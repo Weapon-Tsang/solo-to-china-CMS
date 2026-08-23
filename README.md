@@ -109,12 +109,28 @@ JOB_HISTORY_RETENTION_DAYS=30
 
 Use the **Maintenance** view for last-run status or an exceptional admin-triggered run. Normal operation requires no action.
 
+## Operational visibility and exception alerts
+
+`v1.2.0` adds rolling Job performance telemetry, structured request/job logs, a database-backed readiness endpoint, and optional deduplicated exception webhooks. These features reuse SQLite and stdout, so no metrics database or manual alert register is required.
+
+```text
+TELEMETRY_WINDOW_HOURS=24
+LOG_LEVEL=info
+LOG_FORMAT=json
+EXCEPTION_WEBHOOK_URL=https://automation.example/hooks/solo-to-china
+EXCEPTION_NOTIFICATION_MIN_SEVERITY=blocker
+EXCEPTION_NOTIFICATION_REPEAT_HOURS=24
+```
+
+The Maintenance view shows queue depth, success rate, and p95 queue/processing latency. `GET /api/ready` supports deployment readiness probes. Use `npm run backup:drill -- <backup.sqlite>` to exercise an isolated restore without touching the live database.
+
 ## V1 operational controls
 
 - Volatile facts such as prices, opening hours, schedules, booking rules, and transport routes are classified as `time_sensitive`; old evidence becomes `stale` and cannot pass deterministic QA.
 - The **Exceptions** view combines exhausted jobs, stale/conflicted facts, integration failures, draft failures, and WordPress delivery failures.
 - `ADMIN_TOKEN` protects every admin mutation. Non-loopback binding requires both `ADMIN_TOKEN` and `CAPTURE_TOKEN`.
 - `npm run backup` creates a consistent, checksummed SQLite snapshot; `npm run backup:verify -- <file>` verifies it independently.
+- `npm run backup:drill -- <file>` restores into a temporary database, applies migrations, checks integrity, and reads critical table counts.
 - Optional `WORDPRESS_AUTHOR_ID`, `WORDPRESS_CATEGORY_IDS`, and `WORDPRESS_TAG_IDS` map core WordPress fields while status remains `draft`.
 
 See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md), and [Changelog](CHANGELOG.md).
@@ -124,6 +140,7 @@ See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md),
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/health` | Engine 与 AI 配置状态 |
+| `GET` | `/api/ready` | 数据库支持的部署就绪探针 |
 | `POST` | `/api/captures` | Extension 显式提交当前笔记 |
 | `GET` | `/api/sources` | Source 列表 |
 | `GET` | `/api/sources/:id` | Raw/Structured/Claims/Blueprint 详情 |

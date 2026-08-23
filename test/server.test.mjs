@@ -14,6 +14,7 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
     PORT: "0",
     DATABASE_PATH: path.join(directory, "api.sqlite"),
     MAINTENANCE_ENABLED: "false",
+    LOG_LEVEL: "error",
   });
   const app = createApplication(config);
   await app.start();
@@ -54,6 +55,7 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
     DATABASE_PATH: path.join(directory, "auth.sqlite"),
     ADMIN_TOKEN: "admin-secret",
     MAINTENANCE_ENABLED: "false",
+    LOG_LEVEL: "error",
   });
   const app = createApplication(config);
   await app.start();
@@ -67,13 +69,20 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(denied.headers.get("x-frame-options"), "DENY");
   const allowed = await fetch(`${baseUrl}/api/pipeline/run-one`, {
     method: "POST",
-    headers: { authorization: "Bearer admin-secret" },
+    headers: { authorization: "Bearer admin-secret", "x-request-id": "test-request-id" },
   });
   assert.equal(allowed.status, 200);
+  assert.equal(allowed.headers.get("x-request-id"), "test-request-id");
   const health = await (await fetch(`${baseUrl}/api/health`)).json();
-  assert.equal(health.version, "1.1.0");
+  assert.equal(health.version, "1.2.0");
+  assert.equal(typeof health.queueActive, "number");
+  const readyResponse = await fetch(`${baseUrl}/api/ready`);
+  assert.equal(readyResponse.status, 200);
+  assert.equal((await readyResponse.json()).database, "ready");
   const maintenance = await (await fetch(`${baseUrl}/api/maintenance`)).json();
   assert.equal(maintenance.enabled, false);
+  assert.equal(maintenance.telemetry.windowHours, 24);
+  assert.equal(maintenance.notifications.configured, false);
   const exceptions = await (await fetch(`${baseUrl}/api/exceptions`)).json();
   assert.deepEqual(exceptions.items, []);
 });

@@ -12,6 +12,8 @@ import { Repository } from "./repository.mjs";
 import { WordPressDraftAdapter } from "./wordpress.mjs";
 import { CommercialComposer, CommercialValidationError, normalizeCommercialOffer } from "./commercial.mjs";
 import { MaintenanceScheduler } from "./maintenance.mjs";
+import { createLogger } from "./logger.mjs";
+import { ExceptionNotifier } from "./notifications.mjs";
 import { VERSION } from "./version.mjs";
 
 const MIME = {
@@ -27,6 +29,7 @@ export function createApplication(config = loadConfig()) {
   if (!isLoopbackHost(config.host) && (!config.captureToken || !config.adminToken)) {
     throw new Error("Non-loopback HOST requires both CAPTURE_TOKEN and ADMIN_TOKEN.");
   }
+  const logger = createLogger(config.logging);
   const db = openDatabase(config.databasePath);
   const repository = new Repository(db, config.content);
   const extractor = new OpenAIExtractor(config.openai);
@@ -35,8 +38,16 @@ export function createApplication(config = loadConfig()) {
   const commercialComposer = new CommercialComposer(config.commercial);
   const pipeline = new Pipeline(repository, extractor, {
     contentEngine, wordpress, commercialComposer, contentConfig: config.content,
+    logger: logger.child({ component: "pipeline" }),
   });
-  const maintenance = new MaintenanceScheduler(repository, pipeline, config.maintenance, config.wordpress);
+  const notifier = new ExceptionNotifier(repository, config.notifications);
+  const maintenance = new MaintenanceScheduler(
+    repository,
+    pipeline,
+    { ...config.maintenance, notificationIntervalMinutes: config.notifications.intervalMinutes },
+    config.wordpress,
+    { notifier, logger: logger.child({ component: "maintenance" }) },
+  );
   if (wordpress.enabled) {
     repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours);
   }
@@ -44,6 +55,17 @@ export function createApplication(config = loadConfig()) {
   const publicDir = path.join(config.root, "public");
 
   const server = http.createServer(async (request, response) => {
+    const requestId = normalizeRequestId(request.headers["x-request-id"]) || crypto.randomUUID();
+    const requestStartedAt = Date.now();
+    const requestPath = String(request.url || "/").split("?", 1)[0];
+    response.setHeader("X-Request-Id", requestId);
+    response.once("finish", () => {
+      if (!requestPath.startsWith("/api/")) return;
+      logger.info("http.request_completed", {
+        requestId, method: request.method, path: requestPath, status: response.statusCode,
+        durationMs: Date.now() - requestStartedAt,
+      });
+    });
     try {
       setSecurityHeaders(response);
       setCors(request, response);
@@ -51,6 +73,7 @@ export function createApplication(config = loadConfig()) {
       const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
 
       if (request.method === "GET" && url.pathname === "/api/health") {
+        const telemetry = repository.jobTelemetry(config.telemetry.windowHours);
         return sendJson(response, 200, {
           ok: true,
           version: VERSION,
@@ -58,7 +81,13 @@ export function createApplication(config = loadConfig()) {
           contentAutomationConfigured: contentEngine.enabled,
           wordpressConfigured: wordpress.enabled,
           maintenanceEnabled: config.maintenance.enabled,
+          notificationsConfigured: notifier.enabled,
+          queueActive: telemetry.active,
         });
+      }
+      if (request.method === "GET" && url.pathname === "/api/ready") {
+        db.prepare("SELECT 1 AS ready").get();
+        return sendJson(response, 200, { ready: true, version: VERSION, database: "ready" });
       }
       if (request.method === "POST" && url.pathname === "/api/captures") {
         authorizeCapture(request, config.captureToken);
@@ -104,6 +133,14 @@ export function createApplication(config = loadConfig()) {
           intervalMinutes: config.maintenance.intervalMinutes,
           runs: repository.listMaintenanceRuns(),
           wordpressSync: repository.getWordPressSyncState(wordpress.config.siteUrl),
+          telemetry: repository.jobTelemetry(config.telemetry.windowHours),
+          notifications: {
+            configured: notifier.enabled,
+            minimumSeverity: config.notifications.minimumSeverity,
+            repeatHours: config.notifications.repeatHours,
+            ...repository.notificationOverview(),
+          },
+          logging: { level: config.logging.level, format: config.logging.format },
         });
       }
       if (request.method === "POST" && url.pathname === "/api/maintenance/run") {
@@ -191,7 +228,8 @@ export function createApplication(config = loadConfig()) {
       return sendJson(response, 404, { error: "Not found." });
     } catch (error) {
       const status = error instanceof ValidationError || error instanceof CommercialValidationError ? 400 : error?.statusCode || 500;
-      if (status === 500) console.error(error);
+      const log = status >= 500 ? logger.error : logger.warn;
+      log("http.request_failed", { requestId, method: request.method, path: requestPath, status, error });
       return sendJson(response, status, { error: error.message || "Unexpected server error." });
     }
   });
@@ -201,6 +239,8 @@ export function createApplication(config = loadConfig()) {
     repository,
     pipeline,
     maintenance,
+    notifier,
+    logger,
     start() {
       return new Promise((resolve, reject) => {
         const onError = (error) => reject(error);
@@ -209,6 +249,7 @@ export function createApplication(config = loadConfig()) {
           server.off("error", onError);
           pipeline.start();
           maintenance.start();
+          logger.info("server.started", { host: config.host, port: server.address().port, version: VERSION });
           resolve();
         });
       });
@@ -218,6 +259,7 @@ export function createApplication(config = loadConfig()) {
       pipeline.stop();
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       db.close();
+      logger.info("server.stopped", { version: VERSION });
     },
   };
 }
@@ -246,6 +288,11 @@ function isLoopbackHost(host) {
   return ["127.0.0.1", "localhost", "::1"].includes(host);
 }
 
+function normalizeRequestId(value) {
+  const candidate = Array.isArray(value) ? value[0] : String(value || "");
+  return /^[A-Za-z0-9._-]{1,128}$/.test(candidate) ? candidate : "";
+}
+
 function setSecurityHeaders(response) {
   response.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   response.setHeader("X-Content-Type-Options", "nosniff");
@@ -260,7 +307,8 @@ function setCors(request, response) {
     response.setHeader("Access-Control-Allow-Origin", origin);
     response.setHeader("Vary", "Origin");
   }
-  response.setHeader("Access-Control-Allow-Headers", "authorization, content-type");
+  response.setHeader("Access-Control-Allow-Headers", "authorization, content-type, x-request-id");
+  response.setHeader("Access-Control-Expose-Headers", "x-request-id");
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 }
 
@@ -323,7 +371,7 @@ if (import.meta.main) {
   const config = loadConfig();
   const app = createApplication(config);
   await app.start();
-  console.log(`SoloToChina Research Engine: http://${config.host}:${config.port}`);
+  app.logger.info("preview.ready", { url: `http://${config.host}:${config.port}` });
   const shutdown = async () => {
     await app.stop();
     process.exit(0);

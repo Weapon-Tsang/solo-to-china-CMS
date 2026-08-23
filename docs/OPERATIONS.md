@@ -42,6 +42,14 @@ Verify any snapshot before restore:
 npm run backup:verify -- ./backups/solo-to-china-TIMESTAMP.sqlite
 ```
 
+Exercise the complete restore path without replacing or opening the live database:
+
+```powershell
+npm run backup:drill -- ./backups/solo-to-china-TIMESTAMP.sqlite
+```
+
+The drill copies the selected backup into an isolated temporary directory, applies forward migrations, checks integrity, and reads critical table counts. The temporary restored database is removed afterwards.
+
 To restore, stop the engine, verify the selected snapshot, preserve the current database, copy the verified snapshot to the configured `DATABASE_PATH`, and start the engine. Startup migrations are forward-only.
 
 ## Exceptions
@@ -60,10 +68,41 @@ To restore, stop the engine, verify the selected snapshot, preserve the current 
 
 Maintenance state is durable in SQLite. Restarts do not reset due times, and queue idempotency prevents duplicate reconciliation Jobs. Failed maintenance appears in Exceptions; failed pipeline Jobs are never removed by retention cleanup.
 
+## Operational visibility
+
+The **Maintenance** view shows active queue depth, oldest waiting age, rolling success rate, p95 queue latency, p95 processing duration, and per-Job-type outcomes. The rolling window defaults to 24 hours:
+
+```text
+TELEMETRY_WINDOW_HOURS=24
+```
+
+Every API response includes `X-Request-Id`. A safe incoming request ID is preserved; otherwise the engine generates one. API requests, Pipeline jobs, maintenance tasks, startup, and shutdown emit structured stdout events without authorization headers or URL query strings.
+
+```text
+LOG_LEVEL=info
+LOG_FORMAT=json
+```
+
+Use `LOG_FORMAT=pretty` for local reading. Remote deployments can use `GET /api/health` for liveness and `GET /api/ready` for database-backed readiness.
+
+## Exception webhook
+
+Exception alerts are optional. When configured, maintenance sends a generic JSON payload containing only operational Exceptions at or above the selected severity:
+
+```text
+EXCEPTION_WEBHOOK_URL=https://automation.example/hooks/solo-to-china
+EXCEPTION_WEBHOOK_TOKEN=
+EXCEPTION_NOTIFICATION_MIN_SEVERITY=blocker
+EXCEPTION_NOTIFICATION_INTERVAL_MINUTES=15
+EXCEPTION_NOTIFICATION_REPEAT_HOURS=24
+```
+
+Remote webhook URLs must use HTTPS and cannot embed credentials. `EXCEPTION_WEBHOOK_TOKEN`, when present, is sent as a Bearer token. Delivery fingerprints and outcomes are durable: unchanged exceptions are suppressed until the repeat interval, changed exceptions notify immediately, failed deliveries retry on the next maintenance cycle, and resolved exceptions are removed from notification state. Webhook failures appear in the existing Exceptions view.
+
 ## Release check
 
 ```powershell
 npm run release:check
 ```
 
-This runs syntax checks, the complete test suite, version alignment, migrations 1–5 on a clean database, and SQLite integrity verification.
+This runs syntax checks, the complete test suite, version alignment, migrations 1–7 on a clean database, and SQLite integrity verification.

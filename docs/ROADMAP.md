@@ -88,5 +88,6 @@
 - Encrypted secret storage and key rotation.
 - [x] SQLite backup/restore verification and retention policy.
 - Asset archival policy after permissions/legal review.
-- Structured logs, job latency metrics and exception notification.
+- [x] Structured logs, request IDs, job latency metrics and deduplicated exception webhook notification.
+- [x] Deployment readiness probe and non-destructive backup restore drill.
 - [x] Forward schema migration runner through migration 6.

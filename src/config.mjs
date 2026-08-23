@@ -37,6 +37,21 @@ export function loadConfig(env = process.env) {
       maxOffersPerDraft: integer(env.COMMERCIAL_MAX_OFFERS_PER_DRAFT, 3),
       disclosure: env.AFFILIATE_DISCLOSURE || "SoloToChina may earn a commission from eligible bookings, at no extra cost to you.",
     },
+    telemetry: {
+      windowHours: integer(env.TELEMETRY_WINDOW_HOURS, 24),
+    },
+    logging: {
+      level: choice(env.LOG_LEVEL, ["debug", "info", "warn", "error"], "info"),
+      format: choice(env.LOG_FORMAT, ["json", "pretty"], "json"),
+    },
+    notifications: {
+      webhookUrl: env.EXCEPTION_WEBHOOK_URL || "",
+      webhookToken: env.EXCEPTION_WEBHOOK_TOKEN || "",
+      minimumSeverity: choice(env.EXCEPTION_NOTIFICATION_MIN_SEVERITY, ["warning", "blocker"], "blocker"),
+      intervalMinutes: integer(env.EXCEPTION_NOTIFICATION_INTERVAL_MINUTES, 15),
+      repeatHours: integer(env.EXCEPTION_NOTIFICATION_REPEAT_HOURS, 24),
+      timeoutMs: integer(env.EXCEPTION_WEBHOOK_TIMEOUT_MS, 10_000),
+    },
     maintenance: {
       enabled: boolean(env.MAINTENANCE_ENABLED, true),
       intervalMinutes: integer(env.MAINTENANCE_INTERVAL_MINUTES, 15),
@@ -63,4 +78,9 @@ function integerList(value) {
 function boolean(value, fallback) {
   if (value == null || value === "") return fallback;
   return !["0", "false", "no", "off"].includes(String(value).toLowerCase());
+}
+
+function choice(value, allowed, fallback) {
+  const normalized = String(value || "").toLowerCase();
+  return allowed.includes(normalized) ? normalized : fallback;
 }

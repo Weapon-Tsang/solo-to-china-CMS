@@ -118,6 +118,12 @@ captured → processing → processed
 
 `MaintenanceScheduler` is an in-process coordinator, not a second worker system. It stores durable task state in `maintenance_runs`, reuses the existing idempotent Job queue for Knowledge and WordPress work, calls the verified backup primitive, and removes only expired successful Job rows. It never discovers Sources, calls Xiaohongshu, generates content directly, or publishes WordPress posts.
 
+### Operational visibility and alerts
+
+Migration 7 adds durable first-start, completion, queue-latency, and end-to-end duration fields to `jobs`. The Maintenance API/UI calculates a bounded rolling window (default 24 hours) with success rate and p50/p95 latency; it does not require a second metrics database.
+
+HTTP and background work emit structured stdout events with request/job IDs. `GET /api/ready` is a database-backed deployment readiness probe. An optional HTTPS webhook sends only new, changed, or repeat-due Exceptions. Delivery fingerprints and outcomes live in `exception_notification_state`, so restarts do not create duplicate alerts and resolved exceptions are removed automatically.
+
 ## Security and compliance boundary
 
 - Adapter 只接受 `xiaohongshu.com/explore/...`。

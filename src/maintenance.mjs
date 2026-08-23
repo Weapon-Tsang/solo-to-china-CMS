@@ -4,15 +4,20 @@ const TASKS = {
   knowledge: "knowledge_reconciliation",
   backup: "database_backup",
   cleanup: "job_history_cleanup",
+  notifications: "exception_notifications",
 };
 
+const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
+
 export class MaintenanceScheduler {
-  constructor(repository, pipeline, config, wordpressConfig = {}) {
+  constructor(repository, pipeline, config, wordpressConfig = {}, { notifier = null, logger = silentLogger } = {}) {
     this.repository = repository;
     this.pipeline = pipeline;
     this.config = config;
     this.wordpressConfig = wordpressConfig;
     this.wordpressEnabled = Boolean(wordpressConfig.siteUrl && wordpressConfig.username && wordpressConfig.applicationPassword);
+    this.notifier = notifier;
+    this.logger = logger;
     this.timer = null;
     this.working = false;
   }
@@ -20,9 +25,9 @@ export class MaintenanceScheduler {
   start() {
     if (!this.config.enabled || this.timer) return;
     const intervalMs = Math.max(1, this.config.intervalMinutes) * 60_000;
-    this.timer = setInterval(() => this.runDue().catch((error) => console.error("Maintenance tick failed", error)), intervalMs);
+    this.timer = setInterval(() => this.runDue().catch((error) => this.logger.error("maintenance.tick_failed", { error })), intervalMs);
     this.timer.unref();
-    void this.runDue().catch((error) => console.error("Initial maintenance failed", error));
+    void this.runDue().catch((error) => this.logger.error("maintenance.initial_run_failed", { error }));
   }
 
   stop() {
@@ -59,6 +64,10 @@ export class MaintenanceScheduler {
         itemCount: this.repository.pruneSucceededJobs(this.config.jobHistoryRetentionDays),
         metadata: { retentionDays: this.config.jobHistoryRetentionDays },
       }));
+      if (this.notifier?.enabled) {
+        await this.runTask(results, TASKS.notifications, Math.max(1, this.config.notificationIntervalMinutes || 15) / 60, force,
+          () => this.notifier.deliver());
+      }
       void this.pipeline.runOne();
       return { enabled: true, running: false, results };
     } finally {
@@ -72,13 +81,16 @@ export class MaintenanceScheduler {
       return;
     }
     this.repository.startMaintenance(taskKey);
+    const startedAt = Date.now();
     try {
       const result = await work();
       this.repository.completeMaintenance(taskKey, result.itemCount, result.metadata || {});
       results.push({ task: taskKey, status: "succeeded", ...result });
+      this.logger.info("maintenance.task_succeeded", { task: taskKey, itemCount: result.itemCount, durationMs: Date.now() - startedAt });
     } catch (error) {
       this.repository.failMaintenance(taskKey, error);
       results.push({ task: taskKey, status: "failed", itemCount: 0, error: String(error?.message || error) });
+      this.logger.error("maintenance.task_failed", { task: taskKey, durationMs: Date.now() - startedAt, error });
     }
   }
 }

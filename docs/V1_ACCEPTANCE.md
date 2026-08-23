@@ -13,4 +13,7 @@
 - [x] Human attention is concentrated in final publish review and the unified Exceptions view.
 - [x] Non-loopback operation requires separate capture/admin tokens.
 - [x] SQLite backups are consistent, checksummed, retention-managed, and independently verifiable.
+- [x] Job latency/outcome telemetry and structured request logs make unattended operation observable.
+- [x] Optional exception webhooks are durable, deduplicated, HTTPS-only, and require no manual exception list.
+- [x] A backup can be restore-drilled into an isolated temporary database without touching live data.
 - [x] Package, API, and Chrome extension versions remain aligned for every release.

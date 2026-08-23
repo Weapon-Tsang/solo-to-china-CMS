@@ -1,5 +1,7 @@
+const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
+
 export class Pipeline {
-  constructor(repository, extractor, { pollMs = 750, contentEngine = null, wordpress = null, commercialComposer = null, contentConfig = {} } = {}) {
+  constructor(repository, extractor, { pollMs = 750, contentEngine = null, wordpress = null, commercialComposer = null, contentConfig = {}, logger = silentLogger } = {}) {
     this.repository = repository;
     this.extractor = extractor;
     this.pollMs = pollMs;
@@ -7,13 +9,14 @@ export class Pipeline {
     this.wordpress = wordpress;
     this.commercialComposer = commercialComposer;
     this.contentConfig = { minFacts: 5, maxPerDestination: 1, ...contentConfig };
+    this.logger = logger;
     this.timer = null;
     this.working = false;
   }
 
   start() {
     if (this.timer) return;
-    this.timer = setInterval(() => this.runOne().catch((error) => console.error("Pipeline tick failed", error)), this.pollMs);
+    this.timer = setInterval(() => this.runOne().catch((error) => this.logger.error("pipeline.tick_failed", { error })), this.pollMs);
     this.timer.unref();
     void this.runOne();
   }
@@ -27,9 +30,12 @@ export class Pipeline {
     if (this.working) return false;
     this.working = true;
     let job;
+    let startedAt;
     try {
       job = this.repository.claimJob();
       if (!job) return false;
+      startedAt = Date.now();
+      this.logger.info("pipeline.job_started", { jobId: job.id, jobType: job.type, entityId: job.entity_id, attempt: job.attempts });
       switch (job.type) {
         case "sync_wordpress_inventory": {
           if (!this.wordpress?.enabled) throw new Error("WordPress inventory sync is not configured.");
@@ -131,10 +137,16 @@ export class Pipeline {
           throw new Error(`Unknown job type: ${job.type}`);
       }
       this.repository.completeJob(job.id);
+      this.logger.info("pipeline.job_succeeded", { jobId: job.id, jobType: job.type, durationMs: Date.now() - startedAt });
       return true;
     } catch (error) {
-      if (job) this.repository.failJob(job, error);
-      else console.error(error);
+      if (job) {
+        this.repository.failJob(job, error);
+        this.logger.error("pipeline.job_failed", {
+          jobId: job.id, jobType: job.type, entityId: job.entity_id, attempt: job.attempts,
+          durationMs: startedAt ? Date.now() - startedAt : null, error,
+        });
+      } else this.logger.error("pipeline.unhandled_error", { error });
       return false;
     } finally {
       this.working = false;

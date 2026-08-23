@@ -25,6 +25,37 @@ function migrate(db) {
   if (current < 4) migrationFour(db);
   if (current < 5) migrationFive(db);
   if (current < 6) migrationSix(db);
+  if (current < 7) migrationSeven(db);
+}
+
+function migrationSeven(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE jobs ADD COLUMN started_at TEXT;
+      ALTER TABLE jobs ADD COLUMN completed_at TEXT;
+      ALTER TABLE jobs ADD COLUMN queue_latency_ms INTEGER;
+      ALTER TABLE jobs ADD COLUMN duration_ms INTEGER;
+      CREATE INDEX idx_jobs_completed ON jobs(completed_at, status, type);
+
+      CREATE TABLE exception_notification_state (
+        exception_key TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('sent', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_attempted_at TEXT NOT NULL,
+        last_sent_at TEXT,
+        last_error TEXT,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (7, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationSix(db) {

@@ -80,33 +80,45 @@ export class Repository {
 
   claimJob() {
     return transaction(this.db, () => {
+      const timestamp = now();
       const job = this.db.prepare(`
         SELECT * FROM jobs
         WHERE status = 'queued' AND available_at <= ?
         ORDER BY created_at ASC LIMIT 1
-      `).get(now());
+      `).get(timestamp);
       if (!job) return null;
+      const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
       this.db.prepare(`
-        UPDATE jobs SET status = 'running', attempts = attempts + 1, locked_at = ?, updated_at = ? WHERE id = ?
-      `).run(now(), now(), job.id);
+        UPDATE jobs SET status = 'running', attempts = attempts + 1, locked_at = ?,
+          started_at = COALESCE(started_at, ?), queue_latency_ms = COALESCE(queue_latency_ms, ?), updated_at = ?
+        WHERE id = ?
+      `).run(timestamp, timestamp, queueLatencyMs, timestamp, job.id);
       if (job.type === "extract_source") {
-        this.db.prepare("UPDATE sources SET status = 'processing', updated_at = ? WHERE id = ?").run(now(), job.entity_id);
+        this.db.prepare("UPDATE sources SET status = 'processing', updated_at = ? WHERE id = ?").run(timestamp, job.entity_id);
       }
-      return { ...job, attempts: job.attempts + 1 };
+      return { ...job, attempts: job.attempts + 1, started_at: job.started_at || timestamp, queue_latency_ms: job.queue_latency_ms ?? queueLatencyMs };
     });
   }
 
   completeJob(jobId) {
-    this.db.prepare("UPDATE jobs SET status = 'succeeded', updated_at = ? WHERE id = ?").run(now(), jobId);
+    const timestamp = now();
+    const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(jobId);
+    const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
+    this.db.prepare(`
+      UPDATE jobs SET status='succeeded', completed_at=?, duration_ms=?, updated_at=? WHERE id=?
+    `).run(timestamp, durationMs, timestamp, jobId);
   }
 
   failJob(job, error) {
     const retry = job.attempts < job.max_attempts;
     const delaySeconds = Math.min(300, 10 * 2 ** Math.max(0, job.attempts - 1));
     const availableAt = new Date(Date.now() + delaySeconds * 1_000).toISOString();
+    const timestamp = now();
+    const durationMs = job.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
     this.db.prepare(`
-      UPDATE jobs SET status = ?, available_at = ?, last_error = ?, updated_at = ? WHERE id = ?
-    `).run(retry ? "queued" : "failed", availableAt, String(error?.message || error).slice(0, 4_000), now(), job.id);
+      UPDATE jobs SET status=?, available_at=?, last_error=?, completed_at=?, duration_ms=?, updated_at=? WHERE id=?
+    `).run(retry ? "queued" : "failed", availableAt, String(error?.message || error).slice(0, 4_000),
+      retry ? null : timestamp, retry ? null : durationMs, timestamp, job.id);
     const message = String(error?.message || error).slice(0, 4_000);
     if (job.type === "extract_source") {
       this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
@@ -640,7 +652,7 @@ export class Repository {
   maintenanceDue(taskKey, intervalHours) {
     const state = this.db.prepare("SELECT status, last_succeeded_at FROM maintenance_runs WHERE task_key=?").get(taskKey);
     if (!state?.last_succeeded_at || state.status !== "succeeded") return true;
-    return Date.now() - Date.parse(state.last_succeeded_at) >= Math.max(1, intervalHours) * 3_600_000;
+    return Date.now() - Date.parse(state.last_succeeded_at) >= Math.max(1 / 60, intervalHours) * 3_600_000;
   }
 
   startMaintenance(taskKey) {
@@ -677,6 +689,120 @@ export class Repository {
       ...row,
       metadata: json(row.metadata_json, {}),
     }));
+  }
+
+  jobTelemetry(windowHours = 24) {
+    const hours = Math.max(1, Number(windowHours) || 24);
+    const cutoff = new Date(Date.now() - hours * 3_600_000).toISOString();
+    const counts = { queued: 0, running: 0, succeeded: 0, failed: 0 };
+    for (const row of this.db.prepare("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status").all()) counts[row.status] = row.count;
+    const oldest = this.db.prepare("SELECT MIN(created_at) AS created_at FROM jobs WHERE status='queued'").get().created_at;
+    const completed = this.db.prepare(`
+      SELECT type, status, queue_latency_ms, duration_ms FROM jobs
+      WHERE completed_at >= ? AND status IN ('succeeded','failed')
+      ORDER BY completed_at DESC LIMIT 5000
+    `).all(cutoff);
+    const queueLatencies = completed.map((row) => row.queue_latency_ms).filter(Number.isFinite);
+    const durations = completed.map((row) => row.duration_ms).filter(Number.isFinite);
+    const succeeded = completed.filter((row) => row.status === "succeeded").length;
+    const failed = completed.length - succeeded;
+    const typeMap = new Map();
+    for (const row of completed) {
+      const summary = typeMap.get(row.type) || { type: row.type, completed: 0, succeeded: 0, failed: 0, durations: [], queueLatencies: [] };
+      summary.completed += 1;
+      summary[row.status] += 1;
+      if (Number.isFinite(row.duration_ms)) summary.durations.push(row.duration_ms);
+      if (Number.isFinite(row.queue_latency_ms)) summary.queueLatencies.push(row.queue_latency_ms);
+      typeMap.set(row.type, summary);
+    }
+    const active = this.db.prepare(`
+      SELECT type, status, COUNT(*) AS count FROM jobs WHERE status IN ('queued','running') GROUP BY type, status
+    `).all();
+    for (const row of active) {
+      const summary = typeMap.get(row.type) || { type: row.type, completed: 0, succeeded: 0, failed: 0, durations: [], queueLatencies: [] };
+      summary[row.status] = row.count;
+      typeMap.set(row.type, summary);
+    }
+    return {
+      generatedAt: now(),
+      windowHours: hours,
+      counts,
+      active: counts.queued + counts.running,
+      oldestQueuedAt: oldest || null,
+      oldestQueuedAgeSeconds: oldest ? Math.max(0, Math.round((Date.now() - Date.parse(oldest)) / 1000)) : 0,
+      recent: {
+        completed: completed.length,
+        succeeded,
+        failed,
+        successRate: completed.length ? Math.round((succeeded / completed.length) * 1000) / 10 : null,
+        queueLatencyMs: distribution(queueLatencies),
+        durationMs: distribution(durations),
+      },
+      types: [...typeMap.values()].map((item) => ({
+        type: item.type,
+        queued: item.queued || 0,
+        running: item.running || 0,
+        completed: item.completed,
+        succeeded: item.succeeded,
+        failed: item.failed,
+        queueP95Ms: percentile(item.queueLatencies, 0.95),
+        durationP95Ms: percentile(item.durations, 0.95),
+      })).sort((a, b) => b.queued + b.running - a.queued - a.running || b.completed - a.completed || a.type.localeCompare(b.type)),
+    };
+  }
+
+  notificationCandidates(exceptions, repeatHours = 24, clock = new Date()) {
+    const state = new Map(this.db.prepare("SELECT * FROM exception_notification_state").all().map((row) => [row.exception_key, row]));
+    const repeatMs = Math.max(1, Number(repeatHours) || 24) * 3_600_000;
+    return exceptions.flatMap((item) => {
+      const fingerprint = sha256(JSON.stringify([item.key, item.severity, item.title, item.subject, item.detail, item.retryable]));
+      const previous = state.get(item.key);
+      const due = !previous || previous.fingerprint !== fingerprint || previous.status === "failed"
+        || !previous.last_sent_at || clock.getTime() - Date.parse(previous.last_sent_at) >= repeatMs;
+      return due ? [{ ...item, fingerprint }] : [];
+    });
+  }
+
+  pruneResolvedNotificationState(activeKeys) {
+    const active = new Set(activeKeys);
+    let removed = 0;
+    const remove = this.db.prepare("DELETE FROM exception_notification_state WHERE exception_key=?");
+    for (const row of this.db.prepare("SELECT exception_key FROM exception_notification_state").all()) {
+      if (!active.has(row.exception_key)) removed += remove.run(row.exception_key).changes;
+    }
+    return removed;
+  }
+
+  recordNotificationSent(exceptionKey, fingerprint, timestamp = now()) {
+    this.db.prepare(`
+      INSERT INTO exception_notification_state(exception_key, fingerprint, status, attempts, last_attempted_at, last_sent_at, updated_at)
+      VALUES (?, ?, 'sent', 1, ?, ?, ?)
+      ON CONFLICT(exception_key) DO UPDATE SET fingerprint=excluded.fingerprint, status='sent',
+        attempts=exception_notification_state.attempts+1, last_attempted_at=excluded.last_attempted_at,
+        last_sent_at=excluded.last_sent_at, last_error=NULL, updated_at=excluded.updated_at
+    `).run(exceptionKey, fingerprint, timestamp, timestamp, timestamp);
+  }
+
+  recordNotificationFailed(exceptionKey, fingerprint, error, timestamp = now()) {
+    this.db.prepare(`
+      INSERT INTO exception_notification_state(exception_key, fingerprint, status, attempts, last_attempted_at, last_error, updated_at)
+      VALUES (?, ?, 'failed', 1, ?, ?, ?)
+      ON CONFLICT(exception_key) DO UPDATE SET fingerprint=excluded.fingerprint, status='failed',
+        attempts=exception_notification_state.attempts+1, last_attempted_at=excluded.last_attempted_at,
+        last_error=excluded.last_error, updated_at=excluded.updated_at
+    `).run(exceptionKey, fingerprint, timestamp, String(error?.message || error).slice(0, 4_000), timestamp);
+  }
+
+  notificationOverview() {
+    const rows = this.db.prepare("SELECT * FROM exception_notification_state ORDER BY updated_at DESC").all();
+    return {
+      tracked: rows.length,
+      sent: rows.filter((row) => row.status === "sent").length,
+      failed: rows.filter((row) => row.status === "failed").length,
+      lastAttemptedAt: rows[0]?.last_attempted_at || null,
+      lastSentAt: rows.find((row) => row.last_sent_at)?.last_sent_at || null,
+      lastError: rows.find((row) => row.status === "failed")?.last_error || null,
+    };
   }
 
   enqueueKnowledgeReconciliation() {
@@ -977,6 +1103,23 @@ function exceptionItem(kind, entityId, severity, title, subject, detail, retryab
 
 function wordpressSyncKey(siteUrl) {
   return `wordpress_inventory:${siteUrl}`;
+}
+
+function distribution(values) {
+  if (!values.length) return { samples: 0, p50: null, p95: null, max: null };
+  return {
+    samples: values.length,
+    p50: percentile(values, 0.5),
+    p95: percentile(values, 0.95),
+    max: Math.max(...values),
+  };
+}
+
+function percentile(values, quantile) {
+  if (!values?.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * quantile) - 1));
+  return sorted[index];
 }
 
 function normalizeTitle(value) {

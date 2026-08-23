@@ -1,8 +1,10 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { openDatabase } from "./db.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -53,6 +55,35 @@ export function verifyBackup(filename) {
   }
 }
 
+export function drillBackup(filename) {
+  const source = path.resolve(filename);
+  const sourceVerification = verifyBackup(source);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-restore-drill-"));
+  const restoredPath = path.join(directory, "restored.sqlite");
+  try {
+    fs.copyFileSync(source, restoredPath, fs.constants.COPYFILE_EXCL);
+    const database = openDatabase(restoredPath);
+    let counts;
+    try {
+      counts = Object.fromEntries(["sources", "claims", "knowledge_facts", "article_drafts", "jobs"].map((table) => [
+        table,
+        database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count,
+      ]));
+    } finally {
+      database.close();
+    }
+    const restoredVerification = verifyBackup(restoredPath);
+    return {
+      drill: "passed",
+      source: sourceVerification,
+      restored: { ...restoredVerification, filename: "temporary-restored.sqlite" },
+      counts,
+    };
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 function assertIntegrity(database, filename) {
   const rows = database.prepare("PRAGMA integrity_check").all();
   const messages = rows.map((row) => Object.values(row)[0]);
@@ -94,7 +125,10 @@ function assertInside(directory, filename) {
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
-  if (args[0] === "--verify") {
+  if (args[0] === "--drill") {
+    if (!args[1]) throw new Error("Usage: npm run backup:drill -- <backup.sqlite>");
+    console.log(JSON.stringify(drillBackup(args[1]), null, 2));
+  } else if (args[0] === "--verify") {
     if (!args[1]) throw new Error("Usage: npm run backup:verify -- <backup.sqlite>");
     console.log(JSON.stringify(verifyBackup(args[1]), null, 2));
   } else {

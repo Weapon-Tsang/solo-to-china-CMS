@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 — 2026-08-24
+
+- Redesigned the complete dashboard with a clean Apple-inspired visual system, compact pipeline metrics, responsive navigation, richer empty/loading states, keyboard interaction, and mobile layouts.
+- Added durable Job start/completion timestamps, queue latency, end-to-end duration, rolling success rates, and per-type p95 performance telemetry.
+- Added structured JSON/pretty stdout logs for HTTP requests, Pipeline jobs, maintenance tasks, startup, and shutdown, with safe request ID propagation.
+- Added `GET /api/ready` for database-backed deployment readiness.
+- Added optional HTTPS exception webhooks with severity filtering, Bearer authentication, persistent fingerprints, change detection, repeat reminders, failure retry, and automatic resolved-state cleanup.
+- Added Maintenance UI operational health cards and detailed rolling Job performance.
+- Added non-destructive `npm run backup:drill` restore exercises against an isolated temporary database.
+- Added schema migration 7 and expanded the release suite to 29 tests.
+
 ## 1.1.0 — 2026-08-23
 
 - Added a durable maintenance scheduler for continuously running installations.
