@@ -95,6 +95,16 @@ WORDPRESS_INVENTORY_SYNC_HOURS=24
 - `GET /api/wordpress/inventory` returns the read-only inventory and sync state.
 - `POST /api/wordpress/inventory/sync` queues a protected, read-only refresh.
 
+## V1 operational controls
+
+- Volatile facts such as prices, opening hours, schedules, booking rules, and transport routes are classified as `time_sensitive`; old evidence becomes `stale` and cannot pass deterministic QA.
+- The **Exceptions** view combines exhausted jobs, stale/conflicted facts, integration failures, draft failures, and WordPress delivery failures.
+- `ADMIN_TOKEN` protects every admin mutation. Non-loopback binding requires both `ADMIN_TOKEN` and `CAPTURE_TOKEN`.
+- `npm run backup` creates a consistent, checksummed SQLite snapshot; `npm run backup:verify -- <file>` verifies it independently.
+- Optional `WORDPRESS_AUTHOR_ID`, `WORDPRESS_CATEGORY_IDS`, and `WORDPRESS_TAG_IDS` map core WordPress fields while status remains `draft`.
+
+See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md), and [Changelog](CHANGELOG.md).
+
 ## API
 
 | Method | Path | Purpose |

@@ -28,6 +28,12 @@
 - [x] Evidence-gated practical itinerary candidates
 - [x] Read-only WordPress content inventory sync
 - [x] WordPress title/slug cannibalization suppression
+- [x] Knowledge freshness and official-verification priority
+- [x] Deterministic stale/time-sensitive QA gates
+- [x] Unified operational exception queue
+- [x] Separate capture/admin authorization boundary
+- [x] Consistent SQLite backup, checksum, retention, and verification
+- [x] Optional WordPress author/category/tag mapping
 
 ## Delivered vertical slice: research to WordPress draft
 
@@ -74,9 +80,9 @@
 
 ## Operational hardening before remote deployment
 
-- TLS + admin authentication at reverse proxy.
+- Admin authentication delivered; TLS termination remains a deployment responsibility.
 - Encrypted secret storage and key rotation.
-- SQLite backup/restore check and retention policy.
+- [x] SQLite backup/restore verification and retention policy.
 - Asset archival policy after permissions/legal review.
 - Structured logs, job latency metrics and exception notification.
-- Schema migration runner beyond migration 1.
+- [x] Forward schema migration runner through migration 5.

@@ -47,17 +47,21 @@ export class WordPressDraftAdapter {
         throw new Error(`WordPress post ${existingPostId} is '${current.status}', so the engine refuses to overwrite it.`);
       }
     }
+    const post = {
+      title: draft.title,
+      slug: draft.slug,
+      content: markdownToSafeHtml(draft.body_markdown),
+      excerpt: draft.meta_description,
+      status: "draft",
+      comment_status: "closed",
+      ping_status: "closed",
+    };
+    if (this.config.authorId > 0) post.author = this.config.authorId;
+    if (this.config.categoryIds?.length) post.categories = this.config.categoryIds;
+    if (this.config.tagIds?.length) post.tags = this.config.tagIds;
     const result = await this.request(`/wp-json/wp/v2/posts${existingPostId ? `/${existingPostId}` : ""}`, {
       method: "POST",
-      body: JSON.stringify({
-        title: draft.title,
-        slug: draft.slug,
-        content: markdownToSafeHtml(draft.body_markdown),
-        excerpt: draft.meta_description,
-        status: "draft",
-        comment_status: "closed",
-        ping_status: "closed",
-      }),
+      body: JSON.stringify(post),
     });
     if (result.status !== "draft") throw new Error("WordPress did not confirm draft status; refusing to record the sync.");
     return { postId: result.id, postUrl: result.link || null, status: result.status };

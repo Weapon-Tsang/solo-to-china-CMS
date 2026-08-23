@@ -38,7 +38,8 @@ async function loadView() {
   if (state.view === "blueprints") return renderBlueprints((await api("/api/editorial-blueprints")).items);
   if (state.view === "content") return renderContent((await api("/api/content")).items);
   if (state.view === "wordpress") return renderWordPressInventory(await api("/api/wordpress/inventory"));
-  return renderCommercial((await api("/api/commercial/offers")).items);
+  if (state.view === "commercial") return renderCommercial((await api("/api/commercial/offers")).items);
+  return renderExceptions((await api("/api/exceptions")).items);
 }
 
 function renderMetrics(totals) {
@@ -62,7 +63,7 @@ function renderSources(items) {
 function renderKnowledge(items) {
   if (!items.length) return content.innerHTML = '<div class="empty">Knowledge facts appear after claims are extracted.</div>';
   content.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Destination</th><th>Claim</th><th>Value</th><th>Evidence</th><th>State</th></tr></thead><tbody>${items.map((item) => `
-    <tr><td>${escapeHtml(item.destination_name)}</td><td><div class="title">${escapeHtml(item.subject)} · ${escapeHtml(item.predicate)}</div><div class="subtle">${escapeHtml(item.normalized_key)}</div></td><td>${escapeHtml(item.preferred_value)}</td><td>${item.evidence.length}</td><td><span class="badge ${item.consensus_status}">${item.consensus_status}</span></td></tr>`).join("")}</tbody></table></div>`;
+    <tr><td>${escapeHtml(item.destination_name)}</td><td><div class="title">${escapeHtml(item.subject)} · ${escapeHtml(item.predicate)}</div><div class="subtle">${escapeHtml(item.normalized_key)}</div></td><td>${escapeHtml(item.preferred_value)}</td><td>${item.evidence.length}</td><td><span class="badge ${item.consensus_status}">${item.consensus_status}</span><div class="subtle">${escapeHtml(item.freshness_state)} · ${escapeHtml(item.verification_priority)}</div></td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderBlueprints(items) {
@@ -76,7 +77,7 @@ function renderContent(items) {
   content.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Topic</th><th>Coverage</th><th>Evidence</th><th>Pipeline</th><th>QA / WordPress</th></tr></thead><tbody>${items.map((item) => `
     <tr data-topic="${item.id}" ${item.draft_id ? `data-draft="${item.draft_id}"` : ""}>
       <td><div class="title">${escapeHtml(item.draft_title || item.proposed_title)}</div><div class="subtle">${escapeHtml(item.rationale)}</div>${item.suppression_reason ? `<div class="suppression">Suppressed: ${escapeHtml(item.suppression_reason)}</div>` : ""}</td>
-      <td>${Math.round(item.coverage_score)} / 100</td><td>${item.evidence_count} sources · ${item.conflict_count} conflicts</td>
+      <td>${Math.round(item.coverage_score)} / 100</td><td>${item.evidence_count} sources · ${item.conflict_count} conflicts<div class="subtle">${item.stale_fact_count || 0} stale · ${item.verification_fact_count || 0} verify</div></td>
       <td><span class="badge ${item.draft_status || item.brief_status || item.status}">${escapeHtml(item.draft_status || item.brief_status || item.status)}</span>${item.status === "candidate" ? `<div class="actions"><button class="primary generate" data-id="${item.id}" ${state.health?.contentAutomationConfigured ? "" : "disabled title='Configure OPENAI_API_KEY first'"}>Generate</button></div>` : ""}</td>
       <td>${item.qa_score == null ? "—" : `${Math.round(item.qa_score)} · ${item.qa_passed ? "passed" : "failed"}`}<div class="subtle">Commercial: ${escapeHtml(item.commercial_status || "pending")} (${item.commercial_offer_count || 0}) · WP: ${escapeHtml(item.wordpress_status || "not synced")}</div></td>
     </tr>`).join("")}</tbody></table></div>`;
@@ -105,6 +106,19 @@ function renderCommercial(items) {
     <td><span class="badge ${item.active ? "processed" : ""}">${item.active ? "active" : "inactive"}</span><div class="subtle">${item.valid_until ? `until ${date(item.valid_until)}` : "no expiry"}</div></td></tr>`).join("")}</tbody></table></div>`;
 }
 
+function renderExceptions(items) {
+  if (!items.length) return content.innerHTML = '<div class="empty healthy-empty">No operational exceptions. The pipeline needs no human intervention.</div>';
+  content.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Issue</th><th>Kind</th><th>Severity</th><th>Updated</th><th></th></tr></thead><tbody>${items.map((item) => `
+    <tr><td><div class="title">${escapeHtml(item.title)}</div><div>${escapeHtml(item.subject)}</div><div class="subtle">${escapeHtml(item.detail)}</div></td>
+    <td>${escapeHtml(item.kind)}</td><td><span class="badge ${item.severity}">${escapeHtml(item.severity)}</span></td><td>${item.updatedAt ? date(item.updatedAt) : "—"}</td>
+    <td>${item.retryable ? `<button class="primary retry-exception" data-key="${escapeHtml(item.key)}">Retry</button>` : "New evidence required"}</td></tr>`).join("")}</tbody></table></div>`;
+  content.querySelectorAll("button.retry-exception").forEach((button) => button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { await api(`/api/exceptions/${encodeURIComponent(button.dataset.key)}/retry`, { method: "POST" }); await refresh(); }
+    catch (error) { alert(error.message); button.disabled = false; }
+  }));
+}
+
 async function openDraft(id) {
   const item = await api(`/api/drafts/${id}`);
   const draft = item.draft;
@@ -115,7 +129,7 @@ async function openDraft(id) {
     ${review?.passed && state.health?.wordpressConfigured && draft.status === "ready_for_wordpress" ? '<div class="actions"><button class="primary" id="push-wordpress">Send to WordPress drafts</button></div>' : ""}
     ${review?.issues?.length ? `<section class="panel"><h3>QA issues</h3><ul>${review.issues.map((issue) => `<li><strong>${escapeHtml(issue.severity)}</strong>: ${escapeHtml(issue.message)}</li>`).join("")}</ul></section>` : ""}
     <div class="detail-grid" style="margin-top:18px"><section class="panel wide"><h3>Reader-facing Markdown</h3><div class="draft-body">${escapeHtml(draft.body_markdown)}</div></section>
-    <section class="panel wide"><h3>Internal evidence ledger</h3><p>${draft.evidence_ledger.length} mapped sections · ${draft.unresolved_conflicts.length} unresolved conflicts</p></section>
+    <section class="panel wide"><h3>Internal evidence ledger</h3><p>${draft.evidence_ledger.length} mapped sections · ${draft.unresolved_conflicts.length} unresolved conflicts · ${draft.verification_notes.length} time-sensitive verification notes</p></section>
     <section class="panel wide"><h3>Commercial overlay</h3><p>${composition ? `${composition.offer_ids.length} offers · ${escapeHtml(composition.status)}` : "Pending composition"}</p>${composition?.status === "composed" ? `<div class="draft-body">${escapeHtml(composition.publishable_body_markdown.slice(draft.body_markdown.length).trim())}</div>` : ""}</section></div>`;
   dialog.showModal();
   document.querySelector("#push-wordpress")?.addEventListener("click", async (event) => {
@@ -140,9 +154,18 @@ async function openSource(id) {
   dialog.showModal();
 }
 
-async function api(url, options) {
-  const response = await fetch(url, options);
+async function api(url, options = {}, canPrompt = true) {
+  const adminToken = sessionStorage.getItem("solo_admin_token");
+  const headers = { ...(options.headers || {}), ...(adminToken ? { authorization: `Bearer ${adminToken}` } : {}) };
+  const response = await fetch(url, { ...options, headers });
   const body = await response.json();
+  if (response.status === 401 && options.method && options.method !== "GET" && canPrompt) {
+    const supplied = prompt("Enter ADMIN_TOKEN for this browser session:");
+    if (supplied) {
+      sessionStorage.setItem("solo_admin_token", supplied);
+      return api(url, options, false);
+    }
+  }
   if (!response.ok) throw new Error(body.error || `Request failed: ${response.status}`);
   return body;
 }

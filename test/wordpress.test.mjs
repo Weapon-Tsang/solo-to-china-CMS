@@ -10,6 +10,7 @@ test("WordPress adapter always creates a draft with safe content", async () => {
   };
   const adapter = new WordPressDraftAdapter({
     siteUrl: "https://site.test", username: "editor", applicationPassword: "app password",
+    authorId: 12, categoryIds: [3], tagIds: [7, 8],
   }, fetchStub);
   const result = await adapter.upsertDraft({
     title: "Guide", slug: "guide", meta_description: "Description",
@@ -17,6 +18,9 @@ test("WordPress adapter always creates a draft with safe content", async () => {
   });
   assert.equal(request.body.status, "draft");
   assert.equal(request.body.comment_status, "closed");
+  assert.equal(request.body.author, 12);
+  assert.deepEqual(request.body.categories, [3]);
+  assert.deepEqual(request.body.tags, [7, 8]);
   assert.match(request.body.content, /&lt;script&gt;/);
   assert.doesNotMatch(request.body.content, /<script>/);
   assert.equal(result.postId, 7);

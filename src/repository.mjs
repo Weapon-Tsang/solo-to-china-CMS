@@ -2,8 +2,9 @@ import { id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
 
 export class Repository {
-  constructor(db) {
+  constructor(db, contentConfig = {}) {
     this.db = db;
+    this.contentConfig = { staleAfterDays: 365, volatileStaleAfterDays: 90, ...contentConfig };
     const staleBefore = new Date(Date.now() - 5 * 60_000).toISOString();
     this.db.prepare(`
       UPDATE jobs SET status = 'queued', locked_at = NULL, updated_at = ?
@@ -187,8 +188,9 @@ export class Repository {
 
   rebuildKnowledge(destinationSlug) {
     const sourceRows = this.db.prepare(`
-      SELECT c.*, ss.destination_name, ss.destination_slug
+      SELECT c.*, ss.destination_name, ss.destination_slug, s.captured_at
       FROM claims c JOIN structured_sources ss ON ss.source_id = c.source_id
+      JOIN sources s ON s.id = c.source_id
       WHERE ss.destination_slug = ?
     `).all(destinationSlug);
     const timestamp = now();
@@ -210,26 +212,33 @@ export class Repository {
         const variants = Map.groupBy(rows, (row) => normalizeValue(row.value_text));
         const ranked = [...variants.entries()].sort((a, b) => b[1].length - a[1].length);
         const status = variants.size > 1 ? "conflicted" : rows.length > 1 ? "corroborated" : "single_source";
+        const freshness = classifyFreshness(rows, this.contentConfig);
+        const verificationPriority = freshness.volatile || status === "conflicted"
+          ? "requires_official" : status === "single_source" || freshness.state === "stale" ? "review" : "normal";
         const evidence = rows.map((row) => ({
           source_id: row.source_id,
           value: row.value_text,
           quote: row.source_quote,
           confidence: row.confidence,
           qualifiers: json(row.qualifiers_json, []),
+          captured_at: row.captured_at,
         }));
         this.db.prepare(`
           INSERT INTO knowledge_facts(id, destination_id, normalized_key, subject, predicate, consensus_status,
-            preferred_value, support_count, contradiction_count, evidence_json, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            preferred_value, support_count, contradiction_count, evidence_json, updated_at,
+            freshness_state, latest_evidence_at, verification_priority)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(destination_id, normalized_key) DO UPDATE SET subject=excluded.subject,
             predicate=excluded.predicate, consensus_status=excluded.consensus_status,
             preferred_value=excluded.preferred_value, support_count=excluded.support_count,
             contradiction_count=excluded.contradiction_count, evidence_json=excluded.evidence_json,
-            updated_at=excluded.updated_at
+            updated_at=excluded.updated_at, freshness_state=excluded.freshness_state,
+            latest_evidence_at=excluded.latest_evidence_at, verification_priority=excluded.verification_priority
         `).run(
           `fact_${sha256(`${destinationId}:${key}`).slice(0, 24)}`, destinationId, key, rows[0].subject,
           rows[0].predicate, status, ranked[0][1][0].value_text, ranked[0][1].length,
           Math.max(0, variants.size - 1), JSON.stringify(evidence), timestamp,
+          freshness.state, freshness.latestEvidenceAt, verificationPriority,
         );
       }
     });
@@ -261,21 +270,26 @@ export class Repository {
   }
 
   rebuildTopicCandidates(destinationSlug, minFacts = 5, maxPerDestination = 1) {
-    const facts = this.knowledgeForDestination(destinationSlug);
+    const allFacts = this.knowledgeForDestination(destinationSlug);
+    const facts = allFacts.filter((fact) => fact.freshness_state !== "stale");
     if (facts.length < minFacts || maxPerDestination < 1) return [];
     const destination = this.db.prepare("SELECT name FROM destinations WHERE slug = ?").get(destinationSlug);
     if (!destination) return [];
     const conflictCount = facts.filter((fact) => fact.consensus_status === "conflicted").length;
+    const staleFactCount = allFacts.filter((fact) => fact.freshness_state === "stale").length;
+    const verificationFactCount = facts.filter((fact) => fact.verification_priority === "requires_official").length;
     const evidenceCount = new Set(facts.flatMap((fact) => fact.evidence.map((item) => item.source_id))).size;
     if (evidenceCount < 2) return [];
     const timestamp = now();
     const proposals = [{
       topicKey: `${destinationSlug}:first-time-solo-guide`,
       title: `First-Time ${destination.name} Solo Travel Guide`,
-      rationale: `${facts.length} knowledge facts from ${evidenceCount} independent sources; ${conflictCount} conflicts require editorial handling.`,
-      coverageScore: Math.max(0, Math.min(100, facts.length * 8 + evidenceCount * 6 - conflictCount * 5)),
+      rationale: `${facts.length} knowledge facts from ${evidenceCount} independent sources; ${conflictCount} conflicts, ${staleFactCount} stale facts, and ${verificationFactCount} official-verification flags require editorial handling.`,
+      coverageScore: Math.max(0, Math.min(100, facts.length * 8 + evidenceCount * 6 - conflictCount * 5 - staleFactCount * 4)),
       evidenceCount,
       conflictCount,
+      staleFactCount,
+      verificationFactCount,
       selectionPriority: 0,
     }];
     const subjects = Map.groupBy(facts, (fact) => fact.subject.trim().toLowerCase());
@@ -292,6 +306,8 @@ export class Repository {
         coverageScore: Math.max(0, Math.min(100, subjectFacts.length * 12 + subjectSources * 8 - subjectConflicts * 5)),
         evidenceCount: subjectSources,
         conflictCount: subjectConflicts,
+        staleFactCount: subjectFacts.filter((fact) => fact.freshness_state === "stale").length,
+        verificationFactCount: subjectFacts.filter((fact) => fact.verification_priority === "requires_official").length,
         selectionPriority: 1,
       });
     }
@@ -308,17 +324,20 @@ export class Repository {
         coverageScore: Math.max(0, Math.min(100, itineraryFacts.length * 9 + itinerarySources * 8 - itineraryConflicts * 5)),
         evidenceCount: itinerarySources,
         conflictCount: itineraryConflicts,
+        staleFactCount: itineraryFacts.filter((fact) => fact.freshness_state === "stale").length,
+        verificationFactCount: itineraryFacts.filter((fact) => fact.verification_priority === "requires_official").length,
         selectionPriority: 1,
       });
     }
 
     const upsert = this.db.prepare(`
       INSERT INTO topic_candidates(id, destination_slug, topic_key, proposed_title, rationale, coverage_score,
-        evidence_count, conflict_count, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        evidence_count, conflict_count, stale_fact_count, verification_fact_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(topic_key) DO UPDATE SET proposed_title=excluded.proposed_title, rationale=excluded.rationale,
         coverage_score=excluded.coverage_score, evidence_count=excluded.evidence_count,
-        conflict_count=excluded.conflict_count, updated_at=excluded.updated_at
+        conflict_count=excluded.conflict_count, stale_fact_count=excluded.stale_fact_count,
+        verification_fact_count=excluded.verification_fact_count, updated_at=excluded.updated_at
     `);
     const selectedIds = proposals
       .sort((a, b) => a.selectionPriority - b.selectionPriority || b.coverageScore - a.coverageScore)
@@ -326,7 +345,8 @@ export class Repository {
       .map((proposal) => {
         const candidateId = `topic_${sha256(proposal.topicKey).slice(0, 24)}`;
         upsert.run(candidateId, destinationSlug, proposal.topicKey, proposal.title, proposal.rationale,
-          proposal.coverageScore, proposal.evidenceCount, proposal.conflictCount, timestamp, timestamp);
+          proposal.coverageScore, proposal.evidenceCount, proposal.conflictCount,
+          proposal.staleFactCount, proposal.verificationFactCount, timestamp, timestamp);
         const candidate = this.db.prepare("SELECT status, suppression_reason FROM topic_candidates WHERE id=?").get(candidateId);
         const collision = this.findWordPressCollision(proposal.title);
         const wordpressDismissal = candidate.status === "dismissed" && candidate.suppression_reason?.startsWith("wordpress:");
@@ -415,15 +435,20 @@ export class Repository {
     if (existing) {
       this.db.prepare(`
         UPDATE article_drafts SET title=?, slug=?, body_markdown=?, meta_description=?, evidence_ledger_json=?,
-          unresolved_conflicts_json=?, model=?, revision=revision+1, quality_report_json='{}', status='qa_queued', updated_at=?
+          unresolved_conflicts_json=?, verification_notes_json=?, model=?, revision=revision+1,
+          quality_report_json='{}', status='qa_queued', updated_at=?
         WHERE id=?
-      `).run(draft.title, draft.slug, draft.body_markdown, draft.meta_description, JSON.stringify(draft.evidence_ledger), JSON.stringify(draft.unresolved_conflicts), model, timestamp, draftId);
+      `).run(draft.title, draft.slug, draft.body_markdown, draft.meta_description, JSON.stringify(draft.evidence_ledger),
+        JSON.stringify(draft.unresolved_conflicts), JSON.stringify(draft.verification_notes || []), model, timestamp, draftId);
     } else {
       this.db.prepare(`
         INSERT INTO article_drafts(id, brief_id, title, slug, body_markdown, quality_report_json, status,
-          created_at, updated_at, meta_description, evidence_ledger_json, unresolved_conflicts_json, model)
-        VALUES (?, ?, ?, ?, ?, '{}', 'qa_queued', ?, ?, ?, ?, ?, ?)
-      `).run(draftId, briefId, draft.title, draft.slug, draft.body_markdown, timestamp, timestamp, draft.meta_description, JSON.stringify(draft.evidence_ledger), JSON.stringify(draft.unresolved_conflicts), model);
+          created_at, updated_at, meta_description, evidence_ledger_json, unresolved_conflicts_json,
+          verification_notes_json, model)
+        VALUES (?, ?, ?, ?, ?, '{}', 'qa_queued', ?, ?, ?, ?, ?, ?, ?)
+      `).run(draftId, briefId, draft.title, draft.slug, draft.body_markdown, timestamp, timestamp,
+        draft.meta_description, JSON.stringify(draft.evidence_ledger), JSON.stringify(draft.unresolved_conflicts),
+        JSON.stringify(draft.verification_notes || []), model);
     }
     this.db.prepare("UPDATE topic_candidates SET status='drafted', updated_at=? WHERE id=?").run(timestamp, brief.candidate_id);
     this.db.prepare("UPDATE content_briefs SET status='drafted', updated_at=? WHERE id=?").run(timestamp, briefId);
@@ -444,6 +469,7 @@ export class Repository {
         ...draft,
         evidence_ledger: json(draft.evidence_ledger_json, []),
         unresolved_conflicts: json(draft.unresolved_conflicts_json, []),
+        verification_notes: json(draft.verification_notes_json, []),
       },
       review: review ? hydrateReview(review) : null,
       publication,
@@ -599,7 +625,11 @@ export class Repository {
   }
 
   enqueueStartupReconciliation({ wordpressEnabled = false } = {}) {
-    for (const row of this.db.prepare("SELECT slug FROM destinations").all()) this.enqueue("rebuild_topics", row.slug);
+    const researchSlugs = new Set(this.db.prepare("SELECT DISTINCT destination_slug FROM structured_sources").all().map((row) => row.destination_slug));
+    for (const slug of researchSlugs) this.enqueue("rebuild_knowledge", slug);
+    for (const row of this.db.prepare("SELECT slug FROM destinations").all()) {
+      if (!researchSlugs.has(row.slug)) this.enqueue("rebuild_topics", row.slug);
+    }
     if (wordpressEnabled) {
       for (const row of this.db.prepare("SELECT id FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready')").all()) {
         this.enqueue("compose_commercial", row.id);
@@ -702,6 +732,9 @@ export class Repository {
       consensus_status: row.consensus_status, preferred_value: row.preferred_value,
       support_count: row.support_count, contradiction_count: row.contradiction_count,
       evidence: json(row.evidence_json, []),
+      freshness_state: row.freshness_state,
+      latest_evidence_at: row.latest_evidence_at,
+      verification_priority: row.verification_priority,
     }));
   }
 
@@ -711,6 +744,81 @@ export class Repository {
     this.db.prepare("UPDATE sources SET status = 'captured', last_error = NULL, updated_at = ? WHERE id = ?").run(now(), sourceId);
     this.enqueue("extract_source", sourceId);
     return true;
+  }
+
+  listOperationalExceptions() {
+    const items = [];
+    for (const row of this.db.prepare("SELECT id, title, status, last_error, updated_at FROM sources WHERE status='exception'").all()) {
+      items.push(exceptionItem("source", row.id, "blocker", "Source extraction failed", row.title || row.id, row.last_error, true, row.updated_at));
+    }
+    for (const row of this.db.prepare(`
+      SELECT id, type, entity_id, last_error, updated_at FROM jobs
+      WHERE status='failed' AND type NOT IN (
+        'extract_source','sync_wordpress_inventory','push_wordpress_draft','generate_draft','review_draft','revise_draft'
+      )
+    `).all()) {
+      items.push(exceptionItem("job", row.id, "blocker", `Job failed: ${row.type}`, row.entity_id, row.last_error, true, row.updated_at));
+    }
+    for (const row of this.db.prepare("SELECT * FROM knowledge_facts WHERE consensus_status='conflicted' OR freshness_state='stale'").all()) {
+      const stale = row.freshness_state === "stale";
+      items.push(exceptionItem("knowledge", row.id, stale ? "blocker" : "warning",
+        stale ? "Knowledge fact is stale" : "Knowledge conflict needs judgment",
+        `${row.subject} · ${row.predicate}`, stale ? `Latest evidence: ${row.latest_evidence_at || "unknown"}` : row.preferred_value,
+        false, row.updated_at));
+    }
+    for (const row of this.db.prepare("SELECT sync_key, last_error, updated_at FROM integration_sync_state WHERE status='failed'").all()) {
+      items.push(exceptionItem("sync", row.sync_key, "blocker", "Integration sync failed", row.sync_key, row.last_error, true, row.updated_at));
+    }
+    for (const row of this.db.prepare("SELECT id, candidate_id, topic, last_error, updated_at FROM content_briefs WHERE status='exception'").all()) {
+      items.push({ ...exceptionItem("brief", row.id, "blocker", "Draft generation failed", row.topic, row.last_error, true, row.updated_at), candidateId: row.candidate_id });
+    }
+    for (const row of this.db.prepare(`
+      SELECT ad.id, ad.title, ad.status, ad.updated_at, cb.candidate_id
+      FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id
+      WHERE ad.status='exception' OR (ad.status='qa_failed' AND ad.revision>=2)
+    `).all()) {
+      items.push({ ...exceptionItem("draft", row.id, "blocker", "Draft needs editorial intervention", row.title, row.status, true, row.updated_at), candidateId: row.candidate_id });
+    }
+    for (const row of this.db.prepare(`
+      SELECT wp.draft_id, wp.last_error, wp.updated_at, ad.title, cb.candidate_id
+      FROM wordpress_publications wp JOIN article_drafts ad ON ad.id=wp.draft_id
+      JOIN content_briefs cb ON cb.id=ad.brief_id WHERE wp.status='failed'
+    `).all()) {
+      items.push({ ...exceptionItem("wordpress", row.draft_id, "blocker", "WordPress draft sync failed", row.title, row.last_error, true, row.updated_at), candidateId: row.candidate_id });
+    }
+    const severityRank = { blocker: 0, warning: 1 };
+    return items.sort((a, b) => severityRank[a.severity] - severityRank[b.severity]
+      || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  }
+
+  retryOperationalException(exceptionKey) {
+    const separator = exceptionKey.indexOf(":");
+    const kind = exceptionKey.slice(0, separator);
+    const entityId = exceptionKey.slice(separator + 1);
+    if (!kind || !entityId) return false;
+    if (kind === "source") return this.retrySource(entityId);
+    if (kind === "job") {
+      const result = this.db.prepare(`
+        UPDATE jobs SET status='queued', attempts=0, available_at=?, locked_at=NULL, last_error=NULL, updated_at=?
+        WHERE id=? AND status='failed'
+      `).run(now(), now(), entityId);
+      return result.changes > 0;
+    }
+    if (kind === "sync" && entityId.startsWith("wordpress_inventory:")) {
+      const siteUrl = entityId.slice("wordpress_inventory:".length);
+      return Boolean(this.enqueueWordPressInventorySync(siteUrl, 1, true));
+    }
+    if (kind === "brief") {
+      const row = this.db.prepare("SELECT candidate_id FROM content_briefs WHERE id=?").get(entityId);
+      return Boolean(row && this.retryContent(row.candidate_id));
+    }
+    if (["draft", "wordpress"].includes(kind)) {
+      const row = this.db.prepare(`
+        SELECT cb.candidate_id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?
+      `).get(entityId);
+      return Boolean(row && this.retryContent(row.candidate_id));
+    }
+    return false;
   }
 
   getKnowledge() {
@@ -734,6 +842,7 @@ export class Repository {
 
   dashboard() {
     const statuses = this.db.prepare("SELECT status, COUNT(*) AS count FROM sources GROUP BY status").all();
+    const operationalExceptions = this.listOperationalExceptions();
     return {
       sources: Object.fromEntries(statuses.map((row) => [row.status, row.count])),
       totals: {
@@ -741,7 +850,7 @@ export class Repository {
         claims: this.db.prepare("SELECT COUNT(*) AS count FROM claims").get().count,
         knowledgeFacts: this.db.prepare("SELECT COUNT(*) AS count FROM knowledge_facts").get().count,
         conflicts: this.db.prepare("SELECT COUNT(*) AS count FROM knowledge_facts WHERE consensus_status = 'conflicted'").get().count,
-        exceptions: this.db.prepare("SELECT COUNT(*) AS count FROM sources WHERE status = 'exception'").get().count,
+        exceptions: operationalExceptions.length,
         topicCandidates: this.db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count,
         draftsReady: this.db.prepare("SELECT COUNT(*) AS count FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')").get().count,
         activeOffers: this.db.prepare("SELECT COUNT(*) AS count FROM commercial_offers WHERE active=1 AND target_url<>''").get().count,
@@ -780,6 +889,34 @@ function hydrateSource({ source, assets, structured, claims, blueprint }) {
 
 function normalizeValue(value) {
   return String(value).trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function classifyFreshness(rows, config) {
+  const volatile = rows.some((row) => /price|cost|fee|ticket|opening|hours?|schedule|timetable|policy|rule|visa|payment|booking|reservation|closure|closed|route|metro|train|bus/i
+    .test(`${row.normalized_key} ${row.subject} ${row.predicate}`));
+  const latestMillis = Math.max(...rows.map((row) => Date.parse(row.captured_at) || 0));
+  const latestEvidenceAt = latestMillis ? new Date(latestMillis).toISOString() : null;
+  const ageDays = latestMillis ? (Date.now() - latestMillis) / 86_400_000 : Number.POSITIVE_INFINITY;
+  const staleAfterDays = volatile ? config.volatileStaleAfterDays : config.staleAfterDays;
+  return {
+    volatile,
+    latestEvidenceAt,
+    state: ageDays > staleAfterDays ? "stale" : volatile ? "time_sensitive" : "current",
+  };
+}
+
+function exceptionItem(kind, entityId, severity, title, subject, detail, retryable, updatedAt) {
+  return {
+    key: `${kind}:${entityId}`,
+    kind,
+    entityId,
+    severity,
+    title,
+    subject,
+    detail: detail || "No diagnostic detail was recorded.",
+    retryable,
+    updatedAt,
+  };
 }
 
 function wordpressSyncKey(siteUrl) {

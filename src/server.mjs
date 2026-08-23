@@ -1,4 +1,5 @@
 import http from "node:http";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "./config.mjs";
@@ -21,8 +22,11 @@ const MIME = {
 };
 
 export function createApplication(config = loadConfig()) {
+  if (!isLoopbackHost(config.host) && (!config.captureToken || !config.adminToken)) {
+    throw new Error("Non-loopback HOST requires both CAPTURE_TOKEN and ADMIN_TOKEN.");
+  }
   const db = openDatabase(config.databasePath);
-  const repository = new Repository(db);
+  const repository = new Repository(db, config.content);
   const extractor = new OpenAIExtractor(config.openai);
   const contentEngine = new ContentEngine(config.openai);
   const wordpress = new WordPressDraftAdapter(config.wordpress);
@@ -38,6 +42,7 @@ export function createApplication(config = loadConfig()) {
 
   const server = http.createServer(async (request, response) => {
     try {
+      setSecurityHeaders(response);
       setCors(request, response);
       if (request.method === "OPTIONS") return response.writeHead(204).end();
       const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
@@ -45,6 +50,7 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/health") {
         return sendJson(response, 200, {
           ok: true,
+          version: "1.0.0",
           aiConfigured: extractor.enabled,
           contentAutomationConfigured: contentEngine.enabled,
           wordpressConfigured: wordpress.enabled,
@@ -70,6 +76,7 @@ export function createApplication(config = loadConfig()) {
       }
       const retryMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/retry$/);
       if (request.method === "POST" && retryMatch) {
+        authorizeAdmin(request, config.adminToken);
         const retried = repository.retrySource(retryMatch[1]);
         if (!retried) return sendJson(response, 404, { error: "Source not found." });
         void pipeline.runOne();
@@ -84,6 +91,17 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/content") {
         return sendJson(response, 200, { items: repository.listContent() });
       }
+      if (request.method === "GET" && url.pathname === "/api/exceptions") {
+        return sendJson(response, 200, { items: repository.listOperationalExceptions() });
+      }
+      const exceptionRetryMatch = url.pathname.match(/^\/api\/exceptions\/(.+)\/retry$/);
+      if (request.method === "POST" && exceptionRetryMatch) {
+        authorizeAdmin(request, config.adminToken);
+        const retried = repository.retryOperationalException(decodeURIComponent(exceptionRetryMatch[1]));
+        if (!retried) return sendJson(response, 409, { error: "Exception is not retryable or no longer exists." });
+        void pipeline.runOne();
+        return sendJson(response, 202, { queued: true });
+      }
       if (request.method === "GET" && url.pathname === "/api/wordpress/inventory") {
         return sendJson(response, 200, {
           configured: wordpress.enabled,
@@ -92,7 +110,7 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "POST" && url.pathname === "/api/wordpress/inventory/sync") {
-        authorizeCapture(request, config.captureToken);
+        authorizeAdmin(request, config.adminToken);
         if (!wordpress.enabled) return sendJson(response, 409, { error: "WordPress inventory sync is not configured." });
         const jobId = repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours, true);
         void pipeline.runOne();
@@ -102,7 +120,7 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, { items: repository.listCommercialOffers() });
       }
       if (request.method === "POST" && url.pathname === "/api/commercial/offers") {
-        authorizeCapture(request, config.captureToken);
+        authorizeAdmin(request, config.adminToken);
         const payload = await readJson(request, 1_000_000);
         const inputs = Array.isArray(payload) ? payload : [payload];
         if (inputs.length > 500) return sendJson(response, 400, { error: "A sync batch may contain at most 500 offers." });
@@ -116,6 +134,7 @@ export function createApplication(config = loadConfig()) {
       }
       const generateMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/generate$/);
       if (request.method === "POST" && generateMatch) {
+        authorizeAdmin(request, config.adminToken);
         if (!contentEngine.enabled) return sendJson(response, 409, { error: "OPENAI_API_KEY is required for content production." });
         const queued = repository.queueCandidate(generateMatch[1]);
         if (!queued) return sendJson(response, 409, { error: "Topic is missing or has already entered production." });
@@ -124,6 +143,7 @@ export function createApplication(config = loadConfig()) {
       }
       const retryContentMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/retry$/);
       if (request.method === "POST" && retryContentMatch) {
+        authorizeAdmin(request, config.adminToken);
         if (!contentEngine.enabled) return sendJson(response, 409, { error: "OPENAI_API_KEY is required for content production." });
         const jobType = repository.retryContent(retryContentMatch[1]);
         if (!jobType) return sendJson(response, 409, { error: "Nothing retryable was found for this topic." });
@@ -137,6 +157,7 @@ export function createApplication(config = loadConfig()) {
       }
       const wordpressMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/wordpress$/);
       if (request.method === "POST" && wordpressMatch) {
+        authorizeAdmin(request, config.adminToken);
         if (!wordpress.enabled) return sendJson(response, 409, { error: "WordPress delivery is not configured." });
         const draft = repository.getDraftPackage(wordpressMatch[1]);
         if (!draft?.review?.passed) return sendJson(response, 409, { error: "Draft must pass QA before WordPress delivery." });
@@ -145,6 +166,7 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 202, { queued: true });
       }
       if (request.method === "POST" && url.pathname === "/api/pipeline/run-one") {
+        authorizeAdmin(request, config.adminToken);
         const worked = await pipeline.runOne();
         return sendJson(response, 200, { worked });
       }
@@ -175,12 +197,35 @@ export function createApplication(config = loadConfig()) {
 }
 
 function authorizeCapture(request, token) {
+  authorize(request, token, "capture");
+}
+
+function authorizeAdmin(request, token) {
+  authorize(request, token, "admin");
+}
+
+function authorize(request, token, label) {
   if (!token) return;
-  if (request.headers.authorization !== `Bearer ${token}`) {
-    const error = new Error("Invalid capture token.");
+  const supplied = request.headers.authorization || "";
+  const expected = `Bearer ${token}`;
+  const valid = supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+  if (!valid) {
+    const error = new Error(`Invalid ${label} token.`);
     error.statusCode = 401;
     throw error;
   }
+}
+
+function isLoopbackHost(host) {
+  return ["127.0.0.1", "localhost", "::1"].includes(host);
+}
+
+function setSecurityHeaders(response) {
+  response.setHeader("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Frame-Options", "DENY");
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
 }
 
 function setCors(request, response) {

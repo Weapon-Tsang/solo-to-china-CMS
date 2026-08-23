@@ -106,6 +106,14 @@ captured → processing → processed
 
 实际 V1 在 job running 期间保留 `captured`，完成后进入 `processed` / `needs_ai`。Dashboard 只把 `exception` 和 `conflicted` 暴露为需要人工关注的队列。
 
+## V1 operational boundary
+
+- Knowledge Facts carry `freshness_state`, `latest_evidence_at`, and `verification_priority` derived from captured evidence dates and volatile predicates.
+- Deterministic QA blocks stale evidence and requires internal verification notes for used time-sensitive facts.
+- The Exceptions projection derives the small human-attention queue from domain state; it does not create a second manual tracking system.
+- SQLite backup uses `VACUUM INTO` for a consistent snapshot, then verifies integrity and writes a SHA-256 manifest.
+- Capture and admin credentials are separated. A non-loopback bind is impossible without both tokens.
+
 ## Security and compliance boundary
 
 - Adapter 只接受 `xiaohongshu.com/explore/...`。

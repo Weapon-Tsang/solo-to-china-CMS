@@ -23,6 +23,30 @@ function migrate(db) {
   if (current < 2) migrationTwo(db);
   if (current < 3) migrationThree(db);
   if (current < 4) migrationFour(db);
+  if (current < 5) migrationFive(db);
+}
+
+function migrationFive(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE knowledge_facts ADD COLUMN freshness_state TEXT NOT NULL DEFAULT 'current'
+        CHECK (freshness_state IN ('current', 'time_sensitive', 'stale'));
+      ALTER TABLE knowledge_facts ADD COLUMN latest_evidence_at TEXT;
+      ALTER TABLE knowledge_facts ADD COLUMN verification_priority TEXT NOT NULL DEFAULT 'normal'
+        CHECK (verification_priority IN ('normal', 'review', 'requires_official'));
+
+      ALTER TABLE topic_candidates ADD COLUMN stale_fact_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE topic_candidates ADD COLUMN verification_fact_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE article_drafts ADD COLUMN verification_notes_json TEXT NOT NULL DEFAULT '[]';
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (5, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFour(db) {

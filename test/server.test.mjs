@@ -43,3 +43,35 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
   const sources = await (await fetch(`${baseUrl}/api/sources`)).json();
   assert.equal(sources.items[0].destination_name, "Chengdu");
 });
+
+test("admin mutations require ADMIN_TOKEN and responses include security headers", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-auth-test-"));
+  const config = loadConfig({
+    HOST: "127.0.0.1",
+    PORT: "0",
+    DATABASE_PATH: path.join(directory, "auth.sqlite"),
+    ADMIN_TOKEN: "admin-secret",
+  });
+  const app = createApplication(config);
+  await app.start();
+  t.after(async () => {
+    await app.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
+  const denied = await fetch(`${baseUrl}/api/pipeline/run-one`, { method: "POST" });
+  assert.equal(denied.status, 401);
+  assert.equal(denied.headers.get("x-frame-options"), "DENY");
+  const allowed = await fetch(`${baseUrl}/api/pipeline/run-one`, {
+    method: "POST",
+    headers: { authorization: "Bearer admin-secret" },
+  });
+  assert.equal(allowed.status, 200);
+  const exceptions = await (await fetch(`${baseUrl}/api/exceptions`)).json();
+  assert.deepEqual(exceptions.items, []);
+});
+
+test("non-loopback binding refuses to start without both operational tokens", () => {
+  const config = loadConfig({ HOST: "0.0.0.0", DATABASE_PATH: "data/should-not-open.sqlite" });
+  assert.throws(() => createApplication(config), /requires both CAPTURE_TOKEN and ADMIN_TOKEN/);
+});

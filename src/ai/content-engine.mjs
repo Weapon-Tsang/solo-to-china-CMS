@@ -1,7 +1,7 @@
 import { slugify, truncate } from "../utils.mjs";
 
 const BRIEF_SCHEMA = objectSchema(
-  ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions"],
+  ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions"],
   {
     title: { type: "string" },
     primary_keyword: { type: "string" },
@@ -18,11 +18,12 @@ const BRIEF_SCHEMA = objectSchema(
     },
     adaptation_requirements: { type: "array", items: { type: "string" } },
     conflict_instructions: { type: "array", items: { type: "string" } },
+    verification_instructions: { type: "array", items: { type: "string" } },
   },
 );
 
 const DRAFT_SCHEMA = objectSchema(
-  ["title", "slug", "meta_description", "body_markdown", "evidence_ledger", "unresolved_conflicts"],
+  ["title", "slug", "meta_description", "body_markdown", "evidence_ledger", "unresolved_conflicts", "verification_notes"],
   {
     title: { type: "string" }, slug: { type: "string" }, meta_description: { type: "string" }, body_markdown: { type: "string" },
     evidence_ledger: {
@@ -34,6 +35,7 @@ const DRAFT_SCHEMA = objectSchema(
       }),
     },
     unresolved_conflicts: { type: "array", items: { type: "string" } },
+    verification_notes: { type: "array", items: { type: "string" } },
   },
 );
 
@@ -123,6 +125,7 @@ const BRIEF_PROMPT = `Create an evidence-backed English content brief for SoloTo
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
 - Conflicted facts require explicit handling instructions; never silently choose a side.
+- Facts marked time_sensitive or requires_official need explicit verification instructions. Exclude stale facts from the outline.
 - Build an original synthesis, not a translation or imitation of any one UGC source.
 - Include practical adaptation for language, booking, payment, navigation, safety, and solo logistics where evidence permits.
 - Affiliate inventory and commercial conversion are outside this task and must not appear.`;
@@ -134,6 +137,7 @@ const DRAFT_PROMPT = `Write an original, publication-quality English China trave
 - Do not mention Xiaohongshu, source authors, internal claim keys, evidence ledgers, affiliate products, Trip.com, or commercial calls to action in body_markdown.
 - Synthesize across sources. Do not translate one source section-by-section.
 - Return a separate evidence ledger mapping each article section to exact claim keys and source IDs.
+- Do not use stale facts. List every used time_sensitive/requires_official claim key in verification_notes and state temporal uncertainty in reader-facing copy.
 - The article should be useful even with no commercial module. Aim for at least 1,200 words when evidence coverage supports it.
 - If revision_feedback exists, fix every blocker without adding unsupported facts.`;
 
@@ -164,6 +168,14 @@ function applyDeterministicGates(review, contentPackage) {
   const acknowledged = new Set(draft.unresolved_conflicts || []);
   const hiddenConflicts = conflictedKeys.filter((key) => ledgerKeys.has(key) && !acknowledged.has(key));
   addGate("conflict-disclosure", hiddenConflicts.length === 0, hiddenConflicts.length ? `Used conflicted facts without ledger disclosure: ${hiddenConflicts.join(", ")}` : "Used conflicts are disclosed or avoided.", "hidden_conflict");
+  const staleKeys = facts.filter((fact) => fact.freshness_state === "stale").map((fact) => fact.normalized_key);
+  const usedStaleKeys = staleKeys.filter((key) => ledgerKeys.has(key));
+  addGate("stale-evidence", usedStaleKeys.length === 0, usedStaleKeys.length ? `Draft uses stale facts that must be refreshed or omitted: ${usedStaleKeys.join(", ")}` : "No stale evidence is used.", "stale_evidence_used");
+  const verificationKeys = facts.filter((fact) => fact.freshness_state === "time_sensitive" || fact.verification_priority === "requires_official")
+    .map((fact) => fact.normalized_key);
+  const acknowledgedVerification = new Set(draft.verification_notes || []);
+  const hiddenVerification = verificationKeys.filter((key) => ledgerKeys.has(key) && !acknowledgedVerification.has(key));
+  addGate("temporal-verification", hiddenVerification.length === 0, hiddenVerification.length ? `Used time-sensitive facts without verification notes: ${hiddenVerification.join(", ")}` : "Time-sensitive evidence is flagged or avoided.", "missing_verification_note");
   addGate("minimum-depth", wordCount(draft.body_markdown) >= 800, `Draft has ${wordCount(draft.body_markdown)} words; minimum evidence-backed review threshold is 800.`, "draft_too_short");
 
   const dedupedIssues = uniqueBy(issues, (item) => `${item.code}:${item.message}`);

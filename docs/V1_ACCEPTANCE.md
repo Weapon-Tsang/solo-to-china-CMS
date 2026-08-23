@@ -1,0 +1,16 @@
+# V1 Acceptance
+
+- [x] A user explicitly opens and saves one Xiaohongshu note; there is no automated discovery or crawling.
+- [x] Raw capture remains safe when AI or WordPress is not configured.
+- [x] Multiple sources become Claims, KB Facts, conflict states, and editorial patterns automatically.
+- [x] Topic generation requires multiple independent sources and blocks WordPress cannibalization.
+- [x] Itinerary generation requires route/timing evidence from multiple sources.
+- [x] Stale facts cannot pass deterministic QA; time-sensitive facts require verification notes.
+- [x] Research Drafts never read affiliate inventory.
+- [x] Commercial composition cannot mutate the Research Draft or Knowledge Base.
+- [x] WordPress delivery is always `draft` and cannot overwrite a human-published post.
+- [x] Existing WordPress content is synchronized read-only.
+- [x] Human attention is concentrated in final publish review and the unified Exceptions view.
+- [x] Non-loopback operation requires separate capture/admin tokens.
+- [x] SQLite backups are consistent, checksummed, retention-managed, and independently verifiable.
+- [x] Package and Chrome extension versions are aligned at `1.0.0`.
