@@ -8,6 +8,36 @@ export class WordPressDraftAdapter {
     return Boolean(this.config.siteUrl && this.config.username && this.config.applicationPassword);
   }
 
+  async listContentInventory() {
+    if (!this.enabled) throw new Error("WordPress inventory sync is not configured.");
+    assertSafeSiteUrl(this.config.siteUrl);
+    const inventory = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const params = new URLSearchParams({
+        context: "edit",
+        status: "publish,draft,pending,private,future",
+        per_page: "100",
+        page: String(page),
+        _fields: "id,slug,status,link,modified,title",
+      });
+      const { body, response } = await this.requestWithResponse(`/wp-json/wp/v2/posts?${params}`, { method: "GET" });
+      if (!Array.isArray(body)) throw new Error("WordPress inventory response must be an array.");
+      inventory.push(...body.map((post) => ({
+        postId: post.id,
+        slug: String(post.slug || ""),
+        title: plainText(post.title?.raw || post.title?.rendered || ""),
+        status: String(post.status || ""),
+        postUrl: post.link || null,
+        modifiedAt: post.modified || null,
+      })));
+      totalPages = Math.max(1, Number.parseInt(response.headers.get("x-wp-totalpages") || "1", 10) || 1);
+      page += 1;
+    } while (page <= totalPages);
+    return inventory;
+  }
+
   async upsertDraft(draft, existingPostId = null) {
     if (!this.enabled) throw new Error("WordPress draft delivery is not configured.");
     assertSafeSiteUrl(this.config.siteUrl);
@@ -34,6 +64,11 @@ export class WordPressDraftAdapter {
   }
 
   async request(pathname, options) {
+    const { body } = await this.requestWithResponse(pathname, options);
+    return body;
+  }
+
+  async requestWithResponse(pathname, options) {
     const response = await this.fetch(`${this.config.siteUrl}${pathname}`, {
       ...options,
       headers: {
@@ -44,7 +79,7 @@ export class WordPressDraftAdapter {
     });
     const body = await response.json();
     if (!response.ok) throw new Error(`WordPress API failed (${response.status}): ${body?.message || response.statusText}`);
-    return body;
+    return { body, response };
   }
 }
 
@@ -77,6 +112,19 @@ function inline(text) {
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+}
+
+function plainText(value) {
+  return String(value)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(?:39|x27);/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function assertSafeSiteUrl(value) {

@@ -22,6 +22,48 @@ function migrate(db) {
   if (current < 1) migrationOne(db);
   if (current < 2) migrationTwo(db);
   if (current < 3) migrationThree(db);
+  if (current < 4) migrationFour(db);
+}
+
+function migrationFour(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE topic_candidates ADD COLUMN suppression_reason TEXT;
+
+      CREATE TABLE wordpress_content_inventory (
+        id TEXT PRIMARY KEY,
+        site_url TEXT NOT NULL,
+        post_id INTEGER NOT NULL,
+        slug TEXT NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        post_url TEXT,
+        modified_at TEXT,
+        synced_at TEXT NOT NULL,
+        UNIQUE(site_url, post_id)
+      );
+      CREATE INDEX idx_wordpress_inventory_site_slug
+        ON wordpress_content_inventory(site_url, slug);
+
+      CREATE TABLE integration_sync_state (
+        sync_key TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'never'
+          CHECK (status IN ('never', 'running', 'succeeded', 'failed')),
+        last_started_at TEXT,
+        last_succeeded_at TEXT,
+        last_error TEXT,
+        item_count INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (4, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationThree(db) {

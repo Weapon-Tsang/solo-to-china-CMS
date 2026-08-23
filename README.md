@@ -84,6 +84,17 @@ AUTO_CONTENT_MAX_PER_DESTINATION=1
 
 OpenAI 请求格式依据官方 [Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)：Responses 支持文本/图片输入和 JSON 输出；这里设置 `store: false`，同时保留本地 Raw Capture 作为系统记录。
 
+## WordPress inventory and topic protection
+
+When WordPress credentials are configured, the engine reads published and in-progress posts into a local inventory before rebuilding topic candidates. Exact slug/title matches and high-overlap titles are marked `dismissed` with a `wordpress:` suppression reason, so they cannot enter automatic planning. The inventory request never edits WordPress content.
+
+```text
+WORDPRESS_INVENTORY_SYNC_HOURS=24
+```
+
+- `GET /api/wordpress/inventory` returns the read-only inventory and sync state.
+- `POST /api/wordpress/inventory/sync` queues a protected, read-only refresh.
+
 ## API
 
 | Method | Path | Purpose |

@@ -31,6 +31,18 @@ export class Pipeline {
       job = this.repository.claimJob();
       if (!job) return false;
       switch (job.type) {
+        case "sync_wordpress_inventory": {
+          if (!this.wordpress?.enabled) throw new Error("WordPress inventory sync is not configured.");
+          this.repository.startWordPressInventorySync(this.wordpress.config.siteUrl);
+          try {
+            const items = await this.wordpress.listContentInventory();
+            this.repository.replaceWordPressInventory(this.wordpress.config.siteUrl, items);
+          } catch (error) {
+            this.repository.failWordPressInventorySync(this.wordpress.config.siteUrl, error);
+            throw error;
+          }
+          break;
+        }
         case "extract_source": {
           const source = this.repository.getSource(job.entity_id);
           if (!source) throw new Error(`Source ${job.entity_id} no longer exists.`);

@@ -25,6 +25,9 @@
 - [x] Relevance/category dedupe and affiliate disclosure
 - [x] No-offer pass-through behavior
 - [x] Attraction/how-to topic candidates
+- [x] Evidence-gated practical itinerary candidates
+- [x] Read-only WordPress content inventory sync
+- [x] WordPress title/slug cannibalization suppression
 
 ## Delivered vertical slice: research to WordPress draft
 
@@ -61,9 +64,9 @@
    - Cannot mutate the Research Draft evidence ledger or Knowledge Base.
 
 2. **Topic strategy expansion** — partially delivered
-   - Attraction/how-to clusters delivered; itinerary clusters remain.
+   - Attraction/how-to and evidence-gated itinerary clusters delivered.
    - Coverage freshness, seasonality and official-source verification gates.
-   - Cannibalization checks against existing WordPress content.
+   - WordPress inventory cannibalization checks delivered; Search Console/query-level overlap remains future work.
 
 3. **WordPress field mapping**
    - Confirm production SEO plugin fields, taxonomy IDs, author, featured-media and block markup.

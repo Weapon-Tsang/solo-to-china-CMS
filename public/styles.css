@@ -35,6 +35,10 @@ tbody tr { cursor: pointer; }
 tbody tr:hover { background: #f2f7f3; }
 .title { max-width: 420px; font-weight: 680; }
 .subtle { margin-top: 5px; color: var(--muted); font-size: 12px; }
+.suppression { margin-top: 7px; color: var(--orange); font-size: 12px; font-weight: 650; }
+.inventory-summary { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: baseline; margin-bottom: 12px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.inventory-summary span { color: var(--muted); font-size: 12px; }
+.inventory-summary .error-text { color: var(--red); }
 .badge { display: inline-flex; padding: 4px 8px; border-radius: 999px; background: #e8ece9; color: #48564f; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .badge.processed, .badge.corroborated { background: var(--green-soft); color: var(--green); }
 .badge.exception, .badge.conflicted { background: #fee4e2; color: var(--red); }
@@ -57,8 +61,8 @@ dialog::backdrop { background: #12241dcc; }
   .topbar { min-height: 150px; align-items: flex-start; flex-direction: column; justify-content: flex-end; gap: 14px; }
   .health { max-width: 100%; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
-  .tabs { flex-wrap: wrap; }
-  .tab { flex: 0 0 auto; }
+  .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  .tab { flex: 0 0 auto; white-space: nowrap; }
   .detail-grid { grid-template-columns: 1fr; }
   .wide { grid-column: auto; }
   th:nth-child(3), td:nth-child(3) { display: none; }

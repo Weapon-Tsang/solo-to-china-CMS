@@ -24,6 +24,7 @@ export function loadConfig(env = process.env) {
       siteUrl: (env.WORDPRESS_SITE_URL || "").replace(/\/$/, ""),
       username: env.WORDPRESS_USERNAME || "",
       applicationPassword: env.WORDPRESS_APPLICATION_PASSWORD || "",
+      inventorySyncHours: integer(env.WORDPRESS_INVENTORY_SYNC_HOURS, 24),
     },
     commercial: {
       maxOffersPerDraft: integer(env.COMMERCIAL_MAX_OFFERS_PER_DRAFT, 3),

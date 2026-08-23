@@ -276,6 +276,7 @@ export class Repository {
       coverageScore: Math.max(0, Math.min(100, facts.length * 8 + evidenceCount * 6 - conflictCount * 5)),
       evidenceCount,
       conflictCount,
+      selectionPriority: 0,
     }];
     const subjects = Map.groupBy(facts, (fact) => fact.subject.trim().toLowerCase());
     for (const subjectFacts of subjects.values()) {
@@ -291,6 +292,23 @@ export class Repository {
         coverageScore: Math.max(0, Math.min(100, subjectFacts.length * 12 + subjectSources * 8 - subjectConflicts * 5)),
         evidenceCount: subjectSources,
         conflictCount: subjectConflicts,
+        selectionPriority: 1,
+      });
+    }
+
+    const itineraryFacts = facts.filter((fact) => /route|transport|duration|time|day|itinerary|station|metro|travel.?between|order|sequence|district|area/i
+      .test(`${fact.normalized_key} ${fact.subject} ${fact.predicate}`));
+    const itinerarySources = new Set(itineraryFacts.flatMap((fact) => fact.evidence.map((item) => item.source_id))).size;
+    if (itineraryFacts.length >= 6 && itinerarySources >= 2) {
+      const itineraryConflicts = itineraryFacts.filter((fact) => fact.consensus_status === "conflicted").length;
+      proposals.push({
+        topicKey: `${destinationSlug}:practical-solo-itinerary`,
+        title: `A Practical ${destination.name} Itinerary for Solo Travelers`,
+        rationale: `${itineraryFacts.length} route, timing, and area facts from ${itinerarySources} independent sources support an evidence-bounded itinerary.`,
+        coverageScore: Math.max(0, Math.min(100, itineraryFacts.length * 9 + itinerarySources * 8 - itineraryConflicts * 5)),
+        evidenceCount: itinerarySources,
+        conflictCount: itineraryConflicts,
+        selectionPriority: 1,
       });
     }
 
@@ -302,12 +320,27 @@ export class Repository {
         coverage_score=excluded.coverage_score, evidence_count=excluded.evidence_count,
         conflict_count=excluded.conflict_count, updated_at=excluded.updated_at
     `);
-    const selectedIds = proposals.sort((a, b) => b.coverageScore - a.coverageScore).slice(0, maxPerDestination).map((proposal) => {
-      const candidateId = `topic_${sha256(proposal.topicKey).slice(0, 24)}`;
-      upsert.run(candidateId, destinationSlug, proposal.topicKey, proposal.title, proposal.rationale,
-        proposal.coverageScore, proposal.evidenceCount, proposal.conflictCount, timestamp, timestamp);
-      return candidateId;
-    });
+    const selectedIds = proposals
+      .sort((a, b) => a.selectionPriority - b.selectionPriority || b.coverageScore - a.coverageScore)
+      .slice(0, maxPerDestination)
+      .map((proposal) => {
+        const candidateId = `topic_${sha256(proposal.topicKey).slice(0, 24)}`;
+        upsert.run(candidateId, destinationSlug, proposal.topicKey, proposal.title, proposal.rationale,
+          proposal.coverageScore, proposal.evidenceCount, proposal.conflictCount, timestamp, timestamp);
+        const candidate = this.db.prepare("SELECT status, suppression_reason FROM topic_candidates WHERE id=?").get(candidateId);
+        const collision = this.findWordPressCollision(proposal.title);
+        const wordpressDismissal = candidate.status === "dismissed" && candidate.suppression_reason?.startsWith("wordpress:");
+        if (collision && (["candidate", "brief_queued"].includes(candidate.status) || wordpressDismissal)) {
+          const reason = `wordpress:${collision.post_id}:${collision.title || collision.slug}`;
+          this.db.prepare("UPDATE topic_candidates SET status='dismissed', suppression_reason=?, updated_at=? WHERE id=?")
+            .run(reason, timestamp, candidateId);
+          this.db.prepare("DELETE FROM jobs WHERE type='plan_content' AND entity_id=? AND status='queued'").run(candidateId);
+        } else if (!collision && candidate.status === "dismissed" && candidate.suppression_reason?.startsWith("wordpress:")) {
+          this.db.prepare("UPDATE topic_candidates SET status='candidate', suppression_reason=NULL, updated_at=? WHERE id=?")
+            .run(timestamp, candidateId);
+        }
+        return candidateId;
+      });
     if (!selectedIds.length) return [];
     const placeholders = selectedIds.map(() => "?").join(",");
     return this.db.prepare(`SELECT * FROM topic_candidates WHERE id IN (${placeholders}) AND status='candidate' ORDER BY coverage_score DESC`).all(...selectedIds);
@@ -574,6 +607,83 @@ export class Repository {
     }
   }
 
+  enqueueWordPressInventorySync(siteUrl, syncHours = 24, force = false) {
+    if (!siteUrl) return null;
+    const state = this.getWordPressSyncState(siteUrl);
+    const lastSucceeded = state?.last_succeeded_at ? Date.parse(state.last_succeeded_at) : 0;
+    const staleAfterMs = Math.max(1, syncHours) * 60 * 60 * 1_000;
+    if (!force && state?.status === "succeeded" && lastSucceeded && Date.now() - lastSucceeded < staleAfterMs) return null;
+    return this.enqueue("sync_wordpress_inventory", siteUrl);
+  }
+
+  startWordPressInventorySync(siteUrl) {
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO integration_sync_state(sync_key, status, last_started_at, updated_at)
+      VALUES (?, 'running', ?, ?)
+      ON CONFLICT(sync_key) DO UPDATE SET status='running', last_started_at=excluded.last_started_at,
+        last_error=NULL, updated_at=excluded.updated_at
+    `).run(wordpressSyncKey(siteUrl), timestamp, timestamp);
+  }
+
+  replaceWordPressInventory(siteUrl, items) {
+    const timestamp = now();
+    return transaction(this.db, () => {
+      // V1 has one WordPress destination. Dropping previous-site rows prevents stale
+      // candidates from being suppressed after the configured site changes.
+      this.db.prepare("DELETE FROM wordpress_content_inventory").run();
+      const insert = this.db.prepare(`
+        INSERT INTO wordpress_content_inventory(id, site_url, post_id, slug, title, status, post_url, modified_at, synced_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const item of items) {
+        insert.run(`wpi_${sha256(`${siteUrl}:${item.postId}`).slice(0, 24)}`, siteUrl, item.postId,
+          item.slug, item.title, item.status, item.postUrl, item.modifiedAt, timestamp);
+      }
+      this.db.prepare(`
+        INSERT INTO integration_sync_state(sync_key, status, last_started_at, last_succeeded_at, item_count, updated_at)
+        VALUES (?, 'succeeded', ?, ?, ?, ?)
+        ON CONFLICT(sync_key) DO UPDATE SET status='succeeded', last_succeeded_at=excluded.last_succeeded_at,
+          last_error=NULL, item_count=excluded.item_count, updated_at=excluded.updated_at
+      `).run(wordpressSyncKey(siteUrl), timestamp, timestamp, items.length, timestamp);
+      for (const row of this.db.prepare("SELECT slug FROM destinations").all()) this.enqueue("rebuild_topics", row.slug);
+      return items.length;
+    });
+  }
+
+  failWordPressInventorySync(siteUrl, error) {
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO integration_sync_state(sync_key, status, last_error, updated_at)
+      VALUES (?, 'failed', ?, ?)
+      ON CONFLICT(sync_key) DO UPDATE SET status='failed', last_error=excluded.last_error, updated_at=excluded.updated_at
+    `).run(wordpressSyncKey(siteUrl), String(error?.message || error).slice(0, 4_000), timestamp);
+  }
+
+  listWordPressInventory(siteUrl = null) {
+    if (siteUrl) return this.db.prepare("SELECT * FROM wordpress_content_inventory WHERE site_url=? ORDER BY modified_at DESC, post_id DESC").all(siteUrl);
+    return this.db.prepare("SELECT * FROM wordpress_content_inventory ORDER BY modified_at DESC, post_id DESC").all();
+  }
+
+  getWordPressSyncState(siteUrl) {
+    if (!siteUrl) return null;
+    return this.db.prepare("SELECT * FROM integration_sync_state WHERE sync_key=?").get(wordpressSyncKey(siteUrl)) || null;
+  }
+
+  findWordPressCollision(title) {
+    const titleSlug = slugify(title);
+    const normalizedTitle = normalizeTitle(title);
+    const titleTokens = topicTokens(title);
+    for (const row of this.db.prepare("SELECT * FROM wordpress_content_inventory").all()) {
+      if (row.slug === titleSlug || normalizeTitle(row.title) === normalizedTitle) return row;
+      const rowTokens = topicTokens(row.title);
+      const union = new Set([...titleTokens, ...rowTokens]);
+      const intersection = [...titleTokens].filter((token) => rowTokens.has(token)).length;
+      if (union.size && intersection / union.size >= 0.78) return row;
+    }
+    return null;
+  }
+
   enqueueCommercialForDestination(destinationSlug) {
     const rows = this.db.prepare(`
       SELECT ad.id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id
@@ -635,6 +745,7 @@ export class Repository {
         topicCandidates: this.db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count,
         draftsReady: this.db.prepare("SELECT COUNT(*) AS count FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')").get().count,
         activeOffers: this.db.prepare("SELECT COUNT(*) AS count FROM commercial_offers WHERE active=1 AND target_url<>''").get().count,
+        wordpressInventory: this.db.prepare("SELECT COUNT(*) AS count FROM wordpress_content_inventory").get().count,
       },
       jobs: this.db.prepare("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status").all(),
     };
@@ -669,6 +780,19 @@ function hydrateSource({ source, assets, structured, claims, blueprint }) {
 
 function normalizeValue(value) {
   return String(value).trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function wordpressSyncKey(siteUrl) {
+  return `wordpress_inventory:${siteUrl}`;
+}
+
+function normalizeTitle(value) {
+  return String(value).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/g, " ");
+}
+
+function topicTokens(value) {
+  const stopWords = new Set(["a", "an", "and", "for", "in", "of", "the", "to", "travel", "guide"]);
+  return new Set(normalizeTitle(value).split(" ").filter((token) => token && !stopWords.has(token)));
 }
 
 function countStrings(values) {

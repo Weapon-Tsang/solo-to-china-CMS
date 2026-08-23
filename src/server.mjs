@@ -30,6 +30,9 @@ export function createApplication(config = loadConfig()) {
   const pipeline = new Pipeline(repository, extractor, {
     contentEngine, wordpress, commercialComposer, contentConfig: config.content,
   });
+  if (wordpress.enabled) {
+    repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours);
+  }
   repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled });
   const publicDir = path.join(config.root, "public");
 
@@ -80,6 +83,20 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/content") {
         return sendJson(response, 200, { items: repository.listContent() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/wordpress/inventory") {
+        return sendJson(response, 200, {
+          configured: wordpress.enabled,
+          sync: repository.getWordPressSyncState(wordpress.config.siteUrl),
+          items: repository.listWordPressInventory(wordpress.config.siteUrl || null),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/api/wordpress/inventory/sync") {
+        authorizeCapture(request, config.captureToken);
+        if (!wordpress.enabled) return sendJson(response, 409, { error: "WordPress inventory sync is not configured." });
+        const jobId = repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours, true);
+        void pipeline.runOne();
+        return sendJson(response, 202, { queued: true, jobId });
       }
       if (request.method === "GET" && url.pathname === "/api/commercial/offers") {
         return sendJson(response, 200, { items: repository.listCommercialOffers() });

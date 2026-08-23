@@ -3,4 +3,6 @@ data/*.sqlite*
 .DS_Store
 node_modules/
 coverage/
+output/
+.playwright-cli/
 *.log

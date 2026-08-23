@@ -76,6 +76,12 @@ Frozen Research Draft + destination-relevant active Offers
 
 每个分类最多一个 Offer；无相关 Offer 时 Overlay 与 Research Draft 完全一致。Research Draft、Evidence Ledger 和 Knowledge Base 从不被修改。Offer feed 更新只重组尚未同步到 WordPress 的 Draft。
 
+### WordPress inventory guard
+
+`wordpress_content_inventory` is a read-only mirror used before topic planning; it is not Research evidence and never enters prompts. `integration_sync_state` records inventory freshness and failures without a manual spreadsheet or checklist.
+
+At startup, a stale inventory sync is queued before topic reconciliation. Candidate generation suppresses exact slug/title collisions and high-confidence title overlap. Suppression is reversible when a later inventory no longer contains the collision; candidates that already became briefs or drafts are never silently rolled back.
+
 ## Content state transitions
 
 ```text

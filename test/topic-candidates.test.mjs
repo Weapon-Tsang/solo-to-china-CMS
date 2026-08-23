@@ -34,3 +34,55 @@ test("topic discovery can add an attraction how-to when multiple sources cover o
   assert.ok(topics.some((topic) => topic.topic_key === "beijing:first-time-solo-guide"));
   assert.ok(topics.some((topic) => topic.topic_key === "beijing:visit:the-forbidden-city"));
 });
+
+test("WordPress inventory suppresses an overlapping topic before content planning", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  seedKnowledge(db, { factCount: 5 });
+  repository.replaceWordPressInventory("https://site.test", [{
+    postId: 42,
+    slug: "first-time-beijing-solo-travel-guide",
+    title: "First-Time Beijing Solo Travel Guide",
+    status: "publish",
+    postUrl: "https://site.test/first-time-beijing-solo-travel-guide",
+    modifiedAt: "2026-08-01T00:00:00",
+  }]);
+  const generated = repository.rebuildTopicCandidates("beijing", 5, 1);
+  assert.equal(generated.length, 0);
+  const [topic] = repository.listContent();
+  assert.equal(topic.status, "dismissed");
+  assert.match(topic.suppression_reason, /^wordpress:42:/);
+  assert.equal(repository.queueCandidate(topic.id), false);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='plan_content'").get().count, 0);
+  repository.replaceWordPressInventory("https://site.test", []);
+  const restored = repository.rebuildTopicCandidates("beijing", 5, 1);
+  assert.equal(restored.length, 1);
+  assert.equal(restored[0].status, "candidate");
+  assert.equal(restored[0].suppression_reason, null);
+});
+
+test("itinerary discovery requires route evidence from multiple sources and never displaces the core guide", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  seedKnowledge(db, { factCount: 6, routeFacts: true });
+  const one = repository.rebuildTopicCandidates("beijing", 5, 1);
+  assert.equal(one.length, 1);
+  assert.equal(one[0].topic_key, "beijing:first-time-solo-guide");
+  const expanded = repository.rebuildTopicCandidates("beijing", 5, 3);
+  assert.ok(expanded.some((topic) => topic.topic_key === "beijing:practical-solo-itinerary"));
+});
+
+function seedKnowledge(db, { factCount, routeFacts = false }) {
+  const timestamp = "2026-08-23T00:00:00.000Z";
+  db.prepare("INSERT INTO destinations(id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+    .run("dst_beijing", "beijing", "Beijing", timestamp, timestamp);
+  const insert = db.prepare(`
+    INSERT INTO knowledge_facts(id, destination_id, normalized_key, subject, predicate, consensus_status,
+      preferred_value, support_count, contradiction_count, evidence_json, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'corroborated', ?, 2, 0, ?, ?)
+  `);
+  for (let index = 0; index < factCount; index += 1) {
+    const subject = routeFacts ? `Route segment ${index}` : `Practical detail ${index}`;
+    const predicate = routeFacts ? `metro travel time order ${index}` : `detail ${index}`;
+    insert.run(`fact_${index}`, "dst_beijing", `${routeFacts ? "route" : "detail"}.${index}`, subject, predicate,
+      `value ${index}`, JSON.stringify([{ source_id: "source_a" }, { source_id: "source_b" }]), timestamp);
+  }
+}

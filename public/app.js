@@ -37,6 +37,7 @@ async function loadView() {
   if (state.view === "knowledge") return renderKnowledge((await api("/api/knowledge")).items);
   if (state.view === "blueprints") return renderBlueprints((await api("/api/editorial-blueprints")).items);
   if (state.view === "content") return renderContent((await api("/api/content")).items);
+  if (state.view === "wordpress") return renderWordPressInventory(await api("/api/wordpress/inventory"));
   return renderCommercial((await api("/api/commercial/offers")).items);
 }
 
@@ -44,7 +45,8 @@ function renderMetrics(totals) {
   const values = [
     [totals.sources, "Sources"], [totals.claims, "Claims"], [totals.knowledgeFacts, "Knowledge facts"],
     [totals.conflicts, "Conflicts"], [totals.topicCandidates, "Topic candidates"],
-    [totals.draftsReady, "Drafts ready"], [totals.activeOffers, "Active offers"], [totals.exceptions, "Exceptions"],
+    [totals.draftsReady, "Drafts ready"], [totals.wordpressInventory, "WP inventory"],
+    [totals.activeOffers, "Active offers"], [totals.exceptions, "Exceptions"],
   ];
   document.querySelector("#metrics").innerHTML = values.map(([value, label]) => `<div class="metric"><strong>${value}</strong><span>${label}</span></div>`).join("");
 }
@@ -73,7 +75,7 @@ function renderContent(items) {
   if (!items.length) return content.innerHTML = '<div class="empty">Topic candidates appear automatically when a destination reaches the configured evidence threshold.</div>';
   content.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Topic</th><th>Coverage</th><th>Evidence</th><th>Pipeline</th><th>QA / WordPress</th></tr></thead><tbody>${items.map((item) => `
     <tr data-topic="${item.id}" ${item.draft_id ? `data-draft="${item.draft_id}"` : ""}>
-      <td><div class="title">${escapeHtml(item.draft_title || item.proposed_title)}</div><div class="subtle">${escapeHtml(item.rationale)}</div></td>
+      <td><div class="title">${escapeHtml(item.draft_title || item.proposed_title)}</div><div class="subtle">${escapeHtml(item.rationale)}</div>${item.suppression_reason ? `<div class="suppression">Suppressed: ${escapeHtml(item.suppression_reason)}</div>` : ""}</td>
       <td>${Math.round(item.coverage_score)} / 100</td><td>${item.evidence_count} sources · ${item.conflict_count} conflicts</td>
       <td><span class="badge ${item.draft_status || item.brief_status || item.status}">${escapeHtml(item.draft_status || item.brief_status || item.status)}</span>${item.status === "candidate" ? `<div class="actions"><button class="primary generate" data-id="${item.id}" ${state.health?.contentAutomationConfigured ? "" : "disabled title='Configure OPENAI_API_KEY first'"}>Generate</button></div>` : ""}</td>
       <td>${item.qa_score == null ? "—" : `${Math.round(item.qa_score)} · ${item.qa_passed ? "passed" : "failed"}`}<div class="subtle">Commercial: ${escapeHtml(item.commercial_status || "pending")} (${item.commercial_offer_count || 0}) · WP: ${escapeHtml(item.wordpress_status || "not synced")}</div></td>
@@ -84,6 +86,15 @@ function renderContent(items) {
     catch (error) { alert(error.message); button.disabled = false; }
   }));
   content.querySelectorAll("tr[data-draft]").forEach((row) => row.addEventListener("click", () => openDraft(row.dataset.draft)));
+}
+
+function renderWordPressInventory({ configured, sync, items }) {
+  if (!configured) return content.innerHTML = '<div class="empty">Configure the WordPress site URL and Application Password to enable automatic read-only inventory sync.</div>';
+  const summary = `<div class="inventory-summary"><strong>${items.length} posts tracked</strong><span>Sync: ${escapeHtml(sync?.status || "pending")} ${sync?.last_succeeded_at ? `· ${date(sync.last_succeeded_at)}` : ""}</span>${sync?.last_error ? `<span class="error-text">${escapeHtml(sync.last_error)}</span>` : ""}</div>`;
+  if (!items.length) return content.innerHTML = `${summary}<div class="empty">The first WordPress inventory sync is pending or the site has no posts.</div>`;
+  content.innerHTML = `${summary}<div class="table-wrap"><table><thead><tr><th>Post</th><th>Status</th><th>Slug</th><th>Modified</th></tr></thead><tbody>${items.map((item) => `
+    <tr><td><div class="title">${item.post_url ? `<a href="${escapeHtml(item.post_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.title || "Untitled")}</a>` : escapeHtml(item.title || "Untitled")}</div><div class="subtle">WordPress #${item.post_id}</div></td>
+    <td><span class="badge ${item.status === "publish" ? "processed" : ""}">${escapeHtml(item.status)}</span></td><td>${escapeHtml(item.slug)}</td><td>${item.modified_at ? date(item.modified_at) : "—"}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderCommercial(items) {
