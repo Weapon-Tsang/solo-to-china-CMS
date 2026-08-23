@@ -34,6 +34,10 @@
 - [x] Separate capture/admin authorization boundary
 - [x] Consistent SQLite backup, checksum, retention, and verification
 - [x] Optional WordPress author/category/tag mapping
+- [x] Durable hands-off maintenance scheduler
+- [x] Periodic Knowledge freshness and WordPress inventory reconciliation
+- [x] Automatic verified backups and successful Job retention cleanup
+- [x] Maintenance state and failure visibility in the admin UI
 
 ## Delivered vertical slice: research to WordPress draft
 
@@ -85,4 +89,4 @@
 - [x] SQLite backup/restore verification and retention policy.
 - Asset archival policy after permissions/legal review.
 - Structured logs, job latency metrics and exception notification.
-- [x] Forward schema migration runner through migration 5.
+- [x] Forward schema migration runner through migration 6.

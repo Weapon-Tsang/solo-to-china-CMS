@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,6 +13,7 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
     HOST: "127.0.0.1",
     PORT: "0",
     DATABASE_PATH: path.join(directory, "api.sqlite"),
+    MAINTENANCE_ENABLED: "false",
   });
   const app = createApplication(config);
   await app.start();
@@ -51,6 +53,7 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
     PORT: "0",
     DATABASE_PATH: path.join(directory, "auth.sqlite"),
     ADMIN_TOKEN: "admin-secret",
+    MAINTENANCE_ENABLED: "false",
   });
   const app = createApplication(config);
   await app.start();
@@ -67,6 +70,10 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
     headers: { authorization: "Bearer admin-secret" },
   });
   assert.equal(allowed.status, 200);
+  const health = await (await fetch(`${baseUrl}/api/health`)).json();
+  assert.equal(health.version, "1.1.0");
+  const maintenance = await (await fetch(`${baseUrl}/api/maintenance`)).json();
+  assert.equal(maintenance.enabled, false);
   const exceptions = await (await fetch(`${baseUrl}/api/exceptions`)).json();
   assert.deepEqual(exceptions.items, []);
 });
@@ -74,4 +81,27 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
 test("non-loopback binding refuses to start without both operational tokens", () => {
   const config = loadConfig({ HOST: "0.0.0.0", DATABASE_PATH: "data/should-not-open.sqlite" });
   assert.throws(() => createApplication(config), /requires both CAPTURE_TOKEN and ADMIN_TOKEN/);
+});
+
+test("failed HTTP bind does not start pipeline or maintenance side effects", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-bind-test-"));
+  const blocker = http.createServer();
+  await new Promise((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await new Promise((resolve) => blocker.close(resolve));
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const config = loadConfig({
+    HOST: "127.0.0.1",
+    PORT: String(blocker.address().port),
+    DATABASE_PATH: path.join(directory, "bind.sqlite"),
+    BACKUP_DIR: path.join(directory, "backups"),
+  });
+  const app = createApplication(config);
+  await assert.rejects(() => app.start(), (error) => error.code === "EADDRINUSE");
+  assert.equal(app.pipeline.timer, null);
+  assert.equal(app.maintenance.timer, null);
+  assert.deepEqual(app.repository.listMaintenanceRuns(), []);
+  assert.equal(fs.existsSync(config.maintenance.backupDir), false);
+  app.repository.db.close();
 });

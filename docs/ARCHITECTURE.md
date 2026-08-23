@@ -114,6 +114,10 @@ captured → processing → processed
 - SQLite backup uses `VACUUM INTO` for a consistent snapshot, then verifies integrity and writes a SHA-256 manifest.
 - Capture and admin credentials are separated. A non-loopback bind is impossible without both tokens.
 
+### Hands-off maintenance
+
+`MaintenanceScheduler` is an in-process coordinator, not a second worker system. It stores durable task state in `maintenance_runs`, reuses the existing idempotent Job queue for Knowledge and WordPress work, calls the verified backup primitive, and removes only expired successful Job rows. It never discovers Sources, calls Xiaohongshu, generates content directly, or publishes WordPress posts.
+
 ## Security and compliance boundary
 
 - Adapter 只接受 `xiaohongshu.com/explore/...`。

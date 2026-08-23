@@ -17,6 +17,7 @@ export function createBackup({ databasePath, backupDir, retention = 14, clock = 
 
   const database = new DatabaseSync(source);
   try {
+    database.exec("PRAGMA busy_timeout = 5000");
     assertIntegrity(database, source);
     database.exec(`VACUUM INTO '${backupPath.replaceAll("'", "''")}'`);
   } finally {

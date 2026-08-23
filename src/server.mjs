@@ -11,6 +11,8 @@ import { Pipeline } from "./pipeline.mjs";
 import { Repository } from "./repository.mjs";
 import { WordPressDraftAdapter } from "./wordpress.mjs";
 import { CommercialComposer, CommercialValidationError, normalizeCommercialOffer } from "./commercial.mjs";
+import { MaintenanceScheduler } from "./maintenance.mjs";
+import { VERSION } from "./version.mjs";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -34,6 +36,7 @@ export function createApplication(config = loadConfig()) {
   const pipeline = new Pipeline(repository, extractor, {
     contentEngine, wordpress, commercialComposer, contentConfig: config.content,
   });
+  const maintenance = new MaintenanceScheduler(repository, pipeline, config.maintenance, config.wordpress);
   if (wordpress.enabled) {
     repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours);
   }
@@ -50,10 +53,11 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/health") {
         return sendJson(response, 200, {
           ok: true,
-          version: "1.0.0",
+          version: VERSION,
           aiConfigured: extractor.enabled,
           contentAutomationConfigured: contentEngine.enabled,
           wordpressConfigured: wordpress.enabled,
+          maintenanceEnabled: config.maintenance.enabled,
         });
       }
       if (request.method === "POST" && url.pathname === "/api/captures") {
@@ -93,6 +97,18 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/exceptions") {
         return sendJson(response, 200, { items: repository.listOperationalExceptions() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/maintenance") {
+        return sendJson(response, 200, {
+          enabled: config.maintenance.enabled,
+          intervalMinutes: config.maintenance.intervalMinutes,
+          runs: repository.listMaintenanceRuns(),
+          wordpressSync: repository.getWordPressSyncState(wordpress.config.siteUrl),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/api/maintenance/run") {
+        authorizeAdmin(request, config.adminToken);
+        return sendJson(response, 200, await maintenance.runDue({ force: true }));
       }
       const exceptionRetryMatch = url.pathname.match(/^\/api\/exceptions\/(.+)\/retry$/);
       if (request.method === "POST" && exceptionRetryMatch) {
@@ -184,11 +200,21 @@ export function createApplication(config = loadConfig()) {
     server,
     repository,
     pipeline,
+    maintenance,
     start() {
-      pipeline.start();
-      return new Promise((resolve) => server.listen(config.port, config.host, resolve));
+      return new Promise((resolve, reject) => {
+        const onError = (error) => reject(error);
+        server.once("error", onError);
+        server.listen(config.port, config.host, () => {
+          server.off("error", onError);
+          pipeline.start();
+          maintenance.start();
+          resolve();
+        });
+      });
     },
     async stop() {
+      maintenance.stop();
       pipeline.stop();
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       db.close();

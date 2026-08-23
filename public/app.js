@@ -39,7 +39,8 @@ async function loadView() {
   if (state.view === "content") return renderContent((await api("/api/content")).items);
   if (state.view === "wordpress") return renderWordPressInventory(await api("/api/wordpress/inventory"));
   if (state.view === "commercial") return renderCommercial((await api("/api/commercial/offers")).items);
-  return renderExceptions((await api("/api/exceptions")).items);
+  if (state.view === "exceptions") return renderExceptions((await api("/api/exceptions")).items);
+  return renderMaintenance(await api("/api/maintenance"));
 }
 
 function renderMetrics(totals) {
@@ -117,6 +118,26 @@ function renderExceptions(items) {
     try { await api(`/api/exceptions/${encodeURIComponent(button.dataset.key)}/retry`, { method: "POST" }); await refresh(); }
     catch (error) { alert(error.message); button.disabled = false; }
   }));
+}
+
+function renderMaintenance(data) {
+  const wordpress = data.wordpressSync;
+  content.innerHTML = `<div class="inventory-summary"><strong>${data.enabled ? "Automatic maintenance enabled" : "Automatic maintenance disabled"}</strong><span>Scheduler checks every ${data.intervalMinutes} minutes</span><button class="primary" id="run-maintenance" ${data.enabled ? "" : "disabled"}>Run now</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Status</th><th>Last success</th><th>Items</th><th>Result</th></tr></thead><tbody>
+    ${data.runs.map((run) => `<tr><td><div class="title">${escapeHtml(run.task_key.replaceAll("_", " "))}</div></td><td><span class="badge ${run.status === "succeeded" ? "processed" : run.status}">${escapeHtml(run.status)}</span></td><td>${run.last_succeeded_at ? date(run.last_succeeded_at) : "—"}</td><td>${run.item_count}</td><td><div class="subtle">${escapeHtml(run.last_error || maintenanceResult(run.metadata))}</div></td></tr>`).join("")}
+    <tr><td><div class="title">WordPress inventory</div></td><td><span class="badge ${wordpress?.status === "succeeded" ? "processed" : wordpress?.status || ""}">${escapeHtml(wordpress?.status || "not configured")}</span></td><td>${wordpress?.last_succeeded_at ? date(wordpress.last_succeeded_at) : "—"}</td><td>${wordpress?.item_count || 0}</td><td><div class="subtle">${escapeHtml(wordpress?.last_error || "Read-only synchronization")}</div></td></tr>
+    </tbody></table></div>`;
+  document.querySelector("#run-maintenance")?.addEventListener("click", async (event) => {
+    event.currentTarget.disabled = true;
+    try { await api("/api/maintenance/run", { method: "POST" }); await refresh(); }
+    catch (error) { alert(error.message); event.currentTarget.disabled = false; }
+  });
+}
+
+function maintenanceResult(metadata) {
+  if (metadata?.backup) return `${metadata.backup} · schema ${metadata.schemaVersion} · ${metadata.bytes} bytes · SHA ${metadata.sha256?.slice(0, 12) || "—"}`;
+  if (metadata?.retentionDays) return `${metadata.retentionDays}-day retention`;
+  return "Completed";
 }
 
 async function openDraft(id) {

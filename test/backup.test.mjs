@@ -20,7 +20,7 @@ test("database backup creates and verifies a consistent SQLite snapshot", (t) =>
     retention: 2,
     clock: () => new Date("2026-08-23T12:00:00.000Z"),
   });
-  assert.equal(result.schemaVersion, 5);
+  assert.equal(result.schemaVersion, 6);
   assert.equal(result.integrity, "ok");
   assert.ok(fs.existsSync(result.backupPath));
   assert.ok(fs.existsSync(result.manifestPath));

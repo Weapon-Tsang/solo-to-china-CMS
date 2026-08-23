@@ -26,6 +26,8 @@ The default `HOST=127.0.0.1` is local-only. Binding any non-loopback host is ref
 
 ## Backup and verification
 
+With `MAINTENANCE_ENABLED=true`, the engine automatically creates a backup every `AUTO_BACKUP_HOURS` and retains `BACKUP_RETENTION` snapshots. The Maintenance view shows the last verified filename, schema version, size, and checksum metadata. Manual commands remain available for exceptional use.
+
 Create a consistent SQLite snapshot while the engine is running:
 
 ```powershell
@@ -47,6 +49,16 @@ To restore, stop the engine, verify the selected snapshot, preserve the current 
 - `blocker`: pipeline failure, stale evidence, exhausted draft QA, integration failure, or WordPress delivery failure.
 - `warning`: conflicting evidence that requires editorial judgment.
 - Retry buttons are shown only for operational failures. Knowledge conflicts and stale evidence require a newly saved source or a future official-source adapter, never manual KB editing.
+
+## Automatic maintenance
+
+- Scheduler wake-up: `MAINTENANCE_INTERVAL_MINUTES` (default 15).
+- Knowledge freshness reconciliation: `KNOWLEDGE_RECONCILE_HOURS` (default 24).
+- Consistent database backup: `AUTO_BACKUP_HOURS` (default 24).
+- Successful Job history: `JOB_HISTORY_RETENTION_DAYS` (default 30).
+- WordPress inventory continues to use `WORDPRESS_INVENTORY_SYNC_HOURS`.
+
+Maintenance state is durable in SQLite. Restarts do not reset due times, and queue idempotency prevents duplicate reconciliation Jobs. Failed maintenance appears in Exceptions; failed pipeline Jobs are never removed by retention cleanup.
 
 ## Release check
 

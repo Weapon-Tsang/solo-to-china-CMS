@@ -95,6 +95,20 @@ WORDPRESS_INVENTORY_SYNC_HOURS=24
 - `GET /api/wordpress/inventory` returns the read-only inventory and sync state.
 - `POST /api/wordpress/inventory/sync` queues a protected, read-only refresh.
 
+## Hands-off maintenance
+
+`v1.1.0` keeps long-running installations current without requiring restarts. The durable scheduler checks WordPress inventory, recalculates Knowledge freshness, creates verified SQLite backups, and removes only expired successful Job history. Failed work is retained in Exceptions.
+
+```text
+MAINTENANCE_ENABLED=true
+MAINTENANCE_INTERVAL_MINUTES=15
+KNOWLEDGE_RECONCILE_HOURS=24
+AUTO_BACKUP_HOURS=24
+JOB_HISTORY_RETENTION_DAYS=30
+```
+
+Use the **Maintenance** view for last-run status or an exceptional admin-triggered run. Normal operation requires no action.
+
 ## V1 operational controls
 
 - Volatile facts such as prices, opening hours, schedules, booking rules, and transport routes are classified as `time_sensitive`; old evidence becomes `stale` and cannot pass deterministic QA.

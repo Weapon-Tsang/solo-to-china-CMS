@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export function loadConfig(env = process.env) {
+  const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
   return {
     root,
     host: env.HOST || "127.0.0.1",
     port: integer(env.PORT, 4310),
-    databasePath: path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite"),
+    databasePath,
     captureToken: env.CAPTURE_TOKEN || "",
     adminToken: env.ADMIN_TOKEN || "",
     openai: {
@@ -36,6 +37,16 @@ export function loadConfig(env = process.env) {
       maxOffersPerDraft: integer(env.COMMERCIAL_MAX_OFFERS_PER_DRAFT, 3),
       disclosure: env.AFFILIATE_DISCLOSURE || "SoloToChina may earn a commission from eligible bookings, at no extra cost to you.",
     },
+    maintenance: {
+      enabled: boolean(env.MAINTENANCE_ENABLED, true),
+      intervalMinutes: integer(env.MAINTENANCE_INTERVAL_MINUTES, 15),
+      knowledgeReconcileHours: integer(env.KNOWLEDGE_RECONCILE_HOURS, 24),
+      autoBackupHours: integer(env.AUTO_BACKUP_HOURS, 24),
+      jobHistoryRetentionDays: integer(env.JOB_HISTORY_RETENTION_DAYS, 30),
+      backupDir: path.resolve(root, env.BACKUP_DIR || "backups"),
+      backupRetention: integer(env.BACKUP_RETENTION, 14),
+      databasePath,
+    },
   };
 }
 
@@ -47,4 +58,9 @@ function integer(value, fallback) {
 function integerList(value) {
   return String(value || "").split(",").map((item) => Number.parseInt(item.trim(), 10))
     .filter((item) => Number.isInteger(item) && item > 0);
+}
+
+function boolean(value, fallback) {
+  if (value == null || value === "") return fallback;
+  return !["0", "false", "no", "off"].includes(String(value).toLowerCase());
 }

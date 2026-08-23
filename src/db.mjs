@@ -24,6 +24,32 @@ function migrate(db) {
   if (current < 3) migrationThree(db);
   if (current < 4) migrationFour(db);
   if (current < 5) migrationFive(db);
+  if (current < 6) migrationSix(db);
+}
+
+function migrationSix(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE maintenance_runs (
+        task_key TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'never'
+          CHECK (status IN ('never', 'running', 'succeeded', 'failed')),
+        last_started_at TEXT,
+        last_succeeded_at TEXT,
+        last_error TEXT,
+        item_count INTEGER NOT NULL DEFAULT 0,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (6, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFive(db) {

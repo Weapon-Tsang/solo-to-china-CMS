@@ -637,6 +637,59 @@ export class Repository {
     }
   }
 
+  maintenanceDue(taskKey, intervalHours) {
+    const state = this.db.prepare("SELECT status, last_succeeded_at FROM maintenance_runs WHERE task_key=?").get(taskKey);
+    if (!state?.last_succeeded_at || state.status !== "succeeded") return true;
+    return Date.now() - Date.parse(state.last_succeeded_at) >= Math.max(1, intervalHours) * 3_600_000;
+  }
+
+  startMaintenance(taskKey) {
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO maintenance_runs(task_key, status, last_started_at, updated_at)
+      VALUES (?, 'running', ?, ?)
+      ON CONFLICT(task_key) DO UPDATE SET status='running', last_started_at=excluded.last_started_at,
+        last_error=NULL, updated_at=excluded.updated_at
+    `).run(taskKey, timestamp, timestamp);
+  }
+
+  completeMaintenance(taskKey, itemCount = 0, metadata = {}) {
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO maintenance_runs(task_key, status, last_started_at, last_succeeded_at, item_count, metadata_json, updated_at)
+      VALUES (?, 'succeeded', ?, ?, ?, ?, ?)
+      ON CONFLICT(task_key) DO UPDATE SET status='succeeded', last_succeeded_at=excluded.last_succeeded_at,
+        last_error=NULL, item_count=excluded.item_count, metadata_json=excluded.metadata_json, updated_at=excluded.updated_at
+    `).run(taskKey, timestamp, timestamp, itemCount, JSON.stringify(metadata), timestamp);
+  }
+
+  failMaintenance(taskKey, error) {
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO maintenance_runs(task_key, status, last_error, updated_at)
+      VALUES (?, 'failed', ?, ?)
+      ON CONFLICT(task_key) DO UPDATE SET status='failed', last_error=excluded.last_error, updated_at=excluded.updated_at
+    `).run(taskKey, String(error?.message || error).slice(0, 4_000), timestamp);
+  }
+
+  listMaintenanceRuns() {
+    return this.db.prepare("SELECT * FROM maintenance_runs ORDER BY task_key").all().map((row) => ({
+      ...row,
+      metadata: json(row.metadata_json, {}),
+    }));
+  }
+
+  enqueueKnowledgeReconciliation() {
+    const rows = this.db.prepare("SELECT DISTINCT destination_slug FROM structured_sources ORDER BY destination_slug").all();
+    for (const row of rows) this.enqueue("rebuild_knowledge", row.destination_slug);
+    return rows.length;
+  }
+
+  pruneSucceededJobs(retentionDays = 30) {
+    const cutoff = new Date(Date.now() - Math.max(1, retentionDays) * 86_400_000).toISOString();
+    return this.db.prepare("DELETE FROM jobs WHERE status='succeeded' AND updated_at < ?").run(cutoff).changes;
+  }
+
   enqueueWordPressInventorySync(siteUrl, syncHours = 24, force = false) {
     if (!siteUrl) return null;
     const state = this.getWordPressSyncState(siteUrl);
@@ -768,6 +821,9 @@ export class Repository {
     }
     for (const row of this.db.prepare("SELECT sync_key, last_error, updated_at FROM integration_sync_state WHERE status='failed'").all()) {
       items.push(exceptionItem("sync", row.sync_key, "blocker", "Integration sync failed", row.sync_key, row.last_error, true, row.updated_at));
+    }
+    for (const row of this.db.prepare("SELECT task_key, last_error, updated_at FROM maintenance_runs WHERE status='failed'").all()) {
+      items.push(exceptionItem("maintenance", row.task_key, "blocker", "Automatic maintenance failed", row.task_key, row.last_error, false, row.updated_at));
     }
     for (const row of this.db.prepare("SELECT id, candidate_id, topic, last_error, updated_at FROM content_briefs WHERE status='exception'").all()) {
       items.push({ ...exceptionItem("brief", row.id, "blocker", "Draft generation failed", row.topic, row.last_error, true, row.updated_at), candidateId: row.candidate_id });

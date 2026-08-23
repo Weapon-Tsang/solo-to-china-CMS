@@ -13,4 +13,4 @@
 - [x] Human attention is concentrated in final publish review and the unified Exceptions view.
 - [x] Non-loopback operation requires separate capture/admin tokens.
 - [x] SQLite backups are consistent, checksummed, retention-managed, and independently verifiable.
-- [x] Package and Chrome extension versions are aligned at `1.0.0`.
+- [x] Package, API, and Chrome extension versions remain aligned for every release.
