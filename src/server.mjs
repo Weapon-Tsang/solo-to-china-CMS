@@ -1,0 +1,245 @@
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { loadConfig } from "./config.mjs";
+import { openDatabase } from "./db.mjs";
+import { normalizeXiaohongshuCapture, ValidationError } from "./adapters/xiaohongshu.mjs";
+import { OpenAIExtractor } from "./ai/openai.mjs";
+import { ContentEngine } from "./ai/content-engine.mjs";
+import { Pipeline } from "./pipeline.mjs";
+import { Repository } from "./repository.mjs";
+import { WordPressDraftAdapter } from "./wordpress.mjs";
+import { CommercialComposer, CommercialValidationError, normalizeCommercialOffer } from "./commercial.mjs";
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+};
+
+export function createApplication(config = loadConfig()) {
+  const db = openDatabase(config.databasePath);
+  const repository = new Repository(db);
+  const extractor = new OpenAIExtractor(config.openai);
+  const contentEngine = new ContentEngine(config.openai);
+  const wordpress = new WordPressDraftAdapter(config.wordpress);
+  const commercialComposer = new CommercialComposer(config.commercial);
+  const pipeline = new Pipeline(repository, extractor, {
+    contentEngine, wordpress, commercialComposer, contentConfig: config.content,
+  });
+  repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled });
+  const publicDir = path.join(config.root, "public");
+
+  const server = http.createServer(async (request, response) => {
+    try {
+      setCors(request, response);
+      if (request.method === "OPTIONS") return response.writeHead(204).end();
+      const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
+
+      if (request.method === "GET" && url.pathname === "/api/health") {
+        return sendJson(response, 200, {
+          ok: true,
+          aiConfigured: extractor.enabled,
+          contentAutomationConfigured: contentEngine.enabled,
+          wordpressConfigured: wordpress.enabled,
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/api/captures") {
+        authorizeCapture(request, config.captureToken);
+        const capture = normalizeXiaohongshuCapture(await readJson(request, 4_000_000));
+        const saved = repository.saveCapture(capture);
+        void pipeline.runOne();
+        return sendJson(response, saved.duplicate ? 200 : 202, saved);
+      }
+      if (request.method === "GET" && url.pathname === "/api/dashboard") {
+        return sendJson(response, 200, repository.dashboard());
+      }
+      if (request.method === "GET" && url.pathname === "/api/sources") {
+        return sendJson(response, 200, { items: repository.listSources(limit(url.searchParams.get("limit"))) });
+      }
+      const sourceMatch = url.pathname.match(/^\/api\/sources\/([^/]+)$/);
+      if (request.method === "GET" && sourceMatch) {
+        const source = repository.getSource(sourceMatch[1]);
+        return source ? sendJson(response, 200, source) : sendJson(response, 404, { error: "Source not found." });
+      }
+      const retryMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/retry$/);
+      if (request.method === "POST" && retryMatch) {
+        const retried = repository.retrySource(retryMatch[1]);
+        if (!retried) return sendJson(response, 404, { error: "Source not found." });
+        void pipeline.runOne();
+        return sendJson(response, 202, { queued: true });
+      }
+      if (request.method === "GET" && url.pathname === "/api/knowledge") {
+        return sendJson(response, 200, { items: repository.getKnowledge() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/editorial-blueprints") {
+        return sendJson(response, 200, { items: repository.getEditorialBlueprints() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/content") {
+        return sendJson(response, 200, { items: repository.listContent() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/commercial/offers") {
+        return sendJson(response, 200, { items: repository.listCommercialOffers() });
+      }
+      if (request.method === "POST" && url.pathname === "/api/commercial/offers") {
+        authorizeCapture(request, config.captureToken);
+        const payload = await readJson(request, 1_000_000);
+        const inputs = Array.isArray(payload) ? payload : [payload];
+        if (inputs.length > 500) return sendJson(response, 400, { error: "A sync batch may contain at most 500 offers." });
+        const normalized = inputs.map((input) => normalizeCommercialOffer(input));
+        const items = normalized.map((offer) => repository.upsertCommercialOffer(offer));
+        for (const destination of new Set(normalized.map((offer) => offer.destinationSlug))) {
+          repository.enqueueCommercialForDestination(destination);
+        }
+        void pipeline.runOne();
+        return sendJson(response, 200, { items });
+      }
+      const generateMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/generate$/);
+      if (request.method === "POST" && generateMatch) {
+        if (!contentEngine.enabled) return sendJson(response, 409, { error: "OPENAI_API_KEY is required for content production." });
+        const queued = repository.queueCandidate(generateMatch[1]);
+        if (!queued) return sendJson(response, 409, { error: "Topic is missing or has already entered production." });
+        void pipeline.runOne();
+        return sendJson(response, 202, { queued: true });
+      }
+      const retryContentMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/retry$/);
+      if (request.method === "POST" && retryContentMatch) {
+        if (!contentEngine.enabled) return sendJson(response, 409, { error: "OPENAI_API_KEY is required for content production." });
+        const jobType = repository.retryContent(retryContentMatch[1]);
+        if (!jobType) return sendJson(response, 409, { error: "Nothing retryable was found for this topic." });
+        void pipeline.runOne();
+        return sendJson(response, 202, { queued: true, jobType });
+      }
+      const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)$/);
+      if (request.method === "GET" && draftMatch) {
+        const draft = repository.getDraftPackage(draftMatch[1]);
+        return draft ? sendJson(response, 200, draft) : sendJson(response, 404, { error: "Draft not found." });
+      }
+      const wordpressMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/wordpress$/);
+      if (request.method === "POST" && wordpressMatch) {
+        if (!wordpress.enabled) return sendJson(response, 409, { error: "WordPress delivery is not configured." });
+        const draft = repository.getDraftPackage(wordpressMatch[1]);
+        if (!draft?.review?.passed) return sendJson(response, 409, { error: "Draft must pass QA before WordPress delivery." });
+        repository.enqueue("compose_commercial", wordpressMatch[1]);
+        void pipeline.runOne();
+        return sendJson(response, 202, { queued: true });
+      }
+      if (request.method === "POST" && url.pathname === "/api/pipeline/run-one") {
+        const worked = await pipeline.runOne();
+        return sendJson(response, 200, { worked });
+      }
+
+      if (request.method === "GET") return serveStatic(publicDir, url.pathname, response);
+      return sendJson(response, 404, { error: "Not found." });
+    } catch (error) {
+      const status = error instanceof ValidationError || error instanceof CommercialValidationError ? 400 : error?.statusCode || 500;
+      if (status === 500) console.error(error);
+      return sendJson(response, status, { error: error.message || "Unexpected server error." });
+    }
+  });
+
+  return {
+    server,
+    repository,
+    pipeline,
+    start() {
+      pipeline.start();
+      return new Promise((resolve) => server.listen(config.port, config.host, resolve));
+    },
+    async stop() {
+      pipeline.stop();
+      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      db.close();
+    },
+  };
+}
+
+function authorizeCapture(request, token) {
+  if (!token) return;
+  if (request.headers.authorization !== `Bearer ${token}`) {
+    const error = new Error("Invalid capture token.");
+    error.statusCode = 401;
+    throw error;
+  }
+}
+
+function setCors(request, response) {
+  const origin = request.headers.origin || "";
+  if (origin.startsWith("chrome-extension://") || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Vary", "Origin");
+  }
+  response.setHeader("Access-Control-Allow-Headers", "authorization, content-type");
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+}
+
+async function readJson(request, maxBytes) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      const error = new Error("Request body is too large.");
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    const error = new Error("Request body must be valid JSON.");
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+function sendJson(response, status, value) {
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  response.end(JSON.stringify(value));
+}
+
+function serveStatic(publicDir, pathname, response) {
+  const relative = pathname === "/" ? "index.html" : pathname.replace(/^\//, "");
+  const filename = path.resolve(publicDir, relative);
+  if (!filename.startsWith(`${path.resolve(publicDir)}${path.sep}`) && filename !== path.join(path.resolve(publicDir), "index.html")) {
+    return sendJson(response, 404, { error: "Not found." });
+  }
+  try {
+    const stat = fs.statSync(filename);
+    if (!stat.isFile()) throw new Error("not a file");
+    response.writeHead(200, {
+      "content-type": MIME[path.extname(filename)] || "application/octet-stream",
+      "cache-control": "no-cache",
+    });
+    fs.createReadStream(filename).pipe(response);
+  } catch {
+    const fallback = path.join(publicDir, "index.html");
+    if (fs.existsSync(fallback)) {
+      response.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-cache" });
+      fs.createReadStream(fallback).pipe(response);
+    } else {
+      sendJson(response, 404, { error: "Not found." });
+    }
+  }
+}
+
+function limit(value) {
+  return Math.max(1, Math.min(500, Number.parseInt(value || "100", 10) || 100));
+}
+
+if (import.meta.main) {
+  const config = loadConfig();
+  const app = createApplication(config);
+  await app.start();
+  console.log(`SoloToChina Research Engine: http://${config.host}:${config.port}`);
+  const shutdown = async () => {
+    await app.stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}

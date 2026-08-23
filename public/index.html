@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SoloToChina Research Engine</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">INTERNAL RESEARCH SYSTEM</p>
+        <h1>SoloToChina</h1>
+      </div>
+      <div id="health" class="health">Connecting…</div>
+    </header>
+
+    <main>
+      <section id="metrics" class="metrics" aria-label="Pipeline totals"></section>
+
+      <nav class="tabs" aria-label="Views">
+        <button class="tab active" data-view="sources">Sources</button>
+        <button class="tab" data-view="knowledge">Knowledge</button>
+        <button class="tab" data-view="blueprints">Editorial blueprints</button>
+        <button class="tab" data-view="content">Content production</button>
+        <button class="tab" data-view="commercial">Commercial offers</button>
+      </nav>
+
+      <section id="notice" class="notice hidden"></section>
+      <section id="content" aria-live="polite"><div class="empty">Loading research…</div></section>
+    </main>
+
+    <dialog id="detail-dialog">
+      <button class="close" aria-label="Close">×</button>
+      <div id="detail"></div>
+    </dialog>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

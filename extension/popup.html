@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      :root { font-family: Inter, system-ui, sans-serif; color: #17231e; }
+      body { width: 340px; margin: 0; padding: 18px; background: #f6f4ed; }
+      .eyebrow { margin: 0 0 4px; color: #176b50; font-size: 10px; font-weight: 800; letter-spacing: .13em; }
+      h1 { margin: 0 0 6px; font-family: Georgia, serif; font-size: 25px; font-weight: 500; }
+      p { margin: 0 0 15px; color: #65726b; font-size: 12px; line-height: 1.5; }
+      button { width: 100%; min-height: 44px; border: 0; border-radius: 9px; background: #176b50; color: white; font: inherit; font-weight: 720; cursor: pointer; }
+      button:disabled { opacity: .55; cursor: wait; }
+      #status { min-height: 18px; margin-top: 12px; font-size: 12px; }
+      #status.error { color: #b42318; } #status.success { color: #176b50; }
+      details { margin-top: 16px; padding-top: 12px; border-top: 1px solid #d9ddd8; }
+      summary { color: #65726b; font-size: 11px; cursor: pointer; }
+      label { display: block; margin-top: 10px; color: #4b5952; font-size: 11px; }
+      input { width: 100%; margin-top: 4px; padding: 8px; border: 1px solid #ccd3ce; border-radius: 6px; background: white; font: inherit; font-size: 11px; box-sizing: border-box; }
+      .save-settings { min-height: 34px; margin-top: 10px; background: #43574e; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <p class="eyebrow">HUMAN-SELECTED CAPTURE</p>
+    <h1>SoloToChina</h1>
+    <p>Saves only the Xiaohongshu note you opened. No search, pagination, cookies, or account automation.</p>
+    <button id="save">Save current note</button>
+    <div id="status" role="status"></div>
+    <details>
+      <summary>Connection settings</summary>
+      <label>Engine URL<input id="endpoint" type="url" value="http://127.0.0.1:4310"></label>
+      <label>Capture token<input id="token" type="password" autocomplete="off"></label>
+      <button id="save-settings" class="save-settings">Save settings</button>
+    </details>
+    <script src="popup.js"></script>
+  </body>
+</html>
