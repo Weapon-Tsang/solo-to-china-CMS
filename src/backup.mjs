@@ -65,7 +65,7 @@ export function drillBackup(filename) {
     const database = openDatabase(restoredPath);
     let counts;
     try {
-      counts = Object.fromEntries(["sources", "claims", "knowledge_facts", "article_drafts", "jobs"].map((table) => [
+      counts = Object.fromEntries(["sources", "claims", "knowledge_facts", "article_drafts", "search_console_inventory", "jobs"].map((table) => [
         table,
         database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count,
       ]));

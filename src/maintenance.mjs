@@ -10,12 +10,14 @@ const TASKS = {
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class MaintenanceScheduler {
-  constructor(repository, pipeline, config, wordpressConfig = {}, { notifier = null, logger = silentLogger } = {}) {
+  constructor(repository, pipeline, config, wordpressConfig = {}, { notifier = null, logger = silentLogger, searchConsoleConfig = {} } = {}) {
     this.repository = repository;
     this.pipeline = pipeline;
     this.config = config;
     this.wordpressConfig = wordpressConfig;
     this.wordpressEnabled = Boolean(wordpressConfig.siteUrl && wordpressConfig.username && wordpressConfig.applicationPassword);
+    this.searchConsoleConfig = searchConsoleConfig;
+    this.searchConsoleEnabled = Boolean(searchConsoleConfig.siteUrl && searchConsoleConfig.clientEmail && searchConsoleConfig.privateKey);
     this.notifier = notifier;
     this.logger = logger;
     this.timer = null;
@@ -48,6 +50,14 @@ export class MaintenanceScheduler {
           force,
         );
         results.push({ task: "wordpress_inventory", status: jobId ? "queued" : "fresh", itemCount: jobId ? 1 : 0 });
+      }
+      if (this.searchConsoleEnabled) {
+        const jobId = this.repository.enqueueSearchConsoleSync(
+          this.searchConsoleConfig.siteUrl,
+          this.searchConsoleConfig.syncHours,
+          force,
+        );
+        results.push({ task: "search_console_inventory", status: jobId ? "queued" : "fresh", itemCount: jobId ? 1 : 0 });
       }
       await this.runTask(results, TASKS.knowledge, this.config.knowledgeReconcileHours, force, () => ({
         itemCount: this.repository.enqueueKnowledgeReconciliation(),

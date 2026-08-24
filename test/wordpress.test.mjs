@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { markdownToSafeHtml, WordPressDraftAdapter } from "../src/wordpress.mjs";
+import { markdownToSafeHtml, markdownToWordPressBlocks, WordPressDraftAdapter } from "../src/wordpress.mjs";
 
 test("WordPress adapter always creates a draft with safe content", async () => {
   let request;
@@ -11,6 +11,8 @@ test("WordPress adapter always creates a draft with safe content", async () => {
   const adapter = new WordPressDraftAdapter({
     siteUrl: "https://site.test", username: "editor", applicationPassword: "app password",
     authorId: 12, categoryIds: [3], tagIds: [7, 8],
+    featuredMediaId: 44, template: "templates/travel.php", contentFormat: "blocks",
+    seoTitleMetaKey: "seo_title", seoDescriptionMetaKey: "seo_description",
   }, fetchStub);
   const result = await adapter.upsertDraft({
     title: "Guide", slug: "guide", meta_description: "Description",
@@ -21,6 +23,10 @@ test("WordPress adapter always creates a draft with safe content", async () => {
   assert.equal(request.body.author, 12);
   assert.deepEqual(request.body.categories, [3]);
   assert.deepEqual(request.body.tags, [7, 8]);
+  assert.equal(request.body.featured_media, 44);
+  assert.equal(request.body.template, "templates/travel.php");
+  assert.deepEqual(request.body.meta, { seo_title: "Guide", seo_description: "Description" });
+  assert.match(request.body.content, /<!-- wp:heading/);
   assert.match(request.body.content, /&lt;script&gt;/);
   assert.doesNotMatch(request.body.content, /<script>/);
   assert.equal(result.postId, 7);
@@ -66,4 +72,13 @@ test("markdown renderer escapes HTML before adding supported formatting", () => 
   assert.match(html, /rel="sponsored nofollow noopener"/);
   assert.match(html, /rel="noopener"/);
   assert.equal((html.match(/sponsored/g) || []).length, 1);
+});
+
+test("WordPress block renderer emits native Gutenberg blocks without weakening HTML escaping", () => {
+  const blocks = markdownToWordPressBlocks("## Plan\n\nText <script>bad</script>\n\n- One\n- Two");
+  assert.match(blocks, /<!-- wp:heading/);
+  assert.match(blocks, /<!-- wp:paragraph -->/);
+  assert.match(blocks, /<!-- wp:list -->/);
+  assert.doesNotMatch(blocks, /<script>/);
+  assert.match(blocks, /&lt;script&gt;/);
 });

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0 — 2026-08-25
+
+- Migrated the dashboard from the legacy static UI to React, Vite, Tailwind CSS, Lucide React, and source-owned shadcn/ui primitives while preserving the single-process deployment model.
+- Rebuilt all eight operational views with responsive metric cards, pill navigation, accessible dialogs, actionable empty states, and desktop/mobile layouts.
+- Added a production frontend build to startup and release checks, with Vite proxy support for local UI development.
+- Added automatic read-only Google Search Console query/page inventory with service-account authentication, durable scheduling, and reversible query-level topic cannibalization protection.
+- Added schema migration 8 for Search Console performance inventory without mixing performance data into the Research Knowledge Base.
+- Added native Gutenberg block output plus optional WordPress featured-media, template, and REST-exposed SEO meta mappings while preserving draft-only delivery.
+- Expanded the release suite to 34 tests and documented environment-only secret rotation and deployment boundaries.
+
 ## 1.2.0 — 2026-08-24
 
 - Redesigned the complete dashboard with a clean Apple-inspired visual system, compact pipeline metrics, responsive navigation, richer empty/loading states, keyboard interaction, and mobile layouts.

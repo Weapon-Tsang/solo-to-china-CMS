@@ -23,7 +23,7 @@ Manually opened Xiaohongshu note
   → Minimal exception/review dashboard
 ```
 
-- 零 npm 运行依赖：Node 24 单进程、内置 SQLite、原生 HTML/JS。
+- 单进程低运维部署：Node 24、内置 SQLite，React 前端在启动前构建为静态资源并由同一服务托管。
 - Raw Capture 以 canonical URL 去重；同一 URL 内容改变时保留递增版本号。
 - 未配置 AI Key 时 Capture 不会失败，Source 会进入 `needs_ai`，可稍后批量重跑。
 - Research 聚合只读取 `sources` / `claims` / `structured_sources` 等研究表。
@@ -41,10 +41,13 @@ Manually opened Xiaohongshu note
 Copy-Item .env.example .env
 # 在当前 shell 设置变量，或使用你惯用的 env loader
 $env:OPENAI_API_KEY = "..." # 可选
+npm install
 npm start
 ```
 
 打开 [http://127.0.0.1:4310](http://127.0.0.1:4310)。数据库首次启动时自动创建在 `data/solo-to-china.sqlite`。
+
+The dashboard is a React + Vite application styled with Tailwind CSS and source-owned shadcn/ui components. `npm start` builds the production frontend before starting the single Node process; use `npm run dev` only when iterating on the UI locally (API requests are proxied to port 4310).
 
 > Node 24 当前会为内置 `node:sqlite` 输出一条 ExperimentalWarning；不影响运行。若未来 Node 改变该 API，只需要替换 `src/db.mjs`，领域层无须变化。
 
@@ -131,7 +134,8 @@ The Maintenance view shows queue depth, success rate, and p95 queue/processing l
 - `ADMIN_TOKEN` protects every admin mutation. Non-loopback binding requires both `ADMIN_TOKEN` and `CAPTURE_TOKEN`.
 - `npm run backup` creates a consistent, checksummed SQLite snapshot; `npm run backup:verify -- <file>` verifies it independently.
 - `npm run backup:drill -- <file>` restores into a temporary database, applies migrations, checks integrity, and reads critical table counts.
-- Optional `WORDPRESS_AUTHOR_ID`, `WORDPRESS_CATEGORY_IDS`, and `WORDPRESS_TAG_IDS` map core WordPress fields while status remains `draft`.
+- Optional WordPress author/category/tag, featured-media, template, Gutenberg format, and REST-exposed SEO meta mappings keep every delivery in `draft`.
+- Optional Search Console service-account sync automatically protects topic planning from query-level cannibalization; performance rows never enter Research prompts or the Knowledge Base.
 
 See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md), and [Changelog](CHANGELOG.md).
 
@@ -155,6 +159,8 @@ See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md),
 | `GET` | `/api/drafts/:id` | Draft、Evidence Ledger 和 QA 详情 |
 | `POST` | `/api/drafts/:id/wordpress` | 将 QA-passed Draft 补推到 WordPress |
 | `GET` | `/api/dashboard` | 低运维状态指标 |
+| `GET` | `/api/search-console` | 只读查询/页面表现库存与同步状态 |
+| `POST` | `/api/search-console/sync` | 管理员触发只读 Search Console 同步 |
 
 ## WordPress draft-only 配置
 
@@ -162,9 +168,27 @@ See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md),
 WORDPRESS_SITE_URL=https://example.com
 WORDPRESS_USERNAME=solo-to-china-editor
 WORDPRESS_APPLICATION_PASSWORD=xxxx xxxx xxxx xxxx
+WORDPRESS_CONTENT_FORMAT=blocks
+WORDPRESS_FEATURED_MEDIA_ID=
+WORDPRESS_SEO_TITLE_META_KEY=
+WORDPRESS_SEO_DESCRIPTION_META_KEY=
 ```
 
 适配器使用 WordPress 官方建议的 HTTPS + Application Password Basic Auth，并调用 `POST /wp/v2/posts`。发送的 `status` 被代码固定为 `draft`；编辑权限账号应遵循最小权限原则。参考 WordPress 官方 [Authentication](https://developer.wordpress.org/rest-api/using-the-rest-api/authentication/) 与 [Posts endpoint](https://developer.wordpress.org/rest-api/reference/posts/) 文档。
+
+## Search Console query protection
+
+Search Console is an optional read-only strategy adapter, not a Research Source. It automatically synchronizes query/page performance through a service account, stores it in `search_console_inventory`, and reversibly suppresses new Topic Candidates that overlap a query already served by an existing page.
+
+```text
+SEARCH_CONSOLE_SITE_URL=sc-domain:example.com
+GOOGLE_SERVICE_ACCOUNT_EMAIL=search-reader@project.iam.gserviceaccount.com
+GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----
+SEARCH_CONSOLE_SYNC_HOURS=24
+SEARCH_CONSOLE_MIN_IMPRESSIONS=10
+```
+
+The service account needs read access only. Credentials remain process-environment values: they are never written to SQLite, returned by APIs, or included in structured logs.
 
 ## Commercial Offer 同步
 

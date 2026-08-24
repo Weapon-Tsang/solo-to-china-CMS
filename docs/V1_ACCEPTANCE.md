@@ -17,3 +17,7 @@
 - [x] Optional exception webhooks are durable, deduplicated, HTTPS-only, and require no manual exception list.
 - [x] A backup can be restore-drilled into an isolated temporary database without touching live data.
 - [x] Package, API, and Chrome extension versions remain aligned for every release.
+- [x] Search Console query/page performance sync is read-only, automatic, and isolated from Research evidence.
+- [x] Query-level overlap suppresses duplicate topics reversibly before content planning.
+- [x] WordPress delivery supports native Gutenberg blocks and optional production SEO/featured-media mappings while remaining `draft` only.
+- [x] The responsive React dashboard exposes the complete operational workflow without a second frontend service.

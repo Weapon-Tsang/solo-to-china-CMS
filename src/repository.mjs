@@ -4,7 +4,7 @@ import { transaction } from "./db.mjs";
 export class Repository {
   constructor(db, contentConfig = {}) {
     this.db = db;
-    this.contentConfig = { staleAfterDays: 365, volatileStaleAfterDays: 90, ...contentConfig };
+    this.contentConfig = { staleAfterDays: 365, volatileStaleAfterDays: 90, searchConsoleMinimumImpressions: 10, ...contentConfig };
     const staleBefore = new Date(Date.now() - 5 * 60_000).toISOString();
     this.db.prepare(`
       UPDATE jobs SET status = 'queued', locked_at = NULL, updated_at = ?
@@ -360,14 +360,18 @@ export class Repository {
           proposal.coverageScore, proposal.evidenceCount, proposal.conflictCount,
           proposal.staleFactCount, proposal.verificationFactCount, timestamp, timestamp);
         const candidate = this.db.prepare("SELECT status, suppression_reason FROM topic_candidates WHERE id=?").get(candidateId);
-        const collision = this.findWordPressCollision(proposal.title);
-        const wordpressDismissal = candidate.status === "dismissed" && candidate.suppression_reason?.startsWith("wordpress:");
-        if (collision && (["candidate", "brief_queued"].includes(candidate.status) || wordpressDismissal)) {
-          const reason = `wordpress:${collision.post_id}:${collision.title || collision.slug}`;
+        const wordpressCollision = this.findWordPressCollision(proposal.title);
+        const searchCollision = wordpressCollision ? null : this.findSearchConsoleCollision(proposal.title);
+        const collisionDismissal = candidate.status === "dismissed"
+          && /^(wordpress|search_console):/.test(candidate.suppression_reason || "");
+        if ((wordpressCollision || searchCollision) && (["candidate", "brief_queued"].includes(candidate.status) || collisionDismissal)) {
+          const reason = wordpressCollision
+            ? `wordpress:${wordpressCollision.post_id}:${wordpressCollision.title || wordpressCollision.slug}`
+            : `search_console:${searchCollision.id}:${searchCollision.query}`;
           this.db.prepare("UPDATE topic_candidates SET status='dismissed', suppression_reason=?, updated_at=? WHERE id=?")
             .run(reason, timestamp, candidateId);
           this.db.prepare("DELETE FROM jobs WHERE type='plan_content' AND entity_id=? AND status='queued'").run(candidateId);
-        } else if (!collision && candidate.status === "dismissed" && candidate.suppression_reason?.startsWith("wordpress:")) {
+        } else if (!wordpressCollision && !searchCollision && collisionDismissal) {
           this.db.prepare("UPDATE topic_candidates SET status='candidate', suppression_reason=NULL, updated_at=? WHERE id=?")
             .run(timestamp, candidateId);
         }
@@ -893,6 +897,90 @@ export class Repository {
     return null;
   }
 
+  enqueueSearchConsoleSync(propertyUrl, syncHours = 24, force = false) {
+    if (!propertyUrl) return null;
+    const state = this.getSearchConsoleSyncState(propertyUrl);
+    const lastSucceeded = state?.last_succeeded_at ? Date.parse(state.last_succeeded_at) : 0;
+    const staleAfterMs = Math.max(1, syncHours) * 3_600_000;
+    if (!force && state?.status === "succeeded" && lastSucceeded && Date.now() - lastSucceeded < staleAfterMs) return null;
+    return this.enqueue("sync_search_console", propertyUrl);
+  }
+
+  startSearchConsoleSync(propertyUrl) {
+    this.startIntegrationSync(searchConsoleSyncKey(propertyUrl));
+  }
+
+  replaceSearchConsoleInventory(propertyUrl, inventory) {
+    const timestamp = now();
+    return transaction(this.db, () => {
+      this.db.prepare("DELETE FROM search_console_inventory").run();
+      const insert = this.db.prepare(`
+        INSERT INTO search_console_inventory(id, property_url, query, page_url, clicks, impressions, ctr, position,
+          start_date, end_date, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const item of inventory.rows) {
+        insert.run(`gsc_${sha256(`${propertyUrl}:${item.query}:${item.pageUrl}`).slice(0, 24)}`, propertyUrl,
+          item.query, item.pageUrl, item.clicks, item.impressions, item.ctr, item.position,
+          inventory.startDate, inventory.endDate, timestamp);
+      }
+      this.completeIntegrationSync(searchConsoleSyncKey(propertyUrl), inventory.rows.length, timestamp);
+      for (const row of this.db.prepare("SELECT slug FROM destinations").all()) this.enqueue("rebuild_topics", row.slug);
+      return inventory.rows.length;
+    });
+  }
+
+  failSearchConsoleSync(propertyUrl, error) {
+    this.failIntegrationSync(searchConsoleSyncKey(propertyUrl), error);
+  }
+
+  listSearchConsoleInventory(propertyUrl = null, limit = 500) {
+    if (propertyUrl) return this.db.prepare("SELECT * FROM search_console_inventory WHERE property_url=? ORDER BY impressions DESC LIMIT ?").all(propertyUrl, limit);
+    return this.db.prepare("SELECT * FROM search_console_inventory ORDER BY impressions DESC LIMIT ?").all(limit);
+  }
+
+  getSearchConsoleSyncState(propertyUrl) {
+    if (!propertyUrl) return null;
+    return this.db.prepare("SELECT * FROM integration_sync_state WHERE sync_key=?").get(searchConsoleSyncKey(propertyUrl)) || null;
+  }
+
+  findSearchConsoleCollision(title) {
+    const titleTokens = topicTokens(title);
+    const minimumImpressions = Math.max(0, this.contentConfig.searchConsoleMinimumImpressions || 10);
+    for (const row of this.db.prepare("SELECT * FROM search_console_inventory WHERE impressions>=? ORDER BY impressions DESC").all(minimumImpressions)) {
+      const queryTokens = topicTokens(row.query);
+      if (normalizeTitle(row.query) === normalizeTitle(title) || tokenOverlap(titleTokens, queryTokens) >= 0.72) return row;
+    }
+    return null;
+  }
+
+  startIntegrationSync(syncKey) {
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO integration_sync_state(sync_key, status, last_started_at, updated_at)
+      VALUES (?, 'running', ?, ?)
+      ON CONFLICT(sync_key) DO UPDATE SET status='running', last_started_at=excluded.last_started_at,
+        last_error=NULL, updated_at=excluded.updated_at
+    `).run(syncKey, timestamp, timestamp);
+  }
+
+  completeIntegrationSync(syncKey, itemCount, timestamp = now()) {
+    this.db.prepare(`
+      INSERT INTO integration_sync_state(sync_key, status, last_started_at, last_succeeded_at, item_count, updated_at)
+      VALUES (?, 'succeeded', ?, ?, ?, ?)
+      ON CONFLICT(sync_key) DO UPDATE SET status='succeeded', last_succeeded_at=excluded.last_succeeded_at,
+        last_error=NULL, item_count=excluded.item_count, updated_at=excluded.updated_at
+    `).run(syncKey, timestamp, timestamp, itemCount, timestamp);
+  }
+
+  failIntegrationSync(syncKey, error) {
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO integration_sync_state(sync_key, status, last_error, updated_at)
+      VALUES (?, 'failed', ?, ?)
+      ON CONFLICT(sync_key) DO UPDATE SET status='failed', last_error=excluded.last_error, updated_at=excluded.updated_at
+    `).run(syncKey, String(error?.message || error).slice(0, 4_000), timestamp);
+  }
+
   enqueueCommercialForDestination(destinationSlug) {
     const rows = this.db.prepare(`
       SELECT ad.id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id
@@ -933,7 +1021,7 @@ export class Repository {
     for (const row of this.db.prepare(`
       SELECT id, type, entity_id, last_error, updated_at FROM jobs
       WHERE status='failed' AND type NOT IN (
-        'extract_source','sync_wordpress_inventory','push_wordpress_draft','generate_draft','review_draft','revise_draft'
+        'extract_source','sync_wordpress_inventory','sync_search_console','push_wordpress_draft','generate_draft','review_draft','revise_draft'
       )
     `).all()) {
       items.push(exceptionItem("job", row.id, "blocker", `Job failed: ${row.type}`, row.entity_id, row.last_error, true, row.updated_at));
@@ -990,6 +1078,10 @@ export class Repository {
       const siteUrl = entityId.slice("wordpress_inventory:".length);
       return Boolean(this.enqueueWordPressInventorySync(siteUrl, 1, true));
     }
+    if (kind === "sync" && entityId.startsWith("search_console:")) {
+      const propertyUrl = entityId.slice("search_console:".length);
+      return Boolean(this.enqueueSearchConsoleSync(propertyUrl, 1, true));
+    }
     if (kind === "brief") {
       const row = this.db.prepare("SELECT candidate_id FROM content_briefs WHERE id=?").get(entityId);
       return Boolean(row && this.retryContent(row.candidate_id));
@@ -1037,6 +1129,7 @@ export class Repository {
         draftsReady: this.db.prepare("SELECT COUNT(*) AS count FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')").get().count,
         activeOffers: this.db.prepare("SELECT COUNT(*) AS count FROM commercial_offers WHERE active=1 AND target_url<>''").get().count,
         wordpressInventory: this.db.prepare("SELECT COUNT(*) AS count FROM wordpress_content_inventory").get().count,
+        searchQueries: this.db.prepare("SELECT COUNT(*) AS count FROM search_console_inventory").get().count,
       },
       jobs: this.db.prepare("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status").all(),
     };
@@ -1105,6 +1198,10 @@ function wordpressSyncKey(siteUrl) {
   return `wordpress_inventory:${siteUrl}`;
 }
 
+function searchConsoleSyncKey(propertyUrl) {
+  return `search_console:${propertyUrl}`;
+}
+
 function distribution(values) {
   if (!values.length) return { samples: 0, p50: null, p95: null, max: null };
   return {
@@ -1129,6 +1226,12 @@ function normalizeTitle(value) {
 function topicTokens(value) {
   const stopWords = new Set(["a", "an", "and", "for", "in", "of", "the", "to", "travel", "guide"]);
   return new Set(normalizeTitle(value).split(" ").filter((token) => token && !stopWords.has(token)));
+}
+
+function tokenOverlap(left, right) {
+  const union = new Set([...left, ...right]);
+  if (!union.size) return 0;
+  return [...left].filter((token) => right.has(token)).length / union.size;
 }
 
 function countStrings(values) {

@@ -66,28 +66,32 @@
    - Idempotency key maps internal Draft to WordPress post ID.
    - User retains the final publish decision.
 
-## Next vertical slice
+## Completed product slice
 
 1. **Commercial Composer** — delivered
    - Runs only after the Research Draft passes QA.
    - Adds typed slots for hotels/tickets/trains/flights/tours/transfers/planner.
    - Cannot mutate the Research Draft evidence ledger or Knowledge Base.
 
-2. **Topic strategy expansion** — partially delivered
+2. **Topic strategy expansion** — delivered
    - Attraction/how-to and evidence-gated itinerary clusters delivered.
    - Coverage freshness, seasonality and official-source verification gates.
-   - WordPress inventory cannibalization checks delivered; Search Console/query-level overlap remains future work.
+   - WordPress inventory and Search Console query-level cannibalization checks delivered with reversible suppression.
 
-3. **WordPress field mapping**
-   - Confirm production SEO plugin fields, taxonomy IDs, author, featured-media and block markup.
+3. **WordPress field mapping** — delivered
+   - Configurable REST-exposed SEO plugin fields, taxonomy IDs, author, featured-media, template, and native Gutenberg block markup.
    - Keep every new post in `draft` regardless of field mapping.
 
 ## Operational hardening before remote deployment
 
 - Admin authentication delivered; TLS termination remains a deployment responsibility.
-- Encrypted secret storage and key rotation.
+- [x] Secrets are injected only through the process environment, never persisted to SQLite or returned by APIs; rotation is a value replacement and restart.
 - [x] SQLite backup/restore verification and retention policy.
-- Asset archival policy after permissions/legal review.
+- Asset binary archival remains intentionally excluded until permissions/legal review; V1 stores the captured evidence URL and page snapshot without authenticated downloading.
 - [x] Structured logs, request IDs, job latency metrics and deduplicated exception webhook notification.
 - [x] Deployment readiness probe and non-destructive backup restore drill.
-- [x] Forward schema migration runner through migration 6.
+- [x] Forward schema migration runner through migration 8.
+
+## V1 completion boundary
+
+All repository-owned V1 development is delivered. TLS termination, real provider credentials, Google property access, WordPress plugin-specific meta registration, and the legal decision on binary asset archival are deployment/owner configuration rather than missing application code.

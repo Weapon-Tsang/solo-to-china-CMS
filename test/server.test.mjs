@@ -74,8 +74,9 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(allowed.status, 200);
   assert.equal(allowed.headers.get("x-request-id"), "test-request-id");
   const health = await (await fetch(`${baseUrl}/api/health`)).json();
-  assert.equal(health.version, "1.2.0");
+  assert.equal(health.version, "1.3.0");
   assert.equal(typeof health.queueActive, "number");
+  assert.equal(health.searchConsoleConfigured, false);
   const readyResponse = await fetch(`${baseUrl}/api/ready`);
   assert.equal(readyResponse.status, 200);
   assert.equal((await readyResponse.json()).database, "ready");
@@ -83,6 +84,9 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(maintenance.enabled, false);
   assert.equal(maintenance.telemetry.windowHours, 24);
   assert.equal(maintenance.notifications.configured, false);
+  assert.equal(maintenance.searchConsoleSync, null);
+  const searchConsole = await (await fetch(`${baseUrl}/api/search-console`)).json();
+  assert.deepEqual(searchConsole, { configured: false, sync: null, items: [] });
   const exceptions = await (await fetch(`${baseUrl}/api/exceptions`)).json();
   assert.deepEqual(exceptions.items, []);
 });

@@ -32,6 +32,20 @@ export function loadConfig(env = process.env) {
       authorId: integer(env.WORDPRESS_AUTHOR_ID, 0),
       categoryIds: integerList(env.WORDPRESS_CATEGORY_IDS),
       tagIds: integerList(env.WORDPRESS_TAG_IDS),
+      featuredMediaId: integer(env.WORDPRESS_FEATURED_MEDIA_ID, 0),
+      template: safeTemplate(env.WORDPRESS_TEMPLATE),
+      contentFormat: choice(env.WORDPRESS_CONTENT_FORMAT, ["blocks", "html"], "blocks"),
+      seoTitleMetaKey: safeMetaKey(env.WORDPRESS_SEO_TITLE_META_KEY),
+      seoDescriptionMetaKey: safeMetaKey(env.WORDPRESS_SEO_DESCRIPTION_META_KEY),
+    },
+    searchConsole: {
+      siteUrl: env.SEARCH_CONSOLE_SITE_URL || "",
+      clientEmail: env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "",
+      privateKey: env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "",
+      syncHours: integer(env.SEARCH_CONSOLE_SYNC_HOURS, 24),
+      lookbackDays: integer(env.SEARCH_CONSOLE_LOOKBACK_DAYS, 28),
+      rowLimit: integer(env.SEARCH_CONSOLE_ROW_LIMIT, 5_000),
+      minimumImpressions: integer(env.SEARCH_CONSOLE_MIN_IMPRESSIONS, 10),
     },
     commercial: {
       maxOffersPerDraft: integer(env.COMMERCIAL_MAX_OFFERS_PER_DRAFT, 3),
@@ -83,4 +97,14 @@ function boolean(value, fallback) {
 function choice(value, allowed, fallback) {
   const normalized = String(value || "").toLowerCase();
   return allowed.includes(normalized) ? normalized : fallback;
+}
+
+function safeMetaKey(value) {
+  const normalized = String(value || "").trim();
+  return /^[A-Za-z0-9_.:-]{1,191}$/.test(normalized) ? normalized : "";
+}
+
+function safeTemplate(value) {
+  const normalized = String(value || "").trim();
+  return normalized && !normalized.includes("..") && /^[A-Za-z0-9_./-]{1,191}$/.test(normalized) ? normalized : "";
 }

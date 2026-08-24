@@ -1,12 +1,13 @@
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class Pipeline {
-  constructor(repository, extractor, { pollMs = 750, contentEngine = null, wordpress = null, commercialComposer = null, contentConfig = {}, logger = silentLogger } = {}) {
+  constructor(repository, extractor, { pollMs = 750, contentEngine = null, wordpress = null, searchConsole = null, commercialComposer = null, contentConfig = {}, logger = silentLogger } = {}) {
     this.repository = repository;
     this.extractor = extractor;
     this.pollMs = pollMs;
     this.contentEngine = contentEngine;
     this.wordpress = wordpress;
+    this.searchConsole = searchConsole;
     this.commercialComposer = commercialComposer;
     this.contentConfig = { minFacts: 5, maxPerDestination: 1, ...contentConfig };
     this.logger = logger;
@@ -45,6 +46,18 @@ export class Pipeline {
             this.repository.replaceWordPressInventory(this.wordpress.config.siteUrl, items);
           } catch (error) {
             this.repository.failWordPressInventorySync(this.wordpress.config.siteUrl, error);
+            throw error;
+          }
+          break;
+        }
+        case "sync_search_console": {
+          if (!this.searchConsole?.enabled) throw new Error("Search Console sync is not configured.");
+          this.repository.startSearchConsoleSync(this.searchConsole.config.siteUrl);
+          try {
+            const inventory = await this.searchConsole.listQueryInventory();
+            this.repository.replaceSearchConsoleInventory(this.searchConsole.config.siteUrl, inventory);
+          } catch (error) {
+            this.repository.failSearchConsoleSync(this.searchConsole.config.siteUrl, error);
             throw error;
           }
           break;

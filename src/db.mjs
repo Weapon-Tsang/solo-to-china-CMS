@@ -26,6 +26,36 @@ function migrate(db) {
   if (current < 5) migrationFive(db);
   if (current < 6) migrationSix(db);
   if (current < 7) migrationSeven(db);
+  if (current < 8) migrationEight(db);
+}
+
+function migrationEight(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE search_console_inventory (
+        id TEXT PRIMARY KEY,
+        property_url TEXT NOT NULL,
+        query TEXT NOT NULL,
+        page_url TEXT NOT NULL,
+        clicks REAL NOT NULL DEFAULT 0,
+        impressions REAL NOT NULL DEFAULT 0,
+        ctr REAL NOT NULL DEFAULT 0,
+        position REAL NOT NULL DEFAULT 0,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        synced_at TEXT NOT NULL,
+        UNIQUE(property_url, query, page_url)
+      );
+      CREATE INDEX idx_search_console_query ON search_console_inventory(property_url, impressions DESC, query);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (8, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationSeven(db) {

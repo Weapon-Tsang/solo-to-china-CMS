@@ -70,6 +70,25 @@ test("itinerary discovery requires route evidence from multiple sources and neve
   assert.ok(expanded.some((topic) => topic.topic_key === "beijing:practical-solo-itinerary"));
 });
 
+test("Search Console query inventory suppresses and restores overlapping topics automatically", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  seedKnowledge(db, { factCount: 5 });
+  repository.replaceSearchConsoleInventory("sc-domain:site.test", {
+    startDate: "2026-07-28", endDate: "2026-08-23", rows: [{
+      query: "first time beijing solo travel guide",
+      pageUrl: "https://site.test/existing-beijing-guide",
+      clicks: 12, impressions: 120, ctr: 0.1, position: 4,
+    }],
+  });
+  assert.equal(repository.rebuildTopicCandidates("beijing", 5, 1).length, 0);
+  const [suppressed] = repository.listContent();
+  assert.match(suppressed.suppression_reason, /^search_console:gsc_/);
+  repository.replaceSearchConsoleInventory("sc-domain:site.test", { startDate: "2026-07-28", endDate: "2026-08-23", rows: [] });
+  const restored = repository.rebuildTopicCandidates("beijing", 5, 1);
+  assert.equal(restored.length, 1);
+  assert.equal(restored[0].suppression_reason, null);
+});
+
 function seedKnowledge(db, { factCount, routeFacts = false }) {
   const timestamp = "2026-08-23T00:00:00.000Z";
   db.prepare("INSERT INTO destinations(id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")

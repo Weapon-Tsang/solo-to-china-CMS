@@ -10,6 +10,7 @@ import { ContentEngine } from "./ai/content-engine.mjs";
 import { Pipeline } from "./pipeline.mjs";
 import { Repository } from "./repository.mjs";
 import { WordPressDraftAdapter } from "./wordpress.mjs";
+import { SearchConsoleAdapter } from "./search-console.mjs";
 import { CommercialComposer, CommercialValidationError, normalizeCommercialOffer } from "./commercial.mjs";
 import { MaintenanceScheduler } from "./maintenance.mjs";
 import { createLogger } from "./logger.mjs";
@@ -31,13 +32,14 @@ export function createApplication(config = loadConfig()) {
   }
   const logger = createLogger(config.logging);
   const db = openDatabase(config.databasePath);
-  const repository = new Repository(db, config.content);
+  const repository = new Repository(db, { ...config.content, searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions });
   const extractor = new OpenAIExtractor(config.openai);
   const contentEngine = new ContentEngine(config.openai);
   const wordpress = new WordPressDraftAdapter(config.wordpress);
+  const searchConsole = new SearchConsoleAdapter(config.searchConsole);
   const commercialComposer = new CommercialComposer(config.commercial);
   const pipeline = new Pipeline(repository, extractor, {
-    contentEngine, wordpress, commercialComposer, contentConfig: config.content,
+    contentEngine, wordpress, searchConsole, commercialComposer, contentConfig: config.content,
     logger: logger.child({ component: "pipeline" }),
   });
   const notifier = new ExceptionNotifier(repository, config.notifications);
@@ -46,13 +48,16 @@ export function createApplication(config = loadConfig()) {
     pipeline,
     { ...config.maintenance, notificationIntervalMinutes: config.notifications.intervalMinutes },
     config.wordpress,
-    { notifier, logger: logger.child({ component: "maintenance" }) },
+    { notifier, searchConsoleConfig: config.searchConsole, logger: logger.child({ component: "maintenance" }) },
   );
   if (wordpress.enabled) {
     repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours);
   }
+  if (searchConsole.enabled) {
+    repository.enqueueSearchConsoleSync(searchConsole.config.siteUrl, searchConsole.config.syncHours);
+  }
   repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled });
-  const publicDir = path.join(config.root, "public");
+  const publicDir = path.join(config.root, "dist");
 
   const server = http.createServer(async (request, response) => {
     const requestId = normalizeRequestId(request.headers["x-request-id"]) || crypto.randomUUID();
@@ -80,6 +85,7 @@ export function createApplication(config = loadConfig()) {
           aiConfigured: extractor.enabled,
           contentAutomationConfigured: contentEngine.enabled,
           wordpressConfigured: wordpress.enabled,
+          searchConsoleConfigured: searchConsole.enabled,
           maintenanceEnabled: config.maintenance.enabled,
           notificationsConfigured: notifier.enabled,
           queueActive: telemetry.active,
@@ -133,6 +139,7 @@ export function createApplication(config = loadConfig()) {
           intervalMinutes: config.maintenance.intervalMinutes,
           runs: repository.listMaintenanceRuns(),
           wordpressSync: repository.getWordPressSyncState(wordpress.config.siteUrl),
+          searchConsoleSync: repository.getSearchConsoleSyncState(searchConsole.config.siteUrl),
           telemetry: repository.jobTelemetry(config.telemetry.windowHours),
           notifications: {
             configured: notifier.enabled,
@@ -166,6 +173,20 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken);
         if (!wordpress.enabled) return sendJson(response, 409, { error: "WordPress inventory sync is not configured." });
         const jobId = repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours, true);
+        void pipeline.runOne();
+        return sendJson(response, 202, { queued: true, jobId });
+      }
+      if (request.method === "GET" && url.pathname === "/api/search-console") {
+        return sendJson(response, 200, {
+          configured: searchConsole.enabled,
+          sync: repository.getSearchConsoleSyncState(searchConsole.config.siteUrl),
+          items: repository.listSearchConsoleInventory(searchConsole.config.siteUrl || null, limit(url.searchParams.get("limit"))),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/api/search-console/sync") {
+        authorizeAdmin(request, config.adminToken);
+        if (!searchConsole.enabled) return sendJson(response, 409, { error: "Search Console sync is not configured." });
+        const jobId = repository.enqueueSearchConsoleSync(searchConsole.config.siteUrl, searchConsole.config.syncHours, true);
         void pipeline.runOne();
         return sendJson(response, 202, { queued: true, jobId });
       }

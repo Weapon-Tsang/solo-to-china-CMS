@@ -12,8 +12,11 @@ No spreadsheet, manual source card, URL copy, tagging pass, or Knowledge Base ma
 ## Start and stop
 
 ```powershell
+npm install
 npm start
 ```
+
+`npm start` runs a production frontend build before starting the HTTP server. For UI development, run the backend with `npm run dev:server` and Vite with `npm run dev`; Vite serves the interface on port 5173 and proxies `/api` to the backend on port 4310.
 
 The default `HOST=127.0.0.1` is local-only. Binding any non-loopback host is refused unless both `CAPTURE_TOKEN` and `ADMIN_TOKEN` are configured. Stop with Ctrl+C so the HTTP server and SQLite connection close cleanly.
 
@@ -65,6 +68,7 @@ To restore, stop the engine, verify the selected snapshot, preserve the current 
 - Consistent database backup: `AUTO_BACKUP_HOURS` (default 24).
 - Successful Job history: `JOB_HISTORY_RETENTION_DAYS` (default 30).
 - WordPress inventory continues to use `WORDPRESS_INVENTORY_SYNC_HOURS`.
+- Search Console query inventory uses `SEARCH_CONSOLE_SYNC_HOURS` when its read-only service account is configured.
 
 Maintenance state is durable in SQLite. Restarts do not reset due times, and queue idempotency prevents duplicate reconciliation Jobs. Failed maintenance appears in Exceptions; failed pipeline Jobs are never removed by retention cleanup.
 
@@ -84,6 +88,16 @@ LOG_FORMAT=json
 ```
 
 Use `LOG_FORMAT=pretty` for local reading. Remote deployments can use `GET /api/health` for liveness and `GET /api/ready` for database-backed readiness.
+
+## Search Console read-only sync
+
+Grant a Google service account read access to the Search Console property, then configure `SEARCH_CONSOLE_SITE_URL`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, and `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`. Newlines in the private key may be represented as `\\n`. The scheduler refreshes a bounded query/page window automatically; `POST /api/search-console/sync` is reserved for exceptional admin-triggered refreshes.
+
+Search Console performance is strategy inventory only. It never becomes Research evidence and never enters model prompts. A failed sync appears in Exceptions and is retryable through the existing workflow.
+
+## Secret handling and rotation
+
+The engine does not store provider secrets. OpenAI keys, WordPress Application Passwords, Google service-account private keys, webhook tokens, and operational tokens are read from the process environment and are never written to SQLite or returned by an API. Rotate a credential in the deployment secret manager or environment and restart the single process. Backups therefore contain domain data and operational state, not provider credentials.
 
 ## Exception webhook
 
@@ -105,4 +119,4 @@ Remote webhook URLs must use HTTPS and cannot embed credentials. `EXCEPTION_WEBH
 npm run release:check
 ```
 
-This runs syntax checks, the complete test suite, version alignment, migrations 1–7 on a clean database, and SQLite integrity verification.
+This runs the production frontend build, syntax checks, the complete test suite, version alignment, migrations 1–8 on a clean database, and SQLite integrity verification.

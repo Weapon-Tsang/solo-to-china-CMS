@@ -14,7 +14,7 @@ Chrome Extension (explicit click)
          ▼
 ┌──────────────────────────────────────────────┐
 │ Node process                                 │
-│  HTTP API + static dashboard                 │
+│  HTTP API + React dashboard                  │
 │  Xiaohongshu Adapter                         │
 │  Persistent SQLite job runner                │
 │  AI Provider Adapter                         │
@@ -23,6 +23,8 @@ Chrome Extension (explicit click)
                        ▼
                  SQLite database
 ```
+
+The production dashboard is built by Vite into `dist/` and served by the same Node process as the API. React owns view state and interactions; Tailwind CSS, Lucide icons, and source-owned shadcn/ui primitives provide the visual system without adding a separate frontend service.
 
 选择模块化单体是为了减少部署、监控、队列和数据库运维。`jobs` 表承担持久化队列：进程重启后保留任务，指数退避重试，超过最大次数才进入人工异常。未来负载增长时，可以把同一个 `Pipeline` 类移到独立 Worker，而不更改领域模型。
 
@@ -82,6 +84,12 @@ Frozen Research Draft + destination-relevant active Offers
 
 At startup, a stale inventory sync is queued before topic reconciliation. Candidate generation suppresses exact slug/title collisions and high-confidence title overlap. Suppression is reversible when a later inventory no longer contains the collision; candidates that already became briefs or drafts are never silently rolled back.
 
+### Search Console strategy guard
+
+`search_console_inventory` is a read-only query/page performance mirror. It belongs to Content Strategy, not Research: it never enters extraction, Claims, Knowledge aggregation, editorial blueprints, briefs, drafting prompts, QA evidence, or Commercial selection.
+
+An optional service-account adapter synchronizes a bounded rolling window through the Search Console API. Topic planning suppresses high-overlap queries with meaningful impressions before a brief is created; the suppression is automatically reversed when later inventory no longer contains the overlap. Sync state and retries reuse `integration_sync_state` and the durable Job queue.
+
 ## Content state transitions
 
 ```text
@@ -120,7 +128,7 @@ captured → processing → processed
 
 ### Operational visibility and alerts
 
-Migration 7 adds durable first-start, completion, queue-latency, and end-to-end duration fields to `jobs`. The Maintenance API/UI calculates a bounded rolling window (default 24 hours) with success rate and p50/p95 latency; it does not require a second metrics database.
+Migration 7 adds durable first-start, completion, queue-latency, and end-to-end duration fields to `jobs`. Migration 8 adds isolated Search Console performance inventory. The Maintenance API/UI calculates a bounded rolling window (default 24 hours) with success rate and p50/p95 latency; it does not require a second metrics database.
 
 HTTP and background work emit structured stdout events with request/job IDs. `GET /api/ready` is a database-backed deployment readiness probe. An optional HTTPS webhook sends only new, changed, or repeat-due Exceptions. Delivery fingerprints and outcomes live in `exception_notification_state`, so restarts do not create duplicate alerts and resolved exceptions are removed automatically.
 

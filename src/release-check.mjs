@@ -17,7 +17,7 @@ try {
   const database = openDatabase(path.join(directory, "release.sqlite"));
   try {
     const versions = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
-    if (versions.join(",") !== "1,2,3,4,5,6,7") throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
+    if (versions.join(",") !== "1,2,3,4,5,6,7,8") throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
     const integrity = database.prepare("PRAGMA integrity_check").get();
     if (Object.values(integrity)[0] !== "ok") throw new Error("Release database integrity check failed.");
   } finally {
@@ -27,4 +27,4 @@ try {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-console.log("Release check passed: version alignment, migrations 1-7, and SQLite integrity.");
+console.log("Release check passed: version alignment, migrations 1-8, and SQLite integrity.");
