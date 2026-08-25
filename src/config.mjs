@@ -14,10 +14,12 @@ export function loadConfig(env = process.env) {
     adminToken: env.ADMIN_TOKEN || "",
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
-      model: env.KIMI_MODEL || "kimi-k2.6",
+      model: env.KIMI_MODEL || "kimi-k3",
       baseUrl: (env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, ""),
       maxImages: integer(env.KIMI_MAX_IMAGES || env.AI_MAX_IMAGES, 8),
       maxCompletionTokens: integer(env.KIMI_MAX_COMPLETION_TOKENS, 16_000),
+      requestTimeoutMs: integer(env.KIMI_REQUEST_TIMEOUT_MS, 360_000),
+      imageTimeoutMs: integer(env.KIMI_IMAGE_TIMEOUT_MS, 20_000),
     },
     content: {
       minFacts: integer(env.AUTO_CONTENT_MIN_FACTS, 5),

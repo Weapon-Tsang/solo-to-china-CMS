@@ -11,7 +11,7 @@ export class KimiClient {
     return Boolean(this.config.apiKey);
   }
 
-  async completeJson({ name, schema, instructions, content, timeoutMs = 180_000 }) {
+  async completeJson({ name, schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000 }) {
     if (!this.enabled) throw new Error("KIMI_API_KEY is required for AI processing.");
     const response = await this.fetch(`${this.config.baseUrl}/chat/completions`, {
       method: "POST",
@@ -46,22 +46,18 @@ export class KimiClient {
 
   async imageParts(assets) {
     const attempted = (assets || []).slice(0, this.config.maxImages || 0);
-    const parts = [];
-    for (const asset of attempted) {
-      try {
-        const url = await this.imageDataUrl(asset.remote_url);
-        parts.push({ type: "image_url", image_url: { url } });
-      } catch {
-        // Image extraction remains best-effort. The note text is always kept and processed.
-      }
-    }
+    const results = await Promise.allSettled(attempted.map(async (asset) => ({
+      type: "image_url",
+      image_url: { url: await this.imageDataUrl(asset.remote_url) },
+    })));
+    const parts = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
     return { parts, attempted: attempted.length };
   }
 
   async imageDataUrl(value) {
     const url = safeXiaohongshuImageUrl(value);
     if (!url) throw new Error("Captured image URL is not an allowlisted Xiaohongshu HTTPS asset.");
-    const response = await this.fetch(url, { signal: AbortSignal.timeout(30_000) });
+    const response = await this.fetch(url, { signal: AbortSignal.timeout(this.config.imageTimeoutMs || 20_000) });
     if (!response.ok) throw new Error(`Image fetch failed (${response.status}).`);
     const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
     if (!/^image\/(?:jpeg|jpg|png|webp|gif)$/.test(contentType)) throw new Error("Captured asset is not a supported image.");

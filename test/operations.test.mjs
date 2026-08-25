@@ -40,6 +40,27 @@ test("job telemetry reports durable queue latency, duration, outcomes, and activ
   }
 });
 
+test("startup immediately requeues jobs interrupted by a previous local server process", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-recovery-test-"));
+  const database = openDatabase(path.join(directory, "recovery.sqlite"));
+  try {
+    const firstRepository = new Repository(database);
+    const jobId = firstRepository.enqueue("extract_source", "src-interrupted");
+    firstRepository.claimJob();
+
+    const restartedRepository = new Repository(database);
+    const recovered = database.prepare("SELECT status, attempts, locked_at, started_at FROM jobs WHERE id=?").get(jobId);
+    assert.equal(recovered.status, "queued");
+    assert.equal(recovered.attempts, 0);
+    assert.equal(recovered.locked_at, null);
+    assert.equal(recovered.started_at, null);
+    assert.equal(restartedRepository.claimJob().id, jobId);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("exception webhook sends a deduplicated operational payload with optional bearer auth", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-notification-test-"));
   const database = openDatabase(path.join(directory, "notifications.sqlite"));

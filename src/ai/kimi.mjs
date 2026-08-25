@@ -39,7 +39,6 @@ export class KimiExtractor {
       schema: EXTRACTION_SCHEMA,
       instructions: SYSTEM_PROMPT,
       content: [{ type: "text", text: buildInput(source) }, ...images.parts],
-      timeoutMs: 120_000,
     });
     const result = sanitizeResult(completion.output);
     if (images.attempted > images.parts.length) result.source.warnings.push("Some captured image assets were unavailable to the vision model; verify image-only details against the raw source.");

@@ -102,7 +102,7 @@ export class ContentEngine {
   }
 
   async respond({ name, schema, instructions, input }) {
-    return this.client.completeJson({ name, schema, instructions, content: input, timeoutMs: 180_000 });
+    return this.client.completeJson({ name, schema, instructions, content: input });
   }
 }
 const BRIEF_PROMPT = `Create an evidence-backed English content brief for SoloToChina.

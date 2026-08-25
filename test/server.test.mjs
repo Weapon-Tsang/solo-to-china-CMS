@@ -98,9 +98,11 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
 test("Kimi configuration uses the provider's server-side defaults", () => {
   const config = loadConfig({ KIMI_API_KEY: "kimi-test-key" });
   assert.equal(config.kimi.apiKey, "kimi-test-key");
-  assert.equal(config.kimi.model, "kimi-k2.6");
+  assert.equal(config.kimi.model, "kimi-k3");
   assert.equal(config.kimi.baseUrl, "https://api.moonshot.cn/v1");
   assert.equal(config.kimi.maxCompletionTokens, 16_000);
+  assert.equal(config.kimi.requestTimeoutMs, 360_000);
+  assert.equal(config.kimi.imageTimeoutMs, 20_000);
 });
 
 test("non-loopback binding refuses to start without both operational tokens", () => {

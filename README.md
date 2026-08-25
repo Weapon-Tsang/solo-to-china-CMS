@@ -76,10 +76,12 @@ AI 是可替换适配器，核心数据库与队列不依赖模型供应商。�
 
 ```text
 KIMI_API_KEY=...
-KIMI_MODEL=kimi-k2.6
+KIMI_MODEL=kimi-k3
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MAX_IMAGES=8
 KIMI_MAX_COMPLETION_TOKENS=16000
+KIMI_REQUEST_TIMEOUT_MS=360000
+KIMI_IMAGE_TIMEOUT_MS=20000
 AUTO_CONTENT_MIN_FACTS=5
 AUTO_CONTENT_MAX_PER_DESTINATION=1
 ```
@@ -96,12 +98,12 @@ Kimi is the active AI provider. The engine calls Kimi Chat Completions with JSON
 Copy-Item .env.example .env
 # Edit .env and set KIMI_API_KEY=your-kimi-key, or use the temporary shell alternative below.
 $env:KIMI_API_KEY = "your-kimi-key"
-$env:KIMI_MODEL = "kimi-k2.6"
+$env:KIMI_MODEL = "kimi-k3"
 $env:KIMI_BASE_URL = "https://api.moonshot.cn/v1"
 npm start
 ```
 
-Set `KIMI_MAX_IMAGES=8` and `KIMI_MAX_COMPLETION_TOKENS=16000` only when you need to change the defaults. Existing Sources can be re-run after the restart; no recapture is required.
+`kimi-k3` is the current flagship model and supports the image evidence used by this project. Image assets are fetched in parallel and unavailable assets are skipped rather than blocking the full note. Set `KIMI_MAX_IMAGES=8`, `KIMI_MAX_COMPLETION_TOKENS=16000`, `KIMI_REQUEST_TIMEOUT_MS=360000`, or `KIMI_IMAGE_TIMEOUT_MS=20000` only when you need to change the defaults. Existing Sources can be re-run after the restart; no recapture is required.
 
 ## WordPress inventory and topic protection
 

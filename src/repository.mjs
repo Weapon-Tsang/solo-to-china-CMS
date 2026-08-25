@@ -5,11 +5,14 @@ export class Repository {
   constructor(db, contentConfig = {}) {
     this.db = db;
     this.contentConfig = { staleAfterDays: 365, volatileStaleAfterDays: 90, searchConsoleMinimumImpressions: 10, ...contentConfig };
-    const staleBefore = new Date(Date.now() - 5 * 60_000).toISOString();
+    // A running job belongs to the Node process that claimed it. Creating a new
+    // repository happens during process startup, so any existing lock was left by
+    // an interrupted process and must be made retryable immediately.
     this.db.prepare(`
-      UPDATE jobs SET status = 'queued', locked_at = NULL, updated_at = ?
-      WHERE status = 'running' AND locked_at < ?
-    `).run(now(), staleBefore);
+      UPDATE jobs SET status = 'queued', attempts = 0, locked_at = NULL, started_at = NULL,
+        completed_at = NULL, duration_ms = NULL, queue_latency_ms = NULL, updated_at = ?
+      WHERE status = 'running'
+    `).run(now());
   }
 
   saveCapture(capture) {
