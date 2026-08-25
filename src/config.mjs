@@ -15,7 +15,7 @@ export function loadConfig(env = process.env) {
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
       model: env.KIMI_MODEL || "kimi-k2.6",
-      baseUrl: (env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, ""),
+      baseUrl: (env.KIMI_BASE_URL || "https://api.moonshot.ai/v1").replace(/\/$/, ""),
       maxImages: integer(env.KIMI_MAX_IMAGES || env.AI_MAX_IMAGES, 8),
       maxCompletionTokens: integer(env.KIMI_MAX_COMPLETION_TOKENS, 16_000),
     },
