@@ -77,7 +77,7 @@ AI 是可替换适配器，核心数据库与队列不依赖模型供应商。�
 ```text
 KIMI_API_KEY=...
 KIMI_MODEL=kimi-k2.6
-KIMI_BASE_URL=https://api.moonshot.ai/v1
+KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MAX_IMAGES=8
 KIMI_MAX_COMPLETION_TOKENS=16000
 AUTO_CONTENT_MIN_FACTS=5
@@ -97,7 +97,7 @@ Copy-Item .env.example .env
 # Edit .env and set KIMI_API_KEY=your-kimi-key, or use the temporary shell alternative below.
 $env:KIMI_API_KEY = "your-kimi-key"
 $env:KIMI_MODEL = "kimi-k2.6"
-$env:KIMI_BASE_URL = "https://api.moonshot.ai/v1"
+$env:KIMI_BASE_URL = "https://api.moonshot.cn/v1"
 npm start
 ```
 
