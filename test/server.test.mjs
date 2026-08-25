@@ -76,6 +76,7 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   const health = await (await fetch(`${baseUrl}/api/health`)).json();
   assert.equal(health.version, "1.3.0");
   assert.equal(typeof health.queueActive, "number");
+  assert.equal(health.aiProvider, null);
   assert.equal(health.searchConsoleConfigured, false);
   const readyResponse = await fetch(`${baseUrl}/api/ready`);
   assert.equal(readyResponse.status, 200);
@@ -92,6 +93,14 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   const missing = await fetch(`${baseUrl}/api/not-found`);
   assert.equal(missing.status, 404);
   assert.deepEqual(await missing.json(), { error: "Not found." });
+});
+
+test("Kimi configuration uses the provider's server-side defaults", () => {
+  const config = loadConfig({ KIMI_API_KEY: "kimi-test-key" });
+  assert.equal(config.kimi.apiKey, "kimi-test-key");
+  assert.equal(config.kimi.model, "kimi-k2.6");
+  assert.equal(config.kimi.baseUrl, "https://api.moonshot.cn/v1");
+  assert.equal(config.kimi.maxCompletionTokens, 16_000);
 });
 
 test("non-loopback binding refuses to start without both operational tokens", () => {

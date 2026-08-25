@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Switched the active AI provider to Kimi Chat Completions with JSON Schema structured output and trusted Xiaohongshu image-to-base64 vision input.
 - Added an isolated, Windows-compatible `npm run release:check` gate: production build, static checks, tests, temporary SQLite migrations and writes, temporary server/API/UI smoke checks, log scanning, cleanup verification, and Chrome extension static validation.
 - Corrected unknown API `GET` routes so they return a JSON `404` instead of the single-page-app HTML fallback.
 

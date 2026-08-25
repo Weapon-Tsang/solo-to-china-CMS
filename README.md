@@ -75,10 +75,11 @@ The dashboard is a React + Vite application styled with Tailwind CSS and source-
 AI 是可替换适配器，核心数据库与队列不依赖模型供应商。当前适配器使用 OpenAI Responses API 的图文输入和 JSON Schema Structured Outputs。设置：
 
 ```text
-OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-5-mini
-OPENAI_BASE_URL=https://api.openai.com/v1
-AI_MAX_IMAGES=8
+KIMI_API_KEY=...
+KIMI_MODEL=kimi-k2.6
+KIMI_BASE_URL=https://api.moonshot.cn/v1
+KIMI_MAX_IMAGES=8
+KIMI_MAX_COMPLETION_TOKENS=16000
 AUTO_CONTENT_MIN_FACTS=5
 AUTO_CONTENT_MAX_PER_DESTINATION=1
 ```
@@ -86,6 +87,21 @@ AUTO_CONTENT_MAX_PER_DESTINATION=1
 对模型的每一个事实输出都必须落成带 `source_quote`、confidence 和 qualifiers 的 Claim。模型不会直接修改聚合事实；KB 根据独立 Source 证据数将状态标记为 `single_source`、`corroborated` 或 `conflicted`。
 
 OpenAI 请求格式依据官方 [Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)：Responses 支持文本/图片输入和 JSON 输出；这里设置 `store: false`，同时保留本地 Raw Capture 作为系统记录。
+
+## Kimi AI configuration
+
+Kimi is the active AI provider. The engine calls Kimi Chat Completions with JSON Schema structured output and sends trusted Xiaohongshu image assets as base64 vision input. Keep the key on the server only: it is never sent to the Chrome Extension or written to SQLite.
+
+```powershell
+Copy-Item .env.example .env
+# Edit .env and set KIMI_API_KEY=your-kimi-key, or use the temporary shell alternative below.
+$env:KIMI_API_KEY = "your-kimi-key"
+$env:KIMI_MODEL = "kimi-k2.6"
+$env:KIMI_BASE_URL = "https://api.moonshot.cn/v1"
+npm start
+```
+
+Set `KIMI_MAX_IMAGES=8` and `KIMI_MAX_COMPLETION_TOKENS=16000` only when you need to change the defaults. Existing Sources can be re-run after the restart; no recapture is required.
 
 ## WordPress inventory and topic protection
 

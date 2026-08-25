@@ -167,6 +167,6 @@ export class Pipeline {
   }
 
   requireContentEngine() {
-    if (!this.contentEngine?.enabled) throw new Error("Content production requires OPENAI_API_KEY.");
+    if (!this.contentEngine?.enabled) throw new Error("Content production requires KIMI_API_KEY.");
   }
 }

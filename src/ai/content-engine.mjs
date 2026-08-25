@@ -1,4 +1,5 @@
 import { slugify, truncate } from "../utils.mjs";
+import { KimiClient } from "./kimi-client.mjs";
 
 const BRIEF_SCHEMA = objectSchema(
   ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions"],
@@ -62,11 +63,11 @@ const REVIEW_SCHEMA = objectSchema(
 export class ContentEngine {
   constructor(config, fetchImpl = fetch) {
     this.config = config;
-    this.fetch = fetchImpl;
+    this.client = new KimiClient(config, fetchImpl);
   }
 
   get enabled() {
-    return Boolean(this.config.apiKey);
+    return this.client.enabled;
   }
 
   async plan(research) {
@@ -101,24 +102,7 @@ export class ContentEngine {
   }
 
   async respond({ name, schema, instructions, input }) {
-    if (!this.enabled) throw new Error("OPENAI_API_KEY is required for content production.");
-    const response = await this.fetch(`${this.config.baseUrl}/responses`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${this.config.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        model: this.config.model,
-        store: false,
-        instructions,
-        input,
-        text: { format: { type: "json_schema", name, strict: true, schema } },
-      }),
-      signal: AbortSignal.timeout(180_000),
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(`Content AI failed (${response.status}): ${payload?.error?.message || response.statusText}`);
-    const outputText = payload.output_text || findOutputText(payload.output);
-    if (!outputText) throw new Error("Content AI returned no structured output.");
-    return { output: JSON.parse(outputText), model: payload.model || this.config.model };
+    return this.client.completeJson({ name, schema, instructions, content: input, timeoutMs: 180_000 });
   }
 }
 const BRIEF_PROMPT = `Create an evidence-backed English content brief for SoloToChina.
@@ -190,11 +174,6 @@ function applyDeterministicGates(review, contentPackage) {
 
 function objectSchema(required, properties) {
   return { type: "object", additionalProperties: false, required, properties };
-}
-
-function findOutputText(output) {
-  for (const item of output || []) for (const content of item.content || []) if (content.type === "output_text") return content.text;
-  return "";
 }
 
 function wordCount(text) {

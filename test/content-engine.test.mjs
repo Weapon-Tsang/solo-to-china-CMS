@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ContentEngine } from "../src/ai/content-engine.mjs";
 
-test("independent QA cannot approve deterministic evidence or commercial violations", async () => {
+test("Kimi-backed independent QA cannot approve deterministic evidence or commercial violations", async () => {
   const modelReview = { passed: true, score: 98, checks: [], issues: [], unsupported_claims: [] };
-  const fetchStub = async () => new Response(JSON.stringify({ model: "review-model", output_text: JSON.stringify(modelReview) }), {
+  let request;
+  const fetchStub = async (url, options) => {
+    request = { url, body: JSON.parse(options.body) };
+    return new Response(JSON.stringify({ model: "review-model", choices: [{ finish_reason: "stop", message: { content: JSON.stringify(modelReview) } }] }), {
     status: 200, headers: { "content-type": "application/json" },
-  });
-  const engine = new ContentEngine({ apiKey: "key", model: "model", baseUrl: "https://api.example.test/v1" }, fetchStub);
+    });
+  };
+  const engine = new ContentEngine({ apiKey: "key", model: "model", baseUrl: "https://api.example.test/v1", maxCompletionTokens: 16000 }, fetchStub);
   const reviewed = await engine.review({
     facts: [
       { normalized_key: "valid.fact", consensus_status: "corroborated", freshness_state: "stale", verification_priority: "review" },
@@ -26,4 +30,6 @@ test("independent QA cannot approve deterministic evidence or commercial violati
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "draft_too_short"));
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "stale_evidence_used"));
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "missing_verification_note"));
+  assert.equal(request.url, "https://api.example.test/v1/chat/completions");
+  assert.equal(request.body.response_format.type, "json_schema");
 });

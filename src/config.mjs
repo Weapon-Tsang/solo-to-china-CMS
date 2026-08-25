@@ -12,11 +12,12 @@ export function loadConfig(env = process.env) {
     databasePath,
     captureToken: env.CAPTURE_TOKEN || "",
     adminToken: env.ADMIN_TOKEN || "",
-    openai: {
-      apiKey: env.OPENAI_API_KEY || "",
-      model: env.OPENAI_MODEL || "gpt-5-mini",
-      baseUrl: (env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, ""),
-      maxImages: integer(env.AI_MAX_IMAGES, 8),
+    kimi: {
+      apiKey: env.KIMI_API_KEY || "",
+      model: env.KIMI_MODEL || "kimi-k2.6",
+      baseUrl: (env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, ""),
+      maxImages: integer(env.KIMI_MAX_IMAGES || env.AI_MAX_IMAGES, 8),
+      maxCompletionTokens: integer(env.KIMI_MAX_COMPLETION_TOKENS, 16_000),
     },
     content: {
       minFacts: integer(env.AUTO_CONTENT_MIN_FACTS, 5),

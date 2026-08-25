@@ -61,7 +61,7 @@ export function Topbar({ health, refreshing, onRefresh }) {
               {healthy && <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />}
               <span className={cn("relative inline-flex size-2 rounded-full", healthy ? "bg-emerald-500" : "bg-red-500")} />
             </span>
-            <span className="max-w-40 truncate">{health?.aiConfigured ? "AI ready" : healthy ? "Capture ready · AI paused" : "Engine offline"}</span>
+            <span className="max-w-40 truncate">{health?.aiConfigured ? "Kimi ready" : healthy ? "Capture ready · Kimi paused" : "Engine offline"}</span>
           </Badge>
           <Button variant="ghost" size="icon" aria-label="Refresh dashboard" title="Refresh dashboard" onClick={onRefresh} disabled={refreshing}>
             <RefreshCw className={cn(refreshing && "animate-spin")} />
@@ -122,8 +122,8 @@ export function AiAlert({ onConfigure }) {
     <Alert className="flex-wrap sm:flex-nowrap">
       <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
       <div className="min-w-0 flex-1">
-        <AlertTitle>AI extraction is paused</AlertTitle>
-        <AlertDescription>Configure OPENAI_API_KEY to process queued multimodal claims and blueprints. Existing captures remain safe.</AlertDescription>
+        <AlertTitle>Kimi extraction is paused</AlertTitle>
+        <AlertDescription>Configure KIMI_API_KEY to process queued multimodal claims and blueprints. Existing captures remain safe.</AlertDescription>
       </div>
       <Button variant="outline" size="sm" className="w-full border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 sm:w-auto" onClick={onConfigure}>View setup</Button>
     </Alert>

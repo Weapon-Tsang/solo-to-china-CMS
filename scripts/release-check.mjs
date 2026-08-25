@@ -43,7 +43,7 @@ async function main() {
 
   if (buildReady && report.sectionPassed("Build")) await runIsolatedSmoke();
   await runExtensionChecks();
-  report.warning("External Services", "AI provider", "Not called; the isolated server runs without OPENAI_API_KEY.");
+  report.warning("External Services", "Kimi", "Not called; the isolated server runs without KIMI_API_KEY.");
   report.warning("External Services", "WordPress production", "Not called; the isolated server runs without WordPress credentials.");
   report.warning("External Services", "Search Console production", "Not called; the isolated server runs without Google credentials.");
   report.notTested("Chrome Extension", "Real Chrome Load Unpacked", "Requires a human Chrome profile and an explicit user click.");
@@ -229,6 +229,7 @@ function isolatedEnvironment({ port, databasePath, backupDir }) {
     LOG_FORMAT: "json",
     CAPTURE_TOKEN: "",
     ADMIN_TOKEN: "",
+    KIMI_API_KEY: "",
     OPENAI_API_KEY: "",
     WORDPRESS_SITE_URL: "",
     WORDPRESS_USERNAME: "",

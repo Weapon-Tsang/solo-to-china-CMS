@@ -5,7 +5,7 @@ import path from "node:path";
 import { loadConfig } from "./config.mjs";
 import { openDatabase } from "./db.mjs";
 import { normalizeXiaohongshuCapture, ValidationError } from "./adapters/xiaohongshu.mjs";
-import { OpenAIExtractor } from "./ai/openai.mjs";
+import { KimiExtractor } from "./ai/kimi.mjs";
 import { ContentEngine } from "./ai/content-engine.mjs";
 import { Pipeline } from "./pipeline.mjs";
 import { Repository } from "./repository.mjs";
@@ -33,8 +33,8 @@ export function createApplication(config = loadConfig()) {
   const logger = createLogger(config.logging);
   const db = openDatabase(config.databasePath);
   const repository = new Repository(db, { ...config.content, searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions });
-  const extractor = new OpenAIExtractor(config.openai);
-  const contentEngine = new ContentEngine(config.openai);
+  const extractor = new KimiExtractor(config.kimi);
+  const contentEngine = new ContentEngine(config.kimi);
   const wordpress = new WordPressDraftAdapter(config.wordpress);
   const searchConsole = new SearchConsoleAdapter(config.searchConsole);
   const commercialComposer = new CommercialComposer(config.commercial);
@@ -83,6 +83,7 @@ export function createApplication(config = loadConfig()) {
           ok: true,
           version: VERSION,
           aiConfigured: extractor.enabled,
+          aiProvider: extractor.enabled ? "kimi" : null,
           contentAutomationConfigured: contentEngine.enabled,
           wordpressConfigured: wordpress.enabled,
           searchConsoleConfigured: searchConsole.enabled,
@@ -209,7 +210,7 @@ export function createApplication(config = loadConfig()) {
       const generateMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/generate$/);
       if (request.method === "POST" && generateMatch) {
         authorizeAdmin(request, config.adminToken);
-        if (!contentEngine.enabled) return sendJson(response, 409, { error: "OPENAI_API_KEY is required for content production." });
+        if (!contentEngine.enabled) return sendJson(response, 409, { error: "KIMI_API_KEY is required for content production." });
         const queued = repository.queueCandidate(generateMatch[1]);
         if (!queued) return sendJson(response, 409, { error: "Topic is missing or has already entered production." });
         void pipeline.runOne();
@@ -218,7 +219,7 @@ export function createApplication(config = loadConfig()) {
       const retryContentMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/retry$/);
       if (request.method === "POST" && retryContentMatch) {
         authorizeAdmin(request, config.adminToken);
-        if (!contentEngine.enabled) return sendJson(response, 409, { error: "OPENAI_API_KEY is required for content production." });
+        if (!contentEngine.enabled) return sendJson(response, 409, { error: "KIMI_API_KEY is required for content production." });
         const jobType = repository.retryContent(retryContentMatch[1]);
         if (!jobType) return sendJson(response, 409, { error: "Nothing retryable was found for this topic." });
         void pipeline.runOne();

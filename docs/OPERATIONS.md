@@ -97,7 +97,7 @@ Search Console performance is strategy inventory only. It never becomes Research
 
 ## Secret handling and rotation
 
-The engine does not store provider secrets. OpenAI keys, WordPress Application Passwords, Google service-account private keys, webhook tokens, and operational tokens are read from the process environment and are never written to SQLite or returned by an API. Rotate a credential in the deployment secret manager or environment and restart the single process. Backups therefore contain domain data and operational state, not provider credentials.
+The engine does not store provider secrets. Kimi API keys, WordPress Application Passwords, Google service-account private keys, webhook tokens, and operational tokens are read from the process environment and are never written to SQLite or returned by an API. Rotate a credential in the deployment secret manager or environment and restart the single process. Backups therefore contain domain data and operational state, not provider credentials.
 
 ## Exception webhook
 
