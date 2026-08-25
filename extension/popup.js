@@ -3,24 +3,32 @@ const settingsButton = document.querySelector("#save-settings");
 const endpointInput = document.querySelector("#endpoint");
 const tokenInput = document.querySelector("#token");
 const status = document.querySelector("#status");
+const feedback = document.querySelector("#feedback");
+const feedbackIcon = document.querySelector("#feedback-icon");
+const feedbackTitle = document.querySelector("#feedback-title");
+const feedbackDetail = document.querySelector("#feedback-detail");
 
 void restoreSettings();
 saveButton.addEventListener("click", saveCurrentNote);
 settingsButton.addEventListener("click", saveSettings);
 
 async function restoreSettings() {
-  const settings = await chrome.storage.local.get({ endpoint: "http://127.0.0.1:4310", token: "" });
+  const settings = await chrome.storage.local.get({ endpoint: "http://127.0.0.1:4310", token: "", lastCapture: null });
   endpointInput.value = settings.endpoint;
   tokenInput.value = settings.token;
+  if (settings.lastCapture) renderCaptureFeedback(settings.lastCapture);
 }
 
 async function saveSettings() {
   await chrome.storage.local.set({ endpoint: endpointInput.value.replace(/\/$/, ""), token: tokenInput.value });
   show("Settings saved.", "success");
+  showFeedback("success", "Connection settings saved", "The extension will use this local Engine address.");
 }
 
 async function saveCurrentNote() {
   saveButton.disabled = true;
+  setSaveButton("saving", "Saving note");
+  showFeedback("working", "Reading current note", "Only the note you explicitly opened is being captured.");
   show("Reading the current note…");
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -47,16 +55,113 @@ async function saveCurrentNote() {
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || `Save failed (${response.status}).`);
     show(body.duplicate ? "Already saved — capture is up to date." : "Saved. The research pipeline is running.", "success");
+    const saved = {
+      id: body.id,
+      title: capture.title || "This note",
+      stage: body.duplicate ? "duplicate" : "saved",
+      claimCount: null,
+      savedAt: new Date().toISOString(),
+    };
+    await chrome.storage.local.set({ lastCapture: saved });
+    renderCaptureFeedback(saved);
+    setSaveButton("success", body.duplicate ? "Already saved" : "Saved to Sources");
+    await watchExtraction(settings, saved);
   } catch (error) {
     show(error.message || String(error), "error");
+    showFeedback("error", "Save did not complete", error.message || String(error));
+    setSaveButton("idle", "Try again");
   } finally {
     saveButton.disabled = false;
+    if (!saveButton.classList.contains("is-success")) setSaveButton("idle", "Save current note");
   }
 }
 
 function show(message, kind = "") {
   status.textContent = message;
   status.className = kind;
+}
+
+function setSaveButton(state, label) {
+  saveButton.classList.remove("is-saving", "is-success");
+  if (state === "saving") saveButton.classList.add("is-saving");
+  if (state === "success") saveButton.classList.add("is-success");
+  saveButton.textContent = label;
+}
+
+function showFeedback(kind, title, detail) {
+  feedback.className = `visible ${kind}`;
+  feedbackIcon.textContent = kind === "error" ? "!" : kind === "warning" ? "!" : kind === "working" ? "…" : "✓";
+  feedbackTitle.textContent = title;
+  feedbackDetail.textContent = detail;
+}
+
+function renderCaptureFeedback(capture) {
+  const name = String(capture.title || "This note").trim();
+  if (capture.stage === "processed") {
+    const claims = Number.isInteger(capture.claimCount) ? ` ${capture.claimCount} claims extracted.` : " Structured research is ready.";
+    showFeedback("success", "Extraction complete", `${name} is ready in Sources.${claims}`);
+    setSaveButton("success", "Extraction complete");
+    return;
+  }
+  if (capture.stage === "needs_ai") {
+    showFeedback("warning", "Saved to Sources · Kimi paused", `${name} is safe. Add KIMI_API_KEY, restart the Engine, then re-run extraction.`);
+    setSaveButton("success", "Saved to Sources");
+    return;
+  }
+  if (capture.stage === "exception") {
+    showFeedback("error", "Saved, but extraction needs attention", capture.error || `${name} remains safe in Sources. Open it in the dashboard and choose Re-run extraction.`);
+    setSaveButton("idle", "Save current note");
+    return;
+  }
+  if (capture.stage === "queued") {
+    showFeedback("working", "Saved to Sources", `${name} is stored safely. Extraction is still running in the background.`);
+    setSaveButton("success", "Saved to Sources");
+    return;
+  }
+  if (capture.stage === "duplicate") {
+    showFeedback("success", "Already saved", `${name} is already up to date in Sources.`);
+    setSaveButton("success", "Already saved");
+    return;
+  }
+  showFeedback("success", "Saved to Sources", `${name} is safely stored. Checking extraction status…`);
+}
+
+async function watchExtraction(settings, saved) {
+  const endpoint = settings.endpoint.replace(/\/$/, "");
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${endpoint}/api/sources/${saved.id}`, {
+        headers: settings.token ? { authorization: `Bearer ${settings.token}` } : {},
+      });
+      const source = await response.json();
+      if (!response.ok) return;
+      const stage = source.status;
+      if (["processed", "needs_ai", "exception"].includes(stage)) {
+        const updated = {
+          ...saved,
+          stage,
+          claimCount: Array.isArray(source.claims) ? source.claims.length : null,
+          error: source.last_error || "",
+          checkedAt: new Date().toISOString(),
+        };
+        await chrome.storage.local.set({ lastCapture: updated });
+        renderCaptureFeedback(updated);
+        return;
+      }
+    } catch {
+      // A saved source remains successful even if the optional status poll is interrupted.
+      return;
+    }
+    await delay(1_500);
+  }
+  const queued = { ...saved, stage: "queued", checkedAt: new Date().toISOString() };
+  await chrome.storage.local.set({ lastCapture: queued });
+  renderCaptureFeedback(queued);
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 // This function is injected only after the user presses Save. It reads the active page DOM;
