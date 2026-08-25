@@ -119,4 +119,17 @@ Remote webhook URLs must use HTTPS and cannot embed credentials. `EXCEPTION_WEBH
 npm run release:check
 ```
 
-This runs the production frontend build, syntax checks, the complete test suite, version alignment, migrations 1–8 on a clean database, and SQLite integrity verification.
+This is the complete local release gate. It runs the production frontend build, static checks, the complete test suite, version alignment, migrations 1–8 on a clean database, and SQLite integrity verification. It then starts an isolated Node server using a temporary SQLite database and random loopback port, polls `/api/health` instead of relying on logs, checks `/api/ready`, core read APIs, a temporary capture insert/revision/read, React HTML/assets, Extension manifest/assets, database integrity, server logs, automatic shutdown, and temporary-file cleanup.
+
+The runner deliberately clears AI, WordPress, Search Console, webhook, and operational-token configuration for its child process, so it never calls external services or touches the live database. It uses these result states:
+
+- `PASS`: mandatory automated check completed successfully.
+- `WARNING`: intentional external-service or Node-runtime limitation; it does not block local extension integration.
+- `FAIL`: mandatory check failed; the command exits non-zero.
+- `NOT TESTED`: an explicit manual browser or real-account step that cannot be truthfully automated.
+
+Run only the isolated HTTP/API/static smoke phase after an existing build with:
+
+```powershell
+npm run test:smoke
+```

@@ -220,6 +220,16 @@ npm run check
 
 测试覆盖 Adapter 边界、URL 清洗、Capture 幂等/版本、持久化队列、Claim/KB/Blueprint、多类型自动选题、自动内容链、确定性 QA、typed Offer/Commercial 隔离、WordPress draft 强制状态与已发布文章保护。
 
+## Release Check
+
+```powershell
+npm run release:check
+```
+
+This is the single local release gate. It builds the production frontend, runs static and unit/integration checks, starts an isolated server on a temporary loopback port with a temporary SQLite database, polls real HTTP readiness, smoke-tests core APIs and React assets, validates the Chrome Extension manifest/assets, then always stops the test server and removes its temporary data. It never calls AI, WordPress, Search Console, or the live database.
+
+The final report uses `PASS`, `WARNING`, `FAIL`, and `NOT TESTED`. A zero exit code and `READY FOR EXTENSION INTEGRATION` mean all mandatory local checks passed; real Chrome loading and user-selected note capture remain explicit manual acceptance steps.
+
 ## 文档
 
 - [Architecture](docs/ARCHITECTURE.md)

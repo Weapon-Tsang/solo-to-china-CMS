@@ -89,6 +89,9 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.deepEqual(searchConsole, { configured: false, sync: null, items: [] });
   const exceptions = await (await fetch(`${baseUrl}/api/exceptions`)).json();
   assert.deepEqual(exceptions.items, []);
+  const missing = await fetch(`${baseUrl}/api/not-found`);
+  assert.equal(missing.status, 404);
+  assert.deepEqual(await missing.json(), { error: "Not found." });
 });
 
 test("non-loopback binding refuses to start without both operational tokens", () => {

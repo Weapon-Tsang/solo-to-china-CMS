@@ -245,6 +245,7 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, { worked });
       }
 
+      if (url.pathname.startsWith("/api/")) return sendJson(response, 404, { error: "Not found." });
       if (request.method === "GET") return serveStatic(publicDir, url.pathname, response);
       return sendJson(response, 404, { error: "Not found." });
     } catch (error) {

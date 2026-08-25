@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Added an isolated, Windows-compatible `npm run release:check` gate: production build, static checks, tests, temporary SQLite migrations and writes, temporary server/API/UI smoke checks, log scanning, cleanup verification, and Chrome extension static validation.
+- Corrected unknown API `GET` routes so they return a JSON `404` instead of the single-page-app HTML fallback.
+
 ## 1.3.0 — 2026-08-25
 
 - Migrated the dashboard from the legacy static UI to React, Vite, Tailwind CSS, Lucide React, and source-owned shadcn/ui primitives while preserving the single-process deployment model.
