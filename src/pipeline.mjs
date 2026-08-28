@@ -1,11 +1,12 @@
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class Pipeline {
-  constructor(repository, extractor, { pollMs = 750, contentEngine = null, wordpress = null, searchConsole = null, commercialComposer = null, contentConfig = {}, logger = silentLogger } = {}) {
+  constructor(repository, extractor, { pollMs = 750, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null, contentConfig = {}, logger = silentLogger } = {}) {
     this.repository = repository;
     this.extractor = extractor;
     this.pollMs = pollMs;
     this.contentEngine = contentEngine;
+    this.visuals = visuals;
     this.wordpress = wordpress;
     this.searchConsole = searchConsole;
     this.commercialComposer = commercialComposer;
@@ -96,7 +97,23 @@ export class Pipeline {
           const contentPackage = this.repository.getBriefPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Content brief ${job.entity_id} no longer exists.`);
           const drafted = await this.contentEngine.draft(contentPackage);
-          this.repository.saveDraft(job.entity_id, drafted.output, drafted.model);
+          const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model);
+          if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
+          break;
+        }
+        case "generate_visuals": {
+          if (!this.visuals?.enabled) throw new Error("Visual generation is not configured.");
+          const contentPackage = this.repository.getDraftPackage(job.entity_id);
+          if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
+          for (const visual of this.repository.plannedVisuals(job.entity_id)) {
+            try {
+              const result = await this.visuals.generate(visual, contentPackage.draft);
+              this.repository.saveGeneratedVisual(visual.id, result);
+            } catch (error) {
+              this.repository.failVisual(visual.id, error);
+              throw error;
+            }
+          }
           break;
         }
         case "review_draft": {
@@ -114,7 +131,8 @@ export class Pipeline {
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           const drafted = await this.contentEngine.draft(contentPackage, contentPackage.review?.issues || []);
-          this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model);
+          const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model);
+          if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
           break;
         }
         case "compose_commercial": {

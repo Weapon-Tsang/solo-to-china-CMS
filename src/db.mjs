@@ -27,6 +27,81 @@ function migrate(db) {
   if (current < 6) migrationSix(db);
   if (current < 7) migrationSeven(db);
   if (current < 8) migrationEight(db);
+  if (current < 9) migrationNine(db);
+  if (current < 10) migrationTen(db);
+  if (current < 11) migrationEleven(db);
+}
+
+function migrationEleven(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE article_visuals ADD COLUMN wordpress_media_id INTEGER;
+      ALTER TABLE article_visuals ADD COLUMN wordpress_media_url TEXT;
+      INSERT INTO schema_migrations(version, applied_at) VALUES (11, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationTen(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE article_drafts ADD COLUMN seo_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE article_drafts ADD COLUMN schema_jsonld TEXT NOT NULL DEFAULT '{}';
+
+      CREATE TABLE article_visuals (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+        slot INTEGER NOT NULL,
+        placement TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        alt_text TEXT NOT NULL,
+        caption TEXT NOT NULL DEFAULT '',
+        generation_prompt TEXT NOT NULL,
+        aspect_ratio TEXT NOT NULL DEFAULT '16:9',
+        status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'generated', 'failed', 'skipped')),
+        media_path TEXT,
+        media_url TEXT,
+        provider TEXT,
+        model TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(draft_id, slot)
+      );
+      CREATE INDEX idx_article_visuals_draft ON article_visuals(draft_id, slot);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (10, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationNine(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE runtime_settings (
+        setting_key TEXT PRIMARY KEY,
+        value_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (9, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationEight(db) {

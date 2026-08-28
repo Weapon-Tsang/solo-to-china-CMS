@@ -11,7 +11,7 @@ Manually opened Xiaohongshu note
   → Chrome Extension: explicit Save
   → Raw Source + DOM snapshot + image references
   → Durable SQLite job queue
-  → Multimodal structured extraction (optional OpenAI provider)
+  → Multimodal structured extraction (optional Kimi provider)
   → Claims + Source Blueprint
   → Destination Knowledge Base + conflict state
   → Editorial Blueprint Library
@@ -40,7 +40,7 @@ Manually opened Xiaohongshu note
 ```powershell
 Copy-Item .env.example .env
 # 在当前 shell 设置变量，或使用你惯用的 env loader
-$env:OPENAI_API_KEY = "..." # 可选
+$env:KIMI_API_KEY = "..." # 可选
 npm install
 npm start
 ```
@@ -72,7 +72,7 @@ The dashboard is a React + Vite application styled with Tailwind CSS and source-
 
 ## AI 配置
 
-AI 是可替换适配器，核心数据库与队列不依赖模型供应商。当前适配器使用 OpenAI Responses API 的图文输入和 JSON Schema Structured Outputs。设置：
+AI 是可替换适配器，核心数据库与队列不依赖模型供应商。当前适配器使用 Kimi Chat Completions 的图文输入和 JSON Schema Structured Outputs。设置：
 
 ```text
 KIMI_API_KEY=...
@@ -88,8 +88,6 @@ AUTO_CONTENT_MAX_PER_DESTINATION=1
 
 对模型的每一个事实输出都必须落成带 `source_quote`、confidence 和 qualifiers 的 Claim。模型不会直接修改聚合事实；KB 根据独立 Source 证据数将状态标记为 `single_source`、`corroborated` 或 `conflicted`。
 
-OpenAI 请求格式依据官方 [Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)：Responses 支持文本/图片输入和 JSON 输出；这里设置 `store: false`，同时保留本地 Raw Capture 作为系统记录。
-
 ## Kimi AI configuration
 
 Kimi is the active AI provider. The engine calls Kimi Chat Completions with JSON Schema structured output and sends trusted Xiaohongshu image assets as base64 vision input. Keep the key on the server only: it is never sent to the Chrome Extension or written to SQLite.
@@ -103,7 +101,34 @@ $env:KIMI_BASE_URL = "https://api.moonshot.cn/v1"
 npm start
 ```
 
-`kimi-k3` is the current flagship model and supports the image evidence used by this project. Image assets are fetched in parallel and unavailable assets are skipped rather than blocking the full note. Set `KIMI_MAX_IMAGES=8`, `KIMI_MAX_COMPLETION_TOKENS=16000`, `KIMI_REQUEST_TIMEOUT_MS=360000`, or `KIMI_IMAGE_TIMEOUT_MS=20000` only when you need to change the defaults. Existing Sources can be re-run after the restart; no recapture is required.
+`kimi-k3` is the default flagship model and supports the image evidence used by this project. `kimi-k2.7-code` is also supported. Image assets are fetched in parallel and unavailable assets are skipped rather than blocking the full note. Set `KIMI_MAX_IMAGES=8`, `KIMI_MAX_COMPLETION_TOKENS=16000`, `KIMI_REQUEST_TIMEOUT_MS=360000`, or `KIMI_IMAGE_TIMEOUT_MS=20000` only when you need to change the defaults. Existing Sources can be re-run after the restart; no recapture is required.
+
+### Model selection
+
+After an administrator enters the dashboard token, open **Settings** and choose **Kimi K3** or **Kimi K2.7 Code**. The selected model is stored in SQLite, survives restarts, and applies to subsequently started extraction and content jobs. The server key remains server-side; selecting a model never exposes it to the Chrome Extension.
+
+## SEO/GEO package and original visuals
+
+Each generated English Draft includes a reader-facing SEO/GEO package: a concise meta title and description, focus keyword, key takeaways, visible FAQs, an `Article` JSON-LD graph, and an optional `FAQPage` graph. Schema uses the public site URL and publisher values below when configured; it does not put affiliate links or internal research fields into the article.
+
+The engine plans 2--5 rights-safe, original editorial images according to article length. Visual plans are always saved alongside the Draft; they stay pending on a local machine. To create and serve original images in production, enable Vertex Imagen on the GCE VM:
+
+```text
+VISUAL_PROVIDER=vertex_imagen
+GOOGLE_CLOUD_PROJECT=your-project-id
+VERTEX_AI_LOCATION=us-central1
+VERTEX_IMAGEN_MODEL=imagen-4.0-generate-001
+PUBLIC_BASE_URL=https://engine.example.com
+PUBLIC_CONTENT_SITE_URL=https://www.solotochina.com
+CONTENT_PUBLISHER_NAME=SoloToChina
+CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
+```
+
+Generated assets use original no-text/no-logo prompts and are uploaded into WordPress as media when the Draft is delivered. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
+
+## Google Cloud + Cloudflare deployment
+
+The production package uses a persistent Google Compute Engine VM, Docker Compose, Cloudflare Tunnel, and Cloudflare Access. This is deliberate: the current system has a persistent SQLite queue and in-process scheduler, so it should not be put directly on stateless Cloud Run. Follow the [GCE + Cloudflare deployment guide](deployment/gce/DEPLOY.md) to build the image, configure the two hostnames, package the cloud extension, and verify the result.
 
 ## WordPress inventory and topic protection
 

@@ -12,10 +12,11 @@ test("WordPress adapter always creates a draft with safe content", async () => {
     siteUrl: "https://site.test", username: "editor", applicationPassword: "app password",
     authorId: 12, categoryIds: [3], tagIds: [7, 8],
     featuredMediaId: 44, template: "templates/travel.php", contentFormat: "blocks",
-    seoTitleMetaKey: "seo_title", seoDescriptionMetaKey: "seo_description",
+    seoTitleMetaKey: "seo_title", seoDescriptionMetaKey: "seo_description", schemaJsonldMetaKey: "seo_schema",
   }, fetchStub);
   const result = await adapter.upsertDraft({
-    title: "Guide", slug: "guide", meta_description: "Description",
+    title: "Guide", slug: "guide", meta_description: "Description", seo: { meta_title: "SEO Guide" },
+    schema_jsonld: { "@context": "https://schema.org", "@graph": [{ "@type": "Article" }] },
     body_markdown: "## Plan\n\n<script>alert(1)</script> **safe**",
   });
   assert.equal(request.body.status, "draft");
@@ -25,7 +26,10 @@ test("WordPress adapter always creates a draft with safe content", async () => {
   assert.deepEqual(request.body.tags, [7, 8]);
   assert.equal(request.body.featured_media, 44);
   assert.equal(request.body.template, "templates/travel.php");
-  assert.deepEqual(request.body.meta, { seo_title: "Guide", seo_description: "Description" });
+  assert.deepEqual(request.body.meta, {
+    seo_title: "SEO Guide", seo_description: "Description",
+    seo_schema: JSON.stringify({ "@context": "https://schema.org", "@graph": [{ "@type": "Article" }] }),
+  });
   assert.match(request.body.content, /<!-- wp:heading/);
   assert.match(request.body.content, /&lt;script&gt;/);
   assert.doesNotMatch(request.body.content, /<script>/);
@@ -81,4 +85,13 @@ test("WordPress block renderer emits native Gutenberg blocks without weakening H
   assert.match(blocks, /<!-- wp:list -->/);
   assert.doesNotMatch(blocks, /<script>/);
   assert.match(blocks, /&lt;script&gt;/);
+});
+
+test("WordPress renderers place generated visual media safely within the article", () => {
+  const visuals = [{ id: 12, url: "https://site.test/uploads/guide.png", alt: "Beijing skyline", caption: "An original editorial visual" }];
+  const html = markdownToSafeHtml("## Plan\n\nParagraph", visuals);
+  const blocks = markdownToWordPressBlocks("## Plan\n\nParagraph", visuals);
+  assert.match(html, /<figure><img src="https:\/\/site\.test\/uploads\/guide\.png" alt="Beijing skyline"\/>/);
+  assert.match(blocks, /<!-- wp:image \{\"id\":12/);
+  assert.match(blocks, /wp-element-caption/);
 });

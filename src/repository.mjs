@@ -1,5 +1,6 @@
 import { id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
+import { KIMI_MODELS } from "./config.mjs";
 
 export class Repository {
   constructor(db, contentConfig = {}) {
@@ -13,6 +14,32 @@ export class Repository {
         completed_at = NULL, duration_ms = NULL, queue_latency_ms = NULL, updated_at = ?
       WHERE status = 'running'
     `).run(now());
+  }
+
+  getAiSettings(defaultModel) {
+    const saved = this.db.prepare("SELECT value_json FROM runtime_settings WHERE setting_key='ai'").get();
+    const model = json(saved?.value_json, {}).model;
+    const selected = KIMI_MODELS.includes(model) ? model : defaultModel;
+    return {
+      model: selected,
+      source: KIMI_MODELS.includes(model) ? "dashboard" : "environment",
+      models: KIMI_MODELS.map((id) => ({
+        id,
+        label: id === "kimi-k3" ? "Kimi K3" : "Kimi K2.7 Code",
+        description: id === "kimi-k3" ? "Flagship multimodal model for research, writing, and QA." : "Instruction-focused model for tighter structured output and editorial workflows.",
+        supportsImages: true,
+      })),
+    };
+  }
+
+  setAiModel(model, defaultModel) {
+    if (!KIMI_MODELS.includes(model)) throw new Error("Unsupported Kimi model.");
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO runtime_settings(setting_key, value_json, updated_at) VALUES ('ai', ?, ?)
+      ON CONFLICT(setting_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+    `).run(JSON.stringify({ model }), timestamp);
+    return this.getAiSettings(defaultModel);
   }
 
   saveCapture(capture) {
@@ -451,24 +478,27 @@ export class Repository {
     const existing = this.db.prepare("SELECT id, revision FROM article_drafts WHERE brief_id = ?").get(briefId);
     const draftId = existing?.id || id("draft");
     const timestamp = now();
+    const metadata = draftMetadata(draft, brief, this.contentConfig);
     if (existing) {
       this.db.prepare(`
         UPDATE article_drafts SET title=?, slug=?, body_markdown=?, meta_description=?, evidence_ledger_json=?,
           unresolved_conflicts_json=?, verification_notes_json=?, model=?, revision=revision+1,
-          quality_report_json='{}', status='qa_queued', updated_at=?
+          seo_json=?, schema_jsonld=?, quality_report_json='{}', status='qa_queued', updated_at=?
         WHERE id=?
       `).run(draft.title, draft.slug, draft.body_markdown, draft.meta_description, JSON.stringify(draft.evidence_ledger),
-        JSON.stringify(draft.unresolved_conflicts), JSON.stringify(draft.verification_notes || []), model, timestamp, draftId);
+        JSON.stringify(draft.unresolved_conflicts), JSON.stringify(draft.verification_notes || []), model,
+        JSON.stringify(metadata.seo), JSON.stringify(metadata.schema), timestamp, draftId);
     } else {
       this.db.prepare(`
         INSERT INTO article_drafts(id, brief_id, title, slug, body_markdown, quality_report_json, status,
           created_at, updated_at, meta_description, evidence_ledger_json, unresolved_conflicts_json,
-          verification_notes_json, model)
-        VALUES (?, ?, ?, ?, ?, '{}', 'qa_queued', ?, ?, ?, ?, ?, ?, ?)
+          verification_notes_json, model, seo_json, schema_jsonld)
+        VALUES (?, ?, ?, ?, ?, '{}', 'qa_queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(draftId, briefId, draft.title, draft.slug, draft.body_markdown, timestamp, timestamp,
         draft.meta_description, JSON.stringify(draft.evidence_ledger), JSON.stringify(draft.unresolved_conflicts),
-        JSON.stringify(draft.verification_notes || []), model);
+        JSON.stringify(draft.verification_notes || []), model, JSON.stringify(metadata.seo), JSON.stringify(metadata.schema));
     }
+    this.replaceDraftVisuals(draftId, metadata.visuals);
     this.db.prepare("UPDATE topic_candidates SET status='drafted', updated_at=? WHERE id=?").run(timestamp, brief.candidate_id);
     this.db.prepare("UPDATE content_briefs SET status='drafted', updated_at=? WHERE id=?").run(timestamp, briefId);
     this.enqueue("review_draft", draftId);
@@ -489,6 +519,9 @@ export class Repository {
         evidence_ledger: json(draft.evidence_ledger_json, []),
         unresolved_conflicts: json(draft.unresolved_conflicts_json, []),
         verification_notes: json(draft.verification_notes_json, []),
+        seo: json(draft.seo_json, {}),
+        schema_jsonld: json(draft.schema_jsonld, {}),
+        visuals: this.listDraftVisuals(draftId),
       },
       review: review ? hydrateReview(review) : null,
       publication,
@@ -498,6 +531,55 @@ export class Repository {
         offer_ids: json(compositionRow.offer_ids_json, []),
       } : null,
     };
+  }
+
+  listDraftVisuals(draftId) {
+    return this.db.prepare("SELECT * FROM article_visuals WHERE draft_id=? ORDER BY slot").all(draftId);
+  }
+
+  replaceDraftVisuals(draftId, visuals) {
+    const timestamp = now();
+    transaction(this.db, () => {
+      this.db.prepare("DELETE FROM article_visuals WHERE draft_id=?").run(draftId);
+      const insert = this.db.prepare(`
+        INSERT INTO article_visuals(id, draft_id, slot, placement, purpose, alt_text, caption, generation_prompt, aspect_ratio, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      visuals.forEach((visual, index) => insert.run(id("visual"), draftId, index + 1, visual.placement, visual.purpose,
+        visual.alt_text, visual.caption, visual.generation_prompt, visual.aspect_ratio, timestamp, timestamp));
+    });
+  }
+
+  plannedVisuals(draftId) {
+    return this.db.prepare("SELECT * FROM article_visuals WHERE draft_id=? AND status='planned' ORDER BY slot").all(draftId);
+  }
+
+  saveGeneratedVisual(visualId, result) {
+    this.db.prepare(`
+      UPDATE article_visuals SET status='generated', media_path=?, media_url=?, provider=?, model=?, last_error=NULL, updated_at=?
+      WHERE id=?
+    `).run(result.mediaPath, result.mediaUrl, result.provider, result.model, now(), visualId);
+    const visual = this.db.prepare("SELECT draft_id FROM article_visuals WHERE id=?").get(visualId);
+    if (visual) this.refreshDraftSchema(visual.draft_id);
+  }
+
+  failVisual(visualId, error) {
+    this.db.prepare("UPDATE article_visuals SET status='failed', last_error=?, updated_at=? WHERE id=?")
+      .run(String(error?.message || error).slice(0, 4_000), now(), visualId);
+  }
+
+  saveWordPressVisual(visualId, media) {
+    this.db.prepare("UPDATE article_visuals SET wordpress_media_id=?, wordpress_media_url=?, updated_at=? WHERE id=?")
+      .run(media.id, media.url, now(), visualId);
+  }
+
+  refreshDraftSchema(draftId) {
+    const row = this.db.prepare(`
+      SELECT ad.*, cb.destination_slug FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?
+    `).get(draftId);
+    if (!row) return;
+    const schema = buildArticleSchema({ ...row, seo: json(row.seo_json, {}) }, this.listDraftVisuals(draftId), this.contentConfig);
+    this.db.prepare("UPDATE article_drafts SET schema_jsonld=?, updated_at=? WHERE id=?").run(JSON.stringify(schema), now(), draftId);
   }
 
   saveReview(draftId, review, reviewer) {
@@ -530,6 +612,7 @@ export class Repository {
     this.db.prepare(`
       UPDATE wordpress_publications SET post_id=?, post_url=?, status='synced', last_error=NULL, updated_at=? WHERE draft_id=?
     `).run(result.postId, result.postUrl, now(), draftId);
+    for (const visual of result.visuals || []) this.saveWordPressVisual(visual.visualId, visual);
     this.db.prepare("UPDATE article_drafts SET status='wordpress_draft', updated_at=? WHERE id=?").run(now(), draftId);
   }
 
@@ -1163,6 +1246,90 @@ function hydrateSource({ source, assets, structured, claims, blueprint }) {
   }
   delete source.raw_payload_json;
   return { ...source, assets, structured, claims, blueprint };
+}
+
+function draftMetadata(draft, brief, config) {
+  const seo = {
+    meta_title: truncateText(draft.seo?.meta_title || draft.title, 60),
+    focus_keyword: truncateText(draft.seo?.focus_keyword || brief.topic || draft.title, 160),
+    key_takeaways: (draft.seo?.key_takeaways || []).slice(0, 6).map((item) => truncateText(item, 240)),
+    faqs: (draft.faqs || []).slice(0, 5).map((item) => ({ question: truncateText(item.question, 220), answer: truncateText(item.answer, 700) })),
+  };
+  const visuals = normalizeVisuals(draft.visuals, draft, brief);
+  return { seo, visuals, schema: buildArticleSchema({ ...draft, ...seo, seo, destination_slug: brief.destination_slug }, visuals, config) };
+}
+
+function normalizeVisuals(values, draft, brief) {
+  const target = visualCountForWords(wordCount(draft.body_markdown));
+  const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
+  const allowedRatios = ["16:9", "4:3", "1:1", "3:2", "9:16"];
+  const supplied = Array.isArray(values) ? values : [];
+  const visuals = supplied.slice(0, target).map((item, index) => ({
+    placement: allowedPlacements.includes(item?.placement) ? item.placement : defaultPlacement(index),
+    purpose: truncateText(item?.purpose || `Orient readers to ${draft.title}`, 300),
+    alt_text: truncateText(item?.alt_text || `${draft.title} travel illustration`, 220),
+    caption: truncateText(item?.caption || "Illustrative travel scene", 300),
+    generation_prompt: truncateText(item?.generation_prompt || defaultVisualPrompt(draft.title, brief.destination_slug, index), 2_000),
+    aspect_ratio: allowedRatios.includes(item?.aspect_ratio) ? item.aspect_ratio : index === 0 ? "16:9" : "3:2",
+  }));
+  while (visuals.length < target) {
+    const index = visuals.length;
+    visuals.push({
+      placement: defaultPlacement(index), purpose: `Support a key section of ${draft.title}`,
+      alt_text: `${draft.title} travel illustration`, caption: "Illustrative travel scene",
+      generation_prompt: defaultVisualPrompt(draft.title, brief.destination_slug, index), aspect_ratio: index === 0 ? "16:9" : "3:2",
+    });
+  }
+  return visuals;
+}
+
+function buildArticleSchema(draft, visuals, config) {
+  const canonical = config.publicSiteUrl && draft.slug ? `${config.publicSiteUrl}/${draft.slug}/` : null;
+  const generatedImages = visuals.filter((item) => item.status === "generated" && item.media_url).map((item) => item.media_url);
+  const article = {
+    "@type": "Article",
+    headline: draft.title,
+    description: draft.meta_description,
+    inLanguage: "en",
+    author: { "@type": "Organization", name: config.publisherName || "SoloToChina" },
+    publisher: { "@type": "Organization", name: config.publisherName || "SoloToChina" },
+    keywords: draft.seo?.focus_keyword || draft.focus_keyword || "",
+    about: draft.destination_slug || "China travel",
+  };
+  if (canonical) article.mainEntityOfPage = { "@type": "WebPage", "@id": canonical };
+  if (generatedImages.length) article.image = generatedImages;
+  if (config.publisherLogoUrl) article.publisher.logo = { "@type": "ImageObject", url: config.publisherLogoUrl };
+  const graph = [article];
+  const faqs = draft.seo?.faqs || [];
+  if (faqs.length) graph.push({
+    "@type": "FAQPage",
+    mainEntity: faqs.map((item) => ({ "@type": "Question", name: item.question, acceptedAnswer: { "@type": "Answer", text: item.answer } })),
+  });
+  return { "@context": "https://schema.org", "@graph": graph };
+}
+
+function defaultPlacement(index) {
+  return ["hero", "after_intro", "mid_article", "before_faq", "closing"][index] || "mid_article";
+}
+
+function defaultVisualPrompt(title, destination, index) {
+  return `Original editorial travel illustration for \"${title}\" in ${destination || "China"}, scene ${index + 1}; authentic architectural and streetscape atmosphere, no readable text, no logos, no watermark, no copied social-media imagery, natural light, high-detail magazine travel photography.`;
+}
+
+function visualCountForWords(words) {
+  if (words < 1300) return 2;
+  if (words < 2200) return 3;
+  if (words < 3200) return 4;
+  return 5;
+}
+
+function wordCount(text) {
+  return String(text || "").trim().split(/\s+/).filter(Boolean).length;
+}
+
+function truncateText(value, max) {
+  const text = String(value || "");
+  return text.length <= max ? text : text.slice(0, max);
 }
 
 function normalizeValue(value) {

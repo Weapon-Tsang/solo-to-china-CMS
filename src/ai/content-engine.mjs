@@ -24,7 +24,7 @@ const BRIEF_SCHEMA = objectSchema(
 );
 
 const DRAFT_SCHEMA = objectSchema(
-  ["title", "slug", "meta_description", "body_markdown", "evidence_ledger", "unresolved_conflicts", "verification_notes"],
+  ["title", "slug", "meta_description", "body_markdown", "evidence_ledger", "unresolved_conflicts", "verification_notes", "seo", "faqs", "visuals"],
   {
     title: { type: "string" }, slug: { type: "string" }, meta_description: { type: "string" }, body_markdown: { type: "string" },
     evidence_ledger: {
@@ -37,6 +37,16 @@ const DRAFT_SCHEMA = objectSchema(
     },
     unresolved_conflicts: { type: "array", items: { type: "string" } },
     verification_notes: { type: "array", items: { type: "string" } },
+    seo: objectSchema(["meta_title", "focus_keyword", "key_takeaways"], {
+      meta_title: { type: "string" }, focus_keyword: { type: "string" },
+      key_takeaways: { type: "array", items: { type: "string" } },
+    }),
+    faqs: { type: "array", items: objectSchema(["question", "answer"], { question: { type: "string" }, answer: { type: "string" } }) },
+    visuals: { type: "array", items: objectSchema(["placement", "purpose", "alt_text", "caption", "generation_prompt", "aspect_ratio"], {
+      placement: { type: "string", enum: ["hero", "after_intro", "mid_article", "before_faq", "closing"] },
+      purpose: { type: "string" }, alt_text: { type: "string" }, caption: { type: "string" }, generation_prompt: { type: "string" },
+      aspect_ratio: { type: "string", enum: ["16:9", "4:3", "1:1", "3:2", "9:16"] },
+    }) },
   },
 );
 
@@ -87,7 +97,12 @@ export class ContentEngine {
       input: JSON.stringify({ ...contentPackage, revision_feedback: revisionFeedback }),
     });
     result.output.slug = slugify(result.output.slug || result.output.title);
-    result.output.meta_description = truncate(result.output.meta_description, 170);
+    result.output.meta_description = truncate(result.output.meta_description, 160);
+    result.output.seo.meta_title = truncate(result.output.seo.meta_title || result.output.title, 70);
+    result.output.seo.focus_keyword = truncate(result.output.seo.focus_keyword, 160);
+    result.output.seo.key_takeaways = (result.output.seo.key_takeaways || []).slice(0, 6).map((item) => truncate(item, 240));
+    result.output.faqs = (result.output.faqs || []).slice(0, 5).map((item) => ({ question: truncate(item.question, 220), answer: truncate(item.answer, 700) }));
+    result.output.visuals = (result.output.visuals || []).slice(0, 5).map((item) => ({ ...item, purpose: truncate(item.purpose, 300), alt_text: truncate(item.alt_text, 220), caption: truncate(item.caption, 300), generation_prompt: truncate(item.generation_prompt, 2_000) }));
     return result;
   }
 
@@ -123,6 +138,10 @@ const DRAFT_PROMPT = `Write an original, publication-quality English China trave
 - Return a separate evidence ledger mapping each article section to exact claim keys and source IDs.
 - Do not use stale facts. List every used time_sensitive/requires_official claim key in verification_notes and state temporal uncertainty in reader-facing copy.
 - The article should be useful even with no commercial module. Aim for at least 1,200 words when evidence coverage supports it.
+- Make the body easy for Search and AI answer systems to parse: use one answer-first opening paragraph, descriptive H2/H3 headings, short scannable sections, and a visible "Key takeaways" list. Do not make unsupported claims just for SEO.
+- Return 2-5 concise FAQs that are answered by the article and evidence. FAQ answers must not introduce new facts. Include the same questions in a visible "Frequently asked questions" section of body_markdown.
+- Return SEO metadata: a natural meta title under 60 characters, one focus keyword, and 3-6 reader-facing key takeaways. The meta description remains the top-level meta_description field.
+- Return a rights-safe visual plan for original illustrations, never copied UGC. Use 2 visuals for 800-1,299 words, 3 for 1,300-2,199 words, 4 for 2,200-3,199 words, and 5 above that. Each image needs an accurate alt text, a useful placement, a concise caption, an aspect ratio, and an original no-text/no-logo generation_prompt.
 - If revision_feedback exists, fix every blocker without adding unsupported facts.`;
 
 const REVIEW_PROMPT = `Act as an independent senior editor. Audit the English draft against its evidence package and brief.
@@ -161,6 +180,14 @@ function applyDeterministicGates(review, contentPackage) {
   const hiddenVerification = verificationKeys.filter((key) => ledgerKeys.has(key) && !acknowledgedVerification.has(key));
   addGate("temporal-verification", hiddenVerification.length === 0, hiddenVerification.length ? `Used time-sensitive facts without verification notes: ${hiddenVerification.join(", ")}` : "Time-sensitive evidence is flagged or avoided.", "missing_verification_note");
   addGate("minimum-depth", wordCount(draft.body_markdown) >= 800, `Draft has ${wordCount(draft.body_markdown)} words; minimum evidence-backed review threshold is 800.`, "draft_too_short");
+  const seo = draft.seo || {};
+  addGate("seo-metadata", Boolean(seo.meta_title && seo.focus_keyword) && String(seo.meta_title).length <= 60 && String(draft.meta_description || "").length <= 160,
+    "SEO title, focus keyword, and concise meta description are present.", "seo_metadata_invalid");
+  addGate("geo-structure", /(?:^|\n)#{2,3}\s+key takeaways\b/im.test(draft.body_markdown) && /(?:^|\n)#{2,3}\s+frequently asked questions\b/im.test(draft.body_markdown),
+    "Reader-facing Key takeaways and Frequently asked questions sections are required.", "geo_structure_missing");
+  const expectedVisuals = visualCountForWords(wordCount(draft.body_markdown));
+  addGate("visual-plan", Array.isArray(draft.visuals) && draft.visuals.length === expectedVisuals,
+    `Draft needs ${expectedVisuals} rights-safe visual plan item(s) for its length.`, "visual_plan_incomplete");
 
   const dedupedIssues = uniqueBy(issues, (item) => `${item.code}:${item.message}`);
   return {
@@ -178,6 +205,14 @@ function objectSchema(required, properties) {
 
 function wordCount(text) {
   return String(text || "").trim().split(/\s+/).filter(Boolean).length;
+}
+
+function visualCountForWords(words) {
+  if (words < 800) return 2;
+  if (words < 1300) return 2;
+  if (words < 2200) return 3;
+  if (words < 3200) return 4;
+  return 5;
 }
 
 function uniqueBy(items, key) {

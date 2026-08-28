@@ -7,6 +7,7 @@ import { openDatabase } from "./db.mjs";
 import { normalizeXiaohongshuCapture, ValidationError } from "./adapters/xiaohongshu.mjs";
 import { KimiExtractor } from "./ai/kimi.mjs";
 import { ContentEngine } from "./ai/content-engine.mjs";
+import { VertexImagen } from "./visuals/vertex-imagen.mjs";
 import { Pipeline } from "./pipeline.mjs";
 import { Repository } from "./repository.mjs";
 import { WordPressDraftAdapter } from "./wordpress.mjs";
@@ -23,6 +24,9 @@ const MIME = {
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
   ".ico": "image/x-icon",
 };
 
@@ -33,13 +37,15 @@ export function createApplication(config = loadConfig()) {
   const logger = createLogger(config.logging);
   const db = openDatabase(config.databasePath);
   const repository = new Repository(db, { ...config.content, searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions });
-  const extractor = new KimiExtractor(config.kimi);
-  const contentEngine = new ContentEngine(config.kimi);
+  const activeKimi = { ...config.kimi, model: repository.getAiSettings(config.kimi.model).model };
+  const extractor = new KimiExtractor(activeKimi);
+  const contentEngine = new ContentEngine(activeKimi);
+  const visuals = new VertexImagen(config.visuals);
   const wordpress = new WordPressDraftAdapter(config.wordpress);
   const searchConsole = new SearchConsoleAdapter(config.searchConsole);
   const commercialComposer = new CommercialComposer(config.commercial);
   const pipeline = new Pipeline(repository, extractor, {
-    contentEngine, wordpress, searchConsole, commercialComposer, contentConfig: config.content,
+    contentEngine, visuals, wordpress, searchConsole, commercialComposer, contentConfig: config.content,
     logger: logger.child({ component: "pipeline" }),
   });
   const notifier = new ExceptionNotifier(repository, config.notifications);
@@ -76,6 +82,8 @@ export function createApplication(config = loadConfig()) {
       setCors(request, response);
       if (request.method === "OPTIONS") return response.writeHead(204).end();
       const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
+      const captureOnly = isCaptureHost(request, config.captureHost);
+      if (captureOnly && !isCaptureRoute(request.method, url.pathname)) return sendJson(response, 404, { error: "Not found." });
 
       if (request.method === "GET" && url.pathname === "/api/health") {
         const telemetry = repository.jobTelemetry(config.telemetry.windowHours);
@@ -84,7 +92,9 @@ export function createApplication(config = loadConfig()) {
           version: VERSION,
           aiConfigured: extractor.enabled,
           aiProvider: extractor.enabled ? "kimi" : null,
+          aiModel: extractor.enabled ? activeKimi.model : null,
           contentAutomationConfigured: contentEngine.enabled,
+          visualGenerationConfigured: visuals.enabled,
           wordpressConfigured: wordpress.enabled,
           searchConsoleConfigured: searchConsole.enabled,
           maintenanceEnabled: config.maintenance.enabled,
@@ -92,9 +102,22 @@ export function createApplication(config = loadConfig()) {
           queueActive: telemetry.active,
         });
       }
+      if (request.method === "GET" && url.pathname.startsWith("/media/")) {
+        return serveMedia(config.visuals.mediaDir, url.pathname.slice("/media/".length), response);
+      }
       if (request.method === "GET" && url.pathname === "/api/ready") {
         db.prepare("SELECT 1 AS ready").get();
         return sendJson(response, 200, { ready: true, version: VERSION, database: "ready" });
+      }
+      if (request.method === "GET" && url.pathname === "/api/settings/ai") {
+        return sendJson(response, 200, { configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, ...repository.getAiSettings(config.kimi.model) });
+      }
+      if (request.method === "POST" && url.pathname === "/api/settings/ai") {
+        authorizeAdmin(request, config.adminToken);
+        const payload = await readJson(request, 20_000);
+        const settings = repository.setAiModel(String(payload.model || ""), config.kimi.model);
+        activeKimi.model = settings.model;
+        return sendJson(response, 200, { configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, ...settings });
       }
       if (request.method === "POST" && url.pathname === "/api/captures") {
         authorizeCapture(request, config.captureToken);
@@ -111,6 +134,7 @@ export function createApplication(config = loadConfig()) {
       }
       const sourceMatch = url.pathname.match(/^\/api\/sources\/([^/]+)$/);
       if (request.method === "GET" && sourceMatch) {
+        if (captureOnly) authorizeCapture(request, config.captureToken);
         const source = repository.getSource(sourceMatch[1]);
         return source ? sendJson(response, 200, source) : sendJson(response, 404, { error: "Source not found." });
       }
@@ -311,6 +335,18 @@ function isLoopbackHost(host) {
   return ["127.0.0.1", "localhost", "::1"].includes(host);
 }
 
+function isCaptureHost(request, captureHost) {
+  if (!captureHost) return false;
+  const host = String(request.headers.host || "").replace(/:\d+$/, "").toLowerCase();
+  return host === captureHost;
+}
+
+function isCaptureRoute(method, pathname) {
+  return (method === "GET" && ["/api/health", "/api/ready"].includes(pathname))
+    || (method === "POST" && pathname === "/api/captures")
+    || (method === "GET" && /^\/api\/sources\/[^/]+$/.test(pathname));
+}
+
 function normalizeRequestId(value) {
   const candidate = Array.isArray(value) ? value[0] : String(value || "");
   return /^[A-Za-z0-9._-]{1,128}$/.test(candidate) ? candidate : "";
@@ -383,6 +419,23 @@ function serveStatic(publicDir, pathname, response) {
     } else {
       sendJson(response, 404, { error: "Not found." });
     }
+  }
+}
+
+function serveMedia(mediaDir, basename, response) {
+  if (!/^[A-Za-z0-9_-]+\.(?:png|jpe?g|webp)$/.test(basename)) return sendJson(response, 404, { error: "Not found." });
+  const filename = path.join(path.resolve(mediaDir), basename);
+  try {
+    const stat = fs.statSync(filename);
+    if (!stat.isFile()) throw new Error("not a file");
+    response.writeHead(200, {
+      "content-type": MIME[path.extname(filename).toLowerCase()] || "application/octet-stream",
+      "cache-control": "public, max-age=31536000, immutable",
+      "x-content-type-options": "nosniff",
+    });
+    fs.createReadStream(filename).pipe(response);
+  } catch {
+    sendJson(response, 404, { error: "Not found." });
   }
 }
 

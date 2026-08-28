@@ -74,7 +74,7 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(allowed.status, 200);
   assert.equal(allowed.headers.get("x-request-id"), "test-request-id");
   const health = await (await fetch(`${baseUrl}/api/health`)).json();
-  assert.equal(health.version, "1.3.0");
+  assert.equal(health.version, "1.4.0");
   assert.equal(typeof health.queueActive, "number");
   assert.equal(health.aiProvider, null);
   assert.equal(health.searchConsoleConfigured, false);
@@ -93,6 +93,17 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   const missing = await fetch(`${baseUrl}/api/not-found`);
   assert.equal(missing.status, 404);
   assert.deepEqual(await missing.json(), { error: "Not found." });
+
+  const settings = await (await fetch(`${baseUrl}/api/settings/ai`)).json();
+  assert.equal(settings.model, "kimi-k3");
+  assert.equal(settings.models.length, 2);
+  const changed = await fetch(`${baseUrl}/api/settings/ai`, {
+    method: "POST",
+    headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
+    body: JSON.stringify({ model: "kimi-k2.7-code" }),
+  });
+  assert.equal(changed.status, 200);
+  assert.equal((await changed.json()).model, "kimi-k2.7-code");
 });
 
 test("Kimi configuration uses the provider's server-side defaults", () => {
@@ -103,6 +114,34 @@ test("Kimi configuration uses the provider's server-side defaults", () => {
   assert.equal(config.kimi.maxCompletionTokens, 16_000);
   assert.equal(config.kimi.requestTimeoutMs, 360_000);
   assert.equal(config.kimi.imageTimeoutMs, 20_000);
+});
+
+test("capture-only Cloudflare hostname cannot expose dashboard data", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-capture-host-test-"));
+  const config = loadConfig({
+    HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "capture-host.sqlite"),
+    CAPTURE_TOKEN: "capture-secret", ADMIN_TOKEN: "admin-secret", CAPTURE_HOST: "capture.example.test",
+    MAINTENANCE_ENABLED: "false", LOG_LEVEL: "error",
+  });
+  const app = createApplication(config);
+  await app.start();
+  t.after(async () => {
+    await app.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
+  const requestOnCaptureHost = (pathname, headers = {}) => new Promise((resolve, reject) => {
+    const request = http.request(`${baseUrl}${pathname}`, { headers: { host: "capture.example.test", ...headers } }, (response) => {
+      response.resume();
+      response.once("end", () => resolve(response.statusCode));
+    });
+    request.once("error", reject);
+    request.end();
+  });
+  assert.equal(await requestOnCaptureHost("/api/dashboard"), 404);
+  assert.equal(await requestOnCaptureHost("/api/health"), 200);
+  assert.equal(await requestOnCaptureHost("/api/sources/src_unknown"), 401);
+  assert.equal(await requestOnCaptureHost("/api/sources/src_unknown", { authorization: "Bearer capture-secret" }), 404);
 });
 
 test("non-loopback binding refuses to start without both operational tokens", () => {

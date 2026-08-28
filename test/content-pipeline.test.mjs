@@ -81,8 +81,11 @@ test("evidence threshold automatically drives brief, draft, QA, and WordPress dr
   assert.equal(wordpress.calls.length, 1);
   assert.match(wordpress.calls[0].draft.body_markdown, /Optional booking resources/);
   assert.match(wordpress.calls[0].draft.body_markdown, /Affiliate disclosure/);
-  const researchDraft = repository.getDraftPackage(content[0].draft_id).draft.body_markdown;
+  const generatedPackage = repository.getDraftPackage(content[0].draft_id);
+  const researchDraft = generatedPackage.draft.body_markdown;
   assert.doesNotMatch(researchDraft, /Trip\.com|Optional booking resources/);
+  assert.equal(generatedPackage.draft.visuals.length, 2);
+  assert.equal(generatedPackage.draft.schema_jsonld["@context"], "https://schema.org");
   assert.equal(JSON.stringify(repository.getTopicPackage(content[0].id)).includes("Trip.com"), false);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status='failed'").get().count, 0);
 });

@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 export class WordPressDraftAdapter {
   constructor(config, fetchImpl = fetch) {
     this.config = config;
@@ -47,10 +50,11 @@ export class WordPressDraftAdapter {
         throw new Error(`WordPress post ${existingPostId} is '${current.status}', so the engine refuses to overwrite it.`);
       }
     }
+    const visuals = await this.resolveVisualMedia(draft.visuals || []);
     const post = {
       title: draft.title,
       slug: draft.slug,
-      content: this.config.contentFormat === "html" ? markdownToSafeHtml(draft.body_markdown) : markdownToWordPressBlocks(draft.body_markdown),
+      content: this.config.contentFormat === "html" ? markdownToSafeHtml(draft.body_markdown, visuals) : markdownToWordPressBlocks(draft.body_markdown, visuals),
       excerpt: draft.meta_description,
       status: "draft",
       comment_status: "closed",
@@ -60,17 +64,49 @@ export class WordPressDraftAdapter {
     if (this.config.categoryIds?.length) post.categories = this.config.categoryIds;
     if (this.config.tagIds?.length) post.tags = this.config.tagIds;
     if (this.config.featuredMediaId > 0) post.featured_media = this.config.featuredMediaId;
+    else if (visuals[0]?.id) post.featured_media = visuals[0].id;
     if (this.config.template) post.template = this.config.template;
     const meta = {};
-    if (this.config.seoTitleMetaKey) meta[this.config.seoTitleMetaKey] = draft.title;
+    if (this.config.seoTitleMetaKey) meta[this.config.seoTitleMetaKey] = draft.seo?.meta_title || draft.title;
     if (this.config.seoDescriptionMetaKey) meta[this.config.seoDescriptionMetaKey] = draft.meta_description;
+    if (this.config.schemaJsonldMetaKey && draft.schema_jsonld) meta[this.config.schemaJsonldMetaKey] = JSON.stringify(draft.schema_jsonld);
     if (Object.keys(meta).length) post.meta = meta;
     const result = await this.request(`/wp-json/wp/v2/posts${existingPostId ? `/${existingPostId}` : ""}`, {
       method: "POST",
       body: JSON.stringify(post),
     });
     if (result.status !== "draft") throw new Error("WordPress did not confirm draft status; refusing to record the sync.");
-    return { postId: result.id, postUrl: result.link || null, status: result.status };
+    return { postId: result.id, postUrl: result.link || null, status: result.status, visuals: visuals.map((item) => ({ visualId: item.visualId, id: item.id, url: item.url })) };
+  }
+
+  async resolveVisualMedia(visuals) {
+    const output = [];
+    for (const visual of visuals.filter((item) => item.status === "generated" && item.media_path)) {
+      if (visual.wordpress_media_id && visual.wordpress_media_url) {
+        output.push({ visualId: visual.id, id: visual.wordpress_media_id, url: visual.wordpress_media_url, alt: visual.alt_text, caption: visual.caption });
+        continue;
+      }
+      const media = await this.uploadMedia(visual);
+      output.push({ visualId: visual.id, ...media, alt: visual.alt_text, caption: visual.caption });
+    }
+    return output;
+  }
+
+  async uploadMedia(visual) {
+    const filename = path.basename(visual.media_path);
+    const response = await this.fetch(`${this.config.siteUrl}/wp-json/wp/v2/media`, {
+      method: "POST",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${this.config.username}:${this.config.applicationPassword}`).toString("base64")}`,
+        "content-type": mimeForFilename(filename),
+        "content-disposition": `attachment; filename=\"${filename}\"`,
+      },
+      body: fs.readFileSync(visual.media_path),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || !body.id) throw new Error(`WordPress media upload failed (${response.status}): ${body?.message || response.statusText}`);
+    return { id: body.id, url: body.source_url || body.guid?.rendered || "" };
   }
 
   async request(pathname, options) {
@@ -93,16 +129,41 @@ export class WordPressDraftAdapter {
   }
 }
 
-export function markdownToSafeHtml(markdown) {
-  return parseMarkdown(markdown).map((block) => block.html).join("\n");
+export function markdownToSafeHtml(markdown, visuals = []) {
+  return injectVisuals(parseMarkdown(markdown).map((block) => block.html), visuals, htmlVisual).join("\n");
 }
 
-export function markdownToWordPressBlocks(markdown) {
-  return parseMarkdown(markdown).map((block) => {
+export function markdownToWordPressBlocks(markdown, visuals = []) {
+  const blocks = parseMarkdown(markdown).map((block) => {
     if (block.type === "heading") return `<!-- wp:heading {"level":${block.level}} -->\n${block.html}\n<!-- /wp:heading -->`;
     if (block.type === "list") return `<!-- wp:list -->\n${block.html}\n<!-- /wp:list -->`;
     return `<!-- wp:paragraph -->\n${block.html}\n<!-- /wp:paragraph -->`;
-  }).join("\n\n");
+  });
+  return injectVisuals(blocks, visuals, wordpressVisual).join("\n\n");
+}
+
+function injectVisuals(blocks, visuals, renderer) {
+  const output = [...blocks];
+  const ordered = [...visuals].filter((item) => item.id && item.url);
+  ordered.forEach((visual, index) => {
+    const position = Math.min(output.length, Math.max(1, Math.round((index + 1) * output.length / (ordered.length + 1)) + index));
+    output.splice(position, 0, renderer(visual));
+  });
+  return output;
+}
+
+function wordpressVisual(visual) {
+  const caption = visual.caption ? `\n<figcaption class=\"wp-element-caption\">${escapeHtml(visual.caption)}</figcaption>` : "";
+  return `<!-- wp:image {"id":${visual.id},"sizeSlug":"large","linkDestination":"none"} -->\n<figure class=\"wp-block-image size-large\"><img src=\"${escapeHtml(visual.url)}\" alt=\"${escapeHtml(visual.alt || "")}\" class=\"wp-image-${visual.id}\"/>${caption}</figure>\n<!-- /wp:image -->`;
+}
+
+function htmlVisual(visual) {
+  const caption = visual.caption ? `<figcaption>${escapeHtml(visual.caption)}</figcaption>` : "";
+  return `<figure><img src=\"${escapeHtml(visual.url)}\" alt=\"${escapeHtml(visual.alt || "")}\"/>${caption}</figure>`;
+}
+
+function mimeForFilename(filename) {
+  return /\.jpe?g$/i.test(filename) ? "image/jpeg" : /\.webp$/i.test(filename) ? "image/webp" : "image/png";
 }
 
 function parseMarkdown(markdown) {

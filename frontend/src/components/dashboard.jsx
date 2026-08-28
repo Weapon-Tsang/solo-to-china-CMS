@@ -19,6 +19,7 @@ export const views = {
   commercial: { label: "Offers", title: "Commercial offers", description: "Manage the isolated affiliate layer without touching research knowledge.", icon: TicketCheck },
   exceptions: { label: "Exceptions", title: "Exceptions", description: "Only the issues that genuinely need human judgment or intervention.", icon: CircleAlert },
   maintenance: { label: "Maintenance", title: "System maintenance", description: "Quiet automation for backups, reconciliation, sync, and cleanup.", icon: Gauge },
+  settings: { label: "Settings", title: "System settings", description: "Choose the active Kimi model and view media-generation readiness.", icon: Settings2 },
 };
 
 export const emptyIcons = {
@@ -61,7 +62,7 @@ export function Topbar({ health, refreshing, onRefresh }) {
               {healthy && <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />}
               <span className={cn("relative inline-flex size-2 rounded-full", healthy ? "bg-emerald-500" : "bg-red-500")} />
             </span>
-            <span className="max-w-40 truncate">{health?.aiConfigured ? "Kimi configured" : healthy ? "Capture ready · Kimi paused" : "Engine offline"}</span>
+            <span className="max-w-40 truncate">{health?.aiConfigured ? `Kimi · ${health.aiModel || "configured"}` : healthy ? "Capture ready · Kimi paused" : "Engine offline"}</span>
           </Badge>
           <Button variant="ghost" size="icon" aria-label="Refresh dashboard" title="Refresh dashboard" onClick={onRefresh} disabled={refreshing}>
             <RefreshCw className={cn(refreshing && "animate-spin")} />
@@ -160,7 +161,7 @@ export function TableShell({ children, className }) {
 
 export function StatusPill({ status }) {
   const normalized = String(status || "").toLowerCase();
-  const variant = ["processed", "corroborated", "succeeded", "publish", "active", "ready_for_wordpress"].includes(normalized)
+  const variant = ["processed", "corroborated", "succeeded", "publish", "active", "ready", "configured", "ready_for_wordpress"].includes(normalized)
     ? "success" : ["exception", "conflicted", "blocker", "failed"].includes(normalized)
       ? "destructive" : ["warning", "needs_ai", "pending", "retry", "time_sensitive"].includes(normalized)
         ? "warning" : ["candidate", "queued", "running"].includes(normalized) ? "info" : "default";

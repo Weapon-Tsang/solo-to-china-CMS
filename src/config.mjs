@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+export const KIMI_MODELS = ["kimi-k3", "kimi-k2.7-code"];
+
 export function loadConfig(env = process.env) {
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
   return {
@@ -12,20 +14,34 @@ export function loadConfig(env = process.env) {
     databasePath,
     captureToken: env.CAPTURE_TOKEN || "",
     adminToken: env.ADMIN_TOKEN || "",
+    captureHost: hostname(env.CAPTURE_HOST),
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
-      model: env.KIMI_MODEL || "kimi-k3",
+      model: KIMI_MODELS.includes(env.KIMI_MODEL) ? env.KIMI_MODEL : "kimi-k3",
       baseUrl: (env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, ""),
       maxImages: integer(env.KIMI_MAX_IMAGES || env.AI_MAX_IMAGES, 8),
       maxCompletionTokens: integer(env.KIMI_MAX_COMPLETION_TOKENS, 16_000),
       requestTimeoutMs: integer(env.KIMI_REQUEST_TIMEOUT_MS, 360_000),
       imageTimeoutMs: integer(env.KIMI_IMAGE_TIMEOUT_MS, 20_000),
     },
+    visuals: {
+      provider: choice(env.VISUAL_PROVIDER, ["none", "vertex_imagen"], "none"),
+      projectId: env.GOOGLE_CLOUD_PROJECT || "",
+      location: env.VERTEX_AI_LOCATION || "us-central1",
+      model: env.VERTEX_IMAGEN_MODEL || "imagen-4.0-generate-001",
+      mediaDir: path.resolve(root, env.GENERATED_MEDIA_DIR || "data/generated-media"),
+      publicBaseUrl: (env.PUBLIC_BASE_URL || "").replace(/\/$/, ""),
+      accessToken: env.VERTEX_AI_ACCESS_TOKEN || "",
+      requestTimeoutMs: integer(env.VERTEX_IMAGE_TIMEOUT_MS, 120_000),
+    },
     content: {
       minFacts: integer(env.AUTO_CONTENT_MIN_FACTS, 5),
       maxPerDestination: integer(env.AUTO_CONTENT_MAX_PER_DESTINATION, 1),
       staleAfterDays: integer(env.CONTENT_STALE_AFTER_DAYS, 365),
       volatileStaleAfterDays: integer(env.CONTENT_VOLATILE_STALE_AFTER_DAYS, 90),
+      publicSiteUrl: (env.PUBLIC_CONTENT_SITE_URL || "").replace(/\/$/, ""),
+      publisherName: env.CONTENT_PUBLISHER_NAME || "SoloToChina",
+      publisherLogoUrl: env.CONTENT_PUBLISHER_LOGO_URL || "",
     },
     wordpress: {
       siteUrl: (env.WORDPRESS_SITE_URL || "").replace(/\/$/, ""),
@@ -40,6 +56,7 @@ export function loadConfig(env = process.env) {
       contentFormat: choice(env.WORDPRESS_CONTENT_FORMAT, ["blocks", "html"], "blocks"),
       seoTitleMetaKey: safeMetaKey(env.WORDPRESS_SEO_TITLE_META_KEY),
       seoDescriptionMetaKey: safeMetaKey(env.WORDPRESS_SEO_DESCRIPTION_META_KEY),
+      schemaJsonldMetaKey: safeMetaKey(env.WORDPRESS_SCHEMA_JSONLD_META_KEY),
     },
     searchConsole: {
       siteUrl: env.SEARCH_CONSOLE_SITE_URL || "",
@@ -110,4 +127,12 @@ function safeMetaKey(value) {
 function safeTemplate(value) {
   const normalized = String(value || "").trim();
   return normalized && !normalized.includes("..") && /^[A-Za-z0-9_./-]{1,191}$/.test(normalized) ? normalized : "";
+}
+
+function hostname(value) {
+  try {
+    return value ? new URL(value.includes("://") ? value : `https://${value}`).hostname.toLowerCase() : "";
+  } catch {
+    return "";
+  }
 }

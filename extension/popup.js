@@ -1,3 +1,4 @@
+const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";
 const saveButton = document.querySelector("#save");
 const settingsButton = document.querySelector("#save-settings");
 const endpointInput = document.querySelector("#endpoint");
@@ -13,7 +14,7 @@ saveButton.addEventListener("click", saveCurrentNote);
 settingsButton.addEventListener("click", saveSettings);
 
 async function restoreSettings() {
-  const settings = await chrome.storage.local.get({ endpoint: "http://127.0.0.1:4310", token: "", lastCapture: null });
+  const settings = await chrome.storage.local.get({ endpoint: DEFAULT_ENDPOINT, token: "", lastCapture: null });
   endpointInput.value = settings.endpoint;
   tokenInput.value = settings.token;
   if (settings.lastCapture) renderCaptureFeedback(settings.lastCapture);
@@ -22,7 +23,7 @@ async function restoreSettings() {
 async function saveSettings() {
   await chrome.storage.local.set({ endpoint: endpointInput.value.replace(/\/$/, ""), token: tokenInput.value });
   show("Settings saved.", "success");
-  showFeedback("success", "Connection settings saved", "The extension will use this local Engine address.");
+  showFeedback("success", "Connection settings saved", "The extension will use this Engine address.");
 }
 
 async function saveCurrentNote() {
@@ -42,7 +43,7 @@ async function saveCurrentNote() {
     });
     if (!capture?.text || capture.text.length < 20) throw new Error("Could not read enough visible note content. Try opening the note detail page.");
 
-    const settings = await chrome.storage.local.get({ endpoint: "http://127.0.0.1:4310", token: "" });
+    const settings = await chrome.storage.local.get({ endpoint: DEFAULT_ENDPOINT, token: "" });
     show("Saving and queuing extraction…");
     const response = await fetch(`${settings.endpoint.replace(/\/$/, "")}/api/captures`, {
       method: "POST",

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Activity, CheckCircle2, Clock3, ExternalLink, Gauge, Play, RefreshCw, RotateCcw, Webhook,
 } from "lucide-react";
@@ -17,9 +18,27 @@ export function ViewRenderer(props) {
     commercial: CommercialView,
     exceptions: ExceptionsView,
     maintenance: MaintenanceView,
+    settings: SettingsView,
   };
   const Component = components[props.view];
   return <Component {...props} />;
+}
+
+function SettingsView({ data, health, onAction, actionBusy }) {
+  const [model, setModel] = useState(data?.model || "kimi-k3");
+  useEffect(() => setModel(data?.model || "kimi-k3"), [data?.model]);
+  const save = () => onAction("/api/settings/ai", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model }),
+  }, `Active model changed to ${model}`);
+  return <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,.75fr)]">
+    <Card className="p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">Kimi model</div><p className="mt-1 text-xs leading-relaxed text-slate-500">Applies to queued research extraction, planning, writing, and quality review. Each saved output records the exact model used.</p></div><StatusPill status={data?.configured ? "configured" : "needs_ai"} /></div>
+      <div className="mt-5 space-y-2">{(data?.models || []).map((item) => <label key={item.id} className={cn("flex cursor-pointer gap-3 rounded-xl border p-3 transition", model === item.id ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300")}><input className="mt-1 accent-slate-900" type="radio" name="kimi-model" value={item.id} checked={model === item.id} onChange={() => setModel(item.id)} /><span><span className="block text-xs font-semibold text-slate-900">{item.label}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{item.description}</span><span className="mt-1 block text-[10px] text-emerald-600">Vision input supported</span></span></label>)}</div>
+      <div className="mt-5 flex items-center gap-3"><Button size="sm" disabled={actionBusy || !data?.configured || model === data?.model} onClick={save}><CheckCircle2 /> Save model</Button><span className="text-[11px] text-slate-400">Source: {data?.source || "environment"}</span></div>
+    </Card>
+    <Card className="p-5"><div className="text-sm font-semibold text-slate-900">Output readiness</div><div className="mt-4 space-y-3 text-xs text-slate-600"><div className="flex items-center justify-between gap-3"><span>SEO / GEO metadata</span><StatusPill status="ready" /></div><div className="flex items-center justify-between gap-3"><span>Structured data package</span><StatusPill status="ready" /></div><div className="flex items-center justify-between gap-3"><span>Cloud visual generation</span><StatusPill status={health?.visualGenerationConfigured ? "ready" : "pending"} /></div></div><p className="mt-5 text-[11px] leading-relaxed text-slate-400">Visual plans are always created with drafts. When Vertex Imagen is configured on Google Cloud, the engine renders and attaches the planned images automatically.</p></Card>
+  </div>;
 }
 
 function SourcesView({ data, onGuide, onOpenSource }) {

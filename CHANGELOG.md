@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 — 2026-08-28
 
 - Switched the active AI provider to Kimi Chat Completions with JSON Schema structured output and trusted Xiaohongshu image-to-base64 vision input.
+- Added persistent dashboard selection for Kimi K3 and Kimi K2.7 Code, with the active model exposed in the operator status badge.
+- Added SEO/GEO output metadata, visible key takeaways and FAQs, `Article` / `FAQPage` JSON-LD, and deterministic output gates.
+- Added 2--5 original editorial visual plans per Draft, optional Google Vertex Imagen rendering, media serving, and WordPress media upload/placement.
+- Added GCE + Cloudflare Tunnel deployment assets, a capture-only Cloudflare hostname boundary, and an origin-pinned cloud extension packaging command.
 - Added an isolated, Windows-compatible `npm run release:check` gate: production build, static checks, tests, temporary SQLite migrations and writes, temporary server/API/UI smoke checks, log scanning, cleanup verification, and Chrome extension static validation.
 - Corrected unknown API `GET` routes so they return a JSON `404` instead of the single-page-app HTML fallback.
 

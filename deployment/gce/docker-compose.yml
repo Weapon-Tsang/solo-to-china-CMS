@@ -1,0 +1,25 @@
+services:
+  engine:
+    image: ${ENGINE_IMAGE}
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      DATABASE_PATH: /var/lib/solo-to-china/solo-to-china.sqlite
+      BACKUP_DIR: /var/lib/solo-to-china/backups
+      GENERATED_MEDIA_DIR: /var/lib/solo-to-china/generated-media
+    volumes:
+      - solo_to_china_data:/var/lib/solo-to-china
+    expose:
+      - "8080"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - engine
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+
+volumes:
+  solo_to_china_data:
