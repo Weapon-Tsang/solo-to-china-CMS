@@ -1,14 +1,17 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-export const KIMI_MODELS = ["kimi-k3", "kimi-k2.7-code"];
+export const KIMI_MODELS = ["kimi-k2.7-code", "kimi-k3"];
 
 export function loadConfig(env = process.env) {
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
+  const imageProvider = env.IMAGE_PROVIDER || env.VISUAL_PROVIDER || "none";
   return {
     root,
+    contentStrategy: CONTENT_STRATEGY,
     host: env.HOST || "127.0.0.1",
     port: integer(env.PORT, 4310),
     databasePath,
@@ -17,7 +20,7 @@ export function loadConfig(env = process.env) {
     captureHost: hostname(env.CAPTURE_HOST),
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
-      model: KIMI_MODELS.includes(env.KIMI_MODEL) ? env.KIMI_MODEL : "kimi-k3",
+      model: KIMI_MODELS.includes(env.KIMI_MODEL) ? env.KIMI_MODEL : "kimi-k2.7-code",
       baseUrl: (env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, ""),
       maxImages: integer(env.KIMI_MAX_IMAGES || env.AI_MAX_IMAGES, 8),
       maxCompletionTokens: integer(env.KIMI_MAX_COMPLETION_TOKENS, 16_000),
@@ -25,10 +28,13 @@ export function loadConfig(env = process.env) {
       imageTimeoutMs: integer(env.KIMI_IMAGE_TIMEOUT_MS, 20_000),
     },
     visuals: {
-      provider: choice(env.VISUAL_PROVIDER, ["none", "vertex_imagen"], "none"),
+      enabled: boolean(env.IMAGE_ENABLED, false),
+      provider: choice(imageProvider, ["none", "vertex_imagen"], "none"),
       projectId: env.GOOGLE_CLOUD_PROJECT || "",
       location: env.VERTEX_AI_LOCATION || "us-central1",
-      model: env.VERTEX_IMAGEN_MODEL || "imagen-4.0-generate-001",
+      model: env.IMAGE_MODEL || env.VERTEX_IMAGEN_MODEL || "imagen-4.0-generate-001",
+      coverQuality: env.IMAGE_COVER_QUALITY || "1K",
+      inlineQuality: env.IMAGE_INLINE_QUALITY || "1K",
       mediaDir: path.resolve(root, env.GENERATED_MEDIA_DIR || "data/generated-media"),
       publicBaseUrl: (env.PUBLIC_BASE_URL || "").replace(/\/$/, ""),
       accessToken: env.VERTEX_AI_ACCESS_TOKEN || "",
@@ -57,6 +63,7 @@ export function loadConfig(env = process.env) {
       seoTitleMetaKey: safeMetaKey(env.WORDPRESS_SEO_TITLE_META_KEY),
       seoDescriptionMetaKey: safeMetaKey(env.WORDPRESS_SEO_DESCRIPTION_META_KEY),
       schemaJsonldMetaKey: safeMetaKey(env.WORDPRESS_SCHEMA_JSONLD_META_KEY),
+      strategyVersionMetaKey: safeMetaKey(env.WORDPRESS_STRATEGY_VERSION_META_KEY),
     },
     searchConsole: {
       siteUrl: env.SEARCH_CONSOLE_SITE_URL || "",

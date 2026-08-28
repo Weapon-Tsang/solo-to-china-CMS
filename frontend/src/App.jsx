@@ -15,6 +15,7 @@ import { ViewRenderer } from "@/views";
 
 const endpoints = {
   sources: "/api/sources",
+  recommendations: "/api/recommendations",
   knowledge: "/api/knowledge",
   blueprints: "/api/editorial-blueprints",
   content: "/api/content",
@@ -131,7 +132,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <Topbar health={health || { ok: !error }} refreshing={refreshing} onRefresh={() => refresh(true)} />
       <main className="mx-auto w-full max-w-[1440px] space-y-6 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
-        <PageHeading view={activeView} />
+        <PageHeading view={activeView} health={health} />
         <Metrics totals={totals} />
         <Tabs value={activeView} onValueChange={setActiveView}>
           <div className="sticky top-[66px] z-30 -mx-1 overflow-x-auto px-1 py-1 scrollbar-none">
@@ -142,7 +143,7 @@ export default function App() {
         <section aria-live="polite">
           {loading ? <LoadingView /> : error ? <EmptyState icon="offline" title="Couldn’t load this workspace" description={error} action={() => refresh(true)} actionLabel="Try again" /> : <ViewRenderer view={activeView} data={viewData} health={health} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} actionBusy={actionBusy} />}
         </section>
-        <footer className="flex items-center justify-between border-t border-slate-200/70 pt-5 text-[10px] text-slate-400"><span>SoloToChina Research Engine</span><span>v{health?.version || "1.3.0"} · Human-selected sources only</span></footer>
+        <footer className="flex items-center justify-between border-t border-slate-200/70 pt-5 text-[10px] text-slate-400"><span>SoloToChina Research Engine</span><span>App v{health?.version || "—"} · Strategy v{health?.contentStrategy?.version || "—"} · Human-selected sources only</span></footer>
       </main>
       <DetailDialog detail={detail} health={health} actionBusy={actionBusy} onOpenChange={(open) => setDetail((current) => ({ ...current, open }))} onAction={runAction} onClose={() => setDetail({ open: false, type: null, data: null, loading: false })} />
       <Toast {...toast} />
@@ -189,7 +190,7 @@ function DetailCard({ title, className, children }) {
 
 const guides = {
   capture: { icon: AppWindow, title: "Capture your first source", description: "Discovery remains human-led. The extension only reads the note you explicitly opened and saved.", steps: ["Open Chrome Extensions and load the repository extension/ folder as an unpacked extension.", "Open one Xiaohongshu /explore/ note that you already selected.", "Choose Save to SoloToChina. The source will enter extraction automatically."], code: "Engine URL: http://127.0.0.1:4310" },
-  ai: { icon: KeyRound, title: "Enable Kimi extraction", description: "Add a Kimi Open Platform API key to the server environment, then restart the engine. Captures already queued as needs_ai remain safe.", steps: ["Set KIMI_API_KEY in .env or the process environment.", "Choose Kimi K3 or K2.7 Code in System settings; the default is K3.", "Confirm the active model from the top status badge."], code: "$env:KIMI_API_KEY = \"your-kimi-key\"\n$env:KIMI_MODEL = \"kimi-k3\"\nnpm start" },
+  ai: { icon: KeyRound, title: "Enable Kimi extraction", description: "Add a Kimi Open Platform API key to the server environment, then restart the engine. Captures already queued as needs_ai remain safe.", steps: ["Set KIMI_API_KEY in .env or the process environment.", "Kimi K2.7 Code is the default; Kimi K3 remains selectable in System settings.", "Confirm the active model from the top status badge."], code: "$env:KIMI_API_KEY = \"your-kimi-key\"\n$env:KIMI_MODEL = \"kimi-k2.7-code\"\nnpm start" },
   wordpress: { icon: Settings2, title: "Connect WordPress", description: "Use a least-privilege WordPress Application Password. The engine always creates drafts and never publishes.", steps: ["Create an editor Application Password in WordPress.", "Set site URL, username, and application password in the engine environment.", "Restart the engine. Inventory sync will begin automatically."], code: "WORDPRESS_SITE_URL=https://example.com\nWORDPRESS_USERNAME=editor\nWORDPRESS_APPLICATION_PASSWORD=xxxx xxxx xxxx" },
   commercial: { icon: TicketCheck, title: "Sync commercial offers", description: "Offers remain isolated from Research, Knowledge, planning, and QA. Only typed HTTPS offers are accepted.", steps: ["Prepare provider offers using a supported category.", "POST the batch to /api/commercial/offers with ADMIN_TOKEN.", "QA-passed drafts receive a deterministic overlay; no offer means a safe no-op."], code: "POST /api/commercial/offers\nAuthorization: Bearer <ADMIN_TOKEN>" },
 };

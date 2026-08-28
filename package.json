@@ -1,6 +1,6 @@
 {
   "name": "solo-to-china-research-engine",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "Human-selected research capture and content intelligence engine for SoloToChina.",
   "type": "module",
@@ -15,7 +15,7 @@
     "dev": "vite",
     "dev:server": "node --env-file-if-exists=.env --watch src/server.mjs",
     "test": "node --test",
-    "check": "npm run build && node --check src/server.mjs && node --check src/repository.mjs && node --check src/pipeline.mjs && node --check src/maintenance.mjs && node --check src/logger.mjs && node --check src/notifications.mjs && node --check src/search-console.mjs && node --check src/version.mjs && node --check src/ai/kimi-client.mjs && node --check src/ai/kimi.mjs && node --check src/ai/content-engine.mjs && node --check src/visuals/vertex-imagen.mjs && node --check src/commercial.mjs && node --check src/wordpress.mjs && node --check src/backup.mjs && node --check src/release-check.mjs && node --check scripts/release-check.mjs && node --check scripts/package-extension-cloud.mjs && node --check extension/popup.js",
+    "check": "npm run build && node --check src/server.mjs && node --check src/repository.mjs && node --check src/pipeline.mjs && node --check src/maintenance.mjs && node --check src/logger.mjs && node --check src/notifications.mjs && node --check src/search-console.mjs && node --check src/version.mjs && node --check src/content-strategy.mjs && node --check src/content-blocks.mjs && node --check src/ai/kimi-client.mjs && node --check src/ai/kimi.mjs && node --check src/ai/content-engine.mjs && node --check src/visuals/vertex-imagen.mjs && node --check src/commercial.mjs && node --check src/wordpress.mjs && node --check src/backup.mjs && node --check src/release-check.mjs && node --check scripts/release-check.mjs && node --check scripts/package-extension-cloud.mjs && node --check extension/popup.js",
     "backup": "node src/backup.mjs",
     "backup:verify": "node src/backup.mjs --verify",
     "backup:drill": "node src/backup.mjs --drill",

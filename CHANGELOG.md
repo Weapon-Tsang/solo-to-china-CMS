@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.0 — 2026-08-28
+
+- Added the governed **SoloToChina Content Production Strategy 1.0** manifest, immutable specification, upgrade guide, handoff document, system API metadata, and release-drift checks.
+- Added strategy-versioned Intake Analysis, content recommendations, and evidence-based content opportunities. Kimi now recommends a next action; only an explicit **Approve article** decision queues planning.
+- Added versioned Canonical Travel Content, structured content blocks, answer-first SEO/GEO fields, deterministic WebPage/Article/Breadcrumb/Organization/ImageObject schema, and WordPress strategy metadata.
+- Added safe image taxonomy and acquisition rules: only non-factual editorial illustrations can enter automatic image generation; real-world photos, maps, and factual graphics are never fabricated.
+- Made `kimi-k2.7-code` the default Kimi model for new installations while retaining Kimi K3 as an explicit Settings choice.
+- Added schema migration 12 plus strategy, human-approval, image-safety, API, and release coverage.
+
 ## 1.4.0 — 2026-08-28
 
 - Switched the active AI provider to Kimi Chat Completions with JSON Schema structured output and trusted Xiaohongshu image-to-base64 vision input.

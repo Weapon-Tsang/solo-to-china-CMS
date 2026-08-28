@@ -29,7 +29,7 @@ From an authenticated Google Cloud shell or workstation, substitute your own val
 $project = "YOUR_PROJECT_ID"
 $region = "us-central1"
 $repo = "solo-to-china"
-$image = "$region-docker.pkg.dev/$project/$repo/engine:1.4.0"
+$image = "$region-docker.pkg.dev/$project/$repo/engine:1.5.0"
 
 gcloud services enable compute.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com --project $project
 gcloud artifacts repositories create $repo --repository-format=docker --location=$region --project=$project
@@ -65,7 +65,7 @@ In the extension Connection settings use `https://capture.example.com` and paste
 - `https://engine.example.com/api/health` is reachable only after Cloudflare Access authentication.
 - `https://capture.example.com/api/health` returns basic health, while `https://capture.example.com/api/dashboard` returns 404.
 - The extension can save a manually opened note and poll its own `/api/sources/{id}` status using `CAPTURE_TOKEN`.
-- In dashboard Settings choose Kimi K3 or K2.7 Code and verify the top badge changes.
+- Kimi K2.7 Code is the default on a fresh deployment; dashboard Settings can explicitly switch to Kimi K3 and the top badge should change.
 - With Vertex Imagen configured, an article produces 2-5 original visual assets and WordPress receives them as uploaded media attachments.
 
 ## Secrets and costs

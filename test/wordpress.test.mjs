@@ -44,6 +44,22 @@ test("WordPress adapter refuses to overwrite a post after a human publishes it",
   await assert.rejects(() => adapter.upsertDraft({ title: "Guide", slug: "guide", meta_description: "", body_markdown: "Text" }, 7), /refuses to overwrite/);
 });
 
+test("WordPress adapter renders persisted structured blocks instead of reparsing draft Markdown", async () => {
+  let request;
+  const fetchStub = async (url, options) => {
+    request = { url, options, body: JSON.parse(options.body) };
+    return new Response(JSON.stringify({ id: 9, status: "draft", link: "https://site.test/?p=9" }), { status: 201, headers: { "content-type": "application/json" } });
+  };
+  const adapter = new WordPressDraftAdapter({ siteUrl: "https://site.test", username: "editor", applicationPassword: "app password", contentFormat: "blocks" }, fetchStub);
+  await adapter.upsertDraft({
+    title: "Guide", slug: "guide", meta_description: "", body_markdown: "## Ignore this Markdown source",
+    content_blocks: [{ type: "heading", level: 2, text: "Canonical plan" }, { type: "paragraph", text: "Structured reader guidance." }],
+  });
+  assert.match(request.body.content, /Canonical plan/);
+  assert.match(request.body.content, /Structured reader guidance/);
+  assert.doesNotMatch(request.body.content, /Ignore this Markdown source/);
+});
+
 test("WordPress inventory sync reads every page without changing posts", async () => {
   const requests = [];
   const fetchStub = async (url, options) => {

@@ -12,6 +12,7 @@ import { cn, label } from "@/lib/utils";
 
 export const views = {
   sources: { label: "Sources", title: "Research sources", description: "Capture and trace every human-selected travel source.", icon: FileText },
+  recommendations: { label: "Recommendations", title: "AI recommendations", description: "Review each source's next action before any article is planned.", icon: Sparkles },
   knowledge: { label: "Knowledge", title: "Destination knowledge", description: "Review corroborated facts, conflicts, and freshness in one place.", icon: BookOpen },
   blueprints: { label: "Blueprints", title: "Editorial blueprints", description: "Turn recurring source patterns into reusable editorial intelligence.", icon: Layers3 },
   content: { label: "Content", title: "Content production", description: "Move evidence-backed topics through drafting, review, and delivery.", icon: WandSparkles },
@@ -73,7 +74,7 @@ export function Topbar({ health, refreshing, onRefresh }) {
   );
 }
 
-export function PageHeading({ view }) {
+export function PageHeading({ view, health }) {
   const config = views[view];
   const Icon = config.icon;
   return (
@@ -83,7 +84,7 @@ export function PageHeading({ view }) {
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">{config.title}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500">{config.description}</p>
       </div>
-      <Badge variant="success" className="hidden h-7 px-2.5 sm:inline-flex"><Check className="size-3" /> Capture service ready</Badge>
+      <div className="hidden items-center gap-2 sm:flex"><Badge variant="info" className="h-7 px-2.5">Content Strategy v{health?.contentStrategy?.version || "—"}</Badge><Badge variant="success" className="h-7 px-2.5"><Check className="size-3" /> Capture service ready</Badge></div>
     </section>
   );
 }

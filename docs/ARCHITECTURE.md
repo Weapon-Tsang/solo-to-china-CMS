@@ -54,6 +54,8 @@ The production dashboard is built by Vite into `dist/` and served by the same No
 
 ### 4. Content production
 
+`content_intake_analyses` and `content_recommendations` turn an extracted Source into a strategy-versioned AI recommendation; the founder must explicitly decide whether it becomes an article, Knowledge, a cluster, research-first, or ignored. `content_opportunities` aggregates evidence coverage without assuming that a single Source deserves an article. `content_briefs` store Canonical Travel Content plus a fact-linked outline; `article_drafts` store reader-facing Markdown and structured content blocks while the Evidence Ledger remains separate.
+
 - `topic_candidates`：从 Destination KB 覆盖率生成，不读取 Commercial 数据。默认要求至少 5 个 Facts 和 2 条独立 Source。
 - `content_briefs`：Outline 中的事实段落必须引用真实 Claim key。
 - `article_drafts`：Reader-facing Markdown 与内部 Evidence Ledger 分开存储。
@@ -62,6 +64,10 @@ The production dashboard is built by Vite into `dist/` and served by the same No
 - `wordpress_publications`：保存内部 Draft 到 WordPress post ID 的幂等映射。
 
 QA 通过并配置 WordPress 时会自动创建 `draft`。这不等于发布；最终 Publish 始终由用户在 WordPress 完成。
+
+### Content Strategy governance
+
+`config/content-strategy.json` is the single active Strategy version source. `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.0.md` defines the immutable operating contract. New intake, recommendation, opportunity, brief, draft, QA, WordPress, and visual records retain the version that created them; legacy rows are deliberately not backfilled. The server exposes this version through `/api/system/info` and `/api/health`, while release checks reject any manifest, documentation, migration, or UI drift.
 
 ### 5. Commercial layer
 
@@ -91,6 +97,14 @@ At startup, a stale inventory sync is queued before topic reconciliation. Candid
 An optional service-account adapter synchronizes a bounded rolling window through the Search Console API. Topic planning suppresses high-overlap queries with meaningful impressions before a brief is created; the suppression is automatically reversed when later inventory no longer contains the overlap. Sync state and retries reuse `integration_sync_state` and the durable Job queue.
 
 ## Content state transitions
+
+Strategy 1.0 adds an explicit operator gate before the existing planning/draft states:
+
+```text
+captured → extraction → intake analysis → recommendation pending → human decision
+                                                        → approved article → candidate → brief → draft → QA → WordPress draft
+                                                        → knowledge only / cluster / research first / ignored
+```
 
 ```text
 candidate → brief_queued → brief_ready → drafted

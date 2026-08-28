@@ -30,6 +30,89 @@ function migrate(db) {
   if (current < 9) migrationNine(db);
   if (current < 10) migrationTen(db);
   if (current < 11) migrationEleven(db);
+  if (current < 12) migrationTwelve(db);
+}
+
+function migrationTwelve(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE topic_candidates ADD COLUMN strategy_version TEXT;
+      ALTER TABLE content_briefs ADD COLUMN strategy_version TEXT;
+      ALTER TABLE content_briefs ADD COLUMN canonical_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE article_drafts ADD COLUMN strategy_version TEXT;
+      ALTER TABLE article_drafts ADD COLUMN content_blocks_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE quality_reviews ADD COLUMN strategy_version TEXT;
+      ALTER TABLE wordpress_publications ADD COLUMN strategy_version TEXT;
+      ALTER TABLE article_visuals ADD COLUMN strategy_version TEXT;
+      ALTER TABLE article_visuals ADD COLUMN image_type TEXT NOT NULL DEFAULT 'illustration';
+      ALTER TABLE article_visuals ADD COLUMN image_role TEXT NOT NULL DEFAULT 'support';
+      ALTER TABLE article_visuals ADD COLUMN image_subject TEXT NOT NULL DEFAULT '';
+      ALTER TABLE article_visuals ADD COLUMN acquisition_strategy TEXT NOT NULL DEFAULT 'generate_illustration';
+      ALTER TABLE article_visuals ADD COLUMN factual_image_required INTEGER NOT NULL DEFAULT 0;
+
+      CREATE TABLE content_intake_analyses (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL UNIQUE REFERENCES sources(id) ON DELETE CASCADE,
+        strategy_version TEXT NOT NULL,
+        classification TEXT NOT NULL CHECK (classification IN ('ARTICLE_CANDIDATE','KNOWLEDGE_ONLY','CLAIM_ONLY','CLUSTER_CANDIDATE','RESEARCH_REQUIRED','DUPLICATE','LOW_VALUE','UNSURE')),
+        confidence REAL NOT NULL,
+        primary_topic TEXT NOT NULL,
+        article_potential REAL NOT NULL,
+        information_density REAL NOT NULL,
+        topic_completeness REAL NOT NULL,
+        duplicate_likelihood REAL NOT NULL DEFAULT 0,
+        analysis_json TEXT NOT NULL,
+        model TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_content_intake_source ON content_intake_analyses(source_id, updated_at DESC);
+
+      CREATE TABLE content_recommendations (
+        id TEXT PRIMARY KEY,
+        analysis_id TEXT NOT NULL UNIQUE REFERENCES content_intake_analyses(id) ON DELETE CASCADE,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        strategy_version TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        recommended_action TEXT NOT NULL,
+        suggested_content_type TEXT,
+        suggested_article_title TEXT,
+        reasoning_summary TEXT NOT NULL,
+        decision TEXT NOT NULL DEFAULT 'pending' CHECK (decision IN ('pending','approved_article','knowledge_only','cluster','research_first','ignored')),
+        decision_note TEXT,
+        approved_candidate_id TEXT REFERENCES topic_candidates(id),
+        decided_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_content_recommendations_decision ON content_recommendations(decision, updated_at DESC);
+
+      CREATE TABLE content_opportunities (
+        id TEXT PRIMARY KEY,
+        destination_slug TEXT NOT NULL,
+        topic_key TEXT NOT NULL UNIQUE,
+        strategy_version TEXT NOT NULL,
+        source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
+        recommendation_id TEXT REFERENCES content_recommendations(id) ON DELETE SET NULL,
+        candidate_id TEXT REFERENCES topic_candidates(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        content_type TEXT,
+        readiness_score REAL NOT NULL,
+        coverage_json TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'recommended' CHECK (status IN ('recommended','approved','knowledge_only','cluster','research_required','ignored','planned')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_content_opportunities_destination ON content_opportunities(destination_slug, status, readiness_score DESC);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (12, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationEleven(db) {

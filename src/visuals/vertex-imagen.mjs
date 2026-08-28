@@ -13,11 +13,14 @@ export class VertexImagen {
   }
 
   get enabled() {
-    return this.config.provider === "vertex_imagen" && Boolean(this.config.projectId && this.config.publicBaseUrl);
+    return this.config.enabled && this.config.provider === "vertex_imagen" && Boolean(this.config.projectId && this.config.publicBaseUrl);
   }
 
   async generate(visual, draft) {
     if (!this.enabled) throw new Error("Vertex Imagen is not configured.");
+    if (visual.image_type !== "illustration" || visual.acquisition_strategy !== "generate_illustration" || visual.factual_image_required) {
+      throw new Error("Vertex Imagen may generate only non-factual illustrations, never real-world photos, maps, or infographics.");
+    }
     const accessToken = await this.accessToken();
     const endpoint = `https://${this.config.location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(this.config.location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:predict`;
     const response = await this.fetch(endpoint, {
@@ -28,7 +31,7 @@ export class VertexImagen {
         parameters: {
           sampleCount: 1,
           aspectRatio: visual.aspect_ratio,
-          sampleImageSize: "1K",
+          sampleImageSize: visual.image_role === "hero" ? this.config.coverQuality : this.config.inlineQuality,
           addWatermark: true,
           personGeneration: "dont_allow",
           safetyFilterLevel: "block_medium_and_above",

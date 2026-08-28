@@ -1,3 +1,5 @@
+import { markdownToContentBlocks } from "./content-blocks.mjs";
+
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class Pipeline {
@@ -68,6 +70,7 @@ export class Pipeline {
           if (!source) throw new Error(`Source ${job.entity_id} no longer exists.`);
           const extraction = await this.extractor.extract(source);
           this.repository.saveExtraction(source.id, extraction.result, extraction.method, extraction.model);
+          if (this.contentEngine?.enabled && extraction.method !== "heuristic") this.repository.enqueue("analyze_intake", source.id);
           break;
         }
         case "rebuild_knowledge":
@@ -78,10 +81,17 @@ export class Pipeline {
           this.repository.rebuildEditorialLibrary();
           break;
         case "rebuild_topics": {
-          const candidates = this.repository.rebuildTopicCandidates(
+          this.repository.rebuildTopicCandidates(
             job.entity_id, this.contentConfig.minFacts, this.contentConfig.maxPerDestination,
           );
-          if (this.contentEngine?.enabled) for (const candidate of candidates) this.repository.queueCandidate(candidate.id);
+          break;
+        }
+        case "analyze_intake": {
+          this.requireContentEngine();
+          const intakePackage = this.repository.getIntakePackage(job.entity_id);
+          if (!intakePackage) throw new Error(`Source ${job.entity_id} is not ready for intake analysis.`);
+          const analyzed = await this.contentEngine.analyzeIntake(intakePackage);
+          this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model);
           break;
         }
         case "plan_content": {
@@ -155,6 +165,7 @@ export class Pipeline {
             const publishableDraft = {
               ...contentPackage.draft,
               body_markdown: contentPackage.commercial_composition.publishable_body_markdown,
+              content_blocks: markdownToContentBlocks(contentPackage.commercial_composition.publishable_body_markdown),
             };
             const result = await this.wordpress.upsertDraft(publishableDraft, publication.post_id);
             this.repository.completeWordPressPublication(job.entity_id, result);

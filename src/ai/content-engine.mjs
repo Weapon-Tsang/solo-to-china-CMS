@@ -1,8 +1,9 @@
 import { slugify, truncate } from "../utils.mjs";
+import { CONTENT_STRATEGY } from "../content-strategy.mjs";
 import { KimiClient } from "./kimi-client.mjs";
 
 const BRIEF_SCHEMA = objectSchema(
-  ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions"],
+  ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions", "canonical"],
   {
     title: { type: "string" },
     primary_keyword: { type: "string" },
@@ -20,6 +21,37 @@ const BRIEF_SCHEMA = objectSchema(
     adaptation_requirements: { type: "array", items: { type: "string" } },
     conflict_instructions: { type: "array", items: { type: "string" } },
     verification_instructions: { type: "array", items: { type: "string" } },
+    canonical: objectSchema(["content_type", "summary", "quick_answer", "entities", "secondary_queries", "highlights", "practical_tips", "warnings", "faq", "answer_blocks", "image_plan", "seo"], {
+      content_type: { type: "string", enum: ["city_guide", "itinerary", "attraction_guide", "food_guide", "transport_guide", "neighborhood_guide", "hotel_area_guide", "shopping_guide", "practical_guide", "first_time_guide", "comparison", "listicle", "how_to"] },
+      summary: { type: "string" }, quick_answer: { type: "string" },
+      entities: { type: "array", items: { type: "string" } }, secondary_queries: { type: "array", items: { type: "string" } },
+      highlights: { type: "array", items: { type: "string" } }, practical_tips: { type: "array", items: { type: "string" } }, warnings: { type: "array", items: { type: "string" } },
+      faq: { type: "array", items: objectSchema(["question", "answer"], { question: { type: "string" }, answer: { type: "string" } }) },
+      answer_blocks: { type: "array", items: objectSchema(["question", "direct_answer", "supporting_points", "entity"], {
+        question: { type: "string" }, direct_answer: { type: "string" }, supporting_points: { type: "array", items: { type: "string" } }, entity: { type: "string" },
+      }) },
+      image_plan: { type: "array", items: objectSchema(["type", "role", "subject", "placement", "strategy", "factual_image_required"], {
+        type: { type: "string", enum: ["real_world_photo", "infographic", "map_or_route", "illustration"] },
+        role: { type: "string" }, subject: { type: "string" }, placement: { type: "string" }, strategy: { type: "string" }, factual_image_required: { type: "boolean" },
+      }) },
+      seo: objectSchema(["primary_keyword", "secondary_keywords", "search_intent"], {
+        primary_keyword: { type: "string" }, secondary_keywords: { type: "array", items: { type: "string" } }, search_intent: { type: "string" },
+      }),
+    }),
+  },
+);
+
+const INTAKE_SCHEMA = objectSchema(
+  ["classification", "confidence", "primary_topic", "entities", "knowledge_points", "claims", "article_potential", "information_density", "topic_completeness", "duplicate_likelihood", "recommended_action", "suggested_content_type", "suggested_article_title", "missing_information", "possible_cluster_topics", "reasoning_summary"],
+  {
+    classification: { type: "string", enum: ["ARTICLE_CANDIDATE", "KNOWLEDGE_ONLY", "CLAIM_ONLY", "CLUSTER_CANDIDATE", "RESEARCH_REQUIRED", "DUPLICATE", "LOW_VALUE", "UNSURE"] },
+    confidence: { type: "number", minimum: 0, maximum: 1 }, primary_topic: { type: "string" },
+    entities: { type: "array", items: { type: "string" } }, knowledge_points: { type: "array", items: { type: "string" } }, claims: { type: "array", items: { type: "string" } },
+    article_potential: { type: "number", minimum: 0, maximum: 100 }, information_density: { type: "number", minimum: 0, maximum: 100 },
+    topic_completeness: { type: "number", minimum: 0, maximum: 100 }, duplicate_likelihood: { type: "number", minimum: 0, maximum: 100 },
+    recommended_action: { type: "string", enum: ["CREATE_CONTENT_PLAN", "ADD_TO_KNOWLEDGE", "ADD_TO_CLUSTER", "RESEARCH_FIRST", "MERGE_OR_IGNORE", "IGNORE", "HUMAN_REVIEW"] },
+    suggested_content_type: { type: "string" }, suggested_article_title: { type: "string" },
+    missing_information: { type: "array", items: { type: "string" } }, possible_cluster_topics: { type: "array", items: { type: "string" } }, reasoning_summary: { type: "string" },
   },
 );
 
@@ -37,15 +69,17 @@ const DRAFT_SCHEMA = objectSchema(
     },
     unresolved_conflicts: { type: "array", items: { type: "string" } },
     verification_notes: { type: "array", items: { type: "string" } },
-    seo: objectSchema(["meta_title", "focus_keyword", "key_takeaways"], {
-      meta_title: { type: "string" }, focus_keyword: { type: "string" },
+    seo: objectSchema(["meta_title", "focus_keyword", "secondary_keywords", "search_intent", "key_takeaways"], {
+      meta_title: { type: "string" }, focus_keyword: { type: "string" }, secondary_keywords: { type: "array", items: { type: "string" } }, search_intent: { type: "string" },
       key_takeaways: { type: "array", items: { type: "string" } },
     }),
     faqs: { type: "array", items: objectSchema(["question", "answer"], { question: { type: "string" }, answer: { type: "string" } }) },
-    visuals: { type: "array", items: objectSchema(["placement", "purpose", "alt_text", "caption", "generation_prompt", "aspect_ratio"], {
+    visuals: { type: "array", items: objectSchema(["placement", "purpose", "alt_text", "caption", "generation_prompt", "aspect_ratio", "image_type", "image_role", "image_subject", "factual_image_required"], {
       placement: { type: "string", enum: ["hero", "after_intro", "mid_article", "before_faq", "closing"] },
       purpose: { type: "string" }, alt_text: { type: "string" }, caption: { type: "string" }, generation_prompt: { type: "string" },
       aspect_ratio: { type: "string", enum: ["16:9", "4:3", "1:1", "3:2", "9:16"] },
+      image_type: { type: "string", enum: ["real_world_photo", "infographic", "map_or_route", "illustration"] },
+      image_role: { type: "string" }, image_subject: { type: "string" }, factual_image_required: { type: "boolean" },
     }) },
   },
 );
@@ -73,6 +107,7 @@ const REVIEW_SCHEMA = objectSchema(
 export class ContentEngine {
   constructor(config, fetchImpl = fetch) {
     this.config = config;
+    this.contentStrategy = config.contentStrategy || CONTENT_STRATEGY;
     this.client = new KimiClient(config, fetchImpl);
   }
 
@@ -84,7 +119,16 @@ export class ContentEngine {
     return this.respond({
       name: "content_brief",
       schema: BRIEF_SCHEMA,
-      instructions: BRIEF_PROMPT,
+      instructions: briefPrompt(this.contentStrategy.version),
+      input: JSON.stringify(research),
+    });
+  }
+
+  async analyzeIntake(research) {
+    return this.respond({
+      name: "content_intake_analysis",
+      schema: INTAKE_SCHEMA,
+      instructions: intakePrompt(this.contentStrategy.version),
       input: JSON.stringify(research),
     });
   }
@@ -97,9 +141,12 @@ export class ContentEngine {
       input: JSON.stringify({ ...contentPackage, revision_feedback: revisionFeedback }),
     });
     result.output.slug = slugify(result.output.slug || result.output.title);
+    result.output.seo ||= {};
     result.output.meta_description = truncate(result.output.meta_description, 160);
     result.output.seo.meta_title = truncate(result.output.seo.meta_title || result.output.title, 70);
     result.output.seo.focus_keyword = truncate(result.output.seo.focus_keyword, 160);
+    result.output.seo.secondary_keywords = (result.output.seo.secondary_keywords || []).slice(0, 8).map((item) => truncate(item, 160));
+    result.output.seo.search_intent = truncate(result.output.seo.search_intent, 120);
     result.output.seo.key_takeaways = (result.output.seo.key_takeaways || []).slice(0, 6).map((item) => truncate(item, 240));
     result.output.faqs = (result.output.faqs || []).slice(0, 5).map((item) => ({ question: truncate(item.question, 220), answer: truncate(item.answer, 700) }));
     result.output.visuals = (result.output.visuals || []).slice(0, 5).map((item) => ({ ...item, purpose: truncate(item.purpose, 300), alt_text: truncate(item.alt_text, 220), caption: truncate(item.caption, 300), generation_prompt: truncate(item.generation_prompt, 2_000) }));
@@ -120,13 +167,24 @@ export class ContentEngine {
     return this.client.completeJson({ name, schema, instructions, content: input });
   }
 }
-const BRIEF_PROMPT = `Create an evidence-backed English content brief for SoloToChina.
+const intakePrompt = (strategyVersion) => `Analyze one already-captured human-selected China travel source for SoloToChina Content Production Strategy ${strategyVersion}.
+- This is decision support, not article generation. Do not write an article and do not reveal private reasoning.
+- Use only the supplied source and structured claims. A useful narrow fact can be KNOWLEDGE_ONLY or CLAIM_ONLY.
+- Classify the source as ARTICLE_CANDIDATE, KNOWLEDGE_ONLY, CLAIM_ONLY, CLUSTER_CANDIDATE, RESEARCH_REQUIRED, DUPLICATE, LOW_VALUE, or UNSURE.
+- Score article_potential, information_density, topic_completeness, and duplicate_likelihood from 0 to 100. Confidence is 0 to 1.
+- Recommend one action: CREATE_CONTENT_PLAN, ADD_TO_KNOWLEDGE, ADD_TO_CLUSTER, RESEARCH_FIRST, MERGE_OR_IGNORE, IGNORE, or HUMAN_REVIEW.
+- Surface missing facts such as verified booking process, price, route, opening hours, location, or warnings when the source is not enough for a safe standalone guide.
+- reasoning_summary must be a short operator-facing explanation, never hidden chain-of-thought. Commercial conversion is outside this task.`;
+
+const briefPrompt = (strategyVersion) => `Create an evidence-backed English content plan and Canonical Travel Content object for SoloToChina Content Production Strategy ${strategyVersion}.
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
 - Conflicted facts require explicit handling instructions; never silently choose a side.
 - Facts marked time_sensitive or requires_official need explicit verification instructions. Exclude stale facts from the outline.
 - Build an original synthesis, not a translation or imitation of any one UGC source.
 - Include practical adaptation for language, booking, payment, navigation, safety, and solo logistics where evidence permits.
+- Canonical fields are structured source data for the writer and renderer. Use empty arrays or empty strings for unknown information rather than guessing.
+- Include direct answer blocks only where the supplied facts support them. The image plan must distinguish real_world_photo, infographic, map_or_route, and illustration; only illustration is eligible for image-model generation.
 - Affiliate inventory and commercial conversion are outside this task and must not appear.`;
 
 const DRAFT_PROMPT = `Write an original, publication-quality English China travel guide from the supplied brief and evidence package.
@@ -141,7 +199,8 @@ const DRAFT_PROMPT = `Write an original, publication-quality English China trave
 - Make the body easy for Search and AI answer systems to parse: use one answer-first opening paragraph, descriptive H2/H3 headings, short scannable sections, and a visible "Key takeaways" list. Do not make unsupported claims just for SEO.
 - Return 2-5 concise FAQs that are answered by the article and evidence. FAQ answers must not introduce new facts. Include the same questions in a visible "Frequently asked questions" section of body_markdown.
 - Return SEO metadata: a natural meta title under 60 characters, one focus keyword, and 3-6 reader-facing key takeaways. The meta description remains the top-level meta_description field.
-- Return a rights-safe visual plan for original illustrations, never copied UGC. Use 2 visuals for 800-1,299 words, 3 for 1,300-2,199 words, 4 for 2,200-3,199 words, and 5 above that. Each image needs an accurate alt text, a useful placement, a concise caption, an aspect ratio, and an original no-text/no-logo generation_prompt.
+- Return SEO metadata with secondary keywords and search intent. Do not invent internal links or canonical URLs.
+- Return a rights-safe image plan. Use 2 visuals for 800-1,299 words, 3 for 1,300-2,199 words, 4 for 2,200-3,199 words, and 5 above that. Every item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
 - If revision_feedback exists, fix every blocker without adding unsupported facts.`;
 
 const REVIEW_PROMPT = `Act as an independent senior editor. Audit the English draft against its evidence package and brief.
@@ -188,6 +247,25 @@ function applyDeterministicGates(review, contentPackage) {
   const expectedVisuals = visualCountForWords(wordCount(draft.body_markdown));
   addGate("visual-plan", Array.isArray(draft.visuals) && draft.visuals.length === expectedVisuals,
     `Draft needs ${expectedVisuals} rights-safe visual plan item(s) for its length.`, "visual_plan_incomplete");
+  const strategyVersion = contentPackage.brief?.strategy_version;
+  addGate("strategy-version", Boolean(strategyVersion) && draft.strategy_version === strategyVersion,
+    "Draft and canonical content plan must carry the same active Content Strategy version.", "strategy_version_mismatch");
+  const canonical = contentPackage.brief?.canonical || {};
+  addGate("canonical-content", Boolean(canonical.quick_answer) && Array.isArray(canonical.answer_blocks),
+    "Canonical content requires an answer-first summary and structured answer blocks before publication.", "canonical_content_incomplete");
+  addGate("heading-hierarchy", hasSafeHeadingHierarchy(draft.body_markdown),
+    "The post title owns H1; body Markdown may use orderly H2/H3/H4 headings only.", "heading_hierarchy_invalid");
+  const visualStrategySafe = (draft.visuals || []).every((visual) => {
+    if (visual.image_type === "real_world_photo") return visual.acquisition_strategy === "search_real_image" && visual.factual_image_required;
+    if (visual.image_type === "infographic") return visual.acquisition_strategy === "render_infographic";
+    if (visual.image_type === "map_or_route") return visual.acquisition_strategy === "render_map";
+    return visual.image_type === "illustration" && visual.acquisition_strategy === "generate_illustration" && !visual.factual_image_required;
+  });
+  addGate("image-strategy", visualStrategySafe,
+    "Image plans must never use an image model to fabricate a factual real-world photo or route.", "image_strategy_invalid");
+  const graph = draft.schema_jsonld?.["@graph"] || [];
+  addGate("schema-consistency", graph.some((item) => item["@type"] === "Article") && graph.every((item) => !/undefined|null/.test(JSON.stringify(item))),
+    "Deterministic schema must contain an Article and no placeholder values.", "schema_inconsistent");
 
   const dedupedIssues = uniqueBy(issues, (item) => `${item.code}:${item.message}`);
   return {
@@ -213,6 +291,12 @@ function visualCountForWords(words) {
   if (words < 2200) return 3;
   if (words < 3200) return 4;
   return 5;
+}
+
+function hasSafeHeadingHierarchy(markdown) {
+  const levels = [...String(markdown || "").matchAll(/^(#{1,6})\s+/gm)].map((match) => match[1].length);
+  if (levels.includes(1)) return false;
+  return levels.every((level, index) => level >= 2 && (index === 0 || level <= levels[index - 1] + 1));
 }
 
 function uniqueBy(items, key) {

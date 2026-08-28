@@ -76,7 +76,7 @@ AI 是可替换适配器，核心数据库与队列不依赖模型供应商。�
 
 ```text
 KIMI_API_KEY=...
-KIMI_MODEL=kimi-k3
+KIMI_MODEL=kimi-k2.7-code
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MAX_IMAGES=8
 KIMI_MAX_COMPLETION_TOKENS=16000
@@ -96,12 +96,12 @@ Kimi is the active AI provider. The engine calls Kimi Chat Completions with JSON
 Copy-Item .env.example .env
 # Edit .env and set KIMI_API_KEY=your-kimi-key, or use the temporary shell alternative below.
 $env:KIMI_API_KEY = "your-kimi-key"
-$env:KIMI_MODEL = "kimi-k3"
+$env:KIMI_MODEL = "kimi-k2.7-code"
 $env:KIMI_BASE_URL = "https://api.moonshot.cn/v1"
 npm start
 ```
 
-`kimi-k3` is the default flagship model and supports the image evidence used by this project. `kimi-k2.7-code` is also supported. Image assets are fetched in parallel and unavailable assets are skipped rather than blocking the full note. Set `KIMI_MAX_IMAGES=8`, `KIMI_MAX_COMPLETION_TOKENS=16000`, `KIMI_REQUEST_TIMEOUT_MS=360000`, or `KIMI_IMAGE_TIMEOUT_MS=20000` only when you need to change the defaults. Existing Sources can be re-run after the restart; no recapture is required.
+`kimi-k2.7-code` is the default model for new installations; `kimi-k3` remains available from Settings. Both models support the image evidence used by this project. Image assets are fetched in parallel and unavailable assets are skipped rather than blocking the full note. Set `KIMI_MAX_IMAGES=8`, `KIMI_MAX_COMPLETION_TOKENS=16000`, `KIMI_REQUEST_TIMEOUT_MS=360000`, or `KIMI_IMAGE_TIMEOUT_MS=20000` only when you need to change the defaults. Existing Sources can be re-run after the restart; no recapture is required.
 
 ### Model selection
 
@@ -114,7 +114,9 @@ Each generated English Draft includes a reader-facing SEO/GEO package: a concise
 The engine plans 2--5 rights-safe, original editorial images according to article length. Visual plans are always saved alongside the Draft; they stay pending on a local machine. To create and serve original images in production, enable Vertex Imagen on the GCE VM:
 
 ```text
-VISUAL_PROVIDER=vertex_imagen
+IMAGE_ENABLED=true
+IMAGE_PROVIDER=vertex_imagen
+IMAGE_MODEL=imagen-4.0-generate-001
 GOOGLE_CLOUD_PROJECT=your-project-id
 VERTEX_AI_LOCATION=us-central1
 VERTEX_IMAGEN_MODEL=imagen-4.0-generate-001
@@ -124,7 +126,18 @@ CONTENT_PUBLISHER_NAME=SoloToChina
 CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 ```
 
-Generated assets use original no-text/no-logo prompts and are uploaded into WordPress as media when the Draft is delivered. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
+Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
+
+## Content Production Strategy 1.0
+
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json) and documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.0.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.0.md). The live operating path is:
+
+```text
+Capture → structured research → Kimi Intake Analysis → Recommendation → human decision
+                                                       → Approve article only → planning → canonical content → QA → WordPress draft
+```
+
+The **Recommendations** tab is the only new recurring decision point. Choose **Approve article** only when a source-backed opportunity is worth turning into an English guide; choose the other actions when the material should enrich knowledge, join a cluster, wait for research, or be ignored. Every new downstream record carries Strategy `1.0`; historical records stay untagged instead of being falsely represented as strategy-compliant.
 
 ## Google Cloud + Cloudflare deployment
 
@@ -186,6 +199,9 @@ See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md),
 
 | Method | Path | Purpose |
 |---|---|---|
+| `GET` | `/api/system/info` | Application, Kimi, and active Content Strategy information |
+| `GET` | `/api/recommendations` | Strategy-versioned intake recommendations and content opportunities |
+| `POST` | `/api/recommendations/:id/decision` | Admin-only human decision; only `approved_article` may queue planning |
 | `GET` | `/api/health` | Engine 与 AI 配置状态 |
 | `GET` | `/api/ready` | 数据库支持的部署就绪探针 |
 | `POST` | `/api/captures` | Extension 显式提交当前笔记 |
@@ -197,7 +213,7 @@ See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md),
 | `GET` | `/api/content` | Topic/Brief/Draft/QA/WordPress 状态 |
 | `GET` | `/api/commercial/offers` | 只读查看已同步 Offer |
 | `POST` | `/api/commercial/offers` | Provider/Feed Adapter 批量同步 typed offers |
-| `POST` | `/api/topics/:id/generate` | 手动触发尚未自动生成的 Candidate |
+| `POST` | `/api/topics/:id/generate` | Backwards-compatible endpoint; returns `409` until an Intake Recommendation is approved |
 | `POST` | `/api/topics/:id/retry` | 重试少量内容异常 |
 | `GET` | `/api/drafts/:id` | Draft、Evidence Ledger 和 QA 详情 |
 | `POST` | `/api/drafts/:id/wordpress` | 将 QA-passed Draft 补推到 WordPress |

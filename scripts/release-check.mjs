@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDatabase } from "../src/db.mjs";
+import { CONTENT_STRATEGY } from "../src/content-strategy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -123,10 +124,12 @@ async function runIsolatedSmoke() {
 async function smokeReadApis(baseUrl) {
   const routes = [
     ["Dashboard API", "/api/dashboard", (body) => body && typeof body.totals === "object"],
+    ["System strategy API", "/api/system/info", (body) => body?.contentStrategy?.version === CONTENT_STRATEGY.version && body?.contentStrategy?.status === "active"],
     ["Sources API", "/api/sources", (body) => Array.isArray(body?.items)],
     ["Knowledge API", "/api/knowledge", (body) => Array.isArray(body?.items)],
     ["Editorial blueprints API", "/api/editorial-blueprints", (body) => Array.isArray(body?.items)],
     ["Content API", "/api/content", (body) => Array.isArray(body?.items)],
+    ["Recommendations API", "/api/recommendations", (body) => Array.isArray(body?.items) && Array.isArray(body?.opportunities)],
     ["WordPress inventory API", "/api/wordpress/inventory", (body) => typeof body?.configured === "boolean" && Array.isArray(body?.items)],
     ["Search Console API", "/api/search-console", (body) => typeof body?.configured === "boolean" && Array.isArray(body?.items)],
     ["Commercial offers API", "/api/commercial/offers", (body) => Array.isArray(body?.items)],
@@ -195,7 +198,7 @@ function verifyTemporaryDatabase(databasePath) {
 }
 
 function verifyHealth(result) {
-  if (result.status !== 200 || result.body?.ok !== true || typeof result.body?.version !== "string" || result.body.version !== packageJson.version) {
+  if (result.status !== 200 || result.body?.ok !== true || typeof result.body?.version !== "string" || result.body.version !== packageJson.version || result.body?.contentStrategy?.version !== CONTENT_STRATEGY.version) {
     throw new Error(`/api/health did not return the expected ready state (HTTP ${result.status}).`);
   }
 }

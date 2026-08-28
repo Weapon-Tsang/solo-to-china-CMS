@@ -5,7 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { loadConfig } from "../src/config.mjs";
+import { CONTENT_STRATEGY } from "../src/content-strategy.mjs";
 import { createApplication } from "../src/server.mjs";
+import { VERSION } from "../src/version.mjs";
 
 test("HTTP API accepts a manual capture and exposes pipeline state", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-api-test-"));
@@ -74,7 +76,7 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(allowed.status, 200);
   assert.equal(allowed.headers.get("x-request-id"), "test-request-id");
   const health = await (await fetch(`${baseUrl}/api/health`)).json();
-  assert.equal(health.version, "1.4.0");
+  assert.equal(health.version, VERSION);
   assert.equal(typeof health.queueActive, "number");
   assert.equal(health.aiProvider, null);
   assert.equal(health.searchConsoleConfigured, false);
@@ -94,22 +96,27 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(missing.status, 404);
   assert.deepEqual(await missing.json(), { error: "Not found." });
 
+  const system = await (await fetch(`${baseUrl}/api/system/info`)).json();
+  assert.equal(system.contentStrategy.version, CONTENT_STRATEGY.version);
+  assert.equal(system.contentStrategy.status, "active");
+  assert.equal(system.contentStrategy.document, CONTENT_STRATEGY.document);
+
   const settings = await (await fetch(`${baseUrl}/api/settings/ai`)).json();
-  assert.equal(settings.model, "kimi-k3");
+  assert.equal(settings.model, "kimi-k2.7-code");
   assert.equal(settings.models.length, 2);
   const changed = await fetch(`${baseUrl}/api/settings/ai`, {
     method: "POST",
     headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
-    body: JSON.stringify({ model: "kimi-k2.7-code" }),
+    body: JSON.stringify({ model: "kimi-k3" }),
   });
   assert.equal(changed.status, 200);
-  assert.equal((await changed.json()).model, "kimi-k2.7-code");
+  assert.equal((await changed.json()).model, "kimi-k3");
 });
 
 test("Kimi configuration uses the provider's server-side defaults", () => {
   const config = loadConfig({ KIMI_API_KEY: "kimi-test-key" });
   assert.equal(config.kimi.apiKey, "kimi-test-key");
-  assert.equal(config.kimi.model, "kimi-k3");
+  assert.equal(config.kimi.model, "kimi-k2.7-code");
   assert.equal(config.kimi.baseUrl, "https://api.moonshot.cn/v1");
   assert.equal(config.kimi.maxCompletionTokens, 16_000);
   assert.equal(config.kimi.requestTimeoutMs, 360_000);

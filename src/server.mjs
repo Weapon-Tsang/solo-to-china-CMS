@@ -36,7 +36,10 @@ export function createApplication(config = loadConfig()) {
   }
   const logger = createLogger(config.logging);
   const db = openDatabase(config.databasePath);
-  const repository = new Repository(db, { ...config.content, searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions });
+  const repository = new Repository(db, {
+    ...config.content, contentStrategy: config.contentStrategy,
+    searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
+  });
   const activeKimi = { ...config.kimi, model: repository.getAiSettings(config.kimi.model).model };
   const extractor = new KimiExtractor(activeKimi);
   const contentEngine = new ContentEngine(activeKimi);
@@ -93,6 +96,7 @@ export function createApplication(config = loadConfig()) {
           aiConfigured: extractor.enabled,
           aiProvider: extractor.enabled ? "kimi" : null,
           aiModel: extractor.enabled ? activeKimi.model : null,
+          contentStrategy: config.contentStrategy,
           contentAutomationConfigured: contentEngine.enabled,
           visualGenerationConfigured: visuals.enabled,
           wordpressConfigured: wordpress.enabled,
@@ -109,8 +113,18 @@ export function createApplication(config = loadConfig()) {
         db.prepare("SELECT 1 AS ready").get();
         return sendJson(response, 200, { ready: true, version: VERSION, database: "ready" });
       }
+      if (request.method === "GET" && url.pathname === "/api/system/info") {
+        return sendJson(response, 200, {
+          appVersion: VERSION,
+          contentStrategy: config.contentStrategy,
+          ai: repository.getAiSettings(config.kimi.model),
+        });
+      }
       if (request.method === "GET" && url.pathname === "/api/settings/ai") {
-        return sendJson(response, 200, { configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, ...repository.getAiSettings(config.kimi.model) });
+        return sendJson(response, 200, {
+          configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
+          contentStrategy: config.contentStrategy, ...repository.getAiSettings(config.kimi.model),
+        });
       }
       if (request.method === "POST" && url.pathname === "/api/settings/ai") {
         authorizeAdmin(request, config.adminToken);
@@ -154,6 +168,18 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/content") {
         return sendJson(response, 200, { items: repository.listContent() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/recommendations") {
+        return sendJson(response, 200, { items: repository.listContentRecommendations(limit(url.searchParams.get("limit"))), opportunities: repository.listContentOpportunities(limit(url.searchParams.get("limit"))) });
+      }
+      const recommendationDecisionMatch = url.pathname.match(/^\/api\/recommendations\/([^/]+)\/decision$/);
+      if (request.method === "POST" && recommendationDecisionMatch) {
+        authorizeAdmin(request, config.adminToken);
+        const payload = await readJson(request, 20_000);
+        const result = repository.decideRecommendation(recommendationDecisionMatch[1], String(payload.decision || ""), payload.note || "");
+        if (!result) return sendJson(response, 404, { error: "Recommendation not found." });
+        void pipeline.runOne();
+        return sendJson(response, 202, result);
       }
       if (request.method === "GET" && url.pathname === "/api/exceptions") {
         return sendJson(response, 200, { items: repository.listOperationalExceptions() });
@@ -234,11 +260,7 @@ export function createApplication(config = loadConfig()) {
       const generateMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/generate$/);
       if (request.method === "POST" && generateMatch) {
         authorizeAdmin(request, config.adminToken);
-        if (!contentEngine.enabled) return sendJson(response, 409, { error: "KIMI_API_KEY is required for content production." });
-        const queued = repository.queueCandidate(generateMatch[1]);
-        if (!queued) return sendJson(response, 409, { error: "Topic is missing or has already entered production." });
-        void pipeline.runOne();
-        return sendJson(response, 202, { queued: true });
+        return sendJson(response, 409, { error: "Approve an Intake Recommendation before planning content." });
       }
       const retryContentMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/retry$/);
       if (request.method === "POST" && retryContentMatch) {

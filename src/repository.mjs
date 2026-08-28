@@ -1,11 +1,16 @@
 import { id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
 import { KIMI_MODELS } from "./config.mjs";
+import { CONTENT_STRATEGY } from "./content-strategy.mjs";
+import { contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
 
 export class Repository {
   constructor(db, contentConfig = {}) {
     this.db = db;
-    this.contentConfig = { staleAfterDays: 365, volatileStaleAfterDays: 90, searchConsoleMinimumImpressions: 10, ...contentConfig };
+    this.contentConfig = {
+      staleAfterDays: 365, volatileStaleAfterDays: 90, searchConsoleMinimumImpressions: 10,
+      contentStrategy: CONTENT_STRATEGY, ...contentConfig,
+    };
     // A running job belongs to the Node process that claimed it. Creating a new
     // repository happens during process startup, so any existing lock was left by
     // an interrupted process and must be made retryable immediately.
@@ -14,6 +19,10 @@ export class Repository {
         completed_at = NULL, duration_ms = NULL, queue_latency_ms = NULL, updated_at = ?
       WHERE status = 'running'
     `).run(now());
+  }
+
+  get strategyVersion() {
+    return this.contentConfig.contentStrategy?.version || CONTENT_STRATEGY.version;
   }
 
   getAiSettings(defaultModel) {
@@ -168,7 +177,140 @@ export class Repository {
     const structured = this.db.prepare("SELECT * FROM structured_sources WHERE source_id = ?").get(sourceId) || null;
     const claims = this.db.prepare("SELECT * FROM claims WHERE source_id = ? ORDER BY normalized_key").all(sourceId);
     const blueprint = this.db.prepare("SELECT * FROM source_blueprints WHERE source_id = ?").get(sourceId) || null;
-    return hydrateSource({ source, assets, structured, claims, blueprint });
+    const analysis = this.db.prepare("SELECT * FROM content_intake_analyses WHERE source_id = ?").get(sourceId) || null;
+    const recommendation = this.db.prepare("SELECT * FROM content_recommendations WHERE source_id = ? ORDER BY updated_at DESC LIMIT 1").get(sourceId) || null;
+    return hydrateSource({ source, assets, structured, claims, blueprint, analysis, recommendation });
+  }
+
+  getIntakePackage(sourceId) {
+    const source = this.getSource(sourceId);
+    if (!source?.structured) return null;
+    return {
+      strategy_version: this.strategyVersion,
+      source: {
+        id: source.id, title: source.title, captured_at: source.captured_at,
+        text: String(source.raw_text || "").slice(0, 40_000),
+        destination: source.structured.destination_name,
+        destination_slug: source.structured.destination_slug,
+        summary: source.structured.summary,
+      },
+      claims: source.claims.map((claim) => ({
+        key: claim.normalized_key, subject: claim.subject, predicate: claim.predicate,
+        value: claim.value_text, qualifiers: claim.qualifiers, confidence: claim.confidence,
+      })),
+      existing_knowledge: this.knowledgeForDestination(source.structured.destination_slug).slice(0, 80),
+    };
+  }
+
+  saveIntakeAnalysis(sourceId, analysis, model) {
+    const source = this.db.prepare(`
+      SELECT s.id, ss.destination_slug FROM sources s JOIN structured_sources ss ON ss.source_id=s.id WHERE s.id=?
+    `).get(sourceId);
+    if (!source) throw new Error(`Source ${sourceId} is not ready for intake analysis.`);
+    const normalized = normalizeIntakeAnalysis(analysis, this.strategyVersion);
+    const timestamp = now();
+    const analysisId = `intake_${sha256(sourceId).slice(0, 24)}`;
+    const recommendationId = `recommendation_${sha256(sourceId).slice(0, 24)}`;
+    transaction(this.db, () => {
+      this.db.prepare(`
+        INSERT INTO content_intake_analyses(id, source_id, strategy_version, classification, confidence, primary_topic,
+          article_potential, information_density, topic_completeness, duplicate_likelihood, analysis_json, model, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_id) DO UPDATE SET strategy_version=excluded.strategy_version, classification=excluded.classification,
+          confidence=excluded.confidence, primary_topic=excluded.primary_topic, article_potential=excluded.article_potential,
+          information_density=excluded.information_density, topic_completeness=excluded.topic_completeness,
+          duplicate_likelihood=excluded.duplicate_likelihood, analysis_json=excluded.analysis_json, model=excluded.model,
+          updated_at=excluded.updated_at
+      `).run(analysisId, sourceId, this.strategyVersion, normalized.classification, normalized.confidence,
+        normalized.primary_topic, normalized.article_potential, normalized.information_density,
+        normalized.topic_completeness, normalized.duplicate_likelihood, JSON.stringify(normalized), model, timestamp, timestamp);
+      this.db.prepare(`
+        INSERT INTO content_recommendations(id, analysis_id, source_id, strategy_version, classification, recommended_action,
+          suggested_content_type, suggested_article_title, reasoning_summary, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(analysis_id) DO UPDATE SET strategy_version=excluded.strategy_version, classification=excluded.classification,
+          recommended_action=excluded.recommended_action, suggested_content_type=excluded.suggested_content_type,
+          suggested_article_title=excluded.suggested_article_title, reasoning_summary=excluded.reasoning_summary,
+          decision='pending', decision_note=NULL, approved_candidate_id=NULL, decided_at=NULL, updated_at=excluded.updated_at
+      `).run(recommendationId, analysisId, sourceId, this.strategyVersion, normalized.classification,
+        normalized.recommended_action, normalized.suggested_content_type || null, normalized.suggested_article_title || null,
+        normalized.reasoning_summary, timestamp, timestamp);
+    });
+    const recommendation = this.db.prepare("SELECT * FROM content_recommendations WHERE analysis_id=?").get(analysisId);
+    this.upsertContentOpportunity(source.destination_slug, sourceId, recommendation, normalized);
+    return this.getSource(sourceId).analysis;
+  }
+
+  listContentRecommendations(limit = 100) {
+    return this.db.prepare(`
+      SELECT r.*, a.confidence, a.primary_topic, a.article_potential, a.information_density, a.topic_completeness,
+        a.duplicate_likelihood, a.analysis_json, s.title AS source_title, ss.destination_name, ss.destination_slug
+      FROM content_recommendations r
+      JOIN content_intake_analyses a ON a.id=r.analysis_id
+      JOIN sources s ON s.id=r.source_id
+      LEFT JOIN structured_sources ss ON ss.source_id=r.source_id
+      ORDER BY CASE r.decision WHEN 'pending' THEN 0 ELSE 1 END, r.updated_at DESC LIMIT ?
+    `).all(limit).map(hydrateRecommendation);
+  }
+
+  listContentOpportunities(limit = 100) {
+    return this.db.prepare(`
+      SELECT o.*, tc.coverage_score AS candidate_coverage_score, tc.status AS candidate_status
+      FROM content_opportunities o LEFT JOIN topic_candidates tc ON tc.id=o.candidate_id
+      ORDER BY CASE o.status WHEN 'recommended' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, o.readiness_score DESC, o.updated_at DESC
+      LIMIT ?
+    `).all(limit).map((row) => ({ ...row, coverage: json(row.coverage_json, {}) }));
+  }
+
+  decideRecommendation(recommendationId, decision, note = "") {
+    const allowed = new Set(["approved_article", "knowledge_only", "cluster", "research_first", "ignored"]);
+    if (!allowed.has(decision)) throw new Error("Unsupported recommendation decision.");
+    const recommendation = this.db.prepare(`
+      SELECT r.*, a.analysis_json, a.primary_topic, a.article_potential, ss.destination_slug
+      FROM content_recommendations r
+      JOIN content_intake_analyses a ON a.id=r.analysis_id
+      JOIN structured_sources ss ON ss.source_id=r.source_id
+      WHERE r.id=?
+    `).get(recommendationId);
+    if (!recommendation) return null;
+    const analysis = json(recommendation.analysis_json, {});
+    const candidate = decision === "approved_article" ? this.db.prepare(`
+      SELECT * FROM topic_candidates WHERE destination_slug=? AND status='candidate'
+      ORDER BY coverage_score DESC LIMIT 1
+    `).get(recommendation.destination_slug) : null;
+    const timestamp = now();
+    const opportunityStatus = decision === "approved_article" ? candidate ? "planned" : "research_required"
+      : decision === "knowledge_only" ? "knowledge_only" : decision === "cluster" ? "cluster"
+        : decision === "research_first" ? "research_required" : "ignored";
+    this.db.prepare(`
+      UPDATE content_recommendations SET decision=?, decision_note=?, approved_candidate_id=?, decided_at=?, updated_at=? WHERE id=?
+    `).run(decision, String(note || "").slice(0, 1_000), candidate?.id || null, timestamp, timestamp, recommendationId);
+    this.upsertContentOpportunity(recommendation.destination_slug, recommendation.source_id, { ...recommendation, decision, id: recommendationId }, analysis, {
+      status: opportunityStatus, candidateId: candidate?.id || null,
+    });
+    const queued = candidate ? this.queueCandidate(candidate.id) : false;
+    return { recommendation: this.db.prepare("SELECT * FROM content_recommendations WHERE id=?").get(recommendationId), candidateId: candidate?.id || null, queued, needsResearch: decision === "approved_article" && !candidate };
+  }
+
+  upsertContentOpportunity(destinationSlug, sourceId, recommendation, analysis, overrides = {}) {
+    const topic = analysis.primary_topic || recommendation.suggested_article_title || "travel topic";
+    const topicKey = `${destinationSlug}:strategy:${slugify(topic) || sha256(sourceId).slice(0, 8)}`;
+    const opportunityId = `opportunity_${sha256(topicKey).slice(0, 24)}`;
+    const coverage = opportunityCoverage(destinationSlug, this.knowledgeForDestination(destinationSlug), analysis);
+    const status = overrides.status || classificationOpportunityStatus(analysis.classification);
+    const title = analysis.suggested_article_title || recommendation.suggested_article_title || `${topic} guide`;
+    const candidateId = overrides.candidateId || recommendation.approved_candidate_id || null;
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO content_opportunities(id, destination_slug, topic_key, strategy_version, source_id, recommendation_id,
+        candidate_id, title, content_type, readiness_score, coverage_json, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(topic_key) DO UPDATE SET recommendation_id=excluded.recommendation_id, candidate_id=excluded.candidate_id,
+        title=excluded.title, content_type=excluded.content_type, readiness_score=excluded.readiness_score,
+        coverage_json=excluded.coverage_json, status=excluded.status, updated_at=excluded.updated_at
+    `).run(opportunityId, destinationSlug, topicKey, this.strategyVersion, sourceId, recommendation.id, candidateId,
+      title, analysis.suggested_content_type || null, coverage.readiness, JSON.stringify(coverage), status, timestamp, timestamp);
+    return opportunityId;
   }
 
   listSources(limit = 100) {
@@ -374,8 +516,8 @@ export class Repository {
 
     const upsert = this.db.prepare(`
       INSERT INTO topic_candidates(id, destination_slug, topic_key, proposed_title, rationale, coverage_score,
-        evidence_count, conflict_count, stale_fact_count, verification_fact_count, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        evidence_count, conflict_count, stale_fact_count, verification_fact_count, strategy_version, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(topic_key) DO UPDATE SET proposed_title=excluded.proposed_title, rationale=excluded.rationale,
         coverage_score=excluded.coverage_score, evidence_count=excluded.evidence_count,
         conflict_count=excluded.conflict_count, stale_fact_count=excluded.stale_fact_count,
@@ -388,7 +530,7 @@ export class Repository {
         const candidateId = `topic_${sha256(proposal.topicKey).slice(0, 24)}`;
         upsert.run(candidateId, destinationSlug, proposal.topicKey, proposal.title, proposal.rationale,
           proposal.coverageScore, proposal.evidenceCount, proposal.conflictCount,
-          proposal.staleFactCount, proposal.verificationFactCount, timestamp, timestamp);
+          proposal.staleFactCount, proposal.verificationFactCount, this.strategyVersion, timestamp, timestamp);
         const candidate = this.db.prepare("SELECT status, suppression_reason FROM topic_candidates WHERE id=?").get(candidateId);
         const wordpressCollision = this.findWordPressCollision(proposal.title);
         const searchCollision = wordpressCollision ? null : this.findSearchConsoleCollision(proposal.title);
@@ -415,6 +557,14 @@ export class Repository {
   queueCandidate(candidateId) {
     const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
     if (!candidate || !["candidate", "brief_queued"].includes(candidate.status)) return false;
+    if (candidate.strategy_version === this.strategyVersion) {
+      const approved = this.db.prepare(`
+        SELECT id FROM content_opportunities
+        WHERE candidate_id=? AND strategy_version=? AND status='planned'
+        LIMIT 1
+      `).get(candidateId, this.strategyVersion);
+      if (!approved) return false;
+    }
     this.db.prepare("UPDATE topic_candidates SET status = 'brief_queued', updated_at = ? WHERE id = ?").run(now(), candidateId);
     this.enqueue("plan_content", candidateId);
     return true;
@@ -445,17 +595,20 @@ export class Repository {
     const briefId = existing?.id || id("brief");
     const timestamp = now();
     const ledger = [...new Set((plan.outline || []).flatMap((section) => section.claim_keys || []))];
+    const canonical = canonicalFromPlan(plan, candidate, this.contentConfig);
     if (existing) {
       this.db.prepare(`
-        UPDATE content_briefs SET destination_slug=?, topic=?, audience=?, search_intent=?, plan_json=?,
-          evidence_ledger_json=?, model=?, status='ready', last_error=NULL, updated_at=? WHERE id=?
-      `).run(candidate.destination_slug, plan.title, JSON.stringify(plan.audience), plan.search_intent, JSON.stringify(plan), JSON.stringify(ledger), model, timestamp, briefId);
+        UPDATE content_briefs SET destination_slug=?, topic=?, audience=?, search_intent=?, plan_json=?, canonical_json=?,
+          evidence_ledger_json=?, model=?, strategy_version=?, status='ready', last_error=NULL, updated_at=? WHERE id=?
+      `).run(candidate.destination_slug, plan.title, JSON.stringify(plan.audience), plan.search_intent, JSON.stringify(plan),
+        JSON.stringify(canonical), JSON.stringify(ledger), model, this.strategyVersion, timestamp, briefId);
     } else {
       this.db.prepare(`
-        INSERT INTO content_briefs(id, destination_slug, topic, audience, search_intent, plan_json, status,
-          created_at, updated_at, candidate_id, evidence_ledger_json, model)
-        VALUES (?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?)
-      `).run(briefId, candidate.destination_slug, plan.title, JSON.stringify(plan.audience), plan.search_intent, JSON.stringify(plan), timestamp, timestamp, candidateId, JSON.stringify(ledger), model);
+        INSERT INTO content_briefs(id, destination_slug, topic, audience, search_intent, plan_json, canonical_json, status,
+          created_at, updated_at, candidate_id, evidence_ledger_json, model, strategy_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?)
+      `).run(briefId, candidate.destination_slug, plan.title, JSON.stringify(plan.audience), plan.search_intent, JSON.stringify(plan),
+        JSON.stringify(canonical), timestamp, timestamp, candidateId, JSON.stringify(ledger), model, this.strategyVersion);
     }
     this.db.prepare("UPDATE topic_candidates SET status='brief_ready', updated_at=? WHERE id=?").run(timestamp, candidateId);
     this.enqueue("generate_draft", briefId);
@@ -467,7 +620,10 @@ export class Repository {
     if (!brief) return null;
     const topicPackage = this.getTopicPackage(brief.candidate_id);
     return {
-      brief: { ...brief, plan: json(brief.plan_json, {}), evidence_ledger: json(brief.evidence_ledger_json, []) },
+      brief: {
+        ...brief, plan: json(brief.plan_json, {}), canonical: json(brief.canonical_json, {}),
+        evidence_ledger: json(brief.evidence_ledger_json, []),
+      },
       ...topicPackage,
     };
   }
@@ -483,22 +639,23 @@ export class Repository {
       this.db.prepare(`
         UPDATE article_drafts SET title=?, slug=?, body_markdown=?, meta_description=?, evidence_ledger_json=?,
           unresolved_conflicts_json=?, verification_notes_json=?, model=?, revision=revision+1,
-          seo_json=?, schema_jsonld=?, quality_report_json='{}', status='qa_queued', updated_at=?
+          seo_json=?, schema_jsonld=?, content_blocks_json=?, strategy_version=?, quality_report_json='{}', status='qa_queued', updated_at=?
         WHERE id=?
       `).run(draft.title, draft.slug, draft.body_markdown, draft.meta_description, JSON.stringify(draft.evidence_ledger),
         JSON.stringify(draft.unresolved_conflicts), JSON.stringify(draft.verification_notes || []), model,
-        JSON.stringify(metadata.seo), JSON.stringify(metadata.schema), timestamp, draftId);
+        JSON.stringify(metadata.seo), JSON.stringify(metadata.schema), JSON.stringify(metadata.blocks), brief.strategy_version || this.strategyVersion, timestamp, draftId);
     } else {
       this.db.prepare(`
         INSERT INTO article_drafts(id, brief_id, title, slug, body_markdown, quality_report_json, status,
           created_at, updated_at, meta_description, evidence_ledger_json, unresolved_conflicts_json,
-          verification_notes_json, model, seo_json, schema_jsonld)
-        VALUES (?, ?, ?, ?, ?, '{}', 'qa_queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          verification_notes_json, model, seo_json, schema_jsonld, content_blocks_json, strategy_version)
+        VALUES (?, ?, ?, ?, ?, '{}', 'qa_queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(draftId, briefId, draft.title, draft.slug, draft.body_markdown, timestamp, timestamp,
         draft.meta_description, JSON.stringify(draft.evidence_ledger), JSON.stringify(draft.unresolved_conflicts),
-        JSON.stringify(draft.verification_notes || []), model, JSON.stringify(metadata.seo), JSON.stringify(metadata.schema));
+        JSON.stringify(draft.verification_notes || []), model, JSON.stringify(metadata.seo), JSON.stringify(metadata.schema),
+        JSON.stringify(metadata.blocks), brief.strategy_version || this.strategyVersion);
     }
-    this.replaceDraftVisuals(draftId, metadata.visuals);
+    this.replaceDraftVisuals(draftId, metadata.visuals, brief.strategy_version || this.strategyVersion);
     this.db.prepare("UPDATE topic_candidates SET status='drafted', updated_at=? WHERE id=?").run(timestamp, brief.candidate_id);
     this.db.prepare("UPDATE content_briefs SET status='drafted', updated_at=? WHERE id=?").run(timestamp, briefId);
     this.enqueue("review_draft", draftId);
@@ -521,6 +678,7 @@ export class Repository {
         verification_notes: json(draft.verification_notes_json, []),
         seo: json(draft.seo_json, {}),
         schema_jsonld: json(draft.schema_jsonld, {}),
+        content_blocks: json(draft.content_blocks_json, []),
         visuals: this.listDraftVisuals(draftId),
       },
       review: review ? hydrateReview(review) : null,
@@ -537,21 +695,26 @@ export class Repository {
     return this.db.prepare("SELECT * FROM article_visuals WHERE draft_id=? ORDER BY slot").all(draftId);
   }
 
-  replaceDraftVisuals(draftId, visuals) {
+  replaceDraftVisuals(draftId, visuals, strategyVersion) {
     const timestamp = now();
     transaction(this.db, () => {
       this.db.prepare("DELETE FROM article_visuals WHERE draft_id=?").run(draftId);
       const insert = this.db.prepare(`
-        INSERT INTO article_visuals(id, draft_id, slot, placement, purpose, alt_text, caption, generation_prompt, aspect_ratio, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO article_visuals(id, draft_id, slot, placement, purpose, alt_text, caption, generation_prompt, aspect_ratio,
+          strategy_version, image_type, image_role, image_subject, acquisition_strategy, factual_image_required, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       visuals.forEach((visual, index) => insert.run(id("visual"), draftId, index + 1, visual.placement, visual.purpose,
-        visual.alt_text, visual.caption, visual.generation_prompt, visual.aspect_ratio, timestamp, timestamp));
+        visual.alt_text, visual.caption, visual.generation_prompt, visual.aspect_ratio, strategyVersion, visual.image_type,
+        visual.image_role, visual.image_subject, visual.acquisition_strategy, visual.factual_image_required ? 1 : 0, timestamp, timestamp));
     });
   }
 
   plannedVisuals(draftId) {
-    return this.db.prepare("SELECT * FROM article_visuals WHERE draft_id=? AND status='planned' ORDER BY slot").all(draftId);
+    return this.db.prepare(`
+      SELECT * FROM article_visuals WHERE draft_id=? AND status='planned' AND acquisition_strategy='generate_illustration'
+      ORDER BY slot
+    `).all(draftId);
   }
 
   saveGeneratedVisual(visualId, result) {
@@ -575,10 +738,10 @@ export class Repository {
 
   refreshDraftSchema(draftId) {
     const row = this.db.prepare(`
-      SELECT ad.*, cb.destination_slug FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?
+      SELECT ad.*, cb.destination_slug, cb.canonical_json FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?
     `).get(draftId);
     if (!row) return;
-    const schema = buildArticleSchema({ ...row, seo: json(row.seo_json, {}) }, this.listDraftVisuals(draftId), this.contentConfig);
+    const schema = buildArticleSchema({ ...row, seo: json(row.seo_json, {}), canonical: json(row.canonical_json, {}) }, this.listDraftVisuals(draftId), this.contentConfig);
     this.db.prepare("UPDATE article_drafts SET schema_jsonld=?, updated_at=? WHERE id=?").run(JSON.stringify(schema), now(), draftId);
   }
 
@@ -586,8 +749,9 @@ export class Repository {
     const timestamp = now();
     this.db.prepare(`
       INSERT INTO quality_reviews(id, draft_id, passed, score, checks_json, issues_json,
-        unsupported_claims_json, reviewer, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id("review"), draftId, review.passed ? 1 : 0, review.score, JSON.stringify(review.checks), JSON.stringify(review.issues), JSON.stringify(review.unsupported_claims), reviewer, timestamp);
+        unsupported_claims_json, reviewer, strategy_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id("review"), draftId, review.passed ? 1 : 0, review.score, JSON.stringify(review.checks), JSON.stringify(review.issues),
+      JSON.stringify(review.unsupported_claims), reviewer, this.db.prepare("SELECT strategy_version FROM article_drafts WHERE id=?").get(draftId)?.strategy_version || this.strategyVersion, timestamp);
     this.db.prepare("UPDATE article_drafts SET quality_report_json=?, status=?, updated_at=? WHERE id=?")
       .run(JSON.stringify(review), review.passed ? "ready_for_wordpress" : "qa_failed", timestamp, draftId);
     return this.db.prepare("SELECT revision FROM article_drafts WHERE id = ?").get(draftId)?.revision || 1;
@@ -602,9 +766,9 @@ export class Repository {
     }
     const publication = { id: id("wp"), draft_id: draftId, site_url: siteUrl, post_id: null };
     this.db.prepare(`
-      INSERT INTO wordpress_publications(id, draft_id, site_url, status, created_at, updated_at)
-      VALUES (?, ?, ?, 'queued', ?, ?)
-    `).run(publication.id, draftId, siteUrl, timestamp, timestamp);
+      INSERT INTO wordpress_publications(id, draft_id, site_url, status, strategy_version, created_at, updated_at)
+      VALUES (?, ?, ?, 'queued', ?, ?, ?)
+    `).run(publication.id, draftId, siteUrl, this.db.prepare("SELECT strategy_version FROM article_drafts WHERE id=?").get(draftId)?.strategy_version || this.strategyVersion, timestamp, timestamp);
     return publication;
   }
 
@@ -705,7 +869,7 @@ export class Repository {
       WHERE tc.id=?
     `).get(candidateId);
     if (!row) return null;
-    if (!row.brief_id) { this.queueCandidate(candidateId); return "plan_content"; }
+    if (!row.brief_id) return this.queueCandidate(candidateId) ? "plan_content" : null;
     if (!row.draft_id) {
       this.db.prepare("UPDATE content_briefs SET status='ready', last_error=NULL, updated_at=? WHERE id=?").run(now(), row.brief_id);
       this.enqueue("generate_draft", row.brief_id);
@@ -1232,7 +1396,7 @@ function hydrateReview(row) {
   };
 }
 
-function hydrateSource({ source, assets, structured, claims, blueprint }) {
+function hydrateSource({ source, assets, structured, claims, blueprint, analysis = null, recommendation = null }) {
   if (structured) {
     structured.traveler_fit = json(structured.traveler_fit_json, []);
     structured.practical_tips = json(structured.practical_tips_json, []);
@@ -1245,18 +1409,41 @@ function hydrateSource({ source, assets, structured, claims, blueprint }) {
     blueprint.gaps = json(blueprint.gaps_json, []);
   }
   delete source.raw_payload_json;
-  return { ...source, assets, structured, claims, blueprint };
+  return {
+    ...source, assets, structured, claims, blueprint,
+    analysis: analysis ? { ...analysis, data: json(analysis.analysis_json, {}) } : null,
+    recommendation: recommendation ? hydrateRecommendation(recommendation) : null,
+  };
 }
 
 function draftMetadata(draft, brief, config) {
+  const canonical = json(brief.canonical_json, {});
+  const canonicalUrl = config.publicSiteUrl && draft.slug ? `${config.publicSiteUrl}/${draft.slug}/` : null;
   const seo = {
-    meta_title: truncateText(draft.seo?.meta_title || draft.title, 60),
-    focus_keyword: truncateText(draft.seo?.focus_keyword || brief.topic || draft.title, 160),
+    primary_keyword: truncateText(draft.seo?.primary_keyword || draft.seo?.focus_keyword || canonical.seo?.primary_keyword || brief.topic || draft.title, 160),
+    secondary_keywords: (draft.seo?.secondary_keywords || canonical.secondary_queries || []).slice(0, 8).map((item) => truncateText(item, 160)),
+    search_intent: truncateText(draft.seo?.search_intent || canonical.content_intent || brief.search_intent || "informational", 120),
+    seo_title: truncateText(draft.seo?.seo_title || draft.seo?.meta_title || draft.title, 60),
+    meta_title: truncateText(draft.seo?.seo_title || draft.seo?.meta_title || draft.title, 60),
+    focus_keyword: truncateText(draft.seo?.primary_keyword || draft.seo?.focus_keyword || brief.topic || draft.title, 160),
+    meta_description: truncateText(draft.meta_description, 160),
+    slug: draft.slug,
+    canonical_url: canonicalUrl,
+    robots: "index,follow",
+    og_title: truncateText(draft.seo?.og_title || draft.seo?.seo_title || draft.seo?.meta_title || draft.title, 60),
+    og_description: truncateText(draft.seo?.og_description || draft.meta_description, 160),
+    og_image: null,
     key_takeaways: (draft.seo?.key_takeaways || []).slice(0, 6).map((item) => truncateText(item, 240)),
     faqs: (draft.faqs || []).slice(0, 5).map((item) => ({ question: truncateText(item.question, 220), answer: truncateText(item.answer, 700) })),
   };
   const visuals = normalizeVisuals(draft.visuals, draft, brief);
-  return { seo, visuals, schema: buildArticleSchema({ ...draft, ...seo, seo, destination_slug: brief.destination_slug }, visuals, config) };
+  const firstGenerated = visuals.find((visual) => visual.status === "generated" && visual.media_url);
+  if (firstGenerated) seo.og_image = firstGenerated.media_url;
+  const blocks = markdownToContentBlocks(draft.body_markdown);
+  return {
+    seo, visuals, blocks,
+    schema: buildArticleSchema({ ...draft, seo, destination_slug: brief.destination_slug, canonical }, visuals, config),
+  };
 }
 
 function normalizeVisuals(values, draft, brief) {
@@ -1264,42 +1451,69 @@ function normalizeVisuals(values, draft, brief) {
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
   const allowedRatios = ["16:9", "4:3", "1:1", "3:2", "9:16"];
   const supplied = Array.isArray(values) ? values : [];
-  const visuals = supplied.slice(0, target).map((item, index) => ({
-    placement: allowedPlacements.includes(item?.placement) ? item.placement : defaultPlacement(index),
-    purpose: truncateText(item?.purpose || `Orient readers to ${draft.title}`, 300),
-    alt_text: truncateText(item?.alt_text || `${draft.title} travel illustration`, 220),
-    caption: truncateText(item?.caption || "Illustrative travel scene", 300),
-    generation_prompt: truncateText(item?.generation_prompt || defaultVisualPrompt(draft.title, brief.destination_slug, index), 2_000),
-    aspect_ratio: allowedRatios.includes(item?.aspect_ratio) ? item.aspect_ratio : index === 0 ? "16:9" : "3:2",
-  }));
+  const visuals = supplied.slice(0, target).map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
   while (visuals.length < target) {
     const index = visuals.length;
-    visuals.push({
-      placement: defaultPlacement(index), purpose: `Support a key section of ${draft.title}`,
-      alt_text: `${draft.title} travel illustration`, caption: "Illustrative travel scene",
-      generation_prompt: defaultVisualPrompt(draft.title, brief.destination_slug, index), aspect_ratio: index === 0 ? "16:9" : "3:2",
-    });
+    visuals.push(normalizeVisual({}, index, draft, brief, allowedPlacements, allowedRatios));
   }
   return visuals;
 }
 
+function normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios) {
+  const allowedTypes = ["real_world_photo", "infographic", "map_or_route", "illustration"];
+  const imageType = allowedTypes.includes(item?.image_type) ? item.image_type : "illustration";
+  const strategy = imageType === "real_world_photo" ? "search_real_image"
+    : imageType === "infographic" ? "render_infographic"
+      : imageType === "map_or_route" ? "render_map" : "generate_illustration";
+  const factualRequired = imageType === "real_world_photo" || Boolean(item?.factual_image_required);
+  return {
+    placement: allowedPlacements.includes(item?.placement) ? item.placement : defaultPlacement(index),
+    purpose: truncateText(item?.purpose || `Orient readers to ${draft.title}`, 300),
+    alt_text: truncateText(item?.alt_text || `${draft.title} editorial illustration`, 220),
+    caption: truncateText(item?.caption || "Original editorial illustration", 300),
+    generation_prompt: strategy === "generate_illustration"
+      ? truncateText(item?.generation_prompt || defaultVisualPrompt(draft.title, brief.destination_slug, index), 2_000) : "",
+    aspect_ratio: allowedRatios.includes(item?.aspect_ratio) ? item.aspect_ratio : index === 0 ? "16:9" : "3:2",
+    image_type: imageType,
+    image_role: truncateText(item?.image_role || (index === 0 ? "hero" : "support"), 80),
+    image_subject: truncateText(item?.image_subject || draft.title, 240),
+    acquisition_strategy: strategy,
+    factual_image_required: factualRequired,
+  };
+}
+
 function buildArticleSchema(draft, visuals, config) {
-  const canonical = config.publicSiteUrl && draft.slug ? `${config.publicSiteUrl}/${draft.slug}/` : null;
+  const canonicalUrl = config.publicSiteUrl && draft.slug ? `${config.publicSiteUrl}/${draft.slug}/` : null;
   const generatedImages = visuals.filter((item) => item.status === "generated" && item.media_url).map((item) => item.media_url);
+  const organizationId = config.publicSiteUrl ? `${config.publicSiteUrl}#organization` : undefined;
+  const organization = { "@type": "Organization", name: config.publisherName || "SoloToChina" };
+  if (organizationId) organization["@id"] = organizationId;
+  if (config.publisherLogoUrl) organization.logo = { "@type": "ImageObject", url: config.publisherLogoUrl };
   const article = {
     "@type": "Article",
     headline: draft.title,
     description: draft.meta_description,
     inLanguage: "en",
-    author: { "@type": "Organization", name: config.publisherName || "SoloToChina" },
-    publisher: { "@type": "Organization", name: config.publisherName || "SoloToChina" },
-    keywords: draft.seo?.focus_keyword || draft.focus_keyword || "",
+    author: organizationId ? { "@id": organizationId } : organization,
+    publisher: organizationId ? { "@id": organizationId } : organization,
+    keywords: draft.seo?.primary_keyword || draft.seo?.focus_keyword || "",
     about: draft.destination_slug || "China travel",
   };
-  if (canonical) article.mainEntityOfPage = { "@type": "WebPage", "@id": canonical };
+  const graph = [organization];
+  if (canonicalUrl) {
+    graph.push({ "@type": "WebPage", "@id": canonicalUrl, name: draft.title, description: draft.meta_description, inLanguage: "en" });
+    graph.push({
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "China travel", item: config.publicSiteUrl },
+        { "@type": "ListItem", position: 2, name: draft.canonical?.destination?.name || draft.destination_slug || "Travel guide", item: canonicalUrl },
+      ],
+    });
+    article.mainEntityOfPage = { "@type": "WebPage", "@id": canonicalUrl };
+  }
   if (generatedImages.length) article.image = generatedImages;
-  if (config.publisherLogoUrl) article.publisher.logo = { "@type": "ImageObject", url: config.publisherLogoUrl };
-  const graph = [article];
+  graph.push(article);
+  for (const image of generatedImages) graph.push({ "@type": "ImageObject", contentUrl: image });
   const faqs = draft.seo?.faqs || [];
   if (faqs.length) graph.push({
     "@type": "FAQPage",
@@ -1308,12 +1522,155 @@ function buildArticleSchema(draft, visuals, config) {
   return { "@context": "https://schema.org", "@graph": graph };
 }
 
+function canonicalFromPlan(plan, candidate, config) {
+  const supplied = plan.canonical || {};
+  const contentTypes = new Set([
+    "city_guide", "itinerary", "attraction_guide", "food_guide", "transport_guide", "neighborhood_guide",
+    "hotel_area_guide", "shopping_guide", "practical_guide", "first_time_guide", "comparison", "listicle", "how_to",
+  ]);
+  const destinationName = config.destinationName || candidate.destination_slug.replace(/-/g, " ");
+  const faqs = normalizeFaqs(supplied.faq || supplied.faqs || []);
+  return {
+    strategy_version: config.contentStrategy?.version || CONTENT_STRATEGY.version,
+    content_id: `canonical_${sha256(candidate.id).slice(0, 24)}`,
+    content_type: contentTypes.has(supplied.content_type) ? supplied.content_type : "first_time_guide",
+    title: truncateText(plan.title || candidate.proposed_title, 180),
+    slug: slugify(plan.slug || plan.title || candidate.proposed_title),
+    destination: { name: truncateText(supplied.destination?.name || destinationName, 160), slug: candidate.destination_slug },
+    entities: cleanStrings(supplied.entities, 20, 160),
+    content_intent: truncateText(plan.search_intent || supplied.content_intent || "informational", 120),
+    audience: cleanStrings(plan.audience || supplied.audience, 8, 160),
+    primary_query: truncateText(plan.primary_keyword || supplied.primary_query || candidate.proposed_title, 160),
+    secondary_queries: cleanStrings(supplied.secondary_queries, 8, 160),
+    summary: truncateText(supplied.summary || plan.reader_promise || candidate.rationale, 700),
+    quick_answer: truncateText(supplied.quick_answer || plan.reader_promise || candidate.rationale, 700),
+    highlights: cleanStrings(supplied.highlights, 8, 300),
+    places: cleanObjects(supplied.places, 12),
+    days: cleanObjects(supplied.days, 8),
+    transport: cleanStrings(supplied.transport, 12, 300),
+    food: cleanStrings(supplied.food, 12, 300),
+    accommodation: cleanStrings(supplied.accommodation, 12, 300),
+    practical_tips: cleanStrings(supplied.practical_tips || plan.adaptation_requirements, 12, 300),
+    warnings: cleanStrings(supplied.warnings || plan.conflict_instructions, 12, 300),
+    faq: faqs,
+    answer_blocks: normalizeAnswerBlocks(supplied.answer_blocks, candidate.destination_slug),
+    image_plan: normalizeCanonicalImagePlan(supplied.image_plan),
+    internal_link_opportunities: [],
+    seo: {
+      primary_keyword: truncateText(plan.primary_keyword || supplied.seo?.primary_keyword || candidate.proposed_title, 160),
+      secondary_keywords: cleanStrings(supplied.seo?.secondary_keywords || supplied.secondary_queries, 8, 160),
+      search_intent: truncateText(plan.search_intent || supplied.seo?.search_intent || "informational", 120),
+    },
+    schema: {},
+    quality: { evidence_count: candidate.evidence_count, conflict_count: candidate.conflict_count, readiness_score: candidate.coverage_score },
+    last_verified: null,
+  };
+}
+
+function normalizeIntakeAnalysis(value, strategyVersion) {
+  const classifications = new Set(["ARTICLE_CANDIDATE", "KNOWLEDGE_ONLY", "CLAIM_ONLY", "CLUSTER_CANDIDATE", "RESEARCH_REQUIRED", "DUPLICATE", "LOW_VALUE", "UNSURE"]);
+  const classification = classifications.has(value?.classification) ? value.classification : "UNSURE";
+  const fallbackAction = {
+    ARTICLE_CANDIDATE: "CREATE_CONTENT_PLAN", KNOWLEDGE_ONLY: "ADD_TO_KNOWLEDGE", CLAIM_ONLY: "ADD_TO_KNOWLEDGE",
+    CLUSTER_CANDIDATE: "ADD_TO_CLUSTER", RESEARCH_REQUIRED: "RESEARCH_FIRST", DUPLICATE: "MERGE_OR_IGNORE",
+    LOW_VALUE: "IGNORE", UNSURE: "HUMAN_REVIEW",
+  }[classification];
+  return {
+    strategy_version: strategyVersion,
+    classification,
+    confidence: normalizedFraction(value?.confidence),
+    primary_topic: truncateText(value?.primary_topic || "Unclassified travel topic", 240),
+    entities: cleanStrings(value?.entities, 24, 160),
+    knowledge_points: cleanStrings(value?.knowledge_points, 20, 320),
+    claims: cleanStrings(value?.claims, 20, 240),
+    article_potential: normalizedScore(value?.article_potential),
+    information_density: normalizedScore(value?.information_density),
+    topic_completeness: normalizedScore(value?.topic_completeness),
+    duplicate_likelihood: normalizedScore(value?.duplicate_likelihood),
+    recommended_action: truncateText(value?.recommended_action || fallbackAction, 80),
+    suggested_content_type: truncateText(value?.suggested_content_type || "", 80),
+    suggested_article_title: truncateText(value?.suggested_article_title || "", 180),
+    missing_information: cleanStrings(value?.missing_information, 16, 240),
+    possible_cluster_topics: cleanStrings(value?.possible_cluster_topics, 10, 180),
+    reasoning_summary: truncateText(value?.reasoning_summary || "Review the evidence before deciding the next content action.", 700),
+  };
+}
+
+function hydrateRecommendation(row) {
+  const analysis = row.analysis_json ? json(row.analysis_json, {}) : null;
+  return { ...row, analysis, missing_information: analysis?.missing_information || [], possible_cluster_topics: analysis?.possible_cluster_topics || [] };
+}
+
+function classificationOpportunityStatus(classification) {
+  if (classification === "RESEARCH_REQUIRED") return "research_required";
+  if (classification === "KNOWLEDGE_ONLY" || classification === "CLAIM_ONLY") return "knowledge_only";
+  if (classification === "CLUSTER_CANDIDATE") return "cluster";
+  if (["LOW_VALUE", "DUPLICATE"].includes(classification)) return "ignored";
+  return "recommended";
+}
+
+function opportunityCoverage(destinationSlug, facts, analysis) {
+  const values = Array.isArray(facts) ? facts : [];
+  const coverage = {
+    core_answer: Boolean(analysis.primary_topic && values.length),
+    transport: values.some((fact) => /transport|metro|train|bus|station|airport|route/i.test(`${fact.normalized_key} ${fact.subject} ${fact.predicate}`)),
+    cost: values.some((fact) => /price|cost|fee|budget|ticket/i.test(`${fact.normalized_key} ${fact.subject} ${fact.predicate}`)),
+    practical_tips: (analysis.knowledge_points || []).length > 0,
+    faq: (analysis.possible_cluster_topics || []).length > 0 || analysis.article_potential >= 60,
+    destination: destinationSlug,
+  };
+  const complete = Object.values(coverage).filter((value) => value === true).length;
+  return { readiness: Math.round(Math.min(100, analysis.article_potential * 0.55 + analysis.topic_completeness * 0.35 + complete * 2)), coverage };
+}
+
+function normalizeFaqs(values) {
+  return (Array.isArray(values) ? values : []).slice(0, 5).map((item) => ({
+    question: truncateText(item?.question || "", 220), answer: truncateText(item?.answer || "", 700),
+  })).filter((item) => item.question && item.answer);
+}
+
+function normalizeAnswerBlocks(values, destinationSlug) {
+  return (Array.isArray(values) ? values : []).slice(0, 6).map((item) => ({
+    question: truncateText(item?.question || "", 220), direct_answer: truncateText(item?.direct_answer || "", 700),
+    supporting_points: cleanStrings(item?.supporting_points, 6, 240), entity: truncateText(item?.entity || destinationSlug, 160), last_verified: null,
+  })).filter((item) => item.question && item.direct_answer);
+}
+
+function normalizeCanonicalImagePlan(values) {
+  return (Array.isArray(values) ? values : []).slice(0, 5).map((item) => ({
+    type: ["real_world_photo", "infographic", "map_or_route", "illustration"].includes(item?.type) ? item.type : "illustration",
+    role: truncateText(item?.role || "support", 80), subject: truncateText(item?.subject || "", 240),
+    placement: truncateText(item?.placement || "mid_article", 80),
+    strategy: truncateText(item?.strategy || "generate_illustration", 80), factual_image_required: Boolean(item?.factual_image_required),
+  }));
+}
+
+function cleanStrings(values, maxItems, maxLength) {
+  return [...new Set((Array.isArray(values) ? values : []).map((value) => truncateText(value, maxLength)).filter(Boolean))].slice(0, maxItems);
+}
+
+function cleanObjects(values, maxItems) {
+  return (Array.isArray(values) ? values : []).slice(0, maxItems).filter((item) => item && typeof item === "object");
+}
+
+function normalizedScore(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(100, number <= 1 ? number * 100 : number));
+}
+
+function normalizedFraction(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.min(1, number > 1 ? number / 100 : number));
+}
+
 function defaultPlacement(index) {
   return ["hero", "after_intro", "mid_article", "before_faq", "closing"][index] || "mid_article";
 }
 
 function defaultVisualPrompt(title, destination, index) {
-  return `Original editorial travel illustration for \"${title}\" in ${destination || "China"}, scene ${index + 1}; authentic architectural and streetscape atmosphere, no readable text, no logos, no watermark, no copied social-media imagery, natural light, high-detail magazine travel photography.`;
+  return `Original editorial illustration for \"${title}\" in ${destination || "China"}, scene ${index + 1}; calm editorial travel artwork, simplified authentic atmosphere, no realistic documentary claim, no readable text, no logos, no watermark, no copied social-media imagery.`;
 }
 
 function visualCountForWords(words) {

@@ -4,8 +4,9 @@
 
 1. Select useful Xiaohongshu posts on mobile.
 2. Open saved posts in desktop Chrome and click **Save to SoloToChina**.
-3. Review only the **Exceptions** view when its count is non-zero.
-4. Review final drafts in WordPress and publish manually.
+3. When Kimi has analyzed a useful Source, make one decision in **Recommendations**: **Approve article**, Knowledge only, Cluster, Research first, or Ignore. Only **Approve article** queues content planning.
+4. Review only the **Exceptions** view when its count is non-zero.
+5. Review final drafts in WordPress and publish manually.
 
 No spreadsheet, manual source card, URL copy, tagging pass, or Knowledge Base maintenance is required.
 
@@ -119,7 +120,7 @@ Remote webhook URLs must use HTTPS and cannot embed credentials. `EXCEPTION_WEBH
 npm run release:check
 ```
 
-This is the complete local release gate. It runs the production frontend build, static checks, the complete test suite, version alignment, migrations 1–8 on a clean database, and SQLite integrity verification. It then starts an isolated Node server using a temporary SQLite database and random loopback port, polls `/api/health` instead of relying on logs, checks `/api/ready`, core read APIs, a temporary capture insert/revision/read, React HTML/assets, Extension manifest/assets, database integrity, server logs, automatic shutdown, and temporary-file cleanup.
+This is the complete local release gate. It runs the production frontend build, static checks, the complete test suite, application/extension version alignment, Content Strategy manifest/specification/handoff/UI checks, migrations 1–12 on a clean database, and SQLite integrity verification. It then starts an isolated Node server using a temporary SQLite database and random loopback port, polls `/api/health` instead of relying on logs, checks `/api/ready`, `/api/system/info`, core read APIs, a temporary capture insert/revision/read, React HTML/assets, Extension manifest/assets, database integrity, server logs, automatic shutdown, and temporary-file cleanup.
 
 The runner deliberately clears AI, WordPress, Search Console, webhook, and operational-token configuration for its child process, so it never calls external services or touches the live database. It uses these result states:
 

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { markdownToContentBlocks } from "./content-blocks.mjs";
 
 export class WordPressDraftAdapter {
   constructor(config, fetchImpl = fetch) {
@@ -51,10 +52,12 @@ export class WordPressDraftAdapter {
       }
     }
     const visuals = await this.resolveVisualMedia(draft.visuals || []);
+    const contentBlocks = Array.isArray(draft.content_blocks) && draft.content_blocks.length
+      ? draft.content_blocks : markdownToContentBlocks(draft.body_markdown);
     const post = {
       title: draft.title,
       slug: draft.slug,
-      content: this.config.contentFormat === "html" ? markdownToSafeHtml(draft.body_markdown, visuals) : markdownToWordPressBlocks(draft.body_markdown, visuals),
+      content: this.config.contentFormat === "html" ? contentBlocksToSafeHtml(contentBlocks, visuals) : contentBlocksToWordPressBlocks(contentBlocks, visuals),
       excerpt: draft.meta_description,
       status: "draft",
       comment_status: "closed",
@@ -70,13 +73,17 @@ export class WordPressDraftAdapter {
     if (this.config.seoTitleMetaKey) meta[this.config.seoTitleMetaKey] = draft.seo?.meta_title || draft.title;
     if (this.config.seoDescriptionMetaKey) meta[this.config.seoDescriptionMetaKey] = draft.meta_description;
     if (this.config.schemaJsonldMetaKey && draft.schema_jsonld) meta[this.config.schemaJsonldMetaKey] = JSON.stringify(draft.schema_jsonld);
+    if (this.config.strategyVersionMetaKey && draft.strategy_version) meta[this.config.strategyVersionMetaKey] = draft.strategy_version;
     if (Object.keys(meta).length) post.meta = meta;
     const result = await this.request(`/wp-json/wp/v2/posts${existingPostId ? `/${existingPostId}` : ""}`, {
       method: "POST",
       body: JSON.stringify(post),
     });
     if (result.status !== "draft") throw new Error("WordPress did not confirm draft status; refusing to record the sync.");
-    return { postId: result.id, postUrl: result.link || null, status: result.status, visuals: visuals.map((item) => ({ visualId: item.visualId, id: item.id, url: item.url })) };
+    return {
+      postId: result.id, postUrl: result.link || null, status: result.status, strategyVersion: draft.strategy_version || null,
+      visuals: visuals.map((item) => ({ visualId: item.visualId, id: item.id, url: item.url })),
+    };
   }
 
   async resolveVisualMedia(visuals) {
@@ -130,11 +137,19 @@ export class WordPressDraftAdapter {
 }
 
 export function markdownToSafeHtml(markdown, visuals = []) {
-  return injectVisuals(parseMarkdown(markdown).map((block) => block.html), visuals, htmlVisual).join("\n");
+  return contentBlocksToSafeHtml(markdownToContentBlocks(markdown), visuals);
 }
 
 export function markdownToWordPressBlocks(markdown, visuals = []) {
-  const blocks = parseMarkdown(markdown).map((block) => {
+  return contentBlocksToWordPressBlocks(markdownToContentBlocks(markdown), visuals);
+}
+
+function contentBlocksToSafeHtml(contentBlocks, visuals = []) {
+  return injectVisuals(renderContentBlocks(contentBlocks).map((block) => block.html), visuals, htmlVisual).join("\n");
+}
+
+function contentBlocksToWordPressBlocks(contentBlocks, visuals = []) {
+  const blocks = renderContentBlocks(contentBlocks).map((block) => {
     if (block.type === "heading") return `<!-- wp:heading {"level":${block.level}} -->\n${block.html}\n<!-- /wp:heading -->`;
     if (block.type === "list") return `<!-- wp:list -->\n${block.html}\n<!-- /wp:list -->`;
     return `<!-- wp:paragraph -->\n${block.html}\n<!-- /wp:paragraph -->`;
@@ -166,27 +181,12 @@ function mimeForFilename(filename) {
   return /\.jpe?g$/i.test(filename) ? "image/jpeg" : /\.webp$/i.test(filename) ? "image/webp" : "image/png";
 }
 
-function parseMarkdown(markdown) {
-  const lines = String(markdown || "").replace(/\r/g, "").split("\n");
-  const output = [];
-  let list = [];
-  const closeList = () => {
-    if (!list.length) return;
-    output.push({ type: "list", html: `<ul>${list.map((item) => `<li>${item}</li>`).join("")}</ul>` });
-    list = [];
-  };
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) { closeList(); continue; }
-    const heading = line.match(/^(#{2,4})\s+(.+)$/);
-    if (heading) { closeList(); const level = heading[1].length; output.push({ type: "heading", level, html: `<h${level}>${inline(heading[2])}</h${level}>` }); continue; }
-    const bullet = line.match(/^[-*]\s+(.+)$/);
-    if (bullet) { list.push(inline(bullet[1])); continue; }
-    closeList();
-    output.push({ type: "paragraph", html: `<p>${inline(line)}</p>` });
-  }
-  closeList();
-  return output;
+function renderContentBlocks(contentBlocks) {
+  return contentBlocks.map((block) => {
+    if (block.type === "heading") return { ...block, html: `<h${block.level}>${inline(block.text)}</h${block.level}>` };
+    if (block.type === "list") return { ...block, html: `<ul>${block.items.map((item) => `<li>${inline(item)}</li>`).join("")}</ul>` };
+    return { ...block, html: `<p>${inline(block.text)}</p>` };
+  });
 }
 
 function inline(text) {
