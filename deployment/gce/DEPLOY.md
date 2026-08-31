@@ -11,7 +11,7 @@ Both hostnames -- Cloudflare Tunnel -- GCE VM / Docker Compose
 GCE VM -- service account -- Vertex Imagen
 ```
 
-`engine.example.com` is the private operator dashboard. Protect it with a Cloudflare Access policy for the founder identity. `capture.example.com` bypasses Access because a Chrome extension fetch cannot depend on an interactive Access challenge; the application permits only health, capture, and per-source status routes on this hostname. Every useful capture route requires `CAPTURE_TOKEN`.
+`engine.example.com` is the private operator dashboard. It uses the application's own account-password sign-in. `capture.example.com` never uses an interactive access challenge because a Chrome extension fetch cannot depend on one; the application permits only health, capture, and per-source status routes on this hostname. Every useful capture route requires `CAPTURE_TOKEN`.
 
 ## Before provisioning
 
@@ -66,8 +66,8 @@ The cloud package is preconfigured at build time, so the founder does not enter 
 - `https://capture.example.com/api/health` returns basic health, while `https://capture.example.com/api/dashboard` returns 404.
 - The extension can save a manually opened note and poll its own `/api/sources/{id}` status using `CAPTURE_TOKEN`.
 - Kimi K3 is the default on a fresh deployment; dashboard Settings can switch to Kimi K2.7 Code and the top badge should change.
-- With Vertex Imagen configured, an article produces 2-5 original visual assets and WordPress receives them as uploaded media attachments.
+- With Gemini 3.1 Flash Image configured, an article produces 2-5 original non-factual visual assets and WordPress receives them as uploaded media attachments.
 
 ## Secrets and costs
 
-Keep `.env.production`, Cloudflare Tunnel credentials, Kimi keys, WordPress credentials, and tokens out of Git. Vertex Imagen is disabled by default; enabling it creates billable original images. The implementation uses `imagen-4.0-generate-001` with the attached VM service account and does not require a downloaded Google credential file.
+Keep `.env.production`, Cloudflare Tunnel credentials, Kimi keys, WordPress credentials, and tokens out of Git. Gemini 3.1 Flash Image generation is enabled only when the Vertex service account and project quota are available; rendered images are billable. The implementation uses the VM-attached service account and does not require a downloaded Google credential file.
