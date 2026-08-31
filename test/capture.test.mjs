@@ -39,3 +39,28 @@ test("capture storage is idempotent and preserves content revisions", (t) => {
   const queued = fixture.db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type = 'extract_source' AND status = 'queued'").get().count;
   assert.equal(queued, 1);
 });
+
+test("capture identity uses the Xiaohongshu note ID before transient share URLs", (t) => {
+  const fixture = repositoryFixture(t);
+  const first = normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/identity1?source=share&xsec_token=first",
+    title: "Chengdu booking notes",
+    text: "A detailed Chengdu travel note with enough practical booking information.",
+  });
+  const changedShareUrl = normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/identity1?channel=desktop&xsec_token=second",
+    title: "Chengdu booking notes",
+    text: "A detailed Chengdu travel note with enough practical booking information.",
+  });
+
+  const saved = fixture.repository.saveCapture(first);
+  const duplicate = fixture.repository.saveCapture(changedShareUrl);
+
+  assert.equal(duplicate.id, saved.id);
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(duplicate.queued, false);
+  assert.equal(duplicate.identity.externalId, "identity1");
+  assert.equal(fixture.repository.listSources().length, 1);
+  const queued = fixture.db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type = 'extract_source' AND status = 'queued'").get().count;
+  assert.equal(queued, 1);
+});

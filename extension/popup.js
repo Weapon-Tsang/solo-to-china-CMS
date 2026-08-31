@@ -59,12 +59,15 @@ async function saveCurrentNote() {
     });
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || `Save failed (${response.status}).`);
-    show(body.duplicate ? "Already saved — capture is up to date." : "Saved. The research pipeline is running.", "success");
+    const noteIdentity = body.identity?.externalId ? `XHS ID ${body.identity.externalId}` : "this note";
+    show(body.duplicate ? `Already saved — ${noteIdentity} is up to date and was not queued again.` : `Saved — ${noteIdentity} is queued for extraction.`, "success");
     const saved = {
       id: body.id,
       title: capture.title || "This note",
       stage: body.duplicate ? "duplicate" : "saved",
       claimCount: null,
+      externalId: body.identity?.externalId || null,
+      captureVersion: body.captureVersion || null,
       savedAt: new Date().toISOString(),
     };
     await chrome.storage.local.set({ lastCapture: saved });
@@ -124,7 +127,8 @@ function renderCaptureFeedback(capture) {
     return;
   }
   if (capture.stage === "duplicate") {
-    showFeedback("success", "Already saved", `${name} is already up to date in Sources.`);
+    const identity = capture.externalId ? `XHS ID ${capture.externalId}` : "This note";
+    showFeedback("success", "Already saved", `${identity} is already up to date in Sources and was not queued again.`);
     setSaveButton("success", "Already saved");
     return;
   }

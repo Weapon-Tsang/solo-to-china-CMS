@@ -50,17 +50,26 @@ export class Repository {
   saveCapture(capture) {
     const timestamp = now();
     const contentHash = sha256(`${capture.rawText}\n${capture.assets.map((item) => item.url).join("\n")}`);
-    const existing = this.db.prepare("SELECT id, content_hash, capture_version FROM sources WHERE canonical_url = ?").get(capture.canonicalUrl);
 
     return transaction(this.db, () => {
+      // A note ID remains stable when Xiaohongshu changes a share URL or adds
+      // transient tokens. Canonical URL remains the fallback for old captures.
+      const existingByExternalId = capture.externalId
+        ? this.db.prepare("SELECT id, content_hash, capture_version FROM sources WHERE adapter = ? AND external_id = ? LIMIT 1").get(capture.adapter, capture.externalId)
+        : null;
+      const existing = existingByExternalId
+        || this.db.prepare("SELECT id, content_hash, capture_version FROM sources WHERE canonical_url = ?").get(capture.canonicalUrl);
       let sourceId;
       let duplicate = false;
+      let captureVersion = 1;
       if (existing && existing.content_hash === contentHash) {
         sourceId = existing.id;
         duplicate = true;
+        captureVersion = existing.capture_version;
         this.db.prepare("UPDATE sources SET captured_at = ?, updated_at = ? WHERE id = ?").run(capture.capturedAt, timestamp, sourceId);
       } else if (existing) {
         sourceId = existing.id;
+        captureVersion = existing.capture_version + 1;
         this.db.prepare(`
           UPDATE sources SET external_id = ?, title = ?, author_name = ?, author_url = ?, published_at = ?,
             captured_at = ?, raw_text = ?, raw_html = ?, raw_payload_json = ?, content_hash = ?,
@@ -96,7 +105,17 @@ export class Repository {
         this.enqueue("extract_source", sourceId);
       }
 
-      return { id: sourceId, duplicate, queued: !duplicate };
+      return {
+        id: sourceId,
+        duplicate,
+        queued: !duplicate,
+        captureVersion,
+        identity: {
+          adapter: capture.adapter,
+          externalId: capture.externalId || null,
+          contentFingerprint: contentHash.slice(0, 12),
+        },
+      };
     });
   }
 
@@ -311,7 +330,7 @@ export class Repository {
 
   listSources(limit = 100) {
     return this.db.prepare(`
-      SELECT s.id, s.title, s.author_name, s.canonical_url, s.status, s.captured_at, s.capture_version,
+      SELECT s.id, s.external_id, s.title, s.author_name, s.canonical_url, s.status, s.captured_at, s.capture_version,
         ss.destination_name, ss.summary, ss.extraction_method,
         (SELECT COUNT(*) FROM claims c WHERE c.source_id = s.id) AS claim_count
       FROM sources s LEFT JOIN structured_sources ss ON ss.source_id = s.id
