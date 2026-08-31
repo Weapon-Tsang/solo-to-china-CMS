@@ -102,8 +102,10 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(system.contentStrategy.document, CONTENT_STRATEGY.document);
 
   const settings = await (await fetch(`${baseUrl}/api/settings/ai`)).json();
-  assert.equal(settings.model, "kimi-k2.7-code");
+  assert.equal(settings.model, "kimi-k3");
   assert.equal(settings.models.length, 4);
+  assert.equal(settings.visual.id, "vertex-gemini-3.1-flash-image");
+  assert.equal(settings.visual.supportsGeneration, true);
   const changed = await fetch(`${baseUrl}/api/settings/ai`, {
     method: "POST",
     headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
@@ -111,12 +113,21 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   });
   assert.equal(changed.status, 200);
   assert.equal((await changed.json()).model, "kimi-k3");
+  const visualChanged = await fetch(`${baseUrl}/api/settings/visuals`, {
+    method: "POST",
+    headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
+    body: JSON.stringify({ model: "vertex-gemini-3.1-flash-image" }),
+  });
+  assert.equal(visualChanged.status, 200);
+  assert.equal((await visualChanged.json()).model, "gemini-3.1-flash-image");
 });
 
 test("Kimi configuration uses the provider's server-side defaults", () => {
   const config = loadConfig({ KIMI_API_KEY: "kimi-test-key" });
   assert.equal(config.kimi.apiKey, "kimi-test-key");
   assert.equal(config.kimi.model, "kimi-k2.7-code");
+  assert.equal(config.ai.defaultModel, "kimi-k3");
+  assert.equal(config.visuals.defaultModel, "vertex-gemini-3.1-flash-image");
   assert.equal(config.kimi.baseUrl, "https://api.moonshot.cn/v1");
   assert.equal(config.kimi.maxCompletionTokens, 16_000);
   assert.equal(config.kimi.requestTimeoutMs, 360_000);

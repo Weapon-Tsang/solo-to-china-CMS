@@ -26,17 +26,28 @@ export function ViewRenderer(props) {
 }
 
 function SettingsView({ data, health, onAction, actionBusy }) {
-  const [model, setModel] = useState(data?.id || "kimi-k2.7-code");
-  useEffect(() => setModel(data?.id || "kimi-k2.7-code"), [data?.id]);
-  const save = () => onAction("/api/settings/ai", {
+  const [model, setModel] = useState(data?.id || "kimi-k3");
+  const [visualModel, setVisualModel] = useState(data?.visual?.id || "vertex-gemini-3.1-flash-image");
+  useEffect(() => setModel(data?.id || "kimi-k3"), [data?.id]);
+  useEffect(() => setVisualModel(data?.visual?.id || "vertex-gemini-3.1-flash-image"), [data?.visual?.id]);
+  const saveAi = () => onAction("/api/settings/ai", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model }),
   }, `已切换到 ${data?.models?.find((item) => item.id === model)?.label || model}`);
-  return <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,.75fr)]">
-    <Card className="p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">AI 模型</div><p className="mt-1 text-xs leading-relaxed text-slate-500">用于排队中的来源提取、内容规划、写作和质量审核。每次输出都会记录实际使用的模型。</p></div><StatusPill status={data?.configured ? "configured" : "needs_ai"} /></div>
+  const saveVisual = () => onAction("/api/settings/visuals", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: visualModel }),
+  }, `已切换到 ${data?.visual?.models?.find((item) => item.id === visualModel)?.label || visualModel}`);
+  return <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(16rem,.72fr)]">
+    <Card className="p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">图文处理与写作模型</div><p className="mt-1 text-xs leading-relaxed text-slate-500">用于来源读取、图片识别、事实整理、内容规划、英文写作与质量审核。每次输出都会记录实际模型。</p></div><StatusPill status={data?.configured ? "configured" : "needs_ai"} /></div>
       <div className="mt-5 space-y-2">{(data?.models || []).map((item) => <label key={item.id} className={cn("flex cursor-pointer gap-3 rounded-xl border p-3 transition", model === item.id ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300")}><input className="mt-1 accent-slate-900" type="radio" name="ai-model" value={item.id} checked={model === item.id} onChange={() => setModel(item.id)} /><span><span className="block text-xs font-semibold text-slate-900">{item.label}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{item.description}</span><span className="mt-1 block text-[10px] text-emerald-600">支持图文多模态输入{item.preview ? " · 预览版" : ""}</span></span></label>)}</div>
-      <div className="mt-5 flex items-center gap-3"><Button size="sm" disabled={actionBusy || !data?.configured || model === data?.id} onClick={save}><CheckCircle2 /> 保存模型</Button><span className="text-[11px] text-slate-400">来源：{data?.source === "dashboard" ? "后台设置" : "环境配置"}</span></div>
+      <div className="mt-5 flex items-center gap-3"><Button size="sm" disabled={actionBusy || !data?.configured || model === data?.id} onClick={saveAi}><CheckCircle2 /> 保存图文模型</Button><span className="text-[11px] text-slate-400">来源：{data?.source === "dashboard" ? "后台设置" : "环境配置"}</span></div>
+    </Card>
+    <Card className="p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">内容配图生成模型</div><p className="mt-1 text-xs leading-relaxed text-slate-500">只生成原创、非事实性插画。真实景点、酒店、路线与票务信息不会由模型伪造。</p></div><StatusPill status={data?.visual?.supportsGeneration && data?.visualGenerationConfigured ? "ready" : "pending"} /></div>
+      <div className="mt-5 space-y-2">{(data?.visual?.models || []).map((item) => <label key={item.id} className={cn("flex gap-3 rounded-xl border p-3 transition", item.supportsGeneration ? "cursor-pointer" : "cursor-not-allowed opacity-65", visualModel === item.id ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300")}><input className="mt-1 accent-slate-900" type="radio" name="visual-model" value={item.id} checked={visualModel === item.id} disabled={!item.supportsGeneration} onChange={() => setVisualModel(item.id)} /><span><span className="block text-xs font-semibold text-slate-900">{item.label}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{item.description}</span><span className={cn("mt-1 block text-[10px]", item.supportsGeneration ? "text-emerald-600" : "text-amber-600")}>{item.supportsGeneration ? "可生成原创插画" : "仅图文理解；当前 API 不支持图片输出"}</span></span></label>)}</div>
+      <div className="mt-5 flex items-center gap-3"><Button size="sm" disabled={actionBusy || !data?.visual?.supportsGeneration || visualModel === data?.visual?.id} onClick={saveVisual}><CheckCircle2 /> 保存生图模型</Button><span className="text-[11px] text-slate-400">默认：Gemini 3.1 Flash Image</span></div>
     </Card>
     <Card className="p-5"><div className="text-sm font-semibold text-slate-900">System information</div><div className="mt-4 space-y-3 text-xs text-slate-600"><div className="flex items-center justify-between gap-3"><span>Application version</span><span className="font-medium text-slate-900">{data?.appVersion || health?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>Content Strategy</span><span className="font-medium text-slate-900">v{data?.contentStrategy?.version || health?.contentStrategy?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>Strategy status</span><StatusPill status={data?.contentStrategy?.status || health?.contentStrategy?.status} /></div><div className="flex items-center justify-between gap-3"><span>SEO / GEO metadata</span><StatusPill status="ready" /></div><div className="flex items-center justify-between gap-3"><span>Structured data package</span><StatusPill status="ready" /></div><div className="flex items-center justify-between gap-3"><span>Cloud visual generation</span><StatusPill status={health?.visualGenerationConfigured ? "ready" : "pending"} /></div></div><p className="mt-5 text-[11px] leading-relaxed text-slate-400">{data?.contentStrategy?.document || "Strategy specification pending"}. Visual plans are always created with drafts; only safe illustrations are rendered automatically.</p></Card>
   </div>;

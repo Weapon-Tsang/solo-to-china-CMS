@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_ID="project-4bcb9146-c37b-43b0-b11"
-IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.5.7"
+IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.5.8"
 APP_DIR="/opt/solo-to-china"
 METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 
@@ -60,8 +60,8 @@ SESSION_SECRET=${SESSION_SECRET}
 CAPTURE_HOST=capture.solotochina.com
 
 KIMI_API_KEY=${KIMI_API_KEY}
-AI_MODEL=kimi-k2.7-code
-KIMI_MODEL=kimi-k2.7-code
+AI_MODEL=kimi-k3
+KIMI_MODEL=kimi-k3
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MAX_IMAGES=8
 KIMI_MAX_COMPLETION_TOKENS=16000
@@ -73,12 +73,13 @@ CONTENT_PUBLISHER_NAME=SoloToChina
 CONTENT_PUBLISHER_LOGO_URL=
 
 IMAGE_ENABLED=true
-IMAGE_PROVIDER=vertex_imagen
-IMAGE_MODEL=imagen-4.0-generate-001
+IMAGE_PROVIDER=vertex_gemini
+VISUAL_MODEL=vertex-gemini-3.1-flash-image
+IMAGE_MODEL=gemini-3.1-flash-image
 IMAGE_COVER_QUALITY=1K
 IMAGE_INLINE_QUALITY=1K
 GOOGLE_CLOUD_PROJECT=${PROJECT_ID}
-VERTEX_AI_LOCATION=us-central1
+VERTEX_AI_LOCATION=global
 VERTEX_IMAGEN_MODEL=imagen-4.0-generate-001
 PUBLIC_BASE_URL=https://engine.solotochina.com
 VERTEX_IMAGE_TIMEOUT_MS=120000

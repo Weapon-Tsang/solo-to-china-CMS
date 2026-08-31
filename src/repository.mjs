@@ -1,6 +1,6 @@
 import { id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
-import { AI_MODELS } from "./config.mjs";
+import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 import { contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
 
@@ -45,6 +45,31 @@ export class Repository {
       ON CONFLICT(setting_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
     `).run(JSON.stringify({ model }), timestamp);
     return this.getAiSettings(defaultModel);
+  }
+
+  getVisualSettings(defaultModel) {
+    const saved = this.db.prepare("SELECT value_json FROM runtime_settings WHERE setting_key='visuals'").get();
+    const model = json(saved?.value_json, {}).model;
+    const selected = VISUAL_MODELS.some((item) => item.id === model) ? model : defaultModel;
+    const active = VISUAL_MODELS.find((item) => item.id === selected) || VISUAL_MODELS[0];
+    return {
+      id: active.id, model: active.model, provider: active.provider, location: active.location || null,
+      supportsGeneration: active.supportsGeneration,
+      source: VISUAL_MODELS.some((item) => item.id === model) ? "dashboard" : "environment",
+      models: VISUAL_MODELS,
+    };
+  }
+
+  setVisualModel(model, defaultModel) {
+    const selected = VISUAL_MODELS.find((item) => item.id === model);
+    if (!selected) throw new Error("Unsupported visual model.");
+    if (!selected.supportsGeneration) throw new Error("This model can understand images but cannot generate image files through its API.");
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO runtime_settings(setting_key, value_json, updated_at) VALUES ('visuals', ?, ?)
+      ON CONFLICT(setting_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+    `).run(JSON.stringify({ model }), timestamp);
+    return this.getVisualSettings(defaultModel);
   }
 
   saveCapture(capture) {

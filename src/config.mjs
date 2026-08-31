@@ -12,6 +12,26 @@ export const AI_MODELS = [
 ];
 export const KIMI_MODELS = AI_MODELS.filter((item) => item.provider === "kimi").map((item) => item.id);
 
+export const VISUAL_MODELS = [
+  {
+    id: "vertex-gemini-3.1-flash-image",
+    provider: "vertex_gemini",
+    model: "gemini-3.1-flash-image",
+    location: "global",
+    label: "Gemini 3.1 Flash Image（Nano Banana 2）",
+    description: "Google 的原生图像生成与编辑模型；用于原创、非事实性旅行插画。",
+    supportsGeneration: true,
+  },
+  {
+    id: "kimi-k3",
+    provider: "kimi",
+    model: "kimi-k3",
+    label: "Kimi K3",
+    description: "可用于图文理解与文章写作，但 Kimi API 当前不返回图片字节，不能作为生图渲染器。",
+    supportsGeneration: false,
+  },
+];
+
 export function loadConfig(env = process.env) {
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
   const imageProvider = env.IMAGE_PROVIDER || env.VISUAL_PROVIDER || "none";
@@ -31,7 +51,7 @@ export function loadConfig(env = process.env) {
     },
     captureHost: hostname(env.CAPTURE_HOST),
     ai: {
-      defaultModel: AI_MODELS.some((item) => item.id === env.AI_MODEL) ? env.AI_MODEL : "kimi-k2.7-code",
+      defaultModel: AI_MODELS.some((item) => item.id === env.AI_MODEL) ? env.AI_MODEL : "kimi-k3",
     },
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
@@ -53,10 +73,11 @@ export function loadConfig(env = process.env) {
     },
     visuals: {
       enabled: boolean(env.IMAGE_ENABLED, false),
-      provider: choice(imageProvider, ["none", "vertex_imagen"], "none"),
+      provider: choice(imageProvider, ["none", "vertex_imagen", "vertex_gemini"], "none"),
       projectId: env.GOOGLE_CLOUD_PROJECT || "",
       location: env.VERTEX_AI_LOCATION || "us-central1",
-      model: env.IMAGE_MODEL || env.VERTEX_IMAGEN_MODEL || "imagen-4.0-generate-001",
+      defaultModel: VISUAL_MODELS.some((item) => item.id === env.VISUAL_MODEL) ? env.VISUAL_MODEL : "vertex-gemini-3.1-flash-image",
+      model: env.IMAGE_MODEL || env.VERTEX_IMAGEN_MODEL || "gemini-3.1-flash-image",
       coverQuality: env.IMAGE_COVER_QUALITY || "1K",
       inlineQuality: env.IMAGE_INLINE_QUALITY || "1K",
       mediaDir: path.resolve(root, env.GENERATED_MEDIA_DIR || "data/generated-media"),

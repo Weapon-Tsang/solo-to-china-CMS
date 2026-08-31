@@ -44,9 +44,11 @@ export function createApplication(config = loadConfig()) {
   });
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
   const activeAi = { ...config.kimi, ...config.vertex, ...selectedAi };
+  const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
+  const activeVisuals = { ...config.visuals, ...selectedVisual };
   const extractor = new KimiExtractor(activeAi);
   const contentEngine = new ContentEngine(activeAi);
-  const visuals = new VertexImagen(config.visuals);
+  const visuals = new VertexImagen(activeVisuals);
   const wordpress = new WordPressDraftAdapter(config.wordpress);
   const searchConsole = new SearchConsoleAdapter(config.searchConsole);
   const commercialComposer = new CommercialComposer(config.commercial);
@@ -123,6 +125,8 @@ export function createApplication(config = loadConfig()) {
           aiConfigured: extractor.enabled,
           aiProvider: extractor.enabled ? activeAi.provider : null,
           aiModel: extractor.enabled ? activeAi.model : null,
+          visualProvider: visuals.enabled ? activeVisuals.provider : null,
+          visualModel: visuals.enabled ? activeVisuals.model : null,
           contentStrategy: config.contentStrategy,
           contentAutomationConfigured: contentEngine.enabled,
           visualGenerationConfigured: visuals.enabled,
@@ -146,12 +150,14 @@ export function createApplication(config = loadConfig()) {
           appVersion: VERSION,
           contentStrategy: config.contentStrategy,
           ai: repository.getAiSettings(config.ai.defaultModel),
+          visual: repository.getVisualSettings(config.visuals.defaultModel),
         });
       }
       if (request.method === "GET" && url.pathname === "/api/settings/ai") {
         return sendJson(response, 200, {
           configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
-          contentStrategy: config.contentStrategy, ...repository.getAiSettings(config.ai.defaultModel),
+          contentStrategy: config.contentStrategy, visual: repository.getVisualSettings(config.visuals.defaultModel),
+          ...repository.getAiSettings(config.ai.defaultModel),
         });
       }
       if (request.method === "POST" && url.pathname === "/api/settings/ai") {
@@ -159,7 +165,21 @@ export function createApplication(config = loadConfig()) {
         const payload = await readJson(request, 20_000);
         const settings = repository.setAiModel(String(payload.model || ""), config.ai.defaultModel);
         Object.assign(activeAi, settings);
-        return sendJson(response, 200, { configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, ...settings });
+        return sendJson(response, 200, {
+          configured: extractor.enabled, visualGenerationConfigured: visuals.enabled,
+          visual: repository.getVisualSettings(config.visuals.defaultModel), ...settings,
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/api/settings/visuals") {
+        const settings = repository.getVisualSettings(config.visuals.defaultModel);
+        return sendJson(response, 200, { configured: visuals.enabled, ...settings });
+      }
+      if (request.method === "POST" && url.pathname === "/api/settings/visuals") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const settings = repository.setVisualModel(String(payload.model || ""), config.visuals.defaultModel);
+        Object.assign(activeVisuals, settings);
+        return sendJson(response, 200, { configured: visuals.enabled, ...settings });
       }
       if (request.method === "POST" && url.pathname === "/api/captures") {
         authorizeCapture(request, config.captureToken);

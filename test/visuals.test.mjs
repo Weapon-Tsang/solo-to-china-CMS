@@ -22,3 +22,25 @@ test("Vertex Imagen stores a generated visual in the configured media directory"
     /only non-factual illustrations/i,
   );
 });
+
+test("Gemini 3.1 Flash Image stores an inline image from the global Gemini endpoint", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-gemini-visual-test-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  let request;
+  const fetchStub = async (url, options = {}) => {
+    if (String(url).includes("metadata.google.internal")) return Response.json({ access_token: "metadata-token", expires_in: 300 });
+    request = { url: String(url), options };
+    return Response.json({ candidates: [{ content: { parts: [{ text: "Illustration created." }, { inlineData: { data: Buffer.from("gemini-image-bytes").toString("base64"), mimeType: "image/png" } }] } }] });
+  };
+  const client = new VertexImagen({ enabled: true, provider: "vertex_gemini", projectId: "project", location: "global", model: "gemini-3.1-flash-image", mediaDir: directory, publicBaseUrl: "https://engine.example.com", requestTimeoutMs: 5_000 }, fetchStub);
+  const output = await client.generate({ id: "visual_1", slot: 1, image_type: "illustration", acquisition_strategy: "generate_illustration", factual_image_required: false, image_role: "hero", aspect_ratio: "16:9", generation_prompt: "A quiet travel scene" }, { id: "draft_1" });
+
+  assert.equal(output.provider, "vertex_gemini");
+  assert.equal(output.model, "gemini-3.1-flash-image");
+  assert.match(request.url, /^https:\/\/aiplatform\.googleapis\.com\/v1\/projects\/project\/locations\/global\/publishers\/google\/models\/gemini-3\.1-flash-image:generateContent$/);
+  const body = JSON.parse(request.options.body);
+  assert.deepEqual(body.generationConfig.responseModalities, ["TEXT", "IMAGE"]);
+  assert.equal(body.generationConfig.imageConfig.aspectRatio, "16:9");
+  assert.match(body.contents.parts[0].text, /Do not depict people/i);
+  assert.equal(fs.readFileSync(output.mediaPath).toString(), "gemini-image-bytes");
+});

@@ -13,14 +13,20 @@ export class VertexImagen {
   }
 
   get enabled() {
-    return this.config.enabled && this.config.provider === "vertex_imagen" && Boolean(this.config.projectId && this.config.publicBaseUrl);
+    return this.config.enabled && ["vertex_imagen", "vertex_gemini"].includes(this.config.provider) && Boolean(this.config.projectId && this.config.publicBaseUrl);
   }
 
   async generate(visual, draft) {
-    if (!this.enabled) throw new Error("Vertex Imagen is not configured.");
+    if (!this.enabled) throw new Error("Visual generation is not configured.");
     if (visual.image_type !== "illustration" || visual.acquisition_strategy !== "generate_illustration" || visual.factual_image_required) {
-      throw new Error("Vertex Imagen may generate only non-factual illustrations, never real-world photos, maps, or infographics.");
+      throw new Error("The visual generator may generate only non-factual illustrations, never real-world photos, maps, or infographics.");
     }
+    if (this.config.provider === "vertex_gemini") return this.generateGeminiImage(visual, draft);
+    if (this.config.provider === "vertex_imagen") return this.generateImagenImage(visual, draft);
+    throw new Error("The selected visual provider cannot generate image files.");
+  }
+
+  async generateImagenImage(visual, draft) {
     const accessToken = await this.accessToken();
     const endpoint = `https://${this.config.location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(this.config.location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:predict`;
     const response = await this.fetch(endpoint, {
@@ -43,18 +49,66 @@ export class VertexImagen {
     if (!response.ok) throw new Error(`Vertex Imagen request failed (${response.status}): ${payload?.error?.message || response.statusText}`);
     const prediction = payload?.predictions?.find((item) => item?.bytesBase64Encoded);
     if (!prediction) throw new Error("Vertex Imagen returned no renderable image bytes.");
-    const mimeType = normalizeMime(prediction.mimeType);
+    return this.storeImage({
+      base64: prediction.bytesBase64Encoded,
+      mimeType: prediction.mimeType,
+      visual,
+      draft,
+      provider: "vertex_imagen",
+      model: this.config.model,
+    });
+  }
+
+  async generateGeminiImage(visual, draft) {
+    const accessToken = await this.accessToken();
+    const location = this.config.location || "global";
+    const host = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
+    const endpoint = `${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
+    const prompt = `${visual.generation_prompt}\n\nCreate an original editorial illustration only. Do not depict people, logos, watermarks, readable text, or a documentary-style real place.`;
+    const response = await this.fetch(endpoint, {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: { role: "USER", parts: [{ text: prompt }] },
+        generationConfig: {
+          responseModalities: ["TEXT", "IMAGE"],
+          imageConfig: { aspectRatio: visual.aspect_ratio },
+        },
+        safetySettings: [{
+          method: "PROBABILITY",
+          category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+          threshold: "BLOCK_MEDIUM_AND_ABOVE",
+        }],
+      }),
+      signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`Gemini 3.1 Flash Image request failed (${response.status}): ${payload?.error?.message || response.statusText}`);
+    const part = payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
+    if (!part) throw new Error("Gemini 3.1 Flash Image returned no renderable image bytes.");
+    return this.storeImage({
+      base64: part.inlineData.data,
+      mimeType: part.inlineData.mimeType,
+      visual,
+      draft,
+      provider: "vertex_gemini",
+      model: this.config.model,
+    });
+  }
+
+  storeImage({ base64, mimeType: suppliedMimeType, visual, draft, provider, model }) {
+    const mimeType = normalizeMime(suppliedMimeType);
     const extension = mimeType === "image/jpeg" ? "jpg" : "png";
     const checksum = crypto.createHash("sha256").update(`${draft.id}:${visual.id}:${visual.generation_prompt}`).digest("hex").slice(0, 18);
     const filename = `${draft.id}-${String(visual.slot).padStart(2, "0")}-${checksum}.${extension}`;
     fs.mkdirSync(this.config.mediaDir, { recursive: true });
     const mediaPath = path.join(this.config.mediaDir, filename);
-    fs.writeFileSync(mediaPath, Buffer.from(prediction.bytesBase64Encoded, "base64"), { mode: 0o640 });
+    fs.writeFileSync(mediaPath, Buffer.from(base64, "base64"), { mode: 0o640 });
     return {
       mediaPath,
       mediaUrl: `${this.config.publicBaseUrl}/media/${filename}`,
-      provider: "vertex_imagen",
-      model: this.config.model,
+      provider,
+      model,
       mimeType,
     };
   }
