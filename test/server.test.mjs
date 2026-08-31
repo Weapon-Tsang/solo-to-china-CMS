@@ -106,6 +106,8 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(settings.models.length, 4);
   assert.equal(settings.visual.id, "vertex-gemini-3.1-flash-image");
   assert.equal(settings.visual.supportsGeneration, true);
+  assert.equal(settings.storage.mode, "local");
+  assert.equal(settings.storage.crossDevice, false);
   const changed = await fetch(`${baseUrl}/api/settings/ai`, {
     method: "POST",
     headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },

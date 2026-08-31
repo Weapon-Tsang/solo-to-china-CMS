@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Save to SoloToChina",
-  "version": "1.5.8",
+  "version": "1.5.9",
   "description": "Manually save the currently open Xiaohongshu note to the SoloToChina research engine.",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [

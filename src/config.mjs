@@ -5,8 +5,8 @@ import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export const AI_MODELS = [
-  { id: "kimi-k2.7-code", provider: "kimi", model: "kimi-k2.7-code", label: "Kimi K2.7 Code", description: "结构化提取与内容生产的默认模型。", supportsImages: true },
-  { id: "kimi-k3", provider: "kimi", model: "kimi-k3", label: "Kimi K3", description: "Kimi 的高能力多模态模型。", supportsImages: true },
+  { id: "kimi-k2.7-code", provider: "kimi", model: "kimi-k2.7-code", label: "Kimi K2.7 Code", description: "适合结构化提取与内容生产的代码模型。", supportsImages: true },
+  { id: "kimi-k3", provider: "kimi", model: "kimi-k3", label: "Kimi K3", description: "默认的高能力多模态模型，用于图文理解、写作与审核。", supportsImages: true },
   { id: "vertex-gemini-3.1-pro-preview", provider: "vertex", model: "gemini-3.1-pro-preview", label: "Vertex AI · Gemini 3.1 Pro（预览）", description: "Vertex AI 当前最新的 Gemini 高阶推理预览模型；需要项目配额与地区可用性。", supportsImages: true, preview: true },
   { id: "vertex-gemini-2.5-pro", provider: "vertex", model: "gemini-2.5-pro", label: "Vertex AI · Gemini 2.5 Pro", description: "Vertex AI 的稳定 Gemini 高阶推理模型。", supportsImages: true },
 ];

@@ -65,7 +65,7 @@ The cloud package is preconfigured at build time, so the founder does not enter 
 - `https://engine.example.com` presents the application sign-in screen. Do not use a weak default password on an internet-accessible deployment; the provided provisioning script creates a high-entropy initial password in the ignored local output file.
 - `https://capture.example.com/api/health` returns basic health, while `https://capture.example.com/api/dashboard` returns 404.
 - The extension can save a manually opened note and poll its own `/api/sources/{id}` status using `CAPTURE_TOKEN`.
-- Kimi K2.7 Code is the default on a fresh deployment; dashboard Settings can explicitly switch to Kimi K3 and the top badge should change.
+- Kimi K3 is the default on a fresh deployment; dashboard Settings can switch to Kimi K2.7 Code and the top badge should change.
 - With Vertex Imagen configured, an article produces 2-5 original visual assets and WordPress receives them as uploaded media attachments.
 
 ## Secrets and costs

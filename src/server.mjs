@@ -149,6 +149,7 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, {
           appVersion: VERSION,
           contentStrategy: config.contentStrategy,
+          storage: storageInfo(config),
           ai: repository.getAiSettings(config.ai.defaultModel),
           visual: repository.getVisualSettings(config.visuals.defaultModel),
         });
@@ -156,7 +157,7 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/settings/ai") {
         return sendJson(response, 200, {
           configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
-          contentStrategy: config.contentStrategy, visual: repository.getVisualSettings(config.visuals.defaultModel),
+          contentStrategy: config.contentStrategy, storage: storageInfo(config), visual: repository.getVisualSettings(config.visuals.defaultModel),
           ...repository.getAiSettings(config.ai.defaultModel),
         });
       }
@@ -413,6 +414,18 @@ function isDashboardApi(pathname) {
 
 function isLoopbackHost(host) {
   return ["127.0.0.1", "localhost", "::1"].includes(host);
+}
+
+function storageInfo(config) {
+  const local = isLoopbackHost(config.host);
+  return {
+    mode: local ? "local" : "cloud",
+    label: local ? "本机离线持久化" : "云端持久化数据库",
+    crossDevice: !local,
+    description: local
+      ? "当前服务运行在本机；数据保存在此电脑的数据库文件中，换设备前需要迁移或部署到云端。"
+      : "当前服务运行在云端服务器的持久化数据卷中。更换电脑后只需访问同一后台并登录，研究来源、知识库和草稿都会保持一致。",
+  };
 }
 
 function isCaptureHost(request, captureHost) {
