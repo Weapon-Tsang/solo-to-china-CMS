@@ -16,7 +16,7 @@ export const views = {
   knowledge: { label: "知识库", title: "目的地知识", description: "集中查看已佐证事实、冲突和时效性。", icon: BookOpen },
   blueprints: { label: "蓝图", title: "编辑蓝图", description: "把重复出现的优秀表达转化为可复用的编辑洞察。", icon: Layers3 },
   content: { label: "内容", title: "内容生产", description: "将有证据支撑的主题推进至草稿、审核和发布。", icon: WandSparkles },
-  wordpress: { label: "WordPress", title: "WordPress inventory", description: "Keep new topics distinct from posts already in your CMS.", icon: PanelTop },
+  wordpress: { label: "WordPress", title: "WordPress 文章库存", description: "同步既有文章，避免新选题与站内内容重复。", icon: PanelTop },
   commercial: { label: "商品", title: "商业商品", description: "管理独立的联盟层，不污染研究知识库。", icon: TicketCheck },
   exceptions: { label: "异常", title: "需要处理", description: "只显示真正需要人工判断或介入的问题。", icon: CircleAlert },
   maintenance: { label: "维护", title: "系统维护", description: "静默完成备份、校验、同步和清理。", icon: Gauge },
@@ -55,7 +55,7 @@ export function Topbar({ health, refreshing, onRefresh }) {
       <div className="mx-auto flex h-14 w-full max-w-[1440px] items-center justify-between px-4 sm:px-6 lg:px-8">
         <a href="/" className="flex items-center gap-2.5 text-sm font-semibold tracking-tight text-slate-900">
           <span className="grid size-8 place-items-center rounded-lg bg-slate-900 text-white shadow-sm"><Database className="size-4" /></span>
-          <span>SoloToChina</span><span className="hidden border-l border-slate-200 pl-2.5 font-normal text-slate-400 sm:inline">Research Engine</span>
+          <span>SoloToChina</span><span className="hidden border-l border-slate-200 pl-2.5 font-normal text-slate-400 sm:inline">内容研究引擎</span>
         </a>
         <div className="flex items-center gap-2">
           <Badge variant={healthy ? "success" : "destructive"} className="h-7 px-2.5">
@@ -63,7 +63,7 @@ export function Topbar({ health, refreshing, onRefresh }) {
               {healthy && <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />}
               <span className={cn("relative inline-flex size-2 rounded-full", healthy ? "bg-emerald-500" : "bg-red-500")} />
             </span>
-            <span className="max-w-40 truncate">{health?.aiConfigured ? `Kimi · ${health.aiModel || "configured"}` : healthy ? "Capture ready · Kimi paused" : "Engine offline"}</span>
+            <span className="max-w-40 truncate">{health?.aiConfigured ? `${health.aiProvider === "vertex" ? "Vertex AI" : "Kimi"} · ${health.aiModel || "已配置"}` : healthy ? "采集服务就绪 · AI 未配置" : "服务离线"}</span>
           </Badge>
           <Button variant="ghost" size="sm" aria-label="刷新最新状态" title="刷新最新状态" onClick={onRefresh} disabled={refreshing}>
             <RefreshCw className={cn(refreshing && "animate-spin")} /> 刷新状态
@@ -80,25 +80,25 @@ export function PageHeading({ view, health }) {
   return (
     <section className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
       <div>
-        <Badge variant="info" className="mb-3"><Icon className="size-3" /> Content intelligence</Badge>
+        <Badge variant="info" className="mb-3"><Icon className="size-3" /> 内容研究</Badge>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">{config.title}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500">{config.description}</p>
       </div>
-      <div className="hidden items-center gap-2 sm:flex"><Badge variant="info" className="h-7 px-2.5">Content Strategy v{health?.contentStrategy?.version || "—"}</Badge><Badge variant="success" className="h-7 px-2.5"><Check className="size-3" /> Capture service ready</Badge></div>
+      <div className="hidden items-center gap-2 sm:flex"><Badge variant="info" className="h-7 px-2.5">内容策略 v{health?.contentStrategy?.version || "—"}</Badge><Badge variant="success" className="h-7 px-2.5"><Check className="size-3" /> 采集服务就绪</Badge></div>
     </section>
   );
 }
 
 export function Metrics({ totals = {} }) {
   const items = [
-    [totals.sources, "Sources"],
-    [totals.claims, "Claims"],
-    [totals.knowledgeFacts, "Knowledge", totals.conflicts ? `${totals.conflicts} conflicts` : "No conflicts"],
-    [totals.topicCandidates, "Topics"],
-    [totals.draftsReady, "Drafts ready"],
+    [totals.sources, "来源"],
+    [totals.claims, "信息主张"],
+    [totals.knowledgeFacts, "知识事实", totals.conflicts ? `${totals.conflicts} 项冲突` : "暂无冲突"],
+    [totals.topicCandidates, "内容选题"],
+    [totals.draftsReady, "可用草稿"],
     [totals.wordpressInventory, "WordPress"],
-    [totals.activeOffers, "Offers"],
-    [totals.exceptions, "Exceptions"],
+    [totals.activeOffers, "商品"],
+    [totals.exceptions, "异常"],
   ];
   return (
     <section aria-label="Pipeline overview" className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:grid-cols-8">
@@ -124,10 +124,10 @@ export function AiAlert({ onConfigure }) {
     <Alert className="flex-wrap sm:flex-nowrap">
       <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
       <div className="min-w-0 flex-1">
-        <AlertTitle>Kimi extraction is paused</AlertTitle>
-        <AlertDescription>Configure KIMI_API_KEY to process queued multimodal claims and blueprints. Existing captures remain safe.</AlertDescription>
+        <AlertTitle>AI 提取已暂停</AlertTitle>
+        <AlertDescription>请在“设置”中配置 AI 模型后，系统才会处理排队中的图文提取、信息主张和编辑蓝图；已采集的来源不会丢失。</AlertDescription>
       </div>
-      <Button variant="outline" size="sm" className="w-full border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 sm:w-auto" onClick={onConfigure}>View setup</Button>
+      <Button variant="outline" size="sm" className="w-full border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 sm:w-auto" onClick={onConfigure}>前往设置</Button>
     </Alert>
   );
 }

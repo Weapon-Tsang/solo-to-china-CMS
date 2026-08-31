@@ -101,7 +101,7 @@ export default function App() {
     setRefreshing(true);
     try {
       await Promise.all([loadOverview(), loadView(activeView, { quiet: true })]);
-      if (notify) showToast("Dashboard refreshed");
+      if (notify) showToast("已刷新最新状态");
     } catch (caught) {
       setError(caught.message);
       showToast(caught.message, true);
@@ -155,9 +155,9 @@ export default function App() {
         </Tabs>
         {health && !health.aiConfigured && <AiAlert onConfigure={() => openGuide("ai")} />}
         <section aria-live="polite">
-          {loading ? <LoadingView /> : error ? <EmptyState icon="offline" title="Couldn’t load this workspace" description={error} action={() => refresh(true)} actionLabel="Try again" /> : <ViewRenderer view={activeView} data={viewData} health={health} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} actionBusy={actionBusy} />}
+          {loading ? <LoadingView /> : error ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} health={health} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} actionBusy={actionBusy} />}
         </section>
-        <footer className="flex items-center justify-between border-t border-slate-200/70 pt-5 text-[10px] text-slate-400"><span>SoloToChina Research Engine</span><span>App v{health?.version || "—"} · Strategy v{health?.contentStrategy?.version || "—"} · Human-selected sources only</span></footer>
+        <footer className="flex items-center justify-between border-t border-slate-200/70 pt-5 text-[10px] text-slate-400"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
       </main>
       <DetailDialog detail={detail} health={health} actionBusy={actionBusy} onOpenChange={(open) => setDetail((current) => ({ ...current, open }))} onAction={runAction} onClose={() => setDetail({ open: false, type: null, data: null, loading: false })} />
       <Toast {...toast} />
