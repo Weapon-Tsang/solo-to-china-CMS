@@ -26,17 +26,17 @@ export function ViewRenderer(props) {
 }
 
 function SettingsView({ data, health, onAction, actionBusy }) {
-  const [model, setModel] = useState(data?.model || "kimi-k2.7-code");
-  useEffect(() => setModel(data?.model || "kimi-k2.7-code"), [data?.model]);
+  const [model, setModel] = useState(data?.id || "kimi-k2.7-code");
+  useEffect(() => setModel(data?.id || "kimi-k2.7-code"), [data?.id]);
   const save = () => onAction("/api/settings/ai", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model }),
-  }, `Active model changed to ${model}`);
+  }, `已切换到 ${data?.models?.find((item) => item.id === model)?.label || model}`);
   return <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,.75fr)]">
-    <Card className="p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">Kimi model</div><p className="mt-1 text-xs leading-relaxed text-slate-500">Applies to queued research extraction, planning, writing, and quality review. Each saved output records the exact model used.</p></div><StatusPill status={data?.configured ? "configured" : "needs_ai"} /></div>
-      <div className="mt-5 space-y-2">{(data?.models || []).map((item) => <label key={item.id} className={cn("flex cursor-pointer gap-3 rounded-xl border p-3 transition", model === item.id ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300")}><input className="mt-1 accent-slate-900" type="radio" name="kimi-model" value={item.id} checked={model === item.id} onChange={() => setModel(item.id)} /><span><span className="block text-xs font-semibold text-slate-900">{item.label}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{item.description}</span><span className="mt-1 block text-[10px] text-emerald-600">Vision input supported</span></span></label>)}</div>
-      <div className="mt-5 flex items-center gap-3"><Button size="sm" disabled={actionBusy || !data?.configured || model === data?.model} onClick={save}><CheckCircle2 /> Save model</Button><span className="text-[11px] text-slate-400">Source: {data?.source || "environment"}</span></div>
+    <Card className="p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">AI 模型</div><p className="mt-1 text-xs leading-relaxed text-slate-500">用于排队中的来源提取、内容规划、写作和质量审核。每次输出都会记录实际使用的模型。</p></div><StatusPill status={data?.configured ? "configured" : "needs_ai"} /></div>
+      <div className="mt-5 space-y-2">{(data?.models || []).map((item) => <label key={item.id} className={cn("flex cursor-pointer gap-3 rounded-xl border p-3 transition", model === item.id ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300")}><input className="mt-1 accent-slate-900" type="radio" name="ai-model" value={item.id} checked={model === item.id} onChange={() => setModel(item.id)} /><span><span className="block text-xs font-semibold text-slate-900">{item.label}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{item.description}</span><span className="mt-1 block text-[10px] text-emerald-600">支持图文多模态输入{item.preview ? " · 预览版" : ""}</span></span></label>)}</div>
+      <div className="mt-5 flex items-center gap-3"><Button size="sm" disabled={actionBusy || !data?.configured || model === data?.id} onClick={save}><CheckCircle2 /> 保存模型</Button><span className="text-[11px] text-slate-400">来源：{data?.source === "dashboard" ? "后台设置" : "环境配置"}</span></div>
     </Card>
     <Card className="p-5"><div className="text-sm font-semibold text-slate-900">System information</div><div className="mt-4 space-y-3 text-xs text-slate-600"><div className="flex items-center justify-between gap-3"><span>Application version</span><span className="font-medium text-slate-900">{data?.appVersion || health?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>Content Strategy</span><span className="font-medium text-slate-900">v{data?.contentStrategy?.version || health?.contentStrategy?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>Strategy status</span><StatusPill status={data?.contentStrategy?.status || health?.contentStrategy?.status} /></div><div className="flex items-center justify-between gap-3"><span>SEO / GEO metadata</span><StatusPill status="ready" /></div><div className="flex items-center justify-between gap-3"><span>Structured data package</span><StatusPill status="ready" /></div><div className="flex items-center justify-between gap-3"><span>Cloud visual generation</span><StatusPill status={health?.visualGenerationConfigured ? "ready" : "pending"} /></div></div><p className="mt-5 text-[11px] leading-relaxed text-slate-400">{data?.contentStrategy?.document || "Strategy specification pending"}. Visual plans are always created with drafts; only safe illustrations are rendered automatically.</p></Card>
   </div>;
@@ -44,13 +44,13 @@ function SettingsView({ data, health, onAction, actionBusy }) {
 
 function SourcesView({ data, onGuide, onOpenSource }) {
   const items = data?.items || [];
-  if (!items.length) return <EmptyState icon="source" title="No sources yet" description="Open a Xiaohongshu note on your computer, then choose Save to SoloToChina in the Chrome extension." action={() => onGuide("capture")} actionLabel="View capture guide" />;
+  if (!items.length) return <EmptyState icon="source" title="尚无来源" description="在电脑端打开一篇小红书笔记，然后点击 Chrome 扩展中的“保存当前笔记”。" action={() => onGuide("capture")} actionLabel="查看采集说明" />;
   return (
-    <TableShell><Table><TableHeader><TableRow><TableHead>Source</TableHead><TableHead>Status</TableHead><TableHead className="hidden md:table-cell">Destination</TableHead><TableHead>Claims</TableHead><TableHead className="hidden lg:table-cell">Captured</TableHead></TableRow></TableHeader>
+    <><SummaryBar title="处理状态说明"><span><b>处理中：</b>笔记已安全保存，系统正在进行多模态提取、结构化来源、Claims 和内容蓝图。</span><span><b>提取完成：</b>结构化研究已可用，并不代表文章已生成。</span><span><b>需要处理：</b>打开来源查看原因后可重新执行提取。</span></SummaryBar><TableShell><Table><TableHeader><TableRow><TableHead>来源</TableHead><TableHead>状态</TableHead><TableHead className="hidden md:table-cell">目的地</TableHead><TableHead>Claims</TableHead><TableHead className="hidden lg:table-cell">采集时间</TableHead></TableRow></TableHeader>
       <TableBody>{items.map((item) => <TableRow key={item.id} tabIndex={0} role="button" className="cursor-pointer focus-visible:bg-slate-50 focus-visible:outline-none" onClick={() => onOpenSource(item.id)} onKeyDown={(event) => event.key === "Enter" && onOpenSource(item.id)}>
         <TableCell><div className="max-w-md font-medium text-slate-900">{item.title || "Untitled note"}</div><div className="mt-1 text-[11px] text-slate-400">{item.author_name || "Unknown author"} · v{item.capture_version}</div></TableCell>
         <TableCell><StatusPill status={item.status} /></TableCell><TableCell className="hidden md:table-cell">{item.destination_name || "—"}</TableCell><TableCell className="tabular-nums">{item.claim_count}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.captured_at)}</TableCell>
-      </TableRow>)}</TableBody></Table></TableShell>
+      </TableRow>)}</TableBody></Table></TableShell></>
   );
 }
 

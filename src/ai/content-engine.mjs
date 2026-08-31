@@ -1,6 +1,6 @@
 import { slugify, truncate } from "../utils.mjs";
 import { CONTENT_STRATEGY } from "../content-strategy.mjs";
-import { KimiClient } from "./kimi-client.mjs";
+import { createAiClient } from "./client.mjs";
 
 const BRIEF_SCHEMA = objectSchema(
   ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions", "canonical"],
@@ -108,7 +108,7 @@ export class ContentEngine {
   constructor(config, fetchImpl = fetch) {
     this.config = config;
     this.contentStrategy = config.contentStrategy || CONTENT_STRATEGY;
-    this.client = new KimiClient(config, fetchImpl);
+    this.client = createAiClient(config, fetchImpl);
   }
 
   get enabled() {

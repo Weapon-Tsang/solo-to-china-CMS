@@ -52,13 +52,13 @@ The current startup helper uses native `docker run` commands on the VM so the de
 Build an origin-pinned package after the capture hostname is live:
 
 ```powershell
-node scripts/package-extension-cloud.mjs --origin https://capture.example.com
+node scripts/package-extension-cloud.mjs --origin https://capture.example.com --token-file output/deployment-tokens.env
 Compress-Archive -Path output/extension-cloud/* -DestinationPath output/solo-to-china-extension.zip -Force
 ```
 
 Upload the ZIP to the Chrome Web Store as an unlisted extension. Sign in to the same Chrome profile on every desktop and install it from the store. Hosting the backend alone cannot install a browser extension on another device.
 
-In the extension Connection settings use `https://capture.example.com` and paste only `CAPTURE_TOKEN`.
+The cloud package is preconfigured at build time, so the founder does not enter an endpoint or token in the extension UI. Treat the generated package as a private founder extension: its capture credential is embedded in the package and must never be publicly listed or shared.
 
 ## Production verification
 

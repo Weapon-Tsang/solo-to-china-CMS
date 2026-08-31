@@ -1,6 +1,6 @@
 import { id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
-import { KIMI_MODELS } from "./config.mjs";
+import { AI_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 import { contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
 
@@ -28,21 +28,17 @@ export class Repository {
   getAiSettings(defaultModel) {
     const saved = this.db.prepare("SELECT value_json FROM runtime_settings WHERE setting_key='ai'").get();
     const model = json(saved?.value_json, {}).model;
-    const selected = KIMI_MODELS.includes(model) ? model : defaultModel;
+    const selected = AI_MODELS.some((item) => item.id === model) ? model : defaultModel;
+    const active = AI_MODELS.find((item) => item.id === selected) || AI_MODELS[0];
     return {
-      model: selected,
-      source: KIMI_MODELS.includes(model) ? "dashboard" : "environment",
-      models: KIMI_MODELS.map((id) => ({
-        id,
-        label: id === "kimi-k3" ? "Kimi K3" : "Kimi K2.7 Code",
-        description: id === "kimi-k3" ? "Flagship multimodal model for research, writing, and QA." : "Instruction-focused model for tighter structured output and editorial workflows.",
-        supportsImages: true,
-      })),
+      id: active.id, model: active.model, provider: active.provider,
+      source: AI_MODELS.some((item) => item.id === model) ? "dashboard" : "environment",
+      models: AI_MODELS,
     };
   }
 
   setAiModel(model, defaultModel) {
-    if (!KIMI_MODELS.includes(model)) throw new Error("Unsupported Kimi model.");
+    if (!AI_MODELS.some((item) => item.id === model)) throw new Error("Unsupported AI model.");
     const timestamp = now();
     this.db.prepare(`
       INSERT INTO runtime_settings(setting_key, value_json, updated_at) VALUES ('ai', ?, ?)

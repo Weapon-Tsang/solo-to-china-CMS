@@ -42,9 +42,10 @@ export function createApplication(config = loadConfig()) {
     ...config.content, contentStrategy: config.contentStrategy,
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
   });
-  const activeKimi = { ...config.kimi, model: repository.getAiSettings(config.kimi.model).model };
-  const extractor = new KimiExtractor(activeKimi);
-  const contentEngine = new ContentEngine(activeKimi);
+  const selectedAi = repository.getAiSettings(config.ai.defaultModel);
+  const activeAi = { ...config.kimi, ...config.vertex, ...selectedAi };
+  const extractor = new KimiExtractor(activeAi);
+  const contentEngine = new ContentEngine(activeAi);
   const visuals = new VertexImagen(config.visuals);
   const wordpress = new WordPressDraftAdapter(config.wordpress);
   const searchConsole = new SearchConsoleAdapter(config.searchConsole);
@@ -120,8 +121,8 @@ export function createApplication(config = loadConfig()) {
           ok: true,
           version: VERSION,
           aiConfigured: extractor.enabled,
-          aiProvider: extractor.enabled ? "kimi" : null,
-          aiModel: extractor.enabled ? activeKimi.model : null,
+          aiProvider: extractor.enabled ? activeAi.provider : null,
+          aiModel: extractor.enabled ? activeAi.model : null,
           contentStrategy: config.contentStrategy,
           contentAutomationConfigured: contentEngine.enabled,
           visualGenerationConfigured: visuals.enabled,
@@ -144,20 +145,20 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, {
           appVersion: VERSION,
           contentStrategy: config.contentStrategy,
-          ai: repository.getAiSettings(config.kimi.model),
+          ai: repository.getAiSettings(config.ai.defaultModel),
         });
       }
       if (request.method === "GET" && url.pathname === "/api/settings/ai") {
         return sendJson(response, 200, {
           configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
-          contentStrategy: config.contentStrategy, ...repository.getAiSettings(config.kimi.model),
+          contentStrategy: config.contentStrategy, ...repository.getAiSettings(config.ai.defaultModel),
         });
       }
       if (request.method === "POST" && url.pathname === "/api/settings/ai") {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
-        const settings = repository.setAiModel(String(payload.model || ""), config.kimi.model);
-        activeKimi.model = settings.model;
+        const settings = repository.setAiModel(String(payload.model || ""), config.ai.defaultModel);
+        Object.assign(activeAi, settings);
         return sendJson(response, 200, { configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, ...settings });
       }
       if (request.method === "POST" && url.pathname === "/api/captures") {

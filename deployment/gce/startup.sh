@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_ID="project-4bcb9146-c37b-43b0-b11"
-IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.5.2"
+IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.5.3"
 APP_DIR="/opt/solo-to-china"
 METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 
@@ -60,6 +60,7 @@ SESSION_SECRET=${SESSION_SECRET}
 CAPTURE_HOST=capture.solotochina.com
 
 KIMI_API_KEY=${KIMI_API_KEY}
+AI_MODEL=kimi-k2.7-code
 KIMI_MODEL=kimi-k2.7-code
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MAX_IMAGES=8
@@ -81,6 +82,8 @@ VERTEX_AI_LOCATION=us-central1
 VERTEX_IMAGEN_MODEL=imagen-4.0-generate-001
 PUBLIC_BASE_URL=https://engine.solotochina.com
 VERTEX_IMAGE_TIMEOUT_MS=120000
+VERTEX_AI_REQUEST_TIMEOUT_MS=360000
+VERTEX_AI_MAX_COMPLETION_TOKENS=16000
 
 WORDPRESS_SITE_URL=
 WORDPRESS_USERNAME=

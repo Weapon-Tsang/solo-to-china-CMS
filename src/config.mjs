@@ -4,7 +4,13 @@ import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-export const KIMI_MODELS = ["kimi-k2.7-code", "kimi-k3"];
+export const AI_MODELS = [
+  { id: "kimi-k2.7-code", provider: "kimi", model: "kimi-k2.7-code", label: "Kimi K2.7 Code", description: "结构化提取与内容生产的默认模型。", supportsImages: true },
+  { id: "kimi-k3", provider: "kimi", model: "kimi-k3", label: "Kimi K3", description: "Kimi 的高能力多模态模型。", supportsImages: true },
+  { id: "vertex-gemini-3.1-pro-preview", provider: "vertex", model: "gemini-3.1-pro-preview", label: "Vertex AI · Gemini 3.1 Pro（预览）", description: "Vertex AI 当前最新的 Gemini 高阶推理预览模型；需要项目配额与地区可用性。", supportsImages: true, preview: true },
+  { id: "vertex-gemini-2.5-pro", provider: "vertex", model: "gemini-2.5-pro", label: "Vertex AI · Gemini 2.5 Pro", description: "Vertex AI 的稳定 Gemini 高阶推理模型。", supportsImages: true },
+];
+export const KIMI_MODELS = AI_MODELS.filter((item) => item.provider === "kimi").map((item) => item.id);
 
 export function loadConfig(env = process.env) {
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
@@ -24,6 +30,9 @@ export function loadConfig(env = process.env) {
       forcePasswordChange: boolean(env.ADMIN_PASSWORD_FORCE_CHANGE, env.ADMIN_PASSWORD === "123456"),
     },
     captureHost: hostname(env.CAPTURE_HOST),
+    ai: {
+      defaultModel: AI_MODELS.some((item) => item.id === env.AI_MODEL) ? env.AI_MODEL : "kimi-k2.7-code",
+    },
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
       model: KIMI_MODELS.includes(env.KIMI_MODEL) ? env.KIMI_MODEL : "kimi-k2.7-code",
@@ -32,6 +41,15 @@ export function loadConfig(env = process.env) {
       maxCompletionTokens: integer(env.KIMI_MAX_COMPLETION_TOKENS, 16_000),
       requestTimeoutMs: integer(env.KIMI_REQUEST_TIMEOUT_MS, 360_000),
       imageTimeoutMs: integer(env.KIMI_IMAGE_TIMEOUT_MS, 20_000),
+    },
+    vertex: {
+      projectId: env.GOOGLE_CLOUD_PROJECT || "",
+      location: env.VERTEX_AI_LOCATION || "us-central1",
+      accessToken: env.VERTEX_AI_ACCESS_TOKEN || "",
+      requestTimeoutMs: integer(env.VERTEX_AI_REQUEST_TIMEOUT_MS, 360_000),
+      imageTimeoutMs: integer(env.VERTEX_AI_IMAGE_TIMEOUT_MS, 20_000),
+      maxImages: integer(env.VERTEX_AI_MAX_IMAGES || env.AI_MAX_IMAGES, 8),
+      maxCompletionTokens: integer(env.VERTEX_AI_MAX_COMPLETION_TOKENS, 16_000),
     },
     visuals: {
       enabled: boolean(env.IMAGE_ENABLED, false),

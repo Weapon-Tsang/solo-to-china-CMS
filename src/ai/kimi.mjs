@@ -1,5 +1,5 @@
 import { slugify, truncate } from "../utils.mjs";
-import { KimiClient } from "./kimi-client.mjs";
+import { createAiClient } from "./client.mjs";
 
 const EXTRACTION_SCHEMA = {
   type: "object",
@@ -24,7 +24,8 @@ const EXTRACTION_SCHEMA = {
 
 export class KimiExtractor {
   constructor(config, fetchImpl = fetch) {
-    this.client = new KimiClient(config, fetchImpl);
+    this.config = config;
+    this.client = createAiClient(config, fetchImpl);
   }
 
   get enabled() {
@@ -42,7 +43,7 @@ export class KimiExtractor {
     });
     const result = sanitizeResult(completion.output);
     if (images.attempted > images.parts.length) result.source.warnings.push("Some captured image assets were unavailable to the vision model; verify image-only details against the raw source.");
-    return { result, method: images.parts.length ? "kimi_chat_completions_multimodal" : "kimi_chat_completions_text", model: completion.model };
+    return { result, method: images.parts.length ? `${this.config.provider || "kimi"}_multimodal` : `${this.config.provider || "kimi"}_text`, model: completion.model };
   }
 }
 

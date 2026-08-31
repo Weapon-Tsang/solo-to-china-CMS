@@ -4,10 +4,12 @@ import process from "node:process";
 
 const argumentsMap = new Map(process.argv.slice(2).flatMap((value, index, values) => value.startsWith("--") ? [[value, values[index + 1]]] : []));
 const origin = normalizeOrigin(argumentsMap.get("--origin"));
+const tokenFile = argumentsMap.get("--token-file");
+const captureToken = readCaptureToken(tokenFile);
 const output = path.resolve(argumentsMap.get("--out") || "output/extension-cloud");
 
-if (!origin) {
-  console.error("Usage: node scripts/package-extension-cloud.mjs --origin https://capture.example.com [--out output/extension-cloud]");
+if (!origin || !captureToken) {
+  console.error("Usage: node scripts/package-extension-cloud.mjs --origin https://capture.example.com --token-file output/deployment-tokens.env [--out output/extension-cloud]");
   process.exit(1);
 }
 
@@ -21,7 +23,10 @@ manifest.name = "Save to SoloToChina";
 fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 const popupPath = path.join(output, "popup.js");
 const originalPopup = fs.readFileSync(popupPath, "utf8");
-const popup = originalPopup.replace('const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";', `const DEFAULT_ENDPOINT = ${JSON.stringify(origin)};`);
+const popup = originalPopup
+  .replace('const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";', `const DEFAULT_ENDPOINT = ${JSON.stringify(origin)};`)
+  .replace('const DEFAULT_CAPTURE_TOKEN = "";', `const DEFAULT_CAPTURE_TOKEN = ${JSON.stringify(captureToken)};`)
+  .replace("const CLOUD_CONFIGURED = false;", "const CLOUD_CONFIGURED = true;");
 if (popup === originalPopup) throw new Error("Extension default endpoint marker was not found.");
 fs.writeFileSync(popupPath, popup);
 console.log(`Cloud extension package created at ${output}`);
@@ -34,4 +39,13 @@ function normalizeOrigin(value) {
   } catch {
     return null;
   }
+}
+
+function readCaptureToken(filename) {
+  if (!filename) return "";
+  try {
+    const line = fs.readFileSync(path.resolve(filename), "utf8").split(/\r?\n/).find((item) => item.startsWith("CAPTURE_TOKEN="));
+    const value = line?.slice("CAPTURE_TOKEN=".length).trim() || "";
+    return /^[A-Za-z0-9_-]{24,}$/.test(value) ? value : "";
+  } catch { return ""; }
 }

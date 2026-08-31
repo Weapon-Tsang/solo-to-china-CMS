@@ -1,4 +1,6 @@
 const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";
+const DEFAULT_CAPTURE_TOKEN = "";
+const CLOUD_CONFIGURED = false;
 const saveButton = document.querySelector("#save");
 const settingsButton = document.querySelector("#save-settings");
 const endpointInput = document.querySelector("#endpoint");
@@ -8,15 +10,17 @@ const feedback = document.querySelector("#feedback");
 const feedbackIcon = document.querySelector("#feedback-icon");
 const feedbackTitle = document.querySelector("#feedback-title");
 const feedbackDetail = document.querySelector("#feedback-detail");
+const settingsPanel = document.querySelector("#connection-settings");
 
 void restoreSettings();
 saveButton.addEventListener("click", saveCurrentNote);
 settingsButton.addEventListener("click", saveSettings);
 
 async function restoreSettings() {
-  const settings = await chrome.storage.local.get({ endpoint: DEFAULT_ENDPOINT, token: "", lastCapture: null });
+  const settings = await chrome.storage.local.get({ endpoint: DEFAULT_ENDPOINT, token: DEFAULT_CAPTURE_TOKEN, lastCapture: null });
   endpointInput.value = settings.endpoint;
   tokenInput.value = settings.token;
+  if (CLOUD_CONFIGURED) settingsPanel.hidden = true;
   if (settings.lastCapture) renderCaptureFeedback(settings.lastCapture);
 }
 
@@ -43,7 +47,7 @@ async function saveCurrentNote() {
     });
     if (!capture?.text || capture.text.length < 20) throw new Error("Could not read enough visible note content. Try opening the note detail page.");
 
-    const settings = await chrome.storage.local.get({ endpoint: DEFAULT_ENDPOINT, token: "" });
+    const settings = await chrome.storage.local.get({ endpoint: DEFAULT_ENDPOINT, token: DEFAULT_CAPTURE_TOKEN });
     show("Saving and queuing extraction…");
     const response = await fetch(`${settings.endpoint.replace(/\/$/, "")}/api/captures`, {
       method: "POST",

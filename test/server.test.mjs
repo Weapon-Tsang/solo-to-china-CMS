@@ -103,7 +103,7 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
 
   const settings = await (await fetch(`${baseUrl}/api/settings/ai`)).json();
   assert.equal(settings.model, "kimi-k2.7-code");
-  assert.equal(settings.models.length, 2);
+  assert.equal(settings.models.length, 4);
   const changed = await fetch(`${baseUrl}/api/settings/ai`, {
     method: "POST",
     headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },

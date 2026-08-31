@@ -11,16 +11,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn, label } from "@/lib/utils";
 
 export const views = {
-  sources: { label: "Sources", title: "Research sources", description: "Capture and trace every human-selected travel source.", icon: FileText },
-  recommendations: { label: "Recommendations", title: "AI recommendations", description: "Review each source's next action before any article is planned.", icon: Sparkles },
-  knowledge: { label: "Knowledge", title: "Destination knowledge", description: "Review corroborated facts, conflicts, and freshness in one place.", icon: BookOpen },
-  blueprints: { label: "Blueprints", title: "Editorial blueprints", description: "Turn recurring source patterns into reusable editorial intelligence.", icon: Layers3 },
-  content: { label: "Content", title: "Content production", description: "Move evidence-backed topics through drafting, review, and delivery.", icon: WandSparkles },
+  sources: { label: "来源", title: "研究来源", description: "查看每一条由你亲自挑选并保存的旅行笔记。", icon: FileText },
+  recommendations: { label: "建议", title: "内容建议", description: "在文章规划前，审阅每条来源的下一步建议。", icon: Sparkles },
+  knowledge: { label: "知识库", title: "目的地知识", description: "集中查看已佐证事实、冲突和时效性。", icon: BookOpen },
+  blueprints: { label: "蓝图", title: "编辑蓝图", description: "把重复出现的优秀表达转化为可复用的编辑洞察。", icon: Layers3 },
+  content: { label: "内容", title: "内容生产", description: "将有证据支撑的主题推进至草稿、审核和发布。", icon: WandSparkles },
   wordpress: { label: "WordPress", title: "WordPress inventory", description: "Keep new topics distinct from posts already in your CMS.", icon: PanelTop },
-  commercial: { label: "Offers", title: "Commercial offers", description: "Manage the isolated affiliate layer without touching research knowledge.", icon: TicketCheck },
-  exceptions: { label: "Exceptions", title: "Exceptions", description: "Only the issues that genuinely need human judgment or intervention.", icon: CircleAlert },
-  maintenance: { label: "Maintenance", title: "System maintenance", description: "Quiet automation for backups, reconciliation, sync, and cleanup.", icon: Gauge },
-  settings: { label: "Settings", title: "System settings", description: "Choose the active Kimi model and view media-generation readiness.", icon: Settings2 },
+  commercial: { label: "商品", title: "商业商品", description: "管理独立的联盟层，不污染研究知识库。", icon: TicketCheck },
+  exceptions: { label: "异常", title: "需要处理", description: "只显示真正需要人工判断或介入的问题。", icon: CircleAlert },
+  maintenance: { label: "维护", title: "系统维护", description: "静默完成备份、校验、同步和清理。", icon: Gauge },
+  settings: { label: "设置", title: "系统设置", description: "选择用于提取、规划、写作和审核的 AI 模型。", icon: Settings2 },
 };
 
 export const emptyIcons = {
@@ -65,8 +65,8 @@ export function Topbar({ health, refreshing, onRefresh }) {
             </span>
             <span className="max-w-40 truncate">{health?.aiConfigured ? `Kimi · ${health.aiModel || "configured"}` : healthy ? "Capture ready · Kimi paused" : "Engine offline"}</span>
           </Badge>
-          <Button variant="ghost" size="icon" aria-label="Refresh dashboard" title="Refresh dashboard" onClick={onRefresh} disabled={refreshing}>
-            <RefreshCw className={cn(refreshing && "animate-spin")} />
+          <Button variant="ghost" size="sm" aria-label="刷新最新状态" title="刷新最新状态" onClick={onRefresh} disabled={refreshing}>
+            <RefreshCw className={cn(refreshing && "animate-spin")} /> 刷新状态
           </Button>
         </div>
       </div>
