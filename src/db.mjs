@@ -31,6 +31,28 @@ function migrate(db) {
   if (current < 10) migrationTen(db);
   if (current < 11) migrationEleven(db);
   if (current < 12) migrationTwelve(db);
+  if (current < 13) migrationThirteen(db);
+}
+
+function migrationThirteen(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE app_users (
+        username TEXT PRIMARY KEY,
+        password_salt TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        force_password_change INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO schema_migrations(version, applied_at) VALUES (13, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationTwelve(db) {

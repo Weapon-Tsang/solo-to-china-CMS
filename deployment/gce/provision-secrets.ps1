@@ -90,16 +90,23 @@ if (-not (Test-Path -LiteralPath $LocalEnvPath)) {
 $kimiApiKey = Get-DotEnvValue -Path $LocalEnvPath -Name "KIMI_API_KEY"
 $captureToken = New-RandomToken
 $adminToken = New-RandomToken
+$adminUsername = "admin"
+$adminPassword = New-RandomToken
+$sessionSecret = New-RandomToken
 
 Set-GcpSecret -Name "solo-to-china-kimi-api-key" -Value $kimiApiKey
 Set-GcpSecret -Name "solo-to-china-capture-token" -Value $captureToken
 Set-GcpSecret -Name "solo-to-china-admin-token" -Value $adminToken
+Set-GcpSecret -Name "solo-to-china-admin-password" -Value $adminPassword
+Set-GcpSecret -Name "solo-to-china-session-secret" -Value $sessionSecret
 
 $outputDirectory = Split-Path -Parent $TokenOutputPath
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 [System.IO.File]::WriteAllLines($TokenOutputPath, @(
   "CAPTURE_TOKEN=$captureToken",
-  "ADMIN_TOKEN=$adminToken"
+  "ADMIN_TOKEN=$adminToken",
+  "ADMIN_USERNAME=$adminUsername",
+  "ADMIN_PASSWORD=$adminPassword"
 ))
 
-Write-Output "Created three Secret Manager secrets and saved the generated application tokens to the ignored output directory."
+Write-Output "Created five Secret Manager secrets and saved the generated application credentials to the ignored output directory."

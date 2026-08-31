@@ -29,6 +29,7 @@ const endpoints = {
 export default function App() {
   const [activeView, setActiveView] = useState("sources");
   const [health, setHealth] = useState(null);
+  const [auth, setAuth] = useState(null);
   const [totals, setTotals] = useState({});
   const [viewData, setViewData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -55,6 +56,8 @@ export default function App() {
     setTotals(dashboard.totals || {});
   }, []);
 
+  const loadAuth = useCallback(async () => setAuth(await api("/api/auth/status")), []);
+
   const loadView = useCallback(async (view, { quiet = false } = {}) => {
     const sequence = ++requestSequence.current;
     if (!quiet) setLoading(true);
@@ -72,20 +75,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void loadOverview().catch((caught) => setError(caught.message));
-  }, [loadOverview]);
+    void loadAuth().catch((caught) => setError(caught.message));
+  }, [loadAuth]);
 
   useEffect(() => {
+    if (!auth?.authenticated || auth.mustChangePassword) return;
+    void loadOverview().catch((caught) => setError(caught.message));
+  }, [auth, loadOverview]);
+
+  useEffect(() => {
+    if (!auth?.authenticated || auth.mustChangePassword) return;
     setViewData(null);
     void loadView(activeView);
-  }, [activeView, loadView]);
+  }, [activeView, auth, loadView]);
 
   useEffect(() => {
+    if (!auth?.authenticated || auth.mustChangePassword) return undefined;
     const interval = setInterval(() => {
       void Promise.all([loadOverview(), loadView(activeView, { quiet: true })]).catch((caught) => setError(caught.message));
     }, 60_000);
     return () => clearInterval(interval);
-  }, [activeView, loadOverview, loadView]);
+  }, [activeView, auth, loadOverview, loadView]);
 
   const refresh = useCallback(async (notify = false) => {
     setRefreshing(true);
@@ -128,6 +138,10 @@ export default function App() {
     }
   }, [showToast]);
 
+  if (!auth) return <LoadingView />;
+  if (auth.enabled && !auth.authenticated) return <LoginScreen onAuthenticated={loadAuth} />;
+  if (auth.enabled && auth.mustChangePassword) return <ChangePasswordScreen onChanged={loadAuth} />;
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <Topbar health={health || { ok: !error }} refreshing={refreshing} onRefresh={() => refresh(true)} />
@@ -149,6 +163,46 @@ export default function App() {
       <Toast {...toast} />
     </div>
   );
+}
+
+function LoginScreen({ onAuthenticated }) {
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true); setError("");
+    try {
+      await api("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password }) });
+      await onAuthenticated();
+    } catch (caught) { setError(caught.message); } finally { setBusy(false); }
+  };
+  return <AuthShell title="Welcome back" description="Sign in to manage your SoloToChina research workspace."><form className="space-y-4" onSubmit={submit}><AuthField label="Username" value={username} onChange={setUsername} autoComplete="username" /><AuthField label="Password" type="password" value={password} onChange={setPassword} autoComplete="current-password" />{error && <p className="text-xs text-rose-600">{error}</p>}<Button className="w-full" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</Button></form></AuthShell>;
+}
+
+function ChangePasswordScreen({ onChanged }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [nextPassword, setNextPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true); setError("");
+    try {
+      await api("/api/auth/change-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ currentPassword, nextPassword }) });
+      await onChanged();
+    } catch (caught) { setError(caught.message); } finally { setBusy(false); }
+  };
+  return <AuthShell title="Secure your workspace" description="Choose a new password before using the dashboard."><form className="space-y-4" onSubmit={submit}><AuthField label="Current password" type="password" value={currentPassword} onChange={setCurrentPassword} autoComplete="current-password" /><AuthField label="New password" type="password" value={nextPassword} onChange={setNextPassword} autoComplete="new-password" hint="Use at least 8 characters." />{error && <p className="text-xs text-rose-600">{error}</p>}<Button className="w-full" disabled={busy}>{busy ? "Updating…" : "Set new password"}</Button></form></AuthShell>;
+}
+
+function AuthShell({ title, description, children }) {
+  return <main className="grid min-h-screen place-items-center bg-slate-50 px-4"><Card className="w-full max-w-sm p-7 shadow-sm"><div className="mb-6"><div className="mb-4 grid size-10 place-items-center rounded-xl bg-slate-950 text-sm font-semibold text-white">S</div><h1 className="text-xl font-semibold tracking-tight text-slate-950">{title}</h1><p className="mt-2 text-sm leading-6 text-slate-500">{description}</p></div>{children}</Card></main>;
+}
+
+function AuthField({ label, type = "text", value, onChange, autoComplete, hint }) {
+  return <label className="block space-y-1.5"><span className="text-xs font-medium text-slate-700">{label}</span><input className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100" type={type} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} required />{hint && <span className="block text-[11px] text-slate-400">{hint}</span>}</label>;
 }
 
 function DetailDialog({ detail, health, actionBusy, onOpenChange, onAction, onClose }) {

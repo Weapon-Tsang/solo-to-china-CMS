@@ -16,6 +16,7 @@ import { CommercialComposer, CommercialValidationError, normalizeCommercialOffer
 import { MaintenanceScheduler } from "./maintenance.mjs";
 import { createLogger } from "./logger.mjs";
 import { ExceptionNotifier } from "./notifications.mjs";
+import { createAuth } from "./auth.mjs";
 import { VERSION } from "./version.mjs";
 
 const MIME = {
@@ -31,11 +32,12 @@ const MIME = {
 };
 
 export function createApplication(config = loadConfig()) {
-  if (!isLoopbackHost(config.host) && (!config.captureToken || !config.adminToken)) {
-    throw new Error("Non-loopback HOST requires both CAPTURE_TOKEN and ADMIN_TOKEN.");
+  if (!isLoopbackHost(config.host) && (!config.captureToken || !config.adminToken || !config.auth.password || !config.auth.sessionSecret)) {
+    throw new Error("Non-loopback HOST requires CAPTURE_TOKEN, ADMIN_TOKEN, ADMIN_PASSWORD, and SESSION_SECRET.");
   }
   const logger = createLogger(config.logging);
   const db = openDatabase(config.databasePath);
+  const auth = createAuth(db, config.auth);
   const repository = new Repository(db, {
     ...config.content, contentStrategy: config.contentStrategy,
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
@@ -88,6 +90,30 @@ export function createApplication(config = loadConfig()) {
       const captureOnly = isCaptureHost(request, config.captureHost);
       if (captureOnly && !isCaptureRoute(request.method, url.pathname)) return sendJson(response, 404, { error: "Not found." });
 
+      if (!captureOnly && request.method === "GET" && url.pathname === "/api/auth/status") {
+        return sendJson(response, 200, { enabled: auth.enabled, ...auth.status(request) });
+      }
+      if (!captureOnly && request.method === "POST" && url.pathname === "/api/auth/login") {
+        if (!auth.enabled) return sendJson(response, 409, { error: "Password sign-in is not configured." });
+        const payload = await readJson(request, 20_000);
+        const session = auth.login(payload.username, payload.password);
+        if (!session) return sendJson(response, 401, { error: "Incorrect username or password." });
+        response.setHeader("Set-Cookie", session.cookie);
+        return sendJson(response, 200, { authenticated: true, username: session.username, mustChangePassword: session.mustChangePassword });
+      }
+      if (!captureOnly && request.method === "POST" && url.pathname === "/api/auth/logout") {
+        response.setHeader("Set-Cookie", auth.clearCookie());
+        return sendJson(response, 204, {});
+      }
+      if (!captureOnly && request.method === "POST" && url.pathname === "/api/auth/change-password") {
+        const payload = await readJson(request, 20_000);
+        const session = auth.changePassword(request, payload.currentPassword, payload.nextPassword);
+        if (!session) return sendJson(response, 401, { error: "Current password is incorrect." });
+        response.setHeader("Set-Cookie", session.cookie);
+        return sendJson(response, 200, { authenticated: true, username: session.username, mustChangePassword: false });
+      }
+      if (!captureOnly && isDashboardApi(url.pathname) && !hasBearerToken(request, config.adminToken)) auth.require(request);
+
       if (request.method === "GET" && url.pathname === "/api/health") {
         const telemetry = repository.jobTelemetry(config.telemetry.windowHours);
         return sendJson(response, 200, {
@@ -107,6 +133,7 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "GET" && url.pathname.startsWith("/media/")) {
+        if (!captureOnly) auth.require(request);
         return serveMedia(config.visuals.mediaDir, url.pathname.slice("/media/".length), response);
       }
       if (request.method === "GET" && url.pathname === "/api/ready") {
@@ -127,7 +154,7 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "POST" && url.pathname === "/api/settings/ai") {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
         const settings = repository.setAiModel(String(payload.model || ""), config.kimi.model);
         activeKimi.model = settings.model;
@@ -154,7 +181,7 @@ export function createApplication(config = loadConfig()) {
       }
       const retryMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/retry$/);
       if (request.method === "POST" && retryMatch) {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         const retried = repository.retrySource(retryMatch[1]);
         if (!retried) return sendJson(response, 404, { error: "Source not found." });
         void pipeline.runOne();
@@ -174,7 +201,7 @@ export function createApplication(config = loadConfig()) {
       }
       const recommendationDecisionMatch = url.pathname.match(/^\/api\/recommendations\/([^/]+)\/decision$/);
       if (request.method === "POST" && recommendationDecisionMatch) {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
         const result = repository.decideRecommendation(recommendationDecisionMatch[1], String(payload.decision || ""), payload.note || "");
         if (!result) return sendJson(response, 404, { error: "Recommendation not found." });
@@ -202,12 +229,12 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "POST" && url.pathname === "/api/maintenance/run") {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         return sendJson(response, 200, await maintenance.runDue({ force: true }));
       }
       const exceptionRetryMatch = url.pathname.match(/^\/api\/exceptions\/(.+)\/retry$/);
       if (request.method === "POST" && exceptionRetryMatch) {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         const retried = repository.retryOperationalException(decodeURIComponent(exceptionRetryMatch[1]));
         if (!retried) return sendJson(response, 409, { error: "Exception is not retryable or no longer exists." });
         void pipeline.runOne();
@@ -221,7 +248,7 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "POST" && url.pathname === "/api/wordpress/inventory/sync") {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         if (!wordpress.enabled) return sendJson(response, 409, { error: "WordPress inventory sync is not configured." });
         const jobId = repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours, true);
         void pipeline.runOne();
@@ -235,7 +262,7 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "POST" && url.pathname === "/api/search-console/sync") {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         if (!searchConsole.enabled) return sendJson(response, 409, { error: "Search Console sync is not configured." });
         const jobId = repository.enqueueSearchConsoleSync(searchConsole.config.siteUrl, searchConsole.config.syncHours, true);
         void pipeline.runOne();
@@ -245,7 +272,7 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, { items: repository.listCommercialOffers() });
       }
       if (request.method === "POST" && url.pathname === "/api/commercial/offers") {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 1_000_000);
         const inputs = Array.isArray(payload) ? payload : [payload];
         if (inputs.length > 500) return sendJson(response, 400, { error: "A sync batch may contain at most 500 offers." });
@@ -259,12 +286,12 @@ export function createApplication(config = loadConfig()) {
       }
       const generateMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/generate$/);
       if (request.method === "POST" && generateMatch) {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         return sendJson(response, 409, { error: "Approve an Intake Recommendation before planning content." });
       }
       const retryContentMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/retry$/);
       if (request.method === "POST" && retryContentMatch) {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         if (!contentEngine.enabled) return sendJson(response, 409, { error: "KIMI_API_KEY is required for content production." });
         const jobType = repository.retryContent(retryContentMatch[1]);
         if (!jobType) return sendJson(response, 409, { error: "Nothing retryable was found for this topic." });
@@ -278,7 +305,7 @@ export function createApplication(config = loadConfig()) {
       }
       const wordpressMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/wordpress$/);
       if (request.method === "POST" && wordpressMatch) {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         if (!wordpress.enabled) return sendJson(response, 409, { error: "WordPress delivery is not configured." });
         const draft = repository.getDraftPackage(wordpressMatch[1]);
         if (!draft?.review?.passed) return sendJson(response, 409, { error: "Draft must pass QA before WordPress delivery." });
@@ -287,7 +314,7 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 202, { queued: true });
       }
       if (request.method === "POST" && url.pathname === "/api/pipeline/run-one") {
-        authorizeAdmin(request, config.adminToken);
+        authorizeAdmin(request, config.adminToken, auth);
         const worked = await pipeline.runOne();
         return sendJson(response, 200, { worked });
       }
@@ -337,20 +364,30 @@ function authorizeCapture(request, token) {
   authorize(request, token, "capture");
 }
 
-function authorizeAdmin(request, token) {
+function authorizeAdmin(request, token, auth) {
+  if (hasBearerToken(request, token)) return;
+  if (auth.enabled) return auth.require(request);
   authorize(request, token, "admin");
 }
 
 function authorize(request, token, label) {
   if (!token) return;
-  const supplied = request.headers.authorization || "";
-  const expected = `Bearer ${token}`;
-  const valid = supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
-  if (!valid) {
+  if (!hasBearerToken(request, token)) {
     const error = new Error(`Invalid ${label} token.`);
     error.statusCode = 401;
     throw error;
   }
+}
+
+function hasBearerToken(request, token) {
+  if (!token) return false;
+  const supplied = request.headers.authorization || "";
+  const expected = `Bearer ${token}`;
+  return supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+}
+
+function isDashboardApi(pathname) {
+  return pathname.startsWith("/api/") && !["/api/health", "/api/ready"].includes(pathname);
 }
 
 function isLoopbackHost(host) {

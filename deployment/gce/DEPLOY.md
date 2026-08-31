@@ -6,7 +6,7 @@ Use one Google Compute Engine VM, a persistent Docker volume, and one Cloudflare
 
 ```text
 Chrome extension -- HTTPS + CAPTURE_TOKEN -- capture.example.com
-Dashboard -- Cloudflare Access -- engine.example.com
+Dashboard -- account password -- engine.example.com
 Both hostnames -- Cloudflare Tunnel -- GCE VM / Docker Compose
 GCE VM -- service account -- Vertex Imagen
 ```
@@ -18,8 +18,8 @@ GCE VM -- service account -- Vertex Imagen
 1. Choose two Cloudflare-managed hostnames, for example `engine.example.com` and `capture.example.com`.
 2. Create a Google Cloud project with billing enabled. Enable Compute Engine, Artifact Registry, Cloud Build, and Vertex AI APIs.
 3. Create a VM service account with `roles/aiplatform.user`; attach it to the VM with the `cloud-platform` access scope. Do not create or copy a JSON service-account key.
-4. Create a Cloudflare Tunnel, add both public hostnames pointing to `http://engine:8080`, and create a Cloudflare Access application only for `engine.example.com`.
-5. Generate independent random `CAPTURE_TOKEN` and `ADMIN_TOKEN` values. The extension receives only the capture token; the dashboard keeps the admin token only in session storage when an action needs it.
+4. Create a Cloudflare Tunnel and add both public hostnames pointing to `http://engine:8080`. Do not put an interactive Cloudflare Access challenge in front of the dashboard; the application owns dashboard sign-in.
+5. Generate independent random `CAPTURE_TOKEN`, `ADMIN_TOKEN`, `ADMIN_PASSWORD`, and `SESSION_SECRET` values. The extension receives only the capture token. Store all dashboard credentials in Secret Manager.
 
 ## Build and run
 
@@ -29,7 +29,7 @@ From an authenticated Google Cloud shell or workstation, substitute your own val
 $project = "YOUR_PROJECT_ID"
 $region = "us-central1"
 $repo = "solo-to-china"
-$image = "$region-docker.pkg.dev/$project/$repo/engine:1.5.1"
+$image = "$region-docker.pkg.dev/$project/$repo/engine:1.5.2"
 
 gcloud services enable compute.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com --project $project
 gcloud artifacts repositories create $repo --repository-format=docker --location=$region --project=$project
@@ -62,7 +62,7 @@ In the extension Connection settings use `https://capture.example.com` and paste
 
 ## Production verification
 
-- `https://engine.example.com/api/health` is reachable only after Cloudflare Access authentication.
+- `https://engine.example.com` presents the application sign-in screen. Do not use a weak default password on an internet-accessible deployment; the provided provisioning script creates a high-entropy initial password in the ignored local output file.
 - `https://capture.example.com/api/health` returns basic health, while `https://capture.example.com/api/dashboard` returns 404.
 - The extension can save a manually opened note and poll its own `/api/sources/{id}` status using `CAPTURE_TOKEN`.
 - Kimi K2.7 Code is the default on a fresh deployment; dashboard Settings can explicitly switch to Kimi K3 and the top badge should change.

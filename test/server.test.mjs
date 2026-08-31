@@ -153,7 +153,39 @@ test("capture-only Cloudflare hostname cannot expose dashboard data", async (t) 
 
 test("non-loopback binding refuses to start without both operational tokens", () => {
   const config = loadConfig({ HOST: "0.0.0.0", DATABASE_PATH: "data/should-not-open.sqlite" });
-  assert.throws(() => createApplication(config), /requires both CAPTURE_TOKEN and ADMIN_TOKEN/);
+  assert.throws(() => createApplication(config), /requires CAPTURE_TOKEN, ADMIN_TOKEN, ADMIN_PASSWORD, and SESSION_SECRET/);
+});
+
+test("dashboard password login creates a secure session and requires an initial password change", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-password-auth-test-"));
+  const config = loadConfig({
+    HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "password-auth.sqlite"),
+    ADMIN_USERNAME: "admin", ADMIN_PASSWORD: "123456", SESSION_SECRET: "test-session-secret-with-enough-entropy",
+    MAINTENANCE_ENABLED: "false", LOG_LEVEL: "error",
+  });
+  const app = createApplication(config);
+  await app.start();
+  t.after(async () => { await app.stop(); fs.rmSync(directory, { recursive: true, force: true }); });
+  const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
+
+  const before = await (await fetch(`${baseUrl}/api/auth/status`)).json();
+  assert.deepEqual(before, { enabled: true, authenticated: false, username: null, mustChangePassword: false });
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "admin", password: "123456" }),
+  });
+  assert.equal(login.status, 200);
+  assert.equal((await login.json()).mustChangePassword, true);
+  const cookie = login.headers.get("set-cookie");
+  assert.ok(cookie?.includes("HttpOnly") && cookie.includes("SameSite=Strict"));
+  const blocked = await fetch(`${baseUrl}/api/pipeline/run-one`, { method: "POST", headers: { cookie } });
+  assert.equal(blocked.status, 403);
+  const changed = await fetch(`${baseUrl}/api/auth/change-password`, {
+    method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ currentPassword: "123456", nextPassword: "longer-and-private-password" }),
+  });
+  assert.equal(changed.status, 200);
+  const freshCookie = changed.headers.get("set-cookie");
+  const allowed = await fetch(`${baseUrl}/api/pipeline/run-one`, { method: "POST", headers: { cookie: freshCookie } });
+  assert.equal(allowed.status, 200);
 });
 
 test("failed HTTP bind does not start pipeline or maintenance side effects", async (t) => {

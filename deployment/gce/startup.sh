@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_ID="project-4bcb9146-c37b-43b0-b11"
-IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.5.1"
+IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.5.2"
 APP_DIR="/opt/solo-to-china"
 METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 
@@ -40,6 +40,8 @@ log 'Fetching runtime configuration from Secret Manager.'
 KIMI_API_KEY="$(secret_value solo-to-china-kimi-api-key)"
 CAPTURE_TOKEN="$(secret_value solo-to-china-capture-token)"
 ADMIN_TOKEN="$(secret_value solo-to-china-admin-token)"
+ADMIN_PASSWORD="$(secret_value solo-to-china-admin-password)"
+SESSION_SECRET="$(secret_value solo-to-china-session-secret)"
 CLOUDFLARE_TUNNEL_TOKEN="$(secret_value solo-to-china-cloudflare-tunnel-token)"
 
 install -d -m 0700 "$APP_DIR"
@@ -52,6 +54,9 @@ HOST=0.0.0.0
 PORT=8080
 CAPTURE_TOKEN=${CAPTURE_TOKEN}
 ADMIN_TOKEN=${ADMIN_TOKEN}
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=${ADMIN_PASSWORD}
+SESSION_SECRET=${SESSION_SECRET}
 CAPTURE_HOST=capture.solotochina.com
 
 KIMI_API_KEY=${KIMI_API_KEY}

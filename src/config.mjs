@@ -17,6 +17,12 @@ export function loadConfig(env = process.env) {
     databasePath,
     captureToken: env.CAPTURE_TOKEN || "",
     adminToken: env.ADMIN_TOKEN || "",
+    auth: {
+      username: safeUsername(env.ADMIN_USERNAME || "admin"),
+      password: env.ADMIN_PASSWORD || "",
+      sessionSecret: env.SESSION_SECRET || "",
+      forcePasswordChange: boolean(env.ADMIN_PASSWORD_FORCE_CHANGE, env.ADMIN_PASSWORD === "123456"),
+    },
     captureHost: hostname(env.CAPTURE_HOST),
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
@@ -134,6 +140,11 @@ function safeMetaKey(value) {
 function safeTemplate(value) {
   const normalized = String(value || "").trim();
   return normalized && !normalized.includes("..") && /^[A-Za-z0-9_./-]{1,191}$/.test(normalized) ? normalized : "";
+}
+
+function safeUsername(value) {
+  const normalized = String(value || "").trim();
+  return /^[A-Za-z0-9_.-]{3,64}$/.test(normalized) ? normalized : "admin";
 }
 
 function hostname(value) {
