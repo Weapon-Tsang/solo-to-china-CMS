@@ -145,12 +145,12 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <Topbar health={health || { ok: !error }} refreshing={refreshing} onRefresh={() => refresh(true)} />
-      <main className="mx-auto w-full max-w-[1440px] space-y-6 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
+      <main className="mx-auto w-full max-w-[1440px] space-y-4 px-4 py-6 sm:px-6 sm:py-7 lg:px-8">
         <PageHeading view={activeView} health={health} />
         <Metrics totals={totals} />
         <Tabs value={activeView} onValueChange={setActiveView}>
-          <div className="sticky top-[66px] z-30 -mx-1 overflow-x-auto px-1 py-1 scrollbar-none">
-            <TabsList>{Object.entries(views).map(([key, item]) => <TabsTrigger key={key} value={key}>{item.label}</TabsTrigger>)}</TabsList>
+          <div className="sticky top-[62px] z-30 -mx-1 overflow-x-auto px-1 py-1.5 scrollbar-none">
+            <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span></TabsTrigger>; })}</TabsList>
           </div>
         </Tabs>
         {health && !health.aiConfigured && <AiAlert onConfigure={() => openGuide("ai")} />}

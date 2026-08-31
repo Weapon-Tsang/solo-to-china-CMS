@@ -109,7 +109,7 @@ export function Metrics({ totals = {} }) {
     },
   ];
   return (
-    <section aria-label="工作台总览" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <section aria-label="工作台总览" className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
       {groups.map((group) => <MetricGroup key={group.eyebrow} {...group} />)}
     </section>
   );
@@ -123,12 +123,12 @@ function MetricGroup({ icon: Icon, tone, eyebrow, title, value, unit, detail, st
     emerald: "border-emerald-100/90 from-emerald-50/90 to-white text-emerald-700 ring-emerald-100",
     amber: "border-amber-100/90 from-amber-50/90 to-white text-amber-700 ring-amber-100",
   };
-  return <Card className={cn("group relative overflow-hidden border bg-gradient-to-br p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md", tones[tone])}>
-    <div className="absolute -right-7 -top-7 size-24 rounded-full bg-current opacity-[0.035]" />
-    <div className="relative flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] opacity-70">{eyebrow}</p><h2 className="mt-1 text-sm font-semibold text-slate-900">{title}</h2></div><span className="grid size-9 place-items-center rounded-xl bg-white/80 shadow-sm ring-1"><Icon className="size-4" /></span></div>
-    <div className="relative mt-4 flex items-end gap-2"><strong className="text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">{value ?? 0}</strong><span className="pb-1 text-[11px] font-medium text-slate-500">{unit}</span></div>
-    <p className="relative mt-1.5 min-h-4 text-[11px] leading-relaxed text-slate-500">{detail}</p>
-    <div className="relative mt-4 flex gap-2 border-t border-slate-900/[0.06] pt-3">{stats.map(([statValue, statLabel]) => <div key={statLabel} className="min-w-0 flex-1"><div className="text-sm font-semibold text-slate-900 tabular-nums">{statValue ?? 0}</div><div className="truncate text-[10px] text-slate-500">{statLabel}</div></div>)}</div>
+  return <Card className={cn("group relative min-w-0 overflow-hidden border bg-gradient-to-br p-3 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md", tones[tone])}>
+    <div className="absolute -right-6 -top-6 size-20 rounded-full bg-current opacity-[0.035]" />
+    <div className="relative flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-[9px] font-semibold uppercase tracking-[0.12em] opacity-70">{eyebrow}</p><h2 className="mt-0.5 truncate text-xs font-semibold text-slate-900">{title}</h2></div><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-white/80 shadow-sm ring-1"><Icon className="size-3.5" /></span></div>
+    <div className="relative mt-2 flex min-w-0 items-end gap-1.5"><strong className="text-2xl font-semibold tracking-tight text-slate-950 tabular-nums">{value ?? 0}</strong><span className="truncate pb-0.5 text-[10px] font-medium text-slate-500">{unit}</span></div>
+    <p className="relative mt-1 truncate text-[10px] leading-relaxed text-slate-500">{detail}</p>
+    <div className="relative mt-2 flex gap-1.5">{stats.map(([statValue, statLabel]) => <div key={statLabel} className="min-w-0 rounded-md bg-white/55 px-1.5 py-1"><span className="mr-1 text-xs font-semibold text-slate-900 tabular-nums">{statValue ?? 0}</span><span className="text-[9px] text-slate-500">{statLabel}</span></div>)}</div>
   </Card>;
 }
 
