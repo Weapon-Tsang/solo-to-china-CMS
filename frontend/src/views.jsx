@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity, CheckCircle2, Clock3, ExternalLink, Gauge, RefreshCw, RotateCcw, Webhook,
 } from "lucide-react";
@@ -70,8 +70,81 @@ function RecommendationsView({ data, onAction, actionBusy, onNavigate }) {
 
 function KnowledgeView({ data, onNavigate }) {
   const items = data?.items || [];
+  const [activeTheme, setActiveTheme] = useState("all");
+  const overview = useMemo(() => buildKnowledgeOverview(items), [items]);
+  const visibleSubjects = activeTheme === "all"
+    ? overview.subjects
+    : overview.subjects.filter((subject) => subject.facts.some((fact) => knowledgeTheme(fact).id === activeTheme));
+
   if (!items.length) return <EmptyState icon="knowledge" title="知识库正在建立" description="已保存来源完成信息主张提取后，经过结构化整理的事实会显示在这里。" action={() => onNavigate("sources")} actionLabel="查看研究来源" />;
-  return <><SummaryBar title="知识库说明"><span>这里是可复用的结构化事实，不是原始笔记的翻译。</span><span>证据数表示支撑该事实的来源记录；冲突和时效状态会提示你是否需要复核。</span></SummaryBar><TableShell><Table><TableHeader><TableRow><TableHead>目的地</TableHead><TableHead>事实</TableHead><TableHead className="hidden lg:table-cell">当前结论</TableHead><TableHead>证据</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell className="font-medium text-slate-900">{item.destination_name || "—"}</TableCell><TableCell><div className="font-medium text-slate-800">{item.subject || "—"} · {item.predicate || "—"}</div><div className="mt-1 max-w-sm truncate text-[10px] text-slate-400">{item.normalized_key || "—"}</div></TableCell><TableCell className="hidden max-w-md lg:table-cell">{item.preferred_value || "—"}</TableCell><TableCell>{Array.isArray(item.evidence) ? item.evidence.length : 0}</TableCell><TableCell><StatusPill status={item.consensus_status} /><div className="mt-1 text-[10px] text-slate-400">{label(item.freshness_state)} · {label(item.verification_priority)}</div></TableCell></TableRow>)}</TableBody></Table></TableShell></>;
+  return <div className="space-y-4">
+    <SummaryBar title="知识库如何参与创作"><span>系统先将来源拆成可验证事实，再按目的地、景点和主题关联；不会把笔记直接翻译成文章。</span><span>只有满足独立证据门槛的主题才会进入“内容”候选。</span></SummaryBar>
+    <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <Card className="overflow-hidden p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[11px] font-medium uppercase tracking-[0.14em] text-cyan-700">Destination knowledge map</p><h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-900">{overview.destinationLabel} · 可用研究地图</h2><p className="mt-1 text-xs leading-relaxed text-slate-500">先按旅行决策主题归纳，再下钻到每个景点；这比逐行阅读 28 条事实更适合判断内容缺口。</p></div><span className="rounded-full border border-cyan-100 bg-cyan-50 px-3 py-1 text-[11px] font-semibold text-cyan-700">{overview.subjects.length} 个地点 / 实体</span></div>
+        <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{overview.themes.map((theme) => <button key={theme.id} type="button" onClick={() => setActiveTheme(activeTheme === theme.id ? "all" : theme.id)} className={cn("rounded-xl border p-3 text-left transition", activeTheme === theme.id ? "border-slate-900 bg-slate-900 text-white shadow-sm" : "border-slate-200/80 bg-white hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-sm")}><div className={cn("text-[11px] font-semibold", activeTheme === theme.id ? "text-white" : "text-slate-800")}>{theme.label}</div><div className={cn("mt-1 text-xl font-semibold tracking-tight tabular-nums", activeTheme === theme.id ? "text-white" : "text-slate-900")}>{theme.count}</div><div className={cn("mt-0.5 text-[10px]", activeTheme === theme.id ? "text-slate-300" : "text-slate-400")}>{theme.help}</div></button>)}</div>
+      </Card>
+      <Card className="p-5"><p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">Evidence health</p><div className="mt-3 space-y-3"><KnowledgeStat label="独立来源" value={overview.sourceCount} hint="用于判定是否可形成内容候选" tone="emerald" /><KnowledgeStat label="需官方核验" value={overview.officialCheckCount} hint="预约、票价、规则等高时效事实" tone="amber" /><KnowledgeStat label="存在冲突" value={overview.conflictCount} hint="系统会阻止未经处理的冲突进入正文" tone={overview.conflictCount ? "rose" : "slate"} /></div><p className="mt-4 border-t border-slate-100 pt-3 text-[11px] leading-relaxed text-slate-500">当前只有 {overview.sourceCount} 个独立来源，因此本批事实会入库，但不会自动形成可发布文章。</p></Card>
+    </section>
+    <section className="flex flex-wrap items-center gap-2"><span className="mr-1 text-xs font-semibold text-slate-700">查看：</span><Button type="button" variant={activeTheme === "all" ? "default" : "secondary"} size="sm" className="h-8" onClick={() => setActiveTheme("all")}>全部事实</Button>{overview.themes.map((theme) => <Button key={theme.id} type="button" variant={activeTheme === theme.id ? "default" : "secondary"} size="sm" className="h-8" onClick={() => setActiveTheme(theme.id)}>{theme.label} {theme.count}</Button>)}</section>
+    <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{visibleSubjects.map((subject) => <KnowledgeSubjectCard key={subject.key} subject={subject} activeTheme={activeTheme} />)}</section>
+    {activeTheme !== "all" && !visibleSubjects.length && <EmptyState icon="knowledge" title="该主题暂时没有事实" description="继续保存相关来源后，系统会自动归纳并纳入此主题。" />}
+  </div>;
+}
+
+function KnowledgeStat({ label: title, value, hint, tone }) {
+  const styles = { emerald: "border-emerald-100 bg-emerald-50 text-emerald-700", amber: "border-amber-100 bg-amber-50 text-amber-700", rose: "border-rose-100 bg-rose-50 text-rose-700", slate: "border-slate-100 bg-slate-50 text-slate-700" };
+  return <div className={cn("rounded-xl border px-3 py-2.5", styles[tone])}><div className="flex items-baseline justify-between gap-3"><span className="text-[11px] font-medium">{title}</span><strong className="text-lg font-semibold tabular-nums">{value}</strong></div><p className="mt-0.5 text-[10px] opacity-75">{hint}</p></div>;
+}
+
+function KnowledgeSubjectCard({ subject, activeTheme }) {
+  const facts = activeTheme === "all" ? subject.facts : subject.facts.filter((fact) => knowledgeTheme(fact).id === activeTheme);
+  const sourceCount = new Set(facts.flatMap((fact) => Array.isArray(fact.evidence) ? fact.evidence.map((evidence) => evidence?.source_id).filter(Boolean) : [])).size;
+  const officialChecks = facts.filter((fact) => fact.verification_priority === "requires_official").length;
+  return <Card className="overflow-hidden p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate text-sm font-semibold text-slate-900">{subject.name}</h3><p className="mt-1 text-[10px] text-slate-400">{facts.length} 条事实 · {sourceCount} 个独立来源{officialChecks ? ` · ${officialChecks} 项待核验` : ""}</p></div><StatusPill status={sourceCount >= 2 ? "corroborated" : "single_source"} /></div><div className="mt-4 space-y-2.5">{facts.slice(0, 4).map((fact) => <div key={fact.id} className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2"><div className="flex items-center justify-between gap-2"><span className="truncate text-[11px] font-medium text-slate-700">{knowledgeTheme(fact).label}</span><span className={cn("shrink-0 text-[10px]", fact.verification_priority === "requires_official" ? "text-amber-600" : "text-slate-400")}>{fact.verification_priority === "requires_official" ? "待官方核验" : "当前记录"}</span></div><p className="mt-1 text-xs leading-relaxed text-slate-900">{fact.preferred_value || "尚无结论"}</p></div>)}</div>{facts.length > 4 && <p className="mt-3 text-[11px] text-slate-400">还有 {facts.length - 4} 条关联事实已折叠</p>}</Card>;
+}
+
+function buildKnowledgeOverview(items) {
+  const destinations = [...new Set(items.map((item) => item.destination_name).filter(Boolean))];
+  const subjectMap = new Map();
+  const themes = knowledgeThemes().map((theme) => ({ ...theme, count: 0 }));
+  const sourceIds = new Set();
+  let officialCheckCount = 0;
+  let conflictCount = 0;
+  for (const fact of items) {
+    const key = String(fact.subject || "未归类地点").trim().toLowerCase();
+    if (!subjectMap.has(key)) subjectMap.set(key, { key, name: fact.subject || "未归类地点", facts: [] });
+    subjectMap.get(key).facts.push(fact);
+    const theme = knowledgeTheme(fact);
+    const bucket = themes.find((item) => item.id === theme.id);
+    if (bucket) bucket.count += 1;
+    if (fact.verification_priority === "requires_official") officialCheckCount += 1;
+    if (fact.consensus_status === "conflicted") conflictCount += 1;
+    for (const evidence of Array.isArray(fact.evidence) ? fact.evidence : []) if (evidence?.source_id) sourceIds.add(evidence.source_id);
+  }
+  return {
+    destinationLabel: destinations.join(" / ") || "目的地",
+    subjects: [...subjectMap.values()].sort((a, b) => b.facts.length - a.facts.length || a.name.localeCompare(b.name)),
+    themes,
+    sourceCount: sourceIds.size,
+    officialCheckCount,
+    conflictCount,
+  };
+}
+
+function knowledgeThemes() {
+  return [
+    { id: "reservation", label: "预约与入园", help: "预约、门票、入场规则", pattern: /reservation|book|ticket|admission|entry|passport|id.?card/i },
+    { id: "timing", label: "时间与体验", help: "开放、夜游、最佳时段", pattern: /timing|opening|hour|afternoon|evening|night|lighting|blue.?hour/i },
+    { id: "transport", label: "路线与交通", help: "地铁、步行、线路与顺序", pattern: /route|metro|transport|station|walk|district|area|sequence|duration/i },
+    { id: "practical", label: "实用提醒", help: "费用、语言、限制与避坑", pattern: /price|cost|language|warning|restriction|queue|crowd|accessibility/i },
+    { id: "other", label: "景点与其他", help: "尚待进一步归类的事实", pattern: /.*/i },
+  ];
+}
+
+function knowledgeTheme(fact) {
+  const input = `${fact.normalized_key || ""} ${fact.predicate || ""} ${fact.preferred_value || ""}`;
+  return knowledgeThemes().find((theme) => theme.pattern.test(input)) || knowledgeThemes().at(-1);
 }
 
 function BlueprintsView({ data, onNavigate }) {

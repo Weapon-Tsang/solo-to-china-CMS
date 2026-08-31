@@ -90,33 +90,46 @@ export function PageHeading({ view, health }) {
 }
 
 export function Metrics({ totals = {} }) {
-  const items = [
-    [totals.sources, "来源"],
-    [totals.claims, "信息主张"],
-    [totals.knowledgeFacts, "知识事实", totals.conflicts ? `${totals.conflicts} 项冲突` : "暂无冲突"],
-    [totals.topicCandidates, "内容选题"],
-    [totals.draftsReady, "可用草稿"],
-    [totals.wordpressInventory, "WordPress"],
-    [totals.activeOffers, "商品"],
-    [totals.exceptions, "异常"],
+  const groups = [
+    {
+      icon: FileText, tone: "blue", eyebrow: "研究资产", title: "来源已结构化", value: totals.knowledgeFacts ?? 0, unit: "条知识事实",
+      detail: totals.conflicts ? `${totals.conflicts} 项冲突需要处理` : "暂无事实冲突", stats: [[totals.sources, "来源"], [totals.claims, "信息主张"]],
+    },
+    {
+      icon: Route, tone: "indigo", eyebrow: "内容机会", title: "选题发现", value: totals.topicCandidates ?? 0, unit: "个候选主题",
+      detail: totals.topicCandidates ? "等待人工批准后自动生产" : "继续积累独立来源以发现选题", stats: [[totals.draftsReady, "可用草稿"], [totals.wordpressInventory, "站内文章"]],
+    },
+    {
+      icon: Box, tone: "fuchsia", eyebrow: "商业图层", title: "联盟商品", value: totals.activeOffers ?? 0, unit: "个可用商品",
+      detail: totals.activeOffers ? "仅在质检通过后叠加到发布稿" : "未配置也不影响研究与写作", stats: [[totals.wordpressInventory, "WordPress 库存"], [totals.draftsReady, "待投递草稿"]],
+    },
+    {
+      icon: CircleAlert, tone: totals.exceptions ? "amber" : "emerald", eyebrow: "系统健康", title: totals.exceptions ? "需要关注" : "运行正常", value: totals.exceptions ?? 0, unit: "个待处理异常",
+      detail: totals.exceptions ? "请在“异常”中查看并处理" : "采集、队列与维护状态正常", stats: [[totals.conflicts, "知识冲突"], [totals.sources, "已采集来源"]],
+    },
   ];
   return (
-    <section aria-label="Pipeline overview" className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:grid-cols-8">
-      {items.map(([value, text, meta], index) => {
-        const [Icon, iconClass] = metricStyles[index];
-        return (
-          <Card key={text} className="group p-3.5 transition duration-200 hover:-translate-y-0.5 hover:border-slate-300/80 hover:shadow-md">
-            <div className="flex items-center justify-between gap-2">
-              <span className={cn("grid size-8 place-items-center rounded-lg", iconClass)}><Icon className="size-4" /></span>
-              <strong className="text-xl font-bold tracking-tight text-slate-900 tabular-nums">{value ?? 0}</strong>
-            </div>
-            <div className="mt-3 truncate text-[11px] font-medium text-slate-500">{text}</div>
-            {meta && <div className={cn("mt-0.5 truncate text-[9px]", totals.conflicts ? "text-amber-600" : "text-slate-400")}>{meta}</div>}
-          </Card>
-        );
-      })}
+    <section aria-label="工作台总览" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {groups.map((group) => <MetricGroup key={group.eyebrow} {...group} />)}
     </section>
   );
+}
+
+function MetricGroup({ icon: Icon, tone, eyebrow, title, value, unit, detail, stats }) {
+  const tones = {
+    blue: "border-blue-100/90 from-blue-50/90 to-white text-blue-700 ring-blue-100",
+    indigo: "border-indigo-100/90 from-indigo-50/90 to-white text-indigo-700 ring-indigo-100",
+    fuchsia: "border-fuchsia-100/90 from-fuchsia-50/90 to-white text-fuchsia-700 ring-fuchsia-100",
+    emerald: "border-emerald-100/90 from-emerald-50/90 to-white text-emerald-700 ring-emerald-100",
+    amber: "border-amber-100/90 from-amber-50/90 to-white text-amber-700 ring-amber-100",
+  };
+  return <Card className={cn("group relative overflow-hidden border bg-gradient-to-br p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md", tones[tone])}>
+    <div className="absolute -right-7 -top-7 size-24 rounded-full bg-current opacity-[0.035]" />
+    <div className="relative flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] opacity-70">{eyebrow}</p><h2 className="mt-1 text-sm font-semibold text-slate-900">{title}</h2></div><span className="grid size-9 place-items-center rounded-xl bg-white/80 shadow-sm ring-1"><Icon className="size-4" /></span></div>
+    <div className="relative mt-4 flex items-end gap-2"><strong className="text-3xl font-semibold tracking-tight text-slate-950 tabular-nums">{value ?? 0}</strong><span className="pb-1 text-[11px] font-medium text-slate-500">{unit}</span></div>
+    <p className="relative mt-1.5 min-h-4 text-[11px] leading-relaxed text-slate-500">{detail}</p>
+    <div className="relative mt-4 flex gap-2 border-t border-slate-900/[0.06] pt-3">{stats.map(([statValue, statLabel]) => <div key={statLabel} className="min-w-0 flex-1"><div className="text-sm font-semibold text-slate-900 tabular-nums">{statValue ?? 0}</div><div className="truncate text-[10px] text-slate-500">{statLabel}</div></div>)}</div>
+  </Card>;
 }
 
 export function AiAlert({ onConfigure }) {
@@ -165,7 +178,7 @@ export function StatusPill({ status }) {
   const variant = ["processed", "corroborated", "succeeded", "publish", "active", "ready", "configured", "ready_for_wordpress"].includes(normalized)
     ? "success" : ["exception", "conflicted", "blocker", "failed"].includes(normalized)
       ? "destructive" : ["warning", "needs_ai", "pending", "retry", "time_sensitive"].includes(normalized)
-        ? "warning" : ["candidate", "queued", "running"].includes(normalized) ? "info" : "default";
+        ? "warning" : ["candidate", "queued", "running", "single_source"].includes(normalized) ? "info" : "default";
   return <Badge variant={variant}>{label(status || "unknown")}</Badge>;
 }
 
