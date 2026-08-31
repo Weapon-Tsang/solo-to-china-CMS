@@ -29,7 +29,7 @@ From an authenticated Google Cloud shell or workstation, substitute your own val
 $project = "YOUR_PROJECT_ID"
 $region = "us-central1"
 $repo = "solo-to-china"
-$image = "$region-docker.pkg.dev/$project/$repo/engine:1.5.0"
+$image = "$region-docker.pkg.dev/$project/$repo/engine:1.5.1"
 
 gcloud services enable compute.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com --project $project
 gcloud artifacts repositories create $repo --repository-format=docker --location=$region --project=$project
@@ -45,7 +45,7 @@ docker compose up -d
 docker compose ps
 ```
 
-The `solo_to_china_data` Docker volume stores SQLite, verified backups, and generated media. Snapshot the VM persistent disk or copy verified SQLite backups to a private Cloud Storage bucket on an operations schedule.
+The current startup helper uses native `docker run` commands on the VM so the deployment is not coupled to the Debian image's legacy Compose client. The checked-in Compose file remains useful for local administration. The `solo_to_china_data` Docker volume stores SQLite, verified backups, and generated media. Snapshot the VM persistent disk or copy verified SQLite backups to a private Cloud Storage bucket on an operations schedule.
 
 ## Install the extension on every desktop Chrome
 
