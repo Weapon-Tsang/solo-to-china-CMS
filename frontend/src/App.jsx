@@ -127,6 +127,17 @@ export default function App() {
 
   const openGuide = useCallback((guide) => setDetail({ open: true, type: "guide", data: { guide }, loading: false }), []);
 
+  const openContentStrategy = useCallback(async () => {
+    setDetail({ open: true, type: "strategy", data: null, loading: true });
+    try {
+      const data = await api("/api/content-strategy");
+      setDetail({ open: true, type: "strategy", data, loading: false });
+    } catch (caught) {
+      setDetail({ open: false, type: null, data: null, loading: false });
+      showToast(caught.message, true);
+    }
+  }, [showToast]);
+
   const openPackage = useCallback(async (type, id) => {
     setDetail({ open: true, type, data: null, loading: true });
     try {
@@ -145,19 +156,27 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <Topbar health={health || { ok: !error }} refreshing={refreshing} onRefresh={() => refresh(true)} />
-      <main className="mx-auto w-full max-w-[1440px] space-y-4 px-4 py-6 sm:px-6 sm:py-7 lg:px-8">
-        <PageHeading view={activeView} health={health} />
+      <main className="mx-auto w-full max-w-[1440px] space-y-3 px-3 py-4 sm:space-y-4 sm:px-6 sm:py-7 lg:px-8">
+        <PageHeading view={activeView} health={health} onOpenStrategy={openContentStrategy} />
         <Metrics totals={totals} />
         <Tabs value={activeView} onValueChange={setActiveView}>
-          <div className="sticky top-[62px] z-30 -mx-1 overflow-x-auto px-1 py-1.5 scrollbar-none">
+          <div className="sticky top-[53px] z-30 -mx-1 py-1.5 sm:top-[62px] sm:hidden">
+            <label className="flex h-10 items-center gap-2 rounded-xl border border-slate-200/80 bg-white/90 px-3 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
+              <span className="text-slate-400">当前工作区</span>
+              <select aria-label="切换后台工作区" value={activeView} onChange={(event) => setActiveView(event.target.value)} className="min-w-0 flex-1 appearance-none bg-transparent text-right font-semibold text-slate-900 outline-none">
+                {Object.entries(views).map(([key, item]) => <option key={key} value={key}>{item.label} · {item.title}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="sticky top-[62px] z-30 -mx-1 hidden overflow-x-auto px-1 py-1.5 scrollbar-none sm:block">
             <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span></TabsTrigger>; })}</TabsList>
           </div>
         </Tabs>
         {health && !health.aiConfigured && <AiAlert onConfigure={() => openGuide("ai")} />}
         <section aria-live="polite">
-          {loading ? <LoadingView /> : error ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} health={health} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} actionBusy={actionBusy} />}
+          {loading ? <LoadingView /> : error ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} actionBusy={actionBusy} />}
         </section>
-        <footer className="flex items-center justify-between border-t border-slate-200/70 pt-5 text-[10px] text-slate-400"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
+        <footer className="flex flex-col gap-1 border-t border-slate-200/70 pt-4 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:pt-5"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
       </main>
       <DetailDialog detail={detail} health={health} actionBusy={actionBusy} onOpenChange={(open) => setDetail((current) => ({ ...current, open }))} onAction={runAction} onClose={() => setDetail({ open: false, type: null, data: null, loading: false })} />
       <Toast {...toast} />
@@ -211,6 +230,7 @@ function DetailDialog({ detail, health, actionBusy, onOpenChange, onAction, onCl
       <DialogContent>
         {detail.loading ? <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-slate-500"><LoaderCircle className="size-4 animate-spin" /> Loading details</div>
           : detail.type === "guide" ? <GuideContent guide={detail.data.guide} />
+            : detail.type === "strategy" ? <ContentStrategyDetail strategy={detail.data} />
             : detail.type === "source" ? <SourceDetail source={detail.data} actionBusy={actionBusy} onAction={onAction} onClose={onClose} />
               : detail.type === "draft" ? <DraftDetail item={detail.data} health={health} actionBusy={actionBusy} onAction={onAction} onClose={onClose} /> : null}
       </DialogContent>
@@ -253,4 +273,16 @@ function GuideContent({ guide }) {
   const item = guides[guide] || guides.ai;
   const Icon = item.icon;
   return <><DialogHeader><span className="mb-2 grid size-10 place-items-center rounded-xl bg-slate-900 text-white"><Icon className="size-4" /></span><DialogTitle>{item.title}</DialogTitle><DialogDescription>{item.description}</DialogDescription></DialogHeader><ol className="space-y-3">{item.steps.map((step, index) => <li className="flex gap-3 text-sm leading-relaxed text-slate-600" key={step}><span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600">{index + 1}</span><span>{step}</span></li>)}</ol><div className="mt-5 rounded-xl border border-slate-800 bg-slate-950 p-4 text-slate-200 shadow-inner"><div className="mb-2 flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-slate-500"><Terminal className="size-3" /> Configuration</div><pre className="overflow-auto whitespace-pre-wrap text-xs leading-relaxed">{item.code}</pre></div><div className="mt-4 flex items-center gap-2 text-[11px] text-slate-400"><CheckCircle2 className="size-3.5 text-emerald-500" /> No spreadsheet or manual Knowledge Base maintenance is introduced.</div></>;
+}
+
+function ContentStrategyDetail({ strategy }) {
+  const version = strategy?.version || "—";
+  const steps = [
+    ["人工选源", "只保存你已打开并明确选择的小红书笔记；不自动搜索、翻页或抓取。"],
+    ["事实与建议", "系统提取可追溯的 Claims 和知识事实，再给出唯一的推荐下一步；不会自行发布文章。"],
+    ["人工批准", "只有“批准文章”会启动内容规划；证据不足、重复或冲突会优先留在知识层或补充研究。"],
+    ["英文内容生产", "基于已验证事实生成面向国际自由行游客的原创英文草稿，并附 SEO / GEO、FAQ 和 Schema.org 包。"],
+    ["质量与草稿发布", "通过证据、冲突、图片和结构化数据检查后，才写入 WordPress 草稿，最终发布仍由你决定。"],
+  ];
+  return <><DialogHeader><Badge variant="info" className="w-max"><Layers3 className="size-3" /> 内容生产策略 v{version}</Badge><DialogTitle>{strategy?.name || "SoloToChina 内容生产策略"}</DialogTitle><DialogDescription>这是当前运行策略的中文操作摘要；内容输出语言与站点文案不会因此改变。</DialogDescription></DialogHeader><div className="space-y-4"><section className="rounded-xl border border-slate-200 bg-slate-50 p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">运行路径</p><div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-800"><span>人工采集</span><span className="text-slate-300">→</span><span>结构化事实</span><span className="text-slate-300">→</span><span>建议与人工决定</span><span className="text-slate-300">→</span><span>内容规划</span><span className="text-slate-300">→</span><span>QA</span><span className="text-slate-300">→</span><span>WordPress 草稿</span></div></section><ol className="space-y-3">{steps.map(([title, description], index) => <li className="flex gap-3" key={title}><span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-900 text-[10px] font-semibold text-white">{index + 1}</span><div><h3 className="text-xs font-semibold text-slate-900">{title}</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{description}</p></div></li>)}</ol><section className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-950"><b>图片边界：</b>实景照片必须使用授权或官方真实图片；地图、路线和信息图必须由结构化数据渲染；仅无事实断言的原创插画可调用生图模型。</section><details className="rounded-xl border border-slate-200 bg-white p-3"><summary className="cursor-pointer select-none text-xs font-semibold text-slate-700">展开阅读完整策略原文（Markdown）</summary><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-[10px] leading-relaxed text-slate-200">{strategy?.markdown || "策略原文暂时无法读取。"}</pre></details><Button asChild className="w-full"><a href="/api/content-strategy/download"><FileText />下载完整策略 v{version}（.md）</a></Button><p className="text-center text-[10px] text-slate-400">策略状态：{strategy?.status === "active" ? "运行中" : strategy?.status || "—"} · 新记录会携带此版本，历史记录不会被追溯改写。</p></div></>;
 }

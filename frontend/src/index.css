@@ -25,6 +25,7 @@
   .scrollbar-none { scrollbar-width: none; }
   .scrollbar-none::-webkit-scrollbar { display: none; }
   .text-balance { text-wrap: balance; }
+  .mobile-table-scroll { -webkit-overflow-scrolling: touch; overscroll-behavior-inline: contain; }
 }
 
 ::selection { background: #dbeafe; color: #172554; }

@@ -101,6 +101,16 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(system.contentStrategy.status, "active");
   assert.equal(system.contentStrategy.document, CONTENT_STRATEGY.document);
 
+  const strategy = await fetch(`${baseUrl}/api/content-strategy`, { headers: { authorization: "Bearer admin-secret" } });
+  assert.equal(strategy.status, 200);
+  const strategyBody = await strategy.json();
+  assert.equal(strategyBody.version, CONTENT_STRATEGY.version);
+  assert.match(strategyBody.markdown, /SoloToChina Content Production Strategy/);
+  const download = await fetch(`${baseUrl}/api/content-strategy/download`, { headers: { authorization: "Bearer admin-secret" } });
+  assert.equal(download.status, 200);
+  assert.match(download.headers.get("content-disposition"), /attachment/);
+  assert.match(await download.text(), /Image intelligence/);
+
   const settings = await (await fetch(`${baseUrl}/api/settings/ai`)).json();
   assert.equal(settings.model, "kimi-k3");
   assert.equal(settings.models.length, 4);
@@ -199,6 +209,20 @@ test("dashboard password login creates a secure session and requires an initial 
   const freshCookie = changed.headers.get("set-cookie");
   const allowed = await fetch(`${baseUrl}/api/pipeline/run-one`, { method: "POST", headers: { cookie: freshCookie } });
   assert.equal(allowed.status, 200);
+  const credentials = await fetch(`${baseUrl}/api/auth/update-credentials`, {
+    method: "POST", headers: { cookie: freshCookie, "content-type": "application/json" },
+    body: JSON.stringify({ currentPassword: "longer-and-private-password", nextUsername: "solo-founder", nextPassword: "another-long-private-password" }),
+  });
+  assert.equal(credentials.status, 200);
+  assert.equal((await credentials.json()).username, "solo-founder");
+  const oldLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "admin", password: "longer-and-private-password" }),
+  });
+  assert.equal(oldLogin.status, 401);
+  const newLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "solo-founder", password: "another-long-private-password" }),
+  });
+  assert.equal(newLogin.status, 200);
 });
 
 test("failed HTTP bind does not start pipeline or maintenance side effects", async (t) => {

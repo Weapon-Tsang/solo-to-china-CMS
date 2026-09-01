@@ -11,6 +11,15 @@ export function getContentStrategy() {
   return { ...CONTENT_STRATEGY };
 }
 
+export function getContentStrategyDocument() {
+  const documentPath = path.resolve(root, CONTENT_STRATEGY.document);
+  return {
+    ...getContentStrategy(),
+    filename: path.basename(documentPath),
+    markdown: fs.readFileSync(documentPath, "utf8"),
+  };
+}
+
 function loadManifest() {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   const required = ["name", "current_version", "document", "status"];

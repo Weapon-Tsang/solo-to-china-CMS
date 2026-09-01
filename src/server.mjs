@@ -17,6 +17,7 @@ import { MaintenanceScheduler } from "./maintenance.mjs";
 import { createLogger } from "./logger.mjs";
 import { ExceptionNotifier } from "./notifications.mjs";
 import { createAuth } from "./auth.mjs";
+import { getContentStrategyDocument } from "./content-strategy.mjs";
 import { VERSION } from "./version.mjs";
 
 const MIME = {
@@ -115,6 +116,13 @@ export function createApplication(config = loadConfig()) {
         response.setHeader("Set-Cookie", session.cookie);
         return sendJson(response, 200, { authenticated: true, username: session.username, mustChangePassword: false });
       }
+      if (!captureOnly && request.method === "POST" && url.pathname === "/api/auth/update-credentials") {
+        const payload = await readJson(request, 20_000);
+        const session = auth.updateCredentials(request, payload.currentPassword, payload.nextUsername, payload.nextPassword);
+        if (!session) return sendJson(response, 401, { error: "Current password is incorrect." });
+        response.setHeader("Set-Cookie", session.cookie);
+        return sendJson(response, 200, { authenticated: true, username: session.username, mustChangePassword: false });
+      }
       if (!captureOnly && isDashboardApi(url.pathname) && !hasBearerToken(request, config.adminToken)) auth.require(request);
 
       if (request.method === "GET" && url.pathname === "/api/health") {
@@ -144,6 +152,18 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/ready") {
         db.prepare("SELECT 1 AS ready").get();
         return sendJson(response, 200, { ready: true, version: VERSION, database: "ready" });
+      }
+      if (request.method === "GET" && url.pathname === "/api/content-strategy") {
+        return sendJson(response, 200, getContentStrategyDocument());
+      }
+      if (request.method === "GET" && url.pathname === "/api/content-strategy/download") {
+        const strategy = getContentStrategyDocument();
+        response.writeHead(200, {
+          "content-type": "text/markdown; charset=utf-8",
+          "content-disposition": `attachment; filename="${strategy.filename}"`,
+          "cache-control": "no-store",
+        });
+        return response.end(strategy.markdown);
       }
       if (request.method === "GET" && url.pathname === "/api/system/info") {
         return sendJson(response, 200, {

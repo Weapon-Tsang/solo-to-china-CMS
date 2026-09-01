@@ -34,6 +34,19 @@ export function createAuth(db, config) {
         .run(salt, hash, user.username);
       return { username: user.username, mustChangePassword: false, cookie: createCookie(user.username, signingKey) };
     },
+    updateCredentials(request, currentPassword, nextUsername, nextPassword = "") {
+      const session = readSession(request, signingKey);
+      const user = session && findUser(db, session.username);
+      if (!user || !verifyPassword(currentPassword, user.password_salt, user.password_hash)) return null;
+      const username = validateUsername(nextUsername);
+      const password = String(nextPassword || "");
+      if (username !== user.username && findUser(db, username)) throw httpError(409, "That administrator account name is already in use.");
+      if (password) validatePassword(password);
+      const credentials = password ? hashPassword(password) : { salt: user.password_salt, hash: user.password_hash };
+      db.prepare("UPDATE app_users SET username = ?, password_salt = ?, password_hash = ?, force_password_change = 0, updated_at = datetime('now') WHERE username = ?")
+        .run(username, credentials.salt, credentials.hash, user.username);
+      return { username, mustChangePassword: false, cookie: createCookie(username, signingKey) };
+    },
     require(request, { allowPasswordChange = false } = {}) {
       const session = readSession(request, signingKey);
       const user = session && findUser(db, session.username);
@@ -53,13 +66,14 @@ function disabledAuth() {
     status: () => ({ authenticated: true, username: null, mustChangePassword: false }),
     login: () => null,
     changePassword: () => null,
+    updateCredentials: () => null,
     require: () => null,
     clearCookie: () => "",
   };
 }
 
 function ensureBootstrapUser(db, config) {
-  const existing = findUser(db, config.username);
+  const existing = db.prepare("SELECT username FROM app_users LIMIT 1").get();
   if (existing) return;
   if (config.password !== "123456") validatePassword(config.password);
   const { salt, hash } = hashPassword(config.password);
@@ -85,6 +99,12 @@ function verifyPassword(password, salt, expectedHash) {
 
 function validatePassword(password) {
   if (typeof password !== "string" || password.length < 8) throw httpError(400, "Password must contain at least 8 characters.");
+}
+
+function validateUsername(username) {
+  const normalized = String(username || "").trim();
+  if (!/^[A-Za-z0-9_.-]{3,64}$/.test(normalized)) throw httpError(400, "Administrator account names must be 3–64 letters, numbers, dots, hyphens, or underscores.");
+  return normalized;
 }
 
 function createCookie(username, signingKey) {
