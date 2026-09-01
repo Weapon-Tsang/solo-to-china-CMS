@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 function Table({ className, ...props }) {
-  return <div className="mobile-table-scroll relative w-full touch-pan-x overflow-x-auto"><table className={cn("w-full caption-bottom text-sm", className)} {...props} /></div>;
+  return <div className="mobile-table-scroll relative w-full overflow-x-auto"><table className={cn("w-full caption-bottom text-sm", className)} {...props} /></div>;
 }
 function TableHeader({ className, ...props }) { return <thead className={cn("bg-slate-50/80 [&_tr]:border-b", className)} {...props} />; }
 function TableBody({ className, ...props }) { return <tbody className={cn("[&_tr:last-child]:border-0", className)} {...props} />; }

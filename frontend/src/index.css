@@ -25,7 +25,9 @@
   .scrollbar-none { scrollbar-width: none; }
   .scrollbar-none::-webkit-scrollbar { display: none; }
   .text-balance { text-wrap: balance; }
-  .mobile-table-scroll { -webkit-overflow-scrolling: touch; overscroll-behavior-inline: contain; }
+  /* Keep vertical page scrolling available when a finger starts on a wide table.
+     `touch-action: pan-x` traps iOS/Android users inside the table at page bottom. */
+  .mobile-table-scroll { -webkit-overflow-scrolling: touch; overscroll-behavior-inline: contain; touch-action: auto; }
 }
 
 ::selection { background: #dbeafe; color: #172554; }
