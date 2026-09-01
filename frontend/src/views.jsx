@@ -270,7 +270,27 @@ function knowledgeTheme(fact) {
 function BlueprintsView({ data, onNavigate }) {
   const items = data?.items || [];
   if (!items.length) return <EmptyState icon="blueprint" title="暂无编辑蓝图" description="系统会从已提取来源中归纳可复用的选题角度、写作形式和章节结构。" action={() => onNavigate("sources")} actionLabel="查看研究来源" />;
-  return <><SummaryBar title="编辑蓝图说明"><span>蓝图记录“怎么写更有帮助”，不是把来源内容直接翻译成文章。</span><span>它会在后续内容规划时提供结构和角度参考。</span></SummaryBar><TableShell><Table><TableHeader><TableRow><TableHead>写作模式</TableHead><TableHead>形式</TableHead><TableHead>样本数</TableHead><TableHead className="hidden md:table-cell">常见章节</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell className="font-medium text-slate-900">{item.angle}</TableCell><TableCell>{item.format}</TableCell><TableCell>{item.sample_count}</TableCell><TableCell className="hidden max-w-xl md:table-cell">{Array.isArray(item.section_patterns) ? item.section_patterns.slice(0, 4).map((entry) => entry?.value).filter(Boolean).join(" · ") || "—" : "—"}</TableCell></TableRow>)}</TableBody></Table></TableShell></>;
+  const reusable = items.filter((item) => !isPendingBlueprint(item));
+  const pendingCount = items.length - reusable.length;
+  if (!reusable.length) return <EmptyState icon="blueprint" title="蓝图正在等待归纳" description="来源已被安全保存；图文提取完成后，系统才会把稳定的写作模式加入这里。" action={() => onNavigate("sources")} actionLabel="查看研究来源" />;
+  const sampleCount = reusable.reduce((total, item) => total + Number(item.sample_count || 0), 0);
+  return <div className="space-y-3 sm:space-y-4"><SummaryBar title="编辑蓝图如何参与创作"><span>蓝图归纳的是“怎样组织信息更有帮助”，不会翻译或直接复用来源内容。</span><span>后续文章规划会参考其角度、形式和章节，但所有事实仍只取自知识库。</span>{pendingCount > 0 && <span className="text-amber-700">另有 {pendingCount} 条等待 AI 归纳，暂不计入写作模式。</span>}</SummaryBar><section className="grid gap-2.5 sm:grid-cols-3"><BlueprintStat label="可复用写作模式" value={reusable.length} hint="由已提取来源自动归纳" tone="blue" /><BlueprintStat label="支撑样本" value={sampleCount} hint="同类来源越多，模式越稳定" tone="violet" /><BlueprintStat label="当前用途" value="规划" hint="只提供结构参考，不直接成文" tone="emerald" /></section><section className="grid gap-3 lg:grid-cols-2">{reusable.map((item, index) => <BlueprintCard key={item.id} item={item} index={index} />)}</section></div>;
+}
+
+function isPendingBlueprint(item) {
+  const format = String(item?.format || "").toLowerCase();
+  const angle = String(item?.angle || "").toLowerCase();
+  return [format, angle].some((value) => value.includes("pending-ai-analysis") || value === "unclassified" || value === "pending");
+}
+
+function BlueprintStat({ label: title, value, hint, tone }) {
+  const styles = { blue: "border-blue-100 bg-blue-50/80 text-blue-700", violet: "border-violet-100 bg-violet-50/80 text-violet-700", emerald: "border-emerald-100 bg-emerald-50/80 text-emerald-700" };
+  return <Card className={cn("p-3.5 shadow-sm", styles[tone])}><p className="text-[10px] font-semibold uppercase tracking-[0.12em] opacity-70">{title}</p><div className="mt-1.5 flex items-end gap-1.5"><strong className="text-2xl font-semibold tracking-tight text-slate-950 tabular-nums">{value}</strong>{typeof value === "number" && <span className="pb-1 text-[10px] font-medium text-slate-500">个</span>}</div><p className="mt-1 text-[10px] leading-relaxed text-slate-500">{hint}</p></Card>;
+}
+
+function BlueprintCard({ item, index }) {
+  const sections = Array.isArray(item.section_patterns) ? item.section_patterns.map((entry) => entry?.value).filter(Boolean) : [];
+  return <Card className="overflow-hidden p-4 shadow-sm sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-600">写作模式 {String(index + 1).padStart(2, "0")}</p><h2 className="mt-1 text-sm font-semibold leading-relaxed text-slate-900">{item.format || "待归纳的写作形式"}</h2></div><span className="shrink-0 rounded-full border border-violet-100 bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700">{item.sample_count || 0} 个样本</span></div><section className="mt-4 rounded-xl border border-slate-100 bg-slate-50/80 p-3"><p className="text-[10px] font-semibold text-slate-500">可复用角度</p><p className="mt-1.5 text-xs leading-relaxed text-slate-800">{item.angle || "暂无角度说明"}</p></section><section className="mt-4"><div className="flex items-center justify-between gap-3"><h3 className="text-[11px] font-semibold text-slate-700">推荐章节顺序</h3><span className="text-[10px] text-slate-400">仅供规划参考</span></div>{sections.length ? <ol className="mt-2.5 space-y-2">{sections.slice(0, 6).map((section, sectionIndex) => <li key={`${item.id}-${sectionIndex}`} className="flex gap-2 rounded-lg border border-slate-100 px-2.5 py-2"><span className="grid size-4 shrink-0 place-items-center rounded-full bg-slate-100 text-[9px] font-semibold text-slate-500">{sectionIndex + 1}</span><span className="text-[11px] leading-relaxed text-slate-600">{section}</span></li>)}</ol> : <p className="mt-2.5 text-[11px] text-slate-400">系统尚未归纳出稳定的章节结构。</p>}</section><details className="mt-4 border-t border-slate-100 pt-3 text-[11px] text-slate-500"><summary className="cursor-pointer select-none font-medium text-slate-600">蓝图使用边界</summary><p className="mt-2 leading-relaxed">蓝图只影响内容规划的组织方式；不会把小红书表达翻译、复制到文章，也不会覆盖知识库中的证据与冲突规则。</p></details></Card>;
 }
 
 function ContentView({ data, onNavigate, onOpenDraft }) {

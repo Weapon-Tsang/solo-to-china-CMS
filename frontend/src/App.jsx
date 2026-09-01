@@ -161,12 +161,10 @@ export default function App() {
         <Metrics totals={totals} />
         <Tabs value={activeView} onValueChange={setActiveView}>
           <div className="sticky top-[53px] z-30 -mx-1 py-1.5 sm:top-[62px] sm:hidden">
-            <label className="flex h-10 items-center gap-2 rounded-xl border border-slate-200/80 bg-white/90 px-3 text-xs font-medium text-slate-600 shadow-sm backdrop-blur">
-              <span className="text-slate-400">当前工作区</span>
-              <select aria-label="切换后台工作区" value={activeView} onChange={(event) => setActiveView(event.target.value)} className="min-w-0 flex-1 appearance-none bg-transparent text-right font-semibold text-slate-900 outline-none">
-                {Object.entries(views).map(([key, item]) => <option key={key} value={key}>{item.label} · {item.title}</option>)}
-              </select>
-            </label>
+            <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm backdrop-blur">
+              <div className="flex items-center justify-between px-3 pt-2.5 text-[10px]"><span className="font-semibold text-slate-700">工作区菜单</span><span className="text-slate-400">左右滑动切换全部功能</span></div>
+              <div className="relative mt-1 border-t border-slate-100"><div className="overflow-x-auto px-1.5 py-1.5 scrollbar-none"><TabsList aria-label="手机工作区菜单" className="h-10 border-0 bg-transparent p-0 shadow-none">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; return <TabsTrigger key={key} value={key} title={item.title} className="h-8 px-2.5"><Icon className="size-3.5 shrink-0" /><span>{item.label}</span></TabsTrigger>; })}</TabsList></div><span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-end bg-gradient-to-l from-white via-white/85 to-transparent pr-1.5 text-sm text-slate-400">›</span></div>
+            </div>
           </div>
           <div className="sticky top-[62px] z-30 -mx-1 hidden overflow-x-auto px-1 py-1.5 scrollbar-none sm:block">
             <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span></TabsTrigger>; })}</TabsList>
