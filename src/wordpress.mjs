@@ -2,6 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { markdownToContentBlocks } from "./content-blocks.mjs";
 
+const SOURCE_IMAGE_HOST_SUFFIXES = ["xiaohongshu.com", "xhscdn.com", "xhscdn.net", "xhscdn.cn"];
+const MAX_SOURCE_IMAGE_BYTES = 12 * 1024 * 1024;
+
 export class WordPressDraftAdapter {
   constructor(config, fetchImpl = fetch) {
     this.config = config;
@@ -88,7 +91,9 @@ export class WordPressDraftAdapter {
 
   async resolveVisualMedia(visuals) {
     const output = [];
-    for (const visual of visuals.filter((item) => item.status === "generated" && item.media_path)) {
+    for (const visual of visuals.filter((item) => (
+      item.status === "generated" && (item.media_path || (item.source_asset_id && item.source_remote_url))
+    ))) {
       if (visual.wordpress_media_id && visual.wordpress_media_url) {
         output.push({ visualId: visual.id, id: visual.wordpress_media_id, url: visual.wordpress_media_url, alt: visual.alt_text, caption: visual.caption });
         continue;
@@ -100,20 +105,40 @@ export class WordPressDraftAdapter {
   }
 
   async uploadMedia(visual) {
-    const filename = path.basename(visual.media_path);
+    const asset = visual.media_path
+      ? { filename: path.basename(visual.media_path), contentType: mimeForFilename(visual.media_path), bytes: fs.readFileSync(visual.media_path) }
+      : await this.downloadAuthorizedSourceAsset(visual);
     const response = await this.fetch(`${this.config.siteUrl}/wp-json/wp/v2/media`, {
       method: "POST",
       headers: {
         authorization: `Basic ${Buffer.from(`${this.config.username}:${this.config.applicationPassword}`).toString("base64")}`,
-        "content-type": mimeForFilename(filename),
-        "content-disposition": `attachment; filename=\"${filename}\"`,
+        "content-type": asset.contentType,
+        "content-disposition": `attachment; filename=\"${asset.filename}\"`,
       },
-      body: fs.readFileSync(visual.media_path),
+      body: asset.bytes,
       signal: AbortSignal.timeout(60_000),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || !body.id) throw new Error(`WordPress media upload failed (${response.status}): ${body?.message || response.statusText}`);
     return { id: body.id, url: body.source_url || body.guid?.rendered || "" };
+  }
+
+  async downloadAuthorizedSourceAsset(visual) {
+    const sourceUrl = safeAuthorizedSourceImageUrl(visual.source_remote_url);
+    if (!sourceUrl) throw new Error("Authorized source image URL is not an allowlisted Xiaohongshu HTTPS asset.");
+    const response = await this.fetch(sourceUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) throw new Error(`Authorized source image download failed (${response.status}).`);
+    const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
+    if (!/^image\/(?:jpeg|jpg|png|webp)$/.test(contentType)) throw new Error("Authorized source asset is not a supported image.");
+    const declaredBytes = Number.parseInt(response.headers.get("content-length") || "", 10);
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_SOURCE_IMAGE_BYTES) throw new Error("Authorized source asset is too large for WordPress upload.");
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > MAX_SOURCE_IMAGE_BYTES) throw new Error("Authorized source asset is empty or too large for WordPress upload.");
+    return {
+      bytes,
+      contentType: contentType === "image/jpg" ? "image/jpeg" : contentType,
+      filename: `source-${visual.id}.${extensionForContentType(contentType)}`,
+    };
   }
 
   async request(pathname, options) {
@@ -179,6 +204,21 @@ function htmlVisual(visual) {
 
 function mimeForFilename(filename) {
   return /\.jpe?g$/i.test(filename) ? "image/jpeg" : /\.webp$/i.test(filename) ? "image/webp" : "image/png";
+}
+
+function extensionForContentType(contentType) {
+  return contentType === "image/webp" ? "webp" : contentType === "image/png" ? "png" : "jpg";
+}
+
+function safeAuthorizedSourceImageUrl(value) {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    const approved = SOURCE_IMAGE_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+    return url.protocol === "https:" && approved ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 function renderContentBlocks(contentBlocks) {

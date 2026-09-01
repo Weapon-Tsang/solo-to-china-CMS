@@ -2,9 +2,9 @@
 
 ## Active Content Strategy
 
-- **Active strategy:** SoloToChina Content Production Strategy 1.1
+- **Active strategy:** SoloToChina Content Production Strategy 1.2
 - **Canonical manifest:** `config/content-strategy.json`
-- **Specification:** `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.1.md`
+- **Specification:** `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.2.md`
 - **Evolution log:** `docs/content-strategy/CHANGELOG.md` and the manifest `history` entries
 - **Status:** implemented incrementally on the existing durable SQLite pipeline; legacy records intentionally have no retroactive strategy tag.
 

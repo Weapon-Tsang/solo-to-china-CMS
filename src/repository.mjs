@@ -674,7 +674,8 @@ export class Repository {
     const existing = this.db.prepare("SELECT id, revision FROM article_drafts WHERE brief_id = ?").get(briefId);
     const draftId = existing?.id || id("draft");
     const timestamp = now();
-    const metadata = draftMetadata(draft, brief, this.contentConfig);
+    const authorizedSourceAssets = this.authorizedSourceAssetsForBrief(brief);
+    const metadata = draftMetadata(draft, brief, this.contentConfig, authorizedSourceAssets);
     if (existing) {
       this.db.prepare(`
         UPDATE article_drafts SET title=?, slug=?, body_markdown=?, meta_description=?, evidence_ledger_json=?,
@@ -741,12 +742,15 @@ export class Repository {
       this.db.prepare("DELETE FROM article_visuals WHERE draft_id=?").run(draftId);
       const insert = this.db.prepare(`
         INSERT INTO article_visuals(id, draft_id, slot, placement, purpose, alt_text, caption, generation_prompt, aspect_ratio,
-          strategy_version, image_type, image_role, image_subject, acquisition_strategy, factual_image_required, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          strategy_version, image_type, image_role, image_subject, acquisition_strategy, factual_image_required,
+          source_asset_id, source_remote_url, status, media_url, provider, model, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       visuals.forEach((visual, index) => insert.run(id("visual"), draftId, index + 1, visual.placement, visual.purpose,
         visual.alt_text, visual.caption, visual.generation_prompt, visual.aspect_ratio, strategyVersion, visual.image_type,
-        visual.image_role, visual.image_subject, visual.acquisition_strategy, visual.factual_image_required ? 1 : 0, timestamp, timestamp));
+        visual.image_role, visual.image_subject, visual.acquisition_strategy, visual.factual_image_required ? 1 : 0,
+        visual.source_asset_id || null, visual.source_remote_url || null, visual.status || "planned", visual.media_url || null,
+        visual.provider || null, visual.model || null, timestamp, timestamp));
     });
   }
 
@@ -772,8 +776,21 @@ export class Repository {
   }
 
   saveWordPressVisual(visualId, media) {
-    this.db.prepare("UPDATE article_visuals SET wordpress_media_id=?, wordpress_media_url=?, updated_at=? WHERE id=?")
-      .run(media.id, media.url, now(), visualId);
+    const before = this.db.prepare(`
+      SELECT av.draft_id, av.media_url AS previous_media_url, ad.seo_json
+      FROM article_visuals av JOIN article_drafts ad ON ad.id=av.draft_id WHERE av.id=?
+    `).get(visualId);
+    this.db.prepare("UPDATE article_visuals SET wordpress_media_id=?, wordpress_media_url=?, media_url=?, updated_at=? WHERE id=?")
+      .run(media.id, media.url, media.url, now(), visualId);
+    if (before) {
+      const seo = json(before.seo_json, {});
+      if (!seo.og_image || seo.og_image === before.previous_media_url) {
+        seo.og_image = media.url;
+        this.db.prepare("UPDATE article_drafts SET seo_json=?, updated_at=? WHERE id=?")
+          .run(JSON.stringify(seo), now(), before.draft_id);
+      }
+      this.refreshDraftSchema(before.draft_id);
+    }
   }
 
   refreshDraftSchema(draftId) {
@@ -1295,6 +1312,25 @@ export class Repository {
     }));
   }
 
+  authorizedSourceAssetsForBrief(brief) {
+    const claimKeys = json(brief.evidence_ledger_json, []);
+    const supportingFacts = this.knowledgeForDestination(brief.destination_slug)
+      .filter((fact) => !claimKeys.length || claimKeys.includes(fact.normalized_key));
+    const sourceIds = [...new Set(supportingFacts
+      .flatMap((fact) => fact.evidence || [])
+      .map((evidence) => evidence.source_id)
+      .filter(Boolean))];
+    if (!sourceIds.length) return [];
+    const placeholders = sourceIds.map(() => "?").join(",");
+    return this.db.prepare(`
+      SELECT sa.id, sa.source_id, sa.remote_url, sa.alt_text, sa.position, s.title AS source_title
+      FROM source_assets sa JOIN sources s ON s.id=sa.source_id
+      WHERE sa.kind='image' AND s.adapter='xiaohongshu' AND sa.source_id IN (${placeholders})
+      ORDER BY s.captured_at DESC, sa.position ASC
+      LIMIT 12
+    `).all(...sourceIds);
+  }
+
   retrySource(sourceId) {
     const source = this.db.prepare("SELECT id FROM sources WHERE id = ?").get(sourceId);
     if (!source) return false;
@@ -1456,7 +1492,7 @@ function hydrateSource({ source, assets, structured, claims, blueprint, analysis
   };
 }
 
-function draftMetadata(draft, brief, config) {
+function draftMetadata(draft, brief, config, authorizedSourceAssets = []) {
   const canonical = json(brief.canonical_json, {});
   const canonicalUrl = config.publicSiteUrl && draft.slug ? `${config.publicSiteUrl}/${draft.slug}/` : null;
   const seo = {
@@ -1476,7 +1512,7 @@ function draftMetadata(draft, brief, config) {
     key_takeaways: (draft.seo?.key_takeaways || []).slice(0, 6).map((item) => truncateText(item, 240)),
     faqs: (draft.faqs || []).slice(0, 5).map((item) => ({ question: truncateText(item.question, 220), answer: truncateText(item.answer, 700) })),
   };
-  const visuals = normalizeVisuals(draft.visuals, draft, brief);
+  const visuals = normalizeVisuals(draft.visuals, draft, brief, authorizedSourceAssets);
   const firstGenerated = visuals.find((visual) => visual.status === "generated" && visual.media_url);
   if (firstGenerated) seo.og_image = firstGenerated.media_url;
   const blocks = markdownToContentBlocks(draft.body_markdown);
@@ -1486,7 +1522,7 @@ function draftMetadata(draft, brief, config) {
   };
 }
 
-function normalizeVisuals(values, draft, brief) {
+function normalizeVisuals(values, draft, brief, authorizedSourceAssets = []) {
   const target = visualCountForWords(wordCount(draft.body_markdown));
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
   const allowedRatios = ["16:9", "4:3", "1:1", "3:2", "9:16"];
@@ -1496,7 +1532,38 @@ function normalizeVisuals(values, draft, brief) {
     const index = visuals.length;
     visuals.push(normalizeVisual({}, index, draft, brief, allowedPlacements, allowedRatios));
   }
-  return visuals;
+  if (!authorizedSourceAssets.length) return visuals;
+
+  // The source owner has confirmed the rights for every explicitly saved
+  // Xiaohongshu image. Turn the first slot into a factual source-photo slot
+  // when the model did not plan one, then map every real-photo slot to a
+  // distinct evidence-linked source asset.
+  if (!visuals.some((visual) => visual.image_type === "real_world_photo")) {
+    visuals[0] = normalizeVisual({
+      ...visuals[0], image_type: "real_world_photo", factual_image_required: true,
+    }, 0, draft, brief, allowedPlacements, allowedRatios);
+  }
+  let assetIndex = 0;
+  return visuals.map((visual) => {
+    if (visual.image_type !== "real_world_photo") return visual;
+    const asset = authorizedSourceAssets[assetIndex % authorizedSourceAssets.length];
+    assetIndex += 1;
+    return {
+      ...visual,
+      purpose: truncateText(visual.purpose || `Evidence-linked view for ${draft.title}`, 300),
+      alt_text: truncateText(visual.alt_text || `${brief.destination_slug} travel scene`, 220),
+      caption: truncateText(`Authorized source photo from the saved research note: ${asset.source_title || "Xiaohongshu"}`, 300),
+      generation_prompt: "",
+      acquisition_strategy: "use_authorized_source_image",
+      factual_image_required: true,
+      source_asset_id: asset.id,
+      source_remote_url: asset.remote_url,
+      status: "generated",
+      media_url: asset.remote_url,
+      provider: "authorized_xiaohongshu_source",
+      model: "user-authorized-source-image",
+    };
+  });
 }
 
 function normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios) {

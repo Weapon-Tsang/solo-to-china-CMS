@@ -200,7 +200,7 @@ const DRAFT_PROMPT = `Write an original, publication-quality English China trave
 - Return 2-5 concise FAQs that are answered by the article and evidence. FAQ answers must not introduce new facts. Include the same questions in a visible "Frequently asked questions" section of body_markdown.
 - Return SEO metadata: a natural meta title under 60 characters, one focus keyword, and 3-6 reader-facing key takeaways. The meta description remains the top-level meta_description field.
 - Return SEO metadata with secondary keywords and search intent. Do not invent internal links or canonical URLs.
-- Return a rights-safe image plan. Use 2 visuals for 800-1,299 words, 3 for 1,300-2,199 words, 4 for 2,200-3,199 words, and 5 above that. Every item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
+- Return a rights-safe image plan. Use 2 visuals for 800-1,299 words, 3 for 1,300-2,199 words, 4 for 2,200-3,199 words, and 5 above that. Every item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. When a factual real-world visual supports the evidence, plan REAL_WORLD_PHOTO: the pipeline will prioritize an explicitly saved, user-authorized source image that is linked to the article evidence. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
 - If revision_feedback exists, fix every blocker without adding unsupported facts.`;
 
 const REVIEW_PROMPT = `Act as an independent senior editor. Audit the English draft against its evidence package and brief.
@@ -256,7 +256,12 @@ function applyDeterministicGates(review, contentPackage) {
   addGate("heading-hierarchy", hasSafeHeadingHierarchy(draft.body_markdown),
     "The post title owns H1; body Markdown may use orderly H2/H3/H4 headings only.", "heading_hierarchy_invalid");
   const visualStrategySafe = (draft.visuals || []).every((visual) => {
-    if (visual.image_type === "real_world_photo") return visual.acquisition_strategy === "search_real_image" && visual.factual_image_required;
+    if (visual.image_type === "real_world_photo") {
+      if (visual.acquisition_strategy === "use_authorized_source_image") {
+        return visual.factual_image_required && Boolean(visual.source_asset_id && visual.source_remote_url);
+      }
+      return visual.acquisition_strategy === "search_real_image" && visual.factual_image_required;
+    }
     if (visual.image_type === "infographic") return visual.acquisition_strategy === "render_infographic";
     if (visual.image_type === "map_or_route") return visual.acquisition_strategy === "render_map";
     return visual.image_type === "illustration" && visual.acquisition_strategy === "generate_illustration" && !visual.factual_image_required;

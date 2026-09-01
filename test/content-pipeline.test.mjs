@@ -42,11 +42,14 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
         adaptation_requirements: ["language"], conflict_instructions: [],
       } };
     },
-    async draft() {
+    async draft(contentPackage) {
+      const sourceIds = [...new Set(contentPackage.facts
+        .filter((fact) => ["beijing.fact.0", "beijing.fact.1"].includes(fact.normalized_key))
+        .flatMap((fact) => fact.evidence.map((evidence) => evidence.source_id)))];
       return { model: "writer-model", output: {
         title: "First-Time Beijing Solo Travel Guide", slug: "beijing-solo-guide", meta_description: "A practical first-time Beijing guide.",
         body_markdown: "## Plan\n\nEvidence-backed practical guidance for independent visitors.",
-        evidence_ledger: [{ section: "Plan", claim_keys: ["beijing.fact.0", "beijing.fact.1"], source_ids: [] }],
+        evidence_ledger: [{ section: "Plan", claim_keys: ["beijing.fact.0", "beijing.fact.1"], source_ids: sourceIds }],
         unresolved_conflicts: [],
       } };
     },
@@ -72,7 +75,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   for (const [externalId, title] of [["autoA", "Source A"], ["autoB", "Source B"]]) {
     repository.saveCapture(normalizeXiaohongshuCapture({
       url: `https://www.xiaohongshu.com/explore/${externalId}`, title,
-      text: `This manually selected Beijing source contains enough useful travel evidence: ${title}.`, images: [],
+      text: `This manually selected Beijing source contains enough useful travel evidence: ${title}.`,
+      images: [{ url: `https://ci.xhscdn.com/${externalId}.jpg`, alt: `${title} real-world travel scene` }],
     }));
   }
   repository.upsertCommercialOffer(normalizeCommercialOffer({
@@ -103,6 +107,10 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   const researchDraft = generatedPackage.draft.body_markdown;
   assert.doesNotMatch(researchDraft, /Trip\.com|Optional booking resources/);
   assert.equal(generatedPackage.draft.visuals.length, 2);
+  assert.equal(generatedPackage.draft.visuals[0].acquisition_strategy, "use_authorized_source_image");
+  assert.equal(generatedPackage.draft.visuals[0].status, "generated");
+  assert.ok(generatedPackage.draft.visuals[0].source_asset_id);
+  assert.match(generatedPackage.draft.visuals[0].source_remote_url, /xhscdn\.com/);
   assert.equal(generatedPackage.draft.schema_jsonld["@context"], "https://schema.org");
   assert.equal(generatedPackage.draft.strategy_version, CONTENT_STRATEGY.version);
   assert.equal(generatedPackage.brief.strategy_version, CONTENT_STRATEGY.version);

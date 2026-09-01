@@ -1,13 +1,25 @@
 {
   "name": "SoloToChina Content Production Strategy",
-  "current_version": "1.1",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.1.md",
+  "current_version": "1.2",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.2.md",
   "status": "active",
   "history": [
     {
-      "version": "1.1",
+      "version": "1.2",
       "effective_date": "2026-09-01",
       "status": "active",
+      "summary": "将人工筛选并保存的笔记图片纳入已授权发布素材池，并让与文章证据直接相关的实景图优先进入 WordPress 草稿。",
+      "changes": [
+        "内容所有者已确认：每张人工筛选并保存的小红书笔记图片均获得原作者和平台授权，可用于 SoloToChina 内容发布。",
+        "系统按文章证据反查来源素材；匹配的实景图优先于生图模型作为文章配图，并保留来源素材、来源笔记与 WordPress 媒体的可追溯关系。",
+        "没有匹配实景图的视觉槽位，才按事实需求使用可验证地图、信息图或非事实性的原创插画。",
+        "该授权不改变事实核验、人工发布决定和仅处理人工选定来源的边界。"
+      ]
+    },
+    {
+      "version": "1.1",
+      "effective_date": "2026-09-01",
+      "status": "superseded",
       "summary": "新增策略演化日志，并明确来源实景图在研究层和发布层的不同用途。",
       "changes": [
         "后台展示策略版本历史与变动摘要；新生成的下游记录带 1.1 标签，历史记录保持其原有版本。",

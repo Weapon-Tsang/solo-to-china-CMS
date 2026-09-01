@@ -60,6 +60,33 @@ test("WordPress adapter renders persisted structured blocks instead of reparsing
   assert.doesNotMatch(request.body.content, /Ignore this Markdown source/);
 });
 
+test("WordPress adapter uploads an authorized evidence-linked Xiaohongshu source photo", async () => {
+  const requests = [];
+  const fetchStub = async (url, options = {}) => {
+    requests.push({ url, options });
+    if (url === "https://ci.xhscdn.com/beijing-view.jpg") {
+      return new Response(Buffer.from("authorized-source-image"), { status: 200, headers: { "content-type": "image/jpeg" } });
+    }
+    if (url.endsWith("/wp-json/wp/v2/media")) {
+      assert.equal(options.headers["content-type"], "image/jpeg");
+      assert.equal(Buffer.from(options.body).toString(), "authorized-source-image");
+      return new Response(JSON.stringify({ id: 13, source_url: "https://site.test/uploads/beijing-view.jpg" }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    assert.equal(url, "https://site.test/wp-json/wp/v2/posts");
+    return new Response(JSON.stringify({ id: 14, status: "draft", link: "https://site.test/?p=14" }), { status: 201, headers: { "content-type": "application/json" } });
+  };
+  const adapter = new WordPressDraftAdapter({ siteUrl: "https://site.test", username: "editor", applicationPassword: "app password", contentFormat: "blocks" }, fetchStub);
+  const result = await adapter.upsertDraft({
+    title: "Beijing Guide", slug: "beijing-guide", meta_description: "", body_markdown: "## Plan\n\nEvidence-led guidance.",
+    visuals: [{ id: "visual_source_1", status: "generated", source_asset_id: "asset_1", source_remote_url: "https://ci.xhscdn.com/beijing-view.jpg", alt_text: "Beijing travel scene", caption: "Authorized source photo" }],
+  });
+  assert.equal(result.visuals[0].id, 13);
+  assert.equal(requests.length, 3);
+  const postBody = JSON.parse(requests[2].options.body);
+  assert.equal(postBody.featured_media, 13);
+  assert.match(postBody.content, /wp-image-13/);
+});
+
 test("WordPress inventory sync reads every page without changing posts", async () => {
   const requests = [];
   const fetchStub = async (url, options) => {

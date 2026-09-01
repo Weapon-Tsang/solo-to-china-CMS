@@ -32,6 +32,23 @@ function migrate(db) {
   if (current < 11) migrationEleven(db);
   if (current < 12) migrationTwelve(db);
   if (current < 13) migrationThirteen(db);
+  if (current < 14) migrationFourteen(db);
+}
+
+function migrationFourteen(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE article_visuals ADD COLUMN source_asset_id TEXT REFERENCES source_assets(id);
+      ALTER TABLE article_visuals ADD COLUMN source_remote_url TEXT;
+      CREATE INDEX idx_article_visuals_source_asset ON article_visuals(source_asset_id);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (14, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationThirteen(db) {
