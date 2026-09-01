@@ -105,11 +105,13 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(strategy.status, 200);
   const strategyBody = await strategy.json();
   assert.equal(strategyBody.version, CONTENT_STRATEGY.version);
+  assert.equal(strategyBody.history[0].version, CONTENT_STRATEGY.version);
+  assert.equal(strategyBody.history[0].status, "active");
   assert.match(strategyBody.markdown, /SoloToChina Content Production Strategy/);
   const download = await fetch(`${baseUrl}/api/content-strategy/download`, { headers: { authorization: "Bearer admin-secret" } });
   assert.equal(download.status, 200);
   assert.match(download.headers.get("content-disposition"), /attachment/);
-  assert.match(await download.text(), /Image intelligence/);
+  assert.match(await download.text(), /Image evidence and reader trust/);
 
   const settings = await (await fetch(`${baseUrl}/api/settings/ai`)).json();
   assert.equal(settings.model, "kimi-k3");

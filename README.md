@@ -131,16 +131,18 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 1.0
+## Content Production Strategy 1.1
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json) and documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.0.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.0.md). The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.1.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.1.md), and summarized by an append-only [evolution log](docs/content-strategy/CHANGELOG.md). The live operating path is:
 
 ```text
 Capture → structured research → Kimi Intake Analysis → Recommendation → human decision
                                                        → Approve article only → planning → canonical content → QA → WordPress draft
 ```
 
-The **Recommendations** tab is the only new recurring decision point. Choose **Approve article** only when a source-backed opportunity is worth turning into an English guide; choose the other actions when the material should enrich knowledge, join a cluster, wait for research, or be ignored. Every new downstream record carries Strategy `1.0`; historical records stay untagged instead of being falsely represented as strategy-compliant.
+The **Recommendations** tab is the only new recurring decision point. Choose **Approve article** only when a source-backed opportunity is worth turning into an English guide; choose the other actions when the material should enrich knowledge, join a cluster, wait for research, or be ignored. Every new downstream record carries Strategy `1.1`; historical records retain the strategy version that created them.
+
+Source images saved through an explicit capture remain available as internal multimodal research evidence. A real-world image is a publication asset only when it is owned, official, licensed, or permission-confirmed; contextual fit alone does not automatically republish third-party media. Maps and infographics are rendered from validated data, while image generation is limited to non-factual original illustrations.
 
 ## Google Cloud + Cloudflare deployment
 

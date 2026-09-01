@@ -67,7 +67,7 @@ QA 通过并配置 WordPress 时会自动创建 `draft`。这不等于发布；�
 
 ### Content Strategy governance
 
-`config/content-strategy.json` is the single active Strategy version source. `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.0.md` defines the immutable operating contract. New intake, recommendation, opportunity, brief, draft, QA, WordPress, and visual records retain the version that created them; legacy rows are deliberately not backfilled. The server exposes this version through `/api/system/info` and `/api/health`, while release checks reject any manifest, documentation, migration, or UI drift.
+`config/content-strategy.json` is the single active Strategy version source. `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.1.md` defines the immutable operating contract, while the manifest `history` and `docs/content-strategy/CHANGELOG.md` preserve the version evolution log. New intake, recommendation, opportunity, brief, draft, QA, WordPress, and visual records retain the version that created them; legacy rows are deliberately not backfilled. The server exposes this version through `/api/system/info` and `/api/health`, while release checks reject any manifest, documentation, migration, or UI drift.
 
 ### 5. Commercial layer
 
@@ -98,7 +98,7 @@ An optional service-account adapter synchronizes a bounded rolling window throug
 
 ## Content state transitions
 
-Strategy 1.0 adds an explicit operator gate before the existing planning/draft states:
+Strategy 1.0 introduced an explicit operator gate before the existing planning/draft states; Strategy 1.1 preserves that gate and adds version-history plus image-evidence governance:
 
 ```text
 captured → extraction → intake analysis → recommendation pending → human decision

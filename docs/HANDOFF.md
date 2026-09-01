@@ -2,9 +2,10 @@
 
 ## Active Content Strategy
 
-- **Active strategy:** SoloToChina Content Production Strategy 1.0
+- **Active strategy:** SoloToChina Content Production Strategy 1.1
 - **Canonical manifest:** `config/content-strategy.json`
-- **Specification:** `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.0.md`
+- **Specification:** `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.1.md`
+- **Evolution log:** `docs/content-strategy/CHANGELOG.md` and the manifest `history` entries
 - **Status:** implemented incrementally on the existing durable SQLite pipeline; legacy records intentionally have no retroactive strategy tag.
 
 Any future maintainer, agent, or developer must read the active manifest and linked strategy specification before changing intake, recommendations, content planning, image behaviour, QA, or publishing.

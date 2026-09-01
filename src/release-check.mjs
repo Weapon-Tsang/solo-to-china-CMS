@@ -23,6 +23,9 @@ const serverSource = fs.readFileSync(path.join(root, "src", "server.mjs"), "utf8
 if (!strategyText.includes(`Content Production Strategy ${CONTENT_STRATEGY.version}`)) {
   throw new Error(`Strategy specification does not identify version ${CONTENT_STRATEGY.version}.`);
 }
+if (!CONTENT_STRATEGY.history.some((entry) => entry.version === CONTENT_STRATEGY.version && entry.status === "active")) {
+  throw new Error("Content strategy has no active evolution-history entry for the manifest version.");
+}
 if (!handoffText.includes(`Content Production Strategy ${CONTENT_STRATEGY.version}`) || !handoffText.includes("config/content-strategy.json")) {
   throw new Error("Handoff does not reference the active strategy manifest and version.");
 }

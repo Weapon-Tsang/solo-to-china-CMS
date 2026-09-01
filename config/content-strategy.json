@@ -1,6 +1,31 @@
 {
   "name": "SoloToChina Content Production Strategy",
-  "current_version": "1.0",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.0.md",
-  "status": "active"
+  "current_version": "1.1",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.1.md",
+  "status": "active",
+  "history": [
+    {
+      "version": "1.1",
+      "effective_date": "2026-09-01",
+      "status": "active",
+      "summary": "新增策略演化日志，并明确来源实景图在研究层和发布层的不同用途。",
+      "changes": [
+        "后台展示策略版本历史与变动摘要；新生成的下游记录带 1.1 标签，历史记录保持其原有版本。",
+        "人工保存的来源图片可进入 OCR、图文理解与研究证据，不改变最终英文内容的输出语言。",
+        "实景图可提升内容可信度，但发布层仅接纳自有、官方、已授权或许可已确认的图片；语境相关本身不触发自动发布。",
+        "路线图和信息图继续由已验证数据渲染；生图只用于不承载事实断言的原创插画。"
+      ]
+    },
+    {
+      "version": "1.0",
+      "effective_date": "2026-08-23",
+      "status": "superseded",
+      "summary": "建立人工选源、证据优先、人工批准、SEO/GEO、质量检查和仅 WordPress 草稿交付的基础策略。",
+      "changes": [
+        "建立人工发现与显式采集边界，禁止自动发现、批量抓取和绕过访问限制。",
+        "建立 Claims、目的地知识、内容机会、规范化内容、质量检查与商业层隔离。",
+        "明确只有人工批准后才能进入文章规划，WordPress 始终只创建草稿。"
+      ]
+    }
+  ]
 }

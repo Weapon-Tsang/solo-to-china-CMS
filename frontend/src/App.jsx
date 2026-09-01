@@ -275,6 +275,7 @@ function GuideContent({ guide }) {
 
 function ContentStrategyDetail({ strategy }) {
   const version = strategy?.version || "—";
+  const history = Array.isArray(strategy?.history) ? strategy.history : [];
   const steps = [
     ["人工选源", "只保存你已打开并明确选择的小红书笔记；不自动搜索、翻页或抓取。"],
     ["事实与建议", "系统提取可追溯的 Claims 和知识事实，再给出唯一的推荐下一步；不会自行发布文章。"],
@@ -282,5 +283,23 @@ function ContentStrategyDetail({ strategy }) {
     ["英文内容生产", "基于已验证事实生成面向国际自由行游客的原创英文草稿，并附 SEO / GEO、FAQ 和 Schema.org 包。"],
     ["质量与草稿发布", "通过证据、冲突、图片和结构化数据检查后，才写入 WordPress 草稿，最终发布仍由你决定。"],
   ];
-  return <><DialogHeader><Badge variant="info" className="w-max"><Layers3 className="size-3" /> 内容生产策略 v{version}</Badge><DialogTitle>{strategy?.name || "SoloToChina 内容生产策略"}</DialogTitle><DialogDescription>这是当前运行策略的中文操作摘要；内容输出语言与站点文案不会因此改变。</DialogDescription></DialogHeader><div className="space-y-4"><section className="rounded-xl border border-slate-200 bg-slate-50 p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">运行路径</p><div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-800"><span>人工采集</span><span className="text-slate-300">→</span><span>结构化事实</span><span className="text-slate-300">→</span><span>建议与人工决定</span><span className="text-slate-300">→</span><span>内容规划</span><span className="text-slate-300">→</span><span>QA</span><span className="text-slate-300">→</span><span>WordPress 草稿</span></div></section><ol className="space-y-3">{steps.map(([title, description], index) => <li className="flex gap-3" key={title}><span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-900 text-[10px] font-semibold text-white">{index + 1}</span><div><h3 className="text-xs font-semibold text-slate-900">{title}</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{description}</p></div></li>)}</ol><section className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-950"><b>图片边界：</b>实景照片必须使用授权或官方真实图片；地图、路线和信息图必须由结构化数据渲染；仅无事实断言的原创插画可调用生图模型。</section><details className="rounded-xl border border-slate-200 bg-white p-3"><summary className="cursor-pointer select-none text-xs font-semibold text-slate-700">展开阅读完整策略原文（Markdown）</summary><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-[10px] leading-relaxed text-slate-200">{strategy?.markdown || "策略原文暂时无法读取。"}</pre></details><Button asChild className="w-full"><a href="/api/content-strategy/download"><FileText />下载完整策略 v{version}（.md）</a></Button><p className="text-center text-[10px] text-slate-400">策略状态：{strategy?.status === "active" ? "运行中" : strategy?.status || "—"} · 新记录会携带此版本，历史记录不会被追溯改写。</p></div></>;
+  return <>
+    <DialogHeader>
+      <Badge variant="info" className="w-max"><Layers3 className="size-3" /> 内容生产策略 v{version}</Badge>
+      <DialogTitle>{strategy?.name || "SoloToChina 内容生产策略"}</DialogTitle>
+      <DialogDescription>这是当前运行策略的中文操作摘要；内容输出语言与站点文案不会因此改变。</DialogDescription>
+    </DialogHeader>
+    <div className="space-y-4">
+      <section className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">运行路径</p>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-800"><span>人工采集</span><span className="text-slate-300">→</span><span>结构化事实</span><span className="text-slate-300">→</span><span>建议与人工决定</span><span className="text-slate-300">→</span><span>内容规划</span><span className="text-slate-300">→</span><span>QA</span><span className="text-slate-300">→</span><span>WordPress 草稿</span></div>
+      </section>
+      <ol className="space-y-3">{steps.map(([title, description], index) => <li className="flex gap-3" key={title}><span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-900 text-[10px] font-semibold text-white">{index + 1}</span><div><h3 className="text-xs font-semibold text-slate-900">{title}</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{description}</p></div></li>)}</ol>
+      <section className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-950"><b>图片边界：</b>人工保存的来源图片可用于 OCR、图文理解和研究证据。实景图只有在自有、官方、已授权或许可已确认时，才会进入发布层；“内容相关”本身不会触发自动发布。地图、路线和信息图由已验证数据渲染；仅无事实断言的原创插画可调用生图模型。</section>
+      {history.length > 0 && <section className="rounded-xl border border-slate-200 bg-white p-3.5"><div className="flex items-center justify-between gap-3"><div><h3 className="text-xs font-semibold text-slate-900">策略演化日志</h3><p className="mt-0.5 text-[11px] text-slate-500">版本不会覆盖历史记录；每次变更都有简短说明。</p></div><Badge variant="muted">{history.length} 个版本</Badge></div><ol className="mt-3 space-y-2.5">{history.map((entry) => <li className="rounded-lg border border-slate-100 bg-slate-50 p-3" key={entry.version}><div className="flex flex-wrap items-center gap-2"><strong className="text-xs text-slate-900">v{entry.version}</strong><Badge variant={entry.status === "active" ? "success" : "muted"}>{entry.status === "active" ? "当前运行" : "历史版本"}</Badge><span className="text-[10px] text-slate-400">{entry.effectiveDate}</span></div><p className="mt-1.5 text-[11px] leading-relaxed text-slate-700">{entry.summary}</p><ul className="mt-2 space-y-1 text-[10px] leading-relaxed text-slate-500">{entry.changes.map((change) => <li className="flex gap-1.5" key={change}><span className="mt-0.5 text-slate-300">•</span><span>{change}</span></li>)}</ul></li>)}</ol></section>}
+      <details className="rounded-xl border border-slate-200 bg-white p-3"><summary className="cursor-pointer select-none text-xs font-semibold text-slate-700">展开阅读完整策略原文（Markdown）</summary><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-[10px] leading-relaxed text-slate-200">{strategy?.markdown || "策略原文暂时无法读取。"}</pre></details>
+      <Button asChild className="w-full"><a href="/api/content-strategy/download"><FileText />下载完整策略 v{version}（.md）</a></Button>
+      <p className="text-center text-[10px] text-slate-400">策略状态：{strategy?.status === "active" ? "运行中" : strategy?.status || "—"} · 新记录会携带此版本，历史记录不会被追溯改写。</p>
+    </div>
+  </>;
 }

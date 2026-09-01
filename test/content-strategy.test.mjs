@@ -10,6 +10,11 @@ test("active content strategy manifest resolves its immutable specification", ()
   assert.equal(getContentStrategy().status, "active");
   assert.ok(fs.existsSync(path.resolve(CONTENT_STRATEGY.document)));
   assert.match(fs.readFileSync(path.resolve(CONTENT_STRATEGY.document), "utf8"), new RegExp(`Content Production Strategy ${CONTENT_STRATEGY.version.replace(".", "\\.")}`));
+  const strategy = getContentStrategy();
+  assert.ok(strategy.history.length >= 2);
+  assert.equal(strategy.history[0].version, CONTENT_STRATEGY.version);
+  assert.equal(strategy.history[0].status, "active");
+  assert.ok(strategy.history[0].changes.length > 0);
 });
 
 test("structured content blocks preserve article hierarchy without rendering HTML", () => {
