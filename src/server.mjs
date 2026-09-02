@@ -232,11 +232,22 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/knowledge") {
         return sendJson(response, 200, { items: repository.getKnowledge() });
       }
+      const knowledgeResolutionMatch = url.pathname.match(/^\/api\/knowledge\/([^/]+)\/resolve$/);
+      if (request.method === "POST" && knowledgeResolutionMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const resolved = repository.resolveKnowledgeConflict(decodeURIComponent(knowledgeResolutionMatch[1]), payload.preferredValue, payload.note || "");
+        if (!resolved) return sendJson(response, 404, { error: "Knowledge conflict not found or already resolved." });
+        return sendJson(response, 200, resolved);
+      }
       if (request.method === "GET" && url.pathname === "/api/editorial-blueprints") {
         return sendJson(response, 200, { items: repository.getEditorialBlueprints() });
       }
       if (request.method === "GET" && url.pathname === "/api/content") {
-        return sendJson(response, 200, { items: repository.listContent() });
+        return sendJson(response, 200, {
+          items: repository.listContent(),
+          opportunities: repository.listContentOpportunities(limit(url.searchParams.get("limit"))),
+        });
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {
         return sendJson(response, 200, { items: repository.listContentRecommendations(limit(url.searchParams.get("limit"))), opportunities: repository.listContentOpportunities(limit(url.searchParams.get("limit"))) });

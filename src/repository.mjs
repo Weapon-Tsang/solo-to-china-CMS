@@ -1299,16 +1299,20 @@ export class Repository {
 
   knowledgeForDestination(destinationSlug) {
     return this.db.prepare(`
-      SELECT k.* FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      SELECT k.*, kr.status AS resolution_status, kr.preferred_value AS resolved_value, kr.note AS resolution_note,
+        kr.resolved_at AS resolution_resolved_at
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
       WHERE d.slug=? ORDER BY k.consensus_status='conflicted' DESC, k.support_count DESC, k.normalized_key
     `).all(destinationSlug).map((row) => ({
       normalized_key: row.normalized_key, subject: row.subject, predicate: row.predicate,
-      consensus_status: row.consensus_status, preferred_value: row.preferred_value,
+      consensus_status: resolvedConsensusStatus(row), preferred_value: resolvedPreferredValue(row),
       support_count: row.support_count, contradiction_count: row.contradiction_count,
       evidence: json(row.evidence_json, []),
       freshness_state: row.freshness_state,
       latest_evidence_at: row.latest_evidence_at,
-      verification_priority: row.verification_priority,
+      verification_priority: resolvedVerificationPriority(row),
+      manual_resolution: hydrateKnowledgeResolution(row),
     }));
   }
 
@@ -1352,12 +1356,26 @@ export class Repository {
     `).all()) {
       items.push(exceptionItem("job", row.id, "blocker", `Job failed: ${row.type}`, row.entity_id, row.last_error, true, row.updated_at));
     }
-    for (const row of this.db.prepare("SELECT * FROM knowledge_facts WHERE consensus_status='conflicted' OR freshness_state='stale'").all()) {
+    for (const row of this.db.prepare(`
+      SELECT k.*, d.slug AS destination_slug, kr.status AS resolution_status, kr.preferred_value AS resolved_value,
+        kr.note AS resolution_note, kr.resolved_at AS resolution_resolved_at
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE (k.consensus_status='conflicted' AND COALESCE(kr.status, '') <> 'resolved') OR k.freshness_state='stale'
+    `).all()) {
       const stale = row.freshness_state === "stale";
-      items.push(exceptionItem("knowledge", row.id, stale ? "blocker" : "warning",
+      const item = exceptionItem("knowledge", row.id, stale ? "blocker" : "warning",
         stale ? "Knowledge fact is stale" : "Knowledge conflict needs judgment",
         `${row.subject} · ${row.predicate}`, stale ? `Latest evidence: ${row.latest_evidence_at || "unknown"}` : row.preferred_value,
-        false, row.updated_at));
+        false, row.updated_at);
+      if (!stale) item.knowledge = {
+        id: row.id,
+        destinationSlug: row.destination_slug,
+        normalizedKey: row.normalized_key,
+        preferredValue: row.preferred_value,
+        evidence: json(row.evidence_json, []),
+      };
+      items.push(item);
     }
     for (const row of this.db.prepare("SELECT sync_key, last_error, updated_at FROM integration_sync_state WHERE status='failed'").all()) {
       items.push(exceptionItem("sync", row.sync_key, "blocker", "Integration sync failed", row.sync_key, row.last_error, true, row.updated_at));
@@ -1421,12 +1439,43 @@ export class Repository {
     return false;
   }
 
+  resolveKnowledgeConflict(factId, preferredValue, note = "") {
+    const fact = this.db.prepare(`
+      SELECT k.id, k.normalized_key, k.consensus_status, d.slug AS destination_slug
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id WHERE k.id=?
+    `).get(factId);
+    if (!fact || fact.consensus_status !== "conflicted") return null;
+    const value = String(preferredValue || "").trim().slice(0, 2_000);
+    if (!value) throw new Error("A confirmed knowledge value is required to resolve a conflict.");
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO knowledge_resolutions(id, destination_slug, normalized_key, status, preferred_value, note, resolved_at, created_at, updated_at)
+      VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?, ?)
+      ON CONFLICT(destination_slug, normalized_key) DO UPDATE SET status='resolved', preferred_value=excluded.preferred_value,
+        note=excluded.note, resolved_at=excluded.resolved_at, updated_at=excluded.updated_at
+    `).run(`resolution_${sha256(`${fact.destination_slug}:${fact.normalized_key}`).slice(0, 24)}`,
+      fact.destination_slug, fact.normalized_key, value, String(note || "").trim().slice(0, 1_000), timestamp, timestamp, timestamp);
+    this.rebuildTopicCandidates(fact.destination_slug);
+    return { factId, destinationSlug: fact.destination_slug, normalizedKey: fact.normalized_key, preferredValue: value };
+  }
+
   getKnowledge() {
     return this.db.prepare(`
-      SELECT k.*, d.slug AS destination_slug, d.name AS destination_name
+      SELECT k.*, d.slug AS destination_slug, d.name AS destination_name,
+        kr.status AS resolution_status, kr.preferred_value AS resolved_value, kr.note AS resolution_note,
+        kr.resolved_at AS resolution_resolved_at
       FROM knowledge_facts k JOIN destinations d ON d.id = k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
       ORDER BY d.name, k.normalized_key
-    `).all().map((row) => ({ ...row, evidence: json(row.evidence_json, []) }));
+    `).all().map((row) => ({
+      ...row,
+      raw_consensus_status: row.consensus_status,
+      consensus_status: resolvedConsensusStatus(row),
+      preferred_value: resolvedPreferredValue(row),
+      evidence: json(row.evidence_json, []),
+      manual_resolution: hydrateKnowledgeResolution(row),
+      verification_priority: resolvedVerificationPriority(row),
+    }));
   }
 
   getEditorialBlueprints() {
@@ -1449,7 +1498,12 @@ export class Repository {
         sources: this.db.prepare("SELECT COUNT(*) AS count FROM sources").get().count,
         claims: this.db.prepare("SELECT COUNT(*) AS count FROM claims").get().count,
         knowledgeFacts: this.db.prepare("SELECT COUNT(*) AS count FROM knowledge_facts").get().count,
-        conflicts: this.db.prepare("SELECT COUNT(*) AS count FROM knowledge_facts WHERE consensus_status = 'conflicted'").get().count,
+        conflicts: this.db.prepare(`
+          SELECT COUNT(*) AS count FROM knowledge_facts k
+          JOIN destinations d ON d.id=k.destination_id
+          LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+          WHERE k.consensus_status='conflicted' AND COALESCE(kr.status, '') <> 'resolved'
+        `).get().count,
         exceptions: operationalExceptions.length,
         topicCandidates: this.db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count,
         draftsReady: this.db.prepare("SELECT COUNT(*) AS count FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')").get().count,
@@ -1811,6 +1865,30 @@ function classifyFreshness(rows, config) {
     volatile,
     latestEvidenceAt,
     state: ageDays > staleAfterDays ? "stale" : volatile ? "time_sensitive" : "current",
+  };
+}
+
+function resolvedConsensusStatus(row) {
+  return row.consensus_status === "conflicted" && row.resolution_status === "resolved" ? "resolved" : row.consensus_status;
+}
+
+function resolvedPreferredValue(row) {
+  return row.consensus_status === "conflicted" && row.resolution_status === "resolved" && row.resolved_value
+    ? row.resolved_value : row.preferred_value;
+}
+
+function resolvedVerificationPriority(row) {
+  return row.consensus_status === "conflicted" && row.resolution_status === "resolved"
+    ? "manual_confirmed" : row.verification_priority;
+}
+
+function hydrateKnowledgeResolution(row) {
+  if (row.resolution_status !== "resolved") return null;
+  return {
+    status: row.resolution_status,
+    preferred_value: row.resolved_value,
+    note: row.resolution_note || "",
+    resolved_at: row.resolution_resolved_at || null,
   };
 }
 

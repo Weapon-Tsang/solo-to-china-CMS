@@ -158,7 +158,7 @@ export default function App() {
       <Topbar health={health || { ok: !error }} refreshing={refreshing} onRefresh={() => refresh(true)} />
       <main className="mx-auto w-full max-w-[1440px] space-y-3 px-3 py-4 sm:space-y-4 sm:px-6 sm:py-7 lg:px-8">
         <PageHeading view={activeView} health={health} onOpenStrategy={openContentStrategy} />
-        <Metrics totals={totals} />
+        <Metrics totals={totals} onNavigate={setActiveView} />
         <Tabs value={activeView} onValueChange={setActiveView}>
           <div className="sticky top-[53px] z-30 -mx-1 py-1.5 sm:top-[62px] sm:hidden">
             <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm backdrop-blur">

@@ -92,6 +92,26 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.deepEqual(searchConsole, { configured: false, sync: null, items: [] });
   const exceptions = await (await fetch(`${baseUrl}/api/exceptions`)).json();
   assert.deepEqual(exceptions.items, []);
+  app.repository.db.prepare("INSERT INTO destinations(id, slug, name, created_at, updated_at) VALUES ('dst-api', 'chongqing', 'Chongqing', 'now', 'now')").run();
+  app.repository.db.prepare(`
+    INSERT INTO knowledge_facts(id, destination_id, normalized_key, subject, predicate, consensus_status,
+      preferred_value, support_count, contradiction_count, evidence_json, updated_at,
+      freshness_state, latest_evidence_at, verification_priority)
+    VALUES ('fact-api', 'dst-api', 'hongyadong.lighting', 'Hongyadong', 'has evening lighting', 'conflicted',
+      '20:00-23:00', 1, 1, '[]', '2026-09-02T00:00:00.000Z', 'current', '2026-09-02T00:00:00.000Z', 'requires_official')
+  `).run();
+  const unresolved = await fetch(`${baseUrl}/api/knowledge/fact-api/resolve`, { method: "POST" });
+  assert.equal(unresolved.status, 401);
+  const resolved = await fetch(`${baseUrl}/api/knowledge/fact-api/resolve`, {
+    method: "POST",
+    headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
+    body: JSON.stringify({ preferredValue: "19:30-22:30", note: "Operator notice" }),
+  });
+  assert.equal(resolved.status, 200);
+  assert.equal((await resolved.json()).preferredValue, "19:30-22:30");
+  const content = await (await fetch(`${baseUrl}/api/content`)).json();
+  assert.ok(Array.isArray(content.items));
+  assert.ok(Array.isArray(content.opportunities));
   const missing = await fetch(`${baseUrl}/api/not-found`);
   assert.equal(missing.status, 404);
   assert.deepEqual(await missing.json(), { error: "Not found." });

@@ -33,6 +33,33 @@ function migrate(db) {
   if (current < 12) migrationTwelve(db);
   if (current < 13) migrationThirteen(db);
   if (current < 14) migrationFourteen(db);
+  if (current < 15) migrationFifteen(db);
+}
+
+function migrationFifteen(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE knowledge_resolutions (
+        id TEXT PRIMARY KEY,
+        destination_slug TEXT NOT NULL,
+        normalized_key TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('resolved')),
+        preferred_value TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        resolved_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(destination_slug, normalized_key)
+      );
+      CREATE INDEX idx_knowledge_resolutions_destination ON knowledge_resolutions(destination_slug, normalized_key);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (15, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFourteen(db) {
