@@ -10,6 +10,15 @@
 
 Any future maintainer, agent, or developer must read the active manifest and linked strategy specification before changing intake, recommendations, content planning, image behaviour, QA, or publishing.
 
+## Frontend capability contract
+
+- **CMS integration specification:** `docs/FRONTEND_CONTRACT_INTEGRATION.md`
+- **Owner of component capability:** the separate Frontend repository, through its published machine-readable Component Registry and Page Schema
+- **CMS role:** synchronized Contract consumer, editorial composer, payload producer, and pre-publish validator
+- **Current safety state:** do not configure a source by guessing the Frontend path. Until Frontend publishes real contract artifacts, component-aware generation stays unconfigured and the legacy Markdown/WordPress path remains compatible.
+
+Future maintainers must not scan Frontend JSX/CSS, duplicate a component list in this repository, or hardcode component IDs into AI prompts. Read the Frontend Contract Integration document before changing Contract sync, composition, or publishing gates.
+
 ## Current operating boundary
 
 Source discovery stays human-led. The Chrome extension only captures a note the user has opened and explicitly saved. The engine stores raw evidence, creates traceable structured claims, asks for a human decision before article planning, sends only validated drafts to WordPress, and never publishes a post itself.

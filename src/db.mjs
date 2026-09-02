@@ -34,6 +34,154 @@ function migrate(db) {
   if (current < 13) migrationThirteen(db);
   if (current < 14) migrationFourteen(db);
   if (current < 15) migrationFifteen(db);
+  if (current < 16) migrationSixteen(db);
+  if (current < 17) migrationSeventeen(db);
+}
+
+function migrationSeventeen(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE claims ADD COLUMN original_normalized_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE claims ADD COLUMN entity_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE claims ADD COLUMN canonical_subject TEXT NOT NULL DEFAULT '';
+      ALTER TABLE claims ADD COLUMN entity_aliases_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE claims ADD COLUMN entity_resolution_status TEXT NOT NULL DEFAULT 'unresolved';
+      CREATE INDEX idx_claims_entity ON claims(entity_key, canonical_subject);
+
+      ALTER TABLE knowledge_facts ADD COLUMN entity_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE knowledge_facts ADD COLUMN canonical_subject TEXT NOT NULL DEFAULT '';
+      ALTER TABLE knowledge_facts ADD COLUMN entity_aliases_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE knowledge_facts ADD COLUMN entity_resolution_status TEXT NOT NULL DEFAULT 'unresolved';
+      CREATE INDEX idx_knowledge_facts_entity ON knowledge_facts(destination_id, entity_key);
+
+      CREATE TABLE entity_aliases (
+        id TEXT PRIMARY KEY,
+        destination_slug TEXT NOT NULL,
+        alias_normalized TEXT NOT NULL,
+        entity_key TEXT NOT NULL,
+        canonical_subject TEXT NOT NULL,
+        aliases_json TEXT NOT NULL DEFAULT '[]',
+        resolution_source TEXT NOT NULL CHECK (resolution_source IN ('model', 'manual', 'derived')),
+        confidence REAL NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(destination_slug, alias_normalized)
+      );
+      CREATE INDEX idx_entity_aliases_entity ON entity_aliases(destination_slug, entity_key);
+
+      CREATE TABLE entity_merge_candidates (
+        id TEXT PRIMARY KEY,
+        destination_slug TEXT NOT NULL,
+        alias TEXT NOT NULL,
+        alias_normalized TEXT NOT NULL,
+        proposed_entity_key TEXT NOT NULL,
+        proposed_canonical_subject TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        rationale TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
+        model TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(destination_slug, alias_normalized, proposed_entity_key)
+      );
+      CREATE INDEX idx_entity_merge_candidates_pending ON entity_merge_candidates(status, destination_slug, updated_at DESC);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (17, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationSixteen(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE frontend_contract_snapshots (
+        id TEXT PRIMARY KEY,
+        source_repository TEXT NOT NULL,
+        registry_source TEXT NOT NULL,
+        page_schema_source TEXT NOT NULL,
+        frontend_commit_sha TEXT,
+        contract_version TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        checksum TEXT NOT NULL UNIQUE,
+        registry_json TEXT NOT NULL,
+        page_schema_json TEXT NOT NULL,
+        diff_json TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'major_mismatch')),
+        synced_at TEXT NOT NULL,
+        accepted_at TEXT
+      );
+      CREATE INDEX idx_frontend_contract_snapshots_status ON frontend_contract_snapshots(status, synced_at DESC);
+
+      CREATE TABLE frontend_contract_state (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        active_snapshot_id TEXT REFERENCES frontend_contract_snapshots(id),
+        last_attempt_at TEXT,
+        last_success_at TEXT,
+        last_error TEXT,
+        status TEXT NOT NULL DEFAULT 'unconfigured'
+          CHECK (status IN ('unconfigured', 'syncing', 'healthy', 'stale', 'major_mismatch', 'invalid')),
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO frontend_contract_state(singleton, status, updated_at) VALUES (1, 'unconfigured', datetime('now'));
+
+      CREATE TABLE frontend_page_plans (
+        id TEXT PRIMARY KEY,
+        brief_id TEXT NOT NULL UNIQUE REFERENCES content_briefs(id) ON DELETE CASCADE,
+        snapshot_id TEXT NOT NULL REFERENCES frontend_contract_snapshots(id),
+        contract_version TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        contract_checksum TEXT NOT NULL,
+        plan_json TEXT NOT NULL,
+        validation_json TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL CHECK (status IN ('ready', 'invalid', 'failed')),
+        model TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE frontend_page_compositions (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL UNIQUE REFERENCES article_drafts(id) ON DELETE CASCADE,
+        plan_id TEXT REFERENCES frontend_page_plans(id) ON DELETE SET NULL,
+        snapshot_id TEXT NOT NULL REFERENCES frontend_contract_snapshots(id),
+        contract_version TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        contract_checksum TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        validation_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('valid', 'invalid', 'stale_contract')),
+        model TEXT,
+        generated_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_frontend_page_compositions_snapshot ON frontend_page_compositions(snapshot_id, status);
+
+      CREATE TABLE frontend_capability_requests (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT REFERENCES article_drafts(id) ON DELETE SET NULL,
+        brief_id TEXT REFERENCES content_briefs(id) ON DELETE SET NULL,
+        semantic_need TEXT NOT NULL,
+        use_case TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'addressed', 'dismissed')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_frontend_capability_requests_status ON frontend_capability_requests(status, updated_at DESC);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (16, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFifteen(db) {

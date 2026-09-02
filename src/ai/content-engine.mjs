@@ -104,6 +104,49 @@ const REVIEW_SCHEMA = objectSchema(
   },
 );
 
+const PAGE_PLAN_SCHEMA = objectSchema(
+  ["blocks"],
+  {
+    blocks: {
+      type: "array",
+      minItems: 1,
+      items: objectSchema(["type", "semantic_role", "writer_guidance"], {
+        type: { type: "string" },
+        variant: { type: "string" },
+        semantic_role: { type: "string" },
+        writer_guidance: { type: "string" },
+      }),
+    },
+  },
+);
+
+const ENTITY_RESOLUTION_SCHEMA = objectSchema(
+  ["entities", "claim_updates", "candidates"],
+  {
+    entities: {
+      type: "array",
+      items: objectSchema(["entity_key", "canonical_subject", "aliases", "confidence"], {
+        entity_key: { type: "string" }, canonical_subject: { type: "string" },
+        aliases: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 },
+      }),
+    },
+    claim_updates: {
+      type: "array",
+      items: objectSchema(["claim_id", "entity_key", "canonical_subject", "canonical_key", "confidence"], {
+        claim_id: { type: "string" }, entity_key: { type: "string" }, canonical_subject: { type: "string" },
+        canonical_key: { type: "string" }, confidence: { type: "number", minimum: 0, maximum: 1 },
+      }),
+    },
+    candidates: {
+      type: "array",
+      items: objectSchema(["alias", "proposed_entity_key", "proposed_canonical_subject", "confidence", "rationale"], {
+        alias: { type: "string" }, proposed_entity_key: { type: "string" }, proposed_canonical_subject: { type: "string" },
+        confidence: { type: "number", minimum: 0, maximum: 1 }, rationale: { type: "string" },
+      }),
+    },
+  },
+);
+
 export class ContentEngine {
   constructor(config, fetchImpl = fetch) {
     this.config = config;
@@ -153,6 +196,41 @@ export class ContentEngine {
     return result;
   }
 
+  async composePagePlan(contentPackage, capabilities) {
+    return this.respond({
+      name: "frontend_page_plan",
+      schema: PAGE_PLAN_SCHEMA,
+      instructions: pagePlanPrompt(contentPackage.brief?.strategy_version || this.contentStrategy.version, capabilities),
+      input: JSON.stringify({
+        canonical: contentPackage.brief?.canonical || {}, outline: contentPackage.brief?.plan || {},
+        facts: (contentPackage.facts || []).map((fact) => ({ key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate, status: fact.consensus_status })),
+      }),
+    });
+  }
+
+  async resolveEntities(entityPackage) {
+    return this.respond({
+      name: "destination_entity_resolution",
+      schema: ENTITY_RESOLUTION_SCHEMA,
+      instructions: ENTITY_RESOLUTION_PROMPT,
+      input: JSON.stringify(entityPackage),
+    });
+  }
+
+  async composeFrontendPage(contentPackage, capabilities, pageSchema) {
+    return this.respond({
+      name: "frontend_page_payload",
+      schema: pageSchema,
+      instructions: pagePayloadPrompt(contentPackage.brief?.strategy_version || this.contentStrategy.version, capabilities),
+      input: JSON.stringify({
+        page_plan: contentPackage.frontend_page_plan?.plan || null,
+        canonical: contentPackage.brief?.canonical || {},
+        draft: contentPackage.draft,
+        visuals: contentPackage.draft?.visuals || [],
+      }),
+    });
+  }
+
   async review(contentPackage) {
     const modelReview = await this.respond({
       name: "quality_review",
@@ -200,8 +278,32 @@ const DRAFT_PROMPT = `Write an original, publication-quality English China trave
 - Return 2-5 concise FAQs that are answered by the article and evidence. FAQ answers must not introduce new facts. Include the same questions in a visible "Frequently asked questions" section of body_markdown.
 - Return SEO metadata: a natural meta title under 60 characters, one focus keyword, and 3-6 reader-facing key takeaways. The meta description remains the top-level meta_description field.
 - Return SEO metadata with secondary keywords and search intent. Do not invent internal links or canonical URLs.
+- If the evidence package includes a frontend_page_plan, honor its semantic section order and writer guidance in the reader-facing article. It is a composition plan, not permission to invent components, props, or visual styling.
 - Return a rights-safe image plan. Use 2 visuals for 800-1,299 words, 3 for 1,300-2,199 words, 4 for 2,200-3,199 words, and 5 above that. Every item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. When a factual real-world visual supports the evidence, plan REAL_WORLD_PHOTO: the pipeline will prioritize an explicitly saved, user-authorized source image that is linked to the article evidence. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
 - If revision_feedback exists, fix every blocker without adding unsupported facts.`;
+
+const ENTITY_RESOLUTION_PROMPT = `Resolve destination entities in SoloToChina's evidence store.
+- Group only references that identify the same physical place, route, venue, attraction, restaurant, station, neighbourhood, or named travel entity within the supplied destination.
+- Chinese names, pinyin, common English names, literal translations, abbreviations, and source-language variants may be aliases only when the supplied claims make the identity clear. Never merge merely similar names.
+- Preserve the source claims. This task only establishes canonical entity identity and, where confident, a stable canonical claim key.
+- entity_key must be lowercase ASCII dot-separated and semantic, for example attraction.zhongshan_4th_road. canonical_subject should use the clearest reader-facing English/common name; aliases must retain all useful source forms, including Chinese.
+- Return claim_updates only when confidence is at least 0.85. Use the same canonical_key only for truly equivalent claim concepts; otherwise preserve the claim's original key.
+- For plausible but uncertain cross-language matches with confidence 0.60-0.84, return candidates instead. Do not add them to entities or claim_updates.
+- Do not guess translations, addresses, venues, or relationships not supported by the supplied claims. Return empty arrays when no safe merge is available.`;
+
+const pagePlanPrompt = (strategyVersion, capabilities) => `You are the Page Composer for SoloToChina Content Production Strategy ${strategyVersion}.
+Select the semantic Frontend components and their final order before the writer produces reader-facing copy.
+You may only use component IDs and variants published by the current Frontend Component Registry below. Never invent a component, a variant, CSS class, visual style, color, spacing, or layout instruction.
+Do not make content type a hardcoded layout template. Select only components that match the actual evidence-backed editorial need.
+Do not select deprecated components for a new page. blocks array order is the final intended reader order.
+Each writer_guidance explains the evidence-bounded content that the Writer should prepare for this semantic component; it is not visual direction.
+Current capability candidates (machine-derived):\n${JSON.stringify(promptCapabilities(capabilities))}`;
+
+const pagePayloadPrompt = (strategyVersion, capabilities) => `Produce a Frontend page payload for SoloToChina Content Production Strategy ${strategyVersion}.
+Follow the supplied Page Schema exactly. The blocks array order is final render order.
+Use only component IDs, variants, fields, and data schemas published by the current Frontend Component Registry candidates below. Never invent components, variants, props, CSS, styling tokens, or visual instructions.
+Use the page plan as an editorial ordering guide. Use only information contained in the supplied canonical content and draft. Preserve uncertainty instead of fabricating facts. Do not use deprecated components in a new payload.
+Current capability candidates (machine-derived):\n${JSON.stringify(promptCapabilities(capabilities))}`;
 
 const REVIEW_PROMPT = `Act as an independent senior editor. Audit the English draft against its evidence package and brief.
 Fail the draft for any unsupported factual assertion, hidden conflict, misleading certainty, source-key leakage, affiliate contamination, or unsafe advice.
@@ -306,4 +408,12 @@ function hasSafeHeadingHierarchy(markdown) {
 
 function uniqueBy(items, key) {
   return [...new Map(items.map((item) => [key(item), item])).values()];
+}
+
+function promptCapabilities(capabilities) {
+  return (capabilities?.components || []).slice(0, 32).map((component) => ({
+    id: component.id, category: component.category, purpose: component.purpose, status: component.status,
+    variants: component.variants, requiredFields: component.requiredFields, optionalFields: component.optionalFields,
+    schema: component.schema,
+  }));
 }

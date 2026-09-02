@@ -51,7 +51,26 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
     </Card>
     <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div><div className="text-sm font-semibold text-slate-900">系统与数据存储</div><p className="mt-1 text-xs leading-relaxed text-slate-500">模型密钥只保留在服务器环境中；研究来源、Claims、知识库和草稿使用持久化数据库保存。</p></div><span className="grid size-8 place-items-center rounded-lg bg-sky-50 text-sky-700"><Database className="size-4" /></span></div><div className="mt-4 space-y-3 text-xs text-slate-600"><div className="flex items-center justify-between gap-3"><span>当前部署</span><span className="font-medium text-slate-900">{data?.storage?.label || "正在识别"}</span></div><div className="flex items-center justify-between gap-3"><span>跨设备访问</span><span className="font-medium text-slate-900">{data?.storage?.crossDevice ? "支持：登录同一后台即可" : "当前仅本机"}</span></div><div className="flex items-center justify-between gap-3"><span>应用版本</span><span className="font-medium text-slate-900">{data?.appVersion || health?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>内容策略</span><span className="font-medium text-slate-900">v{data?.contentStrategy?.version || health?.contentStrategy?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>SEO / GEO 结构化包</span><StatusPill status="ready" /></div><div className="flex items-center justify-between gap-3"><span>云端生图服务</span><StatusPill status={health?.visualGenerationConfigured ? "ready" : "pending"} /></div></div><p className="mt-4 border-t border-slate-100 pt-3 text-[11px] leading-relaxed text-slate-400 sm:mt-5">{data?.storage?.description || "数据库状态将在服务启动后显示。"}</p></Card>
     <CredentialSettingsCard auth={auth} onAction={onAction} onAuthRefresh={onAuthRefresh} actionBusy={actionBusy} />
+    <FrontendContractSettingsCard contract={data?.frontendContract} onAction={onAction} actionBusy={actionBusy} />
   </div>;
+}
+
+function FrontendContractSettingsCard({ contract, onAction, actionBusy }) {
+  const configured = Boolean(contract?.configured);
+  const ready = Boolean(contract?.canCompose);
+  const stateLabel = {
+    unconfigured: "尚未配置来源", syncing: "正在同步", healthy: "已验证", stale: "使用最近有效缓存", major_mismatch: "需要确认重大版本", invalid: "无有效契约",
+  }[contract?.status] || "等待状态";
+  const sync = () => onAction("/api/frontend-contract/sync", { method: "POST" }, "已加入前端能力契约同步队列。");
+  return <Card className="p-4 sm:p-5 xl:col-span-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-semibold text-slate-900">Frontend Capability Contract</div><p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">前端发布可渲染组件与页面 Schema；CMS 只选择组件、变体和顺序，并在生成与发布前校验。这里显示当前已同步的能力，不会扫描或猜测前端代码。</p></div><StatusPill status={ready ? "ready" : contract?.status === "major_mismatch" || contract?.status === "invalid" ? "exception" : "pending"} /></div>
+    <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4"><ContractSetting label="同步状态" value={stateLabel} /><ContractSetting label="契约版本" value={contract?.active?.contractVersion ? `v${contract.active.contractVersion}` : "—"} /><ContractSetting label="页面 Schema" value={contract?.active?.schemaVersion ? `v${contract.active.schemaVersion}` : "—"} /><ContractSetting label="可用组件" value={contract?.active ? `${contract.stableComponents || 0} 个稳定 / ${contract.availableComponents || 0} 个总计` : "暂无"} /></div>
+    <div className="mt-3 grid gap-2 rounded-lg bg-slate-50 p-3 text-[11px] text-slate-500 sm:grid-cols-2"><div><span className="text-slate-400">来源仓库：</span><span className="break-all text-slate-700">{contract?.sourceRepository || "未配置"}</span></div><div><span className="text-slate-400">最近成功同步：</span><span className="text-slate-700">{contract?.lastSuccessAt ? formatDate(contract.lastSuccessAt) : "尚无"}</span></div>{contract?.lastError && <div className="sm:col-span-2"><span className="text-amber-700">最近错误：</span>{contract.lastError}</div>}</div>
+    <div className="mt-4 flex flex-wrap items-center gap-3"><Button size="sm" variant="outline" disabled={actionBusy || !configured} onClick={sync}><RefreshCw /> 同步前端 Contract</Button><span className="text-[11px] text-slate-400">{configured ? "同步失败时仅可使用最近一次通过验证的缓存；重大版本需通过诊断 API 显式确认后才会恢复生产。" : "请在服务器环境中配置 Component Registry 与 Page Schema 的发布地址。"}</span></div>
+  </Card>;
+}
+
+function ContractSetting({ label: title, value }) {
+  return <div className="rounded-lg border border-slate-100 bg-white px-3 py-2"><div className="text-[10px] text-slate-400">{title}</div><div className="mt-0.5 font-medium text-slate-800">{value}</div></div>;
 }
 
 function CredentialSettingsCard({ auth, onAction, onAuthRefresh, actionBusy }) {
@@ -328,8 +347,8 @@ function CommercialView({ data, onGuide }) {
 
 function ExceptionsView({ data, onAction, actionBusy }) {
   const items = data?.items || [];
-  const knowledgeConflicts = items.filter((item) => Boolean(item.knowledge?.id));
-  if (knowledgeConflicts.length) return <ExceptionsWorkspace items={items} onAction={onAction} actionBusy={actionBusy} />;
+  const manualReviewItems = items.filter((item) => Boolean(item.knowledge?.id || item.entity_alias?.id));
+  if (manualReviewItems.length) return <ExceptionsWorkspace items={items} onAction={onAction} actionBusy={actionBusy} />;
   if (!items.length) return <EmptyState icon="check" title="当前没有需要处理的问题" description="采集、队列和知识库目前没有需要你介入的异常。" healthy />;
   const retry = (item) => onAction(`/api/exceptions/${encodeURIComponent(item.key)}/retry`, { method: "POST" }, "已重新加入处理队列");
   return <div className="space-y-3">
@@ -340,6 +359,19 @@ function ExceptionsView({ data, onAction, actionBusy }) {
 }
 
 function ExceptionsWorkspace({ items, onAction, actionBusy }) {
+  const retry = (item) => onAction(`/api/exceptions/${encodeURIComponent(item.key)}/retry`, { method: "POST" }, "已重新加入处理队列");
+  return <div className="space-y-3"><SummaryBar title={`${items.length} 个待处理问题`}><span>知识冲突和跨语言别名都不会被静默覆盖；确认后才会更新可用于内容生产的规范化实体。</span></SummaryBar><div className="grid gap-3 lg:grid-cols-2">{items.map((item) => <Card key={item.key} className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-xs text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.detail}</p>{item.knowledge?.id ? <KnowledgeConflictResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.entity_alias?.id ? <EntityAliasResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.retryable ? <Button className="mt-4" variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <p className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">需要补充新的来源证据；现有事实会保留，但不会自动用于内容生产。</p>}</Card>)}</div></div>;
+}
+
+function EntityAliasResolution({ item, onAction, actionBusy }) {
+  const candidate = item.entity_alias;
+  const decide = (decision) => onAction(`/api/knowledge/entity-aliases/candidates/${encodeURIComponent(candidate.id)}/decision`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }),
+  }, decision === "accepted" ? "已确认别名合并，知识库正在重建。" : "已拒绝此别名合并建议。");
+  return <section className="mt-4 rounded-xl border border-violet-200 bg-violet-50/70 p-3"><p className="text-xs font-semibold text-violet-950">跨语言实体合并</p><p className="mt-1 text-[11px] leading-relaxed text-violet-900">若确认“{candidate.alias}”与“{candidate.proposedCanonicalSubject}”是同一地点，系统会保留两种原始称呼及其证据，并统一归入同一实体；不会删除 Claims。</p><p className="mt-2 text-[10px] text-violet-700">模型置信度：{Math.round((candidate.confidence || 0) * 100)}%</p><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={actionBusy} onClick={() => decide("accepted")}><CheckCircle2 />确认合并</Button><Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => decide("rejected")}>不是同一地点</Button></div></section>;
+}
+
+function LegacyExceptionsWorkspace({ items, onAction, actionBusy }) {
   const retry = (item) => onAction(`/api/exceptions/${encodeURIComponent(item.key)}/retry`, { method: "POST" }, "已重新加入处理队列");
   return <div className="space-y-3"><SummaryBar title={`${items.length} 个待处理问题`}><span>“注意”表示需要人工确认，不会自动重试；在确认前，该冲突事实不会进入文章生产。</span></SummaryBar><div className="grid gap-3 lg:grid-cols-2">{items.map((item) => <Card key={item.key} className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-xs text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.detail}</p>{item.knowledge?.id ? <KnowledgeConflictResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.retryable ? <Button className="mt-4" variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <p className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">此问题需补充新的来源证据；现有事实会保留，但不会自动用于内容生产。</p>}</Card>)}</div></div>;
 }

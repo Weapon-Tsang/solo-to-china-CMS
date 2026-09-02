@@ -8,6 +8,7 @@ import { loadConfig } from "../src/config.mjs";
 import { CONTENT_STRATEGY } from "../src/content-strategy.mjs";
 import { createApplication } from "../src/server.mjs";
 import { VERSION } from "../src/version.mjs";
+import { frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
 
 test("HTTP API accepts a manual capture and exposes pipeline state", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-api-test-"));
@@ -109,6 +110,24 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   });
   assert.equal(resolved.status, 200);
   assert.equal((await resolved.json()).preferredValue, "19:30-22:30");
+  app.repository.applyEntityResolution("chongqing", {
+    entities: [], claim_updates: [], candidates: [{
+      alias: "中四路", proposed_entity_key: "attraction.zhongshan_4th_road",
+      proposed_canonical_subject: "Zhongshan 4th Road", confidence: 0.7, rationale: "Cross-language alias needs confirmation.",
+    }],
+  }, "fixture-model");
+  const aliases = await (await fetch(`${baseUrl}/api/knowledge/entity-aliases?destination=chongqing`)).json();
+  assert.equal(aliases.candidates.length, 1);
+  const aliasId = aliases.candidates[0].id;
+  const aliasDenied = await fetch(`${baseUrl}/api/knowledge/entity-aliases/candidates/${aliasId}/decision`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision: "accepted" }),
+  });
+  assert.equal(aliasDenied.status, 401);
+  const aliasAccepted = await fetch(`${baseUrl}/api/knowledge/entity-aliases/candidates/${aliasId}/decision`, {
+    method: "POST", headers: { authorization: "Bearer admin-secret", "content-type": "application/json" }, body: JSON.stringify({ decision: "accepted" }),
+  });
+  assert.equal(aliasAccepted.status, 200);
+  assert.equal((await aliasAccepted.json()).status, "accepted");
   const content = await (await fetch(`${baseUrl}/api/content`)).json();
   assert.ok(Array.isArray(content.items));
   assert.ok(Array.isArray(content.opportunities));
@@ -140,6 +159,10 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(settings.visual.supportsGeneration, true);
   assert.equal(settings.storage.mode, "local");
   assert.equal(settings.storage.crossDevice, false);
+  assert.equal(settings.frontendContract.status, "unconfigured");
+  const contractDiagnostics = await fetch(`${baseUrl}/api/frontend-contract`);
+  assert.equal(contractDiagnostics.status, 200);
+  assert.equal((await contractDiagnostics.json()).configured, false);
   const changed = await fetch(`${baseUrl}/api/settings/ai`, {
     method: "POST",
     headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
@@ -154,6 +177,42 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   });
   assert.equal(visualChanged.status, 200);
   assert.equal((await visualChanged.json()).model, "gemini-3.1-flash-image");
+});
+
+test("Frontend Contract API syncs published files, exposes capabilities, and requires explicit major-version acceptance", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-contract-api-test-"));
+  const fixture = frontendContractFixture(t);
+  const config = loadConfig({
+    HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "contract.sqlite"),
+    ADMIN_TOKEN: "admin-secret", MAINTENANCE_ENABLED: "false", LOG_LEVEL: "error",
+    FRONTEND_CONTRACT_SOURCE_REPOSITORY: "https://github.com/example/solo-to-china",
+    FRONTEND_COMPONENT_REGISTRY_SOURCE: fixture.registryPath,
+    FRONTEND_PAGE_SCHEMA_SOURCE: fixture.pageSchemaPath,
+  });
+  const app = createApplication(config);
+  await app.start();
+  t.after(async () => { await app.stop(); fs.rmSync(directory, { recursive: true, force: true }); });
+  const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
+  while (await app.pipeline.runOne()) { /* drain startup contract sync */ }
+
+  const first = await (await fetch(`${baseUrl}/api/frontend-contract`)).json();
+  assert.equal(first.status, "healthy");
+  assert.equal(first.active.contractVersion, "1.2.0");
+  const capabilities = await (await fetch(`${baseUrl}/api/frontend-contract/capabilities?semantics=faq`)).json();
+  assert.deepEqual(capabilities.components.map((item) => item.id), ["faqList"]);
+  assert.equal((await fetch(`${baseUrl}/api/frontend-contract/sync`, { method: "POST" })).status, 401);
+
+  fixture.write({ contractVersion: "2.0.0" });
+  const sync = await fetch(`${baseUrl}/api/frontend-contract/sync`, { method: "POST", headers: { authorization: "Bearer admin-secret" } });
+  assert.equal(sync.status, 202);
+  while (await app.pipeline.runOne()) { /* drain explicitly requested major sync */ }
+  const mismatch = await (await fetch(`${baseUrl}/api/frontend-contract`)).json();
+  assert.equal(mismatch.status, "major_mismatch");
+  assert.equal(mismatch.active.contractVersion, "1.2.0");
+  const pending = mismatch.snapshots.find((snapshot) => snapshot.contract_version === "2.0.0");
+  const accepted = await fetch(`${baseUrl}/api/frontend-contract/snapshots/${pending.id}/accept`, { method: "POST", headers: { authorization: "Bearer admin-secret" } });
+  assert.equal(accepted.status, 200);
+  assert.equal((await accepted.json()).active.contractVersion, "2.0.0");
 });
 
 test("Kimi configuration uses the provider's server-side defaults", () => {

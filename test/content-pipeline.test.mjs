@@ -5,9 +5,18 @@ import { Pipeline } from "../src/pipeline.mjs";
 import { CONTENT_STRATEGY } from "../src/content-strategy.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 import { CommercialComposer, normalizeCommercialOffer } from "../src/commercial.mjs";
+import { FrontendContractConsumer } from "../src/frontend-contract.mjs";
+import { frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
 
 test("human approval drives recommendation, brief, draft, QA, and WordPress draft delivery", async (t) => {
   const { db, repository } = repositoryFixture(t);
+  const contractFixture = frontendContractFixture(t);
+  const frontendContracts = new FrontendContractConsumer(repository, {
+    sourceRepository: "https://github.com/example/solo-to-china",
+    registrySource: contractFixture.registryPath,
+    pageSchemaSource: contractFixture.pageSchemaPath,
+  });
+  await frontendContracts.sync();
   const sourceExtractor = {
     async extract(source) {
       return {
@@ -53,6 +62,17 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
         unresolved_conflicts: [],
       } };
     },
+    async composePagePlan() {
+      return { model: "composer-model", output: {
+        blocks: [{ type: "articleSection", variant: "answer-first", semantic_role: "answer", writer_guidance: "Start with the practical evidence-backed answer." }],
+      } };
+    },
+    async composeFrontendPage() {
+      return { model: "payload-composer-model", output: {
+        metadata: { title: "First-Time Beijing Solo Travel Guide" },
+        blocks: [{ type: "articleSection", variant: "answer-first", data: { heading: "Plan", body: "Evidence-backed practical guidance for independent visitors." } }],
+      } };
+    },
     async review() {
       return { model: "reviewer-model", output: { passed: true, score: 92, checks: [], issues: [], unsupported_claims: [] } };
     },
@@ -69,6 +89,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   const pipeline = new Pipeline(repository, sourceExtractor, {
     contentEngine, wordpress,
     commercialComposer: new CommercialComposer({ maxOffersPerDraft: 3, disclosure: "Affiliate disclosure." }),
+    frontendContracts,
     contentConfig: { minFacts: 5, maxPerDestination: 1 },
   });
 
@@ -85,14 +106,14 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
     ctaLabel: "Check hotel options", description: "Compare available stays for your dates.", priority: 10,
   }));
 
-  for (let index = 0; index < 30; index += 1) await pipeline.runOne();
+  for (let index = 0; index < 60; index += 1) await pipeline.runOne();
   assert.equal(repository.listContent()[0].draft_id, null);
   assert.equal(repository.queueCandidate(repository.listContent()[0].id), false);
   const recommendation = repository.listContentRecommendations()[0];
   assert.equal(recommendation.strategy_version, CONTENT_STRATEGY.version);
   const approval = repository.decideRecommendation(recommendation.id, "approved_article");
   assert.equal(approval.queued, true);
-  for (let index = 0; index < 30; index += 1) await pipeline.runOne();
+  for (let index = 0; index < 60; index += 1) await pipeline.runOne();
 
   const content = repository.listContent();
   assert.equal(content.length, 1);
@@ -113,6 +134,10 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.match(generatedPackage.draft.visuals[0].source_remote_url, /xhscdn\.com/);
   assert.equal(generatedPackage.draft.schema_jsonld["@context"], "https://schema.org");
   assert.equal(generatedPackage.draft.strategy_version, CONTENT_STRATEGY.version);
+  assert.equal(generatedPackage.frontend_page_plan.plan.blocks[0].type, "articleSection");
+  assert.equal(generatedPackage.frontend_page.payload.blocks[0].type, "articleSection");
+  assert.equal(generatedPackage.frontend_page.validation.valid, true);
+  assert.equal(generatedPackage.frontend_page.contract_version, "1.2.0");
   assert.equal(generatedPackage.brief.strategy_version, CONTENT_STRATEGY.version);
   assert.equal(generatedPackage.brief.canonical.strategy_version, CONTENT_STRATEGY.version);
   assert.ok(generatedPackage.draft.content_blocks.length > 0);

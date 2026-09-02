@@ -94,6 +94,14 @@ export function loadConfig(env = process.env) {
       publisherName: env.CONTENT_PUBLISHER_NAME || "SoloToChina",
       publisherLogoUrl: env.CONTENT_PUBLISHER_LOGO_URL || "",
     },
+    frontendContract: {
+      sourceRepository: env.FRONTEND_CONTRACT_SOURCE_REPOSITORY || "",
+      registrySource: env.FRONTEND_COMPONENT_REGISTRY_SOURCE || "",
+      pageSchemaSource: env.FRONTEND_PAGE_SCHEMA_SOURCE || "",
+      frontendCommitSha: env.FRONTEND_CONTRACT_COMMIT_SHA || "",
+      timeoutMs: integer(env.FRONTEND_CONTRACT_TIMEOUT_MS, 15_000),
+      syncHours: integer(env.FRONTEND_CONTRACT_SYNC_HOURS, 6),
+    },
     wordpress: {
       siteUrl: (env.WORDPRESS_SITE_URL || "").replace(/\/$/, ""),
       username: env.WORDPRESS_USERNAME || "",
@@ -142,6 +150,7 @@ export function loadConfig(env = process.env) {
       enabled: boolean(env.MAINTENANCE_ENABLED, true),
       intervalMinutes: integer(env.MAINTENANCE_INTERVAL_MINUTES, 15),
       knowledgeReconcileHours: integer(env.KNOWLEDGE_RECONCILE_HOURS, 24),
+      entityResolutionHours: integer(env.ENTITY_RESOLUTION_HOURS, 24),
       autoBackupHours: integer(env.AUTO_BACKUP_HOURS, 24),
       jobHistoryRetentionDays: integer(env.JOB_HISTORY_RETENTION_DAYS, 30),
       backupDir: path.resolve(root, env.BACKUP_DIR || "backups"),

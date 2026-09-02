@@ -170,7 +170,7 @@ function sanitizeResult(result) {
   result.source.summary = truncate(result.source.summary, 5_000);
   result.claims = result.claims.slice(0, 100).map((claim) => ({
     ...claim,
-    key: truncate(claim.key.toLowerCase().replace(/[^a-z0-9.]+/g, ".").replace(/^\.|\.$/g, ""), 300),
+    key: truncate(claim.key.toLowerCase().replace(/[^a-z0-9._]+/g, ".").replace(/^\.|\.$/g, ""), 300),
     source_quote: truncate(claim.source_quote, 800),
   })).filter((claim) => claim.key && claim.value);
   return result;

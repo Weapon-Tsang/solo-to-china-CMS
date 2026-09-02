@@ -17,6 +17,7 @@ import { MaintenanceScheduler } from "./maintenance.mjs";
 import { createLogger } from "./logger.mjs";
 import { ExceptionNotifier } from "./notifications.mjs";
 import { createAuth } from "./auth.mjs";
+import { FrontendContractConsumer, FrontendContractError } from "./frontend-contract.mjs";
 import { getContentStrategyDocument } from "./content-strategy.mjs";
 import { VERSION } from "./version.mjs";
 
@@ -47,6 +48,7 @@ export function createApplication(config = loadConfig()) {
   const activeAi = { ...config.kimi, ...config.vertex, ...selectedAi };
   const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
   const activeVisuals = { ...config.visuals, ...selectedVisual };
+  const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
   const extractor = new KimiExtractor(activeAi);
   const contentEngine = new ContentEngine(activeAi);
   const visuals = new VertexImagen(activeVisuals);
@@ -54,14 +56,14 @@ export function createApplication(config = loadConfig()) {
   const searchConsole = new SearchConsoleAdapter(config.searchConsole);
   const commercialComposer = new CommercialComposer(config.commercial);
   const pipeline = new Pipeline(repository, extractor, {
-    contentEngine, visuals, wordpress, searchConsole, commercialComposer, contentConfig: config.content,
+    contentEngine, visuals, wordpress, searchConsole, commercialComposer, frontendContracts, contentConfig: config.content,
     logger: logger.child({ component: "pipeline" }),
   });
   const notifier = new ExceptionNotifier(repository, config.notifications);
   const maintenance = new MaintenanceScheduler(
     repository,
     pipeline,
-    { ...config.maintenance, notificationIntervalMinutes: config.notifications.intervalMinutes },
+    { ...config.maintenance, notificationIntervalMinutes: config.notifications.intervalMinutes, frontendContract: config.frontendContract },
     config.wordpress,
     { notifier, searchConsoleConfig: config.searchConsole, logger: logger.child({ component: "maintenance" }) },
   );
@@ -72,6 +74,7 @@ export function createApplication(config = loadConfig()) {
     repository.enqueueSearchConsoleSync(searchConsole.config.siteUrl, searchConsole.config.syncHours);
   }
   repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled });
+  if (frontendContracts.configured) repository.enqueue("sync_frontend_contract", "default");
   const publicDir = path.join(config.root, "dist");
 
   const server = http.createServer(async (request, response) => {
@@ -136,6 +139,7 @@ export function createApplication(config = loadConfig()) {
           visualProvider: visuals.enabled ? activeVisuals.provider : null,
           visualModel: visuals.enabled ? activeVisuals.model : null,
           contentStrategy: config.contentStrategy,
+          frontendContract: frontendContracts.diagnostics(),
           contentAutomationConfigured: contentEngine.enabled,
           visualGenerationConfigured: visuals.enabled,
           wordpressConfigured: wordpress.enabled,
@@ -172,14 +176,41 @@ export function createApplication(config = loadConfig()) {
           storage: storageInfo(config),
           ai: repository.getAiSettings(config.ai.defaultModel),
           visual: repository.getVisualSettings(config.visuals.defaultModel),
+          frontendContract: frontendContracts.diagnostics(),
         });
       }
       if (request.method === "GET" && url.pathname === "/api/settings/ai") {
         return sendJson(response, 200, {
           configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
           contentStrategy: config.contentStrategy, storage: storageInfo(config), visual: repository.getVisualSettings(config.visuals.defaultModel),
+          frontendContract: frontendContracts.diagnostics(),
           ...repository.getAiSettings(config.ai.defaultModel),
         });
+      }
+      if (request.method === "GET" && url.pathname === "/api/frontend-contract") {
+        return sendJson(response, 200, { ...frontendContracts.diagnostics(), snapshots: repository.listFrontendContractSnapshots() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/frontend-contract/capabilities") {
+        const semantics = String(url.searchParams.get("semantics") || "").split(",").map((item) => item.trim()).filter(Boolean);
+        return sendJson(response, 200, frontendContracts.capabilities({ semantics }));
+      }
+      if (request.method === "GET" && url.pathname === "/api/frontend-contract/compatibility") {
+        return sendJson(response, 200, frontendContracts.compatibilityReport());
+      }
+      if (request.method === "GET" && url.pathname === "/api/frontend-contract/capability-requests") {
+        return sendJson(response, 200, { items: repository.listFrontendCapabilityRequests() });
+      }
+      if (request.method === "POST" && url.pathname === "/api/frontend-contract/sync") {
+        authorizeAdmin(request, config.adminToken, auth);
+        if (!frontendContracts.configured) return sendJson(response, 409, { error: "Frontend Contract sources are not configured." });
+        const jobId = repository.enqueue("sync_frontend_contract", "default");
+        void pipeline.runOne();
+        return sendJson(response, 202, { queued: true, jobId });
+      }
+      const frontendContractAcceptMatch = url.pathname.match(/^\/api\/frontend-contract\/snapshots\/([^/]+)\/accept$/);
+      if (request.method === "POST" && frontendContractAcceptMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        return sendJson(response, 200, frontendContracts.acceptMajorSnapshot(decodeURIComponent(frontendContractAcceptMatch[1])));
       }
       if (request.method === "POST" && url.pathname === "/api/settings/ai") {
         authorizeAdmin(request, config.adminToken, auth);
@@ -231,6 +262,30 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/knowledge") {
         return sendJson(response, 200, { items: repository.getKnowledge() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/knowledge/entity-aliases") {
+        const destination = String(url.searchParams.get("destination") || "").trim();
+        return sendJson(response, 200, {
+          aliases: repository.listEntityAliases(destination || null),
+          candidates: repository.listEntityMergeCandidates(),
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/api/knowledge/entity-aliases/reconcile") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const destination = String(payload.destinationSlug || "").trim();
+        const queued = destination ? Boolean(repository.enqueue("resolve_entities", destination)) : repository.enqueueEntityResolutionForAllDestinations() > 0;
+        if (queued) void pipeline.runOne();
+        return sendJson(response, 202, { queued, destinationSlug: destination || null });
+      }
+      const entityCandidateDecisionMatch = url.pathname.match(/^\/api\/knowledge\/entity-aliases\/candidates\/([^/]+)\/decision$/);
+      if (request.method === "POST" && entityCandidateDecisionMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.decideEntityMergeCandidate(decodeURIComponent(entityCandidateDecisionMatch[1]), String(payload.decision || ""));
+        if (!result) return sendJson(response, 404, { error: "Entity alias candidate not found or already decided." });
+        void pipeline.runOne();
+        return sendJson(response, 200, result);
       }
       const knowledgeResolutionMatch = url.pathname.match(/^\/api\/knowledge\/([^/]+)\/resolve$/);
       if (request.method === "POST" && knowledgeResolutionMatch) {
@@ -376,7 +431,7 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET") return serveStatic(publicDir, url.pathname, response);
       return sendJson(response, 404, { error: "Not found." });
     } catch (error) {
-      const status = error instanceof ValidationError || error instanceof CommercialValidationError ? 400 : error?.statusCode || 500;
+      const status = error instanceof ValidationError || error instanceof CommercialValidationError ? 400 : error instanceof FrontendContractError ? 409 : error?.statusCode || 500;
       const log = status >= 500 ? logger.error : logger.warn;
       log("http.request_failed", { requestId, method: request.method, path: requestPath, status, error });
       return sendJson(response, status, { error: error.message || "Unexpected server error." });

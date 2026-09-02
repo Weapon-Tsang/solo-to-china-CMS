@@ -15,11 +15,13 @@ if (packageJson.version !== VERSION || manifest.version !== VERSION) {
 
 const strategyDocument = path.join(root, CONTENT_STRATEGY.document);
 const handoffPath = path.join(root, "docs", "HANDOFF.md");
+const frontendContractDocument = path.join(root, "docs", "FRONTEND_CONTRACT_INTEGRATION.md");
 const strategyText = fs.readFileSync(strategyDocument, "utf8");
 const handoffText = fs.readFileSync(handoffPath, "utf8");
 const dashboardSource = fs.readFileSync(path.join(root, "frontend", "src", "components", "dashboard.jsx"), "utf8");
 const contentViewSource = fs.readFileSync(path.join(root, "frontend", "src", "views.jsx"), "utf8");
 const serverSource = fs.readFileSync(path.join(root, "src", "server.mjs"), "utf8");
+const frontendContractSource = fs.readFileSync(path.join(root, "src", "frontend-contract.mjs"), "utf8");
 if (!strategyText.includes(`Content Production Strategy ${CONTENT_STRATEGY.version}`)) {
   throw new Error(`Strategy specification does not identify version ${CONTENT_STRATEGY.version}.`);
 }
@@ -35,13 +37,16 @@ if (!dashboardSource.includes("health?.contentStrategy")) {
 if (contentViewSource.includes("/api/topics/${item.id}/generate") || !serverSource.includes("Approve an Intake Recommendation before planning content.")) {
   throw new Error("Content planning is not protected by the Strategy human-approval gate.");
 }
+if (!fs.existsSync(frontendContractDocument) || !frontendContractSource.includes("class FrontendContractConsumer") || !serverSource.includes("/api/frontend-contract")) {
+  throw new Error("Frontend Contract Consumer documentation and diagnostics API are required.");
+}
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-release-"));
 try {
   const database = openDatabase(path.join(directory, "release.sqlite"));
   try {
     const versions = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
-    if (versions.join(",") !== "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15") throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
+    if (versions.join(",") !== "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17") throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
     for (const [table, column] of [
       ["content_intake_analyses", "strategy_version"], ["content_recommendations", "strategy_version"],
       ["content_opportunities", "strategy_version"], ["topic_candidates", "strategy_version"],
@@ -57,6 +62,12 @@ try {
     if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_resolutions'").get()) {
       throw new Error("knowledge_resolutions is required for human conflict decisions.");
     }
+    for (const table of ["frontend_contract_snapshots", "frontend_contract_state", "frontend_page_plans", "frontend_page_compositions", "frontend_capability_requests"]) {
+      if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for Frontend Contract integration.`);
+    }
+    for (const table of ["entity_aliases", "entity_merge_candidates"]) {
+      if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for multilingual entity normalization.`);
+    }
     const integrity = database.prepare("PRAGMA integrity_check").get();
     if (Object.values(integrity)[0] !== "ok") throw new Error("Release database integrity check failed.");
   } finally {
@@ -66,4 +77,4 @@ try {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-15, and SQLite integrity.`);
+console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-17, and SQLite integrity.`);

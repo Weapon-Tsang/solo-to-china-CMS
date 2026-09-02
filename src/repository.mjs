@@ -72,6 +72,142 @@ export class Repository {
     return this.getVisualSettings(defaultModel);
   }
 
+  getFrontendContractState() {
+    return this.db.prepare("SELECT * FROM frontend_contract_state WHERE singleton=1").get() || null;
+  }
+
+  recordFrontendContractAttempt(status, error = null) {
+    const timestamp = now();
+    this.db.prepare(`
+      UPDATE frontend_contract_state SET last_attempt_at=?, last_error=?, status=?, updated_at=? WHERE singleton=1
+    `).run(timestamp, error ? String(error).slice(0, 4_000) : null, status, timestamp);
+  }
+
+  getActiveFrontendContractSnapshot() {
+    return this.db.prepare(`
+      SELECT s.* FROM frontend_contract_state st JOIN frontend_contract_snapshots s ON s.id=st.active_snapshot_id
+      WHERE st.singleton=1
+    `).get() || null;
+  }
+
+  listFrontendContractSnapshots(limit = 20) {
+    return this.db.prepare(`
+      SELECT id, source_repository, registry_source, page_schema_source, frontend_commit_sha, contract_version, schema_version,
+        checksum, diff_json, status, synced_at, accepted_at
+      FROM frontend_contract_snapshots ORDER BY synced_at DESC LIMIT ?
+    `).all(limit).map((row) => ({ ...row, diff: json(row.diff_json, {}) }));
+  }
+
+  saveFrontendContractSnapshot(snapshot) {
+    const timestamp = now();
+    return transaction(this.db, () => {
+      let row = this.db.prepare("SELECT * FROM frontend_contract_snapshots WHERE checksum=?").get(snapshot.checksum);
+      if (!row) {
+        const snapshotId = id("fcontract");
+        this.db.prepare(`
+          INSERT INTO frontend_contract_snapshots(id, source_repository, registry_source, page_schema_source, frontend_commit_sha,
+            contract_version, schema_version, checksum, registry_json, page_schema_json, diff_json, status, synced_at, accepted_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(snapshotId, snapshot.sourceRepository, snapshot.registrySource, snapshot.pageSchemaSource, snapshot.frontendCommitSha,
+          snapshot.contractVersion, snapshot.schemaVersion, snapshot.checksum, JSON.stringify(snapshot.registry), JSON.stringify(snapshot.pageSchema),
+          JSON.stringify(snapshot.diff || {}), snapshot.activate ? "active" : "major_mismatch", timestamp, snapshot.activate ? timestamp : null);
+        row = this.db.prepare("SELECT * FROM frontend_contract_snapshots WHERE id=?").get(snapshotId);
+      }
+      if (snapshot.activate) {
+        this.db.prepare("UPDATE frontend_contract_snapshots SET status='superseded' WHERE status='active' AND id<>?").run(row.id);
+        this.db.prepare("UPDATE frontend_contract_snapshots SET status='active', accepted_at=COALESCE(accepted_at, ?) WHERE id=?").run(timestamp, row.id);
+        this.db.prepare(`
+          UPDATE frontend_contract_state SET active_snapshot_id=?, last_attempt_at=?, last_success_at=?, last_error=NULL,
+            status='healthy', updated_at=? WHERE singleton=1
+        `).run(row.id, timestamp, timestamp, timestamp);
+      } else {
+        this.db.prepare(`
+          UPDATE frontend_contract_state SET last_attempt_at=?, last_error=?, status='major_mismatch', updated_at=? WHERE singleton=1
+        `).run(timestamp, `Major Frontend Contract update ${snapshot.contractVersion} requires explicit acceptance.`, timestamp);
+      }
+      return this.db.prepare("SELECT * FROM frontend_contract_snapshots WHERE id=?").get(row.id);
+    });
+  }
+
+  acceptFrontendContractSnapshot(snapshotId) {
+    const timestamp = now();
+    return transaction(this.db, () => {
+      const snapshot = this.db.prepare("SELECT * FROM frontend_contract_snapshots WHERE id=?").get(snapshotId);
+      if (!snapshot) return null;
+      this.db.prepare("UPDATE frontend_contract_snapshots SET status='superseded' WHERE status='active' AND id<>?").run(snapshotId);
+      this.db.prepare("UPDATE frontend_contract_snapshots SET status='active', accepted_at=? WHERE id=?").run(timestamp, snapshotId);
+      this.db.prepare(`
+        UPDATE frontend_contract_state SET active_snapshot_id=?, last_attempt_at=?, last_success_at=?, last_error=NULL,
+          status='healthy', updated_at=? WHERE singleton=1
+      `).run(snapshotId, timestamp, timestamp, timestamp);
+      return this.db.prepare("SELECT * FROM frontend_contract_snapshots WHERE id=?").get(snapshotId);
+    });
+  }
+
+  saveFrontendPagePlan(briefId, snapshot, plan, validation, model = null) {
+    const timestamp = now();
+    const existing = this.db.prepare("SELECT id FROM frontend_page_plans WHERE brief_id=?").get(briefId);
+    const planId = existing?.id || id("fplan");
+    this.db.prepare(`
+      INSERT INTO frontend_page_plans(id, brief_id, snapshot_id, contract_version, schema_version, contract_checksum,
+        plan_json, validation_json, status, model, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(brief_id) DO UPDATE SET snapshot_id=excluded.snapshot_id, contract_version=excluded.contract_version,
+        schema_version=excluded.schema_version, contract_checksum=excluded.contract_checksum, plan_json=excluded.plan_json,
+        validation_json=excluded.validation_json, status=excluded.status, model=excluded.model, updated_at=excluded.updated_at
+    `).run(planId, briefId, snapshot.id, snapshot.contractVersion, snapshot.schemaVersion, snapshot.checksum,
+      JSON.stringify(plan), JSON.stringify(validation), validation.valid ? "ready" : "invalid", model, timestamp, timestamp);
+    return this.getFrontendPagePlan(briefId);
+  }
+
+  getFrontendPagePlan(briefId) {
+    const row = this.db.prepare("SELECT * FROM frontend_page_plans WHERE brief_id=?").get(briefId);
+    return row ? { ...row, plan: json(row.plan_json, {}), validation: json(row.validation_json, {}) } : null;
+  }
+
+  saveFrontendPageComposition(draftId, planId, snapshot, payload, validation, model = null) {
+    const timestamp = now();
+    const existing = this.db.prepare("SELECT id FROM frontend_page_compositions WHERE draft_id=?").get(draftId);
+    const compositionId = existing?.id || id("fpage");
+    this.db.prepare(`
+      INSERT INTO frontend_page_compositions(id, draft_id, plan_id, snapshot_id, contract_version, schema_version,
+        contract_checksum, payload_json, validation_json, status, model, generated_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(draft_id) DO UPDATE SET plan_id=excluded.plan_id, snapshot_id=excluded.snapshot_id,
+        contract_version=excluded.contract_version, schema_version=excluded.schema_version, contract_checksum=excluded.contract_checksum,
+        payload_json=excluded.payload_json, validation_json=excluded.validation_json, status=excluded.status, model=excluded.model,
+        generated_at=excluded.generated_at, updated_at=excluded.updated_at
+    `).run(compositionId, draftId, planId || null, snapshot.id, snapshot.contractVersion, snapshot.schemaVersion,
+      snapshot.checksum, JSON.stringify(payload), JSON.stringify(validation), validation.valid ? "valid" : "invalid", model, timestamp, timestamp);
+    return this.getFrontendPageComposition(draftId);
+  }
+
+  getFrontendPageComposition(draftId) {
+    const row = this.db.prepare("SELECT * FROM frontend_page_compositions WHERE draft_id=?").get(draftId);
+    return row ? { ...row, payload: json(row.payload_json, {}), validation: json(row.validation_json, {}) } : null;
+  }
+
+  listFrontendPageCompositions() {
+    return this.db.prepare(`
+      SELECT pc.*, ad.title FROM frontend_page_compositions pc JOIN article_drafts ad ON ad.id=pc.draft_id
+      ORDER BY pc.updated_at DESC
+    `).all().map((row) => ({ ...row, payload: json(row.payload_json, {}), validation: json(row.validation_json, {}) }));
+  }
+
+  createFrontendCapabilityRequest({ briefId = null, draftId = null, semanticNeed, useCase, reason }) {
+    const timestamp = now();
+    const requestId = id("fcap");
+    this.db.prepare(`
+      INSERT INTO frontend_capability_requests(id, brief_id, draft_id, semantic_need, use_case, reason, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(requestId, briefId, draftId, String(semanticNeed || "").slice(0, 160), String(useCase || "").slice(0, 1_000), String(reason || "").slice(0, 2_000), timestamp, timestamp);
+    return this.db.prepare("SELECT * FROM frontend_capability_requests WHERE id=?").get(requestId);
+  }
+
+  listFrontendCapabilityRequests() {
+    return this.db.prepare("SELECT * FROM frontend_capability_requests WHERE status='open' ORDER BY updated_at DESC").all();
+  }
+
   saveCapture(capture) {
     const timestamp = now();
     const contentHash = sha256(`${capture.rawText}\n${capture.assets.map((item) => item.url).join("\n")}`);
@@ -203,9 +339,9 @@ export class Repository {
       this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
     } else if (!retry && job.type === "plan_content") {
       this.db.prepare("UPDATE topic_candidates SET status='candidate', updated_at=? WHERE id=?").run(now(), job.entity_id);
-    } else if (!retry && job.type === "generate_draft") {
+    } else if (!retry && ["generate_draft", "compose_frontend_page_plan"].includes(job.type)) {
       this.db.prepare("UPDATE content_briefs SET status='exception', last_error=?, updated_at=? WHERE id=?").run(message, now(), job.entity_id);
-    } else if (!retry && ["review_draft", "revise_draft"].includes(job.type)) {
+    } else if (!retry && ["review_draft", "revise_draft", "compose_frontend_page"].includes(job.type)) {
       this.db.prepare("UPDATE article_drafts SET status='exception', updated_at=? WHERE id=?").run(now(), job.entity_id);
     }
   }
@@ -384,12 +520,16 @@ export class Repository {
       );
       const insertClaim = this.db.prepare(`
         INSERT OR IGNORE INTO claims(id, source_id, normalized_key, subject, predicate, value_text,
-          qualifiers_json, source_quote, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          qualifiers_json, source_quote, confidence, created_at, original_normalized_key, entity_key,
+          canonical_subject, entity_aliases_json, entity_resolution_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const claim of result.claims) {
+        const normalizedKey = normalizeClaimKey(claim.key);
+        const inferredEntity = inferEntityIdentity(normalizedKey, claim.subject, claim.predicate);
         insertClaim.run(
-          id("claim"), sourceId, claim.key, claim.subject, claim.predicate, claim.value,
-          JSON.stringify(claim.qualifiers), claim.source_quote, claim.confidence, timestamp,
+          id("claim"), sourceId, normalizedKey, claim.subject, claim.predicate, claim.value,
+          JSON.stringify(claim.qualifiers), claim.source_quote, claim.confidence, timestamp, normalizedKey,
+          inferredEntity.entityKey, inferredEntity.canonicalSubject, JSON.stringify(inferredEntity.aliases), inferredEntity.status,
         );
       }
       this.db.prepare(`
@@ -405,12 +545,172 @@ export class Repository {
       );
       this.db.prepare("UPDATE sources SET status = ?, last_error = NULL, updated_at = ? WHERE id = ?")
         .run(method === "heuristic" ? "needs_ai" : "processed", timestamp, sourceId);
-      this.enqueue("rebuild_knowledge", result.source.destination_slug);
+      this.enqueue("resolve_entities", result.source.destination_slug);
       this.enqueue("rebuild_editorial", "global");
     });
   }
 
+  getEntityResolutionPackage(destinationSlug, limit = 300) {
+    const rows = this.db.prepare(`
+      SELECT c.id, c.normalized_key, c.original_normalized_key, c.subject, c.predicate, c.value_text,
+        c.source_quote, c.confidence, c.entity_key, c.canonical_subject, c.entity_aliases_json,
+        s.captured_at, s.title AS source_title
+      FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
+      JOIN sources s ON s.id=c.source_id
+      WHERE ss.destination_slug=? ORDER BY s.captured_at DESC, c.normalized_key LIMIT ?
+    `).all(destinationSlug, limit);
+    const destination = this.db.prepare("SELECT name FROM destinations WHERE slug=?").get(destinationSlug);
+    return {
+      destination: { slug: destinationSlug, name: destination?.name || destinationSlug },
+      claims: rows.map((row) => ({
+        id: row.id, key: row.normalized_key, original_key: row.original_normalized_key || row.normalized_key,
+        subject: row.subject, predicate: row.predicate, value: row.value_text, source_quote: row.source_quote,
+        confidence: row.confidence, current_entity_key: row.entity_key || null,
+        current_canonical_subject: row.canonical_subject || null, current_aliases: json(row.entity_aliases_json, []),
+        captured_at: row.captured_at, source_title: row.source_title,
+      })),
+      known_aliases: this.listEntityAliases(destinationSlug),
+    };
+  }
+
+  listEntityAliases(destinationSlug = null) {
+    const rows = destinationSlug
+      ? this.db.prepare("SELECT * FROM entity_aliases WHERE destination_slug=? ORDER BY canonical_subject, alias_normalized").all(destinationSlug)
+      : this.db.prepare("SELECT * FROM entity_aliases ORDER BY destination_slug, canonical_subject, alias_normalized").all();
+    return rows.map((row) => ({ ...row, aliases: json(row.aliases_json, []) }));
+  }
+
+  listEntityMergeCandidates(status = "pending") {
+    return this.db.prepare(`
+      SELECT * FROM entity_merge_candidates WHERE status=? ORDER BY confidence DESC, updated_at DESC
+    `).all(status).map((row) => ({ ...row }));
+  }
+
+  enqueueEntityResolutionForAllDestinations() {
+    const destinations = this.db.prepare("SELECT DISTINCT destination_slug FROM structured_sources WHERE destination_slug<>'' AND destination_slug<>'unknown'").all();
+    for (const row of destinations) this.enqueue("resolve_entities", row.destination_slug);
+    return destinations.length;
+  }
+
+  resolveEntitiesDeterministically(destinationSlug) {
+    const rows = this.db.prepare(`
+      SELECT c.* FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
+    `).all(destinationSlug);
+    const timestamp = now();
+    transaction(this.db, () => {
+      for (const row of rows) {
+        const originalKey = row.original_normalized_key || row.normalized_key;
+        const inferred = inferEntityIdentity(originalKey, row.subject, row.predicate);
+        const alias = normalizeEntityAlias(row.subject);
+        const mapped = alias ? this.db.prepare("SELECT * FROM entity_aliases WHERE destination_slug=? AND alias_normalized=?").get(destinationSlug, alias) : null;
+        const identity = mapped ? {
+          entityKey: mapped.entity_key,
+          canonicalSubject: mapped.canonical_subject,
+          aliases: json(mapped.aliases_json, []),
+          status: mapped.resolution_source === "manual" || mapped.resolution_source === "model" ? "resolved" : "derived",
+        } : inferred;
+        this.db.prepare(`
+          UPDATE claims SET original_normalized_key=CASE WHEN original_normalized_key='' THEN ? ELSE original_normalized_key END,
+            entity_key=?, canonical_subject=?, entity_aliases_json=?, entity_resolution_status=? WHERE id=?
+        `).run(originalKey, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases), identity.status, row.id);
+        if (!mapped && identity.entityKey && alias) this.upsertEntityAlias(destinationSlug, alias, identity, "derived", 0.55, timestamp);
+      }
+    });
+    return rows.length;
+  }
+
+  applyEntityResolution(destinationSlug, resolution, model = null) {
+    const timestamp = now();
+    const entities = new Map();
+    for (const item of resolution?.entities || []) {
+      if (Number(item?.confidence) < 0.85) continue;
+      const entityKey = normalizeEntityKey(item?.entity_key);
+      const canonicalSubject = cleanEntityName(item?.canonical_subject);
+      if (!entityKey || !canonicalSubject) continue;
+      const aliases = uniqueEntityAliases([canonicalSubject, ...(item.aliases || [])]);
+      const identity = { entityKey, canonicalSubject, aliases, status: "resolved" };
+      entities.set(entityKey, identity);
+      for (const alias of aliases) this.upsertEntityAlias(destinationSlug, normalizeEntityAlias(alias), identity, "model", Number(item.confidence), timestamp);
+    }
+    const claims = new Map(this.db.prepare(`
+      SELECT c.* FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
+    `).all(destinationSlug).map((row) => [row.id, row]));
+    transaction(this.db, () => {
+      for (const item of resolution?.claim_updates || []) {
+        if (Number(item?.confidence) < 0.85) continue;
+        const row = claims.get(item?.claim_id);
+        const entityKey = normalizeEntityKey(item?.entity_key);
+        const canonicalSubject = cleanEntityName(item?.canonical_subject);
+        if (!row || !entityKey || !canonicalSubject) continue;
+        const identity = entities.get(entityKey) || { entityKey, canonicalSubject, aliases: uniqueEntityAliases([canonicalSubject, row.subject]), status: "resolved" };
+        const canonicalKey = normalizeClaimKey(item?.canonical_key);
+        this.db.prepare(`
+          UPDATE claims SET original_normalized_key=CASE WHEN original_normalized_key='' THEN normalized_key ELSE original_normalized_key END,
+            normalized_key=?, entity_key=?, canonical_subject=?, entity_aliases_json=?, entity_resolution_status='resolved' WHERE id=?
+        `).run(canonicalKey || row.normalized_key, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases), row.id);
+        for (const alias of uniqueEntityAliases([row.subject, ...identity.aliases])) this.upsertEntityAlias(destinationSlug, normalizeEntityAlias(alias), identity, "model", Number(item.confidence), timestamp);
+      }
+      for (const item of resolution?.candidates || []) {
+        const confidence = Number(item?.confidence);
+        const alias = cleanEntityName(item?.alias);
+        const entityKey = normalizeEntityKey(item?.proposed_entity_key);
+        const canonicalSubject = cleanEntityName(item?.proposed_canonical_subject);
+        if (!alias || !entityKey || !canonicalSubject || confidence < 0.6 || confidence >= 0.85) continue;
+        const candidateId = `entity_candidate_${sha256(`${destinationSlug}:${normalizeEntityAlias(alias)}:${entityKey}`).slice(0, 24)}`;
+        this.db.prepare(`
+          INSERT INTO entity_merge_candidates(id, destination_slug, alias, alias_normalized, proposed_entity_key,
+            proposed_canonical_subject, confidence, rationale, status, model, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+          ON CONFLICT(destination_slug, alias_normalized, proposed_entity_key) DO UPDATE SET confidence=excluded.confidence,
+            rationale=excluded.rationale, status='pending', model=excluded.model, updated_at=excluded.updated_at
+        `).run(candidateId, destinationSlug, alias, normalizeEntityAlias(alias), entityKey, canonicalSubject, confidence,
+          String(item?.rationale || "Possible multilingual alias requires an operator decision.").slice(0, 1_000), model, timestamp, timestamp);
+      }
+    });
+    this.resolveEntitiesDeterministically(destinationSlug);
+    return { resolvedEntities: entities.size, candidates: this.listEntityMergeCandidates().filter((item) => item.destination_slug === destinationSlug).length };
+  }
+
+  decideEntityMergeCandidate(candidateId, decision) {
+    if (!["accepted", "rejected"].includes(decision)) throw new Error("Entity merge decision must be accepted or rejected.");
+    const candidate = this.db.prepare("SELECT * FROM entity_merge_candidates WHERE id=? AND status='pending'").get(candidateId);
+    if (!candidate) return null;
+    const timestamp = now();
+    transaction(this.db, () => {
+      this.db.prepare("UPDATE entity_merge_candidates SET status=?, updated_at=? WHERE id=?").run(decision, timestamp, candidateId);
+      if (decision === "accepted") {
+        const identity = {
+          entityKey: candidate.proposed_entity_key,
+          canonicalSubject: candidate.proposed_canonical_subject,
+          aliases: uniqueEntityAliases([candidate.alias, candidate.proposed_canonical_subject]),
+          status: "resolved",
+        };
+        for (const alias of identity.aliases) this.upsertEntityAlias(candidate.destination_slug, normalizeEntityAlias(alias), identity, "manual", 1, timestamp);
+      }
+    });
+    if (decision === "accepted") {
+      this.resolveEntitiesDeterministically(candidate.destination_slug);
+      this.enqueue("rebuild_knowledge", candidate.destination_slug);
+    }
+    return { ...candidate, status: decision };
+  }
+
+  upsertEntityAlias(destinationSlug, aliasNormalized, identity, source, confidence, timestamp = now()) {
+    if (!aliasNormalized || !identity?.entityKey || !identity?.canonicalSubject) return;
+    const aliasId = `entity_alias_${sha256(`${destinationSlug}:${aliasNormalized}`).slice(0, 24)}`;
+    this.db.prepare(`
+      INSERT INTO entity_aliases(id, destination_slug, alias_normalized, entity_key, canonical_subject, aliases_json,
+        resolution_source, confidence, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(destination_slug, alias_normalized) DO UPDATE SET entity_key=excluded.entity_key,
+        canonical_subject=excluded.canonical_subject, aliases_json=excluded.aliases_json, resolution_source=excluded.resolution_source,
+        confidence=excluded.confidence, updated_at=excluded.updated_at
+    `).run(aliasId, destinationSlug, aliasNormalized, identity.entityKey, identity.canonicalSubject,
+      JSON.stringify(identity.aliases || []), source, confidence, timestamp, timestamp);
+  }
+
   rebuildKnowledge(destinationSlug) {
+    this.resolveEntitiesDeterministically(destinationSlug);
     const sourceRows = this.db.prepare(`
       SELECT c.*, ss.destination_name, ss.destination_slug, s.captured_at
       FROM claims c JOIN structured_sources ss ON ss.source_id = c.source_id
@@ -439,30 +739,37 @@ export class Repository {
         const freshness = classifyFreshness(rows, this.contentConfig);
         const verificationPriority = freshness.volatile || status === "conflicted"
           ? "requires_official" : status === "single_source" || freshness.state === "stale" ? "review" : "normal";
+        const entity = aggregateEntityIdentity(rows);
         const evidence = rows.map((row) => ({
           source_id: row.source_id,
           value: row.value_text,
           quote: row.source_quote,
           confidence: row.confidence,
           qualifiers: json(row.qualifiers_json, []),
+          original_key: row.original_normalized_key || row.normalized_key,
+          source_subject: row.subject,
           captured_at: row.captured_at,
         }));
         this.db.prepare(`
           INSERT INTO knowledge_facts(id, destination_id, normalized_key, subject, predicate, consensus_status,
             preferred_value, support_count, contradiction_count, evidence_json, updated_at,
-            freshness_state, latest_evidence_at, verification_priority)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            freshness_state, latest_evidence_at, verification_priority, entity_key, canonical_subject,
+            entity_aliases_json, entity_resolution_status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(destination_id, normalized_key) DO UPDATE SET subject=excluded.subject,
             predicate=excluded.predicate, consensus_status=excluded.consensus_status,
             preferred_value=excluded.preferred_value, support_count=excluded.support_count,
             contradiction_count=excluded.contradiction_count, evidence_json=excluded.evidence_json,
             updated_at=excluded.updated_at, freshness_state=excluded.freshness_state,
-            latest_evidence_at=excluded.latest_evidence_at, verification_priority=excluded.verification_priority
+            latest_evidence_at=excluded.latest_evidence_at, verification_priority=excluded.verification_priority,
+            entity_key=excluded.entity_key, canonical_subject=excluded.canonical_subject,
+            entity_aliases_json=excluded.entity_aliases_json, entity_resolution_status=excluded.entity_resolution_status
         `).run(
-          `fact_${sha256(`${destinationId}:${key}`).slice(0, 24)}`, destinationId, key, rows[0].subject,
+          `fact_${sha256(`${destinationId}:${key}`).slice(0, 24)}`, destinationId, key, entity.canonicalSubject || rows[0].subject,
           rows[0].predicate, status, ranked[0][1][0].value_text, ranked[0][1].length,
           Math.max(0, variants.size - 1), JSON.stringify(evidence), timestamp,
-          freshness.state, freshness.latestEvidenceAt, verificationPriority,
+          freshness.state, freshness.latestEvidenceAt, verificationPriority, entity.entityKey,
+          entity.canonicalSubject, JSON.stringify(entity.aliases), entity.status,
         );
       }
     });
@@ -628,7 +935,7 @@ export class Repository {
     };
   }
 
-  saveBrief(candidateId, plan, model) {
+  saveBrief(candidateId, plan, model, { deferDraft = false } = {}) {
     const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
     if (!candidate) throw new Error(`Topic candidate ${candidateId} not found.`);
     const existing = this.db.prepare("SELECT id FROM content_briefs WHERE candidate_id = ?").get(candidateId);
@@ -651,7 +958,7 @@ export class Repository {
         JSON.stringify(canonical), timestamp, timestamp, candidateId, JSON.stringify(ledger), model, this.strategyVersion);
     }
     this.db.prepare("UPDATE topic_candidates SET status='brief_ready', updated_at=? WHERE id=?").run(timestamp, candidateId);
-    this.enqueue("generate_draft", briefId);
+    if (!deferDraft) this.enqueue("generate_draft", briefId);
     return briefId;
   }
 
@@ -664,11 +971,12 @@ export class Repository {
         ...brief, plan: json(brief.plan_json, {}), canonical: json(brief.canonical_json, {}),
         evidence_ledger: json(brief.evidence_ledger_json, []),
       },
+      frontend_page_plan: this.getFrontendPagePlan(briefId),
       ...topicPackage,
     };
   }
 
-  saveDraft(briefId, draft, model) {
+  saveDraft(briefId, draft, model, { deferReview = false } = {}) {
     const brief = this.db.prepare("SELECT * FROM content_briefs WHERE id = ?").get(briefId);
     if (!brief) throw new Error(`Content brief ${briefId} not found.`);
     const existing = this.db.prepare("SELECT id, revision FROM article_drafts WHERE brief_id = ?").get(briefId);
@@ -699,7 +1007,7 @@ export class Repository {
     this.replaceDraftVisuals(draftId, metadata.visuals, brief.strategy_version || this.strategyVersion);
     this.db.prepare("UPDATE topic_candidates SET status='drafted', updated_at=? WHERE id=?").run(timestamp, brief.candidate_id);
     this.db.prepare("UPDATE content_briefs SET status='drafted', updated_at=? WHERE id=?").run(timestamp, briefId);
-    this.enqueue("review_draft", draftId);
+    if (!deferReview) this.enqueue("review_draft", draftId);
     return draftId;
   }
 
@@ -722,6 +1030,7 @@ export class Repository {
         content_blocks: json(draft.content_blocks_json, []),
         visuals: this.listDraftVisuals(draftId),
       },
+      frontend_page: this.getFrontendPageComposition(draftId),
       review: review ? hydrateReview(review) : null,
       publication,
       commercial_composition: compositionRow ? {
@@ -1306,6 +1615,10 @@ export class Repository {
       WHERE d.slug=? ORDER BY k.consensus_status='conflicted' DESC, k.support_count DESC, k.normalized_key
     `).all(destinationSlug).map((row) => ({
       normalized_key: row.normalized_key, subject: row.subject, predicate: row.predicate,
+      entity_key: row.entity_key || null,
+      canonical_subject: row.canonical_subject || row.subject,
+      entity_aliases: json(row.entity_aliases_json, []),
+      entity_resolution_status: row.entity_resolution_status || "unresolved",
       consensus_status: resolvedConsensusStatus(row), preferred_value: resolvedPreferredValue(row),
       support_count: row.support_count, contradiction_count: row.contradiction_count,
       evidence: json(row.evidence_json, []),
@@ -1374,6 +1687,20 @@ export class Repository {
         normalizedKey: row.normalized_key,
         preferredValue: row.preferred_value,
         evidence: json(row.evidence_json, []),
+      };
+      items.push(item);
+    }
+    for (const row of this.db.prepare(`
+      SELECT * FROM entity_merge_candidates WHERE status='pending' ORDER BY confidence DESC, updated_at DESC
+    `).all()) {
+      const item = exceptionItem("entity_alias", row.id, "warning", "Entity alias merge needs confirmation",
+        `${row.alias} → ${row.proposed_canonical_subject}`,
+        row.rationale || "The model found a possible multilingual reference to the same destination entity.",
+        false, row.updated_at);
+      item.entity_alias = {
+        id: row.id, destinationSlug: row.destination_slug, alias: row.alias,
+        proposedEntityKey: row.proposed_entity_key, proposedCanonicalSubject: row.proposed_canonical_subject,
+        confidence: row.confidence,
       };
       items.push(item);
     }
@@ -1473,6 +1800,9 @@ export class Repository {
       consensus_status: resolvedConsensusStatus(row),
       preferred_value: resolvedPreferredValue(row),
       evidence: json(row.evidence_json, []),
+      entity_aliases: json(row.entity_aliases_json, []),
+      canonical_subject: row.canonical_subject || row.subject,
+      entity_resolution_status: row.entity_resolution_status || "unresolved",
       manual_resolution: hydrateKnowledgeResolution(row),
       verification_priority: resolvedVerificationPriority(row),
     }));
@@ -1532,7 +1862,12 @@ function hydrateSource({ source, assets, structured, claims, blueprint, analysis
     structured.practical_tips = json(structured.practical_tips_json, []);
     structured.warnings = json(structured.warnings_json, []);
   }
-  for (const claim of claims) claim.qualifiers = json(claim.qualifiers_json, []);
+  for (const claim of claims) {
+    claim.qualifiers = json(claim.qualifiers_json, []);
+    claim.entity_aliases = json(claim.entity_aliases_json, []);
+    claim.canonical_subject ||= claim.subject;
+    claim.entity_resolution_status ||= "unresolved";
+  }
   if (blueprint) {
     blueprint.sections = json(blueprint.sections_json, []);
     blueprint.strengths = json(blueprint.strengths_json, []);
@@ -1852,6 +2187,69 @@ function truncateText(value, max) {
 
 function normalizeValue(value) {
   return String(value).trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeClaimKey(value) {
+  return String(value || "").toLowerCase().trim().replace(/[^a-z0-9._]+/g, ".").replace(/\.{2,}/g, ".").replace(/^\.|\.$/g, "").slice(0, 300);
+}
+
+function normalizeEntityKey(value) {
+  const key = normalizeClaimKey(value);
+  return key && key.split(".").length >= 2 ? key : "";
+}
+
+function cleanEntityName(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+function normalizeEntityAlias(value) {
+  return cleanEntityName(value).normalize("NFKC").toLocaleLowerCase("en-US")
+    .replace(/[\s\p{P}\p{S}_]+/gu, "").slice(0, 300);
+}
+
+function uniqueEntityAliases(values) {
+  return [...new Map((values || []).map(cleanEntityName).filter(Boolean).map((item) => [normalizeEntityAlias(item), item])).values()].slice(0, 24);
+}
+
+function inferEntityIdentity(key, subject, predicate) {
+  const normalizedKey = normalizeClaimKey(key);
+  const segments = normalizedKey.split(".").filter(Boolean);
+  const category = new Set(["attraction", "place", "venue", "restaurant", "museum", "road", "street", "hotel", "neighborhood", "station", "market", "park", "temple", "district", "route"]);
+  let entityKey = "";
+  if (segments.length >= 3 && category.has(segments[0])) entityKey = segments.slice(0, -1).join(".");
+  if (!entityKey && /^[\x00-\x7F]+$/.test(cleanEntityName(subject))) {
+    const subjectKey = normalizeClaimKey(cleanEntityName(subject));
+    if (subjectKey) entityKey = `subject.${subjectKey}`;
+  }
+  const canonicalSubject = cleanEntityName(subject);
+  return {
+    entityKey,
+    canonicalSubject,
+    aliases: uniqueEntityAliases([subject]),
+    status: entityKey ? "derived" : "unresolved",
+  };
+}
+
+function aggregateEntityIdentity(rows) {
+  const keys = rows.map((row) => row.entity_key).filter(Boolean);
+  const entityKey = keys.length ? countStrings(keys)[0].value : "";
+  const aliases = uniqueEntityAliases(rows.flatMap((row) => [row.subject, row.canonical_subject, ...json(row.entity_aliases_json, [])]));
+  const names = rows.map((row) => cleanEntityName(row.canonical_subject || row.subject)).filter(Boolean);
+  const preferred = names.sort((left, right) => entityNameScore(right) - entityNameScore(left) || left.length - right.length || left.localeCompare(right))[0] || rows[0]?.subject || "";
+  const states = new Set(rows.map((row) => row.entity_resolution_status));
+  return {
+    entityKey,
+    canonicalSubject: preferred,
+    aliases,
+    status: states.has("resolved") ? "resolved" : states.has("derived") ? "derived" : "unresolved",
+  };
+}
+
+function entityNameScore(value) {
+  const text = String(value || "");
+  const latin = (text.match(/[A-Za-z]/g) || []).length;
+  const han = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+  return latin * 4 + (han ? 1 : 0);
 }
 
 function classifyFreshness(rows, config) {

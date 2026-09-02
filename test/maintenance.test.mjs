@@ -31,9 +31,11 @@ test("maintenance scheduler backs up, reconciles, prunes, and records durable st
   });
 
   const first = await scheduler.runDue({ force: true });
-  assert.equal(first.results.filter((item) => item.status === "succeeded").length, 3);
+  // Entity alias reconciliation is a first-class recurring task alongside
+  // knowledge reconciliation, backup, and job-history cleanup.
+  assert.equal(first.results.filter((item) => item.status === "succeeded").length, 4);
   assert.equal(database.prepare("SELECT COUNT(*) AS count FROM jobs WHERE id=?").get(oldJob).count, 0);
-  assert.equal(repository.listMaintenanceRuns().length, 3);
+  assert.equal(repository.listMaintenanceRuns().length, 4);
   assert.equal(fs.readdirSync(path.join(directory, "backups")).filter((name) => name.endsWith(".sqlite")).length, 1);
 
   const second = await scheduler.runDue();

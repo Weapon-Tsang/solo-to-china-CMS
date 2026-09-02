@@ -2,9 +2,11 @@ import { createBackup } from "./backup.mjs";
 
 const TASKS = {
   knowledge: "knowledge_reconciliation",
+  entities: "entity_resolution",
   backup: "database_backup",
   cleanup: "job_history_cleanup",
   notifications: "exception_notifications",
+  frontendContract: "frontend_contract_sync",
 };
 
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
@@ -59,6 +61,14 @@ export class MaintenanceScheduler {
         );
         results.push({ task: "search_console_inventory", status: jobId ? "queued" : "fresh", itemCount: jobId ? 1 : 0 });
       }
+      if (this.config.frontendContract?.registrySource && this.config.frontendContract?.pageSchemaSource) {
+        await this.runTask(results, TASKS.frontendContract, this.config.frontendContract.syncHours, force, () => ({
+          itemCount: this.repository.enqueue("sync_frontend_contract", "default") ? 1 : 0,
+        }));
+      }
+      await this.runTask(results, TASKS.entities, this.config.entityResolutionHours || 24, force, () => ({
+        itemCount: this.repository.enqueueEntityResolutionForAllDestinations(),
+      }));
       await this.runTask(results, TASKS.knowledge, this.config.knowledgeReconcileHours, force, () => ({
         itemCount: this.repository.enqueueKnowledgeReconciliation(),
       }));

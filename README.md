@@ -91,6 +91,10 @@ AUTO_CONTENT_MAX_PER_DESTINATION=1
 
 ## Kimi AI configuration
 
+## Frontend Capability Contract
+
+The CMS consumes the Frontend's published Component Registry and Page Schema; it never scans Frontend source code or maintains a copied component list. When a compatible Contract is synchronized, the CMS selects semantic components/variants and produces a validated `page.blocks[]` payload before the publish gate. See [Frontend Contract Integration](docs/FRONTEND_CONTRACT_INTEGRATION.md) for source configuration, cache behaviour, diagnostics, version compatibility, and capability-gap handling.
+
 Kimi is the active AI provider. The engine calls Kimi Chat Completions with JSON Schema structured output and sends trusted Xiaohongshu image assets as base64 vision input. Keep the key on the server only: it is never sent to the Chrome Extension or written to SQLite.
 
 ```powershell
