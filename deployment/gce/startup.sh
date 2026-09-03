@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_ID="project-4bcb9146-c37b-43b0-b11"
-IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.10.0"
+IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.11.0"
 APP_DIR="/opt/solo-to-china"
 METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 
@@ -132,6 +132,12 @@ docker pull "$IMAGE"
 docker pull cloudflare/cloudflared:latest
 docker network inspect solo-to-china >/dev/null 2>&1 || docker network create solo-to-china >/dev/null
 docker volume inspect solo_to_china_data >/dev/null 2>&1 || docker volume create solo_to_china_data >/dev/null
+if docker inspect engine >/dev/null 2>&1; then
+  log 'Creating a verified SQLite backup in the persistent volume before replacing the engine container.'
+  docker exec engine node src/backup.mjs \
+    /var/lib/solo-to-china/solo-to-china.sqlite \
+    /var/lib/solo-to-china/backups >/dev/null
+fi
 docker rm --force engine cloudflared >/dev/null 2>&1 || true
 docker run --detach --name engine --restart unless-stopped \
   --network solo-to-china \
