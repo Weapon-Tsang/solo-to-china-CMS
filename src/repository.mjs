@@ -885,6 +885,10 @@ export class Repository {
       row.structured_value = structureClaim({ predicate: row.predicate, value: row.value_text, qualifiers: json(row.qualifiers_json, []), sourceQuote: row.source_quote });
       row.scope = row.structured_value.scope;
     }
+    const previousReviewDecisions = new Map(this.db.prepare(`
+      SELECT id, review_type, status FROM claim_review_cases
+      WHERE destination_slug=? AND status IN ('resolved','dismissed')
+    `).all(destinationSlug).map((row) => [row.id, row]));
     transaction(this.db, () => {
       const destinationId = `dst_${sha256(destinationSlug).slice(0, 20)}`;
       if (!sourceRows.length) {
@@ -907,10 +911,17 @@ export class Repository {
       for (const row of sourceRows) {
         updateStructuredClaim.run(JSON.stringify(row.structured_value), JSON.stringify(row.scope), row.structured_value.claim_kind, row.structured_value.cardinality, row.id);
         const extractionIssue = detectClaimExtractionIssue(row);
-        if (extractionIssue) this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
-          review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?, 'pending', ?, ?)`)
-          .run(`claim_review_${sha256(`${row.id}:${extractionIssue}`).slice(0, 24)}`, destinationSlug, row.id,
-            extractionIssue, "The original source contains negation or a limiting qualifier that is absent from the normalized Claim.", timestamp, timestamp);
+        if (extractionIssue) {
+          const reviewId = `claim_review_${sha256(`${row.id}:${extractionIssue}`).slice(0, 24)}`;
+          const previous = previousReviewDecisions.get(reviewId);
+          // A legacy "resolved" extraction review only acknowledged the issue; it did not
+          // correct the Claim. Re-open genuine issues, while preserving explicit false-positive dismissals.
+          const status = previous?.status === "dismissed" ? "dismissed" : "pending";
+          this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
+            review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)`)
+            .run(reviewId, destinationSlug, row.id, extractionIssue,
+              "The original source contains negation or a limiting qualifier that is absent from the normalized Claim.", status, timestamp, timestamp);
+        }
       }
       for (let left = 0; left < sourceRows.length; left += 1) {
         for (let right = left + 1; right < sourceRows.length; right += 1) {
@@ -950,9 +961,10 @@ export class Repository {
                 comparison.canCoexist ? 1 : 0, comparison.reason, JSON.stringify(comparison.scope), timestamp, timestamp);
             if (comparison.reviewType && !comparison.reviewType.includes("EXTRACTION_ERROR")) {
               const reviewId = `claim_review_${sha256(`${rows[left].id}:${rows[right].id}:${comparison.reviewType}`).slice(0, 24)}`;
+              const status = previousReviewDecisions.get(reviewId)?.status || "pending";
               this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
-                review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
-                .run(reviewId, destinationSlug, rows[left].id, rows[right].id, comparison.reviewType, comparison.reason, timestamp, timestamp);
+                review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                .run(reviewId, destinationSlug, rows[left].id, rows[right].id, comparison.reviewType, comparison.reason, status, timestamp, timestamp);
             }
           }
         }
@@ -2042,8 +2054,26 @@ export class Repository {
   retrySource(sourceId) {
     const source = this.db.prepare("SELECT id FROM sources WHERE id = ?").get(sourceId);
     if (!source) return false;
-    this.db.prepare("UPDATE sources SET status = 'captured', last_error = NULL, updated_at = ? WHERE id = ?").run(now(), sourceId);
-    this.enqueue("extract_source", sourceId);
+    const timestamp = now();
+    const active = this.db.prepare(`
+      SELECT id, status FROM jobs
+      WHERE type='extract_source' AND entity_id=? AND status IN ('queued','running')
+      ORDER BY created_at DESC LIMIT 1
+    `).get(sourceId);
+    if (active?.status === "running") {
+      this.db.prepare("UPDATE sources SET status='processing', last_error=NULL, updated_at=? WHERE id=?")
+        .run(timestamp, sourceId);
+      return true;
+    }
+    transaction(this.db, () => {
+      this.db.prepare("UPDATE sources SET status='queued', last_error=NULL, updated_at=? WHERE id=?")
+        .run(timestamp, sourceId);
+      if (active?.status === "queued") {
+        this.db.prepare(`UPDATE jobs SET attempts=0, available_at=?, locked_at=NULL, last_error=NULL,
+          started_at=NULL, completed_at=NULL, queue_latency_ms=NULL, duration_ms=NULL, updated_at=? WHERE id=?`)
+          .run(timestamp, timestamp, active.id);
+      } else this.enqueue("extract_source", sourceId);
+    });
     return true;
   }
 
@@ -2084,7 +2114,7 @@ export class Repository {
       };
       items.push(item);
     }
-    for (const row of this.db.prepare(`SELECT r.*, a.subject AS subject_a, a.predicate AS predicate_a,
+    for (const row of this.db.prepare(`SELECT r.*, a.source_id AS source_id_a, a.subject AS subject_a, a.predicate AS predicate_a,
       a.value_text AS value_a, a.source_quote AS source_quote_a, a.structured_value_json AS structured_a,
       b.subject AS subject_b, b.predicate AS predicate_b, b.value_text AS value_b,
       b.source_quote AS source_quote_b, b.structured_value_json AS structured_b
@@ -2097,7 +2127,7 @@ export class Repository {
       const item = exceptionItem(kind, row.id, "warning", title, `${row.subject_a} · ${row.predicate_a}`, row.reason, false, row.updated_at);
       item.claim_review = {
         id: row.id, reviewType: row.review_type, destinationSlug: row.destination_slug,
-        claimA: { id: row.claim_a_id, originalSentence: row.source_quote_a, normalized: { subject: row.subject_a, predicate: row.predicate_a, value: row.value_a, structured: json(row.structured_a, {}) } },
+        claimA: { id: row.claim_a_id, sourceId: row.source_id_a, originalSentence: row.source_quote_a, normalized: { subject: row.subject_a, predicate: row.predicate_a, value: row.value_a, structured: json(row.structured_a, {}) } },
         claimB: row.claim_b_id ? { id: row.claim_b_id, originalSentence: row.source_quote_b, normalized: { subject: row.subject_b, predicate: row.predicate_b, value: row.value_b, structured: json(row.structured_b, {}) } } : null,
       };
       items.push(item);
@@ -2209,6 +2239,11 @@ export class Repository {
     if (!["resolved", "dismissed"].includes(decision)) throw new Error("Claim review decision must be resolved or dismissed.");
     const row = this.db.prepare("SELECT * FROM claim_review_cases WHERE id=? AND status='pending'").get(caseId);
     if (!row) return null;
+    if (decision === "resolved" && row.review_type.includes("EXTRACTION_ERROR")) {
+      const error = new Error("An extraction review can only be resolved by re-extracting the source; dismiss it only when the complete Claim already preserves the source meaning.");
+      error.statusCode = 409;
+      throw error;
+    }
     const timestamp = now();
     this.db.prepare("UPDATE claim_review_cases SET status=?, reason=?, updated_at=? WHERE id=?")
       .run(decision, `${row.reason}${note ? ` Operator note: ${String(note).slice(0, 1_000)}` : ""}`, timestamp, caseId);

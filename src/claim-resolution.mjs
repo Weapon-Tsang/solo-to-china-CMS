@@ -7,8 +7,8 @@ const SOFT_PREDICATES = new Set([
   "recommended_for", "worth_visiting",
 ]);
 
-const NEGATION_PATTERN = /\b(?:not|never|no|avoid|without|isn['’]?t|aren['’]?t|doesn['’]?t|don['’]?t|cannot|can['’]?t)\b|不|无需|不要|避免|不可|不能|并非|不是/iu;
-const LIMITER_PATTERN = /\b(?:only|except|unless|but only|at most|at least)\b|仅|只|除非|例外|至少|最多/iu;
+const NEGATION_PATTERN = /\b(?:not|never|no|avoid|without|unable|different|unlike|false|optional|isn['’]?t|aren['’]?t|doesn['’]?t|don['’]?t|cannot|can['’]?t)\b|不|无须|无需|不用|不需要|不要|没有|不能|不可|避免|并非|不是|非/iu;
+const LIMITER_PATTERN = /\b(?:only|except|unless|but only|at most|at least)\b|仅限|只有|只能|只可|只允许|只需|只在|仅在|仅可|除了|除非|例外|最多|至少/iu;
 const TIME_TERMS = new Map([
   ["morning", "morning"], ["上午", "morning"], ["early morning", "morning"],
   ["afternoon", "afternoon"], ["下午", "afternoon"],
@@ -82,6 +82,10 @@ export function classifyClaimPair(left, right) {
   if (!sameScope) return result("COMPATIBLE", true, "The values apply under different scope, time, audience, season, or conditions.", a, b);
 
   const kind = strongestKind(a.structured.claim_kind, b.structured.claim_kind);
+  if (kind === "HARD_FACT" && hasSameTimeEvidence(a, b)) {
+    return result("ENRICHMENT", true,
+      "Both hard-fact claims contain the same time evidence; the longer wording adds description rather than a conflicting value.", a, b);
+  }
   if (kind === "HARD_FACT") {
     return result("CONFLICT", false, "Different single-value hard facts cannot both be used under the same scope.", a, b,
       hasTemporalScope(a, b) ? "TEMPORAL_CONFLICT" : "SOURCE_CONFLICT");
@@ -104,7 +108,7 @@ export function classifyClaimPair(left, right) {
 
 export function detectClaimExtractionIssue(claim) {
   const quote = String(claim?.source_quote || claim?.sourceQuote || "");
-  const normalized = String(claim?.value_text || claim?.value || "");
+  const normalized = claimSemanticText(claim);
   if (hasNegation(quote) && !hasNegation(normalized)) return "NEGATION_EXTRACTION_ERROR";
   if (LIMITER_PATTERN.test(quote) && !LIMITER_PATTERN.test(normalized)) return "QUALIFIER_EXTRACTION_ERROR";
   return null;
@@ -185,6 +189,17 @@ function hasTemporalScope(a, b) {
   return /time|schedule|opening|season|date|时|日期|季节/iu.test(`${a.predicate} ${b.predicate}`);
 }
 
+function hasSameTimeEvidence(a, b) {
+  const left = timePoints(claimSemanticText(a));
+  const right = timePoints(claimSemanticText(b));
+  if (!left.size || left.size !== right.size) return false;
+  return [...left].every((value) => right.has(value));
+}
+
+function timePoints(value) {
+  return new Set(String(value || "").match(/\b\d{1,2}:\d{2}\b/gu) || []);
+}
+
 function tokenOverlap(a, b) {
   const left = new Set(normalizeText(a).split(" ").filter(Boolean));
   const right = new Set(normalizeText(b).split(" ").filter(Boolean));
@@ -204,6 +219,41 @@ function canonicalPrimaryValue(value, predicate) {
 function normalizeText(value) {
   return clean(value).normalize("NFKC").toLocaleLowerCase("en-US")
     .replace(/[^\p{L}\p{N}:]+/gu, " ").trim().replace(/\s+/g, " ");
+}
+
+function claimSemanticText(claim) {
+  const structured = claim?.structured_value && typeof claim.structured_value === "object"
+    ? claim.structured_value : parseObject(claim?.structured_value_json);
+  const qualifiers = Array.isArray(claim?.qualifiers)
+    ? claim.qualifiers : parseArray(claim?.qualifiers_json);
+  return flattenText([
+    claim?.predicate,
+    claim?.value_text || claim?.value,
+    qualifiers,
+    structured,
+  ]).join(" ");
+}
+
+function flattenText(value) {
+  if (value == null) return [];
+  if (["string", "number", "boolean"].includes(typeof value)) return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(flattenText);
+  if (typeof value === "object") return Object.values(value).flatMap(flattenText);
+  return [];
+}
+
+function parseArray(value) {
+  try {
+    const parsed = JSON.parse(String(value || "[]"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+function parseObject(value) {
+  try {
+    const parsed = JSON.parse(String(value || "{}"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
 }
 
 function hasNegation(value) { return NEGATION_PATTERN.test(String(value || "")); }

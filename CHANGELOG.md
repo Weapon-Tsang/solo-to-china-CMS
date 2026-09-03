@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.11.1 — 2026-09-03
+
+- Fixed false `NEGATION_EXTRACTION_ERROR` reviews by evaluating the complete Claim semantics—predicate, value, qualifiers, and structured fields—instead of value text alone.
+- Treats identical time evidence with richer descriptive wording as enrichment rather than a hard-fact source conflict.
+- Replaced the misleading extraction-review acknowledgement with explicit “retry source extraction” and “meaning preserved / dismiss false positive” actions; extraction reviews can no longer be closed as resolved without re-extraction.
+- Preserves explicit false-positive dismissals across Knowledge rebuilds, while reopening legacy extraction acknowledgements that never corrected the underlying Claim.
+- Fixed source retry state so delayed jobs become immediately eligible, attempts are reset, queued sources display as queued, and an already-running extraction remains visibly processing instead of being overwritten as captured.
+
 ## 1.11.0 — 2026-09-03
 
 - Added schema migration 18 with typed/granular Entity identity, Entity Relations, auditable/undoable merge history, structured Claim value/scope fields, Claim Relations, and categorized Claim review cases.

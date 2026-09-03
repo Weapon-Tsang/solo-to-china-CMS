@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyClaimPair, structureClaim } from "../src/claim-resolution.mjs";
+import { classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "../src/claim-resolution.mjs";
 import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
@@ -63,6 +63,45 @@ test("hard facts use scope-aware conflict rules and extraction errors are separa
     claim("worth a special trip", { predicate: "worth_visiting" }),
   );
   assert.equal(extraction.reviewType, "NEGATION_EXTRACTION_ERROR");
+});
+
+test("extraction review checks the complete Claim semantics instead of value text alone", () => {
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "重庆动物园 25r 8:00-18:00 无需预约 2号线动物园",
+    predicate: "does not require",
+    value_text: "advance reservation",
+  }), null);
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "景区里的网红餐厅不要去",
+    predicate: "should avoid",
+    value_text: "internet-famous restaurants in touristy areas",
+  }), null);
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "只是作者主观体验，并非唯一答案",
+    predicate: "stated as",
+    value_text: "作者主观体验，非唯一答案",
+  }), null);
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "无需提前预约",
+    predicate: "reservation information",
+    value_text: "advance reservation",
+  }), "NEGATION_EXTRACTION_ERROR");
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "only good for a photo",
+    predicate: "good for",
+    value_text: "photography",
+    qualifiers: ["only good for a photo"],
+  }), null);
+});
+
+test("matching time evidence with richer description is enrichment, not a hard-fact conflict", () => {
+  const enriched = classifyClaimPair(
+    claim("20:00-23:00", { predicate: "has evening lighting during", sourceQuote: "洪崖洞晚上20:00-23:00亮灯" }),
+    claim("lit from 20:00-23:00 and looks like the real-life Spirited Away", { predicate: "has evening lighting during", sourceQuote: "洪崖洞晚上20:00-23:00亮灯" }),
+  );
+  assert.equal(enriched.relation, "ENRICHMENT");
+  assert.equal(enriched.canCoexist, true);
+  assert.equal(enriched.reviewType, null);
 });
 
 test("knowledge aggregation persists enrichment relations without creating an exception", (t) => {
