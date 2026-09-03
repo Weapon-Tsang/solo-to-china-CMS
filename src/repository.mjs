@@ -3,6 +3,9 @@ import { transaction } from "./db.mjs";
 import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 import { contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
+import { classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "./claim-resolution.mjs";
+import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
+import { legacyOfferToAsset } from "./commercial.mjs";
 
 export class Repository {
   constructor(db, contentConfig = {}) {
@@ -196,11 +199,20 @@ export class Repository {
 
   createFrontendCapabilityRequest({ briefId = null, draftId = null, semanticNeed, useCase, reason }) {
     const timestamp = now();
+    const normalizedNeed = String(semanticNeed || "").slice(0, 160);
+    const existing = this.db.prepare(`SELECT id FROM frontend_capability_requests
+      WHERE status='open' AND semantic_need=? AND COALESCE(draft_id,'')=COALESCE(?,'') AND COALESCE(brief_id,'')=COALESCE(?,'')`)
+      .get(normalizedNeed, draftId, briefId);
+    if (existing) {
+      this.db.prepare("UPDATE frontend_capability_requests SET use_case=?, reason=?, updated_at=? WHERE id=?")
+        .run(String(useCase || "").slice(0, 1_000), String(reason || "").slice(0, 2_000), timestamp, existing.id);
+      return this.db.prepare("SELECT * FROM frontend_capability_requests WHERE id=?").get(existing.id);
+    }
     const requestId = id("fcap");
     this.db.prepare(`
       INSERT INTO frontend_capability_requests(id, brief_id, draft_id, semantic_need, use_case, reason, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(requestId, briefId, draftId, String(semanticNeed || "").slice(0, 160), String(useCase || "").slice(0, 1_000), String(reason || "").slice(0, 2_000), timestamp, timestamp);
+    `).run(requestId, briefId, draftId, normalizedNeed, String(useCase || "").slice(0, 1_000), String(reason || "").slice(0, 2_000), timestamp, timestamp);
     return this.db.prepare("SELECT * FROM frontend_capability_requests WHERE id=?").get(requestId);
   }
 
@@ -521,15 +533,21 @@ export class Repository {
       const insertClaim = this.db.prepare(`
         INSERT OR IGNORE INTO claims(id, source_id, normalized_key, subject, predicate, value_text,
           qualifiers_json, source_quote, confidence, created_at, original_normalized_key, entity_key,
-          canonical_subject, entity_aliases_json, entity_resolution_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          canonical_subject, entity_aliases_json, entity_resolution_status, entity_type, granularity,
+          entity_location_json, structured_value_json, scope_json, claim_kind, cardinality)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const claim of result.claims) {
         const normalizedKey = normalizeClaimKey(claim.key);
         const inferredEntity = inferEntityIdentity(normalizedKey, claim.subject, claim.predicate);
+        const entityMetadata = inferEntityMetadata(claim.subject, inferredEntity.entityKey);
+        const structured = structureClaim({ predicate: claim.predicate, value: claim.value, qualifiers: claim.qualifiers, sourceQuote: claim.source_quote });
         insertClaim.run(
           id("claim"), sourceId, normalizedKey, claim.subject, claim.predicate, claim.value,
           JSON.stringify(claim.qualifiers), claim.source_quote, claim.confidence, timestamp, normalizedKey,
           inferredEntity.entityKey, inferredEntity.canonicalSubject, JSON.stringify(inferredEntity.aliases), inferredEntity.status,
+          entityMetadata.entityType, entityMetadata.granularity, JSON.stringify(entityMetadata.location),
+          JSON.stringify(structured), JSON.stringify(structured.scope), structured.claim_kind, structured.cardinality,
         );
       }
       this.db.prepare(`
@@ -554,6 +572,7 @@ export class Repository {
     const rows = this.db.prepare(`
       SELECT c.id, c.normalized_key, c.original_normalized_key, c.subject, c.predicate, c.value_text,
         c.source_quote, c.confidence, c.entity_key, c.canonical_subject, c.entity_aliases_json,
+        c.entity_type, c.granularity, c.entity_location_json,
         s.captured_at, s.title AS source_title
       FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
       JOIN sources s ON s.id=c.source_id
@@ -567,6 +586,7 @@ export class Repository {
         subject: row.subject, predicate: row.predicate, value: row.value_text, source_quote: row.source_quote,
         confidence: row.confidence, current_entity_key: row.entity_key || null,
         current_canonical_subject: row.canonical_subject || null, current_aliases: json(row.entity_aliases_json, []),
+        entity_type: row.entity_type, granularity: row.granularity, location: json(row.entity_location_json, {}),
         captured_at: row.captured_at, source_title: row.source_title,
       })),
       known_aliases: this.listEntityAliases(destinationSlug),
@@ -577,13 +597,14 @@ export class Repository {
     const rows = destinationSlug
       ? this.db.prepare("SELECT * FROM entity_aliases WHERE destination_slug=? ORDER BY canonical_subject, alias_normalized").all(destinationSlug)
       : this.db.prepare("SELECT * FROM entity_aliases ORDER BY destination_slug, canonical_subject, alias_normalized").all();
-    return rows.map((row) => ({ ...row, aliases: json(row.aliases_json, []) }));
+    return rows.map((row) => ({ ...row, aliases: json(row.aliases_json, []), location: json(row.location_json, {}) }));
   }
 
   listEntityMergeCandidates(status = "pending") {
     return this.db.prepare(`
       SELECT * FROM entity_merge_candidates WHERE status=? ORDER BY confidence DESC, updated_at DESC
-    `).all(status).map((row) => ({ ...row }));
+    `).all(status).map((row) => ({ ...row, location: json(row.location_json, {}), assessment: assessEntityIdentity(row) }))
+      .filter((row) => status !== "pending" || row.assessment.decision !== "DO_NOT_MERGE");
   }
 
   enqueueEntityResolutionForAllDestinations() {
@@ -601,6 +622,7 @@ export class Repository {
       for (const row of rows) {
         const originalKey = row.original_normalized_key || row.normalized_key;
         const inferred = inferEntityIdentity(originalKey, row.subject, row.predicate);
+        const inferredMetadata = inferEntityMetadata(row.subject, inferred.entityKey, { entityType: row.entity_type, granularity: row.granularity, location: json(row.entity_location_json, {}) });
         const alias = normalizeEntityAlias(row.subject);
         const mapped = alias ? this.db.prepare("SELECT * FROM entity_aliases WHERE destination_slug=? AND alias_normalized=?").get(destinationSlug, alias) : null;
         const identity = mapped ? {
@@ -608,11 +630,14 @@ export class Repository {
           canonicalSubject: mapped.canonical_subject,
           aliases: json(mapped.aliases_json, []),
           status: mapped.resolution_source === "manual" || mapped.resolution_source === "model" ? "resolved" : "derived",
-        } : inferred;
+          entityType: mapped.entity_type, granularity: mapped.granularity, location: json(mapped.location_json, {}),
+        } : { ...inferred, ...inferredMetadata };
         this.db.prepare(`
           UPDATE claims SET original_normalized_key=CASE WHEN original_normalized_key='' THEN ? ELSE original_normalized_key END,
-            entity_key=?, canonical_subject=?, entity_aliases_json=?, entity_resolution_status=? WHERE id=?
-        `).run(originalKey, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases), identity.status, row.id);
+            entity_key=?, canonical_subject=?, entity_aliases_json=?, entity_resolution_status=?, entity_type=?, granularity=?,
+            entity_location_json=? WHERE id=?
+        `).run(originalKey, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases), identity.status,
+          identity.entityType || "other", identity.granularity || "general_topic", JSON.stringify(identity.location || {}), row.id);
         if (!mapped && identity.entityKey && alias) this.upsertEntityAlias(destinationSlug, alias, identity, "derived", 0.55, timestamp);
       }
     });
@@ -628,7 +653,10 @@ export class Repository {
       const canonicalSubject = cleanEntityName(item?.canonical_subject);
       if (!entityKey || !canonicalSubject) continue;
       const aliases = uniqueEntityAliases([canonicalSubject, ...(item.aliases || [])]);
-      const identity = { entityKey, canonicalSubject, aliases, status: "resolved" };
+      const metadata = inferEntityMetadata(canonicalSubject, entityKey, {
+        entityType: item.entity_type, granularity: item.granularity, location: item.location,
+      });
+      const identity = { entityKey, canonicalSubject, aliases, status: "resolved", ...metadata };
       entities.set(entityKey, identity);
       for (const alias of aliases) this.upsertEntityAlias(destinationSlug, normalizeEntityAlias(alias), identity, "model", Number(item.confidence), timestamp);
     }
@@ -642,12 +670,27 @@ export class Repository {
         const entityKey = normalizeEntityKey(item?.entity_key);
         const canonicalSubject = cleanEntityName(item?.canonical_subject);
         if (!row || !entityKey || !canonicalSubject) continue;
-        const identity = entities.get(entityKey) || { entityKey, canonicalSubject, aliases: uniqueEntityAliases([canonicalSubject, row.subject]), status: "resolved" };
+        const metadata = inferEntityMetadata(canonicalSubject, entityKey, {
+          entityType: item.entity_type, granularity: item.granularity, location: item.location,
+        });
+        const assessment = assessEntityIdentity({
+          alias: row.subject, candidate_entity_key: row.entity_key, candidate_entity_type: row.entity_type,
+          candidate_granularity: row.granularity, proposed_entity_key: entityKey,
+          proposed_canonical_subject: canonicalSubject, proposed_entity_type: metadata.entityType,
+          proposed_granularity: metadata.granularity, location: metadata.location, confidence: item.confidence,
+        });
+        if (assessment.decision === "DO_NOT_MERGE") {
+          if (row.entity_key && assessment.suggestedRelation) this.upsertEntityRelation(destinationSlug, row.entity_key, assessment.suggestedRelation, entityKey, "model", Number(item.confidence), assessment.reasons.join("; "));
+          continue;
+        }
+        const identity = entities.get(entityKey) || { entityKey, canonicalSubject, aliases: uniqueEntityAliases([canonicalSubject, row.subject]), status: "resolved", ...metadata };
         const canonicalKey = normalizeClaimKey(item?.canonical_key);
         this.db.prepare(`
           UPDATE claims SET original_normalized_key=CASE WHEN original_normalized_key='' THEN normalized_key ELSE original_normalized_key END,
-            normalized_key=?, entity_key=?, canonical_subject=?, entity_aliases_json=?, entity_resolution_status='resolved' WHERE id=?
-        `).run(canonicalKey || row.normalized_key, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases), row.id);
+            normalized_key=?, entity_key=?, canonical_subject=?, entity_aliases_json=?, entity_resolution_status='resolved',
+            entity_type=?, granularity=?, entity_location_json=? WHERE id=?
+        `).run(canonicalKey || row.normalized_key, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases),
+          identity.entityType, identity.granularity, JSON.stringify(identity.location || {}), row.id);
         for (const alias of uniqueEntityAliases([row.subject, ...identity.aliases])) this.upsertEntityAlias(destinationSlug, normalizeEntityAlias(alias), identity, "model", Number(item.confidence), timestamp);
       }
       for (const item of resolution?.candidates || []) {
@@ -656,43 +699,135 @@ export class Repository {
         const entityKey = normalizeEntityKey(item?.proposed_entity_key);
         const canonicalSubject = cleanEntityName(item?.proposed_canonical_subject);
         if (!alias || !entityKey || !canonicalSubject || confidence < 0.6 || confidence >= 0.85) continue;
+        const candidateMetadata = inferEntityMetadata(alias, item?.candidate_entity_key, {
+          entityType: item?.candidate_entity_type, granularity: item?.candidate_granularity, location: item?.candidate_location,
+        });
+        const proposedMetadata = inferEntityMetadata(canonicalSubject, entityKey, {
+          entityType: item?.proposed_entity_type, granularity: item?.proposed_granularity, location: item?.proposed_location,
+        });
+        const assessment = assessEntityIdentity({
+          ...item, alias, proposed_entity_key: entityKey, proposed_canonical_subject: canonicalSubject,
+          candidate_entity_type: candidateMetadata.entityType, candidate_granularity: candidateMetadata.granularity,
+          proposed_entity_type: proposedMetadata.entityType, proposed_granularity: proposedMetadata.granularity,
+        });
+        if (assessment.decision === "DO_NOT_MERGE") {
+          const candidateEntityKey = normalizeEntityKey(item?.candidate_entity_key);
+          if (candidateEntityKey && assessment.suggestedRelation) this.upsertEntityRelation(destinationSlug, candidateEntityKey, assessment.suggestedRelation, entityKey, "model", confidence, assessment.reasons.join("; "));
+          continue;
+        }
         const candidateId = `entity_candidate_${sha256(`${destinationSlug}:${normalizeEntityAlias(alias)}:${entityKey}`).slice(0, 24)}`;
         this.db.prepare(`
           INSERT INTO entity_merge_candidates(id, destination_slug, alias, alias_normalized, proposed_entity_key,
-            proposed_canonical_subject, confidence, rationale, status, model, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+            proposed_canonical_subject, confidence, rationale, status, model, created_at, updated_at,
+            candidate_entity_key, candidate_entity_type, candidate_granularity, proposed_entity_type,
+            proposed_granularity, location_json, ai_recommendation, suggested_relation)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(destination_slug, alias_normalized, proposed_entity_key) DO UPDATE SET confidence=excluded.confidence,
-            rationale=excluded.rationale, status='pending', model=excluded.model, updated_at=excluded.updated_at
+            rationale=excluded.rationale, status='pending', model=excluded.model, updated_at=excluded.updated_at,
+            candidate_entity_key=excluded.candidate_entity_key, candidate_entity_type=excluded.candidate_entity_type,
+            candidate_granularity=excluded.candidate_granularity, proposed_entity_type=excluded.proposed_entity_type,
+            proposed_granularity=excluded.proposed_granularity, location_json=excluded.location_json,
+            ai_recommendation=excluded.ai_recommendation, suggested_relation=excluded.suggested_relation
         `).run(candidateId, destinationSlug, alias, normalizeEntityAlias(alias), entityKey, canonicalSubject, confidence,
-          String(item?.rationale || "Possible multilingual alias requires an operator decision.").slice(0, 1_000), model, timestamp, timestamp);
+          String(item?.rationale || "Possible multilingual alias requires an operator decision.").slice(0, 1_000), model, timestamp, timestamp,
+          normalizeEntityKey(item?.candidate_entity_key), candidateMetadata.entityType, candidateMetadata.granularity,
+          proposedMetadata.entityType, proposedMetadata.granularity, JSON.stringify({ candidate: candidateMetadata.location, proposed: proposedMetadata.location }),
+          String(item?.recommendation || "UNCERTAIN").toUpperCase(), ENTITY_RELATION_TYPES.has(item?.suggested_relation) ? item.suggested_relation : assessment.suggestedRelation);
       }
     });
     this.resolveEntitiesDeterministically(destinationSlug);
     return { resolvedEntities: entities.size, candidates: this.listEntityMergeCandidates().filter((item) => item.destination_slug === destinationSlug).length };
   }
 
-  decideEntityMergeCandidate(candidateId, decision) {
-    if (!["accepted", "rejected"].includes(decision)) throw new Error("Entity merge decision must be accepted or rejected.");
+  decideEntityMergeCandidate(candidateId, decision, options = {}) {
+    const normalizedDecision = ({ accepted: "same_entity", rejected: "different_entity" })[decision] || decision;
+    if (!["same_entity", "different_entity", "create_relation", "defer"].includes(normalizedDecision)) {
+      throw new Error("Entity decision must be same_entity, different_entity, create_relation, or defer.");
+    }
     const candidate = this.db.prepare("SELECT * FROM entity_merge_candidates WHERE id=? AND status='pending'").get(candidateId);
     if (!candidate) return null;
     const timestamp = now();
+    if (normalizedDecision === "defer") {
+      this.db.prepare("UPDATE entity_merge_candidates SET decision_reason=?, updated_at=? WHERE id=?")
+        .run(String(options.reason || "Deferred by operator.").slice(0, 1_000), timestamp, candidateId);
+      return { ...candidate, status: "pending", decision: "defer" };
+    }
+    const assessment = assessEntityIdentity(candidate);
+    if (normalizedDecision === "same_entity" && assessment.decision === "DO_NOT_MERGE") {
+      throw new Error(`Entity merge violates hard constraints: ${assessment.reasons.join("; ")}`);
+    }
+    const finalStatus = normalizedDecision === "same_entity" ? "accepted" : "rejected";
+    const aliasNormals = uniqueEntityAliases([candidate.alias, candidate.proposed_canonical_subject]).map(normalizeEntityAlias);
+    const beforeState = normalizedDecision === "same_entity" ? {
+      aliases: aliasNormals.flatMap((alias) => this.db.prepare("SELECT * FROM entity_aliases WHERE destination_slug=? AND alias_normalized=?").all(candidate.destination_slug, alias)),
+      claims: this.db.prepare(`SELECT id, normalized_key, entity_key, canonical_subject, entity_aliases_json,
+        entity_resolution_status, entity_type, granularity, entity_location_json FROM claims WHERE id IN (
+          SELECT c.id FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
+          WHERE ss.destination_slug=? AND lower(trim(c.subject))=lower(trim(?))
+        )`).all(candidate.destination_slug, candidate.alias),
+      alias_normals: aliasNormals,
+    } : null;
+    let historyId = null;
     transaction(this.db, () => {
-      this.db.prepare("UPDATE entity_merge_candidates SET status=?, updated_at=? WHERE id=?").run(decision, timestamp, candidateId);
-      if (decision === "accepted") {
+      this.db.prepare("UPDATE entity_merge_candidates SET status=?, decision_reason=?, decided_at=?, updated_at=? WHERE id=?")
+        .run(finalStatus, String(options.reason || assessment.reasons.join("; ")).slice(0, 1_000), timestamp, timestamp, candidateId);
+      if (normalizedDecision === "same_entity") {
+        const metadata = inferEntityMetadata(candidate.proposed_canonical_subject, candidate.proposed_entity_key, {
+          entityType: candidate.proposed_entity_type, granularity: candidate.proposed_granularity,
+          location: json(candidate.location_json, {}).proposed,
+        });
         const identity = {
           entityKey: candidate.proposed_entity_key,
           canonicalSubject: candidate.proposed_canonical_subject,
           aliases: uniqueEntityAliases([candidate.alias, candidate.proposed_canonical_subject]),
-          status: "resolved",
+          status: "resolved", ...metadata,
         };
         for (const alias of identity.aliases) this.upsertEntityAlias(candidate.destination_slug, normalizeEntityAlias(alias), identity, "manual", 1, timestamp);
+        historyId = id("entity_merge");
+        this.db.prepare(`INSERT INTO entity_merge_history(id, candidate_id, destination_slug, merged_from_entity_ids_json,
+          target_entity_key, decision, operator, ai_recommendation, ai_confidence, reason, before_state_json,
+          after_state_json, status, created_at) VALUES (?, ?, ?, ?, ?, 'same_entity', ?, ?, ?, ?, ?, ?, 'active', ?)`)
+          .run(historyId, candidateId, candidate.destination_slug,
+            JSON.stringify([candidate.candidate_entity_key || normalizeEntityKey(candidate.alias)].filter(Boolean)), candidate.proposed_entity_key,
+            String(options.operator || "administrator").slice(0, 200), candidate.ai_recommendation,
+            candidate.confidence, String(options.reason || candidate.rationale).slice(0, 1_000), JSON.stringify(beforeState), JSON.stringify(identity), timestamp);
+      } else if (normalizedDecision === "create_relation") {
+        const relationType = options.relationType || candidate.suggested_relation || assessment.suggestedRelation;
+        if (!ENTITY_RELATION_TYPES.has(relationType)) throw new Error("A supported entity relation type is required.");
+        const subjectKey = candidate.candidate_entity_key || `other.candidate_${sha256(`${candidate.destination_slug}:${candidate.alias_normalized}`).slice(0, 16)}`;
+        this.upsertEntityRelation(candidate.destination_slug, subjectKey, relationType, candidate.proposed_entity_key,
+          "manual", 1, String(options.reason || candidate.rationale).slice(0, 1_000));
       }
     });
-    if (decision === "accepted") {
+    if (normalizedDecision === "same_entity") {
       this.resolveEntitiesDeterministically(candidate.destination_slug);
       this.enqueue("rebuild_knowledge", candidate.destination_slug);
     }
-    return { ...candidate, status: decision };
+    return { ...candidate, status: finalStatus, decision: normalizedDecision, historyId };
+  }
+
+  undoEntityMerge(historyId, operator = "administrator") {
+    const history = this.db.prepare("SELECT * FROM entity_merge_history WHERE id=? AND status='active'").get(historyId);
+    if (!history) return null;
+    const before = json(history.before_state_json, {});
+    const timestamp = now();
+    transaction(this.db, () => {
+      for (const alias of before.alias_normals || []) this.db.prepare("DELETE FROM entity_aliases WHERE destination_slug=? AND alias_normalized=?").run(history.destination_slug, alias);
+      for (const row of before.aliases || []) this.db.prepare(`INSERT INTO entity_aliases(
+        id, destination_slug, alias_normalized, entity_key, canonical_subject, aliases_json,
+        resolution_source, confidence, created_at, updated_at, entity_type, granularity, location_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(row.id, row.destination_slug, row.alias_normalized, row.entity_key, row.canonical_subject, row.aliases_json,
+          row.resolution_source, row.confidence, row.created_at, timestamp, row.entity_type, row.granularity, row.location_json);
+      for (const row of before.claims || []) this.db.prepare(`UPDATE claims SET normalized_key=?, entity_key=?, canonical_subject=?,
+        entity_aliases_json=?, entity_resolution_status=?, entity_type=?, granularity=?, entity_location_json=? WHERE id=?`)
+        .run(row.normalized_key, row.entity_key, row.canonical_subject, row.entity_aliases_json, row.entity_resolution_status,
+          row.entity_type, row.granularity, row.entity_location_json, row.id);
+      this.db.prepare("UPDATE entity_merge_history SET status='undone', undone_at=?, undo_operator=? WHERE id=?")
+        .run(timestamp, String(operator || "administrator").slice(0, 200), historyId);
+    });
+    this.enqueue("rebuild_knowledge", history.destination_slug);
+    return { id: historyId, status: "undone", destinationSlug: history.destination_slug };
   }
 
   upsertEntityAlias(destinationSlug, aliasNormalized, identity, source, confidence, timestamp = now()) {
@@ -700,13 +835,41 @@ export class Repository {
     const aliasId = `entity_alias_${sha256(`${destinationSlug}:${aliasNormalized}`).slice(0, 24)}`;
     this.db.prepare(`
       INSERT INTO entity_aliases(id, destination_slug, alias_normalized, entity_key, canonical_subject, aliases_json,
-        resolution_source, confidence, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        resolution_source, confidence, created_at, updated_at, entity_type, granularity, location_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(destination_slug, alias_normalized) DO UPDATE SET entity_key=excluded.entity_key,
         canonical_subject=excluded.canonical_subject, aliases_json=excluded.aliases_json, resolution_source=excluded.resolution_source,
-        confidence=excluded.confidence, updated_at=excluded.updated_at
+        confidence=excluded.confidence, updated_at=excluded.updated_at, entity_type=excluded.entity_type,
+        granularity=excluded.granularity, location_json=excluded.location_json
     `).run(aliasId, destinationSlug, aliasNormalized, identity.entityKey, identity.canonicalSubject,
-      JSON.stringify(identity.aliases || []), source, confidence, timestamp, timestamp);
+      JSON.stringify(identity.aliases || []), source, confidence, timestamp, timestamp,
+      normalizeEntityType(identity.entityType), normalizeGranularity(identity.granularity), JSON.stringify(identity.location || {}));
+  }
+
+  upsertEntityRelation(destinationSlug, subjectEntityKey, relationType, objectEntityKey, source = "derived", confidence = 1, rationale = "") {
+    if (!ENTITY_RELATION_TYPES.has(relationType) || !subjectEntityKey || !objectEntityKey || subjectEntityKey === objectEntityKey) return null;
+    const timestamp = now();
+    const relationId = `entity_relation_${sha256(`${destinationSlug}:${subjectEntityKey}:${relationType}:${objectEntityKey}`).slice(0, 24)}`;
+    this.db.prepare(`INSERT INTO entity_relations(id, destination_slug, subject_entity_key, relation_type,
+      object_entity_key, source, confidence, rationale, provenance_json, active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', 1, ?, ?)
+      ON CONFLICT(destination_slug, subject_entity_key, relation_type, object_entity_key) DO UPDATE SET
+        source=excluded.source, confidence=excluded.confidence, rationale=excluded.rationale, active=1, updated_at=excluded.updated_at`)
+      .run(relationId, destinationSlug, subjectEntityKey, relationType, objectEntityKey, source, confidence, rationale, timestamp, timestamp);
+    return this.db.prepare("SELECT * FROM entity_relations WHERE id=?").get(relationId);
+  }
+
+  listEntityRelations(destinationSlug = null) {
+    return destinationSlug
+      ? this.db.prepare("SELECT * FROM entity_relations WHERE destination_slug=? AND active=1 ORDER BY updated_at DESC").all(destinationSlug)
+      : this.db.prepare("SELECT * FROM entity_relations WHERE active=1 ORDER BY updated_at DESC").all();
+  }
+
+  listEntityMergeHistory(destinationSlug = null) {
+    const rows = destinationSlug
+      ? this.db.prepare("SELECT * FROM entity_merge_history WHERE destination_slug=? ORDER BY created_at DESC").all(destinationSlug)
+      : this.db.prepare("SELECT * FROM entity_merge_history ORDER BY created_at DESC").all();
+    return rows.map((row) => ({ ...row, merged_from_entity_ids: json(row.merged_from_entity_ids_json, []) }));
   }
 
   rebuildKnowledge(destinationSlug) {
@@ -718,6 +881,10 @@ export class Repository {
       WHERE ss.destination_slug = ?
     `).all(destinationSlug);
     const timestamp = now();
+    for (const row of sourceRows) {
+      row.structured_value = structureClaim({ predicate: row.predicate, value: row.value_text, qualifiers: json(row.qualifiers_json, []), sourceQuote: row.source_quote });
+      row.scope = row.structured_value.scope;
+    }
     transaction(this.db, () => {
       const destinationId = `dst_${sha256(destinationSlug).slice(0, 20)}`;
       if (!sourceRows.length) {
@@ -730,12 +897,67 @@ export class Repository {
         ON CONFLICT(slug) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at
       `).run(destinationId, destinationSlug, displayName, timestamp, timestamp);
       this.db.prepare("DELETE FROM knowledge_facts WHERE destination_id = ?").run(destinationId);
+      this.db.prepare(`DELETE FROM claim_relations WHERE claim_a_id IN (
+        SELECT c.id FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
+      )`).run(destinationSlug);
+      this.db.prepare(`DELETE FROM claim_review_cases WHERE claim_a_id IN (
+        SELECT c.id FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
+      )`).run(destinationSlug);
+      const updateStructuredClaim = this.db.prepare(`UPDATE claims SET structured_value_json=?, scope_json=?, claim_kind=?, cardinality=? WHERE id=?`);
+      for (const row of sourceRows) {
+        updateStructuredClaim.run(JSON.stringify(row.structured_value), JSON.stringify(row.scope), row.structured_value.claim_kind, row.structured_value.cardinality, row.id);
+        const extractionIssue = detectClaimExtractionIssue(row);
+        if (extractionIssue) this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
+          review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?, 'pending', ?, ?)`)
+          .run(`claim_review_${sha256(`${row.id}:${extractionIssue}`).slice(0, 24)}`, destinationSlug, row.id,
+            extractionIssue, "The original source contains negation or a limiting qualifier that is absent from the normalized Claim.", timestamp, timestamp);
+      }
+      for (let left = 0; left < sourceRows.length; left += 1) {
+        for (let right = left + 1; right < sourceRows.length; right += 1) {
+          const a = sourceRows[left];
+          const b = sourceRows[right];
+          if (a.normalized_key === b.normalized_key || normalizeValue(a.predicate) !== normalizeValue(b.predicate)) continue;
+          const broad = [a, b].find((row) => ["collection", "category", "general_topic"].includes(row.granularity));
+          const specific = [a, b].find((row) => row.granularity === "specific_entity");
+          if (!broad || !specific) continue;
+          const claimA = [broad.id, specific.id].sort()[0];
+          const claimB = [broad.id, specific.id].sort()[1];
+          const relationId = `claim_relation_${sha256(`${claimA}:${claimB}`).slice(0, 24)}`;
+          this.db.prepare(`INSERT OR IGNORE INTO claim_relations(id, destination_slug, claim_a_id, claim_b_id,
+            relation_type, can_coexist, reason, scope_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'GENERALIZATION', 1, ?, '{}', ?, ?)`)
+            .run(relationId, destinationSlug, claimA, claimB,
+              "A specific Claim may support a broader collection/category Claim, but the two are not merged.", timestamp, timestamp);
+          if (specific.entity_key && broad.entity_key) this.upsertEntityRelation(destinationSlug, specific.entity_key,
+            "applies_to", broad.entity_key, "derived", 0.8, "Specific Claim supports a broader collection/category Claim.");
+        }
+      }
 
       const groups = Map.groupBy(sourceRows, (row) => row.normalized_key);
       for (const [key, rows] of groups) {
         const variants = Map.groupBy(rows, (row) => normalizeValue(row.value_text));
         const ranked = [...variants.entries()].sort((a, b) => b[1].length - a[1].length);
-        const status = variants.size > 1 ? "conflicted" : rows.length > 1 ? "corroborated" : "single_source";
+        const relations = [];
+        for (let left = 0; left < rows.length; left += 1) {
+          for (let right = left + 1; right < rows.length; right += 1) {
+            const comparison = classifyClaimPair(rows[left], rows[right]);
+            relations.push({ claim_a_id: rows[left].id, claim_b_id: rows[right].id, ...comparison });
+            const relationId = `claim_relation_${sha256(`${rows[left].id}:${rows[right].id}`).slice(0, 24)}`;
+            this.db.prepare(`INSERT INTO claim_relations(id, destination_slug, claim_a_id, claim_b_id,
+              relation_type, can_coexist, reason, scope_json, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+              .run(relationId, destinationSlug, rows[left].id, rows[right].id, comparison.relation,
+                comparison.canCoexist ? 1 : 0, comparison.reason, JSON.stringify(comparison.scope), timestamp, timestamp);
+            if (comparison.reviewType && !comparison.reviewType.includes("EXTRACTION_ERROR")) {
+              const reviewId = `claim_review_${sha256(`${rows[left].id}:${rows[right].id}:${comparison.reviewType}`).slice(0, 24)}`;
+              this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
+                review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
+                .run(reviewId, destinationSlug, rows[left].id, rows[right].id, comparison.reviewType, comparison.reason, timestamp, timestamp);
+            }
+          }
+        }
+        const conflicts = relations.filter((relation) => !relation.canCoexist);
+        const status = conflicts.length ? "conflicted" : rows.length > 1 ? "corroborated" : "single_source";
         const freshness = classifyFreshness(rows, this.contentConfig);
         const verificationPriority = freshness.volatile || status === "conflicted"
           ? "requires_official" : status === "single_source" || freshness.state === "stale" ? "review" : "normal";
@@ -746,6 +968,8 @@ export class Repository {
           quote: row.source_quote,
           confidence: row.confidence,
           qualifiers: json(row.qualifiers_json, []),
+          structured_value: row.structured_value,
+          scope: row.scope,
           original_key: row.original_normalized_key || row.normalized_key,
           source_subject: row.subject,
           captured_at: row.captured_at,
@@ -754,8 +978,9 @@ export class Repository {
           INSERT INTO knowledge_facts(id, destination_id, normalized_key, subject, predicate, consensus_status,
             preferred_value, support_count, contradiction_count, evidence_json, updated_at,
             freshness_state, latest_evidence_at, verification_priority, entity_key, canonical_subject,
-            entity_aliases_json, entity_resolution_status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            entity_aliases_json, entity_resolution_status, entity_type, granularity, entity_location_json,
+            claim_relations_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(destination_id, normalized_key) DO UPDATE SET subject=excluded.subject,
             predicate=excluded.predicate, consensus_status=excluded.consensus_status,
             preferred_value=excluded.preferred_value, support_count=excluded.support_count,
@@ -763,13 +988,16 @@ export class Repository {
             updated_at=excluded.updated_at, freshness_state=excluded.freshness_state,
             latest_evidence_at=excluded.latest_evidence_at, verification_priority=excluded.verification_priority,
             entity_key=excluded.entity_key, canonical_subject=excluded.canonical_subject,
-            entity_aliases_json=excluded.entity_aliases_json, entity_resolution_status=excluded.entity_resolution_status
+            entity_aliases_json=excluded.entity_aliases_json, entity_resolution_status=excluded.entity_resolution_status,
+            entity_type=excluded.entity_type, granularity=excluded.granularity,
+            entity_location_json=excluded.entity_location_json, claim_relations_json=excluded.claim_relations_json
         `).run(
           `fact_${sha256(`${destinationId}:${key}`).slice(0, 24)}`, destinationId, key, entity.canonicalSubject || rows[0].subject,
-          rows[0].predicate, status, ranked[0][1][0].value_text, ranked[0][1].length,
-          Math.max(0, variants.size - 1), JSON.stringify(evidence), timestamp,
+          rows[0].predicate, status, ranked[0][1][0].value_text, status === "conflicted" ? ranked[0][1].length : rows.length,
+          conflicts.length, JSON.stringify(evidence), timestamp,
           freshness.state, freshness.latestEvidenceAt, verificationPriority, entity.entityKey,
-          entity.canonicalSubject, JSON.stringify(entity.aliases), entity.status,
+          entity.canonicalSubject, JSON.stringify(entity.aliases), entity.status, entity.entityType,
+          entity.granularity, JSON.stringify(entity.location || {}), JSON.stringify(relations),
         );
       }
     });
@@ -1037,6 +1265,9 @@ export class Repository {
         ...compositionRow,
         slots: json(compositionRow.slots_json, []),
         offer_ids: json(compositionRow.offer_ids_json, []),
+        asset_ids: json(compositionRow.asset_ids_json, []),
+        commercial_blocks: json(compositionRow.commercial_blocks_json, []),
+        content_blocks: json(compositionRow.content_blocks_json, []),
       } : null,
     };
   }
@@ -1169,6 +1400,131 @@ export class Repository {
     `).all();
   }
 
+  upsertAffiliateProviderAccount(account) {
+    const timestamp = now();
+    const existing = this.db.prepare("SELECT id FROM affiliate_provider_accounts WHERE provider_key=?").get(account.providerKey);
+    const providerId = existing?.id || account.id;
+    this.db.prepare(`INSERT INTO affiliate_provider_accounts(id, provider_key, display_name, connection_mode,
+      site_name, default_language, default_disclosure, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(provider_key) DO UPDATE SET display_name=excluded.display_name, connection_mode=excluded.connection_mode,
+        site_name=excluded.site_name, default_language=excluded.default_language,
+        default_disclosure=excluded.default_disclosure, status=excluded.status, updated_at=excluded.updated_at`)
+      .run(providerId, account.providerKey, account.displayName, account.connectionMode, account.siteName,
+        account.defaultLanguage, account.defaultDisclosure, account.status, timestamp, timestamp);
+    return this.getAffiliateProviderAccount(providerId);
+  }
+
+  getAffiliateProviderAccount(providerId) {
+    return this.db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM affiliate_assets a
+      WHERE a.provider_account_id=p.id AND a.active=1) AS active_asset_count
+      FROM affiliate_provider_accounts p WHERE p.id=?`).get(providerId) || null;
+  }
+
+  listAffiliateProviderAccounts() {
+    return this.db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM affiliate_assets a
+      WHERE a.provider_account_id=p.id AND a.active=1) AS active_asset_count
+      FROM affiliate_provider_accounts p ORDER BY p.display_name`).all();
+  }
+
+  upsertAffiliateAsset(asset) {
+    const provider = this.getAffiliateProviderAccount(asset.providerAccountId);
+    if (!provider) throw new Error("Affiliate asset provider account does not exist.");
+    const timestamp = now();
+    this.db.prepare(`INSERT INTO affiliate_assets(id, provider_account_id, provider, asset_type, product_category,
+      scope_type, scope_key, destination_slug, area_key, route_key, entity_key, entity_name, provider_entity_id,
+      title, description, cta_label, target_url, embed_config_json, language, priority, active, valid_from,
+      valid_until, source_updated_at, legacy_offer_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET provider_account_id=excluded.provider_account_id, provider=excluded.provider,
+        asset_type=excluded.asset_type, product_category=excluded.product_category, scope_type=excluded.scope_type,
+        scope_key=excluded.scope_key, destination_slug=excluded.destination_slug, area_key=excluded.area_key,
+        route_key=excluded.route_key, entity_key=excluded.entity_key, entity_name=excluded.entity_name,
+        provider_entity_id=excluded.provider_entity_id, title=excluded.title, description=excluded.description,
+        cta_label=excluded.cta_label, target_url=excluded.target_url, embed_config_json=excluded.embed_config_json,
+        language=excluded.language, priority=excluded.priority, active=excluded.active, valid_from=excluded.valid_from,
+        valid_until=excluded.valid_until, source_updated_at=excluded.source_updated_at, updated_at=excluded.updated_at`)
+      .run(asset.id, asset.providerAccountId, asset.provider, asset.assetType, asset.productCategory, asset.scopeType,
+        asset.scopeKey, asset.destinationSlug, asset.areaKey, asset.routeKey, asset.entityKey, asset.entityName,
+        asset.providerEntityId, asset.title, asset.description, asset.ctaLabel, asset.targetUrl,
+        JSON.stringify(asset.embedConfig || {}), asset.language, asset.priority, asset.active ? 1 : 0, asset.validFrom,
+        asset.validUntil, asset.sourceUpdatedAt, asset.legacyOfferId, timestamp, timestamp);
+    this.db.prepare(`INSERT OR IGNORE INTO affiliate_asset_mappings(id, affiliate_asset_id, scope_type, scope_key, destination_slug, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(`asset_mapping_${sha256(`${asset.id}:${asset.scopeType}:${asset.scopeKey}`).slice(0, 24)}`,
+        asset.id, asset.scopeType, asset.scopeKey || asset.destinationSlug || asset.productCategory, asset.destinationSlug, timestamp);
+    return this.getAffiliateAsset(asset.id);
+  }
+
+  getAffiliateAsset(assetId) {
+    const row = this.db.prepare("SELECT * FROM affiliate_assets WHERE id=?").get(assetId);
+    return row ? { ...row, embed_config: json(row.embed_config_json, {}) } : null;
+  }
+
+  listAffiliateAssets({ activeOnly = false, providerAccountId = null } = {}) {
+    const clauses = [];
+    const values = [];
+    if (activeOnly) { clauses.push("active=1 AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)"); values.push(now(), now()); }
+    if (providerAccountId) { clauses.push("provider_account_id=?"); values.push(providerAccountId); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.db.prepare(`SELECT * FROM affiliate_assets ${where} ORDER BY provider, active DESC, priority DESC, product_category, title`)
+      .all(...values).map((row) => ({ ...row, embed_config: json(row.embed_config_json, {}) }));
+  }
+
+  listAffiliateAssetMappings() {
+    return this.db.prepare(`SELECT m.*, a.title, a.provider, a.product_category, a.asset_type
+      FROM affiliate_asset_mappings m JOIN affiliate_assets a ON a.id=m.affiliate_asset_id
+      ORDER BY m.destination_slug, m.scope_type, m.scope_key`).all();
+  }
+
+  listAffiliateOpportunities(status = "open") {
+    return this.db.prepare("SELECT * FROM affiliate_opportunities WHERE status=? ORDER BY score DESC, updated_at DESC")
+      .all(status).map((row) => ({ ...row, factors: json(row.factors_json, {}) }));
+  }
+
+  recordCommercialEvent(event) {
+    this.db.prepare(`INSERT INTO commercial_events(id, event_type, article_id, draft_id, offer_id,
+      affiliate_asset_id, provider, category, slot_key, component_variant, placement, entity_key, route_key,
+      destination_slug, device, locale, strategy_version, value_amount, occurred_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(event.id, event.eventType, event.articleId, event.draftId, event.offerId, event.affiliateAssetId,
+        event.provider, event.category, event.slotKey, event.componentVariant, event.placement, event.entityKey,
+        event.routeKey, event.destinationSlug, event.device, event.locale, event.strategyVersion,
+        event.valueAmount, event.occurredAt, now());
+    return { id: event.id, eventType: event.eventType, occurredAt: event.occurredAt };
+  }
+
+  commercialPerformance() {
+    const rows = this.db.prepare(`SELECT provider, category, slot_key, component_variant, destination_slug,
+      SUM(event_type='impression') AS impressions, SUM(event_type='click') AS clicks,
+      SUM(event_type='booking') AS bookings, SUM(CASE WHEN event_type='commission' THEN COALESCE(value_amount,0) ELSE 0 END) AS commission
+      FROM commercial_events GROUP BY provider, category, slot_key, component_variant, destination_slug
+      ORDER BY commission DESC, clicks DESC`).all();
+    return rows.map((row) => ({ ...row, ctr: row.impressions ? row.clicks / row.impressions : 0,
+      conversion_rate: row.clicks ? row.bookings / row.clicks : 0, epc: row.clicks ? row.commission / row.clicks : 0,
+      rpm: row.impressions ? row.commission * 1_000 / row.impressions : 0 }));
+  }
+
+  upsertCommissionRule(rule) {
+    const timestamp = now();
+    const validFrom = rule.validFrom || "";
+    this.db.prepare(`INSERT INTO commission_rules(id, provider, product_category, commission_model,
+      effective_rate, valid_from, valid_until, promotion_multiplier, source_updated_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(provider, product_category, valid_from) DO UPDATE SET commission_model=excluded.commission_model,
+        effective_rate=excluded.effective_rate, valid_until=excluded.valid_until,
+        promotion_multiplier=excluded.promotion_multiplier, source_updated_at=excluded.source_updated_at,
+        updated_at=excluded.updated_at`)
+      .run(rule.id, rule.provider, rule.productCategory, rule.commissionModel, rule.effectiveRate, validFrom,
+        rule.validUntil, rule.promotionMultiplier, rule.sourceUpdatedAt, timestamp, timestamp);
+    return this.db.prepare("SELECT * FROM commission_rules WHERE provider=? AND product_category=? AND valid_from=?")
+      .get(rule.provider, rule.productCategory, validFrom);
+  }
+
+  listCommissionRules() {
+    return this.db.prepare("SELECT * FROM commission_rules ORDER BY provider, product_category, valid_from DESC").all();
+  }
+
   upsertCommercialOffer(offer) {
     const timestamp = now();
     const existing = this.db.prepare("SELECT id FROM commercial_offers WHERE offer_key=?").get(offer.offerKey);
@@ -1187,6 +1543,12 @@ export class Repository {
       offer.active ? 1 : 0, timestamp, offer.offerKey, offer.title, offer.targetUrl, offer.ctaLabel,
       offer.description, offer.priceText, offer.validUntil, offer.priority, offer.sourceUpdatedAt,
     );
+    const providerKey = slugify(offer.provider);
+    const provider = this.upsertAffiliateProviderAccount({
+      id: `provider_${sha256(providerKey).slice(0, 24)}`, providerKey, displayName: offer.provider,
+      connectionMode: "FEED", siteName: "", defaultLanguage: "en", defaultDisclosure: "", status: "CONFIGURED",
+    });
+    this.upsertAffiliateAsset(legacyOfferToAsset({ ...offer, id: offerId }, provider.id));
     return this.db.prepare("SELECT * FROM commercial_offers WHERE id=?").get(offerId);
   }
 
@@ -1198,27 +1560,54 @@ export class Repository {
   }
 
   activeOffersForDestination(destinationSlug) {
-    return this.db.prepare(`
-      SELECT * FROM commercial_offers
-      WHERE destination_slug=? AND active=1 AND target_url<>'' AND (valid_until IS NULL OR valid_until>?)
-      ORDER BY priority DESC, category, title
-    `).all(destinationSlug, now());
+    return this.db.prepare(`SELECT * FROM affiliate_assets
+      WHERE active=1 AND (destination_slug=? OR scope_type IN ('COUNTRY','CATEGORY','GLOBAL'))
+        AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)
+      ORDER BY priority DESC, product_category, title`).all(destinationSlug, now(), now());
   }
 
   saveCommercialComposition(draftId, composition) {
     const timestamp = now();
     const compositionId = `composition_${sha256(draftId).slice(0, 24)}`;
-    this.db.prepare(`
-      INSERT INTO commercial_compositions(id, draft_id, publishable_body_markdown, slots_json, offer_ids_json,
-        disclosure_text, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(draft_id) DO UPDATE SET publishable_body_markdown=excluded.publishable_body_markdown,
-        slots_json=excluded.slots_json, offer_ids_json=excluded.offer_ids_json,
-        disclosure_text=excluded.disclosure_text, status=excluded.status, updated_at=excluded.updated_at
-    `).run(
-      compositionId, draftId, composition.publishableBodyMarkdown, JSON.stringify(composition.slots),
-      JSON.stringify(composition.offerIds), composition.disclosureText, composition.status, timestamp, timestamp,
-    );
-    this.db.prepare("UPDATE article_drafts SET status='commercial_ready', updated_at=? WHERE id=?").run(timestamp, draftId);
+    transaction(this.db, () => {
+      this.db.prepare("DELETE FROM commercial_slots WHERE draft_id=?").run(draftId);
+      this.db.prepare("DELETE FROM affiliate_opportunities WHERE draft_id=?").run(draftId);
+      this.db.prepare("DELETE FROM commercial_intents WHERE draft_id=?").run(draftId);
+      for (const intent of composition.intents || []) this.db.prepare(`INSERT INTO commercial_intents(
+        id, draft_id, block_index, block_key, intent_type, product_category, destination_slug, area_key,
+        route_key, entity_key, intent_strength, decision_stage, recommended_component, reason, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(intent.id, draftId, intent.blockIndex, intent.blockKey, intent.intentType, intent.productCategory,
+          intent.destinationSlug, intent.areaKey, intent.routeKey, intent.entityKey, intent.intentStrength,
+          intent.decisionStage, intent.recommendedComponent, intent.reason, timestamp, timestamp);
+      for (const slot of composition.slots || []) this.db.prepare(`INSERT INTO commercial_slots(
+        id, draft_id, intent_id, affiliate_asset_id, slot_key, component_type, placement, block_index,
+        strategy_version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(`commercial_slot_${sha256(`${draftId}:${slot.slot_key}`).slice(0, 24)}`, draftId,
+          (composition.intents || []).find((intent) => intent.blockIndex === slot.block_index && intent.productCategory === slot.product_category)?.id || null,
+          slot.affiliate_asset_id, slot.slot_key, slot.component_type, slot.placement, slot.block_index,
+          this.strategyVersion, timestamp, timestamp);
+      for (const opportunity of composition.opportunities || []) this.db.prepare(`INSERT INTO affiliate_opportunities(
+        id, draft_id, intent_id, provider, product_category, scope_type, scope_key, score, factors_json,
+        reason, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`)
+        .run(opportunity.id, draftId, opportunity.intentId, opportunity.provider, opportunity.productCategory,
+          opportunity.scopeType, opportunity.scopeKey, opportunity.score, JSON.stringify(opportunity.factors), opportunity.reason, timestamp, timestamp);
+      this.db.prepare(`INSERT INTO commercial_compositions(id, draft_id, publishable_body_markdown, slots_json, offer_ids_json,
+        disclosure_text, status, created_at, updated_at, asset_ids_json, commercial_blocks_json,
+        content_blocks_json, strategy_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(draft_id) DO UPDATE SET publishable_body_markdown=excluded.publishable_body_markdown,
+          slots_json=excluded.slots_json, offer_ids_json=excluded.offer_ids_json, disclosure_text=excluded.disclosure_text,
+          status=excluded.status, updated_at=excluded.updated_at, asset_ids_json=excluded.asset_ids_json,
+          commercial_blocks_json=excluded.commercial_blocks_json, content_blocks_json=excluded.content_blocks_json,
+          strategy_version=excluded.strategy_version`)
+        .run(compositionId, draftId, composition.publishableBodyMarkdown, JSON.stringify(composition.slots),
+          JSON.stringify(composition.offerIds), composition.disclosureText, composition.status, timestamp, timestamp,
+          JSON.stringify(composition.assetIds || []), JSON.stringify(composition.commercialBlocks || []),
+          JSON.stringify(composition.contentBlocks || []), this.strategyVersion);
+      this.db.prepare("UPDATE article_drafts SET status='commercial_ready', updated_at=? WHERE id=?").run(timestamp, draftId);
+    });
   }
 
   retryContent(candidateId) {
@@ -1619,6 +2008,8 @@ export class Repository {
       canonical_subject: row.canonical_subject || row.subject,
       entity_aliases: json(row.entity_aliases_json, []),
       entity_resolution_status: row.entity_resolution_status || "unresolved",
+      entity_type: row.entity_type || "other", granularity: row.granularity || "general_topic",
+      entity_location: json(row.entity_location_json, {}), claim_relations: json(row.claim_relations_json, []),
       consensus_status: resolvedConsensusStatus(row), preferred_value: resolvedPreferredValue(row),
       support_count: row.support_count, contradiction_count: row.contradiction_count,
       evidence: json(row.evidence_json, []),
@@ -1674,7 +2065,10 @@ export class Repository {
         kr.note AS resolution_note, kr.resolved_at AS resolution_resolved_at
       FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
       LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
-      WHERE (k.consensus_status='conflicted' AND COALESCE(kr.status, '') <> 'resolved') OR k.freshness_state='stale'
+      WHERE (k.consensus_status='conflicted' AND COALESCE(kr.status, '') <> 'resolved' AND NOT EXISTS (
+        SELECT 1 FROM claim_review_cases crc JOIN claims ca ON ca.id=crc.claim_a_id
+        WHERE crc.destination_slug=d.slug AND crc.status='pending' AND ca.normalized_key=k.normalized_key
+      )) OR k.freshness_state='stale'
     `).all()) {
       const stale = row.freshness_state === "stale";
       const item = exceptionItem("knowledge", row.id, stale ? "blocker" : "warning",
@@ -1690,17 +2084,42 @@ export class Repository {
       };
       items.push(item);
     }
-    for (const row of this.db.prepare(`
-      SELECT * FROM entity_merge_candidates WHERE status='pending' ORDER BY confidence DESC, updated_at DESC
-    `).all()) {
-      const item = exceptionItem("entity_alias", row.id, "warning", "Entity alias merge needs confirmation",
+    for (const row of this.db.prepare(`SELECT r.*, a.subject AS subject_a, a.predicate AS predicate_a,
+      a.value_text AS value_a, a.source_quote AS source_quote_a, a.structured_value_json AS structured_a,
+      b.subject AS subject_b, b.predicate AS predicate_b, b.value_text AS value_b,
+      b.source_quote AS source_quote_b, b.structured_value_json AS structured_b
+      FROM claim_review_cases r JOIN claims a ON a.id=r.claim_a_id
+      LEFT JOIN claims b ON b.id=r.claim_b_id WHERE r.status='pending' ORDER BY r.updated_at DESC`).all()) {
+      const kind = ({ CLAIM_CONFLICT: "claim_conflict", SOURCE_CONFLICT: "source_conflict", TEMPORAL_CONFLICT: "temporal_conflict",
+        GRANULARITY_CONFLICT: "granularity_conflict", NEGATION_EXTRACTION_ERROR: "extraction_error",
+        QUALIFIER_EXTRACTION_ERROR: "extraction_error" })[row.review_type] || "claim_conflict";
+      const title = row.review_type.includes("EXTRACTION_ERROR") ? "Claim extraction needs correction" : `${row.review_type.replaceAll("_", " ").toLowerCase()} needs judgment`;
+      const item = exceptionItem(kind, row.id, "warning", title, `${row.subject_a} · ${row.predicate_a}`, row.reason, false, row.updated_at);
+      item.claim_review = {
+        id: row.id, reviewType: row.review_type, destinationSlug: row.destination_slug,
+        claimA: { id: row.claim_a_id, originalSentence: row.source_quote_a, normalized: { subject: row.subject_a, predicate: row.predicate_a, value: row.value_a, structured: json(row.structured_a, {}) } },
+        claimB: row.claim_b_id ? { id: row.claim_b_id, originalSentence: row.source_quote_b, normalized: { subject: row.subject_b, predicate: row.predicate_b, value: row.value_b, structured: json(row.structured_b, {}) } } : null,
+      };
+      items.push(item);
+    }
+    for (const row of this.listEntityMergeCandidates("pending")) {
+      const item = exceptionItem("entity_identity", row.id, "warning", "Entity identity needs confirmation",
         `${row.alias} → ${row.proposed_canonical_subject}`,
         row.rationale || "The model found a possible multilingual reference to the same destination entity.",
         false, row.updated_at);
       item.entity_alias = {
         id: row.id, destinationSlug: row.destination_slug, alias: row.alias,
         proposedEntityKey: row.proposed_entity_key, proposedCanonicalSubject: row.proposed_canonical_subject,
-        confidence: row.confidence,
+        candidateEntityKey: row.candidate_entity_key, candidateEntityType: row.candidate_entity_type,
+        candidateGranularity: row.candidate_granularity, proposedEntityType: row.proposed_entity_type,
+        proposedGranularity: row.proposed_granularity, location: row.location,
+        confidence: row.confidence, aiRecommendation: row.ai_recommendation,
+        reason: row.rationale, suggestedRelation: row.suggested_relation || row.assessment?.suggestedRelation,
+        linkedClaims: this.db.prepare(`SELECT c.id, c.subject, c.predicate, c.value_text, c.source_quote,
+          s.title AS source_title FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
+          JOIN sources s ON s.id=c.source_id WHERE ss.destination_slug=? AND (
+            lower(trim(c.subject))=lower(trim(?)) OR c.entity_key=?
+          ) ORDER BY s.captured_at DESC LIMIT 20`).all(row.destination_slug, row.alias, row.proposed_entity_key),
       };
       items.push(item);
     }
@@ -1786,6 +2205,16 @@ export class Repository {
     return { factId, destinationSlug: fact.destination_slug, normalizedKey: fact.normalized_key, preferredValue: value };
   }
 
+  decideClaimReviewCase(caseId, decision, note = "") {
+    if (!["resolved", "dismissed"].includes(decision)) throw new Error("Claim review decision must be resolved or dismissed.");
+    const row = this.db.prepare("SELECT * FROM claim_review_cases WHERE id=? AND status='pending'").get(caseId);
+    if (!row) return null;
+    const timestamp = now();
+    this.db.prepare("UPDATE claim_review_cases SET status=?, reason=?, updated_at=? WHERE id=?")
+      .run(decision, `${row.reason}${note ? ` Operator note: ${String(note).slice(0, 1_000)}` : ""}`, timestamp, caseId);
+    return { id: caseId, status: decision, destinationSlug: row.destination_slug };
+  }
+
   getKnowledge() {
     return this.db.prepare(`
       SELECT k.*, d.slug AS destination_slug, d.name AS destination_name,
@@ -1803,6 +2232,8 @@ export class Repository {
       entity_aliases: json(row.entity_aliases_json, []),
       canonical_subject: row.canonical_subject || row.subject,
       entity_resolution_status: row.entity_resolution_status || "unresolved",
+      entity_location: json(row.entity_location_json, {}),
+      claim_relations: json(row.claim_relations_json, []),
       manual_resolution: hydrateKnowledgeResolution(row),
       verification_priority: resolvedVerificationPriority(row),
     }));
@@ -1837,7 +2268,7 @@ export class Repository {
         exceptions: operationalExceptions.length,
         topicCandidates: this.db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count,
         draftsReady: this.db.prepare("SELECT COUNT(*) AS count FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')").get().count,
-        activeOffers: this.db.prepare("SELECT COUNT(*) AS count FROM commercial_offers WHERE active=1 AND target_url<>''").get().count,
+        activeOffers: this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_assets WHERE active=1").get().count,
         wordpressInventory: this.db.prepare("SELECT COUNT(*) AS count FROM wordpress_content_inventory").get().count,
         searchQueries: this.db.prepare("SELECT COUNT(*) AS count FROM search_console_inventory").get().count,
       },
@@ -1865,6 +2296,9 @@ function hydrateSource({ source, assets, structured, claims, blueprint, analysis
   for (const claim of claims) {
     claim.qualifiers = json(claim.qualifiers_json, []);
     claim.entity_aliases = json(claim.entity_aliases_json, []);
+    claim.entity_location = json(claim.entity_location_json, {});
+    claim.structured_value = json(claim.structured_value_json, {});
+    claim.scope = json(claim.scope_json, {});
     claim.canonical_subject ||= claim.subject;
     claim.entity_resolution_status ||= "unresolved";
   }
@@ -2237,11 +2671,17 @@ function aggregateEntityIdentity(rows) {
   const names = rows.map((row) => cleanEntityName(row.canonical_subject || row.subject)).filter(Boolean);
   const preferred = names.sort((left, right) => entityNameScore(right) - entityNameScore(left) || left.length - right.length || left.localeCompare(right))[0] || rows[0]?.subject || "";
   const states = new Set(rows.map((row) => row.entity_resolution_status));
+  const entityType = countStrings(rows.map((row) => row.entity_type).filter(Boolean))[0]?.value || "other";
+  const granularity = countStrings(rows.map((row) => row.granularity).filter(Boolean))[0]?.value || "general_topic";
+  const location = rows.map((row) => json(row.entity_location_json, {})).find((item) => Object.keys(item).length) || {};
   return {
     entityKey,
     canonicalSubject: preferred,
     aliases,
     status: states.has("resolved") ? "resolved" : states.has("derived") ? "derived" : "unresolved",
+    entityType,
+    granularity,
+    location,
   };
 }
 

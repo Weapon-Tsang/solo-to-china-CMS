@@ -60,6 +60,30 @@ test("WordPress adapter renders persisted structured blocks instead of reparsing
   assert.doesNotMatch(request.body.content, /Ignore this Markdown source/);
 });
 
+test("WordPress renders validated commercial blocks with sponsored attributes and rejects unsafe embeds", async () => {
+  let request;
+  const fetchStub = async (url, options) => {
+    request = { url, body: JSON.parse(options.body) };
+    return new Response(JSON.stringify({ id: 10, status: "draft", link: "https://site.test/?p=10" }), { status: 201, headers: { "content-type": "application/json" } });
+  };
+  const adapter = new WordPressDraftAdapter({ siteUrl: "https://site.test", username: "editor", applicationPassword: "app password", contentFormat: "blocks" }, fetchStub);
+  await adapter.upsertDraft({
+    title: "Guide", slug: "guide", meta_description: "", body_markdown: "Research body",
+    content_blocks: [{ type: "paragraph", text: "Research body" }, {
+      type: "commercial", component: "affiliate_booking_card", slot_key: "contextual:attraction:1", placement: "contextual",
+      data: { affiliate_asset_id: "asset-1", provider: "Trip.com", product_category: "ATTRACTION", title: "Forbidden City tickets", description: "Official booking option.", cta_label: "View tickets", target_url: "https://www.trip.com/tickets", disclosure: "Affiliate disclosure." },
+    }, {
+      type: "commercial", component: "affiliate_search_card", slot_key: "contextual:hotel:2", placement: "contextual",
+      data: { affiliate_asset_id: "asset-2", provider: "Trip.com", product_category: "HOTEL", title: "Unsafe", embed_config: { src: "https://evil.example/widget" } },
+    }],
+  });
+  assert.match(request.body.content, /wp:group/);
+  assert.match(request.body.content, /data-affiliate-asset="asset-1"/);
+  assert.match(request.body.content, /rel="sponsored nofollow noopener"/);
+  assert.doesNotMatch(request.body.content, /evil\.example/);
+  assert.doesNotMatch(request.body.content, /<script/);
+});
+
 test("WordPress adapter uploads an authorized evidence-linked Xiaohongshu source photo", async () => {
   const requests = [];
   const fetchStub = async (url, options = {}) => {

@@ -20,7 +20,7 @@ const endpoints = {
   blueprints: "/api/editorial-blueprints",
   content: "/api/content",
   wordpress: "/api/wordpress/inventory",
-  commercial: "/api/commercial/offers",
+  commercial: "/api/commercial",
   exceptions: "/api/exceptions",
   maintenance: "/api/maintenance",
   settings: "/api/settings/ai",
@@ -264,7 +264,7 @@ const guides = {
   capture: { icon: AppWindow, title: "Capture your first source", description: "Discovery remains human-led. The extension only reads the note you explicitly opened and saved.", steps: ["Open Chrome Extensions and load the repository extension/ folder as an unpacked extension.", "Open one Xiaohongshu /explore/ note that you already selected.", "Choose Save to SoloToChina. The source will enter extraction automatically."], code: "Engine URL: http://127.0.0.1:4310" },
   ai: { icon: KeyRound, title: "Enable Kimi extraction", description: "Add a Kimi Open Platform API key to the server environment, then restart the engine. Captures already queued as needs_ai remain safe.", steps: ["Set KIMI_API_KEY in .env or the process environment.", "Kimi K3 is the default; Kimi K2.7 Code remains selectable in System settings.", "Confirm the active model from the top status badge."], code: "$env:KIMI_API_KEY = \"your-kimi-key\"\n$env:AI_MODEL = \"kimi-k3\"\nnpm start" },
   wordpress: { icon: Settings2, title: "Connect WordPress", description: "Use a least-privilege WordPress Application Password. The engine always creates drafts and never publishes.", steps: ["Create an editor Application Password in WordPress.", "Set site URL, username, and application password in the engine environment.", "Restart the engine. Inventory sync will begin automatically."], code: "WORDPRESS_SITE_URL=https://example.com\nWORDPRESS_USERNAME=editor\nWORDPRESS_APPLICATION_PASSWORD=xxxx xxxx xxxx" },
-  commercial: { icon: TicketCheck, title: "Sync commercial offers", description: "Offers remain isolated from Research, Knowledge, planning, and QA. Only typed HTTPS offers are accepted.", steps: ["Prepare provider offers using a supported category.", "POST the batch to /api/commercial/offers with ADMIN_TOKEN.", "QA-passed drafts receive a deterministic overlay; no offer means a safe no-op."], code: "POST /api/commercial/offers\nAuthorization: Bearer <ADMIN_TOKEN>" },
+  commercial: { icon: TicketCheck, title: "Configure affiliate assets", description: "Provider accounts and reusable assets remain isolated from Research, Knowledge, planning, and QA.", steps: ["Create a MANUAL Trip.com provider account; never store dashboard credentials or cookies.", "Copy only official links or structured embed configuration into the Affiliate Asset Registry.", "Map assets at the destination, area, route, or selective entity level. Missing exact assets silently fall back unless the opportunity score is high."], code: "POST /api/commercial/providers\nPOST /api/commercial/assets\nAuthorization: Bearer <ADMIN_TOKEN>" },
 };
 
 function GuideContent({ guide }) {

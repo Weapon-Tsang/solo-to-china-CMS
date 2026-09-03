@@ -59,8 +59,30 @@ To restore, stop the engine, verify the selected snapshot, preserve the current 
 ## Exceptions
 
 - `blocker`: pipeline failure, stale evidence, exhausted draft QA, integration failure, or WordPress delivery failure.
-- `warning`: conflicting evidence that requires editorial judgment.
-- Retry buttons are shown only for operational failures. Knowledge conflicts and stale evidence require a newly saved source or a future official-source adapter, never manual KB editing.
+- `warning`: Entity Identity, Claim Conflict, Source/Temporal/Granularity Conflict, or Extraction Error that genuinely requires judgment.
+- Retry buttons are shown only for operational failures. Enrichment, refinement, compatible recommendations, obvious entity mismatches, and normal affiliate fallback never appear as exceptions.
+- Entity merge review supports **same entity**, **different entity**, **create relation**, and **defer**. Accepted merges are auditable and may be undone from merge history without deleting Claims or Sources.
+
+## Trip.com manual Affiliate setup
+
+1. In the official Trip.com Affiliate Platform, create the official Link, Search Box, or Banner configuration. Do not invent or edit tracking parameters.
+2. Create a `MANUAL` provider through `POST /api/commercial/providers`; store only display/site/language/disclosure metadata—never username, password, Cookie, or login state.
+3. Add each reusable resource through `POST /api/commercial/assets`. Keep `assetType` (presentation) separate from `productCategory` (what is sold), and choose `scopeType` according to real user decision precision.
+4. Prefer Destination + Category assets, then selective Area, Route, and major-attraction assets. Create specific hotel/product links only when repeated high-intent demand justifies maintenance.
+5. Confirm the Commercial view shows the Provider, Asset, mapping, and any high-value Opportunity. Missing ordinary links should remain silent fallback.
+
+Structured Search Box/Dynamic Banner configuration accepts only allowlisted fields and credential-free HTTPS sources. Arbitrary HTML/script is rejected. Commercial density defaults are configurable without affecting Research:
+
+```text
+COMMERCIAL_MAX_OFFERS_PER_DRAFT=3
+COMMERCIAL_MAX_CONTEXTUAL_UNITS=2
+COMMERCIAL_MAX_END_RESOURCE_UNITS=1
+COMMERCIAL_MIN_BLOCK_DISTANCE=3
+COMMERCIAL_MINIMUM_CONTENT_BLOCKS=2
+AFFILIATE_OPPORTUNITY_THRESHOLD=70
+```
+
+The minimum measurement path accepts authenticated/server-side `impression` and `click` through `POST /api/commercial/events`; aggregated CTR/EPC/RPM placeholders are available from `/api/commercial/performance`. Never expose an administrator token in public browser JavaScript. Public Frontend tracking requires a same-origin WordPress relay or another separately reviewed ingestion boundary. Booking/commission import and official attribution remain Phase 2.
 
 ## Automatic maintenance
 
@@ -120,7 +142,7 @@ Remote webhook URLs must use HTTPS and cannot embed credentials. `EXCEPTION_WEBH
 npm run release:check
 ```
 
-This is the complete local release gate. It runs the production frontend build, static checks, the complete test suite, application/extension version alignment, Content Strategy manifest/specification/handoff/UI checks, migrations 1–12 on a clean database, and SQLite integrity verification. It then starts an isolated Node server using a temporary SQLite database and random loopback port, polls `/api/health` instead of relying on logs, checks `/api/ready`, `/api/system/info`, core read APIs, a temporary capture insert/revision/read, React HTML/assets, Extension manifest/assets, database integrity, server logs, automatic shutdown, and temporary-file cleanup.
+This is the complete local release gate. It runs the production frontend build, static checks, the complete test suite, application/extension version alignment, Content Strategy manifest/specification/handoff/UI checks, migrations 1–18 on a clean database, and SQLite integrity verification. It then starts an isolated Node server using a temporary SQLite database and random loopback port, polls `/api/health` instead of relying on logs, checks `/api/ready`, `/api/system/info`, core read APIs, a temporary capture insert/revision/read, React HTML/assets, Extension manifest/assets, database integrity, server logs, automatic shutdown, and temporary-file cleanup.
 
 The runner deliberately clears AI, WordPress, Search Console, webhook, and operational-token configuration for its child process, so it never calls external services or touches the live database. It uses these result states:
 

@@ -27,7 +27,7 @@ Manually opened Xiaohongshu note
 - Raw Capture 以 canonical URL 去重；同一 URL 内容改变时保留递增版本号。
 - 未配置 AI Key 时 Capture 不会失败，Source 会进入 `needs_ai`，可稍后批量重跑。
 - Research 聚合只读取 `sources` / `claims` / `structured_sources` 等研究表。
-- Commercial 数据位于独立 `commercial_offers` 表族，当前没有进入任何 Research 查询或 Prompt。
+- Commercial 数据位于独立 Affiliate Provider / Asset / Intent / Composition / Event 表族，不进入任何 Research 查询或 Prompt；`commercial_offers` 仅作为旧同步 API 的兼容入口。
 - 自动选题至少要求 `AUTO_CONTENT_MIN_FACTS` 个 KB Facts 和 2 条独立 Source；Affiliate inventory 不参与评分。
 - QA 同时包含独立模型 Review 和不可绕过的代码检查；失败 Draft 最多自动修订一次。
 - WordPress 只创建/更新 `draft`。用户发布后，系统会拒绝再次覆盖该文章。
@@ -93,7 +93,7 @@ AUTO_CONTENT_MAX_PER_DESTINATION=1
 
 ## Frontend Capability Contract
 
-The CMS consumes the Frontend's published Component Registry and Page Schema; it never scans Frontend source code or maintains a copied component list. When a compatible Contract is synchronized, the CMS selects semantic components/variants and produces a validated `page.blocks[]` payload before the publish gate. See [Frontend Contract Integration](docs/FRONTEND_CONTRACT_INTEGRATION.md) for source configuration, cache behaviour, diagnostics, version compatibility, and capability-gap handling.
+The CMS consumes the Frontend's generated `contracts/component-registry.json` and `contracts/page-schema.json`; it never scans Frontend source code or maintains a copied component list. When a compatible Contract is synchronized, the CMS selects semantic components/variants and produces a validated `page.blocks[]` payload before the publish gate. Commercial/affiliate capabilities are excluded from pre-QA editorial composition and queried separately only by the post-QA Commercial Composer. See [Frontend Contract Integration](docs/FRONTEND_CONTRACT_INTEGRATION.md) for the audited source paths, cache behaviour, diagnostics, version compatibility, and capability-gap handling.
 
 Kimi is the active AI provider. The engine calls Kimi Chat Completions with JSON Schema structured output and sends trusted Xiaohongshu image assets as base64 vision input. Keep the key on the server only: it is never sent to the Chrome Extension or written to SQLite.
 
@@ -135,9 +135,9 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 1.2
+## Content Production Strategy 1.3
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.2.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.2.md), and summarized by an append-only [evolution log](docs/content-strategy/CHANGELOG.md). The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.3.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.3.md), and summarized by an append-only [evolution log](docs/content-strategy/CHANGELOG.md). The live operating path is:
 
 ```text
 Capture → structured research → Kimi Intake Analysis → Recommendation → human decision
@@ -220,8 +220,14 @@ See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md),
 | `GET` | `/api/knowledge` | Destination KB 与证据/冲突 |
 | `GET` | `/api/editorial-blueprints` | 聚合 Editorial Pattern |
 | `GET` | `/api/content` | Topic/Brief/Draft/QA/WordPress 状态 |
-| `GET` | `/api/commercial/offers` | 只读查看已同步 Offer |
-| `POST` | `/api/commercial/offers` | Provider/Feed Adapter 批量同步 typed offers |
+| `GET` | `/api/commercial` | Provider、Asset、Mapping、Opportunity 与 Performance 总览 |
+| `GET/POST` | `/api/commercial/providers` | 管理 Affiliate Provider Account（V1 默认 MANUAL） |
+| `GET/POST` | `/api/commercial/assets` | 管理安全、可复用的 Affiliate Asset Registry |
+| `GET` | `/api/commercial/mappings` | 查看 Destination / Area / Route / Entity 映射 |
+| `GET` | `/api/commercial/opportunities` | 只显示超过人工维护门槛的高价值精度缺口 |
+| `POST` | `/api/commercial/events` | 记录 impression / click（预留 booking / commission） |
+| `GET` | `/api/commercial/performance` | CTR、conversion、commission、EPC、RPM 聚合 |
+| `GET/POST` | `/api/commercial/offers` | 旧 typed Offer API；写入时同步投影为 Affiliate Asset |
 | `POST` | `/api/topics/:id/generate` | Backwards-compatible endpoint; returns `409` until an Intake Recommendation is approved |
 | `POST` | `/api/topics/:id/retry` | 重试少量内容异常 |
 | `GET` | `/api/drafts/:id` | Draft、Evidence Ledger 和 QA 详情 |
@@ -258,18 +264,21 @@ SEARCH_CONSOLE_MIN_IMPRESSIONS=10
 
 The service account needs read access only. Credentials remain process-environment values: they are never written to SQLite, returned by APIs, or included in structured logs.
 
-## Commercial Offer 同步
+## Affiliate Provider 与 Asset Registry
 
-Commercial API 是未来 Trip.com 或其它 Provider Adapter 的写入边界，不要求用户手工维护 Offer。支持分类：`hotels`、`attraction_tickets`、`trains`、`flights`、`tours_activities`、`airport_transfer`、`planner`。
+V1 使用 MANUAL Provider：先在 Trip.com 官方 Affiliate Platform 创建官方链接或 Embed 配置，再把公开产物保存到 CMS。不要保存用户名、密码、Cookie 或登录态，不要自动登录/爬取后台，也不要猜测 Tracking 参数。
 
 ```json
 {
+  "providerAccountId": "provider_...",
   "provider": "Trip.com",
-  "externalId": "beijing-hotel-search",
-  "category": "hotels",
+  "assetType": "CATEGORY_LINK",
+  "productCategory": "HOTEL",
+  "scopeType": "DESTINATION",
+  "scopeKey": "beijing",
   "destinationSlug": "beijing",
   "title": "Browse Beijing hotels",
-  "targetUrl": "https://affiliate.example/hotels?city=beijing",
+  "targetUrl": "https://official-trip-affiliate-link.example/",
   "ctaLabel": "Check hotel options",
   "description": "Compare available stays for your travel dates.",
   "priority": 10,
@@ -277,7 +286,7 @@ Commercial API 是未来 Trip.com 或其它 Provider Adapter 的写入边界，�
 }
 ```
 
-`targetUrl` 必须是 HTTPS。Composer 每篇默认最多使用 3 个相关 Offer、每个分类最多一个，并自动增加 disclosure。Offer 更新只重组尚未同步到 WordPress 的 Draft，避免覆盖人工编辑。
+`assetType`（怎么展示）与 `productCategory`（卖什么）严格分开。Link 必须是无凭据 HTTPS；Search Box/Banner 只接受结构化、域名 allowlist 的配置，拒绝任意 HTML/script。Composer 仅在 QA 后解析 block-level intent，按用户决策精度选择 Entity/Route/Area/Destination/Category fallback，并限制为通常 1–2 个 contextual units 加 0–1 个 end-resource unit。无匹配 Asset 时严格 no-op。
 
 ## 验证
 

@@ -1,13 +1,26 @@
 {
   "name": "SoloToChina Content Production Strategy",
-  "current_version": "1.2",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.2.md",
+  "current_version": "1.3",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.3.md",
   "status": "active",
   "history": [
     {
+      "version": "1.3",
+      "effective_date": "2026-09-03",
+      "status": "active",
+      "summary": "严格分离实体身份、语义关系与 Claim，按可同时为真判断知识冲突，并建立隔离的 Affiliate Provider/Asset/Intent/Tracking Phase 1。",
+      "changes": [
+        "实体增加类型、粒度和地理硬约束；明显不可能的合并自动保持分离，相关对象建立 Relation，人工合并可审计和撤销。",
+        "Claim 拆分主值、Qualifier 与 Scope，自动记录 enrichment/refinement/compatible 等关系，只有互斥命题进入分类异常队列。",
+        "Commercial Layer 统一为 Provider 与 Affiliate Asset Registry，支持 block-level intent、分层 fallback、密度限制和有门槛的高价值 Opportunity。",
+        "WordPress 安全渲染结构化商业 Block；Frontend 组件能力继续只消费 Contract，缺口生成 capability request。",
+        "新增 impression/click 事件和 Performance 聚合，同时维持 Research、Knowledge、正文和 Evidence Ledger 的商业隔离。"
+      ]
+    },
+    {
       "version": "1.2",
       "effective_date": "2026-09-01",
-      "status": "active",
+      "status": "superseded",
       "summary": "将人工筛选并保存的笔记图片纳入已授权发布素材池，并让与文章证据直接相关的实景图优先进入 WordPress 草稿。",
       "changes": [
         "内容所有者已确认：每张人工筛选并保存的小红书笔记图片均获得原作者和平台授权，可用于 SoloToChina 内容发布。",

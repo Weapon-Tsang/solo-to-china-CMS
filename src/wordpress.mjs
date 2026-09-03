@@ -177,6 +177,7 @@ function contentBlocksToWordPressBlocks(contentBlocks, visuals = []) {
   const blocks = renderContentBlocks(contentBlocks).map((block) => {
     if (block.type === "heading") return `<!-- wp:heading {"level":${block.level}} -->\n${block.html}\n<!-- /wp:heading -->`;
     if (block.type === "list") return `<!-- wp:list -->\n${block.html}\n<!-- /wp:list -->`;
+    if (block.type === "commercial") return `<!-- wp:group {"className":"solotochina-affiliate","metadata":{"name":"Affiliate booking resource"}} -->\n<div class="wp-block-group solotochina-affiliate">${block.html}</div>\n<!-- /wp:group -->`;
     return `<!-- wp:paragraph -->\n${block.html}\n<!-- /wp:paragraph -->`;
   });
   return injectVisuals(blocks, visuals, wordpressVisual).join("\n\n");
@@ -225,8 +226,42 @@ function renderContentBlocks(contentBlocks) {
   return contentBlocks.map((block) => {
     if (block.type === "heading") return { ...block, html: `<h${block.level}>${inline(block.text)}</h${block.level}>` };
     if (block.type === "list") return { ...block, html: `<ul>${block.items.map((item) => `<li>${inline(item)}</li>`).join("")}</ul>` };
+    if (block.type === "commercial") return { ...block, html: commercialBlockHtml(block) };
     return { ...block, html: `<p>${inline(block.text)}</p>` };
   });
+}
+
+function commercialBlockHtml(block) {
+  const allowedComponents = new Set(["affiliate_booking_card", "affiliate_product_card", "affiliate_search_card", "affiliate_comparison_card", "affiliate_banner", "affiliate_promotion_card"]);
+  if (!allowedComponents.has(block.component) || !block.data || typeof block.data !== "object") return "";
+  const data = block.data;
+  const targetUrl = safeCommercialUrl(data.target_url);
+  const embedUrl = safeCommercialEmbedUrl(data.embed_config?.src, data.provider);
+  const attributes = [
+    ["data-affiliate-asset", data.affiliate_asset_id], ["data-affiliate-provider", data.provider],
+    ["data-affiliate-category", data.product_category], ["data-affiliate-slot", block.slot_key],
+    ["data-affiliate-component", block.component],
+  ].filter(([, value]) => value).map(([key, value]) => `${key}="${escapeHtml(value)}"`).join(" ");
+  const action = targetUrl
+    ? `<p><a href="${escapeHtml(targetUrl)}" rel="sponsored nofollow noopener" target="_blank">${escapeHtml(data.cta_label || "View option")}</a></p>`
+    : embedUrl ? `<iframe src="${escapeHtml(embedUrl)}" title="${escapeHtml(data.title || "Booking search")}" loading="lazy" sandbox="allow-forms allow-popups allow-scripts" referrerpolicy="strict-origin-when-cross-origin"></iframe>` : "";
+  if (!action) return "";
+  return `<aside class="solotochina-commercial ${escapeHtml(block.component)}" ${attributes}><h3>${escapeHtml(data.title || "Booking resource")}</h3>${data.description ? `<p>${escapeHtml(data.description)}</p>` : ""}${action}${data.disclosure ? `<p class="affiliate-disclosure">${escapeHtml(data.disclosure)}</p>` : ""}</aside>`;
+}
+
+function safeCommercialUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password ? url.toString() : "";
+  } catch { return ""; }
+}
+
+function safeCommercialEmbedUrl(value, provider) {
+  const url = safeCommercialUrl(value);
+  if (!url) return "";
+  const host = new URL(url).hostname.toLowerCase();
+  if (/trip/i.test(String(provider || "")) && !["trip.com", "tripcdn.com", "ctrip.com"].some((suffix) => host === suffix || host.endsWith(`.${suffix}`))) return "";
+  return url;
 }
 
 function inline(text) {

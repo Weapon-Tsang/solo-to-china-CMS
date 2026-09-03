@@ -129,6 +129,11 @@ export function loadConfig(env = process.env) {
     },
     commercial: {
       maxOffersPerDraft: integer(env.COMMERCIAL_MAX_OFFERS_PER_DRAFT, 3),
+      maxContextualUnits: integer(env.COMMERCIAL_MAX_CONTEXTUAL_UNITS, 2),
+      maxEndResourceUnits: integer(env.COMMERCIAL_MAX_END_RESOURCE_UNITS, 1),
+      minBlockDistance: integer(env.COMMERCIAL_MIN_BLOCK_DISTANCE, 3),
+      minimumContentBlocks: integer(env.COMMERCIAL_MINIMUM_CONTENT_BLOCKS, 2),
+      opportunityThreshold: integer(env.AFFILIATE_OPPORTUNITY_THRESHOLD, 70),
       disclosure: env.AFFILIATE_DISCLOSURE || "SoloToChina may earn a commission from eligible bookings, at no extra cost to you.",
     },
     telemetry: {

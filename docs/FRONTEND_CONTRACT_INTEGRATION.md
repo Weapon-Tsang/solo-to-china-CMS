@@ -13,14 +13,21 @@ The CMS never scans React/JSX/CSS and never stores a hand-maintained production 
 
 ## Current source configuration
 
-The adjacent `solo-to-china` directory was empty when this integration was introduced, so this CMS intentionally has **no default Contract source**. That is safer than inventing a registry.
+The Frontend repository was audited at commit `210d0fe` (`feat(contract): publish CMS capability schema`). It publishes the CMS-facing generated artifacts at:
 
-When the Frontend publishes its real artifacts, configure these server environment variables with the actual published file paths or HTTPS URLs:
+```text
+contracts/component-registry.json
+contracts/page-schema.json
+```
+
+The generated Registry uses `inputSchema` for component data schemas; the CMS accepts that published field directly. Do not point the CMS at the Theme authoring source `content-contract/component-registry.v1.json`: its shape is intentionally different, and the current WordPress `/wp-json/stc/v1/component-registry` endpoint serves that authoring form rather than the generated CMS artifact. The Frontend also does not yet expose a public Page Schema REST endpoint.
+
+For local integration, use filesystem paths to the two generated artifacts. For a controlled production rollout, use HTTPS artifacts from the reviewed Frontend repository or add Frontend endpoints that publish both generated files. Example repository URLs are:
 
 ```dotenv
-FRONTEND_CONTRACT_SOURCE_REPOSITORY=https://github.com/<owner>/solo-to-china
-FRONTEND_COMPONENT_REGISTRY_SOURCE=https://<published-host>/<actual-path>/component-registry.json
-FRONTEND_PAGE_SCHEMA_SOURCE=https://<published-host>/<actual-path>/page-schema.json
+FRONTEND_CONTRACT_SOURCE_REPOSITORY=https://github.com/Weapon-Tsang/solo-to-china
+FRONTEND_COMPONENT_REGISTRY_SOURCE=https://raw.githubusercontent.com/Weapon-Tsang/solo-to-china/main/contracts/component-registry.json
+FRONTEND_PAGE_SCHEMA_SOURCE=https://raw.githubusercontent.com/Weapon-Tsang/solo-to-china/main/contracts/page-schema.json
 # optional provenance when the published JSON does not include it
 FRONTEND_CONTRACT_COMMIT_SHA=<frontend-commit-sha>
 FRONTEND_CONTRACT_SYNC_HOURS=6
@@ -28,6 +35,8 @@ FRONTEND_CONTRACT_TIMEOUT_MS=15000
 ```
 
 Use HTTPS in production. Explicit filesystem paths are supported only for local development, controlled deployment artifacts, and tests. The CMS does not infer paths or create files in the Frontend repository.
+
+Do not enable these variables in production until the reviewed Frontend commit is deployed and a manual sync succeeds. Keeping them unset retains the safe legacy WordPress path.
 
 ## What the CMS reads
 
@@ -130,6 +139,30 @@ CMS records semantic gap
   -> CMS synchronizes
   -> Composer may use the new capability
 ```
+
+## Affiliate component capabilities
+
+Commercial composition uses the same consumer-only contract. The CMS may derive a semantic need for `affiliate_booking_card`, `affiliate_product_card`, `affiliate_search_card`, `affiliate_comparison_card`, `affiliate_banner`, `affiliate_promotion_card`, or `affiliate_disclosure`, but these names are requests—not a copied registry and not proof that the Frontend implements them.
+
+After a QA-passed Research Draft produces block-level commercial intent, the Commercial Composer selects an existing Affiliate Asset and a semantic component. If the active Contract does not publish that component as non-deprecated, the CMS creates a `frontend_capability_request` containing the affected draft/brief and use case. It does not invent props, variants, CSS, or a replacement component. The independent WordPress adapter may still use its own server-validated Gutenberg fallback with safe data attributes, disclosure, allowlisted structured embeds, and sponsored link attributes.
+
+Commercial data remains outside the Frontend page-planning and writing prompts. A Contract capability only controls whether the Frontend can safely render an already-selected Commercial Overlay; it never influences Research, Knowledge, topic choice, draft facts, QA conclusions, or the Evidence Ledger.
+
+### Audited Frontend capability status
+
+Registry `1.0.0` currently exposes one generic commercial capability, `affiliate_cta`. It safely renders an HTTPS link with disclosure and sponsored attributes, but its schema does not carry the Asset, slot, placement, destination/route/entity, or event-attribution fields required by the new Commercial Overlay. The CMS therefore does not silently reinterpret it as one of the richer components.
+
+The Frontend component library should add, as real implemented and tested capabilities:
+
+- `affiliate_booking_card` for high-intent Deep/Category Links;
+- `affiliate_search_card` for allowlisted structured Search Box configuration;
+- `affiliate_banner` for static and dynamic banners;
+- `affiliate_promotion_card` for promotion assets;
+- optional `affiliate_product_card`, `affiliate_comparison_card`, and `affiliate_disclosure` as product needs mature.
+
+Their schemas should carry the CMS-selected `affiliate_asset_id`, provider, product category, slot key, placement, destination/route/entity scope, CTA/link or allowlisted embed configuration, disclosure, and strategy version. The Frontend—not the CMS—owns styling, responsive behavior, embed rendering, and impression/click dispatch. Public browser events need a same-origin WordPress relay or another explicitly secured ingestion design; the existing Engine event endpoint is protected as a dashboard API and must not expose an administrator credential to browser JavaScript.
+
+Until those capabilities are published, the CMS records deduplicated `frontend_capability_request` entries and the WordPress adapter keeps its validated server-rendered fallback. Commercial components remain excluded from `resolveForArticle`, so the pre-QA Page Composer cannot select `affiliate_cta` or any future affiliate-prefixed capability.
 
 ## CI and test coverage
 

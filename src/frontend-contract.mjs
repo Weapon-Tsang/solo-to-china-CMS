@@ -72,10 +72,23 @@ export class FrontendContractConsumer {
       ...(canonical.warnings || []), ...(canonical.transport || []), ...(canonical.faq || []).map((item) => item.question),
       draft.title, draft.body_markdown,
     ].filter(Boolean).join(" ");
-    const resolved = this.capabilities({ semantics: tokenize(semanticText) });
+    const resolved = editorialCapabilities(this.capabilities({ semantics: tokenize(semanticText) }));
     if (resolved.components.length) return resolved;
-    const fallback = this.capabilities();
+    const fallback = editorialCapabilities(this.capabilities());
     return { ...fallback, components: fallback.components.slice(0, 24) };
+  }
+
+  hasComponent(componentId) {
+    const component = this.active?.componentsById.get(componentId);
+    return Boolean(component && component.status !== "deprecated");
+  }
+
+  commercialCapabilities(componentIds = []) {
+    const active = this.active;
+    const requested = [...new Set(componentIds)];
+    if (!active) return { status: "NO_VALID_FRONTEND_CONTRACT", supported: [], missing: requested };
+    const supported = requested.filter((componentId) => this.hasComponent(componentId));
+    return { status: "OK", supported, missing: requested.filter((componentId) => !supported.includes(componentId)), contract: snapshotSummary(active) };
   }
 
   async sync() {
@@ -198,7 +211,7 @@ export class FrontendContractConsumer {
 export function normalizeRegistry(raw) {
   if (!isObject(raw) || !Array.isArray(raw.components)) throw new FrontendContractError("INVALID_COMPONENT_REGISTRY", "Component Registry must be an object with a components array.");
   const contractVersion = requiredVersion(raw.contractVersion, "contractVersion");
-  const schemaVersion = requiredVersion(raw.schemaVersion, "schemaVersion");
+  const schemaVersion = requiredSchemaVersion(raw.schemaVersion, "schemaVersion");
   const components = raw.components.map(normalizeComponent);
   const duplicates = components.filter((item, index) => components.findIndex((candidate) => candidate.id === item.id) !== index).map((item) => item.id);
   if (duplicates.length) throw new FrontendContractError("DUPLICATE_COMPONENT_ID", `Component Registry has duplicate IDs: ${[...new Set(duplicates)].join(", ")}.`);
@@ -207,7 +220,7 @@ export function normalizeRegistry(raw) {
 
 export function normalizePageSchema(raw, fallbackVersion = "") {
   if (!isObject(raw)) throw new FrontendContractError("INVALID_PAGE_SCHEMA", "Page Schema must be a JSON object.");
-  const schemaVersion = requiredVersion(raw.schemaVersion || fallbackVersion, "schemaVersion");
+  const schemaVersion = requiredSchemaVersion(raw.schemaVersion || fallbackVersion, "schemaVersion");
   const schema = isObject(raw.schema) ? raw.schema : raw;
   if (!isObject(schema) || !Object.keys(schema).length) throw new FrontendContractError("INVALID_PAGE_SCHEMA", "Page Schema must contain a non-empty JSON Schema object.");
   return { raw, schemaVersion, frontendCommitSha: readCommit(raw), schema };
@@ -219,7 +232,7 @@ function normalizeComponent(component) {
   }
   const status = String(component.status || "").toLowerCase();
   if (!COMPONENT_STATUSES.has(status)) throw new FrontendContractError("INVALID_COMPONENT_STATUS", `Component '${component.id}' must declare a supported status.`);
-  const schema = component.schema || component.dataSchema || component.data_schema;
+  const schema = component.schema || component.inputSchema || component.input_schema || component.dataSchema || component.data_schema;
   if (!isObject(schema)) throw new FrontendContractError("MISSING_COMPONENT_SCHEMA", `Component '${component.id}' must publish its data schema.`);
   const variants = (Array.isArray(component.variants) ? component.variants : []).map((variant) => typeof variant === "string" ? variant : variant?.id || variant?.name).filter((value) => typeof value === "string" && value);
   return {
@@ -232,6 +245,16 @@ function normalizeComponent(component) {
     requiredFields: Array.isArray(schema.required) ? schema.required : [],
     optionalFields: Object.keys(schema.properties || {}).filter((key) => !(schema.required || []).includes(key)),
     deprecation: component.deprecation || component.deprecated || null,
+  };
+}
+
+function editorialCapabilities(result) {
+  return {
+    ...result,
+    components: (result.components || []).filter((component) => {
+      const category = String(component.category || "").toLowerCase();
+      return category !== "commercial" && category !== "affiliate" && !String(component.id || "").toLowerCase().startsWith("affiliate_");
+    }),
   };
 }
 
@@ -356,6 +379,12 @@ function matchesType(value, type) {
 function requiredVersion(value, field) {
   const version = String(value || "");
   if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) throw new FrontendContractError("INVALID_CONTRACT_VERSION", `${field} must use semantic versioning.`);
+  return version;
+}
+
+function requiredSchemaVersion(value, field) {
+  const version = String(value || "").trim();
+  if (!/^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/.test(version)) throw new FrontendContractError("INVALID_SCHEMA_VERSION", `${field} must be a safe schema-version identifier.`);
   return version;
 }
 

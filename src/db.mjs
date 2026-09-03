@@ -36,6 +36,299 @@ function migrate(db) {
   if (current < 15) migrationFifteen(db);
   if (current < 16) migrationSixteen(db);
   if (current < 17) migrationSeventeen(db);
+  if (current < 18) migrationEighteen(db);
+}
+
+function migrationEighteen(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE claims ADD COLUMN entity_type TEXT NOT NULL DEFAULT 'other';
+      ALTER TABLE claims ADD COLUMN granularity TEXT NOT NULL DEFAULT 'general_topic';
+      ALTER TABLE claims ADD COLUMN entity_location_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE claims ADD COLUMN structured_value_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE claims ADD COLUMN scope_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE claims ADD COLUMN claim_kind TEXT NOT NULL DEFAULT 'HARD_FACT';
+      ALTER TABLE claims ADD COLUMN cardinality TEXT NOT NULL DEFAULT 'SINGLE_VALUE';
+
+      ALTER TABLE knowledge_facts ADD COLUMN entity_type TEXT NOT NULL DEFAULT 'other';
+      ALTER TABLE knowledge_facts ADD COLUMN granularity TEXT NOT NULL DEFAULT 'general_topic';
+      ALTER TABLE knowledge_facts ADD COLUMN entity_location_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE knowledge_facts ADD COLUMN claim_relations_json TEXT NOT NULL DEFAULT '[]';
+
+      ALTER TABLE entity_aliases ADD COLUMN entity_type TEXT NOT NULL DEFAULT 'other';
+      ALTER TABLE entity_aliases ADD COLUMN granularity TEXT NOT NULL DEFAULT 'general_topic';
+      ALTER TABLE entity_aliases ADD COLUMN location_json TEXT NOT NULL DEFAULT '{}';
+
+      ALTER TABLE entity_merge_candidates ADD COLUMN candidate_entity_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE entity_merge_candidates ADD COLUMN candidate_entity_type TEXT NOT NULL DEFAULT 'other';
+      ALTER TABLE entity_merge_candidates ADD COLUMN candidate_granularity TEXT NOT NULL DEFAULT 'general_topic';
+      ALTER TABLE entity_merge_candidates ADD COLUMN proposed_entity_type TEXT NOT NULL DEFAULT 'other';
+      ALTER TABLE entity_merge_candidates ADD COLUMN proposed_granularity TEXT NOT NULL DEFAULT 'general_topic';
+      ALTER TABLE entity_merge_candidates ADD COLUMN location_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE entity_merge_candidates ADD COLUMN ai_recommendation TEXT NOT NULL DEFAULT 'UNCERTAIN';
+      ALTER TABLE entity_merge_candidates ADD COLUMN suggested_relation TEXT;
+      ALTER TABLE entity_merge_candidates ADD COLUMN decision_reason TEXT NOT NULL DEFAULT '';
+      ALTER TABLE entity_merge_candidates ADD COLUMN decided_at TEXT;
+
+      CREATE TABLE entity_relations (
+        id TEXT PRIMARY KEY,
+        destination_slug TEXT NOT NULL,
+        subject_entity_key TEXT NOT NULL,
+        relation_type TEXT NOT NULL CHECK (relation_type IN (
+          'same_as','alias_of','member_of','part_of','located_in','applies_to','related_to',
+          'supports','contradicts','generalizes','specializes','derived_from','example_of'
+        )),
+        object_entity_key TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('model','manual','derived')),
+        confidence REAL NOT NULL,
+        rationale TEXT NOT NULL DEFAULT '',
+        provenance_json TEXT NOT NULL DEFAULT '{}',
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(destination_slug, subject_entity_key, relation_type, object_entity_key)
+      );
+      CREATE INDEX idx_entity_relations_subject ON entity_relations(destination_slug, subject_entity_key, active);
+
+      CREATE TABLE entity_merge_history (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT REFERENCES entity_merge_candidates(id),
+        destination_slug TEXT NOT NULL,
+        merged_from_entity_ids_json TEXT NOT NULL,
+        target_entity_key TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        operator TEXT NOT NULL,
+        ai_recommendation TEXT NOT NULL,
+        ai_confidence REAL NOT NULL,
+        reason TEXT NOT NULL,
+        before_state_json TEXT NOT NULL,
+        after_state_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','undone')),
+        created_at TEXT NOT NULL,
+        undone_at TEXT,
+        undo_operator TEXT
+      );
+      CREATE INDEX idx_entity_merge_history_target ON entity_merge_history(destination_slug, target_entity_key, created_at DESC);
+
+      CREATE TABLE claim_relations (
+        id TEXT PRIMARY KEY,
+        destination_slug TEXT NOT NULL,
+        claim_a_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+        claim_b_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+        relation_type TEXT NOT NULL CHECK (relation_type IN (
+          'EXACT_MATCH','PARAPHRASE','REFINEMENT','ENRICHMENT','GENERALIZATION','COMPATIBLE',
+          'OVERLAPPING','COMPLEMENTARY','CONFLICT','UNCERTAIN'
+        )),
+        can_coexist INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        scope_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(claim_a_id, claim_b_id)
+      );
+      CREATE INDEX idx_claim_relations_destination ON claim_relations(destination_slug, relation_type, updated_at DESC);
+
+      CREATE TABLE claim_review_cases (
+        id TEXT PRIMARY KEY,
+        destination_slug TEXT NOT NULL,
+        claim_a_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+        claim_b_id TEXT REFERENCES claims(id) ON DELETE CASCADE,
+        review_type TEXT NOT NULL CHECK (review_type IN (
+          'CLAIM_CONFLICT','SOURCE_CONFLICT','TEMPORAL_CONFLICT','GRANULARITY_CONFLICT',
+          'NEGATION_EXTRACTION_ERROR','QUALIFIER_EXTRACTION_ERROR'
+        )),
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','resolved','dismissed')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(claim_a_id, claim_b_id, review_type)
+      );
+      CREATE INDEX idx_claim_review_cases_pending ON claim_review_cases(status, review_type, updated_at DESC);
+
+      CREATE TABLE affiliate_provider_accounts (
+        id TEXT PRIMARY KEY,
+        provider_key TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        connection_mode TEXT NOT NULL DEFAULT 'MANUAL' CHECK (connection_mode IN ('MANUAL','OFFICIAL_API','FEED')),
+        site_name TEXT NOT NULL DEFAULT '',
+        default_language TEXT NOT NULL DEFAULT 'en',
+        default_disclosure TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'CONFIGURED' CHECK (status IN ('CONFIGURED','DISABLED','NEEDS_CONFIGURATION')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE affiliate_assets (
+        id TEXT PRIMARY KEY,
+        provider_account_id TEXT NOT NULL REFERENCES affiliate_provider_accounts(id),
+        provider TEXT NOT NULL,
+        asset_type TEXT NOT NULL CHECK (asset_type IN ('DEEP_LINK','CATEGORY_LINK','SEARCH_BOX','STATIC_BANNER','DYNAMIC_BANNER','PROMOTION')),
+        product_category TEXT NOT NULL CHECK (product_category IN ('HOTEL','FLIGHT','TRAIN','ATTRACTION','TOUR_ACTIVITY','FLIGHT_HOTEL','CAR_RENTAL','AIRPORT_TRANSFER','PLANNER')),
+        scope_type TEXT NOT NULL CHECK (scope_type IN ('ENTITY','ROUTE','AREA','DESTINATION','COUNTRY','CATEGORY','GLOBAL')),
+        scope_key TEXT NOT NULL DEFAULT '',
+        destination_slug TEXT NOT NULL DEFAULT '',
+        area_key TEXT NOT NULL DEFAULT '',
+        route_key TEXT NOT NULL DEFAULT '',
+        entity_key TEXT NOT NULL DEFAULT '',
+        entity_name TEXT NOT NULL DEFAULT '',
+        provider_entity_id TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        cta_label TEXT NOT NULL DEFAULT 'View option',
+        target_url TEXT NOT NULL DEFAULT '',
+        embed_config_json TEXT NOT NULL DEFAULT '{}',
+        language TEXT NOT NULL DEFAULT 'en',
+        priority INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1,
+        valid_from TEXT,
+        valid_until TEXT,
+        source_updated_at TEXT,
+        legacy_offer_id TEXT UNIQUE REFERENCES commercial_offers(id),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_affiliate_assets_resolution ON affiliate_assets(active, product_category, scope_type, destination_slug, scope_key, priority DESC);
+
+      CREATE TABLE affiliate_asset_mappings (
+        id TEXT PRIMARY KEY,
+        affiliate_asset_id TEXT NOT NULL REFERENCES affiliate_assets(id) ON DELETE CASCADE,
+        scope_type TEXT NOT NULL CHECK (scope_type IN ('ENTITY','ROUTE','AREA','DESTINATION','COUNTRY','CATEGORY','GLOBAL')),
+        scope_key TEXT NOT NULL,
+        destination_slug TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE(affiliate_asset_id, scope_type, scope_key)
+      );
+
+      CREATE TABLE commercial_intents (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+        block_index INTEGER NOT NULL,
+        block_key TEXT NOT NULL,
+        intent_type TEXT NOT NULL,
+        product_category TEXT NOT NULL,
+        destination_slug TEXT NOT NULL DEFAULT '',
+        area_key TEXT NOT NULL DEFAULT '',
+        route_key TEXT NOT NULL DEFAULT '',
+        entity_key TEXT NOT NULL DEFAULT '',
+        intent_strength TEXT NOT NULL CHECK (intent_strength IN ('LOW','MEDIUM','HIGH','VERY_HIGH')),
+        decision_stage TEXT NOT NULL,
+        recommended_component TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(draft_id, block_key, product_category)
+      );
+      CREATE INDEX idx_commercial_intents_draft ON commercial_intents(draft_id, block_index);
+
+      CREATE TABLE commercial_slots (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+        intent_id TEXT REFERENCES commercial_intents(id) ON DELETE SET NULL,
+        affiliate_asset_id TEXT REFERENCES affiliate_assets(id) ON DELETE SET NULL,
+        slot_key TEXT NOT NULL,
+        component_type TEXT NOT NULL,
+        placement TEXT NOT NULL,
+        block_index INTEGER,
+        strategy_version TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(draft_id, slot_key)
+      );
+
+      CREATE TABLE affiliate_opportunities (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT REFERENCES article_drafts(id) ON DELETE SET NULL,
+        intent_id TEXT REFERENCES commercial_intents(id) ON DELETE SET NULL,
+        provider TEXT NOT NULL,
+        product_category TEXT NOT NULL,
+        scope_type TEXT NOT NULL,
+        scope_key TEXT NOT NULL,
+        score REAL NOT NULL,
+        factors_json TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','addressed','dismissed')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(draft_id, product_category, scope_type, scope_key)
+      );
+      CREATE INDEX idx_affiliate_opportunities_open ON affiliate_opportunities(status, score DESC, updated_at DESC);
+
+      CREATE TABLE commercial_events (
+        id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL CHECK (event_type IN ('impression','click','booking','commission')),
+        article_id TEXT,
+        draft_id TEXT REFERENCES article_drafts(id) ON DELETE SET NULL,
+        offer_id TEXT,
+        affiliate_asset_id TEXT REFERENCES affiliate_assets(id) ON DELETE SET NULL,
+        provider TEXT NOT NULL,
+        category TEXT NOT NULL,
+        slot_key TEXT NOT NULL,
+        component_variant TEXT NOT NULL DEFAULT '',
+        placement TEXT NOT NULL DEFAULT '',
+        entity_key TEXT NOT NULL DEFAULT '',
+        route_key TEXT NOT NULL DEFAULT '',
+        destination_slug TEXT NOT NULL DEFAULT '',
+        device TEXT NOT NULL DEFAULT '',
+        locale TEXT NOT NULL DEFAULT '',
+        strategy_version TEXT NOT NULL,
+        value_amount REAL,
+        occurred_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_commercial_events_performance ON commercial_events(provider, category, event_type, occurred_at DESC);
+
+      CREATE TABLE commission_rules (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        product_category TEXT NOT NULL,
+        commission_model TEXT NOT NULL,
+        effective_rate REAL,
+        valid_from TEXT,
+        valid_until TEXT,
+        promotion_multiplier REAL NOT NULL DEFAULT 1,
+        source_updated_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(provider, product_category, valid_from)
+      );
+
+      ALTER TABLE commercial_compositions ADD COLUMN asset_ids_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE commercial_compositions ADD COLUMN commercial_blocks_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE commercial_compositions ADD COLUMN content_blocks_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE commercial_compositions ADD COLUMN strategy_version TEXT NOT NULL DEFAULT '';
+
+      INSERT OR IGNORE INTO affiliate_provider_accounts(
+        id, provider_key, display_name, connection_mode, site_name, default_language,
+        default_disclosure, status, created_at, updated_at
+      )
+      SELECT 'provider_legacy_' || lower(hex(randomblob(12))), lower(trim(provider)), provider,
+        'MANUAL', '', 'en', '', 'CONFIGURED', datetime('now'), datetime('now')
+      FROM commercial_offers WHERE trim(provider) <> '' GROUP BY lower(trim(provider));
+
+      INSERT OR IGNORE INTO affiliate_assets(
+        id, provider_account_id, provider, asset_type, product_category, scope_type, scope_key,
+        destination_slug, title, description, cta_label, target_url, priority, active,
+        valid_until, source_updated_at, legacy_offer_id, created_at, updated_at
+      )
+      SELECT 'asset_' || o.id,
+        (SELECT p.id FROM affiliate_provider_accounts p WHERE p.provider_key=lower(trim(o.provider)) LIMIT 1),
+        o.provider, 'CATEGORY_LINK',
+        CASE o.category WHEN 'hotels' THEN 'HOTEL' WHEN 'attraction_tickets' THEN 'ATTRACTION'
+          WHEN 'trains' THEN 'TRAIN' WHEN 'flights' THEN 'FLIGHT' WHEN 'tours_activities' THEN 'TOUR_ACTIVITY'
+          WHEN 'airport_transfer' THEN 'AIRPORT_TRANSFER' ELSE 'PLANNER' END,
+        'DESTINATION', o.destination_slug, o.destination_slug, o.title, o.description,
+        o.cta_label, o.target_url, o.priority, o.active, o.valid_until, o.source_updated_at,
+        o.id, o.updated_at, o.updated_at
+      FROM commercial_offers o WHERE trim(o.target_url) <> '';
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (18, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationSeventeen(db) {

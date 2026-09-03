@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.11.0 — 2026-09-03
+
+- Added schema migration 18 with typed/granular Entity identity, Entity Relations, auditable/undoable merge history, structured Claim value/scope fields, Claim Relations, and categorized Claim review cases.
+- Replaced value-string inequality conflict detection with coexistence-aware exact/paraphrase/refinement/enrichment/generalization/compatible/overlap/complement/conflict classification; original source sentences and normalized Claims remain visible for review.
+- Added the canonical Affiliate Provider and Asset Registry, mappings, block-level Commercial Intent, decision-specific resolution/fallback, density guard, thresholded Opportunity queue, slots/compositions, impression/click events, commission metadata, and performance aggregation.
+- Preserved `/api/commercial/offers` as a write-through compatibility adapter while moving runtime selection to `affiliate_assets`; Research, Knowledge, planning, drafts, QA, and Evidence Ledgers remain commercially isolated.
+- Added safe structured Commercial Blocks for WordPress with disclosure and sponsored attributes, plus Frontend Contract capability-gap requests instead of a hand-maintained component list.
+- Added compatibility with the Frontend repository's published `inputSchema` shape and excluded commercial capabilities from all pre-QA editorial component resolution.
+- Activated immutable Content Production Strategy 1.3, updated operator/API documentation, and expanded automated Entity, Claim, Commercial, Contract, WordPress, server, migration, and release coverage.
+
 ## 1.5.0 — 2026-08-28
 
 - Added the governed **SoloToChina Content Production Strategy 1.0** manifest, immutable specification, upgrade guide, handoff document, system API metadata, and release-drift checks.

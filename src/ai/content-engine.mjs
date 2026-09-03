@@ -120,6 +120,11 @@ const PAGE_PLAN_SCHEMA = objectSchema(
   },
 );
 
+const ENTITY_LOCATION_SCHEMA = objectSchema([], {
+  country: { type: "string" }, region: { type: "string" }, city: { type: "string" }, district: { type: "string" },
+  latitude: { type: "number" }, longitude: { type: "number" },
+});
+
 const ENTITY_RESOLUTION_SCHEMA = objectSchema(
   ["entities", "claim_updates", "candidates"],
   {
@@ -128,6 +133,7 @@ const ENTITY_RESOLUTION_SCHEMA = objectSchema(
       items: objectSchema(["entity_key", "canonical_subject", "aliases", "confidence"], {
         entity_key: { type: "string" }, canonical_subject: { type: "string" },
         aliases: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 },
+        entity_type: { type: "string" }, granularity: { type: "string" }, location: ENTITY_LOCATION_SCHEMA,
       }),
     },
     claim_updates: {
@@ -135,6 +141,7 @@ const ENTITY_RESOLUTION_SCHEMA = objectSchema(
       items: objectSchema(["claim_id", "entity_key", "canonical_subject", "canonical_key", "confidence"], {
         claim_id: { type: "string" }, entity_key: { type: "string" }, canonical_subject: { type: "string" },
         canonical_key: { type: "string" }, confidence: { type: "number", minimum: 0, maximum: 1 },
+        entity_type: { type: "string" }, granularity: { type: "string" }, location: ENTITY_LOCATION_SCHEMA,
       }),
     },
     candidates: {
@@ -142,6 +149,11 @@ const ENTITY_RESOLUTION_SCHEMA = objectSchema(
       items: objectSchema(["alias", "proposed_entity_key", "proposed_canonical_subject", "confidence", "rationale"], {
         alias: { type: "string" }, proposed_entity_key: { type: "string" }, proposed_canonical_subject: { type: "string" },
         confidence: { type: "number", minimum: 0, maximum: 1 }, rationale: { type: "string" },
+        candidate_entity_key: { type: "string" }, candidate_entity_type: { type: "string" }, candidate_granularity: { type: "string" },
+        proposed_entity_type: { type: "string" }, proposed_granularity: { type: "string" },
+        candidate_location: ENTITY_LOCATION_SCHEMA, proposed_location: ENTITY_LOCATION_SCHEMA,
+        recommendation: { type: "string", enum: ["MERGE", "DO_NOT_MERGE", "UNCERTAIN"] },
+        suggested_relation: { type: "string" },
       }),
     },
   },
@@ -283,12 +295,18 @@ const DRAFT_PROMPT = `Write an original, publication-quality English China trave
 - If revision_feedback exists, fix every blocker without adding unsupported facts.`;
 
 const ENTITY_RESOLUTION_PROMPT = `Resolve destination entities in SoloToChina's evidence store.
+- Identity asks whether two references identify the same real-world object. Semantic relatedness, shared topic, shared location, shared category, or cross-language similarity is never sufficient identity evidence.
 - Group only references that identify the same physical place, route, venue, attraction, restaurant, station, neighbourhood, or named travel entity within the supplied destination.
 - Chinese names, pinyin, common English names, literal translations, abbreviations, and source-language variants may be aliases only when the supplied claims make the identity clear. Never merge merely similar names.
+- Classify entity_type as place, attraction, restaurant, hotel, transport_hub, route, city, district, region, country, organization, government_agency, event, category, collection, topic, policy, rule, procedure, product_or_service, or other.
+- Classify granularity as specific_entity, collection, category, route, area, city_level, regional, national, or general_topic.
+- A specific entity cannot be merged with a collection/category/general topic. A city cannot be merged with a district; a route cannot be merged with a destination. Return DO_NOT_MERGE for obvious type, geography, granularity, canonical-identity, or alias-plausibility violations; do not put those cases in the uncertain queue.
+- If two entities are related but not identical, suggest member_of, part_of, located_in, applies_to, related_to, supports, contradicts, generalizes, specializes, derived_from, or example_of instead of a merge.
+- Entity and Claim are separate. Phrases such as 'Chongqing attractions (advance reservation)' or 'Hongyadong reservation' are not place aliases merely because a Claim discusses a place.
 - Preserve the source claims. This task only establishes canonical entity identity and, where confident, a stable canonical claim key.
 - entity_key must be lowercase ASCII dot-separated and semantic, for example attraction.zhongshan_4th_road. canonical_subject should use the clearest reader-facing English/common name; aliases must retain all useful source forms, including Chinese.
 - Return claim_updates only when confidence is at least 0.85. Use the same canonical_key only for truly equivalent claim concepts; otherwise preserve the claim's original key.
-- For plausible but uncertain cross-language matches with confidence 0.60-0.84, return candidates instead. Do not add them to entities or claim_updates.
+- For plausible but uncertain identity matches with confidence 0.60-0.84, return candidates with recommendation UNCERTAIN, both type/granularity values, a concise rationale, and any suggested relation. Do not add them to entities or claim_updates.
 - Do not guess translations, addresses, venues, or relationships not supported by the supplied claims. Return empty arrays when no safe merge is available.`;
 
 const pagePlanPrompt = (strategyVersion, capabilities) => `You are the Page Composer for SoloToChina Content Production Strategy ${strategyVersion}.

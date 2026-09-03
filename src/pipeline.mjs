@@ -206,9 +206,17 @@ export class Pipeline {
           if (!this.commercialComposer) throw new Error("Commercial Composer is not configured.");
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage?.review?.passed) throw new Error("Only a QA-passed Research Draft can enter the Commercial Layer.");
-          const offers = this.repository.activeOffersForDestination(contentPackage.brief.destination_slug);
-          const composition = this.commercialComposer.compose(contentPackage, offers);
-          this.repository.saveCommercialComposition(job.entity_id, composition);
+           const offers = this.repository.activeOffersForDestination(contentPackage.brief.destination_slug);
+           const composition = this.commercialComposer.compose(contentPackage, offers);
+           if (this.frontendContracts?.configured) {
+             const capabilities = this.frontendContracts.commercialCapabilities(composition.requiredComponents);
+             for (const componentId of capabilities.missing) this.repository.createFrontendCapabilityRequest({
+               draftId: job.entity_id, briefId: contentPackage.brief?.id || null,
+               semanticNeed: componentId, useCase: `Commercial overlay for ${contentPackage.draft?.title || job.entity_id}`,
+               reason: `The Commercial Composer selected '${componentId}', but the active Frontend Contract does not publish that safe component. WordPress retains its safe server-rendered fallback.`,
+             });
+           }
+           this.repository.saveCommercialComposition(job.entity_id, composition);
           if (this.wordpress?.enabled) this.repository.enqueue("push_wordpress_draft", job.entity_id);
           break;
         }
@@ -234,10 +242,12 @@ export class Pipeline {
           const publication = this.repository.prepareWordPressPublication(job.entity_id, this.wordpress.config.siteUrl);
           try {
             const publishableDraft = {
-              ...contentPackage.draft,
-              body_markdown: contentPackage.commercial_composition.publishable_body_markdown,
-              content_blocks: markdownToContentBlocks(contentPackage.commercial_composition.publishable_body_markdown),
-            };
+               ...contentPackage.draft,
+               body_markdown: contentPackage.commercial_composition.publishable_body_markdown,
+               content_blocks: contentPackage.commercial_composition.content_blocks?.length
+                 ? contentPackage.commercial_composition.content_blocks
+                 : markdownToContentBlocks(contentPackage.commercial_composition.publishable_body_markdown),
+             };
             const result = await this.wordpress.upsertDraft(publishableDraft, publication.post_id);
             this.repository.completeWordPressPublication(job.entity_id, result);
           } catch (error) {

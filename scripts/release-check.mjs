@@ -133,6 +133,7 @@ async function smokeReadApis(baseUrl) {
     ["WordPress inventory API", "/api/wordpress/inventory", (body) => typeof body?.configured === "boolean" && Array.isArray(body?.items)],
     ["Search Console API", "/api/search-console", (body) => typeof body?.configured === "boolean" && Array.isArray(body?.items)],
     ["Commercial offers API", "/api/commercial/offers", (body) => Array.isArray(body?.items)],
+    ["Affiliate Provider/Asset API", "/api/commercial", (body) => Array.isArray(body?.providers) && Array.isArray(body?.items) && Array.isArray(body?.opportunities)],
     ["Exception queue scan", "/api/exceptions", (body) => Array.isArray(body?.items) && body.items.length === 0],
     ["Maintenance API", "/api/maintenance", (body) => typeof body?.enabled === "boolean" && Array.isArray(body?.runs)],
   ];

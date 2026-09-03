@@ -46,7 +46,7 @@ try {
   const database = openDatabase(path.join(directory, "release.sqlite"));
   try {
     const versions = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
-    if (versions.join(",") !== "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17") throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
+    if (versions.join(",") !== "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18") throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
     for (const [table, column] of [
       ["content_intake_analyses", "strategy_version"], ["content_recommendations", "strategy_version"],
       ["content_opportunities", "strategy_version"], ["topic_candidates", "strategy_version"],
@@ -55,6 +55,8 @@ try {
       ["quality_reviews", "strategy_version"], ["wordpress_publications", "strategy_version"],
       ["article_visuals", "strategy_version"], ["article_visuals", "image_type"], ["article_visuals", "acquisition_strategy"],
       ["article_visuals", "source_asset_id"], ["article_visuals", "source_remote_url"],
+      ["claims", "structured_value_json"], ["claims", "scope_json"], ["claims", "entity_type"],
+      ["knowledge_facts", "claim_relations_json"], ["commercial_compositions", "commercial_blocks_json"],
     ]) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
       if (!columns.includes(column)) throw new Error(`${table}.${column} is required for Content Strategy governance.`);
@@ -68,6 +70,11 @@ try {
     for (const table of ["entity_aliases", "entity_merge_candidates"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for multilingual entity normalization.`);
     }
+    for (const table of ["entity_relations", "entity_merge_history", "claim_relations", "claim_review_cases",
+      "affiliate_provider_accounts", "affiliate_assets", "affiliate_asset_mappings", "commercial_intents",
+      "commercial_slots", "affiliate_opportunities", "commercial_events", "commission_rules"]) {
+      if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for Entity, Claim, or Commercial Phase 1.`);
+    }
     const integrity = database.prepare("PRAGMA integrity_check").get();
     if (Object.values(integrity)[0] !== "ok") throw new Error("Release database integrity check failed.");
   } finally {
@@ -77,4 +84,4 @@ try {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-17, and SQLite integrity.`);
+console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-18, and SQLite integrity.`);

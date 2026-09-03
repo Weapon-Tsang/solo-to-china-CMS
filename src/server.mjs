@@ -12,7 +12,10 @@ import { Pipeline } from "./pipeline.mjs";
 import { Repository } from "./repository.mjs";
 import { WordPressDraftAdapter } from "./wordpress.mjs";
 import { SearchConsoleAdapter } from "./search-console.mjs";
-import { CommercialComposer, CommercialValidationError, normalizeCommercialOffer } from "./commercial.mjs";
+import {
+  CommercialComposer, CommercialValidationError, normalizeAffiliateAsset,
+  normalizeAffiliateProviderAccount, normalizeCommercialEvent, normalizeCommercialOffer, normalizeCommissionRule,
+} from "./commercial.mjs";
 import { MaintenanceScheduler } from "./maintenance.mjs";
 import { createLogger } from "./logger.mjs";
 import { ExceptionNotifier } from "./notifications.mjs";
@@ -268,6 +271,8 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, {
           aliases: repository.listEntityAliases(destination || null),
           candidates: repository.listEntityMergeCandidates(),
+          relations: repository.listEntityRelations(destination || null),
+          mergeHistory: repository.listEntityMergeHistory(destination || null),
         });
       }
       if (request.method === "POST" && url.pathname === "/api/knowledge/entity-aliases/reconcile") {
@@ -282,9 +287,27 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "POST" && entityCandidateDecisionMatch) {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
-        const result = repository.decideEntityMergeCandidate(decodeURIComponent(entityCandidateDecisionMatch[1]), String(payload.decision || ""));
+        const result = repository.decideEntityMergeCandidate(decodeURIComponent(entityCandidateDecisionMatch[1]), String(payload.decision || ""), {
+          relationType: payload.relationType, reason: payload.reason, operator: payload.operator || "administrator",
+        });
         if (!result) return sendJson(response, 404, { error: "Entity alias candidate not found or already decided." });
         void pipeline.runOne();
+        return sendJson(response, 200, result);
+      }
+      const entityMergeUndoMatch = url.pathname.match(/^\/api\/knowledge\/entity-merges\/([^/]+)\/undo$/);
+      if (request.method === "POST" && entityMergeUndoMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const result = repository.undoEntityMerge(decodeURIComponent(entityMergeUndoMatch[1]));
+        if (!result) return sendJson(response, 404, { error: "Active entity merge history not found." });
+        void pipeline.runOne();
+        return sendJson(response, 200, result);
+      }
+      const claimReviewDecisionMatch = url.pathname.match(/^\/api\/knowledge\/claim-reviews\/([^/]+)\/decision$/);
+      if (request.method === "POST" && claimReviewDecisionMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.decideClaimReviewCase(decodeURIComponent(claimReviewDecisionMatch[1]), String(payload.decision || ""), payload.note || "");
+        if (!result) return sendJson(response, 404, { error: "Pending claim review not found." });
         return sendJson(response, 200, result);
       }
       const knowledgeResolutionMatch = url.pathname.match(/^\/api\/knowledge\/([^/]+)\/resolve$/);
@@ -375,6 +398,65 @@ export function createApplication(config = loadConfig()) {
         const jobId = repository.enqueueSearchConsoleSync(searchConsole.config.siteUrl, searchConsole.config.syncHours, true);
         void pipeline.runOne();
         return sendJson(response, 202, { queued: true, jobId });
+      }
+      if (request.method === "GET" && url.pathname === "/api/commercial") {
+        return sendJson(response, 200, {
+          providers: repository.listAffiliateProviderAccounts(), items: repository.listAffiliateAssets(),
+          mappings: repository.listAffiliateAssetMappings(), opportunities: repository.listAffiliateOpportunities(),
+          performance: repository.commercialPerformance(), commissionRules: repository.listCommissionRules(),
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/api/commercial/providers") {
+        return sendJson(response, 200, { items: repository.listAffiliateProviderAccounts() });
+      }
+      if (request.method === "POST" && url.pathname === "/api/commercial/providers") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 50_000);
+        return sendJson(response, 200, repository.upsertAffiliateProviderAccount(normalizeAffiliateProviderAccount(payload)));
+      }
+      const commercialProviderMatch = url.pathname.match(/^\/api\/commercial\/providers\/([^/]+)$/);
+      if (request.method === "GET" && commercialProviderMatch) {
+        const providerId = decodeURIComponent(commercialProviderMatch[1]);
+        const provider = repository.getAffiliateProviderAccount(providerId);
+        if (!provider) return sendJson(response, 404, { error: "Affiliate provider not found." });
+        return sendJson(response, 200, {
+          provider, assets: repository.listAffiliateAssets({ providerAccountId: providerId }),
+          mappings: repository.listAffiliateAssetMappings().filter((item) => repository.getAffiliateAsset(item.affiliate_asset_id)?.provider_account_id === providerId),
+          performance: repository.commercialPerformance().filter((item) => item.provider === provider.display_name),
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/api/commercial/assets") {
+        return sendJson(response, 200, { items: repository.listAffiliateAssets() });
+      }
+      if (request.method === "POST" && url.pathname === "/api/commercial/assets") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 200_000);
+        const provider = repository.getAffiliateProviderAccount(payload.providerAccountId || payload.provider_account_id);
+        if (!provider) return sendJson(response, 400, { error: "Affiliate provider account does not exist." });
+        return sendJson(response, 200, repository.upsertAffiliateAsset(normalizeAffiliateAsset(payload, {
+          id: provider.id, displayName: provider.display_name,
+        })));
+      }
+      if (request.method === "GET" && url.pathname === "/api/commercial/mappings") {
+        return sendJson(response, 200, { items: repository.listAffiliateAssetMappings() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/commercial/opportunities") {
+        return sendJson(response, 200, { items: repository.listAffiliateOpportunities(String(url.searchParams.get("status") || "open")) });
+      }
+      if (request.method === "GET" && url.pathname === "/api/commercial/performance") {
+        return sendJson(response, 200, { items: repository.commercialPerformance() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/commercial/commission-rules") {
+        return sendJson(response, 200, { items: repository.listCommissionRules() });
+      }
+      if (request.method === "POST" && url.pathname === "/api/commercial/commission-rules") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 50_000);
+        return sendJson(response, 200, repository.upsertCommissionRule(normalizeCommissionRule(payload)));
+      }
+      if (request.method === "POST" && url.pathname === "/api/commercial/events") {
+        const payload = await readJson(request, 50_000);
+        return sendJson(response, 202, repository.recordCommercialEvent(normalizeCommercialEvent(payload, repository.strategyVersion)));
       }
       if (request.method === "GET" && url.pathname === "/api/commercial/offers") {
         return sendJson(response, 200, { items: repository.listCommercialOffers() });

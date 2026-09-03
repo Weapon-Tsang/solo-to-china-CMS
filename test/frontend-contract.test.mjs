@@ -36,6 +36,46 @@ test("synchronized registry validates a valid page and preserves block order", a
   assert.deepEqual(validPayload().blocks.map((block) => block.type), ["articleSection", "faqList"]);
 });
 
+test("commercial components are consumed from the registry and missing capabilities are explicit", async (t) => {
+  const { repository } = repositoryFixture(t);
+  const fixture = frontendContractFixture(t);
+  const consumer = consumerFor(repository, fixture);
+  await consumer.sync();
+  const capabilities = consumer.commercialCapabilities(["affiliate_booking_card", "articleSection"]);
+  assert.deepEqual(capabilities.supported, ["articleSection"]);
+  assert.deepEqual(capabilities.missing, ["affiliate_booking_card"]);
+});
+
+test("the published Frontend inputSchema and 2020-12 shape sync while commercial capabilities stay out of pre-QA composition", async (t) => {
+  const { repository } = repositoryFixture(t);
+  const fixture = frontendContractFixture(t, { contractVersion: "1.0.0", schemaVersion: "2020-12", components: [{
+    id: "affiliate_cta", name: "Affiliate CTA", category: "commercial", purpose: "Contextual commercial action.",
+    status: "stable", variants: ["default"], cmsUsable: true, interface: "page_block", renderMode: "shortcode",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["category", "provider", "title", "description", "cta_label", "target_url"],
+      properties: {
+        category: { type: "string" }, provider: { type: "string" }, title: { type: "string" },
+        description: { type: "string" }, cta_label: { type: "string" },
+        target_url: { type: "string", pattern: "^https://" }, disclosure: { type: "string" },
+      },
+    },
+  }] });
+  const consumer = consumerFor(repository, fixture);
+  await consumer.sync();
+  assert.equal(consumer.hasComponent("affiliate_cta"), true);
+  assert.deepEqual(consumer.commercialCapabilities(["affiliate_cta"]).supported, ["affiliate_cta"]);
+  assert.deepEqual(consumer.resolveForArticle({ draft: { body_markdown: "Compare booking options." } }).components, []);
+  const validation = consumer.validatePagePayload({
+    metadata: { title: "Commercial payload" },
+    blocks: [{ type: "affiliate_cta", variant: "default", data: {
+      category: "hotel", provider: "Trip.com", title: "Compare hotels", description: "Check location before price.",
+      cta_label: "View options", target_url: "https://www.trip.com/",
+    } }],
+  });
+  assert.equal(validation.valid, true);
+});
+
 test("component validation rejects unknown components, variants, required fields, and arbitrary data", async (t) => {
   const { repository } = repositoryFixture(t);
   const fixture = frontendContractFixture(t);

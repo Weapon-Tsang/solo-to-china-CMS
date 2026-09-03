@@ -43,16 +43,61 @@ test("uncertain multilingual aliases stay pending until an operator accepts or r
     candidates: [{
       alias: "中四路小吃街", proposed_entity_key: "attraction.zhongshan_4th_road",
       proposed_canonical_subject: "Zhongshan 4th Road", confidence: 0.72,
+      candidate_entity_type: "attraction", candidate_granularity: "specific_entity",
+      proposed_entity_type: "attraction", proposed_granularity: "specific_entity",
       rationale: "The note may refer to a food area on the same road, but the boundary is unclear.",
     }],
   }, "fixture-model");
   const [candidate] = repository.listEntityMergeCandidates();
   assert.equal(candidate.status, "pending");
-  assert.ok(repository.listOperationalExceptions().some((item) => item.kind === "entity_alias" && item.entity_alias?.id === candidate.id));
+  assert.ok(repository.listOperationalExceptions().some((item) => item.kind === "entity_identity" && item.entity_alias?.id === candidate.id));
   const accepted = repository.decideEntityMergeCandidate(candidate.id, "accepted");
   assert.equal(accepted.status, "accepted");
   const alias = repository.listEntityAliases("chongqing").find((item) => item.alias_normalized.includes("中四路小吃街"));
   assert.equal(alias.canonical_subject, "Zhongshan 4th Road");
+});
+
+test("generic collections and claim-like phrases are related instead of entering identity review", (t) => {
+  const { repository } = repositoryFixture(t);
+  saveSource(repository, "generic", "several listed attractions", "Advance reservation may be useful.");
+  repository.applyEntityResolution("chongqing", {
+    entities: [], claim_updates: [], candidates: [{
+      alias: "several listed attractions", candidate_entity_key: "collection.chongqing_listed_attractions",
+      candidate_entity_type: "collection", candidate_granularity: "collection",
+      proposed_entity_key: "topic.chongqing_attractions_reservation",
+      proposed_canonical_subject: "Chongqing attractions (advance reservation)",
+      proposed_entity_type: "topic", proposed_granularity: "general_topic",
+      confidence: 0.78, rationale: "Semantically related reservation wording.", suggested_relation: "supports",
+    }],
+  }, "fixture-model");
+  assert.equal(repository.listEntityMergeCandidates().length, 0);
+  const relation = repository.listEntityRelations("chongqing")[0];
+  assert.equal(relation.subject_entity_key, "collection.chongqing_listed_attractions");
+  assert.ok(["related_to", "supports"].includes(relation.relation_type));
+});
+
+test("manual entity merge is audited and can be undone without deleting claims", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  saveSource(repository, "undo", "Hongya Cave", "Visit after sunset.");
+  repository.applyEntityResolution("chongqing", {
+    entities: [], claim_updates: [], candidates: [{
+      alias: "Hongya Cave", candidate_entity_key: "attraction.hongya_cave",
+      candidate_entity_type: "attraction", candidate_granularity: "specific_entity",
+      proposed_entity_key: "attraction.hongyadong", proposed_canonical_subject: "Hongyadong",
+      proposed_entity_type: "attraction", proposed_granularity: "specific_entity",
+      confidence: 0.75, rationale: "Common English alias with matching destination evidence.",
+    }],
+  }, "fixture-model");
+  const candidate = repository.listEntityMergeCandidates()[0];
+  const beforeClaimCount = db.prepare("SELECT COUNT(*) AS count FROM claims").get().count;
+  const accepted = repository.decideEntityMergeCandidate(candidate.id, "same_entity", { operator: "test-editor" });
+  assert.match(accepted.historyId, /^entity_merge_/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM claims").get().count, beforeClaimCount);
+  assert.equal(repository.listEntityMergeHistory("chongqing")[0].status, "active");
+  const undone = repository.undoEntityMerge(accepted.historyId, "test-editor");
+  assert.equal(undone.status, "undone");
+  assert.equal(repository.listEntityMergeHistory("chongqing")[0].status, "undone");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM claims").get().count, beforeClaimCount);
 });
 
 function saveSource(repository, externalId, subject, value) {

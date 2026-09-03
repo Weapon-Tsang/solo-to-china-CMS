@@ -47,9 +47,11 @@ The production dashboard is built by Vite into `dist/` and served by the same No
 ### 3. Aggregated intelligence
 
 - `knowledge_facts`：同 Destination、同 Claim key 的多 Source 聚合。
-- 值一致且证据 > 1 → `corroborated`。
+- Claim 关系为 exact/paraphrase/refinement/enrichment/compatible/overlapping/complementary 且可同时为真 → `corroborated`。
 - 只有一个 Source → `single_source`。
-- 出现不同值 → `conflicted`，保留全部 evidence，不自动覆盖。
+- 只有同 Scope/Time/Condition 下不能同时为真的命题 → `conflicted`，保留全部 evidence，不自动覆盖。
+- `entity_aliases` 保存规范身份；`entity_relations` 保存非同一对象之间的 relatedness；`entity_merge_history` 保存可撤销的人工合并快照。
+- `claim_relations` 保存 Claim 兼容/细化/冲突关系；`claim_review_cases` 只投影真实冲突或抽取错误到分类异常队列。
 - `editorial_blueprints`：跨 Source 聚合表达模式，与 KB 分开。
 
 ### 4. Content production
@@ -67,22 +69,24 @@ QA 通过并配置 WordPress 时会自动创建 `draft`。这不等于发布；�
 
 ### Content Strategy governance
 
-`config/content-strategy.json` is the single active Strategy version source. `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.2.md` defines the immutable operating contract, while the manifest `history` and `docs/content-strategy/CHANGELOG.md` preserve the version evolution log. New intake, recommendation, opportunity, brief, draft, QA, WordPress, and visual records retain the version that created them; legacy rows are deliberately not backfilled. The server exposes this version through `/api/system/info` and `/api/health`, while release checks reject any manifest, documentation, migration, or UI drift.
+`config/content-strategy.json` is the single active Strategy version source. `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.3.md` defines the immutable operating contract, while the manifest `history` and `docs/content-strategy/CHANGELOG.md` preserve the version evolution log. New intake, recommendation, opportunity, brief, draft, QA, WordPress, visual, and Commercial Composition/event records retain the version that created them; legacy rows are deliberately not backfilled. The server exposes this version through `/api/system/info` and `/api/health`, while release checks reject any manifest, documentation, migration, or UI drift.
 
 ### 5. Commercial layer
 
-`commercial_offers` 与 `commercial_compositions` 是独立表族。Research Extractor、Claim Aggregator、KB、Topic Candidate、Brief、Draft 和 QA Package 均不读取它。
+`affiliate_provider_accounts`、`affiliate_assets`、`affiliate_asset_mappings`、`commercial_intents`、`commercial_slots`、`commercial_compositions`、`affiliate_opportunities`、`commercial_events` 和 `commission_rules` 是独立表族。Research Extractor、Claim Aggregator、KB、Topic Candidate、Brief、Draft 和 QA Package 均不读取它。`commercial_offers` 仅保留为旧 Provider/Feed API 的兼容入口，并同步投影为 canonical `affiliate_assets`。
 
 Commercial Composer 仅在 Research Draft 通过 QA 后运行：
 
 ```text
-Frozen Research Draft + destination-relevant active Offers
-  → deterministic relevance and category dedupe
-  → disclosure + typed end-resource slots
+Frozen Research Draft + structured blocks + active Affiliate Assets
+  → block-level commercial intent
+  → intent-specific scope preference (Entity / Route / Area / Destination / Country / Category / Global)
+  → deterministic fallback + density guard + opportunity threshold
+  → contextual typed components and optional final utility block
   → independent Publishable Overlay
 ```
 
-每个分类最多一个 Offer；无相关 Offer 时 Overlay 与 Research Draft 完全一致。Research Draft、Evidence Ledger 和 Knowledge Base 从不被修改。Offer feed 更新只重组尚未同步到 WordPress 的 Draft。
+普通文章最多 1–2 个 contextual units 和 0–1 个 end-resource unit；相邻重复类别、过早模块和连续商业模块被阻止。无相关 Asset 时 Overlay 与 Research Draft 完全一致。Research Draft、Evidence Ledger 和 Knowledge Base 从不被修改。缺少精确链接通常静默 fallback，只有超过收益/维护门槛的精度缺口进入 Affiliate Opportunity。
 
 ### WordPress inventory guard
 

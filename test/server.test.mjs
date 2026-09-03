@@ -114,6 +114,8 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
     entities: [], claim_updates: [], candidates: [{
       alias: "中四路", proposed_entity_key: "attraction.zhongshan_4th_road",
       proposed_canonical_subject: "Zhongshan 4th Road", confidence: 0.7, rationale: "Cross-language alias needs confirmation.",
+      candidate_entity_type: "attraction", candidate_granularity: "specific_entity",
+      proposed_entity_type: "attraction", proposed_granularity: "specific_entity",
     }],
   }, "fixture-model");
   const aliases = await (await fetch(`${baseUrl}/api/knowledge/entity-aliases?destination=chongqing`)).json();
@@ -128,6 +130,28 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   });
   assert.equal(aliasAccepted.status, 200);
   assert.equal((await aliasAccepted.json()).status, "accepted");
+  const providerResponse = await fetch(`${baseUrl}/api/commercial/providers`, {
+    method: "POST", headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
+    body: JSON.stringify({ providerKey: "trip-com", displayName: "Trip.com", connectionMode: "MANUAL", defaultDisclosure: "Affiliate disclosure." }),
+  });
+  assert.equal(providerResponse.status, 200);
+  const provider = await providerResponse.json();
+  const assetResponse = await fetch(`${baseUrl}/api/commercial/assets`, {
+    method: "POST", headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
+    body: JSON.stringify({ providerAccountId: provider.id, provider: "Trip.com", assetType: "CATEGORY_LINK", productCategory: "HOTEL", scopeType: "DESTINATION", scopeKey: "chongqing", destinationSlug: "chongqing", title: "Chongqing hotels", targetUrl: "https://www.trip.com/hotels/chongqing" }),
+  });
+  assert.equal(assetResponse.status, 200);
+  const asset = await assetResponse.json();
+  assert.equal(asset.product_category, "HOTEL");
+  const eventResponse = await fetch(`${baseUrl}/api/commercial/events`, {
+    method: "POST", headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
+    body: JSON.stringify({ eventType: "impression", provider: "Trip.com", category: "HOTEL", slotKey: "end-resource:hotel:1", affiliateAssetId: asset.id, destination: "chongqing" }),
+  });
+  assert.equal(eventResponse.status, 202);
+  const commercial = await (await fetch(`${baseUrl}/api/commercial`)).json();
+  assert.equal(commercial.providers.length, 1);
+  assert.equal(commercial.items.length, 1);
+  assert.equal(commercial.performance[0].impressions, 1);
   const content = await (await fetch(`${baseUrl}/api/content`)).json();
   assert.ok(Array.isArray(content.items));
   assert.ok(Array.isArray(content.opportunities));

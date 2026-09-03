@@ -34,6 +34,7 @@ export function contentBlockSummary(blocks) {
       if (/frequently asked questions/i.test(block.text || "")) output.faq = true;
     }
     if (block.type === "list") output.lists += 1;
+    if (block.type === "commercial") output.commercial = (output.commercial || 0) + 1;
   }
   return output;
 }
