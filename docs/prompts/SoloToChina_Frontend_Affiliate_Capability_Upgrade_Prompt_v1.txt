@@ -1,0 +1,223 @@
+SoloToChina Frontend Affiliate Capability Upgrade Prompt v1
+
+目标仓库：
+https://github.com/Weapon-Tsang/solo-to-china
+
+已审查基线：
+- branch: main
+- commit: 210d0fe feat(contract): publish CMS capability schema
+- Theme version: 0.25.0
+- Content Contract: 2.0.0
+- Component Registry: 1.0.0
+- CMS counterpart: solo-to-china-CMS 1.11.0 / migration 18
+
+请在开始前检查 git status，不要覆盖、重置或删除现有改动。先阅读仓库内 README、docs/CMS_FRONTEND_CONTRACT.md、docs/architecture/content-component-system.md、Component Registry 生成脚本和验证脚本。保持“Frontend defines what can be rendered; CMS decides what should be rendered”的责任边界。
+
+目标
+
+为 CMS 1.11.0 的 QA 后 Commercial Overlay 提供真实、可验证、安全的前端能力。此次工作必须同时修改 canonical Component Registry、生成后的 CMS Contract、Page Schema、WordPress renderer、CSS/JS、组件 Gallery、自动化测试和文档，不能只添加视觉样式或静态示例。
+
+不可破坏的边界
+
+1. Research、Claim、Knowledge、选题、Research Draft 和 Evidence Ledger 不读取 Affiliate 数据。
+2. 商业组件只能渲染 CMS 在 QA 后显式选择并传入的 Commercial Block；不得根据标题、contentType、正文关键词或页面模板自行插入商业内容。
+3. 不得自动登录或爬取 Trip.com Affiliate Dashboard，不得保存用户名、密码、Cookie 或登录态，不得猜测、拼接或修改官方 Tracking URL/Sub ID。
+4. 不得接受或原样输出任意 HTML/script。Search Box 和 Dynamic Banner 只能使用结构化配置、固定字段、允许的 embed 类型和官方域名 allowlist。
+5. 所有外链必须是 HTTPS；Affiliate 外链必须带 rel="sponsored nofollow noopener"。可使用 target="_blank"。
+6. 必须有清晰 disclosure。组件在没有完整、安全数据时应安全不渲染，不能显示半成品或降级为未经验证的 HTML。
+7. 不得把 CMS 管理员令牌、Trip.com 凭据或任何服务器秘密放进前端 JavaScript、HTML、Contract、Git、日志或浏览器请求。
+8. 保留现有 affiliate_cta 的历史兼容性；不要静默改变已有文章的含义或自动重排 Gutenberg 内容。
+
+当前 Contract 事实
+
+canonical authoring source：
+wp-content/themes/solo-to-china/content-contract/component-registry.v1.json
+
+生成后的 CMS artifacts：
+contracts/component-registry.json
+contracts/page-schema.json
+
+当前 WordPress /wp-json/stc/v1/component-registry 返回 authoring shape（registry_version、snake_case 字段），而 CMS 消费的是 generated shape（contractVersion、schemaVersion=2020-12、components[].inputSchema）。当前也没有公开 generated Page Schema 的 REST endpoint。
+
+请继续保持单一 canonical Registry，通过 scripts/generate-component-catalog.ps1 生成所有派生产物。不得在多个 JSON 文件手工维护重复组件清单。
+
+必须新增的组件能力
+
+1. affiliate_booking_card
+   - 用于高意图 DEEP_LINK / CATEGORY_LINK。
+   - 适合景点门票、路线交通、明确酒店选择等场景。
+   - 必须显示 provider、标题、描述、CTA、disclosure；价格字段只能显示 CMS 明确提供的文本。
+
+2. affiliate_search_card
+   - 用于酒店、航班、火车等需要日期/人数/路线选择的场景。
+   - 支持安全 Link 模式和 allowlisted structured Search Box 模式。
+   - 不允许 raw HTML/script。
+
+3. affiliate_banner
+   - 支持 STATIC_BANNER 和 DYNAMIC_BANNER。
+   - Banner 只是宽泛内容或结尾 fallback，不能在高意图页面替代 contextual booking card。
+   - 图片、目标链接和 iframe/source 必须分别校验 HTTPS 与官方域名。
+
+4. affiliate_promotion_card
+   - 用于 PROMOTION / Campaign 资源。
+   - 支持 valid_from / valid_until；过期或尚未生效时不渲染。
+   - 不得用 promotion 数据改变正文事实、推荐结论或内容顺序。
+
+可后续实现但本次需预留清晰扩展方式：
+- affiliate_product_card
+- affiliate_comparison_card
+- affiliate_disclosure
+
+现有 affiliate_cta 保留为历史兼容和简单 Link fallback，但不要把它冒充上述新组件。其当前 schema 缺少 Asset、Slot、Placement、Scope 和事件归因字段。
+
+统一 Commercial Block 数据契约
+
+新组件的 inputSchema 应使用 additionalProperties=false，并根据组件需要定义以下字段。字段是否 required 应由真实 renderer 需要决定，不要要求无意义字段：
+
+- affiliate_asset_id: string
+- provider: string
+- asset_type: DEEP_LINK | CATEGORY_LINK | SEARCH_BOX | STATIC_BANNER | DYNAMIC_BANNER | PROMOTION
+- product_category: HOTEL | FLIGHT | TRAIN | ATTRACTION | TOUR_ACTIVITY | FLIGHT_HOTEL | CAR_RENTAL | AIRPORT_TRANSFER | PLANNER
+- title: string
+- description: string
+- cta_label: string
+- target_url: HTTPS URL，可为空仅限允许的 structured embed 组件
+- embed_config: object，只允许记录明确列出的字段
+- disclosure: string
+- scope_type: ENTITY | ROUTE | AREA | DESTINATION | COUNTRY | CATEGORY | GLOBAL
+- scope_key: string
+- slot_key: string
+- placement: contextual | end_resource
+- strategy_version: string
+- valid_from / valid_until: ISO date-time，可选
+
+推荐 embed_config 最小字段：
+- embed_type: search_box | dynamic_banner
+- src: HTTPS URL
+- width / height: 有界整数
+- language: 明确 allowlist
+- theme / variant: Registry 中声明的 enum
+
+拒绝：
+- html
+- script
+- srcdoc
+- javascript: URL
+- data: URL
+- inline event handler
+- 未知字段
+- 嵌入凭据的 URL
+
+允许域名必须集中维护并可测试，至少严格限制为 Trip.com 官方确认使用的 trip.com、tripcdn.com 或 ctrip.com 域名及其合法子域。不要使用字符串 contains 进行域名判断。
+
+组件渲染与交互
+
+- 使用语义化 aside/section，标题关系和 CTA 可被键盘、屏幕阅读器正确访问。
+- 不依赖 hover 才能看到 disclosure 或重要条件。
+- 移动端不得产生水平页面溢出；iframe/banner 必须有明确尺寸策略和 loading="lazy"。
+- 尊重 prefers-reduced-motion。
+- 组件视觉权重应低于文章标题、Quick Answer 和正文；不得制造全屏拦截、自动弹窗或虚假紧迫感。
+- 不得把商业组件自动放在 minimum content depth 之前，不得连续放置；最终顺序以 CMS Commercial Composition 为准，前端不能重新推断或增加模块。
+
+Impression / Click 事件
+
+实现无 PII 的最小事件采集：
+- event_type: impression | click
+- article_id / draft_id（存在时）
+- affiliate_asset_id
+- provider
+- category
+- slot_key
+- component_variant
+- placement
+- entity / route / destination（CMS 有提供时）
+- timestamp
+- device（粗粒度）
+- locale
+- strategy_version
+
+要求：
+- Impression 使用 IntersectionObserver，在达到明确可见阈值后每个 page view / slot 最多发送一次。
+- Click 在正常导航前使用 sendBeacon 或 keepalive fetch，失败不能阻止用户跳转。
+- 不采集姓名、邮箱、账号、精确位置、Cookie 内容、完整 IP 或正文内容。
+- 不把 ADMIN_TOKEN 写入浏览器。
+
+CMS Engine 的 POST /api/commercial/events 当前属于受保护 Dashboard API。请实现同源 WordPress relay 或提出并实现另一套经过测试的安全边界：浏览器只向同源 WordPress endpoint 发送严格验证的公开事件；WordPress 服务端再使用服务器环境中的凭据转发到 Engine。服务端凭据不得写入数据库、主题文件、响应或日志。公共入口需要 payload 大小限制、字段 allowlist、枚举/长度验证、合理 rate limit、失败降级和去重策略。
+
+Frontend Contract 发布
+
+1. 更新 canonical component-registry.v1.json。
+2. 添加真实 PHP renderer/shortcode 或受控 Gutenberg renderer，不能只登记未实现组件。
+3. 更新 CSS、必要的无依赖 JS 和 Component Gallery 示例。
+4. 运行 scripts/generate-component-catalog.ps1 重新生成：
+   - contracts/component-registry.json
+   - contracts/page-schema.json
+   - 相关 Catalog 文档
+5. 按仓库 SemVer 规则提升 Component Registry（预计 1.1.0）。若 Content Contract 引用的 Registry 版本改变，同步更新 Content Contract 版本、Theme 版本和所有固定验证断言；不要伪造版本号。
+6. 让 WordPress 提供 CMS 可直接消费的 generated artifacts：
+   - GET /wp-json/stc/v1/component-registry 应返回 generated CMS shape，或新增命名清晰的 generated-registry endpoint；
+   - 新增 generated Page Schema endpoint；
+   - 两个 endpoint 都提供稳定 ETag、Last-Modified、Cache-Control，并返回完全可重现的 JSON。
+7. authoring Registry 仍留在主题内部使用，但不要要求 CMS 理解其内部 snake_case 格式。
+
+与 CMS 1.11.0 的联调验收
+
+CMS 配置源应指向 generated artifacts，而非 React/PHP 源码：
+- FRONTEND_CONTRACT_SOURCE_REPOSITORY=https://github.com/Weapon-Tsang/solo-to-china
+- FRONTEND_COMPONENT_REGISTRY_SOURCE=<generated registry HTTPS endpoint>
+- FRONTEND_PAGE_SCHEMA_SOURCE=<generated page schema HTTPS endpoint>
+- FRONTEND_CONTRACT_COMMIT_SHA=<deployed frontend commit>
+
+验收：
+1. CMS sync 状态为 healthy。
+2. Registry 和 Page Schema schemaVersion 一致。
+3. 新组件出现在 /api/frontend-contract/capabilities。
+4. 旧 affiliate_cta 历史 payload 仍通过验证。
+5. 新 Commercial Block 用正确组件通过 inputSchema 和 Page Schema 校验。
+6. 未知字段、任意 HTML、javascript URL、未允许 iframe 域名被拒绝。
+7. pre-QA 页面规划不能自动选择任何 commercial/affiliate 组件。
+8. QA 后无匹配 Asset 时严格 no-op。
+9. 缺少某个新能力时 CMS 保留 frontend_capability_request，而不是前端或 CMS 猜测替代组件。
+10. WordPress 仍只生成/更新 draft，不自动发布，不覆盖人工已发布内容。
+
+必须新增/更新测试
+
+- Registry canonical/generated 一致性
+- Page Schema 包含全部新组件且 additionalProperties=false
+- 每个 renderer 的安全输入和完整输出
+- unsafe URL / raw HTML / script / srcdoc / 未知字段拒绝
+- 官方域名和恶意相似域名测试，例如 trip.com.evil.example 必须拒绝
+- sponsored nofollow noopener
+- disclosure 可见性
+- expired/not-yet-valid promotion 不渲染
+- responsive CSS、键盘可用性和 reduced-motion 基线
+- impression 去重与可见阈值
+- click 不阻断导航
+- event payload allowlist、大小限制、rate limit 和无 PII
+- WordPress relay 不向浏览器或日志暴露服务器凭据
+- Contract REST endpoint 的 JSON、ETag、缓存和版本
+- Component Gallery 覆盖所有新增组件
+- 所有既有 verify-project、verify-component-registry、verify-content-contract、verify-content-runtime、package-release 检查继续通过
+
+文档与交付
+
+更新：
+- README.md
+- docs/CMS_FRONTEND_CONTRACT.md
+- docs/architecture/content-component-system.md
+- docs/COMPONENT_CHANGELOG.md
+- Theme/Contract/Registry 版本说明
+- 生产配置说明：generated Contract endpoints、WordPress relay、服务器环境变量和回滚方式
+
+完成后输出：
+1. 修改文件列表
+2. Contract/Registry/Theme 版本变化
+3. 新组件及各自数据 Schema
+4. 安全渲染与 allowlist 设计
+5. Impression/Click 数据流
+6. CMS 联调结果
+7. 自动化测试结果
+8. 生产配置步骤
+9. 未实现、留待后续的能力
+
+不要提交、推送或部署，除非当前任务的用户明确授权。
