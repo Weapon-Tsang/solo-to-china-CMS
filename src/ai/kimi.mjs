@@ -34,32 +34,41 @@ export class KimiExtractor {
 
   async extract(source) {
     if (!this.enabled) return { result: heuristicExtraction(source), method: "heuristic", model: null };
-    if (source.source_kind === "video_url" && isYoutubeUrl(source.submitted_url) && this.config.provider !== "vertex" && !source.submission_metadata?.operatorNotesProvided) {
-      throw new Error("YouTube video extraction requires a Vertex Gemini model with video input, or an operator-supplied transcript in the source notes.");
+    const videoSource = source.source_kind === "video" || (source.source_kind === "video_url" && isYoutubeUrl(source.submitted_url));
+    if (videoSource && this.config.provider !== "vertex" && !source.submission_metadata?.operatorNotesProvided) {
+      throw new Error("Video extraction requires a Vertex Gemini model with video input, or an operator-supplied transcript in the source notes.");
     }
-    const images = await this.client.imageParts(source.assets);
-    const videoParts = vertexVideoParts(source, this.config.provider);
-    const completion = await this.client.completeJson({
-      name: "source_research_extraction",
-      schema: EXTRACTION_SCHEMA,
-      instructions: SYSTEM_PROMPT,
-      content: [{ type: "text", text: buildInput(source) }, ...videoParts, ...images.parts],
-    });
+    const images = await this.client.imageParts((source.assets || []).filter((asset) => asset.kind !== "video"));
+    const videos = await prepareVideoParts(source, this.config.provider, this.client);
+    let completion;
+    try {
+      completion = await this.client.completeJson({
+        name: "source_research_extraction",
+        schema: EXTRACTION_SCHEMA,
+        instructions: SYSTEM_PROMPT,
+        content: [{ type: "text", text: buildInput(source) }, ...videos.parts, ...images.parts],
+      });
+    } finally {
+      await videos.cleanup();
+    }
     const result = sanitizeResult(completion.output);
     if (images.attempted > images.parts.length) result.source.warnings.push("Some captured image assets were unavailable to the vision model; verify image-only details against the raw source.");
-    if (source.source_kind === "video_url" && videoParts.length === 0) result.source.warnings.push("The video frames and audio were not available to the selected model; extraction used only the public page text and operator-supplied transcript.");
-    const mode = videoParts.length ? "video" : images.parts.length ? "multimodal" : "text";
+    if ((source.source_kind === "video" || source.source_kind === "video_url") && videos.parts.length === 0) result.source.warnings.push("The video frames and audio were not available to the selected model; extraction used only the public page text and operator-supplied transcript.");
+    const mode = videos.parts.length ? "video" : images.parts.length ? "multimodal" : "text";
     return { result, method: `${this.config.provider || "kimi"}_${mode}`, model: completion.model };
   }
 }
 
-function vertexVideoParts(source, provider) {
-  if (provider !== "vertex" || source?.source_kind !== "video_url" || !isYoutubeUrl(source.submitted_url)) return [];
+async function prepareVideoParts(source, provider, client) {
+  const empty = { parts: [], attempted: 0, cleanup: async () => {} };
+  if (provider !== "vertex") return empty;
+  if (source?.source_kind === "video") return client.videoParts(source.assets || []);
+  if (source?.source_kind !== "video_url" || !isYoutubeUrl(source.submitted_url)) return empty;
   try {
     const url = new URL(source.submitted_url || "");
-    return [{ fileData: { fileUri: url.toString(), mimeType: "video/mp4" } }];
+    return { parts: [{ fileData: { fileUri: url.toString(), mimeType: "video/mp4" } }], attempted: 1, cleanup: async () => {} };
   } catch {
-    return [];
+    return empty;
   }
 }
 

@@ -47,6 +47,8 @@ docker compose ps
 
 The current startup helper uses native `docker run` commands on the VM so the deployment is not coupled to the Debian image's legacy Compose client. The checked-in Compose file remains useful for local administration. The `solo_to_china_data` Docker volume stores SQLite, verified backups, and generated media. Snapshot the VM persistent disk or copy verified SQLite backups to a private Cloud Storage bucket on an operations schedule.
 
+Uploaded videos larger than the inline Gemini request threshold use the private bucket named by `MANUAL_SOURCE_GCS_BUCKET`. Grant only the VM service account `roles/storage.objectAdmin` on that bucket, enforce public-access prevention and uniform bucket-level access, and apply `video-bucket-lifecycle.json`. The application deletes each `manual-source-input/` object after extraction; the lifecycle rule removes abandoned temporary objects after one day. Authorized originals remain in `solo_to_china_data` and are never governed by this bucket policy.
+
 ## Install the extension on every desktop Chrome
 
 Build an origin-pinned package after the capture hostname is live:

@@ -1,6 +1,11 @@
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { KimiClient } from "./kimi-client.mjs";
 
 const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+const MAX_INLINE_VIDEO_BYTES = 14 * 1024 * 1024;
+const SUPPORTED_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/quicktime", "video/mpeg", "video/webm", "video/avi", "video/wmv", "video/flv", "video/3gpp"]);
 
 export class VertexGeminiClient {
   constructor(config, fetchImpl = fetch) {
@@ -46,6 +51,48 @@ export class VertexGeminiClient {
         return match ? { inlineData: { mimeType: match[1], data: match[2] } } : null;
       }).filter(Boolean),
     };
+  }
+
+  async videoParts(assets) {
+    const attempted = (assets || []).filter((asset) => asset?.kind === "video").slice(0, 1);
+    if (!attempted.length) return { parts: [], attempted: 0, cleanup: async () => {} };
+    const asset = attempted[0];
+    const uploadRoot = path.resolve(this.config.sourceUploadsDir || "data/source-uploads");
+    const filename = path.resolve(String(asset.local_path || ""));
+    if (!filename.startsWith(`${uploadRoot}${path.sep}`)) throw new Error("Uploaded source video is outside the configured source directory.");
+    const mimeType = String(asset.mime_type || "").toLowerCase();
+    if (!SUPPORTED_VIDEO_MIME_TYPES.has(mimeType)) throw new Error("Uploaded source video has an unsupported MIME type.");
+    const bytes = await fs.readFile(filename);
+    if (!bytes.length) throw new Error("Uploaded source video is empty.");
+    const maxInlineVideoBytes = Number(this.config.maxInlineVideoBytes || MAX_INLINE_VIDEO_BYTES);
+    if (bytes.length <= maxInlineVideoBytes) {
+      return { parts: [{ inlineData: { mimeType, data: bytes.toString("base64") } }], attempted: 1, cleanup: async () => {} };
+    }
+
+    const bucket = String(this.config.videoBucket || "").trim();
+    if (!/^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/.test(bucket)) {
+      throw new Error("Uploaded video is too large for inline analysis. Configure MANUAL_SOURCE_GCS_BUCKET and grant the VM service account object create/delete access, then retry extraction.");
+    }
+    const objectName = `manual-source-input/${crypto.randomUUID()}${path.extname(filename).toLowerCase()}`;
+    const accessToken = await this.accessToken();
+    const uploadUrl = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`);
+    uploadUrl.searchParams.set("uploadType", "media");
+    uploadUrl.searchParams.set("name", objectName);
+    const uploaded = await this.fetch(uploadUrl, {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}`, "content-type": mimeType },
+      body: bytes,
+      signal: AbortSignal.timeout(this.config.requestTimeoutMs || 360_000),
+    });
+    if (!uploaded.ok) {
+      const payload = await uploaded.json().catch(() => ({}));
+      throw new Error(`Cloud Storage video staging failed (${uploaded.status}): ${payload?.error?.message || uploaded.statusText}`);
+    }
+    const cleanup = async () => {
+      const deleteUrl = `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`;
+      await this.fetch(deleteUrl, { method: "DELETE", headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30_000) }).catch(() => null);
+    };
+    return { parts: [{ fileData: { fileUri: `gs://${bucket}/${objectName}`, mimeType } }], attempted: 1, cleanup };
   }
 
   async accessToken() {

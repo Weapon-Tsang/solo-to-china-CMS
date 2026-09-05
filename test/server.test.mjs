@@ -88,6 +88,23 @@ test("admin manual-source API stores uploaded evidence, queues the shared pipeli
   assert.equal(source.assets[0].mime_type, "image/png");
   assert.ok(fs.existsSync(app.repository.db.prepare("SELECT storage_path FROM source_files WHERE source_id=?").get(saved.id).storage_path));
 
+  const videoBytes = Buffer.concat([Buffer.alloc(4), Buffer.from("ftyp"), Buffer.from("isom0000manual API video fixture")]);
+  const videoResponse = await fetch(`${baseUrl}/api/manual-sources`, {
+    method: "POST",
+    headers: { authorization: "Bearer manual-admin-token", "content-type": "application/json" },
+    body: JSON.stringify({
+      kind: "video", title: "Chongqing route video",
+      files: [{ name: "route.mp4", mimeType: "video/mp4", base64: videoBytes.toString("base64") }],
+    }),
+  });
+  assert.equal(videoResponse.status, 202);
+  const savedVideo = await videoResponse.json();
+  assert.equal(savedVideo.sourceKind, "video");
+  const videoSource = app.repository.getSource(savedVideo.id);
+  assert.equal(videoSource.files[0].file_kind, "video");
+  assert.equal(videoSource.assets[0].kind, "video");
+  assert.equal(videoSource.assets[0].mime_type, "video/mp4");
+
   const blocked = await fetch(`${baseUrl}/api/manual-sources`, {
     method: "POST",
     headers: { authorization: "Bearer manual-admin-token", "content-type": "application/json" },

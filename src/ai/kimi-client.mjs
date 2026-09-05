@@ -57,6 +57,11 @@ export class KimiClient {
     return { parts, attempted: attempted.length };
   }
 
+  async videoParts(assets) {
+    const attempted = (assets || []).filter((asset) => asset?.kind === "video").slice(0, 1).length;
+    return { parts: [], attempted, cleanup: async () => {} };
+  }
+
   async imageDataUrl(asset) {
     if (asset?.local_path) return this.localImageDataUrl(asset);
     const url = safeXiaohongshuImageUrl(asset?.remote_url);

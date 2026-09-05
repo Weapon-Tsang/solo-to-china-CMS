@@ -68,11 +68,14 @@ test("Vertex extraction sends a public YouTube source as direct video evidence",
   assert.equal(output.method, "vertex_video");
 });
 
-test("non-Vertex models require an operator transcript for YouTube sources", async () => {
+test("non-Vertex models require an operator transcript for video URLs and uploaded video files", async () => {
   const extractor = new KimiExtractor({ provider: "kimi", apiKey: "fixture", model: "fixture", baseUrl: "https://api.example.test", maxImages: 0 }, async () => {
     throw new Error("request should not be attempted");
   });
   await assert.rejects(() => extractor.extract({
     submitted_url: "https://youtu.be/public-fixture", source_kind: "video_url", submission_metadata: { operatorNotesProvided: false }, assets: [],
+  }), /requires a Vertex Gemini model.*operator-supplied transcript/);
+  await assert.rejects(() => extractor.extract({
+    submitted_url: "", source_kind: "video", submission_metadata: { operatorNotesProvided: false }, assets: [{ kind: "video" }],
   }), /requires a Vertex Gemini model.*operator-supplied transcript/);
 });

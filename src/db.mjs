@@ -39,6 +39,60 @@ function migrate(db) {
   if (current < 18) migrationEighteen(db);
   if (current < 19) migrationNineteen(db);
   if (current < 20) migrationTwenty(db);
+  if (current < 21) migrationTwentyOne(db);
+}
+
+function migrationTwentyOne(db) {
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE source_assets_new (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('image', 'video_cover', 'video')),
+        remote_url TEXT NOT NULL,
+        alt_text TEXT NOT NULL DEFAULT '',
+        position INTEGER NOT NULL,
+        local_path TEXT NOT NULL DEFAULT '',
+        mime_type TEXT NOT NULL DEFAULT '',
+        original_filename TEXT NOT NULL DEFAULT '',
+        UNIQUE(source_id, remote_url)
+      );
+      INSERT INTO source_assets_new(id, source_id, kind, remote_url, alt_text, position, local_path, mime_type, original_filename)
+      SELECT id, source_id, kind, remote_url, alt_text, position, local_path, mime_type, original_filename FROM source_assets;
+      DROP TABLE source_assets;
+      ALTER TABLE source_assets_new RENAME TO source_assets;
+
+      CREATE TABLE source_files_new (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        file_kind TEXT NOT NULL CHECK (file_kind IN ('pdf','word','image','video')),
+        original_filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        storage_path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+        sha256 TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(source_id, storage_path)
+      );
+      INSERT INTO source_files_new(id, source_id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at)
+      SELECT id, source_id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at FROM source_files;
+      DROP TABLE source_files;
+      ALTER TABLE source_files_new RENAME TO source_files;
+      CREATE INDEX idx_source_files_source ON source_files(source_id, created_at);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (21, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+  const violations = db.prepare("PRAGMA foreign_key_check").all();
+  if (violations.length) throw new Error(`Migration 21 created foreign-key violations: ${JSON.stringify(violations.slice(0, 5))}`);
 }
 
 function migrationTwenty(db) {

@@ -6,13 +6,15 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { openDatabase } from "../src/db.mjs";
 
-test("migration 20 preserves populated legacy Sources and their evidence assets", async (t) => {
+test("migrations 20 and 21 preserve populated legacy Sources and their evidence assets", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-migration-20-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const databasePath = path.join(directory, "legacy.sqlite");
   const dbModulePath = fileURLToPath(new URL("../src/db.mjs", import.meta.url));
   const legacyModulePath = path.join(directory, "db-v19.mjs");
-  const source = fs.readFileSync(dbModulePath, "utf8").replace("  if (current < 20) migrationTwenty(db);\n", "");
+  const source = fs.readFileSync(dbModulePath, "utf8")
+    .replace("  if (current < 20) migrationTwenty(db);\n", "")
+    .replace("  if (current < 21) migrationTwentyOne(db);\n", "");
   fs.writeFileSync(legacyModulePath, source);
   const { openDatabase: openLegacyDatabase } = await import(`${pathToFileURL(legacyModulePath).href}?v=19`);
   const legacy = openLegacyDatabase(databasePath);
@@ -29,7 +31,7 @@ test("migration 20 preserves populated legacy Sources and their evidence assets"
 
   const upgraded = openDatabase(databasePath);
   try {
-    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 20);
+    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 21);
     const preserved = upgraded.prepare("SELECT * FROM sources WHERE id='src-legacy'").get();
     assert.equal(preserved.adapter, "xiaohongshu");
     assert.equal(preserved.source_kind, "xiaohongshu_note");

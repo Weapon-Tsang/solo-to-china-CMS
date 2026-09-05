@@ -11,12 +11,19 @@ const require = createRequire(import.meta.url);
 const WordExtractor = require("word-extractor");
 
 const LINK_KINDS = new Set(["auto_url", "xiaohongshu_url", "wechat_url", "video_url", "web_url"]);
-const FILE_KINDS = new Set(["pdf", "word", "images"]);
+const FILE_KINDS = new Set(["pdf", "word", "images", "video"]);
 const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const VIDEO_MIME_BY_EXTENSION = new Map([
+  [".mp4", "video/mp4"], [".m4v", "video/mp4"], [".mov", "video/quicktime"],
+  [".mpeg", "video/mpeg"], [".mpg", "video/mpeg"], [".webm", "video/webm"],
+  [".avi", "video/avi"], [".wmv", "video/wmv"], [".flv", "video/flv"], [".3gp", "video/3gpp"],
+]);
+const VIDEO_MIME_TYPES = new Set([...VIDEO_MIME_BY_EXTENSION.values(), "video/x-flv", "video/x-msvideo", "video/x-ms-wmv", "video/mov", "video/mpg"]);
 const WORD_EXTENSIONS = new Set([".doc", ".docx"]);
 const DEFAULT_MAX_FILE_BYTES = 12 * 1024 * 1024;
 const DEFAULT_MAX_IMAGE_BYTES = 6 * 1024 * 1024;
-const DEFAULT_MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+const DEFAULT_MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_BYTES = 110 * 1024 * 1024;
 const DEFAULT_MAX_REMOTE_BYTES = 8 * 1024 * 1024;
 
 export class ManualSourceError extends Error {
@@ -36,6 +43,7 @@ export class ManualSourceIngestor {
       requestTimeoutMs: Number(config.requestTimeoutMs || 20_000),
       maxFileBytes: Number(config.maxFileBytes || DEFAULT_MAX_FILE_BYTES),
       maxImageBytes: Number(config.maxImageBytes || DEFAULT_MAX_IMAGE_BYTES),
+      maxVideoBytes: Number(config.maxVideoBytes || DEFAULT_MAX_VIDEO_BYTES),
       maxTotalBytes: Number(config.maxTotalBytes || DEFAULT_MAX_TOTAL_BYTES),
       maxRemoteBytes: Number(config.maxRemoteBytes || DEFAULT_MAX_REMOTE_BYTES),
       maxImages: Number(config.maxImages || 8),
@@ -50,7 +58,7 @@ export class ManualSourceIngestor {
     if (!input || typeof input !== "object") throw new ManualSourceError("INVALID_SUBMISSION", "提交内容必须是有效对象。", { statusCode: 400 });
     const requestedKind = String(input.kind || "").trim();
     if (!LINK_KINDS.has(requestedKind) && !FILE_KINDS.has(requestedKind)) {
-      throw new ManualSourceError("UNSUPPORTED_SOURCE_TYPE", "请选择受支持的链接、PDF、Word 或图片来源。", { statusCode: 400 });
+      throw new ManualSourceError("UNSUPPORTED_SOURCE_TYPE", "请选择受支持的链接、PDF、Word、图片或视频来源。", { statusCode: 400 });
     }
 
     const submissionId = crypto.randomUUID();
@@ -86,7 +94,7 @@ export class ManualSourceIngestor {
           if (sourceKind === "video_url") warnings.push("该视频平台不支持直接传入模型；当前仅提取公开页面文字。建议在补充说明中粘贴字幕或文字稿。");
         }
       } else {
-        const decoded = decodeFiles(input.files, this.config);
+        const decoded = decodeFiles(input.files, this.config, sourceKind === "video" ? this.config.maxVideoBytes : this.config.maxFileBytes);
         uploadDirectory = path.join(this.config.uploadDir, submissionId);
         fs.mkdirSync(uploadDirectory, { recursive: true });
 
@@ -112,6 +120,22 @@ export class ManualSourceIngestor {
           }));
           title ||= images.length === 1 ? images[0].originalFilename : `人工上传图片（${images.length} 张）`;
           rawText = joinText(notes, `人工上传的图片资料：${images.map((file) => file.originalFilename).join("、")}。请结合图片识别可见文字、地点和旅行信息。`);
+        } else if (sourceKind === "video") {
+          if (decoded.length !== 1) throw new ManualSourceError("FILE_COUNT_INVALID", "视频来源每次请上传一个视频文件。", { statusCode: 400 });
+          const file = normalizeVideoFile(decoded[0]);
+          files = [persistFile(file, uploadDirectory, submissionId, "video", 0)];
+          assets = [{
+            kind: "video",
+            url: `manual-asset://${submissionId}/0`,
+            alt: file.originalFilename,
+            position: 0,
+            localPath: files[0].storagePath,
+            mimeType: file.mimeType,
+            originalFilename: file.originalFilename,
+          }];
+          title ||= file.originalFilename;
+          rawText = joinText(notes, `人工上传的视频资料：${file.originalFilename}。请结合视频画面、可见文字、对白和环境音提取旅行信息。`);
+          warnings.push("视频文件需要支持视频输入的 Vertex Gemini 模型；若当前选择 Kimi，请切换模型或在补充说明中提供文字稿后重新提取。");
         } else {
           if (decoded.length !== 1) throw new ManualSourceError("FILE_COUNT_INVALID", "PDF 或 Word 来源每次请上传一个文档。", { statusCode: 400 });
           const file = decoded[0];
@@ -206,7 +230,7 @@ export class ManualSourceIngestor {
         return { title: filenameFromUrl(currentUrl) || "在线 PDF 文档", text, rawHtml: "", warnings: [] };
       }
       if (!(contentType.startsWith("text/") || contentType.includes("html") || !contentType)) {
-        throw new ManualSourceError("UNSUPPORTED_CONTENT_TYPE", `链接返回了不支持的内容类型（${contentType || "未知"}）。请下载后以 PDF、Word 或图片上传。`);
+        throw new ManualSourceError("UNSUPPORTED_CONTENT_TYPE", `链接返回了不支持的内容类型（${contentType || "未知"}）。请下载后以 PDF、Word、图片或视频文件上传。`);
       }
       const rawHtml = bytes.toString("utf8");
       const blockReason = detectAccessWall(rawHtml);
@@ -244,7 +268,7 @@ export async function extractWordText(bytes) {
   return [document.getBody(), document.getFootnotes(), document.getEndnotes()].filter(Boolean).join("\n\n");
 }
 
-function decodeFiles(input, config) {
+function decodeFiles(input, config, maxSingleBytes = config.maxFileBytes) {
   if (!Array.isArray(input) || input.length === 0) throw new ManualSourceError("FILE_REQUIRED", "请选择要上传的文件。", { statusCode: 400 });
   let totalBytes = 0;
   return input.map((item, index) => {
@@ -254,7 +278,7 @@ function decodeFiles(input, config) {
     if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) throw new ManualSourceError("INVALID_FILE_DATA", `${originalFilename} 的文件数据无效。`, { statusCode: 400 });
     const bytes = Buffer.from(encoded, "base64");
     if (!bytes.length) throw new ManualSourceError("EMPTY_FILE", `${originalFilename} 是空文件。`, { statusCode: 400 });
-    if (bytes.length > config.maxFileBytes) throw new ManualSourceError("FILE_TOO_LARGE", `${originalFilename} 超过单文件 ${formatMegabytes(config.maxFileBytes)} MB 限制。`, { statusCode: 413 });
+    if (bytes.length > maxSingleBytes) throw new ManualSourceError("FILE_TOO_LARGE", `${originalFilename} 超过单文件 ${formatMegabytes(maxSingleBytes)} MB 限制。`, { statusCode: 413 });
     totalBytes += bytes.length;
     if (totalBytes > config.maxTotalBytes) throw new ManualSourceError("UPLOAD_TOO_LARGE", `本次上传总大小超过 ${formatMegabytes(config.maxTotalBytes)} MB 限制。`, { statusCode: 413 });
     return { originalFilename, mimeType, bytes };
@@ -435,6 +459,32 @@ function isImage(file) {
   return false;
 }
 
+function normalizeVideoFile(file) {
+  const extension = path.extname(file.originalFilename).toLowerCase();
+  const canonicalMimeType = VIDEO_MIME_BY_EXTENSION.get(extension);
+  if (!canonicalMimeType) {
+    throw new ManualSourceError("UNSUPPORTED_FILE_TYPE", "视频文件支持 MP4、MOV、MPEG/MPG、WebM、AVI、WMV、FLV 或 3GP 格式。", { statusCode: 400 });
+  }
+  if (file.mimeType !== "application/octet-stream" && !VIDEO_MIME_TYPES.has(file.mimeType)) {
+    throw new ManualSourceError("UNSUPPORTED_FILE_TYPE", "文件声明的 MIME 类型不是受支持的视频格式。", { statusCode: 400 });
+  }
+  if (!looksLikeVideo(file.bytes, extension)) {
+    throw new ManualSourceError("INVALID_VIDEO_FILE", "视频文件签名与扩展名不一致，文件可能损坏或并非真实视频。请转换为标准 MP4 后重试。", { statusCode: 400 });
+  }
+  return { ...file, mimeType: canonicalMimeType };
+}
+
+function looksLikeVideo(input, extension) {
+  const bytes = Buffer.from(input);
+  if ([".mp4", ".m4v", ".mov", ".3gp"].includes(extension)) return bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp";
+  if (extension === ".webm") return bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+  if ([".mpeg", ".mpg"].includes(extension)) return ["000001ba", "000001b3"].includes(bytes.subarray(0, 4).toString("hex"));
+  if (extension === ".avi") return bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "AVI ";
+  if (extension === ".wmv") return bytes.subarray(0, 8).equals(Buffer.from([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11]));
+  if (extension === ".flv") return bytes.subarray(0, 3).toString("ascii") === "FLV";
+  return false;
+}
+
 function normalizeFilename(value) {
   const base = path.basename(String(value || "")).replace(/[\u0000-\u001f<>:"/\\|?*]+/g, "_").trim();
   return truncate(base || "upload", 180);
@@ -443,7 +493,7 @@ function normalizeFilename(value) {
 function safeExtension(filename, mimeType) {
   const extension = path.extname(filename).toLowerCase();
   if (/^\.[a-z0-9]{1,8}$/.test(extension)) return extension;
-  return { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "application/pdf": ".pdf" }[mimeType] || "";
+  return { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "application/pdf": ".pdf", "video/mp4": ".mp4", "video/quicktime": ".mov", "video/mpeg": ".mpeg", "video/webm": ".webm", "video/avi": ".avi", "video/wmv": ".wmv", "video/flv": ".flv", "video/3gpp": ".3gp" }[mimeType] || "";
 }
 
 function normalizeExtractedText(value) {
@@ -464,7 +514,7 @@ function decodeHtml(value) {
 }
 
 function sourceKindLabel(kind) {
-  return { xiaohongshu_url: "小红书链接", wechat_url: "微信公众号文章", video_url: "视频链接", web_url: "网页链接", pdf: "PDF 文档", word: "Word 文档", images: "图片资料" }[kind] || "人工提交来源";
+  return { xiaohongshu_url: "小红书链接", wechat_url: "微信公众号文章", video_url: "视频链接", video: "视频文件", web_url: "网页链接", pdf: "PDF 文档", word: "Word 文档", images: "图片资料" }[kind] || "人工提交来源";
 }
 
 function safeRemoveSubmissionDirectory(root, directory) {

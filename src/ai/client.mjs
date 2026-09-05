@@ -15,5 +15,6 @@ export function createAiClient(config, fetchImpl = fetch) {
     get enabled() { return current().enabled; },
     completeJson(input) { return current().completeJson(input); },
     imageParts(assets) { return current().imageParts(assets); },
+    videoParts(assets) { return current().videoParts(assets); },
   };
 }

@@ -46,7 +46,7 @@ try {
   const database = openDatabase(path.join(directory, "release.sqlite"));
   try {
     const versions = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
-    if (versions.join(",") !== "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20") throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
+    if (versions.join(",") !== "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21") throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
     for (const [table, column] of [
       ["content_intake_analyses", "strategy_version"], ["content_recommendations", "strategy_version"],
       ["content_opportunities", "strategy_version"], ["topic_candidates", "strategy_version"],
@@ -86,4 +86,4 @@ try {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-20, and SQLite integrity.`);
+console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-21, and SQLite integrity.`);

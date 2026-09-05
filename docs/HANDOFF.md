@@ -39,7 +39,7 @@ The audited Frontend Registry currently provides only the generic `affiliate_cta
 - Provider, Asset, mapping, opportunity, performance, and event APIs live under `/api/commercial/*`; the dashboard's Commercial view reads `/api/commercial`.
 - The composer runs after QA, derives block intent, selects decision-appropriate precision, falls back silently, enforces density, and stores an independent Overlay. Research packages never read these tables.
 - WordPress receives generated safe commercial blocks with disclosure and sponsored link attributes. Arbitrary HTML/script is rejected.
-- App version `1.12.0` and schema migration `20` are the expected post-upgrade baseline.
+- App version `1.13.0` and schema migration `21` are the expected post-upgrade baseline.
 
 Trip.com remains manual-only: an operator must create official links/embed configuration in the official platform and paste only those public artifacts into the registry. Do not store credentials/cookies, automate dashboard login, crawl the affiliate dashboard, invent tracking parameters, or create low-value entity links at scale.
 
@@ -49,7 +49,7 @@ Deferred Phase 2: official API/feed integration when available, report import, b
 
 Source discovery stays human-led. The Chrome extension only captures a note the user has opened and explicitly saved. The engine stores raw evidence, creates traceable structured claims, asks for a human decision before article planning, sends only validated drafts to WordPress, and never publishes a post itself.
 
-The Sources dashboard also accepts explicit administrator submissions: public Xiaohongshu, WeChat, video, and ordinary web links; PDF/DOC/DOCX files; and one or more images. These inputs become the same immutable Source evidence and use the existing extraction, Claim, Knowledge, Blueprint, and content-intake pipeline. Uploaded originals live under `SOURCE_UPLOADS_DIR`, which must remain inside the persistent Docker volume. Public-link fetching carries no cookies or credentials, rejects private/reserved network destinations, and returns classified operator-facing errors for login walls, bot protection, rate limits, timeouts, unsupported responses, and empty content.
+The Sources dashboard also accepts explicit administrator submissions: public Xiaohongshu, WeChat, video, and ordinary web links; PDF/DOC/DOCX files; one or more images; and a single video file up to 100 MB. These inputs become the same immutable Source evidence and use the existing extraction, Claim, Knowledge, Blueprint, and content-intake pipeline. Uploaded originals live under `SOURCE_UPLOADS_DIR`, which must remain inside the persistent Docker volume. Video files use Vertex Gemini frame/audio analysis; files above the inline threshold require ephemeral `MANUAL_SOURCE_GCS_BUCKET` staging. Public-link fetching carries no cookies or credentials, rejects private/reserved network destinations, and returns classified operator-facing errors for login walls, bot protection, rate limits, timeouts, unsupported responses, and empty content.
 
 ## Admin model and action navigation
 

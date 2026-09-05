@@ -77,6 +77,41 @@ test("manual image submission persists originals and supplies local multimodal a
   assert.equal(fs.existsSync(path.dirname(prepared.capture.files[0].storagePath)), false);
 });
 
+test("manual video submission validates and persists one supported video as model evidence", async (t) => {
+  const { directory, ingestor } = fixture(t);
+  const videoBytes = Buffer.concat([Buffer.alloc(4), Buffer.from("ftyp"), Buffer.from("isom0000fixture video bytes")]);
+  const prepared = await ingestor.prepare({
+    kind: "video",
+    title: "Chongqing walking route",
+    files: [{ name: "route.mp4", mimeType: "video/mp4", base64: videoBytes.toString("base64") }],
+  });
+  assert.equal(prepared.capture.sourceKind, "video");
+  assert.equal(prepared.capture.assets[0].kind, "video");
+  assert.equal(prepared.capture.assets[0].mimeType, "video/mp4");
+  assert.equal(prepared.capture.files[0].fileKind, "video");
+  assert.ok(fs.existsSync(prepared.capture.files[0].storagePath));
+  assert.ok(prepared.capture.files[0].storagePath.startsWith(`${path.resolve(directory)}${path.sep}`));
+});
+
+test("manual video default accepts files above the former 12 MB limit", async (t) => {
+  const { ingestor } = fixture(t);
+  const videoBytes = Buffer.alloc(13 * 1024 * 1024);
+  videoBytes.write("ftyp", 4, "ascii");
+  const prepared = await ingestor.prepare({
+    kind: "video",
+    files: [{ name: "long-route.mp4", mimeType: "video/mp4", base64: videoBytes.toString("base64") }],
+  });
+  assert.equal(prepared.capture.files[0].sizeBytes, 13 * 1024 * 1024);
+});
+
+test("manual video submission rejects renamed non-video content", async (t) => {
+  const { ingestor } = fixture(t);
+  await assert.rejects(
+    () => ingestor.prepare({ kind: "video", files: [{ name: "fake.mp4", mimeType: "video/mp4", base64: Buffer.from("not a video").toString("base64") }] }),
+    (error) => error instanceof ManualSourceError && error.code === "INVALID_VIDEO_FILE",
+  );
+});
+
 test("manual PDF and Word submissions feed extracted text into the same capture contract", async (t) => {
   const { ingestor } = fixture(t, {
     extractPdfImpl: async () => "重庆博物馆周二至周日开放，入馆前应查看官方预约规则。",

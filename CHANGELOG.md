@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.0 — 2026-09-06
+
+- Added administrator video-file Sources with signature validation, persistent original evidence, schema migration 21, and direct Vertex Gemini frame/audio analysis for MP4, MOV, MPEG/MPG, WebM, AVI, WMV, FLV, and 3GP inputs.
+- Raised the default video limit to 100 MB while keeping document and image limits unchanged. Videos up to the safe inline threshold are sent directly; larger files use an ephemeral Cloud Storage model-input object that is deleted after extraction while the authorized original remains in the persistent volume.
+- Added explicit processing failures when the selected model lacks video input or large-video Cloud Storage staging is not configured, instead of silently treating a filename or operator note as decoded video evidence.
+
 ## 1.12.0 — 2026-09-05
 
 - Added an administrator-only manual Source intake for public Xiaohongshu, WeChat, video, and ordinary web links, plus PDF, DOC/DOCX, and multi-image uploads; every accepted submission enters the existing extraction, Claim, Knowledge, Blueprint, and content-intake pipeline.

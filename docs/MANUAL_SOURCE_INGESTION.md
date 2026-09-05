@@ -10,10 +10,13 @@ The administrator Sources page accepts intentionally selected research evidence 
 - PDF documents
 - Word documents (`.doc` and `.docx`)
 - JPG, PNG, WebP, or GIF images (up to eight per submission)
+- One uploaded video file per submission: MP4/M4V, MOV, MPEG/MPG, WebM, AVI, WMV, FLV, or 3GP
 
 Every accepted item is stored as a regular `Source` and queued for the existing `extract_source` pipeline. That pipeline performs multimodal extraction, creates structured Claims and an editorial Blueprint, updates eligible Knowledge, and produces the normal content-intake recommendation. Manual intake does not bypass human editorial approval or the QA gate.
 
-Uploaded originals are stored below `SOURCE_UPLOADS_DIR`. Production must point this directory into the existing persistent Docker volume. The SQLite database records file hashes, MIME types, sizes, original filenames, and provenance; images are loaded locally into the configured multimodal model. Never delete the persistent volume during deployment.
+Uploaded originals are stored below `SOURCE_UPLOADS_DIR`. Production must point this directory into the existing persistent Docker volume. The SQLite database records file hashes, MIME types, sizes, original filenames, and provenance; images and videos are loaded locally into the configured multimodal model. Never delete the persistent volume during deployment.
+
+Uploaded video analysis requires an active Vertex Gemini model. Videos up to 14 MiB are sent as inline bytes. Larger accepted videos are copied to an ephemeral object in `MANUAL_SOURCE_GCS_BUCKET`, passed to Vertex as a `gs://` model input, and deleted after extraction; the persistent original is retained as Source evidence. The VM service account needs object create/delete permission on that bucket. If the bucket is absent or inaccessible, extraction fails with an actionable Source error instead of pretending that the video was decoded. Kimi can process an operator-supplied transcript but the current Kimi API integration does not receive uploaded video frames or audio.
 
 ## Link extraction and failures
 
@@ -45,7 +48,7 @@ When a public site cannot be extracted, the operator should upload an authorized
 }
 ```
 
-File submissions use `kind` equal to `pdf`, `word`, or `images`, and include browser-produced base64 file entries:
+File submissions use `kind` equal to `pdf`, `word`, `images`, or `video`, and include browser-produced base64 file entries:
 
 ```json
 {
@@ -57,4 +60,4 @@ File submissions use `kind` equal to `pdf`, `word`, or `images`, and include bro
 }
 ```
 
-The defaults are 12 MB per document, 6 MB per image, 25 MB per submission, 8 MB per fetched response, eight images, and a 20-second link timeout. They can be adjusted with the `MANUAL_SOURCE_*` environment settings documented in `.env.example`.
+The defaults are 12 MB per document, 6 MB per image, 100 MB per video, 110 MB per submission, 8 MB per fetched response, eight images, and a 20-second link timeout. They can be adjusted with the `MANUAL_SOURCE_*` environment settings documented in `.env.example`.
