@@ -94,6 +94,43 @@ test("extraction review checks the complete Claim semantics instead of value tex
   }), null);
 });
 
+test("contrastive and quoted slogan wording is not treated as logical negation", () => {
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "夜游磁器口和白天不一样的感觉，建议晚上去",
+    predicate: "recommended_visit_time",
+    value_text: "evening/night",
+  }), null);
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "海报上‘热得遭不住了’简直是我的心声",
+    predicate: "features",
+    value_text: "Midea branded melting billboard installation",
+  }), null);
+});
+
+test("claims sharing an exact quote satisfy negation and limiter coverage together", () => {
+  const quote = "整条路线全程下坡，几乎不用爬坡，带老人小孩出行都很友好";
+  const suitable = { id: "suitable", source_quote: quote, predicate: "suitable_for", value_text: "elderly travelers and children" };
+  const terrain = { id: "terrain", source_quote: quote, predicate: "requires_climbing", value_text: "false" };
+  assert.equal(detectClaimExtractionIssue(suitable, [terrain]), null);
+});
+
+test("reservation wording is compared as a canonical boolean fact", () => {
+  assert.equal(structureClaim({ predicate: "预约要求", value: "需要预约" }).typed_value, true);
+  assert.equal(structureClaim({ predicate: "预约要求", value: "无需预约" }).typed_value, false);
+  const noReservationA = claim("advance reservation", { predicate: "does not require", sourceQuote: "" });
+  const noReservationB = claim("no reservation required", { predicate: "requires reservation", sourceQuote: "" });
+  const equivalent = classifyClaimPair(noReservationA, noReservationB);
+  assert.equal(equivalent.relation, "PARAPHRASE");
+  assert.equal(equivalent.canCoexist, true);
+  assert.equal(equivalent.reviewType, null);
+
+  const required = claim("true", { predicate: "reservation_required", sourceQuote: "" });
+  const notRequired = claim("false", { predicate: "reservation_required", sourceQuote: "" });
+  const conflict = classifyClaimPair(required, notRequired);
+  assert.equal(conflict.relation, "CONFLICT");
+  assert.equal(conflict.reviewType, "SOURCE_CONFLICT");
+});
+
 test("matching time evidence with richer description is enrichment, not a hard-fact conflict", () => {
   const enriched = classifyClaimPair(
     claim("20:00-23:00", { predicate: "has evening lighting during", sourceQuote: "洪崖洞晚上20:00-23:00亮灯" }),

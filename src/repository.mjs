@@ -35,6 +35,8 @@ export class Repository {
     const active = AI_MODELS.find((item) => item.id === selected) || AI_MODELS[0];
     return {
       id: active.id, model: active.model, provider: active.provider,
+      ...(active.location ? { location: active.location } : {}),
+      defaultModel,
       source: AI_MODELS.some((item) => item.id === model) ? "dashboard" : "environment",
       models: AI_MODELS,
     };
@@ -222,7 +224,10 @@ export class Repository {
 
   saveCapture(capture) {
     const timestamp = now();
-    const contentHash = sha256(`${capture.rawText}\n${capture.assets.map((item) => item.url).join("\n")}`);
+    const contentHash = sha256(`${capture.rawText}\n${capture.assets.map((item) => item.url).join("\n")}\n${(capture.files || []).map((item) => item.sha256).join("\n")}`);
+    const sourceKind = capture.sourceKind || (capture.adapter === "xiaohongshu" ? "xiaohongshu_note" : "manual_source");
+    const submittedUrl = capture.submittedUrl || capture.canonicalUrl;
+    const submissionMetadata = capture.submissionMetadata || {};
 
     return transaction(this.db, () => {
       // A note ID remains stable when Xiaohongshu changes a share URL or adds
@@ -244,24 +249,27 @@ export class Repository {
         sourceId = existing.id;
         captureVersion = existing.capture_version + 1;
         this.db.prepare(`
-          UPDATE sources SET external_id = ?, title = ?, author_name = ?, author_url = ?, published_at = ?,
+          UPDATE sources SET external_id = ?, submitted_url = ?, source_kind = ?, submission_metadata_json = ?,
+            title = ?, author_name = ?, author_url = ?, published_at = ?,
             captured_at = ?, raw_text = ?, raw_html = ?, raw_payload_json = ?, content_hash = ?,
             capture_version = capture_version + 1, status = 'captured', last_error = NULL, updated_at = ?
           WHERE id = ?
         `).run(
-          capture.externalId, capture.title, capture.authorName, capture.authorUrl, capture.publishedAt,
+          capture.externalId, submittedUrl, sourceKind, JSON.stringify(submissionMetadata),
+          capture.title, capture.authorName, capture.authorUrl, capture.publishedAt,
           capture.capturedAt, capture.rawText, capture.rawHtml, JSON.stringify(capture), contentHash, timestamp, sourceId,
         );
         this.db.prepare("DELETE FROM source_assets WHERE source_id = ?").run(sourceId);
+        this.db.prepare("DELETE FROM source_files WHERE source_id = ?").run(sourceId);
         this.db.prepare("DELETE FROM jobs WHERE entity_id = ? AND status IN ('queued', 'failed')").run(sourceId);
       } else {
         sourceId = id("src");
         this.db.prepare(`
-          INSERT INTO sources(id, adapter, external_id, canonical_url, title, author_name, author_url,
-            published_at, captured_at, raw_text, raw_html, raw_payload_json, content_hash, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO sources(id, adapter, external_id, canonical_url, submitted_url, source_kind, submission_metadata_json,
+            title, author_name, author_url, published_at, captured_at, raw_text, raw_html, raw_payload_json, content_hash, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          sourceId, capture.adapter, capture.externalId, capture.canonicalUrl, capture.title, capture.authorName,
+          sourceId, capture.adapter, capture.externalId, capture.canonicalUrl, submittedUrl, sourceKind, JSON.stringify(submissionMetadata), capture.title, capture.authorName,
           capture.authorUrl, capture.publishedAt, capture.capturedAt, capture.rawText, capture.rawHtml,
           JSON.stringify(capture), contentHash, timestamp, timestamp,
         );
@@ -269,11 +277,20 @@ export class Repository {
 
       if (!duplicate) {
         const insertAsset = this.db.prepare(`
-          INSERT OR IGNORE INTO source_assets(id, source_id, kind, remote_url, alt_text, position)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT OR IGNORE INTO source_assets(id, source_id, kind, remote_url, alt_text, position, local_path, mime_type, original_filename)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const asset of capture.assets) {
-          insertAsset.run(id("asset"), sourceId, asset.kind, asset.url, asset.alt, asset.position);
+          insertAsset.run(id("asset"), sourceId, asset.kind, asset.url, asset.alt, asset.position,
+            asset.localPath || "", asset.mimeType || "", asset.originalFilename || "");
+        }
+        const insertFile = this.db.prepare(`
+          INSERT INTO source_files(id, source_id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const file of capture.files || []) {
+          insertFile.run(file.id || id("source_file"), sourceId, file.fileKind, file.originalFilename,
+            file.mimeType, file.storagePath, file.sizeBytes, file.sha256, timestamp);
         }
         this.enqueue("extract_source", sourceId);
       }
@@ -362,12 +379,15 @@ export class Repository {
     const source = this.db.prepare("SELECT * FROM sources WHERE id = ?").get(sourceId);
     if (!source) return null;
     const assets = this.db.prepare("SELECT * FROM source_assets WHERE source_id = ? ORDER BY position").all(sourceId);
+    const files = this.db.prepare("SELECT id, file_kind, original_filename, mime_type, size_bytes, sha256, created_at FROM source_files WHERE source_id = ? ORDER BY created_at, id").all(sourceId);
     const structured = this.db.prepare("SELECT * FROM structured_sources WHERE source_id = ?").get(sourceId) || null;
     const claims = this.db.prepare("SELECT * FROM claims WHERE source_id = ? ORDER BY normalized_key").all(sourceId);
+    const extractionRuns = this.db.prepare("SELECT * FROM extraction_runs WHERE source_id=? ORDER BY revision DESC").all(sourceId);
+    const claimHistory = this.db.prepare("SELECT * FROM claim_history WHERE source_id=? ORDER BY extraction_revision DESC, claim_id").all(sourceId);
     const blueprint = this.db.prepare("SELECT * FROM source_blueprints WHERE source_id = ?").get(sourceId) || null;
     const analysis = this.db.prepare("SELECT * FROM content_intake_analyses WHERE source_id = ?").get(sourceId) || null;
     const recommendation = this.db.prepare("SELECT * FROM content_recommendations WHERE source_id = ? ORDER BY updated_at DESC LIMIT 1").get(sourceId) || null;
-    return hydrateSource({ source, assets, structured, claims, blueprint, analysis, recommendation });
+    return hydrateSource({ source, assets, files, structured, claims, extractionRuns, claimHistory, blueprint, analysis, recommendation });
   }
 
   getIntakePackage(sourceId) {
@@ -503,9 +523,11 @@ export class Repository {
 
   listSources(limit = 100) {
     return this.db.prepare(`
-      SELECT s.id, s.external_id, s.title, s.author_name, s.canonical_url, s.status, s.captured_at, s.capture_version,
+      SELECT s.id, s.adapter, s.external_id, s.title, s.author_name, s.canonical_url, s.submitted_url, s.source_kind,
+        s.status, s.last_error, s.captured_at, s.capture_version,
         ss.destination_name, ss.summary, ss.extraction_method,
-        (SELECT COUNT(*) FROM claims c WHERE c.source_id = s.id) AS claim_count
+        (SELECT COUNT(*) FROM claims c WHERE c.source_id = s.id) AS claim_count,
+        (SELECT COUNT(*) FROM source_files sf WHERE sf.source_id = s.id) AS file_count
       FROM sources s LEFT JOIN structured_sources ss ON ss.source_id = s.id
       ORDER BY s.captured_at DESC LIMIT ?
     `).all(limit);
@@ -514,6 +536,23 @@ export class Repository {
   saveExtraction(sourceId, result, method, model = null) {
     const timestamp = now();
     transaction(this.db, () => {
+      const previousRevision = this.db.prepare("SELECT COALESCE(MAX(revision), 0) AS revision FROM extraction_runs WHERE source_id=?").get(sourceId).revision;
+      const extractionRevision = previousRevision + 1;
+      const extractionRunId = id("extraction");
+      this.db.prepare(`UPDATE extraction_runs SET status='superseded', superseded_at=?
+        WHERE source_id=? AND status='active'`).run(timestamp, sourceId);
+      this.db.prepare(`INSERT INTO extraction_runs(id, source_id, revision, method, model, status, created_at, completed_at)
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`).run(
+        extractionRunId, sourceId, extractionRevision, method, model, timestamp, timestamp,
+      );
+      const archiveClaim = this.db.prepare(`INSERT OR IGNORE INTO claim_history(
+        id, claim_id, source_id, extraction_run_id, extraction_revision, lifecycle_status, snapshot_json, superseded_at
+      ) VALUES (?, ?, ?, ?, ?, 'superseded', ?, ?)`);
+      for (const claim of this.db.prepare("SELECT * FROM claims WHERE source_id=?").all(sourceId)) {
+        const claimRevision = Number(claim.extraction_revision || previousRevision || 1);
+        archiveClaim.run(`claim_history_${sha256(`${claim.id}:${claimRevision}`).slice(0, 24)}`,
+          claim.id, sourceId, claim.extraction_run_id || null, claimRevision, JSON.stringify(claim), timestamp);
+      }
       this.db.prepare("DELETE FROM claims WHERE source_id = ?").run(sourceId);
       this.db.prepare(`
         INSERT INTO structured_sources(source_id, language, summary, destination_name, destination_slug,
@@ -534,20 +573,26 @@ export class Repository {
         INSERT OR IGNORE INTO claims(id, source_id, normalized_key, subject, predicate, value_text,
           qualifiers_json, source_quote, confidence, created_at, original_normalized_key, entity_key,
           canonical_subject, entity_aliases_json, entity_resolution_status, entity_type, granularity,
-          entity_location_json, structured_value_json, scope_json, claim_kind, cardinality)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          entity_location_json, structured_value_json, scope_json, claim_kind, cardinality,
+          extraction_run_id, extraction_revision, claim_role, knowledge_eligible)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const claim of result.claims) {
         const normalizedKey = normalizeClaimKey(claim.key);
         const inferredEntity = inferEntityIdentity(normalizedKey, claim.subject, claim.predicate);
         const entityMetadata = inferEntityMetadata(claim.subject, inferredEntity.entityKey);
         const structured = structureClaim({ predicate: claim.predicate, value: claim.value, qualifiers: claim.qualifiers, sourceQuote: claim.source_quote });
+        const claimRole = normalizeClaimRole(claim.claim_role, claim.subject, claim.predicate);
+        const knowledgeEligible = claim.knowledge_eligible === true
+          || (claim.knowledge_eligible == null && !["personal_experience", "editorial_metadata", "promotional_observation"].includes(claimRole));
         insertClaim.run(
           id("claim"), sourceId, normalizedKey, claim.subject, claim.predicate, claim.value,
           JSON.stringify(claim.qualifiers), claim.source_quote, claim.confidence, timestamp, normalizedKey,
           inferredEntity.entityKey, inferredEntity.canonicalSubject, JSON.stringify(inferredEntity.aliases), inferredEntity.status,
           entityMetadata.entityType, entityMetadata.granularity, JSON.stringify(entityMetadata.location),
           JSON.stringify(structured), JSON.stringify(structured.scope), structured.claim_kind, structured.cardinality,
+          extractionRunId, extractionRevision,
+          claimRole, knowledgeEligible ? 1 : 0,
         );
       }
       this.db.prepare(`
@@ -576,7 +621,8 @@ export class Repository {
         s.captured_at, s.title AS source_title
       FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
       JOIN sources s ON s.id=c.source_id
-      WHERE ss.destination_slug=? ORDER BY s.captured_at DESC, c.normalized_key LIMIT ?
+      WHERE ss.destination_slug=? AND c.knowledge_eligible=1
+      ORDER BY s.captured_at DESC, c.normalized_key LIMIT ?
     `).all(destinationSlug, limit);
     const destination = this.db.prepare("SELECT name FROM destinations WHERE slug=?").get(destinationSlug);
     return {
@@ -874,23 +920,30 @@ export class Repository {
 
   rebuildKnowledge(destinationSlug) {
     this.resolveEntitiesDeterministically(destinationSlug);
-    const sourceRows = this.db.prepare(`
+    const allSourceRows = this.db.prepare(`
       SELECT c.*, ss.destination_name, ss.destination_slug, s.captured_at
       FROM claims c JOIN structured_sources ss ON ss.source_id = c.source_id
       JOIN sources s ON s.id = c.source_id
       WHERE ss.destination_slug = ?
     `).all(destinationSlug);
     const timestamp = now();
-    for (const row of sourceRows) {
+    for (const row of allSourceRows) {
       row.structured_value = structureClaim({ predicate: row.predicate, value: row.value_text, qualifiers: json(row.qualifiers_json, []), sourceQuote: row.source_quote });
       row.scope = row.structured_value.scope;
     }
+    const sourceRows = allSourceRows.filter((row) => row.knowledge_eligible !== 0);
     const previousReviewDecisions = new Map(this.db.prepare(`
       SELECT id, review_type, status FROM claim_review_cases
       WHERE destination_slug=? AND status IN ('resolved','dismissed')
     `).all(destinationSlug).map((row) => [row.id, row]));
     transaction(this.db, () => {
       const destinationId = `dst_${sha256(destinationSlug).slice(0, 20)}`;
+      this.db.prepare(`DELETE FROM claim_relations WHERE claim_a_id IN (
+        SELECT c.id FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
+      )`).run(destinationSlug);
+      this.db.prepare(`DELETE FROM claim_review_cases WHERE claim_a_id IN (
+        SELECT c.id FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
+      )`).run(destinationSlug);
       if (!sourceRows.length) {
         this.db.prepare("DELETE FROM knowledge_facts WHERE destination_id = ?").run(destinationId);
         return;
@@ -901,17 +954,16 @@ export class Repository {
         ON CONFLICT(slug) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at
       `).run(destinationId, destinationSlug, displayName, timestamp, timestamp);
       this.db.prepare("DELETE FROM knowledge_facts WHERE destination_id = ?").run(destinationId);
-      this.db.prepare(`DELETE FROM claim_relations WHERE claim_a_id IN (
-        SELECT c.id FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
-      )`).run(destinationSlug);
-      this.db.prepare(`DELETE FROM claim_review_cases WHERE claim_a_id IN (
-        SELECT c.id FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
-      )`).run(destinationSlug);
       const updateStructuredClaim = this.db.prepare(`UPDATE claims SET structured_value_json=?, scope_json=?, claim_kind=?, cardinality=? WHERE id=?`);
+      const reviewedExtractionQuotes = new Set();
       for (const row of sourceRows) {
         updateStructuredClaim.run(JSON.stringify(row.structured_value), JSON.stringify(row.scope), row.structured_value.claim_kind, row.structured_value.cardinality, row.id);
-        const extractionIssue = detectClaimExtractionIssue(row);
+        const siblingClaims = sourceRows.filter((candidate) => candidate.source_id === row.source_id && candidate.id !== row.id);
+        const extractionIssue = detectClaimExtractionIssue(row, siblingClaims);
         if (extractionIssue) {
+          const quoteKey = `${row.source_id}:${sha256(row.source_quote)}:${extractionIssue}`;
+          if (reviewedExtractionQuotes.has(quoteKey)) continue;
+          reviewedExtractionQuotes.add(quoteKey);
           const reviewId = `claim_review_${sha256(`${row.id}:${extractionIssue}`).slice(0, 24)}`;
           const previous = previousReviewDecisions.get(reviewId);
           // A legacy "resolved" extraction review only acknowledged the issue; it did not
@@ -946,7 +998,12 @@ export class Repository {
 
       const groups = Map.groupBy(sourceRows, (row) => row.normalized_key);
       for (const [key, rows] of groups) {
-        const variants = Map.groupBy(rows, (row) => normalizeValue(row.value_text));
+        const canonicalPredicates = new Set(rows.map((row) => row.structured_value.canonical_predicate).filter(Boolean));
+        const typedFact = canonicalPredicates.size === 1 && rows.every((row) => row.structured_value.typed_value != null);
+        const canonicalPredicate = typedFact ? [...canonicalPredicates][0] : null;
+        const variants = Map.groupBy(rows, (row) => typedFact
+          ? `${canonicalPredicate}:${JSON.stringify(row.structured_value.typed_value)}`
+          : normalizeValue(row.value_text));
         const ranked = [...variants.entries()].sort((a, b) => b[1].length - a[1].length);
         const relations = [];
         for (let left = 0; left < rows.length; left += 1) {
@@ -970,6 +1027,9 @@ export class Repository {
         }
         const conflicts = relations.filter((relation) => !relation.canCoexist);
         const status = conflicts.length ? "conflicted" : rows.length > 1 ? "corroborated" : "single_source";
+        const preferredValue = typedFact
+          ? String(ranked[0][1][0].structured_value.typed_value)
+          : ranked[0][1][0].value_text;
         const freshness = classifyFreshness(rows, this.contentConfig);
         const verificationPriority = freshness.volatile || status === "conflicted"
           ? "requires_official" : status === "single_source" || freshness.state === "stale" ? "review" : "normal";
@@ -1005,7 +1065,7 @@ export class Repository {
             entity_location_json=excluded.entity_location_json, claim_relations_json=excluded.claim_relations_json
         `).run(
           `fact_${sha256(`${destinationId}:${key}`).slice(0, 24)}`, destinationId, key, entity.canonicalSubject || rows[0].subject,
-          rows[0].predicate, status, ranked[0][1][0].value_text, status === "conflicted" ? ranked[0][1].length : rows.length,
+          canonicalPredicate || rows[0].predicate, status, preferredValue, status === "conflicted" ? ranked[0][1].length : rows.length,
           conflicts.length, JSON.stringify(evidence), timestamp,
           freshness.state, freshness.latestEvidenceAt, verificationPriority, entity.entityKey,
           entity.canonicalSubject, JSON.stringify(entity.aliases), entity.status, entity.entityType,
@@ -2288,8 +2348,21 @@ export class Repository {
   dashboard() {
     const statuses = this.db.prepare("SELECT status, COUNT(*) AS count FROM sources GROUP BY status").all();
     const operationalExceptions = this.listOperationalExceptions();
+    const exceptionCount = (kind) => operationalExceptions.filter((item) => item.kind === kind).length;
     return {
       sources: Object.fromEntries(statuses.map((row) => [row.status, row.count])),
+      actionCounts: {
+        sources: exceptionCount("source"),
+        recommendations: this.db.prepare("SELECT COUNT(*) AS count FROM content_recommendations WHERE decision='pending'").get().count,
+        knowledge: 0,
+        blueprints: 0,
+        content: 0,
+        wordpress: exceptionCount("wordpress") + operationalExceptions.filter((item) => item.kind === "sync" && String(item.subject || "").startsWith("wordpress_inventory:")).length,
+        commercial: this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_opportunities WHERE status='open'").get().count,
+        exceptions: operationalExceptions.length,
+        maintenance: exceptionCount("maintenance") + exceptionCount("sync"),
+        settings: 0,
+      },
       totals: {
         sources: this.db.prepare("SELECT COUNT(*) AS count FROM sources").get().count,
         claims: this.db.prepare("SELECT COUNT(*) AS count FROM claims").get().count,
@@ -2322,7 +2395,7 @@ function hydrateReview(row) {
   };
 }
 
-function hydrateSource({ source, assets, structured, claims, blueprint, analysis = null, recommendation = null }) {
+function hydrateSource({ source, assets, files = [], structured, claims, extractionRuns = [], claimHistory = [], blueprint, analysis = null, recommendation = null }) {
   if (structured) {
     structured.traveler_fit = json(structured.traveler_fit_json, []);
     structured.practical_tips = json(structured.practical_tips_json, []);
@@ -2342,9 +2415,12 @@ function hydrateSource({ source, assets, structured, claims, blueprint, analysis
     blueprint.strengths = json(blueprint.strengths_json, []);
     blueprint.gaps = json(blueprint.gaps_json, []);
   }
+  source.submission_metadata = json(source.submission_metadata_json, {});
   delete source.raw_payload_json;
+  delete source.submission_metadata_json;
   return {
-    ...source, assets, structured, claims, blueprint,
+    ...source, assets, files, structured, claims, extraction_runs: extractionRuns,
+    claim_history: claimHistory.map((row) => ({ ...row, snapshot: json(row.snapshot_json, {}) })), blueprint,
     analysis: analysis ? { ...analysis, data: json(analysis.analysis_json, {}) } : null,
     recommendation: recommendation ? hydrateRecommendation(recommendation) : null,
   };
@@ -2656,6 +2732,20 @@ function truncateText(value, max) {
 
 function normalizeValue(value) {
   return String(value).trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeClaimRole(value, subject = "", predicate = "") {
+  const roles = new Set(["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"]);
+  const supplied = String(value || "").trim().toLowerCase();
+  if (roles.has(supplied)) return supplied;
+  const normalizedSubject = normalizeValue(subject);
+  const normalizedPredicate = normalizeValue(predicate);
+  if (["recommendations", "recommendation", "guide", "source author"].includes(normalizedSubject)
+    || /\b(?:editorial|disclaimer|stated as)\b/u.test(normalizedPredicate)) return "editorial_metadata";
+  if (["author's trip", "author trip", "the author"].includes(normalizedSubject)
+    || /\b(?:personal experience|author experience)\b/u.test(normalizedPredicate)) return "personal_experience";
+  if (/\b(?:recommend|recommended|best time|worth visiting|suitable for)\b/u.test(normalizedPredicate)) return "recommendation";
+  return "fact";
 }
 
 function normalizeClaimKey(value) {

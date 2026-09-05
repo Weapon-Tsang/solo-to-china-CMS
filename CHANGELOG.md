@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.12.0 — 2026-09-05
+
+- Added an administrator-only manual Source intake for public Xiaohongshu, WeChat, video, and ordinary web links, plus PDF, DOC/DOCX, and multi-image uploads; every accepted submission enters the existing extraction, Claim, Knowledge, Blueprint, and content-intake pipeline.
+- Added direct public YouTube video/audio evidence input for the active Vertex Gemini model; other video platforms stay page-text/transcript-only and are labeled accordingly instead of being misrepresented as decoded video.
+- Added persistent original-file evidence storage and schema migration 20 (`source_files`, Source type/submission metadata, and local multimodal asset paths) without weakening Claim/evidence retention.
+- Added SSRF-safe public-link extraction and classified operator errors for authentication walls, bot protection, rate limits, timeouts, oversized/unsupported responses, parse failures, and empty content.
+- Added Vertex AI Gemini 3.8 Flash (`gemini-3.8-flash`) as the default multimodal extraction, writing, and review model, using Google's supported global endpoint; the Gemini 3.1 Flash Image generation default is unchanged.
+- Added live numbered action badges to the admin navigation for failed Sources, pending Recommendations, WordPress delivery/sync failures, open Commercial opportunities, operational Exceptions, failed maintenance/integration runs, and required AI/Contract configuration.
+- Replaced the mobile horizontal navigation scroller with a touch-friendly three-column menu grid so every admin section is reachable without sideways swiping.
+
+- Added schema migration 19 with extraction-run revisions and immutable superseded Claim snapshots, so re-extraction preserves the full structured Claim audit trail while Knowledge consumes only the active projection.
+- Required atomic Claim extraction guidance, minimal proposition-specific source quotes, explicit negation/limiter retention, and canonical reservation booleans across Kimi and OpenAI extractors.
+- Canonicalized reservation assertions such as `does not require reservation` and `requires reservation = no reservation required` to the same typed fact, eliminating false source conflicts without hiding true required/not-required contradictions.
+- Reduced extraction-review noise from contrastive language and colloquial slogans, and evaluate sibling Claims sharing the same quote before reporting a missing negation or limiter.
+- Added Claim roles and Knowledge eligibility: editorial metadata, personal experience, and non-durable promotional observations remain auditable evidence but do not enter destination Knowledge.
+- Queued a one-time Knowledge/Claim Review recalculation for existing destinations after migration 19.
+
 ## 1.11.1 — 2026-09-03
 
 - Fixed false `NEGATION_EXTRACTION_ERROR` reviews by evaluating the complete Claim semantics—predicate, value, qualifiers, and structured fields—instead of value text alone.

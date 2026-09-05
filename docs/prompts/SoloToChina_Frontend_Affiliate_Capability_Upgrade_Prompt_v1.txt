@@ -9,7 +9,7 @@ https://github.com/Weapon-Tsang/solo-to-china
 - Theme version: 0.25.0
 - Content Contract: 2.0.0
 - Component Registry: 1.0.0
-- CMS counterpart: solo-to-china-CMS 1.11.0 / migration 18
+- CMS counterpart: solo-to-china-CMS 1.12.0 / migration 20
 
 请在开始前检查 git status，不要覆盖、重置或删除现有改动。先阅读仓库内 README、docs/CMS_FRONTEND_CONTRACT.md、docs/architecture/content-component-system.md、Component Registry 生成脚本和验证脚本。保持“Frontend defines what can be rendered; CMS decides what should be rendered”的责任边界。
 

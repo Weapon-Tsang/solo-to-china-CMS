@@ -7,8 +7,11 @@ const SOFT_PREDICATES = new Set([
   "recommended_for", "worth_visiting",
 ]);
 
-const NEGATION_PATTERN = /\b(?:not|never|no|avoid|without|unable|different|unlike|false|optional|isn['’]?t|aren['’]?t|doesn['’]?t|don['’]?t|cannot|can['’]?t)\b|不|无须|无需|不用|不需要|不要|没有|不能|不可|避免|并非|不是|非/iu;
-const LIMITER_PATTERN = /\b(?:only|except|unless|but only|at most|at least)\b|仅限|只有|只能|只可|只允许|只需|只在|仅在|仅可|除了|除非|例外|最多|至少/iu;
+// These patterns describe proposition polarity and material limits. Contrastive
+// wording (for example “different from daytime”) and colloquial intensifiers are
+// not logical negation and must not create review noise.
+const NEGATION_PATTERN = /\b(?:not|never|no|avoid|without|unable|false|optional|isn['’]?t|aren['’]?t|doesn['’]?t|don['’]?t|cannot|can['’]?t)\b|(?:无须|无需|不用|不需要|不要|不能|不可|无法|没法|未能|避免|不值得|不开放|不收费|不适合|不推荐|不接受|不提供|不允许|不包含|不支持|不营业|没有预约|没有预订|没有预定|并非|不是|非必要|非唯一|免预约)/iu;
+const LIMITER_PATTERN = /\b(?:only|except|unless|but only|at most|at least)\b|(?:仅限|只有|只能|只可|只允许|只需|只在|仅在|仅可|除了|除非|例外|最多|至少|至多|唯有)/iu;
 const TIME_TERMS = new Map([
   ["morning", "morning"], ["上午", "morning"], ["early morning", "morning"],
   ["afternoon", "afternoon"], ["下午", "afternoon"],
@@ -37,9 +40,13 @@ export function structureClaim({ predicate, value, qualifiers = [], sourceQuote 
     : HARD_FACT_PREDICATES.has(normalizedPredicate) ? "HARD_FACT" : inferClaimKind(normalizedPredicate, rawValue);
   const cardinality = claimKind === "SOFT_RECOMMENDATION"
     ? "MULTI_VALUE" : claimKind === "CONTEXT_DEPENDENT" ? "CONTEXT_DEPENDENT" : "SINGLE_VALUE";
+  const canonical = canonicalFactSemantics(predicate, rawValue, qualifierValues);
   return {
     value: primaryValue,
     normalized_value: normalizeText(primaryValue),
+    canonical_predicate: canonical.predicate,
+    typed_value: canonical.value,
+    polarity: canonical.polarity,
     qualifiers: rationale,
     rationale,
     scope: inferScope([...qualifierValues, sourceQuote]),
@@ -63,6 +70,20 @@ export function classifyClaimPair(left, right) {
   }
 
   const sameScope = scopesCompatible(a.structured.scope, b.structured.scope);
+  const sameCanonicalPredicate = a.structured.canonical_predicate
+    && a.structured.canonical_predicate === b.structured.canonical_predicate;
+  const typedA = a.structured.typed_value;
+  const typedB = b.structured.typed_value;
+  if (sameCanonicalPredicate && typedA != null && typedB != null) {
+    if (typedA === typedB) {
+      return result("PARAPHRASE", true,
+        "The claims use different wording for the same canonical typed fact.", a, b);
+    }
+    if (sameScope) {
+      return result("CONFLICT", false,
+        "The claims assign opposing typed values to the same canonical fact under a compatible scope.", a, b, "SOURCE_CONFLICT");
+    }
+  }
   const aValue = a.structured.normalized_value;
   const bValue = b.structured.normalized_value;
   const exactRaw = normalizeText(a.value_text) === normalizeText(b.value_text);
@@ -106,18 +127,27 @@ export function classifyClaimPair(left, right) {
     kind === "SOFT_RECOMMENDATION" ? "Soft or multi-value recommendations may coexist." : "The claims add different compatible information.", a, b);
 }
 
-export function detectClaimExtractionIssue(claim) {
+export function detectClaimExtractionIssue(claim, siblingClaims = []) {
   const quote = String(claim?.source_quote || claim?.sourceQuote || "");
-  const normalized = claimSemanticText(claim);
+  const sameQuoteClaims = [claim, ...siblingClaims].filter((candidate, index, items) => {
+    const candidateQuote = String(candidate?.source_quote || candidate?.sourceQuote || "");
+    const identity = candidate?.id || candidate;
+    return normalizeText(candidateQuote) === normalizeText(quote)
+      && items.findIndex((item) => (item?.id || item) === identity) === index;
+  });
+  const normalized = sameQuoteClaims.map(claimSemanticText).join(" ");
   if (hasNegation(quote) && !hasNegation(normalized)) return "NEGATION_EXTRACTION_ERROR";
   if (LIMITER_PATTERN.test(quote) && !LIMITER_PATTERN.test(normalized)) return "QUALIFIER_EXTRACTION_ERROR";
   return null;
 }
 
 function hydrate(claim) {
-  const structured = claim.structured_value && typeof claim.structured_value === "object"
-    ? claim.structured_value
-    : structureClaim({ predicate: claim.predicate, value: claim.value_text, qualifiers: claim.qualifiers, sourceQuote: claim.source_quote });
+  const computed = structureClaim({ predicate: claim.predicate, value: claim.value_text, qualifiers: claim.qualifiers, sourceQuote: claim.source_quote });
+  const saved = claim.structured_value && typeof claim.structured_value === "object" ? claim.structured_value : {};
+  const structured = {
+    ...computed, ...saved, canonical_predicate: computed.canonical_predicate,
+    typed_value: computed.typed_value, polarity: computed.polarity,
+  };
   structured.scope ||= claim.scope || {};
   return { ...claim, structured };
 }
@@ -180,8 +210,8 @@ function strongestKind(a, b) {
 }
 
 function sameDecisionConcept(a, b) {
-  const predicateA = normalizePredicate(a.predicate);
-  const predicateB = normalizePredicate(b.predicate);
+  const predicateA = a.structured.canonical_predicate || normalizePredicate(a.predicate);
+  const predicateB = b.structured.canonical_predicate || normalizePredicate(b.predicate);
   return predicateA === predicateB || tokenOverlap(a.value_text, b.value_text) >= 0.35;
 }
 
@@ -214,6 +244,30 @@ function normalizePredicate(value) {
 function canonicalPrimaryValue(value, predicate) {
   if (["recommended_visit_time", "best_time_to_visit"].includes(predicate)) return value.replace(/\s+visit$/iu, "").trim();
   return value;
+}
+
+function canonicalFactSemantics(predicate, value, qualifiers = []) {
+  const normalizedPredicate = normalizeText(predicate);
+  const normalizedValue = normalizeText(value);
+  const text = `${normalizedPredicate} ${normalizedValue} ${qualifiers.map(normalizeText).join(" ")}`;
+  if (/\b(?:reservation|booking|appointment)\b|预约/iu.test(text)) {
+    // An explicit negative value wins over an awkward positive predicate such as
+    // “requires reservation = no reservation required”. This keeps model wording
+    // out of the knowledge identity and compares the actual boolean assertion.
+    const explicitlyFalse = /\b(?:false|optional|not required|no reservation required|without reservation)\b|(?:无需预约|无须预约|不需要预约|不用预约|免预约)/iu.test(normalizedValue)
+      || /\b(?:does not require|doesn['’]?t require|not require)\b|(?:无需|无须|不需要|不用|免)/iu.test(normalizedPredicate);
+    const explicitlyTrue = /^(?:true|yes|required|reservation required|advance reservation required|需要预约|须预约|必须预约)$/iu.test(normalizedValue)
+      || /\b(?:requires reservation|reservation is required|advance reservation required)\b|(?:需要预约|须预约|必须预约)/iu.test(normalizedPredicate);
+    return {
+      predicate: "reservation_required",
+      value: explicitlyFalse ? false : explicitlyTrue ? true : null,
+      polarity: explicitlyFalse ? "negative" : explicitlyTrue ? "positive" : "unknown",
+    };
+  }
+  return {
+    predicate: normalizePredicate(predicate), value: null,
+    polarity: hasNegation(`${predicate} ${value}`) ? "negative" : "positive",
+  };
 }
 
 function normalizeText(value) {

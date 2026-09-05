@@ -46,8 +46,57 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
   while (await app.pipeline.runOne()) { /* drain follow-up aggregation jobs */ }
   const dashboard = await (await fetch(`${baseUrl}/api/dashboard`)).json();
   assert.equal(dashboard.totals.sources, 1);
+  assert.equal(dashboard.actionCounts.settings, 1);
   const sources = await (await fetch(`${baseUrl}/api/sources`)).json();
   assert.equal(sources.items[0].destination_name, "Chengdu");
+});
+
+test("admin manual-source API stores uploaded evidence, queues the shared pipeline, and returns classified link failures", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-manual-api-test-"));
+  const config = loadConfig({
+    HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "api.sqlite"),
+    SOURCE_UPLOADS_DIR: path.join(directory, "source-uploads"), ADMIN_TOKEN: "manual-admin-token",
+    MAINTENANCE_ENABLED: "false", LOG_LEVEL: "error",
+  });
+  const app = createApplication(config);
+  await app.start();
+  t.after(async () => {
+    await app.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
+  const denied = await fetch(`${baseUrl}/api/manual-sources`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  assert.equal(denied.status, 401);
+
+  const response = await fetch(`${baseUrl}/api/manual-sources`, {
+    method: "POST",
+    headers: { authorization: "Bearer manual-admin-token", "content-type": "application/json" },
+    body: JSON.stringify({
+      kind: "images", title: "重庆公共交通与景点截图",
+      notes: "人工授权的重庆旅行资料截图，包含轨道交通和景点参观提示。",
+      files: [{ name: "chongqing.png", mimeType: "image/png", base64: Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("manual image fixture")]).toString("base64") }],
+    }),
+  });
+  assert.equal(response.status, 202);
+  const saved = await response.json();
+  assert.match(saved.id, /^src_/);
+  assert.equal(saved.sourceKind, "images");
+  const source = app.repository.getSource(saved.id);
+  assert.equal(source.adapter, "manual");
+  assert.equal(source.source_kind, "images");
+  assert.equal(source.files.length, 1);
+  assert.equal(source.assets[0].mime_type, "image/png");
+  assert.ok(fs.existsSync(app.repository.db.prepare("SELECT storage_path FROM source_files WHERE source_id=?").get(saved.id).storage_path));
+
+  const blocked = await fetch(`${baseUrl}/api/manual-sources`, {
+    method: "POST",
+    headers: { authorization: "Bearer manual-admin-token", "content-type": "application/json" },
+    body: JSON.stringify({ kind: "web_url", url: "http://127.0.0.1/private" }),
+  });
+  assert.equal(blocked.status, 400);
+  const failure = await blocked.json();
+  assert.equal(failure.code, "PRIVATE_NETWORK_BLOCKED");
+  assert.match(failure.error, /内网/);
 });
 
 test("admin mutations require ADMIN_TOKEN and responses include security headers", async (t) => {
@@ -177,8 +226,10 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.match(await download.text(), /Authorized source images and reader trust/);
 
   const settings = await (await fetch(`${baseUrl}/api/settings/ai`)).json();
-  assert.equal(settings.model, "kimi-k3");
-  assert.equal(settings.models.length, 4);
+  assert.equal(settings.model, "gemini-3.8-flash");
+  assert.equal(settings.id, "vertex-gemini-3.8-flash");
+  assert.equal(settings.location, "global");
+  assert.equal(settings.models.length, 5);
   assert.equal(settings.visual.id, "vertex-gemini-3.1-flash-image");
   assert.equal(settings.visual.supportsGeneration, true);
   assert.equal(settings.storage.mode, "local");
@@ -243,7 +294,7 @@ test("Kimi configuration uses the provider's server-side defaults", () => {
   const config = loadConfig({ KIMI_API_KEY: "kimi-test-key" });
   assert.equal(config.kimi.apiKey, "kimi-test-key");
   assert.equal(config.kimi.model, "kimi-k2.7-code");
-  assert.equal(config.ai.defaultModel, "kimi-k3");
+  assert.equal(config.ai.defaultModel, "vertex-gemini-3.8-flash");
   assert.equal(config.visuals.defaultModel, "vertex-gemini-3.1-flash-image");
   assert.equal(config.kimi.baseUrl, "https://api.moonshot.cn/v1");
   assert.equal(config.kimi.maxCompletionTokens, 16_000);

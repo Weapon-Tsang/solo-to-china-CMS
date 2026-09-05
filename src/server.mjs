@@ -5,6 +5,7 @@ import path from "node:path";
 import { loadConfig } from "./config.mjs";
 import { openDatabase } from "./db.mjs";
 import { normalizeXiaohongshuCapture, ValidationError } from "./adapters/xiaohongshu.mjs";
+import { ManualSourceError, ManualSourceIngestor } from "./adapters/manual-source.mjs";
 import { KimiExtractor } from "./ai/kimi.mjs";
 import { ContentEngine } from "./ai/content-engine.mjs";
 import { VertexImagen } from "./visuals/vertex-imagen.mjs";
@@ -52,6 +53,7 @@ export function createApplication(config = loadConfig()) {
   const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
   const activeVisuals = { ...config.visuals, ...selectedVisual };
   const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
+  const manualSources = new ManualSourceIngestor(config.manualSources);
   const extractor = new KimiExtractor(activeAi);
   const contentEngine = new ContentEngine(activeAi);
   const visuals = new VertexImagen(activeVisuals);
@@ -243,8 +245,32 @@ export function createApplication(config = loadConfig()) {
         void pipeline.runOne();
         return sendJson(response, saved.duplicate ? 200 : 202, saved);
       }
+      if (request.method === "POST" && url.pathname === "/api/manual-sources") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const maxBodyBytes = Math.ceil(config.manualSources.maxTotalBytes * 1.4) + 250_000;
+        const prepared = await manualSources.prepare(await readJson(request, maxBodyBytes));
+        let saved;
+        try {
+          saved = repository.saveCapture(prepared.capture);
+        } catch (error) {
+          prepared.cleanup();
+          throw error;
+        }
+        if (saved.duplicate) prepared.cleanup();
+        void pipeline.runOne();
+        return sendJson(response, saved.duplicate ? 200 : 202, {
+          ...saved,
+          sourceKind: prepared.capture.sourceKind,
+          warnings: prepared.warnings,
+          message: saved.duplicate ? "该来源内容已存在，未重复排队。" : "来源已安全入库并进入提取与内容生产流程。",
+        });
+      }
       if (request.method === "GET" && url.pathname === "/api/dashboard") {
-        return sendJson(response, 200, repository.dashboard());
+        const dashboard = repository.dashboard();
+        const contractStatus = frontendContracts.diagnostics().status;
+        dashboard.actionCounts.settings = (extractor.enabled ? 0 : 1)
+          + (["major_mismatch", "invalid"].includes(contractStatus) ? 1 : 0);
+        return sendJson(response, 200, dashboard);
       }
       if (request.method === "GET" && url.pathname === "/api/sources") {
         return sendJson(response, 200, { items: repository.listSources(limit(url.searchParams.get("limit"))) });
@@ -253,7 +279,7 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && sourceMatch) {
         if (captureOnly) authorizeCapture(request, config.captureToken);
         const source = repository.getSource(sourceMatch[1]);
-        return source ? sendJson(response, 200, source) : sendJson(response, 404, { error: "Source not found." });
+        return source ? sendJson(response, 200, sourceForApi(source)) : sendJson(response, 404, { error: "Source not found." });
       }
       const retryMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/retry$/);
       if (request.method === "POST" && retryMatch) {
@@ -516,7 +542,10 @@ export function createApplication(config = loadConfig()) {
       const status = error instanceof ValidationError || error instanceof CommercialValidationError ? 400 : error instanceof FrontendContractError ? 409 : error?.statusCode || 500;
       const log = status >= 500 ? logger.error : logger.warn;
       log("http.request_failed", { requestId, method: request.method, path: requestPath, status, error });
-      return sendJson(response, status, { error: error.message || "Unexpected server error." });
+      return sendJson(response, status, {
+        error: error.message || "Unexpected server error.",
+        ...(error instanceof ManualSourceError ? { code: error.code, details: error.details } : {}),
+      });
     }
   });
 
@@ -656,6 +685,13 @@ async function readJson(request, maxBytes) {
 function sendJson(response, status, value) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
   response.end(JSON.stringify(value));
+}
+
+function sourceForApi(source) {
+  return {
+    ...source,
+    assets: (source.assets || []).map(({ local_path, ...asset }) => asset),
+  };
 }
 
 function serveStatic(publicDir, pathname, response) {

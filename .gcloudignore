@@ -1,0 +1,7 @@
+.gcloudignore
+.git
+.gitignore
+
+# Reuse the repository's exclusions so local credentials, data, backups,
+# generated output, and installed dependencies never enter Cloud Build input.
+#!include:.gitignore

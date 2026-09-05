@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_ID="project-4bcb9146-c37b-43b0-b11"
-IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.11.1"
+IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.12.0"
 APP_DIR="/opt/solo-to-china"
 METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 
@@ -60,7 +60,7 @@ SESSION_SECRET=${SESSION_SECRET}
 CAPTURE_HOST=capture.solotochina.com
 
 KIMI_API_KEY=${KIMI_API_KEY}
-AI_MODEL=kimi-k3
+AI_MODEL=vertex-gemini-3.8-flash
 KIMI_MODEL=kimi-k3
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MAX_IMAGES=8
@@ -109,6 +109,7 @@ services:
       DATABASE_PATH: /var/lib/solo-to-china/solo-to-china.sqlite
       BACKUP_DIR: /var/lib/solo-to-china/backups
       GENERATED_MEDIA_DIR: /var/lib/solo-to-china/generated-media
+      SOURCE_UPLOADS_DIR: /var/lib/solo-to-china/source-uploads
     volumes:
       - solo_to_china_data:/var/lib/solo-to-china
     expose:
@@ -147,6 +148,7 @@ docker run --detach --name engine --restart unless-stopped \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
   --env BACKUP_DIR=/var/lib/solo-to-china/backups \
   --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media \
+  --env SOURCE_UPLOADS_DIR=/var/lib/solo-to-china/source-uploads \
   --volume solo_to_china_data:/var/lib/solo-to-china \
   "$IMAGE" >/dev/null
 docker run --detach --name cloudflared --restart unless-stopped \

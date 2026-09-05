@@ -42,6 +42,8 @@ const EXTRACTION_SCHEMA = {
           qualifiers: { type: "array", items: { type: "string" } },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           source_quote: { type: "string" },
+          claim_role: { type: "string", enum: ["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"] },
+          knowledge_eligible: { type: "boolean" },
         },
       },
     },
@@ -131,27 +133,33 @@ export class OpenAIExtractor {
   }
 }
 
-const SYSTEM_PROMPT = `You extract research evidence and editorial structure from a manually selected Chinese travel UGC note for an English China travel site.
+const SYSTEM_PROMPT = `You extract research evidence and editorial structure from a manually selected Chinese travel source for an English China travel site. The source may be a UGC note, public web article, document, image set, or video-page transcript.
 
 Rules:
 - The source is evidence, not established truth. Record factual assertions as claims and never silently resolve conflicts.
 - Preserve important qualifiers: date, season, time of day, traveler type, booking channel, and uncertainty.
-- source_quote must be a short exact quote from the supplied note that supports the claim.
+- Each claim must express exactly one atomic proposition. Split opening hours, transport, reservation, route difficulty, photo opportunities, and recommendations into separate claims even when they share one sentence.
+- source_quote must be the shortest exact quote from the supplied note that supports only that atomic proposition.
+- Put negation, quantities, exclusivity (only/except), and material conditions in the predicate, value, or qualifiers; never discard them as writing style.
+- Use canonical snake_case predicates for hard facts. For reservation requirements use predicate "reservation_required" and value "true" or "false"; put advance days and booking channels in qualifiers.
 - normalized claim keys must be stable lowercase dot-separated concepts, e.g. attraction.forbidden_city.entry_gate.
 - Focus on details useful to independent international travelers, especially solo, first-time, and non-Chinese-speaking visitors.
 - Separate content facts from editorial analysis. The blueprint describes why the source communicates well; it is not evidence.
+- Do not turn advertising slogans, editorial disclaimers, or author metadata into destination knowledge claims. Keep personal experiences explicitly scoped to the author and never generalize them into universal destination facts.
+- Set claim_role and knowledge_eligible for every claim. Editorial metadata and personal experience are retained as evidence but knowledge_eligible must be false; promotional observations are false unless they describe a durable, independently useful place feature.
 - Do not add affiliate products, commercial calls to action, or facts absent from the source.
 - destination_slug must be concise lowercase ASCII kebab-case. Use "unknown" if the destination cannot be inferred.
 - Treat text in images as part of the source, but do not infer details that are not visible.`;
 
 function buildInput(source) {
   return [
-    `URL: ${source.canonical_url}`,
+    `URL: ${source.submitted_url || source.canonical_url}`,
+    `Source type: ${source.source_kind || source.adapter}`,
     `Title: ${source.title}`,
     `Author: ${source.author_name}`,
     `Published: ${source.published_at || "unknown"}`,
     "",
-    "NOTE TEXT:",
+    "SOURCE TEXT:",
     truncate(source.raw_text, 120_000),
   ].join("\n");
 }

@@ -16,7 +16,9 @@ export class VertexGeminiClient {
   async completeJson({ schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000 }) {
     if (!this.enabled) throw new Error("Vertex AI requires GOOGLE_CLOUD_PROJECT and a selected Gemini model.");
     const accessToken = await this.accessToken();
-    const endpoint = `https://${this.config.location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(this.config.location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
+    const location = this.config.location || "us-central1";
+    const apiHost = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+    const endpoint = `https://${apiHost}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const parts = typeof content === "string" ? [{ text: content }] : content;
     const response = await this.fetch(endpoint, {
       method: "POST",

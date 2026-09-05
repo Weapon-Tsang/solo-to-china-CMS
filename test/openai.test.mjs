@@ -43,3 +43,36 @@ test("Kimi adapter sends trusted image evidence as base64 input and requests str
   assert.equal(output.result.source.destination_slug, "beijing-city");
   assert.equal(output.result.claims[0].key, "attraction.entry.gate");
 });
+
+test("Vertex extraction sends a public YouTube source as direct video evidence", async () => {
+  let request;
+  const expected = {
+    source: { language: "zh-CN", summary: "Video summary", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.8 },
+    claims: [],
+    blueprint: { format: "video notes", hook: "route", angle: "first visit", sections: [], strengths: [], gaps: [] },
+  };
+  const fetchStub = async (url, options = {}) => {
+    if (String(url).startsWith("http://metadata.google.internal")) return new Response(JSON.stringify({ access_token: "fixture-token", expires_in: 300 }), { status: 200 });
+    request = { url, body: JSON.parse(options.body) };
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(expected) }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const extractor = new KimiExtractor({ provider: "vertex", projectId: "fixture-project", model: "gemini-3.8-flash", location: "global", maxImages: 0 }, fetchStub);
+  const output = await extractor.extract({
+    canonical_url: "manual-source://fixture", submitted_url: "https://www.youtube.com/watch?v=fixture",
+    source_kind: "video_url", title: "Chongqing route video", author_name: "人工提交", published_at: null,
+    raw_text: "Public video page metadata and an operator-selected travel source.", assets: [],
+  });
+  const video = request.body.contents[0].parts.find((part) => part.fileData);
+  assert.equal(video.fileData.fileUri, "https://www.youtube.com/watch?v=fixture");
+  assert.equal(video.fileData.mimeType, "video/mp4");
+  assert.equal(output.method, "vertex_video");
+});
+
+test("non-Vertex models require an operator transcript for YouTube sources", async () => {
+  const extractor = new KimiExtractor({ provider: "kimi", apiKey: "fixture", model: "fixture", baseUrl: "https://api.example.test", maxImages: 0 }, async () => {
+    throw new Error("request should not be attempted");
+  });
+  await assert.rejects(() => extractor.extract({
+    submitted_url: "https://youtu.be/public-fixture", source_kind: "video_url", submission_metadata: { operatorNotesProvided: false }, assets: [],
+  }), /requires a Vertex Gemini model.*operator-supplied transcript/);
+});

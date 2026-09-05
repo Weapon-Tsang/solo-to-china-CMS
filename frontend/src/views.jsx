@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Activity, CheckCircle2, ChevronDown, ChevronRight, Clock3, Database, ExternalLink, Gauge, MapPin, RefreshCw, RotateCcw, Webhook,
+  Activity, AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock3, Database, ExternalLink, FileUp, Gauge, Link2, MapPin, RefreshCw, RotateCcw, UploadCloud, Webhook,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -26,9 +26,9 @@ export function ViewRenderer(props) {
 }
 
 function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy }) {
-  const [model, setModel] = useState(data?.id || "kimi-k3");
+  const [model, setModel] = useState(data?.id || "vertex-gemini-3.8-flash");
   const [visualModel, setVisualModel] = useState(data?.visual?.id || "vertex-gemini-3.1-flash-image");
-  useEffect(() => setModel(data?.id || "kimi-k3"), [data?.id]);
+  useEffect(() => setModel(data?.id || "vertex-gemini-3.8-flash"), [data?.id]);
   useEffect(() => setVisualModel(data?.visual?.id || "vertex-gemini-3.1-flash-image"), [data?.visual?.id]);
   const saveAi = () => onAction("/api/settings/ai", {
     method: "POST",
@@ -42,7 +42,7 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
   }, `已切换到 ${data?.visual?.models?.find((item) => item.id === visualModel)?.label || visualModel}`);
   return <div className="grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(16rem,.72fr)]">
     <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">图文处理与写作模型</div><p className="mt-1 text-xs leading-relaxed text-slate-500">用于来源读取、图片识别、事实整理、内容规划、英文写作与质量审核。每次输出都会记录实际模型。</p></div><StatusPill status={data?.configured ? "configured" : "needs_ai"} /></div>
-      <div className="mt-4 space-y-2 sm:mt-5">{(data?.models || []).map((item) => <label key={item.id} className={cn("flex cursor-pointer gap-3 rounded-xl border p-3 transition", model === item.id ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300")}><input className="mt-1 accent-slate-900" type="radio" name="ai-model" value={item.id} checked={model === item.id} onChange={() => setModel(item.id)} /><span><span className="block text-xs font-semibold text-slate-900">{item.label}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{item.description}</span><span className="mt-1 block text-[10px] text-emerald-600">支持图文多模态输入{item.preview ? " · 预览版" : ""}</span></span></label>)}</div>
+      <div className="mt-4 space-y-2 sm:mt-5">{(data?.models || []).map((item) => <label key={item.id} className={cn("flex cursor-pointer gap-3 rounded-xl border p-3 transition", model === item.id ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300")}><input className="mt-1 accent-slate-900" type="radio" name="ai-model" value={item.id} checked={model === item.id} onChange={() => setModel(item.id)} /><span><span className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-slate-900"><span>{item.label}</span>{item.isDefault && <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700">默认</span>}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{item.description}</span><span className="mt-1 block text-[10px] text-emerald-600">支持图文多模态输入{item.preview ? " · 预览版" : ""}</span></span></label>)}</div>
       <div className="mt-4 flex flex-wrap items-center gap-2.5 sm:mt-5 sm:gap-3"><Button size="sm" disabled={actionBusy || !data?.configured || model === data?.id} onClick={saveAi}><CheckCircle2 /> 保存图文模型</Button><span className="text-[11px] text-slate-400">来源：{data?.source === "dashboard" ? "后台设置" : "环境配置"}</span></div>
     </Card>
     <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">内容配图策略与生图模型</div><p className="mt-1 text-xs leading-relaxed text-slate-500">已授权的人工筛选来源实景图会优先用于文章；此模型只补足无法由真实素材覆盖的原创、非事实性插画。</p></div><StatusPill status={data?.visual?.supportsGeneration && data?.visualGenerationConfigured ? "ready" : "pending"} /></div>
@@ -104,16 +104,73 @@ function CredentialField({ label: title, type = "text", value, onChange, autoCom
   return <label className="block min-w-0"><span className="mb-1.5 block text-[11px] font-medium text-slate-600">{title}</span><input className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-300 focus:border-slate-400 focus:ring-4 focus:ring-slate-100" type={type} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} required={title === "管理员账号" || title === "当前密码"} {...props} /></label>;
 }
 
-function SourcesView({ data, onGuide, onOpenSource }) {
+function SourcesView({ data, onGuide, onOpenSource, onSubmitManualSource, actionBusy }) {
   const items = data?.items || [];
-  if (!items.length) return <EmptyState icon="source" title="尚无来源" description="在电脑端打开一篇小红书笔记，然后点击 Chrome 扩展中的“保存当前笔记”。" action={() => onGuide("capture")} actionLabel="查看采集说明" />;
   return (
-    <><SummaryBar title="处理状态说明"><span><b>处理中：</b>笔记已安全保存，系统正在进行多模态提取、结构化来源、Claims 和内容蓝图。</span><span><b>提取完成：</b>结构化研究已可用，并不代表文章已生成。</span><span><b>需要处理：</b>打开来源查看原因后可重新执行提取。</span></SummaryBar><section className="space-y-2.5 md:hidden" aria-label="研究来源列表">{items.map((item) => <button key={item.id} type="button" onClick={() => onOpenSource(item.id)} className="block w-full rounded-2xl border border-slate-200/80 bg-white p-4 text-left shadow-sm transition active:scale-[0.99] focus:outline-none focus-visible:ring-4 focus-visible:ring-slate-200"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="line-clamp-2 text-[15px] font-semibold leading-relaxed text-slate-900">{item.title || "未命名笔记"}</h2><p className="mt-1.5 text-[11px] text-slate-400">{item.author_name || "未知作者"}{item.external_id ? ` · XHS ID ${item.external_id}` : ""} · v{item.capture_version}</p></div><StatusPill status={item.status} /></div><div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[11px] text-slate-500"><span>{item.destination_name || "目的地识别中"}</span><span className="font-medium tabular-nums text-slate-700">{item.claim_count} 条 Claims</span></div><p className="mt-2 text-[10px] text-slate-400">点击查看来源详情与提取结果</p></button>)}</section><div className="hidden md:block"><TableShell><Table><TableHeader><TableRow><TableHead>来源</TableHead><TableHead>状态</TableHead><TableHead className="hidden md:table-cell">目的地</TableHead><TableHead>Claims</TableHead><TableHead className="hidden lg:table-cell">采集时间</TableHead></TableRow></TableHeader>
+    <div className="space-y-4"><ManualSourceForm onSubmit={onSubmitManualSource} busy={actionBusy} /><div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500"><span>也可以继续使用 Chrome 扩展采集已授权的小红书笔记。</span><button type="button" className="font-medium text-blue-700 hover:text-blue-800" onClick={() => onGuide("capture")}>查看扩展采集说明</button></div>{!items.length ? <EmptyState icon="source" title="尚无来源" description="可在上方提交公开链接、PDF、Word 或图片，提交后会自动进入现有研究与内容生产流程。" /> : <><SummaryBar title="处理状态说明"><span><b>处理中：</b>来源已安全保存，系统正在进行多模态提取、结构化来源、Claims 和内容蓝图。</span><span><b>提取完成：</b>结构化研究已可用，并不代表文章已生成。</span><span><b>需要处理：</b>打开来源查看原因后可重新执行提取。</span></SummaryBar><section className="space-y-2.5 md:hidden" aria-label="研究来源列表">{items.map((item) => <button key={item.id} type="button" onClick={() => onOpenSource(item.id)} className="block w-full rounded-2xl border border-slate-200/80 bg-white p-4 text-left shadow-sm transition active:scale-[0.99] focus:outline-none focus-visible:ring-4 focus-visible:ring-slate-200"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="line-clamp-2 text-[15px] font-semibold leading-relaxed text-slate-900">{item.title || "未命名来源"}</h2><p className="mt-1.5 text-[11px] text-slate-400">{sourceTypeLabel(item)} · v{item.capture_version}</p></div><StatusPill status={item.status} /></div><div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[11px] text-slate-500"><span>{item.destination_name || "目的地识别中"}</span><span className="font-medium tabular-nums text-slate-700">{item.claim_count} 条 Claims</span></div><p className="mt-2 text-[10px] text-slate-400">点击查看来源详情与提取结果</p></button>)}</section><div className="hidden md:block"><TableShell><Table><TableHeader><TableRow><TableHead>来源</TableHead><TableHead>状态</TableHead><TableHead className="hidden md:table-cell">目的地</TableHead><TableHead>Claims</TableHead><TableHead className="hidden lg:table-cell">采集时间</TableHead></TableRow></TableHeader>
       <TableBody>{items.map((item) => <TableRow key={item.id} tabIndex={0} role="button" className="cursor-pointer focus-visible:bg-slate-50 focus-visible:outline-none" onClick={() => onOpenSource(item.id)} onKeyDown={(event) => event.key === "Enter" && onOpenSource(item.id)}>
-        <TableCell><div className="max-w-md font-medium text-slate-900">{item.title || "未命名笔记"}</div><div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-slate-400"><span>{item.author_name || "未知作者"}</span>{item.external_id && <><span>·</span><span className="font-mono text-[10px] text-slate-500">XHS ID {item.external_id}</span></>}<span>· v{item.capture_version}</span></div></TableCell>
+        <TableCell><div className="max-w-md font-medium text-slate-900">{item.title || "未命名来源"}</div><div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-slate-400"><span>{sourceTypeLabel(item)}</span><span>· v{item.capture_version}</span></div></TableCell>
         <TableCell><StatusPill status={item.status} /></TableCell><TableCell className="hidden md:table-cell">{item.destination_name || "—"}</TableCell><TableCell className="tabular-nums">{item.claim_count}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.captured_at)}</TableCell>
-      </TableRow>)}</TableBody></Table></TableShell></div></>
+      </TableRow>)}</TableBody></Table></TableShell></div></>}</div>
   );
+}
+
+function ManualSourceForm({ onSubmit, busy }) {
+  const [kind, setKind] = useState("auto_url");
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [notes, setNotes] = useState("");
+  const [files, setFiles] = useState([]);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [result, setResult] = useState(null);
+  const [failure, setFailure] = useState(null);
+  const linkMode = kind.endsWith("_url");
+  const accept = kind === "pdf" ? ".pdf,application/pdf" : kind === "word" ? ".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "image/jpeg,image/png,image/webp,image/gif";
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setFailure(null); setResult(null);
+    try {
+      const encodedFiles = linkMode ? [] : await Promise.all(files.map(readFileForSubmission));
+      const response = await onSubmit({ kind, url: linkMode ? url : undefined, title, notes, files: encodedFiles });
+      setResult(response);
+      setUrl(""); setTitle(""); setNotes(""); setFiles([]); setFileInputKey((value) => value + 1);
+    } catch (caught) {
+      setFailure({ code: caught.code, message: caught.message });
+    }
+  };
+
+  return <Card className="overflow-hidden border-blue-100 bg-gradient-to-br from-white to-blue-50/40 p-4 sm:p-5">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><UploadCloud className="size-4 text-blue-700" />人工提交内容来源</div><p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">提交后自动进入入库、内容提取、Claims、知识整理、蓝图和创作建议流程。原文件会保存在持久化数据目录中。</p></div><span className="rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-semibold text-blue-700">统一生产流程</span></div>
+    <form className="mt-4 grid gap-3 lg:grid-cols-2" onSubmit={submit}>
+      <label className="block"><span className="mb-1.5 block text-[11px] font-medium text-slate-600">来源格式</span><select value={kind} onChange={(event) => { setKind(event.target.value); setFiles([]); setFailure(null); setResult(null); }} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"><option value="auto_url">自动识别链接</option><option value="xiaohongshu_url">小红书笔记链接</option><option value="wechat_url">微信公众号链接</option><option value="video_url">视频链接</option><option value="web_url">其他网页链接</option><option value="pdf">PDF 文档</option><option value="word">Word 文档（DOC/DOCX）</option><option value="images">图片（可多选）</option></select></label>
+      {linkMode ? <label className="block"><span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-slate-600"><Link2 className="size-3" />公开链接</span><input type="url" required value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://..." className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-300 focus:border-slate-400 focus:ring-4 focus:ring-slate-100" /></label> : <label className="block"><span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-slate-600"><FileUp className="size-3" />选择文件</span><input key={fileInputKey} type="file" required multiple={kind === "images"} accept={accept} onChange={(event) => setFiles(Array.from(event.target.files || []))} className="block h-10 w-full rounded-lg border border-slate-200 bg-white text-xs text-slate-600 file:mr-3 file:h-full file:border-0 file:border-r file:border-slate-200 file:bg-slate-50 file:px-3 file:text-xs file:font-medium" /><span className="mt-1 block text-[10px] text-slate-400">文档最多 12 MB，图片每张最多 6 MB；本次总计最多 25 MB，图片最多 8 张。</span></label>}
+      <label className="block"><span className="mb-1.5 block text-[11px] font-medium text-slate-600">标题（选填）</span><input value={title} maxLength={1000} onChange={(event) => setTitle(event.target.value)} placeholder="留空时尝试从网页或文件名识别" className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-300 focus:border-slate-400 focus:ring-4 focus:ring-slate-100" /></label>
+      <label className="block"><span className="mb-1.5 block text-[11px] font-medium text-slate-600">补充说明/正文（选填）</span><textarea value={notes} maxLength={120000} onChange={(event) => setNotes(event.target.value)} placeholder="可补充来源背景、视频文字稿，或在链接无法直接读取时粘贴正文。" className="min-h-24 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-900 outline-none placeholder:text-slate-300 focus:border-slate-400 focus:ring-4 focus:ring-slate-100" /></label>
+      {failure && <div role="alert" className="flex gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 lg:col-span-2"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><div><strong>{failureReasonLabel(failure.code)}</strong><p className="mt-0.5 leading-relaxed">{failure.message}</p><p className="mt-1 text-[10px] text-rose-600">错误代码：{failure.code || "REQUEST_FAILED"}</p></div></div>}
+      {result && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 lg:col-span-2"><strong>{result.message}</strong>{result.warnings?.length > 0 && <ul className="mt-1 list-disc pl-4 text-[10px]">{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}
+      <div className="flex flex-wrap items-center gap-3 lg:col-span-2"><Button disabled={busy || (linkMode ? !url : files.length === 0)}><UploadCloud />{busy ? "正在提取并入库…" : "提交并进入生产流程"}</Button><span className="text-[10px] leading-relaxed text-slate-400">{linkMode ? "链接只读取公开页面，不携带登录 Cookie；遇到反爬、登录墙、限流或空内容会明确返回原因。" : "原文件会保存到持久化数据目录；文档解析失败或扫描版 PDF 无正文时会明确返回原因。"}</span></div>
+    </form>
+  </Card>;
+}
+
+function readFileForSubmission(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`无法读取文件：${file.name}`));
+    reader.onload = () => resolve({ name: file.name, mimeType: file.type || "application/octet-stream", base64: String(reader.result || "").split(",", 2)[1] || "" });
+    reader.readAsDataURL(file);
+  });
+}
+
+function sourceTypeLabel(item) {
+  if (item.source_kind === "xiaohongshu_note") return `${item.author_name || "未知作者"}${item.external_id ? ` · XHS ID ${item.external_id}` : ""}`;
+  const labels = { xiaohongshu_url: "人工提交 · 小红书链接", wechat_url: "人工提交 · 微信公众号", video_url: "人工提交 · 视频链接", web_url: "人工提交 · 网页链接", pdf: "人工提交 · PDF", word: "人工提交 · Word", images: `人工提交 · 图片${item.file_count ? `（${item.file_count}）` : ""}` };
+  return labels[item.source_kind] || "人工提交来源";
+}
+
+function failureReasonLabel(code) {
+  return { AUTH_REQUIRED: "需要登录或授权", BOT_PROTECTION: "触发反爬/人机验证", RATE_LIMITED: "访问频率受限", FETCH_TIMEOUT: "链接响应超时", EMPTY_CONTENT: "未提取到正文", EMPTY_DOCUMENT: "文档没有可提取正文", DOCUMENT_PARSE_FAILED: "文档解析失败", PRIVATE_NETWORK_BLOCKED: "已阻止内网地址", UNSUPPORTED_CONTENT_TYPE: "不支持的链接内容格式", REMOTE_HTTP_ERROR: "目标网站返回错误" }[code] || "提交失败";
 }
 
 function RecommendationsView({ data, onAction, actionBusy, onNavigate }) {

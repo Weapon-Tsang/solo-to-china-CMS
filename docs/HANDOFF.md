@@ -25,10 +25,13 @@ The audited Frontend Registry currently provides only the generic `affiliate_cta
 
 ## Entity and Claim resolution
 
+- **Lifecycle specification:** `docs/CLAIM_KNOWLEDGE_LIFECYCLE.md`
 - Migration 18 adds Entity type/granularity/location fields, typed Entity Relations, auditable merge history with undo, structured Claim values/scopes, Claim Relations, and categorized Claim review cases.
+- Migration 19 versions extraction runs, archives superseded Claim snapshots, records Claim role/Knowledge eligibility, and schedules a one-time recalculation of historical Claim Review cases.
 - Identity merges require compatible type, geography, granularity, canonical identity, and alias plausibility. Obvious collection/specific or claim-like mismatches never enter manual review.
-- Knowledge aggregation no longer treats different value strings as a conflict. It persists enrichment/refinement/overlap/compatibility and reviews only mutually incompatible claims or extraction errors.
-- Claims, original quotes, Sources, evidence, and provenance are retained through merge, rejection, relation creation, conflict resolution, and undo.
+- Knowledge aggregation no longer treats different value strings as a conflict. It persists enrichment/refinement/overlap/compatibility, canonicalizes reservation booleans, and reviews only mutually incompatible claims or uncovered extraction errors.
+- Editorial metadata and personal experiences remain auditable Claims but are not eligible for destination Knowledge. Re-extraction preserves old Claim revisions as immutable history instead of erasing their audit trail.
+- Claims, original quotes, Sources, evidence, and provenance are retained through extraction revisions, merge, rejection, relation creation, conflict resolution, and undo.
 
 ## Commercial Phase 1
 
@@ -36,7 +39,7 @@ The audited Frontend Registry currently provides only the generic `affiliate_cta
 - Provider, Asset, mapping, opportunity, performance, and event APIs live under `/api/commercial/*`; the dashboard's Commercial view reads `/api/commercial`.
 - The composer runs after QA, derives block intent, selects decision-appropriate precision, falls back silently, enforces density, and stores an independent Overlay. Research packages never read these tables.
 - WordPress receives generated safe commercial blocks with disclosure and sponsored link attributes. Arbitrary HTML/script is rejected.
-- App version `1.11.1` and schema migration `18` are the expected post-upgrade baseline.
+- App version `1.12.0` and schema migration `20` are the expected post-upgrade baseline.
 
 Trip.com remains manual-only: an operator must create official links/embed configuration in the official platform and paste only those public artifacts into the registry. Do not store credentials/cookies, automate dashboard login, crawl the affiliate dashboard, invent tracking parameters, or create low-value entity links at scale.
 
@@ -45,3 +48,12 @@ Deferred Phase 2: official API/feed integration when available, report import, b
 ## Current operating boundary
 
 Source discovery stays human-led. The Chrome extension only captures a note the user has opened and explicitly saved. The engine stores raw evidence, creates traceable structured claims, asks for a human decision before article planning, sends only validated drafts to WordPress, and never publishes a post itself.
+
+The Sources dashboard also accepts explicit administrator submissions: public Xiaohongshu, WeChat, video, and ordinary web links; PDF/DOC/DOCX files; and one or more images. These inputs become the same immutable Source evidence and use the existing extraction, Claim, Knowledge, Blueprint, and content-intake pipeline. Uploaded originals live under `SOURCE_UPLOADS_DIR`, which must remain inside the persistent Docker volume. Public-link fetching carries no cookies or credentials, rejects private/reserved network destinations, and returns classified operator-facing errors for login walls, bot protection, rate limits, timeouts, unsupported responses, and empty content.
+
+## Admin model and action navigation
+
+- The default text/image-understanding model is Vertex AI Gemini 3.8 Flash (`gemini-3.8-flash`) at the `global` location. Explicit model choices saved from Settings remain operator-owned and are not overwritten during upgrade.
+- Image generation remains a separate pipeline whose default is Gemini 3.1 Flash Image (`gemini-3.1-flash-image`). Never route factual image generation through the text/writing model.
+- `/api/dashboard` returns `actionCounts` for menu badges. Counts represent records with a real operator action: failed Sources, pending Recommendations, WordPress delivery/sync failures, open Commercial opportunities, all operational Exceptions, failed maintenance/integration runs, and required AI/Contract configuration.
+- The mobile admin navigation is a three-column grid. Do not reintroduce a horizontally scrolling tab list on phone breakpoints.

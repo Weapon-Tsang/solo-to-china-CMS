@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 const IMAGE_HOST_SUFFIXES = ["xiaohongshu.com", "xhscdn.com", "xhscdn.net", "xhscdn.cn"];
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 
@@ -48,14 +51,15 @@ export class KimiClient {
     const attempted = (assets || []).slice(0, this.config.maxImages || 0);
     const results = await Promise.allSettled(attempted.map(async (asset) => ({
       type: "image_url",
-      image_url: { url: await this.imageDataUrl(asset.remote_url) },
+      image_url: { url: await this.imageDataUrl(asset) },
     })));
     const parts = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
     return { parts, attempted: attempted.length };
   }
 
-  async imageDataUrl(value) {
-    const url = safeXiaohongshuImageUrl(value);
+  async imageDataUrl(asset) {
+    if (asset?.local_path) return this.localImageDataUrl(asset);
+    const url = safeXiaohongshuImageUrl(asset?.remote_url);
     if (!url) throw new Error("Captured image URL is not an allowlisted Xiaohongshu HTTPS asset.");
     const response = await this.fetch(url, { signal: AbortSignal.timeout(this.config.imageTimeoutMs || 20_000) });
     if (!response.ok) throw new Error(`Image fetch failed (${response.status}).`);
@@ -66,6 +70,17 @@ export class KimiClient {
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new Error("Captured image is empty or too large for Kimi vision input.");
     return `data:${contentType};base64,${Buffer.from(bytes).toString("base64")}`;
+  }
+
+  async localImageDataUrl(asset) {
+    const uploadRoot = path.resolve(this.config.sourceUploadsDir || "data/source-uploads");
+    const filename = path.resolve(String(asset.local_path || ""));
+    if (!filename.startsWith(`${uploadRoot}${path.sep}`)) throw new Error("Uploaded source image is outside the configured source directory.");
+    const contentType = String(asset.mime_type || "").toLowerCase();
+    if (!/^image\/(?:jpeg|jpg|png|webp|gif)$/.test(contentType)) throw new Error("Uploaded source asset is not a supported image.");
+    const bytes = await fs.readFile(filename);
+    if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new Error("Uploaded source image is empty or too large for vision input.");
+    return `data:${contentType};base64,${bytes.toString("base64")}`;
   }
 }
 

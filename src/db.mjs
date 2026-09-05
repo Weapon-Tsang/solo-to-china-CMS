@@ -37,6 +37,155 @@ function migrate(db) {
   if (current < 16) migrationSixteen(db);
   if (current < 17) migrationSeventeen(db);
   if (current < 18) migrationEighteen(db);
+  if (current < 19) migrationNineteen(db);
+  if (current < 20) migrationTwenty(db);
+}
+
+function migrationTwenty(db) {
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE sources_new (
+        id TEXT PRIMARY KEY,
+        adapter TEXT NOT NULL CHECK (adapter IN ('xiaohongshu','manual')),
+        external_id TEXT,
+        canonical_url TEXT NOT NULL UNIQUE,
+        submitted_url TEXT NOT NULL DEFAULT '',
+        source_kind TEXT NOT NULL DEFAULT 'xiaohongshu_note',
+        submission_metadata_json TEXT NOT NULL DEFAULT '{}',
+        title TEXT NOT NULL DEFAULT '',
+        author_name TEXT NOT NULL DEFAULT '',
+        author_url TEXT NOT NULL DEFAULT '',
+        published_at TEXT,
+        captured_at TEXT NOT NULL,
+        raw_text TEXT NOT NULL,
+        raw_html TEXT NOT NULL,
+        raw_payload_json TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        capture_version INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'captured',
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO sources_new(id, adapter, external_id, canonical_url, submitted_url, source_kind,
+        submission_metadata_json, title, author_name, author_url, published_at, captured_at, raw_text,
+        raw_html, raw_payload_json, content_hash, capture_version, status, last_error, created_at, updated_at)
+      SELECT id, adapter, external_id, canonical_url, canonical_url, 'xiaohongshu_note', '{}', title,
+        author_name, author_url, published_at, captured_at, raw_text, raw_html, raw_payload_json,
+        content_hash, capture_version, status, last_error, created_at, updated_at
+      FROM sources;
+
+      DROP TABLE sources;
+      ALTER TABLE sources_new RENAME TO sources;
+      CREATE INDEX idx_sources_adapter_external_id ON sources(adapter, external_id);
+      CREATE INDEX idx_sources_kind_captured_at ON sources(source_kind, captured_at DESC);
+
+      ALTER TABLE source_assets ADD COLUMN local_path TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN mime_type TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN original_filename TEXT NOT NULL DEFAULT '';
+
+      CREATE TABLE source_files (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        file_kind TEXT NOT NULL CHECK (file_kind IN ('pdf','word','image')),
+        original_filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        storage_path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+        sha256 TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(source_id, storage_path)
+      );
+      CREATE INDEX idx_source_files_source ON source_files(source_id, created_at);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (20, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+  const violations = db.prepare("PRAGMA foreign_key_check").all();
+  if (violations.length) throw new Error(`Migration 20 created foreign-key violations: ${JSON.stringify(violations.slice(0, 5))}`);
+}
+
+function migrationNineteen(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE extraction_runs (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL,
+        method TEXT NOT NULL,
+        model TEXT,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','superseded')),
+        created_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        superseded_at TEXT,
+        UNIQUE(source_id, revision)
+      );
+      CREATE INDEX idx_extraction_runs_source ON extraction_runs(source_id, revision DESC);
+
+      ALTER TABLE claims ADD COLUMN extraction_run_id TEXT REFERENCES extraction_runs(id);
+      ALTER TABLE claims ADD COLUMN extraction_revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE claims ADD COLUMN claim_role TEXT NOT NULL DEFAULT 'fact'
+        CHECK (claim_role IN ('fact','recommendation','personal_experience','promotional_observation','editorial_metadata'));
+      ALTER TABLE claims ADD COLUMN knowledge_eligible INTEGER NOT NULL DEFAULT 1 CHECK (knowledge_eligible IN (0,1));
+      CREATE INDEX idx_claims_extraction_run ON claims(extraction_run_id, source_id);
+      CREATE INDEX idx_claims_knowledge_eligible ON claims(knowledge_eligible, source_id);
+
+      CREATE TABLE claim_history (
+        id TEXT PRIMARY KEY,
+        claim_id TEXT NOT NULL,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        extraction_run_id TEXT REFERENCES extraction_runs(id),
+        extraction_revision INTEGER NOT NULL,
+        lifecycle_status TEXT NOT NULL CHECK (lifecycle_status IN ('superseded')),
+        snapshot_json TEXT NOT NULL,
+        superseded_at TEXT NOT NULL,
+        UNIQUE(claim_id, extraction_revision)
+      );
+      CREATE INDEX idx_claim_history_source ON claim_history(source_id, extraction_revision DESC);
+
+      INSERT INTO extraction_runs(id, source_id, revision, method, model, status, created_at, completed_at)
+      SELECT 'extract_legacy_' || c.source_id, c.source_id, 1,
+        COALESCE(ss.extraction_method, 'legacy'), ss.model, 'active',
+        COALESCE(ss.extracted_at, MIN(c.created_at)), COALESCE(ss.extracted_at, MIN(c.created_at))
+      FROM claims c LEFT JOIN structured_sources ss ON ss.source_id=c.source_id
+      GROUP BY c.source_id;
+
+      UPDATE claims SET extraction_run_id='extract_legacy_' || source_id, extraction_revision=1
+      WHERE extraction_run_id IS NULL;
+
+      UPDATE claims SET claim_role='editorial_metadata', knowledge_eligible=0
+      WHERE lower(trim(subject)) IN ('recommendations','recommendation','guide','source author');
+      UPDATE claims SET claim_role='personal_experience', knowledge_eligible=0
+      WHERE lower(trim(subject)) IN ('author''s trip','author trip','the author','source author');
+
+      INSERT INTO jobs(id, type, entity_id, status, attempts, max_attempts, available_at, created_at, updated_at)
+      SELECT 'job_claim_review_v19_' || lower(hex(randomblob(12))), 'rebuild_knowledge', ss.destination_slug,
+        'queued', 0, 3, datetime('now'), datetime('now'), datetime('now')
+      FROM structured_sources ss
+      WHERE ss.destination_slug<>'' AND ss.destination_slug<>'unknown'
+        AND NOT EXISTS (
+          SELECT 1 FROM jobs j WHERE j.type='rebuild_knowledge' AND j.entity_id=ss.destination_slug
+            AND j.status IN ('queued','running')
+        )
+      GROUP BY ss.destination_slug;
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (19, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationEighteen(db) {

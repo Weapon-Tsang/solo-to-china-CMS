@@ -28,6 +28,8 @@ test("source retry resets a delayed queued extraction and never masks a running 
   const job = db.prepare("SELECT * FROM jobs WHERE type='extract_source' AND entity_id=?").get(source.id);
   db.prepare("UPDATE jobs SET attempts=2, available_at='2099-01-01T00:00:00.000Z', last_error='quota' WHERE id=?").run(job.id);
   db.prepare("UPDATE sources SET status='exception', last_error='quota' WHERE id=?").run(source.id);
+  assert.equal(repository.dashboard().actionCounts.sources, 1);
+  assert.equal(repository.dashboard().actionCounts.exceptions, 1);
 
   assert.equal(repository.retrySource(source.id), true);
   let retried = db.prepare("SELECT * FROM jobs WHERE id=?").get(job.id);
@@ -36,6 +38,7 @@ test("source retry resets a delayed queued extraction and never masks a running 
   assert.equal(retried.last_error, null);
   assert.ok(Date.parse(retried.available_at) <= Date.now());
   assert.equal(db.prepare("SELECT status FROM sources WHERE id=?").get(source.id).status, "queued");
+  assert.equal(repository.dashboard().actionCounts.sources, 0);
 
   assert.equal(repository.claimJob().id, job.id);
   assert.equal(repository.retrySource(source.id), true);

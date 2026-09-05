@@ -5,8 +5,9 @@ import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export const AI_MODELS = [
+  { id: "vertex-gemini-3.8-flash", provider: "vertex", model: "gemini-3.8-flash", location: "global", label: "Vertex AI · Gemini 3.8 Flash", description: "默认的 Google 多模态工作模型，用于图文理解、结构化提取、写作与审核。", supportsImages: true, isDefault: true },
   { id: "kimi-k2.7-code", provider: "kimi", model: "kimi-k2.7-code", label: "Kimi K2.7 Code", description: "适合结构化提取与内容生产的代码模型。", supportsImages: true },
-  { id: "kimi-k3", provider: "kimi", model: "kimi-k3", label: "Kimi K3", description: "默认的高能力多模态模型，用于图文理解、写作与审核。", supportsImages: true },
+  { id: "kimi-k3", provider: "kimi", model: "kimi-k3", label: "Kimi K3", description: "高能力多模态模型，用于图文理解、写作与审核。", supportsImages: true },
   { id: "vertex-gemini-3.1-pro-preview", provider: "vertex", model: "gemini-3.1-pro-preview", label: "Vertex AI · Gemini 3.1 Pro（预览）", description: "Vertex AI 当前最新的 Gemini 高阶推理预览模型；需要项目配额与地区可用性。", supportsImages: true, preview: true },
   { id: "vertex-gemini-2.5-pro", provider: "vertex", model: "gemini-2.5-pro", label: "Vertex AI · Gemini 2.5 Pro", description: "Vertex AI 的稳定 Gemini 高阶推理模型。", supportsImages: true },
 ];
@@ -34,6 +35,7 @@ export const VISUAL_MODELS = [
 
 export function loadConfig(env = process.env) {
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
+  const sourceUploadsDir = path.resolve(root, env.SOURCE_UPLOADS_DIR || "data/source-uploads");
   const imageProvider = env.IMAGE_PROVIDER || env.VISUAL_PROVIDER || "none";
   return {
     root,
@@ -51,7 +53,7 @@ export function loadConfig(env = process.env) {
     },
     captureHost: hostname(env.CAPTURE_HOST),
     ai: {
-      defaultModel: AI_MODELS.some((item) => item.id === env.AI_MODEL) ? env.AI_MODEL : "kimi-k3",
+      defaultModel: AI_MODELS.some((item) => item.id === env.AI_MODEL) ? env.AI_MODEL : "vertex-gemini-3.8-flash",
     },
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
@@ -61,6 +63,7 @@ export function loadConfig(env = process.env) {
       maxCompletionTokens: integer(env.KIMI_MAX_COMPLETION_TOKENS, 16_000),
       requestTimeoutMs: integer(env.KIMI_REQUEST_TIMEOUT_MS, 360_000),
       imageTimeoutMs: integer(env.KIMI_IMAGE_TIMEOUT_MS, 20_000),
+      sourceUploadsDir,
     },
     vertex: {
       projectId: env.GOOGLE_CLOUD_PROJECT || "",
@@ -70,6 +73,16 @@ export function loadConfig(env = process.env) {
       imageTimeoutMs: integer(env.VERTEX_AI_IMAGE_TIMEOUT_MS, 20_000),
       maxImages: integer(env.VERTEX_AI_MAX_IMAGES || env.AI_MAX_IMAGES, 8),
       maxCompletionTokens: integer(env.VERTEX_AI_MAX_COMPLETION_TOKENS, 16_000),
+      sourceUploadsDir,
+    },
+    manualSources: {
+      uploadDir: sourceUploadsDir,
+      requestTimeoutMs: integer(env.MANUAL_SOURCE_REQUEST_TIMEOUT_MS, 20_000),
+      maxFileBytes: integer(env.MANUAL_SOURCE_MAX_FILE_BYTES, 12 * 1024 * 1024),
+      maxImageBytes: integer(env.MANUAL_SOURCE_MAX_IMAGE_BYTES, 6 * 1024 * 1024),
+      maxTotalBytes: integer(env.MANUAL_SOURCE_MAX_TOTAL_BYTES, 25 * 1024 * 1024),
+      maxRemoteBytes: integer(env.MANUAL_SOURCE_MAX_REMOTE_BYTES, 8 * 1024 * 1024),
+      maxImages: integer(env.MANUAL_SOURCE_MAX_IMAGES, 8),
     },
     visuals: {
       enabled: boolean(env.IMAGE_ENABLED, false),

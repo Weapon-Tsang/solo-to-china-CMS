@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn, label } from "@/lib/utils";
 
 export const views = {
-  sources: { label: "来源", title: "研究来源", description: "查看每一条由你亲自挑选并保存的旅行笔记。", icon: FileText },
+  sources: { label: "来源", title: "研究来源", description: "查看并提交由你主动选择的旅行笔记、链接、文档与图片。", icon: FileText },
   recommendations: { label: "建议", title: "内容建议", description: "在文章规划前，审阅每条来源的下一步建议。", icon: Sparkles },
   knowledge: { label: "知识库", title: "目的地知识", description: "集中查看已佐证事实、冲突和时效性。", icon: BookOpen },
   blueprints: { label: "蓝图", title: "编辑蓝图", description: "把重复出现的优秀表达转化为可复用的编辑洞察。", icon: Layers3 },

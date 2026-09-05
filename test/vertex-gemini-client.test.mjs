@@ -18,3 +18,16 @@ test("Vertex Gemini uses the configured model and structured JSON response", asy
   assert.equal(body.generationConfig.responseMimeType, "application/json");
   assert.equal(body.systemInstruction.parts[0].text, "Be precise.");
 });
+
+test("Vertex Gemini uses the global API host for Gemini 3.8 Flash", async () => {
+  let requestedUrl = "";
+  const client = new VertexGeminiClient({
+    projectId: "test-project", location: "global", model: "gemini-3.8-flash",
+    accessToken: "test-access-token", maxCompletionTokens: 1000,
+  }, async (url) => {
+    requestedUrl = url;
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] }), { status: 200 });
+  });
+  await client.completeJson({ schema: { type: "object" }, instructions: "Be precise.", content: "source text" });
+  assert.equal(requestedUrl, "https://aiplatform.googleapis.com/v1/projects/test-project/locations/global/publishers/google/models/gemini-3.8-flash:generateContent");
+});

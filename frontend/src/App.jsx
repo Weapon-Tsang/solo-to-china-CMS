@@ -31,6 +31,7 @@ export default function App() {
   const [health, setHealth] = useState(null);
   const [auth, setAuth] = useState(null);
   const [totals, setTotals] = useState({});
+  const [actionCounts, setActionCounts] = useState({});
   const [viewData, setViewData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -54,6 +55,7 @@ export default function App() {
     const [nextHealth, dashboard] = await Promise.all([api("/api/health"), api("/api/dashboard")]);
     setHealth(nextHealth);
     setTotals(dashboard.totals || {});
+    setActionCounts(dashboard.actionCounts || {});
   }, []);
 
   const loadAuth = useCallback(async () => setAuth(await api("/api/auth/status")), []);
@@ -125,6 +127,25 @@ export default function App() {
     }
   }, [refresh, showToast]);
 
+  const submitManualSource = useCallback(async (payload) => {
+    setActionBusy(true);
+    try {
+      const result = await api("/api/manual-sources", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      showToast(result.message || "来源已进入处理流程");
+      await refresh(false);
+      return result;
+    } catch (caught) {
+      showToast(caught.message, true);
+      throw caught;
+    } finally {
+      setActionBusy(false);
+    }
+  }, [refresh, showToast]);
+
   const openGuide = useCallback((guide) => setDetail({ open: true, type: "guide", data: { guide }, loading: false }), []);
 
   const openContentStrategy = useCallback(async () => {
@@ -161,18 +182,19 @@ export default function App() {
         <Metrics totals={totals} onNavigate={setActiveView} />
         <Tabs value={activeView} onValueChange={setActiveView}>
           <div className="sticky top-[53px] z-30 -mx-1 py-1.5 sm:top-[62px] sm:hidden">
-            <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm backdrop-blur">
-              <div className="flex items-center justify-between px-3 pt-2.5 text-[10px]"><span className="font-semibold text-slate-700">工作区菜单</span><span className="text-slate-400">左右滑动切换全部功能</span></div>
-              <div className="relative mt-1 border-t border-slate-100"><div className="overflow-x-auto px-1.5 py-1.5 scrollbar-none"><TabsList aria-label="手机工作区菜单" className="h-10 border-0 bg-transparent p-0 shadow-none">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; return <TabsTrigger key={key} value={key} title={item.title} className="h-8 px-2.5"><Icon className="size-3.5 shrink-0" /><span>{item.label}</span></TabsTrigger>; })}</TabsList></div><span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-end bg-gradient-to-l from-white via-white/85 to-transparent pr-1.5 text-sm text-slate-400">›</span></div>
+            <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 p-1.5 shadow-sm backdrop-blur">
+              <TabsList aria-label="手机端后台菜单" className="grid h-auto w-full grid-cols-3 gap-1 border-0 bg-transparent p-0 shadow-none">
+                {Object.entries(views).map(([key, item]) => { const Icon = item.icon; return <TabsTrigger key={key} value={key} title={item.title} className="relative h-11 min-w-0 w-full px-1.5"><Icon className="size-3.5 shrink-0" /><span className="truncate">{item.label}</span><NavigationBadge count={actionCounts[key]} active={activeView === key} compact /></TabsTrigger>; })}
+              </TabsList>
             </div>
           </div>
           <div className="sticky top-[62px] z-30 -mx-1 hidden overflow-x-auto px-1 py-1.5 scrollbar-none sm:block">
-            <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span></TabsTrigger>; })}</TabsList>
+            <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span><NavigationBadge count={actionCounts[key]} active={activeView === key} /></TabsTrigger>; })}</TabsList>
           </div>
         </Tabs>
         {health && !health.aiConfigured && <AiAlert onConfigure={() => openGuide("ai")} />}
         <section aria-live="polite">
-          {loading ? <LoadingView /> : error ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} actionBusy={actionBusy} />}
+          {loading ? <LoadingView /> : error ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} onSubmitManualSource={submitManualSource} actionBusy={actionBusy} />}
         </section>
         <footer className="flex flex-col gap-1 border-t border-slate-200/70 pt-4 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:pt-5"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
       </main>
@@ -180,6 +202,12 @@ export default function App() {
       <Toast {...toast} />
     </div>
   );
+}
+
+function NavigationBadge({ count, active = false, compact = false }) {
+  const value = Number(count || 0);
+  if (value <= 0) return null;
+  return <span aria-label={`${value} 项待处理`} className={cn("inline-flex min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold tabular-nums", compact && "absolute right-1 top-1", active ? "bg-white/20 text-white" : "bg-amber-100 text-amber-800")}>{value > 99 ? "99+" : value}</span>;
 }
 
 function LoginScreen({ onAuthenticated }) {
@@ -238,10 +266,12 @@ function DetailDialog({ detail, health, actionBusy, onOpenChange, onAction, onCl
 
 function SourceDetail({ source, actionBusy, onAction, onClose }) {
   const retry = async () => { if (await onAction(`/api/sources/${source.id}/retry`, { method: "POST" }, "Extraction queued")) onClose(); };
+  const originalUrl = /^https?:\/\//.test(source.submitted_url || "") ? source.submitted_url : /^https?:\/\//.test(source.canonical_url || "") ? source.canonical_url : "";
   return <>
-    <DialogHeader><Badge variant="info" className="w-max"><FileText className="size-3" /> Source detail</Badge><DialogTitle>{source.title || "Untitled note"}</DialogTitle><DialogDescription>Raw evidence, structured extraction, claims, and editorial pattern remain traceable to the selected note.</DialogDescription></DialogHeader>
-    <div className="mb-4 flex flex-wrap items-center gap-2"><Button variant="secondary" size="sm" asChild><a href={source.canonical_url} target="_blank" rel="noreferrer"><ExternalLink /> Open original</a></Button><Button size="sm" disabled={actionBusy} onClick={retry}><RefreshCw className={cn(actionBusy && "animate-spin")} /> Re-run extraction</Button><StatusPill status={source.status} /></div>
-    <div className="grid gap-3 md:grid-cols-2"><DetailCard title="Structured source"><p>{source.structured?.summary || "Pending extraction"}</p><small>Destination: {source.structured?.destination_name || "—"} · Confidence {source.structured?.confidence ?? "—"}</small></DetailCard><DetailCard title="Source blueprint"><p>{source.blueprint?.angle || "Pending extraction"}</p><small>{source.blueprint?.format || "—"}</small></DetailCard><DetailCard title={`Claims (${source.claims.length})`} className="md:col-span-2">{source.claims.length ? <ul className="space-y-3">{source.claims.map((claim) => <li key={claim.id}><strong className="text-xs text-slate-800">{claim.subject} {claim.predicate}</strong><p>{claim.value_text}</p><small>“{claim.source_quote}”</small></li>)}</ul> : <p>No claims extracted.</p>}</DetailCard><DetailCard title="Raw captured text" className="md:col-span-2"><pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{source.raw_text}</pre></DetailCard></div>
+    <DialogHeader><Badge variant="info" className="w-max"><FileText className="size-3" /> Source detail</Badge><DialogTitle>{source.title || "Untitled source"}</DialogTitle><DialogDescription>Raw evidence, uploaded-file provenance, structured extraction, Claims, and editorial pattern remain traceable to this selected source.</DialogDescription></DialogHeader>
+    <div className="mb-4 flex flex-wrap items-center gap-2">{originalUrl && <Button variant="secondary" size="sm" asChild><a href={originalUrl} target="_blank" rel="noreferrer"><ExternalLink /> Open original</a></Button>}<Button size="sm" disabled={actionBusy} onClick={retry}><RefreshCw className={cn(actionBusy && "animate-spin")} /> Re-run extraction</Button><StatusPill status={source.status} /></div>
+    {source.last_error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><strong>Processing failure</strong><p className="mt-1 leading-relaxed">{source.last_error}</p><small>Correct the access, model, or source-content issue before retrying extraction.</small></div>}
+    <div className="grid gap-3 md:grid-cols-2"><DetailCard title="Structured source"><p>{source.structured?.summary || "Pending extraction"}</p><small>Destination: {source.structured?.destination_name || "—"} · Confidence {source.structured?.confidence ?? "—"}</small></DetailCard><DetailCard title="Source blueprint"><p>{source.blueprint?.angle || "Pending extraction"}</p><small>{source.blueprint?.format || "—"}</small></DetailCard>{source.files?.length > 0 && <DetailCard title={`Original files (${source.files.length})`} className="md:col-span-2"><ul className="space-y-1">{source.files.map((file) => <li key={file.id}><strong className="text-xs text-slate-700">{file.original_filename}</strong><small className="ml-2">{file.mime_type} · {(file.size_bytes / 1024 / 1024).toFixed(2)} MB · SHA-256 {file.sha256.slice(0, 12)}…</small></li>)}</ul></DetailCard>}<DetailCard title={`Claims (${source.claims.length})`} className="md:col-span-2">{source.claims.length ? <ul className="space-y-3">{source.claims.map((claim) => <li key={claim.id}><strong className="text-xs text-slate-800">{claim.subject} {claim.predicate}</strong><p>{claim.value_text}</p><small>“{claim.source_quote}”</small></li>)}</ul> : <p>No claims extracted.</p>}</DetailCard><DetailCard title="Raw captured text" className="md:col-span-2"><pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{source.raw_text}</pre></DetailCard></div>
   </>;
 }
 

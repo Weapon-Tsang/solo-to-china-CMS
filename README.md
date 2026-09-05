@@ -2,6 +2,8 @@
 
 SoloToChina 的内部研究基础设施。V1 采用 **Human Discovery + Human Selection + Assisted Capture**：用户在 Chrome 中明确打开一篇小红书笔记并点击保存，系统再负责持久化、抽取、Claim 建模、冲突检测和 Editorial Blueprint 聚合。
 
+后台“来源”页也支持管理员主动提交公开的小红书、微信公众号、视频和普通网页链接，以及 PDF、Word 和图片文件。提交内容会进入同一套 Source → Claims → Knowledge → Blueprint → 内容建议流程；链接读取失败会明确区分登录墙、反爬、限流、超时、空内容和不支持格式。参见 [Manual Source Ingestion](docs/MANUAL_SOURCE_INGESTION.md)。
+
 这不是小红书爬虫。项目没有搜索、翻页、批量打开、验证码规避、Cookie/Token 读取、私有 API 或账号行为模拟。
 
 ## 当前可运行纵向切片
@@ -76,7 +78,7 @@ AI 是可替换适配器，核心数据库与队列不依赖模型供应商。�
 
 ```text
 KIMI_API_KEY=...
-AI_MODEL=kimi-k3
+AI_MODEL=vertex-gemini-3.8-flash
 KIMI_MODEL=kimi-k3
 KIMI_BASE_URL=https://api.moonshot.cn/v1
 KIMI_MAX_IMAGES=8
@@ -101,13 +103,13 @@ Kimi is the active AI provider. The engine calls Kimi Chat Completions with JSON
 Copy-Item .env.example .env
 # Edit .env and set KIMI_API_KEY=your-kimi-key, or use the temporary shell alternative below.
 $env:KIMI_API_KEY = "your-kimi-key"
-$env:AI_MODEL = "kimi-k3"
+$env:AI_MODEL = "vertex-gemini-3.8-flash"
 $env:KIMI_MODEL = "kimi-k3"
 $env:KIMI_BASE_URL = "https://api.moonshot.cn/v1"
 npm start
 ```
 
-`kimi-k3` is the default model for new installations; `kimi-k2.7-code` remains available from Settings. Both models support the image evidence used by this project. Image assets are fetched in parallel and unavailable assets are skipped rather than blocking the full note. Set `KIMI_MAX_IMAGES=8`, `KIMI_MAX_COMPLETION_TOKENS=16000`, `KIMI_REQUEST_TIMEOUT_MS=360000`, or `KIMI_IMAGE_TIMEOUT_MS=20000` only when you need to change the defaults. Existing Sources can be re-run after the restart; no recapture is required.
+`gemini-3.8-flash` on Vertex AI is the default multimodal model for new installations; Kimi K3 and Kimi K2.7 Code remain available from Settings. Gemini 3.8 Flash uses the global Vertex AI endpoint for image understanding, structured extraction, writing, and review. The separate image-generation default remains `gemini-3.1-flash-image`. Image assets are fetched in parallel and unavailable assets are skipped rather than blocking the full note. Existing Sources can be re-run after a model change; no recapture is required.
 
 ### Model selection
 
@@ -217,6 +219,7 @@ See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md),
 | `GET` | `/api/sources` | Source 列表 |
 | `GET` | `/api/sources/:id` | Raw/Structured/Claims/Blueprint 详情 |
 | `POST` | `/api/sources/:id/retry` | 重跑异常或 `needs_ai` Source |
+| `POST` | `/api/manual-sources` | 管理员提交公开链接、PDF/Word 或图片并进入统一生产流程 |
 | `GET` | `/api/knowledge` | Destination KB 与证据/冲突 |
 | `GET` | `/api/editorial-blueprints` | 聚合 Editorial Pattern |
 | `GET` | `/api/content` | Topic/Brief/Draft/QA/WordPress 状态 |
