@@ -26,6 +26,17 @@ test("a later successful job clears older duplicate failures from the active exc
   assert.equal(repository.listOperationalExceptions().some((item) => item.key === `job:${failedId}`), false);
 });
 
+test("content navigation count includes briefs that need editorial action", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  db.prepare(`
+    INSERT INTO content_briefs(id, destination_slug, topic, audience, search_intent, status, last_error, created_at, updated_at)
+    VALUES ('brief-action', 'chongqing', 'Action brief', '[]', 'informational', 'exception', 'planner failed', 'now', 'now')
+  `).run();
+  const dashboard = repository.dashboard();
+  assert.equal(dashboard.actionCounts.content, 1);
+  assert.equal(dashboard.totals.contentNeedsAttention, 1);
+});
+
 test("source retry resets a delayed queued extraction and never masks a running extraction as captured", (t) => {
   const { db, repository } = repositoryFixture(t);
   const source = repository.saveCapture(normalizeXiaohongshuCapture({

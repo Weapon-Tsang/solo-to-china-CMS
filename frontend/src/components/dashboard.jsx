@@ -89,7 +89,8 @@ export function PageHeading({ view, health, onOpenStrategy }) {
   );
 }
 
-export function Metrics({ totals = {}, onNavigate }) {
+export function Metrics({ totals: rawTotals = {}, onNavigate }) {
+  const totals = { ...rawTotals, topicCandidates: rawTotals.contentPipelineItems ?? rawTotals.topicCandidates };
   const groups = [
     {
       icon: FileText, tone: "blue", eyebrow: "研究资产", title: "来源已结构化", value: totals.knowledgeFacts ?? 0, unit: "条知识事实",

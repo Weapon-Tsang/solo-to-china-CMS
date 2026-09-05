@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.2 — 2026-09-06
+
+- Refresh Dashboard totals whenever an administrator changes sections, and temporarily poll every five seconds while background jobs are active so asynchronous planning and QA state becomes visible without a manual refresh.
+- Count the Content Opportunity card from approved candidates that actually entered the production pipeline instead of all discovered candidates, making the approval transition immediately visible.
+- Added the Content navigation action badge for briefs and drafts that require editorial intervention; backend dashboard counts and browser-rendered navigation now share the same actionable-state definition.
+
 ## 1.13.1 — 2026-09-06
 
 - Fixed Vertex Gemini source extraction requests by translating shared Kimi/OpenAI text and image parts into the Vertex `text` and `inlineData` shapes instead of sending the unsupported `parts[].type` field.

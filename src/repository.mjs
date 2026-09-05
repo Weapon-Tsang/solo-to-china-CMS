@@ -2354,14 +2354,20 @@ export class Repository {
     const statuses = this.db.prepare("SELECT status, COUNT(*) AS count FROM sources GROUP BY status").all();
     const operationalExceptions = this.listOperationalExceptions();
     const exceptionCount = (kind) => operationalExceptions.filter((item) => item.kind === kind).length;
+    const pendingRecommendations = this.db.prepare("SELECT COUNT(*) AS count FROM content_recommendations WHERE decision='pending'").get().count;
+    const contentNeedsAttention = exceptionCount("brief") + exceptionCount("draft");
+    const contentPipelineItems = this.db.prepare(`
+      SELECT COUNT(DISTINCT candidate_id) AS count FROM content_opportunities
+      WHERE candidate_id IS NOT NULL AND status='planned'
+    `).get().count;
     return {
       sources: Object.fromEntries(statuses.map((row) => [row.status, row.count])),
       actionCounts: {
         sources: exceptionCount("source"),
-        recommendations: this.db.prepare("SELECT COUNT(*) AS count FROM content_recommendations WHERE decision='pending'").get().count,
+        recommendations: pendingRecommendations,
         knowledge: 0,
         blueprints: 0,
-        content: 0,
+        content: contentNeedsAttention,
         wordpress: exceptionCount("wordpress") + operationalExceptions.filter((item) => item.kind === "sync" && String(item.subject || "").startsWith("wordpress_inventory:")).length,
         commercial: this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_opportunities WHERE status='open'").get().count,
         exceptions: operationalExceptions.length,
@@ -2380,6 +2386,9 @@ export class Repository {
         `).get().count,
         exceptions: operationalExceptions.length,
         topicCandidates: this.db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count,
+        pendingRecommendations,
+        contentPipelineItems,
+        contentNeedsAttention,
         draftsReady: this.db.prepare("SELECT COUNT(*) AS count FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')").get().count,
         activeOffers: this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_assets WHERE active=1").get().count,
         wordpressInventory: this.db.prepare("SELECT COUNT(*) AS count FROM wordpress_content_inventory").get().count,

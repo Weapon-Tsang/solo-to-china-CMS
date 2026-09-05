@@ -82,22 +82,17 @@ export default function App() {
 
   useEffect(() => {
     if (!auth?.authenticated || auth.mustChangePassword) return;
-    void loadOverview().catch((caught) => setError(caught.message));
-  }, [auth, loadOverview]);
-
-  useEffect(() => {
-    if (!auth?.authenticated || auth.mustChangePassword) return;
     setViewData(null);
-    void loadView(activeView);
-  }, [activeView, auth, loadView]);
+    void Promise.all([loadOverview(), loadView(activeView)]).catch((caught) => setError(caught.message));
+  }, [activeView, auth, loadOverview, loadView]);
 
   useEffect(() => {
     if (!auth?.authenticated || auth.mustChangePassword) return undefined;
     const interval = setInterval(() => {
       void Promise.all([loadOverview(), loadView(activeView, { quiet: true })]).catch((caught) => setError(caught.message));
-    }, 60_000);
+    }, health?.queueActive > 0 ? 5_000 : 60_000);
     return () => clearInterval(interval);
-  }, [activeView, auth, loadOverview, loadView]);
+  }, [activeView, auth, health?.queueActive, loadOverview, loadView]);
 
   const refresh = useCallback(async (notify = false) => {
     setRefreshing(true);

@@ -109,12 +109,17 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   for (let index = 0; index < 60; index += 1) await pipeline.runOne();
   assert.equal(repository.listContent()[0].draft_id, null);
   assert.equal(repository.queueCandidate(repository.listContent()[0].id), false);
-  const pendingRecommendationCount = repository.dashboard().actionCounts.recommendations;
+  const dashboardBeforeApproval = repository.dashboard();
+  const pendingRecommendationCount = dashboardBeforeApproval.actionCounts.recommendations;
   assert.ok(pendingRecommendationCount > 0);
+  assert.equal(dashboardBeforeApproval.totals.contentPipelineItems, 0);
   const recommendation = repository.listContentRecommendations()[0];
   assert.equal(recommendation.strategy_version, CONTENT_STRATEGY.version);
   const approval = repository.decideRecommendation(recommendation.id, "approved_article");
-  assert.equal(repository.dashboard().actionCounts.recommendations, pendingRecommendationCount - 1);
+  const dashboardAfterApproval = repository.dashboard();
+  assert.equal(dashboardAfterApproval.actionCounts.recommendations, pendingRecommendationCount - 1);
+  assert.equal(dashboardAfterApproval.totals.pendingRecommendations, pendingRecommendationCount - 1);
+  assert.equal(dashboardAfterApproval.totals.contentPipelineItems, 1);
   assert.equal(approval.queued, true);
   for (let index = 0; index < 60; index += 1) await pipeline.runOne();
 
