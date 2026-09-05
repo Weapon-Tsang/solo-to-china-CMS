@@ -17,6 +17,15 @@ test("operational exception queue exposes and safely retries an exhausted generi
   assert.equal(job.last_error, null);
 });
 
+test("a later successful job clears older duplicate failures from the active exception queue", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const failedId = repository.enqueue("resolve_entities", "chongqing");
+  db.prepare("UPDATE jobs SET status='failed', attempts=3, last_error='invalid JSON', updated_at='2026-09-06T01:00:00.000Z' WHERE id=?").run(failedId);
+  const recoveredId = repository.enqueue("resolve_entities", "chongqing");
+  db.prepare("UPDATE jobs SET status='succeeded', completed_at='2026-09-06T01:01:00.000Z', updated_at='2026-09-06T01:01:00.000Z' WHERE id=?").run(recoveredId);
+  assert.equal(repository.listOperationalExceptions().some((item) => item.key === `job:${failedId}`), false);
+});
+
 test("source retry resets a delayed queued extraction and never masks a running extraction as captured", (t) => {
   const { db, repository } = repositoryFixture(t);
   const source = repository.saveCapture(normalizeXiaohongshuCapture({

@@ -24,22 +24,34 @@ export class VertexGeminiClient {
     const location = this.config.location || "us-central1";
     const apiHost = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
     const endpoint = `https://${apiHost}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
-    const parts = typeof content === "string" ? [{ text: content }] : content;
-    const response = await this.fetch(endpoint, {
-      method: "POST",
-      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: instructions }] },
-        contents: [{ role: "user", parts }],
-        generationConfig: { responseMimeType: "application/json", responseSchema: schema, maxOutputTokens: this.config.maxCompletionTokens || 16_000 },
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`Vertex Gemini request failed (${response.status}): ${payload?.error?.message || response.statusText}`);
-    const output = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("");
-    if (!output?.trim()) throw new Error("Vertex Gemini returned no structured output.");
-    try { return { output: JSON.parse(output), model: this.config.model }; } catch { throw new Error("Vertex Gemini returned invalid JSON despite structured output mode."); }
+    const parts = normalizeVertexParts(content);
+    const requestBody = {
+      systemInstruction: { parts: [{ text: instructions }] },
+      contents: [{ role: "user", parts }],
+      generationConfig: {
+        responseMimeType: "application/json", responseSchema: schema,
+        maxOutputTokens: this.config.maxCompletionTokens || 16_000, temperature: 0.1,
+      },
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await this.fetch(endpoint, {
+        method: "POST",
+        headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+        body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(`Vertex Gemini request failed (${response.status}): ${payload?.error?.message || response.statusText}`);
+      const candidate = payload?.candidates?.[0];
+      const output = candidate?.content?.parts?.map((part) => part.text || "").join("");
+      if (candidate?.finishReason === "MAX_TOKENS") {
+        throw new Error("Vertex Gemini structured output reached its token limit; increase VERTEX_AI_MAX_COMPLETION_TOKENS or reduce the input scope.");
+      }
+      if (!output?.trim()) throw new Error("Vertex Gemini returned no structured output.");
+      const parsed = parseStructuredJson(output);
+      if (parsed.ok) return { output: parsed.value, model: this.config.model };
+    }
+    throw new Error("Vertex Gemini returned invalid JSON twice despite structured output mode.");
   }
 
   async imageParts(assets) {
@@ -105,4 +117,35 @@ export class VertexGeminiClient {
     this.tokenExpiresAt = Date.now() + Math.max(60, Number(payload.expires_in || 300) - 60) * 1_000;
     return this.token;
   }
+}
+
+function normalizeVertexParts(content) {
+  const parts = typeof content === "string" ? [{ text: content }] : content;
+  if (!Array.isArray(parts)) throw new Error("Vertex Gemini content must be text or an array of content parts.");
+  return parts.map((part) => {
+    if (typeof part?.text === "string") return { text: part.text };
+    if (part?.inlineData?.mimeType && part.inlineData.data) return { inlineData: part.inlineData };
+    if (part?.fileData?.fileUri && part.fileData.mimeType) return { fileData: part.fileData };
+    const dataUrl = part?.type === "image_url" ? part?.image_url?.url : "";
+    const match = /^data:([^;]+);base64,(.+)$/s.exec(dataUrl);
+    if (match) return { inlineData: { mimeType: match[1], data: match[2] } };
+    throw new Error("Vertex Gemini received an unsupported content part.");
+  });
+}
+
+function parseStructuredJson(value) {
+  const text = String(value || "").replace(/^\uFEFF/, "").trim();
+  const candidates = [text];
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text);
+  if (fenced) candidates.push(fenced[1].trim());
+  const firstObject = text.indexOf("{");
+  const lastObject = text.lastIndexOf("}");
+  if (firstObject >= 0 && lastObject > firstObject) candidates.push(text.slice(firstObject, lastObject + 1));
+  const firstArray = text.indexOf("[");
+  const lastArray = text.lastIndexOf("]");
+  if (firstArray >= 0 && lastArray > firstArray) candidates.push(text.slice(firstArray, lastArray + 1));
+  for (const candidate of candidates) {
+    try { return { ok: true, value: JSON.parse(candidate) }; } catch { /* try the next safe wrapper removal */ }
+  }
+  return { ok: false, value: null };
 }

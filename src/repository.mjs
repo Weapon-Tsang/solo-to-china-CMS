@@ -2147,6 +2147,11 @@ export class Repository {
       WHERE status='failed' AND type NOT IN (
         'extract_source','sync_wordpress_inventory','sync_search_console','push_wordpress_draft','generate_draft','review_draft','revise_draft'
       )
+      AND NOT EXISTS (
+        SELECT 1 FROM jobs recovered
+        WHERE recovered.type=jobs.type AND recovered.entity_id=jobs.entity_id
+          AND recovered.status='succeeded' AND recovered.updated_at>=jobs.updated_at
+      )
     `).all()) {
       items.push(exceptionItem("job", row.id, "blocker", `Job failed: ${row.type}`, row.entity_id, row.last_error, true, row.updated_at));
     }

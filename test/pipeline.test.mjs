@@ -53,6 +53,29 @@ test("pipeline separates extraction, claims, knowledge conflict detection, and e
   assert.equal(repository.getKnowledge()[0].evidence.length, 2);
 });
 
+test("entity resolution falls back deterministically when model structured output is invalid", async () => {
+  const completed = [];
+  const enqueued = [];
+  let deterministicCalls = 0;
+  const repository = {
+    claimJob: () => ({ id: "job-entity", type: "resolve_entities", entity_id: "chongqing", attempts: 1, max_attempts: 3 }),
+    getEntityResolutionPackage: () => ({ claims: [{ id: "claim-1" }] }),
+    resolveEntitiesDeterministically: (slug) => { assert.equal(slug, "chongqing"); deterministicCalls += 1; },
+    enqueue: (type, entityId) => enqueued.push([type, entityId]),
+    completeJob: (jobId) => completed.push(jobId),
+    failJob: () => assert.fail("recoverable model output must not fail the job"),
+  };
+  const contentEngine = {
+    enabled: true,
+    resolveEntities: async () => { throw new Error("Vertex Gemini returned invalid JSON twice despite structured output mode."); },
+  };
+  const pipeline = new Pipeline(repository, {}, { contentEngine });
+  assert.equal(await pipeline.runOne(), true);
+  assert.equal(deterministicCalls, 1);
+  assert.deepEqual(enqueued, [["rebuild_knowledge", "chongqing"]]);
+  assert.deepEqual(completed, ["job-entity"]);
+});
+
 test("re-extraction versions derived claims instead of erasing their audit history", (t) => {
   const { db, repository } = repositoryFixture(t);
   const source = repository.saveCapture(normalizeXiaohongshuCapture({

@@ -19,7 +19,35 @@ test("Vertex Gemini uses the configured model and structured JSON response", asy
   assert.match(request.url, /gemini-3\.1-pro-preview:generateContent$/);
   const body = JSON.parse(request.options.body);
   assert.equal(body.generationConfig.responseMimeType, "application/json");
+  assert.equal(body.generationConfig.temperature, 0.1);
   assert.equal(body.systemInstruction.parts[0].text, "Be precise.");
+});
+
+test("Vertex Gemini converts shared text parts and retries malformed structured output once", async () => {
+  const requests = [];
+  const client = new VertexGeminiClient({
+    projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
+  }, async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    const text = requests.length === 1 ? '{"ok":' : '```json\n{"ok":true}\n```';
+    return Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text }] } }] });
+  });
+  const result = await client.completeJson({
+    schema: { type: "object" }, instructions: "Be precise.", content: [{ type: "text", text: "source text" }],
+  });
+  assert.deepEqual(result.output, { ok: true });
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0].contents[0].parts, [{ text: "source text" }]);
+  assert.equal("type" in requests[0].contents[0].parts[0], false);
+});
+
+test("Vertex Gemini reports an exhausted structured output before attempting to parse it", async () => {
+  const client = new VertexGeminiClient({
+    projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
+  }, async () => Response.json({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: '{"partial":' }] } }] }));
+  await assert.rejects(() => client.completeJson({
+    schema: { type: "object" }, instructions: "Be precise.", content: "source text",
+  }), /structured output reached its token limit/);
 });
 
 test("Vertex Gemini uses the global API host for Gemini 3.8 Flash", async () => {

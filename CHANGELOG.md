@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.13.1 — 2026-09-06
+
+- Fixed Vertex Gemini source extraction requests by translating shared Kimi/OpenAI text and image parts into the Vertex `text` and `inlineData` shapes instead of sending the unsupported `parts[].type` field.
+- Added conservative structured-output cleanup plus one retry for malformed Vertex JSON, with an explicit token-limit error instead of an ambiguous parse failure.
+- Made Entity Resolution fall back to the existing deterministic resolver only for recoverable model-output formatting failures, so Claims and Knowledge rebuilding continue without deleting or rewriting source evidence.
+- Suppressed recovered historical job failures from the active Exceptions queue once a later job for the same entity and stage succeeds, while retaining the job records for audit history.
+
 ## 1.13.0 — 2026-09-06
 
 - Added administrator video-file Sources with signature validation, persistent original evidence, schema migration 21, and direct Vertex Gemini frame/audio analysis for MP4, MOV, MPEG/MPG, WebM, AVI, WMV, FLV, and 3GP inputs.

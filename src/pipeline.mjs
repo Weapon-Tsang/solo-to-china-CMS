@@ -81,8 +81,16 @@ export class Pipeline {
         case "resolve_entities": {
           const entityPackage = this.repository.getEntityResolutionPackage(job.entity_id);
           if (this.contentEngine?.enabled && typeof this.contentEngine.resolveEntities === "function" && entityPackage.claims.length) {
-            const resolved = await this.contentEngine.resolveEntities(entityPackage);
-            this.repository.applyEntityResolution(job.entity_id, resolved.output, resolved.model);
+            try {
+              const resolved = await this.contentEngine.resolveEntities(entityPackage);
+              this.repository.applyEntityResolution(job.entity_id, resolved.output, resolved.model);
+            } catch (error) {
+              if (!isRecoverableStructuredOutputError(error)) throw error;
+              this.logger.warn("pipeline.entity_resolution_model_output_invalid", {
+                jobId: job.id, entityId: job.entity_id, error,
+              });
+              this.repository.resolveEntitiesDeterministically(job.entity_id);
+            }
           } else {
             this.repository.resolveEntitiesDeterministically(job.entity_id);
           }
@@ -289,4 +297,8 @@ export class Pipeline {
     if (!contract || !this.canComposeFrontendPage) throw new Error("NO_VALID_FRONTEND_CONTRACT: component-aware page composition is blocked until a compatible Frontend Contract is synchronized.");
     return contract;
   }
+}
+
+function isRecoverableStructuredOutputError(error) {
+  return /(?:invalid JSON|no structured output|structured output reached its token limit)/i.test(String(error?.message || error));
 }
