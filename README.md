@@ -137,16 +137,16 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 1.3
+## Content Production Strategy 1.4
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.3.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.3.md), and summarized by an append-only [evolution log](docs/content-strategy/CHANGELOG.md). The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.4.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.4.md), and summarized by an append-only [evolution log](docs/content-strategy/CHANGELOG.md). Sources are evidence containers: preflight and segmentation account for text, PDF pages, images, and video evidence before exhaustive Claim extraction and coverage audit. Source families, Topic Clusters, and Coverage Matrices determine whether an approved Content Opportunity is ready. The live operating path is:
 
 ```text
 Capture → structured research → Kimi Intake Analysis → Recommendation → human decision
                                                        → Approve article only → planning → canonical content → QA → WordPress draft
 ```
 
-The **Recommendations** tab is the only new recurring decision point. Choose **Approve article** only when a source-backed opportunity is worth turning into an English guide; choose the other actions when the material should enrich knowledge, join a cluster, wait for research, or be ignored. Every new downstream record carries Strategy `1.2`; historical records retain the strategy version that created them.
+The **Recommendations** tab is the single article decision point. Approval is durable: insufficient evidence enters `approved_waiting_for_evidence`, then automatically resumes as `approved_ready` when the Coverage Matrix becomes complete. Every new downstream record carries Strategy `1.4`; historical records retain the strategy version that created them.
 
 Every source image in an explicitly saved note is owner-confirmed as authorized for SoloToChina publication. The system traces article evidence back to those source assets, prioritizes matching real-world photos as WordPress draft media, and retains their provenance. Maps and infographics are rendered from validated data, while image generation is limited to non-factual original illustrations.
 

@@ -40,7 +40,7 @@ test("pipeline separates extraction, claims, knowledge conflict detection, and e
     }));
   }
 
-  for (let index = 0; index < 8; index += 1) await pipeline.runOne();
+  while (await pipeline.runOne()) { /* drain the Strategy 1.4 staged extraction graph */ }
 
   const dashboard = repository.dashboard();
   assert.equal(dashboard.totals.sources, 2);

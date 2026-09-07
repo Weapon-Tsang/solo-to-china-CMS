@@ -136,6 +136,12 @@ EXCEPTION_NOTIFICATION_REPEAT_HOURS=24
 
 Remote webhook URLs must use HTTPS and cannot embed credentials. `EXCEPTION_WEBHOOK_TOKEN`, when present, is sent as a Bearer token. Delivery fingerprints and outcomes are durable: unchanged exceptions are suppressed until the repeat interval, changed exceptions notify immediately, failed deliveries retry on the next maintenance cycle, and resolved exceptions are removed from notification state. Webhook failures appear in the existing Exceptions view.
 
+## Strategy 1.4 research rebuild
+
+The Maintenance tab provides an explicit, confirmed “clear and reprocess” operation. It removes only derived extraction, Claim, Knowledge, Topic, Opportunity, Blueprint, Draft, Commercial, Publish Composition, and job state. Raw Sources, uploaded originals, source assets, hashes, and provenance remain in the persistent volume. Every preserved Source is then queued through the Strategy 1.4 preflight pipeline. The protected API is `POST /api/maintenance/reset-derived-research` with confirmation `RESET_DERIVED_RESEARCH`.
+
+Never remove the Docker volume during this operation or deployment. The reset endpoint is the supported path for replacing potentially polluted derived research while preserving the evidence record.
+
 ## Release check
 
 ```powershell

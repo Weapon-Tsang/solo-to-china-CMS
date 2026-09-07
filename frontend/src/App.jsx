@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { api } from "@/lib/api";
+import { api, uploadChunk } from "@/lib/api";
 import { cn, label } from "@/lib/utils";
 import { ViewRenderer } from "@/views";
 
@@ -110,10 +110,10 @@ export default function App() {
   const runAction = useCallback(async (url, options, successMessage) => {
     setActionBusy(true);
     try {
-      await api(url, options);
-      showToast(successMessage);
+      const result = await api(url, options);
+      showToast(typeof successMessage === "function" ? successMessage(result) : successMessage);
       await refresh(false);
-      return true;
+      return result || true;
     } catch (caught) {
       showToast(caught.message, true);
       return false;
@@ -122,14 +122,33 @@ export default function App() {
     }
   }, [refresh, showToast]);
 
-  const submitManualSource = useCallback(async (payload) => {
+  const submitManualSource = useCallback(async (payload, onProgress) => {
     setActionBusy(true);
     try {
-      const result = await api("/api/manual-sources", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      let result;
+      if (payload.kind === "video" && payload.rawFiles?.[0]) {
+        const file = payload.rawFiles[0];
+        onProgress?.({ phase: "initializing", percent: 0, label: "正在建立分块上传会话" });
+        const session = await api("/api/manual-source-uploads", { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ kind: "video", name: file.name, mimeType: file.type || "video/mp4", size: file.size }) });
+        let sent = 0;
+        for (let index = 0; index < session.chunkCount; index += 1) {
+          const start = index * session.chunkBytes;
+          const chunk = file.slice(start, Math.min(file.size, start + session.chunkBytes));
+          await uploadChunk(`/api/manual-source-uploads/${session.uploadId}/chunks/${index}`, chunk, (loaded) => {
+            const percent = Math.min(99, Math.round(((sent + loaded) / file.size) * 100));
+            onProgress?.({ phase: "uploading", percent, label: `正在上传第 ${index + 1}/${session.chunkCount} 个分块` });
+          });
+          sent += chunk.size;
+        }
+        onProgress?.({ phase: "processing", percent: 100, label: "上传完成，正在校验并写入证据库" });
+        result = await api(`/api/manual-source-uploads/${session.uploadId}/complete`, { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: payload.title, notes: payload.notes }) });
+      } else {
+        onProgress?.({ phase: "processing", percent: 0, label: "正在上传并解析来源" });
+        result = await api("/api/manual-sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      }
+      onProgress?.({ phase: "queued", percent: 100, label: "已入库，等待分段提取" });
       showToast(result.message || "来源已进入处理流程");
       await refresh(false);
       return result;
@@ -266,7 +285,7 @@ function SourceDetail({ source, actionBusy, onAction, onClose }) {
     <DialogHeader><Badge variant="info" className="w-max"><FileText className="size-3" /> Source detail</Badge><DialogTitle>{source.title || "Untitled source"}</DialogTitle><DialogDescription>Raw evidence, uploaded-file provenance, structured extraction, Claims, and editorial pattern remain traceable to this selected source.</DialogDescription></DialogHeader>
     <div className="mb-4 flex flex-wrap items-center gap-2">{originalUrl && <Button variant="secondary" size="sm" asChild><a href={originalUrl} target="_blank" rel="noreferrer"><ExternalLink /> Open original</a></Button>}<Button size="sm" disabled={actionBusy} onClick={retry}><RefreshCw className={cn(actionBusy && "animate-spin")} /> Re-run extraction</Button><StatusPill status={source.status} /></div>
     {source.last_error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><strong>Processing failure</strong><p className="mt-1 leading-relaxed">{source.last_error}</p><small>Correct the access, model, or source-content issue before retrying extraction.</small></div>}
-    <div className="grid gap-3 md:grid-cols-2"><DetailCard title="Structured source"><p>{source.structured?.summary || "Pending extraction"}</p><small>Destination: {source.structured?.destination_name || "—"} · Confidence {source.structured?.confidence ?? "—"}</small></DetailCard><DetailCard title="Source blueprint"><p>{source.blueprint?.angle || "Pending extraction"}</p><small>{source.blueprint?.format || "—"}</small></DetailCard>{source.files?.length > 0 && <DetailCard title={`Original files (${source.files.length})`} className="md:col-span-2"><ul className="space-y-1">{source.files.map((file) => <li key={file.id}><strong className="text-xs text-slate-700">{file.original_filename}</strong><small className="ml-2">{file.mime_type} · {(file.size_bytes / 1024 / 1024).toFixed(2)} MB · SHA-256 {file.sha256.slice(0, 12)}…</small></li>)}</ul></DetailCard>}<DetailCard title={`Claims (${source.claims.length})`} className="md:col-span-2">{source.claims.length ? <ul className="space-y-3">{source.claims.map((claim) => <li key={claim.id}><strong className="text-xs text-slate-800">{claim.subject} {claim.predicate}</strong><p>{claim.value_text}</p><small>“{claim.source_quote}”</small></li>)}</ul> : <p>No claims extracted.</p>}</DetailCard><DetailCard title="Raw captured text" className="md:col-span-2"><pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{source.raw_text}</pre></DetailCard></div>
+    <div className="grid gap-3 md:grid-cols-2"><DetailCard title="结构化来源"><p>{source.structured?.summary || "等待提取"}</p><small>目的地：{source.structured?.destination_name || "—"} · 置信度 {source.structured?.confidence ?? "—"}</small></DetailCard><DetailCard title="编辑蓝图"><p>{source.blueprint?.angle || "等待提取"}</p><small>{source.blueprint?.format || "—"}</small></DetailCard>{source.files?.length > 0 && <DetailCard title={`原始文件（${source.files.length}）`} className="md:col-span-2"><ul className="space-y-1">{source.files.map((file) => <li key={file.id}><strong className="text-xs text-slate-700">{file.original_filename}</strong><small className="ml-2">{file.mime_type} · {(file.size_bytes / 1024 / 1024).toFixed(2)} MB · SHA-256 {file.sha256.slice(0, 12)}…</small></li>)}</ul></DetailCard>}{source.segments?.length > 0 && <DetailCard title={`分段与覆盖审计（${source.segments.length}）`} className="md:col-span-2"><ul className="space-y-1">{source.segments.map((segment) => { const coverage = source.extraction_coverage?.find((item) => item.segment_id === segment.id); return <li key={segment.id} className="flex items-center justify-between gap-3"><span>#{segment.sequence + 1} · {label(segment.segment_type)}{segment.image_index ? ` · 图片 ${segment.image_index}` : ""}</span><StatusPill status={coverage?.status || segment.status} /></li>; })}</ul></DetailCard>}<DetailCard title={`Claims（${source.claims.length}）`} className="md:col-span-2">{source.claims.length ? <ul className="space-y-3">{source.claims.map((claim) => <li key={claim.id} className={claim.lifecycle_status === "excluded" ? "opacity-50" : ""}><div className="flex items-start justify-between gap-3"><div><strong className="text-xs text-slate-800">{claim.subject} {claim.predicate}</strong><p>{claim.value_text}</p><small>“{claim.source_quote}”</small></div><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => onAction(`/api/claims/${claim.id}/${claim.lifecycle_status === "excluded" ? "restore" : "exclude"}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "后台人工管理" }) }, claim.lifecycle_status === "excluded" ? "Claim 已恢复" : "Claim 已排除并将重建知识库")}>{claim.lifecycle_status === "excluded" ? "恢复" : "排除"}</Button></div></li>)}</ul> : <p>尚未提取 Claim。</p>}</DetailCard><DetailCard title="原始采集文本" className="md:col-span-2"><pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{source.raw_text}</pre></DetailCard></div>
   </>;
 }
 

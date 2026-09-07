@@ -20,10 +20,10 @@ const VIDEO_MIME_BY_EXTENSION = new Map([
 ]);
 const VIDEO_MIME_TYPES = new Set([...VIDEO_MIME_BY_EXTENSION.values(), "video/x-flv", "video/x-msvideo", "video/x-ms-wmv", "video/mov", "video/mpg"]);
 const WORD_EXTENSIONS = new Set([".doc", ".docx"]);
-const DEFAULT_MAX_FILE_BYTES = 12 * 1024 * 1024;
-const DEFAULT_MAX_IMAGE_BYTES = 6 * 1024 * 1024;
-const DEFAULT_MAX_VIDEO_BYTES = 100 * 1024 * 1024;
-const DEFAULT_MAX_TOTAL_BYTES = 110 * 1024 * 1024;
+const DEFAULT_MAX_FILE_BYTES = 64 * 1024 * 1024;
+const DEFAULT_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const DEFAULT_MAX_VIDEO_BYTES = 256 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_BYTES = 300 * 1024 * 1024;
 const DEFAULT_MAX_REMOTE_BYTES = 8 * 1024 * 1024;
 
 export class ManualSourceError extends Error {
@@ -46,7 +46,7 @@ export class ManualSourceIngestor {
       maxVideoBytes: Number(config.maxVideoBytes || DEFAULT_MAX_VIDEO_BYTES),
       maxTotalBytes: Number(config.maxTotalBytes || DEFAULT_MAX_TOTAL_BYTES),
       maxRemoteBytes: Number(config.maxRemoteBytes || DEFAULT_MAX_REMOTE_BYTES),
-      maxImages: Number(config.maxImages || 8),
+      maxImages: Number(config.maxImages || 30),
     };
     this.fetch = fetchImpl;
     this.lookup = lookupImpl;
@@ -173,7 +173,7 @@ export class ManualSourceIngestor {
         authorUrl: "",
         publishedAt: null,
         capturedAt: new Date().toISOString(),
-        rawText: truncate(rawText, 250_000),
+        rawText: truncate(rawText, 1_000_000),
         rawHtml: truncate(rawHtml, 1_500_000),
         assets,
         files,
@@ -259,7 +259,9 @@ export async function extractPdfText(bytes) {
   } finally {
     await loadingTask.destroy();
   }
-  return pages.join("\n\n");
+  // Form-feed preserves the page boundary for Strategy 1.4 segmentation and
+  // Evidence Span page locators while remaining readable as plain text.
+  return pages.join("\n\f\n");
 }
 
 export async function extractWordText(bytes) {

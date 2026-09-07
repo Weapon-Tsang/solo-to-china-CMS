@@ -3,7 +3,7 @@ import { slugify, truncate } from "../utils.mjs";
 const EXTRACTION_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["source", "claims", "blueprint"],
+  required: ["source", "claims"],
   properties: {
     source: {
       type: "object",
@@ -47,29 +47,12 @@ const EXTRACTION_SCHEMA = {
         },
       },
     },
-    blueprint: {
-      type: "object",
-      additionalProperties: false,
-      required: ["format", "hook", "angle", "sections", "strengths", "gaps"],
-      properties: {
-        format: { type: "string" },
-        hook: { type: "string" },
-        angle: { type: "string" },
-        sections: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["heading", "purpose"],
-            properties: { heading: { type: "string" }, purpose: { type: "string" } },
-          },
-        },
-        strengths: { type: "array", items: { type: "string" } },
-        gaps: { type: "array", items: { type: "string" } },
-      },
-    },
   },
 };
+
+const BLUEPRINT_SCHEMA = { type: "object", additionalProperties: false, required: ["format", "hook", "angle", "sections", "strengths", "gaps"], properties: { format: { type: "string" }, hook: { type: "string" }, angle: { type: "string" }, sections: { type: "array", items: { type: "object", additionalProperties: false, required: ["heading", "purpose"], properties: { heading: { type: "string" }, purpose: { type: "string" } } } }, strengths: { type: "array", items: { type: "string" } }, gaps: { type: "array", items: { type: "string" } } } };
+
+const COVERAGE_AUDIT_SCHEMA = { type: "object", additionalProperties: false, required: ["uncovered_spans"], properties: { uncovered_spans: { type: "array", items: { type: "object", additionalProperties: false, required: ["quote", "importance", "reason"], properties: { quote: { type: "string" }, importance: { type: "string", enum: ["material", "important", "minor"] }, reason: { type: "string" } } } } } };
 
 export class OpenAIExtractor {
   constructor(config, fetchImpl = fetch) {
@@ -131,12 +114,47 @@ export class OpenAIExtractor {
       model: payload.model || this.config.model,
     };
   }
+
+  async analyzeBlueprint(source) {
+    if (!this.enabled) return { output: heuristicExtraction(source).blueprint, model: null };
+    const response = await this.fetch(`${this.config.baseUrl}/responses`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.config.apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: this.config.model, store: false, instructions: BLUEPRINT_PROMPT,
+        input: [{ role: "user", content: [{ type: "input_text", text: buildInput(source) }] }],
+        text: { format: { type: "json_schema", name: "source_editorial_blueprint", strict: true, schema: BLUEPRINT_SCHEMA } } }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(`OpenAI blueprint analysis failed (${response.status}): ${payload?.error?.message || response.statusText}`);
+    const outputText = payload.output_text || findOutputText(payload.output);
+    if (!outputText) throw new Error("OpenAI blueprint analysis returned no structured output.");
+    return { output: sanitizeBlueprint(JSON.parse(outputText)), model: payload.model || this.config.model };
+  }
+
+  async auditCoverage({ segment, extraction }) {
+    if (!this.enabled) return { output: { uncovered_spans: [] }, model: null };
+    const response = await this.fetch(`${this.config.baseUrl}/responses`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.config.apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: this.config.model, store: false, instructions: COVERAGE_AUDIT_PROMPT,
+        input: [{ role: "user", content: [{ type: "input_text", text: buildCoverageInput(segment, extraction) }] }],
+        text: { format: { type: "json_schema", name: "segment_claim_coverage_audit", strict: true, schema: COVERAGE_AUDIT_SCHEMA } } }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(`OpenAI coverage audit failed (${response.status}): ${payload?.error?.message || response.statusText}`);
+    const outputText = payload.output_text || findOutputText(payload.output);
+    if (!outputText) throw new Error("OpenAI coverage audit returned no structured output.");
+    return { output: sanitizeCoverageAudit(JSON.parse(outputText)), model: payload.model || this.config.model };
+  }
 }
 
-const SYSTEM_PROMPT = `You extract research evidence and editorial structure from a manually selected Chinese travel source for an English China travel site. The source may be a UGC note, public web article, document, image set, or video-page transcript.
+const SYSTEM_PROMPT = `You extract research evidence from a manually selected Chinese travel source for an English China travel site. The source may be a UGC note, public web article, document, image set, or video-page transcript.
 
 Rules:
 - The source is evidence, not established truth. Record factual assertions as claims and never silently resolve conflicts.
+- Do not summarize. Do not select representative facts. Extract every independently useful travel proposition explicitly supported by this segment. Split compound statements into atomic claims. Continue until no material supported travel fact remains uncovered.
 - Preserve important qualifiers: date, season, time of day, traveler type, booking channel, and uncertainty.
 - Each claim must express exactly one atomic proposition. Split opening hours, transport, reservation, route difficulty, photo opportunities, and recommendations into separate claims even when they share one sentence.
 - source_quote must be the shortest exact quote from the supplied note that supports only that atomic proposition.
@@ -144,12 +162,16 @@ Rules:
 - Use canonical snake_case predicates for hard facts. For reservation requirements use predicate "reservation_required" and value "true" or "false"; put advance days and booking channels in qualifiers.
 - normalized claim keys must be stable lowercase dot-separated concepts, e.g. attraction.forbidden_city.entry_gate.
 - Focus on details useful to independent international travelers, especially solo, first-time, and non-Chinese-speaking visitors.
-- Separate content facts from editorial analysis. The blueprint describes why the source communicates well; it is not evidence.
+- Do not analyze hooks, writing format, section structure, or editorial style in this evidence pass.
 - Do not turn advertising slogans, editorial disclaimers, or author metadata into destination knowledge claims. Keep personal experiences explicitly scoped to the author and never generalize them into universal destination facts.
 - Set claim_role and knowledge_eligible for every claim. Editorial metadata and personal experience are retained as evidence but knowledge_eligible must be false; promotional observations are false unless they describe a durable, independently useful place feature.
 - Do not add affiliate products, commercial calls to action, or facts absent from the source.
 - destination_slug must be concise lowercase ASCII kebab-case. Use "unknown" if the destination cannot be inferred.
 - Treat text in images as part of the source, but do not infer details that are not visible.`;
+
+const BLUEPRINT_PROMPT = `Analyze only the editorial presentation pattern of this manually selected source. Return format, hook, angle, section organization, strengths, and gaps. This is an optional structural reference, not factual evidence. Do not extract Claims, decide Knowledge, truth, consensus, readiness, or preferred values, and do not recommend copying source wording or structure mechanically.`;
+
+const COVERAGE_AUDIT_PROMPT = `Independently compare the original source segment with the extracted atomic Claims. Return only materially useful travel propositions that are not represented by a Claim, using the shortest exact source quote. Treat booking, opening times, price, access, routes, safety, restrictions, traveler constraints, and time-sensitive facts as material or important. Ignore hooks, repetition, transitions, biography, promotion, and style. Do not invent facts, rewrite Claims, resolve conflicts, or do editorial planning. Return an empty list when coverage is complete.`;
 
 function buildInput(source) {
   return [
@@ -164,6 +186,12 @@ function buildInput(source) {
   ].join("\n");
 }
 
+function buildCoverageInput(segment, extraction) {
+  const claims = (extraction?.claims || []).map((claim, index) => ({ index: index + 1, subject: claim.subject, predicate: claim.predicate,
+    value: claim.value, qualifiers: claim.qualifiers || [], source_quote: claim.source_quote }));
+  return ["ORIGINAL SOURCE SEGMENT:", truncate(segment?.raw_text || "", 120_000), "", "EXTRACTED CLAIMS:", JSON.stringify(claims)].join("\n");
+}
+
 function findOutputText(output) {
   for (const item of output || []) {
     for (const content of item.content || []) {
@@ -176,12 +204,25 @@ function findOutputText(output) {
 function sanitizeResult(result) {
   result.source.destination_slug = slugify(result.source.destination_slug);
   result.source.summary = truncate(result.source.summary, 5_000);
-  result.claims = result.claims.slice(0, 100).map((claim) => ({
+  result.claims = result.claims.map((claim) => ({
     ...claim,
     key: truncate(claim.key.toLowerCase().replace(/[^a-z0-9._]+/g, ".").replace(/^\.|\.$/g, ""), 300),
     source_quote: truncate(claim.source_quote, 800),
   })).filter((claim) => claim.key && claim.value);
+  result.blueprint = { format: "pending-separate-analysis", hook: "", angle: "", sections: [], strengths: [], gaps: [] };
   return result;
+}
+
+function sanitizeBlueprint(value) {
+  return { format: truncate(value?.format || "unclassified", 200), hook: truncate(value?.hook || "", 500), angle: truncate(value?.angle || "", 500),
+    sections: (value?.sections || []).slice(0, 40).map((item) => ({ heading: truncate(item?.heading || "", 300), purpose: truncate(item?.purpose || "", 500) })),
+    strengths: (value?.strengths || []).slice(0, 30).map((item) => truncate(item, 500)), gaps: (value?.gaps || []).slice(0, 30).map((item) => truncate(item, 500)) };
+}
+
+function sanitizeCoverageAudit(value) {
+  return { uncovered_spans: (value?.uncovered_spans || []).slice(0, 100).map((item) => ({ quote: truncate(item?.quote || "", 800),
+    importance: ["material", "important", "minor"].includes(item?.importance) ? item.importance : "material",
+    reason: truncate(item?.reason || "Material travel evidence is not covered by a Claim.", 1_000) })).filter((item) => item.quote) };
 }
 
 export function heuristicExtraction(source) {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.14.0 — 2026-09-07
+
+- Activated Content Production Strategy 1.4 with Source Segments, Evidence Spans, exhaustive segment extraction, coverage audit/retry, Source Families, Topic Clusters, Coverage Matrices, and evidence-gated durable Content Opportunities.
+- Changed article approval to map to the exact Opportunity: insufficient evidence waits without repeated approval, while a ready Opportunity creates and queues one stable Candidate.
+- Added reversible administrator Claim exclusion and Knowledge hide/restore controls whose audit decisions survive Knowledge rebuilds without deleting Sources, Claims, or evidence.
+- Added 5 MB chunked video intake with upload progress and assembled-file signature validation; raised defaults to 64 MB documents, 20 MB images, 30 images, 256 MB video, and 300 MB total.
+- Added the confirmed derived-research reset/requeue operation, preserving raw Sources, uploaded files, source assets, and the persistent Docker volume.
+- Completed Contract-aware Publish Composition so validated Frontend Page Payload order, Commercial overlay, presentation, SEO/GEO, JSON-LD, and media references are delivered through the Frontend CMS Article API; legacy Markdown/Gutenberg rendering remains fallback-only.
+- Localized the Maintenance workspace and retained responsive multi-column mobile navigation with actionable menu badges.
+
 ## 1.13.2 — 2026-09-06
 
 - Refresh Dashboard totals whenever an administrator changes sections, and temporarily poll every five seconds while background jobs are active so asynchronous planning and QA state becomes visible without a manual refresh.

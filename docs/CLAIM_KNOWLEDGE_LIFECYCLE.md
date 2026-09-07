@@ -16,6 +16,12 @@ Claims are durable evidence records. `claim_role` distinguishes facts, recommend
 
 Exclusion from Knowledge never deletes the Claim, source quote, or captured Source.
 
+## Administrator lifecycle controls
+
+Source detail exposes reversible Claim exclusion and restoration. Excluded Claims remain in `claims` with an operator, reason, and timestamp, but do not participate in Entity resolution or Knowledge aggregation. The Knowledge tab exposes reversible hide/restore controls. Knowledge visibility decisions are stored by destination and normalized key, so they survive Knowledge rebuilds while underlying Claims and evidence remain unchanged.
+
+These controls are deliberately not physical deletion. The administrator can remove an incorrect extraction from active research or hide an unsuitable aggregate conclusion without destroying provenance, extraction history, or the ability to audit and restore the decision.
+
 ## Typed facts
 
 Stable fact identity does not depend on natural-language polarity placement. Reservation assertions use `reservation_required` with a boolean typed value. For example, `does not require = advance reservation` and `requires reservation = no reservation required` both normalize to `reservation_required=false`.

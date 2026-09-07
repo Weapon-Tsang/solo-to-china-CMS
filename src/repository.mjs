@@ -6,6 +6,7 @@ import { contentBlockSummary, markdownToContentBlocks } from "./content-blocks.m
 import { classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "./claim-resolution.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
 import { legacyOfferToAsset } from "./commercial.mjs";
+import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
 
 export class Repository {
   constructor(db, contentConfig = {}) {
@@ -98,7 +99,7 @@ export class Repository {
   listFrontendContractSnapshots(limit = 20) {
     return this.db.prepare(`
       SELECT id, source_repository, registry_source, page_schema_source, frontend_commit_sha, contract_version, schema_version,
-        checksum, diff_json, status, synced_at, accepted_at
+        checksum, publish_package_schema_source, publish_package_version, diff_json, status, synced_at, accepted_at
       FROM frontend_contract_snapshots ORDER BY synced_at DESC LIMIT ?
     `).all(limit).map((row) => ({ ...row, diff: json(row.diff_json, {}) }));
   }
@@ -111,12 +112,23 @@ export class Repository {
         const snapshotId = id("fcontract");
         this.db.prepare(`
           INSERT INTO frontend_contract_snapshots(id, source_repository, registry_source, page_schema_source, frontend_commit_sha,
-            contract_version, schema_version, checksum, registry_json, page_schema_json, diff_json, status, synced_at, accepted_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            contract_version, schema_version, checksum, registry_json, page_schema_json, diff_json, status, synced_at, accepted_at,
+            publish_package_schema_source, publish_package_version, publish_package_schema_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(snapshotId, snapshot.sourceRepository, snapshot.registrySource, snapshot.pageSchemaSource, snapshot.frontendCommitSha,
           snapshot.contractVersion, snapshot.schemaVersion, snapshot.checksum, JSON.stringify(snapshot.registry), JSON.stringify(snapshot.pageSchema),
-          JSON.stringify(snapshot.diff || {}), snapshot.activate ? "active" : "major_mismatch", timestamp, snapshot.activate ? timestamp : null);
+          JSON.stringify(snapshot.diff || {}), snapshot.activate ? "active" : "major_mismatch", timestamp, snapshot.activate ? timestamp : null,
+          snapshot.publishPackageSchemaSource || "", snapshot.publishPackageVersion || "", JSON.stringify(snapshot.publishPackageSchema || {}));
         row = this.db.prepare("SELECT * FROM frontend_contract_snapshots WHERE id=?").get(snapshotId);
+      } else {
+        this.db.prepare(`UPDATE frontend_contract_snapshots SET source_repository=?, registry_source=?, page_schema_source=?,
+          frontend_commit_sha=?, contract_version=?, schema_version=?, registry_json=?, page_schema_json=?, diff_json=?,
+          publish_package_schema_source=?, publish_package_version=?, publish_package_schema_json=?, synced_at=? WHERE id=?`)
+          .run(snapshot.sourceRepository, snapshot.registrySource, snapshot.pageSchemaSource, snapshot.frontendCommitSha,
+            snapshot.contractVersion, snapshot.schemaVersion, JSON.stringify(snapshot.registry), JSON.stringify(snapshot.pageSchema),
+            JSON.stringify(snapshot.diff || {}), snapshot.publishPackageSchemaSource || "", snapshot.publishPackageVersion || "",
+            JSON.stringify(snapshot.publishPackageSchema || {}), timestamp, row.id);
+        row = this.db.prepare("SELECT * FROM frontend_contract_snapshots WHERE id=?").get(row.id);
       }
       if (snapshot.activate) {
         this.db.prepare("UPDATE frontend_contract_snapshots SET status='superseded' WHERE status='active' AND id<>?").run(row.id);
@@ -190,6 +202,47 @@ export class Repository {
   getFrontendPageComposition(draftId) {
     const row = this.db.prepare("SELECT * FROM frontend_page_compositions WHERE draft_id=?").get(draftId);
     return row ? { ...row, payload: json(row.payload_json, {}), validation: json(row.validation_json, {}) } : null;
+  }
+
+  markFrontendPageCompositionStale(draftId) {
+    this.db.prepare("UPDATE frontend_page_compositions SET status='stale_contract', updated_at=? WHERE draft_id=?")
+      .run(now(), draftId);
+  }
+
+  saveFrontendPublishComposition(draftId, snapshot, publishPackage, validation, commercialStrategyVersion = "") {
+    const timestamp = now();
+    const frontendPage = this.db.prepare("SELECT id FROM frontend_page_compositions WHERE draft_id=?").get(draftId);
+    const commercial = this.db.prepare("SELECT id FROM commercial_compositions WHERE draft_id=?").get(draftId);
+    if (!frontendPage || !commercial) throw new Error("Editorial and Commercial compositions are required before Publish Composition.");
+    const existing = this.db.prepare("SELECT id FROM frontend_publish_compositions WHERE draft_id=?").get(draftId);
+    const compositionId = existing?.id || id("fpublish");
+    this.db.prepare(`
+      INSERT INTO frontend_publish_compositions(id, draft_id, frontend_page_composition_id, commercial_composition_id,
+        snapshot_id, publish_package_version, contract_version, page_schema_version, contract_checksum,
+        commercial_strategy_version, publish_package_json, validation_json, status, generated_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(draft_id) DO UPDATE SET frontend_page_composition_id=excluded.frontend_page_composition_id,
+        commercial_composition_id=excluded.commercial_composition_id, snapshot_id=excluded.snapshot_id,
+        publish_package_version=excluded.publish_package_version, contract_version=excluded.contract_version,
+        page_schema_version=excluded.page_schema_version, contract_checksum=excluded.contract_checksum,
+        commercial_strategy_version=excluded.commercial_strategy_version, publish_package_json=excluded.publish_package_json,
+        validation_json=excluded.validation_json, status=excluded.status, wordpress_post_id=NULL,
+        generated_at=excluded.generated_at, updated_at=excluded.updated_at
+    `).run(compositionId, draftId, frontendPage.id, commercial.id, snapshot.id, snapshot.publishPackageVersion || "1.0.0",
+      publishPackage.contract.componentContractVersion, publishPackage.contract.pageSchemaVersion,
+      publishPackage.contract.contractChecksum, commercialStrategyVersion || "", JSON.stringify(publishPackage),
+      JSON.stringify(validation), validation.valid ? "valid" : "invalid", timestamp, timestamp);
+    return this.getFrontendPublishComposition(draftId);
+  }
+
+  getFrontendPublishComposition(draftId) {
+    const row = this.db.prepare("SELECT * FROM frontend_publish_compositions WHERE draft_id=?").get(draftId);
+    return row ? { ...row, publish_package: json(row.publish_package_json, {}), validation: json(row.validation_json, {}) } : null;
+  }
+
+  markFrontendPublishComposition(draftId, status, postId = null) {
+    this.db.prepare("UPDATE frontend_publish_compositions SET status=?, wordpress_post_id=?, updated_at=? WHERE draft_id=?")
+      .run(status, postId, now(), draftId);
   }
 
   listFrontendPageCompositions() {
@@ -354,7 +407,7 @@ export class Repository {
   }
 
   failJob(job, error) {
-    const retry = job.attempts < job.max_attempts;
+    const retry = error?.retryable !== false && job.attempts < job.max_attempts;
     const delaySeconds = Math.min(300, 10 * 2 ** Math.max(0, job.attempts - 1));
     const availableAt = new Date(Date.now() + delaySeconds * 1_000).toISOString();
     const timestamp = now();
@@ -370,7 +423,7 @@ export class Repository {
       this.db.prepare("UPDATE topic_candidates SET status='candidate', updated_at=? WHERE id=?").run(now(), job.entity_id);
     } else if (!retry && ["generate_draft", "compose_frontend_page_plan"].includes(job.type)) {
       this.db.prepare("UPDATE content_briefs SET status='exception', last_error=?, updated_at=? WHERE id=?").run(message, now(), job.entity_id);
-    } else if (!retry && ["review_draft", "revise_draft", "compose_frontend_page"].includes(job.type)) {
+    } else if (!retry && ["review_draft", "revise_draft", "compose_frontend_page", "compose_publish_page", "push_wordpress_draft"].includes(job.type)) {
       this.db.prepare("UPDATE article_drafts SET status='exception', updated_at=? WHERE id=?").run(now(), job.entity_id);
     }
   }
@@ -387,7 +440,137 @@ export class Repository {
     const blueprint = this.db.prepare("SELECT * FROM source_blueprints WHERE source_id = ?").get(sourceId) || null;
     const analysis = this.db.prepare("SELECT * FROM content_intake_analyses WHERE source_id = ?").get(sourceId) || null;
     const recommendation = this.db.prepare("SELECT * FROM content_recommendations WHERE source_id = ? ORDER BY updated_at DESC LIMIT 1").get(sourceId) || null;
-    return hydrateSource({ source, assets, files, structured, claims, extractionRuns, claimHistory, blueprint, analysis, recommendation });
+    const segments = this.db.prepare("SELECT * FROM source_segments WHERE source_id=? ORDER BY sequence").all(sourceId);
+    const coverage = this.db.prepare("SELECT * FROM extraction_coverage WHERE source_id=? ORDER BY segment_id").all(sourceId);
+    const family = this.db.prepare(`SELECT sf.*, sfm.relation_type, sfm.overlap_score, sfm.incremental_claim_count, sfm.analysis_json
+      FROM source_family_memberships sfm JOIN source_families sf ON sf.id=sfm.family_id WHERE sfm.source_id=?`).get(sourceId) || null;
+    return hydrateSource({ source, assets, files, structured, claims, extractionRuns, claimHistory, blueprint, analysis, recommendation, segments, coverage, family });
+  }
+
+  prepareSourceSegments(sourceId) {
+    const source = this.getSource(sourceId);
+    if (!source) throw new Error(`Source ${sourceId} no longer exists.`);
+    const values = segmentSource(source);
+    const timestamp = now();
+    transaction(this.db, () => {
+      this.db.prepare("DELETE FROM source_segments WHERE source_id=?").run(sourceId);
+      const insert = this.db.prepare(`INSERT INTO source_segments(id,source_id,segment_type,sequence,title,raw_text,page_start,page_end,asset_id,image_index,destination_scopes_json,topic_scopes_json,content_hash,semantic_hash,status,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?)`);
+      for (const item of values) insert.run(item.id, sourceId, item.segmentType, item.sequence, item.title, item.rawText,
+        item.pageStart, item.pageEnd, item.assetId, item.imageIndex, JSON.stringify(item.destinationScopes), JSON.stringify(item.topicScopes),
+        item.contentHash, item.semanticHash, timestamp, timestamp);
+      this.db.prepare("UPDATE source_assets SET extraction_status='pending', extraction_error=NULL, processed_at=NULL WHERE source_id=?").run(sourceId);
+      this.db.prepare("UPDATE sources SET status='processing', diagnostic_json=?, updated_at=? WHERE id=?")
+        .run(JSON.stringify({ strategy_version: this.strategyVersion, stage: "segmented", segment_count: values.length, asset_count: source.assets.length }), timestamp, sourceId);
+    });
+    return values;
+  }
+
+  getSegmentExtractionPackage(segmentId) {
+    const segment = this.db.prepare("SELECT * FROM source_segments WHERE id=?").get(segmentId);
+    if (!segment) return null;
+    const source = this.getSource(segment.source_id);
+    const asset = segment.asset_id ? source.assets.find((item) => item.id === segment.asset_id) : null;
+    return {
+      sourceId: source.id, segment,
+      source: { ...source, raw_text: segment.raw_text, assets: asset ? [asset] : [], title: segment.title || source.title,
+        submission_metadata: { ...source.submission_metadata, segment_id: segment.id, segment_sequence: segment.sequence } },
+    };
+  }
+
+  saveSegmentExtraction(segmentId, extraction, { retry = false } = {}) {
+    const segment = this.db.prepare("SELECT * FROM source_segments WHERE id=?").get(segmentId);
+    if (!segment) throw new Error(`Source segment ${segmentId} no longer exists.`);
+    const timestamp = now();
+    const attempt = retry ? 2 : 1;
+    transaction(this.db, () => {
+      this.db.prepare(`INSERT INTO segment_extractions(segment_id,source_id,result_json,method,model,attempt,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(segment_id) DO UPDATE SET result_json=excluded.result_json,method=excluded.method,
+        model=excluded.model,attempt=excluded.attempt,updated_at=excluded.updated_at`)
+        .run(segmentId, segment.source_id, JSON.stringify(extraction.result), extraction.method, extraction.model, attempt, timestamp, timestamp);
+      this.db.prepare("UPDATE source_segments SET status='extracted',updated_at=? WHERE id=?").run(timestamp, segmentId);
+      if (segment.asset_id) this.db.prepare("UPDATE source_assets SET extraction_status='processed',extraction_error=NULL,processed_at=? WHERE id=?")
+        .run(timestamp, segment.asset_id);
+    });
+  }
+
+  getSegmentCoveragePackage(segmentId) {
+    const row = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model,se.attempt FROM source_segments ss
+      JOIN segment_extractions se ON se.segment_id=ss.id WHERE ss.id=?`).get(segmentId);
+    if (!row) return null;
+    const coverage = this.db.prepare("SELECT * FROM extraction_coverage WHERE segment_id=?").get(segmentId);
+    return { segment: row, extraction: json(row.result_json, {}), coverage: coverage ? { ...coverage, uncovered_spans: json(coverage.uncovered_spans_json, []) } : null };
+  }
+
+  auditSegmentCoverage(segmentId, assessment = null) {
+    const row = this.db.prepare(`SELECT s.*,se.result_json,se.method,se.model,se.attempt FROM source_segments s
+      JOIN segment_extractions se ON se.segment_id=s.id WHERE s.id=?`).get(segmentId);
+    if (!row) throw new Error(`Segment ${segmentId} has no extraction result.`);
+    const result = json(row.result_json, {});
+    const claims = Array.isArray(result.claims) ? result.claims : [];
+    const material = String(row.raw_text || "").trim().length >= 40 || row.asset_id;
+    const assessedUncovered = Array.isArray(assessment?.uncovered_spans) ? assessment.uncovered_spans
+      .map((item) => ({ locator: String(item.quote || item.locator || row.title || `segment ${row.sequence + 1}`).slice(0, 800),
+        importance: String(item.importance || "material"), reason: String(item.reason || "Material travel evidence is not covered by a Claim.").slice(0, 1000) })) : null;
+    const uncovered = assessedUncovered || (material && claims.length === 0 && row.method !== "heuristic"
+      ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: "Material segment produced no supported Claim." }] : []);
+    const importantUncovered = uncovered.filter((item) => ["material", "important"].includes(item.importance)).length;
+    const retryCount = Math.max(0, Number(row.attempt || 1) - 1);
+    const status = importantUncovered ? retryCount < 1 ? "retry_required" : "manual_review" : "passed";
+    const timestamp = now();
+    const coverageId = `coverage_${sha256(segmentId).slice(0, 24)}`;
+    this.db.prepare(`INSERT INTO extraction_coverage(id,source_id,segment_id,extraction_run_id,status,candidate_evidence_count,claim_count,uncovered_spans_json,important_uncovered_count,model,audited_at,retry_count)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,
+      candidate_evidence_count=excluded.candidate_evidence_count,claim_count=excluded.claim_count,uncovered_spans_json=excluded.uncovered_spans_json,
+      important_uncovered_count=excluded.important_uncovered_count,model=excluded.model,audited_at=excluded.audited_at,retry_count=excluded.retry_count`)
+      .run(coverageId, row.source_id, segmentId, null, status, claims.length + uncovered.length, claims.length, JSON.stringify(uncovered), importantUncovered, row.model, timestamp, retryCount);
+    this.db.prepare("UPDATE source_segments SET status=?,updated_at=? WHERE id=?")
+      .run(status === "passed" ? "complete" : status === "manual_review" ? "failed" : status, timestamp, segmentId);
+    if (row.asset_id && status !== "passed") this.db.prepare("UPDATE source_assets SET extraction_status=?,extraction_error=? WHERE id=?")
+      .run(status === "retry_required" ? "retry_required" : "failed", uncovered[0]?.reason || null, row.asset_id);
+    if (status === "manual_review") this.db.prepare("UPDATE sources SET status='exception',last_error=?,updated_at=? WHERE id=?")
+      .run("Coverage audit still found material evidence without Claims after one targeted retry.", timestamp, row.source_id);
+    return { sourceId: row.source_id, segmentId, status, retryCount, claimCount: claims.length, uncovered };
+  }
+
+  sourceCoverageReady(sourceId) {
+    const counts = this.db.prepare(`SELECT COUNT(*) AS total,
+      SUM(CASE WHEN ec.status='passed' THEN 1 ELSE 0 END) AS done
+      FROM source_segments ss LEFT JOIN extraction_coverage ec ON ec.segment_id=ss.id WHERE ss.source_id=?`).get(sourceId);
+    return Number(counts.total || 0) > 0 && Number(counts.total) === Number(counts.done || 0);
+  }
+
+  finalizeSegmentedExtraction(sourceId) {
+    if (!this.sourceCoverageReady(sourceId)) throw new Error(`Source ${sourceId} still has unaudited segments.`);
+    const rows = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model FROM source_segments ss
+      JOIN segment_extractions se ON se.segment_id=ss.id WHERE ss.source_id=? ORDER BY ss.sequence`).all(sourceId);
+    const results = rows.map((row) => ({ row, result: json(row.result_json, {}) }));
+    const primary = results.map((item) => item.result.source).filter(Boolean).sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0))[0]
+      || { language: "unknown", summary: "", destination_name: "Unknown", destination_slug: "unknown", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0 };
+    const claims = results.flatMap((item) => (item.result.claims || []).map((claim) => ({ ...claim, _segment_id: item.row.id, _asset_id: item.row.asset_id })));
+    const blueprint = mergeBlueprints(results.map((item) => item.result.blueprint).filter(Boolean));
+    const method = [...new Set(rows.map((row) => row.method))].join("+");
+    const model = [...new Set(rows.map((row) => row.model).filter(Boolean))].join(", ") || null;
+    this.saveExtraction(sourceId, { source: primary, claims, blueprint }, method, model, { deferDownstream: true });
+    const savedClaims = this.db.prepare("SELECT id,normalized_key,value_text,source_quote FROM claims WHERE source_id=?").all(sourceId);
+    const savedByEvidence = Map.groupBy(savedClaims, (claim) => `${claim.normalized_key}\u0000${claim.value_text}\u0000${claim.source_quote}`);
+    for (const input of claims) {
+      const lookup = `${normalizeClaimKey(input.key)}\u0000${input.value}\u0000${input.source_quote}`;
+      const claim = savedByEvidence.get(lookup)?.shift();
+      if (!claim) continue;
+      const spanId = `span_${sha256(`${claim.id}:${input._segment_id}`).slice(0, 24)}`;
+      const segment = rows.find((item) => item.id === input._segment_id);
+      this.db.prepare(`INSERT OR IGNORE INTO evidence_spans(id,source_id,segment_id,asset_id,locator_type,page,image_index,quote,region_json,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`).run(spanId, sourceId, input._segment_id, input._asset_id || null,
+        input._asset_id ? "asset" : segment?.page_start ? "page" : "text", segment?.page_start || null, segment?.image_index || null,
+        claim.source_quote || "", "{}", now());
+      this.db.prepare("UPDATE claims SET evidence_span_ids_json=?,destination_scopes_json=?,topic_scopes_json=?,source_authority_level=(SELECT authority_level FROM sources WHERE id=?) WHERE id=?")
+        .run(JSON.stringify([spanId]), JSON.stringify([primary.destination_slug].filter(Boolean)), JSON.stringify([]), sourceId, claim.id);
+    }
+    this.db.prepare("UPDATE sources SET destination_scopes_json=?,diagnostic_json=?,updated_at=? WHERE id=?")
+      .run(JSON.stringify([primary.destination_slug].filter(Boolean)), JSON.stringify({ strategy_version: this.strategyVersion, stage: "finalized", segment_count: rows.length, claim_count: claims.length,
+        coverage: this.db.prepare("SELECT status,COUNT(*) count FROM extraction_coverage WHERE source_id=? GROUP BY status").all(sourceId) }), now(), sourceId);
+    return { destinationSlug: primary.destination_slug, claimCount: claims.length };
   }
 
   getIntakePackage(sourceId) {
@@ -439,7 +622,7 @@ export class Repository {
         ON CONFLICT(analysis_id) DO UPDATE SET strategy_version=excluded.strategy_version, classification=excluded.classification,
           recommended_action=excluded.recommended_action, suggested_content_type=excluded.suggested_content_type,
           suggested_article_title=excluded.suggested_article_title, reasoning_summary=excluded.reasoning_summary,
-          decision='pending', decision_note=NULL, approved_candidate_id=NULL, decided_at=NULL, updated_at=excluded.updated_at
+          updated_at=excluded.updated_at
       `).run(recommendationId, analysisId, sourceId, this.strategyVersion, normalized.classification,
         normalized.recommended_action, normalized.suggested_content_type || null, normalized.suggested_article_title || null,
         normalized.reasoning_summary, timestamp, timestamp);
@@ -467,7 +650,7 @@ export class Repository {
       FROM content_opportunities o LEFT JOIN topic_candidates tc ON tc.id=o.candidate_id
       ORDER BY CASE o.status WHEN 'recommended' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, o.readiness_score DESC, o.updated_at DESC
       LIMIT ?
-    `).all(limit).map((row) => ({ ...row, coverage: json(row.coverage_json, {}) }));
+    `).all(limit).map((row) => ({ ...row, coverage: json(row.coverage_json, {}), readiness: json(row.readiness_json, {}) }));
   }
 
   decideRecommendation(recommendationId, decision, note = "") {
@@ -482,43 +665,173 @@ export class Repository {
     `).get(recommendationId);
     if (!recommendation) return null;
     const analysis = json(recommendation.analysis_json, {});
-    const candidate = decision === "approved_article" ? this.db.prepare(`
-      SELECT * FROM topic_candidates WHERE destination_slug=? AND status='candidate'
-      ORDER BY coverage_score DESC LIMIT 1
-    `).get(recommendation.destination_slug) : null;
     const timestamp = now();
-    const opportunityStatus = decision === "approved_article" ? candidate ? "planned" : "research_required"
+    let opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE recommendation_id=?").get(recommendationId);
+    if (!opportunity) {
+      this.upsertContentOpportunity(recommendation.destination_slug, recommendation.source_id, recommendation, analysis);
+      opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE recommendation_id=?").get(recommendationId);
+    }
+    const readiness = json(opportunity?.readiness_json || opportunity?.coverage_json, {});
+    const ready = Boolean(readiness.ready);
+    const opportunityStatus = decision === "approved_article" ? ready ? "approved_ready" : "approved_waiting_for_evidence"
       : decision === "knowledge_only" ? "knowledge_only" : decision === "cluster" ? "cluster"
         : decision === "research_first" ? "research_required" : "ignored";
     this.db.prepare(`
-      UPDATE content_recommendations SET decision=?, decision_note=?, approved_candidate_id=?, decided_at=?, updated_at=? WHERE id=?
-    `).run(decision, String(note || "").slice(0, 1_000), candidate?.id || null, timestamp, timestamp, recommendationId);
-    this.upsertContentOpportunity(recommendation.destination_slug, recommendation.source_id, { ...recommendation, decision, id: recommendationId }, analysis, {
-      status: opportunityStatus, candidateId: candidate?.id || null,
-    });
-    const queued = candidate ? this.queueCandidate(candidate.id) : false;
-    return { recommendation: this.db.prepare("SELECT * FROM content_recommendations WHERE id=?").get(recommendationId), candidateId: candidate?.id || null, queued, needsResearch: decision === "approved_article" && !candidate };
+      UPDATE content_recommendations SET decision=?, decision_note=?, approved_candidate_id=NULL, opportunity_id=?, decided_at=?, updated_at=? WHERE id=?
+    `).run(decision, String(note || "").slice(0, 1_000), opportunity.id, timestamp, timestamp, recommendationId);
+    this.db.prepare("UPDATE content_opportunities SET status=?,approved_at=?,updated_at=? WHERE id=?")
+      .run(opportunityStatus, decision === "approved_article" ? timestamp : null, timestamp, opportunity.id);
+    const reconciled = decision === "approved_article" && ready ? this.reconcileApprovedOpportunity(opportunity.id) : { candidateId: null, queued: false };
+    return {
+      recommendationId, opportunityId: opportunity.id, decision, status: opportunityStatus,
+      queued: Boolean(reconciled.queued), candidateId: reconciled.candidateId || null,
+      needsEvidence: decision === "approved_article" && !ready, readiness,
+    };
   }
 
   upsertContentOpportunity(destinationSlug, sourceId, recommendation, analysis, overrides = {}) {
     const topic = analysis.primary_topic || recommendation.suggested_article_title || "travel topic";
-    const topicKey = `${destinationSlug}:strategy:${slugify(topic) || sha256(sourceId).slice(0, 8)}`;
+    const contentType = normalizeContentType(analysis.suggested_content_type || recommendation.suggested_content_type);
+    const topicKey = stableOpportunityKey(destinationSlug, topic, contentType);
     const opportunityId = `opportunity_${sha256(topicKey).slice(0, 24)}`;
-    const coverage = opportunityCoverage(destinationSlug, this.knowledgeForDestination(destinationSlug), analysis);
+    const facts = this.knowledgeForDestination(destinationSlug);
+    const familyCount = this.independentSourceFamilyCount(destinationSlug);
+    const matrix = evaluateCoverage({ topicKey, contentType, facts, sourceFamilyCount: familyCount });
+    const coverage = { ...matrix, legacy_signals: opportunityCoverage(destinationSlug, facts, analysis) };
     const status = overrides.status || classificationOpportunityStatus(analysis.classification);
     const title = analysis.suggested_article_title || recommendation.suggested_article_title || `${topic} guide`;
     const candidateId = overrides.candidateId || recommendation.approved_candidate_id || null;
     const timestamp = now();
     this.db.prepare(`
-      INSERT INTO content_opportunities(id, destination_slug, topic_key, strategy_version, source_id, recommendation_id,
-        candidate_id, title, content_type, readiness_score, coverage_json, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,source_id,source_ids_json,recommendation_id,
+        candidate_id,title,content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(topic_key) DO UPDATE SET recommendation_id=excluded.recommendation_id, candidate_id=excluded.candidate_id,
         title=excluded.title, content_type=excluded.content_type, readiness_score=excluded.readiness_score,
-        coverage_json=excluded.coverage_json, status=excluded.status, updated_at=excluded.updated_at
-    `).run(opportunityId, destinationSlug, topicKey, this.strategyVersion, sourceId, recommendation.id, candidateId,
-      title, analysis.suggested_content_type || null, coverage.readiness, JSON.stringify(coverage), status, timestamp, timestamp);
+        readiness_json=excluded.readiness_json,coverage_json=excluded.coverage_json,
+        status=CASE WHEN content_opportunities.status IN ('approved_waiting_for_evidence','approved_ready','producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft','suppressed') THEN content_opportunities.status ELSE excluded.status END,
+        source_ids_json=CASE WHEN instr(content_opportunities.source_ids_json, excluded.source_id)>0 THEN content_opportunities.source_ids_json ELSE json_insert(content_opportunities.source_ids_json,'$[#]',excluded.source_id) END,
+        updated_at=excluded.updated_at
+    `).run(opportunityId,destinationSlug,JSON.stringify([destinationSlug]),topicKey,this.strategyVersion,sourceId,JSON.stringify([sourceId]),recommendation.id,candidateId,
+      title,contentType,matrix.readiness.score,JSON.stringify(matrix.readiness),JSON.stringify(coverage),status,timestamp,timestamp);
+    this.db.prepare("UPDATE content_recommendations SET opportunity_id=? WHERE id=?").run(opportunityId, recommendation.id);
+    this.saveCoverageMatrix(matrix, destinationSlug);
     return opportunityId;
+  }
+
+  analyzeSourceFamily(sourceId) {
+    const source = this.getSource(sourceId);
+    if (!source?.structured) return null;
+    const peers = this.db.prepare(`SELECT s.* FROM sources s JOIN structured_sources ss ON ss.source_id=s.id
+      WHERE ss.destination_slug=? AND s.id<>? ORDER BY s.captured_at DESC`).all(source.structured.destination_slug, sourceId);
+    let best = null;
+    for (const peer of peers) {
+      const relation = classifySourceFamily(source, peer);
+      if (!best || relation.overlapScore > best.overlapScore) best = { ...relation, peer };
+    }
+    const shareFamily = best && ["EXACT_DUPLICATE", "NEAR_DUPLICATE", "DERIVED_FROM"].includes(best.relation);
+    const peerMembership = shareFamily ? this.db.prepare("SELECT family_id FROM source_family_memberships WHERE source_id=?").get(best.peer.id) : null;
+    const familyKey = peerMembership?.family_id || `family_${sha256(shareFamily ? best.peer.id : sourceId).slice(0, 24)}`;
+    const timestamp = now();
+    const peerKeys = shareFamily ? new Set(this.db.prepare("SELECT normalized_key FROM claims WHERE source_id=?").all(best.peer.id).map((row) => row.normalized_key)) : new Set();
+    const sourceKeys = this.db.prepare("SELECT normalized_key FROM claims WHERE source_id=?").all(sourceId).map((row) => row.normalized_key);
+    const incremental = sourceKeys.filter((key) => !peerKeys.has(key)).length;
+    this.db.prepare(`INSERT INTO source_families(id,family_key,canonical_source_id,created_at,updated_at) VALUES (?,?,?,?,?)
+      ON CONFLICT(family_key) DO UPDATE SET updated_at=excluded.updated_at`).run(familyKey, familyKey, shareFamily ? best.peer.id : sourceId, timestamp, timestamp);
+    this.db.prepare(`INSERT INTO source_family_memberships(family_id,source_id,relation_type,overlap_score,incremental_claim_count,related_source_id,analysis_json,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET family_id=excluded.family_id,relation_type=excluded.relation_type,
+      overlap_score=excluded.overlap_score,incremental_claim_count=excluded.incremental_claim_count,related_source_id=excluded.related_source_id,
+      analysis_json=excluded.analysis_json,updated_at=excluded.updated_at`)
+      .run(familyKey, sourceId, best?.relation || "INDEPENDENT", best?.overlapScore || 0, incremental, best?.peer.id || null, JSON.stringify(best || {}), timestamp, timestamp);
+    return { familyId: familyKey, relation: best?.relation || "INDEPENDENT", incrementalClaimCount: incremental };
+  }
+
+  independentSourceFamilyCount(destinationSlug) {
+    return Number(this.db.prepare(`SELECT COUNT(DISTINCT sfm.family_id) AS count FROM source_family_memberships sfm
+      JOIN structured_sources ss ON ss.source_id=sfm.source_id WHERE ss.destination_slug=?`).get(destinationSlug)?.count || 0);
+  }
+
+  rebuildTopicClusters(destinationSlug) {
+    const facts = this.knowledgeForDestination(destinationSlug);
+    const grouped = Map.groupBy(facts, (fact) => slugify(fact.subject || "general") || "general");
+    const timestamp = now();
+    for (const [subject, values] of grouped) {
+      const topicKey = `${destinationSlug}:cluster:${subject}`;
+      this.db.prepare(`INSERT INTO topic_clusters(id,destination_slug,topic_key,title,claim_keys_json,source_family_ids_json,updated_at)
+        VALUES (?,?,?,?,?,?,?) ON CONFLICT(topic_key) DO UPDATE SET title=excluded.title,claim_keys_json=excluded.claim_keys_json,
+        source_family_ids_json=excluded.source_family_ids_json,updated_at=excluded.updated_at`)
+        .run(`cluster_${sha256(topicKey).slice(0, 24)}`, destinationSlug, topicKey, values[0]?.subject || subject,
+          JSON.stringify(values.map((item) => item.normalized_key)), JSON.stringify([]), timestamp);
+    }
+    return grouped.size;
+  }
+
+  rebuildCoverageMatrices(destinationSlug) {
+    const facts = this.knowledgeForDestination(destinationSlug);
+    const familyCount = this.independentSourceFamilyCount(destinationSlug);
+    const opportunities = this.db.prepare("SELECT * FROM content_opportunities WHERE destination_slug=?").all(destinationSlug);
+    for (const opportunity of opportunities) {
+      const matrix = evaluateCoverage({ topicKey: opportunity.topic_key, contentType: opportunity.content_type, facts, sourceFamilyCount: familyCount });
+      this.saveCoverageMatrix(matrix, destinationSlug);
+      const current = opportunity.status;
+      const next = current === "approved_waiting_for_evidence" && matrix.readiness.ready ? "approved_ready" : current;
+      this.db.prepare("UPDATE content_opportunities SET readiness_score=?,readiness_json=?,coverage_json=?,status=?,updated_at=? WHERE id=?")
+        .run(matrix.readiness.score, JSON.stringify(matrix.readiness), JSON.stringify(matrix), next, now(), opportunity.id);
+    }
+    return opportunities.length;
+  }
+
+  saveCoverageMatrix(matrix, destinationSlug) {
+    const timestamp = now();
+    this.db.prepare(`INSERT INTO coverage_matrices(id,topic_key,destination_slug,content_type,requirements_json,readiness_json,strategy_version,generated_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(topic_key) DO UPDATE SET requirements_json=excluded.requirements_json,
+      readiness_json=excluded.readiness_json,strategy_version=excluded.strategy_version,generated_at=excluded.generated_at,updated_at=excluded.updated_at`)
+      .run(`matrix_${sha256(matrix.topicKey).slice(0, 24)}`, matrix.topicKey, destinationSlug, matrix.contentType,
+        JSON.stringify(matrix.requirements), JSON.stringify(matrix.readiness), this.strategyVersion, timestamp, timestamp);
+  }
+
+  reconcileApprovedOpportunity(opportunityId) {
+    const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(opportunityId);
+    if (!opportunity || !["approved_ready", "producing"].includes(opportunity.status)) return { candidateId: opportunity?.candidate_id || null, queued: false };
+    const readiness = json(opportunity.readiness_json, {});
+    if (!readiness.ready) {
+      this.db.prepare("UPDATE content_opportunities SET status='approved_waiting_for_evidence',updated_at=? WHERE id=?").run(now(), opportunityId);
+      return { candidateId: null, queued: false };
+    }
+    const collision = this.findWordPressCollision(opportunity.title) || this.findSearchConsoleCollision(opportunity.title);
+    if (collision) {
+      const reason = collision.post_id ? `wordpress:${collision.post_id}:${collision.title || collision.slug}` : `search_console:${collision.id}:${collision.query}`;
+      this.db.prepare("UPDATE content_opportunities SET status='suppressed',suppression_reason=?,updated_at=? WHERE id=?").run(reason, now(), opportunityId);
+      return { candidateId: null, queued: false, suppressed: true };
+    }
+    const candidateId = opportunity.candidate_id || `topic_${sha256(opportunity.topic_key).slice(0, 24)}`;
+    const timestamp = now();
+    this.db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,stale_fact_count,verification_fact_count,strategy_version,created_at,updated_at,opportunity_id,recommendation_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(topic_key) DO UPDATE SET opportunity_id=excluded.opportunity_id,
+      recommendation_id=excluded.recommendation_id,coverage_score=excluded.coverage_score,updated_at=excluded.updated_at`)
+      .run(candidateId, opportunity.destination_slug, opportunity.topic_key, opportunity.title,
+        `Approved Strategy 1.4 opportunity with ${readiness.factCount || 0} facts from ${readiness.sourceFamilyCount || 0} independent source families.`,
+        readiness.score || 0, readiness.sourceFamilyCount || 0, readiness.conflictedCount || 0, readiness.staleCount || 0,
+        readiness.requiresOfficialCount || 0, this.strategyVersion, timestamp, timestamp, opportunityId, opportunity.recommendation_id);
+    this.db.prepare("UPDATE content_opportunities SET candidate_id=?,status='producing',updated_at=? WHERE id=?").run(candidateId, timestamp, opportunityId);
+    this.db.prepare("UPDATE content_recommendations SET approved_candidate_id=?,opportunity_id=?,updated_at=? WHERE id=?")
+      .run(candidateId, opportunityId, timestamp, opportunity.recommendation_id);
+    return { candidateId, queued: this.queueCandidate(candidateId) };
+  }
+
+  reconcileApprovedOpportunities(destinationSlug = null) {
+    const rows = destinationSlug
+      ? this.db.prepare("SELECT id FROM content_opportunities WHERE destination_slug=? AND status IN ('approved_waiting_for_evidence','approved_ready')").all(destinationSlug)
+      : this.db.prepare("SELECT id FROM content_opportunities WHERE status IN ('approved_waiting_for_evidence','approved_ready')").all();
+    const results = [];
+    for (const row of rows) {
+      const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(row.id);
+      if (opportunity.status === "approved_waiting_for_evidence") {
+        this.rebuildCoverageMatrices(opportunity.destination_slug);
+      }
+      results.push(this.reconcileApprovedOpportunity(row.id));
+    }
+    return results;
   }
 
   listSources(limit = 100) {
@@ -533,7 +846,7 @@ export class Repository {
     `).all(limit);
   }
 
-  saveExtraction(sourceId, result, method, model = null) {
+  saveExtraction(sourceId, result, method, model = null, { deferDownstream = false } = {}) {
     const timestamp = now();
     transaction(this.db, () => {
       const previousRevision = this.db.prepare("SELECT COALESCE(MAX(revision), 0) AS revision FROM extraction_runs WHERE source_id=?").get(sourceId).revision;
@@ -595,6 +908,10 @@ export class Repository {
           claimRole, knowledgeEligible ? 1 : 0,
         );
       }
+      this.db.prepare(`UPDATE claims SET observed_at=(SELECT published_at FROM sources WHERE id=?),
+        temporal_confidence=CASE WHEN (SELECT published_at FROM sources WHERE id=?) IS NULL THEN 'unknown' ELSE 'medium' END,
+        source_authority_level=(SELECT authority_level FROM sources WHERE id=?) WHERE source_id=?`)
+        .run(sourceId, sourceId, sourceId, sourceId);
       this.db.prepare(`
         INSERT INTO source_blueprints(source_id, format, hook, angle, sections_json, strengths_json, gaps_json, extracted_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -608,9 +925,24 @@ export class Repository {
       );
       this.db.prepare("UPDATE sources SET status = ?, last_error = NULL, updated_at = ? WHERE id = ?")
         .run(method === "heuristic" ? "needs_ai" : "processed", timestamp, sourceId);
-      this.enqueue("resolve_entities", result.source.destination_slug);
-      this.enqueue("rebuild_editorial", "global");
+      if (!deferDownstream) {
+        this.enqueue("resolve_entities", result.source.destination_slug);
+        this.enqueue("rebuild_editorial", "global");
+      }
     });
+  }
+
+  saveSourceBlueprint(sourceId, blueprint) {
+    const value = blueprint || {};
+    const timestamp = now();
+    this.db.prepare(`INSERT INTO source_blueprints(source_id,format,hook,angle,sections_json,strengths_json,gaps_json,extracted_at)
+      VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET format=excluded.format,hook=excluded.hook,
+      angle=excluded.angle,sections_json=excluded.sections_json,strengths_json=excluded.strengths_json,
+      gaps_json=excluded.gaps_json,extracted_at=excluded.extracted_at`)
+      .run(sourceId, String(value.format || "unclassified").slice(0, 200), String(value.hook || "").slice(0, 500),
+        String(value.angle || "").slice(0, 500), JSON.stringify(value.sections || []), JSON.stringify(value.strengths || []),
+        JSON.stringify(value.gaps || []), timestamp);
+    return this.db.prepare("SELECT * FROM source_blueprints WHERE source_id=?").get(sourceId);
   }
 
   getEntityResolutionPackage(destinationSlug, limit = 300) {
@@ -621,7 +953,7 @@ export class Repository {
         s.captured_at, s.title AS source_title
       FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
       JOIN sources s ON s.id=c.source_id
-      WHERE ss.destination_slug=? AND c.knowledge_eligible=1
+      WHERE ss.destination_slug=? AND c.knowledge_eligible=1 AND c.lifecycle_status='active'
       ORDER BY s.captured_at DESC, c.normalized_key LIMIT ?
     `).all(destinationSlug, limit);
     const destination = this.db.prepare("SELECT name FROM destinations WHERE slug=?").get(destinationSlug);
@@ -661,7 +993,8 @@ export class Repository {
 
   resolveEntitiesDeterministically(destinationSlug) {
     const rows = this.db.prepare(`
-      SELECT c.* FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
+      SELECT c.* FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
+      WHERE ss.destination_slug=? AND c.lifecycle_status='active'
     `).all(destinationSlug);
     const timestamp = now();
     transaction(this.db, () => {
@@ -924,7 +1257,7 @@ export class Repository {
       SELECT c.*, ss.destination_name, ss.destination_slug, s.captured_at
       FROM claims c JOIN structured_sources ss ON ss.source_id = c.source_id
       JOIN sources s ON s.id = c.source_id
-      WHERE ss.destination_slug = ?
+      WHERE ss.destination_slug = ? AND c.lifecycle_status='active'
     `).all(destinationSlug);
     const timestamp = now();
     for (const row of allSourceRows) {
@@ -1031,7 +1364,9 @@ export class Repository {
           ? String(ranked[0][1][0].structured_value.typed_value)
           : ranked[0][1][0].value_text;
         const freshness = classifyFreshness(rows, this.contentConfig);
-        const verificationPriority = freshness.volatile || status === "conflicted"
+        const hasCurrentOfficialEvidence = rows.some((row) => Number(row.source_authority_level || 4) === 1)
+          && freshness.state !== "stale";
+        const verificationPriority = status === "conflicted" || (freshness.volatile && !hasCurrentOfficialEvidence)
           ? "requires_official" : status === "single_source" || freshness.state === "stale" ? "review" : "normal";
         const entity = aggregateEntityIdentity(rows);
         const evidence = rows.map((row) => ({
@@ -1046,13 +1381,15 @@ export class Repository {
           source_subject: row.subject,
           captured_at: row.captured_at,
         }));
+        const visibility = this.db.prepare("SELECT * FROM knowledge_visibility_overrides WHERE destination_slug=? AND normalized_key=?")
+          .get(destinationSlug, key);
         this.db.prepare(`
           INSERT INTO knowledge_facts(id, destination_id, normalized_key, subject, predicate, consensus_status,
             preferred_value, support_count, contradiction_count, evidence_json, updated_at,
             freshness_state, latest_evidence_at, verification_priority, entity_key, canonical_subject,
             entity_aliases_json, entity_resolution_status, entity_type, granularity, entity_location_json,
-            claim_relations_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            claim_relations_json, visibility_status, visibility_reason, visibility_updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(destination_id, normalized_key) DO UPDATE SET subject=excluded.subject,
             predicate=excluded.predicate, consensus_status=excluded.consensus_status,
             preferred_value=excluded.preferred_value, support_count=excluded.support_count,
@@ -1062,7 +1399,9 @@ export class Repository {
             entity_key=excluded.entity_key, canonical_subject=excluded.canonical_subject,
             entity_aliases_json=excluded.entity_aliases_json, entity_resolution_status=excluded.entity_resolution_status,
             entity_type=excluded.entity_type, granularity=excluded.granularity,
-            entity_location_json=excluded.entity_location_json, claim_relations_json=excluded.claim_relations_json
+            entity_location_json=excluded.entity_location_json, claim_relations_json=excluded.claim_relations_json,
+            visibility_status=excluded.visibility_status, visibility_reason=excluded.visibility_reason,
+            visibility_updated_at=excluded.visibility_updated_at
         `).run(
           `fact_${sha256(`${destinationId}:${key}`).slice(0, 24)}`, destinationId, key, entity.canonicalSubject || rows[0].subject,
           canonicalPredicate || rows[0].predicate, status, preferredValue, status === "conflicted" ? ranked[0][1].length : rows.length,
@@ -1070,6 +1409,7 @@ export class Repository {
           freshness.state, freshness.latestEvidenceAt, verificationPriority, entity.entityKey,
           entity.canonicalSubject, JSON.stringify(entity.aliases), entity.status, entity.entityType,
           entity.granularity, JSON.stringify(entity.location || {}), JSON.stringify(relations),
+          visibility?.visibility_status || "visible", visibility?.reason || null, visibility?.updated_at || null,
         );
       }
     });
@@ -1172,6 +1512,10 @@ export class Repository {
     `);
     const selectedIds = proposals
       .sort((a, b) => a.selectionPriority - b.selectionPriority || b.coverageScore - a.coverageScore)
+      .filter((proposal) => {
+        const existing = this.db.prepare("SELECT status FROM topic_candidates WHERE topic_key=?").get(proposal.topicKey);
+        return !existing || ["candidate", "dismissed"].includes(existing.status);
+      })
       .slice(0, maxPerDestination)
       .map((proposal) => {
         const candidateId = `topic_${sha256(proposal.topicKey).slice(0, 24)}`;
@@ -1207,7 +1551,7 @@ export class Repository {
     if (candidate.strategy_version === this.strategyVersion) {
       const approved = this.db.prepare(`
         SELECT id FROM content_opportunities
-        WHERE candidate_id=? AND strategy_version=? AND status='planned'
+        WHERE candidate_id=? AND strategy_version=? AND status='producing'
         LIMIT 1
       `).get(candidateId, this.strategyVersion);
       if (!approved) return false;
@@ -1258,6 +1602,7 @@ export class Repository {
         JSON.stringify(canonical), timestamp, timestamp, candidateId, JSON.stringify(ledger), model, this.strategyVersion);
     }
     this.db.prepare("UPDATE topic_candidates SET status='brief_ready', updated_at=? WHERE id=?").run(timestamp, candidateId);
+    this.db.prepare("UPDATE content_opportunities SET status='producing',updated_at=? WHERE candidate_id=?").run(timestamp, candidateId);
     if (!deferDraft) this.enqueue("generate_draft", briefId);
     return briefId;
   }
@@ -1307,6 +1652,7 @@ export class Repository {
     this.replaceDraftVisuals(draftId, metadata.visuals, brief.strategy_version || this.strategyVersion);
     this.db.prepare("UPDATE topic_candidates SET status='drafted', updated_at=? WHERE id=?").run(timestamp, brief.candidate_id);
     this.db.prepare("UPDATE content_briefs SET status='drafted', updated_at=? WHERE id=?").run(timestamp, briefId);
+    this.db.prepare("UPDATE content_opportunities SET status='drafted',updated_at=? WHERE candidate_id=?").run(timestamp, brief.candidate_id);
     if (!deferReview) this.enqueue("review_draft", draftId);
     return draftId;
   }
@@ -1331,6 +1677,7 @@ export class Repository {
         visuals: this.listDraftVisuals(draftId),
       },
       frontend_page: this.getFrontendPageComposition(draftId),
+      publish_composition: this.getFrontendPublishComposition(draftId),
       review: review ? hydrateReview(review) : null,
       publication,
       commercial_composition: compositionRow ? {
@@ -1423,35 +1770,45 @@ export class Repository {
       JSON.stringify(review.unsupported_claims), reviewer, this.db.prepare("SELECT strategy_version FROM article_drafts WHERE id=?").get(draftId)?.strategy_version || this.strategyVersion, timestamp);
     this.db.prepare("UPDATE article_drafts SET quality_report_json=?, status=?, updated_at=? WHERE id=?")
       .run(JSON.stringify(review), review.passed ? "ready_for_wordpress" : "qa_failed", timestamp, draftId);
+    this.db.prepare(`UPDATE content_opportunities SET status=?,updated_at=? WHERE candidate_id=(
+      SELECT cb.candidate_id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?)`)
+      .run(review.passed ? "ready_for_wordpress" : "qa_failed", timestamp, draftId);
     return this.db.prepare("SELECT revision FROM article_drafts WHERE id = ?").get(draftId)?.revision || 1;
   }
 
-  prepareWordPressPublication(draftId, siteUrl) {
+  prepareWordPressPublication(draftId, siteUrl, deliveryMode = "legacy") {
     const timestamp = now();
     const existing = this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id = ?").get(draftId);
     if (existing) {
-      this.db.prepare("UPDATE wordpress_publications SET status='queued', last_error=NULL, updated_at=? WHERE draft_id=?").run(timestamp, draftId);
-      return existing;
+      this.db.prepare("UPDATE wordpress_publications SET status='queued', last_error=NULL, error_code=NULL, delivery_mode=?, updated_at=? WHERE draft_id=?")
+        .run(deliveryMode, timestamp, draftId);
+      return this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id=?").get(draftId);
     }
     const publication = { id: id("wp"), draft_id: draftId, site_url: siteUrl, post_id: null };
     this.db.prepare(`
-      INSERT INTO wordpress_publications(id, draft_id, site_url, status, strategy_version, created_at, updated_at)
-      VALUES (?, ?, ?, 'queued', ?, ?, ?)
-    `).run(publication.id, draftId, siteUrl, this.db.prepare("SELECT strategy_version FROM article_drafts WHERE id=?").get(draftId)?.strategy_version || this.strategyVersion, timestamp, timestamp);
+      INSERT INTO wordpress_publications(id, draft_id, site_url, status, strategy_version, created_at, updated_at, delivery_mode)
+      VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)
+    `).run(publication.id, draftId, siteUrl, this.db.prepare("SELECT strategy_version FROM article_drafts WHERE id=?").get(draftId)?.strategy_version || this.strategyVersion, timestamp, timestamp, deliveryMode);
     return publication;
   }
 
   completeWordPressPublication(draftId, result) {
     this.db.prepare(`
-      UPDATE wordpress_publications SET post_id=?, post_url=?, status='synced', last_error=NULL, updated_at=? WHERE draft_id=?
-    `).run(result.postId, result.postUrl, now(), draftId);
+      UPDATE wordpress_publications SET post_id=?, post_url=?, preview_url=?, edit_url=?, response_json=?, status='synced',
+        last_error=NULL, error_code=NULL, updated_at=? WHERE draft_id=?
+    `).run(result.postId, result.postUrl, result.previewUrl || result.postUrl || null, result.editUrl || null,
+      JSON.stringify(result), now(), draftId);
     for (const visual of result.visuals || []) this.saveWordPressVisual(visual.visualId, visual);
+    this.markFrontendPublishComposition(draftId, "delivered", result.postId);
     this.db.prepare("UPDATE article_drafts SET status='wordpress_draft', updated_at=? WHERE id=?").run(now(), draftId);
+    this.db.prepare(`UPDATE content_opportunities SET status='wordpress_draft',updated_at=? WHERE candidate_id=(
+      SELECT cb.candidate_id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?)`).run(now(), draftId);
   }
 
   failWordPressPublication(draftId, error) {
-    this.db.prepare("UPDATE wordpress_publications SET status='failed', last_error=?, updated_at=? WHERE draft_id=?")
-      .run(String(error?.message || error).slice(0, 4000), now(), draftId);
+    this.db.prepare("UPDATE wordpress_publications SET status='failed', last_error=?, error_code=?, updated_at=? WHERE draft_id=?")
+      .run(String(error?.message || error).slice(0, 4000), String(error?.code || "WORDPRESS_DELIVERY_FAILED").slice(0, 120), now(), draftId);
+    if (this.getFrontendPublishComposition(draftId)) this.markFrontendPublishComposition(draftId, "delivery_failed");
   }
 
   listContent() {
@@ -1459,7 +1816,8 @@ export class Repository {
       SELECT tc.*, cb.id AS brief_id, cb.status AS brief_status, ad.id AS draft_id, ad.status AS draft_status,
         ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score,
         wp.post_id AS wordpress_post_id, wp.post_url AS wordpress_post_url, wp.status AS wordpress_status,
-        cc.status AS commercial_status, json_array_length(COALESCE(cc.offer_ids_json, '[]')) AS commercial_offer_count
+        cc.status AS commercial_status, json_array_length(COALESCE(cc.offer_ids_json, '[]')) AS commercial_offer_count,
+        pc.status AS publish_composition_status
       FROM topic_candidates tc
       LEFT JOIN content_briefs cb ON cb.candidate_id = tc.id
       LEFT JOIN article_drafts ad ON ad.brief_id = cb.id
@@ -1468,6 +1826,7 @@ export class Repository {
       )
       LEFT JOIN wordpress_publications wp ON wp.draft_id = ad.id
       LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
+      LEFT JOIN frontend_publish_compositions pc ON pc.draft_id = ad.id
       ORDER BY tc.coverage_score DESC, tc.updated_at DESC
     `).all();
   }
@@ -1506,21 +1865,23 @@ export class Repository {
     this.db.prepare(`INSERT INTO affiliate_assets(id, provider_account_id, provider, asset_type, product_category,
       scope_type, scope_key, destination_slug, area_key, route_key, entity_key, entity_name, provider_entity_id,
       title, description, cta_label, target_url, embed_config_json, language, priority, active, valid_from,
-      valid_until, source_updated_at, legacy_offer_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      valid_until, source_updated_at, legacy_offer_id, created_at, updated_at, image_url, alt_text, price_text)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET provider_account_id=excluded.provider_account_id, provider=excluded.provider,
         asset_type=excluded.asset_type, product_category=excluded.product_category, scope_type=excluded.scope_type,
         scope_key=excluded.scope_key, destination_slug=excluded.destination_slug, area_key=excluded.area_key,
         route_key=excluded.route_key, entity_key=excluded.entity_key, entity_name=excluded.entity_name,
         provider_entity_id=excluded.provider_entity_id, title=excluded.title, description=excluded.description,
         cta_label=excluded.cta_label, target_url=excluded.target_url, embed_config_json=excluded.embed_config_json,
+        image_url=excluded.image_url, alt_text=excluded.alt_text, price_text=excluded.price_text,
         language=excluded.language, priority=excluded.priority, active=excluded.active, valid_from=excluded.valid_from,
         valid_until=excluded.valid_until, source_updated_at=excluded.source_updated_at, updated_at=excluded.updated_at`)
       .run(asset.id, asset.providerAccountId, asset.provider, asset.assetType, asset.productCategory, asset.scopeType,
         asset.scopeKey, asset.destinationSlug, asset.areaKey, asset.routeKey, asset.entityKey, asset.entityName,
         asset.providerEntityId, asset.title, asset.description, asset.ctaLabel, asset.targetUrl,
         JSON.stringify(asset.embedConfig || {}), asset.language, asset.priority, asset.active ? 1 : 0, asset.validFrom,
-        asset.validUntil, asset.sourceUpdatedAt, asset.legacyOfferId, timestamp, timestamp);
+        asset.validUntil, asset.sourceUpdatedAt, asset.legacyOfferId, timestamp, timestamp,
+        asset.imageUrl || "", asset.altText || "", asset.priceText || "");
     this.db.prepare(`INSERT OR IGNORE INTO affiliate_asset_mappings(id, affiliate_asset_id, scope_type, scope_key, destination_slug, created_at)
       VALUES (?, ?, ?, ?, ?, ?)`)
       .run(`asset_mapping_${sha256(`${asset.id}:${asset.scopeType}:${asset.scopeKey}`).slice(0, 24)}`,
@@ -1682,17 +2043,20 @@ export class Repository {
     });
   }
 
-  retryContent(candidateId) {
+  retryContent(candidateId, { contractAware = false } = {}) {
     const row = this.db.prepare(`
       SELECT tc.id, tc.status AS candidate_status, cb.id AS brief_id, cb.status AS brief_status,
         ad.id AS draft_id, ad.status AS draft_status, ad.revision, qr.passed AS qa_passed,
-        wp.status AS wordpress_status, cc.status AS commercial_status
+        wp.status AS wordpress_status, cc.status AS commercial_status, pc.status AS publish_composition_status,
+        fp.status AS frontend_page_status
       FROM topic_candidates tc
       LEFT JOIN content_briefs cb ON cb.candidate_id=tc.id
       LEFT JOIN article_drafts ad ON ad.brief_id=cb.id
       LEFT JOIN quality_reviews qr ON qr.id=(SELECT id FROM quality_reviews WHERE draft_id=ad.id ORDER BY created_at DESC LIMIT 1)
       LEFT JOIN wordpress_publications wp ON wp.draft_id=ad.id
       LEFT JOIN commercial_compositions cc ON cc.draft_id=ad.id
+      LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=ad.id
+      LEFT JOIN frontend_page_compositions fp ON fp.draft_id=ad.id
       WHERE tc.id=?
     `).get(candidateId);
     if (!row) return null;
@@ -1702,13 +2066,23 @@ export class Repository {
       this.enqueue("generate_draft", row.brief_id);
       return "generate_draft";
     }
+    if (contractAware && (row.frontend_page_status === "stale_contract" || row.publish_composition_status === "stale_contract")) {
+      this.enqueue("compose_frontend_page", row.draft_id);
+      return "compose_frontend_page";
+    }
     if (row.qa_passed && !row.commercial_status) {
       this.enqueue("compose_commercial", row.draft_id);
       return "compose_commercial";
     }
+    if (row.qa_passed && row.commercial_status && !row.publish_composition_status) {
+      const jobType = contractAware ? "compose_publish_page" : "push_wordpress_draft";
+      this.enqueue(jobType, row.draft_id);
+      return jobType;
+    }
     if (row.qa_passed && row.wordpress_status === "failed") {
-      this.enqueue("push_wordpress_draft", row.draft_id);
-      return "push_wordpress_draft";
+      const jobType = contractAware && row.publish_composition_status === "stale_contract" ? "compose_publish_page" : "push_wordpress_draft";
+      this.enqueue(jobType, row.draft_id);
+      return jobType;
     }
     if (!row.qa_passed) {
       this.enqueue("revise_draft", row.draft_id);
@@ -1717,17 +2091,48 @@ export class Repository {
     return null;
   }
 
-  enqueueStartupReconciliation({ wordpressEnabled = false } = {}) {
+  enqueueStartupReconciliation({ wordpressEnabled = false, contractAware = false } = {}) {
     const researchSlugs = new Set(this.db.prepare("SELECT DISTINCT destination_slug FROM structured_sources").all().map((row) => row.destination_slug));
     for (const slug of researchSlugs) this.enqueue("rebuild_knowledge", slug);
     for (const row of this.db.prepare("SELECT slug FROM destinations").all()) {
       if (!researchSlugs.has(row.slug)) this.enqueue("rebuild_topics", row.slug);
     }
+    this.reconcileApprovedOpportunities();
     if (wordpressEnabled) {
-      for (const row of this.db.prepare("SELECT id FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready')").all()) {
-        this.enqueue("compose_commercial", row.id);
+      for (const row of this.db.prepare(`SELECT ad.id, cc.id AS commercial_id, pc.id AS publish_id,
+          fp.id AS frontend_page_id, fp.status AS frontend_page_status
+        FROM article_drafts ad LEFT JOIN commercial_compositions cc ON cc.draft_id=ad.id
+        LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=ad.id
+        LEFT JOIN frontend_page_compositions fp ON fp.draft_id=ad.id
+        WHERE ad.status IN ('ready_for_wordpress','commercial_ready')`).all()) {
+        let jobType = !row.commercial_id ? "compose_commercial" : "push_wordpress_draft";
+        if (contractAware && row.commercial_id) {
+          if (!row.frontend_page_id || row.frontend_page_status === "stale_contract") jobType = "compose_frontend_page";
+          else if (!row.publish_id) jobType = "compose_publish_page";
+        }
+        this.enqueue(jobType, row.id);
       }
     }
+  }
+
+  resetDerivedResearchAndRequeue() {
+    const timestamp = now();
+    const sourceIds = this.db.prepare("SELECT id FROM sources ORDER BY created_at").all().map((row) => row.id);
+    transaction(this.db, () => {
+      for (const table of [
+        "frontend_publish_compositions", "wordpress_publications", "commercial_compositions", "commercial_intents", "commercial_slots",
+        "quality_reviews", "article_visuals", "frontend_page_compositions", "frontend_page_plans", "frontend_capability_requests",
+        "article_drafts", "content_briefs", "topic_candidates", "content_opportunities", "content_recommendations", "content_intake_analyses",
+        "coverage_matrices", "topic_clusters", "knowledge_resolutions", "knowledge_visibility_overrides", "knowledge_facts", "claim_review_cases", "claim_relations",
+        "entity_merge_candidates", "entity_merge_history", "entity_relations", "entity_aliases", "editorial_blueprints", "source_blueprints",
+        "claim_history", "claims", "evidence_spans", "extraction_coverage", "segment_extractions", "source_segments",
+        "source_family_memberships", "source_families", "extraction_runs", "structured_sources", "jobs",
+      ]) this.db.prepare(`DELETE FROM ${table}`).run();
+      this.db.prepare("UPDATE source_assets SET extraction_status='pending',extraction_error=NULL,processed_at=NULL").run();
+      this.db.prepare("UPDATE sources SET status='captured',last_error=NULL,diagnostic_json='{}',destination_scopes_json='[]',topic_scopes_json='[]',updated_at=?").run(timestamp);
+      for (const sourceId of sourceIds) this.enqueue("extract_source", sourceId);
+    });
+    return { preservedSources: sourceIds.length, requeuedSources: sourceIds.length, resetAt: timestamp };
   }
 
   maintenanceDue(taskKey, intervalHours) {
@@ -1955,6 +2360,29 @@ export class Repository {
     return this.db.prepare("SELECT * FROM wordpress_content_inventory ORDER BY modified_at DESC, post_id DESC").all();
   }
 
+  listWordPressPublicationStates() {
+    return this.db.prepare(`
+      SELECT ad.id AS draft_id, ad.title, ad.status AS draft_status, ad.updated_at,
+        qr.passed AS qa_passed, cc.status AS commercial_status, pc.status AS publish_composition_status,
+        wp.status AS wordpress_status, wp.post_id, wp.post_url, wp.preview_url, wp.edit_url,
+        wp.last_error, wp.error_code, wp.delivery_mode,
+        CASE
+          WHEN wp.status='synced' AND wp.post_id IS NOT NULL THEN 'wordpress_draft'
+          WHEN wp.status='failed' THEN 'delivery_failed'
+          WHEN wp.status='queued' THEN 'queued'
+          WHEN pc.status='delivered' THEN 'delivered'
+          WHEN pc.status='valid' THEN 'ready_to_deliver'
+          ELSE 'not_ready'
+        END AS delivery_state
+      FROM article_drafts ad
+      LEFT JOIN quality_reviews qr ON qr.id=(SELECT id FROM quality_reviews WHERE draft_id=ad.id ORDER BY created_at DESC LIMIT 1)
+      LEFT JOIN commercial_compositions cc ON cc.draft_id=ad.id
+      LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=ad.id
+      LEFT JOIN wordpress_publications wp ON wp.draft_id=ad.id
+      ORDER BY ad.updated_at DESC
+    `).all();
+  }
+
   getWordPressSyncState(siteUrl) {
     if (!siteUrl) return null;
     return this.db.prepare("SELECT * FROM integration_sync_state WHERE sync_key=?").get(wordpressSyncKey(siteUrl)) || null;
@@ -2073,7 +2501,7 @@ export class Repository {
         kr.resolved_at AS resolution_resolved_at
       FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
       LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
-      WHERE d.slug=? ORDER BY k.consensus_status='conflicted' DESC, k.support_count DESC, k.normalized_key
+      WHERE d.slug=? AND k.visibility_status='visible' ORDER BY k.consensus_status='conflicted' DESC, k.support_count DESC, k.normalized_key
     `).all(destinationSlug).map((row) => ({
       normalized_key: row.normalized_key, subject: row.subject, predicate: row.predicate,
       entity_key: row.entity_key || null,
@@ -2090,6 +2518,35 @@ export class Repository {
       verification_priority: resolvedVerificationPriority(row),
       manual_resolution: hydrateKnowledgeResolution(row),
     }));
+  }
+
+  setClaimLifecycle(claimId, action, reason = "", actor = "admin") {
+    if (!["exclude", "restore"].includes(action)) throw new Error("Claim action must be exclude or restore.");
+    const claim = this.db.prepare(`SELECT c.*,ss.destination_slug FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE c.id=?`).get(claimId);
+    if (!claim) return null;
+    const excluded = action === "exclude";
+    this.db.prepare("UPDATE claims SET lifecycle_status=?,exclusion_reason=?,excluded_at=?,excluded_by=? WHERE id=?")
+      .run(excluded ? "excluded" : "active", excluded ? String(reason || "Excluded by administrator").slice(0, 1000) : null,
+        excluded ? now() : null, excluded ? actor : null, claimId);
+    this.enqueue("rebuild_knowledge", claim.destination_slug);
+    return { claimId, action, status: excluded ? "excluded" : "active", destinationSlug: claim.destination_slug };
+  }
+
+  setKnowledgeVisibility(factId, action, reason = "", actor = "admin") {
+    if (!["hide", "restore"].includes(action)) throw new Error("Knowledge action must be hide or restore.");
+    const fact = this.db.prepare(`SELECT k.*,d.slug AS destination_slug FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id WHERE k.id=?`).get(factId);
+    if (!fact) return null;
+    const hidden = action === "hide";
+    const timestamp = now();
+    const visibilityReason = hidden ? String(reason || "Hidden by administrator").slice(0, 1000) : null;
+    this.db.prepare(`INSERT INTO knowledge_visibility_overrides(destination_slug,normalized_key,visibility_status,reason,updated_by,updated_at)
+      VALUES (?,?,?,?,?,?) ON CONFLICT(destination_slug,normalized_key) DO UPDATE SET visibility_status=excluded.visibility_status,
+      reason=excluded.reason,updated_by=excluded.updated_by,updated_at=excluded.updated_at`)
+      .run(fact.destination_slug, fact.normalized_key, hidden ? "hidden" : "visible", visibilityReason,
+        String(actor || "admin").slice(0, 200), timestamp);
+    this.db.prepare("UPDATE knowledge_facts SET visibility_status=?,visibility_reason=?,visibility_updated_at=? WHERE id=?")
+      .run(hidden ? "hidden" : "visible", visibilityReason, timestamp, factId);
+    return { factId, action, status: hidden ? "hidden" : "visible", destinationSlug: fact.destination_slug };
   }
 
   authorizedSourceAssetsForBrief(brief) {
@@ -2246,7 +2703,7 @@ export class Repository {
       || String(b.updatedAt).localeCompare(String(a.updatedAt)));
   }
 
-  retryOperationalException(exceptionKey) {
+  retryOperationalException(exceptionKey, { contractAware = false } = {}) {
     const separator = exceptionKey.indexOf(":");
     const kind = exceptionKey.slice(0, separator);
     const entityId = exceptionKey.slice(separator + 1);
@@ -2269,13 +2726,13 @@ export class Repository {
     }
     if (kind === "brief") {
       const row = this.db.prepare("SELECT candidate_id FROM content_briefs WHERE id=?").get(entityId);
-      return Boolean(row && this.retryContent(row.candidate_id));
+      return Boolean(row && this.retryContent(row.candidate_id, { contractAware }));
     }
     if (["draft", "wordpress"].includes(kind)) {
       const row = this.db.prepare(`
         SELECT cb.candidate_id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?
       `).get(entityId);
-      return Boolean(row && this.retryContent(row.candidate_id));
+      return Boolean(row && this.retryContent(row.candidate_id, { contractAware }));
     }
     return false;
   }
@@ -2358,7 +2815,7 @@ export class Repository {
     const contentNeedsAttention = exceptionCount("brief") + exceptionCount("draft");
     const contentPipelineItems = this.db.prepare(`
       SELECT COUNT(DISTINCT candidate_id) AS count FROM content_opportunities
-      WHERE candidate_id IS NOT NULL AND status='planned'
+      WHERE candidate_id IS NOT NULL AND status IN ('producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft')
     `).get().count;
     return {
       sources: Object.fromEntries(statuses.map((row) => [row.status, row.count])),
@@ -2409,7 +2866,7 @@ function hydrateReview(row) {
   };
 }
 
-function hydrateSource({ source, assets, files = [], structured, claims, extractionRuns = [], claimHistory = [], blueprint, analysis = null, recommendation = null }) {
+function hydrateSource({ source, assets, files = [], structured, claims, extractionRuns = [], claimHistory = [], blueprint, analysis = null, recommendation = null, segments = [], coverage = [], family = null }) {
   if (structured) {
     structured.traveler_fit = json(structured.traveler_fit_json, []);
     structured.practical_tips = json(structured.practical_tips_json, []);
@@ -2437,6 +2894,9 @@ function hydrateSource({ source, assets, files = [], structured, claims, extract
     claim_history: claimHistory.map((row) => ({ ...row, snapshot: json(row.snapshot_json, {}) })), blueprint,
     analysis: analysis ? { ...analysis, data: json(analysis.analysis_json, {}) } : null,
     recommendation: recommendation ? hydrateRecommendation(recommendation) : null,
+    segments: segments.map((row) => ({ ...row, destination_scopes: json(row.destination_scopes_json, []), topic_scopes: json(row.topic_scopes_json, []) })),
+    extraction_coverage: coverage.map((row) => ({ ...row, uncovered_spans: json(row.uncovered_spans_json, []) })),
+    source_family: family ? { ...family, analysis: json(family.analysis_json, {}) } : null,
   };
 }
 
@@ -2676,6 +3136,26 @@ function opportunityCoverage(destinationSlug, facts, analysis) {
   };
   const complete = Object.values(coverage).filter((value) => value === true).length;
   return { readiness: Math.round(Math.min(100, analysis.article_potential * 0.55 + analysis.topic_completeness * 0.35 + complete * 2)), coverage };
+}
+
+function normalizeContentType(value) {
+  const normalized = slugify(value || "").replaceAll("-", "_");
+  return ["city_guide","itinerary","attraction_guide","food_guide","transport_guide","neighborhood_guide","hotel_area_guide","shopping_guide","practical_guide","first_time_guide","comparison","listicle","how_to"].includes(normalized)
+    ? normalized : "practical_guide";
+}
+
+function mergeBlueprints(values) {
+  const blueprints = Array.isArray(values) ? values : [];
+  const first = blueprints[0] || {};
+  const unique = (items) => [...new Set(items.filter(Boolean))];
+  return {
+    format: first.format || "multi-segment evidence container",
+    hook: first.hook || "",
+    angle: first.angle || "evidence-led travel guidance",
+    sections: unique(blueprints.flatMap((item) => (item.sections || []).map((section) => JSON.stringify(section)))).map((item) => JSON.parse(item)),
+    strengths: unique(blueprints.flatMap((item) => item.strengths || [])),
+    gaps: unique(blueprints.flatMap((item) => item.gaps || [])),
+  };
 }
 
 function normalizeFaqs(values) {

@@ -4,7 +4,7 @@ import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { Pipeline } from "../src/pipeline.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
-test("topic discovery can add an attraction how-to when multiple sources cover one subject", async (t) => {
+test("Strategy 1.4 extraction builds topic clusters without manufacturing pre-approval candidates", async (t) => {
   const { repository } = repositoryFixture(t);
   const extractor = {
     async extract(source) {
@@ -28,11 +28,11 @@ test("topic discovery can add an attraction how-to when multiple sources cover o
       text: `A manually selected source with detailed Forbidden City information ${id}.`, images: [],
     }));
   }
-  for (let index = 0; index < 15; index += 1) await pipeline.runOne();
-  const topics = repository.listContent();
-  assert.equal(topics.length, 2);
-  assert.ok(topics.some((topic) => topic.topic_key === "beijing:first-time-solo-guide"));
-  assert.ok(topics.some((topic) => topic.topic_key === "beijing:visit:the-forbidden-city"));
+  while (await pipeline.runOne()) { /* drain the Strategy 1.4 staged extraction graph */ }
+  const clusters = repository.db.prepare("SELECT * FROM topic_clusters WHERE destination_slug='beijing'").all();
+  assert.equal(clusters.length, 1);
+  assert.equal(clusters[0].title, "the Forbidden City");
+  assert.equal(repository.listContent().length, 0);
 });
 
 test("WordPress inventory suppresses an overlapping topic before content planning", (t) => {

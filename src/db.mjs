@@ -40,6 +40,262 @@ function migrate(db) {
   if (current < 19) migrationNineteen(db);
   if (current < 20) migrationTwenty(db);
   if (current < 21) migrationTwentyOne(db);
+  if (current < 22) migrationTwentyTwo(db);
+  if (current < 23) migrationTwentyThree(db);
+}
+
+function migrationTwentyThree(db) {
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE sources ADD COLUMN observed_at TEXT;
+      ALTER TABLE sources ADD COLUMN verified_at TEXT;
+      ALTER TABLE sources ADD COLUMN effective_from TEXT;
+      ALTER TABLE sources ADD COLUMN effective_to TEXT;
+      ALTER TABLE sources ADD COLUMN authority_level INTEGER NOT NULL DEFAULT 4 CHECK (authority_level BETWEEN 1 AND 4);
+      ALTER TABLE sources ADD COLUMN destination_scopes_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE sources ADD COLUMN topic_scopes_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE sources ADD COLUMN diagnostic_json TEXT NOT NULL DEFAULT '{}';
+
+      ALTER TABLE source_assets ADD COLUMN extraction_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (extraction_status IN ('pending','processed','failed','retry_required'));
+      ALTER TABLE source_assets ADD COLUMN extraction_error TEXT;
+      ALTER TABLE source_assets ADD COLUMN processed_at TEXT;
+
+      ALTER TABLE claims ADD COLUMN evidence_span_ids_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE claims ADD COLUMN destination_scopes_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE claims ADD COLUMN topic_scopes_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE claims ADD COLUMN observed_at TEXT;
+      ALTER TABLE claims ADD COLUMN verified_at TEXT;
+      ALTER TABLE claims ADD COLUMN effective_from TEXT;
+      ALTER TABLE claims ADD COLUMN effective_to TEXT;
+      ALTER TABLE claims ADD COLUMN temporal_confidence TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (temporal_confidence IN ('unknown','low','medium','high'));
+      ALTER TABLE claims ADD COLUMN source_authority_level INTEGER NOT NULL DEFAULT 4 CHECK (source_authority_level BETWEEN 1 AND 4);
+      ALTER TABLE claims ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle_status IN ('active','excluded'));
+      ALTER TABLE claims ADD COLUMN exclusion_reason TEXT;
+      ALTER TABLE claims ADD COLUMN excluded_at TEXT;
+      ALTER TABLE claims ADD COLUMN excluded_by TEXT;
+      ALTER TABLE knowledge_facts ADD COLUMN visibility_status TEXT NOT NULL DEFAULT 'visible' CHECK (visibility_status IN ('visible','hidden'));
+      ALTER TABLE knowledge_facts ADD COLUMN visibility_reason TEXT;
+      ALTER TABLE knowledge_facts ADD COLUMN visibility_updated_at TEXT;
+
+      CREATE TABLE knowledge_visibility_overrides (
+        destination_slug TEXT NOT NULL,
+        normalized_key TEXT NOT NULL,
+        visibility_status TEXT NOT NULL CHECK (visibility_status IN ('visible','hidden')),
+        reason TEXT,
+        updated_by TEXT NOT NULL DEFAULT 'admin',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(destination_slug, normalized_key)
+      );
+
+      CREATE TABLE source_segments (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        segment_type TEXT NOT NULL CHECK (segment_type IN ('text_section','paragraph_group','pdf_page','pdf_page_group','image','infographic','table','map','itinerary_block','video_chapter','other')),
+        sequence INTEGER NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        raw_text TEXT NOT NULL DEFAULT '',
+        page_start INTEGER,
+        page_end INTEGER,
+        asset_id TEXT REFERENCES source_assets(id) ON DELETE SET NULL,
+        image_index INTEGER,
+        destination_scopes_json TEXT NOT NULL DEFAULT '[]',
+        topic_scopes_json TEXT NOT NULL DEFAULT '[]',
+        content_hash TEXT NOT NULL,
+        semantic_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','extracting','extracted','retry_required','failed','complete')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(source_id, sequence)
+      );
+      CREATE INDEX idx_source_segments_source ON source_segments(source_id, sequence);
+
+      CREATE TABLE evidence_spans (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        segment_id TEXT NOT NULL REFERENCES source_segments(id) ON DELETE CASCADE,
+        asset_id TEXT REFERENCES source_assets(id) ON DELETE SET NULL,
+        locator_type TEXT NOT NULL,
+        page INTEGER,
+        image_index INTEGER,
+        timestamp_start REAL,
+        timestamp_end REAL,
+        quote TEXT NOT NULL DEFAULT '',
+        region_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_evidence_spans_segment ON evidence_spans(segment_id, id);
+
+      CREATE TABLE extraction_coverage (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        segment_id TEXT NOT NULL REFERENCES source_segments(id) ON DELETE CASCADE,
+        extraction_run_id TEXT REFERENCES extraction_runs(id) ON DELETE SET NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending','passed','retry_required','failed','manual_review')),
+        candidate_evidence_count INTEGER NOT NULL DEFAULT 0,
+        claim_count INTEGER NOT NULL DEFAULT 0,
+        uncovered_spans_json TEXT NOT NULL DEFAULT '[]',
+        important_uncovered_count INTEGER NOT NULL DEFAULT 0,
+        model TEXT,
+        audited_at TEXT,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(segment_id, extraction_run_id)
+      );
+      CREATE INDEX idx_extraction_coverage_source ON extraction_coverage(source_id, status);
+
+      CREATE TABLE segment_extractions (
+        segment_id TEXT PRIMARY KEY REFERENCES source_segments(id) ON DELETE CASCADE,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        result_json TEXT NOT NULL,
+        method TEXT NOT NULL,
+        model TEXT,
+        attempt INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_segment_extractions_source ON segment_extractions(source_id, segment_id);
+
+      CREATE TABLE source_families (
+        id TEXT PRIMARY KEY,
+        family_key TEXT NOT NULL UNIQUE,
+        canonical_source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE source_family_memberships (
+        family_id TEXT NOT NULL REFERENCES source_families(id) ON DELETE CASCADE,
+        source_id TEXT NOT NULL UNIQUE REFERENCES sources(id) ON DELETE CASCADE,
+        relation_type TEXT NOT NULL CHECK (relation_type IN ('EXACT_DUPLICATE','NEAR_DUPLICATE','DERIVED_FROM','PARTIAL_OVERLAP','INDEPENDENT')),
+        overlap_score REAL NOT NULL DEFAULT 0,
+        incremental_claim_count INTEGER NOT NULL DEFAULT 0,
+        related_source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
+        analysis_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(family_id, source_id)
+      );
+
+      CREATE TABLE topic_clusters (
+        id TEXT PRIMARY KEY,
+        destination_slug TEXT NOT NULL,
+        topic_key TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        claim_keys_json TEXT NOT NULL DEFAULT '[]',
+        source_family_ids_json TEXT NOT NULL DEFAULT '[]',
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE coverage_matrices (
+        id TEXT PRIMARY KEY,
+        topic_key TEXT NOT NULL UNIQUE,
+        destination_slug TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        requirements_json TEXT NOT NULL,
+        readiness_json TEXT NOT NULL,
+        strategy_version TEXT NOT NULL,
+        generated_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE content_opportunities_new (
+        id TEXT PRIMARY KEY,
+        destination_slug TEXT NOT NULL,
+        destination_scopes_json TEXT NOT NULL DEFAULT '[]',
+        topic_key TEXT NOT NULL UNIQUE,
+        strategy_version TEXT NOT NULL,
+        source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
+        source_ids_json TEXT NOT NULL DEFAULT '[]',
+        recommendation_id TEXT REFERENCES content_recommendations(id) ON DELETE SET NULL,
+        candidate_id TEXT REFERENCES topic_candidates(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        content_type TEXT,
+        readiness_score REAL NOT NULL,
+        readiness_json TEXT NOT NULL DEFAULT '{}',
+        coverage_json TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'recommended' CHECK (status IN ('recommended','approved_waiting_for_evidence','approved_ready','producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft','knowledge_only','cluster','research_required','ignored','suppressed')),
+        approved_at TEXT,
+        suppression_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO content_opportunities_new(id,destination_slug,destination_scopes_json,topic_key,strategy_version,source_id,source_ids_json,recommendation_id,candidate_id,title,content_type,readiness_score,readiness_json,coverage_json,status,approved_at,created_at,updated_at)
+      SELECT id,destination_slug,json_array(destination_slug),topic_key,strategy_version,source_id,
+        CASE WHEN source_id IS NULL THEN '[]' ELSE json_array(source_id) END,recommendation_id,candidate_id,title,content_type,readiness_score,coverage_json,coverage_json,
+        CASE status WHEN 'approved' THEN 'approved_waiting_for_evidence' WHEN 'planned' THEN 'producing' ELSE status END,
+        CASE WHEN status IN ('approved','planned') THEN updated_at ELSE NULL END,created_at,updated_at
+      FROM content_opportunities;
+      DROP TABLE content_opportunities;
+      ALTER TABLE content_opportunities_new RENAME TO content_opportunities;
+      CREATE INDEX idx_content_opportunities_destination ON content_opportunities(destination_slug, status, readiness_score DESC);
+
+      ALTER TABLE content_recommendations ADD COLUMN opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL;
+      ALTER TABLE topic_candidates ADD COLUMN opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL;
+      ALTER TABLE topic_candidates ADD COLUMN recommendation_id TEXT REFERENCES content_recommendations(id) ON DELETE SET NULL;
+      CREATE UNIQUE INDEX idx_topic_candidates_opportunity ON topic_candidates(opportunity_id) WHERE opportunity_id IS NOT NULL;
+
+      UPDATE content_recommendations SET opportunity_id=(SELECT o.id FROM content_opportunities o WHERE o.recommendation_id=content_recommendations.id LIMIT 1);
+      UPDATE topic_candidates SET opportunity_id=(SELECT o.id FROM content_opportunities o WHERE o.candidate_id=topic_candidates.id LIMIT 1),
+        recommendation_id=(SELECT o.recommendation_id FROM content_opportunities o WHERE o.candidate_id=topic_candidates.id LIMIT 1);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (23, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+  const violations = db.prepare("PRAGMA foreign_key_check").all();
+  if (violations.length) throw new Error(`Migration 23 created foreign-key violations: ${JSON.stringify(violations.slice(0, 5))}`);
+}
+
+function migrationTwentyTwo(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE frontend_contract_snapshots ADD COLUMN publish_package_schema_source TEXT NOT NULL DEFAULT '';
+      ALTER TABLE frontend_contract_snapshots ADD COLUMN publish_package_version TEXT NOT NULL DEFAULT '';
+      ALTER TABLE frontend_contract_snapshots ADD COLUMN publish_package_schema_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE wordpress_publications ADD COLUMN preview_url TEXT;
+      ALTER TABLE wordpress_publications ADD COLUMN edit_url TEXT;
+      ALTER TABLE wordpress_publications ADD COLUMN response_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE wordpress_publications ADD COLUMN error_code TEXT;
+      ALTER TABLE wordpress_publications ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT 'legacy';
+      ALTER TABLE affiliate_assets ADD COLUMN image_url TEXT NOT NULL DEFAULT '';
+      ALTER TABLE affiliate_assets ADD COLUMN alt_text TEXT NOT NULL DEFAULT '';
+      ALTER TABLE affiliate_assets ADD COLUMN price_text TEXT NOT NULL DEFAULT '';
+
+      CREATE TABLE frontend_publish_compositions (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL UNIQUE REFERENCES article_drafts(id) ON DELETE CASCADE,
+        frontend_page_composition_id TEXT NOT NULL REFERENCES frontend_page_compositions(id),
+        commercial_composition_id TEXT NOT NULL REFERENCES commercial_compositions(id),
+        snapshot_id TEXT NOT NULL REFERENCES frontend_contract_snapshots(id),
+        publish_package_version TEXT NOT NULL,
+        contract_version TEXT NOT NULL,
+        page_schema_version TEXT NOT NULL,
+        contract_checksum TEXT NOT NULL,
+        commercial_strategy_version TEXT NOT NULL,
+        publish_package_json TEXT NOT NULL,
+        validation_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('valid','invalid','stale_contract','delivered','delivery_failed')),
+        wordpress_post_id INTEGER,
+        generated_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_frontend_publish_compositions_status
+        ON frontend_publish_compositions(status, updated_at DESC);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (22, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationTwentyOne(db) {

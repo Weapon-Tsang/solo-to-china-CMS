@@ -9,7 +9,7 @@ The administrator Sources page accepts intentionally selected research evidence 
 - Public video links and ordinary web pages. Public YouTube links are passed to the active Vertex Gemini model as video/audio evidence; other video platforms contribute only publicly extractable page text and should include an authorized transcript in the supplementary-text field.
 - PDF documents
 - Word documents (`.doc` and `.docx`)
-- JPG, PNG, WebP, or GIF images (up to eight per submission)
+- JPG, PNG, WebP, or GIF images (up to 30 per submission, 20 MB each by default)
 - One uploaded video file per submission: MP4/M4V, MOV, MPEG/MPG, WebM, AVI, WMV, FLV, or 3GP
 
 Every accepted item is stored as a regular `Source` and queued for the existing `extract_source` pipeline. That pipeline performs multimodal extraction, creates structured Claims and an editorial Blueprint, updates eligible Knowledge, and produces the normal content-intake recommendation. Manual intake does not bypass human editorial approval or the QA gate.
@@ -48,7 +48,7 @@ When a public site cannot be extracted, the operator should upload an authorized
 }
 ```
 
-File submissions use `kind` equal to `pdf`, `word`, `images`, or `video`, and include browser-produced base64 file entries:
+File submissions use `kind` equal to `pdf`, `word`, `images`, or `video`. PDF/Word/image submissions use browser-produced base64 entries. Video submissions use an administrator-only chunked upload session so files above 100 MB do not depend on one oversized JSON request:
 
 ```json
 {
@@ -60,4 +60,6 @@ File submissions use `kind` equal to `pdf`, `word`, `images`, or `video`, and in
 }
 ```
 
-The defaults are 12 MB per document, 6 MB per image, 100 MB per video, 110 MB per submission, 8 MB per fetched response, eight images, and a 20-second link timeout. They can be adjusted with the `MANUAL_SOURCE_*` environment settings documented in `.env.example`.
+The defaults are 64 MB per document, 20 MB per image, 256 MB per video, 300 MB per submission, 8 MB per fetched response, 30 images, and a 20-second link timeout. Videos are uploaded in 5 MB chunks; the UI reports initialization, per-chunk upload percentage, persistence, queueing, extraction, and later pipeline status. They can be adjusted with the `MANUAL_SOURCE_*` environment settings documented in `.env.example`.
+
+Chunked video API: create a session with `POST /api/manual-source-uploads`, send exact binary chunks with `PUT /api/manual-source-uploads/:id/chunks/:index`, then persist the Source with `POST /api/manual-source-uploads/:id/complete`. The server validates declared size and the assembled video signature before the Source enters the queue.

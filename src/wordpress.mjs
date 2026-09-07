@@ -5,6 +5,17 @@ import { markdownToContentBlocks } from "./content-blocks.mjs";
 const SOURCE_IMAGE_HOST_SUFFIXES = ["xiaohongshu.com", "xhscdn.com", "xhscdn.net", "xhscdn.cn"];
 const MAX_SOURCE_IMAGE_BYTES = 12 * 1024 * 1024;
 
+export class WordPressApiError extends Error {
+  constructor(code, message, { status = 0, details = null } = {}) {
+    super(`${code}: ${message}`);
+    this.name = "WordPressApiError";
+    this.code = code;
+    this.statusCode = status;
+    this.details = details;
+    this.retryable = status === 429 || status >= 500 || status === 0;
+  }
+}
+
 export class WordPressDraftAdapter {
   constructor(config, fetchImpl = fetch) {
     this.config = config;
@@ -86,6 +97,55 @@ export class WordPressDraftAdapter {
     return {
       postId: result.id, postUrl: result.link || null, status: result.status, strategyVersion: draft.strategy_version || null,
       visuals: visuals.map((item) => ({ visualId: item.visualId, id: item.id, url: item.url })),
+    };
+  }
+
+  async upsertContractDraft(publishPackage) {
+    if (!this.enabled) throw new Error("WordPress draft delivery is not configured.");
+    assertSafeSiteUrl(this.config.siteUrl);
+    const configuredEndpoint = String(this.config.cmsArticleEndpoint || "").trim();
+    const endpoint = configuredEndpoint || `${this.config.siteUrl}/wp-json/stc/v1/cms-articles`;
+    const url = new URL(endpoint, `${this.config.siteUrl}/`);
+    const site = new URL(this.config.siteUrl);
+    if (url.origin !== site.origin || url.username || url.password) {
+      throw new WordPressApiError("UNSAFE_CMS_ARTICLE_ENDPOINT", "The CMS Article endpoint must use the configured WordPress origin.", { status: 400 });
+    }
+    const existingPostId = Number.parseInt(publishPackage?.publication?.existing_post_id || "", 10);
+    if (Number.isInteger(existingPostId) && existingPostId > 0) url.pathname = `${url.pathname.replace(/\/$/, "")}/${existingPostId}`;
+    const serializedPackage = JSON.stringify(publishPackage);
+    if (Buffer.byteLength(serializedPackage, "utf8") > 1024 * 1024) {
+      throw new WordPressApiError("INVALID_PAGE_SCHEMA", "The Publish Package exceeds the Frontend 1 MiB limit.", { status: 413 });
+    }
+    const response = await this.fetch(url, {
+      method: Number.isInteger(existingPostId) && existingPostId > 0 ? "PUT" : "POST",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${this.config.username}:${this.config.applicationPassword}`).toString("base64")}`,
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: serializedPackage,
+      signal: AbortSignal.timeout(60_000),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const code = String(body?.code || "WORDPRESS_API_FAILED");
+      throw new WordPressApiError(code, body?.message || response.statusText || "WordPress rejected the Publish Package.", {
+        status: response.status, details: body?.data || null,
+      });
+    }
+    if (body?.status !== "draft" || !Number.isInteger(body?.post_id)) {
+      throw new WordPressApiError("INVALID_WORDPRESS_RESPONSE", "WordPress did not confirm a draft post and post_id.", { status: 502, details: body });
+    }
+    return {
+      postId: body.post_id,
+      postUrl: body.preview_url || null,
+      previewUrl: body.preview_url || null,
+      editUrl: body.edit_url || null,
+      slug: body.slug || publishPackage.page?.metadata?.slug || "",
+      status: body.status,
+      contractVersion: body.contract_version || null,
+      updated: Boolean(body.updated),
+      visuals: [],
     };
   }
 

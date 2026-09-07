@@ -14,7 +14,9 @@ test("migrations 20 and 21 preserve populated legacy Sources and their evidence 
   const legacyModulePath = path.join(directory, "db-v19.mjs");
   const source = fs.readFileSync(dbModulePath, "utf8")
     .replace("  if (current < 20) migrationTwenty(db);\n", "")
-    .replace("  if (current < 21) migrationTwentyOne(db);\n", "");
+    .replace("  if (current < 21) migrationTwentyOne(db);\n", "")
+    .replace("  if (current < 22) migrationTwentyTwo(db);\n", "")
+    .replace("  if (current < 23) migrationTwentyThree(db);\n", "");
   fs.writeFileSync(legacyModulePath, source);
   const { openDatabase: openLegacyDatabase } = await import(`${pathToFileURL(legacyModulePath).href}?v=19`);
   const legacy = openLegacyDatabase(databasePath);
@@ -31,7 +33,7 @@ test("migrations 20 and 21 preserve populated legacy Sources and their evidence 
 
   const upgraded = openDatabase(databasePath);
   try {
-    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 21);
+    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 23);
     const preserved = upgraded.prepare("SELECT * FROM sources WHERE id='src-legacy'").get();
     assert.equal(preserved.adapter, "xiaohongshu");
     assert.equal(preserved.source_kind, "xiaohongshu_note");

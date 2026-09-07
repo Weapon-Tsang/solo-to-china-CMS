@@ -46,7 +46,7 @@ try {
   const database = openDatabase(path.join(directory, "release.sqlite"));
   try {
     const versions = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
-    if (versions.join(",") !== "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21") throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
+    if (versions.join(",") !== "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23") throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
     for (const [table, column] of [
       ["content_intake_analyses", "strategy_version"], ["content_recommendations", "strategy_version"],
       ["content_opportunities", "strategy_version"], ["topic_candidates", "strategy_version"],
@@ -57,8 +57,10 @@ try {
       ["article_visuals", "source_asset_id"], ["article_visuals", "source_remote_url"],
       ["claims", "structured_value_json"], ["claims", "scope_json"], ["claims", "entity_type"],
       ["claims", "extraction_run_id"], ["claims", "extraction_revision"], ["claims", "claim_role"], ["claims", "knowledge_eligible"],
+      ["claims", "evidence_span_ids_json"], ["claims", "lifecycle_status"], ["claims", "source_authority_level"],
       ["sources", "source_kind"], ["sources", "submitted_url"], ["source_assets", "local_path"],
-      ["knowledge_facts", "claim_relations_json"], ["commercial_compositions", "commercial_blocks_json"],
+      ["knowledge_facts", "claim_relations_json"], ["knowledge_facts", "visibility_status"], ["commercial_compositions", "commercial_blocks_json"],
+      ["frontend_contract_snapshots", "publish_package_schema_json"], ["wordpress_publications", "delivery_mode"],
     ]) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
       if (!columns.includes(column)) throw new Error(`${table}.${column} is required for Content Strategy governance.`);
@@ -66,13 +68,15 @@ try {
     if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_resolutions'").get()) {
       throw new Error("knowledge_resolutions is required for human conflict decisions.");
     }
-    for (const table of ["frontend_contract_snapshots", "frontend_contract_state", "frontend_page_plans", "frontend_page_compositions", "frontend_capability_requests"]) {
+    for (const table of ["frontend_contract_snapshots", "frontend_contract_state", "frontend_page_plans", "frontend_page_compositions", "frontend_publish_compositions", "frontend_capability_requests"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for Frontend Contract integration.`);
     }
     for (const table of ["entity_aliases", "entity_merge_candidates"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for multilingual entity normalization.`);
     }
     for (const table of ["entity_relations", "entity_merge_history", "claim_relations", "claim_review_cases", "extraction_runs", "claim_history", "source_files",
+      "source_segments", "evidence_spans", "extraction_coverage", "segment_extractions", "source_families", "source_family_memberships",
+      "topic_clusters", "coverage_matrices", "knowledge_visibility_overrides",
       "affiliate_provider_accounts", "affiliate_assets", "affiliate_asset_mappings", "commercial_intents",
       "commercial_slots", "affiliate_opportunities", "commercial_events", "commission_rules"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for Entity, Claim, or Commercial Phase 1.`);
@@ -86,4 +90,4 @@ try {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-21, and SQLite integrity.`);
+console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-23, and SQLite integrity.`);

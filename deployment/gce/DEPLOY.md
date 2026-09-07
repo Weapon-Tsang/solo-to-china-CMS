@@ -67,7 +67,7 @@ The cloud package is preconfigured at build time, so the founder does not enter 
 - `https://engine.example.com` presents the application sign-in screen. Do not use a weak default password on an internet-accessible deployment; the provided provisioning script creates a high-entropy initial password in the ignored local output file.
 - `https://capture.example.com/api/health` returns basic health, while `https://capture.example.com/api/dashboard` returns 404.
 - The extension can save a manually opened note and poll its own `/api/sources/{id}` status using `CAPTURE_TOKEN`.
-- Kimi K3 is the default on a fresh deployment; dashboard Settings can switch to Kimi K2.7 Code and the top badge should change.
+- Vertex AI Gemini 3.8 Flash is the default multimodal research and writing model on a fresh deployment; Kimi K3 and Kimi K2.7 Code remain explicit alternatives in Settings.
 - With Gemini 3.1 Flash Image configured, an article produces 2-5 original non-factual visual assets and WordPress receives them as uploaded media attachments.
 
 ## Secrets and costs

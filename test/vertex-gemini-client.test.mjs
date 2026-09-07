@@ -20,6 +20,7 @@ test("Vertex Gemini uses the configured model and structured JSON response", asy
   const body = JSON.parse(request.options.body);
   assert.equal(body.generationConfig.responseMimeType, "application/json");
   assert.equal(body.generationConfig.temperature, 0.1);
+  assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "HIGH");
   assert.equal(body.systemInstruction.parts[0].text, "Be precise.");
 });
 

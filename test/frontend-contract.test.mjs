@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import { FrontendContractConsumer, FrontendContractError } from "../src/frontend-contract.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 import { defaultComponents, frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
+import { sha256 } from "../src/utils.mjs";
 
 function consumerFor(repository, fixture) {
   return new FrontendContractConsumer(repository, {
@@ -34,6 +36,29 @@ test("synchronized registry validates a valid page and preserves block order", a
   const validation = consumer.validatePagePayload(validPayload());
   assert.equal(validation.valid, true);
   assert.deepEqual(validPayload().blocks.map((block) => block.type), ["articleSection", "faqList"]);
+});
+
+test("REST synchronization uses the generated artifact ETag as the exact Contract checksum", async (t) => {
+  const { repository } = repositoryFixture(t);
+  const fixture = frontendContractFixture(t);
+  const registryRaw = fs.readFileSync(fixture.registryPath, "utf8");
+  const pageRaw = fs.readFileSync(fixture.pageSchemaPath, "utf8");
+  const expectedChecksum = sha256(registryRaw);
+  const fetchImpl = async (url) => {
+    const isRegistry = String(url).endsWith("registry");
+    const raw = isRegistry ? registryRaw : pageRaw;
+    return new Response(JSON.stringify(JSON.parse(raw)), {
+      status: 200,
+      headers: isRegistry ? { etag: `\"${expectedChecksum}\"` } : {},
+    });
+  };
+  const consumer = new FrontendContractConsumer(repository, {
+    registrySource: "https://example.test/registry",
+    pageSchemaSource: "https://example.test/page-schema",
+  }, fetchImpl);
+  await consumer.sync();
+  assert.equal(consumer.active.checksum, expectedChecksum);
+  assert.notEqual(sha256(JSON.stringify(JSON.parse(registryRaw))), expectedChecksum);
 });
 
 test("commercial components are consumed from the registry and missing capabilities are explicit", async (t) => {

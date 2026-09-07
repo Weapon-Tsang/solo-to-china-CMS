@@ -31,6 +31,8 @@ export class VertexGeminiClient {
       generationConfig: {
         responseMimeType: "application/json", responseSchema: schema,
         maxOutputTokens: this.config.maxCompletionTokens || 16_000, temperature: 0.1,
+        ...(String(this.config.model).startsWith("gemini-3")
+          ? { thinkingConfig: { thinkingLevel: this.config.thinkingLevel || "HIGH" } } : {}),
       },
     };
     for (let attempt = 0; attempt < 2; attempt += 1) {

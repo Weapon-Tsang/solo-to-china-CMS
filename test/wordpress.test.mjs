@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { markdownToSafeHtml, markdownToWordPressBlocks, WordPressDraftAdapter } from "../src/wordpress.mjs";
+import { markdownToSafeHtml, markdownToWordPressBlocks, WordPressApiError, WordPressDraftAdapter } from "../src/wordpress.mjs";
 
 test("WordPress adapter always creates a draft with safe content", async () => {
   let request;
@@ -152,6 +152,44 @@ test("WordPress block renderer emits native Gutenberg blocks without weakening H
   assert.match(blocks, /<!-- wp:list -->/);
   assert.doesNotMatch(blocks, /<script>/);
   assert.match(blocks, /&lt;script&gt;/);
+});
+
+test("Contract-aware adapter sends the exact Publish Package to the STC CMS Article API", async () => {
+  const calls = [];
+  const adapter = new WordPressDraftAdapter({
+    siteUrl: "https://site.test", username: "editor", applicationPassword: "app-password",
+  }, async (url, options) => {
+    calls.push({ url: String(url), options });
+    return Response.json({ post_id: 71, status: "draft", preview_url: "https://site.test/?p=71&preview=true", edit_url: "https://site.test/wp-admin/post.php?post=71", slug: "guide", contract_version: "1.1.0", updated: false }, { status: 201 });
+  });
+  const publishPackage = {
+    contract: { componentContractVersion: "1.1.0", pageSchemaVersion: "1.1.0", contractChecksum: "a".repeat(64) },
+    page: { metadata: { pageId: "draft-1", title: "Guide", slug: "guide", contentType: "city-guide" }, blocks: [{ type: "quick_answer", variant: "default", data: { content: "Answer" } }] },
+    seo: { meta_title: "Guide", meta_description: "Description" }, schema_jsonld: {}, media: [],
+    publication: { status: "draft", existing_post_id: null, cms_draft_id: "draft-1" },
+  };
+  const result = await adapter.upsertContractDraft(publishPackage);
+  assert.equal(calls[0].url, "https://site.test/wp-json/stc/v1/cms-articles");
+  assert.equal(calls[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].options.body), publishPackage);
+  assert.equal(calls[0].options.body.includes("body_markdown"), false);
+  assert.equal(result.postId, 71);
+  assert.equal(result.previewUrl, "https://site.test/?p=71&preview=true");
+});
+
+test("Contract-aware adapter uses explicit PUT and surfaces non-retryable Frontend validation errors", async () => {
+  const methods = [];
+  const adapter = new WordPressDraftAdapter({ siteUrl: "https://site.test", username: "editor", applicationPassword: "app-password" }, async (url, options) => {
+    methods.push([String(url), options.method]);
+    return Response.json({ code: "POST_NOT_DRAFT", message: "Published posts cannot be overwritten.", data: { status: 409 } }, { status: 409 });
+  });
+  await assert.rejects(() => adapter.upsertContractDraft({ publication: { existing_post_id: 71 } }), (error) => {
+    assert.ok(error instanceof WordPressApiError);
+    assert.equal(error.code, "POST_NOT_DRAFT");
+    assert.equal(error.retryable, false);
+    return true;
+  });
+  assert.deepEqual(methods[0], ["https://site.test/wp-json/stc/v1/cms-articles/71", "PUT"]);
 });
 
 test("WordPress renderers place generated visual media safely within the article", () => {

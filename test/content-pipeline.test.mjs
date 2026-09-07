@@ -6,11 +6,17 @@ import { CONTENT_STRATEGY } from "../src/content-strategy.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 import { CommercialComposer, normalizeCommercialOffer } from "../src/commercial.mjs";
 import { FrontendContractConsumer } from "../src/frontend-contract.mjs";
-import { frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
+import { defaultComponents, frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
 
 test("human approval drives recommendation, brief, draft, QA, and WordPress draft delivery", async (t) => {
   const { db, repository } = repositoryFixture(t);
-  const contractFixture = frontendContractFixture(t);
+  const commercialComponent = {
+    id: "affiliate_booking_card", category: "commercial", purpose: "Approved affiliate booking resource.", status: "stable", variants: ["default"],
+    schema: { type: "object", additionalProperties: false,
+      required: ["affiliate_asset_id", "provider", "asset_type", "product_category", "title", "description", "cta_label", "target_url", "disclosure", "scope_type", "scope_key", "slot_key", "placement", "strategy_version"],
+      properties: Object.fromEntries(["affiliate_asset_id", "provider", "asset_type", "product_category", "title", "description", "cta_label", "target_url", "disclosure", "scope_type", "scope_key", "slot_key", "placement", "strategy_version", "price_text", "entity", "route", "destination", "anchor"].map((key) => [key, { type: "string" }])) },
+  };
+  const contractFixture = frontendContractFixture(t, { components: [...defaultComponents(), commercialComponent] });
   const frontendContracts = new FrontendContractConsumer(repository, {
     sourceRepository: "https://github.com/example/solo-to-china",
     registrySource: contractFixture.registryPath,
@@ -23,10 +29,14 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
         method: "test", model: "source-model",
         result: {
           source: { language: "zh-CN", summary: "Research", destination_name: "Beijing", destination_slug: "beijing", traveler_fit: ["solo"], practical_tips: [], warnings: [], confidence: 0.9 },
-          claims: Array.from({ length: 5 }, (_, index) => ({
-            key: `beijing.fact.${index}`, subject: `Travel detail ${index}`, predicate: "guidance", value: `Value ${index}`,
-            qualifiers: [], confidence: 0.85, source_quote: `${source.title} evidence ${index}`,
-          })),
+          claims: [
+            ["beijing.orientation.location", "Beijing orientation", "location", "Central Beijing"],
+            ["beijing.transport.metro", "Beijing transport", "metro transport", "Use the metro"],
+            ["beijing.booking.reservation", "Beijing booking", "reservation booking", "Reserve timed attractions"],
+            ["beijing.payment.methods", "Beijing payment", "payment methods", "Carry a working mobile payment method"],
+            ["beijing.cost.budget", "Beijing budget", "cost budget", "Plan admission and transit costs"],
+          ].map(([key, subject, predicate, value]) => ({ key, subject, predicate, value,
+            qualifiers: [], confidence: 0.85, source_quote: `${source.title}: ${value}` })),
           blueprint: { format: "guide", hook: "First trip", angle: "solo first visit", sections: [], strengths: ["specific"], gaps: [] },
         },
       };
@@ -37,7 +47,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
     async analyzeIntake() {
       return { model: "intake-model", output: {
         classification: "ARTICLE_CANDIDATE", confidence: 0.9, primary_topic: "First-Time Beijing", entities: ["Beijing"],
-        knowledge_points: ["Practical planning evidence"], claims: ["beijing.fact.0"], article_potential: 88,
+        knowledge_points: ["Practical planning evidence"], claims: ["beijing.orientation.location"], article_potential: 88,
         information_density: 82, topic_completeness: 76, duplicate_likelihood: 5, recommended_action: "CREATE_CONTENT_PLAN",
         suggested_content_type: "first_time_guide", suggested_article_title: "First-Time Beijing Solo Travel Guide",
         missing_information: [], possible_cluster_topics: [], reasoning_summary: "Evidence supports a human-reviewed article opportunity.",
@@ -47,18 +57,18 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       return { model: "planner-model", output: {
         title: "First-Time Beijing Solo Travel Guide", primary_keyword: "beijing solo travel", search_intent: "informational",
         audience: ["solo travelers"], angle: "first visit", reader_promise: "Plan with confidence",
-        outline: [{ heading: "Plan", purpose: "Practical steps", claim_keys: ["beijing.fact.0", "beijing.fact.1"] }],
+        outline: [{ heading: "Plan", purpose: "Practical steps", claim_keys: ["beijing.orientation.location", "beijing.transport.metro"] }],
         adaptation_requirements: ["language"], conflict_instructions: [],
       } };
     },
     async draft(contentPackage) {
       const sourceIds = [...new Set(contentPackage.facts
-        .filter((fact) => ["beijing.fact.0", "beijing.fact.1"].includes(fact.normalized_key))
+        .filter((fact) => ["beijing.orientation.location", "beijing.transport.metro"].includes(fact.normalized_key))
         .flatMap((fact) => fact.evidence.map((evidence) => evidence.source_id)))];
       return { model: "writer-model", output: {
         title: "First-Time Beijing Solo Travel Guide", slug: "beijing-solo-guide", meta_description: "A practical first-time Beijing guide.",
         body_markdown: "## Plan\n\nEvidence-backed practical guidance for independent visitors.",
-        evidence_ledger: [{ section: "Plan", claim_keys: ["beijing.fact.0", "beijing.fact.1"], source_ids: sourceIds }],
+        evidence_ledger: [{ section: "Plan", claim_keys: ["beijing.orientation.location", "beijing.transport.metro"], source_ids: sourceIds }],
         unresolved_conflicts: [],
       } };
     },
@@ -81,9 +91,9 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
     enabled: true,
     config: { siteUrl: "https://example.test" },
     calls: [],
-    async upsertDraft(draft, postId) {
-      this.calls.push({ draft, postId });
-      return { postId: 42, postUrl: "https://example.test/?p=42", status: "draft" };
+    async upsertContractDraft(publishPackage) {
+      this.calls.push({ publishPackage });
+      return { postId: 42, postUrl: "https://example.test/?p=42", previewUrl: "https://example.test/?p=42&preview=true", status: "draft" };
     },
   };
   const pipeline = new Pipeline(repository, sourceExtractor, {
@@ -96,19 +106,22 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   for (const [externalId, title] of [["autoA", "Source A"], ["autoB", "Source B"]]) {
     repository.saveCapture(normalizeXiaohongshuCapture({
       url: `https://www.xiaohongshu.com/explore/${externalId}`, title,
-      text: `This manually selected Beijing source contains enough useful travel evidence: ${title}.`,
+      text: externalId === "autoA"
+        ? "Beijing orientation covers central districts, landmark locations, metro transfers, station exits, airport connections, and walking navigation for a first independent visit."
+        : "Beijing booking evidence covers timed reservations, passport entry checks, mobile payment preparation, admission costs, practical budgets, and visitor requirements.",
       images: [{ url: `https://ci.xhscdn.com/${externalId}.jpg`, alt: `${title} real-world travel scene` }],
     }));
   }
+  db.prepare("UPDATE sources SET authority_level=1, verified_at='2026-09-07T00:00:00.000Z'").run();
   repository.upsertCommercialOffer(normalizeCommercialOffer({
     provider: "Trip.com", externalId: "hotel-search-beijing", category: "hotels", destinationSlug: "beijing",
-    title: "Browse Beijing hotels", targetUrl: "https://example.test/affiliate/hotels?city=beijing",
+    title: "Browse Beijing hotels", targetUrl: "https://www.trip.com/hotels/?city=beijing",
     ctaLabel: "Check hotel options", description: "Compare available stays for your dates.", priority: 10,
   }));
 
   for (let index = 0; index < 60; index += 1) await pipeline.runOne();
-  assert.equal(repository.listContent()[0].draft_id, null);
-  assert.equal(repository.queueCandidate(repository.listContent()[0].id), false);
+  assert.equal(repository.listContent().length, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count, 0);
   const dashboardBeforeApproval = repository.dashboard();
   const pendingRecommendationCount = dashboardBeforeApproval.actionCounts.recommendations;
   assert.ok(pendingRecommendationCount > 0);
@@ -119,8 +132,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   const dashboardAfterApproval = repository.dashboard();
   assert.equal(dashboardAfterApproval.actionCounts.recommendations, pendingRecommendationCount - 1);
   assert.equal(dashboardAfterApproval.totals.pendingRecommendations, pendingRecommendationCount - 1);
-  assert.equal(dashboardAfterApproval.totals.contentPipelineItems, 1);
-  assert.equal(approval.queued, true);
+  assert.equal(dashboardAfterApproval.totals.contentPipelineItems, 1, JSON.stringify(approval));
+  assert.equal(approval.queued, true, JSON.stringify(approval));
   for (let index = 0; index < 60; index += 1) await pipeline.runOne();
 
   const content = repository.listContent();
@@ -129,9 +142,9 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(content[0].qa_passed, 1);
   assert.equal(content[0].wordpress_post_id, 42);
   assert.equal(wordpress.calls.length, 1);
-  assert.match(wordpress.calls[0].draft.body_markdown, /Optional booking resources/);
-  assert.match(wordpress.calls[0].draft.body_markdown, /Affiliate disclosure/);
-  assert.ok(wordpress.calls[0].draft.content_blocks.length > 0);
+  assert.equal(wordpress.calls[0].publishPackage.page.blocks[0].type, "articleSection");
+  assert.equal(wordpress.calls[0].publishPackage.page.blocks[1].type, "affiliate_booking_card");
+  assert.equal(wordpress.calls[0].publishPackage.page.blocks[1].data.disclosure, "Affiliate disclosure.");
   const generatedPackage = repository.getDraftPackage(content[0].draft_id);
   const researchDraft = generatedPackage.draft.body_markdown;
   assert.doesNotMatch(researchDraft, /Trip\.com|Optional booking resources/);
@@ -145,6 +158,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(generatedPackage.frontend_page_plan.plan.blocks[0].type, "articleSection");
   assert.equal(generatedPackage.frontend_page.payload.blocks[0].type, "articleSection");
   assert.equal(generatedPackage.frontend_page.validation.valid, true);
+  assert.equal(generatedPackage.publish_composition.validation.valid, true);
+  assert.deepEqual(generatedPackage.publish_composition.publish_package.page.blocks, wordpress.calls[0].publishPackage.page.blocks);
   assert.equal(generatedPackage.frontend_page.contract_version, "1.2.0");
   assert.equal(generatedPackage.brief.strategy_version, CONTENT_STRATEGY.version);
   assert.equal(generatedPackage.brief.canonical.strategy_version, CONTENT_STRATEGY.version);
@@ -152,4 +167,26 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(db.prepare("SELECT strategy_version FROM wordpress_publications WHERE draft_id=?").get(content[0].draft_id).strategy_version, CONTENT_STRATEGY.version);
   assert.equal(JSON.stringify(repository.getTopicPackage(content[0].id)).includes("Trip.com"), false);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status='failed'").get().count, 0);
+
+  const mismatched = structuredClone(generatedPackage.publish_composition.publish_package);
+  mismatched.contract.contractChecksum = "f".repeat(64);
+  assert.equal(frontendContracts.validatePublishPackage(mismatched).errors.some((item) => item.code === "CONTRACT_VERSION_MISMATCH"), true);
+
+  const deliveryError = Object.assign(new Error("Published posts cannot be overwritten."), { code: "POST_NOT_DRAFT" });
+  repository.failWordPressPublication(content[0].draft_id, deliveryError);
+  const failedPublication = db.prepare("SELECT status, error_code, last_error FROM wordpress_publications WHERE draft_id=?").get(content[0].draft_id);
+  assert.equal(failedPublication.status, "failed");
+  assert.equal(failedPublication.error_code, "POST_NOT_DRAFT");
+  assert.match(failedPublication.last_error, /cannot be overwritten/);
+  assert.equal(repository.getDraftPackage(content[0].draft_id).publish_composition.status, "delivery_failed");
+
+  assert.equal(repository.retryContent(content[0].id, { contractAware: true }), "push_wordpress_draft");
+  assert.equal(await pipeline.runOne(), true);
+  assert.equal(wordpress.calls.length, 2);
+  assert.equal(wordpress.calls[1].publishPackage.publication.existing_post_id, 42);
+  assert.equal(db.prepare("SELECT status FROM wordpress_publications WHERE draft_id=?").get(content[0].draft_id).status, "synced");
+
+  repository.failWordPressPublication(content[0].draft_id, deliveryError);
+  db.prepare("DELETE FROM frontend_publish_compositions WHERE draft_id=?").run(content[0].draft_id);
+  assert.equal(repository.retryContent(content[0].id, { contractAware: false }), "push_wordpress_draft");
 });

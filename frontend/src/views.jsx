@@ -124,31 +124,36 @@ function ManualSourceForm({ onSubmit, busy }) {
   const [fileInputKey, setFileInputKey] = useState(0);
   const [result, setResult] = useState(null);
   const [failure, setFailure] = useState(null);
+  const [progress, setProgress] = useState(null);
   const linkMode = kind.endsWith("_url");
   const accept = kind === "pdf" ? ".pdf,application/pdf" : kind === "word" ? ".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" : kind === "video" ? ".mp4,.m4v,.mov,.mpeg,.mpg,.webm,.avi,.wmv,.flv,.3gp,video/*" : "image/jpeg,image/png,image/webp,image/gif";
 
   const submit = async (event) => {
     event.preventDefault();
-    setFailure(null); setResult(null);
+    setFailure(null); setResult(null); setProgress({ phase: "preparing", percent: 0, label: "正在准备文件" });
     try {
-      const encodedFiles = linkMode ? [] : await Promise.all(files.map(readFileForSubmission));
-      const response = await onSubmit({ kind, url: linkMode ? url : undefined, title, notes, files: encodedFiles });
+      const encodedFiles = linkMode || kind === "video" ? [] : await Promise.all(files.map(readFileForSubmission));
+      const response = await onSubmit({ kind, url: linkMode ? url : undefined, title, notes, files: encodedFiles,
+        ...(kind === "video" ? { rawFiles: files } : {}) }, setProgress);
       setResult(response);
       setUrl(""); setTitle(""); setNotes(""); setFiles([]); setFileInputKey((value) => value + 1);
     } catch (caught) {
       setFailure({ code: caught.code, message: caught.message });
+    } finally {
+      setProgress(null);
     }
   };
 
   return <Card className="overflow-hidden border-blue-100 bg-gradient-to-br from-white to-blue-50/40 p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><UploadCloud className="size-4 text-blue-700" />人工提交内容来源</div><p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">提交后自动进入入库、内容提取、Claims、知识整理、蓝图和创作建议流程。原文件会保存在持久化数据目录中。</p></div><span className="rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-semibold text-blue-700">统一生产流程</span></div>
     <form className="mt-4 grid gap-3 lg:grid-cols-2" onSubmit={submit}>
-      <label className="block"><span className="mb-1.5 block text-[11px] font-medium text-slate-600">来源格式</span><select value={kind} onChange={(event) => { setKind(event.target.value); setFiles([]); setFailure(null); setResult(null); }} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"><option value="auto_url">自动识别链接</option><option value="xiaohongshu_url">小红书笔记链接</option><option value="wechat_url">微信公众号链接</option><option value="video_url">视频链接</option><option value="web_url">其他网页链接</option><option value="pdf">PDF 文档</option><option value="word">Word 文档（DOC/DOCX）</option><option value="images">图片（可多选）</option><option value="video">视频文件（最大 100 MB）</option></select></label>
-      {linkMode ? <label className="block"><span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-slate-600"><Link2 className="size-3" />公开链接</span><input type="url" required value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://..." className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-300 focus:border-slate-400 focus:ring-4 focus:ring-slate-100" /></label> : <label className="block"><span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-slate-600"><FileUp className="size-3" />选择文件</span><input key={fileInputKey} type="file" required multiple={kind === "images"} accept={accept} onChange={(event) => setFiles(Array.from(event.target.files || []))} className="block h-10 w-full rounded-lg border border-slate-200 bg-white text-xs text-slate-600 file:mr-3 file:h-full file:border-0 file:border-r file:border-slate-200 file:bg-slate-50 file:px-3 file:text-xs file:font-medium" /><span className="mt-1 block text-[10px] text-slate-400">文档最多 12 MB，图片每张最多 6 MB、最多 8 张；单个视频最多 100 MB。</span></label>}
+      <label className="block"><span className="mb-1.5 block text-[11px] font-medium text-slate-600">来源格式</span><select value={kind} onChange={(event) => { setKind(event.target.value); setFiles([]); setFailure(null); setResult(null); }} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"><option value="auto_url">自动识别链接</option><option value="xiaohongshu_url">小红书笔记链接</option><option value="wechat_url">微信公众号链接</option><option value="video_url">视频链接</option><option value="web_url">其他网页链接</option><option value="pdf">PDF 文档</option><option value="word">Word 文档（DOC/DOCX）</option><option value="images">图片（可多选）</option><option value="video">视频文件（最大 256 MB）</option></select></label>
+      {linkMode ? <label className="block"><span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-slate-600"><Link2 className="size-3" />公开链接</span><input type="url" required value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://..." className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-300 focus:border-slate-400 focus:ring-4 focus:ring-slate-100" /></label> : <label className="block"><span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-slate-600"><FileUp className="size-3" />选择文件</span><input key={fileInputKey} type="file" required multiple={kind === "images"} accept={accept} onChange={(event) => setFiles(Array.from(event.target.files || []))} className="block h-10 w-full rounded-lg border border-slate-200 bg-white text-xs text-slate-600 file:mr-3 file:h-full file:border-0 file:border-r file:border-slate-200 file:bg-slate-50 file:px-3 file:text-xs file:font-medium" /><span className="mt-1 block text-[10px] text-slate-400">PDF/Word 最多 64 MB，图片每张最多 20 MB、最多 30 张；视频采用分块上传，最多 256 MB。</span></label>}
       <label className="block"><span className="mb-1.5 block text-[11px] font-medium text-slate-600">标题（选填）</span><input value={title} maxLength={1000} onChange={(event) => setTitle(event.target.value)} placeholder="留空时尝试从网页或文件名识别" className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-300 focus:border-slate-400 focus:ring-4 focus:ring-slate-100" /></label>
       <label className="block"><span className="mb-1.5 block text-[11px] font-medium text-slate-600">补充说明/正文（选填）</span><textarea value={notes} maxLength={120000} onChange={(event) => setNotes(event.target.value)} placeholder="可补充来源背景、视频文字稿，或在链接无法直接读取时粘贴正文。" className="min-h-24 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-900 outline-none placeholder:text-slate-300 focus:border-slate-400 focus:ring-4 focus:ring-slate-100" /></label>
       {failure && <div role="alert" className="flex gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 lg:col-span-2"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><div><strong>{failureReasonLabel(failure.code)}</strong><p className="mt-0.5 leading-relaxed">{failure.message}</p><p className="mt-1 text-[10px] text-rose-600">错误代码：{failure.code || "REQUEST_FAILED"}</p></div></div>}
       {result && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 lg:col-span-2"><strong>{result.message}</strong>{result.warnings?.length > 0 && <ul className="mt-1 list-disc pl-4 text-[10px]">{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</div>}
+      {progress && <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800 lg:col-span-2"><div className="flex items-center justify-between gap-3"><strong>{progress.label}</strong><span className="tabular-nums">{progress.percent}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-blue-100"><div className="h-full rounded-full bg-blue-600 transition-[width]" style={{ width: `${progress.percent}%` }} /></div><p className="mt-1.5 text-[10px] text-blue-600">入库后将依次进行预检、分段、Claim 提取、覆盖审计、实体解析和知识重建。</p></div>}
       <div className="flex flex-wrap items-center gap-3 lg:col-span-2"><Button disabled={busy || (linkMode ? !url : files.length === 0)}><UploadCloud />{busy ? "正在提取并入库…" : "提交并进入生产流程"}</Button><span className="text-[10px] leading-relaxed text-slate-400">{linkMode ? "链接只读取公开页面，不携带登录 Cookie；遇到反爬、登录墙、限流或空内容会明确返回原因。" : kind === "video" ? "原视频会保存在持久化目录；需使用支持视频输入的 Vertex Gemini，画面、对白和环境音会一并分析。" : "原文件会保存到持久化数据目录；文档解析失败或扫描版 PDF 无正文时会明确返回原因。"}</span></div>
     </form>
   </Card>;
@@ -178,7 +183,11 @@ function RecommendationsView({ data, onAction, actionBusy, onNavigate }) {
   const opportunities = data?.opportunities || [];
   const decide = (id, decision, message) => onAction(`/api/recommendations/${id}/decision`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }),
-  }, message);
+  }, decision === "approved_article" ? (result) => result.queued
+    ? "已批准该内容机会，证据就绪并已进入内容生产。"
+    : result.status === "suppressed" ? "已批准，但检测到已有内容冲突，当前已抑制。"
+      : `已批准该内容机会，仍缺少证据：${(result.readiness?.blockingRequirements || []).join("、") || "等待覆盖要求满足"}。`
+    : message);
   if (!items.length) return <EmptyState icon="content" title="暂时没有内容建议" description="AI 完成来源提取后，系统会在这里建议：沉淀为知识、归入专题、补充研究，或进入文章候选。" action={() => onNavigate("sources")} actionLabel="查看研究来源" />;
   return <div className="space-y-4">
     <SummaryBar title="“建议”如何使用"><span>它是人工审批关口：系统只推荐下一步，不会自动发布文章。</span><span>“补充研究”表示现有证据不足，优先核验官方信息。</span></SummaryBar>
@@ -254,12 +263,14 @@ function recommendationGuidance(item) {
   return map[type] || map.UNSURE;
 }
 
-function KnowledgeView({ data, onNavigate }) {
+function KnowledgeView({ data, onNavigate, onAction, actionBusy }) {
   const items = data?.items || [];
+  const visibleItems = items.filter((item) => item.visibility_status !== "hidden");
+  const hiddenItems = items.filter((item) => item.visibility_status === "hidden");
   const [activeTheme, setActiveTheme] = useState("all");
   const [activeSubject, setActiveSubject] = useState("all");
   const [cityExpanded, setCityExpanded] = useState(true);
-  const overview = useMemo(() => buildKnowledgeOverview(items), [items]);
+  const overview = useMemo(() => buildKnowledgeOverview(visibleItems), [visibleItems]);
   const themeSubjects = activeTheme === "all"
     ? overview.subjects
     : overview.subjects.filter((subject) => subject.facts.some((fact) => knowledgeTheme(fact).id === activeTheme));
@@ -279,7 +290,21 @@ function KnowledgeView({ data, onNavigate }) {
     <section className="flex flex-wrap items-center gap-2"><span className="mr-1 text-xs font-semibold text-slate-700">查看主题：</span><Button type="button" variant={activeTheme === "all" ? "default" : "secondary"} size="sm" className="h-8" onClick={() => selectTheme("all")}>全部事实</Button>{overview.themes.map((theme) => <Button key={theme.id} type="button" variant={activeTheme === theme.id ? "default" : "secondary"} size="sm" className="h-8" onClick={() => selectTheme(theme.id)}>{theme.label} {theme.count}</Button>)}</section>
     <section className="grid gap-3 xl:grid-cols-[17rem_minmax(0,1fr)]"><KnowledgeDirectory overview={overview} activeSubject={activeSubject} expanded={cityExpanded} onToggle={() => setCityExpanded((value) => !value)} onSelect={setActiveSubject} /><div><div className="mb-3 flex items-center justify-between gap-3"><div><p className="text-xs font-semibold text-slate-800">{activeSubject === "all" ? "景点与主题索引" : visibleSubjects[0]?.name || "景点事实"}</p><p className="mt-0.5 text-[11px] text-slate-400">{activeSubject === "all" ? "先从左侧目录选择一个景点；此处默认不展开全部事实。" : `正在查看 ${visibleSubjects[0]?.facts.length || 0} 条关联事实。`}</p></div>{activeSubject !== "all" && <Button type="button" variant="secondary" size="sm" className="h-8" onClick={() => setActiveSubject("all")}>返回索引</Button>}</div><section className="grid gap-3 md:grid-cols-2">{visibleSubjects.map((subject) => <KnowledgeSubjectCard key={subject.key} subject={subject} activeTheme={activeTheme} compact={activeSubject === "all"} onSelect={() => setActiveSubject(subject.key)} />)}</section></div></section>
     {activeTheme !== "all" && !visibleSubjects.length && <EmptyState icon="knowledge" title="该主题暂时没有事实" description="继续保存相关来源后，系统会自动归纳并纳入此主题。" />}
+    <KnowledgeManagement items={items} hiddenCount={hiddenItems.length} onAction={onAction} actionBusy={actionBusy} />
   </div>;
+}
+
+function KnowledgeManagement({ items, hiddenCount, onAction, actionBusy }) {
+  const update = (fact, action) => onAction(`/api/knowledge/${encodeURIComponent(fact.id)}/${action}`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ reason: action === "hide" ? "由管理员在知识库页面隐藏" : "由管理员恢复显示" }),
+  }, action === "hide" ? "知识事实已隐藏；底层 Claims 与证据保持不变。" : "知识事实已恢复显示。");
+  return <details className="rounded-xl border border-slate-200 bg-white shadow-sm">
+    <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-800">知识库人工管理（{items.length} 条，已隐藏 {hiddenCount} 条）</summary>
+    <div className="border-t border-slate-100 p-3"><p className="mb-3 text-[11px] leading-relaxed text-slate-500">“隐藏”仅阻止该事实进入选题和写作，不删除原始 Claim、来源或证据；可随时恢复，且知识重建后仍保留此决定。</p>
+      <TableShell><Table><TableHeader><TableRow><TableHead>知识事实</TableHead><TableHead>状态</TableHead><TableHead>管理</TableHead></TableRow></TableHeader><TableBody>{items.map((fact) => <TableRow key={fact.id}><TableCell><div className="font-medium text-slate-900">{fact.subject} · {fact.predicate}</div><div className="mt-1 max-w-2xl text-[10px] text-slate-500">{fact.preferred_value}</div>{fact.visibility_reason && <div className="mt-1 text-[10px] text-amber-700">原因：{fact.visibility_reason}</div>}</TableCell><TableCell><StatusPill status={fact.visibility_status === "hidden" ? "ignored" : "active"} /></TableCell><TableCell>{fact.visibility_status === "hidden" ? <Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => update(fact, "restore")}><RotateCcw />恢复</Button> : <Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => update(fact, "hide")}>隐藏</Button>}</TableCell></TableRow>)}</TableBody></Table></TableShell>
+    </div>
+  </details>;
 }
 
 function KnowledgeStat({ label: title, value, hint, tone }) {
@@ -371,10 +396,17 @@ function BlueprintCard({ item, index }) {
 
 function ContentView({ data, onNavigate, onOpenDraft }) {
   const items = data?.items || [];
-  const knowledgeOnly = (data?.opportunities || []).filter((item) => item.status === "knowledge_only");
-  if (knowledgeOnly.length) return <ContentFlowWorkspace items={items} knowledgeOnly={knowledgeOnly} onNavigate={onNavigate} onOpenDraft={onOpenDraft} />;
-  if (!items.length) return <EmptyState icon="content" title="暂无可生产的选题" description="当一个目的地具备足够的独立证据并通过建议页审批后，选题会自动出现在这里。" action={() => onNavigate("knowledge")} actionLabel="查看目的地知识" />;
-  return <><SummaryBar title="内容生产说明"><span>这里管理已批准选题的规划、英文草稿、质量审核和 WordPress 草稿投递。</span><span>点击已有草稿的行可查看详情。</span></SummaryBar><TableShell><Table><TableHeader><TableRow><TableHead>选题</TableHead><TableHead>覆盖度</TableHead><TableHead className="hidden md:table-cell">证据</TableHead><TableHead>流程状态</TableHead><TableHead className="hidden lg:table-cell">质检 / WordPress</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id} tabIndex={item.draft_id ? 0 : undefined} role={item.draft_id ? "button" : undefined} className={cn(item.draft_id && "cursor-pointer")} onClick={() => item.draft_id && onOpenDraft(item.draft_id)} onKeyDown={(event) => event.key === "Enter" && item.draft_id && onOpenDraft(item.draft_id)}><TableCell><div className="max-w-md font-medium text-slate-900">{item.draft_title || item.proposed_title}</div><div className="mt-1 max-w-lg text-[11px] leading-relaxed text-slate-400">{item.rationale}</div>{item.suppression_reason && <div className="mt-1 text-[10px] font-medium text-amber-600">已抑制：{item.suppression_reason}</div>}</TableCell><TableCell className="font-medium tabular-nums">{Math.round(item.coverage_score)}%</TableCell><TableCell className="hidden md:table-cell">{item.evidence_count} 个来源 · {item.conflict_count} 项冲突<div className="mt-1 text-[10px] text-slate-400">{item.stale_fact_count || 0} 项过期 · {item.verification_fact_count || 0} 项待核验</div></TableCell><TableCell><StatusPill status={item.draft_status || item.brief_status || item.status} />{item.status === "candidate" && <div className="mt-1 text-[10px] text-slate-400">请先在“建议”中审批</div>}</TableCell><TableCell className="hidden lg:table-cell">{item.qa_score == null ? "—" : `${Math.round(item.qa_score)} · ${item.qa_passed ? "通过" : "未通过"}`}<div className="mt-1 text-[10px] text-slate-400">商品：{label(item.commercial_status || "pending")}（{item.commercial_offer_count || 0}）· WP：{label(item.wordpress_status || "not_synced")}</div></TableCell></TableRow>)}</TableBody></Table></TableShell></>;
+  const opportunities = data?.opportunities || [];
+  const knowledgeOnly = opportunities.filter((item) => item.status === "knowledge_only");
+  const tracked = opportunities.filter((item) => ["approved_waiting_for_evidence","approved_ready","producing","drafted","qa_failed","ready_for_wordpress","wordpress_draft","suppressed"].includes(item.status));
+  const opportunityQueue = tracked.length ? <OpportunityQueue items={tracked} /> : null;
+  if (knowledgeOnly.length) return <>{opportunityQueue}<ContentFlowWorkspace items={items} knowledgeOnly={knowledgeOnly} onNavigate={onNavigate} onOpenDraft={onOpenDraft} /></>;
+  if (!items.length) return <>{opportunityQueue || <EmptyState icon="content" title="暂无可生产的选题" description="当一个目的地具备足够的独立证据并通过建议页审批后，选题会自动出现在这里。" action={() => onNavigate("knowledge")} actionLabel="查看目的地知识" />}</>;
+  return <>{opportunityQueue}<SummaryBar title="内容生产说明"><span>这里管理已批准选题的规划、英文草稿、质量审核和 WordPress 草稿投递。</span><span>点击已有草稿的行可查看详情。</span></SummaryBar><TableShell><Table><TableHeader><TableRow><TableHead>选题</TableHead><TableHead>覆盖度</TableHead><TableHead className="hidden md:table-cell">证据</TableHead><TableHead>流程状态</TableHead><TableHead className="hidden lg:table-cell">质检 / WordPress</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id} tabIndex={item.draft_id ? 0 : undefined} role={item.draft_id ? "button" : undefined} className={cn(item.draft_id && "cursor-pointer")} onClick={() => item.draft_id && onOpenDraft(item.draft_id)} onKeyDown={(event) => event.key === "Enter" && item.draft_id && onOpenDraft(item.draft_id)}><TableCell><div className="max-w-md font-medium text-slate-900">{item.draft_title || item.proposed_title}</div><div className="mt-1 max-w-lg text-[11px] leading-relaxed text-slate-400">{item.rationale}</div>{item.suppression_reason && <div className="mt-1 text-[10px] font-medium text-amber-600">已抑制：{item.suppression_reason}</div>}</TableCell><TableCell className="font-medium tabular-nums">{Math.round(item.coverage_score)}%</TableCell><TableCell className="hidden md:table-cell">{item.evidence_count} 个来源 · {item.conflict_count} 项冲突<div className="mt-1 text-[10px] text-slate-400">{item.stale_fact_count || 0} 项过期 · {item.verification_fact_count || 0} 项待核验</div></TableCell><TableCell><StatusPill status={item.draft_status || item.brief_status || item.status} /></TableCell><TableCell className="hidden lg:table-cell">{item.qa_score == null ? "—" : `${Math.round(item.qa_score)} · ${item.qa_passed ? "通过" : "未通过"}`}<div className="mt-1 text-[10px] text-slate-400">商品：{label(item.commercial_status || "pending")}（{item.commercial_offer_count || 0}）· WP：{label(item.wordpress_status || "not_synced")}</div></TableCell></TableRow>)}</TableBody></Table></TableShell></>;
+}
+
+function OpportunityQueue({ items }) {
+  return <Card className="mb-3 p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-slate-900">内容机会状态</p><p className="mt-1 text-xs text-slate-500">批准只作用于精确机会；证据不足会保留批准并自动等待，不会误选同目的地的其他主题。</p></div><span className="text-xs font-semibold tabular-nums">{items.length}</span></div><div className="mt-3 space-y-2">{items.map((item) => <div key={item.id} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[1fr_auto]"><div><p className="text-xs font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-[10px] text-slate-500">覆盖 {Math.round(item.readiness_score || 0)}% · 缺少：{(item.readiness?.blockingRequirements || []).join("、") || "无阻塞项"}</p></div><StatusPill status={item.status} /></div>)}</div></Card>;
 }
 
 function ContentFlowWorkspace({ items, knowledgeOnly, onNavigate, onOpenDraft }) {
@@ -390,6 +422,8 @@ function ContentFlowWorkspace({ items, knowledgeOnly, onNavigate, onOpenDraft })
 
 function WordPressView({ data, onGuide }) {
   if (!data?.configured) return <EmptyState icon="wordpress" title="请连接 WordPress" description="配置站点地址和 Application Password 后，系统会先以只读方式同步现有文章库存，避免选题重复。" action={() => onGuide("wordpress")} actionLabel="查看配置说明" />;
+  // Strategy 1.4 keeps this tab as read-only WordPress inventory. CMS
+  // production and delivery states belong to Content Opportunities.
   const items = data.items || [];
   const summary = <SummaryBar title={`已追踪 ${items.length} 篇文章`}><span>同步：{label(data.sync?.status || "pending")}</span>{data.sync?.last_succeeded_at && <span>最近成功：{formatDate(data.sync.last_succeeded_at)}</span>}{data.sync?.last_error && <span className="text-red-600">{data.sync.last_error}</span>}</SummaryBar>;
   if (!items.length) return <>{summary}<EmptyState icon="wordpress" title="文章库存为空" description="首次同步仍在等待，或者该 WordPress 站点目前没有文章。" /></>;
@@ -469,21 +503,29 @@ function MaintenanceView({ data, onAction, actionBusy }) {
   const notifications = data?.notifications || { configured: false, failed: 0, repeatHours: 24, minimumSeverity: "blocker" };
   const wordpress = data?.wordpressSync;
   const searchConsole = data?.searchConsoleSync;
+  const resetDerivedResearch = () => {
+    if (!window.confirm("确认清空知识库、Claims、建议、蓝图和内容生产结果，并保留原始来源后重新处理吗？")) return;
+    onAction("/api/maintenance/reset-derived-research", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirmation: "RESET_DERIVED_RESEARCH" }),
+    }, (result) => `已保留 ${result.preservedSources || 0} 个原始来源，并重新加入 Strategy 1.4 处理队列。`);
+  };
   const cards = [
-    [Activity, "Active queue", telemetry.active, telemetry.oldestQueuedAgeSeconds ? `Oldest ${formatDuration(telemetry.oldestQueuedAgeSeconds * 1000)}` : "No waiting jobs", telemetry.active ? "warning" : "success"],
-    [CheckCircle2, "Success rate", recent.successRate == null ? "—" : `${recent.successRate}%`, `${recent.completed} completed in ${telemetry.windowHours}h`, recent.failed ? "warning" : "success"],
-    [Clock3, "Queue p95", formatDuration(recent.queueLatencyMs?.p95), `${recent.queueLatencyMs?.samples || 0} measured jobs`, "info"],
-    [Gauge, "Processing p95", formatDuration(recent.durationMs?.p95), `${recent.durationMs?.samples || 0} measured jobs`, "info"],
-    [Webhook, "Exception alerts", notifications.configured ? notifications.failed ? "Delivery issue" : notifications.lastSentAt ? "Connected" : "Ready" : "Not configured", notifications.configured ? `Repeat ${notifications.repeatHours}h · ${notifications.minimumSeverity}+` : "Optional HTTPS webhook", notifications.failed ? "danger" : notifications.configured ? "success" : "default"],
+    [Activity, "活动队列", telemetry.active, telemetry.oldestQueuedAgeSeconds ? `最久等待 ${formatDuration(telemetry.oldestQueuedAgeSeconds * 1000)}` : "没有等待中的任务", telemetry.active ? "warning" : "success"],
+    [CheckCircle2, "成功率", recent.successRate == null ? "—" : `${recent.successRate}%`, `${telemetry.windowHours} 小时内完成 ${recent.completed} 个任务`, recent.failed ? "warning" : "success"],
+    [Clock3, "排队耗时 p95", formatDuration(recent.queueLatencyMs?.p95), `${recent.queueLatencyMs?.samples || 0} 个采样任务`, "info"],
+    [Gauge, "处理耗时 p95", formatDuration(recent.durationMs?.p95), `${recent.durationMs?.samples || 0} 个采样任务`, "info"],
+    [Webhook, "异常通知", notifications.configured ? notifications.failed ? "投递异常" : notifications.lastSentAt ? "已连接" : "就绪" : "未配置", notifications.configured ? `每 ${notifications.repeatHours} 小时重复 · ${notifications.minimumSeverity} 及以上` : "可选 HTTPS Webhook", notifications.failed ? "danger" : notifications.configured ? "success" : "default"],
   ];
   return <>
-    <section aria-label="Operational health" className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
-      {cards.map(([Icon, title, value, detail, tone]) => <OperationCard key={title} icon={Icon} title={title} value={value} detail={detail} tone={tone} className={title === "Exception alerts" ? "col-span-2 lg:col-span-1" : ""} />)}
+    <section aria-label="运行健康状况" className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
+      {cards.map(([Icon, title, value, detail, tone]) => <OperationCard key={title} icon={Icon} title={title} value={value} detail={detail} tone={tone} className={title === "异常通知" ? "col-span-2 lg:col-span-1" : ""} />)}
     </section>
-    <SummaryBar title={data?.enabled ? "Automatic maintenance enabled" : "Automatic maintenance disabled"} action={<Button size="sm" disabled={!data?.enabled || actionBusy} onClick={() => onAction("/api/maintenance/run", { method: "POST" }, "Maintenance run completed")}><RefreshCw className={cn(actionBusy && "animate-spin")} /> Run now</Button>}><span>Checks every {data?.intervalMinutes || 15} minutes</span><span>{label(data?.logging?.format || "json")} logs</span></SummaryBar>
-    <SectionTitle title="Maintenance tasks" description="Durable schedules survive restarts" />
-    <TableShell><Table><TableHeader><TableRow><TableHead>Task</TableHead><TableHead>Status</TableHead><TableHead className="hidden md:table-cell">Last success</TableHead><TableHead>Items</TableHead><TableHead className="hidden lg:table-cell">Result</TableHead></TableRow></TableHeader><TableBody>{(data?.runs || []).map((run) => <TableRow key={run.task_key}><TableCell className="font-medium text-slate-900">{label(run.task_key)}</TableCell><TableCell><StatusPill status={run.status} /></TableCell><TableCell className="hidden whitespace-nowrap md:table-cell">{formatDate(run.last_succeeded_at)}</TableCell><TableCell>{run.item_count}</TableCell><TableCell className="hidden max-w-xl text-[11px] lg:table-cell">{run.last_error || maintenanceResult(run.metadata)}</TableCell></TableRow>)}<IntegrationRow title="WordPress inventory" state={wordpress} result="Read-only post synchronization" /><IntegrationRow title="Search Console queries" state={searchConsole} result="Read-only cannibalization protection" /></TableBody></Table></TableShell>
-    {telemetry.types?.length > 0 && <><SectionTitle title="Job performance" description={`Rolling ${telemetry.windowHours}-hour window`} /><TableShell><Table><TableHeader><TableRow><TableHead>Job type</TableHead><TableHead>Queued</TableHead><TableHead>Running</TableHead><TableHead>Completed</TableHead><TableHead>Success</TableHead><TableHead className="hidden md:table-cell">p95 duration</TableHead></TableRow></TableHeader><TableBody>{telemetry.types.map((item) => <TableRow key={item.type}><TableCell className="font-medium text-slate-900">{label(item.type)}</TableCell><TableCell>{item.queued}</TableCell><TableCell>{item.running}</TableCell><TableCell>{item.completed}</TableCell><TableCell>{item.completed ? `${Math.round(item.succeeded / item.completed * 100)}%` : "—"}</TableCell><TableCell className="hidden md:table-cell">{formatDuration(item.durationP95Ms)}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
+    <SummaryBar title={data?.enabled ? "自动维护已启用" : "自动维护已停用"} action={<Button size="sm" disabled={!data?.enabled || actionBusy} onClick={() => onAction("/api/maintenance/run", { method: "POST" }, "维护任务已完成")}><RefreshCw className={cn(actionBusy && "animate-spin")} /> 立即运行</Button>}><span>每 {data?.intervalMinutes || 15} 分钟检查一次</span><span>{label(data?.logging?.format || "json")} 日志</span></SummaryBar>
+    <SectionTitle title="维护任务" description="持久化调度在服务重启后继续生效" />
+    <TableShell><Table><TableHeader><TableRow><TableHead>任务</TableHead><TableHead>状态</TableHead><TableHead className="hidden md:table-cell">上次成功</TableHead><TableHead>处理项</TableHead><TableHead className="hidden lg:table-cell">结果</TableHead></TableRow></TableHeader><TableBody>{(data?.runs || []).map((run) => <TableRow key={run.task_key}><TableCell className="font-medium text-slate-900">{maintenanceLabel(run.task_key)}</TableCell><TableCell><StatusPill status={run.status} /></TableCell><TableCell className="hidden whitespace-nowrap md:table-cell">{formatDate(run.last_succeeded_at)}</TableCell><TableCell>{run.item_count}</TableCell><TableCell className="hidden max-w-xl text-[11px] lg:table-cell">{run.last_error || maintenanceResult(run.metadata)}</TableCell></TableRow>)}<IntegrationRow title="WordPress 文章库存" state={wordpress} result="只读同步站点文章" /><IntegrationRow title="Search Console 查询" state={searchConsole} result="只读检测搜索内容冲突" /></TableBody></Table></TableShell>
+    {telemetry.types?.length > 0 && <><SectionTitle title="任务性能" description={`最近 ${telemetry.windowHours} 小时`} /><TableShell><Table><TableHeader><TableRow><TableHead>任务类型</TableHead><TableHead>排队</TableHead><TableHead>运行中</TableHead><TableHead>已完成</TableHead><TableHead>成功率</TableHead><TableHead className="hidden md:table-cell">p95 耗时</TableHead></TableRow></TableHeader><TableBody>{telemetry.types.map((item) => <TableRow key={item.type}><TableCell className="font-medium text-slate-900">{maintenanceLabel(item.type)}</TableCell><TableCell>{item.queued}</TableCell><TableCell>{item.running}</TableCell><TableCell>{item.completed}</TableCell><TableCell>{item.completed ? `${Math.round(item.succeeded / item.completed * 100)}%` : "—"}</TableCell><TableCell className="hidden md:table-cell">{formatDuration(item.durationP95Ms)}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
+    <Card className="border-amber-200 bg-amber-50/60 p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-semibold text-amber-950">研究派生数据重建</p><p className="mt-1 text-[11px] leading-relaxed text-amber-800">清空旧 Claims、知识、建议、蓝图和内容生产结果；保留原始来源、文件与授权图片，并按 Strategy 1.4 重新处理。</p></div><Button variant="secondary" size="sm" disabled={actionBusy} onClick={resetDerivedResearch}><RotateCcw />清空并重新处理</Button></div></Card>
   </>;
 }
 
@@ -497,7 +539,19 @@ function OperationCard({ icon: Icon, title, value, detail, tone, className }) {
 }
 
 function maintenanceResult(metadata) {
-  if (metadata?.backup) return `${metadata.backup} · schema ${metadata.schemaVersion} · ${metadata.bytes} bytes · SHA ${metadata.sha256?.slice(0, 12) || "—"}`;
-  if (metadata?.retentionDays) return `${metadata.retentionDays}-day retention`;
-  return "Completed";
+  if (metadata?.backup) return `${metadata.backup} · 数据库结构 ${metadata.schemaVersion} · ${metadata.bytes} 字节 · SHA ${metadata.sha256?.slice(0, 12) || "—"}`;
+  if (metadata?.retentionDays) return `保留 ${metadata.retentionDays} 天`;
+  return "已完成";
+}
+
+function maintenanceLabel(value) {
+  return ({ database_backup: "数据库备份", entity_resolution: "实体归并", job_history_cleanup: "任务历史清理", knowledge_reconciliation: "知识库重建",
+    rebuild_knowledge: "重建知识库", rebuild_topics: "重建主题", rebuild_topic_clusters: "重建主题簇", build_coverage_matrix: "构建覆盖矩阵",
+    rebuild_content_opportunities: "重建内容机会", reconcile_approved_opportunities: "恢复已批准机会", generate_visuals: "生成配图",
+    resolve_entities: "解析实体", review_draft: "审核草稿", revise_draft: "修订草稿", analyze_intake: "分析来源",
+    analyze_source_diagnostic: "来源诊断", analyze_source_blueprint: "分析来源蓝图", analyze_source_family: "分析来源家族",
+    extract_source: "提取来源", preflight_source: "来源预检", segment_source: "来源分段",
+    extract_segment_claims: "分段提取 Claim", audit_segment_coverage: "审计分段覆盖", retry_segment_extraction: "定向补漏提取",
+    finalize_source_extraction: "完成来源提取", rebuild_editorial: "重建编辑蓝图", compose_frontend_page: "组合前端页面",
+    compose_commercial: "组合商业层", compose_publish_page: "组合发布页面", push_wordpress_draft: "投递 WordPress 草稿" })[value] || label(value);
 }

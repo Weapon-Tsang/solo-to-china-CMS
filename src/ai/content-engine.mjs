@@ -321,6 +321,7 @@ const pagePayloadPrompt = (strategyVersion, capabilities) => `Produce a Frontend
 Follow the supplied Page Schema exactly. The blocks array order is final render order.
 Use only component IDs, variants, fields, and data schemas published by the current Frontend Component Registry candidates below. Never invent components, variants, props, CSS, styling tokens, or visual instructions.
 Use the page plan as an editorial ordering guide. Use only information contained in the supplied canonical content and draft. Preserve uncertainty instead of fabricating facts. Do not use deprecated components in a new payload.
+When the Registry publishes an image component, use it only for supplied visuals that already include a positive wordpress_media_id. Copy that ID to media_id and preserve the supplied alt text and caption. Place each selected image explicitly in blocks[]; never invent a media ID or an image URL.
 Current capability candidates (machine-derived):\n${JSON.stringify(promptCapabilities(capabilities))}`;
 
 const REVIEW_PROMPT = `Act as an independent senior editor. Audit the English draft against its evidence package and brief.

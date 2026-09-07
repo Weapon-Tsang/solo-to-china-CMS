@@ -61,6 +61,25 @@ test("startup immediately requeues jobs interrupted by a previous local server p
   }
 });
 
+test("deterministic Contract failures do not enter the automatic retry loop", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-contract-failure-"));
+  const database = openDatabase(path.join(directory, "failure.sqlite"));
+  const repository = new Repository(database);
+  try {
+    const jobId = repository.enqueue("compose_publish_page", "draft-missing");
+    const job = repository.claimJob();
+    const error = Object.assign(new Error("UNKNOWN_COMPONENT: made_up"), { code: "UNKNOWN_COMPONENT", retryable: false });
+    repository.failJob(job, error);
+    const stored = database.prepare("SELECT status, attempts, last_error FROM jobs WHERE id=?").get(jobId);
+    assert.equal(stored.status, "failed");
+    assert.equal(stored.attempts, 1);
+    assert.match(stored.last_error, /UNKNOWN_COMPONENT/);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("exception webhook sends a deduplicated operational payload with optional bearer auth", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-notification-test-"));
   const database = openDatabase(path.join(directory, "notifications.sqlite"));

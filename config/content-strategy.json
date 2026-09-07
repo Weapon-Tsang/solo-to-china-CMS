@@ -1,13 +1,26 @@
 {
   "name": "SoloToChina Content Production Strategy",
-  "current_version": "1.3",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.3.md",
+  "current_version": "1.4",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.4.md",
   "status": "active",
   "history": [
     {
+      "version": "1.4",
+      "effective_date": "2026-09-07",
+      "status": "active",
+      "summary": "将异构来源建模为证据容器，通过分段提取、覆盖审计和独立来源家族构建主题机会，并以精确 Opportunity 状态机驱动内容生产。",
+      "changes": [
+        "新增 Source Segment、Evidence Span、Extraction Coverage 与 Source Family，逐段穷尽提取且不再截断 100 条 Claim。",
+        "新增 Topic Cluster 与 Coverage Matrix，依据内容类型的必需证据槽计算可解释的 readiness。",
+        "批准建议只批准其精确 Opportunity；证据不足时持久等待，满足条件后自动恢复并创建一对一 Candidate。",
+        "保留来源诊断、研究草稿、前端页面与发布包之间的职责边界；商业层仍只在 QA 通过后组合。",
+        "增加大视频分块上传、分阶段进度、可审计 Claim 排除与知识可见性管理。"
+      ]
+    },
+    {
       "version": "1.3",
       "effective_date": "2026-09-03",
-      "status": "active",
+      "status": "superseded",
       "summary": "严格分离实体身份、语义关系与 Claim，按可同时为真判断知识冲突，并建立隔离的 Affiliate Provider/Asset/Intent/Tracking Phase 1。",
       "changes": [
         "实体增加类型、粒度和地理硬约束；明显不可能的合并自动保持分离，相关对象建立 Relation，人工合并可审计和撤销。",

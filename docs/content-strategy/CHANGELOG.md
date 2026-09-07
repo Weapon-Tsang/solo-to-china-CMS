@@ -1,5 +1,13 @@
 # Content strategy changelog
 
+## 1.4 — 2026-09-07
+
+- Reframed Sources as evidence containers with preflight, text/PDF/media segmentation, exhaustive atomic Claim extraction, coverage audit, and one targeted retry.
+- Added Evidence Spans, Extraction Coverage, Source Families, Topic Clusters, Coverage Matrices, and evidence-gated Content Opportunity state transitions.
+- Made one human approval durable: incomplete Opportunities wait for evidence and resume automatically; exact ready Opportunities create one Candidate without destination-wide selection.
+- Added reversible administrator Claim exclusion and Knowledge visibility controls without deleting raw evidence or Claim history.
+- Added progress-reporting chunked video uploads and raised default document, image, video, and total upload limits.
+
 ## 1.3 — 2026-09-03
 
 Separates Entity identity from semantic relatedness and Claims, adds typed/granular merge constraints with auditable undo, and replaces string inequality conflict detection with structured Claim relations and coexistence-aware review. Introduces the isolated Affiliate Provider/Asset/Intent/Slot/Opportunity/Event Phase 1, safe commercial WordPress blocks, Frontend Contract capability-gap requests, density guards, and selective precision fallback. Strategy 1.2 image authorization and all Research/Commercial boundaries remain in force.

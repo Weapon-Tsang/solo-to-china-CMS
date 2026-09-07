@@ -2,9 +2,9 @@
 
 ## Active Content Strategy
 
-- **Active strategy:** SoloToChina Content Production Strategy 1.3
+- **Active strategy:** SoloToChina Content Production Strategy 1.4
 - **Canonical manifest:** `config/content-strategy.json`
-- **Specification:** `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.3.md`
+- **Specification:** `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.4.md`
 - **Evolution log:** `docs/content-strategy/CHANGELOG.md` and the manifest `history` entries
 - **Status:** implemented incrementally on the existing durable SQLite pipeline; legacy records intentionally have no retroactive strategy tag.
 
@@ -15,13 +15,13 @@ Any future maintainer, agent, or developer must read the active manifest and lin
 - **CMS integration specification:** `docs/FRONTEND_CONTRACT_INTEGRATION.md`
 - **Owner of component capability:** the separate Frontend repository, through its published machine-readable Component Registry and Page Schema
 - **CMS role:** synchronized Contract consumer, editorial composer, payload producer, and pre-publish validator
-- **Current safety state:** Frontend commit `210d0fe` publishes generated CMS artifacts at `contracts/component-registry.json` and `contracts/page-schema.json`. Production remains unconfigured until those reviewed artifacts are deployed and synchronized successfully; the legacy Markdown/WordPress path remains compatible.
+- **Current safety state:** Frontend Contract `1.1.0` publishes the generated Component Registry, Page Schema, Publish Package Schema, and the authenticated draft-only CMS Article API. Contract-aware installations synchronize the deployed artifacts; installations with no Contract sources retain the legacy Markdown/WordPress fallback.
 
 Future maintainers must not scan Frontend JSX/CSS, duplicate a component list in this repository, or hardcode component IDs into AI prompts. Read the Frontend Contract Integration document before changing Contract sync, composition, or publishing gates.
 
 Affiliate components follow the same rule. The CMS may request semantic capabilities such as `affiliate_booking_card`, `affiliate_search_card`, or `affiliate_banner`, but only the Frontend's published Contract makes one available. A missing component creates a durable capability request; it is never simulated by hardcoded CMS presentation code.
 
-The audited Frontend Registry currently provides only the generic `affiliate_cta`. Dedicated booking/search/banner/promotion components, tracking metadata, and browser-side event dispatch still belong in the Frontend repository. The pre-QA CMS Page Composer explicitly excludes all commercial and `affiliate_*` capabilities.
+The audited Frontend Registry provides the QA-selected booking, search, banner, and promotion components. The pre-QA CMS Page Composer still excludes all commercial and `affiliate_*` capabilities; only the post-QA deterministic overlay may insert them into the final validated Page Payload.
 
 ## Entity and Claim resolution
 
@@ -39,7 +39,7 @@ The audited Frontend Registry currently provides only the generic `affiliate_cta
 - Provider, Asset, mapping, opportunity, performance, and event APIs live under `/api/commercial/*`; the dashboard's Commercial view reads `/api/commercial`.
 - The composer runs after QA, derives block intent, selects decision-appropriate precision, falls back silently, enforces density, and stores an independent Overlay. Research packages never read these tables.
 - WordPress receives generated safe commercial blocks with disclosure and sponsored link attributes. Arbitrary HTML/script is rejected.
-- App version `1.13.2` and schema migration `21` are the expected post-upgrade baseline.
+- App version `1.14.0` and schema migration `23` are the expected post-upgrade baseline.
 
 Trip.com remains manual-only: an operator must create official links/embed configuration in the official platform and paste only those public artifacts into the registry. Do not store credentials/cookies, automate dashboard login, crawl the affiliate dashboard, invent tracking parameters, or create low-value entity links at scale.
 
@@ -49,7 +49,7 @@ Deferred Phase 2: official API/feed integration when available, report import, b
 
 Source discovery stays human-led. The Chrome extension only captures a note the user has opened and explicitly saved. The engine stores raw evidence, creates traceable structured claims, asks for a human decision before article planning, sends only validated drafts to WordPress, and never publishes a post itself.
 
-The Sources dashboard also accepts explicit administrator submissions: public Xiaohongshu, WeChat, video, and ordinary web links; PDF/DOC/DOCX files; one or more images; and a single video file up to 100 MB. These inputs become the same immutable Source evidence and use the existing extraction, Claim, Knowledge, Blueprint, and content-intake pipeline. Uploaded originals live under `SOURCE_UPLOADS_DIR`, which must remain inside the persistent Docker volume. Video files use Vertex Gemini frame/audio analysis; files above the inline threshold require ephemeral `MANUAL_SOURCE_GCS_BUCKET` staging. Public-link fetching carries no cookies or credentials, rejects private/reserved network destinations, and returns classified operator-facing errors for login walls, bot protection, rate limits, timeouts, unsupported responses, and empty content.
+The Sources dashboard also accepts explicit administrator submissions: public Xiaohongshu, WeChat, video, and ordinary web links; PDF/DOC/DOCX files; one or more images; and a single video file up to 256 MB. Browser video uploads use resumable 5 MB application chunks with visible progress. These inputs become immutable Source evidence and enter Strategy 1.4 preflight, segmentation, exhaustive extraction, coverage audit, Knowledge, Opportunity, and content production. Uploaded originals live under `SOURCE_UPLOADS_DIR`, which must remain inside the persistent Docker volume.
 
 ## Admin model and action navigation
 

@@ -40,8 +40,11 @@ export function normalizeAffiliateAsset(input, providerAccount = null) {
   const scopeType = enumValue(input.scopeType || input.scope_type, SCOPE_TYPES, "scopeType");
   const provider = requiredSingleLine(input.provider || providerAccount?.displayName, "provider", 100);
   const targetUrl = input.targetUrl || input.target_url ? safeAffiliateUrl(input.targetUrl || input.target_url) : "";
+  const imageUrl = input.imageUrl || input.image_url ? safeAffiliateUrl(input.imageUrl || input.image_url) : "";
+  const altText = singleLine(truncate(input.altText || input.alt_text, 200));
   const embedConfig = normalizeEmbedConfig(input.embedConfig || input.embed_config || input.embed_config_json, assetType, provider);
   if (["DEEP_LINK", "CATEGORY_LINK", "STATIC_BANNER", "PROMOTION"].includes(assetType) && !targetUrl) throw new CommercialValidationError(`${assetType} requires an official HTTPS targetUrl.`);
+  if (assetType === "STATIC_BANNER" && (!imageUrl || !altText)) throw new CommercialValidationError("STATIC_BANNER requires a safe imageUrl and altText.");
   if (["SEARCH_BOX", "DYNAMIC_BANNER"].includes(assetType) && !targetUrl && !Object.keys(embedConfig).length) throw new CommercialValidationError(`${assetType} requires a safe official URL or embed configuration.`);
   return {
     id: input.id || id("asset"), providerAccountId: requiredSingleLine(input.providerAccountId || input.provider_account_id || providerAccount?.id, "providerAccountId", 200),
@@ -52,7 +55,8 @@ export function normalizeAffiliateAsset(input, providerAccount = null) {
     entityName: singleLine(truncate(input.entityName || input.entity_name, 300)), providerEntityId: singleLine(truncate(input.providerEntityId || input.provider_entity_id, 300)),
     title: requiredSingleLine(input.title, "title", 500), description: truncate(input.description, 1_000),
     ctaLabel: singleLine(truncate(input.ctaLabel || input.cta_label || "View option", 100)).replaceAll("|", " "),
-    targetUrl, embedConfig, language: singleLine(truncate(input.language || "en", 30)), priority: boundedInteger(input.priority, -100, 100), active: input.active !== false,
+    targetUrl, imageUrl, altText, priceText: singleLine(truncate(input.priceText || input.price_text, 120)),
+    embedConfig, language: singleLine(truncate(input.language || "en", 30)), priority: boundedInteger(input.priority, -100, 100), active: input.active !== false,
     validFrom: safeDate(input.validFrom || input.valid_from), validUntil: safeDate(input.validUntil || input.valid_until),
     sourceUpdatedAt: safeDate(input.sourceUpdatedAt || input.source_updated_at) || now(), legacyOfferId: input.legacyOfferId || input.legacy_offer_id || null,
   };
@@ -98,9 +102,14 @@ export class CommercialComposer {
     const researchBody = contentPackage.draft.body_markdown;
     const researchBlocks = Array.isArray(contentPackage.draft.content_blocks) && contentPackage.draft.content_blocks.length
       ? contentPackage.draft.content_blocks : markdownToContentBlocks(researchBody);
-    const intents = detectCommercialIntents(contentPackage, researchBlocks);
+    // In Contract-aware mode commercial slot indexes belong to the validated
+    // Frontend Page Payload. Legacy mode continues to target editorial Markdown
+    // blocks because that is the structure its WordPress adapter publishes.
+    const placementBlocks = Array.isArray(contentPackage.frontend_page?.payload?.blocks)
+      ? contentPackage.frontend_page.payload.blocks : researchBlocks;
+    const intents = detectCommercialIntents(contentPackage, placementBlocks);
     const allResolutions = intents.map((intent) => resolveAffiliateAsset(intent, assets));
-    const selected = applyDensityGuard(allResolutions.filter((item) => item.asset), researchBlocks.length, this.config);
+    const selected = applyDensityGuard(allResolutions.filter((item) => item.asset), placementBlocks.length, this.config);
     const opportunities = dedupeOpportunities(intents.map((intent, index) => buildOpportunity(intent, allResolutions[index], this.config.opportunityThreshold)).filter(Boolean));
     if (!selected.length) return {
       publishableBodyMarkdown: researchBody, contentBlocks: researchBlocks, commercialBlocks: [], intents, slots: [], offerIds: [], assetIds: [],
@@ -247,6 +256,10 @@ function commercialBlock(intent, asset, placement, index, disclosure) {
       asset_type: asset.asset_type || asset.assetType, product_category: canonicalCategory(asset), title: asset.title, description: asset.description || "",
       cta_label: asset.cta_label || asset.ctaLabel, target_url: asset.target_url || asset.targetUrl || "", embed_config: parseEmbed(asset.embed_config_json || asset.embedConfig),
       disclosure, scope_type: asset.scope_type || asset.scopeType, scope_key: asset.scope_key || asset.scopeKey || "",
+      price_text: asset.price_text || asset.priceText || "", valid_from: asset.valid_from || asset.validFrom || "",
+      valid_until: asset.valid_until || asset.validUntil || "", image_url: asset.image_url || asset.imageUrl || "",
+      alt_text: asset.alt_text || asset.altText || "", entity: asset.entity_key || asset.entityKey || "",
+      route: asset.route_key || asset.routeKey || "", destination: asset.destination_slug || asset.destinationSlug || "",
     },
   };
 }
@@ -300,7 +313,17 @@ function canonicalCategory(asset) { return String(asset.product_category || asse
 function landingSpecificity(asset) { return ({ ENTITY: 30, ROUTE: 28, AREA: 20, DESTINATION: 15, COUNTRY: 10, CATEGORY: 5, GLOBAL: 0 })[asset.scope_type || asset.scopeType] || 0; }
 function intentRank(intent) { return ({ VERY_HIGH: 4, HIGH: 3, MEDIUM: 2, LOW: 1 })[intent.intentStrength] || 0; }
 function recommendedComponent(productCategory, veryHigh, context) { if (veryHigh) return "affiliate_booking_card"; if (productCategory === "HOTEL" || /compare|search/i.test(context)) return "affiliate_search_card"; return "affiliate_banner"; }
-function blockText(block) { return block?.type === "list" ? (block.items || []).join(" ") : block?.text || ""; }
+function blockText(block) {
+  if (block?.type === "list") return (block.items || []).join(" ");
+  if (block?.text) return block.text;
+  return stringsIn(block?.data).join(" ");
+}
+function stringsIn(value) {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(stringsIn);
+  if (value && typeof value === "object") return Object.values(value).flatMap(stringsIn);
+  return [];
+}
 function dedupeIntents(items) { const seen = new Set(); return items.filter((item) => { const key = `${item.blockKey}:${item.productCategory}`; if (seen.has(key)) return false; seen.add(key); return true; }); }
 function dedupeOpportunities(items) { const best = new Map(); for (const item of items) { const key = `${item.productCategory}:${item.scopeType}:${item.scopeKey}`; if (!best.has(key) || best.get(key).score < item.score) best.set(key, item); } return [...best.values()]; }
 function parseEmbed(value) { if (!value) return {}; if (typeof value === "object") return value; try { return JSON.parse(value); } catch { return {}; } }
@@ -323,12 +346,21 @@ function normalizeEmbedConfig(value, assetType, provider) {
   const prohibited = Object.keys(config).find((key) => /html|script|markup|onload|onclick/i.test(key));
   if (prohibited) throw new CommercialValidationError(`embedConfig field '${prohibited}' is not allowed.`);
   const allowedTypes = { SEARCH_BOX: "search_box", STATIC_BANNER: "static_banner", DYNAMIC_BANNER: "dynamic_banner" };
-  if (config.embedType && config.embedType !== allowedTypes[assetType]) throw new CommercialValidationError("embedConfig.embedType does not match assetType.");
+  const embedType = config.embed_type || config.embedType || allowedTypes[assetType];
+  if (embedType && embedType !== allowedTypes[assetType]) throw new CommercialValidationError("embedConfig.embedType does not match assetType.");
   if (config.src) {
     const url = new URL(config.src);
     if (url.protocol !== "https:" || url.username || url.password) throw new CommercialValidationError("embedConfig.src must be a credential-free HTTPS URL.");
     if (/trip/i.test(provider) && !["trip.com", "tripcdn.com", "ctrip.com"].some((suffix) => url.hostname === suffix || url.hostname.endsWith(`.${suffix}`))) throw new CommercialValidationError("Trip.com embed sources must use an allowlisted official domain.");
-    config = { ...config, src: url.toString() };
+    config = {
+      embed_type: embedType,
+      src: url.toString(),
+      width: boundedInteger(config.width || 320, 240, 1600),
+      height: boundedInteger(config.height || 240, 80, 800),
+      language: ["en", "zh-CN", "zh-TW"].includes(config.language) ? config.language : "en",
+      theme: ["light", "dark"].includes(config.theme) ? config.theme : "light",
+      variant: ["compact", "standard"].includes(config.variant) ? config.variant : "standard",
+    };
   }
   return config;
 }

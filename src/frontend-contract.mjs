@@ -40,6 +40,7 @@ export class FrontendContractConsumer {
       sourceRepository: this.config.sourceRepository || "",
       registrySource: this.config.registrySource || "",
       pageSchemaSource: this.config.pageSchemaSource || "",
+      publishPackageSchemaSource: resolvePublishPackageSchemaSource(this.config),
       lastAttemptAt: state?.last_attempt_at || null,
       lastSuccessAt: state?.last_success_at || null,
       lastError: state?.last_error || null,
@@ -99,29 +100,42 @@ export class FrontendContractConsumer {
     }
     this.repository.recordFrontendContractAttempt("syncing", null);
     try {
-      const [registryDocument, pageSchemaDocument] = await Promise.all([
+      const publishPackageSchemaSource = resolvePublishPackageSchemaSource(this.config);
+      const [registryResource, pageSchemaResource, publishPackageResource] = await Promise.all([
         readJsonDocument(this.config.registrySource, this.fetch, this.config.timeoutMs),
         readJsonDocument(this.config.pageSchemaSource, this.fetch, this.config.timeoutMs),
+        publishPackageSchemaSource ? readJsonDocument(publishPackageSchemaSource, this.fetch, this.config.timeoutMs) : null,
       ]);
-      const registry = normalizeRegistry(registryDocument);
-      const pageSchema = normalizePageSchema(pageSchemaDocument, registry.schemaVersion);
+      const registry = normalizeRegistry(registryResource.document);
+      const pageSchema = normalizePageSchema(pageSchemaResource.document, registry.schemaVersion, registry.contractVersion);
       if (pageSchema.schemaVersion !== registry.schemaVersion) {
         throw new FrontendContractError("SCHEMA_VERSION_MISMATCH", `Registry schemaVersion ${registry.schemaVersion} does not match Page Schema ${pageSchema.schemaVersion}.`);
       }
+      if (pageSchema.contractVersion !== registry.contractVersion) {
+        throw new FrontendContractError("CONTRACT_VERSION_MISMATCH", `Registry contractVersion ${registry.contractVersion} does not match Page Schema ${pageSchema.contractVersion}.`);
+      }
+      const checksum = registryResource.checksum;
+      const publishPackage = normalizePublishPackageSchema(
+        publishPackageResource?.document || defaultPublishPackageSchema(pageSchema.raw, registry.contractVersion, checksum),
+        registry.contractVersion,
+        checksum,
+      );
       const previous = this.active;
-      const checksum = sha256(stableStringify({ registry: registry.raw, pageSchema: pageSchema.raw }));
       const diff = previous ? diffContracts(previous, { ...registry, pageSchema }) : emptyDiff();
       const majorMismatch = Boolean(previous && semverMajor(previous.contractVersion) !== semverMajor(registry.contractVersion));
       const result = this.repository.saveFrontendContractSnapshot({
         sourceRepository: this.config.sourceRepository || "",
         registrySource: this.config.registrySource,
         pageSchemaSource: this.config.pageSchemaSource,
+        publishPackageSchemaSource,
         frontendCommitSha: registry.frontendCommitSha || pageSchema.frontendCommitSha || this.config.frontendCommitSha || null,
         contractVersion: registry.contractVersion,
         schemaVersion: registry.schemaVersion,
         checksum,
         registry: registry.raw,
         pageSchema: pageSchema.raw,
+        publishPackageVersion: publishPackage.publishPackageVersion,
+        publishPackageSchema: publishPackage.raw,
         diff,
         activate: !majorMismatch,
         majorMismatch,
@@ -190,6 +204,24 @@ export class FrontendContractConsumer {
     return { valid: errors.length === 0, errors, warnings, contract: snapshotSummary(active), existingPage };
   }
 
+  validatePublishPackage(publishPackage) {
+    const active = this.active;
+    if (!active) return invalid("NO_VALID_FRONTEND_CONTRACT", "No validated Frontend Contract is available for Publish Package validation.");
+    const errors = [];
+    if (publishPackage?.contract?.componentContractVersion !== active.contractVersion
+      || publishPackage?.contract?.pageSchemaVersion !== active.pageSchemaContractVersion
+      || publishPackage?.contract?.contractChecksum !== active.checksum) {
+      errors.push(issue("CONTRACT_VERSION_MISMATCH", "Publish Package provenance does not match the active Frontend Contract.", "contract"));
+    }
+    const pageValidation = this.validatePagePayload(publishPackage?.page);
+    errors.push(...pageValidation.errors);
+    const schemaErrors = validateJsonSchema(publishPackage, active.publishPackage.schema, {
+      root: active.publishPackage.schema, path: "$",
+    });
+    errors.push(...schemaErrors.map((entry) => ({ ...entry, code: entry.code || "INVALID_PAGE_SCHEMA" })));
+    return { valid: errors.length === 0, errors, warnings: pageValidation.warnings, contract: snapshotSummary(active) };
+  }
+
   compatibilityReport() {
     const active = this.active;
     const pages = this.repository.listFrontendPageCompositions();
@@ -218,12 +250,26 @@ export function normalizeRegistry(raw) {
   return { raw, contractVersion, schemaVersion, frontendCommitSha: readCommit(raw), components };
 }
 
-export function normalizePageSchema(raw, fallbackVersion = "") {
+export function normalizePageSchema(raw, fallbackVersion = "", fallbackContractVersion = "") {
   if (!isObject(raw)) throw new FrontendContractError("INVALID_PAGE_SCHEMA", "Page Schema must be a JSON object.");
   const schemaVersion = requiredSchemaVersion(raw.schemaVersion || fallbackVersion, "schemaVersion");
+  const contractVersion = requiredVersion(raw.contractVersion || fallbackContractVersion, "contractVersion");
   const schema = isObject(raw.schema) ? raw.schema : raw;
   if (!isObject(schema) || !Object.keys(schema).length) throw new FrontendContractError("INVALID_PAGE_SCHEMA", "Page Schema must contain a non-empty JSON Schema object.");
-  return { raw, schemaVersion, frontendCommitSha: readCommit(raw), schema };
+  return { raw, schemaVersion, contractVersion, frontendCommitSha: readCommit(raw), schema };
+}
+
+export function normalizePublishPackageSchema(raw, contractVersion, checksum) {
+  if (!isObject(raw)) throw new FrontendContractError("INVALID_PUBLISH_PACKAGE_SCHEMA", "Publish Package Schema must be a JSON object.");
+  const publishPackageVersion = requiredVersion(raw.publishPackageVersion, "publishPackageVersion");
+  if (raw.contractVersion !== contractVersion) {
+    throw new FrontendContractError("CONTRACT_VERSION_MISMATCH", `Publish Package Contract ${raw.contractVersion || "missing"} does not match Registry ${contractVersion}.`);
+  }
+  const declaredChecksum = raw.properties?.contract?.properties?.contractChecksum?.const;
+  if (declaredChecksum && declaredChecksum !== checksum) {
+    throw new FrontendContractError("CONTRACT_VERSION_MISMATCH", "Publish Package checksum does not match the generated Component Registry bytes.");
+  }
+  return { raw, schema: raw, publishPackageVersion };
 }
 
 function normalizeComponent(component) {
@@ -260,21 +306,31 @@ function editorialCapabilities(result) {
 
 function hydrateSnapshot(snapshot) {
   const registry = normalizeRegistry(parseJson(snapshot.registry_json, "registry snapshot"));
-  const pageSchema = normalizePageSchema(parseJson(snapshot.page_schema_json, "page schema snapshot"), registry.schemaVersion);
+  const pageSchema = normalizePageSchema(parseJson(snapshot.page_schema_json, "page schema snapshot"), registry.schemaVersion, registry.contractVersion);
+  const storedPublishPackage = parseJson(snapshot.publish_package_schema_json || "{}", "publish package schema snapshot");
+  const publishPackage = normalizePublishPackageSchema(
+    storedPublishPackage.publishPackageVersion ? storedPublishPackage : defaultPublishPackageSchema(pageSchema.raw, registry.contractVersion, snapshot.checksum),
+    registry.contractVersion,
+    snapshot.checksum,
+  );
   const components = registry.components;
   return {
     ...snapshot,
     contractVersion: registry.contractVersion,
     schemaVersion: registry.schemaVersion,
+    pageSchemaContractVersion: pageSchema.contractVersion,
+    publishPackageVersion: publishPackage.publishPackageVersion,
     components,
     componentsById: new Map(components.map((component) => [component.id, component])),
     pageSchema,
+    publishPackage,
   };
 }
 
 function snapshotSummary(snapshot) {
   return {
     id: snapshot.id, contractVersion: snapshot.contractVersion, schemaVersion: snapshot.schemaVersion,
+    pageSchemaContractVersion: snapshot.pageSchemaContractVersion, publishPackageVersion: snapshot.publishPackageVersion,
     checksum: snapshot.checksum, frontendCommitSha: snapshot.frontend_commit_sha || null,
     syncedAt: snapshot.synced_at, sourceRepository: snapshot.source_repository,
   };
@@ -307,11 +363,13 @@ async function readJsonDocument(source, fetchImpl, timeoutMs = 15_000) {
   const location = String(source || "").trim();
   if (!location) throw new FrontendContractError("MISSING_CONTRACT_SOURCE", "A Frontend Contract source is missing.");
   let text;
+  let declaredChecksum = "";
   if (/^https:\/\//i.test(location)) {
     const response = await fetchImpl(location, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
     if (!response.ok) throw new FrontendContractError("CONTRACT_FETCH_FAILED", `Unable to fetch ${location} (${response.status}).`);
     const declaredLength = Number.parseInt(response.headers.get("content-length") || "", 10);
     if (Number.isFinite(declaredLength) && declaredLength > MAX_CONTRACT_BYTES) throw new FrontendContractError("CONTRACT_TOO_LARGE", `Contract at ${location} exceeds ${MAX_CONTRACT_BYTES} bytes.`);
+    declaredChecksum = checksumFromEtag(response.headers.get("etag"));
     text = await response.text();
   } else {
     const filename = location.startsWith("file:") ? fileURLToPath(location) : path.resolve(location);
@@ -319,7 +377,16 @@ async function readJsonDocument(source, fetchImpl, timeoutMs = 15_000) {
     if (fs.statSync(filename).size > MAX_CONTRACT_BYTES) throw new FrontendContractError("CONTRACT_TOO_LARGE", `Contract at ${filename} exceeds ${MAX_CONTRACT_BYTES} bytes.`);
     text = fs.readFileSync(filename, "utf8");
   }
-  try { return JSON.parse(text); } catch { throw new FrontendContractError("INVALID_CONTRACT_JSON", `Contract source '${location}' is not valid JSON.`); }
+  try {
+    return { document: JSON.parse(text), checksum: declaredChecksum || sha256(text), text };
+  } catch {
+    throw new FrontendContractError("INVALID_CONTRACT_JSON", `Contract source '${location}' is not valid JSON.`);
+  }
+}
+
+function checksumFromEtag(value) {
+  const match = String(value || "").trim().match(/^(?:W\/)?\"([a-f0-9]{64})\"$/i);
+  return match ? match[1].toLowerCase() : "";
 }
 
 function validateJsonSchema(value, schema, context) {
@@ -337,6 +404,10 @@ function validateJsonSchema(value, schema, context) {
     if (resolved.minLength != null && value.length < resolved.minLength) errors.push(issue("INVALID_COMPONENT_DATA", `String is shorter than ${resolved.minLength}.`, context.path));
     if (resolved.maxLength != null && value.length > resolved.maxLength) errors.push(issue("INVALID_COMPONENT_DATA", `String is longer than ${resolved.maxLength}.`, context.path));
     if (resolved.pattern && !(new RegExp(resolved.pattern).test(value))) errors.push(issue("INVALID_COMPONENT_DATA", "String does not match the required pattern.", context.path));
+    if (resolved.format === "uri") {
+      try { new URL(value); } catch { errors.push(issue("INVALID_COMPONENT_DATA", "String is not a valid URI.", context.path)); }
+    }
+    if (resolved.format === "date-time" && Number.isNaN(Date.parse(value))) errors.push(issue("INVALID_COMPONENT_DATA", "String is not a valid date-time.", context.path));
   }
   if (typeof value === "number") {
     if (resolved.minimum != null && value < resolved.minimum) errors.push(issue("INVALID_COMPONENT_DATA", `Number is below ${resolved.minimum}.`, context.path));
@@ -397,3 +468,38 @@ function issue(code, message, path) { return { code, message, path }; }
 function invalid(code, message) { return { valid: false, errors: [issue(code, message, "$")], warnings: [], contract: null }; }
 function isObject(value) { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 function stableStringify(value) { if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`; if (isObject(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`; return JSON.stringify(value); }
+
+function resolvePublishPackageSchemaSource(config) {
+  return String(config.publishPackageSchemaSource || "").trim();
+}
+
+function defaultPublishPackageSchema(pageSchema, contractVersion, checksum) {
+  return {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "object",
+    additionalProperties: false,
+    publishPackageVersion: "1.0.0",
+    contractVersion,
+    required: ["contract", "page", "seo", "schema_jsonld", "media", "publication"],
+    properties: {
+      contract: { type: "object", additionalProperties: false, required: ["componentContractVersion", "pageSchemaVersion", "contractChecksum"], properties: {
+        componentContractVersion: { const: contractVersion }, pageSchemaVersion: { const: contractVersion }, contractChecksum: { const: checksum },
+      } },
+      page: pageSchema,
+      seo: { type: "object", additionalProperties: false, required: ["meta_title", "meta_description"], properties: {
+        meta_title: { type: "string", maxLength: 200 }, meta_description: { type: "string", maxLength: 500 },
+        focus_keyword: { type: "string", maxLength: 160 }, secondary_keywords: { type: "array", maxItems: 30, items: { type: "string", maxLength: 160 } },
+        search_intent: { type: "string", maxLength: 160 }, strategy_version: { type: "string", maxLength: 80 },
+      } },
+      schema_jsonld: { type: "object" },
+      media: { type: "array", maxItems: 200, items: { type: "object", additionalProperties: false, required: ["media_id", "alt", "role", "placement"], properties: {
+        media_id: { type: "integer", minimum: 1 }, url: { type: "string", format: "uri" }, alt: { type: "string", maxLength: 500 },
+        caption: { type: "string", maxLength: 2000 }, role: { type: "string", enum: ["featured", "evidence", "context", "illustration", "decorative"] },
+        placement: { type: "string", maxLength: 160 },
+      } } },
+      publication: { type: "object", additionalProperties: false, required: ["status"], properties: {
+        status: { const: "draft" }, existing_post_id: { type: ["integer", "null"], minimum: 1 }, cms_draft_id: { type: ["string", "integer"] },
+      } },
+    },
+  };
+}

@@ -1,62 +1,72 @@
 # Frontend Capability Contract Integration
 
-## Purpose
+## Ownership boundary
 
-SoloToChina uses two independent repositories. The Frontend owns presentation capability; this CMS owns editorial composition.
+SoloToChina uses two repositories. The Frontend owns components, variants, schemas, Gutenberg serialization, presentation, and rendering. The CMS owns research, evidence, editorial composition, commercial selection, validation, and delivery.
 
-```text
-Frontend: components, semantic variants, data schemas, visual design, renderer
-CMS: research, evidence, component selection, variant selection, block order, page composition, validation, publishing
-```
+The CMS never scans JSX/CSS or maintains a handwritten production component list. It may emit only components and variants published by the active Frontend Contract.
 
-The CMS never scans React/JSX/CSS and never stores a hand-maintained production component list. A component may be used only after it appears in a synchronized, machine-readable Frontend Contract.
+Three artifacts remain distinct:
 
-## Current source configuration
+- Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.
+- Frontend Page Payload (`frontend_page.payload`): ordered presentation composition.
+- Publish Package: validated delivery artifact containing the final page, commercial overlay, SEO/GEO, media, and publication metadata.
 
-The Frontend repository was audited at commit `210d0fe` (`feat(contract): publish CMS capability schema`). It publishes the CMS-facing generated artifacts at:
+## Audited Frontend implementation
+
+The Frontend repository was audited at commit `ccfab41` (`feat(cms): deliver page payloads as WordPress drafts`). It publishes:
 
 ```text
 contracts/component-registry.json
 contracts/page-schema.json
+contracts/cms-publish-package.schema.json
 ```
 
-The generated Registry uses `inputSchema` for component data schemas; the CMS accepts that published field directly. Do not point the CMS at the Theme authoring source `content-contract/component-registry.v1.json`: its shape is intentionally different, and the current WordPress `/wp-json/stc/v1/component-registry` endpoint serves that authoring form rather than the generated CMS artifact. The Frontend also does not yet expose a public Page Schema REST endpoint.
+The corresponding read-only REST resources are:
 
-For local integration, use filesystem paths to the two generated artifacts. For a controlled production rollout, use HTTPS artifacts from the reviewed Frontend repository or add Frontend endpoints that publish both generated files. Example repository URLs are:
+```text
+GET /wp-json/stc/v1/component-registry/generated
+GET /wp-json/stc/v1/page-schema
+GET /wp-json/stc/v1/cms-publish-package-schema
+```
+
+Draft delivery uses the Frontend-owned endpoint:
+
+```text
+POST /wp-json/stc/v1/cms-articles
+PUT  /wp-json/stc/v1/cms-articles/{post_id}
+```
+
+The generated Registry uses `inputSchema`; the CMS consumes that field directly. Do not configure the Theme authoring source `content-contract/component-registry.v1.json`.
+
+## Configuration and modes
+
+Local integration may use paths to the three generated artifacts. Production should use the deployed website resources:
 
 ```dotenv
 FRONTEND_CONTRACT_SOURCE_REPOSITORY=https://github.com/Weapon-Tsang/solo-to-china
-FRONTEND_COMPONENT_REGISTRY_SOURCE=https://raw.githubusercontent.com/Weapon-Tsang/solo-to-china/main/contracts/component-registry.json
-FRONTEND_PAGE_SCHEMA_SOURCE=https://raw.githubusercontent.com/Weapon-Tsang/solo-to-china/main/contracts/page-schema.json
-# optional provenance when the published JSON does not include it
+FRONTEND_COMPONENT_REGISTRY_SOURCE=https://solotochina.com/wp-json/stc/v1/component-registry/generated
+FRONTEND_PAGE_SCHEMA_SOURCE=https://solotochina.com/wp-json/stc/v1/page-schema
+FRONTEND_PUBLISH_PACKAGE_SCHEMA_SOURCE=https://solotochina.com/wp-json/stc/v1/cms-publish-package-schema
 FRONTEND_CONTRACT_COMMIT_SHA=<frontend-commit-sha>
+WORDPRESS_CMS_ARTICLE_ENDPOINT=https://solotochina.com/wp-json/stc/v1/cms-articles
 FRONTEND_CONTRACT_SYNC_HOURS=6
 FRONTEND_CONTRACT_TIMEOUT_MS=15000
 ```
 
-Use HTTPS in production. Explicit filesystem paths are supported only for local development, controlled deployment artifacts, and tests. The CMS does not infer paths or create files in the Frontend repository.
-
-Do not enable these variables in production until the reviewed Frontend commit is deployed and a manual sync succeeds. Keeping them unset retains the safe legacy WordPress path.
-
-## What the CMS reads
-
-The Component Registry must contain semantic `contractVersion`, `schemaVersion`, and `components[]`. Each component must provide an `id`, `category`, `purpose`, `status`, supported `variants`, and a JSON data schema. The Page Schema must carry the same `schemaVersion` and define the exact final page payload shape.
-
-The CMS normalizes this into a queryable capability model:
+Contract-aware publishing is enabled only when both Registry and Page Schema sources are configured. The Publish Package Schema source should also be configured for production. Leaving both core sources unset enables **Legacy publishing mode**:
 
 ```text
-componentsById
-componentsByCategory / semantic purpose match
-stable components
-deprecated components
-variants and data schema per component
+body_markdown / content_blocks
+  -> CMS Markdown/Gutenberg renderer
+  -> /wp-json/wp/v2/posts
 ```
 
-It provides only relevant candidates to the Composer based on editorial intent and evidence. Prompts receive candidates dynamically from the synchronized Contract; they do not contain a permanent component-name list.
+Legacy renderer functions and direct `WORDPRESS_*_META_KEY` mappings exist only for this unconfigured fallback. Contract-aware delivery never calls them.
 
-## Synchronization and cache
+## Synchronization and compatibility
 
-Synchronization is queued at server startup and by the maintenance scheduler when both sources are configured. It can also be triggered manually:
+Synchronization runs at startup, on the maintenance interval, or manually:
 
 ```bash
 npm run frontend-contract:sync
@@ -64,7 +74,7 @@ npm run frontend-contract:status
 npm run frontend-contract:status -- --require-valid
 ```
 
-HTTP diagnostics are available to authenticated dashboard users:
+Authenticated diagnostics are available at:
 
 ```text
 GET  /api/frontend-contract
@@ -75,97 +85,72 @@ POST /api/frontend-contract/sync
 POST /api/frontend-contract/snapshots/:id/accept
 ```
 
-Snapshots and state are stored in the CMS SQLite database in `frontend_contract_snapshots` and `frontend_contract_state`. They preserve the source repository/path, Contract and Schema versions, Frontend commit SHA when supplied, checksum, diff, timestamps, and activation status. This is a synchronized cache, not a second source of truth; no endpoint can add a component to it manually.
+Snapshots persist source locations, raw schemas, Contract versions, exact Registry-byte SHA-256 checksum, Frontend commit SHA, compatibility diff, and activation status. Fetch failure retains the Last Known Good Contract and reports `stale`. With no valid snapshot, composition and publishing stop with `NO_VALID_FRONTEND_CONTRACT`.
 
-If fetching fails, the most recent active snapshot remains the **Last Known Good Contract** and status becomes `stale`. No successful snapshot means `NO_VALID_FRONTEND_CONTRACT`, and component-aware composition/publishing is blocked. The dashboard exposes this state under Settings.
+Patch and minor Contract revisions activate after validation. Major revisions remain blocked until explicitly accepted. Deprecated components remain readable for historical compatibility but are rejected for new composition.
 
-## Version compatibility
-
-Patch and minor Contract updates are activated after validation. The diff records added/removed components, variant changes, deprecations, component schema changes, and Page Schema changes.
-
-A major `contractVersion` change is stored but not activated. State becomes `major_mismatch`; the last active Contract remains available for diagnosis but generation/publish composition is blocked. An administrator must review the snapshot and explicitly accept it through the API or internal tooling before it becomes active.
-
-Deprecated components are excluded from new composition. Historical payloads validate with a warning so they can be migrated deliberately rather than rewritten automatically.
-
-## Composition and generation flow
-
-The legacy research model is unchanged. When a compatible Contract is active, the CMS adds two durable queue stages:
+## Contract-aware pipeline
 
 ```text
 Research Sources
   -> Extraction
   -> Claims / Evidence / Knowledge
-  -> Human recommendation decision
-  -> Editorial Planning
-  -> Frontend Capability Resolution
-  -> Page Composer plan (component, variant, final order)
-  -> Structured content generation
-  -> Frontend page payload composition
-  -> Component validation + Page Schema validation
-  -> Quality / SEO / GEO validation
-  -> Commercial composition
-  -> Publishing
-  -> Frontend Renderer
+  -> Human recommendation approval
+  -> plan_content
+  -> compose_frontend_page_plan
+  -> generate_draft
+  -> compose_frontend_page
+  -> review_draft
+  -> compose_commercial
+  -> compose_publish_page
+  -> push_wordpress_draft
+  -> WordPress STC CMS Article API
+  -> Gutenberg Draft
 ```
 
-`contentType` still controls research and editorial expectations, but it is not a hardcoded layout template. The Page Composer chooses only actual Registry components and declared variants. `blocks[]` order is persisted as the final intended render order.
+Approval starts the production pipeline; it does not directly publish. Commercial selection occurs only after QA. The pre-QA Page Composer never receives offers or affiliate components.
 
-The CMS stores page-plan provenance in `frontend_page_plans` and final page-payload provenance in `frontend_page_compositions`, including Contract version, Schema version, checksum, snapshot ID, model, validation result, and generated time. Internal provenance is never added to the public Frontend Page Schema.
-
-If Contract sources are not configured, the existing Markdown/WordPress research workflow remains available for backwards compatibility. Once sources are configured, publishing requires a valid page payload generated from the active Contract as an additional release gate.
-
-## Validation
-
-The Contract Validator rejects:
-
-- `UNKNOWN_COMPONENT`
-- `UNSUPPORTED_VARIANT`
-- `MISSING_REQUIRED_FIELD`
-- undocumented data fields and other invalid component data
-- use of a deprecated component in a new payload
-
-The Page Schema Validator validates the complete payload after individual component validation. Both run before the component-aware publish path. A compatibility report revalidates existing saved page payloads against the currently active Contract without rewriting them.
-
-## Missing capabilities
-
-When no suitable stable capability exists for a real page-composition stage, the CMS creates a `frontend_capability_requests` record with the content use case, semantic need, affected brief/draft, and reason. It does not substitute an unknown component or simulate it with CSS.
-
-The resolution path is:
+`compose_publish_page` starts with the validated editorial Page Payload. `mergeCommercialOverlay()` deterministically inserts Registry-backed affiliate blocks only at approved contextual or end-resource slots. It does not call AI, rewrite editorial blocks, reorder them, or change their data. It then validates every component, the complete Page Schema, and the exact six-field Publish Package:
 
 ```text
-CMS records semantic gap
-  -> Frontend designs and implements capability
-  -> Frontend publishes Registry + Page Schema update
-  -> CMS synchronizes
-  -> Composer may use the new capability
+contract
+page
+seo
+schema_jsonld
+media
+publication
 ```
 
-## Affiliate component capabilities
+`page.metadata.presentation` is preserved as semantic data. The Frontend owns conversion to `_stc_*` post meta and Gutenberg. `push_wordpress_draft` consumes only the saved, validated Publish Package; it never reparses `body_markdown` in Contract-aware mode.
 
-Commercial composition uses the same consumer-only contract. The CMS may derive a semantic need for `affiliate_booking_card`, `affiliate_product_card`, `affiliate_search_card`, `affiliate_comparison_card`, `affiliate_banner`, `affiliate_promotion_card`, or `affiliate_disclosure`, but these names are requests—not a copied registry and not proof that the Frontend implements them.
+## Commercial capabilities
 
-After a QA-passed Research Draft produces block-level commercial intent, the Commercial Composer selects an existing Affiliate Asset and a semantic component. If the active Contract does not publish that component as non-deprecated, the CMS creates a `frontend_capability_request` containing the affected draft/brief and use case. It does not invent props, variants, CSS, or a replacement component. The independent WordPress adapter may still use its own server-validated Gutenberg fallback with safe data attributes, disclosure, allowlisted structured embeds, and sponsored link attributes.
+Registry `1.1.0` publishes `affiliate_booking_card`, `affiliate_search_card`, `affiliate_banner`, and `affiliate_promotion_card`. The merger maps stored commercial assets to their declared variants and data schemas and then revalidates the whole page.
 
-Commercial data remains outside the Frontend page-planning and writing prompts. A Contract capability only controls whether the Frontend can safely render an already-selected Commercial Overlay; it never influences Research, Knowledge, topic choice, draft facts, QA conclusions, or the Evidence Ledger.
+If a selected commercial component is absent from the active Registry, the CMS saves a deduplicated `frontend_capability_request` and blocks Contract-aware delivery. It never invents component data, CSS, iframe HTML, or a Legacy substitute.
 
-### Audited Frontend capability status
+## Media and SEO/GEO
 
-Registry `1.0.0` currently exposes one generic commercial capability, `affiliate_cta`. It safely renders an HTTPS link with disclosure and sponsored attributes, but its schema does not carry the Asset, slot, placement, destination/route/entity, or event-attribution fields required by the new Commercial Overlay. The CMS therefore does not silently reinterpret it as one of the richer components.
+Generated and source-authorized images reuse `/wp-json/wp/v2/media`. Only successfully uploaded media IDs are offered to Page Composer. Placement is represented by Frontend `image` blocks; the final package also carries the referenced media manifest. Contract-aware publishing never invokes length-based `injectVisuals()` placement.
 
-The Frontend component library should add, as real implemented and tested capabilities:
+SEO title, description, search metadata, and `schema_jsonld` are sent as semantic Publish Package fields. The Frontend owns their WordPress meta implementation. Direct CMS meta-key mapping remains Legacy-only.
 
-- `affiliate_booking_card` for high-intent Deep/Category Links;
-- `affiliate_search_card` for allowlisted structured Search Box configuration;
-- `affiliate_banner` for static and dynamic banners;
-- `affiliate_promotion_card` for promotion assets;
-- optional `affiliate_product_card`, `affiliate_comparison_card`, and `affiliate_disclosure` as product needs mature.
+## Persistence and delivery safety
 
-Their schemas should carry the CMS-selected `affiliate_asset_id`, provider, product category, slot key, placement, destination/route/entity scope, CTA/link or allowlisted embed configuration, disclosure, and strategy version. The Frontend—not the CMS—owns styling, responsive behavior, embed rendering, and impression/click dispatch. Public browser events need a same-origin WordPress relay or another explicitly secured ingestion design; the existing Engine event endpoint is protected as a dashboard API and must not expose an administrator credential to browser JavaScript.
+`frontend_page_plans` stores the Page Plan, `frontend_page_compositions` stores the editorial Page Payload, and `frontend_publish_compositions` stores the final package, Contract provenance, commercial strategy version, validation result, generation time, delivery status, and WordPress post ID. This preserves the audit relation:
 
-Until those capabilities are published, the CMS records deduplicated `frontend_capability_request` entries and the WordPress adapter keeps its validated server-rendered fallback. Commercial components remain excluded from `resolveForArticle`, so the pre-QA Page Composer cannot select `affiliate_cta` or any future affiliate-prefixed capability.
+```text
+Editorial Page Payload + Commercial Overlay = Final Published Payload
+```
 
-## CI and test coverage
+The Frontend API uses stable `page.metadata.pageId` and `publication.cms_draft_id` for idempotent POST. Existing draft IDs use PUT. The Frontend rejects updates once a human has published the post.
 
-`npm test` runs Contract Consumer tests and end-to-end queue integration tests. Coverage includes valid blocks/order, unknown components/variants, required and undocumented fields, deprecation, minor and major update behavior, Last Known Good behavior, no-contract safe failure, API synchronization, and composition before the existing QA/WordPress stages.
+Frontend validation errors are persisted with machine code and readable detail. `INVALID_PAGE_SCHEMA`, `UNKNOWN_COMPONENT`, `UNSUPPORTED_VARIANT`, `INVALID_COMPONENT_DATA`, `CONTRACT_VERSION_MISMATCH`, `INVALID_PRESENTATION`, `INVALID_COMMERCIAL_COMPONENT`, `UNSAFE_AFFILIATE_URL`, and `POST_NOT_DRAFT` do not automatically retry. Contract mismatch marks Page and Publish compositions stale and queues Contract synchronization. Network, rate-limit, and server failures retain bounded queue retries.
 
-`npm run check` performs syntax checks for the Contract Consumer and diagnostics scripts. The release check validates the Contract tables and API presence without requiring a remote Frontend Contract in an intentionally unconfigured environment.
+The WordPress dashboard view derives `Not ready`, `Ready to deliver`, `Queued`, `Delivered`, `Delivery failed`, and `WordPress Draft` from the persisted pipeline/publication state and exposes preview links and failure details when available.
+
+## Verification
+
+`npm test` covers the Contract Consumer, deterministic merger, pipeline, persistence, Legacy mode, and Contract-aware adapter. `npm run check` verifies builds and syntax. `npm run release:check` validates migrations and isolated server/API behavior.
+
+The Frontend repository's WordPress Playground blueprint is the runtime E2E authority for the STC CMS Article endpoint. It verifies real Draft creation, exact Page Payload block order, Gutenberg serialization, presentation, SEO/JSON-LD, media, idempotent retry, structured validation errors, and published-post protection.

@@ -4,7 +4,7 @@ import { createAiClient } from "./client.mjs";
 const EXTRACTION_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["source", "claims", "blueprint"],
+  required: ["source", "claims"],
   properties: {
     source: {
       type: "object",
@@ -18,9 +18,12 @@ const EXTRACTION_SCHEMA = {
       },
     },
     claims: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "subject", "predicate", "value", "qualifiers", "confidence", "source_quote"], properties: { key: { type: "string" }, subject: { type: "string" }, predicate: { type: "string" }, value: { type: "string" }, qualifiers: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 }, source_quote: { type: "string" }, claim_role: { type: "string", enum: ["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"] }, knowledge_eligible: { type: "boolean" } } } },
-    blueprint: { type: "object", additionalProperties: false, required: ["format", "hook", "angle", "sections", "strengths", "gaps"], properties: { format: { type: "string" }, hook: { type: "string" }, angle: { type: "string" }, sections: { type: "array", items: { type: "object", additionalProperties: false, required: ["heading", "purpose"], properties: { heading: { type: "string" }, purpose: { type: "string" } } } }, strengths: { type: "array", items: { type: "string" } }, gaps: { type: "array", items: { type: "string" } } } },
   },
 };
+
+const BLUEPRINT_SCHEMA = { type: "object", additionalProperties: false, required: ["format", "hook", "angle", "sections", "strengths", "gaps"], properties: { format: { type: "string" }, hook: { type: "string" }, angle: { type: "string" }, sections: { type: "array", items: { type: "object", additionalProperties: false, required: ["heading", "purpose"], properties: { heading: { type: "string" }, purpose: { type: "string" } } } }, strengths: { type: "array", items: { type: "string" } }, gaps: { type: "array", items: { type: "string" } } } };
+
+const COVERAGE_AUDIT_SCHEMA = { type: "object", additionalProperties: false, required: ["uncovered_spans"], properties: { uncovered_spans: { type: "array", items: { type: "object", additionalProperties: false, required: ["quote", "importance", "reason"], properties: { quote: { type: "string" }, importance: { type: "string", enum: ["material", "important", "minor"] }, reason: { type: "string" } } } } } };
 
 export class KimiExtractor {
   constructor(config, fetchImpl = fetch) {
@@ -57,6 +60,28 @@ export class KimiExtractor {
     const mode = videos.parts.length ? "video" : images.parts.length ? "multimodal" : "text";
     return { result, method: `${this.config.provider || "kimi"}_${mode}`, model: completion.model };
   }
+
+  async analyzeBlueprint(source) {
+    if (!this.enabled) return { output: heuristicExtraction(source).blueprint, model: null };
+    const completion = await this.client.completeJson({
+      name: "source_editorial_blueprint",
+      schema: BLUEPRINT_SCHEMA,
+      instructions: BLUEPRINT_PROMPT,
+      content: [{ type: "text", text: buildInput(source) }],
+    });
+    return { output: sanitizeBlueprint(completion.output), model: completion.model };
+  }
+
+  async auditCoverage({ segment, extraction }) {
+    if (!this.enabled) return { output: { uncovered_spans: [] }, model: null };
+    const completion = await this.client.completeJson({
+      name: "segment_claim_coverage_audit",
+      schema: COVERAGE_AUDIT_SCHEMA,
+      instructions: COVERAGE_AUDIT_PROMPT,
+      content: [{ type: "text", text: buildCoverageInput(segment, extraction) }],
+    });
+    return { output: sanitizeCoverageAudit(completion.output), model: completion.model };
+  }
 }
 
 async function prepareVideoParts(source, provider, client) {
@@ -85,10 +110,11 @@ function isYoutubeUrl(value) {
   }
 }
 
-const SYSTEM_PROMPT = `You extract research evidence and editorial structure from a manually selected Chinese travel source for an English China travel site. The source may be a UGC note, public web article, document, image set, or video-page transcript.
+const SYSTEM_PROMPT = `You extract research evidence from a manually selected Chinese travel source for an English China travel site. The source may be a UGC note, public web article, document, image set, or video-page transcript.
 
 Rules:
 - The source is evidence, not established truth. Record factual assertions as claims and never silently resolve conflicts.
+- Do not summarize. Do not select representative facts. Extract every independently useful travel proposition explicitly supported by this segment. Split compound statements into atomic claims. Continue until no material supported travel fact remains uncovered.
 - Preserve important qualifiers: date, season, time of day, traveler type, booking channel, and uncertainty.
 - Each claim must express exactly one atomic proposition. Split opening hours, transport, reservation, route difficulty, photo opportunities, and recommendations into separate claims even when they share one sentence.
 - source_quote must be the shortest exact quote from the supplied note that supports only that atomic proposition.
@@ -96,24 +122,64 @@ Rules:
 - Use canonical snake_case predicates for hard facts. For reservation requirements use predicate "reservation_required" and value "true" or "false"; put advance days and booking channels in qualifiers.
 - normalized claim keys must be stable lowercase dot-separated concepts, e.g. attraction.forbidden_city.entry_gate.
 - Focus on details useful to independent international travelers, especially solo, first-time, and non-Chinese-speaking visitors.
-- Separate content facts from editorial analysis. The blueprint describes why the source communicates well; it is not evidence.
+- Do not analyze hooks, writing format, section structure, or editorial style in this evidence pass.
 - Do not turn advertising slogans, editorial disclaimers, or author metadata into destination knowledge claims. Keep personal experiences explicitly scoped to the author and never generalize them into universal destination facts.
 - Set claim_role and knowledge_eligible for every claim. Editorial metadata and personal experience are retained as evidence but knowledge_eligible must be false; promotional observations are false unless they describe a durable, independently useful place feature.
 - Do not add affiliate products, commercial calls to action, or facts absent from the source.
 - destination_slug must be concise lowercase ASCII kebab-case. Use "unknown" if the destination cannot be inferred.
 - Treat supplied images as part of the source, but do not infer details that are not visible.`;
 
+const BLUEPRINT_PROMPT = `Analyze only the editorial presentation pattern of this manually selected source.
+- Return format, hook, angle, section organization, strengths, and gaps.
+- This is an optional structural reference for a future planner, not factual evidence.
+- Do not extract or restate factual Claims.
+- Do not decide Knowledge, truth, consensus, readiness, or preferred values.
+- Do not copy source wording or recommend mechanically reproducing its structure.`;
+
+const COVERAGE_AUDIT_PROMPT = `Independently audit whether the extracted atomic Claims cover all materially useful travel evidence in the original source segment.
+- Compare the original segment against the supplied Claims; do not trust the extraction's completeness.
+- Return only source spans that contain an independently useful proposition not already represented by a Claim.
+- Use the shortest exact source quote that identifies the gap.
+- Mark booking rules, operating times, prices, access, route steps, safety, restrictions, traveler constraints, and time-sensitive facts as material or important.
+- Do not flag hooks, repetition, transitions, author biography, promotional language, or purely stylistic wording.
+- Do not invent facts, rewrite Claims, resolve conflicts, or perform editorial planning.
+- Return an empty uncovered_spans array when all material evidence is covered.`;
+
 function buildInput(source) {
   return [`URL: ${source.submitted_url || source.canonical_url}`, `Source type: ${source.source_kind || source.adapter}`, `Title: ${source.title}`, `Author: ${source.author_name}`, `Published: ${source.published_at || "unknown"}`, "", "SOURCE TEXT:", truncate(source.raw_text, 120_000)].join("\n");
+}
+
+function buildCoverageInput(segment, extraction) {
+  const claims = (extraction?.claims || []).map((claim, index) => ({ index: index + 1, subject: claim.subject, predicate: claim.predicate,
+    value: claim.value, qualifiers: claim.qualifiers || [], source_quote: claim.source_quote }));
+  return ["ORIGINAL SOURCE SEGMENT:", truncate(segment?.raw_text || "", 120_000), "", "EXTRACTED CLAIMS:", JSON.stringify(claims)].join("\n");
 }
 
 function sanitizeResult(result) {
   result.source.destination_slug = slugify(result.source.destination_slug);
   result.source.summary = truncate(result.source.summary, 5_000);
   result.source.warnings = Array.isArray(result.source.warnings) ? result.source.warnings.slice(0, 50) : [];
-  result.claims = result.claims.slice(0, 100).map((claim) => ({ ...claim, key: truncate(claim.key.toLowerCase().replace(/[^a-z0-9._]+/g, ".").replace(/^\.|\.$/g, ""), 300), source_quote: truncate(claim.source_quote, 800) })).filter((claim) => claim.key && claim.value);
+  result.claims = result.claims.map((claim) => ({ ...claim, key: truncate(claim.key.toLowerCase().replace(/[^a-z0-9._]+/g, ".").replace(/^\.|\.$/g, ""), 300), source_quote: truncate(claim.source_quote, 800) })).filter((claim) => claim.key && claim.value);
+  result.blueprint = emptyBlueprint();
   return result;
 }
+
+function sanitizeBlueprint(value) {
+  return {
+    format: truncate(value?.format || "unclassified", 200), hook: truncate(value?.hook || "", 500), angle: truncate(value?.angle || "", 500),
+    sections: (value?.sections || []).slice(0, 40).map((item) => ({ heading: truncate(item?.heading || "", 300), purpose: truncate(item?.purpose || "", 500) })),
+    strengths: (value?.strengths || []).slice(0, 30).map((item) => truncate(item, 500)), gaps: (value?.gaps || []).slice(0, 30).map((item) => truncate(item, 500)),
+  };
+}
+
+function sanitizeCoverageAudit(value) {
+  return { uncovered_spans: (value?.uncovered_spans || []).slice(0, 100).map((item) => ({
+    quote: truncate(item?.quote || "", 800), importance: ["material", "important", "minor"].includes(item?.importance) ? item.importance : "material",
+    reason: truncate(item?.reason || "Material travel evidence is not covered by a Claim.", 1_000),
+  })).filter((item) => item.quote) };
+}
+
+function emptyBlueprint() { return { format: "pending-separate-analysis", hook: "", angle: "", sections: [], strengths: [], gaps: [] }; }
 
 export function heuristicExtraction(source) {
   const text = source.raw_text.replace(/\s+/g, " ").trim();

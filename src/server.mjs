@@ -24,6 +24,7 @@ import { createAuth } from "./auth.mjs";
 import { FrontendContractConsumer, FrontendContractError } from "./frontend-contract.mjs";
 import { getContentStrategyDocument } from "./content-strategy.mjs";
 import { VERSION } from "./version.mjs";
+import { ChunkedUploadManager } from "./chunked-upload.mjs";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -54,6 +55,7 @@ export function createApplication(config = loadConfig()) {
   const activeVisuals = { ...config.visuals, ...selectedVisual };
   const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
   const manualSources = new ManualSourceIngestor(config.manualSources);
+  const chunkedUploads = new ChunkedUploadManager(config.manualSources);
   const extractor = new KimiExtractor(activeAi);
   const contentEngine = new ContentEngine(activeAi);
   const visuals = new VertexImagen(activeVisuals);
@@ -78,7 +80,7 @@ export function createApplication(config = loadConfig()) {
   if (searchConsole.enabled) {
     repository.enqueueSearchConsoleSync(searchConsole.config.siteUrl, searchConsole.config.syncHours);
   }
-  repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled });
+  repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled, contractAware: frontendContracts.configured });
   if (frontendContracts.configured) repository.enqueue("sync_frontend_contract", "default");
   const publicDir = path.join(config.root, "dist");
 
@@ -265,6 +267,27 @@ export function createApplication(config = loadConfig()) {
           message: saved.duplicate ? "该来源内容已存在，未重复排队。" : "来源已安全入库并进入提取与内容生产流程。",
         });
       }
+      if (request.method === "POST" && url.pathname === "/api/manual-source-uploads") {
+        authorizeAdmin(request, config.adminToken, auth);
+        return sendJson(response, 201, chunkedUploads.create(await readJson(request, 20_000)));
+      }
+      const uploadChunkMatch = url.pathname.match(/^\/api\/manual-source-uploads\/([^/]+)\/chunks\/(\d+)$/);
+      if (request.method === "PUT" && uploadChunkMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const bytes = await readBytes(request, 6 * 1024 * 1024);
+        return sendJson(response, 200, chunkedUploads.writeChunk(uploadChunkMatch[1], Number(uploadChunkMatch[2]), bytes));
+      }
+      const uploadCompleteMatch = url.pathname.match(/^\/api\/manual-source-uploads\/([^/]+)\/complete$/);
+      if (request.method === "POST" && uploadCompleteMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const prepared = chunkedUploads.complete(uploadCompleteMatch[1], await readJson(request, 150_000));
+        let saved;
+        try { saved = repository.saveCapture(prepared.capture); } catch (error) { prepared.cleanup(); throw error; }
+        if (saved.duplicate) prepared.cleanup();
+        void pipeline.runOne();
+        return sendJson(response, saved.duplicate ? 200 : 202, { ...saved, sourceKind: "video", warnings: prepared.warnings,
+          message: saved.duplicate ? "该来源已存在，未重复排队。" : "视频已完整保存并进入 Strategy 1.4 分段提取流程。" });
+      }
       if (request.method === "GET" && url.pathname === "/api/dashboard") {
         const dashboard = repository.dashboard();
         const contractStatus = frontendContracts.diagnostics().status;
@@ -389,10 +412,35 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         return sendJson(response, 200, await maintenance.runDue({ force: true }));
       }
+      if (request.method === "POST" && url.pathname === "/api/maintenance/reset-derived-research") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        if (payload.confirmation !== "RESET_DERIVED_RESEARCH") return sendJson(response, 400, { error: "Confirmation phrase is required." });
+        const result = repository.resetDerivedResearchAndRequeue();
+        void pipeline.runOne();
+        return sendJson(response, 202, result);
+      }
+      const claimLifecycleMatch = url.pathname.match(/^\/api\/claims\/([^/]+)\/(exclude|restore)$/);
+      if (request.method === "POST" && claimLifecycleMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.setClaimLifecycle(claimLifecycleMatch[1], claimLifecycleMatch[2], payload.reason || "", auth.status(request).username || "admin");
+        if (!result) return sendJson(response, 404, { error: "Claim not found." });
+        void pipeline.runOne();
+        return sendJson(response, 202, result);
+      }
+      const knowledgeVisibilityMatch = url.pathname.match(/^\/api\/knowledge\/([^/]+)\/(hide|restore)$/);
+      if (request.method === "POST" && knowledgeVisibilityMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.setKnowledgeVisibility(knowledgeVisibilityMatch[1], knowledgeVisibilityMatch[2], payload.reason || "", auth.status(request).username || "admin");
+        if (!result) return sendJson(response, 404, { error: "Knowledge fact not found." });
+        return sendJson(response, 200, result);
+      }
       const exceptionRetryMatch = url.pathname.match(/^\/api\/exceptions\/(.+)\/retry$/);
       if (request.method === "POST" && exceptionRetryMatch) {
         authorizeAdmin(request, config.adminToken, auth);
-        const retried = repository.retryOperationalException(decodeURIComponent(exceptionRetryMatch[1]));
+        const retried = repository.retryOperationalException(decodeURIComponent(exceptionRetryMatch[1]), { contractAware: frontendContracts.configured });
         if (!retried) return sendJson(response, 409, { error: "Exception is not retryable or no longer exists." });
         void pipeline.runOne();
         return sendJson(response, 202, { queued: true });
@@ -509,7 +557,7 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "POST" && retryContentMatch) {
         authorizeAdmin(request, config.adminToken, auth);
         if (!contentEngine.enabled) return sendJson(response, 409, { error: "KIMI_API_KEY is required for content production." });
-        const jobType = repository.retryContent(retryContentMatch[1]);
+        const jobType = repository.retryContent(retryContentMatch[1], { contractAware: frontendContracts.configured });
         if (!jobType) return sendJson(response, 409, { error: "Nothing retryable was found for this topic." });
         void pipeline.runOne();
         return sendJson(response, 202, { queued: true, jobType });
@@ -544,7 +592,7 @@ export function createApplication(config = loadConfig()) {
       log("http.request_failed", { requestId, method: request.method, path: requestPath, status, error });
       return sendJson(response, status, {
         error: error.message || "Unexpected server error.",
-        ...(error instanceof ManualSourceError ? { code: error.code, details: error.details } : {}),
+        ...(error?.code ? { code: error.code, details: error.details || null } : {}),
       });
     }
   });
@@ -658,7 +706,7 @@ function setCors(request, response) {
   }
   response.setHeader("Access-Control-Allow-Headers", "authorization, content-type, x-request-id");
   response.setHeader("Access-Control-Expose-Headers", "x-request-id");
-  response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
 }
 
 async function readJson(request, maxBytes) {
@@ -680,6 +728,17 @@ async function readJson(request, maxBytes) {
     error.statusCode = 400;
     throw error;
   }
+}
+
+async function readBytes(request, maxBytes) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > maxBytes) { const error = new Error("Upload chunk is too large."); error.statusCode = 413; throw error; }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 }
 
 function sendJson(response, status, value) {
