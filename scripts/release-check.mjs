@@ -29,8 +29,10 @@ async function main() {
   if (!smokeOnly) {
     const staticCheck = npmInvocation(["run", "check"]);
     const unitTests = npmInvocation(["test"]);
+    const crossRepoCheck = npmInvocation(["run", "test:cross-repo"]);
     buildReady = await report.command("Code", "Static checks and Vite production build", staticCheck.command, staticCheck.args, 120_000);
     await report.command("Code", "Unit and integration tests", unitTests.command, unitTests.args, 120_000);
+    await report.command("Code", "Real cross-repository Frontend Contract gate", crossRepoCheck.command, crossRepoCheck.args, 120_000);
     await report.command("Database", "Version alignment and clean migration chain", process.execPath, ["src/release-check.mjs"], 30_000);
   } else {
     report.warning("Environment", "Smoke-only mode", "Build, static checks, and unit tests were intentionally skipped.");

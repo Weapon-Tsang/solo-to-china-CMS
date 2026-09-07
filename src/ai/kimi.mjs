@@ -72,15 +72,29 @@ export class KimiExtractor {
     return { output: sanitizeBlueprint(completion.output), model: completion.model };
   }
 
-  async auditCoverage({ segment, extraction }) {
+  async auditCoverage({ segment, extraction, source, expectedModality = "text" }) {
     if (!this.enabled) return { output: { uncovered_spans: [] }, model: null };
-    const completion = await this.client.completeJson({
-      name: "segment_claim_coverage_audit",
-      schema: COVERAGE_AUDIT_SCHEMA,
-      instructions: COVERAGE_AUDIT_PROMPT,
-      content: [{ type: "text", text: buildCoverageInput(segment, extraction) }],
-    });
-    return { output: sanitizeCoverageAudit(completion.output), model: completion.model };
+    const images = expectedModality === "image" ? await this.client.imageParts(source?.assets || []) : { parts: [], attempted: 0 };
+    const videos = expectedModality === "video" ? await prepareVideoParts(source, this.config.provider, this.client)
+      : { parts: [], attempted: 0, cleanup: async () => {} };
+    try {
+      const completion = await this.client.completeJson({
+        name: "segment_claim_coverage_audit",
+        schema: COVERAGE_AUDIT_SCHEMA,
+        instructions: COVERAGE_AUDIT_PROMPT,
+        content: [{ type: "text", text: buildCoverageInput(segment, extraction) }, ...videos.parts, ...images.parts],
+      });
+      return {
+        output: { ...sanitizeCoverageAudit(completion.output), modality: {
+          expected: expectedModality,
+          received: videos.parts.length ? "video" : images.parts.length ? "image" : "text",
+          attempted: videos.attempted || images.attempted || 0,
+        } },
+        model: completion.model,
+      };
+    } finally {
+      await videos.cleanup();
+    }
   }
 }
 

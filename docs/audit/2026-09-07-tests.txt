@@ -1,0 +1,173 @@
+
+> solo-to-china-research-engine@1.14.1 test
+> node --test
+
+(node:44864) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?database backup creates and verifies a consistent SQLite snapshot (284.4555ms)
+(node:21456) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?Xiaohongshu adapter accepts only an explicitly opened note and removes tracking (3.6279ms)
+鉁?capture storage is idempotent and preserves content revisions (202.9454ms)
+鉁?capture identity uses the Xiaohongshu note ID before transient share URLs (169.8164ms)
+(node:44188) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?more detailed visit-time wording enriches rather than conflicts (5.1292ms)
+鉁?a narrower compatible expression is stored as refinement (0.4119ms)
+鉁?overlapping soft recommendations coexist while a real contradiction is reviewed (0.8109ms)
+鉁?hard facts use scope-aware conflict rules and extraction errors are separated (1.6369ms)
+鉁?extraction review checks the complete Claim semantics instead of value text alone (1.1456ms)
+鉁?contrastive and quoted slogan wording is not treated as logical negation (0.2247ms)
+鉁?claims sharing an exact quote satisfy negation and limiter coverage together (0.1995ms)
+鉁?reservation wording is compared as a canonical boolean fact (1.2466ms)
+鉁?matching time evidence with richer description is enrichment, not a hard-fact conflict (0.9137ms)
+鉁?knowledge aggregation persists enrichment relations without creating an exception (234.5495ms)
+(node:25484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?commercial composition is a separate overlay and leaves the Research Draft unchanged (6.7366ms)
+鉁?commercial composer is a no-op when no relevant active offer exists (0.3544ms)
+鉁?typed offer validation rejects unsafe links and unsupported categories (0.6182ms)
+鉁?manual provider and asset registry keep display type separate from product category (187.7784ms)
+鉁?affiliate asset validation rejects unsafe URLs and arbitrary embed HTML (0.5289ms)
+鉁?resolver follows intent specificity and falls back without creating low-value work (0.3409ms)
+鉁?only high-value precision gaps create opportunities and density remains bounded (0.4362ms)
+鉁?commercial event schema supports impression and click attribution (0.336ms)
+鉁?commission metadata is configurable commercial data rather than scoring code (168.7809ms)
+鉁?Kimi-backed independent QA cannot approve deterministic evidence or commercial violations (27.5191ms)
+(node:14228) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?human approval drives recommendation, brief, draft, QA, and WordPress draft delivery (591.9269ms)
+鉁?active content strategy manifest resolves its immutable specification (2.0937ms)
+鉁?structured content blocks preserve article hierarchy without rendering HTML (1.7803ms)
+(node:30532) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?multilingual place aliases retain source claims while merging into one canonical knowledge entity (211.3072ms)
+鉁?uncertain multilingual aliases stay pending until an operator accepts or rejects them (205.6912ms)
+鉁?generic collections and claim-like phrases are related instead of entering identity review (193.6042ms)
+鉁?manual entity merge is audited and can be undone without deleting claims (168.9406ms)
+(node:22832) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?operational exception queue exposes and safely retries an exhausted generic job (173.6192ms)
+鉁?a later successful job clears older duplicate failures from the active exception queue (179.8374ms)
+鉁?content navigation count includes briefs that need editorial action (212.1996ms)
+鉁?source retry resets a delayed queued extraction and never masks a running extraction as captured (178.8251ms)
+鉁?a warning knowledge conflict can be resolved by an administrator and then leaves the exception queue (158.456ms)
+鉁?extraction review dismissals survive rebuilds while legacy acknowledgements reopen for real correction (167.2076ms)
+(node:42580) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?knowledge aggregation classifies volatile and stale evidence (202.2483ms)
+(node:13044) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?synchronized registry validates a valid page and preserves block order (191.3328ms)
+鉁?REST synchronization uses the generated artifact ETag as the exact Contract checksum (213.4621ms)
+鉁?commercial components are consumed from the registry and missing capabilities are explicit (161.1794ms)
+鉁?the published Frontend inputSchema and 2020-12 shape sync while commercial capabilities stay out of pre-QA composition (162.777ms)
+鉁?component validation rejects unknown components, variants, required fields, and arbitrary data (148.5359ms)
+鉁?deprecated components are blocked for new pages and warned for historical compatibility (141.3803ms)
+鉁?minor updates activate automatically while major updates keep the Last Known Good Contract until accepted (153.097ms)
+鉁?failed refresh uses Last Known Good Contract but a new environment without one fails safely (274.492ms)
+(node:7948) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?maintenance scheduler backs up, reconciles, prunes, and records durable state (270.8451ms)
+鉁?manual public-link submission extracts visible content and classifies WeChat (33.7732ms)
+鉁?manual link failures expose an actionable authentication code (4.604ms)
+鉁?public YouTube submissions stay usable as direct Vertex video evidence without scraping the watch page (2.7706ms)
+鉁?manual link fetch blocks loopback and private network targets (1.7086ms)
+鉁?manual image submission persists originals and supplies local multimodal assets (13.613ms)
+鉁?manual video submission validates and persists one supported video as model evidence (4.4675ms)
+鉁?manual video default accepts files above the former 12 MB limit (81.6416ms)
+鉁?manual video submission rejects renamed non-video content (2.6098ms)
+鉁?manual PDF and Word submissions feed extracted text into the same capture contract (10.5805ms)
+鉁?bundled PDF parser extracts selectable document text (274.2828ms)
+(node:45332) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?migration 21 preserves v20 file evidence and extends Source storage for video (219.3979ms)
+(node:25724) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?migration 22 preserves Contract snapshots and adds auditable Publish Composition storage (171.7503ms)
+(node:38008) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?migrations 20 and 21 preserve populated legacy Sources and their evidence assets (199.9843ms)
+鉁?Kimi adapter sends trusted image evidence as base64 input and requests strict structured output (25.4823ms)
+鉁?Vertex extraction sends a public YouTube source as direct video evidence (2.7112ms)
+鉁?non-Vertex models require an operator transcript for video URLs and uploaded video files (1.0286ms)
+(node:29280) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?job telemetry reports durable queue latency, duration, outcomes, and active work (169.8163ms)
+鉁?startup immediately requeues jobs interrupted by a previous local server process (130.6041ms)
+鉁?deterministic Contract failures do not enter the automatic retry loop (139.4171ms)
+鉁?exception webhook sends a deduplicated operational payload with optional bearer auth (210.6968ms)
+鉁?failed exception webhook delivery is durable and retryable (130.6964ms)
+鉁?structured logger emits machine-readable events and normalizes errors (0.9998ms)
+鉁?webhook configuration rejects insecure remote URLs and embedded credentials (0.2423ms)
+(node:26712) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?pipeline separates extraction, claims, knowledge conflict detection, and editorial patterns (287.7945ms)
+鉁?entity resolution falls back deterministically when model structured output is invalid (1.2093ms)
+鉁?re-extraction versions derived claims instead of erasing their audit history (153.9811ms)
+鉁?editorial metadata and personal experience remain as claims but stay out of knowledge (145.0826ms)
+鉁?equivalent reservation wording produces one corroborated canonical Knowledge fact (138.947ms)
+鉁?commercial overlay preserves editorial blocks and exact Page Payload order (3.0727ms)
+鉁?structured affiliate search uses exactly one Frontend delivery representation (0.3497ms)
+鉁?Publish Package carries presentation, semantic SEO/GEO, JSON-LD, and WordPress media references (1.4285ms)
+(node:16880) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?Search Console adapter authenticates with a service account and paginates read-only query inventory (62.1861ms)
+鉁?Search Console adapter rejects unsafe property identifiers before authentication (0.5207ms)
+鉁?Search Console inventory runs through the durable job pipeline (150.2375ms)
+(node:39608) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?HTTP API accepts a manual capture and exposes pipeline state (310.8572ms)
+鉁?admin manual-source API stores uploaded evidence, queues the shared pipeline, and returns classified link failures (183.2061ms)
+鉁?admin mutations require ADMIN_TOKEN and responses include security headers (190.3935ms)
+鉁?Frontend Contract API syncs published files, exposes capabilities, and requires explicit major-version acceptance (156.3814ms)
+鉁?Kimi configuration uses the provider's server-side defaults (0.432ms)
+鉁?capture-only Cloudflare hostname cannot expose dashboard data (133.7233ms)
+鉁?non-loopback binding refuses to start without both operational tokens (1.2925ms)
+鉁?dashboard password login creates a secure session and requires an initial password change (350.7732ms)
+鉁?failed HTTP bind does not start pipeline or maintenance side effects (117.6893ms)
+(node:34476) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?Strategy 1.4 accounts for every captured image as an auditable segment (7.1249ms)
+鉁?Coverage Matrix blocks approval until required evidence and independent families exist (0.9976ms)
+鉁?Claim exclusion and Knowledge visibility are reversible and survive rebuilds (196.2223ms)
+鉁?derived research reset preserves raw Sources and requeues Strategy 1.4 processing (157.5056ms)
+鉁?chunked upload accepts videos above 100 MB and validates completed video signatures (35.2004ms)
+(node:43196) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?Strategy 1.4 extraction builds topic clusters without manufacturing pre-approval candidates (329.9016ms)
+鉁?WordPress inventory suppresses an overlapping topic before content planning (144.831ms)
+鉁?itinerary discovery requires route evidence from multiple sources and never displaces the core guide (133.8122ms)
+鉁?Search Console query inventory suppresses and restores overlapping topics automatically (132.7911ms)
+鉁?Vertex Gemini uses the configured model and structured JSON response (29.7034ms)
+鉁?Vertex Gemini converts shared text parts and retries malformed structured output once (1.2555ms)
+鉁?Vertex Gemini reports an exhausted structured output before attempting to parse it (0.983ms)
+鉁?Vertex Gemini uses the global API host for Gemini 3.8 Flash (0.5773ms)
+鉁?Vertex Gemini loads a small uploaded video as inline multimodal evidence (13.0785ms)
+鉁?Vertex Gemini stages a large uploaded video in Cloud Storage and deletes the temporary model input (9.4213ms)
+鉁?Vertex Imagen stores a generated visual in the configured media directory (27.8274ms)
+鉁?Gemini 3.1 Flash Image stores an inline image from the global Gemini endpoint (4.9602ms)
+鉁?WordPress adapter always creates a draft with safe content (25.6956ms)
+鉁?WordPress adapter refuses to overwrite a post after a human publishes it (1.1561ms)
+鉁?WordPress adapter renders persisted structured blocks instead of reparsing draft Markdown (0.6173ms)
+鉁?WordPress renders validated commercial blocks with sponsored attributes and rejects unsafe embeds (0.8569ms)
+鉁?WordPress adapter uploads an authorized evidence-linked Xiaohongshu source photo (1.5143ms)
+鉁?WordPress inventory sync reads every page without changing posts (1.3529ms)
+鉁?markdown renderer escapes HTML before adding supported formatting (0.3119ms)
+鉁?WordPress block renderer emits native Gutenberg blocks without weakening HTML escaping (0.2854ms)
+鉁?Contract-aware adapter sends the exact Publish Package to the STC CMS Article API (1.12ms)
+鉁?Contract-aware adapter uses explicit PUT and surfaces non-retryable Frontend validation errors (0.6773ms)
+鉁?WordPress renderers place generated visual media safely within the article (0.8068ms)
+鈩?tests 118
+鈩?suites 0
+鈩?pass 118
+鈩?fail 0
+鈩?cancelled 0
+鈩?skipped 0
+鈩?todo 0
+鈩?duration_ms 2963.2363
+npm notice
+npm notice New minor version of npm available! 11.9.0 -> 11.19.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.19.1
+npm notice To update run: npm install -g npm@11.19.1
+npm notice

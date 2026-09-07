@@ -189,11 +189,12 @@ export class ContentEngine {
   }
 
   async draft(contentPackage, revisionFeedback = null) {
+    const policy = contentPackage.content_policy || {};
     const result = await this.respond({
-      name: "article_draft",
+      name: "article_draft_v2",
       schema: DRAFT_SCHEMA,
-      instructions: DRAFT_PROMPT,
-      input: JSON.stringify({ ...contentPackage, revision_feedback: revisionFeedback }),
+      instructions: draftPrompt(policy),
+      input: JSON.stringify({ ...draftInputDto(contentPackage), revision_feedback: revisionFeedback }),
     });
     result.output.slug = slugify(result.output.slug || result.output.title);
     result.output.seo ||= {};
@@ -203,8 +204,8 @@ export class ContentEngine {
     result.output.seo.secondary_keywords = (result.output.seo.secondary_keywords || []).slice(0, 8).map((item) => truncate(item, 160));
     result.output.seo.search_intent = truncate(result.output.seo.search_intent, 120);
     result.output.seo.key_takeaways = (result.output.seo.key_takeaways || []).slice(0, 6).map((item) => truncate(item, 240));
-    result.output.faqs = (result.output.faqs || []).slice(0, 5).map((item) => ({ question: truncate(item.question, 220), answer: truncate(item.answer, 700) }));
-    result.output.visuals = (result.output.visuals || []).slice(0, 5).map((item) => ({ ...item, purpose: truncate(item.purpose, 300), alt_text: truncate(item.alt_text, 220), caption: truncate(item.caption, 300), generation_prompt: truncate(item.generation_prompt, 2_000) }));
+    result.output.faqs = (result.output.faqs || []).slice(0, policy.faq?.maximum ?? 4).map((item) => ({ question: truncate(item.question, 220), answer: truncate(item.answer, 700) }));
+    result.output.visuals = (result.output.visuals || []).slice(0, policy.visuals?.maximum ?? 5).map((item) => ({ ...item, purpose: truncate(item.purpose, 300), alt_text: truncate(item.alt_text, 220), caption: truncate(item.caption, 300), generation_prompt: truncate(item.generation_prompt, 2_000) }));
     return result;
   }
 
@@ -245,10 +246,10 @@ export class ContentEngine {
 
   async review(contentPackage) {
     const modelReview = await this.respond({
-      name: "quality_review",
+      name: "quality_review_v2",
       schema: REVIEW_SCHEMA,
       instructions: REVIEW_PROMPT,
-      input: JSON.stringify(contentPackage),
+      input: JSON.stringify(reviewInputDto(contentPackage)),
     });
     return { ...modelReview, output: applyDeterministicGates(modelReview.output, contentPackage) };
   }
@@ -256,6 +257,39 @@ export class ContentEngine {
   async respond({ name, schema, instructions, input }) {
     return this.client.completeJson({ name, schema, instructions, content: input });
   }
+}
+
+function draftInputDto(contentPackage) {
+  return {
+    brief: contentPackage.brief,
+    content_policy: contentPackage.content_policy,
+    facts: (contentPackage.facts || []).map((fact) => ({
+      normalized_key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate,
+      preferred_value: fact.preferred_value, consensus_status: fact.consensus_status,
+      freshness_state: fact.freshness_state, verification_priority: fact.verification_priority,
+      evidence: (fact.evidence || []).map((item) => ({ source_id: item.source_id, quote: item.quote, canonical_url: item.canonical_url,
+        source_title: item.source_title, published_at: item.published_at, verified_at: item.verified_at })),
+    })),
+    reader_sources: contentPackage.reader_sources || [],
+    internal_link_inventory: contentPackage.internal_link_inventory || [],
+    frontend_page_plan: contentPackage.frontend_page_plan?.plan || null,
+  };
+}
+
+function reviewInputDto(contentPackage) {
+  return {
+    brief: { plan: contentPackage.brief?.plan, canonical: contentPackage.brief?.canonical, strategy_version: contentPackage.brief?.strategy_version },
+    content_policy: contentPackage.content_policy,
+    facts: draftInputDto(contentPackage).facts,
+    reader_sources: contentPackage.reader_sources || [],
+    draft: contentPackage.draft,
+    frontend_page: contentPackage.frontend_page ? {
+      payload: contentPackage.frontend_page.payload,
+      validation: contentPackage.frontend_page.validation,
+      current: contentPackage.frontend_page.current,
+      status: contentPackage.frontend_page.status,
+    } : null,
+  };
 }
 const intakePrompt = (strategyVersion) => `Analyze one already-captured human-selected China travel source for SoloToChina Content Production Strategy ${strategyVersion}.
 - This is decision support, not article generation. Do not write an article and do not reveal private reasoning.
@@ -277,7 +311,7 @@ const briefPrompt = (strategyVersion) => `Create an evidence-backed English cont
 - Include direct answer blocks only where the supplied facts support them. The image plan must distinguish real_world_photo, infographic, map_or_route, and illustration; only illustration is eligible for image-model generation.
 - Affiliate inventory and commercial conversion are outside this task and must not appear.`;
 
-const DRAFT_PROMPT = `Write an original, publication-quality English China travel guide from the supplied brief and evidence package.
+const draftPrompt = (policy) => `Write an original, publication-quality English China travel guide from the supplied brief and evidence package.
 - Never invent a price, opening hour, policy, route, booking rule, safety guarantee, or other fact.
 - Use only supplied claim keys; report conflicts and temporal uncertainty transparently.
 - Write for solo, first-time, non-Chinese-speaking travelers without stereotyping or alarmism.
@@ -285,13 +319,14 @@ const DRAFT_PROMPT = `Write an original, publication-quality English China trave
 - Synthesize across sources. Do not translate one source section-by-section.
 - Return a separate evidence ledger mapping each article section to exact claim keys and source IDs.
 - Do not use stale facts. List every used time_sensitive/requires_official claim key in verification_notes and state temporal uncertainty in reader-facing copy.
-- The article should be useful even with no commercial module. Aim for at least 1,200 words when evidence coverage supports it.
+- The article should be useful even with no commercial module. Follow this evidence-scaled content policy: ${JSON.stringify(policy)}. Never pad thin evidence to reach a word target.
 - Make the body easy for Search and AI answer systems to parse: use one answer-first opening paragraph, descriptive H2/H3 headings, short scannable sections, and a visible "Key takeaways" list. Do not make unsupported claims just for SEO.
-- Return 2-5 concise FAQs that are answered by the article and evidence. FAQ answers must not introduce new facts. Include the same questions in a visible "Frequently asked questions" section of body_markdown.
+- FAQ is optional. Include it only when content_policy.faq.allowed is true and the supplied evidence answers real reader questions. When present, include the exact same questions and answers in a visible "Frequently asked questions" section of body_markdown; otherwise return an empty faqs array and omit that section.
 - Return SEO metadata: a natural meta title under 60 characters, one focus keyword, and 3-6 reader-facing key takeaways. The meta description remains the top-level meta_description field.
-- Return SEO metadata with secondary keywords and search intent. Do not invent internal links or canonical URLs.
+- Return SEO metadata with secondary keywords and search intent. Use internal links only from internal_link_inventory and preserve their exact URL. Do not invent canonical URLs.
+- Add a visible "Sources" section when reader_sources is non-empty. Use human-readable source titles, real URLs, and published/verified dates where provided. Never expose internal source or claim IDs.
 - If the evidence package includes a frontend_page_plan, honor its semantic section order and writer guidance in the reader-facing article. It is a composition plan, not permission to invent components, props, or visual styling.
-- Return a rights-safe image plan. Use 2 visuals for 800-1,299 words, 3 for 1,300-2,199 words, 4 for 2,200-3,199 words, and 5 above that. Every item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. When a factual real-world visual supports the evidence, plan REAL_WORLD_PHOTO: the pipeline will prioritize an explicitly saved, user-authorized source image that is linked to the article evidence. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
+- Return a rights-safe image plan within content_policy.visuals limits. Every item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. When a factual real-world visual supports the evidence, plan REAL_WORLD_PHOTO: the pipeline will prioritize an explicitly saved, user-authorized source image that is linked to the article evidence. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
 - If revision_feedback exists, fix every blocker without adding unsupported facts.`;
 
 const ENTITY_RESOLUTION_PROMPT = `Resolve destination entities in SoloToChina's evidence store.
@@ -359,15 +394,27 @@ function applyDeterministicGates(review, contentPackage) {
   const acknowledgedVerification = new Set(draft.verification_notes || []);
   const hiddenVerification = verificationKeys.filter((key) => ledgerKeys.has(key) && !acknowledgedVerification.has(key));
   addGate("temporal-verification", hiddenVerification.length === 0, hiddenVerification.length ? `Used time-sensitive facts without verification notes: ${hiddenVerification.join(", ")}` : "Time-sensitive evidence is flagged or avoided.", "missing_verification_note");
-  addGate("minimum-depth", wordCount(draft.body_markdown) >= 800, `Draft has ${wordCount(draft.body_markdown)} words; minimum evidence-backed review threshold is 800.`, "draft_too_short");
+  const policy = contentPackage.content_policy || { minimum_words: 800, faq: { required: true, allowed: true }, visuals: { minimum: 2, maximum: 5 } };
+  addGate("minimum-depth", wordCount(draft.body_markdown) >= policy.minimum_words,
+    `Draft has ${wordCount(draft.body_markdown)} words; this task requires at least ${policy.minimum_words} evidence-backed words.`, "draft_too_short");
   const seo = draft.seo || {};
   addGate("seo-metadata", Boolean(seo.meta_title && seo.focus_keyword) && String(seo.meta_title).length <= 60 && String(draft.meta_description || "").length <= 160,
     "SEO title, focus keyword, and concise meta description are present.", "seo_metadata_invalid");
-  addGate("geo-structure", /(?:^|\n)#{2,3}\s+key takeaways\b/im.test(draft.body_markdown) && /(?:^|\n)#{2,3}\s+frequently asked questions\b/im.test(draft.body_markdown),
-    "Reader-facing Key takeaways and Frequently asked questions sections are required.", "geo_structure_missing");
-  const expectedVisuals = visualCountForWords(wordCount(draft.body_markdown));
-  addGate("visual-plan", Array.isArray(draft.visuals) && draft.visuals.length === expectedVisuals,
-    `Draft needs ${expectedVisuals} rights-safe visual plan item(s) for its length.`, "visual_plan_incomplete");
+  const hasTakeaways = /(?:^|\n)#{2,3}\s+key takeaways\b/im.test(draft.body_markdown);
+  const hasVisibleFaq = /(?:^|\n)#{2,3}\s+frequently asked questions\b/im.test(draft.body_markdown);
+  const faqCount = Array.isArray(draft.seo?.faqs) ? draft.seo.faqs.length : 0;
+  addGate("geo-structure", hasTakeaways && (!policy.faq?.required || hasVisibleFaq),
+    "Required reader-facing answer structure is present for this content task.", "geo_structure_missing");
+  addGate("faq-consistency", policy.faq?.allowed ? (faqCount === 0 ? !hasVisibleFaq : hasVisibleFaq) : faqCount === 0 && !hasVisibleFaq,
+    "FAQ exists only when the task policy and visible article support it.", "faq_policy_mismatch");
+  const readerSources = contentPackage.reader_sources || [];
+  const hasVisibleSources = !readerSources.length || (/(?:^|\n)#{2,3}\s+sources\b/im.test(draft.body_markdown)
+    && readerSources.some((source) => String(draft.body_markdown).includes(source.url)));
+  addGate("reader-source-traceability", hasVisibleSources,
+    "Reader-facing sources use real titles, URLs, and available evidence dates without internal IDs.", "reader_sources_missing");
+  const visualCount = Array.isArray(draft.visuals) ? draft.visuals.length : 0;
+  addGate("visual-plan", visualCount >= (policy.visuals?.minimum || 0) && visualCount <= (policy.visuals?.maximum || 5),
+    `Draft visual plan count ${visualCount} must be within ${policy.visuals?.minimum || 0}-${policy.visuals?.maximum || 5}.`, "visual_plan_incomplete");
   const strategyVersion = contentPackage.brief?.strategy_version;
   addGate("strategy-version", Boolean(strategyVersion) && draft.strategy_version === strategyVersion,
     "Draft and canonical content plan must carry the same active Content Strategy version.", "strategy_version_mismatch");
@@ -389,6 +436,28 @@ function applyDeterministicGates(review, contentPackage) {
   });
   addGate("image-strategy", visualStrategySafe,
     "Image plans must never use an image model to fabricate a factual real-world photo or route.", "image_strategy_invalid");
+  const incompleteRequiredVisuals = (draft.visuals || []).filter((visual) => visual.factual_image_required
+    && !(visual.status === "generated" && (visual.media_url || visual.wordpress_media_url)));
+  addGate("required-visual-assets", incompleteRequiredVisuals.length === 0,
+    incompleteRequiredVisuals.length ? "One or more factual visuals lack a verified media asset." : "All required factual visuals have real assets.",
+    "required_visual_missing");
+  const unsupportedVisualRenders = (draft.visuals || []).filter((visual) => ["render_infographic", "render_map"].includes(visual.acquisition_strategy)
+    && visual.status !== "generated");
+  addGate("specialized-visual-renderers", unsupportedVisualRenders.length === 0,
+    unsupportedVisualRenders.length ? "A planned map or infographic has no completed renderer output." : "Specialized visuals are complete or not required.",
+    "visual_renderer_incomplete");
+  const page = contentPackage.frontend_page;
+  if (page || contentPackage.frontend_page_plan) {
+    const payload = page?.payload || {};
+    const pageText = visiblePageText(payload);
+    const criticalHeadings = [...String(draft.body_markdown || "").matchAll(/^##\s+(.+)$/gm)].map((match) => normalizeComparable(match[1]));
+    const missingHeadings = criticalHeadings.filter((heading) => !pageText.includes(heading));
+    addGate("final-page-valid", Boolean(page?.current && page.status === "valid" && page.validation?.valid && payload.blocks?.length),
+      "The QA artifact must be the current, schema-valid, non-empty final editorial Page Payload.", "final_page_invalid");
+    addGate("final-page-content", normalizeComparable(payload.metadata?.title) === normalizeComparable(draft.title) && missingHeadings.length === 0,
+      missingHeadings.length ? `Final page omits critical headings: ${missingHeadings.join(", ")}` : "Final page title and critical section headings match the draft.",
+      "final_page_content_missing");
+  }
   const graph = draft.schema_jsonld?.["@graph"] || [];
   addGate("schema-consistency", graph.some((item) => item["@type"] === "Article") && graph.every((item) => !/undefined|null/.test(JSON.stringify(item))),
     "Deterministic schema must contain an Article and no placeholder values.", "schema_inconsistent");
@@ -401,6 +470,23 @@ function applyDeterministicGates(review, contentPackage) {
     passed: review.passed && !dedupedIssues.some((item) => item.severity === "blocker"),
     score: Math.max(0, review.score - dedupedIssues.filter((item) => item.severity === "blocker").length * 10),
   };
+}
+
+function visiblePageText(payload) {
+  const values = [payload?.metadata?.title];
+  const visit = (value) => {
+    if (typeof value === "string") values.push(value.replace(/<[^>]+>/g, " "));
+    else if (Array.isArray(value)) value.forEach(visit);
+    else if (value && typeof value === "object") Object.entries(value).forEach(([key, item]) => {
+      if (!/(?:url|id|strategy|media)/i.test(key)) visit(item);
+    });
+  };
+  visit(payload?.blocks || []);
+  return normalizeComparable(values.join(" "));
+}
+
+function normalizeComparable(value) {
+  return String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 function objectSchema(required, properties) {

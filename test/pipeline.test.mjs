@@ -35,7 +35,7 @@ test("pipeline separates extraction, claims, knowledge conflict detection, and e
     repository.saveCapture(normalizeXiaohongshuCapture({
       url: `https://www.xiaohongshu.com/explore/${id}`,
       title,
-      text: `This is source ${id} with a sufficiently long practical travel description.`,
+      text: `This is source ${id} with a sufficiently long practical travel description. Use the ${title.includes("A") ? "East Gate" : "South Gate"}.`,
       images: [],
     }));
   }

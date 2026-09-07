@@ -5,6 +5,8 @@ import { sha256 } from "./utils.mjs";
 
 const MAX_CONTRACT_BYTES = 2 * 1024 * 1024;
 const COMPONENT_STATUSES = new Set(["stable", "deprecated", "experimental", "beta"]);
+const COMPONENT_INTERFACES = new Set(["page_block", "presentation_meta"]);
+const BASE_PAGE_COMPONENTS = new Set(["paragraph", "heading", "list", "image"]);
 
 export class FrontendContractError extends Error {
   constructor(code, message, details = {}) {
@@ -57,7 +59,7 @@ export class FrontendContractConsumer {
     if (!active) return { status: "NO_VALID_FRONTEND_CONTRACT", components: [] };
     const terms = new Set((Array.isArray(semantics) ? semantics : [semantics]).flatMap(tokenize));
     const components = active.components
-      .filter((component) => includeDeprecated || component.status !== "deprecated")
+      .filter((component) => component.cmsUsable && (includeDeprecated || component.status !== "deprecated"))
       .map((component) => ({ ...component, relevance: capabilityRelevance(component, terms) }))
       .filter((component) => !terms.size || component.relevance > 0)
       .sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
@@ -73,22 +75,32 @@ export class FrontendContractConsumer {
       ...(canonical.warnings || []), ...(canonical.transport || []), ...(canonical.faq || []).map((item) => item.question),
       draft.title, draft.body_markdown,
     ].filter(Boolean).join(" ");
-    const resolved = editorialCapabilities(this.capabilities({ semantics: tokenize(semanticText) }));
-    if (resolved.components.length) return resolved;
-    const fallback = editorialCapabilities(this.capabilities());
-    return { ...fallback, components: fallback.components.slice(0, 24) };
+    const all = editorialCapabilities(this.capabilities());
+    const matched = editorialCapabilities(this.capabilities({ semantics: tokenize(semanticText) }));
+    const base = all.components.filter((component) => BASE_PAGE_COMPONENTS.has(component.id));
+    const components = uniqueComponents([...base, ...matched.components]);
+    return {
+      ...all,
+      components: (components.length ? components : all.components).slice(0, 24),
+      presentationComponents: all.presentationComponents,
+    };
   }
 
-  hasComponent(componentId) {
+  hasComponent(componentId, requiredInterface = null) {
     const component = this.active?.componentsById.get(componentId);
-    return Boolean(component && component.status !== "deprecated");
+    return Boolean(component && component.cmsUsable && component.status !== "deprecated"
+      && (!requiredInterface || component.interface === requiredInterface));
   }
 
   commercialCapabilities(componentIds = []) {
     const active = this.active;
     const requested = [...new Set(componentIds)];
     if (!active) return { status: "NO_VALID_FRONTEND_CONTRACT", supported: [], missing: requested };
-    const supported = requested.filter((componentId) => this.hasComponent(componentId));
+    const supported = requested.filter((componentId) => {
+      const component = active.componentsById.get(componentId);
+      return this.hasComponent(componentId, "page_block")
+        && ["commercial", "affiliate"].includes(String(component.category).toLowerCase());
+    });
     return { status: "OK", supported, missing: requested.filter((componentId) => !supported.includes(componentId)), contract: snapshotSummary(active) };
   }
 
@@ -120,6 +132,7 @@ export class FrontendContractConsumer {
         registry.contractVersion,
         checksum,
       );
+      const artifactChecksum = sha256(JSON.stringify([registry.raw, pageSchema.raw, publishPackage.raw]));
       const previous = this.active;
       const diff = previous ? diffContracts(previous, { ...registry, pageSchema }) : emptyDiff();
       const majorMismatch = Boolean(previous && semverMajor(previous.contractVersion) !== semverMajor(registry.contractVersion));
@@ -132,6 +145,7 @@ export class FrontendContractConsumer {
         contractVersion: registry.contractVersion,
         schemaVersion: registry.schemaVersion,
         checksum,
+        artifactChecksum,
         registry: registry.raw,
         pageSchema: pageSchema.raw,
         publishPackageVersion: publishPackage.publishPackageVersion,
@@ -165,6 +179,7 @@ export class FrontendContractConsumer {
     blocks.forEach((block, index) => {
       const component = active.componentsById.get(block?.type);
       if (!component) return errors.push(issue("UNKNOWN_COMPONENT", `blocks[${index}].type '${block?.type || ""}' is not in the current Frontend Registry.`, `blocks[${index}].type`));
+      if (component.interface !== "page_block") return errors.push(issue("INVALID_COMPONENT_INTERFACE", `Component '${component.id}' is presentation metadata and cannot be emitted in blocks[].`, `blocks[${index}].type`));
       if (component.status === "deprecated") {
         const target = issue("DEPRECATED_COMPONENT", `Component '${component.id}' is deprecated.`, `blocks[${index}].type`);
         (allowDeprecated ? warnings : errors).push(target);
@@ -182,11 +197,15 @@ export class FrontendContractConsumer {
     const blocks = Array.isArray(payload?.blocks) ? payload.blocks : null;
     const errors = [];
     const warnings = [];
-    if (!blocks) errors.push(issue("MISSING_PAGE_BLOCKS", "Page payload must contain a blocks array in final render order.", "blocks"));
+    if (!blocks?.length) errors.push(issue("MISSING_PAGE_BLOCKS", "Page payload must contain a non-empty blocks array in final render order.", "blocks"));
     for (const [index, block] of (blocks || []).entries()) {
       const component = active.componentsById.get(block?.type);
       if (!component) {
         errors.push(issue("UNKNOWN_COMPONENT", `blocks[${index}].type '${block?.type || ""}' is not in the current Frontend Registry.`, `blocks[${index}].type`));
+        continue;
+      }
+      if (component.interface !== "page_block") {
+        errors.push(issue("INVALID_COMPONENT_INTERFACE", `Component '${component.id}' is presentation metadata and cannot be emitted in blocks[].`, `blocks[${index}].type`));
         continue;
       }
       if (component.status === "deprecated") {
@@ -198,6 +217,7 @@ export class FrontendContractConsumer {
       }
       const dataErrors = validateJsonSchema(block?.data, component.schema, { root: component.schema, path: `blocks[${index}].data` });
       errors.push(...dataErrors.map((entry) => ({ ...entry, code: entry.code || "INVALID_COMPONENT_DATA" })));
+      errors.push(...validateComponentInvariants(block, index));
     }
     const pageErrors = validateJsonSchema(payload, active.pageSchema.schema, { root: active.pageSchema.schema, path: "$" });
     errors.push(...pageErrors.map((entry) => ({ ...entry, code: entry.code || "INVALID_PAGE_SCHEMA" })));
@@ -281,6 +301,9 @@ function normalizeComponent(component) {
   const schema = component.schema || component.inputSchema || component.input_schema || component.dataSchema || component.data_schema;
   if (!isObject(schema)) throw new FrontendContractError("MISSING_COMPONENT_SCHEMA", `Component '${component.id}' must publish its data schema.`);
   const variants = (Array.isArray(component.variants) ? component.variants : []).map((variant) => typeof variant === "string" ? variant : variant?.id || variant?.name).filter((value) => typeof value === "string" && value);
+  // Legacy 1.0 fixtures omitted this field and represented only page blocks.
+  const interfaceName = String(component.interface || component.cmsInterface || component.cms_interface || "page_block");
+  if (!COMPONENT_INTERFACES.has(interfaceName)) throw new FrontendContractError("INVALID_COMPONENT_INTERFACE", `Component '${component.id}' must declare page_block or presentation_meta.`);
   return {
     id: component.id,
     category: String(component.category || "uncategorized"),
@@ -291,17 +314,26 @@ function normalizeComponent(component) {
     requiredFields: Array.isArray(schema.required) ? schema.required : [],
     optionalFields: Object.keys(schema.properties || {}).filter((key) => !(schema.required || []).includes(key)),
     deprecation: component.deprecation || component.deprecated || null,
+    cmsUsable: component.cmsUsable !== false && component.cms_usable !== false,
+    interface: interfaceName,
+    renderMode: String(component.renderMode || component.render_mode || ""),
   };
 }
 
 function editorialCapabilities(result) {
+  const editorial = (result.components || []).filter((component) => {
+    const category = String(component.category || "").toLowerCase();
+    return category !== "commercial" && category !== "affiliate" && !String(component.id || "").toLowerCase().startsWith("affiliate_");
+  });
   return {
     ...result,
-    components: (result.components || []).filter((component) => {
-      const category = String(component.category || "").toLowerCase();
-      return category !== "commercial" && category !== "affiliate" && !String(component.id || "").toLowerCase().startsWith("affiliate_");
-    }),
+    components: editorial.filter((component) => component.interface === "page_block"),
+    presentationComponents: editorial.filter((component) => component.interface === "presentation_meta"),
   };
+}
+
+function uniqueComponents(components) {
+  return [...new Map(components.map((component) => [component.id, component])).values()];
 }
 
 function hydrateSnapshot(snapshot) {
@@ -389,7 +421,7 @@ function checksumFromEtag(value) {
   return match ? match[1].toLowerCase() : "";
 }
 
-function validateJsonSchema(value, schema, context) {
+export function validateJsonSchema(value, schema, context = { root: schema, path: "$" }) {
   const errors = [];
   const resolved = resolveSchema(schema, context.root);
   if (!isObject(resolved)) return [issue("INVALID_SCHEMA", "Schema is not an object.", context.path)];
@@ -405,9 +437,13 @@ function validateJsonSchema(value, schema, context) {
     if (resolved.maxLength != null && value.length > resolved.maxLength) errors.push(issue("INVALID_COMPONENT_DATA", `String is longer than ${resolved.maxLength}.`, context.path));
     if (resolved.pattern && !(new RegExp(resolved.pattern).test(value))) errors.push(issue("INVALID_COMPONENT_DATA", "String does not match the required pattern.", context.path));
     if (resolved.format === "uri") {
-      try { new URL(value); } catch { errors.push(issue("INVALID_COMPONENT_DATA", "String is not a valid URI.", context.path)); }
+      try {
+        const url = new URL(value);
+        if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("unsafe URI");
+      } catch { errors.push(issue("INVALID_COMPONENT_DATA", "String must be an HTTP(S) URI without embedded credentials.", context.path)); }
     }
     if (resolved.format === "date-time" && Number.isNaN(Date.parse(value))) errors.push(issue("INVALID_COMPONENT_DATA", "String is not a valid date-time.", context.path));
+    if (resolved.contentMediaType === "text/html" && !isSafeInlineHtml(value)) errors.push(issue("INVALID_COMPONENT_DATA", "String contains executable or unsupported HTML.", context.path));
   }
   if (typeof value === "number") {
     if (resolved.minimum != null && value < resolved.minimum) errors.push(issue("INVALID_COMPONENT_DATA", `Number is below ${resolved.minimum}.`, context.path));
@@ -428,6 +464,50 @@ function validateJsonSchema(value, schema, context) {
     }
   }
   return errors;
+}
+
+function validateComponentInvariants(block, index) {
+  const data = block?.data || {};
+  const path = `blocks[${index}]`;
+  const errors = [];
+  if (block?.type === "heading" && data.level !== (block.variant === "section" ? 2 : 3)) {
+    errors.push(issue("INVALID_COMPONENT_DATA", "Heading level and variant disagree.", path));
+  }
+  if (block?.type === "list" && typeof data.ordered === "boolean" && data.ordered !== (block.variant === "ordered")) {
+    errors.push(issue("INVALID_COMPONENT_DATA", "List ordering and variant disagree.", path));
+  }
+  if (block?.type === "image" && data.role && data.role !== block.variant) {
+    errors.push(issue("INVALID_COMPONENT_DATA", "Image role and variant disagree.", path));
+  }
+  if (block?.type === "comparison_table" && Array.isArray(data.columns) && Array.isArray(data.rows)
+    && data.rows.some((row) => !Array.isArray(row) || row.length !== data.columns.length)) {
+    errors.push(issue("INVALID_COMPONENT_DATA", "Every comparison row must match the column count.", `${path}.data.rows`));
+  }
+  return errors;
+}
+
+function isSafeInlineHtml(value) {
+  const allowed = new Set(["a", "br", "strong", "b", "em", "i", "code", "s", "sup", "sub"]);
+  let unsafe = false;
+  const stripped = String(value).replace(/<\/?([a-z0-9]+)\b([^>]*)>/gi, (tag, name, attributes) => {
+    const lower = name.toLowerCase();
+    if (!allowed.has(lower)) unsafe = true;
+    if (tag.startsWith("</") && attributes.trim()) unsafe = true;
+    if (lower !== "a" && attributes.trim() && lower !== "br") unsafe = true;
+    if (lower === "a" && !tag.startsWith("</")) {
+      const remainder = attributes.replace(/\s+(href|title|target|rel)\s*=\s*(?:"[^"]*"|'[^']*')/gi, "").trim();
+      if (remainder) unsafe = true;
+      const href = /\shref\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attributes);
+      if (href) {
+        try {
+          const url = new URL(href[1] ?? href[2], "https://solotochina.com/");
+          if (!["http:", "https:", "mailto:"].includes(url.protocol)) unsafe = true;
+        } catch { unsafe = true; }
+      }
+    }
+    return "";
+  });
+  return !unsafe && !/[<>]/.test(stripped);
 }
 
 function resolveSchema(schema, root) {

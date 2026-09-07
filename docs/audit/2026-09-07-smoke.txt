@@ -1,0 +1,89 @@
+
+> solo-to-china-research-engine@1.14.1 test:smoke
+> node scripts/release-check.mjs --smoke-only
+
+(node:40396) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+========================================
+SoloToChina Release Check
+Version: 1.14.1
+========================================
+
+
+Environment
+PASS       Node runtime
+PASS       Dependencies installed
+WARNING    Smoke-only mode 鈥?Build, static checks, and unit tests were intentionally skipped.
+
+Build
+PASS       dist directory
+PASS       dist/index.html
+PASS       Frontend entrypoint
+PASS       JavaScript assets
+PASS       CSS assets
+
+Server
+PASS       Server process started 鈥?PID 18164 captured
+PASS       HTTP listener ready 鈥?health endpoint responded on port 60855
+
+API
+PASS       /api/health 鈥?200 JSON, ok=true, version aligned
+PASS       /api/ready 鈥?200 JSON, ready=true
+PASS       Dashboard API 鈥?200 JSON
+PASS       System strategy API 鈥?200 JSON
+PASS       Sources API 鈥?200 JSON
+PASS       Knowledge API 鈥?200 JSON
+PASS       Editorial blueprints API 鈥?200 JSON
+PASS       Content API 鈥?200 JSON
+PASS       Recommendations API 鈥?200 JSON
+PASS       WordPress inventory API 鈥?200 JSON
+PASS       Search Console API 鈥?200 JSON
+PASS       Commercial offers API 鈥?200 JSON
+PASS       Affiliate Provider/Asset API 鈥?200 JSON
+PASS       Exception queue scan 鈥?200 JSON
+PASS       Maintenance API 鈥?200 JSON
+PASS       Unknown route handling 鈥?404 JSON without server failure
+PASS       Capture write/read smoke 鈥?temporary source insert, revision update, and detail read succeeded
+
+Web UI
+PASS       GET / 鈥?200 HTML with React root
+PASS       Referenced JS/CSS assets 鈥?2 production asset(s) returned 200
+
+Database
+PASS       Temporary SQLite database 鈥?schema, migrations, capture insert/update/select, foreign keys, and integrity verified
+
+Logs
+PASS       Server stdout/stderr captured 鈥?5802 stdout bytes, 169 stderr bytes
+PASS       No fatal server exceptions
+
+Database
+PASS       Temporary database cleanup 鈥?Removed isolated release-check data.
+
+Chrome Extension
+PASS       Manifest JSON
+PASS       Permissions and local Engine host
+PASS       Referenced extension assets
+
+External Services
+WARNING    Kimi 鈥?Not called; the isolated server runs without KIMI_API_KEY.
+WARNING    WordPress production 鈥?Not called; the isolated server runs without WordPress credentials.
+WARNING    Search Console production 鈥?Not called; the isolated server runs without Google credentials.
+
+Chrome Extension
+NOT TESTED Real Chrome Load Unpacked 鈥?Requires a human Chrome profile and an explicit user click.
+NOT TESTED Real Xiaohongshu capture 鈥?Requires a user-selected, already-open note in a real tab.
+
+Logs
+WARNING    Node SQLite ExperimentalWarning 鈥?Known Node runtime warning; it is recorded but not treated as a release failure.
+
+========================================
+RESULT: READY FOR EXTENSION INTEGRATION
+Mandatory checks: 35 passed
+Warnings: 5
+Failures: 0
+========================================
+npm notice
+npm notice New minor version of npm available! 11.9.0 -> 11.19.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.19.1
+npm notice To update run: npm install -g npm@11.19.1
+npm notice

@@ -13,7 +13,6 @@ test("Kimi adapter sends trusted image evidence as base64 input and requests str
       key: "Attraction Entry Gate", subject: "Attraction", predicate: "entry gate", value: "East",
       qualifiers: [], confidence: 0.8, source_quote: "从东门进入",
     }],
-    blueprint: { format: "guide", hook: "Save time", angle: "first visit", sections: [], strengths: [], gaps: [] },
   };
   const fetchStub = async (url, options) => {
     if (String(url).includes("xhscdn.com")) {
@@ -49,7 +48,6 @@ test("Vertex extraction sends a public YouTube source as direct video evidence",
   const expected = {
     source: { language: "zh-CN", summary: "Video summary", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.8 },
     claims: [],
-    blueprint: { format: "video notes", hook: "route", angle: "first visit", sections: [], strengths: [], gaps: [] },
   };
   const fetchStub = async (url, options = {}) => {
     if (String(url).startsWith("http://metadata.google.internal")) return new Response(JSON.stringify({ access_token: "fixture-token", expires_in: 300 }), { status: 200 });

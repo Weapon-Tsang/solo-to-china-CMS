@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { KimiClient } from "./kimi-client.mjs";
+import { validateJsonSchema } from "../frontend-contract.mjs";
+import { ProviderRequestError, vertexStructuredOutput } from "./provider-schema.mjs";
 
 const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 const MAX_INLINE_VIDEO_BYTES = 14 * 1024 * 1024;
@@ -18,24 +20,29 @@ export class VertexGeminiClient {
 
   get enabled() { return Boolean(this.config.projectId && this.config.model); }
 
-  async completeJson({ schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000 }) {
+  async completeJson({ name, schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000 }) {
     if (!this.enabled) throw new Error("Vertex AI requires GOOGLE_CLOUD_PROJECT and a selected Gemini model.");
     const accessToken = await this.accessToken();
     const location = this.config.location || "us-central1";
     const apiHost = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
     const endpoint = `https://${apiHost}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const parts = normalizeVertexParts(content);
+    const startedAt = Date.now();
+    const identity = modelCallIdentity(name, schema, instructions, content);
+    let schemaMode = this.config.structuredSchemaMode || "json_schema";
     const requestBody = {
       systemInstruction: { parts: [{ text: instructions }] },
       contents: [{ role: "user", parts }],
       generationConfig: {
-        responseMimeType: "application/json", responseSchema: schema,
+        responseMimeType: "application/json", ...vertexStructuredOutput(schema, schemaMode),
         maxOutputTokens: this.config.maxCompletionTokens || 16_000, temperature: 0.1,
         ...(String(this.config.model).startsWith("gemini-3")
           ? { thinkingConfig: { thinkingLevel: this.config.thinkingLevel || "HIGH" } } : {}),
       },
     };
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    let correction = "";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      requestBody.contents[0].parts = correction ? [...parts, { text: correction }] : parts;
       const response = await this.fetch(endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
@@ -43,7 +50,19 @@ export class VertexGeminiClient {
         signal: AbortSignal.timeout(timeoutMs),
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(`Vertex Gemini request failed (${response.status}): ${payload?.error?.message || response.statusText}`);
+      if (!response.ok) {
+        const message = payload?.error?.message || response.statusText;
+        if (response.status === 400 && schemaMode === "json_schema" && /responseJsonSchema|unknown field|unsupported/i.test(message)) {
+          schemaMode = "openapi";
+          delete requestBody.generationConfig.responseJsonSchema;
+          Object.assign(requestBody.generationConfig, vertexStructuredOutput(schema, schemaMode));
+          continue;
+        }
+        this.emitModelCall({ ...identity, provider: "vertex", model: this.config.model, latencyMs: Date.now() - startedAt,
+          attempts: attempt + 1, status: "failed", errorCode: String(payload?.error?.code || response.status) });
+        throw new ProviderRequestError("Vertex Gemini", response.status, message,
+          { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
+      }
       const candidate = payload?.candidates?.[0];
       const output = candidate?.content?.parts?.map((part) => part.text || "").join("");
       if (candidate?.finishReason === "MAX_TOKENS") {
@@ -51,9 +70,23 @@ export class VertexGeminiClient {
       }
       if (!output?.trim()) throw new Error("Vertex Gemini returned no structured output.");
       const parsed = parseStructuredJson(output);
-      if (parsed.ok) return { output: parsed.value, model: this.config.model };
+      const errors = parsed.ok ? validateJsonSchema(parsed.value, schema) : [{ path: "$", message: "invalid JSON" }];
+      if (parsed.ok && errors.length === 0) {
+        this.emitModelCall({ ...identity, provider: "vertex", model: this.config.model,
+          inputTokens: payload.usageMetadata?.promptTokenCount ?? null,
+          outputTokens: payload.usageMetadata?.candidatesTokenCount ?? null,
+          cachedTokens: payload.usageMetadata?.cachedContentTokenCount ?? null,
+          latencyMs: Date.now() - startedAt, attempts: attempt + 1, status: "succeeded" });
+        return { output: parsed.value, model: this.config.model,
+          ...(payload.usageMetadata ? { usage: payload.usageMetadata } : {}) };
+      }
+      correction = `The previous structured output was invalid. Return the complete corrected JSON only. Errors: ${JSON.stringify(errors.slice(0, 20))}`;
     }
-    throw new Error("Vertex Gemini returned invalid JSON twice despite structured output mode.");
+    throw Object.assign(new Error("Vertex Gemini returned invalid structured output after repair attempts."), { code: "INVALID_MODEL_OUTPUT", retryable: true });
+  }
+
+  emitModelCall(metric) {
+    try { this.config.onModelCall?.(metric); } catch { /* telemetry must never fail production */ }
   }
 
   async imageParts(assets) {
@@ -119,6 +152,11 @@ export class VertexGeminiClient {
     this.tokenExpiresAt = Date.now() + Math.max(60, Number(payload.expires_in || 300) - 60) * 1_000;
     return this.token;
   }
+}
+
+function modelCallIdentity(stage, schema, instructions, content) {
+  const digest = (value) => crypto.createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
+  return { stage: stage || "unknown", promptHash: digest(instructions || ""), schemaHash: digest(schema || {}), inputHash: digest(content || "") };
 }
 
 function normalizeVertexParts(content) {

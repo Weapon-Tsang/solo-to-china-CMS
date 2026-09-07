@@ -380,6 +380,8 @@ test("dashboard password login creates a secure session and requires an initial 
   });
   assert.equal(changed.status, 200);
   const freshCookie = changed.headers.get("set-cookie");
+  const invalidatedOldSession = await (await fetch(`${baseUrl}/api/auth/status`, { headers: { cookie } })).json();
+  assert.equal(invalidatedOldSession.authenticated, false);
   const allowed = await fetch(`${baseUrl}/api/pipeline/run-one`, { method: "POST", headers: { cookie: freshCookie } });
   assert.equal(allowed.status, 200);
   const credentials = await fetch(`${baseUrl}/api/auth/update-credentials`, {
@@ -396,6 +398,11 @@ test("dashboard password login creates a secure session and requires an initial 
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "solo-founder", password: "another-long-private-password" }),
   });
   assert.equal(newLogin.status, 200);
+  const loginCookie = newLogin.headers.get("set-cookie");
+  const logout = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST", headers: { cookie: loginCookie } });
+  assert.equal(logout.status, 204);
+  const invalidatedLogout = await (await fetch(`${baseUrl}/api/auth/status`, { headers: { cookie: loginCookie } })).json();
+  assert.equal(invalidatedLogout.authenticated, false);
 });
 
 test("failed HTTP bind does not start pipeline or maintenance side effects", async (t) => {

@@ -1,13 +1,26 @@
 {
   "name": "SoloToChina Content Production Strategy",
-  "current_version": "1.4",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.4.md",
+  "current_version": "1.5",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.5.md",
   "status": "active",
   "history": [
     {
+      "version": "1.5",
+      "effective_date": "2026-09-08",
+      "status": "active",
+      "summary": "Bind evidence, QA, media, final page and delivery versions while scaling article depth, FAQ and visuals to the reader task.",
+      "changes": [
+        "Bind QA, page composition and commercial output to exact draft revision, content hash and evidence hash.",
+        "Set word, FAQ and visual requirements from content type, reader intent and evidence coverage rather than one universal threshold.",
+        "Audit the current final visible Page Payload and derive FAQ structured data only from visible FAQ blocks.",
+        "Expose reader-verifiable sources and only use internal links from synchronized WordPress inventory.",
+        "Record model provenance and usage without logging prompts, secrets or source bodies."
+      ]
+    },
+    {
       "version": "1.4",
       "effective_date": "2026-09-07",
-      "status": "active",
+      "status": "superseded",
       "summary": "将异构来源建模为证据容器，通过分段提取、覆盖审计和独立来源家族构建主题机会，并以精确 Opportunity 状态机驱动内容生产。",
       "changes": [
         "新增 Source Segment、Evidence Span、Extraction Coverage 与 Source Family，逐段穷尽提取且不再截断 100 条 Claim。",

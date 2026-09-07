@@ -149,7 +149,7 @@ export class WordPressDraftAdapter {
     };
   }
 
-  async resolveVisualMedia(visuals) {
+  async resolveVisualMedia(visuals, onUploaded = null) {
     const output = [];
     for (const visual of visuals.filter((item) => (
       item.status === "generated" && (item.media_path || (item.source_asset_id && item.source_remote_url))
@@ -159,7 +159,9 @@ export class WordPressDraftAdapter {
         continue;
       }
       const media = await this.uploadMedia(visual);
-      output.push({ visualId: visual.id, ...media, alt: visual.alt_text, caption: visual.caption });
+      const resolved = { visualId: visual.id, ...media, alt: visual.alt_text, caption: visual.caption };
+      output.push(resolved);
+      if (onUploaded) await onUploaded(resolved);
     }
     return output;
   }

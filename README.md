@@ -137,9 +137,9 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 1.4
+## Content Production Strategy 1.5
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.4.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.4.md), and summarized by an append-only [evolution log](docs/content-strategy/CHANGELOG.md). Sources are evidence containers: preflight and segmentation account for text, PDF pages, images, and video evidence before exhaustive Claim extraction and coverage audit. Source families, Topic Clusters, and Coverage Matrices determine whether an approved Content Opportunity is ready. The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.5.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.5.md), and summarized by an append-only [evolution log](docs/content-strategy/CHANGELOG.md). Sources are evidence containers: preflight and segmentation account for text, PDF pages, images, and video evidence before exhaustive Claim extraction and coverage audit. Source families, Topic Clusters, and Coverage Matrices determine whether an approved Content Opportunity is ready. The live operating path is:
 
 ```text
 Capture → structured research → Kimi Intake Analysis → Recommendation → human decision

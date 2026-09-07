@@ -1,0 +1,252 @@
+[
+  {
+    "id": "A01-heading-contract",
+    "reproduced": true,
+    "evidence": {
+      "enum": [
+        {},
+        {}
+      ],
+      "exampleErrors": [
+        {
+          "code": "INVALID_COMPONENT_DATA",
+          "message": "Value is not one of the allowed values.",
+          "path": "blocks[0].data.level"
+        },
+        {
+          "code": "INVALID_COMPONENT_DATA",
+          "message": "Value must match exactly one allowed schema.",
+          "path": "$.blocks[0]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "A01-published-examples",
+    "reproduced": true,
+    "evidence": [
+      {
+        "component": "paragraph",
+        "valid": true
+      },
+      {
+        "component": "heading",
+        "valid": false
+      },
+      {
+        "component": "list",
+        "valid": true
+      },
+      {
+        "component": "image",
+        "valid": true
+      },
+      {
+        "component": "quick_answer",
+        "valid": true
+      },
+      {
+        "component": "key_takeaways",
+        "valid": true
+      },
+      {
+        "component": "quick_facts",
+        "valid": true
+      },
+      {
+        "component": "tip",
+        "valid": true
+      },
+      {
+        "component": "warning",
+        "valid": true
+      },
+      {
+        "component": "steps",
+        "valid": true
+      },
+      {
+        "component": "checklist",
+        "valid": true
+      },
+      {
+        "component": "comparison_table",
+        "valid": false
+      },
+      {
+        "component": "faq",
+        "valid": true
+      },
+      {
+        "component": "planner_cta",
+        "valid": true
+      },
+      {
+        "component": "ticket_reminder",
+        "valid": true
+      },
+      {
+        "component": "affiliate_cta",
+        "valid": true
+      },
+      {
+        "component": "affiliate_booking_card",
+        "valid": true
+      },
+      {
+        "component": "affiliate_search_card",
+        "valid": true
+      },
+      {
+        "component": "affiliate_banner",
+        "valid": true
+      },
+      {
+        "component": "affiliate_promotion_card",
+        "valid": true
+      },
+      {
+        "component": "article_hero",
+        "valid": false
+      },
+      {
+        "component": "share_this_page",
+        "valid": false
+      },
+      {
+        "component": "table_of_contents",
+        "valid": false
+      }
+    ]
+  },
+  {
+    "id": "A19-presentation-interface",
+    "reproduced": true,
+    "evidence": {
+      "planAccepted": true,
+      "pageAccepted": false
+    }
+  },
+  {
+    "id": "A05-empty-final-page",
+    "reproduced": true,
+    "evidence": {
+      "valid": true
+    }
+  },
+  {
+    "id": "A12-validator-parity",
+    "reproduced": true,
+    "evidence": {
+      "cmsAcceptsExecutableInlineHtml": true,
+      "note": "Frontend PHP rejects this via wp_kses; this is not demonstrated public XSS."
+    }
+  },
+  {
+    "id": "A03-topic-scope",
+    "reproduced": true,
+    "evidence": {
+      "ready": true,
+      "factSubjects": [
+        "Summer Palace"
+      ]
+    }
+  },
+  {
+    "id": "A05-qa-ledger-and-page",
+    "reproduced": true,
+    "evidence": {
+      "passed": true,
+      "ledger": [],
+      "finalBlocks": 0
+    }
+  },
+  {
+    "id": "A06-stale-review",
+    "reproduced": true,
+    "evidence": {
+      "revision": 2,
+      "draftStatus": "qa_queued",
+      "returnedReviewPassed": true
+    }
+  },
+  {
+    "id": "A07-image-retry-skips-failure",
+    "reproduced": true,
+    "evidence": {
+      "failedVisual": "visual_30b057f646354210b37edcac3e34746c",
+      "retrySelection": [
+        "visual_8cd37dd224a94aa68bc11454cbcccd1f"
+      ]
+    }
+  },
+  {
+    "id": "A04-multimodal-audit",
+    "reproduced": true,
+    "evidence": {
+      "content": [
+        {
+          "type": "text",
+          "text": "ORIGINAL SOURCE SEGMENT:\n\n\nEXTRACTED CLAIMS:\n[]"
+        }
+      ]
+    }
+  },
+  {
+    "id": "A13-long-paragraph",
+    "reproduced": true,
+    "evidence": {
+      "segments": 1,
+      "firstSegmentChars": 130000,
+      "extractionInputLimit": 120000
+    }
+  },
+  {
+    "id": "A14-chinese-family",
+    "reproduced": true,
+    "evidence": {
+      "relation": "PARTIAL_OVERLAP",
+      "overlapScore": 0.3333333333333333,
+      "incrementalRatio": 0.5
+    }
+  },
+  {
+    "id": "A15-session-revocation",
+    "reproduced": true,
+    "evidence": {
+      "oldCookieValidAfterPasswordChange": true
+    }
+  },
+  {
+    "id": "A16-repository-lock-reset",
+    "reproduced": true,
+    "evidence": {
+      "runningJobAfterSecondRepository": "queued"
+    }
+  },
+  {
+    "id": "A08-partial-upload",
+    "reproduced": true,
+    "evidence": {
+      "uploadCallsAcrossTwoAttempts": 4,
+      "firstAssetUploadedTwice": true
+    }
+  },
+  {
+    "id": "A09-source-age-and-quote",
+    "reproduced": true,
+    "evidence": {
+      "sourcePublishedAt": "2020-01-01",
+      "freshnessState": "time_sensitive",
+      "inventedQuotePersisted": "A fabricated quote not present in the source."
+    }
+  },
+  {
+    "id": "A18-official-evidence",
+    "reproduced": true,
+    "evidence": {
+      "capturedSourceAuthority": 4,
+      "resultingVerification": "requires_official"
+    }
+  }
+]

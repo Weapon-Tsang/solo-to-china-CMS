@@ -1,0 +1,437 @@
+﻿SoloToChina 项目问题清单与完整修复提示词
+
+问题清单与修复顺序
+
+================================================================
+
+本交接包供切换账号后修复 CMS 与 WordPress 前端使用。包含 19 项审计发现和 10 项优化任务；问题编号沿用原审计报告。每项均给出问题边界、代码入口、可直接执行的修复提示词和验收条件。优先修复契约、证据与版本门禁，再处理幂等、素材、分发和效率。
+
+交接日期 2026-09-07
+CMS 仓库 https://github.com/Weapon-Tsang/solo-to-china-CMS
+前端仓库 https://github.com/Weapon-Tsang/solo-to-china
+CMS 审计提交 1a597ecfe2b89ce75f491bcbbf606f9c52d294ca
+前端审计提交 ccfab41f25cd2323bfcd049485bdcb44a71df622
+
+重要边界
+1. 本交接包是修复任务书，不表示这些问题已被修复。
+2. 原审计 CMS 118 项测试通过、静态与构建检查通过、35 项本地 smoke 通过；这些测试没有覆盖所有发现。
+3. 已复现包括隔离代码和 mock 行为，不代表真实模型或生产 WordPress 已发生相同错误。
+4. 原审计未执行真实付费模型、生产 WordPress/PHP、线上 HTML 和浏览器验收；A02 真实模型兼容性、A17 故障窗口等需在适当环境验证。
+5. P1 表示扩大自动生产前优先处理，P2 表示明确的可靠性、安全或质量缺口；未定性为 P0 或已被利用的公网漏洞。
+6. 路径均以对应仓库根目录为基准。新账号应重新核对当前 HEAD，不能假定仍是审计版本。
+
+
+如何在另一个账号使用
+推荐方式：将“01_问题清单.txt”和“02_完整修复提示词.txt”上传到新账号的同一任务，发送：
+“请读取这两个文件，按总提示词和建议批次执行全部修复及优化，持续更新 repair-progress.md，不要只给计划。”
+
+分批方式：先发送总提示词，再按批次粘贴对应 A/B 条目。若开启全新任务，可上传 ZIP 内“逐项提示词”中的对应 TXT；每个文件都包含仓库、基线、通用约束、问题描述和验收，不需要前一个账号的聊天记录。
+
+节省额度：优先完成批次一至四的 A 类缺陷；B 类是已纳入任务范围的优化，继续在批次五执行。跨账号中断前要求保存 repair-progress.md 和精确下一步，不重复从零审计。
+
+各提示词允许修复所需的代码、测试和迁移；不等于授权生产部署、破坏性数据操作或任意付费请求。
+
+
+推荐批次
+批次一 任务与契约基础：A16 A01 A19 A02 A12
+批次二 证据闭环：A18 A03 A04 A09 A14 A13
+批次三 最终页面与素材：A06 A05 A07 A08 A10
+批次四 交付 SEO 与认证：A17 A11 A15
+批次五 优化任务：B01 B02 B03 B04 B05 B06 B07 B08 B09 B10
+最终执行总验收提示词。
+依赖可以协同推进；未通过前置验收时不要把下游标为完全完成。
+
+
+一 19 项审计问题
+
+================================================================
+
+A01  P1  修复前端契约序列化损坏
+
+仓库：前端主修 CMS 验证；证据：已复现
+
+问题：heading 的源 enum 为 [2,3]，生成物变为 [{},{}]，合法 H2/H3 被拒绝；comparison_table 示例二维数组变为带 Count 和 SyncRoot 的对象。
+
+代码入口：前端 scripts/generate-component-catalog.ps1；contracts/*.json；主题 content-contract/component-registry.v1.json 和各 generated 文件。
+
+依赖：无；与 A19 协同
+
+关闭标准：H2=2、H3=3 通过，其他不支持层级拒绝；table.rows 保持二维数组；连续生成两次产物一致；契约 checksum 对齐；原有文章兼容。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A02  P1  增加模型提供商 Schema 适配
+
+仓库：CMS；证据：静态确认 真实请求待验
+
+问题：完整前端 JSON Schema 直接传给 Vertex responseSchema，未区分提供商支持子集；真实线上失败率尚未验证。
+
+代码入口：src/ai/content-engine.mjs；src/ai/vertex-gemini-client.mjs；src/ai/kimi-client.mjs；src/frontend-contract.mjs。
+
+依赖：A01 A19
+
+关闭标准：提供商请求符合其当前支持范围；不支持的约束有明确处理；畸形 JSON、Schema 不匹配、限流、截断均有预期结果；最终页面仍按原契约校验。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A03  P1  按文章主题限定证据就绪范围
+
+仓库：CMS；证据：核心判定已复现
+
+问题：Opportunity 采用城市全量事实与城市家族数，故宫文章可借颐和园事实判 ready。
+
+代码入口：src/repository.mjs 中 upsertContentOpportunity、rebuildCoverageMatrices、getTopicPackage；src/research-strategy.mjs。
+
+依赖：A18 A14
+
+关闭标准：故宫机会仅有颐和园事实必须不 ready；补齐故宫证据后 ready；无关冲突不阻断；相关文章证据变 stale 后撤回 readiness；两个无关来源不能凑独立数。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A04  P1  让多模态覆盖审计检查真实证据
+
+仓库：CMS；证据：审计输入已复现
+
+问题：抽取使用图片视频，但 coverage audit 只有文本和 Claims，无法识别视觉遗漏。
+
+代码入口：src/ai/kimi.mjs 中 auditCoverage 和 buildCoverageInput；src/repository.mjs 分段与覆盖记录；src/pipeline.mjs。
+
+依赖：A13 的定位设计可协同
+
+关闭标准：图片独有预约要求被遗漏时发现 gap；图片 404、空视频、文本为空不能自动通过；真实无关装饰图有可解释结果；补齐后才 finalize。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A05  P1  把硬性 QA 绑定最终可见页面
+
+仓库：两个仓库；证据：空页面与空台账已复现
+
+问题：确定性门禁主要看 Markdown，最终 blocks 可为空，证据台账为空也不必然被拦截。
+
+代码入口：src/ai/content-engine.mjs 中 applyDeterministicGates；src/frontend-contract.mjs；src/publish-page.mjs；前端 Page Schema 与渲染器。
+
+依赖：A06 A03 A19
+
+关闭标准：空 blocks、空事实台账、虚构 source_id、丢失关键例外、新增无证据价格、仅最终页含商业污染均拒绝；合法非事实建议和已隔离商业层可通过。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A06  P1  隔离文章修订与旧 QA 结果
+
+仓库：CMS；证据：已复现
+
+问题：saveDraft 增加 revision 但读取 review 不校验版本，重写后仍能取得旧 passed=true。
+
+代码入口：src/repository.mjs 中 saveDraft、getDraftPackage、saveReview、下游 composition；src/pipeline.mjs 发布与重试阶段；src/db.mjs。
+
+依赖：A16；为 A05 A11 提供版本基础
+
+关闭标准：审核通过后改稿，再执行旧商业/发布任务，必须在外部写入前拒绝；新稿重审后可交付；在途旧响应不能覆盖新稿；历史记录可追溯。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A07  P2  补齐配图重试与非插画任务状态
+
+仓库：CMS；证据：失败选择已复现 其余静态确认
+
+问题：failed 图片不被 plannedVisuals 选中；地图、信息图和实景搜索缺少完整执行器。
+
+代码入口：src/repository.mjs 中 plannedVisuals、failVisual；src/pipeline.mjs generate_visuals；src/visuals/vertex-imagen.mjs。
+
+依赖：A06 A08
+
+关闭标准：临时 503 后真正重试同一图；永久失败有明确状态；空素材不默默成功；必需图缺失阻断；可选降级可解释；地图/信息图路径有可验证产物或明确未完成。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A08  P2  持久化单张媒体进度并复用素材
+
+仓库：CMS 与 WordPress 适配；证据：部分失败已复现
+
+问题：一批媒体全部上传后才保存 ID，部分成功丢进度；修稿删除所有视觉记录导致重复生成上传。
+
+代码入口：src/wordpress.mjs 中 resolveVisualMedia、uploadMedia；src/pipeline.mjs uploadVisualMedia；src/repository.mjs replaceDraftVisuals。
+
+依赖：A16 A06
+
+关闭标准：第一张成功第二张失败后仅重试第二张；纯文案修订不重复生成/上传；图像输入变化会更新；站点切换不混淆；响应丢失不会无限重复资源。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A09  P1  修复事实时效与引用真实性
+
+仓库：CMS；证据：已复现
+
+问题：抓取时间代替事实时间；旧官方证据可借新 UGC 时间取得当前待遇；伪造 source_quote 可写入证据。
+
+代码入口：src/repository.mjs 中 saveCapture、saveExtraction、classifyFreshness、hasCurrentOfficialEvidence；Claim 与 Evidence Span 数据模型。
+
+依赖：A04 A18
+
+关闭标准：2020 年票价今天导入仍旧；同内容再抓取不变新；旧官网加新 UGC 不成为当前官方；虚构 quote 拒绝；正常中文标点规范化不误杀；视觉引用有来源定位。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A10  P1  按实体和画面匹配实景图
+
+仓库：CMS；证据：静态确认
+
+问题：来源内前若干图按顺序分配给文章，未按图片实体匹配；插画转实景后 alt 可能不对应。
+
+代码入口：src/repository.mjs 中 authorizedSourceAssetsForBrief、normalizeVisuals；Source Asset 与 Evidence Span；媒体元数据。
+
+依赖：A03 A04 A07 A08
+
+关闭标准：故宫 Claim 所在混合笔记的餐厅封面不能成为故宫实景图；正确图片被选中且 alt 相符；缺图不捏造；人工实景图可选；授权来源记录不丢失。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A11  P2  统一可见内容与 SEO 结构化数据
+
+仓库：两个仓库；证据：静态确认 线上输出待验
+
+问题：Draft、Page、SEO 和 JSON-LD 可不一致，WordPress 编辑不更新 schema；canonical 和 robots 私有字段未完整消费。
+
+代码入口：src/repository.mjs 中 draftMetadata、buildArticleSchema；src/publish-page.mjs；前端 inc/cms-articles.php 及 SEO 输出 hooks。
+
+依赖：A05 A06 A17
+
+关闭标准：改标题/FAQ 后 schema 同步；slug 冲突和日期型 permalink 正确；核心或插件不产生重复冲突 metadata；OG 图可访问且对应文章；未发表稿不被擅自公开。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A12  P2  对齐 CMS 与 PHP 校验边界
+
+仓库：两个仓库；证据：CMS 已复现 PHP 静态确认
+
+问题：CMS 接受部分 HTML/URI/组件数据，PHP 后期拒绝；未证明公开 XSS 可利用。
+
+代码入口：src/frontend-contract.mjs validateJsonSchema；前端 inc/cms-articles.php 验证函数与 wp_kses。
+
+依赖：A01 A19
+
+关闭标准：script/event handler/危险协议及错列数两端均拒绝；合法 inline HTML 不被误拒；整数和空对象等边界一致；dry-run 不创建 post/media/term；无需把 mock 接受误报为线上 XSS。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A13  P2  补齐长文本与 PDF 视频分段
+
+仓库：CMS；证据：长单段已复现 其余静态确认
+
+问题：130000 字符单段不拆分，提取与覆盖都截断 120000；PDF/视频缺少完整页与时间分段。
+
+代码入口：src/research-strategy.mjs segmentSource、splitText、splitPdfText；src/ai/kimi.mjs；src/adapters/manual-source.mjs；Vertex 视频输入。
+
+依赖：A04 协同
+
+关闭标准：超长单段尾部事实仍可提取且定位；overlap 不重复 Claim；PDF 多页/扫描页保持覆盖状态；长视频分段范围完整无重复全量输入；不支持格式清晰报错。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A14  P2  纠正来源家族与独立佐证计数
+
+仓库：CMS；证据：中文样例已复现 计数静态确认
+
+问题：中文轻微改写可被分成独立家族；corroborated 按 Claim 行数而非独立来源计算。
+
+代码入口：src/research-strategy.mjs classifySourceFamily；src/repository.mjs analyzeSourceFamily、rebuildKnowledge；source_family 数据。
+
+依赖：A09；A03 使用其结果
+
+关闭标准：需要预约/必须预约等近重复不算双独立；同来源两条相同事实不 corroborated；两个独立权威来源可佐证；否定或不同季节事实不被误合并。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A15  P2  实现会话撤销与登录限速
+
+仓库：CMS；证据：旧会话已复现 限速静态确认
+
+问题：修改密码后旧 Cookie 仍有效至到期；登录无限速且 scryptSync 占主事件循环。
+
+代码入口：src/auth.mjs；src/server.mjs 认证路由；src/db.mjs 用户会话迁移。
+
+依赖：无
+
+关闭标准：改密前 Cookie 立即失效，新 Cookie 可用；logout 后当前旧 Cookie 失效；错误登录受限，合法登录可恢复；API/worker 在密码计算压力下仍响应。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A16  P1  修复队列租约和诊断副作用
+
+仓库：CMS；证据：已复现
+
+问题：构造第二个 Repository 会把仍运行的任务重置为 queued，status/sync CLI 可能触发。
+
+代码入口：src/repository.mjs 构造器、claimJob；scripts/check-frontend-contract.mjs；scripts/sync-frontend-contract.mjs；Pipeline 启停。
+
+依赖：先执行 为可靠性基础
+
+关闭标准：运行时执行 status 或构造 Repository 不改锁；崩溃过期可恢复；活跃 worker 不被抢；旧 owner 不能提交结果；并发 claim 只有一个获胜；读命令不创建新 DB。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A17  P2  消除 WordPress 草稿幂等写入窗口
+
+仓库：前端与 CMS 交付适配；证据：静态确认 故障注入待验
+
+问题：post 先创建，幂等 postmeta 后写；中断或并发首次 POST 可能产生重复草稿。
+
+代码入口：前端 inc/cms-articles.php 中 find_mapped_post_id、resolve_target_post_id、upsert_article；CMS WordPress 适配器。
+
+依赖：A16 A06 A12
+
+关闭标准：并发两次首次 POST 只一个 post；post 插入后故障重试仍同 ID；taxonomy 失败可恢复；响应丢失无重复；已经 publish 的 post 拒绝覆盖；权限边界不变。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A18  P1  补齐官方证据核验操作闭环
+
+仓库：CMS；证据：静态确认 默认值已复现
+
+问题：来源默认 authority_level=4，门槛要求官方但 API/UI 无正常设置入口；集成测试通过直接 SQL 设置 1 绕过缺失步骤。
+
+代码入口：src/db.mjs authority 与 verified 字段；src/repository.mjs saveCapture、rebuildKnowledge；src/server.mjs；frontend/src 管理界面。
+
+依赖：A09 时间语义协同
+
+关闭标准：导入官网→管理员确认→核验事实→等待机会恢复；非管理员不能标官方；UGC 不自动变官方；过期官方证据不通过；撤销有追溯并重新计算。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+A19  P1  区分正文组件与页面设置接口
+
+仓库：CMS 与前端契约；证据：已复现
+
+问题：CMS 丢弃 interface，presentation_meta 可以通过 blocks 计划校验但被最终 Page Schema 拒绝。
+
+代码入口：src/frontend-contract.mjs normalizeComponent、capabilities、validateCompositionPlan；src/ai/content-engine.mjs promptCapabilities；前端 Registry。
+
+依赖：A01
+
+关闭标准：三项 presentation 设置可正确保存到 metadata；放进 blocks 在 plan 即拒绝；原先 article_hero 计划通过样例改为失败；合法正文与历史兼容路径正常。
+
+对应提示词：02_完整修复提示词.txt 中同编号，或 ZIP 中同编号独立文件。
+
+
+
+二 10 项改进任务
+
+以下为优化建议，不一概视为已发生漏洞。
+
+================================================================
+
+B01  按内容任务决定篇幅和配图
+
+请替换统一最低 800 词和强制 FAQ/字数配图策略，建立按内容类型、读者任务与证据充分性判定的质量配置。对短实用答案、步骤、攻略、对比设置不同充分性标准；可选 FAQ 不能以删除关键信息换取通过。同步 Writer、QA、素材计划和策略文档，更新策略版本并保持历史版本可追溯。验收：简短但证据完整的问答通过，冗长重复稿仍失败；正文长度变化不造成素材计划数量矛盾。
+
+
+
+B02  增加读者可核实的出处和适用条件
+
+请把内部证据映射转换为读者可理解的官方出处、核验日期、条件与例外；为价格、预约、支付和安全信息提供恰当来源链接。保留 source ID 内部追踪但不泄漏研究元数据。使用真实作者/组织与审核信息，不能虚构经历。与 A09/A11 的证据日期和页面输出共用数据。验收：关键事实可追至真实 URL 和证据版本，原文例外未丢失，内部 src/claim 标识不进入可见页面。
+
+
+
+B03  校正 GEO 与 FAQ 搜索策略
+
+请核对修复当天 Google 官方 AI 搜索与结构化数据文档，修订 GEO/SEO 规则，去除 FAQ 富结果、固定字数、llms.txt 或 schema 必然带来引用排名等承诺。原审计核对的官方记录说明 FAQ rich result 自 2026-05-07 起不再展示；执行时重新核对并记录来源日期。FAQ 仅在满足真实问题时生成，结构化数据与可见内容一致。验收：提示词和质量门禁不再为不存在的搜索特性强制填充内容，也不删除有用 FAQ。
+
+
+
+B04  支持已有文章更新合并和退役
+
+请将内容机会区分 create/update/merge/retire，建立 Claim→文章→已发布 URL 的反向影响索引。新增证据与已有文章重叠时可创建定向更新建议，不仅因标题相似而 dismissed。更新发布策略继续尊重已发表文章保护：默认产生更新草稿/差异供审核，不能直接覆盖已发布正文。验收：票价变化产生指向正确文章的更新机会，重复来源不会重复建稿，update 审批与 create 身份清楚，退役只提出受控建议。
+
+
+
+B05  稳定内容块与真实内部链接
+
+请用稳定 block ID、语义角色、来源和修订记录表达页面内容，优先确定性映射已审核文案。内部链接仅从已发布页面库存解析，按实体、意图、目标可用性与自然锚文本选择；不要让模型猜 URL。处理草稿链接、404、重定向、重复锚点和文章自身链接。验收：重排不丢证据身份，相关链接可解析且不指向测试或未发布页；与 Commercial 定位索引不冲突。
+
+
+
+B06  在租约安全后增加有限并发
+
+请在 A16 和版本门禁完成后，为任务 DAG 提供按 provider 受限并发、独立图片队列与公平调度。保持同实体同修订写入串行；长模型任务不能阻塞健康检查或全部短任务。支持可配置默认保守并发、背压、停止和恢复。验收：模拟慢请求期间其他独立任务可前进；同一阶段不重复领取；限流不形成重试风暴；并发提高后的费用和资源使用有测量。
+
+
+
+B07  记录模型成本并按任务分配预算
+
+请记录每阶段模型、prompt/schema 版本、input/output/cached token、耗时、重试、估算费用和最终 QA 结果。usage 缺失记 unknown，不能记零。价格表来源和时间可配置，费用仅标估算；不假设各提供商相同。提供按每篇 QA 合格文章聚合的成本与延迟，并允许抽取、规划、写作、审阅分阶段配置模型/思考预算。验收：从 mock usage 可正确汇总重试费用，无密钥/全文进入日志；模型切换有评测依据，不强制换更贵模型。
+
+
+
+B08  缩小提示上下文并缓存稳定阶段
+
+请建立阶段专用白名单 DTO，去掉 raw JSON 与解码对象重复传输、无关城市事实、旧 review/publish/commercial 记录。Research prompt 不应接收历史商业组成。按 source/证据 hash、模型、prompt version、schema version 和策略版本构建缓存键，明确变更失效与失败不缓存策略；图片/视频处理缓存同样追溯。验收：同输入重跑减少调用，事实/策略变更命中失效，文章间或来源间不串缓存，审计可看到输入规模与命中率。
+
+
+
+B09  按错误类型恢复任务和契约
+
+请统一结构化错误分类：429/503 使用 Retry-After、指数退避和 jitter，401/403 与确定性 Schema 错误停在需处理状态，格式错误有界修复，资源缺失走补证/素材任务。契约同步成功后定向恢复受 stale_contract 阻塞的页面并重新校验当前版本；检查 snapshot 身份是否只依赖 Registry checksum 而遗漏 Page/Publish Schema 变化，如存在则修复不可变 provenance。验收：永久错误不烧完多次相同调用；契约更新不会永久卡死或无限重编排；旧快照可追溯；失败原因可操作。
+
+
+
+B10  建立跨仓库最终产物验收门禁
+
+请把两个仓库的真实生成契约、Schema 转换、版本 QA、故障恢复、WordPress 保存编辑渲染串成隔离验收。至少覆盖真实 Registry 样例、模型错误输出、缺模态、缺图、响应丢失、并发幂等、编辑后 FAQ/schema 与 canonical。mock 可验证调度但不能冒充真实模型/PHP/浏览器结果；提供有环境时可执行的最小真实 smoke。验收输出区分 PASS/FAIL/NOT TESTED，记录代码版本和命令。真实外部测试缺凭据时标已实现待外部验证，不能整体报全部完成。
+
+
+
+三 状态记录格式
+
+编号 | 状态 | 复核证据 | 修改文件 | 测试及结果 | 迁移影响 | 未测项 | 下一步
+
+状态：待复核／已确认／实现中／已实现待外部验证／已验证完成／已不存在。
+
+
+
+四 官方参考
+
+Vertex 结构化输出 https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/control-generated-output
+
+Vertex Schema https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/Schema
+
+Google Search 更新 https://developers.google.com/search/updates
+
+Google AI 搜索 https://developers.google.com/search/docs/appearance/ai-features
+
+官方行为可能变化，执行修复时重新核对并记录日期。

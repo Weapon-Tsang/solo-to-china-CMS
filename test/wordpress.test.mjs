@@ -36,6 +36,30 @@ test("WordPress adapter always creates a draft with safe content", async () => {
   assert.equal(result.postId, 7);
 });
 
+test("media progress is persisted per image and retry skips an already uploaded asset", async () => {
+  let mediaCalls = 0;
+  const fetchStub = async (url) => {
+    if (String(url).includes("xhscdn.com")) return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/jpeg" } });
+    mediaCalls += 1;
+    if (mediaCalls === 2) return new Response(JSON.stringify({ message: "temporary" }), { status: 503, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ id: 100 + mediaCalls, source_url: `https://site.test/media/${100 + mediaCalls}.jpg` }), { status: 201, headers: { "content-type": "application/json" } });
+  };
+  const adapter = new WordPressDraftAdapter({ siteUrl: "https://site.test", username: "editor", applicationPassword: "password" }, fetchStub);
+  const visuals = [1, 2].map((index) => ({ id: `visual-${index}`, status: "generated", source_asset_id: `asset-${index}`,
+    source_remote_url: `https://ci.xhscdn.com/${index}.jpg`, alt_text: `Image ${index}`, caption: "Evidence" }));
+  const persisted = [];
+  await assert.rejects(() => adapter.resolveVisualMedia(visuals, (media) => {
+    persisted.push(media.visualId);
+    const visual = visuals.find((item) => item.id === media.visualId);
+    visual.wordpress_media_id = media.id;
+    visual.wordpress_media_url = media.url;
+  }), /503/);
+  assert.deepEqual(persisted, ["visual-1"]);
+  const retried = await adapter.resolveVisualMedia(visuals);
+  assert.deepEqual(retried.map((item) => item.visualId), ["visual-1", "visual-2"]);
+  assert.equal(mediaCalls, 3, "retry uploads only the previously failed image");
+});
+
 test("WordPress adapter refuses to overwrite a post after a human publishes it", async () => {
   const fetchStub = async () => new Response(JSON.stringify({ id: 7, status: "publish" }), { status: 200, headers: { "content-type": "application/json" } });
   const adapter = new WordPressDraftAdapter({

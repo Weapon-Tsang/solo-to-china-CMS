@@ -1,5 +1,9 @@
 # Content strategy changelog
 
+## 1.5 — 2026-09-08
+
+Added exact draft/evidence version binding, final-page QA, reader-source traceability, task-specific content sufficiency, optional evidence-backed FAQ, subject-matched media reuse, model usage provenance and publication lifecycle impact.
+
 ## 1.4 — 2026-09-07
 
 - Reframed Sources as evidence containers with preflight, text/PDF/media segmentation, exhaustive atomic Claim extraction, coverage audit, and one targeted retry.

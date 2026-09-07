@@ -50,7 +50,8 @@ export function createApplication(config = loadConfig()) {
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
   });
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
-  const activeAi = { ...config.kimi, ...config.vertex, ...selectedAi };
+  const activeAi = { ...config.kimi, ...config.vertex, ...selectedAi,
+    onModelCall: (metric) => repository.recordModelCall(metric) };
   const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
   const activeVisuals = { ...config.visuals, ...selectedVisual };
   const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
@@ -110,25 +111,26 @@ export function createApplication(config = loadConfig()) {
       if (!captureOnly && request.method === "POST" && url.pathname === "/api/auth/login") {
         if (!auth.enabled) return sendJson(response, 409, { error: "Password sign-in is not configured." });
         const payload = await readJson(request, 20_000);
-        const session = auth.login(payload.username, payload.password);
+        const session = await auth.login(payload.username, payload.password);
         if (!session) return sendJson(response, 401, { error: "Incorrect username or password." });
         response.setHeader("Set-Cookie", session.cookie);
         return sendJson(response, 200, { authenticated: true, username: session.username, mustChangePassword: session.mustChangePassword });
       }
       if (!captureOnly && request.method === "POST" && url.pathname === "/api/auth/logout") {
+        auth.logout(request);
         response.setHeader("Set-Cookie", auth.clearCookie());
         return sendJson(response, 204, {});
       }
       if (!captureOnly && request.method === "POST" && url.pathname === "/api/auth/change-password") {
         const payload = await readJson(request, 20_000);
-        const session = auth.changePassword(request, payload.currentPassword, payload.nextPassword);
+        const session = await auth.changePassword(request, payload.currentPassword, payload.nextPassword);
         if (!session) return sendJson(response, 401, { error: "Current password is incorrect." });
         response.setHeader("Set-Cookie", session.cookie);
         return sendJson(response, 200, { authenticated: true, username: session.username, mustChangePassword: false });
       }
       if (!captureOnly && request.method === "POST" && url.pathname === "/api/auth/update-credentials") {
         const payload = await readJson(request, 20_000);
-        const session = auth.updateCredentials(request, payload.currentPassword, payload.nextUsername, payload.nextPassword);
+        const session = await auth.updateCredentials(request, payload.currentPassword, payload.nextUsername, payload.nextPassword);
         if (!session) return sendJson(response, 401, { error: "Current password is incorrect." });
         response.setHeader("Set-Cookie", session.cookie);
         return sendJson(response, 200, { authenticated: true, username: session.username, mustChangePassword: false });
@@ -304,6 +306,26 @@ export function createApplication(config = loadConfig()) {
         const source = repository.getSource(sourceMatch[1]);
         return source ? sendJson(response, 200, sourceForApi(source)) : sendJson(response, 404, { error: "Source not found." });
       }
+      const sourceEvidenceReviewMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/evidence-review$/);
+      if (request.method === "POST" && sourceEvidenceReviewMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.reviewSourceEvidence(decodeURIComponent(sourceEvidenceReviewMatch[1]), {
+          decision: String(payload.decision || ""),
+          authorityLevel: payload.authorityLevel,
+          verifiedAt: payload.verifiedAt,
+          note: payload.note || "",
+          operator: auth.status(request).username || "administrator",
+        });
+        if (!result) return sendJson(response, 404, { error: "Source not found." });
+        void pipeline.runOne();
+        return sendJson(response, 202, result);
+      }
+      const sourceEvidenceHistoryMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/evidence-reviews$/);
+      if (request.method === "GET" && sourceEvidenceHistoryMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        return sendJson(response, 200, { items: repository.listSourceEvidenceReviews(decodeURIComponent(sourceEvidenceHistoryMatch[1])) });
+      }
       const retryMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/retry$/);
       if (request.method === "POST" && retryMatch) {
         authorizeAdmin(request, config.adminToken, auth);
@@ -378,6 +400,22 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {
         return sendJson(response, 200, { items: repository.listContentRecommendations(limit(url.searchParams.get("limit"))), opportunities: repository.listContentOpportunities(limit(url.searchParams.get("limit"))) });
+      }
+      const opportunityLifecycleMatch = url.pathname.match(/^\/api\/opportunities\/([^/]+)\/lifecycle$/);
+      if (request.method === "POST" && opportunityLifecycleMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.setOpportunityLifecycle(
+          decodeURIComponent(opportunityLifecycleMatch[1]),
+          String(payload.action || ""),
+          {
+            targetPostId: payload.targetPostId,
+            note: payload.note,
+            operator: auth.status(request).username || "administrator",
+          },
+        );
+        if (!result) return sendJson(response, 404, { error: "Content opportunity not found." });
+        return sendJson(response, 200, result);
       }
       const recommendationDecisionMatch = url.pathname.match(/^\/api\/recommendations\/([^/]+)\/decision$/);
       if (request.method === "POST" && recommendationDecisionMatch) {

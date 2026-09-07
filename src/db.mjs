@@ -42,6 +42,190 @@ function migrate(db) {
   if (current < 21) migrationTwentyOne(db);
   if (current < 22) migrationTwentyTwo(db);
   if (current < 23) migrationTwentyThree(db);
+  if (current < 24) migrationTwentyFour(db);
+  if (current < 25) migrationTwentyFive(db);
+  if (current < 26) migrationTwentySix(db);
+  if (current < 27) migrationTwentySeven(db);
+  if (current < 28) migrationTwentyEight(db);
+  if (current < 29) migrationTwentyNine(db);
+  if (current < 30) migrationThirty(db);
+  if (current < 31) migrationThirtyOne(db);
+}
+
+function migrationThirtyOne(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE content_opportunities ADD COLUMN lifecycle_action TEXT NOT NULL DEFAULT 'create'
+        CHECK (lifecycle_action IN ('create','update','merge','retire'));
+      ALTER TABLE content_opportunities ADD COLUMN target_post_id INTEGER;
+      ALTER TABLE content_opportunities ADD COLUMN publication_impact_json TEXT NOT NULL DEFAULT '{}';
+      CREATE INDEX idx_content_opportunity_lifecycle ON content_opportunities(lifecycle_action, status, updated_at DESC);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (31, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationThirty(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE frontend_contract_snapshots ADD COLUMN artifact_checksum TEXT NOT NULL DEFAULT '';
+      CREATE INDEX idx_frontend_contract_artifact_checksum ON frontend_contract_snapshots(artifact_checksum);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (30, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationTwentyNine(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE model_call_metrics (
+        id TEXT PRIMARY KEY,
+        stage TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        prompt_hash TEXT NOT NULL,
+        schema_hash TEXT NOT NULL,
+        input_hash TEXT NOT NULL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cached_tokens INTEGER,
+        latency_ms INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL CHECK (status IN ('succeeded','failed')),
+        error_code TEXT,
+        cost_usd REAL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_model_call_metrics_created ON model_call_metrics(created_at DESC, stage);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (29, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationTwentyEight(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE app_sessions (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL REFERENCES app_users(username) ON UPDATE CASCADE ON DELETE CASCADE,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_app_sessions_expiry ON app_sessions(expires_at);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (28, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationTwentySeven(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE article_visuals ADD COLUMN asset_fingerprint TEXT NOT NULL DEFAULT '';
+      ALTER TABLE article_visuals ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE article_visuals ADD COLUMN retry_at TEXT;
+      INSERT INTO schema_migrations(version, applied_at) VALUES (27, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationTwentySix(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE article_drafts ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE quality_reviews ADD COLUMN draft_revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE quality_reviews ADD COLUMN draft_content_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE quality_reviews ADD COLUMN evidence_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE frontend_page_compositions ADD COLUMN draft_revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE frontend_page_compositions ADD COLUMN draft_content_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE frontend_publish_compositions ADD COLUMN draft_revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE frontend_publish_compositions ADD COLUMN draft_content_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE commercial_compositions ADD COLUMN draft_revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE commercial_compositions ADD COLUMN draft_content_hash TEXT NOT NULL DEFAULT '';
+      CREATE INDEX idx_quality_reviews_version ON quality_reviews(draft_id, draft_revision, draft_content_hash, created_at DESC);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (26, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationTwentyFour(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE jobs ADD COLUMN locked_by TEXT;
+      ALTER TABLE jobs ADD COLUMN lease_expires_at TEXT;
+      ALTER TABLE jobs ADD COLUMN heartbeat_at TEXT;
+      CREATE INDEX idx_jobs_lease ON jobs(status, lease_expires_at);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (24, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationTwentyFive(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE claims ADD COLUMN source_quote_start INTEGER;
+      ALTER TABLE claims ADD COLUMN source_quote_end INTEGER;
+      ALTER TABLE claims ADD COLUMN source_quote_status TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (source_quote_status IN ('legacy','exact','normalized_exact','visual','unsupported'));
+      ALTER TABLE evidence_spans ADD COLUMN start_offset INTEGER;
+      ALTER TABLE evidence_spans ADD COLUMN end_offset INTEGER;
+      ALTER TABLE extraction_coverage ADD COLUMN audit_json TEXT NOT NULL DEFAULT '{}';
+      CREATE TABLE source_evidence_reviews (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        previous_authority_level INTEGER NOT NULL,
+        authority_level INTEGER NOT NULL,
+        previous_verified_at TEXT,
+        verified_at TEXT,
+        decision TEXT NOT NULL CHECK (decision IN ('verified','unverified','rejected')),
+        note TEXT NOT NULL DEFAULT '',
+        operator TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_source_evidence_reviews_source ON source_evidence_reviews(source_id, created_at DESC);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (25, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationTwentyThree(db) {

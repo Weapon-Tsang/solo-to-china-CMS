@@ -1,10 +1,10 @@
 import { markdownToContentBlocks } from "./content-blocks.mjs";
-import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError } from "./publish-page.mjs";
+import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
 
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class Pipeline {
-  constructor(repository, extractor, { pollMs = 750, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null, frontendContracts = null, contentConfig = {}, logger = silentLogger } = {}) {
+  constructor(repository, extractor, { pollMs = 750, maxConcurrent = 2, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null, frontendContracts = null, contentConfig = {}, logger = silentLogger } = {}) {
     this.repository = repository;
     this.extractor = extractor;
     this.pollMs = pollMs;
@@ -17,11 +17,14 @@ export class Pipeline {
     this.contentConfig = { minFacts: 5, maxPerDestination: 1, ...contentConfig };
     this.logger = logger;
     this.timer = null;
-    this.working = false;
+    this.working = 0;
+    this.maxConcurrent = Math.max(1, Math.min(8, Number(maxConcurrent) || 2));
   }
 
   start() {
     if (this.timer) return;
+    const recovered = this.repository.recoverExpiredJobs?.() || 0;
+    if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
     this.timer = setInterval(() => this.runOne().catch((error) => this.logger.error("pipeline.tick_failed", { error })), this.pollMs);
     this.timer.unref();
     void this.runOne();
@@ -33,14 +36,21 @@ export class Pipeline {
   }
 
   async runOne() {
-    if (this.working) return false;
-    this.working = true;
+    if (this.working >= this.maxConcurrent) return false;
+    this.working += 1;
     let job;
     let startedAt;
+    let heartbeatTimer;
     try {
       job = this.repository.claimJob();
       if (!job) return false;
       startedAt = Date.now();
+      heartbeatTimer = setInterval(() => {
+        if (!this.repository.heartbeatJob?.(job.id, job.locked_by)) {
+          this.logger.error("pipeline.job_lease_lost", { jobId: job.id, workerId: job.locked_by });
+        }
+      }, Math.max(10_000, Math.floor((this.repository.jobLeaseMs || 60_000) / 3)));
+      heartbeatTimer.unref();
       this.logger.info("pipeline.job_started", { jobId: job.id, jobType: job.type, entityId: job.entity_id, attempt: job.attempts });
       switch (job.type) {
         case "sync_frontend_contract":
@@ -276,8 +286,9 @@ export class Pipeline {
               const result = await this.visuals.generate(visual, contentPackage.draft);
               this.repository.saveGeneratedVisual(visual.id, result);
             } catch (error) {
-              this.repository.failVisual(visual.id, error);
-              throw error;
+              const failed = this.repository.failVisual(visual.id, error);
+              if (failed.retryable || visual.factual_image_required) throw error;
+              this.logger.warn("pipeline.optional_visual_skipped", { visualId: visual.id, draftId: job.entity_id, error });
             }
           }
           if (this.canComposeFrontendPage) this.repository.enqueue("compose_frontend_page", job.entity_id);
@@ -297,7 +308,8 @@ export class Pipeline {
           }
           const composed = await this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema);
           const validation = this.frontendContracts.validatePagePayload(composed.output);
-          this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model);
+          this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
+            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash });
           if (!validation.valid) throw new Error(`Frontend page payload is invalid: ${validation.errors.map((item) => item.code).join(", ")}`);
           this.repository.enqueue("review_draft", job.entity_id);
           break;
@@ -307,7 +319,8 @@ export class Pipeline {
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           const reviewed = await this.contentEngine.review(contentPackage);
-          const revision = this.repository.saveReview(job.entity_id, reviewed.output, reviewed.model);
+          const revision = this.repository.saveReview(job.entity_id, reviewed.output, reviewed.model,
+            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash });
           if (reviewed.output.passed) this.repository.enqueue("compose_commercial", job.entity_id);
           if (!reviewed.output.passed && revision < 2) this.repository.enqueue("revise_draft", job.entity_id);
           break;
@@ -349,7 +362,7 @@ export class Pipeline {
           if (!contentPackage.commercial_composition) throw new PublishCompositionError("COMMERCIAL_NOT_COMPLETE", "Commercial composition must complete before Publish Composition.");
           const editorialPage = contentPackage.frontend_page?.payload;
           if (!editorialPage) throw new PublishCompositionError("NO_VALID_FRONTEND_PAGE_PAYLOAD", "The validated editorial Frontend Page Payload is missing.");
-          if (contentPackage.frontend_page.contract_checksum !== contract.checksum) {
+          if (contentPackage.frontend_page.snapshot_id !== contract.id || contentPackage.frontend_page.contract_checksum !== contract.checksum) {
             this.repository.markFrontendPublishComposition(job.entity_id, "stale_contract");
             this.repository.markFrontendPageCompositionStale(job.entity_id);
             this.repository.enqueue("sync_frontend_contract", "default");
@@ -360,6 +373,8 @@ export class Pipeline {
           const finalPage = mergeCommercialOverlay(editorialPage, contentPackage.commercial_composition);
           const finalPageValidation = this.frontendContracts.validatePagePayload(finalPage);
           if (!finalPageValidation.valid) throw invalidPublishPage("FINAL_PAGE_INVALID", finalPageValidation);
+          const finalArtifactValidation = validateFinalPageArtifact(finalPage, contentPackage);
+          if (!finalArtifactValidation.valid) throw invalidPublishPage("FINAL_PAGE_QA_FAILED", finalArtifactValidation);
           await this.uploadVisualMedia(contentPackage);
           contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage.draft?.seo?.meta_title || !contentPackage.draft?.meta_description) {
@@ -393,7 +408,7 @@ export class Pipeline {
             if (!composition?.publish_package || !["valid", "delivery_failed"].includes(composition.status)) {
               throw new PublishCompositionError("NO_VALID_PUBLISH_PACKAGE", "A validated Final Publish Package is required before delivery.");
             }
-            if (composition.contract_checksum !== contract.checksum) throw new PublishCompositionError("CONTRACT_VERSION_MISMATCH", "Final Publish Package provenance does not match the active Frontend Contract.");
+            if (composition.snapshot_id !== contract.id || composition.contract_checksum !== contract.checksum) throw new PublishCompositionError("CONTRACT_VERSION_MISMATCH", "Final Publish Package provenance does not match the active Frontend Contract.");
             const validation = this.frontendContracts.validatePublishPackage(composition.publish_package);
             if (!validation.valid) throw invalidPublishPage("PUBLISH_PACKAGE_INVALID", validation);
           }
@@ -430,7 +445,7 @@ export class Pipeline {
         default:
           throw new Error(`Unknown job type: ${job.type}`);
       }
-      this.repository.completeJob(job.id);
+      if (!this.repository.completeJob(job.id, job.locked_by)) throw Object.assign(new Error("JOB_LEASE_LOST"), { retryable: false });
       this.logger.info("pipeline.job_succeeded", { jobId: job.id, jobType: job.type, durationMs: Date.now() - startedAt });
       return true;
     } catch (error) {
@@ -443,7 +458,8 @@ export class Pipeline {
       } else this.logger.error("pipeline.unhandled_error", { error });
       return false;
     } finally {
-      this.working = false;
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      this.working -= 1;
     }
   }
 
@@ -463,8 +479,14 @@ export class Pipeline {
 
   async uploadVisualMedia(contentPackage) {
     if (!this.wordpress?.enabled || typeof this.wordpress.resolveVisualMedia !== "function") return [];
-    const uploaded = await this.wordpress.resolveVisualMedia(contentPackage.draft?.visuals || []);
-    for (const visual of uploaded) this.repository.saveWordPressVisual(visual.visualId, visual);
+    const persisted = new Set();
+    const uploaded = await this.wordpress.resolveVisualMedia(contentPackage.draft?.visuals || [], (visual) => {
+      this.repository.saveWordPressVisual(visual.visualId, visual);
+      persisted.add(visual.visualId);
+    });
+    for (const visual of uploaded) {
+      if (!persisted.has(visual.visualId)) this.repository.saveWordPressVisual(visual.visualId, visual);
+    }
     return uploaded;
   }
 }

@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { ChunkedUploadManager } from "../src/chunked-upload.mjs";
-import { evaluateCoverage, segmentSource } from "../src/research-strategy.mjs";
+import { classifySourceFamily, evaluateCoverage, segmentSource } from "../src/research-strategy.mjs";
+import { scopeFactsForOpportunity } from "../src/repository.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
 test("Strategy 1.4 accounts for every captured image as an auditable segment", () => {
@@ -18,6 +19,29 @@ test("Strategy 1.4 accounts for every captured image as an auditable segment", (
   assert.deepEqual(segments.filter((item) => item.segmentType === "image").map((item) => item.imageIndex), Array.from({ length: 18 }, (_, index) => index + 1));
 });
 
+test("a single oversized paragraph is hard-split without silent truncation", () => {
+  const text = "长文本证据。".repeat(15_000);
+  const segments = segmentSource({ id: "long", source_kind: "manual_text", raw_text: text, title: "Long", assets: [] });
+  assert.ok(segments.length > 10);
+  assert.ok(segments.every((segment) => segment.rawText.length <= 6_000));
+  assert.ok(segments.map((segment) => segment.rawText).join("").length >= text.length);
+});
+
+test("opportunity evidence is scoped to the named entity", () => {
+  const facts = [
+    { normalized_key: "attraction.forbidden_city.reservation", subject: "Forbidden City", predicate: "reservation" },
+    { normalized_key: "attraction.summer_palace.opening_time", subject: "Summer Palace", predicate: "opening time" },
+  ];
+  const selected = scopeFactsForOpportunity(facts, { destinationSlug: "beijing", topic: "Forbidden City", title: "How to Visit Forbidden City" });
+  assert.deepEqual(selected.map((item) => item.subject), ["Forbidden City"]);
+});
+
+test("Chinese near-duplicates are grouped by character n-grams", () => {
+  const left = { raw_text: "故宫需要提前预约，游客应携带护照，从午门进入参观。", author_name: "旅行者" };
+  const right = { raw_text: "故宫需提前预约，游客要带护照，从午门入场参观。", author_name: "旅行者" };
+  assert.notEqual(classifySourceFamily(left, right).relation, "INDEPENDENT");
+});
+
 test("Coverage Matrix blocks approval until required evidence and independent families exist", () => {
   const missing = evaluateCoverage({ topicKey: "beijing:first", contentType: "first_time_guide", facts: [], sourceFamilyCount: 1 });
   assert.equal(missing.readiness.ready, false);
@@ -26,6 +50,32 @@ test("Coverage Matrix blocks approval until required evidence and independent fa
     .map((normalized_key) => ({ normalized_key, consensus_status: "corroborated", verification_priority: "normal", freshness_state: "current" }));
   const ready = evaluateCoverage({ topicKey: "beijing:first", contentType: "first_time_guide", facts, sourceFamilyCount: 2 });
   assert.equal(ready.readiness.ready, true);
+});
+
+test("an editor can classify an opportunity as create, update, merge, or retire against published inventory", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/lifecycle-classification",
+    title: "Published guide revision",
+    text: "A manually selected source for publication lifecycle review.",
+    images: [],
+  }));
+  const timestamp = new Date().toISOString();
+  db.prepare(`INSERT INTO wordpress_content_inventory(id,site_url,post_id,slug,title,status,post_url,modified_at,synced_at)
+    VALUES (?,?,?,?,?,?,?,?,?)`).run("wp-lifecycle", "https://example.test", 42, "existing-guide", "Existing Guide", "publish", "https://example.test/existing-guide/", timestamp, timestamp);
+  db.prepare(`INSERT INTO content_opportunities(id,destination_slug,topic_key,strategy_version,source_id,title,readiness_score,status,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run("opportunity-lifecycle", "beijing", "beijing:existing", "1.5", source.id, "Existing Guide", 100, "recommended", timestamp, timestamp);
+
+  for (const action of ["update", "merge", "retire"]) {
+    const result = repository.setOpportunityLifecycle("opportunity-lifecycle", action, { targetPostId: 42, note: `${action} reviewed`, operator: "editor" });
+    assert.equal(result.lifecycleAction, action);
+    assert.equal(result.targetPostId, 42);
+    assert.equal(result.publicationImpact.requiresEditorialApproval, true);
+  }
+  const create = repository.setOpportunityLifecycle("opportunity-lifecycle", "create", { operator: "editor" });
+  assert.equal(create.targetPostId, null);
+  assert.equal(create.publicationImpact.requiresEditorialApproval, false);
+  assert.throws(() => repository.setOpportunityLifecycle("opportunity-lifecycle", "retire", { targetPostId: 404 }), /published WordPress/);
 });
 
 test("Claim exclusion and Knowledge visibility are reversible and survive rebuilds", (t) => {

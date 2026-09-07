@@ -63,7 +63,7 @@ export function buildPublishPackage({ pagePayload, draft, contract, publication 
     },
     page,
     seo: semanticSeo(draft),
-    schema_jsonld: isObject(draft?.schema_jsonld) ? structuredClone(draft.schema_jsonld) : {},
+    schema_jsonld: synchronizeSchemaWithPage(draft?.schema_jsonld, page, draft),
     media: manifest,
     publication: {
       status: "draft",
@@ -71,6 +71,60 @@ export function buildPublishPackage({ pagePayload, draft, contract, publication 
       cms_draft_id: draft.id,
     },
   };
+}
+
+export function validateFinalPageArtifact(page, contentPackage) {
+  const errors = [];
+  const blocks = Array.isArray(page?.blocks) ? page.blocks : [];
+  if (!blocks.length) errors.push({ code: "EMPTY_FINAL_PAGE", path: "$.blocks" });
+  if (String(page?.metadata?.title || "").trim() !== String(contentPackage?.draft?.title || "").trim()) {
+    errors.push({ code: "TITLE_MISMATCH", path: "$.metadata.title" });
+  }
+  for (const [index, entry] of (contentPackage?.draft?.evidence_ledger || []).entries()) {
+    if (!entry?.section || !entry?.claim_keys?.length || !entry?.source_ids?.length) {
+      errors.push({ code: "INCOMPLETE_EVIDENCE_LEDGER", path: `$.draft.evidence_ledger[${index}]` });
+    }
+  }
+  const allowedAssets = new Set(contentPackage?.commercial_composition?.asset_ids || []);
+  blocks.forEach((block, index) => {
+    if (!String(block?.type || "").startsWith("affiliate_")) return;
+    if (!allowedAssets.has(block.data?.affiliate_asset_id)) {
+      errors.push({ code: "UNVERIFIED_COMMERCIAL_ASSET", path: `$.blocks[${index}].data.affiliate_asset_id` });
+    }
+  });
+  return { valid: errors.length === 0, errors };
+}
+
+export function synchronizeSchemaWithPage(sourceSchema, page, draft = {}) {
+  const schema = isObject(sourceSchema) ? structuredClone(sourceSchema) : { "@context": "https://schema.org", "@graph": [] };
+  schema["@context"] ||= "https://schema.org";
+  const graph = Array.isArray(schema["@graph"]) ? schema["@graph"] : [];
+  const title = String(page?.metadata?.title || draft?.title || "").trim();
+  const description = String(draft?.meta_description || "").trim();
+  for (const node of graph) {
+    const types = Array.isArray(node?.["@type"]) ? node["@type"] : [node?.["@type"]];
+    if (types.includes("Article")) {
+      node.headline = title;
+      if (description) node.description = description;
+    }
+    if (types.includes("WebPage")) {
+      node.name = title;
+      if (description) node.description = description;
+    }
+  }
+  const visibleFaqs = (page?.blocks || []).filter((block) => block?.type === "faq")
+    .flatMap((block) => Array.isArray(block.data?.items) ? block.data.items : [])
+    .filter((item) => item?.question && item?.answer);
+  const withoutFaq = graph.filter((node) => node?.["@type"] !== "FAQPage");
+  if (visibleFaqs.length) withoutFaq.push({
+    "@type": "FAQPage",
+    mainEntity: visibleFaqs.map((item) => ({
+      "@type": "Question", name: item.question,
+      acceptedAnswer: { "@type": "Answer", text: String(item.answer).replace(/<[^>]+>/g, " ").trim() },
+    })),
+  });
+  schema["@graph"] = withoutFaq;
+  return schema;
 }
 
 export function mediaReferences(visuals = []) {

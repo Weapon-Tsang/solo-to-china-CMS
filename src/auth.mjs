@@ -13,42 +13,44 @@ export function createAuth(db, config) {
   return {
     enabled: true,
     status(request) {
-      const session = readSession(request, signingKey);
+      const session = readSession(request, signingKey, db);
       if (!session) return { authenticated: false, username: null, mustChangePassword: false };
       const user = findUser(db, session.username);
       if (!user) return { authenticated: false, username: null, mustChangePassword: false };
       return { authenticated: true, username: user.username, mustChangePassword: Boolean(user.force_password_change) };
     },
-    login(username, password) {
+    async login(username, password) {
       const user = findUser(db, username);
-      if (!user || !verifyPassword(password, user.password_salt, user.password_hash)) return null;
-      return { username: user.username, mustChangePassword: Boolean(user.force_password_change), cookie: createCookie(user.username, signingKey) };
+      if (!user || !(await verifyPassword(password, user.password_salt, user.password_hash))) return null;
+      return { username: user.username, mustChangePassword: Boolean(user.force_password_change), cookie: createCookie(user.username, signingKey, db) };
     },
-    changePassword(request, currentPassword, nextPassword) {
-      const session = readSession(request, signingKey);
+    async changePassword(request, currentPassword, nextPassword) {
+      const session = readSession(request, signingKey, db);
       const user = session && findUser(db, session.username);
-      if (!user || !verifyPassword(currentPassword, user.password_salt, user.password_hash)) return null;
+      if (!user || !(await verifyPassword(currentPassword, user.password_salt, user.password_hash))) return null;
       validatePassword(nextPassword);
-      const { salt, hash } = hashPassword(nextPassword);
+      const { salt, hash } = await hashPasswordAsync(nextPassword);
       db.prepare("UPDATE app_users SET password_salt = ?, password_hash = ?, force_password_change = 0, updated_at = datetime('now') WHERE username = ?")
         .run(salt, hash, user.username);
-      return { username: user.username, mustChangePassword: false, cookie: createCookie(user.username, signingKey) };
+      db.prepare("DELETE FROM app_sessions WHERE username=?").run(user.username);
+      return { username: user.username, mustChangePassword: false, cookie: createCookie(user.username, signingKey, db) };
     },
-    updateCredentials(request, currentPassword, nextUsername, nextPassword = "") {
-      const session = readSession(request, signingKey);
+    async updateCredentials(request, currentPassword, nextUsername, nextPassword = "") {
+      const session = readSession(request, signingKey, db);
       const user = session && findUser(db, session.username);
-      if (!user || !verifyPassword(currentPassword, user.password_salt, user.password_hash)) return null;
+      if (!user || !(await verifyPassword(currentPassword, user.password_salt, user.password_hash))) return null;
       const username = validateUsername(nextUsername);
       const password = String(nextPassword || "");
       if (username !== user.username && findUser(db, username)) throw httpError(409, "That administrator account name is already in use.");
       if (password) validatePassword(password);
-      const credentials = password ? hashPassword(password) : { salt: user.password_salt, hash: user.password_hash };
+      const credentials = password ? await hashPasswordAsync(password) : { salt: user.password_salt, hash: user.password_hash };
+      db.prepare("DELETE FROM app_sessions WHERE username=?").run(user.username);
       db.prepare("UPDATE app_users SET username = ?, password_salt = ?, password_hash = ?, force_password_change = 0, updated_at = datetime('now') WHERE username = ?")
         .run(username, credentials.salt, credentials.hash, user.username);
-      return { username, mustChangePassword: false, cookie: createCookie(username, signingKey) };
+      return { username, mustChangePassword: false, cookie: createCookie(username, signingKey, db) };
     },
     require(request, { allowPasswordChange = false } = {}) {
-      const session = readSession(request, signingKey);
+      const session = readSession(request, signingKey, db);
       const user = session && findUser(db, session.username);
       if (!user) throw httpError(401, "Please sign in to continue.");
       if (user.force_password_change && !allowPasswordChange) throw httpError(403, "Change the initial password before using the dashboard.");
@@ -56,6 +58,10 @@ export function createAuth(db, config) {
     },
     clearCookie() {
       return `${COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+    },
+    logout(request) {
+      const session = readSession(request, signingKey, db);
+      if (session?.sessionId) db.prepare("DELETE FROM app_sessions WHERE id=?").run(session.sessionId);
     },
   };
 }
@@ -68,6 +74,7 @@ function disabledAuth() {
     changePassword: () => null,
     updateCredentials: () => null,
     require: () => null,
+    logout: () => null,
     clearCookie: () => "",
   };
 }
@@ -91,10 +98,23 @@ function hashPassword(password) {
 }
 
 function verifyPassword(password, salt, expectedHash) {
-  const actual = crypto.scryptSync(String(password || ""), salt, 64).toString("base64url");
+  return hashWithSalt(password, salt).then((actual) => {
   const expected = Buffer.from(expectedHash);
-  const supplied = Buffer.from(actual);
-  return expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+    const supplied = Buffer.from(actual);
+    return expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+  });
+}
+
+function hashWithSalt(password, salt) {
+  return new Promise((resolve, reject) => crypto.scrypt(String(password || ""), salt, 64, (error, key) => {
+    if (error) reject(error);
+    else resolve(key.toString("base64url"));
+  }));
+}
+
+async function hashPasswordAsync(password) {
+  const salt = crypto.randomBytes(16).toString("base64url");
+  return { salt, hash: await hashWithSalt(password, salt) };
 }
 
 function validatePassword(password) {
@@ -107,13 +127,19 @@ function validateUsername(username) {
   return normalized;
 }
 
-function createCookie(username, signingKey) {
-  const payload = Buffer.from(JSON.stringify({ username, expiresAt: Date.now() + SESSION_TTL_MS })).toString("base64url");
+function createCookie(username, signingKey, db) {
+  const sessionId = crypto.randomBytes(24).toString("base64url");
+  const expiresAt = Date.now() + SESSION_TTL_MS;
+  const expiresIso = new Date(expiresAt).toISOString();
+  db.prepare("DELETE FROM app_sessions WHERE expires_at<=?").run(new Date().toISOString());
+  db.prepare("INSERT INTO app_sessions(id, username, expires_at, created_at, last_seen_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))")
+    .run(sessionId, username, expiresIso);
+  const payload = Buffer.from(JSON.stringify({ username, sessionId, expiresAt })).toString("base64url");
   const signature = crypto.createHmac("sha256", signingKey).update(payload).digest("base64url");
   return `${COOKIE_NAME}=${payload}.${signature}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
 }
 
-function readSession(request, signingKey) {
+function readSession(request, signingKey, db) {
   const token = parseCookies(request.headers.cookie || "")[COOKIE_NAME];
   if (!token) return null;
   const [payload, signature] = token.split(".");
@@ -124,7 +150,10 @@ function readSession(request, signingKey) {
   if (expectedBuffer.length !== suppliedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, suppliedBuffer)) return null;
   try {
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return typeof parsed.username === "string" && Number(parsed.expiresAt) > Date.now() ? parsed : null;
+    if (typeof parsed.username !== "string" || typeof parsed.sessionId !== "string" || Number(parsed.expiresAt) <= Date.now()) return null;
+    const stored = db.prepare("SELECT id, username, expires_at FROM app_sessions WHERE id=? AND username=?").get(parsed.sessionId, parsed.username);
+    if (!stored || Date.parse(stored.expires_at) <= Date.now()) return null;
+    return parsed;
   } catch {
     return null;
   }

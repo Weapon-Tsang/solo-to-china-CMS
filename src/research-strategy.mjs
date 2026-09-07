@@ -99,7 +99,7 @@ function splitText(text) {
   const output = [];
   let buffer = [];
   let length = 0;
-  for (const paragraph of paragraphs) {
+  for (const paragraph of paragraphs.flatMap((value) => hardSplitParagraph(value))) {
     if (length + paragraph.length > 6_000 && buffer.length) {
       output.push({ type: "paragraph_group", text: buffer.join("\n\n"), title: "" });
       buffer = []; length = 0;
@@ -108,6 +108,24 @@ function splitText(text) {
   }
   if (buffer.length) output.push({ type: "paragraph_group", text: buffer.join("\n\n"), title: "" });
   return output;
+}
+
+function hardSplitParagraph(paragraph, maxLength = 6_000, overlap = 240) {
+  if (paragraph.length <= maxLength) return [paragraph];
+  const chunks = [];
+  let start = 0;
+  while (start < paragraph.length) {
+    let end = Math.min(paragraph.length, start + maxLength);
+    if (end < paragraph.length) {
+      const boundary = Math.max(paragraph.lastIndexOf("。", end), paragraph.lastIndexOf("！", end),
+        paragraph.lastIndexOf("？", end), paragraph.lastIndexOf(". ", end), paragraph.lastIndexOf("\n", end));
+      if (boundary > start + Math.floor(maxLength * 0.65)) end = boundary + 1;
+    }
+    chunks.push(paragraph.slice(start, end));
+    if (end >= paragraph.length) break;
+    start = Math.max(start + 1, end - overlap);
+  }
+  return chunks;
 }
 
 function makeSegment(sourceId, piece, sequence) {
@@ -155,6 +173,16 @@ function matchesRequirement(key, fact) {
   return (MATCHERS[key] || new RegExp(key.replaceAll("_", ".?"), "i")).test(text);
 }
 function normalize(value) { return String(value || "").toLowerCase().replace(/\s+/g, " ").trim(); }
-function tokens(value) { return new Set(normalize(value).split(/[^\p{L}\p{N}]+/u).filter((item) => item.length > 1)); }
+function tokens(value) {
+  const normalized = normalize(value);
+  const words = normalized.split(/[^\p{L}\p{N}]+/u).filter((item) => item.length > 1);
+  const hanRuns = normalized.match(/[\p{Script=Han}]+/gu) || [];
+  const hanNgrams = hanRuns.flatMap((run) => {
+    const values = [];
+    for (const size of [2, 3]) for (let index = 0; index <= run.length - size; index += 1) values.push(run.slice(index, index + size));
+    return values;
+  });
+  return new Set([...words, ...hanNgrams]);
+}
 function jaccard(a, b) { const union = new Set([...a, ...b]); return union.size ? [...a].filter((item) => b.has(item)).length / union.size : 0; }
 function sameAuthor(a, b) { return Boolean(a.author_name && b.author_name && normalize(a.author_name) === normalize(b.author_name)); }

@@ -1,0 +1,250 @@
+# SoloToChina CMS 与前端跨仓库审计
+
+审计日期：2026-09-07。范围包括内容策略、证据提取、文章创作、模型适配、素材生产、页面契约、WordPress 草稿交付、SEO/GEO、认证与队列。审计没有修改业务实现或生产数据，没有调用付费模型或向 WordPress 写入。
+
+## 结论与审计边界
+
+系统已经具备有价值的基础：持久化任务、来源与 Claim 分离、内容机会审批、研究与商业层隔离、组件契约、草稿交付与非草稿保护。但目前不能把“链路接通”视为“内容可稳定自动生产”。最优先的问题是契约生成损坏、官方证据无法通过正常流程完成标记、文章证据范围错误，以及 QA 没有绑定最终发布版本。
+
+通过 GitHub API 核对，两个本地工作区均与审计时远端 main 一致，原工作区无未提交业务修改：
+
+- CMS：`1a597ecfe2b89ce75f491bcbbf606f9c52d294ca`。
+- 前端：`ccfab41f25cd2323bfcd049485bdcb44a71df622`。
+
+验证结果：
+
+- `npm test`：118/118 通过。
+- `npm run check`：构建及脚本指定的语法检查通过。
+- `npm run test:smoke`：35 项 mandatory checks 通过，0 failures；不包含真实模型或生产 WordPress。
+- 新增隔离复现脚本：仅使用内存 SQLite、源码和 mock，已成功运行；结果保存在同目录 JSON。
+- 实际前端 Registry 的 page_block 示例中，heading 与 comparison_table 示例无法通过 CMS 消费端校验。三个 presentation_meta 示例本来就不属于正文 block，另列为 A19。
+- 未执行生产 PHP/WordPress 端到端测试、浏览器视觉验收、线上渲染 HTML 检查、Search Console 数据审查或付费模型请求。本机 PATH 无 PHP。不能据此推断线上已经发生所有问题，也不能声称已完成渗透测试或依赖 CVE 全扫描。
+
+级别：P1 应在扩大自动生产前修复；P2 为明确的可靠性、安全或质量缺口。没有将本次发现定性为 P0 或已被利用的公网漏洞。
+
+## 发现清单
+
+| ID | 级别 | 问题 | 证据类型 |
+|---|---|---|---|
+| A01 | P1 | 前端发布契约损坏，H2/H3 不可能满足其 enum | 已复现 |
+| A02 | P1 | 原始前端 JSON Schema 直接用于 Vertex responseSchema | 静态确认 + 官方文档；真实调用待验 |
+| A03 | P1 | Opportunity 用城市全量事实和来源家族计算就绪 | 已复现核心判定 |
+| A04 | P1 | 图像/视频覆盖审计未收到原始多模态证据 | 已复现输入 |
+| A05 | P1 | 空组件页和空证据台账可以通过硬性 QA | 已复现 |
+| A06 | P1 | 重写后仍读取旧的 QA 通过结果 | 已复现 |
+| A07 | P2 | 失败配图在任务重试时被跳过，非插画缺少执行器 | 已复现失败选择；其余静态确认 |
+| A08 | P2 | 图片批量上传部分成功后丢失进度，修稿又清空素材映射 | 已复现部分失败 |
+| A09 | P1 | 抓取时间被当作事实时效，引用原文没有确定性真实性检查 | 已复现 |
+| A10 | P1 | 实景配图按来源顺序分配，没有图像与实体匹配 | 静态确认 |
+| A11 | P2 | 页面、SEO、JSON-LD 多份内容可漂移，WordPress 编辑后不更新 schema | 静态确认 |
+| A12 | P2 | CMS 与 PHP 校验标准不同，直到交付才暴露错误 | 已复现 CMS 侧 + PHP 静态确认 |
+| A13 | P2 | 超长单段未切分；PDF/视频分段能力与策略描述有差距 | 已复现单段 |
+| A14 | P2 | 中文来源去重及“独立佐证”计算容易高估 | 样例复现 + 静态确认 |
+| A15 | P2 | 修改密码不能撤销旧会话；登录无应用层限速 | 已复现会话；限速静态确认 |
+| A16 | P1 | 构造 Repository 会重置其他实例的 running 任务 | 已复现 |
+| A17 | P2 | WordPress 幂等映射在文章创建后写入，存在非原子窗口 | 静态确认，故障注入待验 |
+| A18 | P1 | 官方证据门槛启用，但正常写入链路无权威级别设置入口 | 静态确认 + 默认值复现 |
+| A19 | P1 | presentation_meta 被当成 page_block 推荐，计划能过最终页失败 | 已复现 |
+
+### A01 — 发布契约已损坏
+
+位置：前端 `contracts/component-registry.json:66`、`contracts/page-schema.json:60`；源 Registry `wp-content/themes/solo-to-china/content-contract/component-registry.v1.json:42`；生成器 `scripts/generate-component-catalog.ps1:19`。
+
+源定义为 `type: integer, enum: [2,3]`，生成物却为 `enum: [{},{}]`。数字 2/3 不在 enum 中，对象又不满足 integer，因此该字段没有任何可接受值。Registry 自带合法 H2 示例实际报 `INVALID_COMPONENT_DATA@blocks[0].data.level`。comparison_table 的示例二维数组还被序列化为带 Count/SyncRoot 等属性的对象。主题内 generated 文件也携带错误产物。
+
+建议：修复 canonical JSON 序列化对数字、数组和 PowerShell 包装对象的处理，重新生成三份契约及校验和。发布门禁必须执行“每个 page_block 示例通过其 schema 与最终 Page Schema”，并比较源定义与生成定义的语义。仅比较生成器是否能运行或文件是否存在不够。具体生成器故障分支仍应在发布使用的 PowerShell 版本复测。
+
+### A02 — 模型 Schema 缺少提供商适配
+
+位置：CMS `src/ai/content-engine.mjs:229`、`src/ai/vertex-gemini-client.mjs:32`。
+
+完整前端 Schema 含 `$schema`、`$id`、`oneOf`、`const`、联合 type、HTML media type 等，直接成为 `generationConfig.responseSchema`。这并不等于 Vertex 支持整套 JSON Schema 2020-12。官方明确说明只支持子集，未支持字段可能被忽略，复杂结构可能产生 400；官方结构化输出字段列表也没有承诺 oneOf/const 等约束。
+
+建议：保留完整契约作为最终权威校验，另生成 Vertex/Kimi 专用输出 schema。对不支持的约束做显式转换和转换报告，必要时分成“选组件”与“按组件填字段”。错误校验反馈应进入结构化修复请求，而非原样重试。真实请求成功率及目前具体 HTTP 错误须用脱敏最小请求验证；本次没有调用真实模型，不能断言所有请求都会 400。
+
+参考：[Google structured output](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/control-generated-output)、[Vertex Schema 类型](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/Schema)。
+
+### A03 — 就绪判断没有文章主题范围
+
+位置：CMS `src/repository.mjs:690`、`:769`、`:1564`；`src/research-strategy.mjs:43`。
+
+upsert/rebuild Coverage 都使用 `knowledgeForDestination()` 和城市级 `independentSourceFamilyCount()`。topicKey 只被记录，不用于过滤事实。复现：故宫机会仅提供颐和园的入场、营业、预约、交通事实，familyCount=2，仍得到 ready=true。反向问题也存在：其他景点的一个冲突或待核验事实可能阻塞本篇机会。
+
+建议：以 opportunity 的实体、关系、地域、意图、时间范围建立证据包；每个必需槽位记录真正支持它的 Claim/Source Family。独立家族数应来自所用证据，不能使用城市总数。Planner/Writer 也应只拿相关文章证据及明确的城市背景资料。
+
+### A04 — 多模态覆盖审计只收到文本
+
+位置：CMS `src/ai/kimi.mjs:77`、`:154`；`src/repository.mjs:442`、`:488`。
+
+提取会读取图片/视频，但 auditCoverage 只发送 segment.raw_text 与抽取 Claims。图片段的 raw_text 通常只是 alt 或文件名。复现图片段原文为空时，审计输入就是空原文加 `[]`。审计没有能力识别图片中漏掉的内容；图片下载失败也可能因审计返回空 gaps 而被标 complete。
+
+建议：审计重用相同 asset、实际处理状态和图像/时间定位；图片读取失败必须是 missing_evidence，不能当成“无遗漏”。可缓存 OCR/视觉转录作为审计输入，但需要记录完整性与证据定位。对每个段保存 expected/received 模态、页数、时长、失败原因。
+
+### A05 — QA 检查对象与最终页面不一致
+
+位置：CMS `src/ai/content-engine.mjs:333`、`:362`；`src/frontend-contract.mjs:179`；前端 `contracts/page-schema.json:8`。
+
+最终正文由 composeFrontendPage 再次生成，硬性门禁仍检查 draft.body_markdown 的字数、标题、商业污染与台账。模型 Review 能看到整个包，但提示词只要求审英文 draft，没有强制逐 block 审阅和差异检查。Page Schema 的 blocks 没有 minItems，空数组通过消费端校验。
+
+隔离样例中：Markdown 长度、模板标题等满足门槛；facts 和 evidence_ledger 为空；最终 blocks 为空；mock reviewer 返回通过后，所有确定性门禁仍通过。这证明硬约束缺失，不代表真实 reviewer 必然放行。台账也未检查 section 覆盖率、source_ids 的真实性或 Claim 与引用来源的关系。
+
+建议：最终发布对象应是唯一可审核版本。对最终 blocks 提取可见文字，检查证据映射、重要内容保留、可见 FAQ/schema 一致、图片引用和链接。禁止空正文；为事实性段落建立 block ID → claim ID → evidence span；低风险纯建议允许显式标注为非事实。优先使用确定性结构转换减少第二次模型改写。
+
+### A06 — QA 通过结果未绑定修订版
+
+位置：CMS `src/repository.mjs:1624`、`:1660`、`:1764`；`src/pipeline.mjs:326`、`:344`、`:387`。
+
+saveDraft 增加 revision 并重置 quality_report，但保留 quality_reviews、商业组合和发布组合。getDraftPackage 只取该 draft 最新 review，不校验 revision。复现先通过审核，再完全替换正文，返回 revision=2、status=qa_queued，同时 review.passed=true。交付主要检查 review.passed，因此重试、遗留排队任务或手动重跑场景可能误用旧授权结果。
+
+建议：Review、Page、Commercial 和 Publish 都绑定 draft revision、正文/页面 hash、证据包版本。重写必须原子失效下游结果；任务参数带版本，执行前验证一致。验收用“审核通过→修改正文→触发旧发布任务”测试，必须在 WordPress 请求之前拒绝。
+
+### A07 — 配图失败重试跳过失败项
+
+位置：CMS `src/pipeline.mjs:267`；`src/repository.mjs:1716`、`:1732`；`src/visuals/vertex-imagen.mjs:21`。
+
+failVisual 把状态设为 failed，而 plannedVisuals 只取 planned。generate_visuals 首次出错后任务重试会忽略该图，其他图完成后可继续组页；QA 只检查计划数量和类型，不要求素材完成。
+
+此外 search_real_image/render_map/render_infographic 只有计划状态与策略名称，当前 Pipeline 没有对应执行器。非插画可以一直 pending，却不一定阻断交付。
+
+建议：图片独立 job，状态区分可重试失败、永久失败、明确降级；文章级必需素材门禁。尚未实现的能力不要描述为已自动渲染，创建可见 acquisition/render task 或明确允许无图降级。恢复后验证最终文章确实引用目标素材。
+
+### A08 — 图片上传非逐项持久化，修稿浪费已有素材
+
+位置：CMS `src/wordpress.mjs:155`；`src/pipeline.mjs:476`；`src/repository.mjs:1699`。
+
+resolveVisualMedia 先上传整个列表，再返回给 Pipeline 持久化。若第 1 张成功、第 2 张失败，第 1 张的 WordPress ID 未保存；下次重试再次上传。mock 两次执行出现四次上传，其中第一张重复上传。saveDraft 又通过 DELETE/INSERT 重建所有 article_visuals，新 ID 丢失旧媒体映射，纯文字修订也可能重新生成、重新上传。
+
+建议：每张素材成功后立即记录；使用 asset hash + site ID + rendition 作为复用键。修稿按视觉语义/输入 hash 做 diff，保留未变化的图。WordPress 网络响应不确定时优先对账，再决定重试；避免用随机 visual ID 作为唯一去重身份。
+
+### A09 — 事实时效与证据真实性约束不足
+
+位置：CMS `src/repository.mjs:300`、`:887`、`:1367`、`:3319`。
+
+freshness 采用最新 captured_at，而非 published_at、observed_at、verified_at；重复抓取相同内容还更新 captured_at。复现：2020 年发布、今天导入的票价被标记 time_sensitive 而非 stale。待官方核验门槛会部分缓解，但不能修正时效计算。hasCurrentOfficialEvidence 又把“存在任意官方行”和“全组最新时间不旧”组合：旧官方内容可借新 UGC 抓取时间取得当前官方证据待遇。
+
+另一个独立缺口是 source_quote 的真实性：存储与覆盖审计没有确定性验证原文是否存在该引用。复现完全不在 source text 内的引用被写入知识证据。模型提示“exact quote”不是证明。
+
+建议：区分抓取时间、事件时间、来源发布时间和核验时间；新鲜度以具体证据行与适用范围计算。文本 quote 必须匹配原文或规范化后的受控偏移；图像/视频引用绑定真实 OCR/转录与页码/时间戳。未知时间不能自动视为最新。
+
+### A10 — 实景图片没有主题语义匹配
+
+位置：CMS `src/repository.mjs:2557`、`:2938`。
+
+先根据文章 Claim 找相关来源，再取来源里的前 12 张图片；随后按 assetIndex 顺序/取模分配实景槽位。没有使用 Claim 的 _asset_id/evidence span 校验图像实体，也未核对 image_subject。若模型没规划实景图，首张插画还会被强制转换成实景图，原来的 alt 和用途可能保留。
+
+例：一篇包含故宫、餐厅和地铁的笔记支持了故宫预约 Claim；其第一张餐厅封面可以成为故宫文章实景图。授权不等于内容匹配；本审计接受项目已有素材授权政策，不重新提出授权审批。
+
+建议：素材建立实体、地点、画面描述、源 Claim/Span 关联与匹配分数；不匹配则不用。人工导入的真实照片也应进入统一素材池。caption/alt 从选中图像事实派生，不继承原插画描述；不足时不循环复用同一张图伪装多个场景。
+
+### A11 — SEO/JSON-LD 与真正页面容易漂移
+
+位置：CMS `src/repository.mjs:2908`、`:3005`；`src/publish-page.mjs:49`；前端 `inc/cms-articles.php:1108`、`:1285`。
+
+- JSON-LD 从 draft 的 title/slug/FAQ 派生，WordPress post_title/post_name/body 来自另一次模型生成的 page.metadata/blocks，没有强制一致。
+- canonical 按站点地址与 draft.slug 拼接，未根据 WordPress 最终 permalink、slug 去重或固定链接格式回写。前端存了 _stc_canonical_url 与 _stc_robots，但主题代码没有消费这两个字段的输出 hook；不能等同于 WordPress 核心没有 canonical。
+- _stc_schema_jsonld 直接输出存储数据；WordPress 编辑 FAQ/标题后没有相应 save_post 再生成逻辑。
+- Article 缺少真实发布日期/更新日期；CMS 里存在 OG 数据，但契约交付与当前主题没有完整 OG/Twitter 输出。站点若装 SEO 插件，应检测实际输出归属，避免双份 schema/description；本次没有假定生产插件状态。
+
+建议：统一 pageId、title、slug 与最终 canonical；从最终可见 blocks 生成 FAQ/schema；发布和编辑时用 WordPress 实际 permalink/时间修正。建立“最终 HTML 提取→schema 可见一致性→canonical→meta/OG”验收。Article author 可以是组织，不能把采用组织作者本身说成错误；若有真实作者与审核者，应增加可核实署名与页面。
+
+### A12 — 两端校验语义不同
+
+位置：CMS `src/frontend-contract.mjs:386`；前端 `inc/cms-articles.php:126`、`:167`、`:342`。
+
+CMS 自制 validator 未实现 contentMediaType=text/html 的安全检查，uri 只做 new URL；PHP 进一步使用 wp_kses、公开 URL 检查，并验证标题 level/variant、表格列数等业务规则。复现 script HTML 被 CMS 判有效；前端代码会拒绝，故这是过晚失败与校验差异，不能报告为已打通的 XSS。图片 ID 的最终存在性本来就应由 WordPress 验证。
+
+建议：两端共享正反例集与明确的 schema subset；把可在 CMS 校验的业务约束前移；远端错误附带 path 输入修复器。受认证的 dry-run endpoint 可在上传/实际写入之前返回 WordPress 业务校验结果。
+
+### A13 — 复杂证据容器处理不完整
+
+位置：CMS `src/research-strategy.mjs:25`、`:105`；`src/ai/kimi.mjs:150`；`src/adapters/manual-source.mjs:144`。
+
+splitText 只在段落边界切块，没有处理一个段落自身超过 6000 字符。复现 130000 字符单段仍为一个 segment，提取与覆盖审计又共同截断到 120000 字符，末尾可能无法被发现遗漏。视频 asset 只产生一个 video_chapter，没有真正按时长切章；YouTube URL 处理也未按 segment 范围约束视频输入。PDF 主要抽文本，扫描件要求另行上传图像，没有自动逐页视觉兜底。
+
+建议：采用硬 token/字符上限与可追溯 overlap；PDF 页码与文档内图片保留；视频分段带 start/end offset，转录和帧缓存复用。设置明确支持矩阵：已支持、降级支持、需要人工补充。
+
+### A14 — 来源独立性容易高估
+
+位置：CMS `src/research-strategy.mjs:73`、`:180`；`src/repository.mjs:720`、`:1362`。
+
+source family 使用按非字母数字分隔的 token 集合；中文整句话常成为一个 token，轻微替换即可显著降低相似度。中文例子仅将“需要预约”改为“必须预约”，得 PARTIAL_OVERLAP，系统仍可能将其分成独立家族。图片内容相同但 URL/文字不同也缺乏感知去重。知识 consensus 又以 rows.length>1 判 corroborated，没有按独立来源家族计算，甚至同一来源不同 Claim 行也可能提高佐证状态。
+
+建议：中文字符 n-gram + MinHash/近似匹配、图像感知 hash、显式转载来源；语义相似只能形成合并候选，不能自动把事实差异合并。support_count 与 corroborated 应基于真正独立的证据家族及其适用范围。
+
+### A15 — 密码变更后的旧会话仍有效
+
+位置：CMS `src/auth.mjs:28`、`:110`；`src/server.mjs:110`。
+
+签名 Cookie 只有 username 与 expiresAt，数据库修改密码不改变会话验证条件。复现旧 Cookie 在密码改变后仍可认证，最长到 12 小时自然过期。logout 也只是清除当前浏览器 Cookie。登录没有应用层 rate limit，scryptSync 在主事件循环运行；已知用户名的高频尝试可消耗服务线程。Cloudflare Access 可以降低暴露面，但本次没有验证其生产配置。
+
+建议：sessionVersion/passwordChangedAt 或服务端会话撤销；修改密码使旧会话全部失效。登录按账号/IP 限速，采用异步密码计算并限制请求规模。不要把“无登录限速”描述成无需密码即可访问。
+
+### A16 — Repository 构造器抢走在执行任务的锁
+
+位置：CMS `src/repository.mjs:12`；`scripts/check-frontend-contract.mjs:10`、`scripts/sync-frontend-contract.mjs`。
+
+构造器默认把所有 running jobs 重置为 queued，认为它们属于已崩溃进程。但 CLI status/sync 同样构造 Repository；在线服务运行时执行这些命令也会改任务锁。复现同一内存库中任务 claim 后，创建第二个 Repository，该任务立即变 queued。生产危害是重复模型调用、重复阶段执行和多进程下结果覆盖。
+
+建议：构造器无任务状态副作用；只由明确的 worker 启动恢复程序处理过期 lease，记录 owner/heartbeat/expiresAt。诊断 CLI 使用只读数据库模式。未实施租约前，不应通过直接增加 worker 实例改善吞吐量。
+
+### A17 — WordPress 幂等写入仍有失败窗口
+
+位置：前端 `inc/cms-articles.php:951`、`:1146`。
+
+幂等查找使用 postmeta；wp_insert_post 在 taxonomy 与 provenance metadata 之前执行。若文章插入成功后分类写入失败、PHP 中断，映射尚未建立，再次 POST 可能再插入一篇。并发两个首次 POST 也有查无映射后各自插入的竞争。正常串行成功重试已有保护，本项是故障边界，未在生产注入验证。
+
+建议：稳定 pageId/cms_draft_id 的唯一幂等记录与互斥，记录写入进度并优先恢复未完成文章；不要只依赖无唯一约束的 postmeta 查找。添加插入成功后故障、taxonomy 错误、响应丢失、并发请求测试。
+
+### A18 — 官方核验缺少可操作闭环
+
+位置：CMS `src/db.mjs:56`；`src/repository.mjs:280`、`:911`、`:1367`；`src/research-strategy.mjs:64`。
+
+sources.authority_level 默认 4；saveCapture 不写入来源权威等级；提取只从 source 拷贝该值；当前 API/UI 未找到可把合法官方来源设置为 level=1 的审核路径。即使人工导入官网 URL，常规存储仍是默认值。时效类事实因缺官方证据变 requires_official，而 Coverage 将其阻断。补更多相同类型来源不一定恢复 approved_waiting_for_evidence。
+
+已有 content-pipeline 集成测试直接用 SQL 将 sources.authority_level 改为 1，因此模拟了现实操作流程里缺失的一步。这不是建议放宽核验门槛，而是要补齐能完成核验的功能。
+
+建议：来源权威元数据、官方域名候选识别、人工确认与审计记录；同时记录 verified_at 与具体核验事实。完成核验后定向重建 KB/coverage 并自动唤醒机会，避免要求操作者改数据库。
+
+### A19 — 页面设置错误进入正文组件池
+
+位置：CMS `src/frontend-contract.mjs:48`、`:151`、`:277`；`src/ai/content-engine.mjs:432`；前端 Registry 中 article_hero/share_this_page/table_of_contents。
+
+前端明确声明这三项 interface=presentation_meta；CMS normalizeComponent 丢弃 interface，能力解析与 plan 校验只按 id/status/variant。复现 article_hero 被候选检索返回，blocks 计划校验通过；最终 Page Schema 拒绝该 block。模型还拿不到 interface 去知道它只能放在 metadata.presentation。
+
+建议：保留 interface/cmsUsable/renderMode；提供两个独立目标字段：正文只接受 page_block，页面设置写入 metadata.presentation。计划阶段也对接口类别校验，避免付费写稿后才发现计划不可渲染。基础 paragraph/heading/list/image 能力不应仅靠语义关键字命中才能提供给模型。
+
+## 内容策略、SEO/GEO 与效率改进
+
+以下为建议，不应与已经复现的缺陷混为一谈。
+
+1. **按读者问题和证据量决定篇幅。** 当前所有文章至少 800 词、固定 Key takeaways/FAQ 和按字数分配 2–5 图，会把简短实用问答拉长，也会鼓励重复内容。对攻略、步骤、对比、短答案分别定义充分性，衡量读者能否完成任务、事实覆盖和冗余率。
+2. **可引用的可靠内容优先于固定格式。** 增加官方来源的可点击出处、核验日期、适用条件、真实作者/审核信息、明确回答与例外。内部 source IDs 不直接暴露，但应转换为读者可理解的出处。价格、预约、支付等信息用具体更新时间和例外，而非一条笼统“请核实”。
+3. **FAQ 不再作为 Google 富结果收益目标。** 截至本次核对，Google 官方更新记录说明 FAQ rich result 从 2026-05-07 起不再展示。FAQ 仍可帮助读者，schema 也可用于其他消费者，但不应以此强制每篇有 FAQ。GEO 同样不能承诺“有 schema 就被 AI 引用”。[Google 更新记录](https://developers.google.com/search/updates)、[Google AI 搜索说明](https://developers.google.com/search/docs/appearance/ai-features)。
+4. **建立更新型内容机会。** 目前去重多为标题/slug/token overlap 和已有页面抑制；应区分 create/update/merge/retire，避免已有指南阻止新证据更新。Article 发布后需要 Claim→文章反向影响索引，在票价、预约变化时产生更新建议，而非只重建 KB。
+5. **页面结构用内容块身份表达。** 稳定 block ID、语义角色、来源映射和修改记录；让 Composer 决定组件及顺序，把已审核文案确定性映射进去。内部链接指向已发布的真实相关页面，并校验链接状态、锚文本、目标实体，禁止模型猜 URL。
+6. **先提高阶段复用，再增加并发。** Pipeline 当前全局 working 单任务；一条 360 秒模型请求会挡住其他任务，图片内部还串行。先修复 A16，之后采用按 provider 的有限并发、独立图片队列、每篇 DAG 依赖和公平调度，保持同一实体同一修订串行写入。
+7. **按任务调整模型与预算。** 写作、审阅、实体解析共享同一运行配置；Gemini 3 默认 HIGH thinking；客户端没有返回 usage、token 或费用。建议记录 input/output/cached tokens、模型、prompt/schema 版本、每阶段耗时/重试原因/费用，按单位“通过 QA 的文章”测成本。可先用同模型不同角色，只有评测证明收益才加昂贵独立 reviewer。
+8. **缩小上下文、缓存可复用计算。** getTopicPackage 把整个城市 KB 给每篇；getDraftPackage 同时包含原 JSON 字段和解码对象，可能重复传输，也可能带历史商业 composition。构建按阶段白名单的 prompt DTO，只传必需事实与有效版本；按 source hash、prompt version、model、schema 缓存抽取、审计和计划。
+9. **失败分层。** 429/503 指数退避加 jitter 与 Retry-After；401/403/永久 schema 错误应停在需处理状态。失效契约同步成功后自动重新编排相关页面；当前 mismatch 会标 stale 并同步，但没有完整自动恢复闭环。不要让所有错误都消耗相同次数的模型调用。
+10. **用最终产物验收。** 补真实契约样例、模型边界输出、故障注入、WordPress 保存→编辑→发布→HTML/JSON-LD 对照测试。当前不少集成测试用 fake engine 返回 passed=true，能证明调度链路，不能证明内容质量或真实提供商兼容性。
+
+## 建议实施顺序与验收
+
+| 批次 | 工作 | 必须看到的验收结果 |
+|---|---|---|
+| 1：打通真实契约 | A01、A19、A02、A12 | 所有正文示例合法；presentation 不进 blocks；Vertex/Kimi 最小请求可产出合法页；错误返回可修复 |
+| 2：证据与最终 QA | A18、A03、A04、A09、A05、A06 | 官网证据可操作核验；跨景点假就绪失败；缺模态不通过；旧 QA/空页不可交付 |
+| 3：可靠交付 | A16、A07、A08、A17 | 诊断不改锁；失败图能恢复；修稿复用图片；响应丢失不产生重复资源/文章 |
+| 4：内容与分发质量 | A10、A11、A13、A14、A15 及策略优化 | 配图对应实体；可见内容/schema/canonical 一致；复杂来源不丢证据；旧会话可撤销 |
+
+不建议现在通过增加文章产量或更换更贵模型掩盖上述问题。先让“一篇含真实图片、官方核验和 FAQ 的指南，经历失败、重试、修稿后仍可正确交付”成为稳定基线，再评估规模化。
+
+## 审计附件
+
+- `2026-09-07-reproduce.mjs`：隔离复现脚本，依赖同级前端 checkout；仅内存数据库与 mock，无真实外部写入。
+- `2026-09-07-reproduction-results.json`：复现结果。
+- `2026-09-07-tests.txt`：118 项测试输出。
+- `2026-09-07-check.txt`：构建与静态检查输出。
+- `2026-09-07-smoke.txt`：35 项本地 HTTP smoke 检查输出。
+
+脚本中的 reproduced=true 意味着对应代码行为/输入差异被观察到；对 mock reviewer、mock 上传和只在 CMS 执行的校验，不能扩张解读为真实模型发生同样错误或生产 WordPress 已接受危险内容。

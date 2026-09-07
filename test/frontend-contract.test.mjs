@@ -67,8 +67,23 @@ test("commercial components are consumed from the registry and missing capabilit
   const consumer = consumerFor(repository, fixture);
   await consumer.sync();
   const capabilities = consumer.commercialCapabilities(["affiliate_booking_card", "articleSection"]);
-  assert.deepEqual(capabilities.supported, ["articleSection"]);
-  assert.deepEqual(capabilities.missing, ["affiliate_booking_card"]);
+  assert.deepEqual(capabilities.supported, []);
+  assert.deepEqual(capabilities.missing, ["affiliate_booking_card", "articleSection"]);
+});
+
+test("presentation metadata is preserved but cannot enter ordered page blocks", async (t) => {
+  const { repository } = repositoryFixture(t);
+  const fixture = frontendContractFixture(t, { components: [...defaultComponents(), {
+    id: "article_hero", category: "presentation", purpose: "Page hero mode.", status: "stable",
+    variants: ["default"], cmsUsable: true, interface: "presentation_meta", renderMode: "template",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+  }] });
+  const consumer = consumerFor(repository, fixture);
+  await consumer.sync();
+  const resolved = consumer.resolveForArticle({ draft: { body_markdown: "Useful answer" } });
+  assert.equal(resolved.components.some((item) => item.id === "article_hero"), false);
+  assert.equal(resolved.presentationComponents.some((item) => item.id === "article_hero"), true);
+  assert.ok(consumer.validateCompositionPlan({ blocks: [{ type: "article_hero" }] }).errors.some((item) => item.code === "INVALID_COMPONENT_INTERFACE"));
 });
 
 test("the published Frontend inputSchema and 2020-12 shape sync while commercial capabilities stay out of pre-QA composition", async (t) => {

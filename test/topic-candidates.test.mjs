@@ -14,7 +14,7 @@ test("Strategy 1.4 extraction builds topic clusters without manufacturing pre-ap
           source: { language: "zh-CN", summary: "Forbidden City research", destination_name: "Beijing", destination_slug: "beijing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
           claims: Array.from({ length: 5 }, (_, index) => ({
             key: `forbidden-city.fact.${index}`, subject: "the Forbidden City", predicate: `detail ${index}`,
-            value: `value ${index}`, qualifiers: [], source_quote: `${source.title} quote ${index}`, confidence: 0.8,
+            value: `value ${index}`, qualifiers: [], source_quote: "detailed Forbidden City information", confidence: 0.8,
           })),
           blueprint: { format: "how-to", hook: "Avoid mistakes", angle: "independent visit", sections: [], strengths: [], gaps: [] },
         },

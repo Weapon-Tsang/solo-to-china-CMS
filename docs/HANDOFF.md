@@ -2,9 +2,9 @@
 
 ## Active Content Strategy
 
-- **Active strategy:** SoloToChina Content Production Strategy 1.4
+- **Active strategy:** SoloToChina Content Production Strategy 1.5
 - **Canonical manifest:** `config/content-strategy.json`
-- **Specification:** `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.4.md`
+- **Specification:** `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.5.md`
 - **Evolution log:** `docs/content-strategy/CHANGELOG.md` and the manifest `history` entries
 - **Status:** implemented incrementally on the existing durable SQLite pipeline; legacy records intentionally have no retroactive strategy tag.
 
@@ -39,7 +39,7 @@ The audited Frontend Registry provides the QA-selected booking, search, banner, 
 - Provider, Asset, mapping, opportunity, performance, and event APIs live under `/api/commercial/*`; the dashboard's Commercial view reads `/api/commercial`.
 - The composer runs after QA, derives block intent, selects decision-appropriate precision, falls back silently, enforces density, and stores an independent Overlay. Research packages never read these tables.
 - WordPress receives generated safe commercial blocks with disclosure and sponsored link attributes. Arbitrary HTML/script is rejected.
-- App version `1.14.1` and schema migration `23` are the expected post-upgrade baseline.
+- App version `1.15.0` and schema migration `31` are the expected post-upgrade baseline.
 
 Trip.com remains manual-only: an operator must create official links/embed configuration in the official platform and paste only those public artifacts into the registry. Do not store credentials/cookies, automate dashboard login, crawl the affiliate dashboard, invent tracking parameters, or create low-value entity links at scale.
 

@@ -1,0 +1,46 @@
+﻿交接日期 2026-09-07
+CMS 仓库 https://github.com/Weapon-Tsang/solo-to-china-CMS
+前端仓库 https://github.com/Weapon-Tsang/solo-to-china
+CMS 审计提交 1a597ecfe2b89ce75f491bcbbf606f9c52d294ca
+前端审计提交 ccfab41f25cd2323bfcd049485bdcb44a71df622
+
+重要边界
+1. 本交接包是修复任务书，不表示这些问题已被修复。
+2. 原审计 CMS 118 项测试通过、静态与构建检查通过、35 项本地 smoke 通过；这些测试没有覆盖所有发现。
+3. 已复现包括隔离代码和 mock 行为，不代表真实模型或生产 WordPress 已发生相同错误。
+4. 原审计未执行真实付费模型、生产 WordPress/PHP、线上 HTML 和浏览器验收；A02 真实模型兼容性、A17 故障窗口等需在适当环境验证。
+5. P1 表示扩大自动生产前优先处理，P2 表示明确的可靠性、安全或质量缺口；未定性为 P0 或已被利用的公网漏洞。
+6. 路径均以对应仓库根目录为基准。新账号应重新核对当前 HEAD，不能假定仍是审计版本。
+
+
+通用执行约束
+请实际修改代码并验证，不仅输出建议。先读取仓库 AGENTS.md、Git 状态与当前实现，若问题已修复则用测试证据关闭，不重复改动。保护用户改动和历史记录。
+保持精确文章机会审批、研究与商业隔离、WordPress draft-only、非草稿保护和项目既有素材授权政策。不得通过关校验、降门槛、标所有来源官方或删失败数据来取得通过。
+测试使用内存/临时数据库、mock 或明确测试 WordPress，不触碰生产库或偷偷批量调用付费模型。真实外部验证条件不足时完成本地实现并标 NOT TESTED，记录可执行验证步骤，不伪造通过。
+涉及数据库、队列、QA、媒体和契约变更时提供迁移、历史兼容和回滚方案；记录 docs/audit/repair-progress.md 中对应编号、代码位置、测试证据、状态和下一步。不要把未部署的实现说成已上线。
+原审计复现脚本断言的是错误行为，修复后应新增正确期望的回归测试，而不是继续维持原缺陷断言为绿。
+
+
+A11 统一可见内容与 SEO 结构化数据
+
+请修复 A11，优先级 P2。责任范围：两个仓库。
+
+审计证据：静态确认 线上输出待验。已观察的问题：Draft、Page、SEO 和 JSON-LD 可不一致，WordPress 编辑不更新 schema；canonical 和 robots 私有字段未完整消费。
+
+首先检查：src/repository.mjs 中 draftMetadata、buildArticleSchema；src/publish-page.mjs；前端 inc/cms-articles.php 及 SEO 输出 hooks。
+
+依赖：A05 A06 A17。
+
+实现要求：
+
+1. 统一 pageId、title、slug 和页面版本，FAQ/schema 从最终可见 blocks 派生；WordPress 保存和编辑后重新生成或可靠失效结构化数据。
+
+2. 以 WordPress 最终 permalink、实际 slug、发布/修改时间更新 canonical 和 Article，处理非默认固定链接与重复 slug。保留 WordPress 核心 canonical，明确私有 robots/canonical 字段的受控用途。
+
+3. 补齐适用的 OG/Twitter 元数据、真实图片引用、真实作者/组织与审核信息；不得捏造个人作者。探测当前 SEO 插件的输出归属，避免重复 title/description/schema。
+
+4. 增加最终 HTML 自动验证，确保可见 FAQ 与 schema 一致、schema 不含内部 ID、草稿仍受 WordPress 访问约束。
+
+验收要求：改标题/FAQ 后 schema 同步；slug 冲突和日期型 permalink 正确；核心或插件不产生重复冲突 metadata；OG 图可访问且对应文章；未发表稿不被擅自公开。
+
+交付：实现、针对性回归、迁移/兼容说明、对应编号状态与未测项。不得仅交付方案。

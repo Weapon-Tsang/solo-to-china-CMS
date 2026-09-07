@@ -1,5 +1,8 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { validateJsonSchema } from "../frontend-contract.mjs";
+import { ProviderRequestError } from "./provider-schema.mjs";
 
 const IMAGE_HOST_SUFFIXES = ["xiaohongshu.com", "xhscdn.com", "xhscdn.net", "xhscdn.cn"];
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -16,35 +19,56 @@ export class KimiClient {
 
   async completeJson({ name, schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000 }) {
     if (!this.enabled) throw new Error("KIMI_API_KEY is required for AI processing.");
-    const response = await this.fetch(`${this.config.baseUrl}/chat/completions`, {
+    const startedAt = Date.now();
+    const identity = modelCallIdentity(name, schema, instructions, content);
+    const messages = [
+      { role: "system", content: instructions },
+      { role: "user", content },
+    ];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await this.fetch(`${this.config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.config.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({
         model: this.config.model,
         stream: false,
         max_completion_tokens: this.config.maxCompletionTokens,
-        messages: [
-          { role: "system", content: instructions },
-          { role: "user", content },
-        ],
+        messages,
         response_format: {
           type: "json_schema",
           json_schema: { name, strict: true, schema },
         },
       }),
       signal: AbortSignal.timeout(timeoutMs),
-    });
-    const payload = await jsonPayload(response);
-    if (!response.ok) throw new Error(`Kimi request failed (${response.status}): ${payload?.error?.message || response.statusText}`);
-    const choice = payload?.choices?.[0];
-    if (choice?.finish_reason === "length") throw new Error("Kimi response reached its output limit; increase KIMI_MAX_COMPLETION_TOKENS.");
-    const output = choice?.message?.content;
-    if (typeof output !== "string" || !output.trim()) throw new Error("Kimi returned no structured output.");
-    try {
-      return { output: JSON.parse(output), model: payload.model || this.config.model };
-    } catch {
-      throw new Error("Kimi returned invalid JSON despite structured output mode.");
+      });
+      const payload = await jsonPayload(response);
+      if (!response.ok) {
+        this.emitModelCall({ ...identity, provider: "kimi", model: this.config.model, latencyMs: Date.now() - startedAt,
+          attempts: attempt + 1, status: "failed", errorCode: String(payload?.error?.code || response.status) });
+        throw new ProviderRequestError("Kimi", response.status, payload?.error?.message || response.statusText,
+          { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
+      }
+      const choice = payload?.choices?.[0];
+      if (choice?.finish_reason === "length") throw Object.assign(new Error("Kimi response reached its output limit; increase KIMI_MAX_COMPLETION_TOKENS."), { code: "MODEL_OUTPUT_LIMIT", retryable: true });
+      const output = choice?.message?.content;
+      if (typeof output !== "string" || !output.trim()) throw Object.assign(new Error("Kimi returned no structured output."), { code: "EMPTY_MODEL_OUTPUT", retryable: true });
+      let parsed;
+      try { parsed = JSON.parse(output); } catch { parsed = null; }
+      const errors = parsed == null ? [{ path: "$", message: "invalid JSON" }] : validateJsonSchema(parsed, schema);
+      if (parsed != null && errors.length === 0) {
+        this.emitModelCall({ ...identity, provider: "kimi", model: payload.model || this.config.model,
+          inputTokens: payload.usage?.prompt_tokens ?? null, outputTokens: payload.usage?.completion_tokens ?? null,
+          cachedTokens: payload.usage?.prompt_tokens_details?.cached_tokens ?? null,
+          latencyMs: Date.now() - startedAt, attempts: attempt + 1, status: "succeeded" });
+        return { output: parsed, model: payload.model || this.config.model, usage: payload.usage || null };
+      }
+      messages.push({ role: "assistant", content: output }, { role: "user", content: `Correct the JSON and return the complete object only. Errors: ${JSON.stringify(errors.slice(0, 20))}` });
     }
+    throw Object.assign(new Error("Kimi returned invalid structured output after repair."), { code: "INVALID_MODEL_OUTPUT", retryable: true });
+  }
+
+  emitModelCall(metric) {
+    try { this.config.onModelCall?.(metric); } catch { /* telemetry must never fail production */ }
   }
 
   async imageParts(assets) {
@@ -87,6 +111,11 @@ export class KimiClient {
     if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new Error("Uploaded source image is empty or too large for vision input.");
     return `data:${contentType};base64,${bytes.toString("base64")}`;
   }
+}
+
+function modelCallIdentity(stage, schema, instructions, content) {
+  const digest = (value) => crypto.createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
+  return { stage: stage || "unknown", promptHash: digest(instructions || ""), schemaHash: digest(schema || {}), inputHash: digest(content || "") };
 }
 
 function safeXiaohongshuImageUrl(value) {

@@ -40,21 +40,30 @@ test("job telemetry reports durable queue latency, duration, outcomes, and activ
   }
 });
 
-test("startup immediately requeues jobs interrupted by a previous local server process", () => {
+test("repository construction cannot steal a live job and only an expired lease is recovered", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-recovery-test-"));
   const database = openDatabase(path.join(directory, "recovery.sqlite"));
   try {
-    const firstRepository = new Repository(database);
+    let current = new Date();
+    const firstRepository = new Repository(database, { workerId: "worker-a", jobLeaseMs: 30_000, clock: () => current });
     const jobId = firstRepository.enqueue("extract_source", "src-interrupted");
     firstRepository.claimJob();
 
-    const restartedRepository = new Repository(database);
-    const recovered = database.prepare("SELECT status, attempts, locked_at, started_at FROM jobs WHERE id=?").get(jobId);
-    assert.equal(recovered.status, "queued");
-    assert.equal(recovered.attempts, 0);
-    assert.equal(recovered.locked_at, null);
-    assert.equal(recovered.started_at, null);
-    assert.equal(restartedRepository.claimJob().id, jobId);
+    const secondRepository = new Repository(database, { workerId: "worker-b", jobLeaseMs: 30_000, clock: () => current });
+    assert.equal(secondRepository.claimJob(), null);
+    let stored = database.prepare("SELECT status, attempts, locked_by FROM jobs WHERE id=?").get(jobId);
+    assert.deepEqual({ ...stored }, { status: "running", attempts: 1, locked_by: "worker-a" });
+    assert.equal(secondRepository.completeJob(jobId, "worker-b"), false);
+
+    current = new Date(current.getTime() + 31_000);
+    assert.equal(secondRepository.recoverExpiredJobs(), 1);
+    const recovered = secondRepository.claimJob();
+    assert.equal(recovered.id, jobId);
+    assert.equal(recovered.attempts, 2);
+    assert.equal(recovered.locked_by, "worker-b");
+    assert.equal(secondRepository.completeJob(jobId, "worker-b"), true);
+    stored = database.prepare("SELECT status, attempts, locked_by FROM jobs WHERE id=?").get(jobId);
+    assert.deepEqual({ ...stored }, { status: "succeeded", attempts: 2, locked_by: null });
   } finally {
     database.close();
     fs.rmSync(directory, { recursive: true, force: true });

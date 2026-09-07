@@ -1,0 +1,44 @@
+﻿交接日期 2026-09-07
+CMS 仓库 https://github.com/Weapon-Tsang/solo-to-china-CMS
+前端仓库 https://github.com/Weapon-Tsang/solo-to-china
+CMS 审计提交 1a597ecfe2b89ce75f491bcbbf606f9c52d294ca
+前端审计提交 ccfab41f25cd2323bfcd049485bdcb44a71df622
+
+重要边界
+1. 本交接包是修复任务书，不表示这些问题已被修复。
+2. 原审计 CMS 118 项测试通过、静态与构建检查通过、35 项本地 smoke 通过；这些测试没有覆盖所有发现。
+3. 已复现包括隔离代码和 mock 行为，不代表真实模型或生产 WordPress 已发生相同错误。
+4. 原审计未执行真实付费模型、生产 WordPress/PHP、线上 HTML 和浏览器验收；A02 真实模型兼容性、A17 故障窗口等需在适当环境验证。
+5. P1 表示扩大自动生产前优先处理，P2 表示明确的可靠性、安全或质量缺口；未定性为 P0 或已被利用的公网漏洞。
+6. 路径均以对应仓库根目录为基准。新账号应重新核对当前 HEAD，不能假定仍是审计版本。
+
+
+通用执行约束
+请实际修改代码并验证，不仅输出建议。先读取仓库 AGENTS.md、Git 状态与当前实现，若问题已修复则用测试证据关闭，不重复改动。保护用户改动和历史记录。
+保持精确文章机会审批、研究与商业隔离、WordPress draft-only、非草稿保护和项目既有素材授权政策。不得通过关校验、降门槛、标所有来源官方或删失败数据来取得通过。
+测试使用内存/临时数据库、mock 或明确测试 WordPress，不触碰生产库或偷偷批量调用付费模型。真实外部验证条件不足时完成本地实现并标 NOT TESTED，记录可执行验证步骤，不伪造通过。
+涉及数据库、队列、QA、媒体和契约变更时提供迁移、历史兼容和回滚方案；记录 docs/audit/repair-progress.md 中对应编号、代码位置、测试证据、状态和下一步。不要把未部署的实现说成已上线。
+原审计复现脚本断言的是错误行为，修复后应新增正确期望的回归测试，而不是继续维持原缺陷断言为绿。
+
+
+A01 修复前端契约序列化损坏
+
+请修复 A01，优先级 P1。责任范围：前端主修 CMS 验证。
+
+审计证据：已复现。已观察的问题：heading 的源 enum 为 [2,3]，生成物变为 [{},{}]，合法 H2/H3 被拒绝；comparison_table 示例二维数组变为带 Count 和 SyncRoot 的对象。
+
+首先检查：前端 scripts/generate-component-catalog.ps1；contracts/*.json；主题 content-contract/component-registry.v1.json 和各 generated 文件。
+
+依赖：无；与 A19 协同。
+
+实现要求：
+
+1. 定位生成器对 PowerShell 数字、数组、PSCustomObject/包装对象的类型处理错误。在发布实际使用的 PowerShell 版本复现并修复，优先避免自制不完整序列化；维持可重复生成与现有校验和约定。
+
+2. 从源 Registry 重新生成公开契约、主题内生成物和发布包 Schema。禁止只手改生成 JSON，禁止把 heading enum 放宽成任意值。
+
+3. 增加源 schema 与生成 schema 的语义一致性检查；每个 page_block 的示例必须同时通过组件 Schema、Page Schema 和可用的 PHP 验证。对 presentation_meta 使用其自己的接口验证。
+
+验收要求：H2=2、H3=3 通过，其他不支持层级拒绝；table.rows 保持二维数组；连续生成两次产物一致；契约 checksum 对齐；原有文章兼容。
+
+交付：实现、针对性回归、迁移/兼容说明、对应编号状态与未测项。不得仅交付方案。

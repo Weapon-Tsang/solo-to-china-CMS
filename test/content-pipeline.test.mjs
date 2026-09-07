@@ -26,7 +26,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   const sourceExtractor = {
     async extract(source) {
       return {
-        method: "test", model: "source-model",
+        method: "test_multimodal", model: "source-model",
         result: {
           source: { language: "zh-CN", summary: "Research", destination_name: "Beijing", destination_slug: "beijing", traveler_fit: ["solo"], practical_tips: [], warnings: [], confidence: 0.9 },
           claims: [
@@ -36,7 +36,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
             ["beijing.payment.methods", "Beijing payment", "payment methods", "Carry a working mobile payment method"],
             ["beijing.cost.budget", "Beijing budget", "cost budget", "Plan admission and transit costs"],
           ].map(([key, subject, predicate, value]) => ({ key, subject, predicate, value,
-            qualifiers: [], confidence: 0.85, source_quote: `${source.title}: ${value}` })),
+            qualifiers: [], confidence: 0.85, source_quote: value })),
           blueprint: { format: "guide", hook: "First trip", angle: "solo first visit", sections: [], strengths: ["specific"], gaps: [] },
         },
       };
@@ -70,6 +70,10 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
         body_markdown: "## Plan\n\nEvidence-backed practical guidance for independent visitors.",
         evidence_ledger: [{ section: "Plan", claim_keys: ["beijing.orientation.location", "beijing.transport.metro"], source_ids: sourceIds }],
         unresolved_conflicts: [],
+        visuals: [
+          { placement: "hero", purpose: "Show Source A real-world travel scene", alt_text: "Source A real-world travel scene", caption: "Beijing orientation", generation_prompt: "", aspect_ratio: "16:9", image_type: "real_world_photo", image_role: "hero", image_subject: "Source A real-world travel scene", factual_image_required: true },
+          { placement: "mid_article", purpose: "Explain planning", alt_text: "Beijing trip planning illustration", caption: "Planning overview", generation_prompt: "Editorial illustration of Beijing trip planning, no text or logos", aspect_ratio: "3:2", image_type: "illustration", image_role: "support", image_subject: "Beijing planning", factual_image_required: false },
+        ],
       } };
     },
     async composePagePlan() {
@@ -107,8 +111,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
     repository.saveCapture(normalizeXiaohongshuCapture({
       url: `https://www.xiaohongshu.com/explore/${externalId}`, title,
       text: externalId === "autoA"
-        ? "Beijing orientation covers central districts, landmark locations, metro transfers, station exits, airport connections, and walking navigation for a first independent visit."
-        : "Beijing booking evidence covers timed reservations, passport entry checks, mobile payment preparation, admission costs, practical budgets, and visitor requirements.",
+        ? "Beijing orientation: Central Beijing. Use the metro. Reserve timed attractions. Carry a working mobile payment method. Plan admission and transit costs."
+        : "Beijing booking: Central Beijing. Use the metro. Reserve timed attractions. Carry a working mobile payment method. Plan admission and transit costs. Passport checks, museum entry, ticket windows, weekend crowds, airport arrival, luggage storage, hotel check-in, translation, local etiquette, and emergency contacts are reviewed independently.",
       images: [{ url: `https://ci.xhscdn.com/${externalId}.jpg`, alt: `${title} real-world travel scene` }],
     }));
   }
@@ -189,4 +193,19 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   repository.failWordPressPublication(content[0].draft_id, deliveryError);
   db.prepare("DELETE FROM frontend_publish_compositions WHERE draft_id=?").run(content[0].draft_id);
   assert.equal(repository.retryContent(content[0].id, { contractAware: false }), "push_wordpress_draft");
+
+  const beforeRevision = repository.getDraftPackage(content[0].draft_id);
+  const visualIds = beforeRevision.draft.visuals.map((visual) => visual.id);
+  repository.saveDraft(beforeRevision.draft.brief_id, {
+    ...beforeRevision.draft,
+    body_markdown: `${beforeRevision.draft.body_markdown}\n\nEditorial clarification.`,
+    faqs: beforeRevision.draft.seo.faqs || [],
+    visuals: beforeRevision.draft.visuals,
+  }, "writer-model-v2", { deferReview: true });
+  const afterRevision = repository.getDraftPackage(content[0].draft_id);
+  assert.equal(afterRevision.draft.revision, beforeRevision.draft.revision + 1);
+  assert.equal(afterRevision.review, null, "an older passed QA cannot authorize revised content");
+  assert.equal(afterRevision.commercial_composition, null, "commercial output is version-bound");
+  assert.equal(afterRevision.frontend_page.current, false, "page composition becomes stale after a draft revision");
+  assert.deepEqual(afterRevision.draft.visuals.map((visual) => visual.id), visualIds, "unchanged visual assets are reused");
 });

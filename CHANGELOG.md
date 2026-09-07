@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.15.0 — 2026-09-08
+
+- Bound QA, page composition, commercial composition and publishing to exact draft/evidence revisions, with final-page validation before external delivery.
+- Added Strategy 1.5 content sufficiency, visible source traceability, optional evidence-backed FAQ, stable block provenance and subject-matched media handling.
+- Added durable job leases, partial media progress, server-side session revocation, provider schema validation, bounded model execution, hash-only usage metrics and response reuse.
+- Added publication lifecycle impact, composite frontend artifact identity, cross-repository release verification and concurrent WordPress draft idempotency.
+
 ## 1.14.1 — 2026-09-07
 
 - Made the confirmed derived-research reset atomic across the bidirectional Opportunity, Recommendation, and Candidate relationships by deferring foreign-key checks until every derived projection is removed.
