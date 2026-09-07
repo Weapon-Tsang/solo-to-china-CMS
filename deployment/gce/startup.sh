@@ -43,6 +43,7 @@ ADMIN_TOKEN="$(secret_value solo-to-china-admin-token)"
 ADMIN_PASSWORD="$(secret_value solo-to-china-admin-password)"
 SESSION_SECRET="$(secret_value solo-to-china-session-secret)"
 CLOUDFLARE_TUNNEL_TOKEN="$(secret_value solo-to-china-cloudflare-tunnel-token)"
+WORDPRESS_APPLICATION_PASSWORD="$(secret_value solo-to-china-wordpress-application-password)"
 
 install -d -m 0700 "$APP_DIR"
 umask 077
@@ -93,17 +94,22 @@ MANUAL_SOURCE_MAX_TOTAL_BYTES=314572800
 MANUAL_SOURCE_MAX_IMAGES=30
 MANUAL_SOURCE_GCS_BUCKET=solo-to-china-video-463584560230
 
-WORDPRESS_SITE_URL=
-WORDPRESS_USERNAME=
-WORDPRESS_APPLICATION_PASSWORD=
+WORDPRESS_SITE_URL=https://solotochina.com
+WORDPRESS_USERNAME=stc-cms
+WORDPRESS_APPLICATION_PASSWORD=${WORDPRESS_APPLICATION_PASSWORD}
+WORDPRESS_CMS_ARTICLE_ENDPOINT=https://solotochina.com/wp-json/stc/v1/cms-articles
 WORDPRESS_CONTENT_FORMAT=blocks
 WORDPRESS_SEO_TITLE_META_KEY=
 WORDPRESS_SEO_DESCRIPTION_META_KEY=
 WORDPRESS_SCHEMA_JSONLD_META_KEY=
 WORDPRESS_STRATEGY_VERSION_META_KEY=
+FRONTEND_CONTRACT_SOURCE_REPOSITORY=https://github.com/Weapon-Tsang/solo-to-china
 FRONTEND_COMPONENT_REGISTRY_SOURCE=https://solotochina.com/wp-json/stc/v1/component-registry/generated
 FRONTEND_PAGE_SCHEMA_SOURCE=https://solotochina.com/wp-json/stc/v1/page-schema
 FRONTEND_PUBLISH_PACKAGE_SCHEMA_SOURCE=https://solotochina.com/wp-json/stc/v1/cms-publish-package-schema
+FRONTEND_CONTRACT_COMMIT_SHA=ccfab41f25cd2323bfcd049485bdcb44a71df622
+FRONTEND_CONTRACT_SYNC_HOURS=6
+FRONTEND_CONTRACT_TIMEOUT_MS=15000
 EOF
 chmod 0600 "${APP_DIR}/.env.production"
 

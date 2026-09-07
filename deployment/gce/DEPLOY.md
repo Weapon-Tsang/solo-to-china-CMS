@@ -72,4 +72,4 @@ The cloud package is preconfigured at build time, so the founder does not enter 
 
 ## Secrets and costs
 
-Keep `.env.production`, Cloudflare Tunnel credentials, Kimi keys, WordPress credentials, and tokens out of Git. Gemini 3.1 Flash Image generation is enabled only when the Vertex service account and project quota are available; rendered images are billable. The implementation uses the VM-attached service account and does not require a downloaded Google credential file.
+Keep `.env.production`, Cloudflare Tunnel credentials, Kimi keys, WordPress credentials, and tokens out of Git. Store the dedicated `stc-cms` WordPress Application Password in Secret Manager as `solo-to-china-wordpress-application-password`; the startup script reads its latest version and injects it only into the Engine process environment. Gemini 3.1 Flash Image generation is enabled only when the Vertex service account and project quota are available; rendered images are billable. The implementation uses the VM-attached service account and does not require a downloaded Google credential file.
