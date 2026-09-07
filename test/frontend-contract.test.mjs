@@ -61,6 +61,24 @@ test("REST synchronization uses the generated artifact ETag as the exact Contrac
   assert.notEqual(sha256(JSON.stringify(JSON.parse(registryRaw))), expectedChecksum);
 });
 
+test("a Page Schema change creates a new composite snapshot when the Registry checksum is unchanged", async (t) => {
+  const { repository } = repositoryFixture(t);
+  const fixture = frontendContractFixture(t);
+  const consumer = consumerFor(repository, fixture);
+  await consumer.sync();
+  const first = consumer.active;
+  const pageSchema = JSON.parse(fs.readFileSync(fixture.pageSchemaPath, "utf8"));
+  pageSchema.$comment = "compatible schema-only release";
+  fs.writeFileSync(fixture.pageSchemaPath, `${JSON.stringify(pageSchema, null, 2)}\n`);
+
+  const result = await consumer.sync();
+
+  assert.equal(result.status, "healthy");
+  assert.equal(consumer.active.checksum, first.checksum);
+  assert.notEqual(consumer.active.id, first.id);
+  assert.equal(repository.listFrontendContractSnapshots().length, 2);
+});
+
 test("commercial components are consumed from the registry and missing capabilities are explicit", async (t) => {
   const { repository } = repositoryFixture(t);
   const fixture = frontendContractFixture(t);

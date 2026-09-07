@@ -50,6 +50,58 @@ function migrate(db) {
   if (current < 29) migrationTwentyNine(db);
   if (current < 30) migrationThirty(db);
   if (current < 31) migrationThirtyOne(db);
+  if (current < 32) migrationThirtyTwo(db);
+}
+
+function migrationThirtyTwo(db) {
+  db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE frontend_contract_snapshots_new (
+        id TEXT PRIMARY KEY,
+        source_repository TEXT NOT NULL,
+        registry_source TEXT NOT NULL,
+        page_schema_source TEXT NOT NULL,
+        frontend_commit_sha TEXT,
+        contract_version TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        registry_json TEXT NOT NULL,
+        page_schema_json TEXT NOT NULL,
+        diff_json TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'major_mismatch')),
+        synced_at TEXT NOT NULL,
+        accepted_at TEXT,
+        publish_package_schema_source TEXT NOT NULL DEFAULT '',
+        publish_package_version TEXT NOT NULL DEFAULT '',
+        publish_package_schema_json TEXT NOT NULL DEFAULT '{}',
+        artifact_checksum TEXT NOT NULL DEFAULT ''
+      );
+      INSERT INTO frontend_contract_snapshots_new(
+        id,source_repository,registry_source,page_schema_source,frontend_commit_sha,contract_version,schema_version,
+        checksum,registry_json,page_schema_json,diff_json,status,synced_at,accepted_at,publish_package_schema_source,
+        publish_package_version,publish_package_schema_json,artifact_checksum
+      ) SELECT
+        id,source_repository,registry_source,page_schema_source,frontend_commit_sha,contract_version,schema_version,
+        checksum,registry_json,page_schema_json,diff_json,status,synced_at,accepted_at,publish_package_schema_source,
+        publish_package_version,publish_package_schema_json,artifact_checksum
+      FROM frontend_contract_snapshots;
+      DROP TABLE frontend_contract_snapshots;
+      ALTER TABLE frontend_contract_snapshots_new RENAME TO frontend_contract_snapshots;
+      CREATE INDEX idx_frontend_contract_snapshots_status ON frontend_contract_snapshots(status, synced_at DESC);
+      CREATE UNIQUE INDEX idx_frontend_contract_artifact_checksum_unique
+        ON frontend_contract_snapshots(artifact_checksum) WHERE artifact_checksum <> '';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (32, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+  const violations = db.prepare("PRAGMA foreign_key_check").all();
+  if (violations.length) throw new Error(`Migration 32 created foreign-key violations: ${JSON.stringify(violations.slice(0, 5))}`);
 }
 
 function migrationThirtyOne(db) {

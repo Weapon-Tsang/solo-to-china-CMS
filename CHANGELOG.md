@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.15.1 — 2026-09-08
+
+- Rebuilt Frontend Contract snapshots around composite artifact identity so a Page or Publish Schema change can be activated while the Registry checksum stays stable.
+- Preserved foreign-key references during the migration and added a partial unique index for non-empty composite checksums.
+
 ## 1.15.0 — 2026-09-08
 
 - Bound QA, page composition, commercial composition and publishing to exact draft/evidence revisions, with final-page validation before external delivery.

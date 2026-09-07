@@ -7,7 +7,7 @@
 ## 当前结论
 
 - A01–A19、B01–B10 的仓库内修复均已完成。
-- CMS 已升级到 `1.15.0`，数据库迁移链为 1–31，内容生产策略升级到 `1.5`。
+- CMS 已升级到 `1.15.1`，数据库迁移链为 1–32，内容生产策略升级到 `1.5`。
 - 前端 Parent Theme 已升级到 `0.28.0`；Component Registry 保持兼容版本 `1.1.0`，Content Contract 保持 `2.1.0`。
 - 两仓库真实契约门禁、CMS 全量测试/构建/release check、WordPress Playground PHP 8.3 运行验证和前端发布打包均已通过。
 - 提交、推送和生产部署正在执行；最终 commit、镜像、线上健康检查与回滚点将在本文件末尾补记。
@@ -48,9 +48,9 @@
 
 ## 验证记录
 
-- CMS `npm test`：127/127 通过。
+- CMS `npm test`：128/128 通过。
 - CMS `npm run check`：Vite production build 与所有 Node syntax check 通过。
-- CMS `npm run release:check`：39 个强制检查通过、0 失败；包括迁移 1–31、SQLite integrity、隔离 HTTP/API/UI smoke、Extension 清单和跨仓库门禁。
+- CMS `npm run release:check`（1.15.1）：39 个强制检查通过、0 失败；包括迁移 1–32、SQLite integrity、隔离 HTTP/API/UI smoke、Extension 清单和跨仓库门禁。
 - 跨仓库门禁：Contract `1.1.0`，复合 checksum `e81cf6bd8cf2ff6f6e6c6a6e233edfccdf46fb60633a2500a2ef8638a7d8dbe1`。
 - 前端静态验证：project、page architecture、component registry、content contract 全部通过。
 - WordPress Playground：CLI `3.1.52`、PHP `8.3` 下的蓝图 CMS Publish Adapter 测试通过；Child Theme Content Runtime 验证通过。
@@ -59,9 +59,9 @@
 
 ## 部署与回滚记录
 
-- 待补：CMS commit / remote push commit。
-- Frontend commit：`fcd1cb0e936b666c888ade7ea8b648799e3fb3be`；remote push 待完成。
-- 待补：Artifact Registry 镜像标签与 digest。
-- 待补：GCE engine 容器版本、数据库升级结果与 `/api/health`、`/api/ready`。
+- CMS 主修复 commit：`de6a9ca`，已推送；1.15.1 生产热修复 commit 待补。
+- Frontend commit：`fcd1cb0e936b666c888ade7ea8b648799e3fb3be`，已推送 `origin/main`。
+- Artifact Registry `engine:1.15.0`：`sha256:d53196d412ef48db42b47ea942c54e8815d5db2e12b6d96bb0e5cf8a07ce6b25`；1.15.1 镜像待构建。
+- GCE 曾成功切换到 `1.15.0`，`/api/health` 与 `/api/ready` 均正常；线上发现旧 checksum 唯一约束导致 Contract stale，已在迁移 32 修复并通过回归，待重新部署 1.15.1。
 - 待补：WordPress Parent Theme `0.28.0` 安装结果及公开 Contract endpoint checksum。
 - 回滚点：部署前生产 SQLite 备份；前端上一版本 Parent Theme `0.27.0`；CMS 上一镜像 `1.14.1`。

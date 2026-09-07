@@ -3136,7 +3136,7 @@ export class Repository {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       id("modelcall"), metric.stage || "unknown", metric.provider || "unknown", metric.model || "unknown",
       metric.promptHash || "", metric.schemaHash || "", metric.inputHash || "", metric.inputTokens ?? null,
-      metric.outputTokens ?? null, metric.cachedTokens ?? null, metric.latencyMs || 0, metric.attempts || 1,
+      metric.outputTokens ?? null, metric.cachedTokens ?? null, metric.latencyMs ?? 0, metric.attempts ?? 1,
       metric.status || "succeeded", metric.errorCode || null, metric.costUsd ?? null, now(),
     );
   }
