@@ -70,10 +70,18 @@ test("derived research reset preserves raw Sources and requeues Strategy 1.4 pro
     claims: [{ key: "chongqing.route.metro", subject: "Chongqing route", predicate: "metro route", value: "Line 2", qualifiers: [], source_quote: "Take Line 2", confidence: 0.9 }],
     blueprint: { format: "guide", hook: "Route", angle: "planning", sections: [], strengths: [], gaps: [] },
   }, "test", "fixture");
+  const timestamp = new Date().toISOString();
+  db.prepare(`INSERT INTO content_opportunities(id,destination_slug,topic_key,strategy_version,source_id,title,readiness_score,status,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run("opportunity-reset", "chongqing", "chongqing:practical_guide:route", "1.4", source.id, "Route", 100, "approved_ready", timestamp, timestamp);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at,opportunity_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run("candidate-reset", "chongqing", "chongqing:route", "Route", "Ready", 100, 1, 0, "candidate", timestamp, timestamp, "opportunity-reset");
+  db.prepare("UPDATE content_opportunities SET candidate_id=? WHERE id=?").run("candidate-reset", "opportunity-reset");
   const reset = repository.resetDerivedResearchAndRequeue();
   assert.equal(reset.preservedSources, 1);
   assert.equal(db.prepare("SELECT COUNT(*) count FROM sources").get().count, 1);
   assert.equal(db.prepare("SELECT COUNT(*) count FROM claims").get().count, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM content_opportunities").get().count, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM topic_candidates").get().count, 0);
   assert.equal(db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='extract_source' AND entity_id=?").get(source.id).count, 1);
 });
 

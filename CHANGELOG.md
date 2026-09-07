@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.14.1 — 2026-09-07
+
+- Made the confirmed derived-research reset atomic across the bidirectional Opportunity, Recommendation, and Candidate relationships by deferring foreign-key checks until every derived projection is removed.
+- Included draft-linked commercial opportunities and events in the reset scope while continuing to preserve raw Sources, uploaded originals, source assets, affiliate inventory, and the persistent Docker volume.
+- Added a populated cyclic-relationship regression test reproducing the production foreign-key failure.
+
 ## 1.14.0 — 2026-09-07
 
 - Activated Content Production Strategy 1.4 with Source Segments, Evidence Spans, exhaustive segment extraction, coverage audit/retry, Source Families, Topic Clusters, Coverage Matrices, and evidence-gated durable Content Opportunities.

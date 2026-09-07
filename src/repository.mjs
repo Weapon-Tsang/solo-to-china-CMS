@@ -2119,8 +2119,13 @@ export class Repository {
     const timestamp = now();
     const sourceIds = this.db.prepare("SELECT id FROM sources ORDER BY created_at").all().map((row) => row.id);
     transaction(this.db, () => {
+      // Opportunity, Recommendation, and Candidate records intentionally retain
+      // bidirectional links. Defer their foreign-key checks until every derived
+      // projection has been removed in this same atomic transaction.
+      this.db.exec("PRAGMA defer_foreign_keys = ON");
       for (const table of [
-        "frontend_publish_compositions", "wordpress_publications", "commercial_compositions", "commercial_intents", "commercial_slots",
+        "frontend_publish_compositions", "wordpress_publications", "commercial_compositions", "affiliate_opportunities", "commercial_events",
+        "commercial_slots", "commercial_intents",
         "quality_reviews", "article_visuals", "frontend_page_compositions", "frontend_page_plans", "frontend_capability_requests",
         "article_drafts", "content_briefs", "topic_candidates", "content_opportunities", "content_recommendations", "content_intake_analyses",
         "coverage_matrices", "topic_clusters", "knowledge_resolutions", "knowledge_visibility_overrides", "knowledge_facts", "claim_review_cases", "claim_relations",
