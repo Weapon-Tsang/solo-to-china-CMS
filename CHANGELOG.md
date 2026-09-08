@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.17.4 - 2026-09-09
+
+- Prevent Favorites Sync retry sessions from remaining indefinitely in the checkpoint-saving phase by committing terminal state before cleanup and bounding CMS/media requests with explicit timeouts.
+- Recover a persisted running/completed session during Extension restart and keep timed-out failed items resumable without losing successful captures.
+
 ## 1.17.3 - 2026-09-09
 
 - Localize CMS detail dialogs, review workflows, configuration guides, commercial and affiliate sections, shared status/category labels, login, and password forms into Chinese.
