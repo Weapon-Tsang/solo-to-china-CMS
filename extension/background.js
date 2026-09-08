@@ -30,6 +30,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === AUTO_ALARM) void startAutomaticSync();
 });
 
+// A service worker can be restarted independently of the Chrome profile.
+// Reconcile persisted work immediately instead of waiting for the minute alarm.
+void restoreAfterRestart();
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   void handleMessage(message, sender).then(sendResponse).catch((error) => sendResponse({ ok: false, error: serializeError(error) }));
   return true;
