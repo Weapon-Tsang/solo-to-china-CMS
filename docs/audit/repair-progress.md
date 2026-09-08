@@ -18,6 +18,8 @@
 - 人工卡片直接展示两侧来源标题、作者、原始链接、原文上下文和精确关联图片；旧记录无法精确映射时明确标注为候选图片。任一侧没有可核验证据时，结论按钮保持禁用，并提供逐来源重新提取入口。
 - 1.17.9 验收：专项证据映射与鉴权预览测试 2/2 通过；npm run check 通过；npm test 209/209 通过；npm run release:check 的 39 项强制检查全部通过、0 失败。
 - 生产复核新生成的 4 条来源冲突后，确认它们均为 viewpoint_location、offers_view 与 serves_as_viewpoint_for 对同一观景关系的不同方向或详细程度表达；1.17.9 将这些谓词按可多值观察关系聚合，不再作为单值硬事实要求人工二选一。
+- 1.17.9 生产发布：证据界面提交 `73219be`、观景关系规则提交 `b1dfd58` 已推送；最终 Cloud Build `11a3356d-110c-47f4-9173-eb4df973b6ff` 发布镜像摘要 `sha256:d877e77a4b96f90efcd5ffb15a7d59cc46053c12e823797e44651d456cfa807d`。
+- GCE `solo-to-china-engine` 已运行 1.17.9，应用与数据库 ready、前端契约 healthy；生产精确关联图片预览返回 HTTP 200、image/webp。启动 Knowledge 重建将人工 Claim 审核从 4 条降至 0。
 
 ## Claim / Knowledge 语义冲突误报修复（2026-09-09）
 
