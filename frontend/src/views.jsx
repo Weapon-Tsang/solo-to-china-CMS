@@ -633,9 +633,10 @@ function EntityAliasResolution({ item, onAction, actionBusy }) {
 function ClaimReviewResolution({ item, onAction, actionBusy }) {
   const review = item.claim_review;
   const extractionIssue = String(review.reviewType || "").includes("EXTRACTION_ERROR");
+  const claims = [review.claimA, review.claimB].filter(Boolean);
+  const evidenceReady = claims.every((claim) => claim.evidence?.available);
   const decide = (decision) => onAction(`/api/knowledge/claim-reviews/${encodeURIComponent(review.id)}/decision`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision }) }, decision === "resolved" ? "已进入最终事实选择；请选择后续写作应采用的值。" : "已确认两条信息可以同时成立，误报已关闭，原始证据保持不变。");
-  const retryExtraction = () => onAction(`/api/sources/${encodeURIComponent(review.claimA.sourceId)}/retry`, { method: "POST" }, "已重新加入来源提取队列；完成后会重新计算 信息主张审核。");
-  const Claim = ({ title, claim }) => claim && <div className="rounded-lg border border-slate-200 bg-white p-2.5"><b className="text-[10px] text-slate-500">{title}原文怎么说</b><p className="mt-1 text-[11px] text-slate-800">{claim.originalSentence || "—"}</p><b className="mt-2 block text-[10px] text-slate-500">系统整理成</b><p className="mt-1 text-[11px] text-slate-800">{claim.normalized.subject} · {claim.normalized.predicate} = {claim.normalized.value}</p></div>;
+  const retryExtraction = (sourceId) => onAction(`/api/sources/${encodeURIComponent(sourceId)}/retry`, { method: "POST" }, "已重新加入来源提取队列；完成后会重新计算信息主张审核。");
   const fallbackExplanation = extractionIssue
     ? "系统怀疑原文里的否定、条件或限制没有被完整保留下来。请比较原文和整理结果后再选择。"
     : "系统把两条信息归到了同一事实，但无法判断它们是互相补充，还是不能同时成立。";
@@ -644,15 +645,32 @@ function ClaimReviewResolution({ item, onAction, actionBusy }) {
       <p className="text-xs font-semibold text-amber-950">{extractionIssue ? "系统为什么拦住这条信息？" : "系统为什么拦住这两条信息？"}</p>
       <p className="mt-1.5 text-[11px] leading-relaxed text-amber-900">{review.explanation || fallbackExplanation}</p>
     </div>
-    <div className="mt-3 grid gap-2"><Claim title="来源 A：" claim={review.claimA} /><Claim title="来源 B：" claim={review.claimB} /></div>
+    <div className="mt-3 grid gap-2"><ClaimEvidencePanel title="来源 A" claim={review.claimA} actionBusy={actionBusy} onRetry={retryExtraction} /><ClaimEvidencePanel title="来源 B" claim={review.claimB} actionBusy={actionBusy} onRetry={retryExtraction} /></div>
+    {!evidenceReady && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-[11px] leading-relaxed text-red-800"><b className="block">证据不完整，当前不能作出结论</b><span>至少一侧没有可核验的原文或图片。系统已禁用结论按钮，请先重新提取缺失证据的来源；完成后异常会自动重新计算。</span></div>}
     {extractionIssue ? <div className="mt-3 grid gap-2 sm:grid-cols-2">
-      <div className="rounded-lg border border-amber-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-900">选项一：原意确实丢了</p><p className="mt-1 text-[10px] leading-relaxed text-slate-600">重新让模型读取该来源。原始证据不会删除，任务会回到处理队列。</p><Button className="mt-2 w-full" size="sm" disabled={actionBusy || !review.claimA.sourceId} onClick={retryExtraction}><RotateCcw />原意丢失：重新提取</Button></div>
-      <div className="rounded-lg border border-amber-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-900">选项二：整理结果已经表达原意</p><p className="mt-1 text-[10px] leading-relaxed text-slate-600">例如 contactless 已表达“0 打扰”。关闭这条误报并保留现有结果。</p><Button className="mt-2 w-full" size="sm" variant="secondary" disabled={actionBusy} onClick={() => decide("dismissed")}>语义完整：关闭误报</Button></div>
+      <div className="rounded-lg border border-amber-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-900">选项一：原意确实丢了</p><p className="mt-1 text-[10px] leading-relaxed text-slate-600">重新让模型读取该来源。原始证据不会删除，任务会回到处理队列。</p><Button className="mt-2 w-full" size="sm" disabled={actionBusy || !review.claimA.sourceId} onClick={() => retryExtraction(review.claimA.sourceId)}><RotateCcw />原意丢失：重新提取</Button></div>
+      <div className="rounded-lg border border-amber-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-900">选项二：整理结果已经表达原意</p><p className="mt-1 text-[10px] leading-relaxed text-slate-600">例如 contactless 已表达“0 打扰”。关闭这条误报并保留现有结果。</p><Button className="mt-2 w-full" size="sm" variant="secondary" disabled={actionBusy || !evidenceReady} onClick={() => decide("dismissed")}>语义完整：关闭误报</Button></div>
     </div> : <div className="mt-3 grid gap-2 sm:grid-cols-2">
-      <div className="rounded-lg border border-amber-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-900">选项一：两句话不能同时为真</p><p className="mt-1 text-[10px] leading-relaxed text-slate-600">仅用于同一对象、同一时间和同一条件下互相否定的情况。下一步需要选择最终事实。</p><Button className="mt-2 w-full" size="sm" disabled={actionBusy} onClick={() => decide("resolved")}><CheckCircle2 />确实矛盾：选择最终事实</Button></div>
-      <div className="rounded-lg border border-amber-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-900">选项二：两句话可以同时为真</p><p className="mt-1 text-[10px] leading-relaxed text-slate-600">适用于不同译法、概括与详情、或互相补充的描述。两条证据都会保留。</p><Button className="mt-2 w-full" size="sm" variant="secondary" disabled={actionBusy} onClick={() => decide("dismissed")}>可以同时成立：关闭误报</Button></div>
+      <div className="rounded-lg border border-amber-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-900">选项一：两句话不能同时为真</p><p className="mt-1 text-[10px] leading-relaxed text-slate-600">仅用于同一对象、同一时间和同一条件下互相否定的情况。下一步需要选择最终事实。</p><Button className="mt-2 w-full" size="sm" disabled={actionBusy || !evidenceReady} onClick={() => decide("resolved")}><CheckCircle2 />确实矛盾：选择最终事实</Button></div>
+      <div className="rounded-lg border border-amber-200 bg-white p-3"><p className="text-[11px] font-semibold text-slate-900">选项二：两句话可以同时为真</p><p className="mt-1 text-[10px] leading-relaxed text-slate-600">适用于不同译法、概括与详情、或互相补充的描述。两条证据都会保留。</p><Button className="mt-2 w-full" size="sm" variant="secondary" disabled={actionBusy || !evidenceReady} onClick={() => decide("dismissed")}>可以同时成立：关闭误报</Button></div>
     </div>}
   </section>;
+}
+
+function ClaimEvidencePanel({ title, claim, actionBusy, onRetry }) {
+  if (!claim) return null;
+  const evidence = claim.evidence || {};
+  const placeholder = /^\s*\[(?:image|video)\]\s*$/iu.test(String(claim.originalSentence || ""));
+  return <div className="rounded-lg border border-slate-200 bg-white p-3">
+    <div className="flex flex-wrap items-start justify-between gap-2"><div><b className="text-[11px] text-slate-800">{title}</b><p className="mt-0.5 text-[10px] text-slate-500">{evidence.source?.title || "未记录来源标题"}{evidence.source?.authorName ? ` · ${evidence.source.authorName}` : ""}</p></div>{evidence.source?.canonicalUrl && <a className="inline-flex items-center gap-1 text-[10px] font-medium text-blue-700 hover:underline" href={evidence.source.canonicalUrl} target="_blank" rel="noreferrer"><ExternalLink className="size-3" />打开原始来源</a>}</div>
+    <b className="mt-3 block text-[10px] text-slate-500">原始证据</b>
+    {placeholder ? <p className="mt-1 text-[11px] text-slate-700">这条信息由图片识别得出，请核对下方对应图片。</p> : <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-slate-800">{evidence.exactQuote || claim.originalSentence || "未保存原句"}</p>}
+    {evidence.textExcerpt && <details className="mt-2 rounded-md bg-slate-50 p-2 text-[10px] text-slate-600"><summary className="cursor-pointer font-medium text-slate-700">查看来源原文上下文</summary><p className="mt-2 whitespace-pre-wrap leading-relaxed">{evidence.textExcerpt}</p></details>}
+    {evidence.assets?.length > 0 && <div className="mt-2"><p className="mb-1.5 text-[10px] text-slate-500">{evidence.assets.every((asset) => asset.matched) ? "与该信息主张关联的图片" : "来源中的候选图片（旧记录未保存精确图片映射）"}</p><div className="grid gap-2 sm:grid-cols-2">{evidence.assets.map((asset) => <figure key={asset.id} className="overflow-hidden rounded-md border border-slate-200 bg-slate-50"><img className="max-h-72 w-full bg-slate-100 object-contain" src={asset.previewUrl} alt={asset.altText || `${title}证据图片`} loading="lazy" /><figcaption className="flex items-center justify-between gap-2 px-2 py-1.5 text-[9px] text-slate-500"><span>图片 {Number(asset.position ?? 0) + 1}{asset.matched ? " · 精确关联" : " · 候选"}</span>{asset.originalUrl && <a className="text-blue-700 hover:underline" href={asset.originalUrl} target="_blank" rel="noreferrer">打开原图</a>}</figcaption></figure>)}</div></div>}
+    {!evidence.available && <p className="mt-2 rounded-md bg-red-50 px-2 py-1.5 text-[10px] leading-relaxed text-red-700">{evidence.reason || "没有可核验的原文或图片。"}</p>}
+    <b className="mt-3 block text-[10px] text-slate-500">系统整理成</b><p className="mt-1 text-[11px] text-slate-800">{claim.normalized.subject} · {claim.normalized.predicate} = {claim.normalized.value}</p>
+    {claim.sourceId && <Button className="mt-2" size="sm" variant="outline" disabled={actionBusy} onClick={() => onRetry(claim.sourceId)}><RotateCcw />重新提取该来源</Button>}
+  </div>;
 }
 
 function LegacyExceptionsWorkspace({ items, onAction, actionBusy }) {

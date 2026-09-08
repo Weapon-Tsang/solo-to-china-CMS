@@ -54,9 +54,14 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
     "语义完整：关闭误报",
     "确实矛盾：选择最终事实",
     "可以同时成立：关闭误报",
+    "原始证据",
+    "查看来源原文上下文",
+    "与该信息主张关联的图片",
+    "证据不完整，当前不能作出结论",
     "采用这条作为最终事实",
     "保存为最终事实",
   ]) assert.ok(viewsSource.includes(text), `人工判定界面缺少大白话说明：${text}`);
+  assert.match(viewsSource, /disabled=\{actionBusy \|\| !evidenceReady\}/, "证据不完整时必须禁用人工结论按钮");
 });
 
 test("shared status, category, and duration labels use Chinese display text", () => {

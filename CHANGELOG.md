@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.17.9 - 2026-09-09
+
+- Show both source titles, original links, exact text context, and linked source images directly in Claim review cards.
+- Add an authenticated, bounded image-preview endpoint backed by the stored review derivative, with HTTPS original-image fallback for legacy captures.
+- Disable final Claim decisions whenever either side lacks reviewable evidence, and offer per-source re-extraction instead of asking the operator to guess.
+
 ## 1.17.8 - 2026-09-09
 
 - Prioritize non-model Knowledge rebuilds ahead of the historical model-extraction backlog so startup reconciliation promptly removes review cases that the current semantic rules now classify as compatible.

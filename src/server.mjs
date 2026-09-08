@@ -342,6 +342,12 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/sources") {
         return sendJson(response, 200, { items: repository.listSources(limit(url.searchParams.get("limit"))) });
       }
+      const sourceAssetPreviewMatch = url.pathname.match(/^\/api\/source-assets\/([^/]+)\/preview$/);
+      if (request.method === "GET" && sourceAssetPreviewMatch) {
+        const asset = repository.getSourceAssetPreview(decodeURIComponent(sourceAssetPreviewMatch[1]));
+        if (!asset) return sendJson(response, 404, { error: "Source evidence image not found." });
+        return serveSourceAssetPreview(asset, response);
+      }
       const sourceMatch = url.pathname.match(/^\/api\/sources\/([^/]+)$/);
       if (request.method === "GET" && sourceMatch) {
         if (captureOnly) authorizeCapture(request, config.captureToken);
@@ -897,6 +903,30 @@ function sourceForApi(source) {
     ...source,
     assets: (source.assets || []).map(({ local_path, ...asset }) => asset),
   };
+}
+
+function serveSourceAssetPreview(asset, response) {
+  const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)$/u.exec(String(asset.ai_derivative_data_url || ""));
+  if (match) {
+    const bytes = Buffer.from(match[2], "base64");
+    if (bytes.length && bytes.length <= 8 * 1024 * 1024) {
+      response.writeHead(200, {
+        "content-type": match[1],
+        "content-length": bytes.length,
+        "cache-control": "private, max-age=300",
+        "x-content-type-options": "nosniff",
+      });
+      return response.end(bytes);
+    }
+  }
+  try {
+    const original = new URL(String(asset.remote_url || ""));
+    if (original.protocol === "https:") {
+      response.writeHead(302, { location: original.toString(), "cache-control": "private, max-age=60" });
+      return response.end();
+    }
+  } catch { /* invalid or unavailable original URL */ }
+  return sendJson(response, 404, { error: "This evidence image has no stored preview. Re-extract the source before deciding." });
 }
 
 function serveStatic(publicDir, pathname, response) {

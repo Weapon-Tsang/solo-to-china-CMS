@@ -652,6 +652,51 @@ export class Repository {
     return hydrateSource({ source, assets, files, structured, claims, extractionRuns, claimHistory, blueprint, analysis, recommendation, segments, coverage, family, captureVersions });
   }
 
+  getSourceAssetPreview(assetId) {
+    return this.db.prepare(`SELECT id,source_id,kind,remote_url,alt_text,position,local_path,mime_type,
+      ai_derivative_data_url FROM source_assets WHERE id=?`).get(assetId) || null;
+  }
+
+  claimReviewEvidence(sourceId, evidenceSpanIdsJson, sourceQuote = "") {
+    if (!sourceId) return { available: false, reason: "该信息主张没有关联到可追溯来源。" };
+    const source = this.db.prepare(`SELECT id,title,author_name,canonical_url,captured_at,raw_text
+      FROM sources WHERE id=?`).get(sourceId);
+    if (!source) return { available: false, reason: "关联来源已不存在，无法核对原文或图片。" };
+    const requestedSpanIds = new Set(json(evidenceSpanIdsJson, []).map(String));
+    const allSpans = this.db.prepare(`SELECT es.id,es.locator_type,es.page,es.image_index,es.quote,es.asset_id,
+      ss.segment_type,ss.sequence,ss.title AS segment_title,ss.raw_text AS segment_text
+      FROM evidence_spans es LEFT JOIN source_segments ss ON ss.id=es.segment_id
+      WHERE es.source_id=? ORDER BY ss.sequence,es.id`).all(sourceId);
+    const spans = (requestedSpanIds.size ? allSpans.filter((span) => requestedSpanIds.has(span.id)) : [])
+      .map((span) => ({ id: span.id, locatorType: span.locator_type, page: span.page, imageIndex: span.image_index,
+        quote: span.quote, segmentType: span.segment_type, segmentTitle: span.segment_title,
+        segmentText: String(span.segment_text || "").slice(0, 2_000), assetId: span.asset_id }));
+    const assetIds = new Set(spans.map((span) => span.assetId).filter(Boolean));
+    const placeholderQuote = /^\s*\[(?:image|video)\]\s*$/iu.test(String(sourceQuote || ""));
+    let assets = this.db.prepare(`SELECT id,kind,remote_url,alt_text,position,mime_type,
+      CASE WHEN ai_derivative_data_url<>'' THEN 1 ELSE 0 END AS preview_stored
+      FROM source_assets WHERE source_id=? ORDER BY position,id`).all(sourceId)
+      .filter((asset) => assetIds.has(asset.id));
+    if (!assets.length && placeholderQuote) {
+      assets = this.db.prepare(`SELECT id,kind,remote_url,alt_text,position,mime_type,
+        CASE WHEN ai_derivative_data_url<>'' THEN 1 ELSE 0 END AS preview_stored
+        FROM source_assets WHERE source_id=? ORDER BY position,id LIMIT 3`).all(sourceId);
+    }
+    assets = assets.map((asset) => ({ id: asset.id, kind: asset.kind, position: asset.position,
+      altText: asset.alt_text, mimeType: asset.mime_type, previewUrl: `/api/source-assets/${encodeURIComponent(asset.id)}/preview`,
+      originalUrl: asset.remote_url, previewStored: Boolean(asset.preview_stored), matched: assetIds.has(asset.id) }));
+    const exactQuote = placeholderQuote ? "" : String(sourceQuote || "").trim();
+    const textExcerpt = sourceExcerpt(source.raw_text, exactQuote);
+    const available = Boolean(exactQuote || spans.some((span) => span.quote || span.segmentText) || assets.length);
+    return {
+      available,
+      reason: available ? "" : "当前记录没有保存可核验的原文片段或关联图片，请重新提取来源后再判断。",
+      source: { id: source.id, title: source.title, authorName: source.author_name,
+        canonicalUrl: source.canonical_url, capturedAt: source.captured_at },
+      exactQuote, textExcerpt, spans, assets,
+    };
+  }
+
   prepareSourceSegments(sourceId) {
     const source = this.getSource(sourceId);
     if (!source) throw new Error(`Source ${sourceId} no longer exists.`);
@@ -3406,8 +3451,10 @@ export class Repository {
     }
     for (const row of this.db.prepare(`SELECT r.*, a.source_id AS source_id_a, a.subject AS subject_a, a.predicate AS predicate_a,
       a.value_text AS value_a, a.source_quote AS source_quote_a, a.structured_value_json AS structured_a,
-      b.subject AS subject_b, b.predicate AS predicate_b, b.value_text AS value_b,
-      b.source_quote AS source_quote_b, b.structured_value_json AS structured_b
+      a.evidence_span_ids_json AS evidence_span_ids_a,
+      b.source_id AS source_id_b, b.subject AS subject_b, b.predicate AS predicate_b, b.value_text AS value_b,
+      b.source_quote AS source_quote_b, b.structured_value_json AS structured_b,
+      b.evidence_span_ids_json AS evidence_span_ids_b
       FROM claim_review_cases r JOIN claims a ON a.id=r.claim_a_id
       LEFT JOIN claims b ON b.id=r.claim_b_id WHERE r.status='pending' ORDER BY r.updated_at DESC`).all()) {
       const kind = ({ CLAIM_CONFLICT: "claim_conflict", SOURCE_CONFLICT: "source_conflict", TEMPORAL_CONFLICT: "temporal_conflict",
@@ -3418,8 +3465,12 @@ export class Repository {
       item.claim_review = {
         id: row.id, reviewType: row.review_type, destinationSlug: row.destination_slug,
         explanation: presentation.explanation,
-        claimA: { id: row.claim_a_id, sourceId: row.source_id_a, originalSentence: row.source_quote_a, normalized: { subject: row.subject_a, predicate: row.predicate_a, value: row.value_a, structured: json(row.structured_a, {}) } },
-        claimB: row.claim_b_id ? { id: row.claim_b_id, originalSentence: row.source_quote_b, normalized: { subject: row.subject_b, predicate: row.predicate_b, value: row.value_b, structured: json(row.structured_b, {}) } } : null,
+        claimA: { id: row.claim_a_id, sourceId: row.source_id_a, originalSentence: row.source_quote_a,
+          evidence: this.claimReviewEvidence(row.source_id_a, row.evidence_span_ids_a, row.source_quote_a),
+          normalized: { subject: row.subject_a, predicate: row.predicate_a, value: row.value_a, structured: json(row.structured_a, {}) } },
+        claimB: row.claim_b_id ? { id: row.claim_b_id, sourceId: row.source_id_b, originalSentence: row.source_quote_b,
+          evidence: this.claimReviewEvidence(row.source_id_b, row.evidence_span_ids_b, row.source_quote_b),
+          normalized: { subject: row.subject_b, predicate: row.predicate_b, value: row.value_b, structured: json(row.structured_b, {}) } } : null,
       };
       items.push(item);
     }
@@ -3705,6 +3756,18 @@ function hydrateSource({ source, assets, files = [], structured, claims, extract
     extraction_coverage: coverage.map((row) => ({ ...row, uncovered_spans: json(row.uncovered_spans_json, []) })),
     source_family: family ? { ...family, analysis: json(family.analysis_json, {}) } : null,
   };
+}
+
+function sourceExcerpt(rawText, exactQuote, maxChars = 2_400) {
+  const text = String(rawText || "").trim();
+  if (!text) return "";
+  const quote = String(exactQuote || "").trim();
+  const quoteIndex = quote ? text.indexOf(quote) : -1;
+  if (quoteIndex < 0) return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
+  const padding = Math.max(300, Math.floor((maxChars - quote.length) / 2));
+  const start = Math.max(0, quoteIndex - padding);
+  const end = Math.min(text.length, quoteIndex + quote.length + padding);
+  return `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
 }
 
 function captureContentHash(capture) {

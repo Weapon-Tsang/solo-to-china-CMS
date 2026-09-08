@@ -51,6 +51,40 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
   assert.equal(sources.items[0].destination_name, "Chengdu");
 });
 
+test("authenticated source evidence preview streams the stored review image", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-evidence-preview-"));
+  const config = loadConfig({
+    HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "api.sqlite"),
+    ADMIN_TOKEN: "evidence-admin-token", ADMIN_PASSWORD: "strong-evidence-password",
+    SESSION_SECRET: "evidence-preview-session-secret-with-enough-entropy",
+    MAINTENANCE_ENABLED: "false", LOG_LEVEL: "error",
+  });
+  const app = createApplication(config);
+  await app.start();
+  t.after(async () => {
+    await app.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const bytes = Buffer.from("stored evidence preview");
+  const source = app.repository.saveCapture({
+    adapter: "manual", externalId: "evidence-preview", canonicalUrl: "https://example.com/evidence-preview",
+    title: "Evidence preview", authorName: "", authorUrl: "", publishedAt: null, capturedAt: new Date().toISOString(),
+    rawText: "Stored source evidence text for an authenticated preview endpoint.", rawHtml: "", sourceKind: "images",
+    assets: [{ kind: "image", url: "https://example.com/evidence.webp", alt: "Evidence", position: 0,
+      aiDerivativeDataUrl: `data:image/webp;base64,${bytes.toString("base64")}` }], files: [],
+    completeness: { overall: "complete" }, rights: {}, client: {},
+  });
+  const asset = app.repository.getSource(source.id).assets[0];
+  const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
+  assert.equal((await fetch(`${baseUrl}/api/source-assets/${asset.id}/preview`)).status, 401);
+  const response = await fetch(`${baseUrl}/api/source-assets/${asset.id}/preview`, {
+    headers: { authorization: "Bearer evidence-admin-token" },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "image/webp");
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+});
+
 test("admin manual-source API stores uploaded evidence, queues the shared pipeline, and returns classified link failures", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-manual-api-test-"));
   const config = loadConfig({

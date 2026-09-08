@@ -133,6 +133,58 @@ test("extraction review dismissals survive rebuilds while legacy acknowledgement
   assert.equal(review.status, "pending");
 });
 
+test("claim review exceptions include both source records, text context, and the exact evidence image", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const sourceA = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/evidenceSourceA123",
+    title: "Raffles City riverfront view",
+    author: { name: "source author A" },
+    text: "The selected note says Raffles City is visible from the opposite riverfront promenade after sunset.",
+    images: [],
+  }));
+  const sourceB = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/evidenceSourceB456",
+    title: "Cableway corridor view",
+    author: { name: "source author B" },
+    text: "The selected note contains a photo showing the skyline from the cableway corridor.",
+    images: [{ url: "https://ci.xhscdn.com/raffles-city.webp", alt: "Raffles City between residential towers",
+      position: 0, aiDerivativeDataUrl: `data:image/webp;base64,${Buffer.from("evidence thumbnail").toString("base64")}` }],
+  }));
+  const extraction = (value, quote) => ({
+    source: { language: "en", summary: "Visibility", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+    claims: [{ key: "chongqing.raffles_city.visibility", subject: "Raffles City Chongqing", predicate: "viewpoint", value,
+      qualifiers: [], source_quote: quote, confidence: 0.9 }],
+    blueprint: { format: "guide", hook: "Views", angle: "practical", sections: [], strengths: [], gaps: [] },
+  });
+  repository.saveExtraction(sourceA.id, extraction("opposite riverfront promenade", "opposite riverfront promenade"), "test", "fixture", { deferDownstream: true });
+  repository.saveExtraction(sourceB.id, extraction("between two residential towers", "[image]"), "test", "fixture", { deferDownstream: true });
+  repository.prepareSourceSegments(sourceA.id);
+  repository.prepareSourceSegments(sourceB.id);
+  const claimA = db.prepare("SELECT id FROM claims WHERE source_id=?").get(sourceA.id);
+  const claimB = db.prepare("SELECT id FROM claims WHERE source_id=?").get(sourceB.id);
+  const segmentA = db.prepare("SELECT id FROM source_segments WHERE source_id=? AND segment_type='paragraph_group'").get(sourceA.id);
+  const segmentB = db.prepare("SELECT id,asset_id,image_index FROM source_segments WHERE source_id=? AND segment_type='image'").get(sourceB.id);
+  db.prepare(`INSERT INTO evidence_spans(id,source_id,segment_id,asset_id,locator_type,image_index,quote,region_json,created_at)
+    VALUES ('span-text',?,?,NULL,'text',NULL,'opposite riverfront promenade','{}','now')`).run(sourceA.id, segmentA.id);
+  db.prepare(`INSERT INTO evidence_spans(id,source_id,segment_id,asset_id,locator_type,image_index,quote,region_json,created_at)
+    VALUES ('span-image',?,?,?,'asset',?,'[image]','{}','now')`).run(sourceB.id, segmentB.id, segmentB.asset_id, segmentB.image_index);
+  db.prepare("UPDATE claims SET evidence_span_ids_json='[\"span-text\"]' WHERE id=?").run(claimA.id);
+  db.prepare("UPDATE claims SET evidence_span_ids_json='[\"span-image\"]' WHERE id=?").run(claimB.id);
+  db.prepare(`INSERT INTO claim_review_cases(id,destination_slug,claim_a_id,claim_b_id,review_type,reason,status,created_at,updated_at)
+    VALUES ('review-evidence','chongqing',?,?,'SOURCE_CONFLICT','needs evidence','pending','now','now')`).run(claimA.id, claimB.id);
+
+  const review = repository.listOperationalExceptions().find((item) => item.claim_review?.id === "review-evidence").claim_review;
+  assert.equal(review.claimA.sourceId, sourceA.id);
+  assert.equal(review.claimB.sourceId, sourceB.id);
+  assert.equal(review.claimA.evidence.available, true);
+  assert.match(review.claimA.evidence.textExcerpt, /opposite riverfront promenade/);
+  assert.equal(review.claimB.evidence.available, true);
+  assert.equal(review.claimB.evidence.assets.length, 1);
+  assert.equal(review.claimB.evidence.assets[0].matched, true);
+  assert.equal(review.claimB.evidence.assets[0].previewStored, true);
+  assert.match(review.claimB.evidence.assets[0].previewUrl, /^\/api\/source-assets\/asset_[^/]+\/preview$/);
+});
+
 test("dismissing a source-conflict false positive keeps it compatible after knowledge rebuild", (t) => {
   const { db, repository } = repositoryFixture(t);
   for (const [externalId, value, quote] of [
