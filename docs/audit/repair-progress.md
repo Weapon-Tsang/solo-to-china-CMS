@@ -7,10 +7,10 @@
 ## 当前结论
 
 - A01–A19、B01–B10 的代码修复与优化全部完成。
-- CMS 待部署版本为 `1.15.2`，数据库迁移为 1–32，内容生成策略版本为 `1.5`。
+- CMS 生产版本为 `1.15.2`，数据库迁移为 1–32，内容生成策略版本为 `1.5`。
 - 前端 Parent Theme 版本为 `0.28.0`，Component Registry 兼容版本为 `1.1.0`，Content Contract 版本为 `2.1.0`。
 - 双仓库真实契约交叉验证、CMS 全量测试与 release check、WordPress Playground PHP 8.3 运行验证、前端发布包检查均已通过。
-- 前端代码已经提交并推送，WordPress Parent Theme `0.28.0` 已部署；CMS `1.15.2` 的 CDN 契约缓存修复已通过验收，正在构建部署。
+- CMS 与前端代码已经提交并推送；WordPress Parent Theme `0.28.0` 和 CMS `1.15.2` 均已部署并通过生产健康检查与契约同步验收。
 
 ## 问题状态
 
@@ -64,8 +64,11 @@
 - Frontend commit：`fcd1cb0e936b666c888ade7ea8b648799e3fb3be`，已推送到 `origin/main`。
 - Artifact Registry `engine:1.15.0`：`sha256:d53196d412ef48db42b47ea942c54e8815d5db2e12b6d96bb0e5cf8a07ce6b25`。
 - Artifact Registry `engine:1.15.1`：`sha256:83a3bf7f547245a8308adef97a616a717d1fc485fb5c5176fc257be4e7e31aaf`，Cloud Build ID `56f4cc76-1e5f-4d63-bdd7-630344f4976b`。
-- GCE `solo-to-china-engine` 已切换至 `1.15.1`；`https://engine.solotochina.com/api/health` 返回 `ok: true`、version `1.15.1`、strategy `1.5`、Frontend Contract `healthy`；`/api/ready` 返回 `ready: true`。
+- Artifact Registry `engine:1.15.2`：`sha256:f379eba4113503cbaa69949eba0f72bf49240b923bdb79180a2cdc6404c0a05f`，Cloud Build ID `644a4c95-2ce5-4dae-87a5-982388115665`。
+- CMS `1.15.2` 修复 commit：`44f08a6ef04770cb8dd2f64d3c1c5c2b078bd085`，已推送到 `origin/main`。
+- GCE `solo-to-china-engine` 已切换至 `1.15.2`；`https://engine.solotochina.com/api/health` 返回 `ok: true`、version `1.15.2`、strategy `1.5`、Frontend Contract `healthy`；`/api/ready` 返回 `ready: true`、database `ready`，WordPress 首页返回 HTTP 200。
 - 迁移 32 移除旧表对 Registry checksum 的错误唯一约束，改为非空 artifact checksum 的部分唯一索引，解决同一 Registry 配合新版 Page/Publish 契约时被误判 stale 的问题。
 - WordPress Parent Theme 已通过生产后台从 `0.27.0` 替换为 `0.28.0`。带版本参数的公开资源确认主题为 `0.28.0`；Registry、Page Schema、Publish Package Schema 与前端仓库产物逐字节一致，ETag 分别为 `2e8da42b4fa86f8e717b992d648cae222bbbbe59a2b9d78848f0181bb9415fd3`、`f44dc8bad0b15ec3c976e448b8d0e6e49a92afb4af80230aa36a736afa7c94c8`、`0a9b26f8aa01499320820214b398da17a517b042f2039dd6f216869d4ca52b62`。
 - 生产验收发现 Cloudflare 的无查询 URL 仍可能命中部署前缓存。CMS `1.15.2` 为三份 HTTPS 契约 URL 自动附加精确的 `FRONTEND_CONTRACT_COMMIT_SHA`，保留原查询参数并发送 `Cache-Control: no-cache`；新增回归测试已覆盖三份资源。
+- CMS 生产同步已激活新快照 `fcontract_e829b4d699df4aadb5755a1094111e28`，Registry checksum 为 `2e8da42b4fa86f8e717b992d648cae222bbbbe59a2b9d78848f0181bb9415fd3`，Frontend commit 为 `fcd1cb0e936b666c888ade7ea8b648799e3fb3be`，23 个组件全部可用且 `canCompose: true`。
 - 回滚点：GCE 启动脚本部署前生成的 SQLite 备份；前端上一版本 Parent Theme `0.27.0`；CMS 上一稳定镜像 `1.15.0`（并保留 `1.14.1`）。
