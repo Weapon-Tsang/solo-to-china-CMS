@@ -113,10 +113,11 @@ export class FrontendContractConsumer {
     this.repository.recordFrontendContractAttempt("syncing", null);
     try {
       const publishPackageSchemaSource = resolvePublishPackageSchemaSource(this.config);
+      const frontendCommitSha = String(this.config.frontendCommitSha || "").trim();
       const [registryResource, pageSchemaResource, publishPackageResource] = await Promise.all([
-        readJsonDocument(this.config.registrySource, this.fetch, this.config.timeoutMs),
-        readJsonDocument(this.config.pageSchemaSource, this.fetch, this.config.timeoutMs),
-        publishPackageSchemaSource ? readJsonDocument(publishPackageSchemaSource, this.fetch, this.config.timeoutMs) : null,
+        readJsonDocument(this.config.registrySource, this.fetch, this.config.timeoutMs, frontendCommitSha),
+        readJsonDocument(this.config.pageSchemaSource, this.fetch, this.config.timeoutMs, frontendCommitSha),
+        publishPackageSchemaSource ? readJsonDocument(publishPackageSchemaSource, this.fetch, this.config.timeoutMs, frontendCommitSha) : null,
       ]);
       const registry = normalizeRegistry(registryResource.document);
       const pageSchema = normalizePageSchema(pageSchemaResource.document, registry.schemaVersion, registry.contractVersion);
@@ -391,13 +392,17 @@ function emptyDiff() {
   return { addedComponents: [], removedComponents: [], deprecatedComponents: [], variantChanges: [], schemaChanges: [], pageSchemaChanged: false };
 }
 
-async function readJsonDocument(source, fetchImpl, timeoutMs = 15_000) {
+async function readJsonDocument(source, fetchImpl, timeoutMs = 15_000, frontendCommitSha = "") {
   const location = String(source || "").trim();
   if (!location) throw new FrontendContractError("MISSING_CONTRACT_SOURCE", "A Frontend Contract source is missing.");
   let text;
   let declaredChecksum = "";
   if (/^https:\/\//i.test(location)) {
-    const response = await fetchImpl(location, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
+    const requestUrl = versionedContractUrl(location, frontendCommitSha);
+    const response = await fetchImpl(requestUrl, {
+      headers: { accept: "application/json", "cache-control": "no-cache" },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!response.ok) throw new FrontendContractError("CONTRACT_FETCH_FAILED", `Unable to fetch ${location} (${response.status}).`);
     const declaredLength = Number.parseInt(response.headers.get("content-length") || "", 10);
     if (Number.isFinite(declaredLength) && declaredLength > MAX_CONTRACT_BYTES) throw new FrontendContractError("CONTRACT_TOO_LARGE", `Contract at ${location} exceeds ${MAX_CONTRACT_BYTES} bytes.`);
@@ -414,6 +419,14 @@ async function readJsonDocument(source, fetchImpl, timeoutMs = 15_000) {
   } catch {
     throw new FrontendContractError("INVALID_CONTRACT_JSON", `Contract source '${location}' is not valid JSON.`);
   }
+}
+
+function versionedContractUrl(location, frontendCommitSha) {
+  const commit = String(frontendCommitSha || "").trim().toLowerCase();
+  if (!/^[a-f0-9]{40,64}$/.test(commit)) return location;
+  const url = new URL(location);
+  url.searchParams.set("stc_frontend_commit", commit);
+  return url.href;
 }
 
 function checksumFromEtag(value) {

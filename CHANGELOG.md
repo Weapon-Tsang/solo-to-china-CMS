@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.15.2 — 2026-09-08
+
+- Version HTTPS Frontend Contract requests with the exact deployed frontend commit and request cache revalidation, preventing stale CDN artifacts from being accepted immediately after a frontend release.
+- Add production-derived regression coverage for all Registry, Page Schema, and Publish Package Schema source URLs while preserving existing query parameters.
+
 ## 1.15.1 — 2026-09-08
 
 - Rebuilt Frontend Contract snapshots around composite artifact identity so a Page or Publish Schema change can be activated while the Registry checksum stays stable.

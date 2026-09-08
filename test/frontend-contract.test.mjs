@@ -61,6 +61,45 @@ test("REST synchronization uses the generated artifact ETag as the exact Contrac
   assert.notEqual(sha256(JSON.stringify(JSON.parse(registryRaw))), expectedChecksum);
 });
 
+test("REST synchronization versions every Contract URL with the exact deployed frontend commit", async (t) => {
+  const { repository } = repositoryFixture(t);
+  const fixture = frontendContractFixture(t);
+  const registry = JSON.parse(fs.readFileSync(fixture.registryPath, "utf8"));
+  delete registry.frontendCommitSha;
+  const registryRaw = JSON.stringify(registry);
+  const pageRaw = fs.readFileSync(fixture.pageSchemaPath, "utf8");
+  const publishRaw = JSON.stringify({
+    type: "object",
+    contractVersion: registry.contractVersion,
+    publishPackageVersion: "1.0.0",
+  });
+  const commit = "fcd1cb0e936b666c888ade7ea8b648799e3fb3be";
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url: String(url), cacheControl: options?.headers?.["cache-control"] });
+    const raw = String(url).includes("component-registry") ? registryRaw
+      : String(url).includes("page-schema") ? pageRaw : publishRaw;
+    return new Response(raw, { status: 200 });
+  };
+  const consumer = new FrontendContractConsumer(repository, {
+    registrySource: "https://example.test/component-registry?channel=production",
+    pageSchemaSource: "https://example.test/page-schema",
+    publishPackageSchemaSource: "https://example.test/publish-schema",
+    frontendCommitSha: commit,
+  }, fetchImpl);
+
+  await consumer.sync();
+
+  assert.equal(requests.length, 3);
+  for (const request of requests) {
+    const url = new URL(request.url);
+    assert.equal(url.searchParams.get("stc_frontend_commit"), commit);
+    assert.equal(request.cacheControl, "no-cache");
+  }
+  assert.equal(new URL(requests[0].url).searchParams.get("channel"), "production");
+  assert.equal(consumer.diagnostics().active.frontendCommitSha, commit);
+});
+
 test("a Page Schema change creates a new composite snapshot when the Registry checksum is unchanged", async (t) => {
   const { repository } = repositoryFixture(t);
   const fixture = frontendContractFixture(t);

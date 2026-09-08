@@ -54,6 +54,8 @@ FRONTEND_CONTRACT_SYNC_HOURS=6
 FRONTEND_CONTRACT_TIMEOUT_MS=15000
 ```
 
+For HTTPS sources, the consumer appends the exact configured `FRONTEND_CONTRACT_COMMIT_SHA` as the `stc_frontend_commit` query parameter and requests revalidation. This makes each deployed frontend revision a distinct CDN cache key while preserving any existing source query parameters, so a release cannot silently synchronize the previous Contract from an edge cache.
+
 Contract-aware publishing is enabled only when both Registry and Page Schema sources are configured. The Publish Package Schema source should also be configured for production. Leaving both core sources unset enables **Legacy publishing mode**:
 
 ```text
