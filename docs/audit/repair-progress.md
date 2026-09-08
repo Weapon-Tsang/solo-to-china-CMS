@@ -199,3 +199,16 @@
 - 版本 `1.17.4` 将完成状态与收藏夹检查点在清理前原子写入 Chrome 本地存储；CMS 请求增加 45 秒超时，媒体请求增加 30 秒超时，超时任务保留在可恢复队列。
 - Extension 重启时会自动收敛遗留的 `running + completed` 会话；仍有失败项时进入 `paused_failed_items`，无失败项时完成检查点提交，不会丢失已采集内容。
 - 验收：Favorites Sync 专项测试 15/15 通过；`npm run check` 通过；`npm test` 197/197 通过；`npm run release:check` 39 项强制检查通过、0 失败。
+
+## Claim review and processing queue completion (2026-09-09)
+
+- Versions `1.17.5` through `1.17.8` reduce false-positive manual reviews, defer source coverage failure until extraction settles, expose live per-source processing queue state, and prioritize exact non-model Knowledge reconciliation ahead of the historical model backlog.
+- Claim normalization now recognizes compatible descriptive refinements, preserved semantic exclusivity, and multi-viewpoint `is_visible_from` facts. These cases remain traceable without forcing an operator to choose between compatible evidence.
+- The Source list now returns `list_number` plus `running`, `queued`, `cooldown`, or `failed` state, current stage, queue position, jobs ahead, attempts, timestamps, and a concise failure reason. The UI explains each state in plain Chinese.
+- Validation for `1.17.8`: `npm run check` passed; `npm test` passed 207/207; `npm run release:check` passed all 39 mandatory checks with zero failures.
+- Implementation commits `d03a336`, `bf77ea9`, `8a7059a`, `ac18670`, `5e0d8ac`, and `66b565f` were pushed to `origin/main`; remote `main` resolves to `66b565f6d003df2e8377453d4e7d62234dd9daa9`.
+- Cloud Build `eb2ef9de-ae44-4467-8ef6-2e209c7e978c` published `engine:1.17.8` at `sha256:95706f764923e67554a846980c8d2f3a622e2d7d0aa709f0fcfc65e501f4b2af`.
+- GCE `solo-to-china-engine` reports health version `1.17.8`; the frontend contract is healthy and composable, while `/api/ready` reports application and database ready.
+- The exact startup Knowledge rebuild completed without invoking the broad maintenance workflow. Production `/api/exceptions` now reports zero total exceptions and zero `CLAIM_REVIEW` items.
+- Production Source queue acceptance returned 74 numbered sources, including 2 actively running and 53 queued sources with consecutive queue positions and accurate jobs-ahead counts.
+- Rollback image: `engine:1.17.7` (`sha256:d4b9ec83e3031f1478e8536c6061caafb11c0717145479b505573129c273e397`).
