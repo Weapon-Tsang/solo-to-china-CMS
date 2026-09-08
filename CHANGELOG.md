@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.17.2 - 2026-09-08
+
+- Load owner-authorized Xiaohongshu CDN videos through a hostname-allowlisted, size-bounded path instead of misclassifying them as out-of-directory uploads.
+- Keep Vertex 429 quota failures durably queued with longer backoff and apply a shared AI queue cooldown instead of exhausting three short retries into a manual blocker.
+
 ## 1.17.1 - 2026-09-08
 
 - Pause Favorites Sync when Xiaohongshu verification interrupts note navigation, reduce resumed concurrency, and keep concurrent work recoverable.

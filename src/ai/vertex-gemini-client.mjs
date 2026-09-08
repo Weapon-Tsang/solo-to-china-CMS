@@ -7,6 +7,7 @@ import { ProviderRequestError, vertexStructuredOutput } from "./provider-schema.
 
 const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 const MAX_INLINE_VIDEO_BYTES = 14 * 1024 * 1024;
+const MAX_REMOTE_VIDEO_BYTES = 256 * 1024 * 1024;
 const SUPPORTED_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/quicktime", "video/mpeg", "video/webm", "video/avi", "video/wmv", "video/flv", "video/3gpp"]);
 
 export class VertexGeminiClient {
@@ -117,12 +118,9 @@ export class VertexGeminiClient {
       };
     }
     const asset = attempted[0];
-    const uploadRoot = path.resolve(this.config.sourceUploadsDir || "data/source-uploads");
-    const filename = path.resolve(String(asset.local_path || ""));
-    if (!filename.startsWith(`${uploadRoot}${path.sep}`)) throw new Error("Uploaded source video is outside the configured source directory.");
-    const mimeType = String(asset.mime_type || "").toLowerCase();
+    const prepared = await this.loadVideoAsset(asset);
+    const { bytes, mimeType, filename } = prepared;
     if (!SUPPORTED_VIDEO_MIME_TYPES.has(mimeType)) throw new Error("Uploaded source video has an unsupported MIME type.");
-    const bytes = await fs.readFile(filename);
     if (!bytes.length) throw new Error("Uploaded source video is empty.");
     const maxInlineVideoBytes = Number(this.config.maxInlineVideoBytes || MAX_INLINE_VIDEO_BYTES);
     if (bytes.length <= maxInlineVideoBytes) {
@@ -133,7 +131,7 @@ export class VertexGeminiClient {
     if (!/^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/.test(bucket)) {
       throw new Error("Uploaded video is too large for inline analysis. Configure MANUAL_SOURCE_GCS_BUCKET and grant the VM service account object create/delete access, then retry extraction.");
     }
-    const objectName = `manual-source-input/${crypto.randomUUID()}${path.extname(filename).toLowerCase()}`;
+    const objectName = `manual-source-input/${crypto.randomUUID()}${path.extname(filename || "")?.toLowerCase() || extensionForVideo(mimeType)}`;
     const accessToken = await this.accessToken();
     const uploadUrl = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`);
     uploadUrl.searchParams.set("uploadType", "media");
@@ -155,6 +153,30 @@ export class VertexGeminiClient {
     return { parts: [{ fileData: { fileUri: `gs://${bucket}/${objectName}`, mimeType } }], attempted: 1, cleanup };
   }
 
+  async loadVideoAsset(asset) {
+    if (asset?.local_path) {
+      const uploadRoot = path.resolve(this.config.sourceUploadsDir || "data/source-uploads");
+      const filename = path.resolve(String(asset.local_path));
+      if (!filename.startsWith(`${uploadRoot}${path.sep}`)) throw new Error("Uploaded source video is outside the configured source directory.");
+      return { bytes: await fs.readFile(filename), mimeType: String(asset.mime_type || "").toLowerCase(), filename };
+    }
+    const mediaUrl = xiaohongshuMediaUrl(asset?.remote_url);
+    if (!mediaUrl) throw Object.assign(new Error("Captured Xiaohongshu video has no trusted downloadable media URL."), { retryable: false });
+    const response = await this.fetch(mediaUrl, {
+      method: "GET",
+      headers: { referer: "https://www.xiaohongshu.com/" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(this.config.requestTimeoutMs || 360_000),
+    });
+    if (!response.ok) throw Object.assign(new Error(`Captured Xiaohongshu video download failed (${response.status}).`), {
+      code: "XHS_VIDEO_DOWNLOAD_FAILED", status: response.status, retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+    });
+    if (response.url && !xiaohongshuMediaUrl(response.url)) throw Object.assign(new Error("Captured Xiaohongshu video redirected outside trusted media hosts."), { retryable: false });
+    const mimeType = String(asset?.mime_type || response.headers.get("content-type") || "video/mp4").split(";", 1)[0].trim().toLowerCase();
+    const bytes = await readResponseBytes(response, Number(this.config.maxVideoBytes || MAX_REMOTE_VIDEO_BYTES));
+    return { bytes, mimeType, filename: new URL(mediaUrl).pathname };
+  }
+
   async accessToken() {
     if (this.config.accessToken) return this.config.accessToken;
     if (this.token && Date.now() < this.tokenExpiresAt) return this.token;
@@ -165,6 +187,48 @@ export class VertexGeminiClient {
     this.tokenExpiresAt = Date.now() + Math.max(60, Number(payload.expires_in || 300) - 60) * 1_000;
     return this.token;
   }
+}
+
+function xiaohongshuMediaUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== "https:" || !(host === "xhscdn.com" || host.endsWith(".xhscdn.com")
+      || host === "xhscdn.net" || host.endsWith(".xhscdn.net")
+      || host === "xiaohongshu.com" || host.endsWith(".xiaohongshu.com"))) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+async function readResponseBytes(response, maximumBytes) {
+  const declared = Number.parseInt(response.headers.get("content-length") || "", 10);
+  if (Number.isFinite(declared) && declared > maximumBytes) throw Object.assign(new Error("Captured Xiaohongshu video exceeds the configured size limit."), { retryable: false });
+  if (!response.body?.getReader) {
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > maximumBytes) throw Object.assign(new Error("Captured Xiaohongshu video exceeds the configured size limit."), { retryable: false });
+    return bytes;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maximumBytes) throw Object.assign(new Error("Captured Xiaohongshu video exceeds the configured size limit."), { retryable: false });
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, size);
+}
+
+function extensionForVideo(mimeType) {
+  return ({ "video/mp4": ".mp4", "video/quicktime": ".mov", "video/mpeg": ".mpeg", "video/webm": ".webm", "video/3gpp": ".3gp" })[mimeType] || ".mp4";
 }
 
 function modelCallIdentity(stage, schema, instructions, content) {

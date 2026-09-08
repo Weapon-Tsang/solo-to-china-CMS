@@ -78,6 +78,7 @@ export function loadConfig(env = process.env) {
       maxCompletionTokens: integer(env.VERTEX_AI_MAX_COMPLETION_TOKENS, 16_000),
       thinkingLevel: choice(String(env.VERTEX_AI_THINKING_LEVEL || "HIGH").toUpperCase(), ["MINIMAL", "LOW", "MEDIUM", "HIGH"], "HIGH"),
       sourceUploadsDir,
+      maxVideoBytes: integer(env.MANUAL_SOURCE_MAX_VIDEO_BYTES, 256 * 1024 * 1024),
       videoBucket: String(env.MANUAL_SOURCE_GCS_BUCKET || "").trim(),
     },
     manualSources: {

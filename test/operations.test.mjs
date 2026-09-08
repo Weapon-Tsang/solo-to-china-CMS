@@ -89,6 +89,30 @@ test("deterministic Contract failures do not enter the automatic retry loop", ()
   }
 });
 
+test("provider quota exhaustion remains queued beyond the normal attempt cap and cools down AI work", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-provider-quota-test-"));
+  const database = openDatabase(path.join(directory, "quota.sqlite"));
+  const repository = new Repository(database);
+  try {
+    const limitedId = repository.enqueue("extract_segment_claims", "segment-limited");
+    database.prepare("UPDATE jobs SET max_attempts=1 WHERE id=?").run(limitedId);
+    const limited = repository.claimJob();
+    const waitingId = repository.enqueue("audit_segment_coverage", "segment-waiting");
+    const error = Object.assign(new Error("Vertex Gemini request failed (429): Resource exhausted."), { status: 429, retryable: true });
+    repository.failJob(limited, error);
+    const retried = database.prepare("SELECT status, attempts, available_at FROM jobs WHERE id=?").get(limitedId);
+    const waiting = database.prepare("SELECT status, available_at FROM jobs WHERE id=?").get(waitingId);
+    assert.equal(retried.status, "queued");
+    assert.equal(retried.attempts, 1);
+    assert.ok(Date.parse(retried.available_at) > Date.now());
+    assert.equal(waiting.status, "queued");
+    assert.ok(Date.parse(waiting.available_at) > Date.now());
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("exception webhook sends a deduplicated operational payload with optional bearer auth", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-notification-test-"));
   const database = openDatabase(path.join(directory, "notifications.sqlite"));

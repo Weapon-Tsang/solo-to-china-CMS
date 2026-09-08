@@ -76,6 +76,26 @@ test("Vertex Gemini loads a small uploaded video as inline multimodal evidence",
   assert.equal(Buffer.from(result.parts[0].inlineData.data, "base64").toString(), "video fixture");
 });
 
+test("Vertex Gemini downloads an authorized Xiaohongshu CDN video for multimodal evidence", async () => {
+  const requests = [];
+  const client = new VertexGeminiClient({ maxInlineVideoBytes: 1024, maxVideoBytes: 2048, imageTimeoutMs: 1000 }, async (url, options) => {
+    requests.push({ url: String(url), options });
+    return new Response(Buffer.from("remote video fixture"), { status: 200, headers: { "content-type": "video/mp4", "content-length": "20" } });
+  });
+  const result = await client.videoParts([{ kind: "video", remote_url: "https://sns-video-bd.xhscdn.com/stream/note.mp4", mime_type: "" }]);
+  assert.equal(requests[0].options.headers.referer, "https://www.xiaohongshu.com/");
+  assert.equal(result.parts[0].inlineData.mimeType, "video/mp4");
+  assert.equal(Buffer.from(result.parts[0].inlineData.data, "base64").toString(), "remote video fixture");
+});
+
+test("Vertex Gemini rejects untrusted remote video hosts and oversized responses", async () => {
+  const client = new VertexGeminiClient({ maxVideoBytes: 4 }, async () => new Response(Buffer.from("oversized"), {
+    status: 200, headers: { "content-type": "video/mp4", "content-length": "9" },
+  }));
+  await assert.rejects(() => client.videoParts([{ kind: "video", remote_url: "https://example.com/video.mp4" }]), /trusted downloadable/);
+  await assert.rejects(() => client.videoParts([{ kind: "video", remote_url: "https://sns-video-bd.xhscdn.com/video.mp4" }]), /size limit/);
+});
+
 test("Vertex Gemini prepares every video in a multi-video source", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-vertex-videos-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

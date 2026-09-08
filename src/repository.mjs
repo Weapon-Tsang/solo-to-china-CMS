@@ -587,8 +587,11 @@ export class Repository {
   }
 
   failJob(job, error) {
-    const retry = error?.retryable !== false && job.attempts < job.max_attempts;
-    const baseDelayMs = Math.min(300_000, 10_000 * 2 ** Math.max(0, job.attempts - 1));
+    const quotaLimited = error?.status === 429 || /resource exhausted|quota|rate.?limit/i.test(String(error?.message || ""));
+    const retry = error?.retryable !== false && (quotaLimited || job.attempts < job.max_attempts);
+    const baseDelayMs = quotaLimited
+      ? Math.min(3_600_000, 60_000 * 2 ** Math.min(6, Math.max(0, job.attempts - 1)))
+      : Math.min(300_000, 10_000 * 2 ** Math.max(0, job.attempts - 1));
     const delayMs = Math.max(Number(error?.retryAfterMs || 0), Math.round(baseDelayMs * (0.8 + Math.random() * 0.4)));
     const availableAt = new Date(Date.now() + delayMs).toISOString();
     const timestamp = this.jobTimestamp();
@@ -599,6 +602,14 @@ export class Repository {
       WHERE id=? AND status='running' AND locked_by=?
     `).run(retry ? "queued" : "failed", availableAt, String(error?.message || error).slice(0, 4_000),
       retry ? null : timestamp, retry ? null : durationMs, timestamp, job.id, job.locked_by || this.workerId);
+    if (quotaLimited) this.db.prepare(`
+      UPDATE jobs SET available_at=CASE WHEN available_at<? THEN ? ELSE available_at END, updated_at=?
+      WHERE status='queued' AND type IN (
+        'extract_segment_claims','audit_segment_coverage','retry_segment_extraction','analyze_source_blueprint',
+        'analyze_source_diagnostic','resolve_entities','analyze_intake','plan_content','compose_frontend_page_plan',
+        'generate_draft','review_draft','revise_draft','compose_frontend_page'
+      )
+    `).run(availableAt, availableAt, timestamp);
     const message = String(error?.message || error).slice(0, 4_000);
     if (job.type === "extract_source") {
       this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
