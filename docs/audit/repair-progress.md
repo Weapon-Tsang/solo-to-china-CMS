@@ -124,3 +124,5 @@
 - 自动化验收明确未冒充真实账号测试：真实 Chrome Load Unpacked 与已登录小红书收藏页采集仍需在用户 Chrome profile 中执行；Kimi、WordPress、Search Console 外部服务未在隔离 gate 中调用。
 
 - Production failure diagnosis: extension 1.17.0 received HTTP 404 from the 1.16.1 Engine at /api/captures/identity-check, which the old client mislabeled as incomplete note content. Start and resume now preflight the Favorites Sync API, distinguish backend version, authentication, availability, and content errors, and clear stale errors before recovery.
+
+- Production deployment: commit 4b547fe was pushed to origin/main; Cloud Build 59794bf1-fc3a-4f70-acb1-046669525756 published engine:1.17.0 at sha256:ef0e2e67cb2602bdce94ca671a4cf85fbdd356a170f5c03e3887a15b47e38254. GCE solo-to-china-engine now reports health version 1.17.0 and ready database; the capture identity route returns 401 without a token and the capture-only host keeps /api/dashboard at 404. The startup deployment created a verified SQLite backup before replacement; rollback image is engine:1.16.1.
