@@ -1701,25 +1701,32 @@ export class Repository {
         const variants = Map.groupBy(rows, (row) => typedFact
           ? `${canonicalPredicate}:${JSON.stringify(row.structured_value.typed_value)}`
           : normalizeValue(row.value_text));
-        const ranked = [...variants.entries()].sort((a, b) => b[1].length - a[1].length);
+        const ranked = [...variants.entries()].sort((a, b) => b[1].length - a[1].length
+          || knowledgeValueSpecificity(b[1][0].value_text) - knowledgeValueSpecificity(a[1][0].value_text));
         const relations = [];
         for (let left = 0; left < rows.length; left += 1) {
           for (let right = left + 1; right < rows.length; right += 1) {
             const comparison = classifyClaimPair(rows[left], rows[right]);
-            relations.push({ claim_a_id: rows[left].id, claim_b_id: rows[right].id, ...comparison });
+            const reviewId = comparison.reviewType && !comparison.reviewType.includes("EXTRACTION_ERROR")
+              ? `claim_review_${sha256(`${rows[left].id}:${rows[right].id}:${comparison.reviewType}`).slice(0, 24)}`
+              : null;
+            const reviewStatus = reviewId ? previousReviewDecisions.get(reviewId)?.status || "pending" : null;
+            if (reviewId) {
+              this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
+                review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                .run(reviewId, destinationSlug, rows[left].id, rows[right].id, comparison.reviewType, comparison.reason, reviewStatus, timestamp, timestamp);
+            }
+            const effectiveComparison = reviewStatus === "dismissed"
+              ? { ...comparison, relation: "COMPATIBLE", canCoexist: true,
+                reason: `${comparison.reason} Operator dismissed this comparison as a false positive.` }
+              : comparison;
+            relations.push({ claim_a_id: rows[left].id, claim_b_id: rows[right].id, ...effectiveComparison });
             const relationId = `claim_relation_${sha256(`${rows[left].id}:${rows[right].id}`).slice(0, 24)}`;
             this.db.prepare(`INSERT INTO claim_relations(id, destination_slug, claim_a_id, claim_b_id,
               relation_type, can_coexist, reason, scope_json, created_at, updated_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-              .run(relationId, destinationSlug, rows[left].id, rows[right].id, comparison.relation,
-                comparison.canCoexist ? 1 : 0, comparison.reason, JSON.stringify(comparison.scope), timestamp, timestamp);
-            if (comparison.reviewType && !comparison.reviewType.includes("EXTRACTION_ERROR")) {
-              const reviewId = `claim_review_${sha256(`${rows[left].id}:${rows[right].id}:${comparison.reviewType}`).slice(0, 24)}`;
-              const status = previousReviewDecisions.get(reviewId)?.status || "pending";
-              this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
-                review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-                .run(reviewId, destinationSlug, rows[left].id, rows[right].id, comparison.reviewType, comparison.reason, status, timestamp, timestamp);
-            }
+              .run(relationId, destinationSlug, rows[left].id, rows[right].id, effectiveComparison.relation,
+                effectiveComparison.canCoexist ? 1 : 0, effectiveComparison.reason, JSON.stringify(effectiveComparison.scope), timestamp, timestamp);
           }
         }
         const conflicts = relations.filter((relation) => !relation.canCoexist);
@@ -4089,6 +4096,12 @@ function truncateText(value, max) {
 
 function normalizeValue(value) {
   return String(value).trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function knowledgeValueSpecificity(value) {
+  const normalized = normalizeValue(value);
+  if (/^(?:true|false|yes|no|present|absent|available|unavailable|有|无|是|否)$/.test(normalized)) return 0;
+  return normalized.length;
 }
 
 function normalizeClaimRole(value, subject = "", predicate = "") {

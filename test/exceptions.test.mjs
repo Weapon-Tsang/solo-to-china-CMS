@@ -129,3 +129,37 @@ test("extraction review dismissals survive rebuilds while legacy acknowledgement
   review = db.prepare("SELECT * FROM claim_review_cases").get();
   assert.equal(review.status, "pending");
 });
+
+test("dismissing a source-conflict false positive keeps it compatible after knowledge rebuild", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  for (const [externalId, value, quote] of [
+    ["aaaaaaaaaaaaaaaaaaaaaaaa", "true", "Advance reservation is required."],
+    ["bbbbbbbbbbbbbbbbbbbbbbbb", "false", "No advance reservation is required."],
+  ]) {
+    const source = repository.saveCapture(normalizeXiaohongshuCapture({
+      url: `https://www.xiaohongshu.com/explore/${externalId}`,
+      title: externalId,
+      text: `A selected source reports: ${quote}`,
+      images: [],
+    }));
+    repository.saveExtraction(source.id, {
+      source: { language: "en", summary: "Reservations", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+      claims: [{ key: "attraction.test.reservation_required", subject: "Test attraction", predicate: "reservation_required", value, qualifiers: [], source_quote: quote, confidence: 0.9 }],
+      blueprint: { format: "guide", hook: "Reservations", angle: "practical", sections: [], strengths: [], gaps: [] },
+    }, "test", "fixture-model");
+  }
+
+  repository.rebuildKnowledge("chongqing");
+  let review = db.prepare("SELECT * FROM claim_review_cases WHERE review_type='SOURCE_CONFLICT'").get();
+  assert.equal(review.status, "pending");
+  repository.decideClaimReviewCase(review.id, "dismissed", "Different ticket types were implied by the sources.");
+  repository.rebuildKnowledge("chongqing");
+
+  review = db.prepare("SELECT * FROM claim_review_cases WHERE id=?").get(review.id);
+  assert.equal(review.status, "dismissed");
+  const fact = repository.knowledgeForDestination("chongqing")[0];
+  assert.equal(fact.consensus_status, "corroborated");
+  assert.equal(fact.contradiction_count, 0);
+  assert.equal(fact.claim_relations[0].relation, "COMPATIBLE");
+  assert.equal(repository.listOperationalExceptions().some((item) => item.kind === "source_conflict" || item.kind === "knowledge"), false);
+});

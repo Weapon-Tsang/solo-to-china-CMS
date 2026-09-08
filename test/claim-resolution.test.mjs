@@ -141,6 +141,36 @@ test("matching time evidence with richer description is enrichment, not a hard-f
   assert.equal(enriched.reviewType, null);
 });
 
+test("descriptive feature values corroborate positive flags instead of creating a hard-fact conflict", () => {
+  const key = "attraction.hongyadong.night_illumination";
+  const enriched = classifyClaimPair(
+    { ...claim("illuminated with warm golden and red architectural lights", { predicate: "features_night_illumination", qualifiers: ["night"] }), normalized_key: key },
+    { ...claim("true", { predicate: "features_night_lighting", qualifiers: ["nighttime"] }), normalized_key: key },
+  );
+  assert.equal(enriched.relation, "ENRICHMENT");
+  assert.equal(enriched.canCoexist, true);
+  assert.equal(enriched.reviewType, null);
+
+  const conflict = classifyClaimPair(
+    { ...claim("true", { predicate: "features_night_lighting", sourceQuote: "Night lighting is present." }), normalized_key: key },
+    { ...claim("false", { predicate: "features_night_lighting", sourceQuote: "There is no night lighting." }), normalized_key: key },
+  );
+  assert.equal(conflict.relation, "CONFLICT");
+  assert.equal(conflict.reviewType, "CLAIM_CONFLICT");
+});
+
+test("feature translations from the same evidence sentence are paraphrases", () => {
+  const sourceQuote = "一年四季都绿的黄桷树";
+  const key = "attraction.huangge_ancient_road.vegetation";
+  const equivalent = classifyClaimPair(
+    { ...claim("Huangjue banyan trees that remain green all four seasons", { predicate: "features_vegetation", sourceQuote }), normalized_key: key },
+    { ...claim("一年四季都绿的黄桷树", { predicate: "feature", sourceQuote }), normalized_key: key },
+  );
+  assert.equal(equivalent.relation, "PARAPHRASE");
+  assert.equal(equivalent.canCoexist, true);
+  assert.equal(equivalent.reviewType, null);
+});
+
 test("knowledge aggregation persists enrichment relations without creating an exception", (t) => {
   const { repository } = repositoryFixture(t);
   for (const [externalId, value] of [["claima", "afternoon visit"], ["claimb", "afternoon (old residential buildings, daily life, cableway-through-building photo spot)"]]) {

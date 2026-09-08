@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.17.6 - 2026-09-09
+
+- Treat positive feature flags and their richer descriptions as compatible enrichment, and recognize translated feature values extracted from the same evidence as paraphrases instead of conflicts.
+- Normalize scope comparisons consistently and prefer informative Knowledge values over boolean shorthand when evidence support is tied.
+- Preserve an administrator's false-positive dismissal through later Knowledge rebuilds so the same reviewed pair does not reappear as a conflict.
+
 ## 1.17.5 - 2026-09-09
 
 - Prevent coverage audits and source finalization from starving behind a large FIFO segment-extraction backlog, while preserving each job's Vertex cooldown and availability time.

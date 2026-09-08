@@ -95,6 +95,22 @@ export function classifyClaimPair(left, right) {
       richer ? "Both claims share the same primary value; one adds rationale or qualifiers." : "The claims express the same primary value in different wording.", a, b);
   }
 
+  const featurePair = isFeatureClaim(a) && isFeatureClaim(b);
+  const sameEvidence = normalizeText(a.source_quote) && normalizeText(a.source_quote) === normalizeText(b.source_quote);
+  if (featurePair && sameEvidence && a.structured.polarity === b.structured.polarity) {
+    const timedEnrichment = hasSameTimeEvidence(a, b)
+      && normalizeText(a.value_text) !== normalizeText(b.value_text);
+    return result(timedEnrichment ? "ENRICHMENT" : "PARAPHRASE", true,
+      timedEnrichment
+        ? "The feature claims share the same time evidence; one adds descriptive detail."
+        : "The feature claims normalize the same source evidence in different languages or wording.", a, b);
+  }
+  if (featurePair && sameScope && a.structured.polarity === "positive" && b.structured.polarity === "positive"
+    && (isPositiveBoolean(aValue) !== isPositiveBoolean(bValue))) {
+    return result("ENRICHMENT", true,
+      "A positive boolean feature flag confirms the more descriptive feature value.", a, b);
+  }
+
   const opposingPolarity = hasNegation(a.value_text) !== hasNegation(b.value_text);
   if (sameScope && opposingPolarity && sameDecisionConcept(a, b)) {
     return result("CONFLICT", false, "The claims make opposite assertions under a compatible scope.", a, b, "CLAIM_CONFLICT");
@@ -166,6 +182,7 @@ function result(relation, canCoexist, reason, a, b, reviewType = null) {
 
 function inferClaimKind(predicate, value) {
   if (/recommend|best|good|worth|photo|visit.?time|体验|推荐|适合|值得/iu.test(`${predicate} ${value}`)) return "SOFT_RECOMMENDATION";
+  if (isFeaturePredicate(predicate)) return "CONTEXT_DEPENDENT";
   if (/depend|season|audience|condition|视情况|取决于/iu.test(`${predicate} ${value}`)) return "CONTEXT_DEPENDENT";
   return "HARD_FACT";
 }
@@ -210,9 +227,23 @@ function strongestKind(a, b) {
 }
 
 function sameDecisionConcept(a, b) {
+  const keyA = normalizeText(a.normalized_key);
+  const keyB = normalizeText(b.normalized_key);
   const predicateA = a.structured.canonical_predicate || normalizePredicate(a.predicate);
   const predicateB = b.structured.canonical_predicate || normalizePredicate(b.predicate);
-  return predicateA === predicateB || tokenOverlap(a.value_text, b.value_text) >= 0.35;
+  return Boolean(keyA && keyA === keyB) || predicateA === predicateB || tokenOverlap(a.value_text, b.value_text) >= 0.35;
+}
+
+function isFeatureClaim(claim) {
+  return isFeaturePredicate(claim?.predicate) || /(?:^|[._])features?(?:[._]|$)/iu.test(String(claim?.normalized_key || ""));
+}
+
+function isFeaturePredicate(value) {
+  return /^(?:feature|features(?:[_\s]|$)|has[_\s]|offers?[_\s]|includes?[_\s])/iu.test(normalizePredicate(value));
+}
+
+function isPositiveBoolean(value) {
+  return /^(?:true|yes|present|available|provided|有|是|存在|提供)$/iu.test(String(value || "").trim());
 }
 
 function hasTemporalScope(a, b) {
@@ -311,6 +342,6 @@ function parseObject(value) {
 }
 
 function hasNegation(value) { return NEGATION_PATTERN.test(String(value || "")); }
-function matching(text, pattern) { return cleanList(String(text || "").match(pattern) || []); }
+function matching(text, pattern) { return cleanList(String(text || "").match(pattern) || []).map(normalizeText); }
 function clean(value) { return String(value || "").replace(/\s+/g, " ").trim(); }
 function cleanList(values) { return [...new Set((values || []).map(clean).filter(Boolean))].slice(0, 24); }
