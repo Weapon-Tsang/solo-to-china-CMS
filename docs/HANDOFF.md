@@ -41,7 +41,7 @@ The audited Frontend Registry provides the QA-selected booking, search, banner, 
 - Queue completion validates an exact operator-pasted official URL, creates one canonical `affiliate_assets` row, links the original Opportunity, and then uses the existing Composer/Event/Performance path. CSV/JSON import is row-isolated and supports dry-run.
 - The composer runs after QA, derives block intent, selects decision-appropriate precision, falls back silently, enforces density, and stores an independent Overlay. Research packages never read these tables.
 - WordPress receives generated safe commercial blocks with disclosure and sponsored link attributes. Arbitrary HTML/script is rejected.
-- App version `1.16.0` and schema migration `33` are the expected local implementation baseline.
+- App version `1.16.1` and schema migration `34` are the expected local implementation baseline. Migration 34 aligns Queue tool guidance with the current Trip.com Affiliate Link builder while preserving task identity and completed/skipped records.
 - HTTPS Frontend Contract synchronization versions all three source URLs with the exact deployed frontend commit, preventing a CDN edge from returning the previous Registry/Page/Publish artifact immediately after deployment.
 
 Trip.com remains manual-only: an operator must create official links/embed configuration in the official platform and paste only those public artifacts into the Queue/Registry. Do not store credentials/cookies, automate dashboard login, crawl the affiliate dashboard, invent tracking parameters, or create low-value entity links at scale. See `docs/AFFILIATE_ASSET_QUEUE.md` for the operator workflow and provider-dependent limits.

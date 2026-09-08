@@ -2202,14 +2202,14 @@ export class Repository {
     this.db.prepare(`INSERT INTO affiliate_asset_queue_tasks(
       id,task_key,provider_account_id,provider,status,product_category,asset_type,scope_type,scope_key,
       destination_slug,area_key,route_key,entity_key,entity_name,trip_tool_type,trip_destination,trip_property,
-      trip_departure,trip_arrival,source_trip_url,trip_sub1,suggested_title,suggested_description,suggested_cta_label,
+      trip_departure,trip_arrival,trip_pickup_location,source_trip_url,trip_sub1,suggested_title,suggested_description,suggested_cta_label,
       priority,opportunity_id,reason,score,intent_strength,precision_uplift,source_type,affiliate_url,embed_config_json,
       valid_from,valid_until,invalid_reason,created_at,updated_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(task.id, task.taskKey, task.providerAccountId, task.provider, task.status, task.productCategory, task.assetType,
         task.scopeType, task.scopeKey, task.destinationSlug, task.areaKey, task.routeKey, task.entityKey, task.entityName,
-        task.tripToolType, task.tripDestination, task.tripProperty, task.tripDeparture, task.tripArrival, task.sourceTripUrl,
-        task.tripSub1, task.suggestedTitle, task.suggestedDescription, task.suggestedCtaLabel, task.priority,
+        task.tripToolType, task.tripDestination, task.tripProperty, task.tripDeparture, task.tripArrival, task.tripPickupLocation,
+        task.sourceTripUrl, task.tripSub1, task.suggestedTitle, task.suggestedDescription, task.suggestedCtaLabel, task.priority,
         task.opportunityId, task.reason, task.score, task.intentStrength, task.precisionUplift, task.sourceType,
         task.affiliateUrl, JSON.stringify(task.embedConfig || {}), task.validFrom, task.validUntil, "", timestamp, timestamp);
     return { created: true, reason: "created", task: this.getAffiliateQueueTask(task.id) };
@@ -2238,9 +2238,30 @@ export class Repository {
   }
 
   seedAffiliateQueue(filename) {
-    const results = loadAffiliateQueueSeeds(filename).map((task) => this.createAffiliateQueueTask(task, { sourceType: "SEED" }));
+    const results = loadAffiliateQueueSeeds(filename).map((seed) => {
+      const result = this.createAffiliateQueueTask(seed, { sourceType: "SEED" });
+      if (result.reason !== "task_exists" || result.task?.source_type !== "SEED" || ["COMPLETED", "SKIPPED"].includes(result.task?.status)) return result;
+      const fields = [
+        ["asset_type", seed.assetType], ["destination_slug", seed.destinationSlug], ["area_key", seed.areaKey],
+        ["route_key", seed.routeKey], ["entity_key", seed.entityKey], ["entity_name", seed.entityName],
+        ["trip_tool_type", seed.tripToolType], ["trip_destination", seed.tripDestination], ["trip_property", seed.tripProperty],
+        ["trip_departure", seed.tripDeparture], ["trip_arrival", seed.tripArrival], ["trip_pickup_location", seed.tripPickupLocation],
+        ["source_trip_url", seed.sourceTripUrl], ["suggested_title", seed.suggestedTitle],
+        ["suggested_description", seed.suggestedDescription], ["suggested_cta_label", seed.suggestedCtaLabel],
+        ["priority", seed.priority], ["reason", seed.reason],
+      ];
+      if (!fields.some(([column, value]) => String(result.task[column] ?? "") !== String(value ?? ""))) return result;
+      const timestamp = now();
+      this.db.prepare(`UPDATE affiliate_asset_queue_tasks SET asset_type=?,destination_slug=?,area_key=?,route_key=?,
+        entity_key=?,entity_name=?,trip_tool_type=?,trip_destination=?,trip_property=?,trip_departure=?,trip_arrival=?,
+        trip_pickup_location=?,source_trip_url=?,suggested_title=?,suggested_description=?,suggested_cta_label=?,
+        priority=?,reason=?,updated_at=? WHERE id=?`).run(...fields.map(([, value]) => value ?? ""), timestamp, result.task.id);
+
+      return { created: false, reason: "task_updated", task: this.getAffiliateQueueTask(result.task.id) };
+    });
     return {
       created: results.filter((item) => item.created).length,
+      updated: results.filter((item) => item.reason === "task_updated").length,
       existing: results.filter((item) => item.reason === "task_exists").length,
       suppressedByAsset: results.filter((item) => item.reason === "active_asset_exists").length,
       items: results.map((item) => item.task).filter(Boolean),

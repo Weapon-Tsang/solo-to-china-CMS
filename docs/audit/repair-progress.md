@@ -7,7 +7,7 @@
 ## 当前结论
 
 - A01–A19、B01–B10 的代码修复与优化全部完成。
-- CMS 生产版本为 `1.16.0`，数据库迁移为 1–33，内容生成策略版本为 `1.5`。
+- CMS 生产版本为 `1.16.0`，数据库迁移为 1–33，内容生成策略版本为 `1.5`；当前对应关系修正版本为 `1.16.1`，包含迁移 34。
 - 前端 Parent Theme 版本为 `0.28.0`，Component Registry 兼容版本为 `1.1.0`，Content Contract 版本为 `2.1.0`。
 - 双仓库真实契约交叉验证、CMS 全量测试与 release check、WordPress Playground PHP 8.3 运行验证、前端发布包检查均已通过。
 - CMS 与前端代码已经提交并推送；WordPress Parent Theme `0.28.0` 和 CMS `1.16.0` 均已部署并通过生产健康检查与契约同步验收。
@@ -92,3 +92,11 @@
 - GCE `solo-to-china-engine` 已切换至 `1.16.0`；`https://engine.solotochina.com/api/health` 返回 HTTP 200、`ok: true`、version `1.16.0`、strategy `1.5`、Frontend Contract `canCompose: true`；`/api/ready` 返回 HTTP 200、`ready: true`、database `ready`。
 - 生产显式 Seed 已执行一次：创建 4 个任务、0 个重复、0 个因现有 Asset 被抑制；当前 4 个任务均为 `READY_FOR_MANUAL`，未生成任何额外城市、路线或实体组合。
 - 本轮回滚点：启动脚本替换容器前生成的持久卷 SQLite 校验备份；上一稳定镜像 `engine:1.15.2`。
+
+## Trip.com Affiliate Link builder 对应关系修正（2026-09-08，待生产部署）
+
+- 根据用户提供的真实 Trip.com Affiliate Link builder 截图复核：目的地级 ATTRACTION/TOUR_ACTIVITY 不应打开 Custom Link，而应使用 `Attractions & Tours Page` 并填写 `Select a destination*`；Custom Link 保留给具体实体、门票、Tour 或已知精确 URL。
+- 新增工具映射：`ATTRACTIONS_TOURS`、`FLIGHT_HOTEL`、`CAR_RENTALS`、`AIRPORT_TRANSFERS`、`HOMEPAGE`；新增 `trip_pickup_location`，并对 Hotels、Flights、Trains、Flight + Hotel、Attractions & Tours、Car Rentals 的后台必填字段执行生成前校验。
+- Migration 34 会把未完成的目的地级 Attraction/Tour Custom Link 任务升级为 `ATTRACTIONS_TOURS`，保留已完成/已跳过任务的工具和既有 Asset，不改变 `task_key` 或 `trip_sub1`。
+- Seed 同步现在会刷新未完成 Seed 的操作指引，同时保持任务身份和 Sub ID 不变；生产部署后会重新执行幂等 Seed，核对北京/上海任务的工具类型。
+- 修正版本为 `1.16.1`；本地专项对应关系与迁移测试 36/36 通过，全量测试 166/166 通过，`npm run check` 与 `npm run release:check`（39 项强制检查）均通过，0 失败。

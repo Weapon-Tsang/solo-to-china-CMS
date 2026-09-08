@@ -92,6 +92,8 @@ Frozen Research Draft + structured blocks + active Affiliate Assets
 
 Migration 33 adds the persistent manual setup queue. After a composition is stored, only HIGH/VERY_HIGH Opportunities at or above `AFFILIATE_OPPORTUNITY_THRESHOLD` may create a semantic queue task. An exact active Asset or an existing semantic task suppresses creation; a broad fallback does not suppress a more precise Entity/Route/Area task. Seed tasks are loaded only from `config/affiliate-queue-seeds.json`, so there is no combinatorial catalog expansion.
 
+Migration 34 aligns the Queue's tool enum and required operator fields with the current Trip.com Affiliate Link builder. It upgrades incomplete destination-level attraction/tour tasks to `ATTRACTIONS_TOURS`, adds car-rental pickup location storage, and leaves stable task keys, `trip_sub1`, terminal tasks, and linked Assets intact.
+
 ```text
 Explicit Seed ───────────────────────────────┐
 HIGH/VERY_HIGH Opportunity → dedup/suppress ├→ Queue Task → operator uses official Trip.com UI

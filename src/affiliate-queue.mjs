@@ -8,11 +8,14 @@ import {
 } from "./commercial.mjs";
 
 export const AFFILIATE_QUEUE_STATUSES = new Set(["PENDING", "READY_FOR_MANUAL", "COMPLETED", "SKIPPED", "INVALID"]);
-export const TRIP_TOOL_TYPES = new Set(["HOTELS", "FLIGHTS", "TRAINS", "CUSTOM_LINK", "SEARCH_BOX"]);
+export const TRIP_TOOL_TYPES = new Set([
+  "CUSTOM_LINK", "HOMEPAGE", "HOTELS", "FLIGHTS", "TRAINS", "ATTRACTIONS_TOURS",
+  "FLIGHT_HOTEL", "CAR_RENTALS", "AIRPORT_TRANSFERS", "SEARCH_BOX",
+]);
 export const AFFILIATE_QUEUE_EXPORT_FIELDS = [
   "task_id", "task_key", "status", "provider", "product_category", "asset_type", "scope_type", "scope_key",
   "destination_slug", "area_key", "route_key", "entity_key", "entity_name", "trip_tool_type", "trip_destination",
-  "trip_property", "trip_departure", "trip_arrival", "source_trip_url", "trip_sub1", "suggested_title", "priority",
+  "trip_property", "trip_departure", "trip_arrival", "trip_pickup_location", "source_trip_url", "trip_sub1", "suggested_title", "priority",
   "opportunity_id", "score", "reason", "affiliate_url",
 ];
 
@@ -64,9 +67,10 @@ export function normalizeAffiliateQueueTask(input, { sourceType = "SEED" } = {})
     areaKey: singleLine(input.areaKey || input.area_key, 300), routeKey: singleLine(input.routeKey || input.route_key, 300),
     entityKey: singleLine(input.entityKey || input.entity_key, 300), entityName: singleLine(input.entityName || input.entity_name, 300),
     tripToolType, tripDestination: singleLine(input.tripDestination || input.trip_destination || input.destinationSlug || input.destination_slug, 300),
-    tripProperty: singleLine(input.tripProperty || input.trip_property || (scopeType === "ENTITY" && productCategory === "HOTEL" ? input.entityName || input.entity_name : ""), 300),
+    tripProperty: singleLine(input.tripProperty || input.trip_property || (scopeType === "ENTITY" && productCategory === "HOTEL" ? input.entityName || input.entity_name || scopeKey : ""), 300),
     tripDeparture: singleLine(input.tripDeparture || input.trip_departure || (scopeType === "ROUTE" ? routeParts(input.routeKey || input.route_key || scopeKey)[0] : ""), 300),
     tripArrival: singleLine(input.tripArrival || input.trip_arrival || (scopeType === "ROUTE" ? routeParts(input.routeKey || input.route_key || scopeKey)[1] : ""), 300),
+    tripPickupLocation: singleLine(input.tripPickupLocation || input.trip_pickup_location || (productCategory === "CAR_RENTAL" ? input.entityName || input.entity_name || input.areaKey || input.area_key || input.destinationSlug || input.destination_slug || scopeKey : ""), 300),
     sourceTripUrl, tripSub1: affiliateQueueSub1({ productCategory, scopeType, scopeKey }),
     suggestedTitle, suggestedDescription: truncate(input.suggestedDescription || input.suggested_description || "", 1_000),
     suggestedCtaLabel: singleLine(input.suggestedCtaLabel || input.suggested_cta_label || defaultCta(productCategory), 100),
@@ -79,6 +83,7 @@ export function normalizeAffiliateQueueTask(input, { sourceType = "SEED" } = {})
   };
   if (!/^[a-z0-9_]+$/.test(normalized.tripSub1)) throw new AffiliateQueueValidationError("trip_sub1 may contain lowercase a-z, 0-9, and underscore only.");
   if (!normalized.tripSub1.startsWith("stc_")) throw new AffiliateQueueValidationError("trip_sub1 must use the stc_ prefix.");
+  validateTripToolInputs(normalized);
   if (assetType === "PROMOTION" && (!normalized.validFrom || !normalized.validUntil)) throw new AffiliateQueueValidationError("PROMOTION tasks require validFrom and validUntil.");
   if (normalized.validFrom && normalized.validUntil && normalized.validFrom >= normalized.validUntil) throw new AffiliateQueueValidationError("validUntil must be later than validFrom.");
   return normalized;
@@ -194,7 +199,17 @@ function defaultTripTool(category, scope, assetType) {
   if (category === "HOTEL") return "HOTELS";
   if (category === "FLIGHT" && scope === "ROUTE") return "FLIGHTS";
   if (category === "TRAIN" && scope === "ROUTE") return "TRAINS";
+  if (["ATTRACTION", "TOUR_ACTIVITY"].includes(category) && ["DESTINATION", "COUNTRY"].includes(scope)) return "ATTRACTIONS_TOURS";
+  if (category === "FLIGHT_HOTEL" && scope === "ROUTE") return "FLIGHT_HOTEL";
+  if (category === "CAR_RENTAL" && ["ENTITY", "AREA", "DESTINATION"].includes(scope)) return "CAR_RENTALS";
+  if (category === "AIRPORT_TRANSFER") return "AIRPORT_TRANSFERS";
   return "CUSTOM_LINK";
+}
+function validateTripToolInputs(task) {
+  if (task.tripToolType === "HOTELS" && !task.tripDestination && !task.tripProperty) throw new AffiliateQueueValidationError("HOTELS tasks require tripDestination or tripProperty.");
+  if (["FLIGHTS", "TRAINS", "FLIGHT_HOTEL"].includes(task.tripToolType) && (!task.tripDeparture || !task.tripArrival)) throw new AffiliateQueueValidationError(`${task.tripToolType} tasks require tripDeparture and tripArrival.`);
+  if (task.tripToolType === "ATTRACTIONS_TOURS" && !task.tripDestination) throw new AffiliateQueueValidationError("ATTRACTIONS_TOURS tasks require tripDestination.");
+  if (task.tripToolType === "CAR_RENTALS" && !task.tripPickupLocation) throw new AffiliateQueueValidationError("CAR_RENTALS tasks require tripPickupLocation.");
 }
 function defaultTitle(category, scope, scopeKey, entityName) {
   const subject = entityName || String(scopeKey || "China").split(/[-_.]/).filter(Boolean).map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" ");

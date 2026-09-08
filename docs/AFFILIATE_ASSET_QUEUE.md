@@ -41,11 +41,18 @@ There is no city, hotel, attraction, route, airport, or country Cartesian expans
 | Specific hotel | Hotels page → Property | `DEEP_LINK` |
 | Flight route | Flights page → Departure + Arrival | `DEEP_LINK` |
 | Train route | Trains page → Departure + Arrival | `DEEP_LINK` |
-| Attraction, ticket, tour, specific page | Custom Link | Scope-specific `DEEP_LINK` or explicit category link |
+| Attraction/tour destination | Attractions & Tours Page → Select a destination | Destination `CATEGORY_LINK` |
+| Specific attraction, ticket, tour, or existing exact page | Custom Link → paste exact Trip.com URL | Scope-specific `DEEP_LINK` |
+| Flight + hotel route | Flight + Hotel → Departure + Arrival | Route `DEEP_LINK` |
+| Car rental location | Car Rentals → Pick-up Location | Destination/Area/Entity link |
+| Airport transfer | Airport Transfers | Scope-specific link; current builder exposes no destination field |
+| Explicit broad homepage task | Trip.com Homepage | Only for an operator-maintained task; never an automatic fallback |
 | Search Box | Structured Search Box config | `SEARCH_BOX`; no HTML/script |
 | Promotion | Explicit task with start and end dates | `PROMOTION`; both dates required |
 
 Banner tasks are not generated as a default fallback.
+
+These labels and required fields are based on the operator-provided 2026-09-08 screenshots of the live Trip.com Affiliate Link builder. Destination-level Attraction and Tour tasks must use **Attractions & Tours Page**, not Custom Link. Custom Link remains the correct path for a specific attraction/entity or an already known exact Trip.com page URL.
 
 ## URL and embed safety
 

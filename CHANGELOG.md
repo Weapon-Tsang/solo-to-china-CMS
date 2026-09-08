@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.16.1 — 2026-09-08
+
+- Aligned Queue guidance with the current Trip.com Affiliate Link builder, including Attractions & Tours Page destination tasks and the visible Flight + Hotel, Car Rentals, Airport Transfers, and Homepage tools.
+- Added migration 34 to preserve existing tasks while correcting incomplete attraction destination guidance and extending required pickup-location data.
+- Made explicit Seed synchronization refresh mutable operator guidance without changing task keys, Sub IDs, completed tasks, or skipped tasks.
+
 ## 1.16.0 — 2026-09-08
 
 - Added a durable Trip.com manual Affiliate Asset Setup Queue with explicit seed tasks, qualifying Opportunity intake, stable task keys and Sub IDs, and exact-asset suppression.

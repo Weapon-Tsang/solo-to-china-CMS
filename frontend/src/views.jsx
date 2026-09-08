@@ -534,6 +534,11 @@ function tripTaskGuidance(task) {
   if (task.trip_tool_type === "HOTELS") return task.trip_property ? ["打开 Hotels page", "Property: " + task.trip_property] : ["打开 Hotels page", "Destination: " + (task.trip_destination || task.destination_slug)];
   if (task.trip_tool_type === "FLIGHTS") return ["打开 Flights page", "Departure: " + task.trip_departure, "Arrival: " + task.trip_arrival];
   if (task.trip_tool_type === "TRAINS") return ["打开 Trains page", "Departure: " + task.trip_departure, "Arrival: " + task.trip_arrival];
+  if (task.trip_tool_type === "ATTRACTIONS_TOURS") return ["打开 Attractions & Tours Page", "Select a destination*: " + (task.trip_destination || task.destination_slug)];
+  if (task.trip_tool_type === "FLIGHT_HOTEL") return ["打开 Flight + Hotel", "Departure*: " + task.trip_departure, "Arrival*: " + task.trip_arrival];
+  if (task.trip_tool_type === "CAR_RENTALS") return ["打开 Car Rentals", "Pick-up Location: " + task.trip_pickup_location];
+  if (task.trip_tool_type === "AIRPORT_TRANSFERS") return ["打开 Airport Transfers", "填写本任务的 trip_sub1；当前后台无需目的地字段"];
+  if (task.trip_tool_type === "HOMEPAGE") return ["打开 Trip.com Homepage", "填写本任务的 trip_sub1"];
   if (task.trip_tool_type === "SEARCH_BOX") return ["创建结构化 Search Box", "只记录官方 HTTPS src 与结构化配置，不粘贴 HTML 或 script"];
   return ["打开 Custom Link", task.source_trip_url ? "使用下方已确认的 Trip.com 页面 URL" : "查找对应的 " + task.scope_type + " 页面：" + task.scope_key];
 }

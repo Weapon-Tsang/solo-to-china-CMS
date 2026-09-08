@@ -82,6 +82,7 @@ test("initial tasks come only from the explicit small seed file", () => {
   const seeds = loadAffiliateQueueSeeds();
   assert.equal(seeds.length, 4);
   assert.deepEqual(new Set(seeds.map((item) => item.destinationSlug)), new Set(["beijing", "shanghai"]));
+  assert.ok(seeds.filter((item) => item.productCategory === "ATTRACTION").every((item) => item.tripToolType === "ATTRACTIONS_TOURS"));
 });
 
 test("seeding is idempotent and does not expand combinations", (t) => {
@@ -89,6 +90,36 @@ test("seeding is idempotent and does not expand combinations", (t) => {
   assert.equal(repository.seedAffiliateQueue().created, 4);
   assert.equal(repository.seedAffiliateQueue().existing, 4);
   assert.equal(repository.listAffiliateQueueTasks().length, 4);
+});
+
+test("seed sync refreshes operator guidance without changing task identity or trip_sub1", (t) => {
+  const repository = fixture(t);
+  const before = createTask(repository, {
+    productCategory: "ATTRACTION", tripToolType: "CUSTOM_LINK", scopeKey: "beijing",
+    destinationSlug: "beijing", tripDestination: "Beijing", suggestedTitle: "Tickets and attractions in Beijing",
+  });
+  const report = repository.seedAffiliateQueue();
+  const after = repository.getAffiliateQueueTask(before.id);
+  assert.equal(report.updated, 1);
+  assert.equal(after.trip_tool_type, "ATTRACTIONS_TOURS");
+  assert.equal(after.task_key, before.task_key);
+  assert.equal(after.trip_sub1, before.trip_sub1);
+});
+
+test("Trip.com tool mappings match the current Affiliate Link builder fields", () => {
+  assert.equal(normalizeAffiliateQueueTask({ provider: "Trip.com", productCategory: "ATTRACTION", scopeType: "DESTINATION", scopeKey: "beijing", destinationSlug: "beijing" }).tripToolType, "ATTRACTIONS_TOURS");
+  assert.equal(normalizeAffiliateQueueTask({ provider: "Trip.com", productCategory: "ATTRACTION", scopeType: "ENTITY", scopeKey: "forbidden-city", entityName: "Forbidden City" }).tripToolType, "CUSTOM_LINK");
+  assert.equal(normalizeAffiliateQueueTask({ provider: "Trip.com", productCategory: "FLIGHT_HOTEL", scopeType: "ROUTE", scopeKey: "singapore-shanghai" }).tripToolType, "FLIGHT_HOTEL");
+  const car = normalizeAffiliateQueueTask({ provider: "Trip.com", productCategory: "CAR_RENTAL", scopeType: "DESTINATION", scopeKey: "beijing", destinationSlug: "beijing" });
+  assert.equal(car.tripToolType, "CAR_RENTALS");
+  assert.equal(car.tripPickupLocation, "beijing");
+  assert.equal(normalizeAffiliateQueueTask({ provider: "Trip.com", productCategory: "AIRPORT_TRANSFER", scopeType: "DESTINATION", scopeKey: "beijing", destinationSlug: "beijing" }).tripToolType, "AIRPORT_TRANSFERS");
+});
+
+test("specialized Trip.com tools require the fields marked required by the builder", () => {
+  assert.throws(() => normalizeAffiliateQueueTask({ provider: "Trip.com", productCategory: "ATTRACTION", scopeType: "DESTINATION", scopeKey: "beijing", tripToolType: "ATTRACTIONS_TOURS" }), /tripDestination/);
+  assert.throws(() => normalizeAffiliateQueueTask({ provider: "Trip.com", productCategory: "FLIGHT_HOTEL", scopeType: "ROUTE", scopeKey: "singapore" }), /tripDeparture and tripArrival/);
+  assert.throws(() => normalizeAffiliateQueueTask({ provider: "Trip.com", productCategory: "CAR_RENTAL", scopeType: "DESTINATION", scopeKey: "" }), /scopeKey/);
 });
 
 test("an exact active Affiliate Asset suppresses an equivalent queue task", (t) => {
