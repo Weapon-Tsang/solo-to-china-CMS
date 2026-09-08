@@ -7,10 +7,10 @@
 ## 当前结论
 
 - A01–A19、B01–B10 的代码修复与优化全部完成。
-- CMS 生产版本为 `1.15.2`，数据库迁移为 1–32，内容生成策略版本为 `1.5`。
+- CMS 生产版本为 `1.16.0`，数据库迁移为 1–33，内容生成策略版本为 `1.5`。
 - 前端 Parent Theme 版本为 `0.28.0`，Component Registry 兼容版本为 `1.1.0`，Content Contract 版本为 `2.1.0`。
 - 双仓库真实契约交叉验证、CMS 全量测试与 release check、WordPress Playground PHP 8.3 运行验证、前端发布包检查均已通过。
-- CMS 与前端代码已经提交并推送；WordPress Parent Theme `0.28.0` 和 CMS `1.15.2` 均已部署并通过生产健康检查与契约同步验收。
+- CMS 与前端代码已经提交并推送；WordPress Parent Theme `0.28.0` 和 CMS `1.16.0` 均已部署并通过生产健康检查与契约同步验收。
 
 ## 问题状态
 
@@ -73,9 +73,9 @@
 - CMS 生产同步已激活新快照 `fcontract_e829b4d699df4aadb5755a1094111e28`，Registry checksum 为 `2e8da42b4fa86f8e717b992d648cae222bbbbe59a2b9d78848f0181bb9415fd3`，Frontend commit 为 `fcd1cb0e936b666c888ade7ea8b648799e3fb3be`，23 个组件全部可用且 `canCompose: true`。
 - 回滚点：GCE 启动脚本部署前生成的 SQLite 备份；前端上一版本 Parent Theme `0.27.0`；CMS 上一稳定镜像 `1.15.0`（并保留 `1.14.1`）。
 
-## Trip.com Affiliate Asset Setup Queue（2026-09-08，待生产部署）
+## Trip.com Affiliate Asset Setup Queue（2026-09-08，生产已发布）
 
-- 状态：实现和本地验收完成，待提交、推送与生产部署。
+- 状态：实现、本地验收、提交、推送和生产部署全部完成。
 - 本地应用版本已更新为 `1.16.0`；内容生产策略仍为 `1.5`，未因实现型功能改动而抬升策略版本。
 - 新增 Migration 33：`affiliate_asset_queue_tasks`，包含唯一 `task_key`、唯一且不可变的 `trip_sub1`、状态/Opportunity/Provider 索引，以及 Asset 完成关联。
 - 新增显式 Seed 文件 `config/affiliate-queue-seeds.json`；初始范围仅为 Beijing/Shanghai 的 HOTEL/ATTRACTION 四项，不做城市、酒店、路线、机场或实体组合扩张。
@@ -87,3 +87,7 @@
 - 架构边界未改变：Research、Claim、Knowledge、Topic ranking、Brief、Research Draft 和 QA 不读取 Queue；新 Asset 复用既有 Commercial Composer 与 Event/Performance。
 - 验收：`npm run check` 通过；`npm test` 162/162 通过；`npm run release:check` 39 项强制检查全部通过、0 失败；本地真实浏览器完成空状态、Seed、筛选、手工 URL 回填、Task 完成、Asset 生成和待办数刷新验证。
 - 用户已在实现过程中更新授权：完工并通过验收后执行 git commit、push 与部署。
+- 实现 commit：`3d63a08eb794a10a40ba1a52294db5b89deacd3d`，已推送到 `origin/main`。
+- Artifact Registry `engine:1.16.0`：`sha256:c142cf12b66c3559ccaea39a7af9cd7aad48590289ca9efd7f62d03dcb94dad3`，Cloud Build ID `69d1ff56-3078-4610-9d32-9ebe3c12c57d`。
+- GCE `solo-to-china-engine` 已切换至 `1.16.0`；`https://engine.solotochina.com/api/health` 返回 HTTP 200、`ok: true`、version `1.16.0`、strategy `1.5`、Frontend Contract `canCompose: true`；`/api/ready` 返回 HTTP 200、`ready: true`、database `ready`。
+- 本轮回滚点：启动脚本替换容器前生成的持久卷 SQLite 校验备份；上一稳定镜像 `engine:1.15.2`。
