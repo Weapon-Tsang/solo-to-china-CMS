@@ -7,6 +7,8 @@
 - 来源列表现在直接显示“提取 x/y · 审计 x/y”；即使尚未完成最终 Claim 汇总，操作员也能看到真实处理进度。
 - 新增回归测试，验证较新的完成阶段任务可越过旧提取积压，且尚在冷却期的高优先级任务不会提前执行。
 - 验收：`npm run check` 通过；`npm test` 198/198 通过；`npm run release:check` 39 项强制检查通过、0 失败。
+- 生产部署：提交 `d1e913b` 已推送至 `origin/main`；Cloud Build `53c807d3-97bc-4194-9a7b-aff2caada90c` 发布 `engine:1.17.5`，镜像摘要为 `sha256:3039af0edc711a82e6a75e0b5798b38e3474e4ccaded0f8bfee7b75f9633f4fe`。GCE `solo-to-china-engine` 返回 health version `1.17.5`、ready/database `ready`。
+- 生产效果：活动队列由 916 降至 830；覆盖审计由部署前 14 个增至 109 个，最终来源汇总成功 4 个，4 个来源已生成合计 266 条 Claim，异常来源为 0。剩余任务继续按冷却和自适应并发规则处理。
 
 更新时间：2026-09-08
 
