@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.17.8 - 2026-09-09
+
+- Prioritize non-model Knowledge rebuilds ahead of the historical model-extraction backlog so startup reconciliation promptly removes review cases that the current semantic rules now classify as compatible.
+- Keep source finalization first and continue respecting every job's availability time and provider cooldown.
+
 ## 1.17.7 - 2026-09-09
 
 - Treat different valid viewpoints in is_visible_from Claims as multi-value enrichment rather than a single-value conflict.

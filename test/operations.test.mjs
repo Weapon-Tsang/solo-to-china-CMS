@@ -151,13 +151,18 @@ test("completion-stage jobs bypass an older extraction backlog without bypassing
     const extractionId = repository.enqueue("extract_segment_claims", "segment-old");
     const auditId = repository.enqueue("audit_segment_coverage", "segment-ready");
     const finalizeId = repository.enqueue("finalize_source_extraction", "source-ready");
+    const knowledgeId = repository.enqueue("rebuild_knowledge", "chongqing");
     database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-01T00:00:00.000Z", extractionId);
     database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-02T00:00:00.000Z", auditId);
     database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-03T00:00:00.000Z", finalizeId);
+    database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-04T00:00:00.000Z", knowledgeId);
 
     const finalize = repository.claimJob();
     assert.equal(finalize.id, finalizeId);
     repository.completeJob(finalize.id);
+    const knowledge = repository.claimJob();
+    assert.equal(knowledge.id, knowledgeId);
+    repository.completeJob(knowledge.id);
     const audit = repository.claimJob();
     assert.equal(audit.id, auditId);
     repository.completeJob(audit.id);

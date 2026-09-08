@@ -12,6 +12,8 @@
 - 1.17.6 部署重算后，人工 Claim 审核由大量历史误报降至 2 条；生产原文核对确认剩余两条仍可自动处理：“只有玻璃”已被 full glass exterior / devoid of walls and pillars 完整表达，来福士可从两个不同观察点看到也可同时成立。
 - 版本 1.17.7 增加精确的全玻璃语义覆盖和多观察点 is_visible_from 聚合规则；真正缺失的 only 限制仍由控制用例拦截。
 - 1.17.7 验收：npm run check 通过；npm test 207/207 通过；npm run release:check 的 39 项强制检查全部通过、0 失败。
+- 由于生产仍有约 1100 个历史模型任务，版本 1.17.8 将不调用模型的 rebuild_knowledge 提升到来源汇总之后、模型重试与覆盖审计之前，确保部署启动重算不会被旧提取积压长期阻塞；任务 available_at 与 Vertex 共享冷却边界保持不变。
+- 1.17.8 验收：Knowledge/队列定向回归 26/26 通过；npm run release:check 的 39 项强制检查全部通过、0 失败，内含完整 207/207 测试。
 
 ## Claim / Knowledge 语义冲突误报修复（2026-09-09）
 

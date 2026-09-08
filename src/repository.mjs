@@ -546,9 +546,10 @@ export class Repository {
         ORDER BY
           CASE type
             WHEN 'finalize_source_extraction' THEN 0
-            WHEN 'retry_segment_extraction' THEN 1
-            WHEN 'audit_segment_coverage' THEN 2
-            ELSE 3
+            WHEN 'rebuild_knowledge' THEN 1
+            WHEN 'retry_segment_extraction' THEN 2
+            WHEN 'audit_segment_coverage' THEN 3
+            ELSE 4
           END,
           created_at ASC
         LIMIT 1
