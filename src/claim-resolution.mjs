@@ -254,7 +254,7 @@ function isFeatureClaim(claim) {
 
 function isFeaturePredicate(value) {
   const normalized = normalizePredicate(value);
-  return /^(?:feature|features(?:_|$)|has_|offers?_|includes?_|visual_appearance|illuminated(?:_|$)|(?:is_)?visible_from|can_be_seen_from|viewed_from)/iu.test(normalized)
+  return /^(?:feature|features(?:_|$)|has_|offers?_|includes?_|visual_appearance|illuminated(?:_|$)|(?:is_)?visible_from|can_be_seen_from|viewed_from|viewpoint(?:_|$)|serves_as_viewpoint_for)/iu.test(normalized)
     || FEATURE_DESCRIPTOR_PATTERN.test(normalized);
 }
 

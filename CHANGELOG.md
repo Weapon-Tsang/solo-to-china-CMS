@@ -5,6 +5,7 @@
 - Show both source titles, original links, exact text context, and linked source images directly in Claim review cards.
 - Add an authenticated, bounded image-preview endpoint backed by the stored review derivative, with HTTPS original-image fallback for legacy captures.
 - Disable final Claim decisions whenever either side lacks reviewable evidence, and offer per-source re-extraction instead of asking the operator to guess.
+- Treat viewpoint locations, offered views, and viewpoint-for relations as compatible multi-value evidence instead of single-value hard facts.
 
 ## 1.17.8 - 2026-09-09
 

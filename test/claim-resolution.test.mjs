@@ -220,6 +220,24 @@ test("semantic exclusivity and multi-viewpoint visibility do not create manual r
   assert.equal(visibility.relation, "ENRICHMENT");
   assert.equal(visibility.canCoexist, true);
   assert.equal(visibility.reviewType, null);
+
+  const viewpointKey = "attraction.hongyadong.viewpoint";
+  for (const [leftPredicate, leftValue, rightPredicate, rightValue] of [
+    ["viewpoint_location", "visible across the river from the opposite riverbank promenade and railing",
+      "offers_view", "panoramic view of illuminated Hongyadong and Qiansimen Bridge with water reflections"],
+    ["viewpoint_location", "visible across the river from the opposite riverbank promenade and railing",
+      "serves_as_viewpoint_for", "Hongyadong and Qiansimen Bridge"],
+    ["offers_view", "panoramic view of illuminated Hongyadong and Qiansimen Bridge with water reflections",
+      "serves_as_viewpoint_for", "Hongyadong and Qiansimen Bridge"],
+  ]) {
+    const viewpoint = classifyClaimPair(
+      { ...claim(leftValue, { predicate: leftPredicate }), normalized_key: viewpointKey },
+      { ...claim(rightValue, { predicate: rightPredicate, sourceQuote: "[image]" }), normalized_key: viewpointKey },
+    );
+    assert.equal(viewpoint.relation, "ENRICHMENT");
+    assert.equal(viewpoint.canCoexist, true);
+    assert.equal(viewpoint.reviewType, null);
+  }
 });
 
 test("knowledge aggregation persists enrichment relations without creating an exception", (t) => {
