@@ -7,7 +7,7 @@
 ## 当前结论
 
 - A01–A19、B01–B10 的代码修复与优化全部完成。
-- CMS 生产版本为 `1.16.1`，数据库迁移为 1–34，内容生成策略版本为 `1.5`。
+- CMS 生产版本为 `1.17.2`，数据库迁移为 1–35，内容生成策略版本为 `1.5`。
 - 前端 Parent Theme 版本为 `0.28.0`，Component Registry 兼容版本为 `1.1.0`，Content Contract 版本为 `2.1.0`。
 - 双仓库真实契约交叉验证、CMS 全量测试与 release check、WordPress Playground PHP 8.3 运行验证、前端发布包检查均已通过。
 - CMS 与前端代码已经提交并推送；WordPress Parent Theme `0.28.0` 和 CMS `1.16.1` 均已部署并通过生产健康检查与契约同步验收。
@@ -129,3 +129,8 @@
 
 - Xiaohongshu verification recovery: production run 928db209-ac11-49b8-87f6-db9ab04034ab captured 51 of 74 notes, but 23 verification-redirected tabs were misclassified as terminal SELECTOR_MISMATCH failures and the run was incorrectly completed. Version 1.17.1 pauses on interrupted navigation, reduces concurrency to one, retains failed work, blocks completion while failures remain, and reopens the existing 1.17.0 partial run without duplicating its 51 successful captures. Validation passed 191/191 tests, check, and all 39 mandatory release gates.
 - Production deployment: commit f7cda1d was pushed to origin/main; Cloud Build e1a239ac-5931-4d5e-94b4-f67cb6f7bf8c published engine:1.17.1 at sha256:89eff92b53057f1883fa1a4df686688eb048e5d73c5bab5cdfa91eac02f469a7. GCE solo-to-china-engine reports health version 1.17.1 and ready database. The previous production rollback image is engine:1.17.0.
+
+- Vertex/XHS extraction recovery: version 1.17.2 downloads owner-authorized Xiaohongshu CDN video evidence through an HTTPS hostname allowlist with redirect, MIME, byte-limit, and timeout enforcement. Vertex 429 quota errors remain durably queued beyond the normal attempt limit, use one-minute-to-one-hour exponential backoff, and apply a shared cooldown to queued AI work.
+- Validation: `npm test` passed 194/194; `npm run check` passed; `npm run release:check` passed all 39 mandatory checks with zero failures. The focused Vertex and operations suite passed 17/17.
+- Production deployment: commit `0d211f1` was pushed to `origin/main`; Cloud Build `11c73f06-760f-4712-aaca-e768e5558eb3` published `engine:1.17.2` at `sha256:102d5c52b4f3142de1c94916924530046c4d09414a29e7c3c08ff663eef31ddd`. GCE `solo-to-china-engine` reports health version `1.17.2`, application ready, and database ready; the startup deployment created a verified SQLite backup before replacement. The previous production rollback image is `engine:1.17.1`.
+- Production incident acceptance: both `extract_segment_claims` blockers (`segment_ef3cce445ea45388cfcb82e5` and `segment_94ed3853f3c4cf3ca3c7a5fe`) were retried after deployment. The operational exception queue fell from two items to zero; quota-constrained work remains automatically queued instead of requiring manual retry. Runtime configuration and the Vertex request path both use Google Cloud project `project-4bcb9146-c37b-43b0-b11` in location `global`.
