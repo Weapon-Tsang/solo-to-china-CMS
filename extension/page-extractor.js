@@ -76,7 +76,7 @@
     if (failure) return { ok: false, error: failure };
     const externalId = location.pathname.match(/\/(?:explore|discovery\/item)\/([A-Za-z0-9]+)/)?.[1]
       || location.pathname.match(/\/board\/[A-Za-z0-9]+\/([A-Za-z0-9]+)/)?.[1];
-    if (!externalId) return error("SELECTOR_MISMATCH", "The worker tab is not on a Xiaohongshu note detail page.", false);
+    if (!externalId) return error("NAVIGATION_INTERRUPTED", "Xiaohongshu interrupted the note navigation. Complete any login or verification prompt, then resume.", false);
 
     let root = first(SELECTORS.noteRoot);
     while (!root && Date.now() - startedAt < 30_000) {
@@ -232,7 +232,11 @@
 
   function detectBlockingPage() {
     const text = String(document.body?.innerText || "").slice(0, 30_000);
+    const route = `${location.pathname}${location.search}`;
     const hasNoteDetail = Boolean(document.querySelector("#noteContainer,[class*='note-detail'],main article"));
+    if (/captcha|verify|verification|security|challenge/i.test(route) && !hasNoteDetail) {
+      return detail("VERIFICATION_REQUIRED", "Xiaohongshu requires manual verification. Complete it in Chrome, then resume.", false);
+    }
     if (/登录后|登录查看更多|手机号登录|扫码登录|log\s*in|sign\s*in/i.test(text) && !hasNoteDetail) {
       return detail("NOT_LOGGED_IN", "Xiaohongshu login is required. Log in manually, then resume.", false);
     }

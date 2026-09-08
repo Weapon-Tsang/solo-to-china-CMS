@@ -127,6 +127,8 @@ export function recoverSession(input, now = new Date().toISOString()) {
     session.discoveryComplete = false;
     session.cursor = { ...(session.cursor || {}), domOffset: 0, scrollY: 0, collectionEnd: false, collectionEndStreak: 0 };
     session.scan = { ...(session.scan || {}), consecutiveKnown: 0, windowNew: 0 };
+    session.stats.discovered = Math.max(0, Number(session.stats.discovered || 0) - legacyNavigationKeys.size);
+    session.stats.new = Math.max(0, Number(session.stats.new || 0) - legacyNavigationKeys.size);
     session.stats.failed = session.queue.filter((task) => task.status === "failed").length;
     session.stats.retrying = 0;
   }
@@ -136,6 +138,35 @@ export function recoverSession(input, now = new Date().toISOString()) {
   }
   session.activeTasks = [];
   if (!["completed", "cancelled"].includes(session.status)) session.status = session.status.startsWith("paused_") ? session.status : "paused_recovered";
+  session.updatedAt = now;
+  return session;
+}
+
+export function hasUnresolvedFailures(session) {
+  return Number(session?.stats?.failed || 0) > 0
+    || Boolean(session?.queue?.some((task) => task.status === "failed"));
+}
+
+export function prepareSessionResume(input, now = new Date().toISOString()) {
+  const previousStatus = String(input?.status || "");
+  const session = recoverSession(input, now);
+  for (const task of session.queue) {
+    if (task.status === "failed" || task.status.startsWith("paused_")) {
+      task.status = "queued";
+      task.attempts = 0;
+      task.retryAt = null;
+      task.tabId = null;
+      task.error = null;
+    }
+  }
+  session.status = "running";
+  session.completedAt = null;
+  session.lastError = null;
+  session.stats.failed = 0;
+  session.stats.retrying = 0;
+  if (previousStatus === "paused_verification_required") session.concurrency = 1;
+  if (session.queue.some((task) => task.status === "queued")) session.phase = "acquisition";
+  else if (session.phase === "completed") session.phase = "discovery";
   session.updatedAt = now;
   return session;
 }
@@ -203,14 +234,15 @@ export function transitionTask(sessionInput, taskId, status, details = {}) {
 
 export function compactSessionState(sessionInput, terminalRetention = 50) {
   const session = structuredClone(sessionInput);
-  const terminalStates = new Set(["captured", "duplicate", "failed", "cancelled"]);
-  const terminal = session.queue.filter((task) => terminalStates.has(task.status));
-  const retainedTerminalIds = new Set(terminal.slice(-Math.max(0, terminalRetention)).map((task) => task.taskId));
-  session.queue = session.queue.filter((task) => !terminalStates.has(task.status) || retainedTerminalIds.has(task.taskId));
-  for (const task of session.queue) if (terminalStates.has(task.status)) delete task.navigationUrl;
+  const compactableStates = new Set(["captured", "duplicate", "cancelled"]);
+  const terminal = session.queue.filter((task) => compactableStates.has(task.status));
+  const retention = Math.max(0, terminalRetention);
+  const retainedTerminalIds = new Set((retention ? terminal.slice(-retention) : []).map((task) => task.taskId));
+  session.queue = session.queue.filter((task) => !compactableStates.has(task.status) || retainedTerminalIds.has(task.taskId));
+  for (const task of session.queue) if (compactableStates.has(task.status)) delete task.navigationUrl;
   const required = new Set([
     ...(session.currentTopIdentityKeys || []),
-    ...session.queue.filter((task) => !terminalStates.has(task.status)).map((task) => task.identityKey),
+    ...session.queue.filter((task) => !compactableStates.has(task.status)).map((task) => task.identityKey),
   ]);
   const recentLimit = Math.max(500, Math.min(2_000, Number(session.config?.queueHighWatermark || 500) * 2));
   for (const key of (session.seenIdentityKeys || []).slice(-recentLimit)) required.add(key);

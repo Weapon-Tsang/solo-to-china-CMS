@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.17.1 - 2026-09-08
+
+- Pause Favorites Sync when Xiaohongshu verification interrupts note navigation, reduce resumed concurrency, and keep concurrent work recoverable.
+- Keep failed tasks available for retry and prevent a run with unresolved failures from being reported as complete.
+- Let an already completed partial 1.17.0 run retry or rediscover only its failed items while preserving successful captures.
+
 ## 1.17.0 - 2026-09-08
 
 - Fixed real Xiaohongshu board acquisition to use each visible card's authorized detail navigation URL while keeping CMS identity/storage token-free; legacy unfinished queues are rediscovered, temporary completeness gaps retry, and one failed note no longer blocks the collection.

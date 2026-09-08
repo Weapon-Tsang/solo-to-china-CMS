@@ -19,6 +19,7 @@ const ERROR_MESSAGES = Object.freeze({
   TAB_LOAD_TIMEOUT: "笔记页面加载超时，系统会按重试策略再次尝试。",
   SELECTOR_MISMATCH: "页面结构暂时无法识别，请刷新页面；如仍失败可使用“保存当前笔记”。",
   CONTENT_NOT_READY: "笔记内容尚未完整加载，请稍后重试。",
+  NAVIGATION_INTERRUPTED: "小红书中断了笔记页面跳转，请完成登录或安全验证后继续同步。",
   CAPTURE_API_UNAVAILABLE: "当前 CMS 版本不支持收藏同步，请先将 CMS 升级并部署到 1.17.0 或更高版本。",
   CAPTURE_SERVER_UNAVAILABLE: "CMS 服务暂时不可用，请检查服务状态后继续同步。",
   CAPTURE_REJECTED: "笔记采集结果不完整，已阻止进入研究流程。",
@@ -127,7 +128,8 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
   elements.concurrencyMode.onchange = () => { elements.customConcurrencyField.hidden = elements.concurrencyMode.value !== "custom"; };
   if (CLOUD_CONFIGURED) elements.settingsPanel.hidden = true;
 
-  const activeSession = session && !["completed", "cancelled"].includes(session.status) ? session : null;
+  const completedWithFailures = session?.status === "completed" && Number(session?.stats?.failed || 0) > 0;
+  const activeSession = session && (!['completed', 'cancelled'].includes(session.status) || completedWithFailures) ? session : null;
   const last = history?.find((item) => item.scopeKey === currentScope?.key) || history?.[0];
   elements.scope.textContent = activeSession?.scopeLabel || currentScope?.label
     || (currentPageKind === "album_overview" ? "专辑总览（请选择“笔记”或一个专辑）" : session?.scopeLabel || last?.scopeLabel || "未识别到收藏夹");
@@ -141,10 +143,11 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
   ].map(([label, value]) => `<div><span>${label}</span><strong>${Number(value || 0)}</strong></div>`).join("");
 
   const running = session?.status === "running";
-  const paused = session?.status?.startsWith("paused_");
-  elements.actions.hidden = !session || ["completed", "cancelled"].includes(session.status);
+  const paused = session?.status?.startsWith("paused_") || completedWithFailures;
+  elements.actions.hidden = !session || (session.status === "cancelled") || (session.status === "completed" && !completedWithFailures);
   elements.pause.hidden = !running;
   elements.resume.hidden = !paused;
+  elements.resume.textContent = completedWithFailures || session?.status === "paused_failed_items" ? "重试失败项" : "继续同步";
   elements.stopQueue.hidden = !running || session.discoveryComplete;
   elements.sync.disabled = running || paused || (!activeSession && !currentScope);
   elements.full.disabled = running || paused || (!activeSession && !currentScope);
@@ -178,7 +181,10 @@ function renderStatus({ session, currentScope, currentPageKind, settings, stats,
     elements.status.className = "error";
     return;
   }
-  if (session.status === "completed") {
+  if ((session.status === "completed" || session.status === "paused_failed_items") && Number(stats.failed || 0) > 0) {
+    elements.status.textContent = `同步已暂停：${stats.failed} 项尚未采集，完成小红书验证后点击“重试失败项”。已采集的 ${stats.captured} 项不会重复。`;
+    elements.status.className = "error";
+  } else if (session.status === "completed") {
     elements.status.textContent = stats.new
       ? `同步完成：CMS 已接收 ${stats.captured + stats.duplicate} 条新增收藏，失败 ${stats.failed} 条。`
       : "同步完成：当前收藏夹没有需要采集的新内容。";

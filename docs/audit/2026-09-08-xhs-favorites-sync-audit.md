@@ -1,7 +1,7 @@
 # Xiaohongshu Favorites Sync vNext audit and implementation record
 
 Date: 2026-09-08  
-Release: CMS/Extension 1.17.0  
+Release: CMS/Extension 1.17.1
 Schema: migrations 1–35  
 Content Strategy: 1.5 (unchanged)
 
@@ -76,7 +76,7 @@ CMS extraction adapts within 4–8, continues to use durable leases/heartbeats/C
 
 Coverage includes identity/canonicalization, safe checkpoint stop, reordering, unlimited multi-batch backfill, recovery, adaptive concurrency, migration/backfill/indexes, concurrent idempotency, large chunked Capture fidelity, upload expiry, completeness/rights/provenance, long-text segmentation, multi-image batching, multi-video handling, oversized derivatives, output-token resegmentation, API auth/telemetry, and existing pipeline regressions.
 
-Final automated results: `npm run check` passed; `npm test` passed 188/188; `npm run release:check` passed all 39 mandatory checks with zero failures and reported `READY FOR EXTENSION INTEGRATION`. The release gate included migrations 1–35, SQLite integrity, isolated HTTP/API/UI smoke, Extension static validation, and the real sibling Frontend Contract gate. Real signed-in Chrome/Xiaohongshu acceptance and configured external Kimi/WordPress/Search Console calls remain explicitly manual/external checks.
+Final automated results: `npm run check` passed; `npm test` passed 191/191; `npm run release:check` passed all 39 mandatory checks with zero failures and reported `READY FOR EXTENSION INTEGRATION`. The release gate included migrations 1–35, SQLite integrity, isolated HTTP/API/UI smoke, Extension static validation, and the real sibling Frontend Contract gate. Real signed-in Chrome/Xiaohongshu acceptance and configured external Kimi/WordPress/Search Console calls remain explicitly manual/external checks.
 
 ## 11. Documentation / Version
 

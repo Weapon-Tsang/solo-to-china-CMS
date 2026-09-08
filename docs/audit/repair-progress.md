@@ -113,14 +113,14 @@
 - Extension 交互优化：弹窗、按钮、统计项和全部连接参数已汉化；状态栏会实时显示收藏夹已识别、扫描、采集、重试、暂停、恢复、完成和错误指引，并每秒刷新进度。
 - 真实页面兼容修复：支持小红书新版 `/board/{id}` 收藏夹路由，弹窗会直接读取当前活动标签并显示 Scope；首页和单篇笔记不再被误判为收藏夹。
 - 最终加固：历史全量同步必须连续两次确认收藏列表到底，避免懒加载短暂空窗导致提前结束；对应核心专项测试、全量测试与发布门禁均已复验通过。
-- 状态：实现与专项自动化验收已完成，应用/Extension 版本更新为 `1.17.0`，数据库迁移更新为 `35`，Content Strategy 保持 `1.5`。
+- 状态：实现与专项自动化验收已完成，应用/Extension 版本更新为 `1.17.1`，数据库迁移更新为 `35`，Content Strategy 保持 `1.5`。
 - 已完成 MV3 background service worker、持久化 Scope/checkpoint/queue、批量 identity、连续已知安全停止、无 Session 总量上限的完整历史流式回填、4–12 自适应浏览器并发、标签复用、暂停/恢复/取消/重启恢复和可选 Auto Sync。
 - 已保留 Manual Save；登录墙和验证页只会暂停，不读取或上传账号、密码、Cookie、LocalStorage Token，也不绕过验证码或调用未授权私有 API。
 - 已完成零损失链路：完整 raw text/DOM、全部图片和视频、完整内容 hash、Capture Version、completeness manifest、大 JSON 分片校验、AI 图片分批、多视频处理、大图原始 provenance + derivative、模型输出超限自动再分段，partial Source 禁止进入 extraction。
 - Migration 35 已加入 Source/Asset rights/provenance/completeness、immutable capture_versions、Source Version-aware segments、XHS identity 唯一约束、active Job dedupe key 和 favorites_sync_runs 聚合遥测。
 - Favorites Sync 与 Extension Manual Save 统一为 owner-confirmed commercial-use/editing/redistribution/publishable 权利语义，且保留完整 provenance；Recommendation 人工批准边界没有改变。
 - 已更新 README、Architecture、Manual Source Ingestion、Research Boundary、Operations、Content Strategy interpretation/changelog、Handoff、`.env.example`、Changelog、release check 和审计记录。
-- 最终验收：`npm run check` 通过；`npm test` 189/189 通过；`npm run release:check` 39 项强制检查通过、0 失败，结果为 `READY FOR EXTENSION INTEGRATION`。Release gate 同时通过真实 sibling Frontend Contract、迁移 1–35、SQLite integrity、隔离 HTTP/API/UI smoke 与 Extension 静态清单/资产验证。
+- 最终验收：`npm run check` 通过；`npm test` 191/191 通过；`npm run release:check` 39 项强制检查通过、0 失败，结果为 `READY FOR EXTENSION INTEGRATION`。Release gate 同时通过真实 sibling Frontend Contract、迁移 1–35、SQLite integrity、隔离 HTTP/API/UI smoke 与 Extension 静态清单/资产验证。
 - 自动化验收明确未冒充真实账号测试：真实 Chrome Load Unpacked 与已登录小红书收藏页采集仍需在用户 Chrome profile 中执行；Kimi、WordPress、Search Console 外部服务未在隔离 gate 中调用。
 
 - Production failure diagnosis: extension 1.17.0 received HTTP 404 from the 1.16.1 Engine at /api/captures/identity-check, which the old client mislabeled as incomplete note content. Start and resume now preflight the Favorites Sync API, distinguish backend version, authentication, availability, and content errors, and clear stale errors before recovery.

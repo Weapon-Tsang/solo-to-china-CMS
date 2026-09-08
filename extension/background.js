@@ -1,6 +1,7 @@
 import {
-  applyIdentityBatch, classifyCaptureApiError, compactSessionState, createSession, initialConcurrency, nextConcurrency,
+  applyIdentityBatch, classifyCaptureApiError, compactSessionState, createSession, hasUnresolvedFailures, initialConcurrency, nextConcurrency,
   isFavoritesAlbumOverviewUrl, normalizeSettings, recoverSession, scopeFromUrl, shouldStopDiscovery, transitionTask,
+  prepareSessionResume,
 } from "./sync-core.js";
 
 const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";
@@ -163,6 +164,10 @@ async function acquireQueue(session) {
   if (!ready.length) {
     const retrying = session.queue.some((task) => task.status === "retry_wait");
     if (retrying) return session;
+    if (hasUnresolvedFailures(session)) {
+      session.status = "paused_failed_items";
+      return session;
+    }
     if (!session.discoveryComplete && !session.stopAfterQueue) { session.phase = "discovery"; return session; }
     session.phase = "completed";
     return session;
@@ -230,13 +235,19 @@ async function handleTaskError(sessionId, taskId, caught) {
     const task = current.queue.find((item) => item.taskId === taskId);
     if (!task || current.status === "cancelled" || task.status === "cancelled") return current;
     let session = current;
+    if (["paused_login_required", "paused_verification_required"].includes(current.status)
+      && !["NOT_LOGGED_IN", "VERIFICATION_REQUIRED", "NAVIGATION_INTERRUPTED"].includes(error.code)) {
+      session = transitionTask(session, taskId, "queued", { error, retryAt: null, tabId: null });
+      return session;
+    }
     if (error.code === "NOT_LOGGED_IN") {
       session = transitionTask(session, taskId, "paused_login_required", { error });
       session.status = "paused_login_required";
       session.stats.paused = (session.stats.paused || 0) + 1;
-    } else if (error.code === "VERIFICATION_REQUIRED") {
+    } else if (["VERIFICATION_REQUIRED", "NAVIGATION_INTERRUPTED"].includes(error.code)) {
       session = transitionTask(session, taskId, "paused_verification_required", { error });
       session.status = "paused_verification_required";
+      session.concurrency = 1;
       session.stats.paused = (session.stats.paused || 0) + 1;
     } else if (error.code === "CAPTURE_UNAUTHORIZED") {
       session = transitionTask(session, taskId, "failed", { error });
@@ -349,11 +360,15 @@ async function pauseSync(status) {
   return { ok: true, session };
 }
 async function resumeSync() {
+  const current = await loadState();
+  if (!current || current.status === "cancelled" || (current.status === "completed" && !hasUnresolvedFailures(current))) {
+    return { ok: false, error: syncError("NO_RESUMABLE_SESSION", "No resumable sync session was found.", false) };
+  }
   try {
     await assertFavoritesSyncApi();
   } catch (error) {
     await mutateState(null, (current) => {
-      if (!current || ["completed", "cancelled"].includes(current.status)) return current;
+      if (!current || current.status === "cancelled" || (current.status === "completed" && !hasUnresolvedFailures(current))) return current;
       current.status = "paused_error";
       current.lastError = serializeError(error);
       return current;
@@ -361,12 +376,8 @@ async function resumeSync() {
     throw error;
   }
   const session = await mutateState(null, (current) => {
-    if (!current || ["completed", "cancelled"].includes(current.status)) return current;
-    const recovered = recoverSession(current);
-    recovered.status = "running";
-    recovered.lastError = null;
-    for (const task of recovered.queue) if (task.status.startsWith("paused_")) task.status = "queued";
-    return recovered;
+    if (!current || current.status === "cancelled" || (current.status === "completed" && !hasUnresolvedFailures(current))) return current;
+    return prepareSessionResume(current);
   });
   if (!session || session.status !== "running") return { ok: false, error: syncError("NO_RESUMABLE_SESSION", "No resumable sync session was found.", false) };
   void drive();
@@ -389,6 +400,12 @@ async function cancelSync() {
 async function stopAfterQueue() { const session = await mutateState(null, (current) => { if (!current) return current; current.stopAfterQueue = true; current.phase = "acquisition"; return current; }); if (!session) return { ok: false }; void drive(); return { ok: true, session }; }
 
 async function completeSession(session) {
+  if (hasUnresolvedFailures(session)) {
+    session.status = "paused_failed_items";
+    await saveState(session);
+    await reportSession(session).catch(() => null);
+    return;
+  }
   session.status = "completed"; session.completedAt = new Date().toISOString(); session.updatedAt = session.completedAt;
   const scopes = await loadScopes();
   scopes[session.scopeKey] = { scopeUrl: session.scopeUrl, lastSuccessfulSyncAt: session.completedAt,

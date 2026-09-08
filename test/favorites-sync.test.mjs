@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  applyIdentityBatch, canonicalizeNoteUrl, classifyCaptureApiError, compactSessionState, createSession, nextConcurrency,
+  applyIdentityBatch, canonicalizeNoteUrl, classifyCaptureApiError, compactSessionState, createSession, hasUnresolvedFailures, nextConcurrency,
   isFavoritesAlbumOverviewUrl, normalizeCard, noteIdentity, recoverSession, scopeFromUrl, shouldStopDiscovery, transitionTask,
+  prepareSessionResume,
 } from "../extension/sync-core.js";
 
 test("capture API errors distinguish an outdated backend from content rejection", () => {
@@ -123,6 +124,8 @@ test("recovery rediscovers unfinished legacy tasks that lack the visible card na
   assert.equal(recovered.phase, "discovery");
   assert.equal(recovered.queue.length, 0);
   assert.equal(recovered.seenIdentityKeys.length, 0);
+  assert.equal(recovered.stats.discovered, 0);
+  assert.equal(recovered.stats.new, 0);
 });
 
 test("streaming session compaction bounds terminal task history while retaining active identities", () => {
@@ -135,6 +138,46 @@ test("streaming session compaction bounds terminal task history while retaining 
   assert.equal(compacted.queue.filter((task) => task.status === "queued").length, 30);
   for (const task of compacted.queue.filter((item) => item.status === "queued")) assert.ok(compacted.seenIdentityKeys.includes(task.identityKey));
   assert.equal(compacted.stats.captured, 150);
+});
+
+test("failed tasks remain recoverable and a completed partial run can resume without duplicating captures", () => {
+  let session = createSession({ scope, mode: "full" });
+  session = applyIdentityBatch(session, [card("saved"), card("blocked")], identities([card("saved"), card("blocked")], false));
+  session = transitionTask(session, session.queue[0].taskId, "captured");
+  session = transitionTask(session, session.queue[1].taskId, "failed", { error: { code: "NAVIGATION_INTERRUPTED" } });
+  session.status = "completed";
+  session.phase = "completed";
+  session.completedAt = "2026-09-08T15:00:00.000Z";
+  const compacted = compactSessionState(session, 0);
+  assert.equal(compacted.queue.length, 1);
+  assert.equal(compacted.queue[0].status, "failed");
+  assert.ok(compacted.queue[0].navigationUrl);
+  assert.equal(hasUnresolvedFailures(compacted), true);
+  const resumed = prepareSessionResume(compacted);
+  assert.equal(resumed.status, "running");
+  assert.equal(resumed.phase, "acquisition");
+  assert.equal(resumed.queue[0].status, "queued");
+  assert.equal(resumed.queue[0].attempts, 0);
+  assert.equal(resumed.stats.failed, 0);
+  assert.equal(resumed.stats.captured, 1);
+  assert.equal(resumed.completedAt, null);
+});
+
+test("a legacy completed partial run rediscovers token-free failed items", () => {
+  let session = createSession({ scope, mode: "full" });
+  session = applyIdentityBatch(session, [card("legacy-blocked")], identities([card("legacy-blocked")], false));
+  session = transitionTask(session, session.queue[0].taskId, "failed");
+  delete session.queue[0].navigationUrl;
+  session.status = "completed";
+  session.phase = "completed";
+  const resumed = prepareSessionResume(session);
+  assert.equal(resumed.status, "running");
+  assert.equal(resumed.phase, "discovery");
+  assert.equal(resumed.queue.length, 0);
+  assert.equal(resumed.seenIdentityKeys.length, 0);
+  assert.equal(resumed.stats.discovered, 0);
+  assert.equal(resumed.stats.new, 0);
+  assert.equal(resumed.stats.failed, 0);
 });
 
 test("adaptive concurrency remains bounded, grows on healthy samples, and backs off on pressure", () => {
