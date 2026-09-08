@@ -14,6 +14,8 @@ const NEGATION_PATTERN = /\b(?:not|never|no|avoid|without|unable|false|optional|
 const LIMITER_PATTERN = /\b(?:only|except|unless|but only|at most|at least)\b|(?:仅限|只有|只能|只可|只允许|只需|只在|仅在|仅可|除了|除非|例外|最多|至少|至多|唯有)/iu;
 const NO_CONTACT_SOURCE_PATTERN = /(?:0|零)\s*打扰|不打扰|无需接触|无接触/iu;
 const NO_CONTACT_CLAIM_PATTERN = /\b(?:contactless|no[-\s]?contact|without contact|zero disturbance|no disturbance)\b|(?:0|零)\s*打扰|不打扰|无需接触|无接触/iu;
+const ONLY_GLASS_SOURCE_PATTERN = /(?:只有|全是|全部是|都是)\s*玻璃/iu;
+const ONLY_GLASS_CLAIM_PATTERN = /\b(?:full|all|entirely|exclusively)[-\s]*(?:glass|glazed)|\bglass[-\s]*only\b|(?:devoid of|without|no)\b[^.]{0,80}\b(?:wall|walls|pillar|pillars)\b/iu;
 const PROCEDURAL_CONVENIENCE_PATTERN = /(?:你|您)?只(?:需|需要)(?=[\p{Script=Han}\p{L}\p{N}])/gu;
 const FEATURE_DESCRIPTOR_PATTERN = /(?:^|_)(?:feature|features|view|views|scenery|appearance|illumination|lighting|vegetation|amenity|amenities)(?:_|$)/iu;
 
@@ -164,7 +166,7 @@ export function detectClaimExtractionIssue(claim, siblingClaims = []) {
   const normalized = sameQuoteClaims.map(claimSemanticText).join(" ");
   if (NO_CONTACT_SOURCE_PATTERN.test(quote) && !NO_CONTACT_CLAIM_PATTERN.test(normalized)) return "NEGATION_EXTRACTION_ERROR";
   if (hasNegation(quote) && !hasNegation(normalized)) return "NEGATION_EXTRACTION_ERROR";
-  if (hasMaterialLimiter(quote) && !hasMaterialLimiter(normalized)) return "QUALIFIER_EXTRACTION_ERROR";
+  if (hasMaterialLimiter(quote) && !hasMaterialLimiter(normalized) && !semanticLimiterCovered(quote, normalized)) return "QUALIFIER_EXTRACTION_ERROR";
   return null;
 }
 
@@ -252,7 +254,7 @@ function isFeatureClaim(claim) {
 
 function isFeaturePredicate(value) {
   const normalized = normalizePredicate(value);
-  return /^(?:feature|features(?:_|$)|has_|offers?_|includes?_|visual_appearance|illuminated(?:_|$))/iu.test(normalized)
+  return /^(?:feature|features(?:_|$)|has_|offers?_|includes?_|visual_appearance|illuminated(?:_|$)|(?:is_)?visible_from|can_be_seen_from|viewed_from)/iu.test(normalized)
     || FEATURE_DESCRIPTOR_PATTERN.test(normalized);
 }
 
@@ -357,6 +359,10 @@ function parseObject(value) {
 
 function hasMaterialLimiter(value) {
   return LIMITER_PATTERN.test(String(value || "").replace(PROCEDURAL_CONVENIENCE_PATTERN, ""));
+}
+function semanticLimiterCovered(source, normalizedClaim) {
+  return ONLY_GLASS_SOURCE_PATTERN.test(String(source || ""))
+    && ONLY_GLASS_CLAIM_PATTERN.test(String(normalizedClaim || ""));
 }
 function hasNegation(value) { return NEGATION_PATTERN.test(String(value || "")); }
 function matching(text, pattern) { return cleanList(String(text || "").match(pattern) || []).map(normalizeText); }

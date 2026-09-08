@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.17.7 - 2026-09-09
+
+- Treat different valid viewpoints in is_visible_from Claims as multi-value enrichment rather than a single-value conflict.
+- Recognize a full-glass normalized description as preserving the source meaning of “只有玻璃”, while genuine missing exclusivity still enters review.
+- Add production-derived regressions for both remaining false positives after the 1.17.6 Knowledge rebuild.
+
 ## 1.17.6 - 2026-09-09
 
 - Treat different positive natural-language descriptions of the same feature as compatible enrichment, including view, scenery, appearance, lighting, vegetation, and amenity Claims.

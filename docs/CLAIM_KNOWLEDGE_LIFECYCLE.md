@@ -44,4 +44,6 @@ Procedural convenience wording such as “你只需要把衣服放进管家柜�
 
 Positive descriptions under the same normalized feature key and compatible scope are enrichment rather than mutually exclusive single-value facts. This applies to view, scenery, appearance, lighting, vegetation, and amenity descriptions. Positive-versus-negative assertions and typed hard facts such as opening time, price, and reservation requirement retain strict conflict handling.
 
+Visibility-from Claims are multi-value: a landmark may be visible from several viewpoints, so different positive is_visible_from values enrich the same fact. Semantic limiter coverage also recognizes a full-glass description with no walls or pillars as preserving “只有玻璃”; this exception is narrow and does not suppress unrelated missing “only” conditions.
+
 The CMS review card explains in Chinese what source sentences were compared, why processing stopped, and the effect of each action. “可以同时成立” dismisses a false positive while retaining both Claims and their evidence. “确实矛盾” exposes final-value selection; choosing a value makes it the standard fact for later planning and writing without deleting either source.

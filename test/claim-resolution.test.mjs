@@ -205,6 +205,23 @@ test("procedural convenience wording is not mistaken for a missing qualifier", (
   }), "QUALIFIER_EXTRACTION_ERROR");
 });
 
+test("semantic exclusivity and multi-viewpoint visibility do not create manual reviews", () => {
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "百分百转角房，整面没有柱子，没有墙，只有玻璃",
+    predicate: "architectural_feature",
+    value_text: "true corner room with full glass exterior, devoid of supporting pillars or solid blocking walls",
+  }), null);
+
+  const visibilityKey = "attraction.raffles_city_chongqing.is_visible_from";
+  const visibility = classifyClaimPair(
+    { ...claim("opposite riverfront promenade", { predicate: "is_visible_from", sourceQuote: "" }), normalized_key: visibilityKey },
+    { ...claim("visible in the distant background between the two residential towers along the cableway corridor", { predicate: "is_visible_from", sourceQuote: "[image]" }), normalized_key: visibilityKey },
+  );
+  assert.equal(visibility.relation, "ENRICHMENT");
+  assert.equal(visibility.canCoexist, true);
+  assert.equal(visibility.reviewType, null);
+});
+
 test("knowledge aggregation persists enrichment relations without creating an exception", (t) => {
   const { repository } = repositoryFixture(t);
   for (const [externalId, value] of [["claima", "afternoon visit"], ["claimb", "afternoon (old residential buildings, daily life, cableway-through-building photo spot)"]]) {
