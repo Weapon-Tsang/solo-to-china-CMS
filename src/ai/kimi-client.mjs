@@ -26,6 +26,7 @@ export class KimiClient {
       { role: "user", content },
     ];
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      await this.config.beforeRequest?.({ provider: "kimi", model: this.config.model, stage: name, attempt: attempt + 1 });
       const response = await this.fetch(`${this.config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.config.apiKey}`, "content-type": "application/json" },

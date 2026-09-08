@@ -11,6 +11,7 @@ import {
   normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
+import { AI_JOB_TYPES, isProviderPressure } from "./job-policy.mjs";
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
 
@@ -24,6 +25,11 @@ export class Repository {
     this.workerId = String(contentConfig.workerId || id("worker"));
     this.jobLeaseMs = Math.max(30_000, Number(contentConfig.jobLeaseMs || 10 * 60_000));
     this.clock = contentConfig.clock || (() => new Date());
+    this.providerBackoffInitialMs = Math.max(1_000, Number(contentConfig.providerBackoffInitialMs || 5_000));
+    this.providerBackoffMaxMs = Math.max(this.providerBackoffInitialMs, Number(contentConfig.providerBackoffMaxMs || 300_000));
+    this.providerRecoverySuccesses = Math.max(1, Number(contentConfig.providerRecoverySuccesses || 5));
+    this.providerPressureStreak = 0;
+    this.providerSuccessStreak = 0;
   }
 
   jobTimestamp() { return this.clock().toISOString(); }
@@ -596,10 +602,14 @@ export class Repository {
   }
 
   failJob(job, error) {
-    const quotaLimited = error?.status === 429 || /resource exhausted|quota|rate.?limit/i.test(String(error?.message || ""));
-    const retry = error?.retryable !== false && (quotaLimited || job.attempts < job.max_attempts);
-    const baseDelayMs = quotaLimited
-      ? Math.min(3_600_000, 60_000 * 2 ** Math.min(6, Math.max(0, job.attempts - 1)))
+    const providerPressure = isProviderPressure(error);
+    const retry = error?.retryable !== false && (providerPressure || job.attempts < job.max_attempts);
+    if (providerPressure) {
+      this.providerPressureStreak += 1;
+      this.providerSuccessStreak = 0;
+    }
+    const baseDelayMs = providerPressure
+      ? Math.min(this.providerBackoffMaxMs, this.providerBackoffInitialMs * 2 ** Math.min(10, Math.max(0, this.providerPressureStreak - 1)))
       : Math.min(300_000, 10_000 * 2 ** Math.max(0, job.attempts - 1));
     const delayMs = Math.max(Number(error?.retryAfterMs || 0), Math.round(baseDelayMs * (0.8 + Math.random() * 0.4)));
     const availableAt = new Date(Date.now() + delayMs).toISOString();
@@ -611,14 +621,10 @@ export class Repository {
       WHERE id=? AND status='running' AND locked_by=?
     `).run(retry ? "queued" : "failed", availableAt, String(error?.message || error).slice(0, 4_000),
       retry ? null : timestamp, retry ? null : durationMs, timestamp, job.id, job.locked_by || this.workerId);
-    if (quotaLimited) this.db.prepare(`
+    if (providerPressure) this.db.prepare(`
       UPDATE jobs SET available_at=CASE WHEN available_at<? THEN ? ELSE available_at END, updated_at=?
-      WHERE status='queued' AND type IN (
-        'extract_segment_claims','audit_segment_coverage','retry_segment_extraction','analyze_source_blueprint',
-        'analyze_source_diagnostic','resolve_entities','analyze_intake','plan_content','compose_frontend_page_plan',
-        'generate_draft','review_draft','revise_draft','compose_frontend_page'
-      )
-    `).run(availableAt, availableAt, timestamp);
+      WHERE status='queued' AND type IN (${[...AI_JOB_TYPES].map(() => "?").join(",")})
+    `).run(availableAt, availableAt, timestamp, ...AI_JOB_TYPES);
     const message = String(error?.message || error).slice(0, 4_000);
     if (job.type === "extract_source") {
       this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
@@ -3695,6 +3701,13 @@ export class Repository {
       metric.outputTokens ?? null, metric.cachedTokens ?? null, metric.latencyMs ?? 0, metric.attempts ?? 1,
       metric.status || "succeeded", metric.errorCode || null, metric.costUsd ?? null, now(),
     );
+    if (metric.status === "succeeded" && Number(metric.attempts ?? 1) > 0 && this.providerPressureStreak) {
+      this.providerSuccessStreak += 1;
+      if (this.providerSuccessStreak >= this.providerRecoverySuccesses) {
+        this.providerPressureStreak = 0;
+        this.providerSuccessStreak = 0;
+      }
+    }
   }
 }
 

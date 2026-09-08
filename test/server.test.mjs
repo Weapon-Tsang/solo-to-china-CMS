@@ -351,6 +351,13 @@ test("Kimi configuration uses the provider's server-side defaults", () => {
   assert.equal(config.kimi.maxCompletionTokens, 16_000);
   assert.equal(config.kimi.requestTimeoutMs, 360_000);
   assert.equal(config.kimi.imageTimeoutMs, 20_000);
+  assert.equal(config.extraction.concurrencyInitial, 2);
+  assert.equal(config.extraction.concurrencyMax, 4);
+  assert.equal(config.extraction.concurrencySuccessWindow, 12);
+  assert.equal(config.extraction.requestSpacingMs, 1_000);
+  assert.equal(config.extraction.providerBackoffInitialMs, 5_000);
+  assert.equal(config.extraction.providerBackoffMaxMs, 300_000);
+  assert.equal(config.extraction.providerRecoverySuccesses, 5);
 });
 
 test("capture-only Cloudflare hostname cannot expose dashboard data", async (t) => {

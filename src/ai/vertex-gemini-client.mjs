@@ -36,14 +36,16 @@ export class VertexGeminiClient {
       contents: [{ role: "user", parts }],
       generationConfig: {
         responseMimeType: "application/json", ...vertexStructuredOutput(schema, schemaMode),
-        maxOutputTokens: this.config.maxCompletionTokens || 16_000, temperature: 0.1,
+        maxOutputTokens: this.config.maxCompletionTokens || 16_000,
         ...(String(this.config.model).startsWith("gemini-3")
-          ? { thinkingConfig: { thinkingLevel: this.config.thinkingLevel || "HIGH" } } : {}),
+          ? { thinkingConfig: { thinkingLevel: this.config.thinkingLevel || "HIGH" } }
+          : { temperature: 0.1 }),
       },
     };
     let correction = "";
     for (let attempt = 0; attempt < 3; attempt += 1) {
       requestBody.contents[0].parts = correction ? [...parts, { text: correction }] : parts;
+      await this.config.beforeRequest?.({ provider: "vertex", model: this.config.model, stage: name, attempt: attempt + 1 });
       const response = await this.fetch(endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },

@@ -31,12 +31,12 @@ test("model output exhaustion resegments source evidence instead of dropping cla
 });
 
 test("CMS extraction concurrency grows only after sustained success and immediately backs off on transient pressure", () => {
-  const pipeline = new Pipeline({}, {}, { extractionConfig: { concurrencyMode: "auto", concurrencyInitial: 4, concurrencyMax: 8 } });
-  const job = { type: "extract_segment_claims" };
-  for (let index = 0; index < 19; index += 1) pipeline.recordExtractionOutcome(job, { ok: true });
+  const pipeline = new Pipeline({}, {}, { extractionConfig: { concurrencyMode: "auto", concurrencyInitial: 4, concurrencyMax: 8, concurrencySuccessWindow: 12 } });
+  const job = { type: "generate_draft" };
+  for (let index = 0; index < 11; index += 1) pipeline.recordExtractionOutcome(job, { ok: true });
   assert.equal(pipeline.maxConcurrent, 4);
   pipeline.recordExtractionOutcome(job, { ok: true });
   assert.equal(pipeline.maxConcurrent, 5);
-  pipeline.recordExtractionOutcome(job, { ok: false, error: Object.assign(new Error("rate limit"), { retryable: true }) });
+  pipeline.recordExtractionOutcome(job, { ok: false, error: Object.assign(new Error("rate limit"), { provider: "vertex", status: 429, retryable: true }) });
   assert.equal(pipeline.maxConcurrent, 2);
 });

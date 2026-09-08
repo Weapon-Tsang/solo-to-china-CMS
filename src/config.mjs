@@ -98,9 +98,14 @@ export function loadConfig(env = process.env) {
       maxAgeMs: integer(env.CAPTURE_UPLOAD_MAX_AGE_HOURS, 24) * 60 * 60 * 1000,
     },
     extraction: {
-      concurrencyMode: choice(env.EXTRACT_CONCURRENCY_MODE, ["auto", "fixed"], "auto"),
-      concurrencyInitial: integer(env.EXTRACT_CONCURRENCY_INITIAL, 4),
-      concurrencyMax: integer(env.EXTRACT_CONCURRENCY_MAX, 8),
+      concurrencyMode: choice(env.AI_CONCURRENCY_MODE || env.EXTRACT_CONCURRENCY_MODE, ["auto", "fixed"], "auto"),
+      concurrencyInitial: integer(env.AI_CONCURRENCY_INITIAL || env.EXTRACT_CONCURRENCY_INITIAL, 2),
+      concurrencyMax: integer(env.AI_CONCURRENCY_MAX || env.EXTRACT_CONCURRENCY_MAX, 4),
+      concurrencySuccessWindow: integer(env.AI_CONCURRENCY_SUCCESS_WINDOW || env.EXTRACT_CONCURRENCY_SUCCESS_WINDOW, 12),
+      requestSpacingMs: integer(env.AI_REQUEST_SPACING_MS, 1_000),
+      providerBackoffInitialMs: integer(env.AI_PROVIDER_BACKOFF_INITIAL_MS, 5_000),
+      providerBackoffMaxMs: integer(env.AI_PROVIDER_BACKOFF_MAX_MS, 300_000),
+      providerRecoverySuccesses: integer(env.AI_PROVIDER_RECOVERY_SUCCESSES, 5),
       sourceTextSegmentMaxChars: integer(env.SOURCE_TEXT_SEGMENT_MAX_CHARS, 120_000),
     },
     visuals: {

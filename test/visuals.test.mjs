@@ -44,3 +44,17 @@ test("Gemini 3.1 Flash Image stores an inline image from the global Gemini endpo
   assert.match(body.contents.parts[0].text, /Do not depict people/i);
   assert.equal(fs.readFileSync(output.mediaPath).toString(), "gemini-image-bytes");
 });
+
+test("visual generation participates in the shared request gate and preserves provider retry timing", async () => {
+  let gated = 0;
+  const client = new VertexImagen({
+    enabled: true, provider: "vertex_gemini", projectId: "project", location: "global", model: "gemini-3.1-flash-image",
+    accessToken: "token", publicBaseUrl: "https://engine.example.com", requestTimeoutMs: 5_000,
+    beforeRequest: async () => { gated += 1; },
+  }, async () => Response.json({ error: { message: "Resource exhausted." } }, { status: 429, headers: { "retry-after": "2" } }));
+  await assert.rejects(
+    client.generate({ id: "visual_limited", slot: 1, image_type: "illustration", acquisition_strategy: "generate_illustration", factual_image_required: false, image_role: "hero", aspect_ratio: "16:9", generation_prompt: "A quiet travel scene" }, { id: "draft_1" }),
+    (error) => error.status === 429 && error.retryable === true && error.retryAfterMs === 2_000,
+  );
+  assert.equal(gated, 1);
+});

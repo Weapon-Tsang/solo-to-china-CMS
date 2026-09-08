@@ -52,10 +52,12 @@ export function createApplication(config = loadConfig()) {
     affiliateOpportunityThreshold: config.commercial.opportunityThreshold,
   });
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
+  const aiRequestGate = createRequestGate(config.extraction.requestSpacingMs);
   const activeAi = { ...config.kimi, ...config.vertex, ...selectedAi,
+    beforeRequest: aiRequestGate,
     onModelCall: (metric) => repository.recordModelCall(metric) };
   const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
-  const activeVisuals = { ...config.visuals, ...selectedVisual };
+  const activeVisuals = { ...config.visuals, ...selectedVisual, beforeRequest: aiRequestGate };
   const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
   const manualSources = new ManualSourceIngestor(config.manualSources);
   const chunkedUploads = new ChunkedUploadManager(config.manualSources);
@@ -774,6 +776,17 @@ export function createApplication(config = loadConfig()) {
       db.close();
       logger.info("server.stopped", { version: VERSION });
     },
+  };
+}
+
+function createRequestGate(spacingMs = 0) {
+  const spacing = Math.max(0, Number(spacingMs || 0));
+  let nextStartAt = 0;
+  return async () => {
+    const scheduledAt = Math.max(Date.now(), nextStartAt);
+    nextStartAt = scheduledAt + spacing;
+    const waitMs = scheduledAt - Date.now();
+    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
   };
 }
 

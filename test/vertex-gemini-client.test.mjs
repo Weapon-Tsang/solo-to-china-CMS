@@ -19,15 +19,17 @@ test("Vertex Gemini uses the configured model and structured JSON response", asy
   assert.match(request.url, /gemini-3\.1-pro-preview:generateContent$/);
   const body = JSON.parse(request.options.body);
   assert.equal(body.generationConfig.responseMimeType, "application/json");
-  assert.equal(body.generationConfig.temperature, 0.1);
+  assert.equal(body.generationConfig.temperature, undefined);
   assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "HIGH");
   assert.equal(body.systemInstruction.parts[0].text, "Be precise.");
 });
 
 test("Vertex Gemini converts shared text parts and retries malformed structured output once", async () => {
   const requests = [];
+  const gatedAttempts = [];
   const client = new VertexGeminiClient({
     projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
+    beforeRequest: async (request) => gatedAttempts.push(request),
   }, async (_url, options) => {
     requests.push(JSON.parse(options.body));
     const text = requests.length === 1 ? '{"ok":' : '```json\n{"ok":true}\n```';
@@ -38,6 +40,7 @@ test("Vertex Gemini converts shared text parts and retries malformed structured 
   });
   assert.deepEqual(result.output, { ok: true });
   assert.equal(requests.length, 2);
+  assert.deepEqual(gatedAttempts.map((item) => item.attempt), [1, 2]);
   assert.deepEqual(requests[0].contents[0].parts, [{ text: "source text" }]);
   assert.equal("type" in requests[0].contents[0].parts[0], false);
 });

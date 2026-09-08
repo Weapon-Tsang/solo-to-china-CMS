@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.17.10 - 2026-09-09
+
+- Smooth AI traffic with a shared one-second request gate so a restarted worker does not send its initial batch simultaneously.
+- Start durable AI work at two concurrent jobs, grow to four after 12 successful calls, and halve concurrency immediately when any extraction, analysis, drafting, review, or visual job encounters provider pressure.
+- Replace the fixed one-minute-to-one-hour quota delay with Retry-After-aware, jittered truncated exponential backoff from five seconds to five minutes, using consecutive provider-pressure outcomes rather than unrelated job attempt counts.
+- Remove the ignored `temperature` parameter from Gemini 3 requests and make every throughput/backoff setting explicit in the production environment.
+
 ## 1.17.9 - 2026-09-09
 
 - Show both source titles, original links, exact text context, and linked source images directly in Claim review cards.

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { ProviderRequestError } from "../ai/provider-schema.mjs";
 
 const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 
@@ -29,6 +30,7 @@ export class VertexImagen {
   async generateImagenImage(visual, draft) {
     const accessToken = await this.accessToken();
     const endpoint = `https://${this.config.location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(this.config.location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:predict`;
+    await this.config.beforeRequest?.({ provider: "vertex_imagen", model: this.config.model, stage: "generate_visual", attempt: 1 });
     const response = await this.fetch(endpoint, {
       method: "POST",
       headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
@@ -46,7 +48,8 @@ export class VertexImagen {
       signal: AbortSignal.timeout(this.config.requestTimeoutMs),
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`Vertex Imagen request failed (${response.status}): ${payload?.error?.message || response.statusText}`);
+    if (!response.ok) throw new ProviderRequestError("Vertex Imagen", response.status, payload?.error?.message || response.statusText,
+      { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
     const prediction = payload?.predictions?.find((item) => item?.bytesBase64Encoded);
     if (!prediction) throw new Error("Vertex Imagen returned no renderable image bytes.");
     return this.storeImage({
@@ -65,6 +68,7 @@ export class VertexImagen {
     const host = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
     const endpoint = `${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const prompt = `${visual.generation_prompt}\n\nCreate an original editorial illustration only. Do not depict people, logos, watermarks, readable text, or a documentary-style real place.`;
+    await this.config.beforeRequest?.({ provider: "vertex_gemini", model: this.config.model, stage: "generate_visual", attempt: 1 });
     const response = await this.fetch(endpoint, {
       method: "POST",
       headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
@@ -83,7 +87,8 @@ export class VertexImagen {
       signal: AbortSignal.timeout(this.config.requestTimeoutMs),
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`Gemini 3.1 Flash Image request failed (${response.status}): ${payload?.error?.message || response.statusText}`);
+    if (!response.ok) throw new ProviderRequestError("Gemini 3.1 Flash Image", response.status, payload?.error?.message || response.statusText,
+      { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
     const part = payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
     if (!part) throw new Error("Gemini 3.1 Flash Image returned no renderable image bytes.");
     return this.storeImage({

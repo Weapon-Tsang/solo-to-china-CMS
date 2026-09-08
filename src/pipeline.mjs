@@ -1,5 +1,6 @@
 import { markdownToContentBlocks } from "./content-blocks.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
+import { isAiJobType, isProviderPressure } from "./job-policy.mjs";
 
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -21,6 +22,7 @@ export class Pipeline {
     this.concurrencyMode = extractionConfig.concurrencyMode || (maxConcurrent ? "fixed" : "auto");
     this.concurrencyCeiling = Math.max(1, Math.min(16, Number(extractionConfig.concurrencyMax || maxConcurrent || 8)));
     this.maxConcurrent = Math.max(1, Math.min(this.concurrencyCeiling, Number(maxConcurrent || extractionConfig.concurrencyInitial || 4)));
+    this.concurrencySuccessWindow = Math.max(2, Number(extractionConfig.concurrencySuccessWindow || 12));
     this.extractionOutcomes = [];
   }
 
@@ -490,17 +492,16 @@ export class Pipeline {
   }
 
   recordExtractionOutcome(job, outcome) {
-    if (this.concurrencyMode !== "auto" || !["extract_segment_claims", "retry_segment_extraction", "audit_segment_coverage"].includes(job?.type)) return;
+    if (this.concurrencyMode !== "auto" || !isAiJobType(job?.type)) return;
     this.extractionOutcomes.push({ ...outcome, at: Date.now() });
-    if (this.extractionOutcomes.length > 20) this.extractionOutcomes.shift();
-    if (!outcome.ok && (outcome.error?.status === 429 || outcome.error?.retryable || /quota|rate.?limit|timeout/i.test(String(outcome.error?.message || "")))) {
-      this.maxConcurrent = this.maxConcurrent >= 10 ? 8 : this.maxConcurrent >= 8 ? 6
-        : this.maxConcurrent >= 6 ? 4 : this.maxConcurrent >= 4 ? 2 : 1;
+    if (this.extractionOutcomes.length > this.concurrencySuccessWindow) this.extractionOutcomes.shift();
+    if (!outcome.ok && (isProviderPressure(outcome.error) || outcome.error?.retryable || /timeout/i.test(String(outcome.error?.message || "")))) {
+      this.maxConcurrent = Math.max(1, Math.floor(this.maxConcurrent / 2));
       this.logger.warn("pipeline.extraction_concurrency_reduced", { concurrency: this.maxConcurrent, reason: outcome.error?.code || outcome.error?.status || "transient_failure" });
       this.extractionOutcomes = [];
       return;
     }
-    if (this.extractionOutcomes.length >= 20 && this.extractionOutcomes.every((item) => item.ok) && this.maxConcurrent < this.concurrencyCeiling) {
+    if (this.extractionOutcomes.length >= this.concurrencySuccessWindow && this.extractionOutcomes.every((item) => item.ok) && this.maxConcurrent < this.concurrencyCeiling) {
       this.maxConcurrent = Math.min(this.concurrencyCeiling, this.maxConcurrent + 1);
       this.logger.info("pipeline.extraction_concurrency_increased", { concurrency: this.maxConcurrent });
       this.extractionOutcomes = [];

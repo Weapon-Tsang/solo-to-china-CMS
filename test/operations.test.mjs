@@ -119,24 +119,47 @@ test("deterministic Contract failures do not enter the automatic retry loop", ()
   }
 });
 
-test("provider quota exhaustion remains queued beyond the normal attempt cap and cools down AI work", () => {
+test("provider quota exhaustion remains queued, honors shared adaptive backoff, and cools down every AI job", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-provider-quota-test-"));
   const database = openDatabase(path.join(directory, "quota.sqlite"));
-  const repository = new Repository(database);
+  const repository = new Repository(database, { providerBackoffInitialMs: 5_000, providerBackoffMaxMs: 300_000 });
   try {
     const limitedId = repository.enqueue("extract_segment_claims", "segment-limited");
     database.prepare("UPDATE jobs SET max_attempts=1 WHERE id=?").run(limitedId);
     const limited = repository.claimJob();
     const waitingId = repository.enqueue("audit_segment_coverage", "segment-waiting");
+    const contentId = repository.enqueue("generate_draft", "brief-waiting");
     const error = Object.assign(new Error("Vertex Gemini request failed (429): Resource exhausted."), { status: 429, retryable: true });
     repository.failJob(limited, error);
     const retried = database.prepare("SELECT status, attempts, available_at FROM jobs WHERE id=?").get(limitedId);
     const waiting = database.prepare("SELECT status, available_at FROM jobs WHERE id=?").get(waitingId);
+    const content = database.prepare("SELECT status, available_at FROM jobs WHERE id=?").get(contentId);
     assert.equal(retried.status, "queued");
     assert.equal(retried.attempts, 1);
     assert.ok(Date.parse(retried.available_at) > Date.now());
     assert.equal(waiting.status, "queued");
     assert.ok(Date.parse(waiting.available_at) > Date.now());
+    assert.ok(Date.parse(content.available_at) > Date.now());
+    assert.ok(Date.parse(retried.available_at) - Date.now() < 7_000);
+
+    database.prepare("UPDATE jobs SET available_at=? WHERE id=?").run(new Date().toISOString(), contentId);
+    const secondLimited = repository.claimJob();
+    assert.equal(secondLimited.id, contentId);
+    repository.failJob(secondLimited, error);
+    const secondDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(contentId).available_at) - Date.now();
+    assert.ok(secondDelayMs >= 7_500 && secondDelayMs < 13_000);
+
+    for (let index = 0; index < 5; index += 1) repository.recordModelCall({
+      stage: "test", provider: "vertex", model: "fixture", promptHash: "p", schemaHash: "s", inputHash: String(index),
+      latencyMs: 1, attempts: 1, status: "succeeded",
+    });
+    const recoveredId = repository.enqueue("review_draft", "draft-after-recovery");
+    database.prepare("UPDATE jobs SET available_at=? WHERE id=?").run(new Date().toISOString(), recoveredId);
+    const recovered = repository.claimJob();
+    assert.equal(recovered.id, recoveredId);
+    repository.failJob(recovered, error);
+    const recoveredDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(recoveredId).available_at) - Date.now();
+    assert.ok(recoveredDelayMs >= 3_500 && recoveredDelayMs < 7_000);
   } finally {
     database.close();
     fs.rmSync(directory, { recursive: true, force: true });
