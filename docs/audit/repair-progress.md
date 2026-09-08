@@ -90,4 +90,5 @@
 - 实现 commit：`3d63a08eb794a10a40ba1a52294db5b89deacd3d`，已推送到 `origin/main`。
 - Artifact Registry `engine:1.16.0`：`sha256:c142cf12b66c3559ccaea39a7af9cd7aad48590289ca9efd7f62d03dcb94dad3`，Cloud Build ID `69d1ff56-3078-4610-9d32-9ebe3c12c57d`。
 - GCE `solo-to-china-engine` 已切换至 `1.16.0`；`https://engine.solotochina.com/api/health` 返回 HTTP 200、`ok: true`、version `1.16.0`、strategy `1.5`、Frontend Contract `canCompose: true`；`/api/ready` 返回 HTTP 200、`ready: true`、database `ready`。
+- 生产显式 Seed 已执行一次：创建 4 个任务、0 个重复、0 个因现有 Asset 被抑制；当前 4 个任务均为 `READY_FOR_MANUAL`，未生成任何额外城市、路线或实体组合。
 - 本轮回滚点：启动脚本替换容器前生成的持久卷 SQLite 校验备份；上一稳定镜像 `engine:1.15.2`。
