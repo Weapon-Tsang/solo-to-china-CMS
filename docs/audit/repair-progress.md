@@ -134,3 +134,11 @@
 - Validation: `npm test` passed 194/194; `npm run check` passed; `npm run release:check` passed all 39 mandatory checks with zero failures. The focused Vertex and operations suite passed 17/17.
 - Production deployment: commit `0d211f1` was pushed to `origin/main`; Cloud Build `11c73f06-760f-4712-aaca-e768e5558eb3` published `engine:1.17.2` at `sha256:102d5c52b4f3142de1c94916924530046c4d09414a29e7c3c08ff663eef31ddd`. GCE `solo-to-china-engine` reports health version `1.17.2`, application ready, and database ready; the startup deployment created a verified SQLite backup before replacement. The previous production rollback image is `engine:1.17.1`.
 - Production incident acceptance: both `extract_segment_claims` blockers (`segment_ef3cce445ea45388cfcb82e5` and `segment_94ed3853f3c4cf3ca3c7a5fe`) were retried after deployment. The operational exception queue fell from two items to zero; quota-constrained work remains automatically queued instead of requiring manual retry. Runtime configuration and the Vertex request path both use Google Cloud project `project-4bcb9146-c37b-43b0-b11` in location `global`.
+
+## CMS 子页面汉化（2026-09-09）
+
+- 已完成来源详情、文章草稿详情、配置说明、前端能力契约、目的地知识地图、实体与信息主张审核、商品与联盟建链、维护页面及登录/密码页面的固定界面文本汉化；模型生成内容、来源原文和技术配置键保持原值。
+- 公共状态、类别、范围、耗时及日期显示已统一为中文；弹窗无障碍关闭文案同步汉化。
+- 本地浏览器已核验来源详情弹窗的中文控件与布局；英文旧控件扫描为零。
+- 验收：`npm run check` 通过；`npm test` 196/196 通过；`npm run release:check` 39 项强制检查通过、0 失败；新增中文界面回归测试 2/2 通过。
+- 本地提交：`4e05b1e`（版本 `1.17.3`）。自动审批审查拒绝直接推送默认分支，因此远端推送与生产部署等待用户再次明确授权；当前生产仍为 `1.17.2`。
