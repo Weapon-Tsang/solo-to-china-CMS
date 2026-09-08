@@ -113,6 +113,36 @@ test("provider quota exhaustion remains queued beyond the normal attempt cap and
   }
 });
 
+test("completion-stage jobs bypass an older extraction backlog without bypassing availability", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-priority-test-"));
+  const database = openDatabase(path.join(directory, "priority.sqlite"));
+  const repository = new Repository(database);
+  try {
+    const extractionId = repository.enqueue("extract_segment_claims", "segment-old");
+    const auditId = repository.enqueue("audit_segment_coverage", "segment-ready");
+    const finalizeId = repository.enqueue("finalize_source_extraction", "source-ready");
+    database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-01T00:00:00.000Z", extractionId);
+    database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-02T00:00:00.000Z", auditId);
+    database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-03T00:00:00.000Z", finalizeId);
+
+    const finalize = repository.claimJob();
+    assert.equal(finalize.id, finalizeId);
+    repository.completeJob(finalize.id);
+    const audit = repository.claimJob();
+    assert.equal(audit.id, auditId);
+    repository.completeJob(audit.id);
+    assert.equal(repository.claimJob().id, extractionId);
+
+    const unavailableFinalizeId = repository.enqueue("finalize_source_extraction", "source-cooling-down");
+    database.prepare("UPDATE jobs SET available_at=? WHERE id=?").run("2999-01-01T00:00:00.000Z", unavailableFinalizeId);
+    const availableId = repository.enqueue("rebuild_editorial", "global-priority-test");
+    assert.equal(repository.claimJob().id, availableId);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("exception webhook sends a deduplicated operational payload with optional bearer auth", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-notification-test-"));
   const database = openDatabase(path.join(directory, "notifications.sqlite"));

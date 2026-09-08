@@ -514,7 +514,7 @@ export class Repository {
   }
 
   enqueue(type, entityId, { dedupeKey = `${type}:${entityId}` } = {}) {
-    const timestamp = now();
+    const timestamp = this.jobTimestamp();
     const active = this.db.prepare(`
       SELECT id FROM jobs WHERE dedupe_key = ? AND status IN ('queued', 'running') LIMIT 1
     `).get(dedupeKey);
@@ -543,7 +543,15 @@ export class Repository {
       const job = this.db.prepare(`
         SELECT * FROM jobs
         WHERE status = 'queued' AND available_at <= ?
-        ORDER BY created_at ASC LIMIT 1
+        ORDER BY
+          CASE type
+            WHEN 'finalize_source_extraction' THEN 0
+            WHEN 'retry_segment_extraction' THEN 1
+            WHEN 'audit_segment_coverage' THEN 2
+            ELSE 3
+          END,
+          created_at ASC
+        LIMIT 1
       `).get(timestamp);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
@@ -1156,7 +1164,10 @@ export class Repository {
         s.status, s.last_error, s.captured_at, s.capture_version, s.authority_level, s.verified_at,
         ss.destination_name, ss.summary, ss.extraction_method,
         (SELECT COUNT(*) FROM claims c WHERE c.source_id = s.id) AS claim_count,
-        (SELECT COUNT(*) FROM source_files sf WHERE sf.source_id = s.id) AS file_count
+        (SELECT COUNT(*) FROM source_files sf WHERE sf.source_id = s.id) AS file_count,
+        (SELECT COUNT(*) FROM source_segments sg WHERE sg.source_id = s.id) AS segment_count,
+        (SELECT COUNT(*) FROM segment_extractions se WHERE se.source_id = s.id) AS extracted_segment_count,
+        (SELECT COUNT(*) FROM extraction_coverage ec WHERE ec.source_id = s.id AND ec.audited_at IS NOT NULL) AS audited_segment_count
       FROM sources s LEFT JOIN structured_sources ss ON ss.source_id = s.id
       ORDER BY s.captured_at DESC LIMIT ?
     `).all(limit).map((source) => ({ ...source, authority_suggestion: suggestAuthority(source.canonical_url) }));

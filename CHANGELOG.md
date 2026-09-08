@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.17.5 - 2026-09-09
+
+- Prevent coverage audits and source finalization from starving behind a large FIFO segment-extraction backlog, while preserving each job's Vertex cooldown and availability time.
+- Show extracted and audited segment counts in the Sources list before final Claims are committed, so active work is observable instead of appearing permanently stuck at zero.
+
 ## 1.17.4 - 2026-09-09
 
 - Prevent Favorites Sync retry sessions from remaining indefinitely in the checkpoint-saving phase by committing terminal state before cleanup and bounding CMS/media requests with explicit timeouts.
