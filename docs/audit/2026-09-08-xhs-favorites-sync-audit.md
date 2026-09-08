@@ -1,7 +1,7 @@
 # Xiaohongshu Favorites Sync vNext audit and implementation record
 
 Date: 2026-09-08  
-Release: CMS/Extension 1.17.3
+Release: CMS/Extension 1.17.4
 Schema: migrations 1–35  
 Content Strategy: 1.5 (unchanged)
 

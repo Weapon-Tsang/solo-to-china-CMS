@@ -22,6 +22,7 @@ const ERROR_MESSAGES = Object.freeze({
   NAVIGATION_INTERRUPTED: "小红书中断了笔记页面跳转，请完成登录或安全验证后继续同步。",
   CAPTURE_API_UNAVAILABLE: "当前 CMS 版本不支持收藏同步，请先将 CMS 升级并部署到 1.17.0 或更高版本。",
   CAPTURE_SERVER_UNAVAILABLE: "CMS 服务暂时不可用，请检查服务状态后继续同步。",
+  CAPTURE_REQUEST_TIMEOUT: "CMS 请求超时，任务已安全保留并会按重试策略再次处理。",
   CAPTURE_REJECTED: "笔记采集结果不完整，已阻止进入研究流程。",
   CAPTURE_UNAUTHORIZED: "采集令牌无效，请核对扩展设置与 CMS 的 CAPTURE_TOKEN。",
   UNAUTHORIZED: "采集令牌无效，请检查扩展设置与 CMS 的 CAPTURE_TOKEN。",

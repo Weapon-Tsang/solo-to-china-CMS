@@ -147,6 +147,20 @@ export function hasUnresolvedFailures(session) {
     || Boolean(session?.queue?.some((task) => task.status === "failed"));
 }
 
+export function prepareSessionCompletion(input, now = new Date().toISOString()) {
+  const session = structuredClone(input);
+  session.phase = "completed";
+  session.updatedAt = now;
+  if (hasUnresolvedFailures(session)) {
+    session.status = "paused_failed_items";
+    session.completedAt = null;
+    return session;
+  }
+  session.status = "completed";
+  session.completedAt = now;
+  return session;
+}
+
 export function prepareSessionResume(input, now = new Date().toISOString()) {
   const previousStatus = String(input?.status || "");
   const session = recoverSession(input, now);

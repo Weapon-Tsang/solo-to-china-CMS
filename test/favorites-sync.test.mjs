@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   applyIdentityBatch, canonicalizeNoteUrl, classifyCaptureApiError, compactSessionState, createSession, hasUnresolvedFailures, nextConcurrency,
   isFavoritesAlbumOverviewUrl, normalizeCard, noteIdentity, recoverSession, scopeFromUrl, shouldStopDiscovery, transitionTask,
-  prepareSessionResume,
+  prepareSessionCompletion, prepareSessionResume,
 } from "../extension/sync-core.js";
 
 test("capture API errors distinguish an outdated backend from content rejection", () => {
@@ -161,6 +161,25 @@ test("failed tasks remain recoverable and a completed partial run can resume wit
   assert.equal(resumed.stats.failed, 0);
   assert.equal(resumed.stats.captured, 1);
   assert.equal(resumed.completedAt, null);
+});
+
+test("completion state is committed before cleanup and unresolved failures remain resumable", () => {
+  let successful = createSession({ scope, mode: "full" });
+  successful.phase = "completed";
+  const completed = prepareSessionCompletion(successful, "2026-09-09T05:00:00.000Z");
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.phase, "completed");
+  assert.equal(completed.completedAt, "2026-09-09T05:00:00.000Z");
+
+  let partial = createSession({ scope, mode: "full" });
+  partial = applyIdentityBatch(partial, [card("blocked-finalize")], identities([card("blocked-finalize")], false));
+  partial = transitionTask(partial, partial.queue[0].taskId, "failed", { error: { code: "CAPTURE_REQUEST_TIMEOUT" } });
+  partial.phase = "completed";
+  const paused = prepareSessionCompletion(partial, "2026-09-09T05:01:00.000Z");
+  assert.equal(paused.status, "paused_failed_items");
+  assert.equal(paused.completedAt, null);
+  assert.equal(hasUnresolvedFailures(paused), true);
+  assert.equal(prepareSessionResume(paused).phase, "acquisition");
 });
 
 test("a legacy completed partial run rediscovers token-free failed items", () => {

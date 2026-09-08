@@ -1,7 +1,7 @@
 import {
   applyIdentityBatch, classifyCaptureApiError, compactSessionState, createSession, hasUnresolvedFailures, initialConcurrency, nextConcurrency,
   isFavoritesAlbumOverviewUrl, normalizeSettings, recoverSession, scopeFromUrl, shouldStopDiscovery, transitionTask,
-  prepareSessionResume,
+  prepareSessionCompletion, prepareSessionResume,
 } from "./sync-core.js";
 
 const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";
@@ -14,6 +14,8 @@ const TICK_ALARM = "stc-favorites-tick";
 const AUTO_ALARM = "stc-favorites-auto";
 const DIRECT_CAPTURE_BYTES = 3_500_000;
 const UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
+const ENGINE_REQUEST_TIMEOUT_MS = 45_000;
+const MEDIA_REQUEST_TIMEOUT_MS = 30_000;
 let driving = false;
 let driveTimer = null;
 let stateMutation = Promise.resolve();
@@ -293,12 +295,15 @@ async function assertFavoritesSyncApi(settings = null) {
 async function apiJson(url, options, token) {
   let response;
   try {
-    response = await fetch(url, { method: options.method, headers: {
+    response = await fetchWithTimeout(url, { method: options.method, headers: {
       ...(options.raw ? { "content-type": "application/octet-stream" } : { "content-type": "application/json" }),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
-    }, body: options.body });
+    }, body: options.body }, options.timeoutMs || ENGINE_REQUEST_TIMEOUT_MS);
   } catch (cause) {
-    throw Object.assign(new Error("The SoloToChina Engine is unavailable."), { code: "CAPTURE_SERVER_UNAVAILABLE", retryable: true, cause });
+    const timedOut = cause?.name === "AbortError" || cause?.code === "REQUEST_TIMEOUT";
+    throw Object.assign(new Error(timedOut ? "The SoloToChina Engine request timed out." : "The SoloToChina Engine is unavailable."), {
+      code: timedOut ? "CAPTURE_REQUEST_TIMEOUT" : "CAPTURE_SERVER_UNAVAILABLE", retryable: true, cause,
+    });
   }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -320,7 +325,7 @@ async function saveCurrentNote() {
 async function enrichImageDerivatives(capture) {
   for (const image of capture.images || []) {
     try {
-      const response = await fetch(image.url);
+      const response = await fetchWithTimeout(image.url, {}, MEDIA_REQUEST_TIMEOUT_MS);
       if (!response.ok) continue;
       const blob = await response.blob();
       const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -400,22 +405,36 @@ async function cancelSync() {
 async function stopAfterQueue() { const session = await mutateState(null, (current) => { if (!current) return current; current.stopAfterQueue = true; current.phase = "acquisition"; return current; }); if (!session) return { ok: false }; void drive(); return { ok: true, session }; }
 
 async function completeSession(session) {
-  if (hasUnresolvedFailures(session)) {
-    session.status = "paused_failed_items";
+  session = prepareSessionCompletion(session);
+  if (session.status === "paused_failed_items") {
     await saveState(session);
     await reportSession(session).catch(() => null);
     return;
   }
-  session.status = "completed"; session.completedAt = new Date().toISOString(); session.updatedAt = session.completedAt;
   const scopes = await loadScopes();
   scopes[session.scopeKey] = { scopeUrl: session.scopeUrl, lastSuccessfulSyncAt: session.completedAt,
     checkpoint: { topIdentityKeys: session.currentTopIdentityKeys || [], lastSuccessfulSyncAt: session.completedAt }, summary: session.stats };
-  await chrome.storage.local.set({ [SCOPES_KEY]: scopes });
-  await closeWorkerTabs(session); await saveState(session); await archiveSession(session); await reportSession(session).catch(() => null);
+  // Commit the terminal state and checkpoint together before best-effort cleanup.
+  // A slow tab close or telemetry request must never leave the popup in a
+  // permanent running/completed limbo.
+  await chrome.storage.local.set({ [STATE_KEY]: session, [SCOPES_KEY]: scopes });
+  await Promise.allSettled([
+    archiveSession(session),
+    closeWorkerTabs(session),
+    reportSession(session),
+  ]);
 }
 
 async function archiveSession(session) { const history = (await chrome.storage.local.get({ [HISTORY_KEY]: [] }))[HISTORY_KEY]; await chrome.storage.local.set({ [HISTORY_KEY]: [summary(session), ...history.filter((item) => item.sessionId !== session.sessionId)].slice(0, 20) }); }
-async function restoreAfterRestart() { const session = await loadState(); if (session && !["completed", "cancelled"].includes(session.status)) await saveState(recoverSession(session)); }
+async function restoreAfterRestart() {
+  const session = await loadState();
+  if (!session || ["completed", "cancelled"].includes(session.status)) return;
+  if (session.status === "running" && session.phase === "completed") {
+    await completeSession(session);
+    return;
+  }
+  await saveState(recoverSession(session));
+}
 async function startAutomaticSync() { const settings = await loadSettings(); if (settings.autoSync === "off") return; const history = (await chrome.storage.local.get({ [HISTORY_KEY]: [] }))[HISTORY_KEY]; const last = history.find((item) => item.scopeKey === settings.lastScopeKey); if (last && Date.now() - Date.parse(last.completedAt || last.updatedAt) < settings.autoMinIntervalHours * 3_600_000) return; await startSync("incremental", true); }
 async function refreshAutoAlarm() { const settings = await loadSettings(); await chrome.alarms.clear(AUTO_ALARM); if (settings.autoSync === "daily") await chrome.alarms.create(AUTO_ALARM, { periodInMinutes: 24 * 60 }); if (settings.autoSync === "startup") void startAutomaticSync(); }
 
@@ -493,5 +512,11 @@ function summary(session) { return { sessionId: session.sessionId, scopeKey: ses
 function serializeError(value) { return { code: String(value?.code || "NETWORK_ERROR"), message: String(value?.message || value || "Unknown error"), retryable: value?.retryable !== false, timestamp: new Date().toISOString() }; }
 function syncError(code, message, retryable) { return Object.assign(new Error(message), { code, retryable }); }
 function assertNotCancelled(session) { if (session?.status === "cancelled") throw syncError("SESSION_CANCELLED", "The Favorites Sync session was cancelled.", false); }
+async function fetchWithTimeout(url, options = {}, timeoutMs = ENGINE_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(Object.assign(new Error("Request timed out."), { code: "REQUEST_TIMEOUT" })), timeoutMs);
+  try { return await fetch(url, { ...options, signal: controller.signal }); }
+  finally { clearTimeout(timer); }
+}
 async function hashBytes(bytes) { const digest = await crypto.subtle.digest("SHA-256", bytes); return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join(""); }
 function bytesToBase64(bytes) { let output = ""; const block = 0x8000; for (let index = 0; index < bytes.length; index += block) output += String.fromCharCode(...bytes.subarray(index, index + block)); return btoa(output); }
