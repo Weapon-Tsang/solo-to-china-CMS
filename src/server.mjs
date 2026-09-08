@@ -48,6 +48,7 @@ export function createApplication(config = loadConfig()) {
   const repository = new Repository(db, {
     ...config.content, contentStrategy: config.contentStrategy,
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
+    affiliateOpportunityThreshold: config.commercial.opportunityThreshold,
   });
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
   const activeAi = { ...config.kimi, ...config.vertex, ...selectedAi,
@@ -515,8 +516,58 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, {
           providers: repository.listAffiliateProviderAccounts(), items: repository.listAffiliateAssets(),
           mappings: repository.listAffiliateAssetMappings(), opportunities: repository.listAffiliateOpportunities(),
-          performance: repository.commercialPerformance(), commissionRules: repository.listCommissionRules(),
+          queue: repository.listAffiliateQueueTasks(), performance: repository.commercialPerformance(), commissionRules: repository.listCommissionRules(),
         });
+      }
+      if (request.method === "GET" && url.pathname === "/api/commercial/affiliate-queue") {
+        return sendJson(response, 200, { items: repository.listAffiliateQueueTasks({
+          status: url.searchParams.get("status") || "", productCategory: url.searchParams.get("product_category") || "",
+          scopeType: url.searchParams.get("scope_type") || "", provider: url.searchParams.get("provider") || "",
+        }) });
+      }
+      if (request.method === "POST" && url.pathname === "/api/commercial/affiliate-queue/seed") {
+        authorizeAdmin(request, config.adminToken, auth);
+        return sendJson(response, 200, repository.seedAffiliateQueue());
+      }
+      if (request.method === "POST" && url.pathname === "/api/commercial/affiliate-queue/export") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 50_000);
+        const format = String(payload.format || "json").toLowerCase();
+        const content = repository.exportAffiliateQueue({
+          format, status: payload.status || "", productCategory: payload.productCategory || payload.product_category || "",
+          scopeType: payload.scopeType || payload.scope_type || "", provider: payload.provider || "",
+        });
+        return sendJson(response, 200, {
+          format, content, contentType: format === "csv" ? "text/csv; charset=utf-8" : "application/json; charset=utf-8",
+          filename: `affiliate-asset-queue.${format}`,
+        });
+      }
+      if (request.method === "POST" && url.pathname === "/api/commercial/affiliate-queue/import") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 2_000_000);
+        const importData = Array.isArray(payload) ? payload : payload.data ?? payload.items ?? [];
+        return sendJson(response, 200, repository.importAffiliateQueue(importData, {
+          format: payload.format || (Array.isArray(importData) ? "json" : "csv"), dryRun: payload.dryRun ?? payload.dry_run ?? false,
+        }));
+      }
+      const affiliateQueueCompleteMatch = url.pathname.match(/^\/api\/commercial\/affiliate-queue\/([^/]+)\/complete$/);
+      if (request.method === "POST" && affiliateQueueCompleteMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const taskId = decodeURIComponent(affiliateQueueCompleteMatch[1]);
+        const payload = await readJson(request, 200_000);
+        try {
+          const result = repository.completeAffiliateQueueTask(taskId, payload);
+          return result ? sendJson(response, 200, result) : sendJson(response, 404, { error: "Affiliate queue task not found." });
+        } catch (error) {
+          if (error instanceof CommercialValidationError) repository.invalidateAffiliateQueueTask(taskId, error.message);
+          throw error;
+        }
+      }
+      const affiliateQueueSkipMatch = url.pathname.match(/^\/api\/commercial\/affiliate-queue\/([^/]+)\/skip$/);
+      if (request.method === "POST" && affiliateQueueSkipMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const result = repository.skipAffiliateQueueTask(decodeURIComponent(affiliateQueueSkipMatch[1]));
+        return result ? sendJson(response, 200, result) : sendJson(response, 404, { error: "Affiliate queue task not found." });
       }
       if (request.method === "GET" && url.pathname === "/api/commercial/providers") {
         return sendJson(response, 200, { items: repository.listAffiliateProviderAccounts() });

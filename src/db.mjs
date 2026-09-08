@@ -51,6 +51,66 @@ function migrate(db) {
   if (current < 30) migrationThirty(db);
   if (current < 31) migrationThirtyOne(db);
   if (current < 32) migrationThirtyTwo(db);
+  if (current < 33) migrationThirtyThree(db);
+}
+
+function migrationThirtyThree(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE affiliate_asset_queue_tasks (
+        id TEXT PRIMARY KEY,
+        task_key TEXT NOT NULL UNIQUE,
+        provider_account_id TEXT NOT NULL REFERENCES affiliate_provider_accounts(id),
+        provider TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','READY_FOR_MANUAL','COMPLETED','SKIPPED','INVALID')),
+        product_category TEXT NOT NULL CHECK (product_category IN ('HOTEL','FLIGHT','TRAIN','ATTRACTION','TOUR_ACTIVITY','FLIGHT_HOTEL','CAR_RENTAL','AIRPORT_TRANSFER','PLANNER')),
+        asset_type TEXT NOT NULL CHECK (asset_type IN ('DEEP_LINK','CATEGORY_LINK','SEARCH_BOX','STATIC_BANNER','DYNAMIC_BANNER','PROMOTION')),
+        scope_type TEXT NOT NULL CHECK (scope_type IN ('ENTITY','ROUTE','AREA','DESTINATION','COUNTRY','CATEGORY','GLOBAL')),
+        scope_key TEXT NOT NULL DEFAULT '',
+        destination_slug TEXT NOT NULL DEFAULT '',
+        area_key TEXT NOT NULL DEFAULT '',
+        route_key TEXT NOT NULL DEFAULT '',
+        entity_key TEXT NOT NULL DEFAULT '',
+        entity_name TEXT NOT NULL DEFAULT '',
+        trip_tool_type TEXT NOT NULL CHECK (trip_tool_type IN ('HOTELS','FLIGHTS','TRAINS','CUSTOM_LINK','SEARCH_BOX')),
+        trip_destination TEXT NOT NULL DEFAULT '',
+        trip_property TEXT NOT NULL DEFAULT '',
+        trip_departure TEXT NOT NULL DEFAULT '',
+        trip_arrival TEXT NOT NULL DEFAULT '',
+        source_trip_url TEXT NOT NULL DEFAULT '',
+        trip_sub1 TEXT NOT NULL UNIQUE CHECK (trip_sub1 NOT GLOB '*[^a-z0-9_]*'),
+        suggested_title TEXT NOT NULL,
+        suggested_description TEXT NOT NULL DEFAULT '',
+        suggested_cta_label TEXT NOT NULL DEFAULT 'View option',
+        priority INTEGER NOT NULL DEFAULT 0,
+        opportunity_id TEXT,
+        reason TEXT NOT NULL DEFAULT '',
+        score REAL NOT NULL DEFAULT 0,
+        intent_strength TEXT NOT NULL DEFAULT '',
+        precision_uplift REAL NOT NULL DEFAULT 0,
+        source_type TEXT NOT NULL CHECK (source_type IN ('SEED','OPPORTUNITY')),
+        affiliate_url TEXT NOT NULL DEFAULT '',
+        embed_config_json TEXT NOT NULL DEFAULT '{}',
+        valid_from TEXT,
+        valid_until TEXT,
+        affiliate_asset_id TEXT UNIQUE REFERENCES affiliate_assets(id) ON DELETE SET NULL,
+        invalid_reason TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        skipped_at TEXT
+      );
+      CREATE INDEX idx_affiliate_queue_status_key ON affiliate_asset_queue_tasks(status, task_key);
+      CREATE INDEX idx_affiliate_queue_opportunity ON affiliate_asset_queue_tasks(opportunity_id);
+      CREATE INDEX idx_affiliate_queue_provider ON affiliate_asset_queue_tasks(provider, status, priority DESC);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (33, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationThirtyTwo(db) {

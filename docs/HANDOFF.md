@@ -37,14 +37,16 @@ The audited Frontend Registry provides the QA-selected booking, search, banner, 
 
 - `affiliate_assets` is the canonical runtime inventory. The old `/api/commercial/offers` endpoint remains a compatibility adapter and writes through to the new model.
 - Provider, Asset, mapping, opportunity, performance, and event APIs live under `/api/commercial/*`; the dashboard's Commercial view reads `/api/commercial`.
+- `affiliate_asset_queue_tasks` closes the manual Trip.com setup loop. Tasks come only from `config/affiliate-queue-seeds.json` or qualifying HIGH/VERY_HIGH Affiliate Opportunities; `task_key` and `trip_sub1` are durable and unique.
+- Queue completion validates an exact operator-pasted official URL, creates one canonical `affiliate_assets` row, links the original Opportunity, and then uses the existing Composer/Event/Performance path. CSV/JSON import is row-isolated and supports dry-run.
 - The composer runs after QA, derives block intent, selects decision-appropriate precision, falls back silently, enforces density, and stores an independent Overlay. Research packages never read these tables.
 - WordPress receives generated safe commercial blocks with disclosure and sponsored link attributes. Arbitrary HTML/script is rejected.
-- App version `1.15.2` and schema migration `32` are the expected post-upgrade baseline.
+- App version `1.16.0` and schema migration `33` are the expected local implementation baseline.
 - HTTPS Frontend Contract synchronization versions all three source URLs with the exact deployed frontend commit, preventing a CDN edge from returning the previous Registry/Page/Publish artifact immediately after deployment.
 
-Trip.com remains manual-only: an operator must create official links/embed configuration in the official platform and paste only those public artifacts into the registry. Do not store credentials/cookies, automate dashboard login, crawl the affiliate dashboard, invent tracking parameters, or create low-value entity links at scale.
+Trip.com remains manual-only: an operator must create official links/embed configuration in the official platform and paste only those public artifacts into the Queue/Registry. Do not store credentials/cookies, automate dashboard login, crawl the affiliate dashboard, invent tracking parameters, or create low-value entity links at scale. See `docs/AFFILIATE_ASSET_QUEUE.md` for the operator workflow and provider-dependent limits.
 
-Deferred Phase 2: official API/feed integration when available, report import, booking/commission attribution, official Sub ID automation, EPC/RPM learning, A/B testing, promotion-aware ranking, and learned component optimization.
+Deferred Phase 2: official API/feed integration when available, report import, automatic provider-side Sub ID insertion, EPC/RPM learning, A/B testing, promotion-aware ranking, and learned component optimization.
 
 ## Current operating boundary
 

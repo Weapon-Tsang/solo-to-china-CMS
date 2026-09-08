@@ -430,15 +430,16 @@ function WordPressView({ data, onGuide }) {
   return <>{summary}<TableShell><Table><TableHeader><TableRow><TableHead>文章</TableHead><TableHead>状态</TableHead><TableHead className="hidden md:table-cell">固定链接</TableHead><TableHead className="hidden lg:table-cell">修改时间</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell><div className="flex items-center gap-1.5 font-medium text-slate-900">{item.post_url ? <a className="inline-flex items-center gap-1 hover:text-blue-600" href={item.post_url} target="_blank" rel="noreferrer">{item.title || "未命名文章"}<ExternalLink className="size-3" /></a> : item.title || "未命名文章"}</div><div className="mt-1 text-[10px] text-slate-400">WordPress #{item.post_id}</div></TableCell><TableCell><StatusPill status={item.status} /></TableCell><TableCell className="hidden md:table-cell">{item.slug}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.modified_at)}</TableCell></TableRow>)}</TableBody></Table></TableShell></>;
 }
 
-function CommercialView({ data, onGuide }) {
+function CommercialView({ data, onGuide, onAction, actionBusy }) {
   const items = data?.items || [];
   const providers = data?.providers || [];
   const opportunities = data?.opportunities || [];
+  const queue = data?.queue || [];
   const performance = data?.performance || [];
   const commissionRules = data?.commissionRules || [];
-  if (!items.length && !providers.length) return <><SummaryBar title="0 个联盟提供商"><span>没有 Asset 时 Commercial Overlay 严格 no-op，研究、知识和正文不会受影响。</span></SummaryBar><EmptyState icon="offer" title="暂无联盟资产" description="先配置 Trip.com MANUAL Provider，再保存官方生成的 Link 或结构化 Embed 配置；不要保存账号、密码、Cookie 或任意 HTML。" action={() => onGuide("commercial")} actionLabel="查看 Affiliate 配置说明" /></>;
   return <>
-    <SummaryBar title={`${providers.length} 个提供商 · ${items.length} 个资产`}><span>{opportunities.length} 个高价值 Affiliate Opportunity</span><span>{performance.length} 组归因指标 · {commissionRules.length} 条可维护佣金规则</span></SummaryBar>
+    <SummaryBar title={`${providers.length} 个提供商 · ${items.length} 个资产`}><span>{opportunities.length} 个高价值 Affiliate Opportunity</span><span>{queue.length} 个建链任务</span><span>{performance.length} 组归因指标 · {commissionRules.length} 条可维护佣金规则</span></SummaryBar>
+    <AffiliateQueue items={queue} onAction={onAction} actionBusy={actionBusy} />
     <SectionTitle title="Affiliate Providers" description="V1 使用 MANUAL；账号凭证和登录态不进入 CMS" />
     <TableShell><Table><TableHeader><TableRow><TableHead>提供商</TableHead><TableHead>连接方式</TableHead><TableHead>站点 / 语言</TableHead><TableHead>活跃资产</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{providers.map((item) => <TableRow key={item.id}><TableCell><div className="font-medium text-slate-900">{item.display_name}</div><div className="mt-1 text-[10px] text-slate-400">{item.provider_key}</div></TableCell><TableCell>{label(item.connection_mode)}</TableCell><TableCell>{item.site_name || "—"} · {item.default_language || "en"}</TableCell><TableCell className="tabular-nums">{item.active_asset_count || 0}</TableCell><TableCell><StatusPill status={item.status || "configured"} /></TableCell></TableRow>)}</TableBody></Table></TableShell>
     <SectionTitle title="Affiliate Asset Registry" description="Destination / Area / Route / selective Entity" />
@@ -446,6 +447,95 @@ function CommercialView({ data, onGuide }) {
     {opportunities.length > 0 && <><SectionTitle title="高价值机会" description="仅显示超过人工维护门槛的精度缺口" /><TableShell><Table><TableHeader><TableRow><TableHead>范围</TableHead><TableHead>类别</TableHead><TableHead>评分</TableHead><TableHead className="hidden md:table-cell">原因</TableHead></TableRow></TableHeader><TableBody>{opportunities.map((item) => <TableRow key={item.id}><TableCell>{label(item.scope_type)} · {item.scope_key}</TableCell><TableCell>{label(item.product_category)}</TableCell><TableCell>{Math.round(item.score)}</TableCell><TableCell className="hidden md:table-cell">{item.reason}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
     {performance.length > 0 && <><SectionTitle title="Performance" description="Impression / Click 与后续 Booking / Commission 归因" /><TableShell><Table><TableHeader><TableRow><TableHead>提供商 / 类别</TableHead><TableHead>位置</TableHead><TableHead>Impressions</TableHead><TableHead>Clicks / CTR</TableHead><TableHead>Commission</TableHead></TableRow></TableHeader><TableBody>{performance.map((item) => <TableRow key={`${item.provider}:${item.category}:${item.slot_key}:${item.destination_slug}`}><TableCell>{item.provider} · {label(item.category)}</TableCell><TableCell>{item.slot_key || "—"}</TableCell><TableCell>{item.impressions}</TableCell><TableCell>{item.clicks} · {Math.round((item.ctr || 0) * 1000) / 10}%</TableCell><TableCell>{Number(item.commission || 0).toFixed(2)}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
   </>;
+}
+
+function AffiliateQueue({ items, onAction, actionBusy }) {
+  const [status, setStatus] = useState("");
+  const [category, setCategory] = useState("");
+  const [scope, setScope] = useState("");
+  const [urls, setUrls] = useState({});
+  const [importFile, setImportFile] = useState(null);
+  const [importPreview, setImportPreview] = useState(null);
+  const filtered = useMemo(() => items.filter((item) => (!status || item.status === status)
+    && (!category || item.product_category === category) && (!scope || item.scope_type === scope)), [items, status, category, scope]);
+  const active = items.filter((item) => ["PENDING", "READY_FOR_MANUAL", "INVALID"].includes(item.status)).length;
+  const fieldClass = "rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-slate-400";
+  const copy = (value) => navigator.clipboard?.writeText(value);
+  const record = (task) => {
+    const affiliateUrl = String(urls[task.id] || "").trim();
+    if (!affiliateUrl) return;
+    onAction("/api/commercial/affiliate-queue/" + encodeURIComponent(task.id) + "/complete", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ affiliateUrl }),
+    }, (result) => "已创建 Affiliate Asset " + (result.asset?.id || ""));
+  };
+  const exportQueue = async (format) => {
+    const result = await onAction("/api/commercial/affiliate-queue/export", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ format, status, product_category: category, scope_type: scope }),
+    }, "已生成 " + format.toUpperCase() + " 导出文件");
+    if (!result?.content) return;
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([result.content], { type: result.contentType }));
+    link.download = result.filename; document.body.appendChild(link); link.click();
+    URL.revokeObjectURL(link.href); link.remove();
+  };
+  const importQueue = async (dryRun) => {
+    if (!importFile) return;
+    const data = await importFile.text();
+    const format = importFile.name.toLowerCase().endsWith(".csv") ? "csv" : "json";
+    const result = await onAction("/api/commercial/affiliate-queue/import", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ format, dryRun, data }),
+    }, dryRun ? "导入校验已完成" : "有效建链结果已导入");
+    if (result) setImportPreview(result);
+  };
+  return <section className="space-y-3">
+    <SectionTitle title="Affiliate Asset Queue" description="Trip.com MANUAL 半自动人工建链；CMS 不接触账号、Cookie、登录态或后台页面" />
+    <Card className="p-4"><div className="flex flex-wrap items-center gap-2">
+      <select aria-label="队列状态" className={fieldClass} value={status} onChange={(event) => setStatus(event.target.value)}>
+        <option value="">全部状态</option>{["PENDING", "READY_FOR_MANUAL", "COMPLETED", "SKIPPED", "INVALID"].map((value) => <option key={value}>{value}</option>)}
+      </select>
+      <select aria-label="商品类别" className={fieldClass} value={category} onChange={(event) => setCategory(event.target.value)}>
+        <option value="">全部类别</option>{["HOTEL", "FLIGHT", "TRAIN", "ATTRACTION", "TOUR_ACTIVITY", "FLIGHT_HOTEL", "CAR_RENTAL", "AIRPORT_TRANSFER", "PLANNER"].map((value) => <option key={value}>{value}</option>)}
+      </select>
+      <select aria-label="范围" className={fieldClass} value={scope} onChange={(event) => setScope(event.target.value)}>
+        <option value="">全部 Scope</option>{["ENTITY", "ROUTE", "AREA", "DESTINATION", "COUNTRY", "CATEGORY", "GLOBAL"].map((value) => <option key={value}>{value}</option>)}
+      </select>
+      <Button size="sm" disabled={actionBusy} onClick={() => onAction("/api/commercial/affiliate-queue/seed", { method: "POST" }, "初始 Seed 已同步")}><RefreshCw />同步初始 Seed</Button>
+      <Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => exportQueue("csv")}><FileUp />导出 CSV</Button>
+      <Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => exportQueue("json")}><FileUp />导出 JSON</Button>
+    </div><div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+      <input aria-label="选择 Queue 导入文件" type="file" accept=".csv,.json,text/csv,application/json" className="max-w-full text-xs text-slate-600" onChange={(event) => { setImportFile(event.target.files?.[0] || null); setImportPreview(null); }} />
+      <Button size="sm" variant="secondary" disabled={!importFile || actionBusy} onClick={() => importQueue(true)}>校验预览</Button>
+      <Button size="sm" disabled={!importFile || !importPreview || actionBusy} onClick={() => importQueue(false)}>导入有效链接</Button>
+      {importPreview && <span className="text-[11px] text-slate-500">总计 {importPreview.total} · 有效 {importPreview.valid} · 错误 {importPreview.failed} · 已保护 {importPreview.protected}</span>}
+    </div></Card>
+    <SummaryBar title={active + " 个待人工处理任务"}><span>共 {items.length} 个，当前筛选显示 {filtered.length} 个</span><span>只需复制 trip_sub1，并回填官方 Affiliate URL</span></SummaryBar>
+    {!filtered.length ? <EmptyState icon="offer" title="当前筛选没有建链任务" description="任务只来自显式 Seed 或达到阈值的高意向 Affiliate Opportunity，不会按城市、路线或实体批量组合生成。" /> :
+      <div className="grid gap-3 lg:grid-cols-2">{filtered.map((task) => {
+        const guidance = tripTaskGuidance(task);
+        const mutable = !["COMPLETED", "SKIPPED"].includes(task.status);
+        return <Card key={task.id} className="p-4 sm:p-5">
+          <div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap gap-1.5"><span className="rounded bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700">{task.product_category}</span><span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">{task.scope_type}</span><span className="rounded bg-violet-50 px-2 py-1 text-[10px] font-semibold text-violet-700">{task.asset_type}</span></div><h3 className="mt-2 text-sm font-semibold text-slate-900">{task.suggested_title}</h3><p className="mt-1 text-[11px] text-slate-500">{task.scope_key}</p></div><StatusPill status={task.status} /></div>
+          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-700"><b>Trip.com 操作指引</b><ul className="mt-1 space-y-0.5">{guidance.map((line) => <li key={line}>· {line}</li>)}</ul></div>
+          <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2"><code className="truncate text-xs font-semibold text-slate-800">{task.trip_sub1}</code><Button size="sm" variant="ghost" onClick={() => copy(task.trip_sub1)}>复制 trip_sub1</Button></div>
+          {task.source_trip_url && <Button className="mt-2" size="sm" variant="secondary" onClick={() => copy(task.source_trip_url)}><Link2 />复制 Trip.com URL</Button>}
+          <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] text-slate-500"><span>Priority: {task.priority}</span><span>Opportunity Score: {Math.round(task.score || 0)}</span></div>
+          <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{task.reason}</p>
+          {task.invalid_reason && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-[11px] text-red-700">{task.invalid_reason}</p>}
+          {mutable && <div className="mt-3 space-y-2 border-t border-slate-100 pt-3"><input aria-label={task.suggested_title + " Affiliate URL"} className={fieldClass + " w-full"} type="url" value={urls[task.id] || ""} placeholder="粘贴 Trip.com 官方 Affiliate HTTPS URL" onChange={(event) => setUrls((current) => ({ ...current, [task.id]: event.target.value }))} />
+            <div className="flex gap-2"><Button size="sm" disabled={actionBusy || !String(urls[task.id] || "").trim()} onClick={() => record(task)}>记录 Affiliate URL</Button><Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => onAction("/api/commercial/affiliate-queue/" + encodeURIComponent(task.id) + "/skip", { method: "POST" }, "任务已跳过")}>跳过</Button></div></div>}
+          {task.affiliate_asset_id && <p className="mt-3 text-[10px] text-emerald-700">Affiliate Asset: {task.affiliate_asset_id}</p>}
+        </Card>;
+      })}</div>}
+  </section>;
+}
+
+function tripTaskGuidance(task) {
+  if (task.trip_tool_type === "HOTELS") return task.trip_property ? ["打开 Hotels page", "Property: " + task.trip_property] : ["打开 Hotels page", "Destination: " + (task.trip_destination || task.destination_slug)];
+  if (task.trip_tool_type === "FLIGHTS") return ["打开 Flights page", "Departure: " + task.trip_departure, "Arrival: " + task.trip_arrival];
+  if (task.trip_tool_type === "TRAINS") return ["打开 Trains page", "Departure: " + task.trip_departure, "Arrival: " + task.trip_arrival];
+  if (task.trip_tool_type === "SEARCH_BOX") return ["创建结构化 Search Box", "只记录官方 HTTPS src 与结构化配置，不粘贴 HTML 或 script"];
+  return ["打开 Custom Link", task.source_trip_url ? "使用下方已确认的 Trip.com 页面 URL" : "查找对应的 " + task.scope_type + " 页面：" + task.scope_key];
 }
 
 function ExceptionsView({ data, onAction, actionBusy }) {

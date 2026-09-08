@@ -75,7 +75,7 @@ Strategy 1.4 expands Source intelligence into `source_segments`, `evidence_spans
 
 ### 5. Commercial layer
 
-`affiliate_provider_accounts`、`affiliate_assets`、`affiliate_asset_mappings`、`commercial_intents`、`commercial_slots`、`commercial_compositions`、`affiliate_opportunities`、`commercial_events` 和 `commission_rules` 是独立表族。Research Extractor、Claim Aggregator、KB、Topic Candidate、Brief、Draft 和 QA Package 均不读取它。`commercial_offers` 仅保留为旧 Provider/Feed API 的兼容入口，并同步投影为 canonical `affiliate_assets`。
+`affiliate_provider_accounts`、`affiliate_assets`、`affiliate_asset_mappings`、`affiliate_asset_queue_tasks`、`commercial_intents`、`commercial_slots`、`commercial_compositions`、`affiliate_opportunities`、`commercial_events` 和 `commission_rules` 是独立表族。Research Extractor、Claim Aggregator、KB、Topic Candidate、Brief、Draft 和 QA Package 均不读取它。`commercial_offers` 仅保留为旧 Provider/Feed API 的兼容入口，并同步投影为 canonical `affiliate_assets`。
 
 Commercial Composer 仅在 Research Draft 通过 QA 后运行：
 
@@ -89,6 +89,17 @@ Frozen Research Draft + structured blocks + active Affiliate Assets
 ```
 
 普通文章最多 1–2 个 contextual units 和 0–1 个 end-resource unit；相邻重复类别、过早模块和连续商业模块被阻止。无相关 Asset 时 Overlay 与 Research Draft 完全一致。Research Draft、Evidence Ledger 和 Knowledge Base 从不被修改。缺少精确链接通常静默 fallback，只有超过收益/维护门槛的精度缺口进入 Affiliate Opportunity。
+
+Migration 33 adds the persistent manual setup queue. After a composition is stored, only HIGH/VERY_HIGH Opportunities at or above `AFFILIATE_OPPORTUNITY_THRESHOLD` may create a semantic queue task. An exact active Asset or an existing semantic task suppresses creation; a broad fallback does not suppress a more precise Entity/Route/Area task. Seed tasks are loaded only from `config/affiliate-queue-seeds.json`, so there is no combinatorial catalog expansion.
+
+```text
+Explicit Seed ───────────────────────────────┐
+HIGH/VERY_HIGH Opportunity → dedup/suppress ├→ Queue Task → operator uses official Trip.com UI
+                                             │              → paste exact HTTPS Affiliate URL
+                                             └──────────────→ validate → Affiliate Asset → existing Composer/events
+```
+
+`task_key` has a database unique constraint. `trip_sub1` has a separate unique constraint and is immutable after insert; deterministic hash suffixing resolves different semantic tasks that share a readable base. Completion and task status change occur in one SQLite transaction, and the generated Asset ID is deterministic, making retries idempotent. Import uses both `task_id` and `task_key`, validates each row independently, and cannot overwrite a completed task. Full details are in `docs/AFFILIATE_ASSET_QUEUE.md`.
 
 ### WordPress inventory guard
 

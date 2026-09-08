@@ -6,7 +6,13 @@ import { contentBlockSummary, markdownToContentBlocks } from "./content-blocks.m
 import { classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "./claim-resolution.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
 import { legacyOfferToAsset } from "./commercial.mjs";
+import {
+  affiliateAssetFromQueueTask, exportAffiliateQueue, loadAffiliateQueueSeeds,
+  normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
+} from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
+
+function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
 
 export class Repository {
   constructor(db, contentConfig = {}) {
@@ -2153,6 +2159,174 @@ export class Repository {
       .all(status).map((row) => ({ ...row, factors: json(row.factors_json, {}) }));
   }
 
+  ensureTripManualProvider() {
+    const existing = this.db.prepare(`SELECT * FROM affiliate_provider_accounts
+      WHERE provider_key IN ('trip','trip-com') OR lower(display_name) IN ('trip','trip.com')
+      ORDER BY CASE WHEN connection_mode='MANUAL' THEN 0 ELSE 1 END LIMIT 1`).get();
+    if (existing) return existing;
+    return this.upsertAffiliateProviderAccount({
+      id: `provider_${sha256("trip-com").slice(0, 24)}`, providerKey: "trip-com", displayName: "Trip.com",
+      connectionMode: "MANUAL", siteName: "SoloToChina", defaultLanguage: "en",
+      defaultDisclosure: "SoloToChina may earn a commission from eligible bookings, at no extra cost to you.", status: "CONFIGURED",
+    });
+  }
+
+  getAffiliateQueueTask(taskId) {
+    const row = this.db.prepare("SELECT * FROM affiliate_asset_queue_tasks WHERE id=?").get(taskId);
+    return row ? { ...row, embed_config: json(row.embed_config_json, {}) } : null;
+  }
+
+  listAffiliateQueueTasks({ status = "", productCategory = "", scopeType = "", provider = "" } = {}) {
+    const clauses = []; const values = [];
+    if (status) { clauses.push("status=?"); values.push(String(status).toUpperCase()); }
+    if (productCategory) { clauses.push("product_category=?"); values.push(String(productCategory).toUpperCase()); }
+    if (scopeType) { clauses.push("scope_type=?"); values.push(String(scopeType).toUpperCase()); }
+    if (provider) { clauses.push("lower(provider)=lower(?)"); values.push(provider); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    return this.db.prepare(`SELECT * FROM affiliate_asset_queue_tasks ${where}
+      ORDER BY CASE status WHEN 'READY_FOR_MANUAL' THEN 0 WHEN 'PENDING' THEN 1 WHEN 'INVALID' THEN 2 WHEN 'COMPLETED' THEN 3 ELSE 4 END,
+      priority DESC, score DESC, created_at ASC`).all(...values).map((row) => ({ ...row, embed_config: json(row.embed_config_json, {}) }));
+  }
+
+  createAffiliateQueueTask(input, options = {}) {
+    const provider = input.providerAccountId || input.provider_account_id
+      ? this.getAffiliateProviderAccount(input.providerAccountId || input.provider_account_id) : this.ensureTripManualProvider();
+    if (!provider) throw new Error("Affiliate queue provider account does not exist.");
+    if (provider.connection_mode !== "MANUAL") throw conflictError("V1 Affiliate Asset Queue requires a MANUAL Trip.com provider account.");
+    const task = normalizeAffiliateQueueTask({ ...input, providerAccountId: provider.id, provider: provider.display_name }, options);
+    const existing = this.db.prepare("SELECT * FROM affiliate_asset_queue_tasks WHERE task_key=?").get(task.taskKey);
+    if (existing) return { created: false, reason: "task_exists", task: this.getAffiliateQueueTask(existing.id) };
+    if (this.hasActiveAffiliateAssetForTask(task)) return { created: false, reason: "active_asset_exists", task: null };
+    task.tripSub1 = this.allocateAffiliateQueueSub1(task.tripSub1, task.taskKey);
+    const timestamp = now();
+    this.db.prepare(`INSERT INTO affiliate_asset_queue_tasks(
+      id,task_key,provider_account_id,provider,status,product_category,asset_type,scope_type,scope_key,
+      destination_slug,area_key,route_key,entity_key,entity_name,trip_tool_type,trip_destination,trip_property,
+      trip_departure,trip_arrival,source_trip_url,trip_sub1,suggested_title,suggested_description,suggested_cta_label,
+      priority,opportunity_id,reason,score,intent_strength,precision_uplift,source_type,affiliate_url,embed_config_json,
+      valid_from,valid_until,invalid_reason,created_at,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(task.id, task.taskKey, task.providerAccountId, task.provider, task.status, task.productCategory, task.assetType,
+        task.scopeType, task.scopeKey, task.destinationSlug, task.areaKey, task.routeKey, task.entityKey, task.entityName,
+        task.tripToolType, task.tripDestination, task.tripProperty, task.tripDeparture, task.tripArrival, task.sourceTripUrl,
+        task.tripSub1, task.suggestedTitle, task.suggestedDescription, task.suggestedCtaLabel, task.priority,
+        task.opportunityId, task.reason, task.score, task.intentStrength, task.precisionUplift, task.sourceType,
+        task.affiliateUrl, JSON.stringify(task.embedConfig || {}), task.validFrom, task.validUntil, "", timestamp, timestamp);
+    return { created: true, reason: "created", task: this.getAffiliateQueueTask(task.id) };
+  }
+
+  allocateAffiliateQueueSub1(base, taskKey) {
+    const existing = this.db.prepare("SELECT task_key FROM affiliate_asset_queue_tasks WHERE trip_sub1=?").get(base);
+    if (!existing || existing.task_key === taskKey) return base;
+    const digest = sha256(taskKey);
+    for (const length of [8, 12, 16, 24, 32]) {
+      const candidate = `${base.slice(0, 99 - length)}_${digest.slice(0, length)}`;
+      if (!this.db.prepare("SELECT 1 FROM affiliate_asset_queue_tasks WHERE trip_sub1=?").get(candidate)) return candidate;
+    }
+    throw new Error("Unable to allocate a unique deterministic trip_sub1.");
+  }
+
+  hasActiveAffiliateAssetForTask(task) {
+    const timestamp = now();
+    const rows = this.db.prepare(`SELECT * FROM affiliate_assets WHERE active=1 AND product_category=?
+      AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)`).all(task.productCategory, timestamp, timestamp);
+    return rows.some((asset) => {
+      if (asset.scope_type !== task.scopeType) return false;
+      const assetKey = asset.scope_key || asset.entity_key || asset.route_key || asset.area_key || asset.destination_slug || asset.product_category;
+      return assetKey === task.scopeKey;
+    });
+  }
+
+  seedAffiliateQueue(filename) {
+    const results = loadAffiliateQueueSeeds(filename).map((task) => this.createAffiliateQueueTask(task, { sourceType: "SEED" }));
+    return {
+      created: results.filter((item) => item.created).length,
+      existing: results.filter((item) => item.reason === "task_exists").length,
+      suppressedByAsset: results.filter((item) => item.reason === "active_asset_exists").length,
+      items: results.map((item) => item.task).filter(Boolean),
+    };
+  }
+
+  completeAffiliateQueueTask(taskId, completion = {}) {
+    const task = this.getAffiliateQueueTask(taskId);
+    if (!task) return null;
+    if (task.status === "COMPLETED") return { task, asset: this.getAffiliateAsset(task.affiliate_asset_id), created: false, idempotent: true };
+    if (task.status === "SKIPPED") throw conflictError("A skipped affiliate queue task cannot be completed.");
+    const provider = this.getAffiliateProviderAccount(task.provider_account_id);
+    if (!provider) throw new Error("Affiliate queue provider account does not exist.");
+    const asset = affiliateAssetFromQueueTask(task, completion, provider);
+    const timestamp = now();
+    let saved;
+    transaction(this.db, () => {
+      saved = this.upsertAffiliateAsset(asset);
+      this.db.prepare(`UPDATE affiliate_asset_queue_tasks SET status='COMPLETED',affiliate_url=?,embed_config_json=?,
+        affiliate_asset_id=?,invalid_reason='',completed_at=?,updated_at=? WHERE id=? AND status<>'COMPLETED'`)
+        .run(asset.targetUrl, JSON.stringify(asset.embedConfig || {}), saved.id, timestamp, timestamp, taskId);
+      if (task.opportunity_id) this.db.prepare("UPDATE affiliate_opportunities SET status='addressed',updated_at=? WHERE id=?").run(timestamp, task.opportunity_id);
+    });
+    return { task: this.getAffiliateQueueTask(taskId), asset: saved, created: true, idempotent: false };
+  }
+
+  skipAffiliateQueueTask(taskId) {
+    const task = this.getAffiliateQueueTask(taskId);
+    if (!task) return null;
+    if (task.status === "COMPLETED") throw conflictError("A completed affiliate queue task cannot be skipped.");
+    if (task.status === "SKIPPED") return task;
+    const timestamp = now();
+    this.db.prepare("UPDATE affiliate_asset_queue_tasks SET status='SKIPPED',skipped_at=?,updated_at=? WHERE id=?")
+      .run(timestamp, timestamp, taskId);
+    return this.getAffiliateQueueTask(taskId);
+  }
+
+  invalidateAffiliateQueueTask(taskId, reason) {
+    const task = this.getAffiliateQueueTask(taskId);
+    if (!task || ["COMPLETED", "SKIPPED"].includes(task.status)) return task;
+    this.db.prepare("UPDATE affiliate_asset_queue_tasks SET status='INVALID',invalid_reason=?,updated_at=? WHERE id=?")
+      .run(String(reason || "Invalid queue completion.").slice(0, 2_000), now(), taskId);
+    return this.getAffiliateQueueTask(taskId);
+  }
+
+  exportAffiliateQueue({ format = "json", ...filters } = {}) {
+    return exportAffiliateQueue(this.listAffiliateQueueTasks(filters), format);
+  }
+
+  importAffiliateQueue(payload, { format = "json", dryRun = false } = {}) {
+    const rows = parseAffiliateQueueImport(payload, format);
+    const seen = new Set(); const results = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index] || {}; const taskId = String(row.task_id || row.id || "").trim(); const taskKey = String(row.task_key || "").trim();
+      const identity = `${taskId}\u0000${taskKey}`;
+      if (seen.has(identity)) { results.push({ row: index + 1, taskId, taskKey, status: "error", error: "Duplicate task_id + task_key row in import." }); continue; }
+      seen.add(identity);
+      const task = taskId ? this.getAffiliateQueueTask(taskId) : null;
+      if (!task || !taskKey || task.task_key !== taskKey) { results.push({ row: index + 1, taskId, taskKey, status: "error", error: "task_id and task_key do not identify the same queue task." }); continue; }
+      if (task.status === "COMPLETED") { results.push({ row: index + 1, taskId, taskKey, status: "protected", error: "Completed task is protected from import changes." }); continue; }
+      const affiliateUrl = String(row.affiliate_url || "").trim();
+      if (!affiliateUrl) { results.push({ row: index + 1, taskId, taskKey, status: "unchanged" }); continue; }
+      try {
+        const provider = this.getAffiliateProviderAccount(task.provider_account_id);
+        const asset = affiliateAssetFromQueueTask(task, { affiliateUrl }, provider);
+        if (dryRun) results.push({ row: index + 1, taskId, taskKey, status: "valid", assetId: asset.id });
+        else {
+          const completed = this.completeAffiliateQueueTask(taskId, { affiliateUrl });
+          results.push({ row: index + 1, taskId, taskKey, status: "completed", assetId: completed.asset.id });
+        }
+      } catch (error) {
+        if (!dryRun) this.invalidateAffiliateQueueTask(taskId, error.message);
+        results.push({ row: index + 1, taskId, taskKey, status: "error", error: error.message });
+      }
+    }
+    return {
+      dryRun: Boolean(dryRun), total: rows.length,
+      valid: results.filter((item) => ["valid", "completed"].includes(item.status)).length,
+      completed: results.filter((item) => item.status === "completed").length,
+      unchanged: results.filter((item) => item.status === "unchanged").length,
+      protected: results.filter((item) => item.status === "protected").length,
+      failed: results.filter((item) => item.status === "error").length,
+      results,
+    };
+  }
+
   recordCommercialEvent(event) {
     this.db.prepare(`INSERT INTO commercial_events(id, event_type, article_id, draft_id, offer_id,
       affiliate_asset_id, provider, category, slot_key, component_variant, placement, entity_key, route_key,
@@ -2283,6 +2457,27 @@ export class Repository {
           JSON.stringify(composition.contentBlocks || []), this.strategyVersion, draft.revision, draft.content_hash);
       this.db.prepare("UPDATE article_drafts SET status='commercial_ready', updated_at=? WHERE id=?").run(timestamp, draftId);
     });
+    this.enqueueAffiliateQueueFromComposition(composition);
+  }
+
+  enqueueAffiliateQueueFromComposition(composition) {
+    const opportunities = composition.opportunities || [];
+    if (!opportunities.length) return { created: 0, suppressed: 0, errors: [] };
+    let provider;
+    try { provider = this.ensureTripManualProvider(); }
+    catch (error) { return { created: 0, suppressed: opportunities.length, errors: [error.message] }; }
+    const threshold = Number(this.contentConfig.affiliateOpportunityThreshold || 70);
+    let created = 0; let suppressed = 0; const errors = [];
+    for (const opportunity of opportunities) {
+      try {
+        const intent = (composition.intents || []).find((item) => item.id === opportunity.intentId);
+        const task = queueTaskFromOpportunity(opportunity, intent, { threshold, providerAccountId: provider.id });
+        if (!task) { suppressed += 1; continue; }
+        const result = this.createAffiliateQueueTask(task, { sourceType: "OPPORTUNITY" });
+        if (result.created) created += 1; else suppressed += 1;
+      } catch (error) { suppressed += 1; errors.push(`${opportunity.id || "unknown"}: ${error.message}`); }
+    }
+    return { created, suppressed, errors };
   }
 
   retryContent(candidateId, { contractAware = false } = {}) {
@@ -3096,7 +3291,12 @@ export class Repository {
         blueprints: 0,
         content: contentNeedsAttention,
         wordpress: exceptionCount("wordpress") + operationalExceptions.filter((item) => item.kind === "sync" && String(item.subject || "").startsWith("wordpress_inventory:")).length,
-        commercial: this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_opportunities WHERE status='open'").get().count,
+        commercial: this.db.prepare(`SELECT
+          (SELECT COUNT(*) FROM affiliate_asset_queue_tasks WHERE status IN ('PENDING','READY_FOR_MANUAL','INVALID')) +
+          (SELECT COUNT(*) FROM affiliate_opportunities o WHERE o.status='open' AND NOT EXISTS (
+            SELECT 1 FROM affiliate_asset_queue_tasks q WHERE q.product_category=o.product_category
+              AND q.scope_type=o.scope_type AND q.scope_key=o.scope_key
+          )) AS count`).get().count,
         exceptions: operationalExceptions.length,
         maintenance: exceptionCount("maintenance") + exceptionCount("sync"),
         settings: 0,
@@ -3118,6 +3318,7 @@ export class Repository {
         contentNeedsAttention,
         draftsReady: this.db.prepare("SELECT COUNT(*) AS count FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')").get().count,
         activeOffers: this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_assets WHERE active=1").get().count,
+        affiliateQueueTasks: this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_asset_queue_tasks WHERE status IN ('PENDING','READY_FOR_MANUAL','INVALID')").get().count,
         wordpressInventory: this.db.prepare("SELECT COUNT(*) AS count FROM wordpress_content_inventory").get().count,
         searchQueries: this.db.prepare("SELECT COUNT(*) AS count FROM search_console_inventory").get().count,
       },

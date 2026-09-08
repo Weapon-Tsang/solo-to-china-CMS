@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.16.0 — 2026-09-08
+
+- Added a durable Trip.com manual Affiliate Asset Setup Queue with explicit seed tasks, qualifying Opportunity intake, stable task keys and Sub IDs, and exact-asset suppression.
+- Added authenticated completion, skip, CSV/JSON export and row-isolated import APIs; completion reuses the existing Affiliate Asset, Composer, attribution, and performance pipeline.
+- Added the Commercial dashboard queue workflow with filtering, operator guidance, copy actions, validation preview, and safe URL recording.
+- Added schema migration 33 and strict Trip.com HTTPS/official-domain validation, structured Search Box configuration, promotion validity enforcement, and full regression coverage.
+
 ## 1.15.2 — 2026-09-08
 
 - Version HTTPS Frontend Contract requests with the exact deployed frontend commit and request cache revalidation, preventing stale CDN artifacts from being accepted immediately after a frontend release.

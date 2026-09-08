@@ -228,6 +228,12 @@ See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md),
 | `GET/POST` | `/api/commercial/assets` | 管理安全、可复用的 Affiliate Asset Registry |
 | `GET` | `/api/commercial/mappings` | 查看 Destination / Area / Route / Entity 映射 |
 | `GET` | `/api/commercial/opportunities` | 只显示超过人工维护门槛的高价值精度缺口 |
+| `GET` | `/api/commercial/affiliate-queue` | 筛选 Trip.com MANUAL 人工建链任务 |
+| `POST` | `/api/commercial/affiliate-queue/seed` | 从显式配置文件幂等创建少量初始任务 |
+| `POST` | `/api/commercial/affiliate-queue/:id/complete` | 用官方 Affiliate URL 完成任务并自动创建 Asset |
+| `POST` | `/api/commercial/affiliate-queue/:id/skip` | 跳过未完成任务 |
+| `POST` | `/api/commercial/affiliate-queue/export` | 导出筛选后的 CSV/JSON 工作表 |
+| `POST` | `/api/commercial/affiliate-queue/import` | 预检或分行导入 CSV/JSON Affiliate URL |
 | `POST` | `/api/commercial/events` | 记录 impression / click（预留 booking / commission） |
 | `GET` | `/api/commercial/performance` | CTR、conversion、commission、EPC、RPM 聚合 |
 | `GET/POST` | `/api/commercial/offers` | 旧 typed Offer API；写入时同步投影为 Affiliate Asset |
@@ -290,6 +296,8 @@ V1 使用 MANUAL Provider：先在 Trip.com 官方 Affiliate Platform 创建官�
 ```
 
 `assetType`（怎么展示）与 `productCategory`（卖什么）严格分开。Link 必须是无凭据 HTTPS；Search Box/Banner 只接受结构化、域名 allowlist 的配置，拒绝任意 HTML/script。Composer 仅在 QA 后解析 block-level intent，按用户决策精度选择 Entity/Route/Area/Destination/Category fallback，并限制为通常 1–2 个 contextual units 加 0–1 个 end-resource unit。无匹配 Asset 时严格 no-op。
+
+Commercial 页面中的 **Affiliate Asset Queue** 将显式 Seed 和达到门槛的高意向 Affiliate Opportunity 转成可复制 `trip_sub1` 的人工任务。操作员只需在 Trip.com 官方平台建链并回填官方 URL；CMS 自动沿用任务的 Provider、产品、Scope、标题、优先级和 Opportunity 关联创建 Asset。任务不会按城市、酒店、路线或实体做组合扩张。CSV/JSON 支持 dry-run、重复检测、已完成保护和逐行错误。完整边界、流程图与 API 示例见 [Trip.com Affiliate Asset Setup Queue](docs/AFFILIATE_ASSET_QUEUE.md)。
 
 ## 验证
 

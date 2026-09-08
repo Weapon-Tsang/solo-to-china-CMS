@@ -72,3 +72,18 @@
 - 生产验收发现 Cloudflare 的无查询 URL 仍可能命中部署前缓存。CMS `1.15.2` 为三份 HTTPS 契约 URL 自动附加精确的 `FRONTEND_CONTRACT_COMMIT_SHA`，保留原查询参数并发送 `Cache-Control: no-cache`；新增回归测试已覆盖三份资源。
 - CMS 生产同步已激活新快照 `fcontract_e829b4d699df4aadb5755a1094111e28`，Registry checksum 为 `2e8da42b4fa86f8e717b992d648cae222bbbbe59a2b9d78848f0181bb9415fd3`，Frontend commit 为 `fcd1cb0e936b666c888ade7ea8b648799e3fb3be`，23 个组件全部可用且 `canCompose: true`。
 - 回滚点：GCE 启动脚本部署前生成的 SQLite 备份；前端上一版本 Parent Theme `0.27.0`；CMS 上一稳定镜像 `1.15.0`（并保留 `1.14.1`）。
+
+## Trip.com Affiliate Asset Setup Queue（2026-09-08，待生产部署）
+
+- 状态：实现和本地验收完成，待提交、推送与生产部署。
+- 本地应用版本已更新为 `1.16.0`；内容生产策略仍为 `1.5`，未因实现型功能改动而抬升策略版本。
+- 新增 Migration 33：`affiliate_asset_queue_tasks`，包含唯一 `task_key`、唯一且不可变的 `trip_sub1`、状态/Opportunity/Provider 索引，以及 Asset 完成关联。
+- 新增显式 Seed 文件 `config/affiliate-queue-seeds.json`；初始范围仅为 Beijing/Shanghai 的 HOTEL/ATTRACTION 四项，不做城市、酒店、路线、机场或实体组合扩张。
+- HIGH/VERY_HIGH 且达到 `AFFILIATE_OPPORTUNITY_THRESHOLD` 的 Affiliate Opportunity 会在缺少 exact Asset/等价任务时生成 Queue Task；broad fallback 不阻止更精确任务。
+- 完成任务只接受 Trip.com allowlist 上无凭据 HTTPS URL，保持 URL 原文不改写，并在事务中创建 canonical Affiliate Asset、标记 COMPLETED、记录完成时间和 Asset ID；重试不会重复创建。
+- SEARCH_BOX 复用 `normalizeEmbedConfig` 的结构化安全边界；PROMOTION 强制 `valid_from` 与 `valid_until`。
+- 新增状态/类别/Scope 筛选、复制 `trip_sub1`/Source URL、URL 回填、跳过、CSV/JSON 导出、dry-run 预检和逐行导入 UI/API。
+- 新增 `test/affiliate-queue.test.mjs` 的 32 个专项用例和 Migration 33 升级测试，覆盖稳定键、冲突、去重、exact/broad fallback、门槛、完成幂等、安全校验、Search Box、Promotion、CSV/JSON、部分失败、保护、筛选和 API 鉴权。
+- 架构边界未改变：Research、Claim、Knowledge、Topic ranking、Brief、Research Draft 和 QA 不读取 Queue；新 Asset 复用既有 Commercial Composer 与 Event/Performance。
+- 验收：`npm run check` 通过；`npm test` 162/162 通过；`npm run release:check` 39 项强制检查全部通过、0 失败；本地真实浏览器完成空状态、Seed、筛选、手工 URL 回填、Task 完成、Asset 生成和待办数刷新验证。
+- 用户已在实现过程中更新授权：完工并通过验收后执行 git commit、push 与部署。

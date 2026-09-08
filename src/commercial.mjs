@@ -39,7 +39,7 @@ export function normalizeAffiliateAsset(input, providerAccount = null) {
   const productCategory = enumValue(input.productCategory || input.product_category, PRODUCT_CATEGORIES, "productCategory");
   const scopeType = enumValue(input.scopeType || input.scope_type, SCOPE_TYPES, "scopeType");
   const provider = requiredSingleLine(input.provider || providerAccount?.displayName, "provider", 100);
-  const targetUrl = input.targetUrl || input.target_url ? safeAffiliateUrl(input.targetUrl || input.target_url) : "";
+  const targetUrl = input.targetUrl || input.target_url ? validateProviderAffiliateUrl(input.targetUrl || input.target_url, provider) : "";
   const imageUrl = input.imageUrl || input.image_url ? safeAffiliateUrl(input.imageUrl || input.image_url) : "";
   const altText = singleLine(truncate(input.altText || input.alt_text, 200));
   const embedConfig = normalizeEmbedConfig(input.embedConfig || input.embed_config || input.embed_config_json, assetType, provider);
@@ -335,7 +335,7 @@ const INTENT_PATTERNS = {
   PLANNER: /planner|itinerary|行程规划/i,
 };
 
-function normalizeEmbedConfig(value, assetType, provider) {
+export function normalizeEmbedConfig(value, assetType, provider) {
   if (!value) return {};
   let config = value;
   if (typeof value === "string") {
@@ -351,7 +351,7 @@ function normalizeEmbedConfig(value, assetType, provider) {
   if (config.src) {
     const url = new URL(config.src);
     if (url.protocol !== "https:" || url.username || url.password) throw new CommercialValidationError("embedConfig.src must be a credential-free HTTPS URL.");
-    if (/trip/i.test(provider) && !["trip.com", "tripcdn.com", "ctrip.com"].some((suffix) => url.hostname === suffix || url.hostname.endsWith(`.${suffix}`))) throw new CommercialValidationError("Trip.com embed sources must use an allowlisted official domain.");
+    if (isTripProvider(provider) && !["trip.com", "tripcdn.com", "ctrip.com"].some((suffix) => url.hostname === suffix || url.hostname.endsWith(`.${suffix}`))) throw new CommercialValidationError("Trip.com embed sources must use an allowlisted official domain.");
     config = {
       embed_type: embedType,
       src: url.toString(),
@@ -368,7 +368,23 @@ function normalizeEmbedConfig(value, assetType, provider) {
 function required(value, field, max) { const text = truncate(value, max).trim(); if (!text) throw new CommercialValidationError(`${field} is required.`); return text; }
 function requiredSingleLine(value, field, max) { return singleLine(required(value, field, max)); }
 function singleLine(value) { return String(value || "").replace(/\s+/g, " ").trim(); }
-function safeAffiliateUrl(value) { try { const url = new URL(value); if (url.protocol !== "https:" || url.username || url.password) throw new Error("unsafe"); return truncate(url.toString(), 4_000); } catch { throw new CommercialValidationError("targetUrl must be a credential-free HTTPS URL."); } }
+export function validateProviderAffiliateUrl(value, provider = "", { field = "targetUrl" } = {}) {
+  const source = String(value || "").trim();
+  if (/<\/?(?:script|iframe|object|embed|style)|javascript:|data:/iu.test(source)) throw new CommercialValidationError(`${field} must be a plain official HTTPS URL, not HTML or script.`);
+  try {
+    const url = new URL(source);
+    if (url.protocol !== "https:" || url.username || url.password) throw new Error("unsafe");
+    if (isTripProvider(provider) && !["trip.com", "tripcdn.com", "ctrip.com"].some((suffix) => url.hostname === suffix || url.hostname.endsWith(`.${suffix}`))) {
+      throw new CommercialValidationError(`${field} must use an allowlisted official Trip.com domain.`);
+    }
+    return truncate(source, 4_000);
+  } catch (error) {
+    if (error instanceof CommercialValidationError) throw error;
+    throw new CommercialValidationError(`${field} must be a credential-free HTTPS URL.`);
+  }
+}
+function safeAffiliateUrl(value) { return validateProviderAffiliateUrl(value); }
+function isTripProvider(value) { return /^(?:trip|trip\.com|trip-com)(?:\s+affiliate)?$/i.test(String(value || "").trim()); }
 function safeDate(value) { if (!value) return null; const date = new Date(value); if (Number.isNaN(date.valueOf())) throw new CommercialValidationError("Date fields must be valid ISO dates."); return date.toISOString(); }
 function boundedInteger(value, min, max) { return Math.max(min, Math.min(max, Number.parseInt(value || "0", 10) || 0)); }
 function enumValue(value, allowed, field, uppercase = true) { const normalized = uppercase ? String(value || "").toUpperCase() : String(value || "").toLowerCase(); if (!allowed.has(normalized)) throw new CommercialValidationError(`Unsupported ${field}: ${value}`); return normalized; }
