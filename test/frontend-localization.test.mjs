@@ -24,6 +24,8 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
     "前端能力契约",
     "目的地知识地图",
     "联盟资产建链队列",
+    "处理队列",
+    "冷却等待",
   ];
   const obsoleteEnglish = [
     "Source detail",
@@ -44,6 +46,7 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
 
   for (const text of requiredChinese) assert.ok(interfaceSource.includes(text), `缺少中文界面文本：${text}`);
   for (const text of obsoleteEnglish) assert.equal(interfaceSource.includes(text), false, `仍存在旧英文界面文本：${text}`);
+  assert.ok(viewsSource.includes("item.list_number"), "来源标题必须显示当前列表序号");
 });
 
 test("shared status, category, and duration labels use Chinese display text", () => {

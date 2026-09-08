@@ -107,12 +107,65 @@ function CredentialField({ label: title, type = "text", value, onChange, autoCom
 function SourcesView({ data, onGuide, onOpenSource, onSubmitManualSource, actionBusy }) {
   const items = data?.items || [];
   return (
-    <div className="space-y-4"><ManualSourceForm onSubmit={onSubmitManualSource} busy={actionBusy} /><div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500"><span>也可以继续使用 Chrome 扩展采集已授权的小红书笔记。</span><button type="button" className="font-medium text-blue-700 hover:text-blue-800" onClick={() => onGuide("capture")}>查看扩展采集说明</button></div>{!items.length ? <EmptyState icon="source" title="尚无来源" description="可在上方提交公开链接、PDF、Word、图片或视频文件，提交后会自动进入现有研究与内容生产流程。" /> : <><SummaryBar title="处理状态说明"><span><b>处理中：</b>来源已安全保存，系统正在进行多模态提取、结构化来源、信息主张和内容蓝图。</span><span><b>提取完成：</b>结构化研究已可用，并不代表文章已生成。</span><span><b>需要处理：</b>打开来源查看原因后可重新执行提取。</span></SummaryBar><section className="space-y-2.5 md:hidden" aria-label="研究来源列表">{items.map((item) => <button key={item.id} type="button" onClick={() => onOpenSource(item.id)} className="block w-full rounded-2xl border border-slate-200/80 bg-white p-4 text-left shadow-sm transition active:scale-[0.99] focus:outline-none focus-visible:ring-4 focus-visible:ring-slate-200"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="line-clamp-2 text-[15px] font-semibold leading-relaxed text-slate-900">{item.title || "未命名来源"}</h2><p className="mt-1.5 text-[11px] text-slate-400">{sourceTypeLabel(item)} · v{item.capture_version}</p></div><StatusPill status={item.status} /></div><div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[11px] text-slate-500"><span>{item.destination_name || "目的地识别中"}</span><span className="font-medium tabular-nums text-slate-700">{sourceProgressLabel(item)}</span></div><p className="mt-2 text-[10px] text-slate-400">点击查看来源详情与提取结果</p></button>)}</section><div className="hidden md:block"><TableShell><Table><TableHeader><TableRow><TableHead>来源</TableHead><TableHead>状态</TableHead><TableHead className="hidden md:table-cell">目的地</TableHead><TableHead>处理进度</TableHead><TableHead className="hidden lg:table-cell">采集时间</TableHead></TableRow></TableHeader>
-      <TableBody>{items.map((item) => <TableRow key={item.id} tabIndex={0} role="button" className="cursor-pointer focus-visible:bg-slate-50 focus-visible:outline-none" onClick={() => onOpenSource(item.id)} onKeyDown={(event) => event.key === "Enter" && onOpenSource(item.id)}>
-        <TableCell><div className="max-w-md font-medium text-slate-900">{item.title || "未命名来源"}</div><div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-slate-400"><span>{sourceTypeLabel(item)}</span><span>· v{item.capture_version}</span></div></TableCell>
-        <TableCell><StatusPill status={item.status} /></TableCell><TableCell className="hidden md:table-cell">{item.destination_name || "—"}</TableCell><TableCell className="whitespace-nowrap text-xs tabular-nums">{sourceProgressLabel(item)}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.captured_at)}</TableCell>
-      </TableRow>)}</TableBody></Table></TableShell></div></>}</div>
+    <div className="space-y-4">
+      <ManualSourceForm onSubmit={onSubmitManualSource} busy={actionBusy} />
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+        <span>也可以继续使用 Chrome 扩展采集已授权的小红书笔记。</span>
+        <button type="button" className="font-medium text-blue-700 hover:text-blue-800" onClick={() => onGuide("capture")}>查看扩展采集说明</button>
+      </div>
+      {!items.length ? <EmptyState icon="source" title="尚无来源" description="可在上方提交公开链接、PDF、Word、图片或视频文件，提交后会自动进入现有研究与内容生产流程。" /> : <>
+        <SummaryBar title="处理状态说明">
+          <span><b>处理中：</b>来源已安全保存，系统正在进行多模态提取、结构化来源、信息主张和内容蓝图。</span>
+          <span><b>提取完成：</b>结构化研究已可用，并不代表文章已生成。</span>
+          <span><b>需要处理：</b>打开来源查看原因后可重新执行提取。</span>
+        </SummaryBar>
+        <SourceQueueOverview items={items} />
+        <section className="space-y-2.5 md:hidden" aria-label="研究来源列表">
+          {items.map((item) => <button key={item.id} type="button" onClick={() => onOpenSource(item.id)} className="block w-full rounded-2xl border border-slate-200/80 bg-white p-4 text-left shadow-sm transition active:scale-[0.99] focus:outline-none focus-visible:ring-4 focus-visible:ring-slate-200">
+            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="line-clamp-2 text-[15px] font-semibold leading-relaxed text-slate-900"><span className="mr-1 tabular-nums text-slate-400">{item.list_number}.</span>{item.title || "未命名来源"}</h2><p className="mt-1.5 text-[11px] text-slate-400">{sourceTypeLabel(item)} · v{item.capture_version}</p></div><StatusPill status={item.status} /></div>
+            <SourceQueueStatus item={item} compact />
+            <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[11px] text-slate-500"><span>{item.destination_name || "目的地识别中"}</span><span className="font-medium tabular-nums text-slate-700">{sourceProgressLabel(item)}</span></div>
+            <p className="mt-2 text-[10px] text-slate-400">点击查看来源详情与提取结果</p>
+          </button>)}
+        </section>
+        <div className="hidden md:block"><TableShell><Table><TableHeader><TableRow><TableHead>来源</TableHead><TableHead>状态</TableHead><TableHead>处理队列</TableHead><TableHead className="hidden md:table-cell">目的地</TableHead><TableHead>处理进度</TableHead><TableHead className="hidden lg:table-cell">采集时间</TableHead></TableRow></TableHeader>
+          <TableBody>{items.map((item) => <TableRow key={item.id} tabIndex={0} role="button" className="cursor-pointer focus-visible:bg-slate-50 focus-visible:outline-none" onClick={() => onOpenSource(item.id)} onKeyDown={(event) => event.key === "Enter" && onOpenSource(item.id)}>
+            <TableCell><div className="max-w-md font-medium text-slate-900"><span className="mr-1.5 tabular-nums text-slate-400">{item.list_number}.</span>{item.title || "未命名来源"}</div><div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-slate-400"><span>{sourceTypeLabel(item)}</span><span>· v{item.capture_version}</span></div></TableCell>
+            <TableCell><StatusPill status={item.status} /></TableCell><TableCell><SourceQueueStatus item={item} /></TableCell><TableCell className="hidden md:table-cell">{item.destination_name || "—"}</TableCell><TableCell className="whitespace-nowrap text-xs tabular-nums">{sourceProgressLabel(item)}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.captured_at)}</TableCell>
+          </TableRow>)}</TableBody>
+        </Table></TableShell></div>
+      </>}
+    </div>
   );
+}
+
+function SourceQueueOverview({ items }) {
+  const active = items.filter((item) => item.queue && ["running", "queued", "cooldown"].includes(item.queue.state));
+  if (!active.length) return null;
+  const running = active.filter((item) => item.queue.state === "running").length;
+  const queued = active.filter((item) => item.queue.state === "queued").length;
+  const cooldown = active.filter((item) => item.queue.state === "cooldown").length;
+  return <SummaryBar title={`处理队列：${running} 篇正在处理 · ${queued} 篇可执行排队 · ${cooldown} 篇冷却等待`}>
+    <span>来源页在队列活动时每 5 秒自动刷新；当前阶段、剩余任务数和排队顺序会随调度实时更新。</span>
+    <span>“冷却等待”表示模型限流或退避尚未到期，并非进程卡死；到达显示时间后会自动重新进入可执行队列。</span>
+  </SummaryBar>;
+}
+
+function SourceQueueStatus({ item, compact = false }) {
+  const queue = item.queue;
+  if (!queue) return <span className="text-[10px] text-slate-400">{item.status === "processing" ? "等待生成后续任务" : "—"}</span>;
+  const stage = sourceQueueStageLabel(queue.stage);
+  if (queue.state === "running") return <div className={cn(compact && "mt-2", "text-[10px] leading-relaxed text-emerald-700")}><b>正在处理</b> · {stage}<br /><span className="text-slate-400">{queue.running_job_count} 个执行中 · {queue.queued_job_count} 个后续任务</span></div>;
+  if (queue.state === "queued") return <div className={cn(compact && "mt-2", "text-[10px] leading-relaxed text-blue-700")}><b>排队第 {queue.queue_position} 位</b> · {stage}<br /><span className="text-slate-400">前方 {queue.queue_ahead} 篇 · 本笔记 {queue.queued_job_count} 个任务</span></div>;
+  if (queue.state === "cooldown") {
+    const quotaLimited = /429|quota|resource exhausted|rate.?limit/i.test(queue.last_error || "");
+    return <div className={cn(compact && "mt-2", "text-[10px] leading-relaxed text-amber-700")}><b>冷却等待 · 排队第 {queue.queue_position} 位</b><br /><span>{quotaLimited ? "模型限流" : stage}，{formatDate(queue.available_at)} 后可重试</span></div>;
+  }
+  return <div className={cn(compact && "mt-2", "text-[10px] leading-relaxed text-rose-700")}><b>任务失败</b> · {stage}<br /><span>尝试 {queue.attempts}/{queue.max_attempts} 次，请打开异常页处理</span></div>;
+}
+
+function sourceQueueStageLabel(type) {
+  return ({ extract_source: "准备处理", preflight_source: "来源预检", segment_source: "来源分段", extract_segment_claims: "信息主张提取", audit_segment_coverage: "覆盖审计", retry_segment_extraction: "定向补提", finalize_source_extraction: "汇总提取结果" })[type] || label(type);
 }
 
 function ManualSourceForm({ onSubmit, busy }) {

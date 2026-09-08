@@ -4,10 +4,40 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { openDatabase } from "../src/db.mjs";
 import { createLogger } from "../src/logger.mjs";
 import { ExceptionNotifier } from "../src/notifications.mjs";
 import { Repository } from "../src/repository.mjs";
+import { repositoryFixture } from "../test-support/repository-fixture.mjs";
+
+test("source list exposes running, queued, and cooldown order with stable list numbers", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const sources = [["running", "111111111111111111111111"], ["queued", "222222222222222222222222"], ["cooldown", "333333333333333333333333"]].map(([name, externalId]) => repository.saveCapture(normalizeXiaohongshuCapture({
+    url: `https://www.xiaohongshu.com/explore/${externalId}`, title: `Queue ${name}`,
+    text: `A manually selected Chongqing travel note used to verify the visible ${name} processing state and queue position.`, images: [],
+  })));
+  const jobs = sources.map((source) => db.prepare("SELECT * FROM jobs WHERE type='extract_source' AND entity_id=?").get(source.id));
+  const now = new Date();
+  db.prepare("UPDATE jobs SET status='running',attempts=1,started_at=?,updated_at=? WHERE id=?")
+    .run(new Date(now.valueOf() - 5_000).toISOString(), now.toISOString(), jobs[0].id);
+  db.prepare("UPDATE jobs SET available_at=?,created_at=?,updated_at=? WHERE id=?")
+    .run(new Date(now.valueOf() - 1_000).toISOString(), new Date(now.valueOf() - 10_000).toISOString(), now.toISOString(), jobs[1].id);
+  db.prepare("UPDATE jobs SET available_at=?,last_error=?,updated_at=? WHERE id=?")
+    .run(new Date(now.valueOf() + 60_000).toISOString(), "Vertex request failed (429): Resource exhausted.", now.toISOString(), jobs[2].id);
+  db.prepare("UPDATE sources SET status='processing' WHERE id IN (?,?,?)").run(...sources.map((source) => source.id));
+
+  const listed = repository.listSources(10);
+  assert.deepEqual(listed.map((item) => item.list_number), [1, 2, 3]);
+  const byId = new Map(listed.map((item) => [item.id, item]));
+  assert.equal(byId.get(sources[0].id).queue.state, "running");
+  assert.equal(byId.get(sources[1].id).queue.state, "queued");
+  assert.equal(byId.get(sources[1].id).queue.queue_position, 1);
+  assert.equal(byId.get(sources[1].id).queue.queue_ahead, 1);
+  assert.equal(byId.get(sources[2].id).queue.state, "cooldown");
+  assert.equal(byId.get(sources[2].id).queue.queue_position, 2);
+  assert.match(byId.get(sources[2].id).queue.last_error, /429/);
+});
 
 test("job telemetry reports durable queue latency, duration, outcomes, and active work", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-telemetry-test-"));

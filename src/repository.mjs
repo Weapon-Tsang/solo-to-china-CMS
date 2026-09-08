@@ -1217,7 +1217,7 @@ export class Repository {
   }
 
   listSources(limit = 100) {
-    return this.db.prepare(`
+    const sources = this.db.prepare(`
       SELECT s.id, s.adapter, s.external_id, s.title, s.author_name, s.canonical_url, s.submitted_url, s.source_kind,
         s.status, s.last_error, s.captured_at, s.capture_version, s.authority_level, s.verified_at,
         ss.destination_name, ss.summary, ss.extraction_method,
@@ -1227,8 +1227,23 @@ export class Repository {
         (SELECT COUNT(*) FROM segment_extractions se WHERE se.source_id = s.id) AS extracted_segment_count,
         (SELECT COUNT(*) FROM extraction_coverage ec WHERE ec.source_id = s.id AND ec.audited_at IS NOT NULL) AS audited_segment_count
       FROM sources s LEFT JOIN structured_sources ss ON ss.source_id = s.id
-      ORDER BY s.captured_at DESC LIMIT ?
-    `).all(limit).map((source) => ({ ...source, authority_suggestion: suggestAuthority(source.canonical_url) }));
+      ORDER BY s.captured_at DESC, s.id DESC LIMIT ?
+    `).all(limit);
+    const queueJobs = this.db.prepare(`
+      SELECT j.id,j.type,j.entity_id,j.status,j.attempts,j.max_attempts,j.available_at,j.created_at,j.started_at,j.updated_at,j.last_error,
+        COALESCE(sg.source_id,j.entity_id) AS source_id
+      FROM jobs j LEFT JOIN source_segments sg ON sg.id=j.entity_id
+      WHERE j.type IN ('extract_source','preflight_source','segment_source','extract_segment_claims',
+        'audit_segment_coverage','retry_segment_extraction','finalize_source_extraction')
+        AND j.status IN ('queued','running','failed')
+        AND (sg.source_id IS NOT NULL OR EXISTS (SELECT 1 FROM sources direct_source WHERE direct_source.id=j.entity_id))
+    `).all();
+    const queueStates = sourceQueueStates(queueJobs);
+    return sources.map((source, index) => {
+      const queue = queueStates.get(source.id) || null;
+      return { ...source, list_number: index + 1, authority_suggestion: suggestAuthority(source.canonical_url),
+        queue: source.status === "processed" && queue?.state === "failed" ? null : queue };
+    });
   }
 
   reviewSourceEvidence(sourceId, { decision, authorityLevel = 4, verifiedAt = null, note = "", operator = "administrator" } = {}) {
@@ -4154,6 +4169,61 @@ function truncateText(value, max) {
 
 function normalizeValue(value) {
   return String(value).trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function sourceQueueStates(rows) {
+  const groups = Map.groupBy(rows || [], (row) => row.source_id);
+  const states = [];
+  const nowMs = Date.now();
+  for (const [sourceId, jobs] of groups) {
+    const active = jobs.filter((job) => ["queued", "running"].includes(job.status));
+    const running = active.filter((job) => job.status === "running").sort(compareRunningJobs);
+    const queued = active.filter((job) => job.status === "queued");
+    const eligible = queued.filter((job) => Date.parse(job.available_at) <= nowMs).sort(compareEligibleJobs);
+    const cooling = queued.filter((job) => Date.parse(job.available_at) > nowMs).sort(compareCoolingJobs);
+    const failed = jobs.filter((job) => job.status === "failed").sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+    const state = running.length ? "running" : eligible.length ? "queued" : cooling.length ? "cooldown" : failed.length ? "failed" : null;
+    if (!state) continue;
+    const next = running[0] || eligible[0] || cooling[0] || failed[0];
+    states.push({ sourceId, state, stage: next.type, running_job_count: running.length,
+      queued_job_count: queued.length, job_count: active.length || failed.length,
+      available_at: next.available_at || null, started_at: next.started_at || null,
+      attempts: Number(next.attempts || 0), max_attempts: Number(next.max_attempts || 0),
+      last_error: next.last_error || null, updated_at: next.updated_at,
+      queue_position: null, queue_ahead: null, _next: next });
+  }
+  const runningCount = states.filter((item) => item.state === "running").length;
+  const waiting = states.filter((item) => ["queued", "cooldown"].includes(item.state)).sort((a, b) => {
+    if (a.state !== b.state) return a.state === "queued" ? -1 : 1;
+    return a.state === "queued" ? compareEligibleJobs(a._next, b._next) : compareCoolingJobs(a._next, b._next);
+  });
+  waiting.forEach((item, index) => {
+    item.queue_position = index + 1;
+    item.queue_ahead = runningCount + index;
+  });
+  return new Map(states.map(({ _next, ...item }) => [item.sourceId, item]));
+}
+
+function extractionJobPriority(type) {
+  if (type === "finalize_source_extraction") return 0;
+  if (type === "retry_segment_extraction") return 1;
+  if (type === "audit_segment_coverage") return 2;
+  return 3;
+}
+
+function compareEligibleJobs(a, b) {
+  return extractionJobPriority(a.type) - extractionJobPriority(b.type)
+    || String(a.created_at).localeCompare(String(b.created_at))
+    || String(a.id).localeCompare(String(b.id));
+}
+
+function compareCoolingJobs(a, b) {
+  return String(a.available_at).localeCompare(String(b.available_at)) || compareEligibleJobs(a, b);
+}
+
+function compareRunningJobs(a, b) {
+  return String(a.started_at || a.created_at).localeCompare(String(b.started_at || b.created_at))
+    || compareEligibleJobs(a, b);
 }
 
 function knowledgeValueSpecificity(value) {

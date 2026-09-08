@@ -7,6 +7,7 @@
 - Preserve an administrator's false-positive dismissal through later Knowledge rebuilds so the same reviewed pair does not reappear as a conflict.
 - Keep a Source in processing state while other segments are still queued, and expose an audited per-segment choice to retry or confirm that uncovered text is non-material before finalization.
 - Localize segment extraction, coverage-review statuses, and the legacy coverage error shown in Source details.
+- Show each Source's live extraction stage, running and remaining job counts, source-level queue position, cooldown time, and provider-pressure state; number Source titles consistently in the current list.
 
 ## 1.17.5 - 2026-09-09
 
