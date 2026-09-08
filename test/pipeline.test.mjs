@@ -53,6 +53,44 @@ test("pipeline separates extraction, claims, knowledge conflict detection, and e
   assert.equal(repository.getKnowledge()[0].evidence.length, 2);
 });
 
+test("a manual coverage segment does not fail its source before every segment settles", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/coverage-ordering",
+    title: "Chongqing image guide",
+    text: "This selected travel note contains a long introduction that the model must inspect before deciding whether it contains a durable travel claim for visitors.",
+    images: [{ url: "https://example.com/one.jpg", alt: "first travel image" }, { url: "https://example.com/two.jpg", alt: "second travel image" }],
+  }));
+  const segments = repository.prepareSourceSegments(source.id);
+  assert.equal(segments.length, 3);
+  const extraction = (claims = []) => ({
+    method: "test_multimodal", model: "fixture-model",
+    result: { source: { language: "en", summary: "Guide", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 }, claims,
+      blueprint: { format: "guide", hook: "Visit", angle: "practical", sections: [], strengths: [], gaps: [] } },
+  });
+
+  repository.saveSegmentExtraction(segments[0].id, extraction());
+  assert.equal(repository.auditSegmentCoverage(segments[0].id, { uncovered_spans: [{ quote: "long introduction", importance: "material", reason: "Potential visitor fact is uncovered." }] }).status, "retry_required");
+  repository.saveSegmentExtraction(segments[0].id, extraction(), { retry: true });
+  assert.equal(repository.auditSegmentCoverage(segments[0].id, { uncovered_spans: [{ quote: "long introduction", importance: "material", reason: "Potential visitor fact is still uncovered." }] }).status, "manual_review");
+  assert.equal(db.prepare("SELECT status,last_error FROM sources WHERE id=?").get(source.id).status, "processing");
+
+  for (const [index, segment] of segments.slice(1).entries()) {
+    repository.saveSegmentExtraction(segment.id, extraction([{ key: `attraction.test.image_${index + 1}`, subject: "Test place", predicate: "features_view", value: `view ${index + 1}`, qualifiers: [], source_quote: `visible image ${index + 1}`, confidence: 0.9 }]));
+    repository.auditSegmentCoverage(segment.id, { uncovered_spans: [], modality: { received: "image", attempted: 1 } });
+    const stored = db.prepare("SELECT status,last_error FROM sources WHERE id=?").get(source.id);
+    assert.equal(stored.status, index === 0 ? "processing" : "exception");
+  }
+
+  const decision = repository.reviewSegmentCoverage(source.id, segments[0].id, { decision: "not_material", note: "Introductory copy only", operator: "tester" });
+  assert.equal(decision.sourceState.ready, true);
+  assert.equal(db.prepare("SELECT status,last_error FROM sources WHERE id=?").get(source.id).status, "processing");
+  assert.equal(db.prepare("SELECT status FROM extraction_coverage WHERE segment_id=?").get(segments[0].id).status, "passed");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='finalize_source_extraction' AND entity_id=? AND status='queued'").get(source.id).count, 1);
+  const audit = JSON.parse(db.prepare("SELECT audit_json FROM extraction_coverage WHERE segment_id=?").get(segments[0].id).audit_json);
+  assert.equal(audit.manualReview.operator, "tester");
+});
+
 test("entity resolution falls back deterministically when model structured output is invalid", async () => {
   const completed = [];
   const enqueued = [];

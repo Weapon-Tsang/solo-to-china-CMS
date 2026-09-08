@@ -13,7 +13,8 @@ export function label(value) {
   chinese.resolved = "已人工确认";
   Object.assign(chinese, {
     verified: "已核验", unverified: "未核验", partial: "部分完成", complete: "完整", completed: "已完成",
-    retrying: "重试中", paragraph_group: "段落组", image: "图片", video: "视频", text: "文本", document: "文档",
+    retrying: "重试中", retry_required: "等待定向重试", manual_review: "需要人工检查", extracted: "已提取，等待审计",
+    paragraph_group: "段落组", image: "图片", video: "视频", text: "文本", document: "文档",
     entity: "实体", route: "路线", area: "区域", destination: "目的地", country: "国家", category: "类别",
     global: "全局", manual: "人工", full: "完整历史", incremental: "增量", json: "JSON",
     pending_review: "等待审核", ready_for_manual: "等待人工建链", invalid: "无效", skipped: "已跳过",
@@ -23,6 +24,14 @@ export function label(value) {
     airport_transfer: "机场接送", planner: "行程规划", category_link: "分类链接", custom_link: "自定义链接",
   });
   return chinese[key] || String(value ?? "").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export function friendlyError(value) {
+  const text = String(value || "");
+  if (text.startsWith("Coverage audit still found material evidence without Claims after one targeted retry.")) {
+    return "覆盖审计在一次定向重试后仍发现未形成信息主张的重要证据，需要人工检查。";
+  }
+  return text;
 }
 
 export function formatDate(value) {

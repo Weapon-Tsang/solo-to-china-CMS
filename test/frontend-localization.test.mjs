@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-import { label, formatDuration } from "../frontend/src/lib/utils.js";
+import { friendlyError, label, formatDuration } from "../frontend/src/lib/utils.js";
 
 const appSource = fs.readFileSync(new URL("../frontend/src/App.jsx", import.meta.url), "utf8");
 const viewsSource = fs.readFileSync(new URL("../frontend/src/views.jsx", import.meta.url), "utf8");
@@ -50,5 +50,8 @@ test("shared status, category, and duration labels use Chinese display text", ()
   assert.equal(label("paragraph_group"), "段落组");
   assert.equal(label("READY_FOR_MANUAL"), "等待人工建链");
   assert.equal(label("airport_transfer"), "机场接送");
+  assert.equal(label("manual_review"), "需要人工检查");
+  assert.equal(label("extracted"), "已提取，等待审计");
+  assert.match(friendlyError("Coverage audit still found material evidence without Claims after one targeted retry."), /覆盖审计/);
   assert.equal(formatDuration(61_000), "1 分钟");
 });

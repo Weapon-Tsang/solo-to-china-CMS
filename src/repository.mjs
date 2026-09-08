@@ -797,16 +797,74 @@ export class Repository {
       .run(status === "passed" ? "complete" : status === "manual_review" ? "failed" : status, timestamp, segmentId);
     if (row.asset_id && status !== "passed") this.db.prepare("UPDATE source_assets SET extraction_status=?,extraction_error=? WHERE id=?")
       .run(status === "retry_required" ? "retry_required" : "failed", uncovered[0]?.reason || null, row.asset_id);
-    if (status === "manual_review") this.db.prepare("UPDATE sources SET status='exception',last_error=?,updated_at=? WHERE id=?")
-      .run("Coverage audit still found material evidence without Claims after one targeted retry.", timestamp, row.source_id);
-    return { sourceId: row.source_id, segmentId, status, retryCount, claimCount: supportedClaims.length, uncovered, ...audit };
+    const sourceState = this.reconcileSourceCoverageState(row.source_id);
+    return { sourceId: row.source_id, segmentId, status, retryCount, claimCount: supportedClaims.length, uncovered, sourceState, ...audit };
   }
 
   sourceCoverageReady(sourceId) {
+    return this.reconcileSourceCoverageState(sourceId).ready;
+  }
+
+  reconcileSourceCoverageState(sourceId) {
     const counts = this.db.prepare(`SELECT COUNT(*) AS total,
-      SUM(CASE WHEN ec.status='passed' THEN 1 ELSE 0 END) AS done
+      SUM(CASE WHEN ec.status='passed' THEN 1 ELSE 0 END) AS passed,
+      SUM(CASE WHEN ec.status='manual_review' THEN 1 ELSE 0 END) AS manual_review,
+      SUM(CASE WHEN ec.status IN ('passed','manual_review') THEN 1 ELSE 0 END) AS terminal
       FROM source_segments ss LEFT JOIN extraction_coverage ec ON ec.segment_id=ss.id WHERE ss.source_id=?`).get(sourceId);
-    return Number(counts.total || 0) > 0 && Number(counts.total) === Number(counts.done || 0);
+    const total = Number(counts.total || 0);
+    const passed = Number(counts.passed || 0);
+    const manualReview = Number(counts.manual_review || 0);
+    const terminal = Number(counts.terminal || 0);
+    const ready = total > 0 && passed === total;
+    const settled = total > 0 && terminal === total;
+    const timestamp = now();
+    if (settled && manualReview > 0) {
+      const message = `覆盖审计在一次定向重试后仍发现未形成信息主张的重要证据，共 ${manualReview} 个分段需要人工检查。`;
+      this.db.prepare("UPDATE sources SET status='exception',last_error=?,updated_at=? WHERE id=?")
+        .run(message, timestamp, sourceId);
+    } else {
+      this.db.prepare(`UPDATE sources SET status='processing',last_error=NULL,updated_at=? WHERE id=?
+        AND status='exception' AND (last_error LIKE 'Coverage audit still found material evidence without Claims%'
+          OR last_error LIKE '覆盖审计在一次定向重试后仍发现未形成信息主张的重要证据%')`)
+        .run(timestamp, sourceId);
+    }
+    return { total, passed, manualReview, terminal, ready, settled };
+  }
+
+  reviewSegmentCoverage(sourceId, segmentId, { decision, note = "", operator = "administrator" } = {}) {
+    if (!["retry", "not_material"].includes(decision)) throw new Error("Coverage review decision must be retry or not_material.");
+    const row = this.db.prepare(`SELECT ss.*,ec.id AS coverage_id,ec.status AS coverage_status,ec.audit_json
+      FROM source_segments ss JOIN extraction_coverage ec ON ec.segment_id=ss.id
+      WHERE ss.id=? AND ss.source_id=?`).get(segmentId, sourceId);
+    if (!row) return null;
+    if (row.coverage_status !== "manual_review") {
+      const error = new Error("Only a segment awaiting manual coverage review can receive this decision.");
+      error.statusCode = 409;
+      throw error;
+    }
+    const timestamp = now();
+    const audit = { ...json(row.audit_json, {}), manualReview: {
+      decision, note: String(note || "").trim().slice(0, 1_000), operator: String(operator || "administrator").slice(0, 200), reviewedAt: timestamp,
+    } };
+    transaction(this.db, () => {
+      if (decision === "not_material") {
+        this.db.prepare(`UPDATE extraction_coverage SET status='passed',important_uncovered_count=0,
+          uncovered_spans_json='[]',audit_json=?,audited_at=? WHERE id=?`).run(JSON.stringify(audit), timestamp, row.coverage_id);
+        this.db.prepare("UPDATE source_segments SET status='complete',updated_at=? WHERE id=?").run(timestamp, segmentId);
+        if (row.asset_id) this.db.prepare("UPDATE source_assets SET extraction_status='processed',extraction_error=NULL,processed_at=? WHERE id=?")
+          .run(timestamp, row.asset_id);
+      } else {
+        this.db.prepare("UPDATE extraction_coverage SET status='retry_required',audit_json=?,audited_at=? WHERE id=?")
+          .run(JSON.stringify(audit), timestamp, row.coverage_id);
+        this.db.prepare("UPDATE source_segments SET status='retry_required',updated_at=? WHERE id=?").run(timestamp, segmentId);
+        if (row.asset_id) this.db.prepare("UPDATE source_assets SET extraction_status='retry_required',extraction_error=NULL WHERE id=?")
+          .run(row.asset_id);
+        this.enqueue("retry_segment_extraction", segmentId);
+      }
+    });
+    const sourceState = this.reconcileSourceCoverageState(sourceId);
+    if (decision === "not_material" && sourceState.ready) this.enqueue("finalize_source_extraction", sourceId);
+    return { sourceId, segmentId, decision, sourceState };
   }
 
   finalizeSegmentedExtraction(sourceId) {

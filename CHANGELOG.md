@@ -5,6 +5,8 @@
 - Treat positive feature flags and their richer descriptions as compatible enrichment, and recognize translated feature values extracted from the same evidence as paraphrases instead of conflicts.
 - Normalize scope comparisons consistently and prefer informative Knowledge values over boolean shorthand when evidence support is tied.
 - Preserve an administrator's false-positive dismissal through later Knowledge rebuilds so the same reviewed pair does not reappear as a conflict.
+- Keep a Source in processing state while other segments are still queued, and expose an audited per-segment choice to retry or confirm that uncovered text is non-material before finalization.
+- Localize segment extraction, coverage-review statuses, and the legacy coverage error shown in Source details.
 
 ## 1.17.5 - 2026-09-09
 

@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, uploadChunk } from "@/lib/api";
-import { cn, label } from "@/lib/utils";
+import { cn, friendlyError, label } from "@/lib/utils";
 import { ViewRenderer } from "@/views";
 
 const endpoints = {
@@ -288,8 +288,8 @@ function SourceDetail({ source, actionBusy, onAction, onClose }) {
   return <>
     <DialogHeader><Badge variant="info" className="w-max"><FileText className="size-3" /> 来源详情</Badge><DialogTitle>{source.title || "未命名来源"}</DialogTitle><DialogDescription>原始证据、上传文件来源、结构化提取、信息主张和编辑模式均可追溯到当前来源。</DialogDescription></DialogHeader>
     <div className="mb-4 flex flex-wrap items-center gap-2">{originalUrl && <Button variant="secondary" size="sm" asChild><a href={originalUrl} target="_blank" rel="noreferrer"><ExternalLink /> 打开原文</a></Button>}<Button size="sm" disabled={actionBusy} onClick={retry}><RefreshCw className={cn(actionBusy && "animate-spin")} /> 重新提取</Button><Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => reviewEvidence("verified", 1)}><CheckCircle2 /> 核验为官方来源</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => reviewEvidence("unverified", 4)}>标记为未核验</Button><StatusPill status={source.status} /><Badge variant={source.verified_at ? "success" : "warning"}>权威等级 L{source.authority_level || 4} · {source.verified_at ? "已核验" : "未核验"}</Badge></div>
-    {source.last_error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><strong>处理失败</strong><p className="mt-1 leading-relaxed">{source.last_error}</p><small>请先修正访问权限、模型配置或来源内容问题，再重新执行提取。</small></div>}
-    <div className="grid gap-3 md:grid-cols-2"><DetailCard title="结构化来源"><p>{source.structured?.summary || "等待提取"}</p><small>目的地：{source.structured?.destination_name || "—"} · 置信度 {source.structured?.confidence ?? "—"}</small></DetailCard><DetailCard title="编辑蓝图"><p>{source.blueprint?.angle === "pending-ai-analysis" ? "等待 AI 分析" : source.blueprint?.angle || "等待提取"}</p><small>{source.blueprint?.format === "unclassified" ? "待分类" : source.blueprint?.format || "—"}</small></DetailCard>{source.files?.length > 0 && <DetailCard title={`原始文件（${source.files.length}）`} className="md:col-span-2"><ul className="space-y-1">{source.files.map((file) => <li key={file.id}><strong className="text-xs text-slate-700">{file.original_filename}</strong><small className="ml-2">{file.mime_type} · {(file.size_bytes / 1024 / 1024).toFixed(2)} MB · SHA-256 {file.sha256.slice(0, 12)}…</small></li>)}</ul></DetailCard>}{source.segments?.length > 0 && <DetailCard title={`分段与覆盖审计（${source.segments.length}）`} className="md:col-span-2"><ul className="space-y-1">{source.segments.map((segment) => { const coverage = source.extraction_coverage?.find((item) => item.segment_id === segment.id); return <li key={segment.id} className="flex items-center justify-between gap-3"><span>#{segment.sequence + 1} · {label(segment.segment_type)}{segment.image_index ? ` · 图片 ${segment.image_index}` : ""}</span><StatusPill status={coverage?.status || segment.status} /></li>; })}</ul></DetailCard>}<DetailCard title={`信息主张（${source.claims.length}）`} className="md:col-span-2">{source.claims.length ? <ul className="space-y-3">{source.claims.map((claim) => <li key={claim.id} className={claim.lifecycle_status === "excluded" ? "opacity-50" : ""}><div className="flex items-start justify-between gap-3"><div><strong className="text-xs text-slate-800">{claim.subject} {claim.predicate}</strong><p>{claim.value_text}</p><small>“{claim.source_quote}”</small></div><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => onAction(`/api/claims/${claim.id}/${claim.lifecycle_status === "excluded" ? "restore" : "exclude"}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "后台人工管理" }) }, claim.lifecycle_status === "excluded" ? "信息主张已恢复" : "信息主张已排除并将重建知识库")}>{claim.lifecycle_status === "excluded" ? "恢复" : "排除"}</Button></div></li>)}</ul> : <p>尚未提取信息主张。</p>}</DetailCard><DetailCard title="原始采集文本" className="md:col-span-2"><pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{source.raw_text}</pre></DetailCard></div>
+    {source.last_error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><strong>处理失败</strong><p className="mt-1 leading-relaxed">{friendlyError(source.last_error)}</p><small>请先修正访问权限、模型配置或来源内容问题，再重新执行提取。</small></div>}
+    <div className="grid gap-3 md:grid-cols-2"><DetailCard title="结构化来源"><p>{source.structured?.summary || "等待提取"}</p><small>目的地：{source.structured?.destination_name || "—"} · 置信度 {source.structured?.confidence ?? "—"}</small></DetailCard><DetailCard title="编辑蓝图"><p>{source.blueprint?.angle === "pending-ai-analysis" ? "等待 AI 分析" : source.blueprint?.angle || "等待提取"}</p><small>{source.blueprint?.format === "unclassified" ? "待分类" : source.blueprint?.format || "—"}</small></DetailCard>{source.files?.length > 0 && <DetailCard title={`原始文件（${source.files.length}）`} className="md:col-span-2"><ul className="space-y-1">{source.files.map((file) => <li key={file.id}><strong className="text-xs text-slate-700">{file.original_filename}</strong><small className="ml-2">{file.mime_type} · {(file.size_bytes / 1024 / 1024).toFixed(2)} MB · SHA-256 {file.sha256.slice(0, 12)}…</small></li>)}</ul></DetailCard>}{source.segments?.length > 0 && <SegmentCoverageList source={source} actionBusy={actionBusy} onAction={onAction} onClose={onClose} />}<DetailCard title={`信息主张（${source.claims.length}）`} className="md:col-span-2">{source.claims.length ? <ul className="space-y-3">{source.claims.map((claim) => <li key={claim.id} className={claim.lifecycle_status === "excluded" ? "opacity-50" : ""}><div className="flex items-start justify-between gap-3"><div><strong className="text-xs text-slate-800">{claim.subject} {claim.predicate}</strong><p>{claim.value_text}</p><small>“{claim.source_quote}”</small></div><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => onAction(`/api/claims/${claim.id}/${claim.lifecycle_status === "excluded" ? "restore" : "exclude"}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "后台人工管理" }) }, claim.lifecycle_status === "excluded" ? "信息主张已恢复" : "信息主张已排除并将重建知识库")}>{claim.lifecycle_status === "excluded" ? "恢复" : "排除"}</Button></div></li>)}</ul> : <p>尚未提取信息主张。</p>}</DetailCard><DetailCard title="原始采集文本" className="md:col-span-2"><pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{source.raw_text}</pre></DetailCard></div>
   </>;
 }
 
@@ -306,6 +306,29 @@ function DraftDetail({ item, health, actionBusy, onAction, onClose }) {
 
 function DetailCard({ title, className, children }) {
   return <Card className={cn("p-4 shadow-none", className)}><h3 className="mb-2 text-xs font-semibold text-slate-900">{title}</h3><div className="text-xs leading-relaxed text-slate-600 [&_small]:mt-2 [&_small]:block [&_small]:text-[10px] [&_small]:text-slate-400 [&_p]:leading-relaxed">{children}</div></Card>;
+}
+
+function SegmentCoverageList({ source, actionBusy, onAction, onClose }) {
+  const review = async (segment, decision) => {
+    const success = await onAction(`/api/sources/${source.id}/segments/${segment.id}/coverage-review`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decision, note: decision === "not_material" ? "人工确认该分段无需形成信息主张" : "人工要求再次定向提取" }),
+    }, decision === "not_material" ? "该分段已确认无需信息主张" : "该分段已加入定向重试队列");
+    if (success) onClose();
+  };
+  return <DetailCard title={`分段与覆盖审计（${source.segments.length}）`} className="md:col-span-2">
+    <ul className="space-y-2">{source.segments.map((segment) => {
+      const coverage = source.extraction_coverage?.find((item) => item.segment_id === segment.id);
+      const status = coverage?.status || segment.status;
+      return <li key={segment.id} className="rounded-lg border border-slate-100 px-2 py-1.5">
+        <div className="flex items-center justify-between gap-3"><span>#{segment.sequence + 1} · {label(segment.segment_type)}{segment.image_index ? ` · 图片 ${segment.image_index}` : ""}</span><StatusPill status={status} /></div>
+        {status === "manual_review" && <div className="mt-2 rounded-md bg-amber-50 p-2 text-amber-900">
+          {(coverage.uncovered_spans || []).map((item, index) => <p key={`${item.locator}-${index}`}>{item.locator || "该分段"}：{item.reason || "仍有重要证据未形成信息主张"}</p>)}
+          <div className="mt-2 flex flex-wrap gap-2"><Button size="sm" disabled={actionBusy} onClick={() => review(segment, "retry")}><RefreshCw /> 重试此分段</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => review(segment, "not_material")}><CheckCircle2 /> 确认无需信息主张</Button></div>
+        </div>}
+      </li>;
+    })}</ul>
+  </DetailCard>;
 }
 
 const guides = {

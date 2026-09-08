@@ -348,6 +348,19 @@ export function createApplication(config = loadConfig()) {
         const source = repository.getSource(sourceMatch[1]);
         return source ? sendJson(response, 200, sourceForApi(source)) : sendJson(response, 404, { error: "Source not found." });
       }
+      const segmentCoverageReviewMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/segments\/([^/]+)\/coverage-review$/);
+      if (request.method === "POST" && segmentCoverageReviewMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.reviewSegmentCoverage(
+          decodeURIComponent(segmentCoverageReviewMatch[1]),
+          decodeURIComponent(segmentCoverageReviewMatch[2]),
+          { decision: String(payload.decision || ""), note: payload.note || "", operator: auth.status(request).username || "administrator" },
+        );
+        if (!result) return sendJson(response, 404, { error: "Source segment or coverage review was not found." });
+        void pipeline.runOne();
+        return sendJson(response, 202, result);
+      }
       const sourceEvidenceReviewMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/evidence-review$/);
       if (request.method === "POST" && sourceEvidenceReviewMatch) {
         authorizeAdmin(request, config.adminToken, auth);
