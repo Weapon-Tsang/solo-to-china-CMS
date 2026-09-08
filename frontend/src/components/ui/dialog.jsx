@@ -13,7 +13,7 @@ function DialogContent({ className, children, ...props }) {
       <DialogPrimitive.Content className={cn("fixed top-1/2 left-1/2 z-50 max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-white/70 bg-white p-6 shadow-2xl outline-none", className)} {...props}>
         {children}
         <DialogPrimitive.Close className="absolute top-4 right-4 grid size-8 place-items-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/30">
-          <X className="size-4" /><span className="sr-only">Close</span>
+          <X className="size-4" /><span className="sr-only">关闭</span>
         </DialogPrimitive.Close>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.17.3 - 2026-09-09
+
+- Localize CMS detail dialogs, review workflows, configuration guides, commercial and affiliate sections, shared status/category labels, login, and password forms into Chinese.
+- Add a regression check that prevents the localized workflow controls from silently returning to English.
+
 ## 1.17.2 - 2026-09-08
 
 - Load owner-authorized Xiaohongshu CDN videos through a hostname-allowlisted, size-bounded path instead of misclassifying them as out-of-directory uploads.
