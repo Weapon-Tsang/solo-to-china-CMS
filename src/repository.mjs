@@ -3390,8 +3390,9 @@ export class Repository {
     `).all()) {
       const stale = row.freshness_state === "stale";
       const item = exceptionItem("knowledge", row.id, stale ? "blocker" : "warning",
-        stale ? "Knowledge fact is stale" : "Knowledge conflict needs judgment",
-        `${row.subject} · ${row.predicate}`, stale ? `Latest evidence: ${row.latest_evidence_at || "unknown"}` : row.preferred_value,
+        stale ? "知识事实已过期，需要更新来源" : "知识事实存在冲突，需要判断",
+        `${row.subject} · ${row.predicate}`, stale ? `最近一条证据时间：${row.latest_evidence_at || "未知"}`
+          : "系统发现同一事实下存在不能自动合并的不同取值，暂时不会把它用于内容生产。",
         false, row.updated_at);
       if (!stale) item.knowledge = {
         id: row.id,
@@ -3411,10 +3412,11 @@ export class Repository {
       const kind = ({ CLAIM_CONFLICT: "claim_conflict", SOURCE_CONFLICT: "source_conflict", TEMPORAL_CONFLICT: "temporal_conflict",
         GRANULARITY_CONFLICT: "granularity_conflict", NEGATION_EXTRACTION_ERROR: "extraction_error",
         QUALIFIER_EXTRACTION_ERROR: "extraction_error" })[row.review_type] || "claim_conflict";
-      const title = row.review_type.includes("EXTRACTION_ERROR") ? "Claim extraction needs correction" : `${row.review_type.replaceAll("_", " ").toLowerCase()} needs judgment`;
-      const item = exceptionItem(kind, row.id, "warning", title, `${row.subject_a} · ${row.predicate_a}`, row.reason, false, row.updated_at);
+      const presentation = claimReviewPresentation(row.review_type);
+      const item = exceptionItem(kind, row.id, "warning", presentation.title, `${row.subject_a} · ${row.predicate_a}`, presentation.detail, false, row.updated_at);
       item.claim_review = {
         id: row.id, reviewType: row.review_type, destinationSlug: row.destination_slug,
+        explanation: presentation.explanation,
         claimA: { id: row.claim_a_id, sourceId: row.source_id_a, originalSentence: row.source_quote_a, normalized: { subject: row.subject_a, predicate: row.predicate_a, value: row.value_a, structured: json(row.structured_a, {}) } },
         claimB: row.claim_b_id ? { id: row.claim_b_id, originalSentence: row.source_quote_b, normalized: { subject: row.subject_b, predicate: row.predicate_b, value: row.value_b, structured: json(row.structured_b, {}) } } : null,
       };
@@ -4352,6 +4354,39 @@ function hydrateKnowledgeResolution(row) {
     preferred_value: row.resolved_value,
     note: row.resolution_note || "",
     resolved_at: row.resolution_resolved_at || null,
+  };
+}
+
+function claimReviewPresentation(reviewType) {
+  if (reviewType === "NEGATION_EXTRACTION_ERROR") return {
+    title: "原文中的否定语义可能没有被完整提取",
+    detail: "系统在原文中看到了“不、无需、不能”等否定含义，但在整理后的信息中没有找到明确对应。",
+    explanation: "请核对整理后的信息是否仍表达了原文的否定含义。例如“0 打扰”被整理成 contactless，语义已经保留，可以关闭误报；如果意思真的丢了，就重新提取。",
+  };
+  if (reviewType === "QUALIFIER_EXTRACTION_ERROR") return {
+    title: "原文中的条件或限制可能没有被完整提取",
+    detail: "系统在原文中看到了“只、至少、最多、除非”等限制表达，但在整理后的信息中没有找到明确对应。",
+    explanation: "请看限制条件是否会改变事实本身。如果整理后的信息已经完整表达原意，关闭误报；如果遗漏了适用条件或范围，重新提取。",
+  };
+  if (reviewType === "TEMPORAL_CONFLICT") return {
+    title: "同一事实在时间信息上可能冲突",
+    detail: "两条信息描述同一对象，但日期、季节、营业时间或有效期不同，系统无法自动判断哪条当前有效。",
+    explanation: "如果两条分别适用于不同时间，可以同时成立并关闭误报；如果它们说的是同一时段且不能同时为真，请选择正确的最终事实。",
+  };
+  if (reviewType === "GRANULARITY_CONFLICT") return {
+    title: "两条信息描述的对象范围可能不同",
+    detail: "系统无法确定两条信息是在说同一个对象，还是景区、建筑、房型等不同层级。",
+    explanation: "如果两条说的是不同对象或范围，可以同时成立并关闭误报；如果确实在争夺同一事实，请进入最终事实判断。",
+  };
+  if (reviewType === "SOURCE_CONFLICT") return {
+    title: "两条来源信息可能冲突，需要判断",
+    detail: "系统把两条信息归到了同一个事实，但它们的表述不同，因此暂时没有自动采用其中任何一条。",
+    explanation: "先判断两句话能否同时为真。只是译法、概括或详细程度不同，应选择“可以同时成立”；只有同一对象、同一时间、同一条件下互相否定时，才选择最终事实。",
+  };
+  return {
+    title: "两条信息主张可能冲突，需要判断",
+    detail: "系统认为两条信息可能在描述同一个事实，但暂时无法确认它们能否同时成立。",
+    explanation: "先判断两句话能否同时为真。能同时成立就关闭误报；不能同时成立时，再选择应采用的最终事实。",
   };
 }
 

@@ -84,6 +84,7 @@ test("a warning knowledge conflict can be resolved by an administrator and then 
 
   const exception = repository.listOperationalExceptions().find((item) => item.key === "knowledge:fact1");
   assert.equal(exception.severity, "warning");
+  assert.equal(exception.title, "知识事实存在冲突，需要判断");
   assert.equal(exception.knowledge.id, "fact1");
 
   const resolution = repository.resolveKnowledgeConflict("fact1", "19:30-22:30", "Verified against the operator notice.");
@@ -116,6 +117,8 @@ test("extraction review dismissals survive rebuilds while legacy acknowledgement
   assert.equal(review.status, "pending");
   const exception = repository.listOperationalExceptions().find((item) => item.claim_review?.id === review.id);
   assert.equal(exception.claim_review.claimA.sourceId, source.id);
+  assert.equal(exception.title, "原文中的否定语义可能没有被完整提取");
+  assert.match(exception.claim_review.explanation, /重新提取/);
   assert.throws(() => repository.decideClaimReviewCase(review.id, "resolved"), /can only be resolved by re-extracting/);
 
   repository.decideClaimReviewCase(review.id, "dismissed");

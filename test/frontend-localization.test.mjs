@@ -47,6 +47,16 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
   for (const text of requiredChinese) assert.ok(interfaceSource.includes(text), `缺少中文界面文本：${text}`);
   for (const text of obsoleteEnglish) assert.equal(interfaceSource.includes(text), false, `仍存在旧英文界面文本：${text}`);
   assert.ok(viewsSource.includes("item.list_number"), "来源标题必须显示当前列表序号");
+  for (const text of [
+    "系统为什么拦住这条信息？",
+    "系统为什么拦住这两条信息？",
+    "原意丢失：重新提取",
+    "语义完整：关闭误报",
+    "确实矛盾：选择最终事实",
+    "可以同时成立：关闭误报",
+    "采用这条作为最终事实",
+    "保存为最终事实",
+  ]) assert.ok(viewsSource.includes(text), `人工判定界面缺少大白话说明：${text}`);
 });
 
 test("shared status, category, and duration labels use Chinese display text", () => {

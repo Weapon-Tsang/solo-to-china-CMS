@@ -39,3 +39,9 @@ Raw Sources and superseded Claim snapshots are never overwritten. Source detail 
 Extraction review compares the source quote with the complete Claim semantics. Sibling Claims sharing the exact quote are evaluated together so a qualifier captured by one atomic Claim does not create duplicate warnings on another.
 
 Contrastive wording and colloquial slogans are not logical negation. Missing logical negation or a material limiter remains reviewable. Migration 19 queues one Knowledge rebuild for each existing destination so historical pending cases are recalculated under these rules.
+
+Procedural convenience wording such as “你只需要把衣服放进管家柜” does not assert that the named action is the only allowed option, so it is removed before material-limiter comparison. Semantic equivalents also count: contactless preserves “0 打扰 / 不打扰”. A genuine limit such as “only the east gate is open” remains reviewable when “only” is missing from the normalized Claim.
+
+Positive descriptions under the same normalized feature key and compatible scope are enrichment rather than mutually exclusive single-value facts. This applies to view, scenery, appearance, lighting, vegetation, and amenity descriptions. Positive-versus-negative assertions and typed hard facts such as opening time, price, and reservation requirement retain strict conflict handling.
+
+The CMS review card explains in Chinese what source sentences were compared, why processing stopped, and the effect of each action. “可以同时成立” dismisses a false positive while retaining both Claims and their evidence. “确实矛盾” exposes final-value selection; choosing a value makes it the standard fact for later planning and writing without deleting either source.

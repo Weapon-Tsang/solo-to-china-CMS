@@ -12,6 +12,11 @@ const SOFT_PREDICATES = new Set([
 // not logical negation and must not create review noise.
 const NEGATION_PATTERN = /\b(?:not|never|no|avoid|without|unable|false|optional|isn['’]?t|aren['’]?t|doesn['’]?t|don['’]?t|cannot|can['’]?t)\b|(?:无须|无需|不用|不需要|不要|不能|不可|无法|没法|未能|避免|不值得|不开放|不收费|不适合|不推荐|不接受|不提供|不允许|不包含|不支持|不营业|没有预约|没有预订|没有预定|并非|不是|非必要|非唯一|免预约)/iu;
 const LIMITER_PATTERN = /\b(?:only|except|unless|but only|at most|at least)\b|(?:仅限|只有|只能|只可|只允许|只需|只在|仅在|仅可|除了|除非|例外|最多|至少|至多|唯有)/iu;
+const NO_CONTACT_SOURCE_PATTERN = /(?:0|零)\s*打扰|不打扰|无需接触|无接触/iu;
+const NO_CONTACT_CLAIM_PATTERN = /\b(?:contactless|no[-\s]?contact|without contact|zero disturbance|no disturbance)\b|(?:0|零)\s*打扰|不打扰|无需接触|无接触/iu;
+const PROCEDURAL_CONVENIENCE_PATTERN = /(?:你|您)?只(?:需|需要)(?=[\p{Script=Han}\p{L}\p{N}])/gu;
+const FEATURE_DESCRIPTOR_PATTERN = /(?:^|_)(?:feature|features|view|views|scenery|appearance|illumination|lighting|vegetation|amenity|amenities)(?:_|$)/iu;
+
 const TIME_TERMS = new Map([
   ["morning", "morning"], ["上午", "morning"], ["early morning", "morning"],
   ["afternoon", "afternoon"], ["下午", "afternoon"],
@@ -110,6 +115,11 @@ export function classifyClaimPair(left, right) {
     return result("ENRICHMENT", true,
       "A positive boolean feature flag confirms the more descriptive feature value.", a, b);
   }
+  if (featurePair && sameScope && a.structured.polarity === "positive" && b.structured.polarity === "positive"
+    && sameDecisionConcept(a, b) && !hasMaterialLimiter(claimSemanticText(a)) && !hasMaterialLimiter(claimSemanticText(b))) {
+    return result("ENRICHMENT", true,
+      "Positive descriptions of the same feature can coexist; they provide different wording or additional detail.", a, b);
+  }
 
   const opposingPolarity = hasNegation(a.value_text) !== hasNegation(b.value_text);
   if (sameScope && opposingPolarity && sameDecisionConcept(a, b)) {
@@ -152,8 +162,9 @@ export function detectClaimExtractionIssue(claim, siblingClaims = []) {
       && items.findIndex((item) => (item?.id || item) === identity) === index;
   });
   const normalized = sameQuoteClaims.map(claimSemanticText).join(" ");
+  if (NO_CONTACT_SOURCE_PATTERN.test(quote) && !NO_CONTACT_CLAIM_PATTERN.test(normalized)) return "NEGATION_EXTRACTION_ERROR";
   if (hasNegation(quote) && !hasNegation(normalized)) return "NEGATION_EXTRACTION_ERROR";
-  if (LIMITER_PATTERN.test(quote) && !LIMITER_PATTERN.test(normalized)) return "QUALIFIER_EXTRACTION_ERROR";
+  if (hasMaterialLimiter(quote) && !hasMaterialLimiter(normalized)) return "QUALIFIER_EXTRACTION_ERROR";
   return null;
 }
 
@@ -235,11 +246,14 @@ function sameDecisionConcept(a, b) {
 }
 
 function isFeatureClaim(claim) {
-  return isFeaturePredicate(claim?.predicate) || /(?:^|[._])features?(?:[._]|$)/iu.test(String(claim?.normalized_key || ""));
+  return isFeaturePredicate(claim?.predicate)
+    || FEATURE_DESCRIPTOR_PATTERN.test(normalizePredicate(claim?.normalized_key));
 }
 
 function isFeaturePredicate(value) {
-  return /^(?:feature|features(?:[_\s]|$)|has[_\s]|offers?[_\s]|includes?[_\s])/iu.test(normalizePredicate(value));
+  const normalized = normalizePredicate(value);
+  return /^(?:feature|features(?:_|$)|has_|offers?_|includes?_|visual_appearance|illuminated(?:_|$))/iu.test(normalized)
+    || FEATURE_DESCRIPTOR_PATTERN.test(normalized);
 }
 
 function isPositiveBoolean(value) {
@@ -341,6 +355,9 @@ function parseObject(value) {
   } catch { return {}; }
 }
 
+function hasMaterialLimiter(value) {
+  return LIMITER_PATTERN.test(String(value || "").replace(PROCEDURAL_CONVENIENCE_PATTERN, ""));
+}
 function hasNegation(value) { return NEGATION_PATTERN.test(String(value || "")); }
 function matching(text, pattern) { return cleanList(String(text || "").match(pattern) || []).map(normalizeText); }
 function clean(value) { return String(value || "").replace(/\s+/g, " ").trim(); }

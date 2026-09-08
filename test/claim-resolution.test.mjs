@@ -171,6 +171,40 @@ test("feature translations from the same evidence sentence are paraphrases", () 
   assert.equal(equivalent.reviewType, null);
 });
 
+test("positive natural-language descriptions of the same feature coexist", () => {
+  const hotelViewKey = "hotel.chongqing_marriott.has_view";
+  const hotelView = classifyClaimPair(
+    { ...claim("一线江景", { predicate: "has_view", sourceQuote: "一线江景" }), normalized_key: hotelViewKey },
+    { ...claim("river and urban cityscape view", { predicate: "has_view", sourceQuote: "river and urban cityscape view" }), normalized_key: hotelViewKey },
+  );
+  assert.equal(hotelView.relation, "ENRICHMENT");
+  assert.equal(hotelView.canCoexist, true);
+  assert.equal(hotelView.reviewType, null);
+
+  const lightingKey = "attraction.hongyadong.night_illumination";
+  const lighting = classifyClaimPair(
+    { ...claim("illuminated with warm golden and red architectural lights along the river hillside", { predicate: "features_night_illumination" }), normalized_key: lightingKey },
+    { ...claim("river and urban cityscape view at night", { predicate: "visual_appearance" }), normalized_key: lightingKey },
+  );
+  assert.equal(lighting.relation, "ENRICHMENT");
+  assert.equal(lighting.canCoexist, true);
+  assert.equal(lighting.reviewType, null);
+});
+
+test("procedural convenience wording is not mistaken for a missing qualifier", () => {
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "你只需要把衣服放到管家柜里，然后让人来取就好，洗好后屋里就会亮灯，告诉你已经送来了！0打扰",
+    predicate: "butler_closet_feature",
+    value_text: "contactless closet with indicator light signaling laundry return",
+  }), null);
+
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "Only the east gate is open",
+    predicate: "entrance",
+    value_text: "east gate",
+  }), "QUALIFIER_EXTRACTION_ERROR");
+});
+
 test("knowledge aggregation persists enrichment relations without creating an exception", (t) => {
   const { repository } = repositoryFixture(t);
   for (const [externalId, value] of [["claima", "afternoon visit"], ["claimb", "afternoon (old residential buildings, daily life, cableway-through-building photo spot)"]]) {
@@ -187,4 +221,37 @@ test("knowledge aggregation persists enrichment relations without creating an ex
   assert.equal(fact.contradiction_count, 0);
   assert.equal(fact.claim_relations[0].relation, "ENRICHMENT");
   assert.equal(repository.listOperationalExceptions().some((item) => item.kind === "claim_conflict"), false);
+});
+
+test("a knowledge rebuild removes historical false-positive feature reviews", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const values = [
+    ["64b111111111111111111111", "一线江景"],
+    ["64b222222222222222222222", "river and urban cityscape view"],
+  ];
+  for (const [externalId, value] of values) {
+    const source = repository.saveCapture(normalizeXiaohongshuCapture({
+      url: `https://www.xiaohongshu.com/explore/${externalId}`,
+      title: externalId,
+      text: `${value}. A manually selected travel note describing the hotel's river and city view in enough detail for research intake.`,
+      images: [],
+    }));
+    repository.saveExtraction(source.id, {
+      source: { language: "zh-CN", summary: value, destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+      claims: [{ key: "hotel.chongqing_marriott.has_view", subject: "Chongqing Marriott Hotel", predicate: "has_view", value, qualifiers: [], source_quote: value, confidence: 0.9 }],
+      blueprint: { format: "guide", hook: value, angle: "practical", sections: [], strengths: [], gaps: [] },
+    }, "test", "fixture-model");
+  }
+
+  const claims = db.prepare("SELECT id FROM claims ORDER BY id").all();
+  db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id, review_type, reason, status, created_at, updated_at)
+    VALUES ('legacy-feature-review', 'chongqing', ?, ?, 'SOURCE_CONFLICT', 'legacy false positive', 'pending', 'now', 'now')`)
+    .run(claims[0].id, claims[1].id);
+
+  repository.rebuildKnowledge("chongqing");
+  const fact = repository.knowledgeForDestination("chongqing")[0];
+  assert.equal(fact.consensus_status, "corroborated");
+  assert.equal(fact.claim_relations[0].relation, "ENRICHMENT");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM claim_review_cases WHERE status='pending'").get().count, 0);
+  assert.equal(repository.listOperationalExceptions().some((item) => item.kind === "source_conflict"), false);
 });

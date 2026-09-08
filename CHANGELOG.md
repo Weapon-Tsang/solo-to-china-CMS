@@ -2,6 +2,11 @@
 
 ## 1.17.6 - 2026-09-09
 
+- Treat different positive natural-language descriptions of the same feature as compatible enrichment, including view, scenery, appearance, lighting, vegetation, and amenity Claims.
+- Do not mistake procedural convenience wording such as “只需要” for a missing exclusivity qualifier; recognize contactless as preserving “0 打扰” semantics while retaining review for genuine limits such as “only the east gate”.
+- Recalculate away historical pending false-positive reviews under the corrected rules, while preserving explicit administrator dismissals.
+- Explain every remaining manual review in plain Chinese: what the system compared, why it stopped, what each choice means, and what changes after the decision.
+- Label final-value choices as the fact that future content will use, while making clear that original evidence is retained.
 - Treat positive feature flags and their richer descriptions as compatible enrichment, and recognize translated feature values extracted from the same evidence as paraphrases instead of conflicts.
 - Normalize scope comparisons consistently and prefer informative Knowledge values over boolean shorthand when evidence support is tied.
 - Preserve an administrator's false-positive dismissal through later Knowledge rebuilds so the same reviewed pair does not reappear as a conflict.
