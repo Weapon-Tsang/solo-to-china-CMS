@@ -9,8 +9,8 @@
 V1 是一个单进程模块化单体：
 
 ```text
-Chrome Extension (explicit click)
-         │ POST /api/captures
+Chrome Extension (Favorites Sync service worker / explicit Save fallback)
+         │ batched identity check + POST /api/captures or chunked capture upload
          ▼
 ┌──────────────────────────────────────────────┐
 │ Node process                                 │
@@ -36,7 +36,13 @@ The production dashboard is built by Vite into `dist/` and served by the same No
 - `source_assets`：当前页面已经展示的图片 URL 与顺序。
 - Raw 层只追加/版本化，不做“纠错”。它是所有派生数据的可追溯依据。
 
-当前 V1 保存图片引用而不是携带登录态下载 CDN 原文件。这样不触碰 Cookie/Token，也避免把自动下载伪装成 Capture。后续只有在明确验证公开 URL 和授权边界后，才增加独立 Asset Archiver。
+Migration 35 makes this boundary lossless and restart-safe. Each Xiaohongshu identity maps to one Source; changed content creates an immutable `capture_versions` snapshot, while the same full-content hash is idempotent. Completeness, rights, acquisition origin, sync scope, extension version, media identity/dimensions/duration, original hash, and derivative provenance remain attached to the Source/Asset. Partial captures are stored for diagnosis but cannot enter extraction.
+
+The MV3 background service worker owns discovery and browser acquisition. It scans bounded Favorites windows, performs batched identity checks, persists queue/checkpoint state in `chrome.storage.local`, reuses a bounded worker-tab pool, and advances after the CMS accepts a Capture. Incremental stop requires a reliable checkpoint, a clean discovery window, and a configurable consecutive-known streak; full reconciliation continues to collection end without a session-total cap. Browser concurrency adapts within 4–12 by default. CMS extraction uses the existing durable Job queue and separate adaptive 4–8 concurrency.
+
+Capture payloads above the direct request limit use a size- and SHA-256-verified chunk protocol. Raw text and DOM are never silently sliced. Text becomes bounded Source segments, media beyond a provider call limit is sent in successive batches, every video is represented, oversized originals retain their original URL/hash while an AI-safe derivative is recorded, and model output exhaustion causes segment subdivision and retry.
+
+Favorites/explicit Save 会保存完整媒体清单和原始远程 URL；Extension 可读取已展示媒体计算内容哈希，并仅为超过模型输入限制的图片生成有独立哈希的 AI derivative。它不读取或携带登录 Cookie/Token。CMS 保存原始身份与 provenance，后续的实际媒体归档和 WordPress 使用仍受 Source rights 字段约束。
 
 ### 2. Source intelligence
 
@@ -168,8 +174,8 @@ HTTP and background work emit structured stdout events with request/job IDs. `GE
 ## Security and compliance boundary
 
 - Adapter 只接受 `xiaohongshu.com/explore/...`。
-- Extension 只有 `activeTab`，没有 Xiaohongshu host permission。
-- DOM 读取发生在用户二次明确点击 Save 后。
+- Extension uses `activeTab`, `scripting`, `storage`, `tabs`, `alarms`, the Xiaohongshu page/media hosts, and the configured Engine capture host for user-started Favorites Sync and explicit single-note Save.
+- DOM extraction is limited to the user's selected Favorites scope and its ordinary detail pages. The Extension does not request the `cookies` permission or extract browser authentication storage.
 - 不访问 Cookie、localStorage、认证 Token 或私有 API。
 - 不进行搜索、翻页、批量打开、重试风控页面、验证码或签名逆向。
 - 默认只监听 `127.0.0.1`；若暴露到网络，必须在反向代理增加 TLS 和身份认证。

@@ -46,7 +46,7 @@ try {
   const database = openDatabase(path.join(directory, "release.sqlite"));
   try {
     const versions = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
-    if (versions.join(",") !== Array.from({ length: 34 }, (_, index) => index + 1).join(",")) throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
+    if (versions.join(",") !== Array.from({ length: 35 }, (_, index) => index + 1).join(",")) throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
     for (const [table, column] of [
       ["content_intake_analyses", "strategy_version"], ["content_recommendations", "strategy_version"],
       ["content_opportunities", "strategy_version"], ["topic_candidates", "strategy_version"],
@@ -59,6 +59,9 @@ try {
       ["claims", "extraction_run_id"], ["claims", "extraction_revision"], ["claims", "claim_role"], ["claims", "knowledge_eligible"],
       ["claims", "evidence_span_ids_json"], ["claims", "lifecycle_status"], ["claims", "source_authority_level"],
       ["sources", "source_kind"], ["sources", "submitted_url"], ["source_assets", "local_path"],
+      ["sources", "acquisition_origin"], ["sources", "completeness_status"], ["sources", "authorization_status"], ["sources", "publishable"],
+      ["source_assets", "media_identity"], ["source_assets", "original_sha256"], ["source_assets", "authorization_status"], ["source_assets", "provenance_json"],
+      ["source_segments", "capture_version"], ["jobs", "dedupe_key"],
       ["knowledge_facts", "claim_relations_json"], ["knowledge_facts", "visibility_status"], ["commercial_compositions", "commercial_blocks_json"],
       ["frontend_contract_snapshots", "publish_package_schema_json"], ["wordpress_publications", "delivery_mode"],
       ["article_drafts", "content_hash"], ["quality_reviews", "draft_content_hash"],
@@ -84,7 +87,7 @@ try {
       "commercial_slots", "affiliate_opportunities", "commercial_events", "commission_rules"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for Entity, Claim, or Commercial Phase 1.`);
     }
-    for (const table of ["source_evidence_reviews", "app_sessions", "model_call_metrics"]) {
+    for (const table of ["source_evidence_reviews", "app_sessions", "model_call_metrics", "capture_versions", "favorites_sync_runs"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required by the audited release.`);
     }
     const integrity = database.prepare("PRAGMA integrity_check").get();
@@ -96,4 +99,4 @@ try {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-34, and SQLite integrity.`);
+console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-35, and SQLite integrity.`);

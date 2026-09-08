@@ -62,7 +62,7 @@ export class ManualSourceIngestor {
     }
 
     const submissionId = crypto.randomUUID();
-    const notes = truncate(input.notes, 120_000).trim();
+    const notes = String(input.notes || "").trim();
     const suppliedTitle = truncate(input.title, 1_000).trim();
     const warnings = [];
     let uploadDirectory = null;
@@ -173,8 +173,8 @@ export class ManualSourceIngestor {
         authorUrl: "",
         publishedAt: null,
         capturedAt: new Date().toISOString(),
-        rawText: truncate(rawText, 1_000_000),
-        rawHtml: truncate(rawHtml, 1_500_000),
+        rawText,
+        rawHtml,
         assets,
         files,
         client: { channel: "admin_manual_submission" },

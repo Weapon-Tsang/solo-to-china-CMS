@@ -36,6 +36,7 @@ export const VISUAL_MODELS = [
 export function loadConfig(env = process.env) {
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
   const sourceUploadsDir = path.resolve(root, env.SOURCE_UPLOADS_DIR || "data/source-uploads");
+  const captureUploadsDir = path.resolve(root, env.CAPTURE_UPLOADS_DIR || "data/capture-uploads");
   const imageProvider = env.IMAGE_PROVIDER || env.VISUAL_PROVIDER || "none";
   return {
     root,
@@ -59,7 +60,8 @@ export function loadConfig(env = process.env) {
       apiKey: env.KIMI_API_KEY || "",
       model: KIMI_MODELS.includes(env.KIMI_MODEL) ? env.KIMI_MODEL : "kimi-k2.7-code",
       baseUrl: (env.KIMI_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/$/, ""),
-      maxImages: integer(env.KIMI_MAX_IMAGES || env.AI_MAX_IMAGES, 64),
+      maxImages: integer(env.AI_IMAGE_BATCH_SIZE || env.KIMI_MAX_IMAGES || env.AI_MAX_IMAGES, 32),
+      imageBatchSize: integer(env.AI_IMAGE_BATCH_SIZE || env.KIMI_MAX_IMAGES || env.AI_MAX_IMAGES, 32),
       maxCompletionTokens: integer(env.KIMI_MAX_COMPLETION_TOKENS, 16_000),
       requestTimeoutMs: integer(env.KIMI_REQUEST_TIMEOUT_MS, 360_000),
       imageTimeoutMs: integer(env.KIMI_IMAGE_TIMEOUT_MS, 20_000),
@@ -71,7 +73,8 @@ export function loadConfig(env = process.env) {
       accessToken: env.VERTEX_AI_ACCESS_TOKEN || "",
       requestTimeoutMs: integer(env.VERTEX_AI_REQUEST_TIMEOUT_MS, 360_000),
       imageTimeoutMs: integer(env.VERTEX_AI_IMAGE_TIMEOUT_MS, 20_000),
-      maxImages: integer(env.VERTEX_AI_MAX_IMAGES || env.AI_MAX_IMAGES, 64),
+      maxImages: integer(env.AI_IMAGE_BATCH_SIZE || env.VERTEX_AI_MAX_IMAGES || env.AI_MAX_IMAGES, 32),
+      imageBatchSize: integer(env.AI_IMAGE_BATCH_SIZE || env.VERTEX_AI_MAX_IMAGES || env.AI_MAX_IMAGES, 32),
       maxCompletionTokens: integer(env.VERTEX_AI_MAX_COMPLETION_TOKENS, 16_000),
       thinkingLevel: choice(String(env.VERTEX_AI_THINKING_LEVEL || "HIGH").toUpperCase(), ["MINIMAL", "LOW", "MEDIUM", "HIGH"], "HIGH"),
       sourceUploadsDir,
@@ -86,6 +89,18 @@ export function loadConfig(env = process.env) {
       maxTotalBytes: integer(env.MANUAL_SOURCE_MAX_TOTAL_BYTES, 300 * 1024 * 1024),
       maxRemoteBytes: integer(env.MANUAL_SOURCE_MAX_REMOTE_BYTES, 8 * 1024 * 1024),
       maxImages: integer(env.MANUAL_SOURCE_MAX_IMAGES, 30),
+    },
+    captureUploads: {
+      uploadDir: captureUploadsDir,
+      maxBytes: integer(env.CAPTURE_UPLOAD_MAX_BYTES, 128 * 1024 * 1024),
+      chunkBytes: integer(env.CAPTURE_UPLOAD_CHUNK_BYTES, 2 * 1024 * 1024),
+      maxAgeMs: integer(env.CAPTURE_UPLOAD_MAX_AGE_HOURS, 24) * 60 * 60 * 1000,
+    },
+    extraction: {
+      concurrencyMode: choice(env.EXTRACT_CONCURRENCY_MODE, ["auto", "fixed"], "auto"),
+      concurrencyInitial: integer(env.EXTRACT_CONCURRENCY_INITIAL, 4),
+      concurrencyMax: integer(env.EXTRACT_CONCURRENCY_MAX, 8),
+      sourceTextSegmentMaxChars: integer(env.SOURCE_TEXT_SEGMENT_MAX_CHARS, 120_000),
     },
     visuals: {
       enabled: boolean(env.IMAGE_ENABLED, false),

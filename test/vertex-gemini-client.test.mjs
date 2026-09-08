@@ -76,6 +76,22 @@ test("Vertex Gemini loads a small uploaded video as inline multimodal evidence",
   assert.equal(Buffer.from(result.parts[0].inlineData.data, "base64").toString(), "video fixture");
 });
 
+test("Vertex Gemini prepares every video in a multi-video source", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-vertex-videos-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const assets = ["one.mp4", "two.mp4", "three.mp4"].map((name, index) => {
+    const filename = path.join(directory, name);
+    fs.writeFileSync(filename, Buffer.from(`video fixture ${index}`));
+    return { kind: "video", local_path: filename, mime_type: "video/mp4" };
+  });
+  const client = new VertexGeminiClient({ sourceUploadsDir: directory, maxInlineVideoBytes: 1024 }, async () => new Response("unexpected"));
+  const result = await client.videoParts(assets);
+  assert.equal(result.attempted, 3);
+  assert.equal(result.parts.length, 3);
+  assert.deepEqual(result.parts.map((part) => Buffer.from(part.inlineData.data, "base64").toString()),
+    ["video fixture 0", "video fixture 1", "video fixture 2"]);
+});
+
 test("Vertex Gemini stages a large uploaded video in Cloud Storage and deletes the temporary model input", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-vertex-video-gcs-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

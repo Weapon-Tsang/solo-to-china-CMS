@@ -2,13 +2,23 @@
 
 ## Daily workflow
 
-1. Select useful Xiaohongshu posts on mobile.
-2. Open saved posts in desktop Chrome and click **Save to SoloToChina**.
+1. Select useful Xiaohongshu posts on mobile or desktop by adding them to the target Favorites collection.
+2. In a signed-in desktop Chrome profile, open that collection and click **Sync New Favorites**. Use **Full Historical Sync** only for the first backfill or an explicit reconciliation. **Save Current Note** remains the selector-debugging and single-note fallback.
 3. When Kimi has analyzed a useful Source, make one decision in **Recommendations**: **Approve article**, Knowledge only, Cluster, Research first, or Ignore. Only **Approve article** queues content planning.
 4. Review only the **Exceptions** view when its count is non-zero.
 5. Review final drafts in WordPress and publish manually.
 
 No spreadsheet, manual source card, URL copy, tagging pass, or Knowledge Base maintenance is required.
+
+## Favorites Sync operation
+
+The popup may start, pause, resume, cancel, or stop after the current persisted queue. Closing the popup does not stop the MV3 background service worker workflow. A Chrome/service-worker restart changes unfinished work to a recoverable paused state; open the popup and click **Resume**. Successful tasks remain successful and are not submitted again.
+
+Daily incremental discovery starts at the top and stops only after it has matched the saved Scope checkpoint, observed the configured consecutive-known streak, and found no new note in the current window. Full historical sync streams bounded discovery and identity batches until collection end and has no fixed session-total cap. The adaptive browser pool starts at 4–8 according to the PC and can grow to 12 under healthy load; access limits, timeouts, 429/5xx responses, and slow pages reduce pressure. Login walls or verification pages pause the whole session with an actionable state. The Extension never receives account credentials, requests browser cookies, or solves verification.
+
+Extension settings live in `chrome.storage.local`: identity/discovery batch sizes, checkpoint streak, queue high-water mark, retries, page timeout, concurrency mode/limits, and optional startup/daily Auto Sync. Server-side limits are documented in `.env.example`. `GET /api/favorites-sync-runs` exposes aggregate run summaries to the authenticated Maintenance surface; no account or browser-session data is recorded.
+
+Large captures use `POST /api/capture-uploads`, exact binary chunks, and `/complete`. The server verifies declared byte size and SHA-256 before parsing/persisting JSON, and removes abandoned upload sessions after `CAPTURE_UPLOAD_MAX_AGE_HOURS`. Keep `CAPTURE_UPLOADS_DIR` within the existing data volume.
 
 ## Start and stop
 
@@ -148,7 +158,7 @@ Never remove the Docker volume during this operation or deployment. The reset en
 npm run release:check
 ```
 
-This is the complete local release gate. It runs the production frontend build, static checks, the complete test suite, application/extension version alignment, Content Strategy manifest/specification/handoff/UI checks, migrations 1–18 on a clean database, and SQLite integrity verification. It then starts an isolated Node server using a temporary SQLite database and random loopback port, polls `/api/health` instead of relying on logs, checks `/api/ready`, `/api/system/info`, core read APIs, a temporary capture insert/revision/read, React HTML/assets, Extension manifest/assets, database integrity, server logs, automatic shutdown, and temporary-file cleanup.
+This is the complete local release gate. It runs the production frontend build, static checks, the complete test suite, application/extension version alignment, Content Strategy manifest/specification/handoff/UI checks, migrations 1–35 on a clean database, and SQLite integrity verification. It then starts an isolated Node server using a temporary SQLite database and random loopback port, polls `/api/health` instead of relying on logs, checks `/api/ready`, `/api/system/info`, core read APIs, a temporary capture insert/revision/read, React HTML/assets, Extension manifest/assets, database integrity, server logs, automatic shutdown, and temporary-file cleanup.
 
 The runner deliberately clears AI, WordPress, Search Console, webhook, and operational-token configuration for its child process, so it never calls external services or touches the live database. It uses these result states:
 

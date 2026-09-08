@@ -11,7 +11,7 @@ test("migration 34 aligns Trip.com tools and updates incomplete destination attr
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const databasePath = path.join(directory, "v33.sqlite");
   const source = fs.readFileSync(fileURLToPath(new URL("../src/db.mjs", import.meta.url)), "utf8")
-    .replace(/^  if \(current < 34\).*$/gm, "");
+    .replace(/^  if \(current < 3[45]\).*$/gm, "");
   const v33ModulePath = path.join(directory, "db-v33.mjs");
   fs.writeFileSync(v33ModulePath, source);
   const { openDatabase: openV33Database } = await import(`${pathToFileURL(v33ModulePath).href}?v=33`);
@@ -34,7 +34,7 @@ test("migration 34 aligns Trip.com tools and updates incomplete destination attr
 
   const upgraded = openDatabase(databasePath);
   try {
-    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 34);
+    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 35);
     const task = upgraded.prepare("SELECT * FROM affiliate_asset_queue_tasks WHERE id='task-beijing'").get();
     assert.equal(task.trip_tool_type, "ATTRACTIONS_TOURS");
     assert.equal(task.trip_pickup_location, "");

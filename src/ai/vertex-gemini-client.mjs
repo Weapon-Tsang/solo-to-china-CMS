@@ -66,7 +66,7 @@ export class VertexGeminiClient {
       const candidate = payload?.candidates?.[0];
       const output = candidate?.content?.parts?.map((part) => part.text || "").join("");
       if (candidate?.finishReason === "MAX_TOKENS") {
-        throw new Error("Vertex Gemini structured output reached its token limit; increase VERTEX_AI_MAX_COMPLETION_TOKENS or reduce the input scope.");
+        throw Object.assign(new Error("Vertex Gemini structured output reached its token limit; the Source segment must be split and retried."), { code: "MODEL_OUTPUT_LIMIT", retryable: true });
       }
       if (!output?.trim()) throw new Error("Vertex Gemini returned no structured output.");
       const parsed = parseStructuredJson(output);
@@ -101,8 +101,21 @@ export class VertexGeminiClient {
   }
 
   async videoParts(assets) {
-    const attempted = (assets || []).filter((asset) => asset?.kind === "video").slice(0, 1);
+    const attempted = (assets || []).filter((asset) => asset?.kind === "video");
     if (!attempted.length) return { parts: [], attempted: 0, cleanup: async () => {} };
+    if (attempted.length > 1) {
+      const prepared = [];
+      try {
+        for (const asset of attempted) prepared.push(await this.videoParts([asset]));
+      } catch (error) {
+        await Promise.allSettled(prepared.map((item) => item.cleanup()));
+        throw error;
+      }
+      return {
+        parts: prepared.flatMap((item) => item.parts), attempted: prepared.reduce((total, item) => total + item.attempted, 0),
+        cleanup: async () => { await Promise.allSettled(prepared.map((item) => item.cleanup())); },
+      };
+    }
     const asset = attempted[0];
     const uploadRoot = path.resolve(this.config.sourceUploadsDir || "data/source-uploads");
     const filename = path.resolve(String(asset.local_path || ""));

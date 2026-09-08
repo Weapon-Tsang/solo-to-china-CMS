@@ -1,5 +1,11 @@
 # Content strategy changelog
 
+## 1.5 implementation clarification — 2026-09-08
+
+- Documented Favorites Sync as an owner-selected Research intake path with owner-confirmed commercial media authorization and complete provenance.
+- Confirmed that concurrency/provider sizes are per-batch limits and cannot truncate Source evidence.
+- Preserved Recommendations as the only human article-production decision.
+
 ## 1.5 — 2026-09-08
 
 Added exact draft/evidence version binding, final-page QA, reader-source traceability, task-specific content sufficiency, optional evidence-backed FAQ, subject-matched media reuse, model usage provenance and publication lifecycle impact.

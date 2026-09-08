@@ -18,8 +18,11 @@ fs.rmSync(output, { recursive: true, force: true });
 fs.cpSync(root, output, { recursive: true });
 const manifestPath = path.join(output, "manifest.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-manifest.host_permissions = [`${origin}/*`];
-manifest.name = "Save to SoloToChina";
+manifest.host_permissions = [
+  ...manifest.host_permissions.filter((value) => /^https:\/\/\*\.(?:xiaohongshu|xhscdn)/.test(value)),
+  `${origin}/*`,
+];
+manifest.name = "保存到 SoloToChina";
 fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 const popupPath = path.join(output, "popup.js");
 const originalPopup = fs.readFileSync(popupPath, "utf8");
@@ -29,6 +32,13 @@ const popup = originalPopup
   .replace("const CLOUD_CONFIGURED = false;", "const CLOUD_CONFIGURED = true;");
 if (popup === originalPopup) throw new Error("Extension default endpoint marker was not found.");
 fs.writeFileSync(popupPath, popup);
+const backgroundPath = path.join(output, "background.js");
+const originalBackground = fs.readFileSync(backgroundPath, "utf8");
+const background = originalBackground
+  .replace('const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";', `const DEFAULT_ENDPOINT = ${JSON.stringify(origin)};`)
+  .replace('const DEFAULT_CAPTURE_TOKEN = "";', `const DEFAULT_CAPTURE_TOKEN = ${JSON.stringify(captureToken)};`);
+if (background === originalBackground) throw new Error("Extension background endpoint marker was not found.");
+fs.writeFileSync(backgroundPath, background);
 console.log(`Cloud extension package created at ${output}`);
 
 function normalizeOrigin(value) {

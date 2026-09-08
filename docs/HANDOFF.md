@@ -41,7 +41,7 @@ The audited Frontend Registry provides the QA-selected booking, search, banner, 
 - Queue completion validates an exact operator-pasted official URL, creates one canonical `affiliate_assets` row, links the original Opportunity, and then uses the existing Composer/Event/Performance path. CSV/JSON import is row-isolated and supports dry-run.
 - The composer runs after QA, derives block intent, selects decision-appropriate precision, falls back silently, enforces density, and stores an independent Overlay. Research packages never read these tables.
 - WordPress receives generated safe commercial blocks with disclosure and sponsored link attributes. Arbitrary HTML/script is rejected.
-- App version `1.16.1` and schema migration `34` are the expected local implementation baseline. Migration 34 aligns Queue tool guidance with the current Trip.com Affiliate Link builder while preserving task identity and completed/skipped records.
+- App/Extension version `1.17.0` and schema migration `35` are the expected local implementation baseline. Migration 35 adds immutable lossless Capture snapshots, complete rights/provenance manifests, Source/Asset provenance, race-safe capture/job identity, and Favorites Sync aggregate telemetry while preserving prior data.
 - HTTPS Frontend Contract synchronization versions all three source URLs with the exact deployed frontend commit, preventing a CDN edge from returning the previous Registry/Page/Publish artifact immediately after deployment.
 
 Trip.com remains manual-only: an operator must create official links/embed configuration in the official platform and paste only those public artifacts into the Queue/Registry. Do not store credentials/cookies, automate dashboard login, crawl the affiliate dashboard, invent tracking parameters, or create low-value entity links at scale. See `docs/AFFILIATE_ASSET_QUEUE.md` for the operator workflow and provider-dependent limits.
@@ -50,7 +50,7 @@ Deferred Phase 2: official API/feed integration when available, report import, a
 
 ## Current operating boundary
 
-Source discovery stays human-led. The Chrome extension only captures a note the user has opened and explicitly saved. The engine stores raw evidence, creates traceable structured claims, asks for a human decision before article planning, sends only validated drafts to WordPress, and never publishes a post itself.
+Source discovery and selection stay human-led. A user favorite is the Research selection step; the Chrome Extension incrementally discovers that chosen collection and captures detail pages through the signed-in browser, with explicit single-note Save retained as fallback. It never receives credentials/cookies or bypasses verification. The engine stores complete raw evidence, creates traceable structured claims, asks for a human decision before article planning, sends only validated drafts to WordPress, and never publishes a post itself.
 
 The Sources dashboard also accepts explicit administrator submissions: public Xiaohongshu, WeChat, video, and ordinary web links; PDF/DOC/DOCX files; one or more images; and a single video file up to 256 MB. Browser video uploads use resumable 5 MB application chunks with visible progress. These inputs become immutable Source evidence and enter Strategy 1.4 preflight, segmentation, exhaustive extraction, coverage audit, Knowledge, Opportunity, and content production. Uploaded originals live under `SOURCE_UPLOADS_DIR`, which must remain inside the persistent Docker volume.
 

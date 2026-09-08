@@ -67,14 +67,6 @@ export class OpenAIExtractor {
   async extract(source) {
     if (!this.enabled) return { result: heuristicExtraction(source), method: "heuristic", model: null };
 
-    const content = [{
-      type: "input_text",
-      text: buildInput(source),
-    }];
-    for (const asset of source.assets.slice(0, this.config.maxImages)) {
-      content.push({ type: "input_image", image_url: asset.remote_url, detail: "auto" });
-    }
-
     const makeRequest = (requestContent) => this.fetch(`${this.config.baseUrl}/responses`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.config.apiKey}`, "content-type": "application/json" },
@@ -94,24 +86,44 @@ export class OpenAIExtractor {
       }),
       signal: AbortSignal.timeout(120_000),
     });
-    let response = await makeRequest(content);
-    let payload = await response.json();
+    const imageAssets = (source.assets || []).filter((asset) => asset.kind === "image" && asset.remote_url);
+    const batchSize = Math.max(1, Number(this.config.imageBatchSize || this.config.maxImages || 32));
+    const batches = imageAssets.length
+      ? Array.from({ length: Math.ceil(imageAssets.length / batchSize) }, (_, index) => imageAssets.slice(index * batchSize, (index + 1) * batchSize))
+      : [[]];
+    const outputs = [];
     let textFallback = false;
-    // Signed/CDN image URLs can expire. Preserve useful text extraction instead of creating
-    // a human exception solely because an image host rejected server-side retrieval.
-    if (!response.ok && content.length > 1) {
-      response = await makeRequest(content.slice(0, 1));
-      payload = await response.json();
-      textFallback = true;
+    let responseModel = this.config.model;
+    for (const batch of batches) {
+      let batchUsedTextFallback = false;
+      const content = [{ type: "input_text", text: buildInput(source) },
+        ...batch.map((asset) => ({ type: "input_image", image_url: asset.remote_url, detail: "auto" }))];
+      let response = await makeRequest(content);
+      let payload = await response.json();
+      // Signed/CDN image URLs can expire. Preserve useful text extraction instead of creating
+      // a human exception solely because an image host rejected server-side retrieval.
+      if (!response.ok && content.length > 1) {
+        response = await makeRequest(content.slice(0, 1));
+        payload = await response.json();
+        textFallback = true;
+        batchUsedTextFallback = true;
+      }
+      if (!response.ok) {
+        const error = new Error(`OpenAI extraction failed (${response.status}): ${payload?.error?.message || response.statusText}`);
+        if (/maximum context|max(?:imum)? output|token limit/i.test(payload?.error?.message || "")) error.code = "MODEL_OUTPUT_LIMIT";
+        throw error;
+      }
+      const outputText = payload.output_text || findOutputText(payload.output);
+      if (!outputText) throw new Error("OpenAI extraction returned no structured output.");
+      const result = sanitizeResult(JSON.parse(outputText));
+      if (batchUsedTextFallback) result.source.warnings.push("This image batch was unavailable to the model; media coverage remains incomplete and requires retry or review.");
+      outputs.push(result);
+      responseModel = payload.model || responseModel;
     }
-    if (!response.ok) throw new Error(`OpenAI extraction failed (${response.status}): ${payload?.error?.message || response.statusText}`);
-    const outputText = payload.output_text || findOutputText(payload.output);
-    if (!outputText) throw new Error("OpenAI extraction returned no structured output.");
-    const result = sanitizeResult(JSON.parse(outputText));
     return {
-      result,
+      result: mergeExtractionResults(outputs),
       method: textFallback ? "openai_responses_text_fallback" : "openai_responses",
-      model: payload.model || this.config.model,
+      model: responseModel,
     };
   }
 
@@ -182,14 +194,24 @@ function buildInput(source) {
     `Published: ${source.published_at || "unknown"}`,
     "",
     "SOURCE TEXT:",
-    truncate(source.raw_text, 120_000),
+    String(source.raw_text || ""),
   ].join("\n");
 }
 
 function buildCoverageInput(segment, extraction) {
   const claims = (extraction?.claims || []).map((claim, index) => ({ index: index + 1, subject: claim.subject, predicate: claim.predicate,
     value: claim.value, qualifiers: claim.qualifiers || [], source_quote: claim.source_quote }));
-  return ["ORIGINAL SOURCE SEGMENT:", truncate(segment?.raw_text || "", 120_000), "", "EXTRACTED CLAIMS:", JSON.stringify(claims)].join("\n");
+  return ["ORIGINAL SOURCE SEGMENT:", String(segment?.raw_text || ""), "", "EXTRACTED CLAIMS:", JSON.stringify(claims)].join("\n");
+}
+
+function mergeExtractionResults(values) {
+  const first = values[0] || { source: {}, claims: [], blueprint: {} };
+  const claims = new Map();
+  for (const value of values) for (const claim of value.claims || []) {
+    const key = JSON.stringify([claim.key, claim.subject, claim.predicate, claim.value, claim.source_quote]);
+    if (!claims.has(key)) claims.set(key, claim);
+  }
+  return { ...first, claims: [...claims.values()] };
 }
 
 function findOutputText(output) {

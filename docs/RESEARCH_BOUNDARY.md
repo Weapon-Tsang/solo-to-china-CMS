@@ -4,6 +4,10 @@
 
 Affiliate 是发布阶段的 Commercial Layer，不能改变哪些 Source 被保存、哪些 Claim 被抽取、冲突如何判定，或 KB 选择什么作为 preferred value。
 
+Favorites Sync is a Research intake transport. A favorite means “include this Source in the evidence pool” and never means “write or publish an article.” Recommendation approval remains the only article-production decision.
+
+For `xhs_favorites_sync` and `xhs_manual_extension`, the project owner has confirmed commercial-use, editing, redistribution, derivative, and publication rights for the complete captured Source and media. The system records this authorization and full provenance on Sources, Capture Versions, and Assets. Other acquisition origins retain independent rights semantics and cannot inherit this status merely because their content resembles a favorite.
+
 ## Allowed data flow
 
 ```text

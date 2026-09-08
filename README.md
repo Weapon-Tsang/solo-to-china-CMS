@@ -1,17 +1,17 @@
 # SoloToChina Research & Content Engine
 
-SoloToChina 的内部研究基础设施。V1 采用 **Human Discovery + Human Selection + Assisted Capture**：用户在 Chrome 中明确打开一篇小红书笔记并点击保存，系统再负责持久化、抽取、Claim 建模、冲突检测和 Editorial Blueprint 聚合。
+SoloToChina 的内部研究基础设施。当前采集路径采用 **Human Discovery + Human Favorite Selection → Incremental Favorites Sync / Manual Capture → Automated Research Pipeline**：用户用收藏完成研究价值和授权确认，Chrome Extension 负责可恢复的增量采集，系统再负责持久化、抽取、Claim 建模、冲突检测和 Editorial Blueprint 聚合。
 
 后台“来源”页也支持管理员主动提交公开的小红书、微信公众号、视频和普通网页链接，以及 PDF、Word、图片和视频文件。提交内容会进入同一套 Source → Claims → Knowledge → Blueprint → 内容建议流程；链接读取失败会明确区分登录墙、反爬、限流、超时、空内容和不支持格式。参见 [Manual Source Ingestion](docs/MANUAL_SOURCE_INGESTION.md)。
 
-这不是小红书爬虫。项目没有搜索、翻页、批量打开、验证码规避、Cookie/Token 读取、私有 API 或账号行为模拟。
+这不是账号自动化或绕过工具。Extension 仅使用 Chrome 当前已有的小红书登录状态和普通网页 UI，不接收账号密码，不读取或上传 Cookie/LocalStorage Token，不自动处理验证码，也不依赖未授权私有 API。登录或验证失效时，同步会保留队列并暂停。
 
 ## 当前可运行纵向切片
 
 ```text
-Manually opened Xiaohongshu note
-  → Chrome Extension: explicit Save
-  → Raw Source + DOM snapshot + image references
+Human Favorite Selection
+  → Incremental Favorites Sync or explicit single-note Save
+  → complete Raw Source + DOM snapshot + all discovered image/video references
   → Durable SQLite job queue
   → Multimodal structured extraction (optional Kimi provider)
   → Claims + Source Blueprint
@@ -58,19 +58,21 @@ The dashboard is a React + Vite application styled with Tailwind CSS and source-
 1. 打开 `chrome://extensions`。
 2. 开启 Developer mode。
 3. 点击 Load unpacked，选择仓库内的 `extension/` 目录。
-4. 打开一篇 `https://www.xiaohongshu.com/explore/...` 笔记。
-5. 点击扩展，再点击 **Save current note**。
+4. 在 Chrome 中保持小红书已登录，打开目标收藏页/收藏夹。
+5. 点击 **Sync New Favorites**；首次回填可选 **Full Historical Sync**。页面结构异常时仍可打开单篇笔记并点 **Save Current Note**。
 
 扩展默认连接 `http://127.0.0.1:4310`。如设置了 `CAPTURE_TOKEN`，在扩展的 Connection settings 中填入相同值。
 
-扩展只声明：
+扩展声明以下最小运行权限：
 
-- `activeTab`：用户触发后读取当前标签页；
-- `scripting`：注入一次性的 DOM 提取函数；
-- `storage`：保存本地 Engine URL 和 Capture Token；
-- localhost host permission：向本机 Engine 发送 Capture。
+- `activeTab`、`scripting`：读取用户打开的收藏页或单篇详情页，并执行普通页面展开/轮播遍历；
+- `storage`：持久化每个收藏 Scope 的 checkpoint、浏览器采集队列、进度、设置和最近结果，使 MV3 service worker 或 Chrome 重启后可恢复；
+- `tabs`：复用有限数量的后台详情页标签执行采集；
+- `alarms`：恢复长任务，以及可选的 Chrome 启动时/每日自动同步；
+- `https://*.xiaohongshu.com/*`：访问收藏页和详情页；`xhscdn` 权限用于读取用户已授权媒体并计算原始哈希/生成 AI 尺寸衍生件；
+- Engine host permission：向本地或打包时配置的 Capture Host 发送身份批量查询、分片 Capture 和聚合状态。
 
-它没有小红书 host permission，无法在后台批量读取小红书页面。
+Extension 不申请 `cookies` 权限。日常增量同步用 checkpoint 与连续 12 个已知身份的组合停止条件，不需要重扫整个历史收藏；完整历史同步按有界窗口流式运行，没有固定 Session 总数上限。Capture 被 CMS 接受后浏览器立即处理下一篇，AI 抽取继续使用现有 SQLite durable Job queue。
 
 ## AI 配置
 
@@ -81,7 +83,7 @@ KIMI_API_KEY=...
 AI_MODEL=vertex-gemini-3.8-flash
 KIMI_MODEL=kimi-k3
 KIMI_BASE_URL=https://api.moonshot.cn/v1
-KIMI_MAX_IMAGES=8
+AI_IMAGE_BATCH_SIZE=32
 KIMI_MAX_COMPLETION_TOKENS=16000
 KIMI_REQUEST_TIMEOUT_MS=360000
 KIMI_IMAGE_TIMEOUT_MS=20000
@@ -110,6 +112,8 @@ npm start
 ```
 
 `gemini-3.8-flash` on Vertex AI is the default multimodal model for new installations; Kimi K3 and Kimi K2.7 Code remain available from Settings. Gemini 3.8 Flash uses the global Vertex AI endpoint for image understanding, structured extraction, writing, and review. The separate image-generation default remains `gemini-3.1-flash-image`. Image assets are fetched in parallel and unavailable assets are skipped rather than blocking the full note. Existing Sources can be re-run after a model change; no recapture is required.
+
+`AI_IMAGE_BATCH_SIZE` limits one provider request, not one Source. All image batches and all videos are processed and merged. `SOURCE_TEXT_SEGMENT_MAX_CHARS` bounds each text segment without truncating the Source; an output-token limit subdivides the affected segment and retries it. Large Extension captures use SHA-256-verified chunks, and oversized images retain the original provenance plus a separate AI-safe derivative.
 
 ### Model selection
 
@@ -215,7 +219,10 @@ See [V1 Operations](docs/OPERATIONS.md), [V1 Acceptance](docs/V1_ACCEPTANCE.md),
 | `POST` | `/api/recommendations/:id/decision` | Admin-only human decision; only `approved_article` may queue planning |
 | `GET` | `/api/health` | Engine 与 AI 配置状态 |
 | `GET` | `/api/ready` | 数据库支持的部署就绪探针 |
-| `POST` | `/api/captures` | Extension 显式提交当前笔记 |
+| `POST` | `/api/captures` | Extension 提交完整 Favorites/单篇 Capture |
+| `POST` | `/api/captures/identity-check` | Capture Token 保护的批量 Xiaohongshu identity 查询（最多 100） |
+| `POST/PUT` | `/api/capture-uploads/*` | 大型 Capture 的初始化、精确二进制分片与校验完成流程 |
+| `GET/POST` | `/api/favorites-sync-runs` | 读取或记录不含账号数据的聚合同步运行摘要 |
 | `GET` | `/api/sources` | Source 列表 |
 | `GET` | `/api/sources/:id` | Raw/Structured/Claims/Blueprint 详情 |
 | `POST` | `/api/sources/:id/retry` | 重跑异常或 `needs_ai` Source |

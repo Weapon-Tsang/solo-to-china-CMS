@@ -25,6 +25,7 @@ import { FrontendContractConsumer, FrontendContractError } from "./frontend-cont
 import { getContentStrategyDocument } from "./content-strategy.mjs";
 import { VERSION } from "./version.mjs";
 import { ChunkedUploadManager } from "./chunked-upload.mjs";
+import { CaptureUploadManager } from "./capture-upload.mjs";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -46,7 +47,7 @@ export function createApplication(config = loadConfig()) {
   const db = openDatabase(config.databasePath);
   const auth = createAuth(db, config.auth);
   const repository = new Repository(db, {
-    ...config.content, contentStrategy: config.contentStrategy,
+    ...config.content, ...config.extraction, contentStrategy: config.contentStrategy,
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
     affiliateOpportunityThreshold: config.commercial.opportunityThreshold,
   });
@@ -58,6 +59,7 @@ export function createApplication(config = loadConfig()) {
   const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
   const manualSources = new ManualSourceIngestor(config.manualSources);
   const chunkedUploads = new ChunkedUploadManager(config.manualSources);
+  const captureUploads = new CaptureUploadManager(config.captureUploads);
   const extractor = new KimiExtractor(activeAi);
   const contentEngine = new ContentEngine(activeAi);
   const visuals = new VertexImagen(activeVisuals);
@@ -66,6 +68,7 @@ export function createApplication(config = loadConfig()) {
   const commercialComposer = new CommercialComposer(config.commercial);
   const pipeline = new Pipeline(repository, extractor, {
     contentEngine, visuals, wordpress, searchConsole, commercialComposer, frontendContracts, contentConfig: config.content,
+    extractionConfig: config.extraction,
     logger: logger.child({ component: "pipeline" }),
   });
   const notifier = new ExceptionNotifier(repository, config.notifications);
@@ -243,12 +246,50 @@ export function createApplication(config = loadConfig()) {
         Object.assign(activeVisuals, settings);
         return sendJson(response, 200, { configured: visuals.enabled, ...settings });
       }
+      if (request.method === "POST" && url.pathname === "/api/captures/identity-check") {
+        authorizeCapture(request, config.captureToken);
+        const payload = await readJson(request, 100_000);
+        if (!Array.isArray(payload.items) || payload.items.length > 100) {
+          const error = new Error("Identity check requires an items array with at most 100 entries."); error.statusCode = 400; throw error;
+        }
+        return sendJson(response, 200, { items: repository.checkCaptureIdentities(payload.items) });
+      }
+      if (request.method === "POST" && url.pathname === "/api/favorites-sync-runs") {
+        authorizeCapture(request, config.captureToken);
+        return sendJson(response, 200, repository.recordFavoritesSyncRun(await readJson(request, 100_000)));
+      }
+      if (request.method === "GET" && url.pathname === "/api/favorites-sync-runs") {
+        if (captureOnly) authorizeCapture(request, config.captureToken);
+        return sendJson(response, 200, { items: repository.listFavoritesSyncRuns(limit(url.searchParams.get("limit"))) });
+      }
       if (request.method === "POST" && url.pathname === "/api/captures") {
         authorizeCapture(request, config.captureToken);
         const capture = normalizeXiaohongshuCapture(await readJson(request, 4_000_000));
         const saved = repository.saveCapture(capture);
         void pipeline.runOne();
         return sendJson(response, saved.duplicate ? 200 : 202, saved);
+      }
+      if (request.method === "POST" && url.pathname === "/api/capture-uploads") {
+        authorizeCapture(request, config.captureToken);
+        return sendJson(response, 201, captureUploads.create(await readJson(request, 20_000)));
+      }
+      const captureChunkMatch = url.pathname.match(/^\/api\/capture-uploads\/([^/]+)\/chunks\/(\d+)$/);
+      if (request.method === "PUT" && captureChunkMatch) {
+        authorizeCapture(request, config.captureToken);
+        const bytes = await readBytes(request, config.captureUploads.chunkBytes + 1024);
+        return sendJson(response, 200, captureUploads.writeChunk(captureChunkMatch[1], Number(captureChunkMatch[2]), bytes));
+      }
+      const captureCompleteMatch = url.pathname.match(/^\/api\/capture-uploads\/([^/]+)\/complete$/);
+      if (request.method === "POST" && captureCompleteMatch) {
+        authorizeCapture(request, config.captureToken);
+        await readJson(request, 20_000);
+        const assembled = captureUploads.complete(captureCompleteMatch[1]);
+        try {
+          const capture = normalizeXiaohongshuCapture(assembled.payload);
+          const saved = repository.saveCapture(capture);
+          void pipeline.runOne();
+          return sendJson(response, saved.duplicate ? 200 : 202, saved);
+        } finally { assembled.cleanup(); }
       }
       if (request.method === "POST" && url.pathname === "/api/manual-sources") {
         authorizeAdmin(request, config.adminToken, auth);
@@ -283,7 +324,7 @@ export function createApplication(config = loadConfig()) {
       const uploadCompleteMatch = url.pathname.match(/^\/api\/manual-source-uploads\/([^/]+)\/complete$/);
       if (request.method === "POST" && uploadCompleteMatch) {
         authorizeAdmin(request, config.adminToken, auth);
-        const prepared = chunkedUploads.complete(uploadCompleteMatch[1], await readJson(request, 150_000));
+        const prepared = chunkedUploads.complete(uploadCompleteMatch[1], await readJson(request, 2_000_000));
         let saved;
         try { saved = repository.saveCapture(prepared.capture); } catch (error) { prepared.cleanup(); throw error; }
         if (saved.duplicate) prepared.cleanup();
@@ -438,6 +479,7 @@ export function createApplication(config = loadConfig()) {
           wordpressSync: repository.getWordPressSyncState(wordpress.config.siteUrl),
           searchConsoleSync: repository.getSearchConsoleSyncState(searchConsole.config.siteUrl),
           telemetry: repository.jobTelemetry(config.telemetry.windowHours),
+          favoritesSyncRuns: repository.listFavoritesSyncRuns(20),
           notifications: {
             configured: notifier.enabled,
             minimumSeverity: config.notifications.minimumSeverity,
@@ -770,8 +812,10 @@ function isCaptureHost(request, captureHost) {
 
 function isCaptureRoute(method, pathname) {
   return (method === "GET" && ["/api/health", "/api/ready"].includes(pathname))
-    || (method === "POST" && pathname === "/api/captures")
-    || (method === "GET" && /^\/api\/sources\/[^/]+$/.test(pathname));
+    || (method === "POST" && ["/api/captures", "/api/captures/identity-check", "/api/capture-uploads", "/api/favorites-sync-runs"].includes(pathname))
+    || (method === "PUT" && /^\/api\/capture-uploads\/[^/]+\/chunks\/\d+$/.test(pathname))
+    || (method === "POST" && /^\/api\/capture-uploads\/[^/]+\/complete$/.test(pathname))
+    || (method === "GET" && (pathname === "/api/favorites-sync-runs" || /^\/api\/sources\/[^/]+$/.test(pathname)));
 }
 
 function normalizeRequestId(value) {

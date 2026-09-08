@@ -14,6 +14,14 @@ The administrator Sources page accepts intentionally selected research evidence 
 
 Every accepted item is stored as a regular `Source` and queued for the existing `extract_source` pipeline. That pipeline performs multimodal extraction, creates structured Claims and an editorial Blueprint, updates eligible Knowledge, and produces the normal content-intake recommendation. Manual intake does not bypass human editorial approval or the QA gate.
 
+## Xiaohongshu Favorites and explicit Save authorization
+
+`xhs_favorites_sync` and `xhs_manual_extension` are owner-confirmed intake origins. By selecting a note for this project, the operator confirms SoloToChina's commercial use, download/copy, editing/cropping/format conversion, redistribution, derivative, translation, WordPress Media, website, and official marketing rights for the captured Source and its discovered media. These origins therefore set `authorization_status=owner_confirmed`, the allowed-use flags, and `publishable=true`, while retaining Source ID, external ID, canonical URL, creator when available, capture time/version, media URL/hash, acquisition origin, sync scope, and Extension version.
+
+Other administrator uploads and remote URLs keep their own declared authorization origin. They do not inherit Favorites authorization automatically. Rights do not bypass the Research → Recommendation → human decision boundary: a favorite enters the evidence pool, not automatic article production.
+
+Every browser capture includes a completeness manifest. A partial capture remains inspectable but cannot be marked processed or enter extraction until its full text/DOM and expected media traversal are complete.
+
 Uploaded originals are stored below `SOURCE_UPLOADS_DIR`. Production must point this directory into the existing persistent Docker volume. The SQLite database records file hashes, MIME types, sizes, original filenames, and provenance; images and videos are loaded locally into the configured multimodal model. Never delete the persistent volume during deployment.
 
 Uploaded video analysis requires an active Vertex Gemini model. Videos up to 14 MiB are sent as inline bytes. Larger accepted videos are copied to an ephemeral object in `MANUAL_SOURCE_GCS_BUCKET`, passed to Vertex as a `gs://` model input, and deleted after extraction; the persistent original is retained as Source evidence. The VM service account needs object create/delete permission on that bucket. If the bucket is absent or inaccessible, extraction fails with an actionable Source error instead of pretending that the video was decoded. Kimi can process an operator-supplied transcript but the current Kimi API integration does not receive uploaded video frames or audio.

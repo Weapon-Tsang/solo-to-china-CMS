@@ -4,6 +4,8 @@ import { KimiExtractor } from "../src/ai/kimi.mjs";
 
 test("Kimi adapter sends trusted image evidence as base64 input and requests strict structured output", async () => {
   let request;
+  let modelRequests = 0;
+  const fetchedImages = [];
   const expected = {
     source: {
       language: "zh-CN", summary: "Summary", destination_name: "Beijing", destination_slug: "Beijing City",
@@ -16,8 +18,10 @@ test("Kimi adapter sends trusted image evidence as base64 input and requests str
   };
   const fetchStub = async (url, options) => {
     if (String(url).includes("xhscdn.com")) {
-      return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/jpeg" } });
+      fetchedImages.push(String(url));
+      return new Response(new Uint8Array(String(url).includes("ignored") ? [4, 5, 6] : [1, 2, 3]), { status: 200, headers: { "content-type": "image/jpeg" } });
     }
+    modelRequests += 1;
     request = { url, options, body: JSON.parse(options.body) };
     return new Response(JSON.stringify({ model: "test-model", choices: [{ finish_reason: "stop", message: { content: JSON.stringify(expected) } }] }), {
       status: 200,
@@ -41,6 +45,8 @@ test("Kimi adapter sends trusted image evidence as base64 input and requests str
   assert.match(image.image_url.url, /^data:image\/jpeg;base64,/);
   assert.equal(output.result.source.destination_slug, "beijing-city");
   assert.equal(output.result.claims[0].key, "attraction.entry.gate");
+  assert.equal(modelRequests, 2);
+  assert.deepEqual(fetchedImages.sort(), ["https://sns-img.xhscdn.com/ignored.jpg", "https://sns-img.xhscdn.com/image.jpg"]);
 });
 
 test("Vertex extraction sends a public YouTube source as direct video evidence", async () => {

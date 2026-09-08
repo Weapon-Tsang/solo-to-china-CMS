@@ -4,7 +4,7 @@ import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCo
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class Pipeline {
-  constructor(repository, extractor, { pollMs = 750, maxConcurrent = 2, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null, frontendContracts = null, contentConfig = {}, logger = silentLogger } = {}) {
+  constructor(repository, extractor, { pollMs = 750, maxConcurrent = null, extractionConfig = {}, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null, frontendContracts = null, contentConfig = {}, logger = silentLogger } = {}) {
     this.repository = repository;
     this.extractor = extractor;
     this.pollMs = pollMs;
@@ -18,21 +18,31 @@ export class Pipeline {
     this.logger = logger;
     this.timer = null;
     this.working = 0;
-    this.maxConcurrent = Math.max(1, Math.min(8, Number(maxConcurrent) || 2));
+    this.concurrencyMode = extractionConfig.concurrencyMode || (maxConcurrent ? "fixed" : "auto");
+    this.concurrencyCeiling = Math.max(1, Math.min(16, Number(extractionConfig.concurrencyMax || maxConcurrent || 8)));
+    this.maxConcurrent = Math.max(1, Math.min(this.concurrencyCeiling, Number(maxConcurrent || extractionConfig.concurrencyInitial || 4)));
+    this.extractionOutcomes = [];
   }
 
   start() {
     if (this.timer) return;
     const recovered = this.repository.recoverExpiredJobs?.() || 0;
     if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
-    this.timer = setInterval(() => this.runOne().catch((error) => this.logger.error("pipeline.tick_failed", { error })), this.pollMs);
+    this.timer = setInterval(() => this.pump(), this.pollMs);
     this.timer.unref();
-    void this.runOne();
+    this.pump();
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  pump() {
+    const slots = Math.max(0, this.maxConcurrent - this.working);
+    for (let index = 0; index < slots; index += 1) {
+      void this.runOne().catch((error) => this.logger.error("pipeline.tick_failed", { error }));
+    }
   }
 
   async runOne() {
@@ -101,18 +111,29 @@ export class Pipeline {
         case "extract_segment_claims": {
           const pack = this.repository.getSegmentExtractionPackage(job.entity_id);
           if (!pack) throw new Error(`Source segment ${job.entity_id} no longer exists.`);
-          const extraction = await this.extractor.extract(pack.source);
-          this.repository.saveSegmentExtraction(job.entity_id, extraction);
-          this.repository.enqueue("audit_segment_coverage", job.entity_id);
+          if (pack.staleCaptureVersion) break;
+          try {
+            const extraction = await this.extractor.extract(pack.source);
+            if (!this.repository.saveSegmentExtraction(job.entity_id, extraction)) break;
+            this.repository.enqueue("audit_segment_coverage", job.entity_id);
+          } catch (error) {
+            if (!isModelOutputLimit(error)) throw error;
+            const children = this.repository.splitSourceSegmentForRetry(job.entity_id);
+            if (!children.length) throw error;
+            for (const child of children) this.repository.enqueue("extract_segment_claims", child.id);
+            this.logger.warn("pipeline.segment_resegmented_after_output_limit", { segmentId: job.entity_id, childCount: children.length });
+          }
           break;
         }
         case "audit_segment_coverage": {
           const coveragePackage = this.repository.getSegmentCoveragePackage(job.entity_id);
           if (!coveragePackage) throw new Error(`Source segment ${job.entity_id} has no extraction result.`);
+          if (coveragePackage.staleCaptureVersion) break;
           const assessment = typeof this.extractor.auditCoverage === "function"
             ? await this.extractor.auditCoverage(coveragePackage)
             : null;
           const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
+          if (audit.status === "stale") break;
           if (audit.status === "retry_required") this.repository.enqueue("retry_segment_extraction", job.entity_id);
           else if (this.repository.sourceCoverageReady(audit.sourceId)) this.repository.enqueue("finalize_source_extraction", audit.sourceId);
           break;
@@ -120,6 +141,7 @@ export class Pipeline {
         case "retry_segment_extraction": {
           const pack = this.repository.getSegmentExtractionPackage(job.entity_id);
           if (!pack) throw new Error(`Source segment ${job.entity_id} no longer exists.`);
+          if (pack.staleCaptureVersion) break;
           const previous = this.repository.getSegmentCoveragePackage(job.entity_id);
           const targets = (previous?.coverage?.uncovered_spans || []).map((item, index) =>
             `${index + 1}. ${item.locator || item.quote || "Unlocated span"} — ${item.reason || "not covered"}`);
@@ -135,12 +157,14 @@ export class Pipeline {
               claims: mergeExtractionClaims(priorResult.claims, retryExtraction.result?.claims),
             },
           };
-          this.repository.saveSegmentExtraction(job.entity_id, extraction, { retry: true });
+          if (!this.repository.saveSegmentExtraction(job.entity_id, extraction, { retry: true })) break;
           const retriedPackage = this.repository.getSegmentCoveragePackage(job.entity_id);
+          if (!retriedPackage || retriedPackage.staleCaptureVersion) break;
           const assessment = typeof this.extractor.auditCoverage === "function"
             ? await this.extractor.auditCoverage(retriedPackage)
             : null;
           const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
+          if (audit.status === "stale") break;
           if (this.repository.sourceCoverageReady(audit.sourceId)) this.repository.enqueue("finalize_source_extraction", audit.sourceId);
           break;
         }
@@ -446,10 +470,12 @@ export class Pipeline {
           throw new Error(`Unknown job type: ${job.type}`);
       }
       if (!this.repository.completeJob(job.id, job.locked_by)) throw Object.assign(new Error("JOB_LEASE_LOST"), { retryable: false });
+      this.recordExtractionOutcome(job, { ok: true });
       this.logger.info("pipeline.job_succeeded", { jobId: job.id, jobType: job.type, durationMs: Date.now() - startedAt });
       return true;
     } catch (error) {
       if (job) {
+        this.recordExtractionOutcome(job, { ok: false, error });
         this.repository.failJob(job, error);
         this.logger.error("pipeline.job_failed", {
           jobId: job.id, jobType: job.type, entityId: job.entity_id, attempt: job.attempts,
@@ -460,6 +486,24 @@ export class Pipeline {
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       this.working -= 1;
+    }
+  }
+
+  recordExtractionOutcome(job, outcome) {
+    if (this.concurrencyMode !== "auto" || !["extract_segment_claims", "retry_segment_extraction", "audit_segment_coverage"].includes(job?.type)) return;
+    this.extractionOutcomes.push({ ...outcome, at: Date.now() });
+    if (this.extractionOutcomes.length > 20) this.extractionOutcomes.shift();
+    if (!outcome.ok && (outcome.error?.status === 429 || outcome.error?.retryable || /quota|rate.?limit|timeout/i.test(String(outcome.error?.message || "")))) {
+      this.maxConcurrent = this.maxConcurrent >= 10 ? 8 : this.maxConcurrent >= 8 ? 6
+        : this.maxConcurrent >= 6 ? 4 : this.maxConcurrent >= 4 ? 2 : 1;
+      this.logger.warn("pipeline.extraction_concurrency_reduced", { concurrency: this.maxConcurrent, reason: outcome.error?.code || outcome.error?.status || "transient_failure" });
+      this.extractionOutcomes = [];
+      return;
+    }
+    if (this.extractionOutcomes.length >= 20 && this.extractionOutcomes.every((item) => item.ok) && this.maxConcurrent < this.concurrencyCeiling) {
+      this.maxConcurrent = Math.min(this.concurrencyCeiling, this.maxConcurrent + 1);
+      this.logger.info("pipeline.extraction_concurrency_increased", { concurrency: this.maxConcurrent });
+      this.extractionOutcomes = [];
     }
   }
 
@@ -511,4 +555,8 @@ function mergeExtractionClaims(previous = [], retried = []) {
 
 function isRecoverableStructuredOutputError(error) {
   return /(?:invalid JSON|no structured output|structured output reached its token limit)/i.test(String(error?.message || error));
+}
+
+function isModelOutputLimit(error) {
+  return error?.code === "MODEL_OUTPUT_LIMIT" || /(?:output|structured output).*(?:token|length).*limit|MAX_TOKENS/i.test(String(error?.message || error));
 }

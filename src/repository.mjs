@@ -1,4 +1,4 @@
-import { id, json, now, sha256, slugify } from "./utils.mjs";
+import { canonicalizeUrl, id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
 import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
@@ -312,23 +312,31 @@ export class Repository {
 
   saveCapture(capture) {
     const timestamp = now();
-    const contentHash = sha256(`${capture.rawText}\n${capture.assets.map((item) => item.url).join("\n")}\n${(capture.files || []).map((item) => item.sha256).join("\n")}`);
+    const contentHash = captureContentHash(capture);
     const sourceKind = capture.sourceKind || (capture.adapter === "xiaohongshu" ? "xiaohongshu_note" : "manual_source");
     const submittedUrl = capture.submittedUrl || capture.canonicalUrl;
     const submissionMetadata = capture.submissionMetadata || {};
+    const completeness = capture.completeness || { overall: "complete" };
+    const completenessStatus = ["complete", "partial_retryable", "partial_needs_attention"].includes(completeness.overall)
+      ? completeness.overall : "complete";
+    const acquisitionOrigin = capture.acquisitionOrigin || capture.client?.acquisitionOrigin || (capture.adapter === "xiaohongshu" ? "xhs_manual_extension" : "manual_upload");
+    const syncScopeKey = capture.syncScopeKey || capture.client?.syncScopeKey || "";
+    const extensionVersion = capture.client?.extensionVersion || "";
+    const rights = capture.rights || {};
 
     return transaction(this.db, () => {
       // A note ID remains stable when Xiaohongshu changes a share URL or adds
       // transient tokens. Canonical URL remains the fallback for old captures.
       const existingByExternalId = capture.externalId
-        ? this.db.prepare("SELECT id, content_hash, capture_version FROM sources WHERE adapter = ? AND external_id = ? LIMIT 1").get(capture.adapter, capture.externalId)
+        ? this.db.prepare("SELECT id, content_hash, capture_version, completeness_status FROM sources WHERE adapter = ? AND external_id = ? LIMIT 1").get(capture.adapter, capture.externalId)
         : null;
       const existing = existingByExternalId
-        || this.db.prepare("SELECT id, content_hash, capture_version FROM sources WHERE canonical_url = ?").get(capture.canonicalUrl);
+        || this.db.prepare("SELECT id, content_hash, capture_version, completeness_status FROM sources WHERE canonical_url = ?").get(capture.canonicalUrl);
       let sourceId;
       let duplicate = false;
       let captureVersion = 1;
-      if (existing && existing.content_hash === contentHash) {
+      const completenessUpgrade = existing?.completeness_status !== "complete" && completenessStatus === "complete";
+      if (existing && existing.content_hash === contentHash && !completenessUpgrade) {
         sourceId = existing.id;
         duplicate = true;
         captureVersion = existing.capture_version;
@@ -337,40 +345,65 @@ export class Repository {
         sourceId = existing.id;
         captureVersion = existing.capture_version + 1;
         this.db.prepare(`
-          UPDATE sources SET external_id = ?, submitted_url = ?, source_kind = ?, submission_metadata_json = ?,
+          UPDATE sources SET adapter = ?, external_id = ?, canonical_url = ?, submitted_url = ?, source_kind = ?, submission_metadata_json = ?,
             title = ?, author_name = ?, author_url = ?, published_at = ?,
             captured_at = ?, raw_text = ?, raw_html = ?, raw_payload_json = ?, content_hash = ?,
-            capture_version = capture_version + 1, status = 'captured', last_error = NULL, updated_at = ?
+            capture_version = capture_version + 1, status = ?, last_error = NULL, acquisition_origin=?, sync_scope_key=?,
+            extension_version=?, completeness_status=?, completeness_json=?, authorization_status=?, commercial_use_allowed=?,
+            editing_allowed=?, redistribution_allowed=?, publishable=?, authorization_origin=?, license_scope_json=?, updated_at = ?
           WHERE id = ?
         `).run(
-          capture.externalId, submittedUrl, sourceKind, JSON.stringify(submissionMetadata),
+          capture.adapter, capture.externalId, capture.canonicalUrl, submittedUrl, sourceKind, JSON.stringify(submissionMetadata),
           capture.title, capture.authorName, capture.authorUrl, capture.publishedAt,
-          capture.capturedAt, capture.rawText, capture.rawHtml, JSON.stringify(capture), contentHash, timestamp, sourceId,
+          capture.capturedAt, capture.rawText, capture.rawHtml, JSON.stringify(capture), contentHash,
+          completenessStatus === "complete" ? "captured" : "partial", acquisitionOrigin, syncScopeKey, extensionVersion,
+          completenessStatus, JSON.stringify(completeness), rights.authorizationStatus || "legacy",
+          rights.commercialUseAllowed ? 1 : 0, rights.editingAllowed ? 1 : 0, rights.redistributionAllowed ? 1 : 0,
+          rights.publishable ? 1 : 0, rights.authorizationOrigin || acquisitionOrigin, JSON.stringify(rights.licenseScope || []),
+          timestamp, sourceId,
         );
         this.db.prepare("DELETE FROM source_assets WHERE source_id = ?").run(sourceId);
         this.db.prepare("DELETE FROM source_files WHERE source_id = ?").run(sourceId);
-        this.db.prepare("DELETE FROM jobs WHERE entity_id = ? AND status IN ('queued', 'failed')").run(sourceId);
+        this.db.prepare(`DELETE FROM jobs WHERE status IN ('queued','failed') AND (
+          entity_id=? OR entity_id IN (SELECT id FROM source_segments WHERE source_id=?)
+        )`).run(sourceId, sourceId);
       } else {
         sourceId = id("src");
         this.db.prepare(`
           INSERT INTO sources(id, adapter, external_id, canonical_url, submitted_url, source_kind, submission_metadata_json,
-            title, author_name, author_url, published_at, captured_at, raw_text, raw_html, raw_payload_json, content_hash, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            title, author_name, author_url, published_at, captured_at, raw_text, raw_html, raw_payload_json, content_hash,
+            status,acquisition_origin,sync_scope_key,extension_version,completeness_status,completeness_json,authorization_status,
+            commercial_use_allowed,editing_allowed,redistribution_allowed,publishable,authorization_origin,license_scope_json,created_at,updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           sourceId, capture.adapter, capture.externalId, capture.canonicalUrl, submittedUrl, sourceKind, JSON.stringify(submissionMetadata), capture.title, capture.authorName,
           capture.authorUrl, capture.publishedAt, capture.capturedAt, capture.rawText, capture.rawHtml,
-          JSON.stringify(capture), contentHash, timestamp, timestamp,
+          JSON.stringify(capture), contentHash, completenessStatus === "complete" ? "captured" : "partial",
+          acquisitionOrigin, syncScopeKey, extensionVersion, completenessStatus, JSON.stringify(completeness),
+          rights.authorizationStatus || "legacy", rights.commercialUseAllowed ? 1 : 0, rights.editingAllowed ? 1 : 0,
+          rights.redistributionAllowed ? 1 : 0, rights.publishable ? 1 : 0, rights.authorizationOrigin || acquisitionOrigin,
+          JSON.stringify(rights.licenseScope || []), timestamp, timestamp,
         );
       }
 
       if (!duplicate) {
         const insertAsset = this.db.prepare(`
-          INSERT OR IGNORE INTO source_assets(id, source_id, kind, remote_url, alt_text, position, local_path, mime_type, original_filename)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT OR IGNORE INTO source_assets(id, source_id, kind, remote_url, alt_text, position, local_path, mime_type, original_filename,
+            media_identity,width,height,duration,original_sha256,ai_derivative_data_url,ai_derivative_sha256,authorization_status,
+            commercial_use_allowed,editing_allowed,redistribution_allowed,publishable,authorization_origin,provenance_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const asset of capture.assets) {
           insertAsset.run(id("asset"), sourceId, asset.kind, asset.url, asset.alt, asset.position,
-            asset.localPath || "", asset.mimeType || "", asset.originalFilename || "");
+            asset.localPath || "", asset.mimeType || "", asset.originalFilename || "", asset.mediaIdentity || asset.url,
+            asset.width ?? null, asset.height ?? null, asset.duration ?? null, asset.originalSha256 || "",
+            asset.aiDerivativeDataUrl || "", asset.aiDerivativeSha256 || "", rights.authorizationStatus || "legacy",
+            rights.commercialUseAllowed ? 1 : 0, rights.editingAllowed ? 1 : 0, rights.redistributionAllowed ? 1 : 0,
+            rights.publishable ? 1 : 0, rights.authorizationOrigin || acquisitionOrigin,
+            JSON.stringify({ sourceId, externalId: capture.externalId || null, canonicalUrl: capture.canonicalUrl,
+              capturedAt: capture.capturedAt, captureVersion, acquisitionOrigin, syncScopeKey, extensionVersion,
+              mediaSourceUrl: asset.url, ...asset.provenance }),
+          );
         }
         const insertFile = this.db.prepare(`
           INSERT INTO source_files(id, source_id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at)
@@ -380,14 +413,28 @@ export class Repository {
           insertFile.run(file.id || id("source_file"), sourceId, file.fileKind, file.originalFilename,
             file.mimeType, file.storagePath, file.sizeBytes, file.sha256, timestamp);
         }
-        this.enqueue("extract_source", sourceId);
+        this.db.prepare(`INSERT INTO capture_versions(id,source_id,capture_version,captured_at,raw_text,raw_html,raw_payload_json,
+          assets_json,content_hash,completeness_status,completeness_json,acquisition_origin,sync_scope_key,extension_version,created_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .run(id("capture_version"), sourceId, captureVersion, capture.capturedAt, capture.rawText, capture.rawHtml,
+            JSON.stringify(capture), JSON.stringify(capture.assets || []), contentHash, completenessStatus,
+            JSON.stringify(completeness), acquisitionOrigin, syncScopeKey, extensionVersion, timestamp);
+        if (completenessStatus === "complete") {
+          this.enqueue("extract_source", sourceId, { dedupeKey: `extract_source:${sourceId}:${captureVersion}` });
+        }
       }
+
+      const queueDepth = this.db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued','running')").get().count;
 
       return {
         id: sourceId,
+        accepted: true,
         duplicate,
-        queued: !duplicate,
+        queued: !duplicate && completenessStatus === "complete",
         captureVersion,
+        completenessStatus,
+        queueDepth,
+        advice: queueDepth >= 500 ? "slow_down" : "continue",
         identity: {
           adapter: capture.adapter,
           externalId: capture.externalId || null,
@@ -397,17 +444,92 @@ export class Repository {
     });
   }
 
-  enqueue(type, entityId) {
+  checkCaptureIdentities(items = []) {
+    const normalized = items.slice(0, 100).map((item) => {
+      const externalId = String(item?.externalId || "").trim().slice(0, 300);
+      let canonicalUrl = "";
+      try { canonicalUrl = canonicalizeUrl(String(item?.url || "")); } catch { /* malformed items stay unknown */ }
+      return { externalId, canonicalUrl };
+    });
+    const externalIds = [...new Set(normalized.map((item) => item.externalId).filter(Boolean))];
+    const urls = [...new Set(normalized.map((item) => item.canonicalUrl).filter(Boolean))];
+    const clauses = [];
+    const parameters = [];
+    if (externalIds.length) { clauses.push(`(adapter='xiaohongshu' AND external_id IN (${externalIds.map(() => "?").join(",")}))`); parameters.push(...externalIds); }
+    if (urls.length) { clauses.push(`(adapter='xiaohongshu' AND canonical_url IN (${urls.map(() => "?").join(",")}))`); parameters.push(...urls); }
+    const rows = clauses.length ? this.db.prepare(`SELECT id,external_id,canonical_url,capture_version,captured_at,content_hash,completeness_status,source_availability
+      FROM sources WHERE ${clauses.join(" OR ")}`).all(...parameters) : [];
+    const byExternalId = new Map(rows.filter((row) => row.external_id).map((row) => [row.external_id, row]));
+    const byUrl = new Map(rows.map((row) => [row.canonical_url, row]));
+    return normalized.map((item) => {
+      const row = (item.externalId && byExternalId.get(item.externalId)) || (item.canonicalUrl && byUrl.get(item.canonicalUrl));
+      const complete = row?.completeness_status === "complete" && row?.source_availability === "available";
+      return row ? { externalId: item.externalId || row.external_id, known: complete, needsRecapture: !complete, sourceId: row.id,
+        captureVersion: row.capture_version, lastCapturedAt: row.captured_at, canonicalUrl: row.canonical_url,
+        contentFingerprint: row.content_hash.slice(0, 12) }
+        : { externalId: item.externalId || null, known: false, sourceId: null, captureVersion: null,
+          lastCapturedAt: null, canonicalUrl: item.canonicalUrl || null, contentFingerprint: null };
+    });
+  }
+
+  recordFavoritesSyncRun(input = {}) {
+    const sessionId = String(input.sessionId || "").trim();
+    if (!/^[A-Za-z0-9-]{8,80}$/.test(sessionId)) throw Object.assign(new Error("A valid Favorites Sync session ID is required."), { statusCode: 400 });
+    const mode = input.mode === "full" ? "full" : "incremental";
+    const startedAt = safeIsoDate(input.startedAt) || now();
+    const completedAt = safeIsoDate(input.completedAt);
+    const timestamp = now();
+    const durationMs = completedAt ? Math.max(0, Date.parse(completedAt) - Date.parse(startedAt)) : null;
+    const suppliedStats = input.stats && typeof input.stats === "object" ? input.stats : {};
+    const stats = {
+      ...suppliedStats,
+      favorites_scanned: Number(suppliedStats.discovered ?? suppliedStats.scanned ?? 0),
+      favorites_known: Number(suppliedStats.known || 0),
+      favorites_new: Number(suppliedStats.new || 0),
+      favorites_capture_success: Number(suppliedStats.captured || 0),
+      favorites_capture_duplicate: Number(suppliedStats.duplicate || 0),
+      favorites_capture_failed: Number(suppliedStats.failed || 0),
+      favorites_sync_paused: String(input.status || "").startsWith("paused_") ? 1 : 0,
+      favorites_sync_duration: durationMs,
+    };
+    this.db.prepare(`INSERT INTO favorites_sync_runs(session_id,scope_key,scope_url,scope_label,mode,status,stats_json,
+      started_at,completed_at,duration_ms,extension_version,last_error_json,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(session_id) DO UPDATE SET scope_key=excluded.scope_key,scope_url=excluded.scope_url,
+        scope_label=excluded.scope_label,mode=excluded.mode,status=excluded.status,stats_json=excluded.stats_json,
+        started_at=excluded.started_at,completed_at=excluded.completed_at,duration_ms=excluded.duration_ms,
+        extension_version=excluded.extension_version,last_error_json=excluded.last_error_json,updated_at=excluded.updated_at`)
+      .run(sessionId, String(input.scopeKey || "").slice(0, 2_000), String(input.scopeUrl || "").slice(0, 4_000),
+        String(input.scopeLabel || "").slice(0, 500), mode, String(input.status || "unknown").slice(0, 100),
+        JSON.stringify(stats), startedAt, completedAt,
+        durationMs, String(input.extensionVersion || "").slice(0, 50),
+        JSON.stringify(input.lastError && typeof input.lastError === "object" ? input.lastError : {}), timestamp, timestamp);
+    const row = this.db.prepare("SELECT * FROM favorites_sync_runs WHERE session_id=?").get(sessionId);
+    return { ...row, stats: json(row.stats_json, {}), lastError: json(row.last_error_json, {}) };
+  }
+
+  listFavoritesSyncRuns(limit = 20) {
+    return this.db.prepare("SELECT * FROM favorites_sync_runs ORDER BY updated_at DESC LIMIT ?").all(Math.max(1, Math.min(100, Number(limit) || 20)))
+      .map((row) => ({ ...row, stats: json(row.stats_json, {}), lastError: json(row.last_error_json, {}) }));
+  }
+
+  enqueue(type, entityId, { dedupeKey = `${type}:${entityId}` } = {}) {
     const timestamp = now();
     const active = this.db.prepare(`
-      SELECT id FROM jobs WHERE type = ? AND entity_id = ? AND status IN ('queued', 'running') LIMIT 1
-    `).get(type, entityId);
+      SELECT id FROM jobs WHERE dedupe_key = ? AND status IN ('queued', 'running') LIMIT 1
+    `).get(dedupeKey);
     if (active) return active.id;
     const jobId = id("job");
-    this.db.prepare(`
-      INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-    `).run(jobId, type, entityId, timestamp, timestamp, timestamp);
-    return jobId;
+    try {
+      this.db.prepare(`
+        INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at, dedupe_key) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(jobId, type, entityId, timestamp, timestamp, timestamp, dedupeKey);
+      return jobId;
+    } catch (error) {
+      const raced = this.db.prepare("SELECT id FROM jobs WHERE dedupe_key=? AND status IN ('queued','running') LIMIT 1").get(dedupeKey);
+      if (raced) return raced.id;
+      throw error;
+    }
   }
 
   claimJob() {
@@ -501,25 +623,34 @@ export class Repository {
     const blueprint = this.db.prepare("SELECT * FROM source_blueprints WHERE source_id = ?").get(sourceId) || null;
     const analysis = this.db.prepare("SELECT * FROM content_intake_analyses WHERE source_id = ?").get(sourceId) || null;
     const recommendation = this.db.prepare("SELECT * FROM content_recommendations WHERE source_id = ? ORDER BY updated_at DESC LIMIT 1").get(sourceId) || null;
+    const captureVersions = this.db.prepare(`SELECT id,capture_version,captured_at,content_hash,completeness_status,
+      acquisition_origin,sync_scope_key,extension_version,created_at FROM capture_versions WHERE source_id=? ORDER BY capture_version DESC`).all(sourceId);
     const segments = this.db.prepare("SELECT * FROM source_segments WHERE source_id=? ORDER BY sequence").all(sourceId);
     const coverage = this.db.prepare("SELECT * FROM extraction_coverage WHERE source_id=? ORDER BY segment_id").all(sourceId);
     const family = this.db.prepare(`SELECT sf.*, sfm.relation_type, sfm.overlap_score, sfm.incremental_claim_count, sfm.analysis_json
       FROM source_family_memberships sfm JOIN source_families sf ON sf.id=sfm.family_id WHERE sfm.source_id=?`).get(sourceId) || null;
-    return hydrateSource({ source, assets, files, structured, claims, extractionRuns, claimHistory, blueprint, analysis, recommendation, segments, coverage, family });
+    return hydrateSource({ source, assets, files, structured, claims, extractionRuns, claimHistory, blueprint, analysis, recommendation, segments, coverage, family, captureVersions });
   }
 
   prepareSourceSegments(sourceId) {
     const source = this.getSource(sourceId);
     if (!source) throw new Error(`Source ${sourceId} no longer exists.`);
-    const values = segmentSource(source);
+    if (source.completeness_status !== "complete") throw Object.assign(
+      new Error(`Source ${sourceId} is ${source.completeness_status}; complete capture evidence is required before extraction.`),
+      { code: "SOURCE_CAPTURE_PARTIAL", retryable: false },
+    );
+    const stored = this.db.prepare("SELECT * FROM source_segments WHERE source_id=? AND capture_version=? ORDER BY sequence")
+      .all(sourceId, source.capture_version);
+    if (stored.length) return stored.filter((item) => !["complete", "extracted"].includes(item.status));
+    const values = segmentSource(source, { maxChars: this.contentConfig.sourceTextSegmentMaxChars });
     const timestamp = now();
     transaction(this.db, () => {
       this.db.prepare("DELETE FROM source_segments WHERE source_id=?").run(sourceId);
-      const insert = this.db.prepare(`INSERT INTO source_segments(id,source_id,segment_type,sequence,title,raw_text,page_start,page_end,asset_id,image_index,destination_scopes_json,topic_scopes_json,content_hash,semantic_hash,status,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?)`);
+      const insert = this.db.prepare(`INSERT INTO source_segments(id,source_id,segment_type,sequence,title,raw_text,page_start,page_end,asset_id,image_index,destination_scopes_json,topic_scopes_json,content_hash,semantic_hash,status,created_at,updated_at,capture_version)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?,?)`);
       for (const item of values) insert.run(item.id, sourceId, item.segmentType, item.sequence, item.title, item.rawText,
         item.pageStart, item.pageEnd, item.assetId, item.imageIndex, JSON.stringify(item.destinationScopes), JSON.stringify(item.topicScopes),
-        item.contentHash, item.semanticHash, timestamp, timestamp);
+        item.contentHash, item.semanticHash, timestamp, timestamp, source.capture_version);
       this.db.prepare("UPDATE source_assets SET extraction_status='pending', extraction_error=NULL, processed_at=NULL WHERE source_id=?").run(sourceId);
       this.db.prepare("UPDATE sources SET status='processing', diagnostic_json=?, updated_at=? WHERE id=?")
         .run(JSON.stringify({ strategy_version: this.strategyVersion, stage: "segmented", segment_count: values.length, asset_count: source.assets.length }), timestamp, sourceId);
@@ -527,10 +658,44 @@ export class Repository {
     return values;
   }
 
+  splitSourceSegmentForRetry(segmentId) {
+    const segment = this.db.prepare("SELECT * FROM source_segments WHERE id=?").get(segmentId);
+    if (!segment || segment.asset_id || String(segment.raw_text || "").length < 800) return [];
+    const text = String(segment.raw_text);
+    let midpoint = Math.floor(text.length / 2);
+    const boundary = Math.max(text.lastIndexOf("。", midpoint), text.lastIndexOf(". ", midpoint), text.lastIndexOf("\n", midpoint));
+    if (boundary > text.length * 0.25) midpoint = boundary + 1;
+    const parts = [text.slice(0, midpoint).trim(), text.slice(midpoint).trim()].filter(Boolean);
+    if (parts.length !== 2) return [];
+    const timestamp = now();
+    return transaction(this.db, () => {
+      const maximum = this.db.prepare("SELECT COALESCE(MAX(sequence),-1) AS value FROM source_segments WHERE source_id=?").get(segment.source_id).value;
+      this.db.prepare("DELETE FROM source_segments WHERE id=?").run(segmentId);
+      const shift = maximum + 2;
+      this.db.prepare("UPDATE source_segments SET sequence=sequence+? WHERE source_id=? AND sequence>?")
+        .run(shift, segment.source_id, segment.sequence);
+      this.db.prepare("UPDATE source_segments SET sequence=sequence-?+1 WHERE source_id=? AND sequence>?")
+        .run(shift, segment.source_id, segment.sequence + shift);
+      const insert = this.db.prepare(`INSERT INTO source_segments(id,source_id,segment_type,sequence,title,raw_text,page_start,page_end,
+        asset_id,image_index,destination_scopes_json,topic_scopes_json,content_hash,semantic_hash,status,created_at,updated_at,capture_version)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?,?)`);
+      return parts.map((rawText, index) => {
+        const childSequence = segment.sequence + index;
+        const childId = `segment_${sha256(`${segment.source_id}:${segment.capture_version}:${childSequence}:${rawText}`).slice(0, 24)}`;
+        insert.run(childId, segment.source_id, segment.segment_type, childSequence,
+          `${segment.title || `Segment ${segment.sequence + 1}`} · part ${index + 1}`, rawText, segment.page_start, segment.page_end,
+          null, null, segment.destination_scopes_json, segment.topic_scopes_json, sha256(rawText),
+          sha256(rawText.toLowerCase().replace(/\s+/g, " ").trim()), timestamp, timestamp, segment.capture_version);
+        return { id: childId, sourceId: segment.source_id };
+      });
+    });
+  }
+
   getSegmentExtractionPackage(segmentId) {
     const segment = this.db.prepare("SELECT * FROM source_segments WHERE id=?").get(segmentId);
     if (!segment) return null;
     const source = this.getSource(segment.source_id);
+    if (segment.capture_version !== source?.capture_version) return { sourceId: segment.source_id, segment, staleCaptureVersion: true };
     const asset = segment.asset_id ? source.assets.find((item) => item.id === segment.asset_id) : null;
     return {
       sourceId: source.id, segment,
@@ -542,6 +707,8 @@ export class Repository {
   saveSegmentExtraction(segmentId, extraction, { retry = false } = {}) {
     const segment = this.db.prepare("SELECT * FROM source_segments WHERE id=?").get(segmentId);
     if (!segment) throw new Error(`Source segment ${segmentId} no longer exists.`);
+    const sourceVersion = this.db.prepare("SELECT capture_version FROM sources WHERE id=?").get(segment.source_id)?.capture_version;
+    if (segment.capture_version !== sourceVersion) return false;
     const timestamp = now();
     const attempt = retry ? 2 : 1;
     transaction(this.db, () => {
@@ -553,6 +720,7 @@ export class Repository {
       if (segment.asset_id) this.db.prepare("UPDATE source_assets SET extraction_status='processed',extraction_error=NULL,processed_at=? WHERE id=?")
         .run(timestamp, segment.asset_id);
     });
+    return true;
   }
 
   getSegmentCoveragePackage(segmentId) {
@@ -561,6 +729,7 @@ export class Repository {
     if (!row) return null;
     const coverage = this.db.prepare("SELECT * FROM extraction_coverage WHERE segment_id=?").get(segmentId);
     const source = this.getSource(row.source_id);
+    if (row.capture_version !== source?.capture_version) return { segment: row, staleCaptureVersion: true };
     const asset = row.asset_id ? source?.assets.find((item) => item.id === row.asset_id) : null;
     return {
       segment: row, extraction: json(row.result_json, {}),
@@ -574,6 +743,8 @@ export class Repository {
     const row = this.db.prepare(`SELECT s.*,se.result_json,se.method,se.model,se.attempt FROM source_segments s
       JOIN segment_extractions se ON se.segment_id=s.id WHERE s.id=?`).get(segmentId);
     if (!row) throw new Error(`Segment ${segmentId} has no extraction result.`);
+    const sourceVersion = this.db.prepare("SELECT capture_version FROM sources WHERE id=?").get(row.source_id)?.capture_version;
+    if (row.capture_version !== sourceVersion) return { status: "stale", sourceId: row.source_id };
     const result = json(row.result_json, {});
     const claims = Array.isArray(result.claims) ? result.claims : [];
     const expectedModality = row.asset_id ? (row.segment_type === "video_chapter" ? "video" : "image") : "text";
@@ -621,8 +792,12 @@ export class Repository {
 
   finalizeSegmentedExtraction(sourceId) {
     if (!this.sourceCoverageReady(sourceId)) throw new Error(`Source ${sourceId} still has unaudited segments.`);
+    const sourceVersion = this.db.prepare("SELECT capture_version FROM sources WHERE id=?").get(sourceId)?.capture_version;
     const rows = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model FROM source_segments ss
       JOIN segment_extractions se ON se.segment_id=ss.id WHERE ss.source_id=? ORDER BY ss.sequence`).all(sourceId);
+    if (!rows.length || rows.some((row) => row.capture_version !== sourceVersion)) {
+      throw Object.assign(new Error(`Source ${sourceId} extraction belongs to a stale capture version.`), { code: "STALE_CAPTURE_VERSION", retryable: false });
+    }
     const results = rows.map((row) => ({ row, result: json(row.result_json, {}) }));
     const primary = results.map((item) => item.result.source).filter(Boolean).sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0))[0]
       || { language: "unknown", summary: "", destination_name: "Unknown", destination_slug: "unknown", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0 };
@@ -3048,7 +3223,10 @@ export class Repository {
             JOIN evidence_spans es ON es.id=ids.value WHERE es.asset_id=sa.id
           )), '') AS evidence_text
       FROM source_assets sa JOIN sources s ON s.id=sa.source_id
-      WHERE sa.kind='image' AND s.adapter='xiaohongshu' AND sa.source_id IN (${placeholders})
+      WHERE sa.kind='image' AND s.adapter='xiaohongshu'
+        AND s.authorization_status='owner_confirmed' AND s.publishable=1
+        AND sa.authorization_status='owner_confirmed' AND sa.publishable=1
+        AND sa.source_id IN (${placeholders})
       ORDER BY s.captured_at DESC, sa.position ASC
       LIMIT 12
     `).all(...sourceIds);
@@ -3374,7 +3552,7 @@ function hydrateReview(row) {
   };
 }
 
-function hydrateSource({ source, assets, files = [], structured, claims, extractionRuns = [], claimHistory = [], blueprint, analysis = null, recommendation = null, segments = [], coverage = [], family = null }) {
+function hydrateSource({ source, assets, files = [], structured, claims, extractionRuns = [], claimHistory = [], blueprint, analysis = null, recommendation = null, segments = [], coverage = [], family = null, captureVersions = [] }) {
   if (structured) {
     structured.traveler_fit = json(structured.traveler_fit_json, []);
     structured.practical_tips = json(structured.practical_tips_json, []);
@@ -3395,10 +3573,26 @@ function hydrateSource({ source, assets, files = [], structured, claims, extract
     blueprint.gaps = json(blueprint.gaps_json, []);
   }
   source.submission_metadata = json(source.submission_metadata_json, {});
+  source.completeness = json(source.completeness_json, {});
+  source.license_scope = json(source.license_scope_json, []);
+  source.commercial_use_allowed = Boolean(source.commercial_use_allowed);
+  source.editing_allowed = Boolean(source.editing_allowed);
+  source.redistribution_allowed = Boolean(source.redistribution_allowed);
+  source.publishable = Boolean(source.publishable);
+  for (const asset of assets) {
+    asset.provenance = json(asset.provenance_json, {});
+    asset.commercial_use_allowed = Boolean(asset.commercial_use_allowed);
+    asset.editing_allowed = Boolean(asset.editing_allowed);
+    asset.redistribution_allowed = Boolean(asset.redistribution_allowed);
+    asset.publishable = Boolean(asset.publishable);
+  }
   delete source.raw_payload_json;
   delete source.submission_metadata_json;
+  delete source.completeness_json;
+  delete source.license_scope_json;
   return {
     ...source, assets, files, structured, claims, extraction_runs: extractionRuns,
+    capture_versions: captureVersions,
     claim_history: claimHistory.map((row) => ({ ...row, snapshot: json(row.snapshot_json, {}) })), blueprint,
     analysis: analysis ? { ...analysis, data: json(analysis.analysis_json, {}) } : null,
     recommendation: recommendation ? hydrateRecommendation(recommendation) : null,
@@ -3406,6 +3600,32 @@ function hydrateSource({ source, assets, files = [], structured, claims, extract
     extraction_coverage: coverage.map((row) => ({ ...row, uncovered_spans: json(row.uncovered_spans_json, []) })),
     source_family: family ? { ...family, analysis: json(family.analysis_json, {}) } : null,
   };
+}
+
+function captureContentHash(capture) {
+  const media = (capture.assets || []).map((asset) => ({
+    kind: asset.kind,
+    identity: asset.mediaIdentity || asset.url,
+    url: asset.url,
+    position: asset.position,
+    originalSha256: asset.originalSha256 || "",
+  }));
+  const files = (capture.files || []).map((file) => ({ kind: file.fileKind, sha256: file.sha256, sizeBytes: file.sizeBytes }));
+  return sha256(JSON.stringify({
+    rawText: String(capture.rawText || ""),
+    rawHtml: String(capture.rawHtml || ""),
+    title: String(capture.title || ""),
+    authorName: String(capture.authorName || ""),
+    publishedAt: capture.publishedAt || null,
+    media,
+    files,
+  }));
+}
+
+function safeIsoDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
 }
 
 function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy = contentPolicyFor(brief)) {

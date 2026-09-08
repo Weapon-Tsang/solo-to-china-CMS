@@ -41,24 +41,42 @@ export class KimiExtractor {
     if (videoSource && this.config.provider !== "vertex" && !source.submission_metadata?.operatorNotesProvided) {
       throw new Error("Video extraction requires a Vertex Gemini model with video input, or an operator-supplied transcript in the source notes.");
     }
-    const images = await this.client.imageParts((source.assets || []).filter((asset) => asset.kind !== "video"));
-    const videos = await prepareVideoParts(source, this.config.provider, this.client);
-    let completion;
-    try {
-      completion = await this.client.completeJson({
-        name: "source_research_extraction",
-        schema: EXTRACTION_SCHEMA,
-        instructions: SYSTEM_PROMPT,
-        content: [{ type: "text", text: buildInput(source) }, ...videos.parts, ...images.parts],
-      });
-    } finally {
-      await videos.cleanup();
+    const assets = source.assets || [];
+    const imageAssets = assets.filter((asset) => asset.kind !== "video");
+    const videoAssets = assets.filter((asset) => asset.kind === "video");
+    const imageBatchSize = Math.max(1, Number(this.config.imageBatchSize || this.config.maxImages || 32));
+    const batches = [];
+    for (let index = 0; index < imageAssets.length; index += imageBatchSize) {
+      batches.push({ images: imageAssets.slice(index, index + imageBatchSize), videos: [] });
     }
-    const result = sanitizeResult(completion.output);
-    if (images.attempted > images.parts.length) result.source.warnings.push("Some captured image assets were unavailable to the vision model; verify image-only details against the raw source.");
-    if ((source.source_kind === "video" || source.source_kind === "video_url") && videos.parts.length === 0) result.source.warnings.push("The video frames and audio were not available to the selected model; extraction used only the public page text and operator-supplied transcript.");
-    const mode = videos.parts.length ? "video" : images.parts.length ? "multimodal" : "text";
-    return { result, method: `${this.config.provider || "kimi"}_${mode}`, model: completion.model };
+    for (const video of videoAssets) batches.push({ images: [], videos: [video] });
+    if (!batches.length) batches.push({ images: [], videos: [] });
+
+    const outputs = [];
+    const methods = new Set();
+    let model = null;
+    for (const batch of batches) {
+      const images = await this.client.imageParts(batch.images);
+      const videos = await prepareVideoParts({ ...source, assets: batch.videos }, this.config.provider, this.client);
+      let completion;
+      try {
+        completion = await this.client.completeJson({
+          name: "source_research_extraction",
+          schema: EXTRACTION_SCHEMA,
+          instructions: SYSTEM_PROMPT,
+          content: [{ type: "text", text: buildInput(source) }, ...videos.parts, ...images.parts],
+        });
+      } finally {
+        await videos.cleanup();
+      }
+      const result = sanitizeResult(completion.output);
+      if (images.attempted > images.parts.length) result.source.warnings.push("Some captured image assets were unavailable to the vision model; completeness remains blocked until they are processed.");
+      if (batch.videos.length && videos.parts.length < batch.videos.length) result.source.warnings.push("One or more captured videos were unavailable to the selected model; completeness remains blocked until they are processed.");
+      outputs.push(result);
+      methods.add(videos.parts.length ? "video" : images.parts.length ? "multimodal" : "text");
+      model ||= completion.model;
+    }
+    return { result: mergeExtractionResults(outputs), method: `${this.config.provider || "kimi"}_${[...methods].join("+")}`, model };
   }
 
   async analyzeBlueprint(source) {
@@ -101,7 +119,7 @@ export class KimiExtractor {
 async function prepareVideoParts(source, provider, client) {
   const empty = { parts: [], attempted: 0, cleanup: async () => {} };
   if (provider !== "vertex") return empty;
-  if (source?.source_kind === "video") return client.videoParts(source.assets || []);
+  if ((source?.assets || []).some((asset) => asset?.kind === "video")) return client.videoParts(source.assets || []);
   if (source?.source_kind !== "video_url" || !isYoutubeUrl(source.submitted_url)) return empty;
   try {
     const url = new URL(source.submitted_url || "");
@@ -109,6 +127,22 @@ async function prepareVideoParts(source, provider, client) {
   } catch {
     return empty;
   }
+}
+
+function mergeExtractionResults(results) {
+  const source = results.map((item) => item.source).filter(Boolean)
+    .sort((left, right) => Number(right.confidence || 0) - Number(left.confidence || 0))[0]
+    || heuristicExtraction({ raw_text: "", title: "", assets: [] }).source;
+  source.warnings = [...new Set(results.flatMap((item) => item.source?.warnings || []))];
+  const claims = [];
+  const seen = new Set();
+  for (const claim of results.flatMap((item) => item.claims || [])) {
+    const key = [claim.key, claim.subject, claim.predicate, claim.value, claim.source_quote].join("\u0000").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    claims.push(claim);
+  }
+  return { source, claims, blueprint: emptyBlueprint() };
 }
 
 function isYoutubeUrl(value) {
@@ -160,13 +194,13 @@ const COVERAGE_AUDIT_PROMPT = `Independently audit whether the extracted atomic 
 - Return an empty uncovered_spans array when all material evidence is covered.`;
 
 function buildInput(source) {
-  return [`URL: ${source.submitted_url || source.canonical_url}`, `Source type: ${source.source_kind || source.adapter}`, `Title: ${source.title}`, `Author: ${source.author_name}`, `Published: ${source.published_at || "unknown"}`, "", "SOURCE TEXT:", truncate(source.raw_text, 120_000)].join("\n");
+  return [`URL: ${source.submitted_url || source.canonical_url}`, `Source type: ${source.source_kind || source.adapter}`, `Title: ${source.title}`, `Author: ${source.author_name}`, `Published: ${source.published_at || "unknown"}`, "", "SOURCE TEXT:", String(source.raw_text || "")].join("\n");
 }
 
 function buildCoverageInput(segment, extraction) {
   const claims = (extraction?.claims || []).map((claim, index) => ({ index: index + 1, subject: claim.subject, predicate: claim.predicate,
     value: claim.value, qualifiers: claim.qualifiers || [], source_quote: claim.source_quote }));
-  return ["ORIGINAL SOURCE SEGMENT:", truncate(segment?.raw_text || "", 120_000), "", "EXTRACTED CLAIMS:", JSON.stringify(claims)].join("\n");
+  return ["ORIGINAL SOURCE SEGMENT:", String(segment?.raw_text || ""), "", "EXTRACTED CLAIMS:", JSON.stringify(claims)].join("\n");
 }
 
 function sanitizeResult(result) {

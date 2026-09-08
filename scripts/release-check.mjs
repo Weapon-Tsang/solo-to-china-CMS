@@ -258,16 +258,18 @@ async function verifyExtension() {
     if (manifest.version !== packageJson.version) throw new Error(`Extension version ${manifest.version} does not match package version ${packageJson.version}.`);
   });
   report.check("Chrome Extension", "Permissions and local Engine host", () => {
-    for (const permission of ["activeTab", "scripting", "storage"]) {
+    for (const permission of ["activeTab", "scripting", "storage", "tabs", "alarms"]) {
       if (!manifest.permissions?.includes(permission)) throw new Error(`Missing required permission: ${permission}.`);
     }
     if (!manifest.host_permissions?.includes("http://127.0.0.1:4310/*")) throw new Error("Missing local Engine host permission.");
+    if (!manifest.host_permissions?.includes("https://*.xiaohongshu.com/*")) throw new Error("Missing Xiaohongshu page host permission.");
   });
   report.check("Chrome Extension", "Referenced extension assets", () => {
     const assets = extensionAssets(manifest);
     for (const asset of assets) assertFile(path.join(extensionDir, asset), `extension/${asset}`);
     const popup = fs.readFileSync(path.join(extensionDir, manifest.action.default_popup), "utf8");
     if (!/http:\/\/127\.0\.0\.1:4310/.test(popup)) throw new Error("Popup default Engine URL is not aligned with the local server.");
+    for (const injectedAsset of ["page-extractor.js", "sync-core.js"]) assertFile(path.join(extensionDir, injectedAsset), `extension/${injectedAsset}`);
   });
 }
 

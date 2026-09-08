@@ -1,54 +1,68 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <style>
-      :root { font-family: Inter, system-ui, sans-serif; color: #17231e; }
-      body { width: 340px; margin: 0; padding: 18px; background: #f6f4ed; }
-      .eyebrow { margin: 0 0 4px; color: #176b50; font-size: 10px; font-weight: 800; letter-spacing: .13em; }
-      h1 { margin: 0 0 6px; font-family: Georgia, serif; font-size: 25px; font-weight: 500; }
-      p { margin: 0 0 15px; color: #65726b; font-size: 12px; line-height: 1.5; }
-      button { position: relative; width: 100%; min-height: 44px; border: 0; border-radius: 9px; background: #176b50; color: white; font: inherit; font-weight: 720; cursor: pointer; transition: transform .18s ease, background .18s ease, box-shadow .18s ease; }
-      button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(23, 107, 80, .2); }
-      button:disabled { opacity: .55; cursor: wait; }
-      button.is-saving::after { content: ""; display: inline-block; width: 11px; height: 11px; margin-left: 8px; border: 2px solid rgba(255,255,255,.45); border-top-color: #fff; border-radius: 50%; vertical-align: -1px; animation: spin .7s linear infinite; }
-      button.is-success { background: #0f8a63; animation: saved .55s ease both; }
-      #status { min-height: 0; margin: 0; font-size: 12px; }
-      #status.error { color: #b42318; } #status.success { color: #176b50; }
-      #feedback { display: none; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 11px 12px; border: 1px solid #c9e8d9; border-radius: 10px; background: #eefaf4; color: #175c45; box-shadow: 0 4px 12px rgba(23, 107, 80, .08); }
-      #feedback.visible { display: flex; animation: reveal .22s ease both; }
-      #feedback.working { border-color: #c9d9ef; background: #f1f6fd; color: #2b5c94; }
-      #feedback.warning { border-color: #f2d28d; background: #fff8e8; color: #8a5c0c; }
-      #feedback.error { border-color: #f0c6c0; background: #fff2f0; color: #a33b31; }
-      .feedback-icon { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; border-radius: 50%; background: currentColor; color: white; font-size: 13px; font-weight: 800; }
-      .feedback-copy { min-width: 0; }
-      .feedback-copy strong { display: block; font-size: 12px; line-height: 1.3; }
-      .feedback-copy span { display: block; margin-top: 2px; color: inherit; font-size: 11px; line-height: 1.4; opacity: .85; }
-      details { margin-top: 16px; padding-top: 12px; border-top: 1px solid #d9ddd8; }
+      :root { font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; color: #17231e; }
+      body { width: 370px; margin: 0; padding: 17px; background: #f6f4ed; box-sizing: border-box; }
+      .eyebrow { margin: 0 0 3px; color: #176b50; font-size: 10px; font-weight: 800; letter-spacing: .13em; }
+      h1 { margin: 0 0 3px; font-family: Georgia, "Microsoft YaHei", serif; font-size: 24px; font-weight: 500; }
+      .subtitle,.meta { margin: 0; color: #65726b; font-size: 11px; line-height: 1.45; }
+      .meta { margin-top: 8px; }
+      .meta strong { color: #263b32; }
+      .counts { display: grid; grid-template-columns: repeat(2,1fr); gap: 6px; margin: 12px 0; }
+      .counts div { display: flex; align-items: center; justify-content: space-between; padding: 7px 9px; border: 1px solid #d9e0dc; border-radius: 8px; background: #fff; font-size: 11px; }
+      .counts strong { font-size: 14px; color: #176b50; }
+      button { width: 100%; min-height: 40px; border: 0; border-radius: 8px; background: #176b50; color: #fff; font: inherit; font-size: 12px; font-weight: 720; cursor: pointer; }
+      button:hover:not(:disabled) { filter: brightness(1.08); }
+      button:disabled { opacity: .48; cursor: wait; }
+      .secondary { background: #43574e; }
+      .quiet { background: #e5ece8; color: #29453a; }
+      .danger { background: #9c3f35; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 7px; }
+      #actions { margin: 8px 0; }
+      #status { min-height: 18px; margin: 10px 0 0; padding: 8px 9px; border-radius: 7px; background: #e7f1ec; color: #176b50; font-size: 11px; line-height: 1.45; }
+      #status.error { background: #fbeae8; color: #b42318; }
+      button.link { display: inline; width: auto; min-height: 0; padding: 0; background: none; color: #176b50; text-decoration: underline; }
+      details { margin-top: 14px; padding-top: 10px; border-top: 1px solid #d9ddd8; }
       summary { color: #65726b; font-size: 11px; cursor: pointer; }
-      label { display: block; margin-top: 10px; color: #4b5952; font-size: 11px; }
-      input { width: 100%; margin-top: 4px; padding: 8px; border: 1px solid #ccd3ce; border-radius: 6px; background: white; font: inherit; font-size: 11px; box-sizing: border-box; }
-      .save-settings { min-height: 34px; margin-top: 10px; background: #43574e; font-size: 11px; }
-      @keyframes spin { to { transform: rotate(360deg); } }
-      @keyframes reveal { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-      @keyframes saved { 50% { transform: scale(1.015); } 100% { transform: scale(1); } }
+      label { display: block; margin-top: 8px; color: #4b5952; font-size: 10px; }
+      input,select { width: 100%; margin-top: 3px; padding: 7px; border: 1px solid #ccd3ce; border-radius: 6px; background: #fff; font: inherit; font-size: 11px; box-sizing: border-box; }
+      .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+      .settings-grid label:first-child { grid-column: 1/-1; }
+      #save-settings { min-height: 34px; margin-top: 9px; }
     </style>
   </head>
   <body>
-    <p class="eyebrow">HUMAN-SELECTED CAPTURE</p>
-    <h1>SoloToChina</h1>
-    <p>Saves only the Xiaohongshu note you opened. No search, pagination, cookies, or account automation.</p>
-    <button id="save">Save current note</button>
-    <div id="status" role="status"></div>
-    <section id="feedback" aria-live="polite" aria-atomic="true">
-      <span id="feedback-icon" class="feedback-icon">✓</span>
-      <div class="feedback-copy"><strong id="feedback-title"></strong><span id="feedback-detail"></span></div>
+    <p class="eyebrow">研究资料采集</p>
+    <h1>收藏同步</h1>
+    <p class="subtitle">收藏即完成资料筛选。扩展会完整采集笔记；文章仍须在 CMS 推荐中心审核批准。</p>
+    <p class="meta"><strong>当前范围：</strong><span id="scope">正在读取……</span><br><strong>上次同步：</strong><span id="last-sync">正在读取……</span></p>
+    <section id="counts" class="counts"></section>
+    <button id="sync">同步新增收藏</button>
+    <div class="grid"><button id="full-sync" class="secondary">完整同步历史收藏</button><button id="save" class="quiet">保存当前笔记</button></div>
+    <section id="actions" hidden>
+      <div class="grid"><button id="pause" class="quiet">暂停同步</button><button id="resume">继续同步</button></div>
+      <div class="grid"><button id="stop-queue" class="quiet">完成当前队列后停止</button><button id="cancel" class="danger">取消同步</button></div>
     </section>
+    <div id="status" role="status" aria-live="polite"></div>
     <details id="connection-settings">
-      <summary>Connection settings</summary>
-      <label>Engine URL<input id="endpoint" type="url" value="http://127.0.0.1:4310"></label>
-      <label>Capture token<input id="token" type="password" autocomplete="off"></label>
-      <button id="save-settings" class="save-settings">Save settings</button>
+      <summary>同步与连接设置</summary>
+      <div class="settings-grid">
+        <label>CMS 服务地址<input id="endpoint" type="url" value="http://127.0.0.1:4310"></label>
+        <label>采集令牌<input id="token" type="password" autocomplete="off"></label>
+        <label>自动同步<select id="auto-sync"><option value="off">关闭</option><option value="startup">Chrome 启动时</option><option value="daily">每天一次</option></select></label>
+        <label>并发策略<select id="concurrency-mode"><option value="auto">自动（推荐）</option><option value="conservative">保守 · 2</option><option value="balanced">均衡 · 4</option><option value="aggressive">高性能 · 8</option><option value="custom">自定义</option></select></label>
+        <label id="custom-concurrency-field" hidden>自定义并发数<input id="custom-concurrency" type="number" min="1" max="12" value="4"></label>
+        <label>身份查询批量<input id="identity-batch-size" type="number" min="1" max="100" value="50"></label>
+        <label>发现扫描批量<input id="discovery-batch-size" type="number" min="10" max="200" value="100"></label>
+        <label>连续已知停止阈值<input id="known-streak" type="number" min="3" max="100" value="12"></label>
+        <label>队列高水位<input id="queue-high-watermark" type="number" min="50" max="5000" value="500"></label>
+        <label>最大重试次数<input id="max-retries" type="number" min="0" max="10" value="3"></label>
+        <label>单页加载超时（毫秒）<input id="detail-timeout" type="number" min="10000" max="120000" step="1000" value="30000"></label>
+        <label>自动同步最小间隔（小时）<input id="auto-min-hours" type="number" min="1" max="168" value="12"></label>
+      </div>
+      <button id="save-settings" class="secondary">保存设置</button>
     </details>
     <script src="popup.js"></script>
   </body>

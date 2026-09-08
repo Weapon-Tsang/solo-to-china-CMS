@@ -20,10 +20,11 @@ export const COVERAGE_REQUIREMENTS = Object.freeze({
   how_to: slots(["goal", "steps", "requirements"], ["cost", "timing", "alternatives", "warnings"]),
 });
 
-export function segmentSource(source) {
+export function segmentSource(source, { maxChars = 6_000 } = {}) {
+  const segmentMaxChars = Math.max(2_000, Math.min(250_000, Number(maxChars || 6_000)));
   const pieces = source.source_kind === "pdf"
-    ? splitPdfText(source.raw_text)
-    : splitText(source.raw_text);
+    ? splitPdfText(source.raw_text, segmentMaxChars)
+    : splitText(source.raw_text, segmentMaxChars);
   const segments = pieces.map((piece, index) => makeSegment(source.id, piece, index));
   for (const [index, asset] of (source.assets || []).entries()) {
     if (!asset || !["image", "video_cover", "video"].includes(asset.kind)) continue;
@@ -89,18 +90,18 @@ export function stableOpportunityKey(destinationSlug, topic, contentType = "prac
 
 function slots(required, important = [], optional = []) { return Object.freeze({ required, important, optional }); }
 
-function splitPdfText(text) {
+function splitPdfText(text, maxChars) {
   return String(text || "").split(/\f|\n\s*\n(?=(?:page\s*)?\d+\b)/iu)
-    .flatMap((value, index) => splitText(value).map((piece) => ({ ...piece, type: "pdf_page_group", pageStart: index + 1, pageEnd: index + 1 })));
+    .flatMap((value, index) => splitText(value, maxChars).map((piece) => ({ ...piece, type: "pdf_page_group", pageStart: index + 1, pageEnd: index + 1 })));
 }
 
-function splitText(text) {
+function splitText(text, maxChars) {
   const paragraphs = String(text || "").split(/\n\s*\n+/u).map((item) => item.trim()).filter(Boolean);
   const output = [];
   let buffer = [];
   let length = 0;
-  for (const paragraph of paragraphs.flatMap((value) => hardSplitParagraph(value))) {
-    if (length + paragraph.length > 6_000 && buffer.length) {
+  for (const paragraph of paragraphs.flatMap((value) => hardSplitParagraph(value, maxChars))) {
+    if (length + paragraph.length > maxChars && buffer.length) {
       output.push({ type: "paragraph_group", text: buffer.join("\n\n"), title: "" });
       buffer = []; length = 0;
     }

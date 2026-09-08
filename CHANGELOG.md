@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.17.0 - 2026-09-08
+
+- Fixed real Xiaohongshu board acquisition to use each visible card's authorized detail navigation URL while keeping CMS identity/storage token-free; legacy unfinished queues are rediscovered, temporary completeness gaps retry, and one failed note no longer blocks the collection.
+- Localized the Favorites Sync extension popup and manifest in Chinese, added live Scope detection, one-second progress refresh, and explicit ready/scanning/acquiring/retrying/paused/completed/error guidance.
+- Added a Manifest V3 Favorites Sync service worker with persistent per-Scope sessions, batched identity discovery, reliable checkpoint/known-streak stopping, unbounded full-history streaming, reusable worker tabs, adaptive 4–12 browser concurrency, retry/backoff, pause/resume/cancel/recovery, optional Auto Sync, progress summaries, and the existing single-note Save fallback.
+- Added Migration 35 with immutable Capture Versions, complete Source/Asset rights and provenance, media identity/dimensions/duration/original/derivative hashes, completeness state, per-version Source segments, one-Source-per-Xiaohongshu identity, active Job dedupe keys, and aggregate Favorites Sync run telemetry.
+- Added authenticated batch identity, chunked Capture upload, and Favorites run-summary APIs. Large JSON captures are size/SHA-256 verified and abandoned upload sessions expire automatically.
+- Removed silent raw-text/DOM/media total truncation. All image batches and videos are processed, oversized originals keep provenance alongside AI-safe derivatives, partial captures cannot enter extraction, and model output exhaustion resegments and retries evidence.
+- Added adaptive 4–8 CMS extraction concurrency and explicit per-call/per-segment configuration. Favorites and explicit Extension Save now share owner-confirmed commercial-use/publishable media semantics with full provenance while preserving the Recommendation human approval boundary.
+- Added migration, API, queue/recovery, idempotency, rights, completeness, large-capture, multi-media, provider-batching, output-limit, and pipeline regression coverage; updated architecture, operations, ingestion, research-boundary, strategy interpretation, handoff, and Extension documentation.
+
 ## 1.16.1 — 2026-09-08
 
 - Aligned Queue guidance with the current Trip.com Affiliate Link builder, including Attractions & Tours Page destination tasks and the visible Flight + Hotel, Car Rentals, Airport Transfers, and Homepage tools.

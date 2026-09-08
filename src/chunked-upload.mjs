@@ -77,7 +77,7 @@ export class ChunkedUploadManager {
     } finally { fs.closeSync(fd); }
     fs.rmSync(directory, { recursive: true, force: true });
     const title = String(input.title || metadata.name).slice(0, 1_000);
-    const notes = String(input.notes || "").slice(0, 120_000);
+    const notes = String(input.notes || "");
     return {
       capture: {
         adapter: "manual", externalId: submissionId, canonicalUrl: `manual-source://${submissionId}`, submittedUrl: "", sourceKind: "video",

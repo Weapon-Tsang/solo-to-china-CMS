@@ -72,7 +72,7 @@ export class KimiClient {
   }
 
   async imageParts(assets) {
-    const attempted = (assets || []).slice(0, this.config.maxImages || 0);
+    const attempted = assets || [];
     const results = await Promise.allSettled(attempted.map(async (asset) => ({
       type: "image_url",
       image_url: { url: await this.imageDataUrl(asset) },
@@ -82,11 +82,14 @@ export class KimiClient {
   }
 
   async videoParts(assets) {
-    const attempted = (assets || []).filter((asset) => asset?.kind === "video").slice(0, 1).length;
+    const attempted = (assets || []).filter((asset) => asset?.kind === "video").length;
     return { parts: [], attempted, cleanup: async () => {} };
   }
 
   async imageDataUrl(asset) {
+    if (asset?.ai_derivative_data_url || asset?.aiDerivativeDataUrl) {
+      return asset.ai_derivative_data_url || asset.aiDerivativeDataUrl;
+    }
     if (asset?.local_path) return this.localImageDataUrl(asset);
     const url = safeXiaohongshuImageUrl(asset?.remote_url);
     if (!url) throw new Error("Captured image URL is not an allowlisted Xiaohongshu HTTPS asset.");
@@ -95,9 +98,12 @@ export class KimiClient {
     const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
     if (!/^image\/(?:jpeg|jpg|png|webp|gif)$/.test(contentType)) throw new Error("Captured asset is not a supported image.");
     const declaredBytes = Number.parseInt(response.headers.get("content-length") || "", 10);
-    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_IMAGE_BYTES) throw new Error("Captured image is too large for Kimi vision input.");
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_IMAGE_BYTES) {
+      throw Object.assign(new Error("Captured image exceeds the provider inline limit and has no AI derivative."), { code: "AI_DERIVATIVE_REQUIRED", retryable: false });
+    }
     const bytes = new Uint8Array(await response.arrayBuffer());
-    if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new Error("Captured image is empty or too large for Kimi vision input.");
+    if (!bytes.length) throw new Error("Captured image is empty.");
+    if (bytes.length > MAX_IMAGE_BYTES) throw Object.assign(new Error("Captured image exceeds the provider inline limit and has no AI derivative."), { code: "AI_DERIVATIVE_REQUIRED", retryable: false });
     return `data:${contentType};base64,${Buffer.from(bytes).toString("base64")}`;
   }
 
@@ -108,7 +114,8 @@ export class KimiClient {
     const contentType = String(asset.mime_type || "").toLowerCase();
     if (!/^image\/(?:jpeg|jpg|png|webp|gif)$/.test(contentType)) throw new Error("Uploaded source asset is not a supported image.");
     const bytes = await fs.readFile(filename);
-    if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new Error("Uploaded source image is empty or too large for vision input.");
+    if (!bytes.length) throw new Error("Uploaded source image is empty.");
+    if (bytes.length > MAX_IMAGE_BYTES) throw Object.assign(new Error("Uploaded source image exceeds the provider inline limit and needs a derived vision copy; the original remains stored."), { code: "AI_DERIVATIVE_REQUIRED", retryable: false });
     return `data:${contentType};base64,${bytes.toString("base64")}`;
   }
 }

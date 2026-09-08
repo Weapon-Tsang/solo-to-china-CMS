@@ -53,6 +53,144 @@ function migrate(db) {
   if (current < 32) migrationThirtyTwo(db);
   if (current < 33) migrationThirtyThree(db);
   if (current < 34) migrationThirtyFour(db);
+  if (current < 35) migrationThirtyFive(db);
+}
+
+function migrationThirtyFive(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE sources ADD COLUMN acquisition_origin TEXT NOT NULL DEFAULT 'legacy';
+      ALTER TABLE sources ADD COLUMN sync_scope_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN extension_version TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN completeness_status TEXT NOT NULL DEFAULT 'complete'
+        CHECK (completeness_status IN ('complete','partial_retryable','partial_needs_attention'));
+      ALTER TABLE sources ADD COLUMN completeness_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE sources ADD COLUMN authorization_status TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (authorization_status IN ('legacy','owner_confirmed','unconfirmed'));
+      ALTER TABLE sources ADD COLUMN commercial_use_allowed INTEGER NOT NULL DEFAULT 0 CHECK (commercial_use_allowed IN (0,1));
+      ALTER TABLE sources ADD COLUMN editing_allowed INTEGER NOT NULL DEFAULT 0 CHECK (editing_allowed IN (0,1));
+      ALTER TABLE sources ADD COLUMN redistribution_allowed INTEGER NOT NULL DEFAULT 0 CHECK (redistribution_allowed IN (0,1));
+      ALTER TABLE sources ADD COLUMN publishable INTEGER NOT NULL DEFAULT 0 CHECK (publishable IN (0,1));
+      ALTER TABLE sources ADD COLUMN authorization_origin TEXT NOT NULL DEFAULT 'legacy';
+      ALTER TABLE sources ADD COLUMN license_scope_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE sources ADD COLUMN source_availability TEXT NOT NULL DEFAULT 'available'
+        CHECK (source_availability IN ('available','unavailable','deleted','private'));
+
+      ALTER TABLE source_assets ADD COLUMN media_identity TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN width INTEGER;
+      ALTER TABLE source_assets ADD COLUMN height INTEGER;
+      ALTER TABLE source_assets ADD COLUMN duration REAL;
+      ALTER TABLE source_assets ADD COLUMN original_sha256 TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN ai_derivative_data_url TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN ai_derivative_sha256 TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN authorization_status TEXT NOT NULL DEFAULT 'legacy';
+      ALTER TABLE source_assets ADD COLUMN commercial_use_allowed INTEGER NOT NULL DEFAULT 0 CHECK (commercial_use_allowed IN (0,1));
+      ALTER TABLE source_assets ADD COLUMN editing_allowed INTEGER NOT NULL DEFAULT 0 CHECK (editing_allowed IN (0,1));
+      ALTER TABLE source_assets ADD COLUMN redistribution_allowed INTEGER NOT NULL DEFAULT 0 CHECK (redistribution_allowed IN (0,1));
+      ALTER TABLE source_assets ADD COLUMN publishable INTEGER NOT NULL DEFAULT 0 CHECK (publishable IN (0,1));
+      ALTER TABLE source_assets ADD COLUMN authorization_origin TEXT NOT NULL DEFAULT 'legacy';
+      ALTER TABLE source_assets ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '{}';
+
+      ALTER TABLE source_segments ADD COLUMN capture_version INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE jobs ADD COLUMN dedupe_key TEXT NOT NULL DEFAULT '';
+      UPDATE jobs SET dedupe_key=type || ':' || entity_id WHERE dedupe_key='';
+      UPDATE jobs AS duplicate
+      SET status='failed', last_error='Superseded duplicate active job during migration 35', updated_at=datetime('now')
+      WHERE duplicate.status IN ('queued','running') AND EXISTS (
+        SELECT 1 FROM jobs AS keeper
+        WHERE keeper.dedupe_key=duplicate.dedupe_key AND keeper.status IN ('queued','running')
+          AND (keeper.created_at<duplicate.created_at OR (keeper.created_at=duplicate.created_at AND keeper.id<duplicate.id))
+      );
+      CREATE UNIQUE INDEX idx_jobs_active_dedupe ON jobs(dedupe_key)
+        WHERE dedupe_key<>'' AND status IN ('queued','running');
+
+      UPDATE sources AS current
+      SET external_id=NULL
+      WHERE external_id IS NOT NULL AND external_id<>'' AND EXISTS (
+        SELECT 1 FROM sources AS older
+        WHERE older.adapter=current.adapter AND older.external_id=current.external_id
+          AND (older.created_at<current.created_at OR (older.created_at=current.created_at AND older.id<current.id))
+      );
+      DROP INDEX IF EXISTS idx_sources_adapter_external_id;
+      CREATE UNIQUE INDEX idx_sources_adapter_external_id_unique ON sources(adapter,external_id)
+        WHERE external_id IS NOT NULL AND external_id<>'';
+      CREATE INDEX idx_sources_identity_lookup ON sources(adapter,canonical_url,external_id);
+      CREATE INDEX idx_sources_sync_scope ON sources(acquisition_origin,sync_scope_key,captured_at DESC);
+
+      UPDATE sources SET acquisition_origin='xhs_manual_extension', authorization_status='owner_confirmed',
+        commercial_use_allowed=1, editing_allowed=1, redistribution_allowed=1, publishable=1,
+        authorization_origin='xhs_manual_extension',
+        license_scope_json='["research","copy","download","edit","crop","compress","format_convert","resize","translate","adapt","redistribute","commercial_publish","wordpress_media","social_media"]'
+      WHERE adapter='xiaohongshu';
+      UPDATE source_assets SET authorization_status='owner_confirmed', commercial_use_allowed=1, editing_allowed=1,
+        redistribution_allowed=1, publishable=1, authorization_origin='xhs_manual_extension',
+        provenance_json=json_object(
+          'sourceId',source_id,
+          'externalId',(SELECT external_id FROM sources WHERE id=source_assets.source_id),
+          'canonicalUrl',(SELECT canonical_url FROM sources WHERE id=source_assets.source_id),
+          'capturedAt',(SELECT captured_at FROM sources WHERE id=source_assets.source_id),
+          'captureVersion',(SELECT capture_version FROM sources WHERE id=source_assets.source_id),
+          'mediaSourceUrl',remote_url,'acquisitionOrigin','xhs_manual_extension'
+        )
+      WHERE source_id IN (SELECT id FROM sources WHERE adapter='xiaohongshu');
+
+      CREATE TABLE capture_versions (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        capture_version INTEGER NOT NULL,
+        captured_at TEXT NOT NULL,
+        raw_text TEXT NOT NULL,
+        raw_html TEXT NOT NULL,
+        raw_payload_json TEXT NOT NULL,
+        assets_json TEXT NOT NULL DEFAULT '[]',
+        content_hash TEXT NOT NULL,
+        completeness_status TEXT NOT NULL CHECK (completeness_status IN ('complete','partial_retryable','partial_needs_attention')),
+        completeness_json TEXT NOT NULL,
+        acquisition_origin TEXT NOT NULL,
+        sync_scope_key TEXT NOT NULL DEFAULT '',
+        extension_version TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        UNIQUE(source_id,capture_version)
+      );
+      CREATE INDEX idx_capture_versions_source ON capture_versions(source_id,capture_version DESC);
+      CREATE TABLE favorites_sync_runs (
+        session_id TEXT PRIMARY KEY,
+        scope_key TEXT NOT NULL,
+        scope_url TEXT NOT NULL,
+        scope_label TEXT NOT NULL DEFAULT '',
+        mode TEXT NOT NULL CHECK (mode IN ('incremental','full')),
+        status TEXT NOT NULL,
+        stats_json TEXT NOT NULL DEFAULT '{}',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        duration_ms INTEGER,
+        extension_version TEXT NOT NULL DEFAULT '',
+        last_error_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_favorites_sync_runs_updated ON favorites_sync_runs(updated_at DESC);
+      INSERT INTO capture_versions(
+        id,source_id,capture_version,captured_at,raw_text,raw_html,raw_payload_json,assets_json,content_hash,
+        completeness_status,completeness_json,acquisition_origin,sync_scope_key,extension_version,created_at
+      )
+      SELECT
+        'capture_version_' || s.id || '_' || s.capture_version,s.id,s.capture_version,s.captured_at,s.raw_text,s.raw_html,s.raw_payload_json,
+        COALESCE((SELECT json_group_array(json_object(
+          'kind',a.kind,'url',a.remote_url,'alt',a.alt_text,'position',a.position,'localPath',a.local_path,
+          'mimeType',a.mime_type,'originalFilename',a.original_filename,'mediaIdentity',a.media_identity
+        )) FROM source_assets AS a WHERE a.source_id=s.id),'[]'),s.content_hash,
+        'complete','{}',CASE WHEN s.adapter='xiaohongshu' THEN 'xhs_manual_extension' ELSE 'legacy' END,'', '',s.created_at
+      FROM sources AS s;
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (35, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationThirtyFour(db) {
