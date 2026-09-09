@@ -193,6 +193,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(generatedPackage.frontend_page.payload.blocks[0].type, "articleSection");
   assert.equal(generatedPackage.frontend_page.validation.valid, true);
   assert.equal(generatedPackage.publish_composition.validation.valid, true);
+  assert.match(generatedPackage.publish_composition.page_content_hash, /^[a-f0-9]{64}$/);
+  assert.match(generatedPackage.publish_composition.seo_artifact_hash, /^[a-f0-9]{64}$/);
   assert.deepEqual(generatedPackage.publish_composition.publish_package.page.blocks, wordpress.calls[0].publishPackage.page.blocks);
   assert.equal(generatedPackage.frontend_page.contract_version, "1.2.0");
   assert.equal(generatedPackage.brief.strategy_version, CONTENT_STRATEGY.version);
@@ -238,4 +240,18 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(afterRevision.commercial_composition, null, "commercial output is version-bound");
   assert.equal(afterRevision.frontend_page.current, false, "page composition becomes stale after a draft revision");
   assert.deepEqual(afterRevision.draft.visuals.map((visual) => visual.id), visualIds, "unchanged visual assets are reused");
+
+  db.prepare("DELETE FROM jobs WHERE entity_id=?").run(content[0].draft_id);
+  const extractionCount = db.prepare("SELECT COUNT(*) AS count FROM segment_extractions").get().count;
+  const bodyBeforeMetadataEdit = afterRevision.draft.body_markdown;
+  const edited = repository.updateDraftMetadata(content[0].draft_id, {
+    title: "First-Time Beijing Solo Travel Guide — 2026 Notes",
+    metaDescription: "Practical, evidence-bounded notes for a first solo visit to Beijing.",
+  });
+  assert.equal(edited.body_markdown, bodyBeforeMetadataEdit, "metadata editing does not invoke or replace writer output");
+  assert.equal(edited.model, "manual_metadata_edit");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM segment_extractions").get().count, extractionCount,
+    "metadata editing does not rerun evidence extraction");
+  assert.deepEqual(db.prepare("SELECT type FROM jobs WHERE entity_id=? AND status='queued' ORDER BY type").all(content[0].draft_id).map((row) => row.type),
+    ["review_draft"], "metadata editing invalidates downstream work and reruns only the final content check");
 });

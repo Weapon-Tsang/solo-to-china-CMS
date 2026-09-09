@@ -16,6 +16,10 @@ import { AI_JOB_TYPES, classifyBatchFailure, isProviderPressure } from "./job-po
 import { pageBlockSignature } from "./evidence-validator.mjs";
 import { estimateSourceProcessing } from "./source-preflight.mjs";
 import { summarizeModelCostLedger } from "./ai/stage-policy.mjs";
+import {
+  affectedInternalLinkBlocks, buildSeoPreview, duplicateContentRisks, inventoryTargetChanges,
+  inventoryVersion, resolveCanonicalUrl, selectInternalLinks,
+} from "./seo-geo.mjs";
 export { pageBlockSignature } from "./evidence-validator.mjs";
 import {
   EDITORIAL_ASSIGNMENT_TYPES, evaluateEditorialAssignment, normalizeEditorialAssignmentInput,
@@ -380,12 +384,15 @@ export class Repository {
     if (!frontendPage || !commercial) throw new Error("Editorial and Commercial compositions are required before Publish Composition.");
     const existing = this.db.prepare("SELECT id FROM frontend_publish_compositions WHERE draft_id=?").get(draftId);
     const compositionId = existing?.id || id("fpublish");
+    const pageContentHash = sha256(JSON.stringify(publishPackage.page || {}));
+    const seoArtifactHash = sha256(JSON.stringify({ seo: publishPackage.seo || {}, schema: publishPackage.schema_jsonld || {},
+      metadata: publishPackage.page?.metadata || {} }));
     this.db.prepare(`
       INSERT INTO frontend_publish_compositions(id, draft_id, frontend_page_composition_id, commercial_composition_id,
         snapshot_id, publish_package_version, contract_version, page_schema_version, contract_checksum,
         commercial_strategy_version, publish_package_json, validation_json, status, generated_at, updated_at,
-        draft_revision, draft_content_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        draft_revision, draft_content_hash, page_content_hash, seo_artifact_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(draft_id) DO UPDATE SET frontend_page_composition_id=excluded.frontend_page_composition_id,
         commercial_composition_id=excluded.commercial_composition_id, snapshot_id=excluded.snapshot_id,
         publish_package_version=excluded.publish_package_version, contract_version=excluded.contract_version,
@@ -393,12 +400,13 @@ export class Repository {
         commercial_strategy_version=excluded.commercial_strategy_version, publish_package_json=excluded.publish_package_json,
         validation_json=excluded.validation_json, status=excluded.status, wordpress_post_id=NULL,
         generated_at=excluded.generated_at, updated_at=excluded.updated_at,
-        draft_revision=excluded.draft_revision, draft_content_hash=excluded.draft_content_hash
+        draft_revision=excluded.draft_revision, draft_content_hash=excluded.draft_content_hash,
+        page_content_hash=excluded.page_content_hash, seo_artifact_hash=excluded.seo_artifact_hash
     `).run(compositionId, draftId, frontendPage.id, commercial.id, snapshot.id, snapshot.publishPackageVersion || "1.0.0",
       publishPackage.contract.componentContractVersion, publishPackage.contract.pageSchemaVersion,
       publishPackage.contract.contractChecksum, commercialStrategyVersion || "", JSON.stringify(publishPackage),
       JSON.stringify(validation), validation.valid ? "valid" : "invalid", timestamp, timestamp,
-      draft.revision, draft.content_hash);
+      draft.revision, draft.content_hash, pageContentHash, seoArtifactHash);
     return this.getFrontendPublishComposition(draftId);
   }
 
@@ -3216,6 +3224,13 @@ export class Repository {
     if (!brief) return null;
     const topicPackage = this.getTopicPackage(brief.candidate_id);
     const contentPolicy = contentPolicyFor(brief, topicPackage?.facts || []);
+    const publishedInventory = this.listWordPressInventory();
+    const syncState = publishedInventory[0]?.site_url ? this.getWordPressSyncState(publishedInventory[0].site_url) : null;
+    const linkInventory = selectInternalLinks(publishedInventory, {
+      siteUrl: this.contentConfig.publicSiteUrl,
+      topic: brief.topic,
+      entities: [brief.destination_slug, ...(topicPackage?.editorial_assignment?.target_entities || [])],
+    });
     return {
       brief: {
         ...brief, plan: json(brief.plan_json, {}), canonical: json(brief.canonical_json, {}),
@@ -3224,8 +3239,11 @@ export class Repository {
       frontend_page_plan: this.getFrontendPagePlan(briefId),
       content_policy: contentPolicy,
       reader_sources: readerSources(topicPackage?.facts || []),
-      internal_link_inventory: this.listWordPressInventory().filter((item) => item.status === "publish")
-        .slice(0, 100).map((item) => ({ title: item.title, url: item.post_url, slug: item.slug })),
+      internal_link_inventory: linkInventory,
+      internal_link_inventory_version: inventoryVersion(publishedInventory, syncState?.last_succeeded_at),
+      duplicate_content_risks: duplicateContentRisks(publishedInventory, {
+        title: brief.topic, entities: [brief.destination_slug],
+      }),
       ...topicPackage,
     };
   }
@@ -3312,6 +3330,7 @@ export class Repository {
         schema_jsonld: json(draft.schema_jsonld, {}),
         content_blocks: json(draft.content_blocks_json, []),
         visuals: this.listDraftVisuals(draftId),
+        seo_preview: buildSeoPreview({ ...draft, seo: json(draft.seo_json, {}) }),
       },
       frontend_page: this.getFrontendPageComposition(draftId),
       publish_composition: this.getFrontendPublishComposition(draftId),
@@ -4311,6 +4330,7 @@ export class Repository {
   replaceWordPressInventory(siteUrl, items) {
     const timestamp = now();
     return transaction(this.db, () => {
+      const previous = this.db.prepare("SELECT * FROM wordpress_content_inventory").all();
       // V1 has one WordPress destination. Dropping previous-site rows prevents stale
       // candidates from being suppressed after the configured site changes.
       this.db.prepare("DELETE FROM wordpress_content_inventory").run();
@@ -4328,9 +4348,34 @@ export class Repository {
         ON CONFLICT(sync_key) DO UPDATE SET status='succeeded', last_succeeded_at=excluded.last_succeeded_at,
           last_error=NULL, item_count=excluded.item_count, updated_at=excluded.updated_at
       `).run(wordpressSyncKey(siteUrl), timestamp, timestamp, items.length, timestamp);
+      this.invalidateInventoryLinkedCompositions(inventoryTargetChanges(previous, items), timestamp);
       for (const row of this.db.prepare("SELECT slug FROM destinations").all()) this.enqueue("rebuild_topics", row.slug);
       return items.length;
     });
+  }
+
+  invalidateInventoryLinkedCompositions(changes, timestamp = now()) {
+    if (!changes.length) return 0;
+    let affectedCount = 0;
+    const rows = this.db.prepare("SELECT draft_id,payload_json,validation_json FROM frontend_page_compositions").all();
+    for (const row of rows) {
+      const indexes = affectedInternalLinkBlocks(json(row.payload_json, {}), changes);
+      if (!indexes.length) continue;
+      const validation = json(row.validation_json, {});
+      validation.valid = false;
+      validation.errors = [...(validation.errors || []).filter((item) => item.code !== "INTERNAL_LINK_INVENTORY_CHANGED"), {
+        code: "INTERNAL_LINK_INVENTORY_CHANGED", path: "$.blocks", blockIndexes: indexes,
+        targets: changes.filter((item) => item.old_url).map((item) => item.old_url),
+        message: "Only blocks referencing a changed public target require recomposition; research evidence remains current.",
+      }];
+      this.db.prepare("UPDATE frontend_page_compositions SET validation_json=?,status='stale_inventory',updated_at=? WHERE draft_id=?")
+        .run(JSON.stringify(validation), timestamp, row.draft_id);
+      this.db.prepare("UPDATE frontend_publish_compositions SET status='stale_inventory',wordpress_post_id=NULL,updated_at=? WHERE draft_id=?")
+        .run(timestamp, row.draft_id);
+      this.enqueue("compose_frontend_page", row.draft_id);
+      affectedCount += 1;
+    }
+    return affectedCount;
   }
 
   failWordPressInventorySync(siteUrl, error) {
@@ -5081,20 +5126,23 @@ function safeIsoDate(value) {
 
 function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy = contentPolicyFor(brief)) {
   const canonical = json(brief.canonical_json, {});
-  const canonicalUrl = config.publicSiteUrl && draft.slug ? `${config.publicSiteUrl}/${draft.slug}/` : null;
+  const canonicalResolution = resolveCanonicalUrl({ siteUrl: config.publicSiteUrl, slug: draft.slug });
+  const canonicalUrl = canonicalResolution.url;
   const seo = {
     primary_keyword: truncateText(draft.seo?.primary_keyword || draft.seo?.focus_keyword || canonical.seo?.primary_keyword || brief.topic || draft.title, 160),
     secondary_keywords: (draft.seo?.secondary_keywords || canonical.secondary_queries || []).slice(0, 8).map((item) => truncateText(item, 160)),
     search_intent: truncateText(draft.seo?.search_intent || canonical.content_intent || brief.search_intent || "informational", 120),
-    seo_title: truncateText(draft.seo?.seo_title || draft.seo?.meta_title || draft.title, 60),
-    meta_title: truncateText(draft.seo?.seo_title || draft.seo?.meta_title || draft.title, 60),
+    seo_title: truncateText(draft.seo?.seo_title || draft.seo?.meta_title || draft.title, 200),
+    meta_title: truncateText(draft.seo?.seo_title || draft.seo?.meta_title || draft.title, 200),
     focus_keyword: truncateText(draft.seo?.primary_keyword || draft.seo?.focus_keyword || brief.topic || draft.title, 160),
-    meta_description: truncateText(draft.meta_description, 160),
+    meta_description: truncateText(draft.meta_description, 500),
     slug: draft.slug,
     canonical_url: canonicalUrl,
-    robots: "index,follow",
-    og_title: truncateText(draft.seo?.og_title || draft.seo?.seo_title || draft.seo?.meta_title || draft.title, 60),
-    og_description: truncateText(draft.seo?.og_description || draft.meta_description, 160),
+    canonical_status: canonicalResolution.status,
+    canonical_reason: canonicalResolution.reason,
+    robots: "noindex,nofollow",
+    og_title: truncateText(draft.seo?.og_title || draft.seo?.seo_title || draft.seo?.meta_title || draft.title, 200),
+    og_description: truncateText(draft.seo?.og_description || draft.meta_description, 500),
     og_image: null,
     key_takeaways: (draft.seo?.key_takeaways || []).slice(0, 6).map((item) => truncateText(item, 240)),
     faqs: policy.faq?.allowed
@@ -5379,9 +5427,11 @@ function visualFingerprint(visual) {
 }
 
 function buildArticleSchema(draft, visuals, config) {
-  const canonicalUrl = config.publicSiteUrl && draft.slug ? `${config.publicSiteUrl}/${draft.slug}/` : null;
-  const generatedImages = visuals.filter((item) => item.status === "generated" && item.media_url).map((item) => item.media_url);
-  const organizationId = config.publicSiteUrl ? `${config.publicSiteUrl}#organization` : undefined;
+  const canonicalUrl = resolveCanonicalUrl({ siteUrl: config.publicSiteUrl, slug: draft.slug }).url;
+  const generatedImages = visuals.filter((item) => item.status === "generated")
+    .map((item) => publicSchemaMediaUrl(item.wordpress_media_url || item.media_url)).filter(Boolean);
+  const siteUrl = resolveCanonicalUrl({ siteUrl: config.publicSiteUrl, slug: "home" }).url?.replace(/home\/$/, "") || null;
+  const organizationId = siteUrl ? `${siteUrl}#organization` : undefined;
   const organization = { "@type": "Organization", name: config.publisherName || "SoloToChina" };
   if (organizationId) organization["@id"] = organizationId;
   if (config.publisherLogoUrl) organization.logo = { "@type": "ImageObject", url: config.publisherLogoUrl };
@@ -5390,32 +5440,44 @@ function buildArticleSchema(draft, visuals, config) {
     headline: draft.title,
     description: draft.meta_description,
     inLanguage: "en",
-    author: organizationId ? { "@id": organizationId } : organization,
     publisher: organizationId ? { "@id": organizationId } : organization,
     keywords: draft.seo?.primary_keyword || draft.seo?.focus_keyword || "",
     about: draft.destination_slug || "China travel",
   };
+  if (config.authorName) article.author = { "@type": "Person", name: config.authorName };
+  if (config.editorName) article.editor = { "@type": "Person", name: config.editorName };
   const graph = [organization];
   if (canonicalUrl) {
-    graph.push({ "@type": "WebPage", "@id": canonicalUrl, name: draft.title, description: draft.meta_description, inLanguage: "en" });
+    article["@id"] = `${canonicalUrl}#article`;
+    article.url = canonicalUrl;
+    graph.push({ "@type": "WebPage", "@id": canonicalUrl, url: canonicalUrl, name: draft.title, description: draft.meta_description, inLanguage: "en" });
     graph.push({
-      "@type": "BreadcrumbList",
+      "@type": "BreadcrumbList", "@id": `${canonicalUrl}#breadcrumb`,
       itemListElement: [
-        { "@type": "ListItem", position: 1, name: "China travel", item: config.publicSiteUrl },
-        { "@type": "ListItem", position: 2, name: draft.canonical?.destination?.name || draft.destination_slug || "Travel guide", item: canonicalUrl },
+        { "@type": "ListItem", position: 1, name: "China travel", item: siteUrl },
+        { "@type": "ListItem", position: 2, name: draft.title, item: canonicalUrl },
       ],
     });
     article.mainEntityOfPage = { "@type": "WebPage", "@id": canonicalUrl };
   }
   if (generatedImages.length) article.image = generatedImages;
   graph.push(article);
-  for (const image of generatedImages) graph.push({ "@type": "ImageObject", contentUrl: image });
+  for (const image of generatedImages) graph.push({ "@type": "ImageObject", contentUrl: image, url: image });
   const faqs = draft.seo?.faqs || [];
   if (faqs.length) graph.push({
     "@type": "FAQPage",
     mainEntity: faqs.map((item) => ({ "@type": "Question", name: item.question, acceptedAnswer: { "@type": "Answer", text: item.answer } })),
   });
   return { "@context": "https://schema.org", "@graph": graph };
+}
+
+function publicSchemaMediaUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password
+      || /(?:token|signature|x-amz-|x-goog-)/i.test(url.search)) return null;
+    return url.toString();
+  } catch { return null; }
 }
 
 function canonicalFromPlan(plan, candidate, config) {

@@ -24,6 +24,9 @@
 - Add a held-out, versioned article quality set and deterministic hard gates for evidence coverage, amounts, dates, exceptions, audience qualifiers, prompt injection, FAQ support, and final-page facts while keeping length, repetition, readability, metadata length, Sources presentation, and image count as editorial warnings.
 - Freeze per-stage model capability/thinking/token/timeout/retry policy, meter every realtime and Batch attempt, retain unknown costs as null with dated price provenance, and replace full draft rewrites with current-hash bounded section repair.
 - Persist dependency/config artifact keys for safe duplicate reuse, eliminate the duplicate coverage rebuild, page Entity resolution beyond 300 Claims, add age/realtime/dependency-aware scheduling and queue age, and expose measured runtime/performance reports without invented p95 or database-query estimates.
+- Keep SEO titles and descriptions evidence-bounded and independently editable without mechanical search-snippet truncation; version page and SEO artifacts so metadata-only edits reuse research and writing while invalidating final checks.
+- Synchronize visible metadata, canonical URLs, Article/WebPage/Breadcrumb schema and optional visible FAQ from one deterministic source; omit invented authors, dates, products, ratings and private media URLs.
+- Select internal links only from relevant published same-site WordPress inventory, validate real anchors and targets, report duplicate risk without automatic consolidation, and invalidate only page blocks affected by route/status changes.
 
 ## 1.17.11 - 2026-09-09
 

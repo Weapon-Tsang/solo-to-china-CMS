@@ -293,6 +293,36 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
   passed; `npm run release:check` passed 44 mandatory checks with 0 failures,
   4 warnings and 4 explicit offline/unconfigured conclusions. The clean schema
   chain is now 1-50. No paid model or production service was called.
-- Current task: C01.
-- Next action: validate reader-facing metadata, schema and answer extraction on
-  the same final-version fixture before starting C02.
+- Completed C01: title scope promises now hard-fail against the confirmed Brief
+  and evidence, while 60/160 characters remain admin guidance rather than a
+  rewrite or truncation rule. Canonical generation accepts only a configured
+  public route or confirmed published URL. Migration 51 versions final page and
+  SEO/schema hashes; metadata editing preserves body/evidence and queues only QA.
+  The admin shows editable title/description previews, character guidance and an
+  explicit no-display/no-CTR disclaimer. A deterministic synchronizer prevents
+  conflicting visible title, description, canonical and structured-data values,
+  with compatibility filtering for older Frontend Page Schemas.
+- Completed C02: Article/WebPage/Breadcrumb identifiers share the validated
+  canonical; author/editor identity is emitted only from explicit configuration,
+  draft publication dates are rejected, private/signed media is excluded and
+  Product/QAPage are rejected. FAQ is optional; when present its visible question
+  and answer pairs must exactly match FAQPage. These checks reuse normal QA and
+  do not add a GEO model call, forced FAQ, fixed section length or AI-crawler claim.
+- Completed C03: Briefs receive a relevance-filtered, versioned inventory of only
+  published same-origin WordPress targets. Final HTML anchors must resolve to that
+  inventory and naturally match the target; generic/mismatched/repeated anchors,
+  previews and missing targets fail. Empty/all-draft inventories yield no links
+  without blocking content. Similar existing articles produce review-only risk
+  records and never automatic merge/delete/canonical actions. A target route or
+  status change records only referencing block indexes as stale and queues page
+  recomposition, leaving evidence research and published body text untouched.
+- C01-C03 focused verification: 10 SEO/GEO and full content-pipeline cases passed;
+  the Vite production build and syntax checks passed. Full suite/release results
+  are recorded in the next checkpoint.
+- Eighth-batch regression checkpoint: 324 tests passed; `npm run check` passed;
+  `npm run release:check` passed 44 mandatory checks with 0 failures, 4 warnings
+  and 4 explicitly untested external/final-HTML conclusions. The clean schema
+  chain is now 1-51 and no production service or paid model was called.
+- Current task: C04.
+- Next action: implement evidence-bound media metadata, public derivative reuse
+  and image-loading contract validation before running C04 acceptance.

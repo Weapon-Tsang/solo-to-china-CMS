@@ -153,6 +153,8 @@ export function loadConfig(env = process.env) {
       publicSiteUrl: (env.PUBLIC_CONTENT_SITE_URL || "").replace(/\/$/, ""),
       publisherName: env.CONTENT_PUBLISHER_NAME || "SoloToChina",
       publisherLogoUrl: env.CONTENT_PUBLISHER_LOGO_URL || "",
+      authorName: String(env.CONTENT_AUTHOR_NAME || "").trim(),
+      editorName: String(env.CONTENT_EDITOR_NAME || "").trim(),
     },
     frontendContract: {
       sourceRepository: env.FRONTEND_CONTRACT_SOURCE_REPOSITORY || "",

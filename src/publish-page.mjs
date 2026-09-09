@@ -1,4 +1,5 @@
 import { validatePageEvidence } from "./evidence-validator.mjs";
+import { synchronizeSeoMetadata, validateSeoGeoArtifact } from "./seo-geo.mjs";
 
 const COMMERCIAL_VARIANTS = {
   affiliate_booking_card: () => "default",
@@ -53,7 +54,10 @@ export function buildPublishPackage({ pagePayload, draft, contract, publication 
   if (!contract?.contractVersion || !contract?.checksum) {
     throw new PublishCompositionError("NO_VALID_FRONTEND_CONTRACT", "A valid active Frontend Contract is required.");
   }
-  const page = structuredClone(pagePayload);
+  const metadataProperties = contract?.pageSchema?.schema?.properties?.metadata?.properties;
+  const supportedMetadataFields = metadataProperties && typeof metadataProperties === "object"
+    ? new Set(Object.keys(metadataProperties)) : null;
+  const page = synchronizeSeoMetadata(pagePayload, draft, { supportedMetadataFields });
   const manifest = buildMediaManifest(media);
   const featured = manifest.find((item) => item.role === "featured");
   if (featured && page.metadata && page.metadata.featuredMediaId == null) page.metadata.featuredMediaId = featured.media_id;
@@ -77,7 +81,8 @@ export function buildPublishPackage({ pagePayload, draft, contract, publication 
 
 export function validateFinalPageArtifact(page, contentPackage) {
   const errors = [];
-  const blocks = Array.isArray(page?.blocks) ? page.blocks : [];
+  const synchronizedPage = synchronizeSeoMetadata(page, contentPackage?.draft);
+  const blocks = Array.isArray(synchronizedPage?.blocks) ? synchronizedPage.blocks : [];
   if (!blocks.length) errors.push({ code: "EMPTY_FINAL_PAGE", path: "$.blocks" });
   if (String(page?.metadata?.title || "").trim() !== String(contentPackage?.draft?.title || "").trim()) {
     errors.push({ code: "TITLE_MISMATCH", path: "$.metadata.title" });
@@ -87,8 +92,15 @@ export function validateFinalPageArtifact(page, contentPackage) {
       errors.push({ code: "INCOMPLETE_EVIDENCE_LEDGER", path: `$.draft.evidence_ledger[${index}]` });
     }
   }
-  const evidenceValidation = validatePageEvidence(page, contentPackage);
+  const evidenceValidation = validatePageEvidence(synchronizedPage, contentPackage);
   errors.push(...evidenceValidation.errors);
+  const hasSeoArtifact = Boolean(contentPackage?.draft?.meta_description || contentPackage?.draft?.seo
+    || contentPackage?.draft?.schema_jsonld);
+  const seoGeoValidation = hasSeoArtifact ? validateSeoGeoArtifact({ page: synchronizedPage, draft: contentPackage?.draft,
+    schema: synchronizeSchemaWithPage(contentPackage?.draft?.schema_jsonld, synchronizedPage, contentPackage?.draft),
+    internalLinks: contentPackage?.internal_link_inventory || [] })
+    : { valid: null, errors: [], status: "not_tested_legacy_artifact" };
+  errors.push(...seoGeoValidation.errors);
   const allowedAssets = new Set(contentPackage?.commercial_composition?.asset_ids || []);
   blocks.forEach((block, index) => {
     if (!String(block?.type || "").startsWith("affiliate_")) return;
@@ -96,7 +108,7 @@ export function validateFinalPageArtifact(page, contentPackage) {
       errors.push({ code: "UNVERIFIED_COMMERCIAL_ASSET", path: `$.blocks[${index}].data.affiliate_asset_id` });
     }
   });
-  return { valid: errors.length === 0, errors, evidence: evidenceValidation };
+  return { valid: errors.length === 0, errors, evidence: evidenceValidation, seoGeo: seoGeoValidation };
 }
 
 export function synchronizeSchemaWithPage(sourceSchema, page, draft = {}) {
@@ -105,15 +117,27 @@ export function synchronizeSchemaWithPage(sourceSchema, page, draft = {}) {
   const graph = Array.isArray(schema["@graph"]) ? schema["@graph"] : [];
   const title = String(page?.metadata?.title || draft?.title || "").trim();
   const description = String(draft?.meta_description || "").trim();
-  for (const node of graph) {
+  const canonicalUrl = String(page?.metadata?.canonicalUrl || page?.metadata?.seo?.canonicalUrl || draft?.seo?.canonical_url || "").trim();
+  for (const node of [...graph, ...(schema["@type"] ? [schema] : [])]) {
     const types = Array.isArray(node?.["@type"]) ? node["@type"] : [node?.["@type"]];
     if (types.includes("Article")) {
       node.headline = title;
       if (description) node.description = description;
+      if (canonicalUrl) {
+        node["@id"] = `${canonicalUrl}#article`;
+        node.url = canonicalUrl;
+        node.mainEntityOfPage = { "@type": "WebPage", "@id": canonicalUrl };
+      }
     }
     if (types.includes("WebPage")) {
       node.name = title;
       if (description) node.description = description;
+      if (canonicalUrl) node["@id"] = node.url = canonicalUrl;
+    }
+    if (types.includes("BreadcrumbList") && canonicalUrl && Array.isArray(node.itemListElement) && node.itemListElement.length) {
+      node["@id"] = `${canonicalUrl}#breadcrumb`;
+      node.itemListElement.at(-1).item = canonicalUrl;
+      node.itemListElement.at(-1).name = title;
     }
   }
   const visibleFaqs = (page?.blocks || []).filter((block) => block?.type === "faq")

@@ -2,6 +2,7 @@ import { slugify, truncate } from "../utils.mjs";
 import { CONTENT_STRATEGY } from "../content-strategy.mjs";
 import { createAiClient } from "./client.mjs";
 import { pageBlockSignature, protectedFactTokens, validatePageEvidence } from "../evidence-validator.mjs";
+import { titlePromiseRisks } from "../seo-geo.mjs";
 
 const BRIEF_SCHEMA = objectSchema(
   ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions", "canonical"],
@@ -233,8 +234,8 @@ export class ContentEngine {
     });
     result.output.slug = slugify(result.output.slug || result.output.title);
     result.output.seo ||= {};
-    result.output.meta_description = truncate(result.output.meta_description, 160);
-    result.output.seo.meta_title = truncate(result.output.seo.meta_title || result.output.title, 70);
+    result.output.meta_description = truncate(result.output.meta_description, 500);
+    result.output.seo.meta_title = truncate(result.output.seo.meta_title || result.output.title, 200);
     result.output.seo.focus_keyword = truncate(result.output.seo.focus_keyword, 160);
     result.output.seo.secondary_keywords = (result.output.seo.secondary_keywords || []).slice(0, 8).map((item) => truncate(item, 160));
     result.output.seo.search_intent = truncate(result.output.seo.search_intent, 120);
@@ -570,6 +571,18 @@ export function applyDeterministicGates(review, contentPackage) {
   const seo = draft.seo || {};
   addGate("seo-metadata", Boolean(seo.meta_title && seo.focus_keyword && draft.meta_description),
     "SEO title, focus keyword, and meta description are present.", "seo_metadata_missing");
+  const promiseRisks = titlePromiseRisks(draft.title, contentPackage.brief, facts);
+  addGate("title-reader-promise", promiseRisks.length === 0,
+    promiseRisks.length ? `Title adds unsupported scope promises: ${promiseRisks.join(", ")}.` : "Title remains within the confirmed brief and evidence scope.",
+    "unsupported_title_promise");
+  const distinctDescription = normalizeComparable(seo.meta_title) !== normalizeComparable(draft.meta_description);
+  addGate("seo-title-description-independence", distinctDescription,
+    distinctDescription ? "Meta description adds an article-specific summary instead of repeating the title." : "Meta description must not duplicate the title.",
+    "seo_title_description_duplicate");
+  const repeatedSeoPhrase = Math.max(...[seo.focus_keyword, "solo travel"].filter(Boolean)
+    .map((phrase) => (String(`${seo.meta_title} ${draft.meta_description}`).toLowerCase().match(new RegExp(escapeRegex(String(phrase).toLowerCase()), "g")) || []).length), 0);
+  addWarning("seo-natural-language", repeatedSeoPhrase <= 2,
+    repeatedSeoPhrase <= 2 ? "SEO metadata uses natural language." : "SEO metadata mechanically repeats a keyword phrase.", "seo_keyword_repetition");
   addWarning("seo-length-guidance", String(seo.meta_title || "").length <= (policy.seo?.title_suggested_max || 60)
       && String(draft.meta_description || "").length <= (policy.seo?.description_suggested_max || 160),
     "SEO title/description exceed the configurable editorial display guidance; there is no ranking hard limit.", "seo_length_suggestion");
@@ -667,6 +680,8 @@ function containsProtectedToken(text, token) {
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(haystack);
 }
+
+function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 function duplicateParagraphs(markdown) {
   const seen = new Set();
