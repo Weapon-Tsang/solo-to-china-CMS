@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createAiClient } from "../src/ai/client.mjs";
 import { parseBatchResult, VertexGeminiClient } from "../src/ai/vertex-gemini-client.mjs";
 
 test("Vertex Gemini uses the configured model and structured JSON response", async () => {
@@ -22,6 +23,25 @@ test("Vertex Gemini uses the configured model and structured JSON response", asy
   assert.equal(body.generationConfig.temperature, undefined);
   assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "LOW");
   assert.equal(body.systemInstruction.parts[0].text, "Be precise.");
+});
+
+test("AI client dispatches an old Batch poll through its stored Vertex adapter after a Kimi switch", async () => {
+  let requestUrl = "";
+  const config = {
+    provider: "vertex", projectId: "project-old", location: "global", model: "model-old",
+    batchBucket: "valid-bucket", batchEnabled: true, accessToken: "test-token",
+  };
+  const client = createAiClient(config, async (url) => {
+    requestUrl = String(url);
+    return new Response(JSON.stringify({ name: "projects/project-old/locations/global/batchPredictionJobs/job-1", state: "JOB_STATE_RUNNING" }), { status: 200 });
+  });
+  config.provider = "kimi";
+  config.model = "kimi-new";
+  const result = await client.getBatch("projects/project-old/locations/global/batchPredictionJobs/job-1", {
+    provider: "vertex", project_id: "project-old", location: "global", model: "model-old",
+  });
+  assert.equal(result.state, "JOB_STATE_RUNNING");
+  assert.match(requestUrl, /aiplatform\.googleapis\.com\/v1\/projects\/project-old\/locations\/global\/batchPredictionJobs\/job-1$/);
 });
 
 test("Vertex Gemini reserves medium thinking for writing and review stages", async () => {

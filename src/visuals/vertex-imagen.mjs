@@ -17,17 +17,17 @@ export class VertexImagen {
     return this.config.enabled && ["vertex_imagen", "vertex_gemini"].includes(this.config.provider) && Boolean(this.config.projectId && this.config.publicBaseUrl);
   }
 
-  async generate(visual, draft) {
+  async generate(visual, draft, options = {}) {
     if (!this.enabled) throw new Error("Visual generation is not configured.");
     if (visual.image_type !== "illustration" || visual.acquisition_strategy !== "generate_illustration" || visual.factual_image_required) {
       throw new Error("The visual generator may generate only non-factual illustrations, never real-world photos, maps, or infographics.");
     }
-    if (this.config.provider === "vertex_gemini") return this.generateGeminiImage(visual, draft);
-    if (this.config.provider === "vertex_imagen") return this.generateImagenImage(visual, draft);
+    if (this.config.provider === "vertex_gemini") return this.generateGeminiImage(visual, draft, options);
+    if (this.config.provider === "vertex_imagen") return this.generateImagenImage(visual, draft, options);
     throw new Error("The selected visual provider cannot generate image files.");
   }
 
-  async generateImagenImage(visual, draft) {
+  async generateImagenImage(visual, draft, options = {}) {
     const accessToken = await this.accessToken();
     const endpoint = `https://${this.config.location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(this.config.location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:predict`;
     await this.config.beforeRequest?.({ provider: "vertex_imagen", model: this.config.model, stage: "generate_visual", attempt: 1 });
@@ -45,7 +45,7 @@ export class VertexImagen {
           safetyFilterLevel: "block_medium_and_above",
         },
       }),
-      signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+      signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new ProviderRequestError("Vertex Imagen", response.status, payload?.error?.message || response.statusText,
@@ -62,7 +62,7 @@ export class VertexImagen {
     });
   }
 
-  async generateGeminiImage(visual, draft) {
+  async generateGeminiImage(visual, draft, options = {}) {
     const accessToken = await this.accessToken();
     const location = this.config.location || "global";
     const host = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
@@ -84,7 +84,7 @@ export class VertexImagen {
           threshold: "BLOCK_MEDIUM_AND_ABOVE",
         }],
       }),
-      signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+      signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new ProviderRequestError("Gemini 3.1 Flash Image", response.status, payload?.error?.message || response.statusText,
@@ -131,6 +131,11 @@ export class VertexImagen {
     this.tokenExpiresAt = Date.now() + Math.max(60, Number(payload.expires_in || 300) - 60) * 1_000;
     return this.token;
   }
+}
+
+function combinedSignal(signal, timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 function normalizeMime(value) {

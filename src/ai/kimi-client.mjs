@@ -17,7 +17,7 @@ export class KimiClient {
     return Boolean(this.config.apiKey);
   }
 
-  async completeJson({ name, schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000 }) {
+  async completeJson({ name, schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000, signal = null }) {
     if (!this.enabled) throw new Error("KIMI_API_KEY is required for AI processing.");
     const startedAt = Date.now();
     const identity = modelCallIdentity(name, schema, instructions, content);
@@ -40,7 +40,7 @@ export class KimiClient {
           json_schema: { name, strict: true, schema },
         },
       }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: combinedSignal(signal, timeoutMs),
       });
       const payload = await jsonPayload(response);
       if (!response.ok) {
@@ -123,6 +123,11 @@ export class KimiClient {
     if (bytes.length > MAX_IMAGE_BYTES) throw Object.assign(new Error("Uploaded source image exceeds the provider inline limit and needs a derived vision copy; the original remains stored."), { code: "AI_DERIVATIVE_REQUIRED", retryable: false });
     return `data:${contentType};base64,${bytes.toString("base64")}`;
   }
+}
+
+function combinedSignal(signal, timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 function modelCallIdentity(stage, schema, instructions, content) {

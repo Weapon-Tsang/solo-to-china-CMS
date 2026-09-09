@@ -5,6 +5,9 @@
 - Persist structured extraction input manifests so image/video coverage uses submitted asset evidence rather than method-name guesses; legacy records remain explicitly unknown.
 - Separate Vertex Batch inference completion, output reading, item ingestion, quarantine, and cleanup so transient Cloud Storage failures resume without repeated inference or premature deletion.
 - Correlate Batch rows with Vertex's transport `keyField`, retain request fingerprints as a recovery path, quarantine duplicate/unknown rows, and treat model-reported IDs only as a cross-check.
+- Persist Batch failure classes, route decisions, attempt budgets, and next-eligible timestamps so permanent preparation failures terminate, oversized inputs use realtime, provider failures back off, and local capacity does not spend the error budget.
+- Freeze provider, model, location, project, schema, prompt, and configuration identity on submitted Batch runs; historical Vertex work continues through its stored adapter after the default model changes.
+- Fence job ownership with a monotonic lease generation, abort guarded model and delivery calls when heartbeats lose ownership, reject stale completion/failure writes, and recover only expired Batch preparations.
 
 ## 1.17.11 - 2026-09-09
 

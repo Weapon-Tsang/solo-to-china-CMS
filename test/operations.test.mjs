@@ -8,6 +8,7 @@ import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { openDatabase } from "../src/db.mjs";
 import { createLogger } from "../src/logger.mjs";
 import { ExceptionNotifier } from "../src/notifications.mjs";
+import { Pipeline } from "../src/pipeline.mjs";
 import { Repository } from "../src/repository.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
@@ -153,6 +154,86 @@ test("repository construction cannot steal a live job and only an expired lease 
     database.close();
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("a stale lease generation cannot complete, fail, or mutate the reclaimed entity", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-fence-test-"));
+  const database = openDatabase(path.join(directory, "fence.sqlite"));
+  let current = new Date("2026-09-10T02:00:00.000Z");
+  try {
+    const sourceRepository = new Repository(database, { workerId: "worker-a", jobLeaseMs: 30_000, clock: () => current });
+    const source = sourceRepository.saveCapture(normalizeXiaohongshuCapture({
+      url: "https://www.xiaohongshu.com/explore/444444444444444444444444", title: "Fenced source",
+      text: "A complete source used to verify monotonic lease fencing across worker recovery.", images: [],
+    }));
+    database.prepare("DELETE FROM jobs").run();
+    const jobId = sourceRepository.enqueue("extract_source", source.id);
+    const stale = sourceRepository.claimJob();
+    assert.equal(stale.lease_generation, 1);
+    current = new Date(current.getTime() + 31_000);
+    const owner = new Repository(database, { workerId: "worker-b", jobLeaseMs: 30_000, clock: () => current });
+    assert.equal(owner.recoverExpiredJobs(), 1);
+    const live = owner.claimJob();
+    assert.equal(live.lease_generation, 2);
+    assert.equal(sourceRepository.completeJob(jobId, stale.locked_by, stale.lease_generation), false);
+    assert.equal(sourceRepository.failJob(stale, Object.assign(new Error("stale worker failure"), { retryable: false })), false);
+    assert.equal(database.prepare("SELECT status FROM sources WHERE id=?").get(source.id).status, "processing");
+    assert.deepEqual({ ...database.prepare("SELECT status,locked_by,lease_generation FROM jobs WHERE id=?").get(jobId) },
+      { status: "running", locked_by: "worker-b", lease_generation: 2 });
+    assert.equal(owner.completeJob(jobId, live.locked_by, live.lease_generation), true);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("heartbeat ownership loss aborts the model call and prevents stale extraction writes", async (t) => {
+  const { db, repository } = repositoryFixture(t, { workerId: "worker-a", jobLeaseMs: 30_000 });
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/555555555555555555555555", title: "Abort source",
+    text: "A complete source used to prove heartbeat loss cancels ongoing model work before persistence.", images: [],
+  }));
+  db.prepare("DELETE FROM jobs").run();
+  const [segment] = repository.prepareSourceSegments(source.id);
+  const jobId = repository.enqueue("extract_segment_claims", segment.id);
+  let aborted = false;
+  const extractor = {
+    batchEnabled: false, config: {},
+    async extract(_pack, { signal }) {
+      setTimeout(() => db.prepare("UPDATE jobs SET locked_by='worker-b',lease_generation=lease_generation+1 WHERE id=?").run(jobId), 0);
+      return new Promise((resolve, reject) => signal.addEventListener("abort", () => {
+        aborted = true;
+        reject(signal.reason);
+      }, { once: true }));
+    },
+  };
+  const pipeline = new Pipeline(repository, extractor, { maxConcurrent: 1, heartbeatIntervalMs: 5 });
+  assert.equal(await pipeline.runOne(), false);
+  assert.equal(aborted, true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM segment_extractions WHERE segment_id=?").get(segment.id).count, 0);
+  const stored = db.prepare("SELECT status,locked_by,lease_generation,last_error FROM jobs WHERE id=?").get(jobId);
+  assert.equal(stored.status, "running");
+  assert.equal(stored.locked_by, "worker-b");
+  assert.equal(stored.lease_generation, 2);
+  assert.equal(stored.last_error, null);
+});
+
+test("startup recovery leaves a live Batch preparation lease alone and reclaims only expiry", (t) => {
+  let current = new Date("2026-09-10T03:00:00.000Z");
+  const { db, repository } = repositoryFixture(t, { workerId: "worker-a", jobLeaseMs: 30_000, clock: () => current });
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/666666666666666666666666", title: "Preparing source",
+    text: "A complete source used to verify preparation lease recovery behavior.", images: [],
+  }));
+  db.prepare("DELETE FROM jobs").run();
+  const [segment] = repository.prepareSourceSegments(source.id);
+  repository.enqueue("extract_segment_claims", segment.id);
+  const run = repository.reserveVertexBatchJobs({ minimum: 1, maximum: 1 });
+  assert.equal(repository.recoverPreparingVertexBatches(), 0);
+  assert.equal(db.prepare("SELECT status FROM vertex_batch_runs WHERE id=?").get(run.id).status, "preparing");
+  current = new Date(current.getTime() + 31_000);
+  assert.equal(repository.recoverPreparingVertexBatches(), 1);
+  assert.equal(db.prepare("SELECT status FROM vertex_batch_runs WHERE id=?").get(run.id).status, "failed");
 });
 
 test("deterministic Contract failures do not enter the automatic retry loop", () => {

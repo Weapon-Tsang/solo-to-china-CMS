@@ -3,21 +3,34 @@ import { KimiClient } from "./kimi-client.mjs";
 import { VertexGeminiClient } from "./vertex-gemini-client.mjs";
 
 export function createAiClient(config, fetchImpl = fetch) {
-  let client = null;
-  let provider = "";
+  const clients = new Map();
   const responseCache = new Map();
   const pending = new Map();
   const maxCacheEntries = Math.max(1, Math.min(512, Number(config.aiResponseCacheEntries || 128)));
-  const current = () => {
-    if (!client || provider !== config.provider) {
-      provider = config.provider;
-      client = provider === "vertex" ? new VertexGeminiClient(config, fetchImpl) : new KimiClient(config, fetchImpl);
+  const clientFor = (snapshot = null) => {
+    const selected = batchClientConfig(config, snapshot);
+    const key = JSON.stringify([selected.provider, selected.model, selected.location, selected.projectId, selected.batchBucket]);
+    if (!clients.has(key)) clients.set(key, selected.provider === "vertex"
+      ? new VertexGeminiClient(selected, fetchImpl)
+      : new KimiClient(selected, fetchImpl));
+    return clients.get(key);
+  };
+  const current = () => clientFor();
+  const batchClient = (snapshot) => {
+    const selected = batchClientConfig(config, snapshot);
+    if (selected.provider !== "vertex" || !selected.projectId) {
+      throw Object.assign(new Error(`Stored Batch configuration cannot access provider ${selected.provider || "unknown"}; restore its Vertex project credentials to resume.`), {
+        code: "BATCH_CREDENTIALS_UNAVAILABLE", retryable: true,
+      });
     }
-    return client;
+    return clientFor(snapshot);
   };
   return {
     get enabled() { return current().enabled; },
     get batchEnabled() { return Boolean(current().batchEnabled); },
+    batchEnabledFor(snapshot) {
+      try { return Boolean(batchClient(snapshot).batchEnabled); } catch { return false; }
+    },
     async completeJson(input) {
       const identity = callIdentity(config, input);
       if (responseCache.has(identity.key)) {
@@ -54,13 +67,24 @@ export function createAiClient(config, fetchImpl = fetch) {
         pending.delete(identity.key);
       }
     },
-    imageParts(assets) { return current().imageParts(assets); },
-    videoParts(assets) { return current().videoParts(assets); },
-    prepareBatchRequest(input) { return current().prepareBatchRequest(input); },
-    createBatch(requests) { return current().createBatch(requests); },
-    getBatch(name) { return current().getBatch(name); },
-    readBatchOutput(batch) { return current().readBatchOutput(batch); },
-    cleanupBatch(batch) { return current().cleanupBatch(batch); },
+    imageParts(assets, snapshot = null) { return clientFor(snapshot).imageParts(assets); },
+    videoParts(assets, snapshot = null) { return clientFor(snapshot).videoParts(assets); },
+    prepareBatchRequest(input, snapshot) { return batchClient(snapshot).prepareBatchRequest(input); },
+    createBatch(requests, options = {}, snapshot) { return batchClient(snapshot).createBatch(requests, options); },
+    getBatch(name, snapshot) { return batchClient(snapshot).getBatch(name); },
+    readBatchOutput(batch, snapshot) { return batchClient(snapshot).readBatchOutput(batch); },
+    cleanupBatch(batch, snapshot) { return batchClient(snapshot).cleanupBatch(batch); },
+  };
+}
+
+function batchClientConfig(config, snapshot) {
+  if (!snapshot) return { ...config };
+  return {
+    ...config,
+    provider: snapshot.provider || config.provider,
+    model: snapshot.model || config.model,
+    location: snapshot.location || config.location,
+    projectId: snapshot.projectId || snapshot.project_id || config.projectId,
   };
 }
 

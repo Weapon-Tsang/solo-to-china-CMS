@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+export const SCHEMA_VERSION = 44;
+
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = new DatabaseSync(filename);
@@ -60,6 +62,66 @@ function migrate(db) {
   if (current < 39) migrationThirtyNine(db);
   if (current < 40) migrationForty(db);
   if (current < 41) migrationFortyOne(db);
+  if (current < 42) migrationFortyTwo(db);
+  if (current < 43) migrationFortyThree(db);
+  if (current < 44) migrationFortyFour(db);
+}
+
+function migrationFortyFour(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE jobs ADD COLUMN lease_generation INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vertex_batch_runs ADD COLUMN preparation_owner TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN preparation_generation INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vertex_batch_runs ADD COLUMN preparation_lease_expires_at TEXT;
+      CREATE INDEX idx_vertex_batch_preparation_lease ON vertex_batch_runs(status,preparation_lease_expires_at);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (44, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyThree(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE vertex_batch_runs ADD COLUMN provider TEXT NOT NULL DEFAULT 'vertex';
+      ALTER TABLE vertex_batch_runs ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN schema_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN prompt_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN config_version TEXT NOT NULL DEFAULT 'legacy';
+      ALTER TABLE vertex_batch_runs ADD COLUMN config_digest TEXT NOT NULL DEFAULT '';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (43, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyTwo(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE jobs ADD COLUMN failure_class TEXT NOT NULL DEFAULT ''
+        CHECK (failure_class IN ('','permanent_input','retryable_provider','input_too_large','capacity','batch_incompatible'));
+      ALTER TABLE jobs ADD COLUMN batch_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE jobs ADD COLUMN next_eligible_at TEXT;
+      ALTER TABLE jobs ADD COLUMN last_failure_code TEXT NOT NULL DEFAULT '';
+      UPDATE jobs SET next_eligible_at=available_at WHERE status='queued';
+      CREATE INDEX idx_jobs_batch_route_ready ON jobs(status,execution_route,next_eligible_at,type,created_at);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (42, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFortyOne(db) {

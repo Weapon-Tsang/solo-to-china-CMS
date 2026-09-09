@@ -55,10 +55,10 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 | A01 | 1.3 | completed | `d642f0f` | Migration 39 and manifest-backed modality coverage verified |
 | A02 | 1.3 | completed | `d642f0f` | Migration 40 and resumable read/ingest/cleanup lifecycle verified |
 | A03 | 1.3 | completed | `d642f0f` | Migration 41, Vertex keyField correlation, anomaly isolation and per-item output-limit fallback verified |
-| A04 | 1.3 | in_progress | `d642f0f` | Complete durable failure classification, attempt budgets, cooldown and capacity handling |
-| A05 | 1.3 | pending | `d642f0f` | After A04; immutable submitted-run provider config |
-| A06 | 1.3 | pending | `d642f0f` | After A05; lease fencing and side-effect cancellation |
-| A07 | 1.3 | pending | `d642f0f` | After A06; evidence date semantics and validity windows |
+| A04 | 1.3 | completed | `d357d59` | Migration 42; durable failure routing/budget/cooldown verified |
+| A05 | 1.3 | completed | `d357d59` | Migration 43; immutable run config and old-provider adapter recovery verified |
+| A06 | 1.3 | completed | `d357d59` | Migration 44; lease generation, cancellation and preparation recovery verified |
+| A07 | 1.3 | in_progress | `d357d59` | Evidence date semantics and validity windows |
 | A08 | 1.3 | pending | `d642f0f` | After A07; submitted-by/source identity separation |
 | A09 | 1.3 | pending | `d642f0f` | After A08; source-family connected components |
 | A10 | 1.3 | pending | `d642f0f` | After A09; stable semantic provenance IDs |
@@ -116,8 +116,27 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
   checks with 0 failures and 4 documented environment warnings. Legacy migration
   fixtures were extended through schema 41, and the release gate now verifies the
   complete 1-41 migration chain.
-- Current task: A04.
-- Next action: finish the route/failure/backoff fields introduced as an A03
-  prerequisite and add permanent-prepare, 429, oversize and capacity tests.
+- Completed A04: migration 42 adds `execution_route`, `failure_class`,
+  `batch_attempts`, `next_eligible_at`, and operator-visible failure codes. Twenty
+  permanent preparation failures terminate without cycling; 429 uses Retry-After
+  plus bounded jitter/backoff and falls back after two Batch attempts; oversized
+  input uses realtime; local capacity remains Batch-eligible after cooldown and
+  consumes no Batch attempt. Verification: 25 focused tests passed.
+- Completed A05: migration 43 freezes provider/model/location/project plus schema,
+  prompt and configuration hashes on each run. Batch dispatch resolves the stored
+  Vertex adapter even while Kimi is the current default. Missing historical-run
+  credentials persist `CREDENTIALS_UNAVAILABLE` and resume the same run after
+  restoration. Verification: 40 focused tests passed.
+- Completed A06: migration 44 adds a monotonic job lease generation and a separate
+  Batch-preparation lease. Completion and failure are owner+generation CAS writes;
+  a stale failure cannot mutate source/brief/draft state. Guarded calls propagate
+  AbortSignal and WordPress idempotency keys. Startup leaves live preparations
+  alone and reclaims only expired ones. Verification: 69 focused tests passed.
+- Second-batch regression checkpoint: 266 tests passed; `npm run check` passed;
+  `npm run release:check` passed 39 mandatory checks with 0 failures and the same
+  4 documented environment warnings. The clean schema chain is now 1-44.
+- Current task: A07.
+- Next action: separate publication/observation/capture/verification dates and add
+  validity-window and seasonal/as-of evidence tests.
 - Unverified conditions: all production/deployed services listed under baseline
   limitations.

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { openDatabase } from "./db.mjs";
+import { openDatabase, SCHEMA_VERSION } from "./db.mjs";
 import { VERSION } from "./version.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 
@@ -46,7 +46,7 @@ try {
   const database = openDatabase(path.join(directory, "release.sqlite"));
   try {
     const versions = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
-    if (versions.join(",") !== Array.from({ length: 41 }, (_, index) => index + 1).join(",")) throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
+    if (versions.join(",") !== Array.from({ length: SCHEMA_VERSION }, (_, index) => index + 1).join(",")) throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
     for (const [table, column] of [
       ["content_intake_analyses", "strategy_version"], ["content_recommendations", "strategy_version"],
       ["content_opportunities", "strategy_version"], ["topic_candidates", "strategy_version"],
@@ -67,6 +67,9 @@ try {
       ["frontend_contract_snapshots", "publish_package_schema_json"], ["wordpress_publications", "delivery_mode"],
       ["article_drafts", "content_hash"], ["quality_reviews", "draft_content_hash"],
       ["jobs", "lease_expires_at"], ["frontend_contract_snapshots", "artifact_checksum"],
+      ["jobs", "execution_route"], ["jobs", "failure_class"], ["jobs", "batch_attempts"], ["jobs", "next_eligible_at"],
+      ["vertex_batch_runs", "provider"], ["vertex_batch_runs", "schema_hash"], ["vertex_batch_runs", "config_digest"],
+      ["jobs", "lease_generation"], ["vertex_batch_runs", "preparation_lease_expires_at"],
       ["content_opportunities", "lifecycle_action"], ["editorial_assignments", "evaluation_json"],
     ]) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
@@ -100,4 +103,4 @@ try {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-41, and SQLite integrity.`);
+console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-${SCHEMA_VERSION}, and SQLite integrity.`);

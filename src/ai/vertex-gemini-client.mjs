@@ -28,7 +28,7 @@ export class VertexGeminiClient {
       && String(this.config.location || "global") === "global";
   }
 
-  async completeJson({ name, schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000 }) {
+  async completeJson({ name, schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000, signal = null }) {
     if (!this.enabled) throw new Error("Vertex AI requires GOOGLE_CLOUD_PROJECT and a selected Gemini model.");
     const accessToken = await this.accessToken();
     const location = this.config.location || "us-central1";
@@ -59,7 +59,7 @@ export class VertexGeminiClient {
         method: "POST",
         headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: combinedSignal(signal, timeoutMs),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -112,12 +112,12 @@ export class VertexGeminiClient {
     return { id, transportKey: id, request };
   }
 
-  async createBatch(requests, { operation = "extract_segment_claims" } = {}) {
+  async createBatch(requests, { operation = "extract_segment_claims", idempotencyKey = "", signal = null } = {}) {
     if (!this.batchEnabled) throw new Error("Vertex Batch is not configured.");
     if (!Array.isArray(requests) || !requests.length) throw new Error("Vertex Batch requires at least one request.");
     const accessToken = await this.accessToken();
     const bucket = String(this.config.batchBucket).trim();
-    const batchId = crypto.randomUUID();
+    const batchId = String(idempotencyKey || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 96);
     const objectPrefix = `vertex-batch/${batchId}`;
     const inputObject = `${objectPrefix}/input.jsonl`;
     const outputObjectPrefix = `${objectPrefix}/output/`;
@@ -136,7 +136,7 @@ export class VertexGeminiClient {
         instanceConfig: { instanceType: "object", keyField: "transport_key" },
         outputConfig: { predictionsFormat: "jsonl", gcsDestination: { outputUriPrefix: `gs://${bucket}/${outputObjectPrefix}` } },
       }),
-      signal: AbortSignal.timeout(this.config.requestTimeoutMs || 360_000),
+      signal: combinedSignal(signal, this.config.requestTimeoutMs || 360_000),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.name) {
@@ -427,6 +427,11 @@ function inputAssetManifest(asset, kind, status, requestReference, error = null)
     failureCode: error?.code ? String(error.code) : null,
     failureReason: error ? String(error?.message || error).slice(0, 1_000) : null,
   };
+}
+
+function combinedSignal(signal, timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 export function parseBatchResult(row) {

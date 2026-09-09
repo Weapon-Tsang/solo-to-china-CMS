@@ -14,12 +14,14 @@ export class SearchConsoleAdapter {
     return Boolean(this.config.siteUrl && this.config.clientEmail && this.config.privateKey);
   }
 
-  async listQueryInventory(now = new Date()) {
+  async listQueryInventory(nowOrOptions = new Date()) {
+    const options = nowOrOptions instanceof Date ? {} : nowOrOptions || {};
+    const now = nowOrOptions instanceof Date ? nowOrOptions : options.now || new Date();
     if (!this.enabled) throw new Error("Search Console sync is not configured.");
     assertProperty(this.config.siteUrl);
     const endDate = isoDate(new Date(now.getTime() - 2 * 86_400_000));
     const startDate = isoDate(new Date(now.getTime() - Math.max(3, this.config.lookbackDays || 28) * 86_400_000));
-    const accessToken = await this.createAccessToken();
+    const accessToken = await this.createAccessToken(options);
     const rows = [];
     const rowLimit = Math.max(1, Math.min(25_000, this.config.rowLimit || 5_000));
     let startRow = 0;
@@ -30,7 +32,7 @@ export class SearchConsoleAdapter {
         method: "POST",
         headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
         body: JSON.stringify({ startDate, endDate, dimensions: ["query", "page"], dataState: "final", rowLimit: requestLimit, startRow }),
-        signal: AbortSignal.timeout(60_000),
+        signal: combinedSignal(options.signal, 60_000),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(`Search Console API failed (${response.status}): ${body?.error?.message || response.statusText}`);
@@ -42,7 +44,7 @@ export class SearchConsoleAdapter {
     return { startDate, endDate, rows };
   }
 
-  async createAccessToken() {
+  async createAccessToken(options = {}) {
     const issuedAt = Math.floor(Date.now() / 1_000);
     const assertion = signJwt({
       iss: this.config.clientEmail,
@@ -55,12 +57,17 @@ export class SearchConsoleAdapter {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
-      signal: AbortSignal.timeout(30_000),
+      signal: combinedSignal(options.signal, 30_000),
     });
     const body = await response.json();
     if (!response.ok || !body.access_token) throw new Error(`Google OAuth failed (${response.status}): ${body?.error_description || body?.error || response.statusText}`);
     return body.access_token;
   }
+}
+
+function combinedSignal(signal, timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 function normalizeRow(row) {

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { slugify, truncate } from "../utils.mjs";
 import { createAiClient } from "./client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
@@ -40,25 +41,41 @@ export class KimiExtractor {
     return this.config.provider === "vertex" && this.client.batchEnabled;
   }
 
-  async prepareBatchExtraction(source, batchItemId) {
-    if (!this.batchEnabled) throw new Error("Vertex Batch extraction is not configured.");
+  batchConfigSnapshot(operation = "extract_segment_claims") {
+    const coverage = operation === "audit_segment_coverage";
+    const snapshot = {
+      provider: this.config.provider || "vertex",
+      model: this.config.model || "",
+      location: this.config.location || "global",
+      projectId: this.config.projectId || "",
+      schemaHash: digest(JSON.stringify(coverage ? COVERAGE_AUDIT_SCHEMA : EXTRACTION_SCHEMA)),
+      promptHash: digest(coverage ? COVERAGE_AUDIT_PROMPT : SYSTEM_PROMPT),
+      configVersion: "batch-request-v1",
+    };
+    return { ...snapshot, configDigest: digest(JSON.stringify(snapshot)) };
+  }
+
+  async prepareBatchExtraction(source, batchItemId, runConfig = null) {
+    if (!this.client.batchEnabledFor(runConfig)) throw Object.assign(new Error("Stored Vertex Batch extraction configuration is unavailable."), { code: "BATCH_CREDENTIALS_UNAVAILABLE", retryable: true });
     if ((source.assets || []).some((asset) => asset.kind === "video") || source.source_kind === "video_url") {
       throw new Error("Video segments remain on the realtime Vertex path.");
     }
-    const images = await this.client.imageParts(source.assets || []);
+    const images = await this.client.imageParts(source.assets || [], runConfig);
     const prepared = this.client.prepareBatchRequest({
       id: batchItemId,
       name: "source_research_extraction",
       schema: EXTRACTION_SCHEMA,
       instructions: SYSTEM_PROMPT,
       content: [{ type: "text", text: buildInput(source) }, ...images.parts],
-    });
+    }, runConfig);
+    const provider = runConfig?.provider || "vertex";
+    const model = runConfig?.model || this.config.model;
     return { ...prepared, attemptedImages: images.attempted, suppliedImages: images.parts.length,
-      inputManifest: extractionInputManifest({ source, provider: "vertex", model: this.config.model, batch: true, images }) };
+      inputManifest: extractionInputManifest({ source, provider, model, batch: true, images }) };
   }
 
-  async prepareBatchCoverage({ segment, extraction, expectedModality = "text" }, batchItemId) {
-    if (!this.batchEnabled) throw new Error("Vertex Batch coverage audit is not configured.");
+  async prepareBatchCoverage({ segment, extraction, expectedModality = "text" }, batchItemId, runConfig = null) {
+    if (!this.client.batchEnabledFor(runConfig)) throw Object.assign(new Error("Stored Vertex Batch coverage configuration is unavailable."), { code: "BATCH_CREDENTIALS_UNAVAILABLE", retryable: true });
     if (expectedModality !== "text") throw new Error("Only text coverage audits use Vertex Batch.");
     return this.client.prepareBatchRequest({
       id: batchItemId,
@@ -66,44 +83,44 @@ export class KimiExtractor {
       schema: COVERAGE_AUDIT_SCHEMA,
       instructions: COVERAGE_AUDIT_PROMPT,
       content: [{ type: "text", text: buildCoverageInput(segment, extraction) }],
-    });
+    }, runConfig);
   }
 
-  createExtractionBatch(requests, options) { return this.client.createBatch(requests, options); }
-  getExtractionBatch(name) { return this.client.getBatch(name); }
-  readExtractionBatch(batch) { return this.client.readBatchOutput(batch); }
-  cleanupExtractionBatch(batch) { return this.client.cleanupBatch(batch); }
+  createExtractionBatch(requests, options = {}) { return this.client.createBatch(requests, options, options.runConfig); }
+  getExtractionBatch(name, runConfig) { return this.client.getBatch(name, runConfig); }
+  readExtractionBatch(batch) { return this.client.readBatchOutput(batch, batch); }
+  cleanupExtractionBatch(batch) { return this.client.cleanupBatch(batch, batch); }
 
-  parseBatchExtraction(item, { inputManifest = null } = {}) {
+  parseBatchExtraction(item, { inputManifest = null, runConfig = null } = {}) {
     if (item?.error) throw Object.assign(new Error(item.error), { retryable: true, code: item.code || "VERTEX_BATCH_ITEM_FAILED" });
     const errors = validateJsonSchema(item?.output, EXTRACTION_SCHEMA);
     if (errors.length) throw Object.assign(new Error(`Vertex Batch returned invalid extraction JSON: ${JSON.stringify(errors.slice(0, 10))}`),
       { retryable: true, code: "INVALID_MODEL_OUTPUT" });
     try {
-      this.config.onModelCall?.({ stage: "source_research_extraction", provider: "vertex", model: this.config.model,
+      this.config.onModelCall?.({ stage: "source_research_extraction", provider: runConfig?.provider || "vertex", model: runConfig?.model || this.config.model,
         inputTokens: item.usage?.promptTokenCount ?? null, outputTokens: item.usage?.candidatesTokenCount ?? null,
         cachedTokens: item.usage?.cachedContentTokenCount ?? null, latencyMs: null, attempts: 1, status: "succeeded", errorCode: null });
     } catch { /* batch telemetry must never fail extraction import */ }
-    return { result: sanitizeResult(item.output), method: "vertex_batch", model: this.config.model,
+    return { result: sanitizeResult(item.output), method: "vertex_batch", model: runConfig?.model || this.config.model,
       inputManifest: inputManifest || item?.inputManifest || null };
   }
 
-  parseBatchCoverage(item) {
+  parseBatchCoverage(item, { runConfig = null } = {}) {
     if (item?.error) throw Object.assign(new Error(item.error), { retryable: true, code: item.code || "VERTEX_BATCH_ITEM_FAILED" });
     const errors = validateJsonSchema(item?.output, COVERAGE_AUDIT_SCHEMA);
     if (errors.length) throw Object.assign(new Error(`Vertex Batch returned invalid coverage-audit JSON: ${JSON.stringify(errors.slice(0, 10))}`),
       { retryable: true, code: "INVALID_MODEL_OUTPUT" });
     try {
-      this.config.onModelCall?.({ stage: "segment_claim_coverage_audit", provider: "vertex", model: this.config.model,
+      this.config.onModelCall?.({ stage: "segment_claim_coverage_audit", provider: runConfig?.provider || "vertex", model: runConfig?.model || this.config.model,
         inputTokens: item.usage?.promptTokenCount ?? null, outputTokens: item.usage?.candidatesTokenCount ?? null,
         cachedTokens: item.usage?.cachedContentTokenCount ?? null, latencyMs: null, attempts: 1, status: "succeeded", errorCode: null });
     } catch { /* batch telemetry must never fail audit import */ }
     return { output: { ...sanitizeCoverageAudit(item.output), modality: {
       expected: "text", received: "text", attempted: 0,
-    } }, model: this.config.model };
+    } }, model: runConfig?.model || this.config.model };
   }
 
-  async extract(source) {
+  async extract(source, { signal = null } = {}) {
     if (!this.enabled) return { result: heuristicExtraction(source), method: "heuristic", model: null };
     const videoSource = source.source_kind === "video" || (source.source_kind === "video_url" && isYoutubeUrl(source.submitted_url));
     if (videoSource && this.config.provider !== "vertex" && !source.submission_metadata?.operatorNotesProvided) {
@@ -134,6 +151,7 @@ export class KimiExtractor {
           schema: EXTRACTION_SCHEMA,
           instructions: SYSTEM_PROMPT,
           content: [{ type: "text", text: buildInput(source) }, ...videos.parts, ...images.parts],
+          signal,
         });
       } finally {
         await videos.cleanup();
@@ -151,18 +169,19 @@ export class KimiExtractor {
       inputManifest: mergeInputManifests(inputManifests) };
   }
 
-  async analyzeBlueprint(source) {
+  async analyzeBlueprint(source, { signal = null } = {}) {
     if (!this.enabled) return { output: heuristicExtraction(source).blueprint, model: null };
     const completion = await this.client.completeJson({
       name: "source_editorial_blueprint",
       schema: BLUEPRINT_SCHEMA,
       instructions: BLUEPRINT_PROMPT,
       content: [{ type: "text", text: buildInput(source) }],
+      signal,
     });
     return { output: sanitizeBlueprint(completion.output), model: completion.model };
   }
 
-  async auditCoverage({ segment, extraction, source, expectedModality = "text" }) {
+  async auditCoverage({ segment, extraction, source, expectedModality = "text" }, { signal = null } = {}) {
     if (!this.enabled) return { output: { uncovered_spans: [] }, model: null };
     const images = expectedModality === "image" ? await this.client.imageParts(source?.assets || []) : { parts: [], attempted: 0 };
     const videos = expectedModality === "video" ? await prepareVideoParts(source, this.config.provider, this.client)
@@ -173,6 +192,7 @@ export class KimiExtractor {
         schema: COVERAGE_AUDIT_SCHEMA,
         instructions: COVERAGE_AUDIT_PROMPT,
         content: [{ type: "text", text: buildCoverageInput(segment, extraction) }, ...videos.parts, ...images.parts],
+        signal,
       });
       return {
         output: { ...sanitizeCoverageAudit(completion.output), modality: {
@@ -240,6 +260,10 @@ function manifestModality(kinds) {
   }
   if (values.size > 1) return "mixed";
   return values.values().next().value || "text";
+}
+
+function digest(value) {
+  return crypto.createHash("sha256").update(String(value)).digest("hex");
 }
 
 function mergeExtractionResults(results) {

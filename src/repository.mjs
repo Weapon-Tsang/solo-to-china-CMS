@@ -12,7 +12,7 @@ import {
   normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
-import { AI_JOB_TYPES, isProviderPressure } from "./job-policy.mjs";
+import { AI_JOB_TYPES, classifyBatchFailure, isProviderPressure } from "./job-policy.mjs";
 import {
   EDITORIAL_ASSIGNMENT_TYPES, evaluateEditorialAssignment, normalizeEditorialAssignmentInput,
   selectFactsForAssignment,
@@ -36,6 +36,10 @@ export class Repository {
     this.providerPressureStreak = 0;
     this.providerSuccessStreak = 0;
     this.providerBackoffUntil = 0;
+    this.batchMaxAttempts = Math.max(1, Number(contentConfig.batchMaxAttempts || 2));
+    this.batchBackoffInitialMs = Math.max(1_000, Number(contentConfig.batchBackoffInitialMs || 5_000));
+    this.batchBackoffMaxMs = Math.max(this.batchBackoffInitialMs, Number(contentConfig.batchBackoffMaxMs || 300_000));
+    this.random = contentConfig.random || Math.random;
   }
 
   jobTimestamp() { return this.clock().toISOString(); }
@@ -46,9 +50,9 @@ export class Repository {
     const timestamp = this.jobTimestamp();
     return this.db.prepare(`
       UPDATE jobs SET status='queued', locked_at=NULL, locked_by=NULL, lease_expires_at=NULL,
-        heartbeat_at=NULL, available_at=?, updated_at=?
+        heartbeat_at=NULL, available_at=?, next_eligible_at=?, updated_at=?
       WHERE status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
-    `).run(timestamp, timestamp, timestamp).changes;
+    `).run(timestamp, timestamp, timestamp, timestamp).changes;
   }
 
   get strategyVersion() {
@@ -545,7 +549,8 @@ export class Repository {
   }
 
   recoverPreparingVertexBatches() {
-    const runs = this.db.prepare("SELECT id FROM vertex_batch_runs WHERE status='preparing'").all();
+    const runs = this.db.prepare(`SELECT id FROM vertex_batch_runs WHERE status='preparing'
+      AND preparation_lease_expires_at IS NOT NULL AND preparation_lease_expires_at<=?`).all(this.jobTimestamp());
     if (!runs.length) return 0;
     const timestamp = this.jobTimestamp();
     transaction(this.db, () => {
@@ -564,27 +569,30 @@ export class Repository {
     if (!["extract_segment_claims", "audit_segment_coverage"].includes(type)) return 0;
     return Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs j
       JOIN source_segments ss ON ss.id=j.entity_id
-      WHERE j.type=? AND j.status='queued' AND j.available_at<=?
+      WHERE j.type=? AND j.status='queued' AND j.available_at<=? AND COALESCE(j.next_eligible_at,j.available_at)<=?
         AND j.execution_route IN ('auto','batch')
         AND ((j.type='extract_segment_claims' AND ss.segment_type<>'video_chapter')
           OR (j.type='audit_segment_coverage' AND ss.asset_id IS NULL))
         AND NOT EXISTS (
           SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
           WHERE vbi.job_id=j.id AND vbr.status IN ('preparing','submitted')
-        )`).get(type, this.jobTimestamp())?.count || 0);
+        )`).get(type, this.jobTimestamp(), this.jobTimestamp())?.count || 0);
   }
 
-  reserveVertexBatchJobs({ minimum = 20, maximum = 1_000, model = '', location = 'global' } = {}) {
+  reserveVertexBatchJobs({ minimum = 20, maximum = 1_000, type = '', provider = 'vertex', model = '', location = 'global',
+    projectId = '', schemaHash = '', promptHash = '', configVersion = 'legacy', configDigest = '' } = {}) {
     return transaction(this.db, () => {
       if (this.db.prepare("SELECT 1 FROM vertex_batch_runs WHERE status IN ('preparing','submitted') LIMIT 1").get()) return null;
       const timestamp = this.jobTimestamp();
       const minimumCount = Math.max(1, Number(minimum || 20));
-      const jobType = ["extract_segment_claims", "audit_segment_coverage"]
-        .find((type) => this.countVertexBatchEligibleJobs(type) >= minimumCount);
+      const requestedTypes = ["extract_segment_claims", "audit_segment_coverage"].includes(type)
+        ? [type] : ["extract_segment_claims", "audit_segment_coverage"];
+      const jobType = requestedTypes
+        .find((value) => this.countVertexBatchEligibleJobs(value) >= minimumCount);
       if (!jobType) return null;
       const rows = this.db.prepare(`SELECT j.* FROM jobs j
         JOIN source_segments ss ON ss.id=j.entity_id
-        WHERE j.type=? AND j.status='queued' AND j.available_at<=?
+        WHERE j.type=? AND j.status='queued' AND j.available_at<=? AND COALESCE(j.next_eligible_at,j.available_at)<=?
           AND j.execution_route IN ('auto','batch')
           AND ((j.type='extract_segment_claims' AND ss.segment_type<>'video_chapter')
             OR (j.type='audit_segment_coverage' AND ss.asset_id IS NULL))
@@ -592,18 +600,23 @@ export class Repository {
             SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
             WHERE vbi.job_id=j.id AND vbr.status IN ('preparing','submitted')
           )
-        ORDER BY j.created_at ASC LIMIT ?`).all(jobType, timestamp, Math.max(1, Number(maximum || 1_000)));
+        ORDER BY j.created_at ASC LIMIT ?`).all(jobType, timestamp, timestamp, Math.max(1, Number(maximum || 1_000)));
       if (rows.length < minimumCount) return null;
       const runId = id("vertex_batch");
-      this.db.prepare(`INSERT INTO vertex_batch_runs(id,model,location,status,next_poll_at,created_at,updated_at)
-        VALUES (?,?,?,'preparing',?,?,?)`).run(runId, model, location, timestamp, timestamp, timestamp);
+      this.db.prepare(`INSERT INTO vertex_batch_runs(id,provider,model,location,project_id,schema_hash,prompt_hash,config_version,config_digest,
+        status,next_poll_at,preparation_owner,preparation_generation,preparation_lease_expires_at,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,'preparing',?,?,1,?,?,?)`)
+        .run(runId, provider, model, location, projectId, schemaHash, promptHash, configVersion, configDigest,
+          timestamp, this.workerId, this.jobLeaseExpiry(), timestamp, timestamp);
       const addItem = this.db.prepare(`INSERT INTO vertex_batch_items(run_id,job_id,segment_id,batch_item_id,transport_key,status)
         VALUES (?,?,?,?,?, 'preparing')`);
       for (const row of rows) {
         const batchItemId = `batch_item_${sha256(`${runId}:${row.id}`).slice(0, 24)}`;
         addItem.run(runId, row.id, row.entity_id, batchItemId, batchItemId);
       }
-      return { id: runId, model, location, status: 'preparing', jobType, items: rows.map((row) => ({
+      return { id: runId, provider, model, location, project_id: projectId, schema_hash: schemaHash, prompt_hash: promptHash,
+        config_version: configVersion, config_digest: configDigest, preparation_owner: this.workerId,
+        preparation_generation: 1, preparation_lease_expires_at: this.jobLeaseExpiry(), status: 'preparing', jobType, items: rows.map((row) => ({
         ...row, segment_id: row.entity_id,
         batch_item_id: `batch_item_${sha256(`${runId}:${row.id}`).slice(0, 24)}`,
       })) };
@@ -620,28 +633,49 @@ export class Repository {
       .run(normalized.receivedModality, JSON.stringify(normalized), transportKey, requestFingerprint, runId, jobId).changes === 1;
   }
 
-  activateVertexBatch(runId, batch) {
+  activateVertexBatch(runId, batch, lease = null) {
     const timestamp = this.jobTimestamp();
     return transaction(this.db, () => {
+      const owner = lease?.preparation_owner || lease?.preparationOwner || this.workerId;
+      const generation = Number(lease?.preparation_generation || lease?.preparationGeneration || 1);
+      const live = this.db.prepare(`SELECT 1 FROM vertex_batch_runs WHERE id=? AND status='preparing'
+        AND preparation_owner=? AND preparation_generation=? AND preparation_lease_expires_at>?`)
+        .get(runId, owner, generation, timestamp);
+      if (!live) return false;
       const submittedIds = new Set(batch.itemIds || []);
       const items = this.db.prepare("SELECT * FROM vertex_batch_items WHERE run_id=? AND status='preparing'").all(runId);
       for (const item of items) {
         if (submittedIds.has(item.batch_item_id)) {
           this.db.prepare("UPDATE vertex_batch_items SET status='submitted',last_error='' WHERE run_id=? AND job_id=?")
             .run(runId, item.job_id);
-          this.db.prepare(`UPDATE jobs SET attempts=attempts+1,started_at=COALESCE(started_at,?),
+          this.db.prepare(`UPDATE jobs SET attempts=attempts+1,batch_attempts=batch_attempts+1,
+            failure_class='',last_failure_code='',next_eligible_at=NULL,started_at=COALESCE(started_at,?),
             queue_latency_ms=COALESCE(queue_latency_ms,?),updated_at=? WHERE id=? AND status='queued'`)
             .run(timestamp, Math.max(0, Date.parse(timestamp) - Date.parse(this.db.prepare("SELECT created_at FROM jobs WHERE id=?").get(item.job_id)?.created_at || timestamp)), timestamp, item.job_id);
         } else {
           this.db.prepare("UPDATE vertex_batch_items SET status='failed',last_error=?,completed_at=? WHERE run_id=? AND job_id=?")
             .run("This item could not be prepared for Vertex Batch; returned to the realtime queue.", timestamp, runId, item.job_id);
+          this.db.prepare(`UPDATE jobs SET execution_route='realtime',failure_class='batch_incompatible',
+            last_failure_code='VERTEX_BATCH_ITEM_NOT_SUBMITTED',available_at=?,next_eligible_at=?,last_error=?,updated_at=?
+            WHERE id=? AND status='queued'`).run(timestamp, timestamp,
+              "Vertex accepted the Batch job without this item; it will run through the realtime route.", timestamp, item.job_id);
         }
       }
       this.db.prepare(`UPDATE vertex_batch_runs SET provider_job_name=?,input_uri=?,output_uri_prefix=?,status='submitted',
-        provider_state=?,submitted_count=?,next_poll_at=?,updated_at=? WHERE id=? AND status='preparing'`)
+        provider_state=?,submitted_count=?,next_poll_at=?,preparation_lease_expires_at=NULL,updated_at=?
+        WHERE id=? AND status='preparing' AND preparation_owner=? AND preparation_generation=?`)
         .run(batch.name, batch.inputUri, batch.outputUriPrefix, batch.state || 'JOB_STATE_PENDING', submittedIds.size,
-          new Date(this.clock().getTime() + Number(batch.pollMs || 60_000)).toISOString(), timestamp, runId);
+          new Date(this.clock().getTime() + Number(batch.pollMs || 60_000)).toISOString(), timestamp, runId, owner, generation);
+      return true;
     });
+  }
+
+  heartbeatVertexBatchPreparation(run) {
+    const timestamp = this.jobTimestamp();
+    return this.db.prepare(`UPDATE vertex_batch_runs SET preparation_lease_expires_at=?,updated_at=?
+      WHERE id=? AND status='preparing' AND preparation_owner=? AND preparation_generation=?`)
+      .run(this.jobLeaseExpiry(), timestamp, run.id, run.preparation_owner || this.workerId,
+        Number(run.preparation_generation || 1)).changes === 1;
   }
 
   dueVertexBatch() {
@@ -655,10 +689,12 @@ export class Repository {
       JOIN jobs j ON j.id=vbi.job_id WHERE vbi.run_id=? AND vbi.status='submitted' ORDER BY vbi.rowid`).all(run.id) };
   }
 
-  deferVertexBatchPoll(runId, providerState, delayMs = 60_000) {
+  deferVertexBatchPoll(runId, providerState, delayMs = 60_000, error = null) {
     const timestamp = this.jobTimestamp();
-    this.db.prepare("UPDATE vertex_batch_runs SET provider_state=?,next_poll_at=?,updated_at=? WHERE id=? AND status='submitted'")
-      .run(providerState || '', new Date(this.clock().getTime() + delayMs).toISOString(), timestamp, runId);
+    const message = String(error?.message || error || '').slice(0, 4_000);
+    this.db.prepare(`UPDATE vertex_batch_runs SET provider_state=?,next_poll_at=?,
+      last_error=CASE WHEN ?<>'' THEN ? ELSE last_error END,updated_at=? WHERE id=? AND status='submitted'`)
+      .run(providerState || '', new Date(this.clock().getTime() + delayMs).toISOString(), message, message, timestamp, runId);
   }
 
   deferVertexBatchOutputRead(runId, providerState, error, delayMs = 60_000, attemptIncrement = 1) {
@@ -694,7 +730,8 @@ export class Repository {
         output_object=?,output_line=?,output_checksum=? WHERE run_id=? AND job_id=? AND status='submitted'`)
         .run(timestamp, timestamp, String(transport.objectName || "").slice(0, 1_000), Number.isInteger(transport.lineNumber) ? transport.lineNumber : null,
           String(transport.checksum || "").slice(0, 200), run.id, item.job_id);
-      this.db.prepare(`UPDATE jobs SET status='succeeded',completed_at=?,duration_ms=?,last_error=NULL,updated_at=?
+      this.db.prepare(`UPDATE jobs SET status='succeeded',completed_at=?,duration_ms=?,last_error=NULL,
+        failure_class='',last_failure_code='',next_eligible_at=NULL,updated_at=?
         WHERE id=? AND status='queued'`).run(timestamp, durationMs, timestamp, item.job_id);
     });
     if (!saved) return this.releaseVertexBatchItem(run.id, item.job_id, "Source changed while the batch was running; returned for fresh extraction.");
@@ -716,26 +753,51 @@ export class Repository {
         output_object=?,output_line=?,output_checksum=? WHERE run_id=? AND job_id=? AND status='submitted'`)
         .run(timestamp, timestamp, String(transport.objectName || "").slice(0, 1_000), Number.isInteger(transport.lineNumber) ? transport.lineNumber : null,
           String(transport.checksum || "").slice(0, 200), run.id, item.job_id);
-      this.db.prepare(`UPDATE jobs SET status='succeeded',completed_at=?,duration_ms=?,last_error=NULL,updated_at=?
+      this.db.prepare(`UPDATE jobs SET status='succeeded',completed_at=?,duration_ms=?,last_error=NULL,
+        failure_class='',last_failure_code='',next_eligible_at=NULL,updated_at=?
         WHERE id=? AND status='queued'`).run(timestamp, durationMs, timestamp, item.job_id);
     });
     return audit;
   }
 
-  releaseVertexBatchItem(runId, jobId, error) {
+  releaseVertexBatchItem(runId, jobId, error, { phase = "result" } = {}) {
     const timestamp = this.jobTimestamp();
     const message = String(error?.message || error || "Vertex Batch item failed").slice(0, 4_000);
     transaction(this.db, () => {
       this.db.prepare("UPDATE vertex_batch_items SET status='failed',last_error=?,completed_at=? WHERE run_id=? AND job_id=?")
         .run(message, timestamp, runId, jobId);
-      const job = this.db.prepare("SELECT attempts,max_attempts FROM jobs WHERE id=?").get(jobId);
-      const retry = Number(job?.attempts || 0) < Number(job?.max_attempts || 3);
-      const forceRealtime = ["MODEL_OUTPUT_LIMIT", "VERTEX_BATCH_DUPLICATE_CORRELATION", "VERTEX_BATCH_OUTPUT_MISSING"]
-        .includes(error?.code) ? "realtime" : null;
-      this.db.prepare(`UPDATE jobs SET status=?,available_at=?,last_error=?,completed_at=?,updated_at=?,
-        execution_route=COALESCE(?,execution_route) WHERE id=? AND status='queued'`)
-        .run(retry ? 'queued' : 'failed', timestamp, message, retry ? null : timestamp, timestamp, forceRealtime, jobId);
+      const job = this.db.prepare("SELECT attempts,max_attempts,batch_attempts,execution_route FROM jobs WHERE id=?").get(jobId);
+      if (!job) return;
+      const failureClass = classifyBatchFailure(error, { phase });
+      const submissionAttempt = phase === "submission" && failureClass !== "capacity" ? 1 : 0;
+      const batchAttempts = Number(job.batch_attempts || 0) + submissionAttempt;
+      const code = String(error?.code || failureClass.toUpperCase()).slice(0, 120);
+      let status = "queued";
+      let route = job.execution_route || "auto";
+      let eligibleAt = timestamp;
+      if (failureClass === "permanent_input") {
+        status = "failed";
+      } else if (["input_too_large", "batch_incompatible"].includes(failureClass)) {
+        route = "realtime";
+      } else if (failureClass === "retryable_provider") {
+        route = batchAttempts >= this.batchMaxAttempts ? "realtime" : "batch";
+        eligibleAt = route === "realtime" ? timestamp : this.batchRetryAt(batchAttempts, error?.retryAfterMs);
+      } else if (failureClass === "capacity") {
+        route = route === "realtime" ? "realtime" : "batch";
+        eligibleAt = this.batchRetryAt(Math.max(1, batchAttempts), error?.retryAfterMs);
+      }
+      this.db.prepare(`UPDATE jobs SET status=?,execution_route=?,failure_class=?,batch_attempts=?,last_failure_code=?,
+        available_at=?,next_eligible_at=?,last_error=?,completed_at=?,updated_at=? WHERE id=? AND status='queued'`)
+        .run(status, route, failureClass, batchAttempts, code, eligibleAt, eligibleAt, message,
+          status === "failed" ? timestamp : null, timestamp, jobId);
     });
+  }
+
+  batchRetryAt(attempt, retryAfterMs = 0) {
+    const base = Math.min(this.batchBackoffMaxMs, this.batchBackoffInitialMs * 2 ** Math.max(0, Number(attempt || 1) - 1));
+    const jittered = Math.round(base * (0.8 + this.random() * 0.4));
+    const delayMs = Math.min(this.batchBackoffMaxMs, Math.max(Number(retryAfterMs || 0), jittered));
+    return new Date(this.clock().getTime() + delayMs).toISOString();
   }
 
   recordVertexBatchOutputAnomaly(runId, output, reason) {
@@ -795,12 +857,12 @@ export class Repository {
       const providerReady = this.clock().getTime() >= this.providerBackoffUntil;
       this.db.prepare(`
         UPDATE jobs SET status='queued', locked_at=NULL, locked_by=NULL, lease_expires_at=NULL,
-          heartbeat_at=NULL, available_at=?, updated_at=?
+          heartbeat_at=NULL, available_at=?, next_eligible_at=?, updated_at=?
         WHERE status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
-      `).run(timestamp, timestamp, timestamp);
+      `).run(timestamp, timestamp, timestamp, timestamp);
       const job = this.db.prepare(`
         SELECT * FROM jobs
-        WHERE status = 'queued' AND available_at <= ?
+        WHERE status = 'queued' AND available_at <= ? AND COALESCE(next_eligible_at,available_at)<=?
           AND (? = 0 OR type <> 'extract_segment_claims' OR execution_route='realtime')
           AND (? = 0 OR type <> 'audit_segment_coverage')
           AND NOT EXISTS (
@@ -836,12 +898,12 @@ export class Repository {
           END,
           created_at ASC
         LIMIT 1
-      `).get(timestamp, deferBatchExtraction ? 1 : 0, deferBatchCoverage ? 1 : 0,
+      `).get(timestamp, timestamp, deferBatchExtraction ? 1 : 0, deferBatchCoverage ? 1 : 0,
         providerReady ? 1 : 0, ...AI_JOB_TYPES);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
       const claimed = this.db.prepare(`
-        UPDATE jobs SET status = 'running', attempts = attempts + 1, locked_at = ?,
+        UPDATE jobs SET status = 'running', attempts = attempts + 1, lease_generation=lease_generation+1, locked_at = ?,
           locked_by = ?, lease_expires_at = ?, heartbeat_at = ?, started_at = COALESCE(started_at, ?),
           queue_latency_ms = COALESCE(queue_latency_ms, ?), updated_at = ?
         WHERE id = ? AND status='queued'
@@ -850,33 +912,34 @@ export class Repository {
       if (job.type === "extract_source") {
         this.db.prepare("UPDATE sources SET status = 'processing', updated_at = ? WHERE id = ?").run(timestamp, job.entity_id);
       }
-      return { ...job, attempts: job.attempts + 1, locked_at: timestamp, locked_by: this.workerId,
+      return { ...job, attempts: job.attempts + 1, lease_generation: Number(job.lease_generation || 0) + 1, locked_at: timestamp, locked_by: this.workerId,
         lease_expires_at: this.jobLeaseExpiry(), heartbeat_at: timestamp,
         started_at: job.started_at || timestamp, queue_latency_ms: job.queue_latency_ms ?? queueLatencyMs };
     });
   }
 
-  heartbeatJob(jobId, ownerId = this.workerId) {
+  heartbeatJob(jobId, ownerId = this.workerId, generation = null) {
     const timestamp = this.jobTimestamp();
     return this.db.prepare(`UPDATE jobs SET heartbeat_at=?, lease_expires_at=?, updated_at=?
-      WHERE id=? AND status='running' AND locked_by=?`)
-      .run(timestamp, this.jobLeaseExpiry(), timestamp, jobId, ownerId).changes === 1;
+      WHERE id=? AND status='running' AND locked_by=? AND (? IS NULL OR lease_generation=?)`)
+      .run(timestamp, this.jobLeaseExpiry(), timestamp, jobId, ownerId, generation, generation).changes === 1;
   }
 
-  ownsJob(jobId, ownerId = this.workerId) {
-    return Boolean(this.db.prepare("SELECT 1 FROM jobs WHERE id=? AND status='running' AND locked_by=? AND lease_expires_at>?")
-      .get(jobId, ownerId, this.jobTimestamp()));
+  ownsJob(jobId, ownerId = this.workerId, generation = null) {
+    return Boolean(this.db.prepare(`SELECT 1 FROM jobs WHERE id=? AND status='running' AND locked_by=?
+      AND lease_expires_at>? AND (? IS NULL OR lease_generation=?)`)
+      .get(jobId, ownerId, this.jobTimestamp(), generation, generation));
   }
 
-  completeJob(jobId, ownerId = this.workerId) {
+  completeJob(jobId, ownerId = this.workerId, generation = null) {
     const timestamp = this.jobTimestamp();
     const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(jobId);
     const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
     return this.db.prepare(`
       UPDATE jobs SET status='succeeded', completed_at=?, duration_ms=?, locked_by=NULL,
-        lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
-      WHERE id=? AND status='running' AND locked_by=?
-    `).run(timestamp, durationMs, timestamp, jobId, ownerId).changes === 1;
+        lease_expires_at=NULL, heartbeat_at=NULL, failure_class='',last_failure_code='',next_eligible_at=NULL,updated_at=?
+      WHERE id=? AND status='running' AND locked_by=? AND (? IS NULL OR lease_generation=?)
+    `).run(timestamp, durationMs, timestamp, jobId, ownerId, generation, generation).changes === 1;
   }
 
   failJob(job, error) {
@@ -894,12 +957,14 @@ export class Repository {
     if (providerPressure) this.providerBackoffUntil = Math.max(this.providerBackoffUntil, Date.parse(availableAt));
     const timestamp = this.jobTimestamp();
     const durationMs = job.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
-    this.db.prepare(`
-      UPDATE jobs SET status=?, available_at=?, last_error=?, completed_at=?, duration_ms=?,
+    const changed = this.db.prepare(`
+      UPDATE jobs SET status=?, available_at=?, next_eligible_at=?,last_error=?, completed_at=?, duration_ms=?,
         locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
-      WHERE id=? AND status='running' AND locked_by=?
-    `).run(retry ? "queued" : "failed", availableAt, String(error?.message || error).slice(0, 4_000),
-      retry ? null : timestamp, retry ? null : durationMs, timestamp, job.id, job.locked_by || this.workerId);
+      WHERE id=? AND status='running' AND locked_by=? AND lease_generation=?
+    `).run(retry ? "queued" : "failed", availableAt, retry ? availableAt : null, String(error?.message || error).slice(0, 4_000),
+      retry ? null : timestamp, retry ? null : durationMs, timestamp, job.id, job.locked_by || this.workerId,
+      Number(job.lease_generation || 0)).changes;
+    if (changed !== 1) return false;
     const message = String(error?.message || error).slice(0, 4_000);
     if (job.type === "extract_source") {
       this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
@@ -910,6 +975,7 @@ export class Repository {
     } else if (!retry && ["review_draft", "revise_draft", "compose_frontend_page", "compose_publish_page", "push_wordpress_draft"].includes(job.type)) {
       this.db.prepare("UPDATE article_drafts SET status='exception', updated_at=? WHERE id=?").run(now(), job.entity_id);
     }
+    return true;
   }
 
   getSource(sourceId) {
@@ -1857,7 +1923,8 @@ export class Repository {
       ORDER BY s.captured_at DESC, s.id DESC LIMIT ?
     `).all(limit);
     const queueJobs = this.db.prepare(`
-      SELECT j.id,j.type,j.entity_id,j.status,j.attempts,j.max_attempts,j.available_at,j.created_at,j.started_at,j.updated_at,j.last_error,
+      SELECT j.id,j.type,j.entity_id,j.status,j.attempts,j.max_attempts,j.available_at,j.next_eligible_at,j.created_at,j.started_at,j.updated_at,j.last_error,
+        j.execution_route,j.failure_class,j.batch_attempts,j.last_failure_code,
         COALESCE(sg.source_id,j.entity_id) AS source_id
       FROM jobs j LEFT JOIN source_segments sg ON sg.id=j.entity_id
       WHERE j.type IN ('extract_source','preflight_source','segment_source','extract_segment_claims',
@@ -5152,7 +5219,10 @@ function sourceQueueStates(rows) {
     const next = running[0] || eligible[0] || cooling[0] || failed[0];
     states.push({ sourceId, state, stage: next.type, running_job_count: running.length,
       queued_job_count: queued.length, job_count: active.length || failed.length,
-      available_at: next.available_at || null, started_at: next.started_at || null,
+      available_at: next.available_at || null, next_eligible_at: next.next_eligible_at || next.available_at || null,
+      execution_route: next.execution_route || "auto", failure_class: next.failure_class || "",
+      batch_attempts: Number(next.batch_attempts || 0), last_failure_code: next.last_failure_code || "",
+      started_at: next.started_at || null,
       attempts: Number(next.attempts || 0), max_attempts: Number(next.max_attempts || 0),
       last_error: next.last_error || null, updated_at: next.updated_at,
       queue_position: null, queue_ahead: null, _next: next });

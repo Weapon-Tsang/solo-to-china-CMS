@@ -13,7 +13,7 @@ test("migration 22 preserves Contract snapshots and adds auditable Publish Compo
   const dbModulePath = fileURLToPath(new URL("../src/db.mjs", import.meta.url));
   const v21ModulePath = path.join(directory, "db-v21.mjs");
   const source = fs.readFileSync(dbModulePath, "utf8")
-    .replace(/^  if \(current < (?:2[2-9]|3[0-9]|4[0-1])\).*$/gm, "");
+    .replace(/^  if \(current < (\d+)\).*$/gm, (line, version) => Number(version) >= 22 ? "" : line);
   fs.writeFileSync(v21ModulePath, source);
   const { openDatabase: openV21Database } = await import(`${pathToFileURL(v21ModulePath).href}?v=21`);
   const v21 = openV21Database(databasePath);
@@ -25,7 +25,7 @@ test("migration 22 preserves Contract snapshots and adds auditable Publish Compo
 
   const upgraded = openDatabase(databasePath);
   try {
-    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 41);
+    assert.ok(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version >= 22);
     assert.equal(upgraded.prepare("SELECT publish_package_schema_json FROM frontend_contract_snapshots WHERE id='contract-v21'").get().publish_package_schema_json, "{}");
     assert.ok(upgraded.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='frontend_publish_compositions'").get());
     assert.ok(upgraded.prepare("PRAGMA table_info(wordpress_publications)").all().some((column) => column.name === "delivery_mode"));

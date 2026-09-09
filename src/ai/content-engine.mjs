@@ -180,31 +180,31 @@ export class ContentEngine {
     return this.client.enabled;
   }
 
-  async plan(research) {
+  async plan(research, options = {}) {
     return this.respond({
       name: "content_brief",
       schema: BRIEF_SCHEMA,
       instructions: briefPrompt(this.contentStrategy.version),
-      input: JSON.stringify(research),
+      input: JSON.stringify(research), options,
     });
   }
 
-  async analyzeIntake(research) {
+  async analyzeIntake(research, options = {}) {
     return this.respond({
       name: "content_intake_analysis",
       schema: INTAKE_SCHEMA,
       instructions: intakePrompt(this.contentStrategy.version),
-      input: JSON.stringify(research),
+      input: JSON.stringify(research), options,
     });
   }
 
-  async draft(contentPackage, revisionFeedback = null) {
+  async draft(contentPackage, revisionFeedback = null, options = {}) {
     const policy = contentPackage.content_policy || {};
     const result = await this.respond({
       name: "article_draft_v2",
       schema: DRAFT_SCHEMA,
       instructions: draftPrompt(policy),
-      input: JSON.stringify({ ...draftInputDto(contentPackage), revision_feedback: revisionFeedback }),
+      input: JSON.stringify({ ...draftInputDto(contentPackage), revision_feedback: revisionFeedback }), options,
     });
     result.output.slug = slugify(result.output.slug || result.output.title);
     result.output.seo ||= {};
@@ -219,7 +219,7 @@ export class ContentEngine {
     return result;
   }
 
-  async composePagePlan(contentPackage, capabilities) {
+  async composePagePlan(contentPackage, capabilities, options = {}) {
     return this.respond({
       name: "frontend_page_plan",
       schema: PAGE_PLAN_SCHEMA,
@@ -227,20 +227,20 @@ export class ContentEngine {
       input: JSON.stringify({
         canonical: contentPackage.brief?.canonical || {}, outline: contentPackage.brief?.plan || {},
         facts: (contentPackage.facts || []).map((fact) => ({ key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate, status: fact.consensus_status })),
-      }),
+      }), options,
     });
   }
 
-  async resolveEntities(entityPackage) {
+  async resolveEntities(entityPackage, options = {}) {
     return this.respond({
       name: "destination_entity_resolution",
       schema: ENTITY_RESOLUTION_SCHEMA,
       instructions: ENTITY_RESOLUTION_PROMPT,
-      input: JSON.stringify(entityPackage),
+      input: JSON.stringify(entityPackage), options,
     });
   }
 
-  async composeFrontendPage(contentPackage, capabilities, pageSchema) {
+  async composeFrontendPage(contentPackage, capabilities, pageSchema, options = {}) {
     return this.respond({
       name: "frontend_page_payload",
       schema: pageSchema,
@@ -250,22 +250,22 @@ export class ContentEngine {
         canonical: contentPackage.brief?.canonical || {},
         draft: contentPackage.draft,
         visuals: contentPackage.draft?.visuals || [],
-      }),
+      }), options,
     });
   }
 
-  async review(contentPackage) {
+  async review(contentPackage, options = {}) {
     const modelReview = await this.respond({
       name: "quality_review_v2",
       schema: REVIEW_SCHEMA,
       instructions: REVIEW_PROMPT,
-      input: JSON.stringify(reviewInputDto(contentPackage)),
+      input: JSON.stringify(reviewInputDto(contentPackage)), options,
     });
     return { ...modelReview, output: applyDeterministicGates(modelReview.output, contentPackage) };
   }
 
-  async respond({ name, schema, instructions, input }) {
-    return this.client.completeJson({ name, schema, instructions, content: input });
+  async respond({ name, schema, instructions, input, options = {} }) {
+    return this.client.completeJson({ name, schema, instructions, content: input, signal: options.signal || null });
   }
 }
 

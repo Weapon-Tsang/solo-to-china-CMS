@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createBackup, drillBackup, verifyBackup } from "../src/backup.mjs";
-import { openDatabase } from "../src/db.mjs";
+import { openDatabase, SCHEMA_VERSION } from "../src/db.mjs";
 
 test("database backup creates and verifies a consistent SQLite snapshot", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-backup-test-"));
@@ -20,7 +20,7 @@ test("database backup creates and verifies a consistent SQLite snapshot", (t) =>
     retention: 2,
     clock: () => new Date("2026-08-23T12:00:00.000Z"),
   });
-  assert.equal(result.schemaVersion, 41);
+  assert.equal(result.schemaVersion, SCHEMA_VERSION);
   assert.equal(result.integrity, "ok");
   assert.ok(fs.existsSync(result.backupPath));
   assert.ok(fs.existsSync(result.manifestPath));

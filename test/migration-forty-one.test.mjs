@@ -12,7 +12,7 @@ test("migration 41 stores authoritative Batch correlation and anomalies", (t) =>
     db.close();
     fs.rmSync(directory, { recursive: true, force: true });
   });
-  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 41);
+  assert.ok(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version >= 41);
   const jobColumns = new Set(db.prepare("PRAGMA table_info(jobs)").all().map((row) => row.name));
   assert.ok(jobColumns.has("execution_route"));
   const itemColumns = new Set(db.prepare("PRAGMA table_info(vertex_batch_items)").all().map((row) => row.name));

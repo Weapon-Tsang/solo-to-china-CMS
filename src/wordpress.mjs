@@ -26,7 +26,7 @@ export class WordPressDraftAdapter {
     return Boolean(this.config.siteUrl && this.config.username && this.config.applicationPassword);
   }
 
-  async listContentInventory() {
+  async listContentInventory(options = {}) {
     if (!this.enabled) throw new Error("WordPress inventory sync is not configured.");
     assertSafeSiteUrl(this.config.siteUrl);
     const inventory = [];
@@ -40,7 +40,7 @@ export class WordPressDraftAdapter {
         page: String(page),
         _fields: "id,slug,status,link,modified,title",
       });
-      const { body, response } = await this.requestWithResponse(`/wp-json/wp/v2/posts?${params}`, { method: "GET" });
+      const { body, response } = await this.requestWithResponse(`/wp-json/wp/v2/posts?${params}`, { method: "GET", signal: options.signal });
       if (!Array.isArray(body)) throw new Error("WordPress inventory response must be an array.");
       inventory.push(...body.map((post) => ({
         postId: post.id,
@@ -56,16 +56,16 @@ export class WordPressDraftAdapter {
     return inventory;
   }
 
-  async upsertDraft(draft, existingPostId = null) {
+  async upsertDraft(draft, existingPostId = null, options = {}) {
     if (!this.enabled) throw new Error("WordPress draft delivery is not configured.");
     assertSafeSiteUrl(this.config.siteUrl);
     if (existingPostId) {
-      const current = await this.request(`/wp-json/wp/v2/posts/${existingPostId}?context=edit`, { method: "GET" });
+      const current = await this.request(`/wp-json/wp/v2/posts/${existingPostId}?context=edit`, { method: "GET", signal: options.signal });
       if (current.status !== "draft") {
         throw new Error(`WordPress post ${existingPostId} is '${current.status}', so the engine refuses to overwrite it.`);
       }
     }
-    const visuals = await this.resolveVisualMedia(draft.visuals || []);
+    const visuals = await this.resolveVisualMedia(draft.visuals || [], null, options);
     const contentBlocks = Array.isArray(draft.content_blocks) && draft.content_blocks.length
       ? draft.content_blocks : markdownToContentBlocks(draft.body_markdown);
     const post = {
@@ -92,6 +92,8 @@ export class WordPressDraftAdapter {
     const result = await this.request(`/wp-json/wp/v2/posts${existingPostId ? `/${existingPostId}` : ""}`, {
       method: "POST",
       body: JSON.stringify(post),
+      signal: options.signal,
+      idempotencyKey: options.idempotencyKey,
     });
     if (result.status !== "draft") throw new Error("WordPress did not confirm draft status; refusing to record the sync.");
     return {
@@ -100,7 +102,7 @@ export class WordPressDraftAdapter {
     };
   }
 
-  async upsertContractDraft(publishPackage) {
+  async upsertContractDraft(publishPackage, options = {}) {
     if (!this.enabled) throw new Error("WordPress draft delivery is not configured.");
     assertSafeSiteUrl(this.config.siteUrl);
     const configuredEndpoint = String(this.config.cmsArticleEndpoint || "").trim();
@@ -122,9 +124,10 @@ export class WordPressDraftAdapter {
         authorization: `Basic ${Buffer.from(`${this.config.username}:${this.config.applicationPassword}`).toString("base64")}`,
         "content-type": "application/json",
         accept: "application/json",
+        ...(options.idempotencyKey ? { "idempotency-key": options.idempotencyKey } : {}),
       },
       body: serializedPackage,
-      signal: AbortSignal.timeout(60_000),
+      signal: combinedSignal(options.signal, 60_000),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -149,7 +152,7 @@ export class WordPressDraftAdapter {
     };
   }
 
-  async resolveVisualMedia(visuals, onUploaded = null) {
+  async resolveVisualMedia(visuals, onUploaded = null, options = {}) {
     const output = [];
     for (const visual of visuals.filter((item) => (
       item.status === "generated" && (item.media_path || (item.source_asset_id && item.source_remote_url))
@@ -158,7 +161,7 @@ export class WordPressDraftAdapter {
         output.push({ visualId: visual.id, id: visual.wordpress_media_id, url: visual.wordpress_media_url, alt: visual.alt_text, caption: visual.caption });
         continue;
       }
-      const media = await this.uploadMedia(visual);
+      const media = await this.uploadMedia(visual, options);
       const resolved = { visualId: visual.id, ...media, alt: visual.alt_text, caption: visual.caption };
       output.push(resolved);
       if (onUploaded) await onUploaded(resolved);
@@ -166,29 +169,30 @@ export class WordPressDraftAdapter {
     return output;
   }
 
-  async uploadMedia(visual) {
+  async uploadMedia(visual, options = {}) {
     const asset = visual.media_path
       ? { filename: path.basename(visual.media_path), contentType: mimeForFilename(visual.media_path), bytes: fs.readFileSync(visual.media_path) }
-      : await this.downloadAuthorizedSourceAsset(visual);
+      : await this.downloadAuthorizedSourceAsset(visual, options);
     const response = await this.fetch(`${this.config.siteUrl}/wp-json/wp/v2/media`, {
       method: "POST",
       headers: {
         authorization: `Basic ${Buffer.from(`${this.config.username}:${this.config.applicationPassword}`).toString("base64")}`,
         "content-type": asset.contentType,
         "content-disposition": `attachment; filename=\"${asset.filename}\"`,
+        ...(options.idempotencyKey ? { "idempotency-key": `${options.idempotencyKey}:${visual.id}` } : {}),
       },
       body: asset.bytes,
-      signal: AbortSignal.timeout(60_000),
+      signal: combinedSignal(options.signal, 60_000),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || !body.id) throw new Error(`WordPress media upload failed (${response.status}): ${body?.message || response.statusText}`);
     return { id: body.id, url: body.source_url || body.guid?.rendered || "" };
   }
 
-  async downloadAuthorizedSourceAsset(visual) {
+  async downloadAuthorizedSourceAsset(visual, options = {}) {
     const sourceUrl = safeAuthorizedSourceImageUrl(visual.source_remote_url);
     if (!sourceUrl) throw new Error("Authorized source image URL is not an allowlisted Xiaohongshu HTTPS asset.");
-    const response = await this.fetch(sourceUrl, { signal: AbortSignal.timeout(30_000) });
+    const response = await this.fetch(sourceUrl, { signal: combinedSignal(options.signal, 30_000) });
     if (!response.ok) throw new Error(`Authorized source image download failed (${response.status}).`);
     const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
     if (!/^image\/(?:jpeg|jpg|png|webp)$/.test(contentType)) throw new Error("Authorized source asset is not a supported image.");
@@ -214,13 +218,19 @@ export class WordPressDraftAdapter {
       headers: {
         authorization: `Basic ${Buffer.from(`${this.config.username}:${this.config.applicationPassword}`).toString("base64")}`,
         "content-type": "application/json",
+        ...(options.idempotencyKey ? { "idempotency-key": options.idempotencyKey } : {}),
       },
-      signal: AbortSignal.timeout(60_000),
+      signal: combinedSignal(options.signal, 60_000),
     });
     const body = await response.json();
     if (!response.ok) throw new Error(`WordPress API failed (${response.status}): ${body?.message || response.statusText}`);
     return { body, response };
   }
+}
+
+function combinedSignal(signal, timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 export function markdownToSafeHtml(markdown, visuals = []) {
