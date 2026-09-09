@@ -374,6 +374,29 @@ test("knowledge aggregation preserves broad-to-specific generalization links aft
   assert.equal(relation.can_coexist, 1);
 });
 
+test("an unchanged knowledge rebuild skips redundant fact writes", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const value = "reachable by metro";
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/68abcdef0000000000000024",
+    title: "Stable metro fact",
+    text: `Hongyadong is ${value}. This selected travel note contains enough detail for research.`,
+    images: [],
+  }));
+  repository.saveExtraction(source.id, {
+    source: { language: "en", summary: value, destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+    claims: [{ key: "attraction.hongyadong.metro_access", subject: "Hongyadong", predicate: "metro_access", value,
+      qualifiers: [], source_quote: value, confidence: 0.9 }],
+    blueprint: { format: "guide", hook: value, angle: "practical", sections: [], strengths: [], gaps: [] },
+  }, "test", "fixture-model");
+  repository.rebuildKnowledge("chongqing");
+  db.prepare("UPDATE knowledge_facts SET updated_at='stable-sentinel'").run();
+
+  repository.rebuildKnowledge("chongqing");
+
+  assert.equal(db.prepare("SELECT updated_at FROM knowledge_facts").get().updated_at, "stable-sentinel");
+});
+
 test("a knowledge rebuild removes historical false-positive feature reviews", (t) => {
   const { db, repository } = repositoryFixture(t);
   const values = [

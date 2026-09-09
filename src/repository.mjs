@@ -1745,8 +1745,21 @@ export class Repository {
           status: mapped.resolution_source === "manual" || mapped.resolution_source === "model" ? "resolved" : "derived",
           entityType: mapped.entity_type, granularity: mapped.granularity, location: json(mapped.location_json, {}),
         } : { ...inferred, ...inferredMetadata };
-        updateClaimIdentity.run(originalKey, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases), identity.status,
-          identity.entityType || "other", identity.granularity || "general_topic", JSON.stringify(identity.location || {}), row.id);
+        const nextIdentity = {
+          original_normalized_key: row.original_normalized_key || originalKey,
+          entity_key: identity.entityKey,
+          canonical_subject: identity.canonicalSubject,
+          entity_aliases_json: JSON.stringify(identity.aliases),
+          entity_resolution_status: identity.status,
+          entity_type: identity.entityType || "other",
+          granularity: identity.granularity || "general_topic",
+          entity_location_json: JSON.stringify(identity.location || {}),
+        };
+        if (!storedColumnsMatch(row, nextIdentity)) updateClaimIdentity.run(
+          originalKey, nextIdentity.entity_key, nextIdentity.canonical_subject, nextIdentity.entity_aliases_json,
+          nextIdentity.entity_resolution_status, nextIdentity.entity_type, nextIdentity.granularity,
+          nextIdentity.entity_location_json, row.id,
+        );
         if (!mapped && identity.entityKey && alias) {
           this.upsertEntityAlias(destinationSlug, alias, identity, "derived", 0.55, timestamp);
           aliasesByNormalized.set(alias, {
@@ -1998,6 +2011,10 @@ export class Repository {
 
   rebuildKnowledge(destinationSlug) {
     this.resolveEntitiesDeterministically(destinationSlug);
+    const destinationId = `dst_${sha256(destinationSlug).slice(0, 20)}`;
+    const existingFactsById = new Map(this.db.prepare(
+      "SELECT * FROM knowledge_facts WHERE destination_id=?",
+    ).all(destinationId).map((row) => [row.id, row]));
     const allSourceRows = this.db.prepare(`
       SELECT c.*, ss.destination_name, ss.destination_slug, s.captured_at, s.published_at,
         s.canonical_url AS source_url, s.title AS source_title, s.authority_level AS source_authority_level,
@@ -2019,7 +2036,6 @@ export class Repository {
       WHERE destination_slug=? AND status IN ('resolved','dismissed')
     `).all(destinationSlug).map((row) => [row.id, row]));
     transaction(this.db, () => {
-      const destinationId = `dst_${sha256(destinationSlug).slice(0, 20)}`;
       this.db.prepare(`DELETE FROM claim_relations WHERE claim_a_id IN (
         SELECT c.id FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
       )`).run(destinationSlug);
@@ -2035,7 +2051,6 @@ export class Repository {
         INSERT INTO destinations(id, slug, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(slug) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at
       `).run(destinationId, destinationSlug, displayName, timestamp, timestamp);
-      this.db.prepare("DELETE FROM knowledge_facts WHERE destination_id = ?").run(destinationId);
       const updateStructuredClaim = this.db.prepare(`UPDATE claims SET structured_value_json=?, scope_json=?, claim_kind=?, cardinality=? WHERE id=?`);
       const insertClaimReview = this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
         review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -2065,9 +2080,20 @@ export class Repository {
           visibility_status=excluded.visibility_status, visibility_reason=excluded.visibility_reason,
           visibility_updated_at=excluded.visibility_updated_at
       `);
+      const deleteKnowledgeFact = this.db.prepare("DELETE FROM knowledge_facts WHERE id=?");
+      const activeFactIds = new Set();
       const reviewedExtractionQuotes = new Set();
       for (const row of sourceRows) {
-        updateStructuredClaim.run(JSON.stringify(row.structured_value), JSON.stringify(row.scope), row.structured_value.claim_kind, row.structured_value.cardinality, row.id);
+        const nextStructured = {
+          structured_value_json: JSON.stringify(row.structured_value),
+          scope_json: JSON.stringify(row.scope),
+          claim_kind: row.structured_value.claim_kind,
+          cardinality: row.structured_value.cardinality,
+        };
+        if (!storedColumnsMatch(row, nextStructured)) updateStructuredClaim.run(
+          nextStructured.structured_value_json, nextStructured.scope_json,
+          nextStructured.claim_kind, nextStructured.cardinality, row.id,
+        );
         const siblingClaims = claimsBySource.get(row.source_id) || [];
         const extractionIssue = detectClaimExtractionIssue(row, siblingClaims);
         if (extractionIssue) {
@@ -2176,16 +2202,41 @@ export class Repository {
             : row.observed_at || row.source_observed_at || row.published_at ? "observed_at" : "captured_at_legacy",
         }));
         const visibility = selectVisibility.get(destinationSlug, key);
-        upsertKnowledgeFact.run(
-          `fact_${sha256(`${destinationId}:${key}`).slice(0, 24)}`, destinationId, key, entity.canonicalSubject || rows[0].subject,
-          canonicalPredicate || rows[0].predicate, status, preferredValue, status === "conflicted" ? ranked[0][1].length : rows.length,
-          conflicts.length, JSON.stringify(evidence), timestamp,
-          freshness.state, freshness.latestEvidenceAt, verificationPriority, entity.entityKey,
-          entity.canonicalSubject, JSON.stringify(entity.aliases), entity.status, entity.entityType,
-          entity.granularity, JSON.stringify(entity.location || {}), JSON.stringify(relations),
-          visibility?.visibility_status || "visible", visibility?.reason || null, visibility?.updated_at || null,
+        const factId = `fact_${sha256(`${destinationId}:${key}`).slice(0, 24)}`;
+        const nextFact = {
+          subject: entity.canonicalSubject || rows[0].subject,
+          predicate: canonicalPredicate || rows[0].predicate,
+          consensus_status: status,
+          preferred_value: preferredValue,
+          support_count: status === "conflicted" ? ranked[0][1].length : rows.length,
+          contradiction_count: conflicts.length,
+          evidence_json: JSON.stringify(evidence),
+          freshness_state: freshness.state,
+          latest_evidence_at: freshness.latestEvidenceAt,
+          verification_priority: verificationPriority,
+          entity_key: entity.entityKey,
+          canonical_subject: entity.canonicalSubject,
+          entity_aliases_json: JSON.stringify(entity.aliases),
+          entity_resolution_status: entity.status,
+          entity_type: entity.entityType,
+          granularity: entity.granularity,
+          entity_location_json: JSON.stringify(entity.location || {}),
+          claim_relations_json: JSON.stringify(relations),
+          visibility_status: visibility?.visibility_status || "visible",
+          visibility_reason: visibility?.reason || null,
+          visibility_updated_at: visibility?.updated_at || null,
+        };
+        activeFactIds.add(factId);
+        if (!storedColumnsMatch(existingFactsById.get(factId), nextFact)) upsertKnowledgeFact.run(
+          factId, destinationId, key, nextFact.subject, nextFact.predicate, nextFact.consensus_status,
+          nextFact.preferred_value, nextFact.support_count, nextFact.contradiction_count, nextFact.evidence_json, timestamp,
+          nextFact.freshness_state, nextFact.latest_evidence_at, nextFact.verification_priority, nextFact.entity_key,
+          nextFact.canonical_subject, nextFact.entity_aliases_json, nextFact.entity_resolution_status, nextFact.entity_type,
+          nextFact.granularity, nextFact.entity_location_json, nextFact.claim_relations_json,
+          nextFact.visibility_status, nextFact.visibility_reason, nextFact.visibility_updated_at,
         );
       }
+      for (const factId of existingFactsById.keys()) if (!activeFactIds.has(factId)) deleteKnowledgeFact.run(factId);
     });
   }
 
@@ -4636,6 +4687,11 @@ function truncateText(value, max) {
 
 function normalizeValue(value) {
   return String(value).trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function storedColumnsMatch(current, expected) {
+  if (!current) return false;
+  return Object.entries(expected).every(([column, value]) => (current[column] ?? null) === (value ?? null));
 }
 
 function sourceQueueStates(rows) {
