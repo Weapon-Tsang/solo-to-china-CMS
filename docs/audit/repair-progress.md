@@ -228,3 +228,17 @@
 - The exact startup Knowledge rebuild completed without invoking the broad maintenance workflow. Production `/api/exceptions` now reports zero total exceptions and zero `CLAIM_REVIEW` items.
 - Production Source queue acceptance returned 74 numbered sources, including 2 actively running and 53 queued sources with consecutive queue positions and accurate jobs-ahead counts.
 - Rollback image: `engine:1.17.7` (`sha256:d4b9ec83e3031f1478e8536c6061caafb11c0717145479b505573129c273e397`).
+
+## Vertex Batch、并行内容策略与异常降噪（2026-09-09）
+
+- 内容策略升级为 `1.7`。单一来源改写（Source Adaptation）、专题创作（Topic Feature）和多来源综合（Multi-Source Synthesis）是可以同时成立的并行机会，不再互相排斥。不同作者的一日游、两日游、路线顺序、美食清单和拍照点被视为可并存选择，不再仅因内容不同判为冲突。
+- 策略演化摘要、变更说明和内容建议理由均使用直白中文，并明确写出：建议写什么、为什么值得写、证据只支持到哪里、真正缺少什么。生产配置已确认是 UTF-8 中文；PowerShell 中出现的乱码是终端解码显示问题，不是配置文件损坏。
+- 生产数据已形成 74 条来源级建议和 254 个并行内容机会：单一来源改写 118 个、专题创作 70 个、多来源综合 66 个；其中 238 个处于“建议”状态，内容类型覆盖 itinerary、practical guide、listicle、food guide、hotel area guide 等。当前 74 条建议全部等待人工批准，所以草稿为 0 是发布安全门的结果，不是系统没有产出建议；已有 33 个机会达到严格 ready，42 个达到专题/改单来源所需的编辑充分度。
+- 按 Google 官方 Batch inference 建议，大批量文本/图片分段提取和文本覆盖审计优先走 Vertex Batch；视频、小批量尾部和 Batch 失败项继续走实时请求兜底。生产最小 Batch 门槛为 10，首个真实生产 Batch 已成功完成 18 项并在结果导入后统一更新状态。Vertex 服务代理只获得 Batch 桶对象读取与创建权限，没有扩大为桶管理员。
+- 处理队列不再在服务重启时给所有目的地无条件排 Knowledge 重建。启动检查使用事务成功提交时更新的目的地水位，只在没有 Knowledge 或存在更新 Claim 时排队；1.17.20 生产重启后 `queueActive=0`，没有再次出现 7 个目的地整队刷新。新增来源、人工修订和真正过期的数据仍按目的地单独排队。
+- Knowledge 重建同时移除了三类放大器：全目的地 Claim 两两扫描、宽泛 Claim 与所有同谓词具体 Claim 的跨乘积、每条 Claim/Knowledge 重复编译 SQL 和无变化写入。泛化关系现在只在规范谓词和值都一致时建立；Claim 按来源缓存，别名一次加载，SQLite 语句复用，不变事实不重写。
+- 生产异常从本轮开始前 828 条降到 1.17.12 后的 408 条，再降到最终 178 条，共减少 650 条（78.5%）。当前没有 Source blocker、没有 temporal conflict、没有维护异常；剩余为 170 条来源事实差异、6 条不确定实体同一性、1 条 Claim 冲突和 1 条提取歧义。
+- 170 条来源事实差异对应 71 个“主体 + 谓词”事实组，而不是 170 次系统故障。其中 155 条直接属于营业时间（87）、是否预约（23）、票价（20）、门票费用（18）、单程/往返票价（7）；这些值会影响游客决策，必须用当前官方信息或人工判断，不能像作者路线偏好一样自动合并。其余少量涉及名称、最近地铁口、拥挤程度、拍摄地、菜品类型等，保留为低量复核尾部。
+- 移动端来源页已改为可滚动、可换行的响应式布局，不再把说明文字挤成单字竖列；点击“来源”Tab 角标会定位并打开队列中的失败或待处理来源，而不是只切换到列表顶部。
+- 验收：完整测试 230/230 通过；`npm run release:check` 的 39 项强制门禁全部通过，0 失败。最终提交为 `a1e77c8`，已推送 `origin/main`。Cloud Build `bd235faf-e600-41a8-821f-4e2da0862810` 发布 `engine:1.17.20`，镜像摘要 `sha256:766237d1e9ad0f66aed753aa15d6ba0328ac88fea97397422324d78103056048`。
+- 生产验收：GCE `solo-to-china-engine` 返回 health version `1.17.20`；Vertex `gemini-3.8-flash` 与 Batch 均已配置；Frontend Contract 为 `healthy` 且 `canCompose=true`；`/api/ready` 返回数据库 ready；最终活动队列为 0。
