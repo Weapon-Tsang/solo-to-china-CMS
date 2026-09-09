@@ -3211,7 +3211,21 @@ export class Repository {
     this.reconcileCoverageAuditFalsePositives();
     this.reconcileEntityRelationshipCandidates();
     const researchSlugs = new Set(this.db.prepare("SELECT DISTINCT destination_slug FROM structured_sources").all().map((row) => row.destination_slug));
-    for (const slug of researchSlugs) this.enqueue("rebuild_knowledge", slug);
+    const staleKnowledgeSlugs = this.db.prepare(`
+      WITH claim_state AS (
+        SELECT ss.destination_slug AS slug, MAX(c.created_at) AS latest_claim_at
+        FROM structured_sources ss JOIN claims c ON c.source_id=ss.source_id
+        WHERE c.lifecycle_status='active' AND c.knowledge_eligible=1
+        GROUP BY ss.destination_slug
+      ), fact_state AS (
+        SELECT d.slug AS slug, MAX(k.updated_at) AS latest_fact_at
+        FROM destinations d JOIN knowledge_facts k ON k.destination_id=d.id
+        GROUP BY d.slug
+      )
+      SELECT claim_state.slug FROM claim_state LEFT JOIN fact_state USING(slug)
+      WHERE fact_state.latest_fact_at IS NULL OR claim_state.latest_claim_at > fact_state.latest_fact_at
+    `).all().map((row) => row.slug);
+    for (const slug of staleKnowledgeSlugs) this.enqueue("rebuild_knowledge", slug);
     for (const row of this.db.prepare(`SELECT s.id FROM sources s
       JOIN structured_sources ss ON ss.source_id=s.id
       LEFT JOIN content_intake_analyses cia ON cia.source_id=s.id

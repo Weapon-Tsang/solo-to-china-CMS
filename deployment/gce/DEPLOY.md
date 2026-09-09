@@ -29,7 +29,7 @@ From an authenticated Google Cloud shell or workstation, substitute your own val
 $project = "YOUR_PROJECT_ID"
 $region = "us-central1"
 $repo = "solo-to-china"
-$image = "$region-docker.pkg.dev/$project/$repo/engine:1.17.18"
+$image = "$region-docker.pkg.dev/$project/$repo/engine:1.17.19"
 
 gcloud services enable compute.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com --project $project
 gcloud artifacts repositories create $repo --repository-format=docker --location=$region --project=$project

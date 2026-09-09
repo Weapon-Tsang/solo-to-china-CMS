@@ -70,6 +70,33 @@ test("job telemetry reports durable queue latency, duration, outcomes, and activ
   }
 });
 
+test("startup queues only destinations whose Knowledge is older than active Claims", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/68abcdef0000000000000031",
+    title: "Current startup knowledge",
+    text: "Hongyadong is reachable by metro. This selected note contains enough detail for research.",
+    images: [],
+  }));
+  repository.saveExtraction(source.id, {
+    source: { language: "en", summary: "Metro access", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+    claims: [{ key: "attraction.hongyadong.metro_access", subject: "Hongyadong", predicate: "metro_access",
+      value: "reachable by metro", qualifiers: [], source_quote: "reachable by metro", confidence: 0.9 }],
+    blueprint: { format: "guide", hook: "Metro", angle: "practical", sections: [], strengths: [], gaps: [] },
+  }, "test", "fixture-model");
+  repository.rebuildKnowledge("chongqing");
+  db.prepare("DELETE FROM jobs").run();
+  db.prepare("UPDATE claims SET created_at='2026-01-01T00:00:00.000Z'").run();
+  db.prepare("UPDATE knowledge_facts SET updated_at='2026-02-01T00:00:00.000Z'").run();
+
+  repository.enqueueStartupReconciliation();
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='rebuild_knowledge'").get().count, 0);
+
+  db.prepare("UPDATE claims SET created_at='2026-03-01T00:00:00.000Z'").run();
+  repository.enqueueStartupReconciliation();
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='rebuild_knowledge' AND entity_id='chongqing'").get().count, 1);
+});
+
 test("repository construction cannot steal a live job and only an expired lease is recovered", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-recovery-test-"));
   const database = openDatabase(path.join(directory, "recovery.sqlite"));
