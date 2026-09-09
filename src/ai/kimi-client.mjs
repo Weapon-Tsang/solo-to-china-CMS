@@ -6,6 +6,7 @@ import { ProviderRequestError } from "./provider-schema.mjs";
 
 const IMAGE_HOST_SUFFIXES = ["xiaohongshu.com", "xhscdn.com", "xhscdn.net", "xhscdn.cn"];
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
 
 export class KimiClient {
   constructor(config, fetchImpl = fetch) {
@@ -117,10 +118,15 @@ export class KimiClient {
     const filename = path.resolve(String(asset.local_path || ""));
     if (!filename.startsWith(`${uploadRoot}${path.sep}`)) throw new Error("Uploaded source image is outside the configured source directory.");
     const contentType = String(asset.mime_type || "").toLowerCase();
-    if (!/^image\/(?:jpeg|jpg|png|webp|gif)$/.test(contentType)) throw new Error("Uploaded source asset is not a supported image.");
+    const pdfVisual = contentType === "application/pdf" && asset?.provenance?.documentKind === "pdf";
+    if (pdfVisual && this.config.provider !== "vertex") {
+      throw Object.assign(new Error("PDF visual evidence requires the Vertex multimodal provider."), { code: "PDF_VISUAL_INPUT_UNSUPPORTED", retryable: false });
+    }
+    if (!pdfVisual && !/^image\/(?:jpeg|jpg|png|webp|gif)$/.test(contentType)) throw new Error("Uploaded source asset is not a supported image.");
     const bytes = await fs.readFile(filename);
     if (!bytes.length) throw new Error("Uploaded source image is empty.");
-    if (bytes.length > MAX_IMAGE_BYTES) throw Object.assign(new Error("Uploaded source image exceeds the provider inline limit and needs a derived vision copy; the original remains stored."), { code: "AI_DERIVATIVE_REQUIRED", retryable: false });
+    const byteLimit = pdfVisual ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
+    if (bytes.length > byteLimit) throw Object.assign(new Error("Uploaded source asset exceeds the provider inline limit and needs a derived vision copy; the original remains stored."), { code: "AI_DERIVATIVE_REQUIRED", retryable: false });
     return `data:${contentType};base64,${bytes.toString("base64")}`;
   }
 }

@@ -9,6 +9,7 @@ import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "extension", "manifest.json"), "utf8"));
+const releaseGate = JSON.parse(fs.readFileSync(path.join(root, "config", "release-gate.json"), "utf8"));
 if (packageJson.version !== VERSION || manifest.version !== VERSION) {
   throw new Error(`Release versions must all be ${VERSION} (package=${packageJson.version}, extension=${manifest.version}).`);
 }
@@ -18,6 +19,9 @@ const handoffPath = path.join(root, "docs", "HANDOFF.md");
 const frontendContractDocument = path.join(root, "docs", "FRONTEND_CONTRACT_INTEGRATION.md");
 const strategyText = fs.readFileSync(strategyDocument, "utf8");
 const handoffText = fs.readFileSync(handoffPath, "utf8");
+const changelogText = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
+const deploymentText = fs.readFileSync(path.join(root, "deployment", "gce", "startup.sh"), "utf8");
+const workflowText = fs.readFileSync(path.join(root, ".github", "workflows", "release-gate.yml"), "utf8");
 const dashboardSource = fs.readFileSync(path.join(root, "frontend", "src", "components", "dashboard.jsx"), "utf8");
 const contentViewSource = fs.readFileSync(path.join(root, "frontend", "src", "views.jsx"), "utf8");
 const serverSource = fs.readFileSync(path.join(root, "src", "server.mjs"), "utf8");
@@ -30,6 +34,23 @@ if (!CONTENT_STRATEGY.history.some((entry) => entry.version === CONTENT_STRATEGY
 }
 if (!handoffText.includes(`Content Production Strategy ${CONTENT_STRATEGY.version}`) || !handoffText.includes("config/content-strategy.json")) {
   throw new Error("Handoff does not reference the active strategy manifest and version.");
+}
+if (!handoffText.includes(`App/Extension version \`${VERSION}\`, schema migration \`${SCHEMA_VERSION}\`, and Content Strategy \`${CONTENT_STRATEGY.version}\``)) {
+  throw new Error("Handoff baseline does not match the app, migration, and Content Strategy versions.");
+}
+if (!new RegExp(`^## ${VERSION.replaceAll(".", "\\.")} - Unreleased\\b`, "m").test(changelogText)) {
+  throw new Error(`CHANGELOG must identify ${VERSION} as the current unreleased version without inventing a release date.`);
+}
+if (!deploymentText.includes(`engine:${VERSION}`)) throw new Error(`Deployment image is not pinned to app version ${VERSION}.`);
+if (!/^[a-f0-9]{40}$/.test(releaseGate.frontend?.commitSha || "")) throw new Error("Release gate requires a fixed 40-character Frontend commit SHA.");
+if (!deploymentText.includes(`FRONTEND_CONTRACT_COMMIT_SHA=${releaseGate.frontend.commitSha}`)) {
+  throw new Error("Deployment and release gate Frontend commit SHAs differ.");
+}
+if (!workflowText.includes(`ref: ${releaseGate.frontend.commitSha}`) || !workflowText.includes("node-version: 24") || !workflowText.includes("npm run release:check")) {
+  throw new Error("CI workflow does not enforce the fixed Frontend SHA, Node 24, and consolidated release gate.");
+}
+if (Number.parseInt(packageJson.engines?.node?.match(/\d+/)?.[0] || "0", 10) < releaseGate.nodeMajor) {
+  throw new Error(`package.json must require Node ${releaseGate.nodeMajor}+.`);
 }
 if (!dashboardSource.includes("health?.contentStrategy")) {
   throw new Error("Admin UI does not consume Content Strategy metadata from the backend.");
@@ -76,6 +97,7 @@ try {
       ["sources", "submitted_by"], ["sources", "source_publisher"], ["sources", "source_identity"],
       ["sources", "source_version_identity"], ["sources", "original_url"], ["sources", "final_url"],
       ["content_opportunities", "lifecycle_action"], ["editorial_assignments", "evaluation_json"],
+      ["editorial_assignments", "assignment_type_source"], ["editorial_assignments", "classification_json"],
     ]) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
       if (!columns.includes(column)) throw new Error(`${table}.${column} is required for Content Strategy governance.`);

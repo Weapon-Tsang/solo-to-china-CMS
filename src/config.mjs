@@ -37,6 +37,7 @@ export function loadConfig(env = process.env) {
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
   const sourceUploadsDir = path.resolve(root, env.SOURCE_UPLOADS_DIR || "data/source-uploads");
   const captureUploadsDir = path.resolve(root, env.CAPTURE_UPLOADS_DIR || "data/capture-uploads");
+  const generatedMediaDir = path.resolve(root, env.GENERATED_MEDIA_DIR || "data/generated-media");
   const imageProvider = env.IMAGE_PROVIDER || env.VISUAL_PROVIDER || "none";
   return {
     root,
@@ -134,7 +135,7 @@ export function loadConfig(env = process.env) {
       model: env.IMAGE_MODEL || env.VERTEX_IMAGEN_MODEL || "gemini-3.1-flash-image",
       coverQuality: env.IMAGE_COVER_QUALITY || "1K",
       inlineQuality: env.IMAGE_INLINE_QUALITY || "1K",
-      mediaDir: path.resolve(root, env.GENERATED_MEDIA_DIR || "data/generated-media"),
+      mediaDir: generatedMediaDir,
       publicBaseUrl: (env.PUBLIC_BASE_URL || "").replace(/\/$/, ""),
       accessToken: env.VERTEX_AI_ACCESS_TOKEN || "",
       requestTimeoutMs: integer(env.VERTEX_IMAGE_TIMEOUT_MS, 120_000),
@@ -216,6 +217,11 @@ export function loadConfig(env = process.env) {
       jobHistoryRetentionDays: integer(env.JOB_HISTORY_RETENTION_DAYS, 30),
       backupDir: path.resolve(root, env.BACKUP_DIR || "backups"),
       backupRetention: integer(env.BACKUP_RETENTION, 14),
+      backupOffsiteLocation: String(env.BACKUP_OFFSITE_LOCATION || "").trim(),
+      backupOffsiteRetentionDays: integer(env.BACKUP_OFFSITE_RETENTION_DAYS, 0),
+      sourceUploadsDir,
+      generatedMediaDir,
+      codeRevision: String(env.ENGINE_IMAGE || env.APP_REVISION || "").trim(),
       databasePath,
     },
   };

@@ -1,0 +1,47 @@
+name: Release gate
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-release-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out CMS
+        uses: actions/checkout@v4
+        with:
+          path: cms
+
+      - name: Check out fixed Frontend contract
+        uses: actions/checkout@v4
+        with:
+          repository: Weapon-Tsang/solo-to-china
+          ref: f44ce1092ced93dfb47d9b3eae83d0d5e4b97086
+          path: frontend
+
+      - name: Use Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: cms/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: cms
+        run: npm ci
+
+      - name: Run the consolidated offline release gate
+        working-directory: cms
+        env:
+          FRONTEND_REPOSITORY_PATH: ${{ github.workspace }}/frontend
+        run: npm run release:check

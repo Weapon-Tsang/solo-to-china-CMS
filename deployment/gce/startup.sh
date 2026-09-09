@@ -122,9 +122,12 @@ FRONTEND_CONTRACT_SOURCE_REPOSITORY=https://github.com/Weapon-Tsang/solo-to-chin
 FRONTEND_COMPONENT_REGISTRY_SOURCE=https://solotochina.com/wp-json/stc/v1/component-registry/generated
 FRONTEND_PAGE_SCHEMA_SOURCE=https://solotochina.com/wp-json/stc/v1/page-schema
 FRONTEND_PUBLISH_PACKAGE_SCHEMA_SOURCE=https://solotochina.com/wp-json/stc/v1/cms-publish-package-schema
-FRONTEND_CONTRACT_COMMIT_SHA=fcd1cb0e936b666c888ade7ea8b648799e3fb3be
+FRONTEND_CONTRACT_COMMIT_SHA=f44ce1092ced93dfb47d9b3eae83d0d5e4b97086
 FRONTEND_CONTRACT_SYNC_HOURS=6
 FRONTEND_CONTRACT_TIMEOUT_MS=15000
+BACKUP_RETENTION=14
+BACKUP_OFFSITE_LOCATION=
+BACKUP_OFFSITE_RETENTION_DAYS=0
 EOF
 chmod 0600 "${APP_DIR}/.env.production"
 
@@ -165,8 +168,8 @@ docker pull cloudflare/cloudflared:latest
 docker network inspect solo-to-china >/dev/null 2>&1 || docker network create solo-to-china >/dev/null
 docker volume inspect solo_to_china_data >/dev/null 2>&1 || docker volume create solo_to_china_data >/dev/null
 if docker inspect engine >/dev/null 2>&1; then
-  log 'Creating a verified SQLite backup in the persistent volume before replacing the engine container.'
-  docker exec engine node src/backup.mjs \
+  log 'Creating a verified database-and-content snapshot in the persistent volume before replacing the engine container.'
+  docker exec --env BACKUP_REASON=pre-upgrade engine node src/backup.mjs \
     /var/lib/solo-to-china/solo-to-china.sqlite \
     /var/lib/solo-to-china/backups >/dev/null
 fi

@@ -329,7 +329,9 @@ export function createApplication(config = loadConfig()) {
           ...saved,
           sourceKind: prepared.capture.sourceKind,
           warnings: prepared.warnings,
-          message: saved.duplicate ? "该来源内容已存在，未重复排队。" : "来源已安全入库并进入提取与内容生产流程。",
+          message: saved.duplicate ? "该来源版本已存在，未重复排队。"
+            : saved.requiresManualStart ? "来源已安全保存。处理规模较高，请查看估算后在来源详情中手动开始提取。"
+              : "来源已安全保存并进入提取、知识整理和内容评估流程。",
         });
       }
       if (request.method === "POST" && url.pathname === "/api/manual-source-uploads") {

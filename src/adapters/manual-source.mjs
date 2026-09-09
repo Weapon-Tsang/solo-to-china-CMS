@@ -6,6 +6,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { canonicalizeUrl, sha256, truncate } from "../utils.mjs";
+import { estimateSourceProcessing } from "../source-preflight.mjs";
 
 const require = createRequire(import.meta.url);
 const WordExtractor = require("word-extractor");
@@ -37,7 +38,7 @@ export class ManualSourceError extends Error {
 }
 
 export class ManualSourceIngestor {
-  constructor(config = {}, { fetchImpl = fetch, lookupImpl = dns.lookup, extractPdfImpl = extractPdfText, extractWordImpl = extractWordText } = {}) {
+  constructor(config = {}, { fetchImpl = fetch, lookupImpl = dns.lookup, extractPdfImpl = extractPdfDocument, extractWordImpl = extractWordText } = {}) {
     this.config = {
       uploadDir: path.resolve(config.uploadDir || "data/source-uploads"),
       requestTimeoutMs: Number(config.requestTimeoutMs || 20_000),
@@ -74,6 +75,7 @@ export class ManualSourceIngestor {
     let rawHtml = "";
     let assets = [];
     let files = [];
+    let pdfMetadata = null;
 
     try {
       if (LINK_KINDS.has(requestedKind)) {
@@ -152,8 +154,29 @@ export class ManualSourceIngestor {
           } catch {
             throw new ManualSourceError("DOCUMENT_PARSE_FAILED", "文档无法解析，可能已加密、损坏或格式与扩展名不一致。请另存为普通 PDF/DOCX 后重试。");
           }
-          rawText = joinText(notes, normalizeExtractedText(extracted));
-          if (rawText.length < 20) {
+          if (sourceKind === "pdf") {
+            const pdf = normalizePdfExtraction(extracted);
+            const visualPages = pdf.pages.filter((page) => page.hasVisualContent).map((page) => page.pageNumber);
+            const textPages = pdf.pages.filter((page) => page.textChars > 0).map((page) => page.pageNumber);
+            pdfMetadata = { pageCount: pdf.pages.length, textPages, visualPages, extractionMode: "embedded_text_and_visual_inventory" };
+            rawText = joinText(notes, pdf.text);
+            if (visualPages.length) {
+              assets = [{
+                kind: "image", url: `manual-asset://${submissionId}/pdf-visual`,
+                alt: `PDF visual evidence on page${visualPages.length === 1 ? "" : "s"} ${visualPages.join(", ")}`,
+                position: 0, localPath: files[0].storagePath, mimeType: "application/pdf",
+                originalFilename: file.originalFilename, mediaIdentity: `pdf:${files[0].sha256}:pages:${visualPages.join(",")}`,
+                originalSha256: files[0].sha256,
+                provenance: { documentKind: "pdf", pdfPages: visualPages, pageStart: Math.min(...visualPages), pageEnd: Math.max(...visualPages),
+                  visualPageCount: visualPages.length, textPageCount: textPages.length },
+              }];
+            }
+            if (rawText.length < 20 && visualPages.length) {
+              rawText = joinText(notes, `PDF visual evidence is preserved for page${visualPages.length === 1 ? "" : "s"} ${visualPages.join(", ")}. No embedded text was available.`);
+              warnings.push("The PDF contains visual or scanned pages. They will use the existing Vertex multimodal path; full-document OCR is not started automatically.");
+            }
+          } else rawText = joinText(notes, normalizeExtractedText(extracted));
+          if (rawText.length < 20 && assets.length === 0) {
             const hint = sourceKind === "pdf" ? "该 PDF 可能是扫描件；请改为上传页面图片，或补充可复制的文字说明。" : "该 Word 文档没有提取到足够正文，请确认文件不是空白或受保护文档。";
             throw new ManualSourceError("EMPTY_DOCUMENT", hint);
           }
@@ -168,6 +191,7 @@ export class ManualSourceIngestor {
       const fileIdentity = files.length === 1 ? files[0].sha256
         : files.length ? sha256(files.map((file) => file.sha256).sort().join(":")) : "";
       const sourceIdentity = submittedUrl ? `url:${canonicalUrl.toLowerCase()}` : fileIdentity ? `file:${fileIdentity}` : `manual:${submissionId}`;
+      const submissionMetadata = { requestedKind, warnings, operatorNotesProvided: Boolean(notes), ...(pdfMetadata ? { pdf: pdfMetadata } : {}) };
       const capture = {
         adapter: "manual",
         externalId: submissionId,
@@ -178,7 +202,7 @@ export class ManualSourceIngestor {
         sourceIdentity,
         sourceVersionIdentity: sha256(JSON.stringify({ sourceIdentity, rawText, files: files.map((file) => file.sha256) })),
         sourceKind,
-        submissionMetadata: { requestedKind, warnings, operatorNotesProvided: Boolean(notes) },
+        submissionMetadata,
         submittedBy: truncate(input.submittedBy || "administrator", 200),
         title: title || sourceKindLabel(sourceKind),
         authorName: truncate(input.authorName, 500).trim(),
@@ -192,6 +216,7 @@ export class ManualSourceIngestor {
         files,
         client: { channel: "admin_manual_submission" },
       };
+      capture.submissionMetadata.processingEstimate = estimateSourceProcessing(capture);
       return {
         capture,
         warnings,
@@ -238,7 +263,7 @@ export class ManualSourceIngestor {
       if (contentType === "application/pdf" || looksLikePdf(bytes)) {
         let text;
         try { text = await this.extractPdf(bytes); } catch { throw new ManualSourceError("DOCUMENT_PARSE_FAILED", "链接指向的 PDF 无法解析，可能已加密或损坏。请下载后另存并上传。"); }
-        text = normalizeExtractedText(text);
+        text = normalizePdfExtraction(text).text;
         if (text.length < 20) throw new ManualSourceError("EMPTY_DOCUMENT", "链接中的 PDF 没有可提取正文，可能是扫描件。请上传页面截图或补充文字说明。");
         return { title: filenameFromUrl(currentUrl) || "在线 PDF 文档", text, rawHtml: "", warnings: [], finalUrl: currentUrl };
       }
@@ -256,25 +281,36 @@ export class ManualSourceIngestor {
   }
 }
 
-export async function extractPdfText(bytes) {
+export async function extractPdfDocument(bytes) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const standardFontDirectory = `${path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../node_modules/pdfjs-dist/standard_fonts")}${path.sep}`;
   const standardFontDataUrl = pathToFileURL(standardFontDirectory).href;
   const loadingTask = pdfjs.getDocument({ data: new Uint8Array(bytes), disableWorker: true, standardFontDataUrl, verbosity: 0 });
   const document = await loadingTask.promise;
   const pages = [];
+  const visualOperators = new Set([
+    pdfjs.OPS.paintImageXObject, pdfjs.OPS.paintInlineImageXObject, pdfjs.OPS.paintImageMaskXObject,
+    pdfjs.OPS.paintSolidColorImageMask, pdfjs.OPS.constructPath, pdfjs.OPS.paintFormXObject, pdfjs.OPS.shadingFill,
+  ].filter(Number.isInteger));
   try {
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
       const page = await document.getPage(pageNumber);
       const content = await page.getTextContent();
-      pages.push(content.items.map((item) => item.str || "").join(" "));
+      const text = normalizeExtractedText(content.items.map((item) => item.str || "").join(" "));
+      const operators = await page.getOperatorList();
+      pages.push({ pageNumber, text, textChars: text.length,
+        hasVisualContent: operators.fnArray.some((operator) => visualOperators.has(operator)) });
     }
   } finally {
     await loadingTask.destroy();
   }
   // Form-feed preserves the page boundary for Strategy 1.4 segmentation and
   // Evidence Span page locators while remaining readable as plain text.
-  return pages.join("\n\f\n");
+  return { text: pages.map((page) => page.text).join("\n\f\n"), pages };
+}
+
+export async function extractPdfText(bytes) {
+  return (await extractPdfDocument(bytes)).text;
 }
 
 export async function extractWordText(bytes) {
@@ -518,6 +554,22 @@ function safeExtension(filename, mimeType) {
 
 function normalizeExtractedText(value) {
   return String(value || "").replace(/\u0000/g, "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function normalizePdfExtraction(value) {
+  if (value && typeof value === "object" && Array.isArray(value.pages)) {
+    const pages = value.pages.map((page, index) => {
+      const text = normalizeExtractedText(page?.text);
+      return { pageNumber: Number(page?.pageNumber) || index + 1, text, textChars: text.length,
+        hasVisualContent: Boolean(page?.hasVisualContent) };
+    });
+    return { text: pages.map((page) => page.text).join("\n\f\n"), pages };
+  }
+  const pages = String(value || "").split(/\f/u).map((text, index) => {
+    const normalized = normalizeExtractedText(text);
+    return { pageNumber: index + 1, text: normalized, textChars: normalized.length, hasVisualContent: false };
+  });
+  return { text: pages.map((page) => page.text).join("\n\f\n"), pages };
 }
 
 function joinText(...values) { return values.map(normalizeExtractedText).filter(Boolean).join("\n\n"); }

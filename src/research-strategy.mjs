@@ -28,11 +28,15 @@ export function segmentSource(source, { maxChars = 6_000 } = {}) {
   const segments = pieces.map((piece, index) => makeSegment(source.id, piece, index));
   for (const [index, asset] of (source.assets || []).entries()) {
     if (!asset || !["image", "video_cover", "video"].includes(asset.kind)) continue;
-    const type = asset.kind === "video" ? "video_chapter" : "image";
+    const pdfPages = asset.provenance?.documentKind === "pdf" && Array.isArray(asset.provenance?.pdfPages)
+      ? asset.provenance.pdfPages.map(Number).filter((value) => Number.isInteger(value) && value > 0) : [];
+    const type = pdfPages.length ? "pdf_page" : asset.kind === "video" ? "video_chapter" : "image";
     const sequence = segments.length;
     segments.push(makeSegment(source.id, {
-      type, text: asset.alt_text || asset.original_filename || "", title: asset.original_filename || `Asset ${index + 1}`,
-      assetId: asset.id, imageIndex: asset.kind === "video" ? null : index + 1,
+      type, text: pdfPages.length ? `PDF visual evidence on page${pdfPages.length === 1 ? "" : "s"} ${pdfPages.join(", ")}.`
+        : asset.alt_text || asset.original_filename || "", title: asset.original_filename || `Asset ${index + 1}`,
+      assetId: asset.id, imageIndex: pdfPages.length || asset.kind === "video" ? null : index + 1,
+      pageStart: pdfPages.length ? Math.min(...pdfPages) : null, pageEnd: pdfPages.length ? Math.max(...pdfPages) : null,
     }, sequence));
   }
   if (!segments.length) segments.push(makeSegment(source.id, { type: "other", text: "", title: source.title || "Source" }, 0));

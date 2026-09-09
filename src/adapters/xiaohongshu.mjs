@@ -1,4 +1,5 @@
 import { canonicalizeUrl, sha256, truncate } from "../utils.mjs";
+import { estimateSourceProcessing } from "../source-preflight.mjs";
 
 const ALLOWED_HOSTS = new Set(["www.xiaohongshu.com", "xiaohongshu.com"]);
 const AUTHORIZED_ORIGINS = new Set(["xhs_manual_extension", "xhs_favorites_sync"]);
@@ -20,7 +21,6 @@ export function normalizeXiaohongshuCapture(input) {
   }
 
   const rawText = String(input.text || "").trim();
-  if (rawText.length < 20) throw new ValidationError("The current page did not expose enough note text to save.");
 
   const canonicalUrl = canonicalizeUrl(url.pathname.startsWith("/board/")
     ? `https://www.xiaohongshu.com/explore/${externalId}`
@@ -34,7 +34,12 @@ export function normalizeXiaohongshuCapture(input) {
   ]);
   const rawHtml = String(input.html || "");
   const completeness = normalizeCompleteness(input.completeness, { rawText, rawHtml, assets });
+  if (rawText.length < 20 && assets.length === 0) {
+    throw new ValidationError("The current page did not expose usable note text or media to save.");
+  }
   const rights = authorizedRights(acquisitionOrigin);
+
+  const processingEstimate = estimateSourceProcessing({ rawText, assets });
 
   return {
     adapter: "xiaohongshu",
@@ -49,6 +54,7 @@ export function normalizeXiaohongshuCapture(input) {
     rawHtml,
     assets,
     completeness,
+    submissionMetadata: { processingEstimate },
     acquisitionOrigin,
     syncScopeKey: truncate(input.syncScopeKey || input.client?.syncScopeKey, 500),
     rights,

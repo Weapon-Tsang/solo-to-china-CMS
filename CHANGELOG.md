@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - audit requirements 1.3
+## 1.17.23 - Unreleased (audit requirements 1.3)
 
 - Persist structured extraction input manifests so image/video coverage uses submitted asset evidence rather than method-name guesses; legacy records remain explicitly unknown.
 - Separate Vertex Batch inference completion, output reading, item ingestion, quarantine, and cleanup so transient Cloud Storage failures resume without repeated inference or premature deletion.
@@ -17,6 +17,10 @@
 - Fence editorial assignments by explicit Entity scope and typed predicates/relations, expose per-Fact include/exclude reasons, rank automatic type candidates with confidence, and preserve operator type overrides.
 - Cancel and invalidate stale detail requests, and report full/partial/failed dashboard refresh outcomes without replacing a newer dialog or claiming false success.
 - Add bounded adaptive account/client-source login throttling, generic failure responses, password-free audit events, unknown-account timing equalization, and an explicit trusted-proxy header policy.
+- Replace database-only backups with hashed database-and-content snapshots, database-file reference verification, versioned rollback metadata, and an isolated mock delivery restore drill.
+- Consolidate Node 24 tests, static/build checks, fixed-SHA Frontend contracts, version alignment, backup drills, and explicit offline/unverified quality dimensions into one release gate and CI workflow.
+- Add media-aware source admission, deterministic processing-scope estimates and manual start for high-cost captures; reject missing or unsupported evidence before a model call.
+- Preserve PDF text and visual-page inventories with page locators, route scanned/chart pages through the existing Vertex document input, and avoid automatic whole-document OCR.
 
 ## 1.17.11 - 2026-09-09
 

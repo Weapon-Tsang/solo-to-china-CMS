@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "nodeMajor": 24,
+  "frontend": {
+    "repository": "https://github.com/Weapon-Tsang/solo-to-china",
+    "commitSha": "f44ce1092ced93dfb47d9b3eae83d0d5e4b97086",
+    "contractVersion": "1.3.0"
+  },
+  "testDiscovery": {
+    "command": "node --test",
+    "scope": "All test/**/*.test.mjs files, including later B04-B06 and C01-C05 additions, use this single gate."
+  },
+  "performance": {
+    "baseline": {
+      "recordedAt": "2026-09-10",
+      "platform": "Windows, Node 24.14.0",
+      "command": "npm test",
+      "sample": "243 tests from the untouched v1.3 starting HEAD",
+      "durationMs": 6950
+    },
+    "unitTestWarningMs": 30000,
+    "unitTestFailureMs": 120000,
+    "isolatedSmokeFailureMs": 15000,
+    "policy": "Critical factual or structural failures always block. Duration warnings do not trigger content/model retry loops."
+  },
+  "qualityDimensions": {
+    "schemaSyntax": "offline_gate",
+    "bodyFactRelationships": "offline_gate",
+    "technicalAccessibility": "cms_and_contract_only_until_published_fixture",
+    "searchPerformance": "not_offline_verifiable"
+  }
+}

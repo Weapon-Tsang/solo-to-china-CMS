@@ -67,8 +67,8 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 | A13 | 1.3 | completed | `36a2ec0` | Migration 48; entity/predicate-scoped selection and explainable classification verified |
 | A14 | 1.3 | completed | `36a2ec0` | Abortable latest-detail requests and truthful refresh outcomes verified |
 | A16 | 1.3 | completed | `36a2ec0` | Bounded adaptive account/source login throttle and trusted-proxy policy verified |
-| B10 | 1.3 | pending | `d642f0f` | Full-system backup manifest and restore; safety principles already active |
-| B11 | 1.3 | pending | `d642f0f` | Extend existing offline release gate; baseline captured above |
+| B10 | 1.3 | completed | `8005821` | Hashed v2 database/content snapshot and side-effect-free restore drill verified |
+| B11 | 1.3 | completed | `8005821` | Consolidated Node 24/fixed-SHA/version/backup gate and CI verified |
 | B03 | 1.3 | pending | `d642f0f` | Media-aware preflight and mixed PDF evidence |
 | B04 | 1.3 | pending | `d642f0f` | Evidence-bounded English quality fixtures and gates |
 | B05 | 1.3 | pending | `d642f0f` | Frozen stage policy, bounded repair, full attempt cost ledger |
@@ -210,6 +210,53 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 - Fifth-batch regression checkpoint: 297 tests passed; `npm run check` passed;
   `npm run release:check` passed 39 mandatory checks with 0 failures and 4
   documented environment warnings. The clean schema chain is now 1-48.
-- Current task: B10.
-- Next action: extend the verified SQLite snapshot into a full-system backup
-  manifest and non-mutating restore drill before proceeding to B11.
+- Completed B10: backups are atomic v2 snapshot directories containing a
+  `VACUUM INTO` database image, all source-upload/generated-media files and any
+  additional locally referenced file. The manifest records every size/hash and
+  DB row/column mapping, consistency window, app/schema/strategy/code rollback
+  identity, Secret Manager key names without values, and local/offsite retention
+  policy. Verification recomputes hashes; the isolated drill copies the whole
+  snapshot, opens every evidence/draft-media reference and advances a recovered
+  draft to `ready_for_wordpress` through a local mock with zero model/WordPress
+  calls. Deletion and same-size corruption fixtures both fail. Deployment now
+  creates a `pre-upgrade` snapshot before container replacement. Verification:
+  4 backup/maintenance tests and `npm run check` passed. A real ignored local
+  snapshot at `backups/solo-to-china-2026-09-09T21-24-07-713Z.snapshot` also
+  verified/drilled; its source DB is schema 35 with 3 Sources, 26 Claims, no
+  local file references and no draft, so its delivery probe correctly reported
+  `not_applicable` rather than inventing content.
+- Completed B11: `config/release-gate.json` records the Node floor, initial
+  243-test/6.95-second Windows baseline and warning/failure budgets, quality
+  dimensions and fixed Frontend revision. The adjacent Frontend working tree was
+  not modified: the gate reads Contract files from the Git object at the fixed
+  SHA. The previous deployed SHA was rejected because it exposed Contract 1.1.0;
+  deployment, CI and the gate now agree on verified Contract 1.3.0 commit
+  `f44ce1092ced93dfb47d9b3eae83d0d5e4b97086`. Git-normalized terminal newline
+  reconstruction is accepted only when it matches the Contract-declared exact
+  Registry checksum. Release metadata now blocks version drift across package,
+  source version, extension, migration, strategy, handoff, changelog, deployment
+  and CI. `npm run release:check` passed 44 mandatory checks with 0 failures,
+  4 warnings and 4 explicitly untested/unconfigured conclusions; real services
+  were not called and final theme HTML/search outcomes were not claimed.
+- Completed B03: intake now evaluates usable evidence rather than a text-length
+  proxy, so a short selected note with a complete image can enter the media path
+  while empty captures remain rejected. A deterministic technical estimate names
+  text segments, media inputs, PDF pages, bytes and expected extraction calls;
+  high-cost captures are stored without queueing until the operator uses the
+  Source-detail `开始提取` action. Exact duplicates remain idempotent. PDF parsing
+  records every page's embedded-text/visual state, retains form-feed page
+  boundaries, and creates one existing Vertex document input plus a page-located
+  `pdf_page` segment for chart/scanned pages instead of launching blanket OCR or
+  asking for re-export. Preflight verifies configured-root file existence, size,
+  MIME and provider modality before any model call. Existing Editorial Assignment
+  acquisition requests remain bounded to its selected destination, target Entities
+  and missing field/time/route evidence; no demand discovery or topic generation
+  was added. Verification: 4 dedicated counterexamples plus 31 capture/manual/
+  pipeline regressions passed; `npm run check` passed.
+- Sixth-batch regression checkpoint: 303 tests passed; `npm run check` passed;
+  `npm run release:check` passed 44 mandatory checks with 0 failures, 4 warnings
+  and 4 explicit offline/unconfigured conclusions. The clean schema chain remains
+  1-48; B10/B11/B03 did not require a database migration.
+- Current task: B04.
+- Next action: review the article fact-coverage and reader-promise boundary for
+  the B04 acceptance cases before making its minimum changes.

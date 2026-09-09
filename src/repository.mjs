@@ -14,6 +14,7 @@ import {
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
 import { AI_JOB_TYPES, classifyBatchFailure, isProviderPressure } from "./job-policy.mjs";
 import { pageBlockSignature } from "./evidence-validator.mjs";
+import { estimateSourceProcessing } from "./source-preflight.mjs";
 export { pageBlockSignature } from "./evidence-validator.mjs";
 import {
   EDITORIAL_ASSIGNMENT_TYPES, evaluateEditorialAssignment, normalizeEditorialAssignmentInput,
@@ -355,7 +356,12 @@ export class Repository {
     const contentHash = captureContentHash(capture);
     const sourceKind = capture.sourceKind || (capture.adapter === "xiaohongshu" ? "xiaohongshu_note" : "manual_source");
     const submittedUrl = capture.submittedUrl || capture.canonicalUrl;
-    const submissionMetadata = capture.submissionMetadata || {};
+    const submissionMetadata = { ...(capture.submissionMetadata || {}) };
+    submissionMetadata.processingEstimate ||= estimateSourceProcessing(capture, {
+      imageBatchSize: this.contentConfig.imageBatchSize,
+      textSegmentMaxChars: this.contentConfig.sourceTextSegmentMaxChars,
+    });
+    const requiresManualStart = Boolean(submissionMetadata.processingEstimate?.requiresManualStart);
     const completeness = capture.completeness || { overall: "complete" };
     const completenessStatus = ["complete", "partial_retryable", "partial_needs_attention"].includes(completeness.overall)
       ? completeness.overall : "complete";
@@ -470,7 +476,7 @@ export class Repository {
           .run(id("capture_version"), sourceId, captureVersion, capture.capturedAt, capture.rawText, capture.rawHtml,
             JSON.stringify(capture), JSON.stringify(capture.assets || []), contentHash, completenessStatus,
             JSON.stringify(completeness), acquisitionOrigin, syncScopeKey, extensionVersion, timestamp);
-        if (completenessStatus === "complete") {
+        if (completenessStatus === "complete" && !requiresManualStart) {
           this.enqueue("extract_source", sourceId, { dedupeKey: `extract_source:${sourceId}:${captureVersion}` });
         }
       }
@@ -481,7 +487,9 @@ export class Repository {
         id: sourceId,
         accepted: true,
         duplicate,
-        queued: !duplicate && completenessStatus === "complete",
+        queued: !duplicate && completenessStatus === "complete" && !requiresManualStart,
+        requiresManualStart: !duplicate && completenessStatus === "complete" && requiresManualStart,
+        processingEstimate: submissionMetadata.processingEstimate,
         captureVersion,
         completenessStatus,
         queueDepth,
@@ -1003,6 +1011,8 @@ export class Repository {
     const message = String(error?.message || error).slice(0, 4_000);
     if (job.type === "extract_source") {
       this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
+    } else if (!retry && ["extract_source", "preflight_source", "segment_source"].includes(job.type)) {
+      this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
     } else if (!retry && job.type === "plan_content") {
       this.db.prepare("UPDATE topic_candidates SET status='candidate', updated_at=? WHERE id=?").run(now(), job.entity_id);
     } else if (!retry && ["generate_draft", "compose_frontend_page_plan"].includes(job.type)) {
@@ -1017,7 +1027,7 @@ export class Repository {
     const source = this.db.prepare("SELECT * FROM sources WHERE id = ?").get(sourceId);
     if (!source) return null;
     const assets = this.db.prepare("SELECT * FROM source_assets WHERE source_id = ? ORDER BY position").all(sourceId);
-    const files = this.db.prepare("SELECT id, file_kind, original_filename, mime_type, size_bytes, sha256, created_at FROM source_files WHERE source_id = ? ORDER BY created_at, id").all(sourceId);
+    const files = this.db.prepare("SELECT id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at FROM source_files WHERE source_id = ? ORDER BY created_at, id").all(sourceId);
     const structured = this.db.prepare("SELECT * FROM structured_sources WHERE source_id = ?").get(sourceId) || null;
     const claims = this.db.prepare("SELECT * FROM claims WHERE source_id = ? ORDER BY normalized_key").all(sourceId);
     const extractionRuns = this.db.prepare("SELECT * FROM extraction_runs WHERE source_id=? ORDER BY revision DESC").all(sourceId);
@@ -1032,6 +1042,15 @@ export class Repository {
     const family = this.db.prepare(`SELECT sf.*, sfm.relation_type, sfm.overlap_score, sfm.incremental_claim_count, sfm.analysis_json
       FROM source_family_memberships sfm JOIN source_families sf ON sf.id=sfm.family_id WHERE sfm.source_id=?`).get(sourceId) || null;
     return hydrateSource({ source, assets, files, structured, claims, extractionRuns, claimHistory, blueprint, analysis, recommendation, segments, coverage, family, captureVersions });
+  }
+
+  recordSourcePreflight(sourceId, result) {
+    const row = this.db.prepare("SELECT diagnostic_json FROM sources WHERE id=?").get(sourceId);
+    if (!row) return false;
+    const diagnostic = { ...json(row.diagnostic_json, {}), preflight: result };
+    this.db.prepare("UPDATE sources SET diagnostic_json=?,updated_at=? WHERE id=?")
+      .run(JSON.stringify(diagnostic), now(), sourceId);
+    return true;
   }
 
   getSourceAssetPreview(assetId) {
@@ -1100,7 +1119,8 @@ export class Repository {
         item.contentHash, item.semanticHash, timestamp, timestamp, source.capture_version);
       this.db.prepare("UPDATE source_assets SET extraction_status='pending', extraction_error=NULL, processed_at=NULL WHERE source_id=?").run(sourceId);
       this.db.prepare("UPDATE sources SET status='processing', diagnostic_json=?, updated_at=? WHERE id=?")
-        .run(JSON.stringify({ strategy_version: this.strategyVersion, stage: "segmented", segment_count: values.length, asset_count: source.assets.length }), timestamp, sourceId);
+        .run(JSON.stringify({ ...json(source.diagnostic_json, {}), strategy_version: this.strategyVersion,
+          stage: "segmented", segment_count: values.length, asset_count: source.assets.length }), timestamp, sourceId);
     });
     return values;
   }

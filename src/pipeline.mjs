@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { markdownToContentBlocks } from "./content-blocks.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
 import { isAiJobType, isProviderPressure } from "./job-policy.mjs";
+import { evaluateSourcePreflight } from "./source-preflight.mjs";
 
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -320,6 +321,19 @@ export class Pipeline {
         case "preflight_source": {
           const source = this.repository.getSource(job.entity_id);
           if (!source) throw new Error(`Source ${job.entity_id} no longer exists.`);
+          const preflight = evaluateSourcePreflight(source, {
+            provider: this.extractor?.config?.provider || "kimi",
+            sourceUploadsDir: this.extractor?.config?.sourceUploadsDir,
+            imageBatchSize: this.extractor?.config?.imageBatchSize,
+            textSegmentMaxChars: this.repository.contentConfig?.sourceTextSegmentMaxChars,
+          });
+          this.repository.recordSourcePreflight?.(source.id, preflight);
+          if (!preflight.ready) {
+            const error = new Error(`Source preflight blocked processing: ${preflight.issues.map((item) => `${item.code}: ${item.message}`).join("; ")}`);
+            error.code = "SOURCE_PREFLIGHT_BLOCKED";
+            error.retryable = false;
+            throw error;
+          }
           this.repository.enqueue("segment_source", source.id);
           break;
         }
