@@ -79,6 +79,32 @@ test("different authors' itinerary routes coexist as alternative recommendations
   assert.equal(structureClaim({ predicate: "itinerary_stops", value: "A -> B" }).cardinality, "MULTI_VALUE");
 });
 
+test("related predicates sharing a model knowledge key remain complementary", () => {
+  const key = "destination.chongqing.city";
+  const relation = classifyClaimPair(
+    { ...claim("Chongqing", { predicate: "city_name" }), normalized_key: key },
+    { ...claim("Chongqing", { predicate: "located_in_city" }), normalized_key: key },
+  );
+  assert.ok(["EXACT_MATCH", "COMPLEMENTARY"].includes(relation.relation));
+  assert.equal(relation.canCoexist, true);
+  assert.equal(relation.reviewType, null);
+});
+
+test("visual descriptions, nearby places, and travel-time estimates are multi-value context", () => {
+  for (const [predicate, left, right] of [
+    ["photo_composition", "framed through a stone opening", "wide riverfront skyline"],
+    ["located_adjacent_to", "the riverfront", "a riverside road"],
+    ["architectural_style", "traditional Chinese pavilions", "Southwestern timber buildings"],
+    ["walking_time", "5 minutes", "10 minutes"],
+    ["transit_duration", "15 minutes", "35 minutes"],
+  ]) {
+    const relation = classifyClaimPair(claim(left, { predicate }), claim(right, { predicate }));
+    assert.equal(relation.canCoexist, true, predicate);
+    assert.equal(relation.reviewType, null, predicate);
+  }
+  assert.equal(structureClaim({ predicate: "walking_time", value: "5 minutes" }).cardinality, "CONTEXT_DEPENDENT");
+});
+
 test("menu items and useful feature lists are multi-value knowledge", () => {
   for (const predicate of ["serves_dish", "associated_food_specialty", "has_feature"]) {
     const relation = classifyClaimPair(claim("option A", { predicate }), claim("option B", { predicate }));
@@ -117,6 +143,16 @@ test("No. 2 place names and semantically represented Chinese guidance do not tri
     predicate: "ride_duration",
     value_text: "4-5 minutes",
   }), null);
+});
+
+test("actionable recommendations and warnings preserve colloquial negation semantics", () => {
+  for (const item of [
+    { source_quote: "Go before 16:00 or after 21:00 so you do not have to squeeze through crowds.", predicate: "recommended_visit_window", value_text: "before 16:00 or after 21:00" },
+    { source_quote: "Do not wear high heels on the steep route.", predicate: "recommended_clothing", value_text: "comfortable flat walking shoes" },
+    { source_quote: "There is no charge for fried rice, fruit, and snacks.", predicate: "complimentary_items", value_text: "fried rice, fruit, and snacks", qualifiers: ["free of charge"] },
+    { source_quote: "Do not board the train in the wrong direction.", predicate: "navigation_caution", value_text: "ensure you board in the correct direction" },
+    { source_quote: "Do not pay the street performer an overpriced photo fee.", predicate: "tourist_trap_warning", value_text: "paid photography and overpriced souvenirs" },
+  ]) assert.equal(detectClaimExtractionIssue(item), null, item.predicate);
 });
 
 test("extraction review checks the complete Claim semantics instead of value text alone", () => {

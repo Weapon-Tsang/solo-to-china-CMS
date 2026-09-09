@@ -76,6 +76,42 @@ test("generic collections and claim-like phrases are related instead of entering
   assert.ok(["related_to", "supports"].includes(relation.relation_type));
 });
 
+test("a model-suggested non-identity relation is retained without asking an editor to merge entities", (t) => {
+  const { repository } = repositoryFixture(t);
+  saveSource(repository, "viewpoint-relation", "Hongyadong photography viewpoint", "A riverbank photo location.");
+  repository.applyEntityResolution("chongqing", {
+    entities: [], claim_updates: [], candidates: [{
+      alias: "Hongyadong photography viewpoint",
+      candidate_entity_key: "attraction.hongyadong_photography_viewpoint",
+      candidate_entity_type: "attraction", candidate_granularity: "specific_entity",
+      proposed_entity_key: "attraction.hongyadong", proposed_canonical_subject: "Hongyadong",
+      proposed_entity_type: "attraction", proposed_granularity: "specific_entity",
+      confidence: 0.74, recommendation: "UNCERTAIN", suggested_relation: "related_to",
+      rationale: "The viewpoint is related to the attraction but is not an alias for it.",
+    }],
+  }, "fixture-model");
+  assert.equal(repository.listEntityMergeCandidates().length, 0);
+  const [relation] = repository.listEntityRelations("chongqing");
+  assert.equal(relation.relation_type, "related_to");
+  assert.equal(repository.listOperationalExceptions().some((item) => item.kind === "entity_identity"), false);
+});
+
+test("startup reconciliation converts legacy relation candidates without merging their identities", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  db.prepare(`INSERT INTO entity_merge_candidates(id,destination_slug,alias,alias_normalized,
+    proposed_entity_key,proposed_canonical_subject,confidence,rationale,status,model,created_at,updated_at,
+    candidate_entity_key,candidate_entity_type,candidate_granularity,proposed_entity_type,proposed_granularity,
+    ai_recommendation,suggested_relation)
+    VALUES ('legacy-relation','chongqing','Grand Theatre Riverbank','grand theatre riverbank',
+      'attraction.chongqing_grand_theatre','Chongqing Grand Theatre',0.72,'Riverbank is part of the theatre site.',
+      'pending','fixture','now','now','attraction.grand_theatre_riverbank','attraction','specific_entity',
+      'attraction','specific_entity','UNCERTAIN','part_of')`).run();
+  assert.equal(repository.reconcileEntityRelationshipCandidates(), 1);
+  assert.equal(repository.listEntityMergeCandidates().length, 0);
+  assert.equal(repository.listEntityRelations("chongqing")[0].relation_type, "part_of");
+  assert.equal(db.prepare("SELECT status FROM entity_merge_candidates WHERE id='legacy-relation'").get().status, "rejected");
+});
+
 test("manual entity merge is audited and can be undone without deleting claims", (t) => {
   const { db, repository } = repositoryFixture(t);
   saveSource(repository, "undo", "Hongya Cave", "Visit after sunset.");

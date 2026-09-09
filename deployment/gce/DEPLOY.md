@@ -29,7 +29,7 @@ From an authenticated Google Cloud shell or workstation, substitute your own val
 $project = "YOUR_PROJECT_ID"
 $region = "us-central1"
 $repo = "solo-to-china"
-$image = "$region-docker.pkg.dev/$project/$repo/engine:1.17.12"
+$image = "$region-docker.pkg.dev/$project/$repo/engine:1.17.13"
 
 gcloud services enable compute.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com --project $project
 gcloud artifacts repositories create $repo --repository-format=docker --location=$region --project=$project
@@ -67,7 +67,7 @@ The cloud package is preconfigured at build time, so the founder does not enter 
 - `https://engine.example.com` presents the application sign-in screen. Do not use a weak default password on an internet-accessible deployment; the provided provisioning script creates a high-entropy initial password in the ignored local output file.
 - `https://capture.example.com/api/health` returns basic health, while `https://capture.example.com/api/dashboard` returns 404.
 - The extension can save a manually opened note and poll its own `/api/sources/{id}` status using `CAPTURE_TOKEN`.
-- Vertex AI Gemini 3.8 Flash is the default multimodal research and writing model on a fresh deployment. Large text/image extraction backlogs use asynchronous Vertex Batch with completion-based updates; video, small tails, and failed items use realtime requests. Kimi K3 and Kimi K2.7 Code remain explicit alternatives in Settings.
+- Vertex AI Gemini 3.8 Flash is the default multimodal research and writing model on a fresh deployment. Large text/image extraction and text coverage-audit backlogs use asynchronous Vertex Batch with completion-based updates; video, small tails, and failed items use realtime requests. Kimi K3 and Kimi K2.7 Code remain explicit alternatives in Settings.
 - With Gemini 3.1 Flash Image configured, an article produces 2-5 original non-factual visual assets and WordPress receives them as uploaded media attachments.
 
 ## Secrets and costs

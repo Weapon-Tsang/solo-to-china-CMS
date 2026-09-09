@@ -69,9 +69,17 @@ export class Pipeline {
       for (const item of run.items) {
         try {
           if (inputFull) throw new Error("Deferred to the next Vertex Batch because the current JSONL input reached its safe memory limit.");
-          const pack = this.repository.getSegmentExtractionPackage(item.segment_id);
-          if (!pack || pack.staleCaptureVersion) throw new Error("Source segment changed before Vertex Batch submission.");
-          const request = await this.extractor.prepareBatchExtraction(pack.source, item.batch_item_id);
+          let request;
+          if (item.type === "audit_segment_coverage") {
+            const pack = this.repository.getSegmentCoveragePackage(item.segment_id);
+            if (!pack || pack.staleCaptureVersion) throw new Error("Source segment changed before Vertex Batch coverage audit submission.");
+            if (pack.expectedModality !== "text") throw new Error("Image and video coverage checks remain on the local completion path.");
+            request = await this.extractor.prepareBatchCoverage(pack, item.batch_item_id);
+          } else {
+            const pack = this.repository.getSegmentExtractionPackage(item.segment_id);
+            if (!pack || pack.staleCaptureVersion) throw new Error("Source segment changed before Vertex Batch submission.");
+            request = await this.extractor.prepareBatchExtraction(pack.source, item.batch_item_id);
+          }
           const requestBytes = Buffer.byteLength(JSON.stringify({ request: request.request })) + 1;
           if (preparedBytes + requestBytes > maximumInputBytes) {
             if (prepared.length) inputFull = true;
@@ -91,9 +99,10 @@ export class Pipeline {
         return false;
       }
       try {
-        const batch = await this.extractor.createExtractionBatch(prepared);
+        const batch = await this.extractor.createExtractionBatch(prepared, { operation: run.jobType || "extract_segment_claims" });
         this.repository.activateVertexBatch(run.id, batch);
-        this.logger.info("pipeline.vertex_batch_submitted", { runId: run.id, providerJobName: batch.name, itemCount: prepared.length, inputBytes: preparedBytes });
+        this.logger.info("pipeline.vertex_batch_submitted", { runId: run.id, jobType: run.jobType,
+          providerJobName: batch.name, itemCount: prepared.length, inputBytes: preparedBytes });
         return true;
       } catch (error) {
         for (const item of run.items) this.repository.releaseVertexBatchItem(run.id, item.id, error);
@@ -127,8 +136,13 @@ export class Pipeline {
       const output = byId.get(item.batch_item_id);
       try {
         if (!output) throw new Error(`Vertex Batch ${state} returned no output for this segment.`);
-        const extraction = this.extractor.parseBatchExtraction(output);
-        this.repository.completeVertexBatchItem(run, item, extraction);
+        if (item.job_type === "audit_segment_coverage") {
+          const assessment = this.extractor.parseBatchCoverage(output);
+          this.repository.completeVertexBatchCoverageItem(run, item, assessment);
+        } else {
+          const extraction = this.extractor.parseBatchExtraction(output);
+          this.repository.completeVertexBatchItem(run, item, extraction);
+        }
       } catch (error) {
         this.repository.releaseVertexBatchItem(run.id, item.job_id, error);
       }
@@ -151,7 +165,9 @@ export class Pipeline {
       const minimum = Math.max(1, Number(this.extractor?.config?.batchMinimumRequests || 20));
       const deferBatchExtraction = Boolean(this.extractor?.batchEnabled
         && this.repository.countVertexBatchEligibleJobs?.() >= minimum);
-      job = this.repository.claimJob({ deferBatchExtraction });
+      const deferBatchCoverage = Boolean(this.extractor?.batchEnabled
+        && this.repository.countVertexBatchEligibleJobs?.("audit_segment_coverage") >= minimum);
+      job = this.repository.claimJob({ deferBatchExtraction, deferBatchCoverage });
       if (!job) return false;
       startedAt = Date.now();
       heartbeatTimer = setInterval(() => {

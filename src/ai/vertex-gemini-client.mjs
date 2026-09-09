@@ -112,7 +112,7 @@ export class VertexGeminiClient {
     return { id, request };
   }
 
-  async createBatch(requests) {
+  async createBatch(requests, { operation = "extract_segment_claims" } = {}) {
     if (!this.batchEnabled) throw new Error("Vertex Batch is not configured.");
     if (!Array.isArray(requests) || !requests.length) throw new Error("Vertex Batch requires at least one request.");
     const accessToken = await this.accessToken();
@@ -130,7 +130,7 @@ export class VertexGeminiClient {
       method: "POST",
       headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
       body: JSON.stringify({
-        displayName: `solo-source-extraction-${batchId.slice(0, 8)}`,
+        displayName: `solo-${String(operation).replace(/[^a-z0-9_-]+/giu, "-").slice(0, 40)}-${batchId.slice(0, 8)}`,
         model: `publishers/google/models/${this.config.model}`,
         inputConfig: { instancesFormat: "jsonl", gcsSource: { uris: [`gs://${bucket}/${inputObject}`] } },
         outputConfig: { predictionsFormat: "jsonl", gcsDestination: { outputUriPrefix: `gs://${bucket}/${outputObjectPrefix}` } },

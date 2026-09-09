@@ -56,7 +56,19 @@ export class KimiExtractor {
     return { ...prepared, attemptedImages: images.attempted, suppliedImages: images.parts.length };
   }
 
-  createExtractionBatch(requests) { return this.client.createBatch(requests); }
+  async prepareBatchCoverage({ segment, extraction, expectedModality = "text" }, batchItemId) {
+    if (!this.batchEnabled) throw new Error("Vertex Batch coverage audit is not configured.");
+    if (expectedModality !== "text") throw new Error("Only text coverage audits use Vertex Batch.");
+    return this.client.prepareBatchRequest({
+      id: batchItemId,
+      name: "segment_claim_coverage_audit",
+      schema: COVERAGE_AUDIT_SCHEMA,
+      instructions: COVERAGE_AUDIT_PROMPT,
+      content: [{ type: "text", text: buildCoverageInput(segment, extraction) }],
+    });
+  }
+
+  createExtractionBatch(requests, options) { return this.client.createBatch(requests, options); }
   getExtractionBatch(name) { return this.client.getBatch(name); }
   readExtractionBatch(batch) { return this.client.readBatchOutput(batch); }
   cleanupExtractionBatch(batch) { return this.client.cleanupBatch(batch); }
@@ -72,6 +84,21 @@ export class KimiExtractor {
         cachedTokens: item.usage?.cachedContentTokenCount ?? null, latencyMs: null, attempts: 1, status: "succeeded", errorCode: null });
     } catch { /* batch telemetry must never fail extraction import */ }
     return { result: sanitizeResult(item.output), method: "vertex_batch", model: this.config.model };
+  }
+
+  parseBatchCoverage(item) {
+    if (item?.error) throw Object.assign(new Error(item.error), { retryable: true, code: item.code || "VERTEX_BATCH_ITEM_FAILED" });
+    const errors = validateJsonSchema(item?.output, COVERAGE_AUDIT_SCHEMA);
+    if (errors.length) throw Object.assign(new Error(`Vertex Batch returned invalid coverage-audit JSON: ${JSON.stringify(errors.slice(0, 10))}`),
+      { retryable: true, code: "INVALID_MODEL_OUTPUT" });
+    try {
+      this.config.onModelCall?.({ stage: "segment_claim_coverage_audit", provider: "vertex", model: this.config.model,
+        inputTokens: item.usage?.promptTokenCount ?? null, outputTokens: item.usage?.candidatesTokenCount ?? null,
+        cachedTokens: item.usage?.cachedContentTokenCount ?? null, latencyMs: null, attempts: 1, status: "succeeded", errorCode: null });
+    } catch { /* batch telemetry must never fail audit import */ }
+    return { output: { ...sanitizeCoverageAudit(item.output), modality: {
+      expected: "text", received: "text", attempted: 0,
+    } }, model: this.config.model };
   }
 
   async extract(source) {

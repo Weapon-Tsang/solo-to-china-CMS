@@ -11,7 +11,8 @@ const SOFT_PREDICATES = new Set([
 // They are intentionally multi-valued: two good itineraries or two dishes can
 // both be true even when their values differ. Treating them as a single official
 // fact creates an O(n²) wall of false conflicts as more travel notes arrive.
-const ALTERNATIVE_PREDICATE_PATTERN = /(?:^|_)(?:itinerary|route|stops?|sequence|recommended_day|suggested_route|walking_route|serves?_dish|serves?_food|food_specialty|associated_food|features?|has_feature|photo(?:graphy)?_spots?|viewpoints?)(?:_|$)/iu;
+const ALTERNATIVE_PREDICATE_PATTERN = /(?:^|_)(?:itinerary|route|stops?|sequence|recommended_day|suggested_route|walking_route|recommended_visit_window|recommended_visit_time|visit_time|serves?_dish|serves?_food|serves?_cuisine|cuisine_type|food_specialty|associated_food|complimentary_items|features?|has_feature|architectural_(?:style|features?)|photo(?:graphy)?_(?:spots?|perspectives?|composition|opportunit(?:y|ies))|viewpoints?|viewing_framing|viewed_through|viewable_through|offers?_view|photo_spot_for|located_(?:near|adjacent_to|in|at)|displays?_(?:text|signage|illuminated_text|led_greeting)|led_display_text|features?_led_display|safety_(?:precaution|hazard)|tourist_trap_warning|shopping_warning|quality_warning|navigation_caution|crowd_condition)(?:_|$)/iu;
+const DURATION_ESTIMATE_PREDICATE_PATTERN = /(?:^|_)(?:walking|transit|travel|ride|light_rail)_(?:time|duration)(?:_minutes)?(?:_|$)/iu;
 
 // These patterns describe proposition polarity and material limits. Contrastive
 // wording (for example “different from daytime”) and colloquial intensifiers are
@@ -129,6 +130,19 @@ export function classifyClaimPair(left, right) {
       "Positive descriptions of the same feature can coexist; they provide different wording or additional detail.", a, b);
   }
 
+  // A normalized knowledge key is an indexing hint, not proof that two
+  // differently-shaped predicates assert the same fact. Entity resolution may
+  // intentionally group related facts such as "located_at" and "located_in",
+  // or "photo_composition" and "viewed_through". Only canonical aliases (price,
+  // hours, reservation, and future typed facts) are allowed to cross predicate
+  // boundaries and conflict. Everything else remains complementary.
+  if (!sameCanonicalPredicate) {
+    const bothRecommendations = a.structured.claim_kind === "SOFT_RECOMMENDATION"
+      && b.structured.claim_kind === "SOFT_RECOMMENDATION";
+    return result(bothRecommendations ? "COMPATIBLE" : "COMPLEMENTARY", true,
+      "The claims describe related but different properties and may coexist; a shared knowledge key alone is not a contradiction.", a, b);
+  }
+
   const opposingPolarity = hasNegation(a.value_text) !== hasNegation(b.value_text);
   if (sameScope && opposingPolarity && sameDecisionConcept(a, b)) {
     return result("CONFLICT", false, "The claims make opposite assertions under a compatible scope.", a, b, "CLAIM_CONFLICT");
@@ -200,7 +214,9 @@ function result(relation, canCoexist, reason, a, b, reviewType = null) {
 }
 
 function inferClaimKind(predicate, value) {
-  if (ALTERNATIVE_PREDICATE_PATTERN.test(normalizePredicate(predicate))) return "SOFT_RECOMMENDATION";
+  const normalizedPredicate = normalizePredicate(predicate);
+  if (ALTERNATIVE_PREDICATE_PATTERN.test(normalizedPredicate)) return "SOFT_RECOMMENDATION";
+  if (DURATION_ESTIMATE_PREDICATE_PATTERN.test(normalizedPredicate)) return "CONTEXT_DEPENDENT";
   if (/recommend|best|good|worth|photo|visit.?time|体验|推荐|适合|值得/iu.test(`${predicate} ${value}`)) return "SOFT_RECOMMENDATION";
   if (isFeaturePredicate(predicate)) return "CONTEXT_DEPENDENT";
   if (/depend|season|audience|condition|视情况|取决于/iu.test(`${predicate} ${value}`)) return "CONTEXT_DEPENDENT";
@@ -408,8 +424,9 @@ function semanticNegationCovered(source, normalizedClaim, claim) {
   const normalized = normalizeText(normalizedClaim);
   const predicate = normalizePredicate(claim?.predicate);
   if (/\b(?:not|never|no|without|avoid|avoids|distrust|unnecessary|unsuitable|inaccessible|difficulty|prohibit|against|rather than|sensitive|non spicy)\b/iu.test(normalized)) return true;
-  if (/(?:^|_)(?:avoid|avoidance|recommended_against|difficulty|risk|time_to_avoid|crowd_advantage)(?:_|$)/iu.test(predicate)) return true;
+  if (/(?:^|_)(?:avoid|avoidance|recommended_against|difficulty|risk|warning|caution|hazard|tourist_trap|time_to_avoid|crowd_advantage|crowd_condition|photo_fee_charged|cost_estimate|complimentary_items)(?:_|$)/iu.test(predicate)) return true;
   if (ALTERNATIVE_PREDICATE_PATTERN.test(predicate) && /\b(?:save|before|after|instead|rather|outside|end)\b/iu.test(normalized)) return true;
+  if (/\b(?:free of charge|complimentary|comfortable flat (?:walking )?shoes?|fewer crowds?|overcrowd(?:ed|ing)?|expensive|low quality|correct direction)\b/iu.test(normalized)) return true;
   if (/不是浪得虚名|不是.{0,8}(?:广告|广)|不用去.+也(?:能|可)|最难的不是.+而是|不要走错/iu.test(sourceText)) return true;
   if (/不是免费/iu.test(sourceText) && /(?:^|_)(?:ticket_price|admission_fee|fare|cost)(?:_|$)/iu.test(predicate) && /\d/u.test(normalized)) return true;
   return false;

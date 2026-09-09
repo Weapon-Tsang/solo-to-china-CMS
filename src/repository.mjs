@@ -555,31 +555,38 @@ export class Repository {
     return runs.length;
   }
 
-  countVertexBatchEligibleJobs() {
+  countVertexBatchEligibleJobs(type = "extract_segment_claims") {
+    if (!["extract_segment_claims", "audit_segment_coverage"].includes(type)) return 0;
     return Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs j
       JOIN source_segments ss ON ss.id=j.entity_id
-      WHERE j.type='extract_segment_claims' AND j.status='queued' AND j.available_at<=?
-        AND ss.segment_type<>'video_chapter'
+      WHERE j.type=? AND j.status='queued' AND j.available_at<=?
+        AND ((j.type='extract_segment_claims' AND ss.segment_type<>'video_chapter')
+          OR (j.type='audit_segment_coverage' AND ss.asset_id IS NULL))
         AND NOT EXISTS (
           SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
           WHERE vbi.job_id=j.id AND vbr.status IN ('preparing','submitted')
-        )`).get(this.jobTimestamp())?.count || 0);
+        )`).get(type, this.jobTimestamp())?.count || 0);
   }
 
   reserveVertexBatchJobs({ minimum = 20, maximum = 1_000, model = '', location = 'global' } = {}) {
     return transaction(this.db, () => {
       if (this.db.prepare("SELECT 1 FROM vertex_batch_runs WHERE status IN ('preparing','submitted') LIMIT 1").get()) return null;
       const timestamp = this.jobTimestamp();
+      const minimumCount = Math.max(1, Number(minimum || 20));
+      const jobType = ["extract_segment_claims", "audit_segment_coverage"]
+        .find((type) => this.countVertexBatchEligibleJobs(type) >= minimumCount);
+      if (!jobType) return null;
       const rows = this.db.prepare(`SELECT j.* FROM jobs j
         JOIN source_segments ss ON ss.id=j.entity_id
-        WHERE j.type='extract_segment_claims' AND j.status='queued' AND j.available_at<=?
-          AND ss.segment_type<>'video_chapter'
+        WHERE j.type=? AND j.status='queued' AND j.available_at<=?
+          AND ((j.type='extract_segment_claims' AND ss.segment_type<>'video_chapter')
+            OR (j.type='audit_segment_coverage' AND ss.asset_id IS NULL))
           AND NOT EXISTS (
             SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
             WHERE vbi.job_id=j.id AND vbr.status IN ('preparing','submitted')
           )
-        ORDER BY j.created_at ASC LIMIT ?`).all(timestamp, Math.max(1, Number(maximum || 1_000)));
-      if (rows.length < Math.max(1, Number(minimum || 20))) return null;
+        ORDER BY j.created_at ASC LIMIT ?`).all(jobType, timestamp, Math.max(1, Number(maximum || 1_000)));
+      if (rows.length < minimumCount) return null;
       const runId = id("vertex_batch");
       this.db.prepare(`INSERT INTO vertex_batch_runs(id,model,location,status,next_poll_at,created_at,updated_at)
         VALUES (?,?,?,'preparing',?,?,?)`).run(runId, model, location, timestamp, timestamp, timestamp);
@@ -589,7 +596,7 @@ export class Repository {
         const batchItemId = `batch_item_${sha256(`${runId}:${row.id}`).slice(0, 24)}`;
         addItem.run(runId, row.id, row.entity_id, batchItemId);
       }
-      return { id: runId, model, location, status: 'preparing', items: rows.map((row, index) => ({
+      return { id: runId, model, location, status: 'preparing', jobType, items: rows.map((row) => ({
         ...row, segment_id: row.entity_id,
         batch_item_id: `batch_item_${sha256(`${runId}:${row.id}`).slice(0, 24)}`,
       })) };
@@ -624,7 +631,8 @@ export class Repository {
     const run = this.db.prepare(`SELECT * FROM vertex_batch_runs WHERE status='submitted' AND next_poll_at<=?
       ORDER BY created_at LIMIT 1`).get(this.jobTimestamp());
     if (!run) return null;
-    return { ...run, items: this.db.prepare("SELECT * FROM vertex_batch_items WHERE run_id=? AND status='submitted' ORDER BY rowid").all(run.id) };
+    return { ...run, items: this.db.prepare(`SELECT vbi.*,j.type AS job_type FROM vertex_batch_items vbi
+      JOIN jobs j ON j.id=vbi.job_id WHERE vbi.run_id=? AND vbi.status='submitted' ORDER BY vbi.rowid`).all(run.id) };
   }
 
   deferVertexBatchPoll(runId, providerState, delayMs = 60_000) {
@@ -646,6 +654,24 @@ export class Repository {
         WHERE id=? AND status='queued'`).run(timestamp, durationMs, timestamp, item.job_id);
     });
     return true;
+  }
+
+  completeVertexBatchCoverageItem(run, item, assessment) {
+    const timestamp = this.jobTimestamp();
+    const audit = this.auditSegmentCoverage(item.segment_id, assessment?.output || assessment);
+    if (audit.status === "retry_required") this.enqueue("retry_segment_extraction", item.segment_id);
+    else if (audit.status !== "stale" && this.sourceCoverageReady(audit.sourceId)) {
+      this.enqueue("finalize_source_extraction", audit.sourceId);
+    }
+    const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(item.job_id);
+    const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
+    transaction(this.db, () => {
+      this.db.prepare("UPDATE vertex_batch_items SET status='succeeded',last_error='',completed_at=? WHERE run_id=? AND job_id=?")
+        .run(timestamp, run.id, item.job_id);
+      this.db.prepare(`UPDATE jobs SET status='succeeded',completed_at=?,duration_ms=?,last_error=NULL,updated_at=?
+        WHERE id=? AND status='queued'`).run(timestamp, durationMs, timestamp, item.job_id);
+    });
+    return audit;
   }
 
   releaseVertexBatchItem(runId, jobId, error) {
@@ -674,7 +700,7 @@ export class Repository {
     return Number(this.db.prepare("SELECT COUNT(*) AS count FROM vertex_batch_runs WHERE status IN ('preparing','submitted')").get()?.count || 0);
   }
 
-  claimJob({ deferBatchExtraction = false } = {}) {
+  claimJob({ deferBatchExtraction = false, deferBatchCoverage = false } = {}) {
     return transaction(this.db, () => {
       const timestamp = this.jobTimestamp();
       const providerReady = this.clock().getTime() >= this.providerBackoffUntil;
@@ -687,6 +713,7 @@ export class Repository {
         SELECT * FROM jobs
         WHERE status = 'queued' AND available_at <= ?
           AND (? = 0 OR type <> 'extract_segment_claims')
+          AND (? = 0 OR type <> 'audit_segment_coverage')
           AND NOT EXISTS (
             SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
             WHERE vbi.job_id=jobs.id AND vbr.status IN ('preparing','submitted')
@@ -720,7 +747,8 @@ export class Repository {
           END,
           created_at ASC
         LIMIT 1
-      `).get(timestamp, deferBatchExtraction ? 1 : 0, providerReady ? 1 : 0, ...AI_JOB_TYPES);
+      `).get(timestamp, deferBatchExtraction ? 1 : 0, deferBatchCoverage ? 1 : 0,
+        providerReady ? 1 : 0, ...AI_JOB_TYPES);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
       const claimed = this.db.prepare(`
@@ -1787,9 +1815,16 @@ export class Repository {
           candidate_entity_type: candidateMetadata.entityType, candidate_granularity: candidateMetadata.granularity,
           proposed_entity_type: proposedMetadata.entityType, proposed_granularity: proposedMetadata.granularity,
         });
-        if (assessment.decision === "DO_NOT_MERGE") {
+        const suggestedRelation = ENTITY_RELATION_TYPES.has(item?.suggested_relation)
+          ? item.suggested_relation : assessment.suggestedRelation;
+        const relationInsteadOfIdentity = suggestedRelation
+          && !["same_as", "alias_of"].includes(suggestedRelation)
+          && String(item?.recommendation || "UNCERTAIN").toUpperCase() !== "MERGE";
+        if (assessment.decision === "DO_NOT_MERGE" || relationInsteadOfIdentity) {
           const candidateEntityKey = normalizeEntityKey(item?.candidate_entity_key);
-          if (candidateEntityKey && assessment.suggestedRelation) this.upsertEntityRelation(destinationSlug, candidateEntityKey, assessment.suggestedRelation, entityKey, "model", confidence, assessment.reasons.join("; "));
+          if (candidateEntityKey && suggestedRelation) this.upsertEntityRelation(destinationSlug, candidateEntityKey,
+            suggestedRelation, entityKey, "model", confidence,
+            String(item?.rationale || assessment.reasons.join("; ")).slice(0, 1_000));
           continue;
         }
         const candidateId = `entity_candidate_${sha256(`${destinationSlug}:${normalizeEntityAlias(alias)}:${entityKey}`).slice(0, 24)}`;
@@ -1809,7 +1844,7 @@ export class Repository {
           String(item?.rationale || "Possible multilingual alias requires an operator decision.").slice(0, 1_000), model, timestamp, timestamp,
           normalizeEntityKey(item?.candidate_entity_key), candidateMetadata.entityType, candidateMetadata.granularity,
           proposedMetadata.entityType, proposedMetadata.granularity, JSON.stringify({ candidate: candidateMetadata.location, proposed: proposedMetadata.location }),
-          String(item?.recommendation || "UNCERTAIN").toUpperCase(), ENTITY_RELATION_TYPES.has(item?.suggested_relation) ? item.suggested_relation : assessment.suggestedRelation);
+          String(item?.recommendation || "UNCERTAIN").toUpperCase(), suggestedRelation);
       }
     });
     this.resolveEntitiesDeterministically(destinationSlug);
@@ -3102,6 +3137,7 @@ export class Repository {
 
   enqueueStartupReconciliation({ wordpressEnabled = false, contractAware = false } = {}) {
     this.reconcileCoverageAuditFalsePositives();
+    this.reconcileEntityRelationshipCandidates();
     const researchSlugs = new Set(this.db.prepare("SELECT DISTINCT destination_slug FROM structured_sources").all().map((row) => row.destination_slug));
     for (const slug of researchSlugs) this.enqueue("rebuild_knowledge", slug);
     for (const row of this.db.prepare(`SELECT s.id FROM sources s
@@ -3154,6 +3190,27 @@ export class Repository {
       }
     });
     return acceptedSourceIds.size;
+  }
+
+  reconcileEntityRelationshipCandidates() {
+    const rows = this.db.prepare(`SELECT * FROM entity_merge_candidates
+      WHERE status='pending' AND suggested_relation IS NOT NULL
+        AND suggested_relation NOT IN ('same_as','alias_of')`).all();
+    let resolved = 0;
+    for (const row of rows) {
+      const subjectKey = row.candidate_entity_key
+        || `other.candidate_${sha256(`${row.destination_slug}:${row.alias_normalized}`).slice(0, 16)}`;
+      const relation = this.upsertEntityRelation(row.destination_slug, subjectKey, row.suggested_relation,
+        row.proposed_entity_key, "model", Number(row.confidence || 0),
+        String(row.rationale || "模型判断两个名称有关联，但没有足够证据把它们合并成同一实体。").slice(0, 1_000));
+      if (!relation) continue;
+      const timestamp = now();
+      this.db.prepare(`UPDATE entity_merge_candidates SET status='rejected',
+        decision_reason='Automatically retained as a non-identity entity relation; no merge was performed.',
+        decided_at=?,updated_at=? WHERE id=? AND status='pending'`).run(timestamp, timestamp, row.id);
+      resolved += 1;
+    }
+    return resolved;
   }
 
   resetDerivedResearchAndRequeue() {
@@ -3735,9 +3792,9 @@ export class Repository {
       items.push(item);
     }
     for (const row of this.listEntityMergeCandidates("pending")) {
-      const item = exceptionItem("entity_identity", row.id, "warning", "Entity identity needs confirmation",
+      const item = exceptionItem("entity_identity", row.id, "warning", "两个名称可能指同一对象，需要确认",
         `${row.alias} → ${row.proposed_canonical_subject}`,
-        row.rationale || "The model found a possible multilingual reference to the same destination entity.",
+        row.rationale || "系统发现两个名称可能是同一地点或商家，但现有证据不足以安全合并。确认前，两边的信息都会原样保留，不会丢失或互相覆盖。",
         false, row.updated_at);
       item.entity_alias = {
         id: row.id, destinationSlug: row.destination_slug, alias: row.alias,
