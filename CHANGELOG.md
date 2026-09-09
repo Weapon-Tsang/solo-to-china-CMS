@@ -27,6 +27,9 @@
 - Keep SEO titles and descriptions evidence-bounded and independently editable without mechanical search-snippet truncation; version page and SEO artifacts so metadata-only edits reuse research and writing while invalidating final checks.
 - Synchronize visible metadata, canonical URLs, Article/WebPage/Breadcrumb schema and optional visible FAQ from one deterministic source; omit invented authors, dates, products, ratings and private media URLs.
 - Select internal links only from relevant published same-site WordPress inventory, validate real anchors and targets, report duplicate risk without automatic consolidation, and invalidate only page blocks affected by route/status changes.
+- Persist WordPress media URL, intrinsic dimensions, MIME, bytes, SHA-256 and responsive derivatives; deduplicate the same source asset, enforce evidence/alt/public-URL rules, and render one high-priority first image with lazy later images in the Legacy path.
+- Validate fixed published/draft HTML fixtures across visible body, one-H1, SEO, schema, link/media, sitemap, robots and device-equivalence dimensions while keeping production HTML, indexing, ranking, CWV and AI citation conclusions explicitly separate.
+- Add a first-time-guide Content AST compatibility path with stable semantic/evidence/media references and deterministic Registry mapping, preserving Markdown, visible facts, FAQ and schema while retaining the existing fallback for unsupported types.
 
 ## 1.17.11 - 2026-09-09
 

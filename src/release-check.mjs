@@ -73,9 +73,11 @@ try {
       ["content_opportunities", "strategy_version"], ["topic_candidates", "strategy_version"],
       ["content_briefs", "strategy_version"], ["content_briefs", "canonical_json"],
       ["article_drafts", "strategy_version"], ["article_drafts", "content_blocks_json"],
+      ["article_drafts", "content_ast_json"],
       ["quality_reviews", "strategy_version"], ["wordpress_publications", "strategy_version"],
       ["article_visuals", "strategy_version"], ["article_visuals", "image_type"], ["article_visuals", "acquisition_strategy"],
       ["article_visuals", "source_asset_id"], ["article_visuals", "source_remote_url"],
+      ["article_visuals", "media_metadata_json"],
       ["claims", "structured_value_json"], ["claims", "scope_json"], ["claims", "entity_type"],
       ["claims", "extraction_run_id"], ["claims", "extraction_revision"], ["claims", "claim_role"], ["claims", "knowledge_eligible"],
       ["claims", "evidence_span_ids_json"], ["claims", "lifecycle_status"], ["claims", "source_authority_level"],
@@ -98,6 +100,7 @@ try {
       ["sources", "source_version_identity"], ["sources", "original_url"], ["sources", "final_url"],
       ["content_opportunities", "lifecycle_action"], ["editorial_assignments", "evaluation_json"],
       ["editorial_assignments", "assignment_type_source"], ["editorial_assignments", "classification_json"],
+      ["frontend_publish_compositions", "page_content_hash"], ["frontend_publish_compositions", "seo_artifact_hash"],
     ]) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
       if (!columns.includes(column)) throw new Error(`${table}.${column} is required for Content Strategy governance.`);

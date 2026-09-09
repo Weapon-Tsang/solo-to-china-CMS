@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
-import { markdownToContentBlocks } from "./content-blocks.mjs";
+import { composeFirstTimeGuideFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
+import { validateMediaDelivery } from "./media-delivery.mjs";
 import { isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
 
@@ -590,7 +591,8 @@ export class Pipeline {
             this.repository.createFrontendCapabilityRequest({ draftId: job.entity_id, briefId: contentPackage.brief?.id || null, semanticNeed: "article-page-payload", useCase: contentPackage.draft?.title || "Article draft", reason: "The active Frontend Contract exposes no stable components for the final page payload." });
             throw new Error("MISSING_FRONTEND_CAPABILITY: no stable Frontend component can express this page.");
           }
-          const composed = await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext }));
+          const composed = composeFirstTimeGuideFromAst(contentPackage.draft.content_ast, capabilities, contract.pageSchema.schema)
+            || await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext }));
           const validation = this.frontendContracts.validatePagePayload(composed.output);
           const savedPage = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
             { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash }, composed.provenance);
@@ -661,6 +663,8 @@ export class Pipeline {
           if (!finalArtifactValidation.valid) throw invalidPublishPage("FINAL_PAGE_QA_FAILED", finalArtifactValidation);
           await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
+          const mediaValidation = validateMediaDelivery(contentPackage.draft.visuals, { requireMetadata: true });
+          if (!mediaValidation.valid) throw invalidPublishPage("MEDIA_DELIVERY_INVALID", mediaValidation);
           if (!contentPackage.draft?.seo?.meta_title || !contentPackage.draft?.meta_description) {
             throw new PublishCompositionError("SEO_PACKAGE_MISSING", "A generated SEO title and meta description are required before delivery.");
           }

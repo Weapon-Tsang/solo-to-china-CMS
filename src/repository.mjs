@@ -2,7 +2,7 @@ import { canonicalizeUrl, id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
 import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
-import { contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
+import { buildContentAst, contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
 import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "./claim-resolution.mjs";
 import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
@@ -3263,23 +3263,23 @@ export class Repository {
       this.db.prepare(`
         UPDATE article_drafts SET title=?, slug=?, body_markdown=?, meta_description=?, evidence_ledger_json=?,
           unresolved_conflicts_json=?, verification_notes_json=?, model=?, revision=revision+1,
-          seo_json=?, schema_jsonld=?, content_blocks_json=?, strategy_version=?, content_hash=?,
+          seo_json=?, schema_jsonld=?, content_blocks_json=?, content_ast_json=?, strategy_version=?, content_hash=?,
           quality_report_json='{}', status='qa_queued', updated_at=?
         WHERE id=?
       `).run(draft.title, draft.slug, draft.body_markdown, draft.meta_description, JSON.stringify(draft.evidence_ledger),
         JSON.stringify(draft.unresolved_conflicts), JSON.stringify(draft.verification_notes || []), model,
-        JSON.stringify(metadata.seo), JSON.stringify(metadata.schema), JSON.stringify(metadata.blocks), brief.strategy_version || this.strategyVersion,
+        JSON.stringify(metadata.seo), JSON.stringify(metadata.schema), JSON.stringify(metadata.blocks), JSON.stringify(metadata.contentAst), brief.strategy_version || this.strategyVersion,
         contentHash, timestamp, draftId);
     } else {
       this.db.prepare(`
         INSERT INTO article_drafts(id, brief_id, title, slug, body_markdown, quality_report_json, status,
           created_at, updated_at, meta_description, evidence_ledger_json, unresolved_conflicts_json,
-          verification_notes_json, model, seo_json, schema_jsonld, content_blocks_json, strategy_version, content_hash)
-        VALUES (?, ?, ?, ?, ?, '{}', 'qa_queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          verification_notes_json, model, seo_json, schema_jsonld, content_blocks_json, content_ast_json, strategy_version, content_hash)
+        VALUES (?, ?, ?, ?, ?, '{}', 'qa_queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(draftId, briefId, draft.title, draft.slug, draft.body_markdown, timestamp, timestamp,
         draft.meta_description, JSON.stringify(draft.evidence_ledger), JSON.stringify(draft.unresolved_conflicts),
         JSON.stringify(draft.verification_notes || []), model, JSON.stringify(metadata.seo), JSON.stringify(metadata.schema),
-        JSON.stringify(metadata.blocks), brief.strategy_version || this.strategyVersion, contentHash);
+        JSON.stringify(metadata.blocks), JSON.stringify(metadata.contentAst), brief.strategy_version || this.strategyVersion, contentHash);
     }
     this.invalidateDraftDependents(draftId, timestamp);
     this.replaceDraftVisuals(draftId, metadata.visuals, brief.strategy_version || this.strategyVersion);
@@ -3329,6 +3329,7 @@ export class Repository {
         seo: json(draft.seo_json, {}),
         schema_jsonld: json(draft.schema_jsonld, {}),
         content_blocks: json(draft.content_blocks_json, []),
+        content_ast: json(draft.content_ast_json, {}),
         visuals: this.listDraftVisuals(draftId),
         seo_preview: buildSeoPreview({ ...draft, seo: json(draft.seo_json, {}) }),
       },
@@ -3357,7 +3358,8 @@ export class Repository {
   }
 
   listDraftVisuals(draftId) {
-    return this.db.prepare("SELECT * FROM article_visuals WHERE draft_id=? ORDER BY slot").all(draftId);
+    return this.db.prepare("SELECT * FROM article_visuals WHERE draft_id=? ORDER BY slot").all(draftId)
+      .map((row) => ({ ...row, media_metadata: json(row.media_metadata_json, {}) }));
   }
 
   replaceDraftVisuals(draftId, visuals, strategyVersion) {
@@ -3368,8 +3370,8 @@ export class Repository {
       const upsert = this.db.prepare(`
         INSERT INTO article_visuals(id, draft_id, slot, placement, purpose, alt_text, caption, generation_prompt, aspect_ratio,
           strategy_version, image_type, image_role, image_subject, acquisition_strategy, factual_image_required,
-          source_asset_id, source_remote_url, status, media_url, provider, model, created_at, updated_at, asset_fingerprint)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          source_asset_id, source_remote_url, status, media_url, provider, model, created_at, updated_at, asset_fingerprint, media_metadata_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(draft_id, slot) DO UPDATE SET placement=excluded.placement, purpose=excluded.purpose,
           alt_text=excluded.alt_text, caption=excluded.caption, generation_prompt=excluded.generation_prompt,
           aspect_ratio=excluded.aspect_ratio, strategy_version=excluded.strategy_version, image_type=excluded.image_type,
@@ -3381,6 +3383,7 @@ export class Repository {
           media_url=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_url ELSE excluded.media_url END,
           wordpress_media_id=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.wordpress_media_id ELSE NULL END,
           wordpress_media_url=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.wordpress_media_url ELSE NULL END,
+          media_metadata_json=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_metadata_json ELSE '{}' END,
           provider=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.provider ELSE excluded.provider END,
           model=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.model ELSE excluded.model END,
           last_error=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.last_error ELSE NULL END,
@@ -3394,7 +3397,7 @@ export class Repository {
         visual.alt_text, visual.caption, visual.generation_prompt, visual.aspect_ratio, strategyVersion, visual.image_type,
         visual.image_role, visual.image_subject, visual.acquisition_strategy, visual.factual_image_required ? 1 : 0,
         visual.source_asset_id || null, visual.source_remote_url || null, visual.status || "planned", visual.media_url || null,
-        visual.provider || null, visual.model || null, timestamp, timestamp, fingerprint);
+        visual.provider || null, visual.model || null, timestamp, timestamp, fingerprint, JSON.stringify(visual.media_metadata || {}));
       });
       this.db.prepare("DELETE FROM article_visuals WHERE draft_id=? AND slot>?").run(draftId, visuals.length);
     });
@@ -3433,8 +3436,8 @@ export class Repository {
       SELECT av.draft_id, av.media_url AS previous_media_url, ad.seo_json
       FROM article_visuals av JOIN article_drafts ad ON ad.id=av.draft_id WHERE av.id=?
     `).get(visualId);
-    this.db.prepare("UPDATE article_visuals SET wordpress_media_id=?, wordpress_media_url=?, media_url=?, updated_at=? WHERE id=?")
-      .run(media.id, media.url, media.url, now(), visualId);
+    this.db.prepare("UPDATE article_visuals SET wordpress_media_id=?, wordpress_media_url=?, media_url=?, media_metadata_json=?, updated_at=? WHERE id=?")
+      .run(media.id, media.url, media.url, JSON.stringify(media.metadata || {}), now(), visualId);
     if (before) {
       const seo = json(before.seo_json, {});
       if (!seo.og_image || seo.og_image === before.previous_media_url) {
@@ -5152,10 +5155,13 @@ function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy
   const visuals = normalizeVisuals(draft.visuals, draft, brief, authorizedSourceAssets, policy);
   const firstGenerated = visuals.find((visual) => visual.status === "generated" && visual.media_url);
   if (firstGenerated) seo.og_image = firstGenerated.media_url;
-  const blocks = markdownToContentBlocks(draft.body_markdown);
+  const contentAst = buildContentAst({ draft: { ...draft, seo }, brief: { ...brief, canonical }, visuals });
+  const blocks = contentAst.nodes.map((node) => node.type === "list"
+    ? { type: "list", items: node.items } : node.type === "heading"
+      ? { type: "heading", level: node.level, text: node.visible_text } : { type: "paragraph", text: node.visible_text });
   return {
-    seo, visuals, blocks,
-    schema: buildArticleSchema({ ...draft, seo, destination_slug: brief.destination_slug, canonical }, visuals, config),
+    seo, visuals, blocks, contentAst,
+    schema: buildArticleSchema({ ...draft, seo, content_ast: contentAst, destination_slug: brief.destination_slug, canonical }, visuals, config),
   };
 }
 
@@ -5231,6 +5237,7 @@ function draftContentHash(draft, metadata, brief) {
     verification_notes: draft.verification_notes || [],
     seo: metadata.seo,
     content_blocks: metadata.blocks,
+    content_ast: metadata.contentAst,
     strategy_version: brief.strategy_version,
   }));
 }
@@ -5463,7 +5470,7 @@ function buildArticleSchema(draft, visuals, config) {
   if (generatedImages.length) article.image = generatedImages;
   graph.push(article);
   for (const image of generatedImages) graph.push({ "@type": "ImageObject", contentUrl: image, url: image });
-  const faqs = draft.seo?.faqs || [];
+  const faqs = draft.content_ast?.faq || draft.seo?.faqs || [];
   if (faqs.length) graph.push({
     "@type": "FAQPage",
     mainEntity: faqs.map((item) => ({ "@type": "Question", name: item.question, acceptedAnswer: { "@type": "Answer", text: item.answer } })),

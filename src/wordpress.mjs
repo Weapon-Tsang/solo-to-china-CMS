@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { markdownToContentBlocks } from "./content-blocks.mjs";
+import { parseMediaMetadata, responsiveImageAttributes, wordpressMediaMetadata } from "./media-delivery.mjs";
 
 const SOURCE_IMAGE_HOST_SUFFIXES = ["xiaohongshu.com", "xhscdn.com", "xhscdn.net", "xhscdn.cn"];
 const MAX_SOURCE_IMAGE_BYTES = 12 * 1024 * 1024;
@@ -154,15 +155,30 @@ export class WordPressDraftAdapter {
 
   async resolveVisualMedia(visuals, onUploaded = null, options = {}) {
     const output = [];
+    const reusable = new Map();
     for (const visual of visuals.filter((item) => (
       item.status === "generated" && (item.media_path || (item.source_asset_id && item.source_remote_url))
     ))) {
+      const assetKey = visual.source_asset_id ? `source:${visual.source_asset_id}` : visual.media_path ? `file:${path.resolve(visual.media_path)}` : null;
+      if (assetKey && reusable.has(assetKey)) {
+        const resolved = { visualId: visual.id, ...reusable.get(assetKey), alt: visual.alt_text, caption: visual.caption,
+          role: visual.image_role, imageType: visual.image_type, acquisitionStrategy: visual.acquisition_strategy };
+        output.push(resolved);
+        if (onUploaded) await onUploaded(resolved);
+        continue;
+      }
       if (visual.wordpress_media_id && visual.wordpress_media_url) {
-        output.push({ visualId: visual.id, id: visual.wordpress_media_id, url: visual.wordpress_media_url, alt: visual.alt_text, caption: visual.caption });
+        const media = { id: visual.wordpress_media_id, url: visual.wordpress_media_url,
+          metadata: parseMediaMetadata(visual.media_metadata || visual.media_metadata_json) };
+        if (assetKey) reusable.set(assetKey, media);
+        output.push({ visualId: visual.id, ...media, alt: visual.alt_text, caption: visual.caption,
+          role: visual.image_role, imageType: visual.image_type, acquisitionStrategy: visual.acquisition_strategy });
         continue;
       }
       const media = await this.uploadMedia(visual, options);
-      const resolved = { visualId: visual.id, ...media, alt: visual.alt_text, caption: visual.caption };
+      if (assetKey) reusable.set(assetKey, media);
+      const resolved = { visualId: visual.id, ...media, alt: visual.alt_text, caption: visual.caption,
+        role: visual.image_role, imageType: visual.image_type, acquisitionStrategy: visual.acquisition_strategy };
       output.push(resolved);
       if (onUploaded) await onUploaded(resolved);
     }
@@ -186,7 +202,8 @@ export class WordPressDraftAdapter {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || !body.id) throw new Error(`WordPress media upload failed (${response.status}): ${body?.message || response.statusText}`);
-    return { id: body.id, url: body.source_url || body.guid?.rendered || "" };
+    const metadata = wordpressMediaMetadata(body, asset);
+    return { id: body.id, url: metadata.url || "", metadata };
   }
 
   async downloadAuthorizedSourceAsset(visual, options = {}) {
@@ -260,19 +277,24 @@ function injectVisuals(blocks, visuals, renderer) {
   const ordered = [...visuals].filter((item) => item.id && item.url);
   ordered.forEach((visual, index) => {
     const position = Math.min(output.length, Math.max(1, Math.round((index + 1) * output.length / (ordered.length + 1)) + index));
-    output.splice(position, 0, renderer(visual));
+    output.splice(position, 0, renderer(visual, index));
   });
   return output;
 }
 
-function wordpressVisual(visual) {
+function wordpressVisual(visual, index = 0) {
   const caption = visual.caption ? `\n<figcaption class=\"wp-element-caption\">${escapeHtml(visual.caption)}</figcaption>` : "";
-  return `<!-- wp:image {"id":${visual.id},"sizeSlug":"large","linkDestination":"none"} -->\n<figure class=\"wp-block-image size-large\"><img src=\"${escapeHtml(visual.url)}\" alt=\"${escapeHtml(visual.alt || "")}\" class=\"wp-image-${visual.id}\"/>${caption}</figure>\n<!-- /wp:image -->`;
+  return `<!-- wp:image {"id":${visual.id},"sizeSlug":"large","linkDestination":"none"} -->\n<figure class=\"wp-block-image size-large\"><img src=\"${escapeHtml(visual.url)}\" alt=\"${escapeHtml(visual.alt || "")}\" class=\"wp-image-${visual.id}\"${imageAttributes(visual, index === 0)}/>${caption}</figure>\n<!-- /wp:image -->`;
 }
 
-function htmlVisual(visual) {
+function htmlVisual(visual, index = 0) {
   const caption = visual.caption ? `<figcaption>${escapeHtml(visual.caption)}</figcaption>` : "";
-  return `<figure><img src=\"${escapeHtml(visual.url)}\" alt=\"${escapeHtml(visual.alt || "")}\"/>${caption}</figure>`;
+  return `<figure><img src=\"${escapeHtml(visual.url)}\" alt=\"${escapeHtml(visual.alt || "")}\"${imageAttributes(visual, index === 0)}/>${caption}</figure>`;
+}
+
+function imageAttributes(visual, featured) {
+  return Object.entries(responsiveImageAttributes(visual.metadata, { featured }))
+    .map(([name, value]) => ` ${name}=\"${escapeHtml(value)}\"`).join("");
 }
 
 function mimeForFilename(filename) {

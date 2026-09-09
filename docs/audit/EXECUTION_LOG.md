@@ -323,6 +323,42 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
   `npm run release:check` passed 44 mandatory checks with 0 failures, 4 warnings
   and 4 explicitly untested external/final-HTML conclusions. The clean schema
   chain is now 1-51 and no production service or paid model was called.
-- Current task: C04.
-- Next action: implement evidence-bound media metadata, public derivative reuse
-  and image-loading contract validation before running C04 acceptance.
+- Completed C04: migration 52 persists each uploaded WordPress media item's final
+  public URL, intrinsic dimensions, MIME, bytes, SHA-256 and responsive derivative
+  inventory. Repeated use of one source asset reuses one Media ID and upload.
+  Delivery rejects signed/private/data URLs, missing size/hash/dimensions, invalid
+  derivatives, alt-role mismatch, alt keyword stuffing, duplicate uploads and a
+  fabricated illustration for a factual scene. The Legacy renderer emits `<img>`
+  with dimensions/srcset/sizes, high priority only on the first image and lazy
+  loading thereafter. No-image content remains valid. The structural baseline/
+  after record is documented without inventing CWV improvement.
+- Completed C05 on the CMS boundary: a final-HTML validator and separate published/
+  draft fixtures check HTTP/publication state, initial visible article body, one
+  H1, title/description/canonical, links/media, JSON-LD, noindex, robots.txt,
+  sitemap, authentication separation and mobile/desktop factual equality. Reports
+  use the six required dimensions and leave production cost, indexing, ranking,
+  traffic, CWV and AI citations untested. The release gate now registers the fixed
+  fixture and keeps production WordPress/theme HTML as NOT TESTED.
+- C05 real-environment observation: an isolated exact Frontend
+  `f44ce1092ced93dfb47d9b3eae83d0d5e4b97086` worktree ran Playground CLI 3.1.52,
+  PHP 8.3 and WordPress 7.0.4. Its published page passed body/H1/canonical/robots/
+  sitemap and mobile/desktop equality, but failed meta description, Article JSON-LD
+  and first-image non-lazy checks. Its own CMS draft Blueprint also failed the
+  Contract checksum. These are recorded as Frontend handoff failures; no Frontend
+  source was edited and the runtime/worktree were removed.
+- Completed B07 compatibility slice: migration 53 freezes a first-time-guide
+  semantic tree containing stable nodes, roles, visible text, Fact/Source-section
+  references, FAQ, SEO summary and media references. Markdown and deterministic
+  `articleSection`/`faqList` payloads derive from that one tree; Registry variant
+  changes preserve visible facts. Unsupported content types or missing components
+  keep the existing validated Composer/capability-request path. Internal node
+  fields remain provenance only and no SEO/GEO model call was added. Three AST
+  counterexamples passed. C01-C05 focused tests were rerun after the migration:
+  21/21 passed, so no pre-migration C05 label was reused.
+- Ninth-batch regression checkpoint: 335 tests passed; `npm run check` passed;
+  `npm run release:check` passed 50 mandatory checks with 0 failures, 4 warnings
+  and 5 explicitly untested external/outcome conclusions. The clean schema chain
+  is now 1-53. No paid model or production service was called by these gates.
+- Current task: B08.
+- Next action: complete B08, B09 and B12 as the final bounded implementation batch,
+  then rerun every affected C01-C05 acceptance and the full delivery gates.

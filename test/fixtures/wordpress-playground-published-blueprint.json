@@ -1,0 +1,15 @@
+{
+  "$schema": "https://playground.wordpress.net/blueprint-schema.json",
+  "landingPage": "/china-mobile-payment-setup/",
+  "login": false,
+  "preferredVersions": { "php": "8.3", "wp": "7.0.4" },
+  "steps": [
+    { "step": "activateTheme", "themeFolderName": "solo-to-china-child" },
+    { "step": "activatePlugin", "pluginName": "SoloToChina Tools", "pluginPath": "solo-to-china-tools/solo-to-china-tools.php" },
+    { "step": "setSiteOptions", "options": {
+      "blogname": "SoloToChina", "blogdescription": "Practical China travel for independent travelers",
+      "show_on_front": "posts", "permalink_structure": "/%postname%/"
+    } },
+    { "step": "runPHP", "code": "<?php require_once '/wordpress/wp-load.php'; require_once '/tmp/solo-to-china-scripts/playground-fixtures.php'; stc_playground_install_fixtures(); ?>" }
+  ]
+}

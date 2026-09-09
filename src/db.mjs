@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 51;
+export const SCHEMA_VERSION = 53;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -72,6 +72,36 @@ function migrate(db) {
   if (current < 49) migrationFortyNine(db);
   if (current < 50) migrationFifty(db);
   if (current < 51) migrationFiftyOne(db);
+  if (current < 52) migrationFiftyTwo(db);
+  if (current < 53) migrationFiftyThree(db);
+}
+
+function migrationFiftyThree(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE article_drafts ADD COLUMN content_ast_json TEXT NOT NULL DEFAULT '{}';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (53, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFiftyTwo(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE article_visuals ADD COLUMN media_metadata_json TEXT NOT NULL DEFAULT '{}';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (52, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFiftyOne(db) {

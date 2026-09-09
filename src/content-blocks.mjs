@@ -1,3 +1,6 @@
+import crypto from "node:crypto";
+import { pageBlockSignature } from "./evidence-validator.mjs";
+
 export function markdownToContentBlocks(markdown) {
   const lines = String(markdown || "").replace(/\r/g, "").split("\n");
   const blocks = [];
@@ -25,6 +28,98 @@ export function markdownToContentBlocks(markdown) {
   return blocks;
 }
 
+export function buildContentAst({ draft = {}, brief = {}, visuals = [] } = {}) {
+  const blocks = markdownToContentBlocks(draft.body_markdown);
+  const ledger = draft.evidence_ledger || [];
+  let activeLedger = null;
+  const occurrence = new Map();
+  const usedPreferredIds = new Set();
+  const nodes = blocks.map((block) => {
+    if (block.type === "heading") activeLedger = ledger.find((entry) => normalize(entry.section) === normalize(block.text)) || activeLedger;
+    const signature = JSON.stringify(block);
+    const count = (occurrence.get(signature) || 0) + 1;
+    occurrence.set(signature, count);
+    const candidate = block.type !== "heading" ? activeLedger?.content_node_ids?.[0] : null;
+    const preferred = candidate && !usedPreferredIds.has(candidate) ? candidate : null;
+    if (preferred) usedPreferredIds.add(preferred);
+    return {
+      id: preferred || `node_${crypto.createHash("sha256").update(`${brief.id || "brief"}:${signature}:${count}`).digest("hex").slice(0, 20)}`,
+      type: block.type,
+      semantic_role: block.type === "heading" ? "section_heading" : activeLedger?.claim_keys?.length ? "factual" : "editorial",
+      visible_text: block.type === "list" ? block.items.join("\n") : block.text,
+      ...(block.level ? { level: block.level } : {}),
+      ...(block.type === "list" ? { items: [...block.items] } : {}),
+      fact_refs: [...new Set(activeLedger?.claim_keys || [])],
+      source_section_ids: activeLedger?.section_id ? [activeLedger.section_id] : [],
+      source_ids: [...new Set(activeLedger?.source_ids || [])],
+      media_refs: [],
+    };
+  });
+  const ast = {
+    version: "content-ast-compat-1",
+    content_type: brief.content_type || brief.canonical?.content_type || "first_time_guide",
+    title: String(draft.title || ""), slug: String(draft.slug || ""),
+    summary: String(draft.meta_description || ""),
+    faq: (draft.faqs || draft.seo?.faqs || []).map((item) => ({ question: String(item.question || ""), answer: String(item.answer || "") })),
+    nodes,
+    media: visuals.map((visual) => ({ id: visual.id || null, role: visual.image_role || "context",
+      placement: visual.placement || "content", alt: visual.alt_text || "", caption: visual.caption || "",
+      media_id: visual.wordpress_media_id || null })),
+  };
+  ast.content_hash = crypto.createHash("sha256").update(JSON.stringify(ast)).digest("hex");
+  return ast;
+}
+
+export function renderContentAstMarkdown(ast) {
+  return (ast?.nodes || []).map((node) => {
+    if (node.type === "heading") return `${"#".repeat(Math.min(4, Math.max(2, Number(node.level) || 2)))} ${node.visible_text}`;
+    if (node.type === "list") return (node.items || []).map((item) => `- ${item}`).join("\n");
+    return node.visible_text;
+  }).join("\n\n");
+}
+
+export function composeFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema = {}) {
+  if (ast?.content_type !== "first_time_guide") return null;
+  const component = (capabilities.components || []).find((item) => item.id === "articleSection" && item.status !== "deprecated");
+  if (!component || !component.schema?.properties?.heading || !component.schema?.properties?.body) return null;
+  const faqComponent = (capabilities.components || []).find((item) => ["faq", "faqList"].includes(item.id)
+    && item.status !== "deprecated" && item.schema?.properties?.items);
+  const sections = [];
+  for (const node of ast.nodes || []) {
+    if (node.type === "heading" && Number(node.level || 2) === 2) sections.push({ heading: node, content: [] });
+    else if (sections.length) sections.at(-1).content.push(node);
+  }
+  if (!sections.length) return null;
+  const variants = component.variants || [];
+  const variant = variants.includes("answer-first") ? "answer-first" : variants[0];
+  const blocks = sections.map((section) => {
+    if (faqComponent && ast.faq?.length && /frequently asked questions|^faq$/i.test(section.heading.visible_text)) {
+      const faqVariant = faqComponent.variants?.[0];
+      return { type: faqComponent.id, ...(faqVariant ? { variant: faqVariant } : {}),
+        data: { items: ast.faq.map((item) => ({ question: item.question, answer: item.answer })) } };
+    }
+    const contentNodes = section.content;
+    const body = contentNodes.map((node) => node.type === "list"
+      ? (node.items || []).map((item) => `- ${item}`).join("\n") : node.visible_text).join("\n\n");
+    return { type: component.id, ...(variant ? { variant } : {}), data: { heading: section.heading.visible_text, body } };
+  });
+  const metadataProperties = pageSchema?.properties?.metadata?.properties || {};
+  const metadata = {};
+  const put = (key, value) => { if (metadataProperties[key]) metadata[key] = value; };
+  put("pageId", ast.content_hash); put("title", ast.title); put("slug", ast.slug); put("contentType", ast.content_type); put("excerpt", ast.summary);
+  metadata.title ||= ast.title;
+  const provenance = blocks.map((block, index) => {
+    const section = sections[index];
+    const nodes = [section.heading, ...section.content];
+    return { blockIndex: index, blockSignature: pageBlockSignature(block), contentNodeId: section.content[0]?.id || section.heading.id,
+      sourceSectionIds: [...new Set(nodes.flatMap((node) => node.source_section_ids))],
+      claimKeys: [...new Set(nodes.flatMap((node) => node.fact_refs))], factuality: nodes.some((node) => node.fact_refs.length) ? "factual" : "non_factual" };
+  });
+  return { output: { metadata, blocks }, model: "deterministic-content-ast-compat-1", provenance: {
+    version: "content-ast-compat-1", valid: true, errors: [], entries: provenance,
+  } };
+}
+
 export function contentBlockSummary(blocks) {
   const output = { paragraphs: 0, headings: 0, lists: 0, faq: false };
   for (const block of blocks || []) {
@@ -38,3 +133,5 @@ export function contentBlockSummary(blocks) {
   }
   return output;
 }
+
+function normalize(value) { return String(value || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim(); }

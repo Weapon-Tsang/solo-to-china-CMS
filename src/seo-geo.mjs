@@ -146,7 +146,7 @@ function validateStructuredData(schema, page, draft) {
   if (nodes.some((node) => types(node).some((type) => ["Product", "QAPage"].includes(type)))) {
     errors.push({ code: "UNSUPPORTED_SCHEMA_TYPE", path: "$.schema_jsonld" });
   }
-  const visibleFaq = (page?.blocks || []).filter((block) => block?.type === "faq")
+  const visibleFaq = (page?.blocks || []).filter((block) => ["faq", "faqList"].includes(block?.type))
     .flatMap((block) => block.data?.items || []).map((item) => [normalize(item.question), normalize(stripHtml(item.answer))]);
   const faqNode = nodes.find((node) => types(node).includes("FAQPage"));
   const schemaFaq = (faqNode?.mainEntity || []).map((item) => [normalize(item.name), normalize(stripHtml(item.acceptedAnswer?.text))]);

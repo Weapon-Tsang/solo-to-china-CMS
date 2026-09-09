@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createBackup, drillBackup } from "../src/backup.mjs";
 import { openDatabase } from "../src/db.mjs";
 import { CONTENT_STRATEGY } from "../src/content-strategy.mjs";
+import { compareRenderedVariants, validateRenderedHtmlArtifact } from "../src/final-html-validator.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -151,7 +152,26 @@ function recordQualityDimensions({ unitTestsPassed, crossRepoPassed, versionPass
   }
   if (crossRepoPassed) report.pass("Quality Dimensions", "CMS/Frontend contract compatibility", `Frontend ${releaseGate.frontend.commitSha} executed.`);
   else report.notTested("Quality Dimensions", "CMS/Frontend contract compatibility", "The fixed-SHA contract gate failed or was unavailable.");
-  report.notTested("Technical Accessibility", "Published WordPress/theme HTML", "C05 published-fixture validation is not yet registered; CMS JSON and a React shell are not final HTML proof.");
+  const fixturePath = path.join(root, releaseGate.finalHtmlFixture.path);
+  report.check("Quality Dimensions", "Fixed published HTML fixture", () => {
+    const html = fs.readFileSync(fixturePath, "utf8");
+    const result = validateRenderedHtmlArtifact({
+      html, status: "publish", url: releaseGate.finalHtmlFixture.url, httpStatus: 200,
+      robotsTxt: "User-agent: *\nDisallow: /wp-admin/",
+      sitemapXml: `<urlset><url><loc>${releaseGate.finalHtmlFixture.url}</loc></url></urlset>`,
+      expectedTitle: releaseGate.finalHtmlFixture.title, expectedDescription: releaseGate.finalHtmlFixture.description,
+      fixture: { type: releaseGate.finalHtmlFixture.type, frontendCommitSha: releaseGate.frontend.commitSha },
+    });
+    const variants = compareRenderedVariants({ mobile: html, desktop: html });
+    if (!result.valid || !variants.valid) throw new Error([...result.errors, ...variants.errors].map((item) => item.code).join(", "));
+    report.pass("Quality Dimensions", "content_quality", result.dimensions.content_quality.status);
+    report.pass("Quality Dimensions", "seo_artifact", result.dimensions.seo_artifact.status);
+    report.pass("Quality Dimensions", "structured_data", result.dimensions.structured_data.status);
+    report.pass("Quality Dimensions", "rendered_html", `${result.dimensions.rendered_html.status}; fixed fixture only`);
+    report.pass("Quality Dimensions", "crawler_configuration", result.dimensions.crawler_configuration.status);
+    report.notTested("Quality Dimensions", "production_cost", "No paid model or production request was made by the offline fixture.");
+  });
+  report.notTested("Technical Accessibility", "Production WordPress/theme HTML and crawler response", "Requires a fixed Frontend SHA deployed in a real WordPress/theme environment; the CMS fixture is not production proof.");
 }
 
 async function smokeReadApis(baseUrl) {

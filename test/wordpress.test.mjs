@@ -220,7 +220,7 @@ test("WordPress renderers place generated visual media safely within the article
   const visuals = [{ id: 12, url: "https://site.test/uploads/guide.png", alt: "Beijing skyline", caption: "An original editorial visual" }];
   const html = markdownToSafeHtml("## Plan\n\nParagraph", visuals);
   const blocks = markdownToWordPressBlocks("## Plan\n\nParagraph", visuals);
-  assert.match(html, /<figure><img src="https:\/\/site\.test\/uploads\/guide\.png" alt="Beijing skyline"\/>/);
+  assert.match(html, /<figure><img src="https:\/\/site\.test\/uploads\/guide\.png" alt="Beijing skyline" fetchpriority="high" decoding="async"\/>/);
   assert.match(blocks, /<!-- wp:image \{\"id\":12/);
   assert.match(blocks, /wp-element-caption/);
 });

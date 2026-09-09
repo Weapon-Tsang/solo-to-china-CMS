@@ -140,7 +140,7 @@ export function synchronizeSchemaWithPage(sourceSchema, page, draft = {}) {
       node.itemListElement.at(-1).name = title;
     }
   }
-  const visibleFaqs = (page?.blocks || []).filter((block) => block?.type === "faq")
+  const visibleFaqs = (page?.blocks || []).filter((block) => ["faq", "faqList"].includes(block?.type))
     .flatMap((block) => Array.isArray(block.data?.items) ? block.data.items : [])
     .filter((item) => item?.question && item?.answer);
   const withoutFaq = graph.filter((node) => node?.["@type"] !== "FAQPage");

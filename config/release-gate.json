@@ -26,7 +26,14 @@
   "qualityDimensions": {
     "schemaSyntax": "offline_gate",
     "bodyFactRelationships": "offline_gate",
-    "technicalAccessibility": "cms_and_contract_only_until_published_fixture",
+    "technicalAccessibility": "fixed_html_fixture_plus_contract; production remains unverified",
     "searchPerformance": "not_offline_verifiable"
+  },
+  "finalHtmlFixture": {
+    "type": "fixed_published_html_not_production",
+    "path": "test/fixtures/published-article.html",
+    "url": "https://solotochina.com/chongqing-night-transport/",
+    "title": "Chongqing Night Transport Guide",
+    "description": "An evidence-bounded guide to one Chongqing evening transport route."
   }
 }
