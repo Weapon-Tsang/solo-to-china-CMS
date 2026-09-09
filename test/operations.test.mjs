@@ -87,7 +87,7 @@ test("startup queues only destinations whose Knowledge is older than active Clai
   repository.rebuildKnowledge("chongqing");
   db.prepare("DELETE FROM jobs").run();
   db.prepare("UPDATE claims SET created_at='2026-01-01T00:00:00.000Z'").run();
-  db.prepare("UPDATE knowledge_facts SET updated_at='2026-02-01T00:00:00.000Z'").run();
+  db.prepare("UPDATE destinations SET updated_at='2026-02-01T00:00:00.000Z'").run();
 
   repository.enqueueStartupReconciliation();
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='rebuild_knowledge'").get().count, 0);

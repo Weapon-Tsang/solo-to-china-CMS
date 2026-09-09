@@ -3218,12 +3218,15 @@ export class Repository {
         WHERE c.lifecycle_status='active' AND c.knowledge_eligible=1
         GROUP BY ss.destination_slug
       ), fact_state AS (
-        SELECT d.slug AS slug, MAX(k.updated_at) AS latest_fact_at
+        SELECT d.slug AS slug, COUNT(k.id) AS fact_count
         FROM destinations d JOIN knowledge_facts k ON k.destination_id=d.id
         GROUP BY d.slug
       )
-      SELECT claim_state.slug FROM claim_state LEFT JOIN fact_state USING(slug)
-      WHERE fact_state.latest_fact_at IS NULL OR claim_state.latest_claim_at > fact_state.latest_fact_at
+      SELECT claim_state.slug FROM claim_state
+      LEFT JOIN destinations ON destinations.slug=claim_state.slug
+      LEFT JOIN fact_state USING(slug)
+      WHERE COALESCE(fact_state.fact_count, 0)=0 OR destinations.updated_at IS NULL
+        OR claim_state.latest_claim_at > destinations.updated_at
     `).all().map((row) => row.slug);
     for (const slug of staleKnowledgeSlugs) this.enqueue("rebuild_knowledge", slug);
     for (const row of this.db.prepare(`SELECT s.id FROM sources s
