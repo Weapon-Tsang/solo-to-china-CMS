@@ -13,6 +13,8 @@ import {
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
 import { AI_JOB_TYPES, classifyBatchFailure, isProviderPressure } from "./job-policy.mjs";
+import { pageBlockSignature } from "./evidence-validator.mjs";
+export { pageBlockSignature } from "./evidence-validator.mjs";
 import {
   EDITORIAL_ASSIGNMENT_TYPES, evaluateEditorialAssignment, normalizeEditorialAssignmentInput,
   selectFactsForAssignment,
@@ -193,6 +195,7 @@ export class Repository {
 
   saveFrontendPagePlan(briefId, snapshot, plan, validation, model = null) {
     const timestamp = now();
+    plan = normalizePagePlan(plan);
     const existing = this.db.prepare("SELECT id FROM frontend_page_plans WHERE brief_id=?").get(briefId);
     const planId = existing?.id || id("fplan");
     this.db.prepare(`
@@ -212,7 +215,7 @@ export class Repository {
     return row ? { ...row, plan: json(row.plan_json, {}), validation: json(row.validation_json, {}) } : null;
   }
 
-  saveFrontendPageComposition(draftId, planId, snapshot, payload, validation, model = null, expectedVersion = null) {
+  saveFrontendPageComposition(draftId, planId, snapshot, payload, validation, model = null, expectedVersion = null, explicitProvenance = null) {
     const timestamp = now();
     const draft = this.db.prepare("SELECT revision, content_hash FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) throw new Error(`Article draft ${draftId} not found.`);
@@ -220,8 +223,23 @@ export class Repository {
       throw Object.assign(new Error("STALE_DRAFT_VERSION: page composition input changed before it could be saved."), { retryable: false });
     }
     const existing = this.db.prepare("SELECT id FROM frontend_page_compositions WHERE draft_id=?").get(draftId);
-    const draftRow = this.db.prepare("SELECT evidence_ledger_json FROM article_drafts WHERE id=?").get(draftId);
-    const validationRecord = { ...validation, blockProvenance: buildBlockProvenance(payload, json(draftRow?.evidence_ledger_json, [])) };
+    const draftRow = this.db.prepare(`SELECT ad.evidence_ledger_json,cb.destination_slug FROM article_drafts ad
+      JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
+    const sourceRows = this.db.prepare(`SELECT c.id,c.normalized_key,c.source_id,c.evidence_span_ids_json FROM claims c
+      JOIN structured_sources ss ON ss.source_id=c.source_id
+      WHERE ss.destination_slug=? AND c.lifecycle_status='active' AND c.knowledge_eligible=1`).all(draftRow?.destination_slug || "");
+    const sourceIdsByClaim = new Map();
+    const claimTracesByKey = new Map();
+    for (const row of sourceRows) sourceIdsByClaim.set(row.normalized_key,
+      [...new Set([...(sourceIdsByClaim.get(row.normalized_key) || []), row.source_id])].sort());
+    for (const row of sourceRows) claimTracesByKey.set(row.normalized_key,
+      [...(claimTracesByKey.get(row.normalized_key) || []), { claimId: row.id, sourceId: row.source_id,
+        evidenceSpanIds: json(row.evidence_span_ids_json, []) }]);
+    const provenance = buildBlockProvenance(payload, json(draftRow?.evidence_ledger_json, []), explicitProvenance,
+      sourceIdsByClaim, claimTracesByKey);
+    const validationRecord = { ...validation, valid: Boolean(validation.valid && provenance.valid),
+      errors: [...(validation.errors || []), ...provenance.errors], blockProvenance: provenance.blocks,
+      provenanceVersion: provenance.version };
     const compositionId = existing?.id || id("fpage");
     this.db.prepare(`
       INSERT INTO frontend_page_compositions(id, draft_id, plan_id, snapshot_id, contract_version, schema_version,
@@ -234,7 +252,7 @@ export class Repository {
         generated_at=excluded.generated_at, updated_at=excluded.updated_at,
         draft_revision=excluded.draft_revision, draft_content_hash=excluded.draft_content_hash
     `).run(compositionId, draftId, planId || null, snapshot.id, snapshot.contractVersion, snapshot.schemaVersion,
-      snapshot.checksum, JSON.stringify(payload), JSON.stringify(validationRecord), validation.valid ? "valid" : "invalid", model, timestamp, timestamp,
+      snapshot.checksum, JSON.stringify(payload), JSON.stringify(validationRecord), validationRecord.valid ? "valid" : "invalid", model, timestamp, timestamp,
       draft.revision, draft.content_hash);
     return this.getFrontendPageComposition(draftId);
   }
@@ -243,7 +261,13 @@ export class Repository {
     const row = this.db.prepare("SELECT * FROM frontend_page_compositions WHERE draft_id=?").get(draftId);
     if (!row) return null;
     const draft = this.db.prepare("SELECT revision, content_hash FROM article_drafts WHERE id=?").get(draftId);
-    return { ...row, payload: json(row.payload_json, {}), validation: json(row.validation_json, {}),
+    const payload = json(row.payload_json, {});
+    const validation = json(row.validation_json, {});
+    if (!Array.isArray(validation.blockProvenance)) {
+      validation.blockProvenance = legacyBlockProvenance(payload);
+      validation.provenanceVersion = "legacy_unknown";
+    }
+    return { ...row, payload, validation,
       current: Boolean(draft && row.draft_revision === draft.revision && row.draft_content_hash === draft.content_hash) };
   }
 
@@ -1203,36 +1227,52 @@ export class Repository {
       : matchingAsset ? matchingAsset.status === "submitted"
         : receivedModality === expectedModality || receivedModality === "mixed";
     const supportedClaims = row.asset_id ? claims : claims.filter((claim) => locateEvidenceQuote(row.raw_text, claim.source_quote).status !== "unsupported");
-    const material = String(row.raw_text || "").trim().length >= 40 || row.asset_id;
+    const materiality = assessSegmentMateriality(row, assessment);
     const assessedUncovered = Array.isArray(assessment?.uncovered_spans) ? assessment.uncovered_spans
       .map((item) => ({ locator: String(item.quote || item.locator || row.title || `segment ${row.sequence + 1}`).slice(0, 800),
         importance: String(item.importance || "material"), reason: String(item.reason || "Material travel evidence is not covered by a Claim.").slice(0, 1000) }))
       .filter((item) => !unsupportedClaimAuditFalsePositive(item)) : null;
-    const noSupportedClaimGap = !row.asset_id && material && supportedClaims.length === 0 && row.method !== "heuristic"
+    const noSupportedClaimGap = !row.asset_id && materiality === "material" && supportedClaims.length === 0 && row.method !== "heuristic"
       ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: "Material segment produced no traceable Claim." }] : [];
+    const mediaZeroClaimGap = row.asset_id && receivedExpectedInput && supportedClaims.length === 0 && materiality !== "non_material"
+      ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material",
+        reason: "Received media produced no Claim and was not classified as decorative by the local materiality rules." }] : [];
     const failedAssetReason = matchingAsset?.failureReason ? ` ${matchingAsset.failureReason}` : "";
     const modalityGap = row.asset_id && !receivedExpectedInput
       ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: `Expected ${expectedModality} evidence was not received by the model.${failedAssetReason}`.trim() }] : [];
-    const uncovered = [...(assessedUncovered || []), ...noSupportedClaimGap, ...modalityGap];
+    const uncovered = [...(assessedUncovered || []), ...noSupportedClaimGap, ...mediaZeroClaimGap, ...modalityGap];
     const importantUncovered = uncovered.filter((item) => ["material", "important"].includes(item.importance)).length;
     const retryCount = Math.max(0, Number(row.attempt || 1) - 1);
-    const bestEffortAccepted = importantUncovered > 0 && retryCount >= 1 && supportedClaims.length > 0 && modalityGap.length === 0;
-    const status = importantUncovered ? bestEffortAccepted ? "passed" : retryCount < 1 ? "retry_required" : "manual_review" : "passed";
+    const transportStatus = receivedExpectedInput ? "succeeded" : "failed";
+    const evidenceCoverage = materiality === "non_material" ? "not_applicable"
+      : importantUncovered === 0 ? "complete" : supportedClaims.length > 0 ? "partial" : "none";
+    const terminalUsability = materiality === "non_material" ? "non_material"
+      : evidenceCoverage === "complete" ? "usable"
+        : evidenceCoverage === "partial" && transportStatus === "succeeded" ? "partial_usable" : "review_needed";
+    const status = importantUncovered > 0 && retryCount < 1 ? "retry_required" : terminalUsability;
+    const legacyStatus = status === "retry_required" ? "retry_required"
+      : status === "review_needed" ? "manual_review" : "passed";
     const timestamp = now();
     const coverageId = `coverage_${sha256(segmentId).slice(0, 24)}`;
     const audit = { expectedModality, receivedModality, assetId: row.asset_id || null,
       attempted: hasStoredManifest ? storedManifest.assets.length : Number(assessment?.modality?.attempted || 0),
       inputManifestVersion: storedManifest.version || 0, legacyInputManifest: !hasStoredManifest,
       inputFailures: storedManifest.assets.filter((item) => item.status === "failed"),
-      unsupportedClaimCount: claims.length - supportedClaims.length, bestEffortAccepted };
-    this.db.prepare(`INSERT INTO extraction_coverage(id,source_id,segment_id,extraction_run_id,status,candidate_evidence_count,claim_count,uncovered_spans_json,important_uncovered_count,model,audited_at,retry_count,audit_json)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,
+      unsupportedClaimCount: claims.length - supportedClaims.length,
+      transportStatus, evidenceCoverage, publicationUsability: status === "retry_required" ? "review_needed" : terminalUsability,
+      materiality, materialityBasis: segmentMaterialityBasis(row, assessment) };
+    this.db.prepare(`INSERT INTO extraction_coverage(id,source_id,segment_id,extraction_run_id,status,candidate_evidence_count,claim_count,uncovered_spans_json,important_uncovered_count,model,audited_at,retry_count,audit_json,transport_status,evidence_coverage,publication_usability,materiality)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,
       candidate_evidence_count=excluded.candidate_evidence_count,claim_count=excluded.claim_count,uncovered_spans_json=excluded.uncovered_spans_json,
-      important_uncovered_count=excluded.important_uncovered_count,model=excluded.model,audited_at=excluded.audited_at,retry_count=excluded.retry_count,audit_json=excluded.audit_json`)
-      .run(coverageId, row.source_id, segmentId, null, status, supportedClaims.length + uncovered.length, supportedClaims.length, JSON.stringify(uncovered), importantUncovered, row.model, timestamp, retryCount, JSON.stringify(audit));
+      important_uncovered_count=excluded.important_uncovered_count,model=excluded.model,audited_at=excluded.audited_at,retry_count=excluded.retry_count,audit_json=excluded.audit_json,
+      transport_status=excluded.transport_status,evidence_coverage=excluded.evidence_coverage,
+      publication_usability=excluded.publication_usability,materiality=excluded.materiality`)
+      .run(coverageId, row.source_id, segmentId, null, legacyStatus, supportedClaims.length + uncovered.length, supportedClaims.length,
+        JSON.stringify(uncovered), importantUncovered, row.model, timestamp, retryCount, JSON.stringify(audit), transportStatus,
+        evidenceCoverage, status === "retry_required" ? "review_needed" : terminalUsability, materiality);
     this.db.prepare("UPDATE source_segments SET status=?,updated_at=? WHERE id=?")
-      .run(status === "passed" ? "complete" : status === "manual_review" ? "failed" : status, timestamp, segmentId);
-    if (row.asset_id && status !== "passed") this.db.prepare("UPDATE source_assets SET extraction_status=?,extraction_error=? WHERE id=?")
+      .run(["usable", "partial_usable", "non_material"].includes(status) ? "complete" : status === "review_needed" ? "failed" : status, timestamp, segmentId);
+    if (row.asset_id && !["usable", "partial_usable", "non_material"].includes(status)) this.db.prepare("UPDATE source_assets SET extraction_status=?,extraction_error=? WHERE id=?")
       .run(status === "retry_required" ? "retry_required" : "failed", uncovered[0]?.reason || null, row.asset_id);
     const sourceState = this.reconcileSourceCoverageState(row.source_id);
     return { sourceId: row.source_id, segmentId, status, retryCount, claimCount: supportedClaims.length, uncovered, sourceState, ...audit };
@@ -1244,18 +1284,24 @@ export class Repository {
 
   reconcileSourceCoverageState(sourceId) {
     const counts = this.db.prepare(`SELECT COUNT(*) AS total,
-      SUM(CASE WHEN ec.status='passed' THEN 1 ELSE 0 END) AS passed,
-      SUM(CASE WHEN ec.status='manual_review' THEN 1 ELSE 0 END) AS manual_review,
-      SUM(CASE WHEN ec.status IN ('passed','manual_review') THEN 1 ELSE 0 END) AS terminal
+      SUM(CASE WHEN ec.publication_usability='usable' THEN 1 ELSE 0 END) AS usable,
+      SUM(CASE WHEN ec.publication_usability='partial_usable' THEN 1 ELSE 0 END) AS partial_usable,
+      SUM(CASE WHEN ec.publication_usability='non_material' THEN 1 ELSE 0 END) AS non_material,
+      SUM(CASE WHEN ec.publication_usability='review_needed' AND ec.status='manual_review' THEN 1 ELSE 0 END) AS review_needed,
+      SUM(CASE WHEN ec.publication_usability IN ('usable','partial_usable','non_material') OR ec.status='manual_review' THEN 1 ELSE 0 END) AS terminal
       FROM source_segments ss LEFT JOIN extraction_coverage ec ON ec.segment_id=ss.id WHERE ss.source_id=?`).get(sourceId);
     const total = Number(counts.total || 0);
-    const passed = Number(counts.passed || 0);
-    const manualReview = Number(counts.manual_review || 0);
+    const usable = Number(counts.usable || 0);
+    const partialUsable = Number(counts.partial_usable || 0);
+    const nonMaterial = Number(counts.non_material || 0);
+    const reviewNeeded = Number(counts.review_needed || 0);
+    const manualReview = reviewNeeded; // Compatibility for the legacy localized exception message below.
     const terminal = Number(counts.terminal || 0);
-    const ready = total > 0 && passed === total;
+    const ready = total > 0 && usable + partialUsable + nonMaterial === total;
+    const complete = ready && partialUsable === 0;
     const settled = total > 0 && terminal === total;
     const timestamp = now();
-    if (settled && manualReview > 0) {
+    if (settled && reviewNeeded > 0) {
       const message = `覆盖审计在一次定向重试后仍发现未形成信息主张的重要证据，共 ${manualReview} 个分段需要人工检查。`;
       this.db.prepare("UPDATE sources SET status='exception',last_error=?,updated_at=? WHERE id=?")
         .run(message, timestamp, sourceId);
@@ -1265,7 +1311,7 @@ export class Repository {
           OR last_error LIKE '覆盖审计在一次定向重试后仍发现未形成信息主张的重要证据%')`)
         .run(timestamp, sourceId);
     }
-    return { total, passed, manualReview, terminal, ready, settled };
+    return { total, usable, partialUsable, nonMaterial, reviewNeeded, terminal, ready, complete, settled };
   }
 
   reviewSegmentCoverage(sourceId, segmentId, { decision, note = "", operator = "administrator" } = {}) {
@@ -1286,12 +1332,13 @@ export class Repository {
     transaction(this.db, () => {
       if (decision === "not_material") {
         this.db.prepare(`UPDATE extraction_coverage SET status='passed',important_uncovered_count=0,
-          uncovered_spans_json='[]',audit_json=?,audited_at=? WHERE id=?`).run(JSON.stringify(audit), timestamp, row.coverage_id);
+          uncovered_spans_json='[]',audit_json=?,audited_at=?,evidence_coverage='not_applicable',
+          publication_usability='non_material',materiality='non_material' WHERE id=?`).run(JSON.stringify(audit), timestamp, row.coverage_id);
         this.db.prepare("UPDATE source_segments SET status='complete',updated_at=? WHERE id=?").run(timestamp, segmentId);
         if (row.asset_id) this.db.prepare("UPDATE source_assets SET extraction_status='processed',extraction_error=NULL,processed_at=? WHERE id=?")
           .run(timestamp, row.asset_id);
       } else {
-        this.db.prepare("UPDATE extraction_coverage SET status='retry_required',audit_json=?,audited_at=? WHERE id=?")
+        this.db.prepare("UPDATE extraction_coverage SET status='retry_required',publication_usability='review_needed',audit_json=?,audited_at=? WHERE id=?")
           .run(JSON.stringify(audit), timestamp, row.coverage_id);
         this.db.prepare("UPDATE source_segments SET status='retry_required',updated_at=? WHERE id=?").run(timestamp, segmentId);
         if (row.asset_id) this.db.prepare("UPDATE source_assets SET extraction_status='retry_required',extraction_error=NULL WHERE id=?")
@@ -2450,7 +2497,19 @@ export class Repository {
         s.observed_at AS source_observed_at, s.verified_at AS source_verified_at,
         s.effective_from AS source_effective_from, s.effective_to AS source_effective_to,
         s.valid_from AS source_valid_from, s.valid_to AS source_valid_to,
-        s.date_kind AS source_date_kind, s.date_confidence AS source_date_confidence
+        s.date_kind AS source_date_kind, s.date_confidence AS source_date_confidence,
+        (SELECT ec.publication_usability FROM json_each(c.evidence_span_ids_json) ids
+          JOIN evidence_spans es ON es.id=ids.value JOIN extraction_coverage ec ON ec.segment_id=es.segment_id
+          ORDER BY CASE ec.publication_usability WHEN 'review_needed' THEN 3 WHEN 'partial_usable' THEN 2 ELSE 1 END DESC LIMIT 1)
+          AS segment_publication_usability,
+        (SELECT ec.evidence_coverage FROM json_each(c.evidence_span_ids_json) ids
+          JOIN evidence_spans es ON es.id=ids.value JOIN extraction_coverage ec ON ec.segment_id=es.segment_id
+          ORDER BY CASE ec.evidence_coverage WHEN 'none' THEN 3 WHEN 'partial' THEN 2 ELSE 1 END DESC LIMIT 1)
+          AS segment_evidence_coverage,
+        (SELECT ec.uncovered_spans_json FROM json_each(c.evidence_span_ids_json) ids
+          JOIN evidence_spans es ON es.id=ids.value JOIN extraction_coverage ec ON ec.segment_id=es.segment_id
+          ORDER BY CASE ec.publication_usability WHEN 'review_needed' THEN 3 WHEN 'partial_usable' THEN 2 ELSE 1 END DESC LIMIT 1)
+          AS segment_uncovered_spans_json
       FROM claims c JOIN structured_sources ss ON ss.source_id = c.source_id
       JOIN sources s ON s.id = c.source_id
       WHERE ss.destination_slug = ? AND c.lifecycle_status='active'
@@ -2655,6 +2714,10 @@ export class Repository {
           source_author_url: row.source_author_url || null,
           source_adapter: row.source_adapter || null,
           source_family_ids: row.source_family_ids || null,
+          publication_usability: row.segment_publication_usability || "legacy_unknown",
+          evidence_coverage: row.segment_evidence_coverage || "unknown",
+          coverage_limitations: ["partial_usable", "review_needed"].includes(row.segment_publication_usability)
+            ? json(row.segment_uncovered_spans_json, []) : [],
           authority_level: row.source_authority_level,
           published_at: row.published_at,
           captured_at: row.captured_at,
@@ -2921,8 +2984,10 @@ export class Repository {
     const selectedKeys = new Set(coverage.selectedFactKeys || []);
     const destinationFacts = currentPublicationFacts(this.knowledgeForDestination(candidate.destination_slug));
     const scopedFacts = selectedKeys.size
-      ? destinationFacts.filter((fact) => selectedKeys.has(fact.normalized_key))
-      : scopeFactsForOpportunity(destinationFacts, { title: candidate.proposed_title, topic_key: candidate.topic_key });
+      ? withScopedCoverageLimitations(destinationFacts.filter((fact) => selectedKeys.has(fact.normalized_key)),
+        topicTokens(`${candidate.topic_key || ""} ${candidate.proposed_title || ""}`))
+      : scopeFactsForOpportunity(destinationFacts,
+        { destinationSlug: candidate.destination_slug, title: candidate.proposed_title, topic_key: candidate.topic_key });
     const source = publicationMode === "source_adaptation" && opportunity?.source_id ? this.getSource(opportunity.source_id) : null;
     return {
       candidate,
@@ -2958,6 +3023,7 @@ export class Repository {
   saveBrief(candidateId, plan, model, { deferDraft = false } = {}) {
     const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
     if (!candidate) throw new Error(`Topic candidate ${candidateId} not found.`);
+    plan = normalizeBriefPlan(plan);
     const existing = this.db.prepare("SELECT id FROM content_briefs WHERE candidate_id = ?").get(candidateId);
     const briefId = existing?.id || id("brief");
     const timestamp = now();
@@ -3005,6 +3071,7 @@ export class Repository {
   saveDraft(briefId, draft, model, { deferReview = false } = {}) {
     const brief = this.db.prepare("SELECT * FROM content_briefs WHERE id = ?").get(briefId);
     if (!brief) throw new Error(`Content brief ${briefId} not found.`);
+    draft.evidence_ledger = normalizeDraftLedger(draft.evidence_ledger, json(brief.plan_json, {}));
     const existing = this.db.prepare("SELECT id, revision FROM article_drafts WHERE brief_id = ?").get(briefId);
     const draftId = existing?.id || id("draft");
     const timestamp = now();
@@ -3813,7 +3880,7 @@ export class Repository {
         if (!uncovered.length || !uncovered.every(unsupportedClaimAuditFalsePositive)) continue;
         const audit = json(row.audit_json, {});
         this.db.prepare(`UPDATE extraction_coverage SET status='passed',important_uncovered_count=0,uncovered_spans_json='[]',
-          audit_json=?,audited_at=? WHERE id=?`).run(JSON.stringify({ ...audit, autoAccepted: true,
+          evidence_coverage='complete',publication_usability='usable',materiality='material',audit_json=?,audited_at=? WHERE id=?`).run(JSON.stringify({ ...audit, autoAccepted: true,
           autoAcceptedReason: "unsupported_extracted_claims_are_excluded_not_source_gaps", dismissedGaps: uncovered }), timestamp, row.id);
         this.db.prepare("UPDATE source_segments SET status='complete',updated_at=? WHERE id=?").run(timestamp, row.segment_id);
         acceptedSourceIds.add(row.source_id);
@@ -4887,22 +4954,98 @@ function evidenceHashForFacts(facts) {
   }))));
 }
 
-function buildBlockProvenance(payload, ledger) {
-  const occurrences = new Map();
-  return (payload?.blocks || []).map((block, index) => {
-    const semantic = JSON.stringify(block?.data || {});
-    const base = sha256(`${block?.type || "unknown"}:${semantic}`).slice(0, 20);
-    const occurrence = (occurrences.get(base) || 0) + 1;
-    occurrences.set(base, occurrence);
-    const evidence = ledger[index] || {};
+function normalizeBriefPlan(plan) {
+  const normalized = structuredClone(plan || {});
+  normalized.outline = (normalized.outline || []).map((section) => {
+    const claimKeys = [...new Set(section.claim_keys || [])].sort();
+    const sectionId = validSemanticId(section.section_id) || `section_${sha256(JSON.stringify({ heading: section.heading || "", claimKeys })).slice(0, 20)}`;
+    return { ...section, section_id: sectionId, claim_keys: claimKeys };
+  });
+  return normalized;
+}
+
+function normalizeDraftLedger(ledger, briefPlan) {
+  const sections = briefPlan?.outline || [];
+  return (ledger || []).map((entry) => {
+    const claimKeys = [...new Set(entry.claim_keys || [])].sort();
+    const matches = sections.filter((section) => {
+      const planned = new Set(section.claim_keys || []);
+      return claimKeys.length > 0 && claimKeys.every((key) => planned.has(key));
+    });
+    const sectionId = validSemanticId(entry.section_id) || (matches.length === 1 ? matches[0].section_id : null)
+      || `section_${sha256(JSON.stringify({ claimKeys, label: entry.section || "" })).slice(0, 20)}`;
+    const nodeIds = [...new Set((entry.content_node_ids || []).map(validSemanticId).filter(Boolean))];
+    return { ...entry, section_id: sectionId,
+      content_node_ids: nodeIds.length ? nodeIds : [`node_${sha256(`${sectionId}:${claimKeys.join("|")}`).slice(0, 20)}`],
+      claim_keys: claimKeys, source_ids: [...new Set(entry.source_ids || [])].sort() };
+  });
+}
+
+function normalizePagePlan(plan) {
+  const normalized = structuredClone(plan || {});
+  normalized.blocks = (normalized.blocks || []).map((block) => ({
+    ...block,
+    content_node_id: validSemanticId(block.content_node_id) || "",
+    source_section_ids: [...new Set((block.source_section_ids || []).map(validSemanticId).filter(Boolean))],
+    claim_keys: [...new Set(block.claim_keys || [])].sort(),
+    factuality: block.factuality === "non_factual" ? "non_factual" : "factual",
+  }));
+  return normalized;
+}
+
+function validSemanticId(value) {
+  const text = String(value || "").trim();
+  return /^[a-z][a-z0-9_.:-]{2,127}$/i.test(text) ? text : "";
+}
+
+export function buildBlockProvenance(payload, ledger, explicit, sourceIdsByClaim = new Map(), claimTracesByKey = new Map()) {
+  const ledgerBySection = new Map((ledger || []).map((entry) => [entry.section_id, entry]));
+  const entriesBySignature = Map.groupBy(explicit?.entries || [], (entry) => entry.blockSignature);
+  const errors = [...(explicit?.errors || [])];
+  const blocks = (payload?.blocks || []).map((block) => {
+    const signature = pageBlockSignature(block);
+    const candidates = entriesBySignature.get(signature) || [];
+    const entry = candidates.shift() || null;
+    if (!entry) {
+      errors.push({ code: "MISSING_BLOCK_PROVENANCE", blockSignature: signature });
+      return legacyBlockRecord(block, signature);
+    }
+    const sectionEntries = (entry.sourceSectionIds || []).map((sectionId) => ledgerBySection.get(sectionId)).filter(Boolean);
+    const allowedClaims = new Set(sectionEntries.flatMap((item) => item.claim_keys || []));
+    const claimKeys = entry.factuality === "non_factual" ? [] : [...new Set(entry.claimKeys || [])].filter((key) => allowedClaims.has(key)).sort();
+    const sourceIds = [...new Set(claimKeys.flatMap((key) => sourceIdsByClaim.get(key) || []))].sort();
+    const claimTraces = claimKeys.flatMap((key) => (claimTracesByKey.get(key) || []).map((trace) => ({ claimKey: key, ...trace })));
+    if ((entry.sourceSectionIds || []).some((sectionId) => !ledgerBySection.has(sectionId))) {
+      errors.push({ code: "UNKNOWN_SOURCE_SECTION", contentNodeId: entry.contentNodeId });
+    }
+    if (entry.factuality === "factual" && (!claimKeys.length || !sourceIds.length)) {
+      errors.push({ code: "UNTRACEABLE_FACTUAL_BLOCK", contentNodeId: entry.contentNodeId });
+    }
     return {
-      blockId: `block_${base}_${occurrence}`,
+      blockId: `block_${entry.contentNodeId}_${signature.slice(0, 12)}`,
+      contentNodeId: entry.contentNodeId,
       type: block?.type || "unknown",
-      semanticRole: evidence.section || block?.type || "content",
-      claimKeys: evidence.claim_keys || [],
-      sourceIds: evidence.source_ids || [],
+      semanticRole: entry.factuality === "non_factual" ? "non_factual" : "factual",
+      factuality: entry.factuality,
+      sourceSectionIds: entry.sourceSectionIds || [],
+      claimKeys,
+      sourceIds,
+      claimTraces,
+      mappingStatus: "explicit_v2",
+      blockSignature: signature,
     };
   });
+  return { version: "2", valid: explicit?.valid !== false && errors.length === 0, errors, blocks };
+}
+
+function legacyBlockProvenance(payload) {
+  return (payload?.blocks || []).map((block) => legacyBlockRecord(block, pageBlockSignature(block)));
+}
+
+function legacyBlockRecord(block, signature) {
+  return { blockId: `legacy_${signature.slice(0, 20)}`, contentNodeId: null, type: block?.type || "unknown",
+    semanticRole: "legacy_unknown", factuality: "unknown", sourceSectionIds: [], claimKeys: [], sourceIds: [], claimTraces: [],
+    mappingStatus: "legacy_unknown", blockSignature: signature };
 }
 
 function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], policy = {}) {
@@ -5602,16 +5745,35 @@ function topicTokens(value) {
   return new Set([...words, ...ngrams]);
 }
 
-export function scopeFactsForOpportunity(facts, { destinationSlug, topic, title }) {
+export function scopeFactsForOpportunity(facts, { destinationSlug, topic, topic_key: topicKey, title }) {
   facts = currentPublicationFacts(facts);
   const destinationTerms = topicTokens(destinationSlug);
-  const terms = topicTokens(`${topic || ""} ${title || ""}`);
+  const terms = topicTokens(`${topic || topicKey || ""} ${title || ""}`);
   for (const term of destinationTerms) terms.delete(term);
   // Generic destination guides intentionally use the destination-wide evidence set.
-  if (!terms.size) return facts;
-  return facts.filter((fact) => {
+  const selected = !terms.size ? facts : facts.filter((fact) => {
     const factTerms = topicTokens(`${fact.normalized_key || ""} ${fact.subject || ""} ${fact.predicate || ""}`);
     return [...terms].some((term) => factTerms.has(term));
+  });
+  return withScopedCoverageLimitations(selected, terms);
+}
+
+function withScopedCoverageLimitations(facts, terms) {
+  return facts.map((fact) => ({
+    ...fact,
+    evidence: (fact.evidence || []).map((item) => ({
+      ...item,
+      coverage_limitations: topicRelevantCoverageGaps(item.coverage_limitations, terms),
+    })),
+  }));
+}
+
+function topicRelevantCoverageGaps(gaps, terms) {
+  const rows = Array.isArray(gaps) ? gaps : [];
+  if (!terms.size) return rows;
+  return rows.filter((gap) => {
+    const gapTerms = topicTokens(`${gap.locator || ""} ${gap.reason || ""}`);
+    return [...terms].some((term) => gapTerms.has(term));
   });
 }
 
@@ -5674,6 +5836,24 @@ function countStrings(values) {
 function normalizeInputModality(value) {
   const modality = String(value || "unknown").toLowerCase();
   return ["text", "image", "video", "mixed", "unknown"].includes(modality) ? modality : "unknown";
+}
+
+function segmentMaterialityBasis(row, assessment = null) {
+  const reviewed = String(assessment?.materiality || "").toLowerCase();
+  if (["material", "non_material"].includes(reviewed)) return `review:${reviewed}`;
+  const text = `${row.title || ""} ${row.raw_text || ""}`.normalize("NFKC").trim().toLowerCase();
+  if (!row.asset_id) return String(row.raw_text || "").trim().length >= 40 ? "text:length_material" : "text:short_non_material";
+  if (/\b(decorative|decoration|ornament|background|divider|spacer|texture|avatar|profile photo|logo|watermark|emoji|sticker)\b/u.test(text)) {
+    return "media:decorative_descriptor";
+  }
+  return text ? "media:meaningful_or_unknown_descriptor" : "media:no_descriptor";
+}
+
+function assessSegmentMateriality(row, assessment = null) {
+  const basis = segmentMaterialityBasis(row, assessment);
+  if (basis === "review:material") return "material";
+  if (basis === "review:non_material" || basis.endsWith("non_material") || basis === "media:decorative_descriptor") return "non_material";
+  return row.asset_id ? "material" : "material";
 }
 
 function normalizeExtractionInputManifest(value) {

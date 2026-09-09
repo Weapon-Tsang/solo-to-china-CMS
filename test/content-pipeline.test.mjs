@@ -7,6 +7,7 @@ import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 import { CommercialComposer, normalizeCommercialOffer } from "../src/commercial.mjs";
 import { FrontendContractConsumer } from "../src/frontend-contract.mjs";
 import { defaultComponents, frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
+import { pageBlockSignature } from "../src/repository.mjs";
 
 test("human approval drives recommendation, brief, draft, QA, and WordPress draft delivery", async (t) => {
   const { db, repository } = repositoryFixture(t);
@@ -78,7 +79,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       return { model: "planner-model", output: {
         title: "First-Time Beijing Solo Travel Guide", primary_keyword: "beijing solo travel", search_intent: "informational",
         audience: ["solo travelers"], angle: "first visit", reader_promise: "Plan with confidence",
-        outline: [{ heading: "Plan", purpose: "Practical steps", claim_keys: ["beijing.orientation.location", "beijing.transport.metro"] }],
+        outline: [{ section_id: "section_plan", heading: "Plan", purpose: "Practical steps", claim_keys: ["beijing.orientation.location", "beijing.transport.metro"] }],
         adaptation_requirements: ["language"], conflict_instructions: [],
       } };
     },
@@ -88,8 +89,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
         .flatMap((fact) => fact.evidence.map((evidence) => evidence.source_id)))];
       return { model: "writer-model", output: {
         title: "First-Time Beijing Solo Travel Guide", slug: "beijing-solo-guide", meta_description: "A practical first-time Beijing guide.",
-        body_markdown: "## Plan\n\nEvidence-backed practical guidance for independent visitors.",
-        evidence_ledger: [{ section: "Plan", claim_keys: ["beijing.orientation.location", "beijing.transport.metro"], source_ids: sourceIds }],
+        body_markdown: "## Plan\n\nCentral Beijing is the orientation point. Use the metro; this transport evidence was checked on September 7, 2026.",
+        evidence_ledger: [{ section_id: "section_plan", section: "Plan", content_node_ids: ["node_plan"], claim_keys: ["beijing.orientation.location", "beijing.transport.metro"], source_ids: sourceIds }],
         unresolved_conflicts: [],
         visuals: [
           { placement: "hero", purpose: "Show Source A real-world travel scene", alt_text: "Source A real-world travel scene", caption: "Beijing orientation", generation_prompt: "", aspect_ratio: "16:9", image_type: "real_world_photo", image_role: "hero", image_subject: "Source A real-world travel scene", factual_image_required: true },
@@ -99,14 +100,17 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
     },
     async composePagePlan() {
       return { model: "composer-model", output: {
-        blocks: [{ type: "articleSection", variant: "answer-first", semantic_role: "answer", writer_guidance: "Start with the practical evidence-backed answer." }],
+        blocks: [{ content_node_id: "node_plan", source_section_ids: ["section_plan"], claim_keys: ["beijing.orientation.location", "beijing.transport.metro"], factuality: "factual", type: "articleSection", variant: "answer-first", semantic_role: "answer", writer_guidance: "Start with the practical evidence-backed answer." }],
       } };
     },
     async composeFrontendPage() {
+      const block = { type: "articleSection", variant: "answer-first", data: { heading: "Plan", body: "Central Beijing is the orientation point. Use the metro; this transport evidence was checked on September 7, 2026." } };
       return { model: "payload-composer-model", output: {
         metadata: { title: "First-Time Beijing Solo Travel Guide" },
-        blocks: [{ type: "articleSection", variant: "answer-first", data: { heading: "Plan", body: "Evidence-backed practical guidance for independent visitors." } }],
-      } };
+        blocks: [block],
+      }, provenance: { version: "2", valid: true, errors: [], entries: [{ contentNodeId: "node_plan",
+        blockSignature: pageBlockSignature(block), sourceSectionIds: ["section_plan"],
+        claimKeys: ["beijing.orientation.location", "beijing.transport.metro"], factuality: "factual" }] } };
     },
     async review() {
       return { model: "reviewer-model", output: { passed: true, score: 92, checks: [], issues: [], unsupported_claims: [] } };
@@ -168,7 +172,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
 
   const content = repository.listContent();
   assert.equal(content.length, 1);
-  assert.equal(content[0].draft_status, "wordpress_draft");
+  assert.equal(content[0].draft_status, "wordpress_draft", JSON.stringify(repository.listOperationalExceptions()));
   assert.equal(content[0].qa_passed, 1);
   assert.equal(content[0].wordpress_post_id, 42);
   assert.equal(wordpress.calls.length, 1);

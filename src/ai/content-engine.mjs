@@ -1,6 +1,7 @@
 import { slugify, truncate } from "../utils.mjs";
 import { CONTENT_STRATEGY } from "../content-strategy.mjs";
 import { createAiClient } from "./client.mjs";
+import { pageBlockSignature, validatePageEvidence } from "../evidence-validator.mjs";
 
 const BRIEF_SCHEMA = objectSchema(
   ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions", "canonical"],
@@ -13,7 +14,8 @@ const BRIEF_SCHEMA = objectSchema(
     reader_promise: { type: "string" },
     outline: {
       type: "array",
-      items: objectSchema(["heading", "purpose", "claim_keys"], {
+      items: objectSchema(["section_id", "heading", "purpose", "claim_keys"], {
+        section_id: { type: "string" },
         heading: { type: "string" }, purpose: { type: "string" },
         claim_keys: { type: "array", items: { type: "string" } },
       }),
@@ -71,8 +73,10 @@ const DRAFT_SCHEMA = objectSchema(
     title: { type: "string" }, slug: { type: "string" }, meta_description: { type: "string" }, body_markdown: { type: "string" },
     evidence_ledger: {
       type: "array",
-      items: objectSchema(["section", "claim_keys", "source_ids"], {
+      items: objectSchema(["section_id", "section", "content_node_ids", "claim_keys", "source_ids"], {
+        section_id: { type: "string" },
         section: { type: "string" },
+        content_node_ids: { type: "array", items: { type: "string" } },
         claim_keys: { type: "array", items: { type: "string" } },
         source_ids: { type: "array", items: { type: "string" } },
       }),
@@ -120,7 +124,11 @@ const PAGE_PLAN_SCHEMA = objectSchema(
     blocks: {
       type: "array",
       minItems: 1,
-      items: objectSchema(["type", "semantic_role", "writer_guidance"], {
+      items: objectSchema(["content_node_id", "source_section_ids", "claim_keys", "factuality", "type", "semantic_role", "writer_guidance"], {
+        content_node_id: { type: "string" },
+        source_section_ids: { type: "array", items: { type: "string" } },
+        claim_keys: { type: "array", items: { type: "string" } },
+        factuality: { type: "string", enum: ["factual", "non_factual"] },
         type: { type: "string" },
         variant: { type: "string" },
         semantic_role: { type: "string" },
@@ -241,9 +249,9 @@ export class ContentEngine {
   }
 
   async composeFrontendPage(contentPackage, capabilities, pageSchema, options = {}) {
-    return this.respond({
+    const result = await this.respond({
       name: "frontend_page_payload",
-      schema: pageSchema,
+      schema: pageSchemaWithCmsProvenance(pageSchema),
       instructions: pagePayloadPrompt(contentPackage.brief?.strategy_version || this.contentStrategy.version, capabilities),
       input: JSON.stringify({
         page_plan: contentPackage.frontend_page_plan?.plan || null,
@@ -252,6 +260,8 @@ export class ContentEngine {
         visuals: contentPackage.draft?.visuals || [],
       }), options,
     });
+    const separated = separateCmsProvenance(result.output, contentPackage.frontend_page_plan?.plan);
+    return { ...result, output: separated.payload, provenance: separated.provenance };
   }
 
   async review(contentPackage, options = {}) {
@@ -287,7 +297,9 @@ function draftInputDto(contentPackage) {
         published_at: item.published_at, observed_at: item.observed_at, captured_at: item.captured_at,
         verified_at: item.verified_at, valid_from: item.valid_from, valid_to: item.valid_to,
         date_kind: item.date_kind, date_confidence: item.date_confidence,
-        timestamp_basis: item.timestamp_basis, authority_level: item.authority_level })),
+        timestamp_basis: item.timestamp_basis, authority_level: item.authority_level,
+        publication_usability: item.publication_usability, evidence_coverage: item.evidence_coverage,
+        coverage_limitations: item.coverage_limitations || [] })),
     })),
     reader_sources: contentPackage.reader_sources || [],
     internal_link_inventory: contentPackage.internal_link_inventory || [],
@@ -328,6 +340,7 @@ const intakePrompt = (strategyVersion) => `Analyze one already-captured human-se
 const briefPrompt = (strategyVersion) => `Create an evidence-backed English content plan and Canonical Travel Content object for SoloToChina Content Production Strategy ${strategyVersion}.
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
+- Evidence marked partial_usable is valid only for the supplied Claim. Treat its coverage_limitations as explicit boundaries: narrow the reader promise, omit unsupported details, and never describe the source or topic as complete. Unrelated source gaps are already removed from this topic package.
 - Unresolved strict safety/semantic conflicts require explicit handling instructions; never silently choose a side.
 - Dynamic prices, hours, reservations, schedules and access details are already selected by an auditable independent-source, source-quality and recency-weighted consensus. They do not require manual official verification. Include the supplied current value when useful, state the evidence date and normal change risk, and prefer higher-confidence conclusions. Dated evidence may be used with a clear as-of caveat rather than discarded.
 - Follow the selected production_mode for this one plan, without treating the other parallel routes as disabled. For source_adaptation, preserve the authorized source's useful itinerary, selection, sequence and practical intent while writing original English copy; do not copy wording or claim facts outside that source package. For topic_feature, fulfill only the bounded topic promise. For multi_source_synthesis, deliberately combine compatible perspectives across sources; it is a creative format, not a completeness repair step.
@@ -376,12 +389,14 @@ You may only use component IDs and variants published by the current Frontend Co
 Do not make content type a hardcoded layout template. Select only components that match the actual evidence-backed editorial need.
 Do not select deprecated components for a new page. blocks array order is the final intended reader order.
 Each writer_guidance explains the evidence-bounded content that the Writer should prepare for this semantic component; it is not visual direction.
+Give every block a stable content_node_id. Explicitly list source_section_ids and claim_keys for factual blocks; decorative or structural blocks must use factuality=non_factual with empty evidence references. One section may feed several nodes and one node may cite several sections.
 Current capability candidates (machine-derived):\n${JSON.stringify(promptCapabilities(capabilities))}`;
 
 const pagePayloadPrompt = (strategyVersion, capabilities) => `Produce a Frontend page payload for SoloToChina Content Production Strategy ${strategyVersion}.
 Follow the supplied Page Schema exactly. The blocks array order is final render order.
 Use only component IDs, variants, fields, and data schemas published by the current Frontend Component Registry candidates below. Never invent components, variants, props, CSS, styling tokens, or visual instructions.
 Use the page plan as an editorial ordering guide. Use only information contained in the supplied canonical content and draft. Preserve uncertainty instead of fabricating facts. Do not use deprecated components in a new payload.
+For each block copy exactly one content_node_id from the supplied page plan into _cms_content_node_id. Also return _cms_source_section_ids, _cms_claim_keys and _cms_factuality from that same plan node. These fields are removed into the CMS provenance sidecar before Frontend validation and are never public component props.
 When the Registry publishes an image component, use it only for supplied visuals that already include a positive wordpress_media_id. Copy that ID to media_id and preserve the supplied alt text and caption. Place each selected image explicitly in blocks[]; never invent a media ID or an image URL.
 Current capability candidates (machine-derived):\n${JSON.stringify(promptCapabilities(capabilities))}`;
 
@@ -484,6 +499,11 @@ function applyDeterministicGates(review, contentPackage) {
     addGate("final-page-content", normalizeComparable(payload.metadata?.title) === normalizeComparable(draft.title) && missingHeadings.length === 0,
       missingHeadings.length ? `Final page omits critical headings: ${missingHeadings.join(", ")}` : "Final page title and critical section headings match the draft.",
       "final_page_content_missing");
+    const evidenceValidation = validatePageEvidence(payload, contentPackage);
+    addGate("final-page-evidence", evidenceValidation.valid,
+      evidenceValidation.valid ? "Every factual semantic node retains its evidence values, conditions, source relation and visible date disclosure."
+        : `Final page evidence mismatch: ${evidenceValidation.errors.map((item) => item.code).join(", ")}`,
+      "final_page_evidence_invalid");
   }
   const graph = draft.schema_jsonld?.["@graph"] || [];
   addGate("schema-consistency", graph.some((item) => item["@type"] === "Article") && graph.every((item) => !/undefined|null/.test(JSON.stringify(item))),
@@ -519,6 +539,46 @@ function normalizeComparable(value) {
 function objectSchema(required, properties) {
   return { type: "object", additionalProperties: false, required, properties };
 }
+
+function pageSchemaWithCmsProvenance(pageSchema) {
+  const schema = structuredClone(pageSchema);
+  const block = schema?.properties?.blocks?.items;
+  if (!block?.properties) return schema;
+  block.properties._cms_content_node_id = { type: "string" };
+  block.properties._cms_source_section_ids = { type: "array", items: { type: "string" } };
+  block.properties._cms_claim_keys = { type: "array", items: { type: "string" } };
+  block.properties._cms_factuality = { type: "string", enum: ["factual", "non_factual"] };
+  block.required = [...new Set([...(block.required || []), "_cms_content_node_id", "_cms_source_section_ids", "_cms_claim_keys", "_cms_factuality"])];
+  return schema;
+}
+
+function separateCmsProvenance(output, plan) {
+  const payload = structuredClone(output || {});
+  const nodes = new Map((plan?.blocks || []).map((block) => [block.content_node_id, block]));
+  const entries = [];
+  const errors = [];
+  for (const block of payload.blocks || []) {
+    const nodeId = String(block._cms_content_node_id || "");
+    const planned = nodes.get(nodeId);
+    if (!planned) errors.push({ code: "UNKNOWN_CONTENT_NODE", contentNodeId: nodeId || null });
+    const clean = { ...block };
+    delete clean._cms_content_node_id;
+    delete clean._cms_source_section_ids;
+    delete clean._cms_claim_keys;
+    delete clean._cms_factuality;
+    Object.keys(block).forEach((key) => delete block[key]);
+    Object.assign(block, clean);
+    entries.push({
+      contentNodeId: nodeId,
+      blockSignature: pageBlockSignature(clean),
+      sourceSectionIds: planned?.source_section_ids || [],
+      claimKeys: planned?.claim_keys || [],
+      factuality: planned?.factuality || "unknown",
+    });
+  }
+  return { payload, provenance: { version: "2", valid: errors.length === 0, errors, entries } };
+}
+
 
 function wordCount(text) {
   return String(text || "").trim().split(/\s+/).filter(Boolean).length;

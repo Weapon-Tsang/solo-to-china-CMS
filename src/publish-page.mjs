@@ -1,3 +1,5 @@
+import { validatePageEvidence } from "./evidence-validator.mjs";
+
 const COMMERCIAL_VARIANTS = {
   affiliate_booking_card: () => "default",
   affiliate_search_card: (data) => data.embed_config ? "search_box" : "link",
@@ -85,6 +87,8 @@ export function validateFinalPageArtifact(page, contentPackage) {
       errors.push({ code: "INCOMPLETE_EVIDENCE_LEDGER", path: `$.draft.evidence_ledger[${index}]` });
     }
   }
+  const evidenceValidation = validatePageEvidence(page, contentPackage);
+  errors.push(...evidenceValidation.errors);
   const allowedAssets = new Set(contentPackage?.commercial_composition?.asset_ids || []);
   blocks.forEach((block, index) => {
     if (!String(block?.type || "").startsWith("affiliate_")) return;
@@ -92,7 +96,7 @@ export function validateFinalPageArtifact(page, contentPackage) {
       errors.push({ code: "UNVERIFIED_COMMERCIAL_ASSET", path: `$.blocks[${index}].data.affiliate_asset_id` });
     }
   });
-  return { valid: errors.length === 0, errors };
+  return { valid: errors.length === 0, errors, evidence: evidenceValidation };
 }
 
 export function synchronizeSchemaWithPage(sourceSchema, page, draft = {}) {

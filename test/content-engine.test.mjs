@@ -33,3 +33,30 @@ test("Kimi-backed independent QA cannot approve deterministic evidence or commer
   assert.equal(request.url, "https://api.example.test/v1/chat/completions");
   assert.equal(request.body.response_format.type, "json_schema");
 });
+
+test("page composition extracts CMS node references before Frontend validation", async () => {
+  const block = { type: "articleSection", data: { heading: "Plan", body: "Use the metro." },
+    _cms_content_node_id: "node_transport", _cms_source_section_ids: ["section_plan"],
+    _cms_claim_keys: ["transport.metro"], _cms_factuality: "factual" };
+  let requestBody;
+  const fetchStub = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({ model: "page-model", choices: [{ finish_reason: "stop",
+      message: { content: JSON.stringify({ metadata: { title: "Guide" }, blocks: [block] }) } }] }),
+    { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const engine = new ContentEngine({ apiKey: "key", model: "model", baseUrl: "https://api.example.test/v1" }, fetchStub);
+  const pageSchema = { type: "object", additionalProperties: false, required: ["metadata", "blocks"], properties: {
+    metadata: { type: "object", additionalProperties: false, required: ["title"], properties: { title: { type: "string" } } },
+    blocks: { type: "array", items: { type: "object", additionalProperties: false, required: ["type", "data"], properties: {
+      type: { type: "string" }, data: { type: "object" },
+    } } },
+  } };
+  const result = await engine.composeFrontendPage({ frontend_page_plan: { plan: { blocks: [{
+    content_node_id: "node_transport", source_section_ids: ["section_plan"], claim_keys: ["transport.metro"], factuality: "factual",
+  }] } }, brief: { strategy_version: "1.8", canonical: {} }, draft: {} }, { components: [] }, pageSchema);
+  assert.equal("_cms_content_node_id" in result.output.blocks[0], false);
+  assert.equal(result.provenance.valid, true);
+  assert.deepEqual(result.provenance.entries[0].claimKeys, ["transport.metro"]);
+  assert.ok(requestBody.response_format.json_schema.schema.properties.blocks.items.required.includes("_cms_content_node_id"));
+});

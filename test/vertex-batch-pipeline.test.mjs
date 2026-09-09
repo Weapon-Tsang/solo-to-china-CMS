@@ -124,7 +124,7 @@ test("an image Batch persists its submitted asset manifest and passes local moda
   assert.equal(await pipeline.pumpVertexBatch(), true);
   assert.equal(parsed, 1);
   assert.equal(db.prepare("SELECT input_modality FROM segment_extractions WHERE segment_id=?").get(imageSegment.id).input_modality, "image");
-  assert.equal(repository.auditSegmentCoverage(imageSegment.id).status, "passed");
+  assert.equal(repository.auditSegmentCoverage(imageSegment.id).status, "usable");
 });
 
 test("a transient Batch output read failure defers ingestion without cleanup or another model request", async (t) => {

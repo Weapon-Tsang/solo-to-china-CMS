@@ -11,6 +11,9 @@
 - Separate publication, observation, capture, verification, and validity-window semantics; scheduled and historical evidence is retained but excluded from current conclusions.
 - Separate manual submitter metadata from author/publisher identity, preserve original/canonical/final public URLs, and deduplicate uploaded files and repeated URLs by stable source identity.
 - Resolve overlapping duplicate families, stable source identities, and stable authors as deterministic connected components with folded-source audit detail and a dry-run rebuild preview.
+- Replace page-array provenance with stable section/node references and store a Contract-neutral sidecar that traces factual blocks through Claims and Sources to exact evidence spans; legacy mappings remain explicitly unknown.
+- Validate final visible page artifacts against their evidence ledger, protected values and qualifiers, visible as-of dates, Claim/Source relations, and answer-bearing content before delivery.
+- Split extraction transport success, evidence coverage, publication usability, and materiality; retain partially covered Claims for bounded topics, route meaningful zero-Claim media to review, and propagate only topic-relevant coverage limitations.
 
 ## 1.17.11 - 2026-09-09
 

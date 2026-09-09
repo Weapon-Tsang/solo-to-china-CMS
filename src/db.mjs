@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 46;
+export const SCHEMA_VERSION = 47;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -67,6 +67,44 @@ function migrate(db) {
   if (current < 44) migrationFortyFour(db);
   if (current < 45) migrationFortyFive(db);
   if (current < 46) migrationFortySix(db);
+  if (current < 47) migrationFortySeven(db);
+}
+
+function migrationFortySeven(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE extraction_coverage ADD COLUMN transport_status TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (transport_status IN ('unknown','succeeded','failed'));
+      ALTER TABLE extraction_coverage ADD COLUMN evidence_coverage TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (evidence_coverage IN ('unknown','complete','partial','none','not_applicable'));
+      ALTER TABLE extraction_coverage ADD COLUMN publication_usability TEXT NOT NULL DEFAULT 'review_needed'
+        CHECK (publication_usability IN ('usable','partial_usable','non_material','review_needed'));
+      ALTER TABLE extraction_coverage ADD COLUMN materiality TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (materiality IN ('unknown','material','non_material'));
+      UPDATE extraction_coverage SET
+        transport_status=CASE WHEN status='failed' THEN 'failed' ELSE 'succeeded' END,
+        evidence_coverage=CASE
+          WHEN status='passed' AND important_uncovered_count=0 THEN 'complete'
+          WHEN claim_count>0 THEN 'partial'
+          WHEN important_uncovered_count>0 THEN 'none'
+          ELSE 'unknown' END,
+        publication_usability=CASE
+          WHEN status='passed' THEN 'usable'
+          ELSE 'review_needed' END,
+        materiality=CASE
+          WHEN status='passed' AND claim_count=0 AND important_uncovered_count=0 THEN 'non_material'
+          WHEN claim_count>0 OR important_uncovered_count>0 THEN 'material'
+          ELSE 'unknown' END;
+      CREATE INDEX idx_extraction_coverage_usability
+        ON extraction_coverage(source_id, publication_usability, evidence_coverage);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (47, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFortySix(db) {

@@ -553,9 +553,9 @@ export class Pipeline {
           }
           const composed = await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal }));
           const validation = this.frontendContracts.validatePagePayload(composed.output);
-          this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
-            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash });
-          if (!validation.valid) throw new Error(`Frontend page payload is invalid: ${validation.errors.map((item) => item.code).join(", ")}`);
+          const savedPage = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
+            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash }, composed.provenance);
+          if (!savedPage.validation.valid) throw new Error(`Frontend page payload is invalid: ${savedPage.validation.errors.map((item) => item.code).join(", ")}`);
           this.repository.enqueue("review_draft", job.entity_id);
           break;
         }

@@ -61,9 +61,9 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 | A07 | 1.3 | completed | `d357d59` | Migration 45; explicit date semantics, validity filtering and reader-safe capture labels verified |
 | A08 | 1.3 | completed | `d357d59` | Migration 46; submitter/author/source identity and real reader URLs verified |
 | A09 | 1.3 | completed | `d357d59` | Deterministic family/author/identity components and dry-run impact verified |
-| A10 | 1.3 | pending | `d642f0f` | After A09; stable semantic provenance IDs |
-| A11 | 1.3 | pending | `d642f0f` | After A10; deterministic final artifact evidence gate |
-| A12 | 1.3 | pending | `d642f0f` | After A11; coverage status dimensions |
+| A10 | 1.3 | completed | `e7cc358` | Stable section/node provenance, span traces and explicit legacy-unknown compatibility verified |
+| A11 | 1.3 | completed | `e7cc358` | Deterministic visible final-artifact evidence gate verified |
+| A12 | 1.3 | completed | `e7cc358` | Migration 47; transport/coverage/usability dimensions and topic-scoped gaps verified |
 | A13 | 1.3 | pending | `d642f0f` | After A12; scoped assignment evidence selection |
 | A14 | 1.3 | pending | `d642f0f` | After A13; UI request races and refresh truthfulness |
 | A16 | 1.3 | pending | `d642f0f` | After A14; login throttling and trusted proxy handling |
@@ -158,6 +158,31 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 - Third-batch regression checkpoint: 279 tests passed; `npm run check` passed;
   `npm run release:check` passed 39 mandatory checks with 0 failures and 4
   documented environment warnings. The clean schema chain is now 1-46.
-- Current task: A10.
-- Next action: replace page-block array-index provenance with stable section/node
-  references and preserve legacy mappings without pretending they are exact.
+- Completed A10: brief sections, draft-ledger nodes and Frontend page-plan blocks
+  now have stable semantic IDs. Page payloads remain Contract-compatible while a
+  stored sidecar maps each factual block to its section, Claim, Source and exact
+  evidence spans. Decorative insertion, section splitting and block reordering do
+  not change identity. Historical rows without the sidecar hydrate as
+  `legacy_unknown`; they never inherit an array position as exact provenance.
+  Verification: 2 dedicated provenance tests plus the content pipeline passed.
+- Completed A11: deterministic QA reads the final visible Page Payload after
+  composition/overlay and rejects empty factual ledgers, missing answers, changed
+  protected values or qualifiers, missing visible as-of dates, forged Sources and
+  invalid Claim-to-Source traces. Non-factual layout variants remain allowed.
+  The same validator runs during AI review and final Publish Package creation.
+  Verification: 4 dedicated validator tests plus Publish/content integration passed.
+- Completed A12: migration 47 separates transport success, evidence coverage,
+  publication usability and materiality. A targeted retry with one supported Claim
+  and nine material gaps becomes `partial_usable/partial`, not complete, while the
+  supported Claim remains eligible for a bounded topic. Local explainable rules
+  classify clear decoration without a model call; meaningful zero-Claim media
+  retries then requires review. Knowledge evidence retains coverage limitations,
+  and writing packages remove gaps unrelated to the selected narrow topic while
+  keeping relevant limitations as reader-promise boundaries. Verification: 3 new
+  acceptance tests and all coverage/pipeline tests passed.
+- Fourth-batch regression checkpoint: 289 tests passed; `npm run check` passed;
+  `npm run release:check` passed 39 mandatory checks with 0 failures and 4
+  documented environment warnings. The clean schema chain is now 1-47.
+- Current task: A13.
+- Next action: review assignment evidence selection and add topic/entity-scoped
+  include/exclude decisions with auditable operator-visible reasons.
