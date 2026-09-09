@@ -58,9 +58,9 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 | A04 | 1.3 | completed | `d357d59` | Migration 42; durable failure routing/budget/cooldown verified |
 | A05 | 1.3 | completed | `d357d59` | Migration 43; immutable run config and old-provider adapter recovery verified |
 | A06 | 1.3 | completed | `d357d59` | Migration 44; lease generation, cancellation and preparation recovery verified |
-| A07 | 1.3 | in_progress | `d357d59` | Evidence date semantics and validity windows |
-| A08 | 1.3 | pending | `d642f0f` | After A07; submitted-by/source identity separation |
-| A09 | 1.3 | pending | `d642f0f` | After A08; source-family connected components |
+| A07 | 1.3 | completed | `d357d59` | Migration 45; explicit date semantics, validity filtering and reader-safe capture labels verified |
+| A08 | 1.3 | completed | `d357d59` | Migration 46; submitter/author/source identity and real reader URLs verified |
+| A09 | 1.3 | completed | `d357d59` | Deterministic family/author/identity components and dry-run impact verified |
 | A10 | 1.3 | pending | `d642f0f` | After A09; stable semantic provenance IDs |
 | A11 | 1.3 | pending | `d642f0f` | After A10; deterministic final artifact evidence gate |
 | A12 | 1.3 | pending | `d642f0f` | After A11; coverage status dimensions |
@@ -135,8 +135,29 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 - Second-batch regression checkpoint: 266 tests passed; `npm run check` passed;
   `npm run release:check` passed 39 mandatory checks with 0 failures and the same
   4 documented environment warnings. The clean schema chain is now 1-44.
-- Current task: A07.
-- Next action: separate publication/observation/capture/verification dates and add
-  validity-window and seasonal/as-of evidence tests.
 - Unverified conditions: all production/deployed services listed under baseline
   limitations.
+- Completed A07: migration 45 separates observed, published, captured, verified,
+  valid-from and valid-to semantics. Capture-only timestamps remain low-confidence
+  archive clues and never populate `latest_evidence_at`; scheduled and historical
+  evidence remains auditable but cannot enter current topic/writing packages.
+  Explicit Claim validity dates and qualifiers are preserved. Verification: 11
+  focused temporal/migration/content-pipeline tests passed.
+- Completed A08: migration 46 separates `submitted_by`, author, publisher,
+  original/canonical/final URL, stable source identity and version identity.
+  Manual URL identity uses the public canonical URL; local file identity uses its
+  content hash. Repeated originals update one Source; reader Sources prefer the
+  real final URL and omit internal/file URIs. Legacy `人工提交` becomes unknown,
+  without guessing an author. Verification: 22 focused tests passed.
+- Completed A09: evidence independence now computes deterministic connected
+  components across overlapping trusted families, stable identities and stable
+  author identity. Consensus audit data names merge reasons, selected observation
+  and folded Sources; input order cannot change the result. Repository dry-run
+  reports affected facts and vote-count/key changes before applying a scoped
+  Knowledge rebuild. Verification: 53 focused consensus/Knowledge tests passed.
+- Third-batch regression checkpoint: 279 tests passed; `npm run check` passed;
+  `npm run release:check` passed 39 mandatory checks with 0 failures and 4
+  documented environment warnings. The clean schema chain is now 1-46.
+- Current task: A10.
+- Next action: replace page-block array-index provenance with stable section/node
+  references and preserve legacy mappings without pretending they are exact.

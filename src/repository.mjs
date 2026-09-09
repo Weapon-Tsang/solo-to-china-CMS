@@ -4,7 +4,7 @@ import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 import { contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
 import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "./claim-resolution.mjs";
-import { evidenceResolutionMode, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
+import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
 import { legacyOfferToAsset } from "./commercial.mjs";
 import {
@@ -339,6 +339,8 @@ export class Repository {
     const syncScopeKey = capture.syncScopeKey || capture.client?.syncScopeKey || "";
     const extensionVersion = capture.client?.extensionVersion || "";
     const rights = capture.rights || {};
+    const sourceIdentity = capture.sourceIdentity || defaultSourceIdentity(capture);
+    const sourceVersionIdentity = capture.sourceVersionIdentity || contentHash;
 
     return transaction(this.db, () => {
       // A note ID remains stable when Xiaohongshu changes a share URL or adds
@@ -346,7 +348,10 @@ export class Repository {
       const existingByExternalId = capture.externalId
         ? this.db.prepare("SELECT id, content_hash, capture_version, completeness_status FROM sources WHERE adapter = ? AND external_id = ? LIMIT 1").get(capture.adapter, capture.externalId)
         : null;
-      const existing = existingByExternalId
+      const existingByIdentity = sourceIdentity
+        ? this.db.prepare("SELECT id, content_hash, capture_version, completeness_status FROM sources WHERE source_identity=? ORDER BY created_at LIMIT 1").get(sourceIdentity)
+        : null;
+      const existing = existingByIdentity || existingByExternalId
         || this.db.prepare("SELECT id, content_hash, capture_version, completeness_status FROM sources WHERE canonical_url = ?").get(capture.canonicalUrl);
       let sourceId;
       let duplicate = false;
@@ -401,6 +406,12 @@ export class Repository {
           JSON.stringify(rights.licenseScope || []), timestamp, timestamp,
         );
       }
+
+      this.db.prepare(`UPDATE sources SET submitted_by=?,source_publisher=?,source_identity=?,source_version_identity=?,
+        original_url=?,final_url=? WHERE id=?`).run(
+        capture.submittedBy || "", capture.sourcePublisher || "", sourceIdentity, sourceVersionIdentity,
+        capture.originalUrl || submittedUrl || "", capture.finalUrl || submittedUrl || "", sourceId,
+      );
 
       if (!duplicate) {
         const insertAsset = this.db.prepare(`
@@ -2007,8 +2018,9 @@ export class Repository {
           canonical_subject, entity_aliases_json, entity_resolution_status, entity_type, granularity,
           entity_location_json, structured_value_json, scope_json, claim_kind, cardinality,
           extraction_run_id, extraction_revision, claim_role, knowledge_eligible,
-          source_quote_start, source_quote_end, source_quote_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          source_quote_start, source_quote_end, source_quote_status,
+          observed_at, valid_from, valid_to, date_kind, date_confidence)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const claim of result.claims) {
         const normalizedKey = normalizeClaimKey(claim.key);
@@ -2025,6 +2037,11 @@ export class Repository {
         };
         const knowledgeEligible = locatedQuote.status !== "unsupported" && (claim.knowledge_eligible === true
           || (claim.knowledge_eligible == null && !["personal_experience", "editorial_metadata", "promotional_observation"].includes(claimRole)));
+        const claimObservedAt = validEvidenceDate(claim.observed_at);
+        const claimValidFrom = validEvidenceDate(claim.valid_from);
+        const claimValidTo = validEvidenceDate(claim.valid_to);
+        const claimDateKind = claimValidFrom ? "valid_from" : claimObservedAt ? "observed_at" : "unknown";
+        const claimDateConfidence = claimDateKind === "unknown" ? "unknown" : normalizeDateConfidence(claim.date_confidence);
         insertClaim.run(
           id("claim"), sourceId, normalizedKey, claim.subject, claim.predicate, claim.value,
           JSON.stringify(claim.qualifiers), locatedQuote.quote, claim.confidence, timestamp, normalizedKey,
@@ -2033,13 +2050,17 @@ export class Repository {
           JSON.stringify(structured), JSON.stringify(structured.scope), structured.claim_kind, structured.cardinality,
           extractionRunId, extractionRevision,
           claimRole, knowledgeEligible ? 1 : 0, locatedQuote.start, locatedQuote.end, locatedQuote.status,
+          claimObservedAt, claimValidFrom, claimValidTo, claimDateKind, claimDateConfidence,
         );
       }
-      this.db.prepare(`UPDATE sources SET observed_at=COALESCE(observed_at,published_at) WHERE id=?`).run(sourceId);
-      this.db.prepare(`UPDATE claims SET observed_at=(SELECT COALESCE(observed_at,published_at) FROM sources WHERE id=?),
-        temporal_confidence=CASE WHEN (SELECT published_at FROM sources WHERE id=?) IS NULL THEN 'unknown' ELSE 'medium' END,
+      this.db.prepare(`UPDATE sources SET date_kind=CASE WHEN published_at IS NOT NULL THEN 'published_at' ELSE date_kind END,
+        date_confidence=CASE WHEN published_at IS NOT NULL THEN 'medium' ELSE date_confidence END WHERE id=?`).run(sourceId);
+      this.db.prepare(`UPDATE claims SET observed_at=COALESCE(claims.observed_at,(SELECT observed_at FROM sources WHERE id=?)),
+        temporal_confidence=CASE WHEN claims.observed_at IS NOT NULL THEN claims.date_confidence WHEN (SELECT published_at FROM sources WHERE id=?) IS NULL THEN 'unknown' ELSE 'medium' END,
+        date_kind=CASE WHEN claims.date_kind<>'unknown' THEN claims.date_kind WHEN (SELECT published_at FROM sources WHERE id=?) IS NULL THEN 'unknown' ELSE 'published_at' END,
+        date_confidence=CASE WHEN claims.date_confidence<>'unknown' THEN claims.date_confidence WHEN (SELECT published_at FROM sources WHERE id=?) IS NULL THEN 'unknown' ELSE 'medium' END,
         source_authority_level=(SELECT authority_level FROM sources WHERE id=?) WHERE source_id=?`)
-        .run(sourceId, sourceId, sourceId, sourceId);
+        .run(sourceId, sourceId, sourceId, sourceId, sourceId, sourceId);
       this.db.prepare(`
         INSERT INTO source_blueprints(source_id, format, hook, angle, sections_json, strengths_json, gaps_json, extracted_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -2421,11 +2442,15 @@ export class Repository {
       SELECT c.*, ss.destination_name, ss.destination_slug, s.captured_at, s.published_at,
         s.canonical_url AS source_url, s.title AS source_title, s.authority_level AS source_authority_level,
         s.adapter AS source_adapter, s.author_name AS source_author_name, s.author_url AS source_author_url,
+        s.original_url AS source_original_url, s.final_url AS source_final_url,
+        s.source_identity, s.source_publisher, s.submitted_by,
         s.completeness_status AS source_completeness_status,
         (SELECT group_concat(sfm.family_id, '|') FROM source_family_memberships sfm
           WHERE sfm.source_id=s.id AND sfm.relation_type IN ('EXACT_DUPLICATE','NEAR_DUPLICATE','DERIVED_FROM')) AS source_family_ids,
         s.observed_at AS source_observed_at, s.verified_at AS source_verified_at,
-        s.effective_from AS source_effective_from, s.effective_to AS source_effective_to
+        s.effective_from AS source_effective_from, s.effective_to AS source_effective_to,
+        s.valid_from AS source_valid_from, s.valid_to AS source_valid_to,
+        s.date_kind AS source_date_kind, s.date_confidence AS source_date_confidence
       FROM claims c JOIN structured_sources ss ON ss.source_id = c.source_id
       JOIN sources s ON s.id = c.source_id
       WHERE ss.destination_slug = ? AND c.lifecycle_status='active'
@@ -2472,8 +2497,8 @@ export class Repository {
           freshness_state, latest_evidence_at, verification_priority, entity_key, canonical_subject,
           entity_aliases_json, entity_resolution_status, entity_type, granularity, entity_location_json,
           claim_relations_json, visibility_status, visibility_reason, visibility_updated_at,
-          consensus_method, consensus_confidence, consensus_detail_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          consensus_method, consensus_confidence, consensus_detail_json, validity_state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(destination_id, normalized_key) DO UPDATE SET subject=excluded.subject,
           predicate=excluded.predicate, consensus_status=excluded.consensus_status,
           preferred_value=excluded.preferred_value, support_count=excluded.support_count,
@@ -2486,7 +2511,8 @@ export class Repository {
           entity_location_json=excluded.entity_location_json, claim_relations_json=excluded.claim_relations_json,
           visibility_status=excluded.visibility_status, visibility_reason=excluded.visibility_reason,
           visibility_updated_at=excluded.visibility_updated_at, consensus_method=excluded.consensus_method,
-          consensus_confidence=excluded.consensus_confidence, consensus_detail_json=excluded.consensus_detail_json
+          consensus_confidence=excluded.consensus_confidence, consensus_detail_json=excluded.consensus_detail_json,
+          validity_state=excluded.validity_state
       `);
       const deleteKnowledgeFact = this.db.prepare("DELETE FROM knowledge_facts WHERE id=?");
       const activeFactIds = new Set();
@@ -2552,7 +2578,8 @@ export class Repository {
         const variantKey = (row) => typedFact
           ? `${canonicalPredicate}:${JSON.stringify(row.structured_value.typed_value)}`
           : normalizeValue(row.value_text);
-        const variants = Map.groupBy(rows, variantKey);
+        const applicableRows = rows.filter((row) => ["current", "unknown"].includes(evidenceTemporalState(row, Date.parse(timestamp)).validityState));
+        const variants = Map.groupBy(applicableRows, variantKey);
         const resolutionMode = evidenceResolutionMode(rows);
         const evidenceConsensus = resolveEvidenceConsensus(rows, {
           variantKey,
@@ -2593,9 +2620,9 @@ export class Repository {
           : evidenceConsensus.autoResolved
             ? evidenceConsensus.supportCount > 1 ? "corroborated" : "single_source"
             : rows.length > 1 ? "corroborated" : "single_source";
-        const consensusWinner = rows.find((row) => variantKey(row) === evidenceConsensus.preferredVariantKey)
-          || ranked[0][1][0];
-        const preferredValue = evidenceConsensus.autoResolved
+        const consensusWinner = applicableRows.find((row) => variantKey(row) === evidenceConsensus.preferredVariantKey)
+          || ranked[0]?.[1]?.[0] || null;
+        const preferredValue = !consensusWinner ? "" : evidenceConsensus.autoResolved
           ? typedFact ? displayTypedKnowledgeValue(consensusWinner.structured_value.typed_value) : evidenceConsensus.preferredValue
           : ranked[0][1][0].value_text;
         const legacyFreshness = classifyFreshness(rows, this.contentConfig);
@@ -2620,6 +2647,14 @@ export class Repository {
           source_subject: row.subject,
           source_title: row.source_title,
           canonical_url: row.source_url,
+          original_url: row.source_original_url || null,
+          final_url: row.source_final_url || null,
+          source_identity: row.source_identity || null,
+          source_publisher: row.source_publisher || null,
+          source_author_name: row.source_author_name || null,
+          source_author_url: row.source_author_url || null,
+          source_adapter: row.source_adapter || null,
+          source_family_ids: row.source_family_ids || null,
           authority_level: row.source_authority_level,
           published_at: row.published_at,
           captured_at: row.captured_at,
@@ -2627,8 +2662,13 @@ export class Repository {
           verified_at: row.verified_at || row.source_verified_at || null,
           effective_from: row.effective_from || row.source_effective_from || null,
           effective_to: row.effective_to || row.source_effective_to || null,
+          valid_from: row.valid_from || row.source_valid_from || row.effective_from || row.source_effective_from || null,
+          valid_to: row.valid_to || row.source_valid_to || row.effective_to || row.source_effective_to || null,
+          date_kind: row.date_kind !== "unknown" ? row.date_kind : row.source_date_kind || "unknown",
+          date_confidence: row.date_confidence !== "unknown" ? row.date_confidence : row.source_date_confidence || "unknown",
           timestamp_basis: row.verified_at || row.source_verified_at ? "verified_at"
-            : row.observed_at || row.source_observed_at || row.published_at ? "observed_at" : "captured_at_legacy",
+            : row.observed_at || row.source_observed_at ? "observed_at"
+              : row.published_at ? "published_at" : "captured_at_archive_only",
         }));
         const visibility = selectVisibility.get(destinationSlug, key);
         const factId = `fact_${sha256(`${destinationId}:${key}`).slice(0, 24)}`;
@@ -2660,6 +2700,7 @@ export class Repository {
           consensus_confidence: evidenceConsensus.autoResolved ? evidenceConsensus.confidence
             : status === "conflicted" ? 0 : Math.min(0.98, 0.55 + Math.min(rows.length, 5) * 0.08),
           consensus_detail_json: JSON.stringify(evidenceConsensus),
+          validity_state: evidenceConsensus.validityState,
         };
         activeFactIds.add(factId);
         if (!storedColumnsMatch(existingFactsById.get(factId), nextFact)) upsertKnowledgeFact.run(
@@ -2670,10 +2711,49 @@ export class Repository {
           nextFact.granularity, nextFact.entity_location_json, nextFact.claim_relations_json,
           nextFact.visibility_status, nextFact.visibility_reason, nextFact.visibility_updated_at,
           nextFact.consensus_method, nextFact.consensus_confidence, nextFact.consensus_detail_json,
+          nextFact.validity_state,
         );
       }
       for (const factId of existingFactsById.keys()) if (!activeFactIds.has(factId)) deleteKnowledgeFact.run(factId);
     });
+  }
+
+  previewEvidenceIndependenceRebuild(destinationSlug) {
+    const facts = this.knowledgeForDestination(destinationSlug);
+    const sourceIds = [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))];
+    if (!sourceIds.length) return { dryRun: true, destinationSlug, affectedCount: 0, affectedFacts: [] };
+    const placeholders = sourceIds.map(() => "?").join(",");
+    const sources = new Map(this.db.prepare(`SELECT s.id,s.adapter,s.author_name,s.author_url,s.source_identity,
+      (SELECT group_concat(sfm.family_id,'|') FROM source_family_memberships sfm
+        WHERE sfm.source_id=s.id AND sfm.relation_type IN ('EXACT_DUPLICATE','NEAR_DUPLICATE','DERIVED_FROM')) AS family_ids
+      FROM sources s WHERE s.id IN (${placeholders})`).all(...sourceIds).map((row) => [row.id, row]));
+    const affectedFacts = [];
+    for (const fact of facts) {
+      const rows = (fact.evidence || []).map((item) => {
+        const source = sources.get(item.source_id) || {};
+        return { ...item, value_text: item.value, normalized_key: fact.normalized_key, predicate: fact.predicate,
+          source_adapter: source.adapter, source_author_name: source.author_name, source_author_url: source.author_url,
+          source_identity: source.source_identity, source_family_ids: source.family_ids };
+      });
+      const projected = resolveEvidenceConsensus(rows, { variantKey: (item) => normalizeValue(item.value_text),
+        staleAfterDays: this.contentConfig.volatileStaleAfterDays });
+      const previousKeys = [...new Set((fact.consensus_detail?.variants || []).flatMap((item) => item.independenceKeys || []))].sort();
+      const projectedKeys = [...new Set(projected.variants.flatMap((item) => item.independenceKeys || []))].sort();
+      if (Number(fact.consensus_detail?.independentSourceCount || fact.support_count) !== projected.independentSourceCount
+        || JSON.stringify(previousKeys) !== JSON.stringify(projectedKeys)) {
+        affectedFacts.push({ normalizedKey: fact.normalized_key,
+          previousIndependentSourceCount: Number(fact.consensus_detail?.independentSourceCount || fact.support_count),
+          projectedIndependentSourceCount: projected.independentSourceCount, previousKeys, projectedKeys });
+      }
+    }
+    return { dryRun: true, destinationSlug, affectedCount: affectedFacts.length, affectedFacts };
+  }
+
+  rebuildEvidenceIndependence(destinationSlug, { dryRun = true } = {}) {
+    const preview = this.previewEvidenceIndependenceRebuild(destinationSlug);
+    if (dryRun) return preview;
+    this.rebuildKnowledge(destinationSlug);
+    return { ...preview, dryRun: false, rebuilt: true };
   }
 
   rebuildEditorialLibrary() {
@@ -2705,7 +2785,7 @@ export class Repository {
     const allFacts = this.knowledgeForDestination(destinationSlug);
     // Dated evidence remains usable when its age and uncertainty are disclosed.
     // Recency changes its weight; it no longer erases otherwise useful research.
-    const facts = allFacts;
+    const facts = currentPublicationFacts(allFacts);
     if (facts.length < minFacts || maxPerDestination < 1) return [];
     const destination = this.db.prepare("SELECT name FROM destinations WHERE slug = ?").get(destinationSlug);
     if (!destination) return [];
@@ -2839,7 +2919,7 @@ export class Repository {
     const editorialAssignment = assignmentRow ? hydrateEditorialAssignment(assignmentRow) : null;
     const publicationMode = normalizePublicationMode(coverage.publicationMode);
     const selectedKeys = new Set(coverage.selectedFactKeys || []);
-    const destinationFacts = this.knowledgeForDestination(candidate.destination_slug);
+    const destinationFacts = currentPublicationFacts(this.knowledgeForDestination(candidate.destination_slug));
     const scopedFacts = selectedKeys.size
       ? destinationFacts.filter((fact) => selectedKeys.has(fact.normalized_key))
       : scopeFactsForOpportunity(destinationFacts, { title: candidate.proposed_title, topic_key: candidate.topic_key });
@@ -4197,6 +4277,7 @@ export class Repository {
       consensus_method: row.consensus_method || "legacy_count",
       consensus_confidence: Number(row.consensus_confidence || 0),
       consensus_detail: json(row.consensus_detail_json, {}),
+      validity_state: row.validity_state || "unknown",
       manual_resolution: hydrateKnowledgeResolution(row),
     }));
   }
@@ -4750,10 +4831,11 @@ export function contentPolicyFor(brief, facts = []) {
   };
 }
 
-function readerSources(facts) {
+export function readerSources(facts) {
   const unique = new Map();
   for (const evidence of facts.flatMap((fact) => fact.evidence || [])) {
-    const url = String(evidence.canonical_url || evidence.url || "").trim();
+    const url = [evidence.final_url, evidence.canonical_url, evidence.original_url, evidence.url]
+      .map((value) => String(value || "").trim()).find((value) => /^https?:\/\//i.test(value)) || "";
     if (!/^https?:\/\//i.test(url)) continue;
     const key = url.toLowerCase();
     if (!unique.has(key)) unique.set(key, {
@@ -4769,6 +4851,15 @@ function readerSources(facts) {
 
 function safeHostname(value) {
   try { return new URL(value).hostname; } catch { return "Source"; }
+}
+
+function defaultSourceIdentity(capture) {
+  const publicUrl = [capture.finalUrl, capture.canonicalUrl, capture.submittedUrl]
+    .map((value) => String(value || "").trim()).find((value) => /^https?:\/\//i.test(value));
+  if (publicUrl) return `url:${canonicalizeUrl(publicUrl).toLowerCase()}`;
+  const hashes = (capture.files || []).map((file) => file.sha256).filter(Boolean).sort();
+  if (hashes.length) return `file:${sha256(hashes.join(":"))}`;
+  return capture.adapter && capture.externalId ? `${capture.adapter}:${capture.externalId}` : "";
 }
 
 function draftContentHash(draft, metadata, brief) {
@@ -5373,9 +5464,8 @@ function entityNameScore(value) {
 function classifyFreshness(rows, config) {
   const volatile = rows.some((row) => /price|cost|fee|ticket|opening|hours?|schedule|timetable|policy|rule|visa|payment|booking|reservation|closure|closed|route|metro|train|bus/i
     .test(`${row.normalized_key} ${row.subject} ${row.predicate}`));
-  const evidenceTimestamp = (row) => row.verified_at || row.source_verified_at || row.effective_from
-    || row.source_effective_from || row.observed_at || row.source_observed_at || row.published_at || row.captured_at;
-  const latestMillis = Math.max(...rows.map((row) => Date.parse(evidenceTimestamp(row)) || 0));
+  const currentTemporal = rows.map((row) => evidenceTemporalState(row)).filter((item) => item.validityState === "current");
+  const latestMillis = Math.max(0, ...currentTemporal.map((item) => item.evidenceTimestampMs || 0));
   const latestEvidenceAt = latestMillis ? new Date(latestMillis).toISOString() : null;
   const ageDays = latestMillis ? (Date.now() - latestMillis) / 86_400_000 : Number.POSITIVE_INFINITY;
   const staleAfterDays = volatile ? config.volatileStaleAfterDays : config.staleAfterDays;
@@ -5384,6 +5474,15 @@ function classifyFreshness(rows, config) {
     latestEvidenceAt,
     state: ageDays > staleAfterDays ? "stale" : volatile ? "time_sensitive" : "current",
   };
+}
+
+function validEvidenceDate(value) {
+  if (!value || Number.isNaN(Date.parse(value))) return null;
+  return new Date(value).toISOString();
+}
+
+function normalizeDateConfidence(value) {
+  return ["low", "medium", "high"].includes(value) ? value : "medium";
 }
 
 function resolvedConsensusStatus(row) {
@@ -5504,6 +5603,7 @@ function topicTokens(value) {
 }
 
 export function scopeFactsForOpportunity(facts, { destinationSlug, topic, title }) {
+  facts = currentPublicationFacts(facts);
   const destinationTerms = topicTokens(destinationSlug);
   const terms = topicTokens(`${topic || ""} ${title || ""}`);
   for (const term of destinationTerms) terms.delete(term);
@@ -5516,7 +5616,12 @@ export function scopeFactsForOpportunity(facts, { destinationSlug, topic, title 
 }
 
 function factsForSource(facts, sourceId) {
-  return (facts || []).filter((fact) => (fact.evidence || []).some((item) => item.source_id === sourceId));
+  return currentPublicationFacts(facts).filter((fact) => (fact.evidence || []).some((item) => item.source_id === sourceId));
+}
+
+function currentPublicationFacts(facts) {
+  return (facts || []).filter((fact) => ["current", "unknown"].includes(fact.validity_state || "unknown")
+    && (!("preferred_value" in fact) || String(fact.preferred_value || "").trim()));
 }
 
 function locateEvidenceQuote(rawText, quote) {

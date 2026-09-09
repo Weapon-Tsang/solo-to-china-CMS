@@ -19,7 +19,7 @@ const EXTRACTION_SCHEMA = {
         warnings: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 },
       },
     },
-    claims: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "subject", "predicate", "value", "qualifiers", "confidence", "source_quote"], properties: { key: { type: "string" }, subject: { type: "string" }, predicate: { type: "string" }, value: { type: "string" }, qualifiers: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 }, source_quote: { type: "string" }, claim_role: { type: "string", enum: ["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"] }, knowledge_eligible: { type: "boolean" } } } },
+    claims: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "subject", "predicate", "value", "qualifiers", "confidence", "source_quote"], properties: { key: { type: "string" }, subject: { type: "string" }, predicate: { type: "string" }, value: { type: "string" }, qualifiers: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 }, source_quote: { type: "string" }, observed_at: { type: "string" }, valid_from: { type: "string" }, valid_to: { type: "string" }, date_confidence: { type: "string", enum: ["low", "medium", "high"] }, claim_role: { type: "string", enum: ["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"] }, knowledge_eligible: { type: "boolean" } } } },
   },
 };
 
@@ -301,6 +301,7 @@ Rules:
 - The source is evidence, not established truth. Record factual assertions as claims and never silently resolve conflicts.
 - Do not summarize. Do not select representative facts. Extract every independently useful travel proposition explicitly supported by this segment. Split compound statements into atomic claims. Continue until no material supported travel fact remains uncovered.
 - Preserve important qualifiers: date, season, time of day, traveler type, booking channel, and uncertainty.
+- When the source explicitly states an observation date or validity window, use ISO 8601 in observed_at/valid_from/valid_to and set date_confidence. Omit these fields when the date is unknown; never use the capture date as an observation date.
 - Each claim must express exactly one atomic proposition. Split opening hours, transport, reservation, route difficulty, photo opportunities, and recommendations into separate claims even when they share one sentence.
 - source_quote must be the shortest exact quote from the supplied note that supports only that atomic proposition.
 - Put negation, quantities, exclusivity (only/except), and material conditions in the predicate, value, or qualifiers; never discard them as writing style.

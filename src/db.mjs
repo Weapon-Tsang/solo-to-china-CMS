@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 44;
+export const SCHEMA_VERSION = 46;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -65,6 +65,73 @@ function migrate(db) {
   if (current < 42) migrationFortyTwo(db);
   if (current < 43) migrationFortyThree(db);
   if (current < 44) migrationFortyFour(db);
+  if (current < 45) migrationFortyFive(db);
+  if (current < 46) migrationFortySix(db);
+}
+
+function migrationFortySix(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE sources ADD COLUMN submitted_by TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN source_publisher TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN source_identity TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN source_version_identity TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN original_url TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN final_url TEXT NOT NULL DEFAULT '';
+      UPDATE sources SET author_name='' WHERE adapter='manual' AND author_name='人工提交';
+      UPDATE sources SET original_url=submitted_url,final_url=submitted_url
+        WHERE submitted_url LIKE 'http://%' OR submitted_url LIKE 'https://%';
+      UPDATE sources SET source_identity='url:' || lower(submitted_url)
+        WHERE adapter='manual' AND (submitted_url LIKE 'http://%' OR submitted_url LIKE 'https://%');
+      UPDATE sources SET source_identity=adapter || ':' || external_id
+        WHERE source_identity='' AND adapter<>'manual' AND external_id<>'';
+      UPDATE sources SET source_identity='file:' || (
+        SELECT sf.sha256 FROM source_files sf WHERE sf.source_id=sources.id ORDER BY sf.id LIMIT 1
+      ) WHERE source_identity='' AND EXISTS (SELECT 1 FROM source_files sf WHERE sf.source_id=sources.id);
+      UPDATE sources SET source_version_identity=content_hash WHERE source_version_identity='';
+      CREATE INDEX idx_sources_identity ON sources(source_identity) WHERE source_identity<>'';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (46, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyFive(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE sources ADD COLUMN date_kind TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (date_kind IN ('unknown','captured_at','published_at','observed_at','verified_at','valid_from','valid_to'));
+      ALTER TABLE sources ADD COLUMN date_confidence TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (date_confidence IN ('unknown','low','medium','high'));
+      ALTER TABLE sources ADD COLUMN valid_from TEXT;
+      ALTER TABLE sources ADD COLUMN valid_to TEXT;
+      ALTER TABLE claims ADD COLUMN date_kind TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (date_kind IN ('unknown','captured_at','published_at','observed_at','verified_at','valid_from','valid_to'));
+      ALTER TABLE claims ADD COLUMN date_confidence TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (date_confidence IN ('unknown','low','medium','high'));
+      ALTER TABLE claims ADD COLUMN valid_from TEXT;
+      ALTER TABLE claims ADD COLUMN valid_to TEXT;
+      ALTER TABLE knowledge_facts ADD COLUMN validity_state TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (validity_state IN ('current','scheduled','historical','unknown'));
+      UPDATE sources SET observed_at=NULL WHERE published_at IS NOT NULL AND observed_at=published_at;
+      UPDATE sources SET date_kind='published_at',date_confidence='medium' WHERE published_at IS NOT NULL;
+      UPDATE claims SET observed_at=NULL WHERE source_id IN (
+        SELECT s.id FROM sources s WHERE s.published_at IS NOT NULL AND claims.observed_at=s.published_at
+      );
+      UPDATE claims SET date_kind='published_at',date_confidence='medium'
+        WHERE source_id IN (SELECT id FROM sources WHERE published_at IS NOT NULL);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (45, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFortyFour(db) {

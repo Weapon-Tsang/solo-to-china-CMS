@@ -70,6 +70,11 @@ try {
       ["jobs", "execution_route"], ["jobs", "failure_class"], ["jobs", "batch_attempts"], ["jobs", "next_eligible_at"],
       ["vertex_batch_runs", "provider"], ["vertex_batch_runs", "schema_hash"], ["vertex_batch_runs", "config_digest"],
       ["jobs", "lease_generation"], ["vertex_batch_runs", "preparation_lease_expires_at"],
+      ["sources", "date_kind"], ["sources", "valid_from"], ["sources", "valid_to"],
+      ["claims", "date_kind"], ["claims", "valid_from"], ["claims", "valid_to"],
+      ["knowledge_facts", "validity_state"],
+      ["sources", "submitted_by"], ["sources", "source_publisher"], ["sources", "source_identity"],
+      ["sources", "source_version_identity"], ["sources", "original_url"], ["sources", "final_url"],
       ["content_opportunities", "lifecycle_action"], ["editorial_assignments", "evaluation_json"],
     ]) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);

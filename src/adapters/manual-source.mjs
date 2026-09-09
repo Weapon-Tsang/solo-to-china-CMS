@@ -5,7 +5,7 @@ import net from "node:net";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { truncate } from "../utils.mjs";
+import { canonicalizeUrl, sha256, truncate } from "../utils.mjs";
 
 const require = createRequire(import.meta.url);
 const WordExtractor = require("word-extractor");
@@ -67,6 +67,7 @@ export class ManualSourceIngestor {
     const warnings = [];
     let uploadDirectory = null;
     let submittedUrl = "";
+    let finalUrl = "";
     let sourceKind = requestedKind;
     let title = suppliedTitle;
     let rawText = "";
@@ -81,12 +82,14 @@ export class ManualSourceIngestor {
         validateKindMatchesUrl(sourceKind, submittedUrl);
         const youtube = sourceKind === "video_url" && isYoutubeUrl(submittedUrl);
         if (youtube) {
+          finalUrl = submittedUrl;
           await assertPublicUrl(submittedUrl, this.lookup);
           title ||= youtubeVideoTitle(submittedUrl);
           rawText = joinText(notes, "人工选择的公开视频将作为画面与音频证据提交给支持视频输入的模型。未提供额外文字稿。请只根据视频中可见或可听内容创建 Claims。");
           warnings.push("公开视频将由支持该能力的 Vertex Gemini 模型读取画面与音频；切换到其他模型时只使用页面文字和补充说明。");
         } else {
           const fetched = await this.fetchPublicSource(submittedUrl);
+          finalUrl = fetched.finalUrl;
           title ||= fetched.title;
           rawHtml = fetched.rawHtml;
           rawText = joinText(notes, fetched.text);
@@ -161,17 +164,27 @@ export class ManualSourceIngestor {
         throw new ManualSourceError("EMPTY_CONTENT", "来源中没有提取到足够的可处理内容。若页面需要登录或正文由客户端加载，请补充正文说明或改为上传文档/截图。");
       }
 
+      const canonicalUrl = submittedUrl ? canonicalizeUrl(finalUrl || submittedUrl) : `manual-source://${submissionId}`;
+      const fileIdentity = files.length === 1 ? files[0].sha256
+        : files.length ? sha256(files.map((file) => file.sha256).sort().join(":")) : "";
+      const sourceIdentity = submittedUrl ? `url:${canonicalUrl.toLowerCase()}` : fileIdentity ? `file:${fileIdentity}` : `manual:${submissionId}`;
       const capture = {
         adapter: "manual",
         externalId: submissionId,
-        canonicalUrl: `manual-source://${submissionId}`,
+        canonicalUrl,
         submittedUrl,
+        originalUrl: submittedUrl,
+        finalUrl: finalUrl || submittedUrl,
+        sourceIdentity,
+        sourceVersionIdentity: sha256(JSON.stringify({ sourceIdentity, rawText, files: files.map((file) => file.sha256) })),
         sourceKind,
         submissionMetadata: { requestedKind, warnings, operatorNotesProvided: Boolean(notes) },
+        submittedBy: truncate(input.submittedBy || "administrator", 200),
         title: title || sourceKindLabel(sourceKind),
-        authorName: "人工提交",
-        authorUrl: "",
-        publishedAt: null,
+        authorName: truncate(input.authorName, 500).trim(),
+        authorUrl: input.authorUrl ? normalizePublicUrl(input.authorUrl) : "",
+        sourcePublisher: truncate(input.sourcePublisher, 500).trim(),
+        publishedAt: normalizeOptionalDate(input.publishedAt),
         capturedAt: new Date().toISOString(),
         rawText,
         rawHtml,
@@ -227,7 +240,7 @@ export class ManualSourceIngestor {
         try { text = await this.extractPdf(bytes); } catch { throw new ManualSourceError("DOCUMENT_PARSE_FAILED", "链接指向的 PDF 无法解析，可能已加密或损坏。请下载后另存并上传。"); }
         text = normalizeExtractedText(text);
         if (text.length < 20) throw new ManualSourceError("EMPTY_DOCUMENT", "链接中的 PDF 没有可提取正文，可能是扫描件。请上传页面截图或补充文字说明。");
-        return { title: filenameFromUrl(currentUrl) || "在线 PDF 文档", text, rawHtml: "", warnings: [] };
+        return { title: filenameFromUrl(currentUrl) || "在线 PDF 文档", text, rawHtml: "", warnings: [], finalUrl: currentUrl };
       }
       if (!(contentType.startsWith("text/") || contentType.includes("html") || !contentType)) {
         throw new ManualSourceError("UNSUPPORTED_CONTENT_TYPE", `链接返回了不支持的内容类型（${contentType || "未知"}）。请下载后以 PDF、Word、图片或视频文件上传。`);
@@ -237,7 +250,7 @@ export class ManualSourceIngestor {
       if (blockReason) throw blockReason;
       const extracted = extractHtmlContent(rawHtml);
       if (extracted.text.length < 20) throw new ManualSourceError("EMPTY_CONTENT", "页面已打开，但没有提取到足够正文。页面可能需要登录、使用客户端打开或通过脚本加载内容；请改为上传文档/截图。");
-      return { ...extracted, rawHtml, warnings: currentUrl === initialUrl ? [] : [`链接重定向至 ${safeDisplayHost(currentUrl)}`] };
+      return { ...extracted, rawHtml, finalUrl: currentUrl, warnings: currentUrl === initialUrl ? [] : [`链接重定向至 ${safeDisplayHost(currentUrl)}`] };
     }
     throw new ManualSourceError("TOO_MANY_REDIRECTS", "链接重定向次数过多，无法安全提取。");
   }
@@ -312,6 +325,11 @@ function normalizePublicUrl(value) {
   if (url.port && !["80", "443"].includes(url.port)) throw new ManualSourceError("UNSAFE_URL", "链接使用了不允许的网络端口。", { statusCode: 400 });
   url.hash = "";
   return url.toString();
+}
+
+function normalizeOptionalDate(value) {
+  if (!value || Number.isNaN(Date.parse(value))) return null;
+  return new Date(value).toISOString();
 }
 
 async function assertPublicUrl(value, lookup) {

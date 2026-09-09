@@ -78,14 +78,17 @@ export class ChunkedUploadManager {
     fs.rmSync(directory, { recursive: true, force: true });
     const title = String(input.title || metadata.name).slice(0, 1_000);
     const notes = String(input.notes || "");
+    const fileSha = sha.digest("hex");
     return {
       capture: {
         adapter: "manual", externalId: submissionId, canonicalUrl: `manual-source://${submissionId}`, submittedUrl: "", sourceKind: "video",
+        originalUrl: "", finalUrl: "", sourceIdentity: `file:${fileSha}`,
+        sourceVersionIdentity: fileSha, submittedBy: "administrator", sourcePublisher: "",
         submissionMetadata: { requestedKind: "video", warnings: [], operatorNotesProvided: Boolean(notes), chunkedUpload: true },
-        title, authorName: "Manual submission", authorUrl: "", publishedAt: null, capturedAt: new Date().toISOString(),
+        title, authorName: "", authorUrl: "", publishedAt: null, capturedAt: new Date().toISOString(),
         rawText: [notes, `Uploaded video evidence: ${metadata.name}. Analyze visible text, scenes, speech, and ambient audio.`].filter(Boolean).join("\n\n"), rawHtml: "",
         assets: [{ kind: "video", url: `manual-asset://${submissionId}/0`, alt: metadata.name, position: 0, localPath: storagePath, mimeType: metadata.mimeType, originalFilename: metadata.name }],
-        files: [{ id: `source_file_${submissionId}_0`, fileKind: "video", originalFilename: metadata.name, mimeType: metadata.mimeType, storagePath, sizeBytes: stat.size, sha256: sha.digest("hex") }],
+        files: [{ id: `source_file_${submissionId}_0`, fileKind: "video", originalFilename: metadata.name, mimeType: metadata.mimeType, storagePath, sizeBytes: stat.size, sha256: fileSha }],
         client: { channel: "admin_chunked_submission" },
       },
       warnings: [],

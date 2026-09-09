@@ -8,6 +8,9 @@
 - Persist Batch failure classes, route decisions, attempt budgets, and next-eligible timestamps so permanent preparation failures terminate, oversized inputs use realtime, provider failures back off, and local capacity does not spend the error budget.
 - Freeze provider, model, location, project, schema, prompt, and configuration identity on submitted Batch runs; historical Vertex work continues through its stored adapter after the default model changes.
 - Fence job ownership with a monotonic lease generation, abort guarded model and delivery calls when heartbeats lose ownership, reject stale completion/failure writes, and recover only expired Batch preparations.
+- Separate publication, observation, capture, verification, and validity-window semantics; scheduled and historical evidence is retained but excluded from current conclusions.
+- Separate manual submitter metadata from author/publisher identity, preserve original/canonical/final public URLs, and deduplicate uploaded files and repeated URLs by stable source identity.
+- Resolve overlapping duplicate families, stable source identities, and stable authors as deterministic connected components with folded-source audit detail and a dry-run rebuild preview.
 
 ## 1.17.11 - 2026-09-09
 
