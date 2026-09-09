@@ -1722,14 +1722,22 @@ export class Repository {
       SELECT c.* FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
       WHERE ss.destination_slug=? AND c.lifecycle_status='active'
     `).all(destinationSlug);
+    const aliasesByNormalized = new Map(this.db.prepare(
+      "SELECT * FROM entity_aliases WHERE destination_slug=?",
+    ).all(destinationSlug).map((row) => [row.alias_normalized, row]));
     const timestamp = now();
     transaction(this.db, () => {
+      const updateClaimIdentity = this.db.prepare(`
+        UPDATE claims SET original_normalized_key=CASE WHEN original_normalized_key='' THEN ? ELSE original_normalized_key END,
+          entity_key=?, canonical_subject=?, entity_aliases_json=?, entity_resolution_status=?, entity_type=?, granularity=?,
+          entity_location_json=? WHERE id=?
+      `);
       for (const row of rows) {
         const originalKey = row.original_normalized_key || row.normalized_key;
         const inferred = inferEntityIdentity(originalKey, row.subject, row.predicate);
         const inferredMetadata = inferEntityMetadata(row.subject, inferred.entityKey, { entityType: row.entity_type, granularity: row.granularity, location: json(row.entity_location_json, {}) });
         const alias = normalizeEntityAlias(row.subject);
-        const mapped = alias ? this.db.prepare("SELECT * FROM entity_aliases WHERE destination_slug=? AND alias_normalized=?").get(destinationSlug, alias) : null;
+        const mapped = alias ? aliasesByNormalized.get(alias) : null;
         const identity = mapped ? {
           entityKey: mapped.entity_key,
           canonicalSubject: mapped.canonical_subject,
@@ -1737,13 +1745,17 @@ export class Repository {
           status: mapped.resolution_source === "manual" || mapped.resolution_source === "model" ? "resolved" : "derived",
           entityType: mapped.entity_type, granularity: mapped.granularity, location: json(mapped.location_json, {}),
         } : { ...inferred, ...inferredMetadata };
-        this.db.prepare(`
-          UPDATE claims SET original_normalized_key=CASE WHEN original_normalized_key='' THEN ? ELSE original_normalized_key END,
-            entity_key=?, canonical_subject=?, entity_aliases_json=?, entity_resolution_status=?, entity_type=?, granularity=?,
-            entity_location_json=? WHERE id=?
-        `).run(originalKey, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases), identity.status,
+        updateClaimIdentity.run(originalKey, identity.entityKey, identity.canonicalSubject, JSON.stringify(identity.aliases), identity.status,
           identity.entityType || "other", identity.granularity || "general_topic", JSON.stringify(identity.location || {}), row.id);
-        if (!mapped && identity.entityKey && alias) this.upsertEntityAlias(destinationSlug, alias, identity, "derived", 0.55, timestamp);
+        if (!mapped && identity.entityKey && alias) {
+          this.upsertEntityAlias(destinationSlug, alias, identity, "derived", 0.55, timestamp);
+          aliasesByNormalized.set(alias, {
+            entity_key: identity.entityKey, canonical_subject: identity.canonicalSubject,
+            aliases_json: JSON.stringify(identity.aliases || []), resolution_source: "derived",
+            entity_type: identity.entityType, granularity: identity.granularity,
+            location_json: JSON.stringify(identity.location || {}),
+          });
+        }
       }
     });
     return rows.length;
@@ -2025,6 +2037,34 @@ export class Repository {
       `).run(destinationId, destinationSlug, displayName, timestamp, timestamp);
       this.db.prepare("DELETE FROM knowledge_facts WHERE destination_id = ?").run(destinationId);
       const updateStructuredClaim = this.db.prepare(`UPDATE claims SET structured_value_json=?, scope_json=?, claim_kind=?, cardinality=? WHERE id=?`);
+      const insertClaimReview = this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
+        review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const insertClaimRelation = this.db.prepare(`INSERT OR IGNORE INTO claim_relations(id, destination_slug, claim_a_id, claim_b_id,
+        relation_type, can_coexist, reason, scope_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const selectVisibility = this.db.prepare(
+        "SELECT * FROM knowledge_visibility_overrides WHERE destination_slug=? AND normalized_key=?",
+      );
+      const upsertKnowledgeFact = this.db.prepare(`
+        INSERT INTO knowledge_facts(id, destination_id, normalized_key, subject, predicate, consensus_status,
+          preferred_value, support_count, contradiction_count, evidence_json, updated_at,
+          freshness_state, latest_evidence_at, verification_priority, entity_key, canonical_subject,
+          entity_aliases_json, entity_resolution_status, entity_type, granularity, entity_location_json,
+          claim_relations_json, visibility_status, visibility_reason, visibility_updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(destination_id, normalized_key) DO UPDATE SET subject=excluded.subject,
+          predicate=excluded.predicate, consensus_status=excluded.consensus_status,
+          preferred_value=excluded.preferred_value, support_count=excluded.support_count,
+          contradiction_count=excluded.contradiction_count, evidence_json=excluded.evidence_json,
+          updated_at=excluded.updated_at, freshness_state=excluded.freshness_state,
+          latest_evidence_at=excluded.latest_evidence_at, verification_priority=excluded.verification_priority,
+          entity_key=excluded.entity_key, canonical_subject=excluded.canonical_subject,
+          entity_aliases_json=excluded.entity_aliases_json, entity_resolution_status=excluded.entity_resolution_status,
+          entity_type=excluded.entity_type, granularity=excluded.granularity,
+          entity_location_json=excluded.entity_location_json, claim_relations_json=excluded.claim_relations_json,
+          visibility_status=excluded.visibility_status, visibility_reason=excluded.visibility_reason,
+          visibility_updated_at=excluded.visibility_updated_at
+      `);
       const reviewedExtractionQuotes = new Set();
       for (const row of sourceRows) {
         updateStructuredClaim.run(JSON.stringify(row.structured_value), JSON.stringify(row.scope), row.structured_value.claim_kind, row.structured_value.cardinality, row.id);
@@ -2039,9 +2079,7 @@ export class Repository {
           // A legacy "resolved" extraction review only acknowledged the issue; it did not
           // correct the Claim. Re-open genuine issues, while preserving explicit false-positive dismissals.
           const status = previous?.status === "dismissed" ? "dismissed" : "pending";
-          this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
-            review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)`)
-            .run(reviewId, destinationSlug, row.id, extractionIssue,
+          insertClaimReview.run(reviewId, destinationSlug, row.id, null, extractionIssue,
               "The original source contains negation or a limiting qualifier that is absent from the normalized Claim.", status, timestamp, timestamp);
         }
       }
@@ -2065,11 +2103,8 @@ export class Repository {
           const claimA = [broad.id, specific.id].sort()[0];
           const claimB = [broad.id, specific.id].sort()[1];
           const relationId = `claim_relation_${sha256(`${claimA}:${claimB}`).slice(0, 24)}`;
-          this.db.prepare(`INSERT OR IGNORE INTO claim_relations(id, destination_slug, claim_a_id, claim_b_id,
-            relation_type, can_coexist, reason, scope_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'GENERALIZATION', 1, ?, '{}', ?, ?)`)
-            .run(relationId, destinationSlug, claimA, claimB,
-              "A specific Claim may support a broader collection/category Claim, but the two are not merged.", timestamp, timestamp);
+          insertClaimRelation.run(relationId, destinationSlug, claimA, claimB, "GENERALIZATION", 1,
+            "A specific Claim may support a broader collection/category Claim, but the two are not merged.", "{}", timestamp, timestamp);
           if (specific.entity_key && broad.entity_key) this.upsertEntityRelation(destinationSlug, specific.entity_key,
             "applies_to", broad.entity_key, "derived", 0.8, "Specific Claim supports a broader collection/category Claim.");
         }
@@ -2094,9 +2129,8 @@ export class Repository {
               : null;
             const reviewStatus = reviewId ? previousReviewDecisions.get(reviewId)?.status || "pending" : null;
             if (reviewId) {
-              this.db.prepare(`INSERT INTO claim_review_cases(id, destination_slug, claim_a_id, claim_b_id,
-                review_type, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-                .run(reviewId, destinationSlug, rows[left].id, rows[right].id, comparison.reviewType, comparison.reason, reviewStatus, timestamp, timestamp);
+              insertClaimReview.run(reviewId, destinationSlug, rows[left].id, rows[right].id,
+                comparison.reviewType, comparison.reason, reviewStatus, timestamp, timestamp);
             }
             const effectiveComparison = reviewStatus === "dismissed"
               ? { ...comparison, relation: "COMPATIBLE", canCoexist: true,
@@ -2104,10 +2138,7 @@ export class Repository {
               : comparison;
             relations.push({ claim_a_id: rows[left].id, claim_b_id: rows[right].id, ...effectiveComparison });
             const relationId = `claim_relation_${sha256(`${rows[left].id}:${rows[right].id}`).slice(0, 24)}`;
-            this.db.prepare(`INSERT INTO claim_relations(id, destination_slug, claim_a_id, claim_b_id,
-              relation_type, can_coexist, reason, scope_json, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-              .run(relationId, destinationSlug, rows[left].id, rows[right].id, effectiveComparison.relation,
+            insertClaimRelation.run(relationId, destinationSlug, rows[left].id, rows[right].id, effectiveComparison.relation,
                 effectiveComparison.canCoexist ? 1 : 0, effectiveComparison.reason, JSON.stringify(effectiveComparison.scope), timestamp, timestamp);
           }
         }
@@ -2144,28 +2175,8 @@ export class Repository {
           timestamp_basis: row.verified_at || row.source_verified_at ? "verified_at"
             : row.observed_at || row.source_observed_at || row.published_at ? "observed_at" : "captured_at_legacy",
         }));
-        const visibility = this.db.prepare("SELECT * FROM knowledge_visibility_overrides WHERE destination_slug=? AND normalized_key=?")
-          .get(destinationSlug, key);
-        this.db.prepare(`
-          INSERT INTO knowledge_facts(id, destination_id, normalized_key, subject, predicate, consensus_status,
-            preferred_value, support_count, contradiction_count, evidence_json, updated_at,
-            freshness_state, latest_evidence_at, verification_priority, entity_key, canonical_subject,
-            entity_aliases_json, entity_resolution_status, entity_type, granularity, entity_location_json,
-            claim_relations_json, visibility_status, visibility_reason, visibility_updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(destination_id, normalized_key) DO UPDATE SET subject=excluded.subject,
-            predicate=excluded.predicate, consensus_status=excluded.consensus_status,
-            preferred_value=excluded.preferred_value, support_count=excluded.support_count,
-            contradiction_count=excluded.contradiction_count, evidence_json=excluded.evidence_json,
-            updated_at=excluded.updated_at, freshness_state=excluded.freshness_state,
-            latest_evidence_at=excluded.latest_evidence_at, verification_priority=excluded.verification_priority,
-            entity_key=excluded.entity_key, canonical_subject=excluded.canonical_subject,
-            entity_aliases_json=excluded.entity_aliases_json, entity_resolution_status=excluded.entity_resolution_status,
-            entity_type=excluded.entity_type, granularity=excluded.granularity,
-            entity_location_json=excluded.entity_location_json, claim_relations_json=excluded.claim_relations_json,
-            visibility_status=excluded.visibility_status, visibility_reason=excluded.visibility_reason,
-            visibility_updated_at=excluded.visibility_updated_at
-        `).run(
+        const visibility = selectVisibility.get(destinationSlug, key);
+        upsertKnowledgeFact.run(
           `fact_${sha256(`${destinationId}:${key}`).slice(0, 24)}`, destinationId, key, entity.canonicalSubject || rows[0].subject,
           canonicalPredicate || rows[0].predicate, status, preferredValue, status === "conflicted" ? ranked[0][1].length : rows.length,
           conflicts.length, JSON.stringify(evidence), timestamp,
