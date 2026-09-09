@@ -2044,14 +2044,15 @@ export class Repository {
               "The original source contains negation or a limiting qualifier that is absent from the normalized Claim.", status, timestamp, timestamp);
         }
       }
-      for (let left = 0; left < sourceRows.length; left += 1) {
-        for (let right = left + 1; right < sourceRows.length; right += 1) {
-          const a = sourceRows[left];
-          const b = sourceRows[right];
-          if (a.normalized_key === b.normalized_key || normalizeValue(a.predicate) !== normalizeValue(b.predicate)) continue;
-          const broad = [a, b].find((row) => ["collection", "category", "general_topic"].includes(row.granularity));
-          const specific = [a, b].find((row) => row.granularity === "specific_entity");
-          if (!broad || !specific) continue;
+      // Generalization links only exist between broad and specific Claims that
+      // share a predicate. Group first instead of scanning every pair in the
+      // destination (7k Claims would otherwise mean roughly 25m comparisons).
+      const generalizationGroups = Map.groupBy(sourceRows, (row) => normalizeValue(row.predicate));
+      for (const predicateRows of generalizationGroups.values()) {
+        const broadRows = predicateRows.filter((row) => ["collection", "category", "general_topic"].includes(row.granularity));
+        const specificRows = predicateRows.filter((row) => row.granularity === "specific_entity");
+        for (const broad of broadRows) for (const specific of specificRows) {
+          if (broad.normalized_key === specific.normalized_key) continue;
           const claimA = [broad.id, specific.id].sort()[0];
           const claimB = [broad.id, specific.id].sort()[1];
           const relationId = `claim_relation_${sha256(`${claimA}:${claimB}`).slice(0, 24)}`;

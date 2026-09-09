@@ -348,6 +348,29 @@ test("knowledge aggregation persists enrichment relations without creating an ex
   assert.equal(repository.listOperationalExceptions().some((item) => item.kind === "claim_conflict"), false);
 });
 
+test("knowledge aggregation preserves broad-to-specific generalization links after grouped comparison", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  for (const [externalId, item] of [
+    ["68abcdef0000000000000021", { key: "collection.chongqing_attractions.metro_access", subject: "multiple Chongqing attractions", value: "reachable by metro" }],
+    ["68abcdef0000000000000022", { key: "attraction.hongyadong.metro_access", subject: "Hongyadong", value: "reachable by metro" }],
+  ]) {
+    const source = repository.saveCapture(normalizeXiaohongshuCapture({
+      url: `https://www.xiaohongshu.com/explore/${externalId}`, title: item.subject,
+      text: `${item.subject} is ${item.value}. This selected travel note contains enough detail for research.`, images: [],
+    }));
+    repository.saveExtraction(source.id, {
+      source: { language: "en", summary: item.value, destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+      claims: [{ key: item.key, subject: item.subject, predicate: "metro_access", value: item.value,
+        qualifiers: [], source_quote: item.value, confidence: 0.9 }],
+      blueprint: { format: "guide", hook: item.value, angle: "practical", sections: [], strengths: [], gaps: [] },
+    }, "test", "fixture-model");
+  }
+  repository.rebuildKnowledge("chongqing");
+  const relation = db.prepare("SELECT relation_type,can_coexist FROM claim_relations WHERE relation_type='GENERALIZATION'").get();
+  assert.equal(relation.relation_type, "GENERALIZATION");
+  assert.equal(relation.can_coexist, 1);
+});
+
 test("a knowledge rebuild removes historical false-positive feature reviews", (t) => {
   const { db, repository } = repositoryFixture(t);
   const values = [
