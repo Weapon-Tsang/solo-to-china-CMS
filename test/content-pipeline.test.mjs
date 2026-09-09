@@ -27,6 +27,20 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
     async extract(source) {
       return {
         method: "test_multimodal", model: "source-model",
+        inputManifest: source.assets?.length ? {
+          version: 1, expectedModality: source.assets[0].kind === "video" ? "video" : "image",
+          receivedModality: source.assets[0].kind === "video" ? "video" : "image",
+          provider: "test", model: "source-model",
+          capabilities: { text: true, image: true, video: true, batch: false },
+          assets: source.assets.map((asset, index) => ({
+            assetId: asset.id, kind: asset.kind === "video" ? "video" : "image", status: "submitted",
+            requestReference: `test-part-${index}`,
+          })),
+        } : {
+          version: 1, expectedModality: "text", receivedModality: "text",
+          provider: "test", model: "source-model",
+          capabilities: { text: true, image: true, video: true, batch: false }, assets: [],
+        },
         result: {
           source: { language: "zh-CN", summary: "Research", destination_name: "Beijing", destination_slug: "beijing", traveler_fit: ["solo"], practical_tips: [], warnings: [], confidence: 0.9 },
           claims: [

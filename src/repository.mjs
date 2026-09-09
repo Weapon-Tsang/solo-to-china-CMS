@@ -565,6 +565,7 @@ export class Repository {
     return Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs j
       JOIN source_segments ss ON ss.id=j.entity_id
       WHERE j.type=? AND j.status='queued' AND j.available_at<=?
+        AND j.execution_route IN ('auto','batch')
         AND ((j.type='extract_segment_claims' AND ss.segment_type<>'video_chapter')
           OR (j.type='audit_segment_coverage' AND ss.asset_id IS NULL))
         AND NOT EXISTS (
@@ -584,6 +585,7 @@ export class Repository {
       const rows = this.db.prepare(`SELECT j.* FROM jobs j
         JOIN source_segments ss ON ss.id=j.entity_id
         WHERE j.type=? AND j.status='queued' AND j.available_at<=?
+          AND j.execution_route IN ('auto','batch')
           AND ((j.type='extract_segment_claims' AND ss.segment_type<>'video_chapter')
             OR (j.type='audit_segment_coverage' AND ss.asset_id IS NULL))
           AND NOT EXISTS (
@@ -595,17 +597,27 @@ export class Repository {
       const runId = id("vertex_batch");
       this.db.prepare(`INSERT INTO vertex_batch_runs(id,model,location,status,next_poll_at,created_at,updated_at)
         VALUES (?,?,?,'preparing',?,?,?)`).run(runId, model, location, timestamp, timestamp, timestamp);
-      const addItem = this.db.prepare(`INSERT INTO vertex_batch_items(run_id,job_id,segment_id,batch_item_id,status)
-        VALUES (?,?,?,?, 'preparing')`);
+      const addItem = this.db.prepare(`INSERT INTO vertex_batch_items(run_id,job_id,segment_id,batch_item_id,transport_key,status)
+        VALUES (?,?,?,?,?, 'preparing')`);
       for (const row of rows) {
         const batchItemId = `batch_item_${sha256(`${runId}:${row.id}`).slice(0, 24)}`;
-        addItem.run(runId, row.id, row.entity_id, batchItemId);
+        addItem.run(runId, row.id, row.entity_id, batchItemId, batchItemId);
       }
       return { id: runId, model, location, status: 'preparing', jobType, items: rows.map((row) => ({
         ...row, segment_id: row.entity_id,
         batch_item_id: `batch_item_${sha256(`${runId}:${row.id}`).slice(0, 24)}`,
       })) };
     });
+  }
+
+  recordVertexBatchItemInput(runId, jobId, manifest, preparedRequest = null) {
+    const normalized = normalizeExtractionInputManifest(manifest);
+    const transportKey = String(preparedRequest?.transportKey || preparedRequest?.id || "").slice(0, 200);
+    const requestFingerprint = preparedRequest?.request ? sha256(JSON.stringify(preparedRequest.request)) : "";
+    if (!normalized.version && !transportKey && !requestFingerprint) return false;
+    return this.db.prepare(`UPDATE vertex_batch_items SET input_modality=?,input_manifest_json=?,transport_key=?,request_fingerprint=?
+      WHERE run_id=? AND job_id=? AND status='preparing'`)
+      .run(normalized.receivedModality, JSON.stringify(normalized), transportKey, requestFingerprint, runId, jobId).changes === 1;
   }
 
   activateVertexBatch(runId, batch) {
@@ -633,6 +645,9 @@ export class Repository {
   }
 
   dueVertexBatch() {
+    const cleanup = this.db.prepare(`SELECT * FROM vertex_batch_runs WHERE status='succeeded' AND result_state='ready_cleanup'
+      AND cleanup_eligible_at IS NOT NULL AND cleanup_eligible_at<=? ORDER BY completed_at LIMIT 1`).get(this.jobTimestamp());
+    if (cleanup) return { ...cleanup, cleanupOnly: true, items: [] };
     const run = this.db.prepare(`SELECT * FROM vertex_batch_runs WHERE status='submitted' AND next_poll_at<=?
       ORDER BY created_at LIMIT 1`).get(this.jobTimestamp());
     if (!run) return null;
@@ -646,33 +661,61 @@ export class Repository {
       .run(providerState || '', new Date(this.clock().getTime() + delayMs).toISOString(), timestamp, runId);
   }
 
-  completeVertexBatchItem(run, item, extraction) {
+  deferVertexBatchOutputRead(runId, providerState, error, delayMs = 60_000, attemptIncrement = 1) {
     const timestamp = this.jobTimestamp();
-    if (!this.saveSegmentExtraction(item.segment_id, extraction)) return this.releaseVertexBatchItem(run.id, item.job_id, "Source changed while the batch was running; returned for fresh extraction.");
-    this.enqueue("audit_segment_coverage", item.segment_id);
-    const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(item.job_id);
-    const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
+    this.db.prepare(`UPDATE vertex_batch_runs SET provider_state=?,result_state='reading',
+      output_read_attempts=output_read_attempts+?,last_output_error=?,next_poll_at=?,updated_at=?
+      WHERE id=? AND status='submitted'`)
+      .run(providerState || "OUTPUT_READ_FAILED", Math.max(0, Number(attemptIncrement || 0)),
+        String(error?.message || error || "Batch output read failed").slice(0, 4_000),
+        new Date(this.clock().getTime() + delayMs).toISOString(), timestamp, runId);
+    return this.db.prepare("SELECT * FROM vertex_batch_runs WHERE id=?").get(runId);
+  }
+
+  beginVertexBatchIngestion(runId, providerState, outputChecksum = "") {
+    const timestamp = this.jobTimestamp();
+    this.db.prepare(`UPDATE vertex_batch_runs SET provider_state=?,result_state='ingesting',
+      output_read_attempts=output_read_attempts+1,output_checksum=?,last_output_error='',updated_at=?
+      WHERE id=? AND status='submitted'`)
+      .run(providerState || "", String(outputChecksum || "").slice(0, 200), timestamp, runId);
+    return this.db.prepare("SELECT * FROM vertex_batch_runs WHERE id=?").get(runId);
+  }
+
+  completeVertexBatchItem(run, item, extraction, transport = {}) {
+    const timestamp = this.jobTimestamp();
+    let saved = false;
     transaction(this.db, () => {
-      this.db.prepare("UPDATE vertex_batch_items SET status='succeeded',last_error='',completed_at=? WHERE run_id=? AND job_id=?")
-        .run(timestamp, run.id, item.job_id);
+      saved = this.saveSegmentExtraction(item.segment_id, extraction, { withinTransaction: true });
+      if (!saved) return;
+      this.enqueue("audit_segment_coverage", item.segment_id);
+      const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(item.job_id);
+      const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
+      this.db.prepare(`UPDATE vertex_batch_items SET status='succeeded',last_error='',completed_at=?,ingested_at=?,
+        output_object=?,output_line=?,output_checksum=? WHERE run_id=? AND job_id=? AND status='submitted'`)
+        .run(timestamp, timestamp, String(transport.objectName || "").slice(0, 1_000), Number.isInteger(transport.lineNumber) ? transport.lineNumber : null,
+          String(transport.checksum || "").slice(0, 200), run.id, item.job_id);
       this.db.prepare(`UPDATE jobs SET status='succeeded',completed_at=?,duration_ms=?,last_error=NULL,updated_at=?
         WHERE id=? AND status='queued'`).run(timestamp, durationMs, timestamp, item.job_id);
     });
+    if (!saved) return this.releaseVertexBatchItem(run.id, item.job_id, "Source changed while the batch was running; returned for fresh extraction.");
     return true;
   }
 
-  completeVertexBatchCoverageItem(run, item, assessment) {
+  completeVertexBatchCoverageItem(run, item, assessment, transport = {}) {
     const timestamp = this.jobTimestamp();
-    const audit = this.auditSegmentCoverage(item.segment_id, assessment?.output || assessment);
-    if (audit.status === "retry_required") this.enqueue("retry_segment_extraction", item.segment_id);
-    else if (audit.status !== "stale" && this.sourceCoverageReady(audit.sourceId)) {
-      this.enqueue("finalize_source_extraction", audit.sourceId);
-    }
-    const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(item.job_id);
-    const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
+    let audit;
     transaction(this.db, () => {
-      this.db.prepare("UPDATE vertex_batch_items SET status='succeeded',last_error='',completed_at=? WHERE run_id=? AND job_id=?")
-        .run(timestamp, run.id, item.job_id);
+      audit = this.auditSegmentCoverage(item.segment_id, assessment?.output || assessment);
+      if (audit.status === "retry_required") this.enqueue("retry_segment_extraction", item.segment_id);
+      else if (audit.status !== "stale" && this.sourceCoverageReady(audit.sourceId)) {
+        this.enqueue("finalize_source_extraction", audit.sourceId);
+      }
+      const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(item.job_id);
+      const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
+      this.db.prepare(`UPDATE vertex_batch_items SET status='succeeded',last_error='',completed_at=?,ingested_at=?,
+        output_object=?,output_line=?,output_checksum=? WHERE run_id=? AND job_id=? AND status='submitted'`)
+        .run(timestamp, timestamp, String(transport.objectName || "").slice(0, 1_000), Number.isInteger(transport.lineNumber) ? transport.lineNumber : null,
+          String(transport.checksum || "").slice(0, 200), run.id, item.job_id);
       this.db.prepare(`UPDATE jobs SET status='succeeded',completed_at=?,duration_ms=?,last_error=NULL,updated_at=?
         WHERE id=? AND status='queued'`).run(timestamp, durationMs, timestamp, item.job_id);
     });
@@ -687,18 +730,59 @@ export class Repository {
         .run(message, timestamp, runId, jobId);
       const job = this.db.prepare("SELECT attempts,max_attempts FROM jobs WHERE id=?").get(jobId);
       const retry = Number(job?.attempts || 0) < Number(job?.max_attempts || 3);
-      this.db.prepare(`UPDATE jobs SET status=?,available_at=?,last_error=?,completed_at=?,updated_at=? WHERE id=? AND status='queued'`)
-        .run(retry ? 'queued' : 'failed', timestamp, message, retry ? null : timestamp, timestamp, jobId);
+      const forceRealtime = ["MODEL_OUTPUT_LIMIT", "VERTEX_BATCH_DUPLICATE_CORRELATION", "VERTEX_BATCH_OUTPUT_MISSING"]
+        .includes(error?.code) ? "realtime" : null;
+      this.db.prepare(`UPDATE jobs SET status=?,available_at=?,last_error=?,completed_at=?,updated_at=?,
+        execution_route=COALESCE(?,execution_route) WHERE id=? AND status='queued'`)
+        .run(retry ? 'queued' : 'failed', timestamp, message, retry ? null : timestamp, timestamp, forceRealtime, jobId);
     });
   }
 
-  finishVertexBatch(runId, status, providerState = '', error = '') {
+  recordVertexBatchOutputAnomaly(runId, output, reason) {
+    const transport = output?.transport || {};
+    const checksum = String(transport.checksum || sha256(JSON.stringify(output || {}))).slice(0, 200);
+    this.db.prepare(`INSERT OR IGNORE INTO vertex_batch_output_anomalies(id,run_id,transport_key,request_fingerprint,
+      output_object,output_line,output_checksum,reason,created_at) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(id("batch_anomaly"), runId, String(output?.id || "").slice(0, 200), String(output?.requestFingerprint || "").slice(0, 200),
+        String(transport.objectName || "").slice(0, 1_000), Number.isInteger(transport.lineNumber) ? transport.lineNumber : null,
+        checksum, String(reason || "Uncorrelated Batch output").slice(0, 2_000), this.jobTimestamp());
+  }
+
+  recordVertexBatchCorrelationWarning(runId, jobId, warning) {
+    return this.db.prepare(`UPDATE vertex_batch_items SET correlation_warning=? WHERE run_id=? AND job_id=?`)
+      .run(String(warning || "").slice(0, 2_000), runId, jobId).changes === 1;
+  }
+
+  finishVertexBatch(runId, status, providerState = '', error = '', resultState = null) {
     const timestamp = this.jobTimestamp();
     const counts = this.db.prepare(`SELECT SUM(status='succeeded') AS succeeded,SUM(status='failed') AS failed
       FROM vertex_batch_items WHERE run_id=?`).get(runId);
-    this.db.prepare(`UPDATE vertex_batch_runs SET status=?,provider_state=?,succeeded_count=?,failed_count=?,last_error=?,
-      completed_at=?,updated_at=? WHERE id=?`).run(status, providerState, Number(counts?.succeeded || 0), Number(counts?.failed || 0),
-      String(error || '').slice(0, 4_000), timestamp, timestamp, runId);
+    const resolvedResultState = resultState || (status === "succeeded" ? "ready_cleanup" : "quarantined");
+    this.db.prepare(`UPDATE vertex_batch_runs SET status=?,provider_state=?,result_state=?,succeeded_count=?,failed_count=?,last_error=?,
+      cleanup_eligible_at=CASE WHEN ?='ready_cleanup' THEN ? ELSE cleanup_eligible_at END,
+      completed_at=?,updated_at=? WHERE id=?`).run(status, providerState, resolvedResultState,
+      Number(counts?.succeeded || 0), Number(counts?.failed || 0), String(error || '').slice(0, 4_000),
+      resolvedResultState, timestamp, timestamp, timestamp, runId);
+  }
+
+  markVertexBatchCleaned(runId) {
+    const timestamp = this.jobTimestamp();
+    return this.db.prepare(`UPDATE vertex_batch_runs SET result_state='cleaned',cleaned_at=?,updated_at=?
+      WHERE id=? AND status='succeeded' AND result_state='ready_cleanup'`).run(timestamp, timestamp, runId).changes === 1;
+  }
+
+  deferVertexBatchCleanup(runId, error, delayMs = 60_000) {
+    const timestamp = this.jobTimestamp();
+    return this.db.prepare(`UPDATE vertex_batch_runs SET cleanup_eligible_at=?,last_output_error=?,updated_at=?
+      WHERE id=? AND status='succeeded' AND result_state='ready_cleanup'`)
+      .run(new Date(this.clock().getTime() + delayMs).toISOString(), String(error?.message || error || "Batch cleanup failed").slice(0, 4_000),
+        timestamp, runId).changes === 1;
+  }
+
+  vertexBatchItemCounts(runId) {
+    const row = this.db.prepare(`SELECT COUNT(*) AS total,SUM(status='submitted') AS submitted,
+      SUM(status='succeeded') AS succeeded,SUM(status='failed') AS failed FROM vertex_batch_items WHERE run_id=?`).get(runId);
+    return Object.fromEntries(Object.entries(row || {}).map(([key, value]) => [key, Number(value || 0)]));
   }
 
   activeVertexBatchCount() {
@@ -717,7 +801,7 @@ export class Repository {
       const job = this.db.prepare(`
         SELECT * FROM jobs
         WHERE status = 'queued' AND available_at <= ?
-          AND (? = 0 OR type <> 'extract_segment_claims')
+          AND (? = 0 OR type <> 'extract_segment_claims' OR execution_route='realtime')
           AND (? = 0 OR type <> 'audit_segment_coverage')
           AND NOT EXISTS (
             SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
@@ -966,27 +1050,47 @@ export class Repository {
     };
   }
 
-  saveSegmentExtraction(segmentId, extraction, { retry = false } = {}) {
+  saveSegmentExtraction(segmentId, extraction, { retry = false, withinTransaction = false } = {}) {
     const segment = this.db.prepare("SELECT * FROM source_segments WHERE id=?").get(segmentId);
     if (!segment) throw new Error(`Source segment ${segmentId} no longer exists.`);
     const sourceVersion = this.db.prepare("SELECT capture_version FROM sources WHERE id=?").get(segment.source_id)?.capture_version;
     if (segment.capture_version !== sourceVersion) return false;
     const timestamp = now();
     const attempt = retry ? 2 : 1;
-    transaction(this.db, () => {
-      this.db.prepare(`INSERT INTO segment_extractions(segment_id,source_id,result_json,method,model,attempt,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(segment_id) DO UPDATE SET result_json=excluded.result_json,method=excluded.method,
-        model=excluded.model,attempt=excluded.attempt,updated_at=excluded.updated_at`)
-        .run(segmentId, segment.source_id, JSON.stringify(extraction.result), extraction.method, extraction.model, attempt, timestamp, timestamp);
+    const suppliedManifest = normalizeExtractionInputManifest(extraction?.inputManifest);
+    // Text segments are passed to every extractor directly in `source.raw_text`, so
+    // record that known transport fact even for older/custom extractor adapters.
+    // Media must still provide a provider manifest; we never infer it from a method
+    // name because that was the lossy behavior A01 removes.
+    const inputManifest = suppliedManifest.version > 0 || segment.asset_id
+      ? suppliedManifest
+      : normalizeExtractionInputManifest({
+        version: 1,
+        expectedModality: "text",
+        receivedModality: "text",
+        provider: extraction?.provider || "adapter",
+        model: extraction?.model || "",
+        capabilities: { text: true, image: false, video: false, batch: false },
+        assets: [],
+      });
+    const inputModality = inputManifest.receivedModality;
+    const write = () => {
+      this.db.prepare(`INSERT INTO segment_extractions(segment_id,source_id,result_json,method,model,attempt,created_at,updated_at,input_modality,input_manifest_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(segment_id) DO UPDATE SET result_json=excluded.result_json,method=excluded.method,
+        model=excluded.model,attempt=excluded.attempt,updated_at=excluded.updated_at,input_modality=excluded.input_modality,
+        input_manifest_json=excluded.input_manifest_json`)
+        .run(segmentId, segment.source_id, JSON.stringify(extraction.result), extraction.method, extraction.model, attempt, timestamp, timestamp,
+          inputModality, JSON.stringify(inputManifest));
       this.db.prepare("UPDATE source_segments SET status='extracted',updated_at=? WHERE id=?").run(timestamp, segmentId);
       if (segment.asset_id) this.db.prepare("UPDATE source_assets SET extraction_status='processed',extraction_error=NULL,processed_at=? WHERE id=?")
         .run(timestamp, segment.asset_id);
-    });
-    return true;
+      return true;
+    };
+    return withinTransaction ? write() : transaction(this.db, write);
   }
 
   getSegmentCoveragePackage(segmentId) {
-    const row = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model,se.attempt FROM source_segments ss
+    const row = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model,se.attempt,se.input_modality,se.input_manifest_json FROM source_segments ss
       JOIN segment_extractions se ON se.segment_id=ss.id WHERE ss.id=?`).get(segmentId);
     if (!row) return null;
     const coverage = this.db.prepare("SELECT * FROM extraction_coverage WHERE segment_id=?").get(segmentId);
@@ -994,7 +1098,7 @@ export class Repository {
     if (row.capture_version !== source?.capture_version) return { segment: row, staleCaptureVersion: true };
     const asset = row.asset_id ? source?.assets.find((item) => item.id === row.asset_id) : null;
     return {
-      segment: row, extraction: json(row.result_json, {}),
+      segment: row, extraction: json(row.result_json, {}), inputManifest: normalizeExtractionInputManifest(json(row.input_manifest_json, {})),
       source: source ? { ...source, raw_text: row.raw_text, assets: asset ? [asset] : [] } : null,
       expectedModality: row.asset_id ? (asset?.kind === "video" ? "video" : "image") : "text",
       coverage: coverage ? { ...coverage, uncovered_spans: json(coverage.uncovered_spans_json, []), audit: json(coverage.audit_json, {}) } : null,
@@ -1002,7 +1106,7 @@ export class Repository {
   }
 
   auditSegmentCoverage(segmentId, assessment = null) {
-    const row = this.db.prepare(`SELECT s.*,se.result_json,se.method,se.model,se.attempt FROM source_segments s
+    const row = this.db.prepare(`SELECT s.*,se.result_json,se.method,se.model,se.attempt,se.input_modality,se.input_manifest_json FROM source_segments s
       JOIN segment_extractions se ON se.segment_id=s.id WHERE s.id=?`).get(segmentId);
     if (!row) throw new Error(`Segment ${segmentId} has no extraction result.`);
     const sourceVersion = this.db.prepare("SELECT capture_version FROM sources WHERE id=?").get(row.source_id)?.capture_version;
@@ -1010,8 +1114,17 @@ export class Repository {
     const result = json(row.result_json, {});
     const claims = Array.isArray(result.claims) ? result.claims : [];
     const expectedModality = row.asset_id ? (row.segment_type === "video_chapter" ? "video" : "image") : "text";
-    const receivedModality = assessment?.modality?.received || (String(row.method || "").includes("video") ? "video"
-      : String(row.method || "").includes("multimodal") ? "image" : "text");
+    const storedManifest = normalizeExtractionInputManifest(json(row.input_manifest_json, {}));
+    const hasStoredManifest = storedManifest.version > 0;
+    const assessmentModality = normalizeInputModality(assessment?.modality?.received);
+    const receivedModality = hasStoredManifest ? storedManifest.receivedModality
+      : assessmentModality !== "unknown" ? assessmentModality
+        : expectedModality === "text" && row.input_modality === "text" ? "text" : "unknown";
+    const matchingAsset = row.asset_id ? storedManifest.assets.find((item) => item.assetId === row.asset_id) : null;
+    const receivedExpectedInput = expectedModality === "text"
+      ? receivedModality === "text" || receivedModality === "mixed"
+      : matchingAsset ? matchingAsset.status === "submitted"
+        : receivedModality === expectedModality || receivedModality === "mixed";
     const supportedClaims = row.asset_id ? claims : claims.filter((claim) => locateEvidenceQuote(row.raw_text, claim.source_quote).status !== "unsupported");
     const material = String(row.raw_text || "").trim().length >= 40 || row.asset_id;
     const assessedUncovered = Array.isArray(assessment?.uncovered_spans) ? assessment.uncovered_spans
@@ -1020,8 +1133,9 @@ export class Repository {
       .filter((item) => !unsupportedClaimAuditFalsePositive(item)) : null;
     const noSupportedClaimGap = !row.asset_id && material && supportedClaims.length === 0 && row.method !== "heuristic"
       ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: "Material segment produced no traceable Claim." }] : [];
-    const modalityGap = row.asset_id && receivedModality !== expectedModality
-      ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: `Expected ${expectedModality} evidence was not received by the model.` }] : [];
+    const failedAssetReason = matchingAsset?.failureReason ? ` ${matchingAsset.failureReason}` : "";
+    const modalityGap = row.asset_id && !receivedExpectedInput
+      ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: `Expected ${expectedModality} evidence was not received by the model.${failedAssetReason}`.trim() }] : [];
     const uncovered = [...(assessedUncovered || []), ...noSupportedClaimGap, ...modalityGap];
     const importantUncovered = uncovered.filter((item) => ["material", "important"].includes(item.importance)).length;
     const retryCount = Math.max(0, Number(row.attempt || 1) - 1);
@@ -1030,8 +1144,10 @@ export class Repository {
     const timestamp = now();
     const coverageId = `coverage_${sha256(segmentId).slice(0, 24)}`;
     const audit = { expectedModality, receivedModality, assetId: row.asset_id || null,
-      attempted: Number(assessment?.modality?.attempted || 0), unsupportedClaimCount: claims.length - supportedClaims.length,
-      bestEffortAccepted };
+      attempted: hasStoredManifest ? storedManifest.assets.length : Number(assessment?.modality?.attempted || 0),
+      inputManifestVersion: storedManifest.version || 0, legacyInputManifest: !hasStoredManifest,
+      inputFailures: storedManifest.assets.filter((item) => item.status === "failed"),
+      unsupportedClaimCount: claims.length - supportedClaims.length, bestEffortAccepted };
     this.db.prepare(`INSERT INTO extraction_coverage(id,source_id,segment_id,extraction_run_id,status,candidate_evidence_count,claim_count,uncovered_spans_json,important_uncovered_count,model,audited_at,retry_count,audit_json)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,
       candidate_evidence_count=excluded.candidate_evidence_count,claim_count=excluded.claim_count,uncovered_spans_json=excluded.uncovered_spans_json,
@@ -5378,4 +5494,35 @@ function countStrings(values) {
   const counts = new Map();
   for (const value of values.filter(Boolean)) counts.set(value, (counts.get(value) || 0) + 1);
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, count }));
+}
+
+function normalizeInputModality(value) {
+  const modality = String(value || "unknown").toLowerCase();
+  return ["text", "image", "video", "mixed", "unknown"].includes(modality) ? modality : "unknown";
+}
+
+function normalizeExtractionInputManifest(value) {
+  if (!value || typeof value !== "object" || Number(value.version || 0) < 1) {
+    return { version: 0, expectedModality: "unknown", receivedModality: "unknown", provider: "", model: "", capabilities: {}, assets: [] };
+  }
+  return {
+    version: 1,
+    expectedModality: normalizeInputModality(value.expectedModality),
+    receivedModality: normalizeInputModality(value.receivedModality),
+    provider: String(value.provider || "").slice(0, 100),
+    model: String(value.model || "").slice(0, 200),
+    capabilities: value.capabilities && typeof value.capabilities === "object" ? {
+      text: Boolean(value.capabilities.text), image: Boolean(value.capabilities.image),
+      video: Boolean(value.capabilities.video), batch: Boolean(value.capabilities.batch),
+    } : {},
+    assets: Array.isArray(value.assets) ? value.assets.map((item) => ({
+      assetId: item?.assetId ? String(item.assetId).slice(0, 200) : null,
+      hash: item?.hash ? String(item.hash).slice(0, 200) : null,
+      kind: normalizeInputModality(item?.kind),
+      status: item?.status === "submitted" ? "submitted" : "failed",
+      requestReference: item?.requestReference ? String(item.requestReference).slice(0, 100) : null,
+      failureCode: item?.failureCode ? String(item.failureCode).slice(0, 200) : null,
+      failureReason: item?.failureReason ? String(item.failureReason).slice(0, 1_000) : null,
+    })) : [],
+  };
 }

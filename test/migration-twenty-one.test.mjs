@@ -13,7 +13,7 @@ test("migration 21 preserves v20 file evidence and extends Source storage for vi
   const dbModulePath = fileURLToPath(new URL("../src/db.mjs", import.meta.url));
   const v20ModulePath = path.join(directory, "db-v20.mjs");
   const source = fs.readFileSync(dbModulePath, "utf8")
-    .replace(/^  if \(current < (?:2[1-9]|3[0-8])\).*$/gm, "");
+    .replace(/^  if \(current < (?:2[1-9]|3[0-9]|4[0-1])\).*$/gm, "");
   fs.writeFileSync(v20ModulePath, source);
   const { openDatabase: openV20Database } = await import(`${pathToFileURL(v20ModulePath).href}?v=20`);
   const v20 = openV20Database(databasePath);
@@ -32,7 +32,7 @@ test("migration 21 preserves v20 file evidence and extends Source storage for vi
 
   const upgraded = openDatabase(databasePath);
   try {
-    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 38);
+    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 41);
     assert.equal(upgraded.prepare("SELECT kind FROM source_assets WHERE id='asset-v20'").get().kind, "image");
     assert.equal(upgraded.prepare("SELECT file_kind FROM source_files WHERE id='file-v20'").get().file_kind, "image");
     upgraded.prepare("INSERT INTO source_assets(id, source_id, kind, remote_url, alt_text, position, local_path, mime_type, original_filename) VALUES ('asset-video','src-v20','video','manual-asset://fixture/video','video',1,'/data/video.mp4','video/mp4','video.mp4')").run();

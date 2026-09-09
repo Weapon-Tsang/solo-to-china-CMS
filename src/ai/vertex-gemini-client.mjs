@@ -109,7 +109,7 @@ export class VertexGeminiClient {
       instructions: `${instructions}\n- Batch processing identifier: return batch_item_id exactly as ${id}.`,
       content, config: this.config,
     });
-    return { id, request };
+    return { id, transportKey: id, request };
   }
 
   async createBatch(requests, { operation = "extract_segment_claims" } = {}) {
@@ -121,7 +121,7 @@ export class VertexGeminiClient {
     const objectPrefix = `vertex-batch/${batchId}`;
     const inputObject = `${objectPrefix}/input.jsonl`;
     const outputObjectPrefix = `${objectPrefix}/output/`;
-    const input = `${requests.map((item) => JSON.stringify({ request: item.request })).join("\n")}\n`;
+    const input = `${requests.map((item) => JSON.stringify({ transport_key: item.transportKey || item.id, request: item.request })).join("\n")}\n`;
     const maximumBytes = Number(this.config.batchMaxInputBytes || 900 * 1024 * 1024);
     if (Buffer.byteLength(input) > maximumBytes) throw new Error("Vertex Batch input exceeds the configured safe Cloud Storage limit.");
     await this.uploadObject(bucket, inputObject, input, "application/jsonl", accessToken);
@@ -133,6 +133,7 @@ export class VertexGeminiClient {
         displayName: `solo-${String(operation).replace(/[^a-z0-9_-]+/giu, "-").slice(0, 40)}-${batchId.slice(0, 8)}`,
         model: `publishers/google/models/${this.config.model}`,
         inputConfig: { instancesFormat: "jsonl", gcsSource: { uris: [`gs://${bucket}/${inputObject}`] } },
+        instanceConfig: { instanceType: "object", keyField: "transport_key" },
         outputConfig: { predictionsFormat: "jsonl", gcsDestination: { outputUriPrefix: `gs://${bucket}/${outputObjectPrefix}` } },
       }),
       signal: AbortSignal.timeout(this.config.requestTimeoutMs || 360_000),
@@ -169,9 +170,14 @@ export class VertexGeminiClient {
     const results = [];
     for (const item of jsonlObjects) {
       const body = await this.downloadObject(parsedUri.bucket, item.name, accessToken);
-      for (const line of body.split(/\r?\n/).filter(Boolean)) {
-        try { results.push(parseBatchResult(JSON.parse(line))); }
-        catch (error) { results.push({ id: "", error: `Invalid Vertex Batch JSONL output: ${error.message}` }); }
+      const lines = body.split(/\r?\n/);
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line.trim()) continue;
+        const transport = { objectName: item.name, lineNumber: index + 1,
+          checksum: crypto.createHash("sha256").update(line).digest("hex") };
+        try { results.push({ ...parseBatchResult(JSON.parse(line)), transport }); }
+        catch (error) { results.push({ id: "", error: `Invalid Vertex Batch JSONL output: ${error.message}`, transport }); }
       }
     }
     return results;
@@ -244,6 +250,7 @@ export class VertexGeminiClient {
     const result = await this.assetClient.imageParts(assets);
     return {
       attempted: result.attempted,
+      manifest: result.manifest || [],
       parts: result.parts.map((part) => {
         const match = /^data:([^;]+);base64,(.+)$/s.exec(part.image_url.url);
         return match ? { inlineData: { mimeType: match[1], data: match[2] } } : null;
@@ -264,6 +271,7 @@ export class VertexGeminiClient {
       }
       return {
         parts: prepared.flatMap((item) => item.parts), attempted: prepared.reduce((total, item) => total + item.attempted, 0),
+        manifest: prepared.flatMap((item) => item.manifest || []),
         cleanup: async () => { await Promise.allSettled(prepared.map((item) => item.cleanup())); },
       };
     }
@@ -274,7 +282,8 @@ export class VertexGeminiClient {
     if (!bytes.length) throw new Error("Uploaded source video is empty.");
     const maxInlineVideoBytes = Number(this.config.maxInlineVideoBytes || MAX_INLINE_VIDEO_BYTES);
     if (bytes.length <= maxInlineVideoBytes) {
-      return { parts: [{ inlineData: { mimeType, data: bytes.toString("base64") } }], attempted: 1, cleanup: async () => {} };
+      return { parts: [{ inlineData: { mimeType, data: bytes.toString("base64") } }], attempted: 1,
+        manifest: [inputAssetManifest(asset, "video", "submitted", "inline_data")], cleanup: async () => {} };
     }
 
     const bucket = String(this.config.videoBucket || "").trim();
@@ -300,7 +309,8 @@ export class VertexGeminiClient {
       const deleteUrl = `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`;
       await this.fetch(deleteUrl, { method: "DELETE", headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30_000) }).catch(() => null);
     };
-    return { parts: [{ fileData: { fileUri: `gs://${bucket}/${objectName}`, mimeType } }], attempted: 1, cleanup };
+    return { parts: [{ fileData: { fileUri: `gs://${bucket}/${objectName}`, mimeType } }], attempted: 1,
+      manifest: [inputAssetManifest(asset, "video", "submitted", "cloud_file")], cleanup };
   }
 
   async loadVideoAsset(asset) {
@@ -407,18 +417,37 @@ function parseGcsUri(value) {
   return match ? { bucket: match[1], object: match[2] } : null;
 }
 
-function parseBatchResult(row) {
-  if (row?.status && !row?.response) return { id: "", error: row.status.message || JSON.stringify(row.status), status: row.status };
+function inputAssetManifest(asset, kind, status, requestReference, error = null) {
+  return {
+    assetId: asset?.id || null,
+    hash: asset?.original_sha256 || asset?.originalSha256 || asset?.ai_derivative_sha256 || asset?.aiDerivativeSha256 || null,
+    kind,
+    status,
+    requestReference,
+    failureCode: error?.code ? String(error.code) : null,
+    failureReason: error ? String(error?.message || error).slice(0, 1_000) : null,
+  };
+}
+
+export function parseBatchResult(row) {
+  const id = String(row?.key || "");
+  const requestFingerprint = row?.instance?.request || row?.request
+    ? crypto.createHash("sha256").update(JSON.stringify(row?.instance?.request || row.request)).digest("hex") : "";
+  if (row?.status && !row?.response) return { id, requestFingerprint,
+    error: row.status.message || JSON.stringify(row.status), code: String(row.status.code || "VERTEX_BATCH_ITEM_FAILED"), status: row.status };
   const payload = row?.response || row;
   const candidate = payload?.candidates?.[0];
-  if (candidate?.finishReason === "MAX_TOKENS") return { id: "", error: "Vertex Batch structured output reached its token limit.", code: "MODEL_OUTPUT_LIMIT" };
+  const finishReason = String(candidate?.finishReason || "");
+  if (finishReason === "MAX_TOKENS") return { id, requestFingerprint, finishReason,
+    error: "Vertex Batch structured output reached its token limit.", code: "MODEL_OUTPUT_LIMIT" };
   const output = candidate?.content?.parts?.map((part) => part.text || "").join("");
   const parsed = parseStructuredJson(output);
-  if (!parsed.ok || !parsed.value || typeof parsed.value !== "object") return { id: "", error: "Vertex Batch returned invalid structured JSON." };
-  const id = String(parsed.value.batch_item_id || "");
+  if (!parsed.ok || !parsed.value || typeof parsed.value !== "object") return { id, requestFingerprint, finishReason,
+    error: "Vertex Batch returned invalid structured JSON.", code: "INVALID_MODEL_OUTPUT" };
+  const modelReportedId = String(parsed.value.batch_item_id || "");
   const value = { ...parsed.value };
   delete value.batch_item_id;
-  return { id, output: value, usage: payload?.usageMetadata || null };
+  return { id, requestFingerprint, modelReportedId, finishReason, output: value, usage: payload?.usageMetadata || null };
 }
 
 function normalizeVertexParts(content) {

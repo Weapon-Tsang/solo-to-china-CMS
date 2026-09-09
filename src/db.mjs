@@ -57,6 +57,87 @@ function migrate(db) {
   if (current < 36) migrationThirtySix(db);
   if (current < 37) migrationThirtySeven(db);
   if (current < 38) migrationThirtyEight(db);
+  if (current < 39) migrationThirtyNine(db);
+  if (current < 40) migrationForty(db);
+  if (current < 41) migrationFortyOne(db);
+}
+
+function migrationFortyOne(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE jobs ADD COLUMN execution_route TEXT NOT NULL DEFAULT 'auto'
+        CHECK (execution_route IN ('auto','batch','realtime'));
+      ALTER TABLE vertex_batch_items ADD COLUMN transport_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_items ADD COLUMN request_fingerprint TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_items ADD COLUMN correlation_warning TEXT NOT NULL DEFAULT '';
+      UPDATE vertex_batch_items SET transport_key=batch_item_id WHERE transport_key='';
+      CREATE UNIQUE INDEX idx_vertex_batch_transport_key ON vertex_batch_items(run_id,transport_key);
+      CREATE INDEX idx_vertex_batch_request_fingerprint ON vertex_batch_items(run_id,request_fingerprint);
+
+      CREATE TABLE vertex_batch_output_anomalies (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES vertex_batch_runs(id) ON DELETE CASCADE,
+        transport_key TEXT NOT NULL DEFAULT '',
+        request_fingerprint TEXT NOT NULL DEFAULT '',
+        output_object TEXT NOT NULL DEFAULT '',
+        output_line INTEGER,
+        output_checksum TEXT NOT NULL DEFAULT '',
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(run_id,output_checksum,reason)
+      );
+      CREATE INDEX idx_vertex_batch_output_anomalies_run ON vertex_batch_output_anomalies(run_id,created_at);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (41, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationForty(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE vertex_batch_runs ADD COLUMN result_state TEXT NOT NULL DEFAULT 'awaiting_inference'
+        CHECK (result_state IN ('awaiting_inference','reading','ingesting','ready_cleanup','cleaned','quarantined'));
+      ALTER TABLE vertex_batch_runs ADD COLUMN output_read_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vertex_batch_runs ADD COLUMN output_checksum TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN last_output_error TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN cleanup_eligible_at TEXT;
+      ALTER TABLE vertex_batch_runs ADD COLUMN cleaned_at TEXT;
+      ALTER TABLE vertex_batch_items ADD COLUMN output_object TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_items ADD COLUMN output_line INTEGER;
+      ALTER TABLE vertex_batch_items ADD COLUMN output_checksum TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_items ADD COLUMN ingested_at TEXT;
+      INSERT INTO schema_migrations(version, applied_at) VALUES (40, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationThirtyNine(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE segment_extractions ADD COLUMN input_modality TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (input_modality IN ('text','image','video','mixed','unknown'));
+      ALTER TABLE segment_extractions ADD COLUMN input_manifest_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE vertex_batch_items ADD COLUMN input_modality TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (input_modality IN ('text','image','video','mixed','unknown'));
+      ALTER TABLE vertex_batch_items ADD COLUMN input_manifest_json TEXT NOT NULL DEFAULT '{}';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (39, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationThirtyEight(db) {

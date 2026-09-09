@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { markdownToContentBlocks } from "./content-blocks.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
 import { isAiJobType, isProviderPressure } from "./job-policy.mjs";
@@ -56,6 +57,7 @@ export class Pipeline {
     this.batchWorking = true;
     try {
       const due = this.repository.dueVertexBatch?.();
+      if (due?.cleanupOnly) return await this.cleanupVertexBatch(due);
       if (due) return await this.pollVertexBatch(due);
       if (this.repository.activeVertexBatchCount?.()) return false;
       const minimum = Math.max(1, Number(this.extractor.config?.batchMinimumRequests || 20));
@@ -80,13 +82,17 @@ export class Pipeline {
             if (!pack || pack.staleCaptureVersion) throw new Error("Source segment changed before Vertex Batch submission.");
             request = await this.extractor.prepareBatchExtraction(pack.source, item.batch_item_id);
           }
-          const requestBytes = Buffer.byteLength(JSON.stringify({ request: request.request })) + 1;
+          const requestBytes = Buffer.byteLength(JSON.stringify({
+            transport_key: request.transportKey || request.id,
+            request: request.request,
+          })) + 1;
           if (preparedBytes + requestBytes > maximumInputBytes) {
             if (prepared.length) inputFull = true;
             throw new Error(prepared.length
               ? "Deferred to the next Vertex Batch because the current JSONL input reached its safe memory limit."
               : "This segment is too large for the configured Vertex Batch input and was returned to the realtime queue.");
           }
+          this.repository.recordVertexBatchItemInput?.(run.id, item.id, request.inputManifest, request);
           prepared.push(request);
           preparedBytes += requestBytes;
         } catch (error) {
@@ -128,31 +134,82 @@ export class Pipeline {
       this.repository.deferVertexBatchPoll(run.id, state, Number(this.extractor.config?.batchPollMs || 60_000));
       return false;
     }
-    let outputs = [];
+    let outputs;
     try { outputs = await this.extractor.readExtractionBatch({ ...run, ...batch }); }
-    catch (error) { this.logger.error("pipeline.vertex_batch_output_read_failed", { runId: run.id, error }); }
-    const byId = new Map(outputs.filter((item) => item.id).map((item) => [item.id, item]));
+    catch (error) {
+      this.repository.deferVertexBatchOutputRead(run.id, state, error, Number(this.extractor.config?.batchPollMs || 60_000));
+      this.logger.error("pipeline.vertex_batch_output_read_failed", { runId: run.id, error });
+      return false;
+    }
+    const outputChecksum = crypto.createHash("sha256").update(outputs.map((item) => item?.transport?.checksum || JSON.stringify(item)).join("\n")).digest("hex");
+    const ingestingRun = this.repository.beginVertexBatchIngestion(run.id, state, outputChecksum) || run;
+    const correlation = correlateBatchOutputs(run.items, outputs);
+    for (const anomaly of correlation.anomalies) {
+      this.repository.recordVertexBatchOutputAnomaly?.(run.id, anomaly.output, anomaly.reason);
+    }
+    const missing = [];
     for (const item of run.items) {
-      const output = byId.get(item.batch_item_id);
+      if (correlation.duplicates.has(item.job_id)) {
+        this.repository.releaseVertexBatchItem(run.id, item.job_id, Object.assign(
+          new Error("Vertex Batch returned duplicate transport correlation for this item; outputs were quarantined."),
+          { code: "VERTEX_BATCH_DUPLICATE_CORRELATION", retryable: false }));
+        continue;
+      }
+      const output = correlation.byJobId.get(item.job_id);
+      if (!output) { missing.push(item); continue; }
+      if (output.modelReportedId && output.modelReportedId !== item.batch_item_id) {
+        this.repository.recordVertexBatchCorrelationWarning?.(run.id, item.job_id,
+          `Model-reported batch_item_id ${output.modelReportedId} did not match transport key ${item.batch_item_id}; the transport key remained authoritative.`);
+      }
       try {
-        if (!output) throw new Error(`Vertex Batch ${state} returned no output for this segment.`);
         if (item.job_type === "audit_segment_coverage") {
           const assessment = this.extractor.parseBatchCoverage(output);
-          this.repository.completeVertexBatchCoverageItem(run, item, assessment);
+          this.repository.completeVertexBatchCoverageItem(run, item, assessment, output.transport);
         } else {
-          const extraction = this.extractor.parseBatchExtraction(output);
-          this.repository.completeVertexBatchItem(run, item, extraction);
+          const extraction = this.extractor.parseBatchExtraction(output, { inputManifest: parseStoredJson(item.input_manifest_json) });
+          this.repository.completeVertexBatchItem(run, item, extraction, output.transport);
         }
       } catch (error) {
         this.repository.releaseVertexBatchItem(run.id, item.job_id, error);
       }
     }
-    const finalStatus = state === "JOB_STATE_SUCCEEDED" || state === "JOB_STATE_PARTIALLY_SUCCEEDED" ? "succeeded"
-      : state === "JOB_STATE_CANCELLED" ? "cancelled" : state === "JOB_STATE_EXPIRED" ? "expired" : "failed";
-    this.repository.finishVertexBatch(run.id, finalStatus, state, batch?.error?.message || "");
-    await this.extractor.cleanupExtractionBatch({ ...run, ...batch }).catch((error) => this.logger.warn("pipeline.vertex_batch_cleanup_failed", { runId: run.id, error }));
+    if (missing.length) {
+      const maximumReadAttempts = Math.max(1, Number(this.extractor.config?.batchOutputReadMaxAttempts || 5));
+      if (Number(ingestingRun.output_read_attempts || 0) < maximumReadAttempts) {
+        this.repository.deferVertexBatchOutputRead(run.id, state,
+          `${missing.length} submitted Batch item(s) are not present in the downloaded output yet.`,
+          Number(this.extractor.config?.batchPollMs || 60_000), 0);
+        return false;
+      }
+      for (const item of missing) this.repository.releaseVertexBatchItem(run.id, item.job_id,
+        Object.assign(new Error(`Vertex Batch ${state} returned no output for this segment after ${maximumReadAttempts} reads.`),
+          { code: "VERTEX_BATCH_OUTPUT_MISSING", retryable: false }));
+    }
+    const counts = this.repository.vertexBatchItemCounts(run.id);
+    const providerSucceeded = state === "JOB_STATE_SUCCEEDED" || state === "JOB_STATE_PARTIALLY_SUCCEEDED";
+    if (!providerSucceeded || counts.failed > 0 || counts.succeeded !== counts.total) {
+      const failedStatus = state === "JOB_STATE_CANCELLED" ? "cancelled" : state === "JOB_STATE_EXPIRED" ? "expired" : "failed";
+      this.repository.finishVertexBatch(run.id, failedStatus, state,
+        batch?.error?.message || `${counts.failed} of ${counts.total} Batch item(s) did not ingest reliably.`, "quarantined");
+      this.logger.warn("pipeline.vertex_batch_quarantined", { runId: run.id, providerState: state, ...counts });
+      return true;
+    }
+    this.repository.finishVertexBatch(run.id, "succeeded", state, "", "ready_cleanup");
+    await this.cleanupVertexBatch({ ...run, ...batch, cleanupOnly: true });
     this.logger.info("pipeline.vertex_batch_completed", { runId: run.id, providerState: state, outputCount: outputs.length });
     return true;
+  }
+
+  async cleanupVertexBatch(run) {
+    try {
+      await this.extractor.cleanupExtractionBatch(run);
+      this.repository.markVertexBatchCleaned(run.id);
+      return true;
+    } catch (error) {
+      this.repository.deferVertexBatchCleanup(run.id, error, Number(this.extractor.config?.batchPollMs || 60_000));
+      this.logger.warn("pipeline.vertex_batch_cleanup_failed", { runId: run.id, error });
+      return false;
+    }
   }
 
   async runOne() {
@@ -647,6 +704,44 @@ export class Pipeline {
     }
     return uploaded;
   }
+}
+
+function parseStoredJson(value) {
+  try { return value ? JSON.parse(value) : null; } catch { return null; }
+}
+
+function correlateBatchOutputs(items, outputs) {
+  const byTransportKey = new Map();
+  const byRequestFingerprint = new Map();
+  for (const item of items || []) {
+    byTransportKey.set(item.transport_key || item.batch_item_id, item);
+    if (item.request_fingerprint) byRequestFingerprint.set(item.request_fingerprint, item);
+  }
+  const candidates = new Map();
+  const anomalies = [];
+  for (const output of outputs || []) {
+    const item = (output?.id && byTransportKey.get(output.id))
+      || (output?.requestFingerprint && byRequestFingerprint.get(output.requestFingerprint));
+    if (!item) {
+      anomalies.push({ output, reason: output?.id
+        ? `Unknown Vertex Batch transport key: ${output.id}`
+        : "Vertex Batch output had neither a known transport key nor a matching request fingerprint." });
+      continue;
+    }
+    const values = candidates.get(item.job_id) || [];
+    values.push(output);
+    candidates.set(item.job_id, values);
+  }
+  const byJobId = new Map();
+  const duplicates = new Set();
+  for (const [jobId, values] of candidates) {
+    if (values.length === 1) byJobId.set(jobId, values[0]);
+    else {
+      duplicates.add(jobId);
+      for (const output of values) anomalies.push({ output, reason: `Duplicate Vertex Batch transport correlation for job ${jobId}.` });
+    }
+  }
+  return { byJobId, duplicates, anomalies };
 }
 
 function invalidPublishPage(code, validation) {

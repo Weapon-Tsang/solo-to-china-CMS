@@ -3,7 +3,7 @@ import test from "node:test";
 import { KimiExtractor } from "../src/ai/kimi.mjs";
 
 test("Kimi adapter sends trusted image evidence as base64 input and requests strict structured output", async () => {
-  let request;
+  const requests = [];
   let modelRequests = 0;
   const fetchedImages = [];
   const expected = {
@@ -22,7 +22,7 @@ test("Kimi adapter sends trusted image evidence as base64 input and requests str
       return new Response(new Uint8Array(String(url).includes("ignored") ? [4, 5, 6] : [1, 2, 3]), { status: 200, headers: { "content-type": "image/jpeg" } });
     }
     modelRequests += 1;
-    request = { url, options, body: JSON.parse(options.body) };
+    requests.push({ url, options, body: JSON.parse(options.body) });
     return new Response(JSON.stringify({ model: "test-model", choices: [{ finish_reason: "stop", message: { content: JSON.stringify(expected) } }] }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -35,18 +35,23 @@ test("Kimi adapter sends trusted image evidence as base64 input and requests str
   const output = await extractor.extract({
     canonical_url: "https://www.xiaohongshu.com/explore/test", title: "Title", author_name: "Author",
     published_at: null, raw_text: "A sufficiently detailed note.",
-    assets: [{ remote_url: "https://sns-img.xhscdn.com/image.jpg" }, { remote_url: "https://sns-img.xhscdn.com/ignored.jpg" }],
+    assets: [{ id: "image-ok", original_sha256: "a".repeat(64), remote_url: "https://sns-img.xhscdn.com/image.jpg" },
+      { id: "image-failed", original_sha256: "b".repeat(64), remote_url: "https://untrusted.example/ignored.jpg" }],
   });
 
-  assert.equal(request.url, "https://api.example.test/v1/chat/completions");
-  assert.equal(request.body.response_format.type, "json_schema");
-  assert.equal(request.body.response_format.json_schema.strict, true);
-  const image = request.body.messages[1].content.find((item) => item.type === "image_url");
+  assert.equal(requests[0].url, "https://api.example.test/v1/chat/completions");
+  assert.equal(requests[0].body.response_format.type, "json_schema");
+  assert.equal(requests[0].body.response_format.json_schema.strict, true);
+  const image = requests.flatMap((item) => item.body.messages[1].content).find((item) => item.type === "image_url");
   assert.match(image.image_url.url, /^data:image\/jpeg;base64,/);
   assert.equal(output.result.source.destination_slug, "beijing-city");
   assert.equal(output.result.claims[0].key, "attraction.entry.gate");
   assert.equal(modelRequests, 2);
-  assert.deepEqual(fetchedImages.sort(), ["https://sns-img.xhscdn.com/ignored.jpg", "https://sns-img.xhscdn.com/image.jpg"]);
+  assert.deepEqual(fetchedImages, ["https://sns-img.xhscdn.com/image.jpg"]);
+  assert.equal(output.inputManifest.expectedModality, "image");
+  assert.equal(output.inputManifest.receivedModality, "image");
+  assert.deepEqual(output.inputManifest.assets.map((item) => [item.assetId, item.status]),
+    [["image-ok", "submitted"], ["image-failed", "failed"]]);
 });
 
 test("Vertex extraction sends a public YouTube source as direct video evidence", async () => {
@@ -70,6 +75,9 @@ test("Vertex extraction sends a public YouTube source as direct video evidence",
   assert.equal(video.fileData.fileUri, "https://www.youtube.com/watch?v=fixture");
   assert.equal(video.fileData.mimeType, "video/mp4");
   assert.equal(output.method, "vertex_video");
+  assert.equal(output.inputManifest.expectedModality, "video");
+  assert.equal(output.inputManifest.receivedModality, "video");
+  assert.equal(output.inputManifest.assets[0].status, "submitted");
 });
 
 test("non-Vertex models require an operator transcript for video URLs and uploaded video files", async () => {

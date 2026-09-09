@@ -53,7 +53,8 @@ export class KimiExtractor {
       instructions: SYSTEM_PROMPT,
       content: [{ type: "text", text: buildInput(source) }, ...images.parts],
     });
-    return { ...prepared, attemptedImages: images.attempted, suppliedImages: images.parts.length };
+    return { ...prepared, attemptedImages: images.attempted, suppliedImages: images.parts.length,
+      inputManifest: extractionInputManifest({ source, provider: "vertex", model: this.config.model, batch: true, images }) };
   }
 
   async prepareBatchCoverage({ segment, extraction, expectedModality = "text" }, batchItemId) {
@@ -73,7 +74,7 @@ export class KimiExtractor {
   readExtractionBatch(batch) { return this.client.readBatchOutput(batch); }
   cleanupExtractionBatch(batch) { return this.client.cleanupBatch(batch); }
 
-  parseBatchExtraction(item) {
+  parseBatchExtraction(item, { inputManifest = null } = {}) {
     if (item?.error) throw Object.assign(new Error(item.error), { retryable: true, code: item.code || "VERTEX_BATCH_ITEM_FAILED" });
     const errors = validateJsonSchema(item?.output, EXTRACTION_SCHEMA);
     if (errors.length) throw Object.assign(new Error(`Vertex Batch returned invalid extraction JSON: ${JSON.stringify(errors.slice(0, 10))}`),
@@ -83,7 +84,8 @@ export class KimiExtractor {
         inputTokens: item.usage?.promptTokenCount ?? null, outputTokens: item.usage?.candidatesTokenCount ?? null,
         cachedTokens: item.usage?.cachedContentTokenCount ?? null, latencyMs: null, attempts: 1, status: "succeeded", errorCode: null });
     } catch { /* batch telemetry must never fail extraction import */ }
-    return { result: sanitizeResult(item.output), method: "vertex_batch", model: this.config.model };
+    return { result: sanitizeResult(item.output), method: "vertex_batch", model: this.config.model,
+      inputManifest: inputManifest || item?.inputManifest || null };
   }
 
   parseBatchCoverage(item) {
@@ -120,6 +122,7 @@ export class KimiExtractor {
 
     const outputs = [];
     const methods = new Set();
+    const inputManifests = [];
     let model = null;
     for (const batch of batches) {
       const images = await this.client.imageParts(batch.images);
@@ -139,10 +142,13 @@ export class KimiExtractor {
       if (images.attempted > images.parts.length) result.source.warnings.push("Some captured image assets were unavailable to the vision model; completeness remains blocked until they are processed.");
       if (batch.videos.length && videos.parts.length < batch.videos.length) result.source.warnings.push("One or more captured videos were unavailable to the selected model; completeness remains blocked until they are processed.");
       outputs.push(result);
+      inputManifests.push(extractionInputManifest({ source: { ...source, assets: [...batch.images, ...batch.videos] },
+        provider: this.config.provider || "kimi", model: completion.model || this.config.model, batch: false, images, videos }));
       methods.add(videos.parts.length ? "video" : images.parts.length ? "multimodal" : "text");
       model ||= completion.model;
     }
-    return { result: mergeExtractionResults(outputs), method: `${this.config.provider || "kimi"}_${[...methods].join("+")}`, model };
+    return { result: mergeExtractionResults(outputs), method: `${this.config.provider || "kimi"}_${[...methods].join("+")}`, model,
+      inputManifest: mergeInputManifests(inputManifests) };
   }
 
   async analyzeBlueprint(source) {
@@ -183,16 +189,57 @@ export class KimiExtractor {
 }
 
 async function prepareVideoParts(source, provider, client) {
-  const empty = { parts: [], attempted: 0, cleanup: async () => {} };
+  const empty = { parts: [], attempted: 0, manifest: [], cleanup: async () => {} };
   if (provider !== "vertex") return empty;
   if ((source?.assets || []).some((asset) => asset?.kind === "video")) return client.videoParts(source.assets || []);
   if (source?.source_kind !== "video_url" || !isYoutubeUrl(source.submitted_url)) return empty;
   try {
     const url = new URL(source.submitted_url || "");
-    return { parts: [{ fileData: { fileUri: url.toString(), mimeType: "video/mp4" } }], attempted: 1, cleanup: async () => {} };
+    return { parts: [{ fileData: { fileUri: url.toString(), mimeType: "video/mp4" } }], attempted: 1,
+      manifest: [{ assetId: null, hash: null, kind: "video", status: "submitted", requestReference: "public_url",
+        failureCode: null, failureReason: null }], cleanup: async () => {} };
   } catch {
     return empty;
   }
+}
+
+function extractionInputManifest({ source, provider, model, batch, images = {}, videos = {} }) {
+  const assets = [...(images.manifest || []), ...(videos.manifest || [])];
+  const expectedKinds = new Set((source?.assets || []).map((asset) => asset?.kind === "video" ? "video" : "image"));
+  if (source?.source_kind === "video_url") expectedKinds.add("video");
+  const submittedKinds = new Set(assets.filter((asset) => asset.status === "submitted").map((asset) => asset.kind));
+  return {
+    version: 1,
+    expectedModality: manifestModality(expectedKinds),
+    receivedModality: manifestModality(submittedKinds),
+    provider,
+    model,
+    capabilities: { text: true, image: true, video: provider === "vertex", batch: Boolean(batch) },
+    assets,
+  };
+}
+
+function mergeInputManifests(manifests) {
+  const values = (manifests || []).filter((item) => item?.version);
+  if (!values.length) return null;
+  const expected = new Set(values.map((item) => item.expectedModality).filter((item) => item !== "text"));
+  const received = new Set(values.map((item) => item.receivedModality).filter((item) => item !== "text"));
+  return {
+    ...values[0],
+    expectedModality: manifestModality(expected),
+    receivedModality: manifestModality(received),
+    assets: values.flatMap((item) => item.assets || []),
+  };
+}
+
+function manifestModality(kinds) {
+  const values = new Set();
+  for (const item of kinds) {
+    if (item === "mixed") { values.add("image"); values.add("video"); }
+    else if (item === "image" || item === "video") values.add(item);
+  }
+  if (values.size > 1) return "mixed";
+  return values.values().next().value || "text";
 }
 
 function mergeExtractionResults(results) {

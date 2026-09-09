@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased - audit requirements 1.3
+
+- Persist structured extraction input manifests so image/video coverage uses submitted asset evidence rather than method-name guesses; legacy records remain explicitly unknown.
+- Separate Vertex Batch inference completion, output reading, item ingestion, quarantine, and cleanup so transient Cloud Storage failures resume without repeated inference or premature deletion.
+- Correlate Batch rows with Vertex's transport `keyField`, retain request fingerprints as a recovery path, quarantine duplicate/unknown rows, and treat model-reported IDs only as a cross-check.
+
 ## 1.17.11 - 2026-09-09
 
 - Finish active Source coverage, finalization and intake diagnostics before expanding the remaining extraction backlog.

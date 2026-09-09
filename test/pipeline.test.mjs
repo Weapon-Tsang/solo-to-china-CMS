@@ -161,6 +161,71 @@ test("media segment coverage uses extraction metadata instead of a second model 
   assert.equal(audits, 0);
 });
 
+test("coverage trusts the persisted input manifest instead of guessing batch modality", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/68abcdef0000000000000199",
+    title: "Chongqing image evidence",
+    text: "A selected image source with enough context for the extraction pipeline.",
+    images: [{ url: "https://example.com/batch-image.jpg", alt: "Hongyadong at night" }],
+  }));
+  const imageSegment = repository.prepareSourceSegments(source.id).find((segment) => segment.assetId);
+  const asset = db.prepare("SELECT * FROM source_assets WHERE id=?").get(imageSegment.assetId);
+
+  repository.saveSegmentExtraction(imageSegment.id, {
+    method: "vertex_batch",
+    model: "gemini-3.8-flash",
+    inputManifest: {
+      version: 1,
+      expectedModality: "image",
+      receivedModality: "image",
+      provider: "vertex",
+      model: "gemini-3.8-flash",
+      capabilities: { text: true, image: true, video: false, batch: true },
+      assets: [{ assetId: asset.id, hash: asset.original_sha256 || null, kind: "image", status: "submitted", requestReference: "inline_data" }],
+    },
+    result: {
+      source: { language: "en", summary: "Image", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+      claims: [{ key: "chongqing.hongyadong.night_view", subject: "Hongyadong", predicate: "features_view", value: "Night view", qualifiers: [], source_quote: "Hongyadong at night", confidence: 0.9 }],
+      blueprint: { format: "guide", hook: "", angle: "", sections: [], strengths: [], gaps: [] },
+    },
+  });
+
+  const audit = repository.auditSegmentCoverage(imageSegment.id);
+  assert.equal(audit.receivedModality, "image");
+  assert.equal(audit.status, "passed");
+  assert.equal(audit.attempted, 1);
+
+  repository.saveSegmentExtraction(imageSegment.id, {
+    method: "vertex_batch",
+    model: "gemini-3.8-flash",
+    inputManifest: {
+      version: 1,
+      expectedModality: "image",
+      receivedModality: "text",
+      provider: "vertex",
+      model: "gemini-3.8-flash",
+      capabilities: { text: true, image: true, video: false, batch: true },
+      assets: [{ assetId: asset.id, hash: asset.original_sha256 || null, kind: "image", status: "failed",
+        requestReference: null, failureCode: "IMAGE_FETCH_FAILED", failureReason: "Image fetch failed (503)." }],
+    },
+    result: {
+      source: { language: "en", summary: "Text fallback", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.6 },
+      claims: [],
+      blueprint: { format: "guide", hook: "", angle: "", sections: [], strengths: [], gaps: [] },
+    },
+  });
+  const failed = repository.auditSegmentCoverage(imageSegment.id);
+  assert.equal(failed.receivedModality, "text");
+  assert.equal(failed.status, "retry_required");
+  assert.match(failed.uncovered[0].reason, /Image fetch failed \(503\)/);
+
+  db.prepare("UPDATE segment_extractions SET input_modality='unknown',input_manifest_json='{}' WHERE segment_id=?").run(imageSegment.id);
+  const legacy = repository.auditSegmentCoverage(imageSegment.id);
+  assert.equal(legacy.receivedModality, "unknown");
+  assert.equal(legacy.status, "retry_required");
+});
+
 test("entity resolution falls back deterministically when model structured output is invalid", async () => {
   const completed = [];
   const enqueued = [];

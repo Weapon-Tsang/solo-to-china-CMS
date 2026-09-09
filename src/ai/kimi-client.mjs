@@ -75,16 +75,20 @@ export class KimiClient {
   async imageParts(assets) {
     const attempted = assets || [];
     const results = await Promise.allSettled(attempted.map(async (asset) => ({
-      type: "image_url",
-      image_url: { url: await this.imageDataUrl(asset) },
+      part: { type: "image_url", image_url: { url: await this.imageDataUrl(asset) } },
+      manifest: inputAssetManifest(asset, "image", "submitted", "inline_data"),
     })));
-    const parts = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-    return { parts, attempted: attempted.length };
+    const parts = results.flatMap((result) => result.status === "fulfilled" ? [result.value.part] : []);
+    const manifest = results.map((result, index) => result.status === "fulfilled" ? result.value.manifest
+      : inputAssetManifest(attempted[index], "image", "failed", null, result.reason));
+    return { parts, attempted: attempted.length, manifest };
   }
 
   async videoParts(assets) {
-    const attempted = (assets || []).filter((asset) => asset?.kind === "video").length;
-    return { parts: [], attempted, cleanup: async () => {} };
+    const attemptedAssets = (assets || []).filter((asset) => asset?.kind === "video");
+    return { parts: [], attempted: attemptedAssets.length, cleanup: async () => {},
+      manifest: attemptedAssets.map((asset) => inputAssetManifest(asset, "video", "failed", null,
+        Object.assign(new Error("The selected provider does not support video input."), { code: "VIDEO_INPUT_UNSUPPORTED" }))) };
   }
 
   async imageDataUrl(asset) {
@@ -139,4 +143,16 @@ function safeXiaohongshuImageUrl(value) {
 
 async function jsonPayload(response) {
   try { return await response.json(); } catch { return {}; }
+}
+
+function inputAssetManifest(asset, kind, status, requestReference, error = null) {
+  return {
+    assetId: asset?.id || null,
+    hash: asset?.original_sha256 || asset?.originalSha256 || asset?.ai_derivative_sha256 || asset?.aiDerivativeSha256 || null,
+    kind,
+    status,
+    requestReference,
+    failureCode: error?.code ? String(error.code) : null,
+    failureReason: error ? String(error?.message || error).slice(0, 1_000) : null,
+  };
 }
