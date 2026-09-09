@@ -172,8 +172,15 @@ test("claim review exceptions include both source records, text context, and the
   db.prepare("UPDATE claims SET evidence_span_ids_json='[\"span-image\"]' WHERE id=?").run(claimB.id);
   db.prepare(`INSERT INTO claim_review_cases(id,destination_slug,claim_a_id,claim_b_id,review_type,reason,status,created_at,updated_at)
     VALUES ('review-evidence','chongqing',?,?,'SOURCE_CONFLICT','needs evidence','pending','now','now')`).run(claimA.id, claimB.id);
+  db.prepare(`INSERT INTO claim_review_cases(id,destination_slug,claim_a_id,claim_b_id,review_type,reason,status,created_at,updated_at)
+    VALUES ('review-evidence-duplicate','chongqing',?,?,'SOURCE_CONFLICT','same fact group','pending','now','now')`).run(claimB.id, claimA.id);
 
-  const review = repository.listOperationalExceptions().find((item) => item.claim_review?.id === "review-evidence").claim_review;
+  const exceptionItems = repository.listOperationalExceptions();
+  const review = exceptionItems.find((item) => item.claim_review?.id === "review-evidence").claim_review;
+  const duplicate = exceptionItems.find((item) => item.claim_review?.id === "review-evidence-duplicate").claim_review;
+  assert.equal(review.factGroupKey, duplicate.factGroupKey);
+  assert.equal(repository.dashboard().totals.exceptions, 1);
+  assert.equal(repository.dashboard().totals.exceptionRecords, 2);
   assert.equal(review.claimA.sourceId, sourceA.id);
   assert.equal(review.claimB.sourceId, sourceB.id);
   assert.equal(review.claimA.evidence.available, true);

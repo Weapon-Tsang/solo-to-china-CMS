@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Activity, AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock3, Database, ExternalLink, FileUp, Gauge, Link2, MapPin, RefreshCw, RotateCcw, UploadCloud, Webhook,
+  Activity, AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock3, Database, ExternalLink, FileUp, Gauge, Link2, MapPin, Plus, RefreshCw, RotateCcw, Trash2, UploadCloud, Webhook,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -12,6 +12,7 @@ export function ViewRenderer(props) {
   const components = {
     sources: SourcesView,
     recommendations: RecommendationsView,
+    assignments: AssignmentsView,
     knowledge: KnowledgeView,
     blueprints: BlueprintsView,
     content: ContentView,
@@ -247,6 +248,100 @@ function sourceProgressLabel(item) {
 
 function failureReasonLabel(code) {
   return { AUTH_REQUIRED: "需要登录或授权", BOT_PROTECTION: "触发反爬/人机验证", RATE_LIMITED: "访问频率受限", FETCH_TIMEOUT: "链接响应超时", EMPTY_CONTENT: "未提取到正文", EMPTY_DOCUMENT: "文档没有可提取正文", DOCUMENT_PARSE_FAILED: "文档解析失败", INVALID_VIDEO_FILE: "视频文件无效", FILE_TOO_LARGE: "文件体积超限", UPLOAD_TOO_LARGE: "本次上传体积超限", PRIVATE_NETWORK_BLOCKED: "已阻止内网地址", UNSUPPORTED_CONTENT_TYPE: "不支持的链接内容格式", REMOTE_HTTP_ERROR: "目标网站返回错误" }[code] || "提交失败";
+}
+
+function AssignmentsView({ data, onAction, actionBusy, onNavigate }) {
+  const destinations = data?.destinations || [];
+  const assignmentTypes = data?.assignmentTypes || [];
+  const assignments = data?.assignments || [];
+  const systemTopics = data?.systemTopics || [];
+  const [destinationSlug, setDestinationSlug] = useState(destinations[0]?.slug || "");
+  const [title, setTitle] = useState("");
+  const [assignmentType, setAssignmentType] = useState("city_walk");
+  const [targetEntities, setTargetEntities] = useState("");
+  const [brief, setBrief] = useState("");
+  const [desiredVisual, setDesiredVisual] = useState("route_sketch");
+  useEffect(() => {
+    if (!destinationSlug && destinations[0]?.slug) setDestinationSlug(destinations[0].slug);
+  }, [destinationSlug, destinations]);
+  const submit = async (event) => {
+    event.preventDefault();
+    const created = await onAction("/api/editorial-assignments", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        destinationSlug,
+        title,
+        assignmentType,
+        targetEntities: targetEntities.split(/[,，\n]/u).map((item) => item.trim()).filter(Boolean),
+        brief,
+        desiredVisual,
+      }),
+    }, (result) => result.status === "ready" ? "命题已新增，素材体检通过。" : "命题已新增，系统列出了需要补采的素材。" );
+    if (created) {
+      setTitle(""); setTargetEntities(""); setBrief("");
+    }
+  };
+  const remove = (item) => {
+    if (!window.confirm(`从命题清单移除“${item.title}”？`)) return;
+    void onAction(`/api/editorial-assignments/${item.id}`, { method: "DELETE" }, (result) => result.message || "命题已移除。");
+  };
+  const removeSystemTopic = (item) => {
+    if (!window.confirm(`从系统选题清单移除“${item.title}”？`)) return;
+    void onAction(`/api/editorial-topics/${item.id}`, { method: "DELETE" }, (result) => result.message || "系统选题已移除。");
+  };
+  return <div className="space-y-4">
+    <SummaryBar title={`${assignments.length} 个人工命题 · ${systemTopics.length} 个系统选题`}>
+      <span>人工命题与系统自动发现的选题并行存在，互不覆盖。</span>
+      <span>新增命题只做素材体检；你点击“加入创作队列”才视为批准生产。</span>
+    </SummaryBar>
+    <section className="grid gap-4 xl:grid-cols-[minmax(20rem,.8fr)_minmax(0,1.2fr)]">
+      <Card className="p-4 sm:p-5">
+        <div><h2 className="text-sm font-semibold text-slate-900">新增人工命题</h2><p className="mt-1 text-[11px] leading-relaxed text-slate-500">像命题作文一样给出方向。可指定城市、沿途 Attraction 和创作边界，系统会从知识库筛选直接相关的素材。</p></div>
+        {destinations.length ? <form className="mt-4 space-y-3" onSubmit={submit}>
+          <label className="block"><span className="text-[11px] font-medium text-slate-700">目的地</span><select value={destinationSlug} onChange={(event) => setDestinationSlug(event.target.value)} className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400">{destinations.map((item) => <option key={item.slug} value={item.slug}>{item.name} · {item.fact_count} 条知识</option>)}</select></label>
+          <label className="block"><span className="text-[11px] font-medium text-slate-700">专题标题 / 命题</span><input required minLength={2} maxLength={180} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：重庆 City Walk：山城步道与江景机位" className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-slate-400" /></label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block"><span className="text-[11px] font-medium text-slate-700">专题类型</span><select value={assignmentType} onChange={(event) => { const value = event.target.value; setAssignmentType(value); if (value === "city_walk") setDesiredVisual("route_sketch"); }} className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400">{assignmentTypes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+            <label className="block"><span className="text-[11px] font-medium text-slate-700">视觉方向</span><select value={desiredVisual} onChange={(event) => setDesiredVisual(event.target.value)} className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"><option value="route_sketch">路线概念手稿</option><option value="illustration">原创编辑插画</option><option value="none">暂不指定</option></select></label>
+          </div>
+          <label className="block"><span className="text-[11px] font-medium text-slate-700">指定地点 / Attraction（可选）</span><input value={targetEntities} onChange={(event) => setTargetEntities(event.target.value)} placeholder="洪崖洞，山城巷，十八梯" className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-slate-400" /><span className="mt-1 block text-[10px] text-slate-400">用逗号分隔。填写后，缺口提示会具体到这些地点及其衔接路线。</span></label>
+          <label className="block"><span className="text-[11px] font-medium text-slate-700">写作要求 / 边界（可选）</span><textarea rows={4} maxLength={2000} value={brief} onChange={(event) => setBrief(event.target.value)} placeholder="例如：面向第一次到重庆的独行游客；路线控制在半天；重点写步行顺序、坡度、交通和最佳拍摄时段。" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-slate-400" /></label>
+          <Button className="w-full" disabled={actionBusy || !destinationSlug || title.trim().length < 2}><Plus /> 新增并检测素材</Button>
+        </form> : <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">还没有可选目的地。请先采集来源并完成知识库提取。</div>}
+      </Card>
+      <section className="space-y-3">
+        <SectionTitle title="人工命题清单" description="素材不足时按城市和地点显示补采任务；补采完成后可一键重新检测。" />
+        {assignments.length ? assignments.map((item) => <EditorialAssignmentCard key={item.id} item={item} onAction={onAction} onRemove={remove} actionBusy={actionBusy} />) : <Card className="p-6 text-center text-xs text-slate-500">尚未添加人工命题。</Card>}
+      </section>
+    </section>
+    <section>
+      <SectionTitle title="系统选定的专题 / 选题" description="这些来自来源分析与并行创作策略；人工命题不会替换或消耗它们。" />
+      {systemTopics.length ? <TableShell><Table><TableHeader><TableRow><TableHead>选题</TableHead><TableHead>内容类型</TableHead><TableHead>素材就绪度</TableHead><TableHead>状态</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{systemTopics.map((item) => <TableRow key={item.id}><TableCell><div className="max-w-lg font-medium text-slate-900">{item.title}</div><div className="mt-1 text-[10px] text-slate-400">{item.destination_slug}</div></TableCell><TableCell>{label(item.content_type)}</TableCell><TableCell className="font-medium tabular-nums">{Math.round(item.readiness_score || 0)}%</TableCell><TableCell><StatusPill status={item.status} /></TableCell><TableCell><Button size="sm" variant="ghost" disabled={actionBusy} onClick={() => removeSystemTopic(item)}><Trash2 /> 移除</Button></TableCell></TableRow>)}</TableBody></Table></TableShell> : <EmptyState icon="content" title="暂无系统选题" description="系统会在来源完成分析后，把可用的专题创作路径显示在这里。" action={() => onNavigate("sources")} actionLabel="查看来源" />}
+    </section>
+  </div>;
+}
+
+function EditorialAssignmentCard({ item, onAction, onRemove, actionBusy }) {
+  const evaluation = item.evaluation || {};
+  const evidence = evaluation.evidence || {};
+  const visibleStatus = item.status === "queued" && item.opportunity_status ? item.opportunity_status : item.status;
+  const recheck = () => onAction(`/api/editorial-assignments/${item.id}/recheck`, { method: "POST" }, (result) => result.status === "ready" ? "重新检测通过，可以加入创作队列。" : "已重新检测，仍有素材缺口。" );
+  const queue = () => onAction(`/api/editorial-assignments/${item.id}/queue`, { method: "POST" }, "命题已批准并加入创作队列。" );
+  return <Card className="p-4 sm:p-5">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold leading-relaxed text-slate-900">{item.title}</h3><StatusPill status={visibleStatus} /></div><p className="mt-1 text-[11px] text-slate-500">{item.destination_name || item.destination_slug} · {label(item.assignment_type)} · {label(item.content_type)}</p></div><div className="text-right"><strong className="text-xl font-semibold tabular-nums text-slate-900">{Math.round(item.quality_score || 0)}</strong><span className="text-[10px] text-slate-400"> / 100</span></div></div>
+    {item.brief && <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600"><b>命题要求：</b>{item.brief}</p>}
+    <p className={cn("mt-3 rounded-xl border p-3 text-xs leading-relaxed", evaluation.ready ? "border-emerald-200 bg-emerald-50 text-emerald-900" : item.status === "suppressed" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-blue-100 bg-blue-50 text-blue-900")}>{evaluation.summary || "正在等待素材体检。"}</p>
+    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><AssignmentStat label="相关事实" value={evidence.factCount || 0} /><AssignmentStat label="独立来源" value={evidence.sourceFamilyCount || 0} /><AssignmentStat label="地点 / 项目" value={evidence.entityCount || 0} /><AssignmentStat label="路线证据" value={evidence.routeFactCount || 0} /></div>
+    {(evaluation.acquisitionRequests || []).length > 0 && <div className="mt-3"><p className="text-[11px] font-semibold text-slate-700">需要补采</p><ul className="mt-2 space-y-2">{evaluation.acquisitionRequests.map((request, index) => <li key={`${request.evidenceType}-${index}`} className="rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2 text-[11px] leading-relaxed text-amber-900">{request.message}</li>)}</ul></div>}
+    {(evidence.selectedFactPreview || []).length > 0 && <details className="mt-3 rounded-lg border border-slate-100 px-3 py-2 text-[11px] text-slate-500"><summary className="cursor-pointer font-medium text-slate-700">查看已筛选素材（{evidence.selectedFactPreview.length} 条预览）</summary><ul className="mt-2 space-y-1.5">{evidence.selectedFactPreview.map((fact) => <li key={fact.key}><b>{fact.subject}</b> · {fact.predicate}：{fact.value}</li>)}</ul></details>}
+    {evaluation.visualBrief && <p className="mt-3 text-[10px] leading-relaxed text-violet-700"><b>视觉计划：</b>{evaluation.visualBrief.instruction}</p>}
+    <div className="mt-4 flex flex-wrap gap-2">{item.status === "needs_sources" && <Button size="sm" variant="secondary" disabled={actionBusy} onClick={recheck}><RefreshCw /> 重新检测</Button>}{item.status === "ready" && <Button size="sm" disabled={actionBusy} onClick={queue}><CheckCircle2 /> 加入创作队列</Button>}{item.status === "queued" && <Button size="sm" variant="secondary" disabled>已进入创作队列</Button>}<Button size="sm" variant="ghost" disabled={actionBusy} onClick={() => onRemove(item)}><Trash2 /> 删除命题</Button></div>
+  </Card>;
+}
+
+function AssignmentStat({ label: title, value }) {
+  return <div className="rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-2"><strong className="block text-sm tabular-nums text-slate-900">{value}</strong><span className="text-[9px] text-slate-500">{title}</span></div>;
 }
 
 function RecommendationsView({ data, onAction, actionBusy, onNavigate }) {
@@ -636,7 +731,12 @@ function ExceptionsView({ data, onAction, actionBusy }) {
 
 function ExceptionsWorkspace({ items, onAction, actionBusy }) {
   const retry = (item) => onAction(`/api/exceptions/${encodeURIComponent(item.key)}/retry`, { method: "POST" }, "已重新加入处理队列");
-  return <div className="space-y-3"><SummaryBar title={`${items.length} 个待处理问题`}><span>队列按 实体身份、信息主张冲突、实体关系、来源/时间冲突和提取错误 分类；补充、细化 与兼容建议不会进入这里。</span></SummaryBar><div className="grid gap-3 lg:grid-cols-2">{items.map((item) => <Card key={item.key} className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-xs text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.detail}</p>{item.knowledge?.id ? <KnowledgeConflictResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.entity_alias?.id ? <EntityAliasResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.claim_review?.id ? <ClaimReviewResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.retryable ? <Button className="mt-4" variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <p className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">需要补充新的来源证据；现有事实会保留，但不会自动用于内容生产。</p>}</Card>)}</div></div>;
+  const issueGroups = new Set(items.map((item) => item.claim_review?.factGroupKey || item.key)).size;
+  const groupedComparisonCount = items.filter((item) => item.claim_review?.factGroupKey).length;
+  const summary = issueGroups < items.length
+    ? `${issueGroups} 个待处理事项 · ${items.length} 条记录`
+    : `${issueGroups} 个待处理事项`;
+  return <div className="space-y-3"><SummaryBar title={summary}><span>同一事实组可能产生多条来源比较，但只算一个待处理事项。系统会先自动排除同义、细化和可并存内容；当前含 {groupedComparisonCount} 条来源比较记录。</span></SummaryBar><div className="grid gap-3 lg:grid-cols-2">{items.map((item) => <Card key={item.key} className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-xs text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.detail}</p>{item.knowledge?.id ? <KnowledgeConflictResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.entity_alias?.id ? <EntityAliasResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.claim_review?.id ? <ClaimReviewResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.retryable ? <Button className="mt-4" variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <p className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">需要补充新的来源证据；现有事实会保留，但不会自动用于内容生产。</p>}</Card>)}</div></div>;
 }
 
 function EntityAliasResolution({ item, onAction, actionBusy }) {

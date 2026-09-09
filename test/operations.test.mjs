@@ -97,6 +97,34 @@ test("startup queues only destinations whose Knowledge is older than active Clai
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='rebuild_knowledge' AND entity_id='chongqing'").get().count, 1);
 });
 
+test("a new Claim classifier revision rechecks pending reviews once at startup", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/68abcdef0000000000000032",
+    title: "Metro exit alias",
+    text: "下浩里最近的地铁出口是上新街地铁站1号出口。这是一条人工选择的重庆交通笔记。",
+    images: [],
+  }));
+  repository.saveExtraction(source.id, {
+    source: { language: "zh-CN", summary: "交通", destination_name: "重庆", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+    claims: [{ key: "attraction.xiahaoli.nearest_metro_exit", subject: "下浩里", predicate: "nearest_metro_exit",
+      value: "上新街地铁站1号出口", qualifiers: [], source_quote: "上新街地铁站1号出口", confidence: 0.9 }],
+    blueprint: { format: "guide", hook: "交通", angle: "practical", sections: [], strengths: [], gaps: [] },
+  }, "test", "fixture-model");
+  repository.rebuildKnowledge("chongqing");
+  const claimId = db.prepare("SELECT id FROM claims WHERE source_id=?").get(source.id).id;
+  db.prepare(`INSERT INTO claim_review_cases(id,destination_slug,claim_a_id,claim_b_id,review_type,reason,status,created_at,updated_at)
+    VALUES ('legacy-metro-review','chongqing',?,?,'SOURCE_CONFLICT','legacy alias mismatch','pending','now','now')`).run(claimId, claimId);
+  db.prepare("DELETE FROM jobs").run();
+
+  repository.enqueueStartupReconciliation();
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='rebuild_knowledge' AND entity_id='chongqing'").get().count, 1);
+
+  db.prepare("DELETE FROM jobs").run();
+  repository.enqueueStartupReconciliation();
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='rebuild_knowledge'").get().count, 0);
+});
+
 test("repository construction cannot steal a live job and only an expired lease is recovered", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-recovery-test-"));
   const database = openDatabase(path.join(directory, "recovery.sqlite"));

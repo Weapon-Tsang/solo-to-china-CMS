@@ -3,7 +3,7 @@ import { transaction } from "./db.mjs";
 import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 import { contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
-import { classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "./claim-resolution.mjs";
+import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "./claim-resolution.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
 import { legacyOfferToAsset } from "./commercial.mjs";
 import {
@@ -12,6 +12,10 @@ import {
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
 import { AI_JOB_TYPES, isProviderPressure } from "./job-policy.mjs";
+import {
+  EDITORIAL_ASSIGNMENT_TYPES, evaluateEditorialAssignment, normalizeEditorialAssignmentInput,
+  selectFactsForAssignment,
+} from "./editorial-assignments.mjs";
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
 
@@ -1256,6 +1260,224 @@ export class Repository {
     }));
   }
 
+  listEditorialAssignments(limit = 100) {
+    const rows = this.db.prepare(`
+      SELECT ea.*, d.name AS destination_name, o.status AS opportunity_status,
+        tc.status AS candidate_status
+      FROM editorial_assignments ea
+      LEFT JOIN destinations d ON d.slug=ea.destination_slug
+      LEFT JOIN content_opportunities o ON o.id=ea.opportunity_id
+      LEFT JOIN topic_candidates tc ON tc.id=ea.candidate_id
+      WHERE ea.deleted_at IS NULL
+      ORDER BY CASE ea.status WHEN 'needs_sources' THEN 0 WHEN 'ready' THEN 1 WHEN 'queued' THEN 2 ELSE 3 END,
+        ea.updated_at DESC LIMIT ?
+    `).all(limit);
+    return rows.map(hydrateEditorialAssignment);
+  }
+
+  listEditorialAssignmentWorkspace(limit = 100) {
+    const assignments = this.listEditorialAssignments(limit);
+    const manualOpportunityIds = new Set(assignments.map((item) => item.opportunity_id).filter(Boolean));
+    const systemTopics = this.listContentOpportunities(limit)
+      .filter((item) => !manualOpportunityIds.has(item.id) && !item.coverage?.manualAssignmentId
+        && item.suppression_reason !== "operator_removed_from_topic_list"
+        && !["ignored", "knowledge_only", "suppressed"].includes(item.status));
+    const destinations = this.db.prepare(`
+      SELECT d.slug,d.name,COUNT(CASE WHEN k.visibility_status='visible' THEN k.id END) AS fact_count,
+        COUNT(DISTINCT CASE WHEN k.visibility_status='visible' THEN k.canonical_subject END) AS entity_count
+      FROM destinations d LEFT JOIN knowledge_facts k ON k.destination_id=d.id
+      GROUP BY d.id,d.slug,d.name ORDER BY d.name
+    `).all();
+    return {
+      assignments,
+      systemTopics,
+      destinations,
+      assignmentTypes: Object.entries(EDITORIAL_ASSIGNMENT_TYPES).map(([id, profile]) => ({
+        id, label: profile.label, contentType: profile.contentType,
+        minimumFacts: profile.minimumFacts, minimumSourceFamilies: profile.minimumSourceFamilies,
+        minimumEntities: profile.minimumEntities,
+      })),
+      summary: {
+        manual: assignments.length,
+        ready: assignments.filter((item) => item.status === "ready").length,
+        needsSources: assignments.filter((item) => item.status === "needs_sources").length,
+        queued: assignments.filter((item) => item.status === "queued").length,
+        system: systemTopics.length,
+      },
+    };
+  }
+
+  createEditorialAssignment(payload, actor = "administrator") {
+    const normalized = normalizeEditorialAssignmentInput(payload);
+    const destination = this.db.prepare("SELECT slug,name FROM destinations WHERE slug=?").get(normalized.destinationSlug);
+    if (!destination) {
+      const error = new Error("该目的地还没有可用知识库。请先采集并完成至少一个该城市的来源提取。");
+      error.statusCode = 400;
+      throw error;
+    }
+    const assignmentId = id("assignment");
+    const timestamp = now();
+    this.db.prepare(`INSERT INTO editorial_assignments(
+      id,destination_slug,title,assignment_type,content_type,brief,target_entities_json,desired_visual,
+      status,created_by,created_at,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      assignmentId, normalized.destinationSlug, normalized.title, normalized.assignmentType,
+      normalized.contentType, normalized.brief, JSON.stringify(normalized.targetEntities), normalized.desiredVisual,
+      "evaluating", String(actor || "administrator").slice(0, 120), timestamp, timestamp,
+    );
+    return this.reevaluateEditorialAssignment(assignmentId);
+  }
+
+  reevaluateEditorialAssignment(assignmentId) {
+    const row = this.db.prepare(`SELECT ea.*,d.name AS destination_name FROM editorial_assignments ea
+      LEFT JOIN destinations d ON d.slug=ea.destination_slug WHERE ea.id=? AND ea.deleted_at IS NULL`).get(assignmentId);
+    if (!row) return null;
+    if (row.status === "queued") return hydrateEditorialAssignment(row);
+    const assignment = hydrateEditorialAssignment(row);
+    const facts = this.knowledgeForDestination(assignment.destination_slug);
+    const scopedFacts = selectFactsForAssignment({
+      id: assignment.id,
+      title: assignment.title,
+      brief: assignment.brief,
+      destinationSlug: assignment.destination_slug,
+      destinationName: assignment.destination_name,
+      assignmentType: assignment.assignment_type,
+      targetEntities: assignment.target_entities,
+    }, facts);
+    const familyCount = this.independentSourceFamilyCountForFacts(scopedFacts)
+      || new Set(scopedFacts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean)).size;
+    const evaluation = evaluateEditorialAssignment({
+      assignment: {
+        id: assignment.id,
+        title: assignment.title,
+        brief: assignment.brief,
+        destinationSlug: assignment.destination_slug,
+        assignmentType: assignment.assignment_type,
+        contentType: assignment.content_type,
+        targetEntities: assignment.target_entities,
+        desiredVisual: assignment.desired_visual,
+      },
+      destinationName: assignment.destination_name || assignment.destination_slug,
+      facts,
+      sourceFamilyCount: familyCount,
+    });
+    const timestamp = now();
+    this.db.prepare(`UPDATE editorial_assignments SET status=?,quality_score=?,evaluation_json=?,
+      selected_fact_keys_json=?,selected_source_ids_json=?,updated_at=? WHERE id=?`)
+      .run(evaluation.ready ? "ready" : "needs_sources", evaluation.score, JSON.stringify(evaluation),
+        JSON.stringify(evaluation.selectedFactKeys), JSON.stringify(evaluation.selectedSourceIds), timestamp, assignmentId);
+    return hydrateEditorialAssignment(this.db.prepare(`SELECT ea.*,d.name AS destination_name
+      FROM editorial_assignments ea LEFT JOIN destinations d ON d.slug=ea.destination_slug WHERE ea.id=?`).get(assignmentId));
+  }
+
+  queueEditorialAssignment(assignmentId) {
+    const current = this.db.prepare("SELECT * FROM editorial_assignments WHERE id=? AND deleted_at IS NULL").get(assignmentId);
+    if (!current) return null;
+    if (current.status === "queued") return hydrateEditorialAssignment(current);
+    const assignment = this.reevaluateEditorialAssignment(assignmentId);
+    if (!assignment?.evaluation?.ready) throw conflictError("素材体检尚未通过。请按缺口提示补充采集后再重试。");
+    const timestamp = now();
+    const topicKey = `manual-assignment:${assignment.id}:${stableOpportunityKey(assignment.destination_slug, assignment.title, assignment.content_type)}`;
+    const opportunityId = `opportunity_${sha256(topicKey).slice(0, 24)}`;
+    const readiness = {
+      ...assignment.evaluation.coverage.readiness,
+      ready: true,
+      editoriallySufficient: true,
+      score: assignment.quality_score,
+      blockingRequirements: [],
+    };
+    const coverage = {
+      ...assignment.evaluation.coverage,
+      publicationMode: "topic_feature",
+      selectedFactKeys: assignment.selected_fact_keys,
+      selectedSourceIds: assignment.selected_source_ids,
+      manualAssignmentId: assignment.id,
+      editorialBrief: assignment.brief,
+      targetEntities: assignment.target_entities,
+      visualBrief: assignment.evaluation.visualBrief,
+    };
+    const lifecycle = this.classifyPublicationLifecycle(assignment.title);
+    this.db.prepare(`INSERT INTO content_opportunities(
+      id,destination_slug,destination_scopes_json,topic_key,strategy_version,source_id,source_ids_json,
+      recommendation_id,candidate_id,title,content_type,readiness_score,readiness_json,coverage_json,status,
+      approved_at,created_at,updated_at,lifecycle_action,target_post_id,publication_impact_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(topic_key) DO UPDATE SET title=excluded.title,content_type=excluded.content_type,
+      readiness_score=excluded.readiness_score,readiness_json=excluded.readiness_json,coverage_json=excluded.coverage_json,
+      status=CASE WHEN content_opportunities.status IN ('producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft')
+        THEN content_opportunities.status ELSE 'approved_ready' END,approved_at=excluded.approved_at,updated_at=excluded.updated_at`)
+      .run(opportunityId,assignment.destination_slug,JSON.stringify([assignment.destination_slug]),topicKey,this.strategyVersion,
+        null,JSON.stringify(assignment.selected_source_ids),null,null,assignment.title,assignment.content_type,
+        assignment.quality_score,JSON.stringify(readiness),JSON.stringify(coverage),"approved_ready",timestamp,timestamp,timestamp,
+        lifecycle.action,lifecycle.targetPostId,JSON.stringify(lifecycle.impact));
+    this.db.prepare("UPDATE editorial_assignments SET opportunity_id=?,updated_at=? WHERE id=?")
+      .run(opportunityId, timestamp, assignmentId);
+    const reconciled = this.reconcileApprovedOpportunity(opportunityId);
+    const opportunity = this.db.prepare("SELECT status,suppression_reason FROM content_opportunities WHERE id=?").get(opportunityId);
+    if (reconciled.suppressed || opportunity?.status === "suppressed") {
+      const evaluation = { ...assignment.evaluation, ready: false,
+        summary: "该命题与站内现有内容高度重合，系统已阻止重复生产。可修改命题角度后重新新增。",
+        suppressionReason: opportunity?.suppression_reason || "existing_content_collision" };
+      this.db.prepare("UPDATE editorial_assignments SET status='suppressed',evaluation_json=?,updated_at=? WHERE id=?")
+        .run(JSON.stringify(evaluation), now(), assignmentId);
+    } else {
+      this.db.prepare("UPDATE editorial_assignments SET status='queued',candidate_id=?,updated_at=? WHERE id=?")
+        .run(reconciled.candidateId, now(), assignmentId);
+      if (reconciled.candidateId) this.db.prepare("UPDATE topic_candidates SET rationale=?,updated_at=? WHERE id=?")
+        .run(`人工命题：${assignment.brief || assignment.title}。素材体检已通过，选中 ${readiness.factCount || assignment.selected_fact_keys.length} 条可追溯事实。`, now(), reconciled.candidateId);
+    }
+    return hydrateEditorialAssignment(this.db.prepare(`SELECT ea.*,d.name AS destination_name,o.status AS opportunity_status,
+      tc.status AS candidate_status FROM editorial_assignments ea LEFT JOIN destinations d ON d.slug=ea.destination_slug
+      LEFT JOIN content_opportunities o ON o.id=ea.opportunity_id LEFT JOIN topic_candidates tc ON tc.id=ea.candidate_id
+      WHERE ea.id=?`).get(assignmentId));
+  }
+
+  deleteEditorialAssignment(assignmentId) {
+    const assignment = this.db.prepare("SELECT * FROM editorial_assignments WHERE id=? AND deleted_at IS NULL").get(assignmentId);
+    if (!assignment) return null;
+    const timestamp = now();
+    this.db.prepare("UPDATE editorial_assignments SET status='deleted',deleted_at=?,updated_at=? WHERE id=?")
+      .run(timestamp, timestamp, assignmentId);
+    return {
+      id: assignmentId,
+      deleted: true,
+      productionContinues: Boolean(assignment.candidate_id),
+      message: assignment.candidate_id
+        ? "命题已从清单移除；已经进入生产队列的文章继续保留，避免误删生产成果。"
+        : "命题已从清单移除。",
+    };
+  }
+
+  dismissEditorialTopic(opportunityId) {
+    const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(opportunityId);
+    if (!opportunity) return null;
+    const timestamp = now();
+    let productionContinues = false;
+    if (opportunity.candidate_id) {
+      const brief = this.db.prepare("SELECT id FROM content_briefs WHERE candidate_id=?").get(opportunity.candidate_id);
+      const runningPlan = this.db.prepare("SELECT id FROM jobs WHERE type='plan_content' AND entity_id=? AND status='running'")
+        .get(opportunity.candidate_id);
+      if (brief || runningPlan) {
+        productionContinues = true;
+      } else {
+        this.db.prepare("DELETE FROM jobs WHERE type='plan_content' AND entity_id=? AND status='queued'")
+          .run(opportunity.candidate_id);
+        this.db.prepare("UPDATE topic_candidates SET status='dismissed',suppression_reason='operator_removed_from_topic_list',updated_at=? WHERE id=?")
+          .run(timestamp, opportunity.candidate_id);
+      }
+    }
+    this.db.prepare("UPDATE content_opportunities SET status=?,suppression_reason='operator_removed_from_topic_list',updated_at=? WHERE id=?")
+      .run(productionContinues ? "suppressed" : "ignored", timestamp, opportunityId);
+    return {
+      id: opportunityId,
+      removed: true,
+      productionContinues,
+      message: productionContinues
+        ? "选题已从清单归档；已经开始生成的规划或草稿继续保留，避免误删成果。"
+        : "选题已从清单移除，尚未开始的规划任务已撤销。",
+    };
+  }
+
   setOpportunityLifecycle(opportunityId, action, { targetPostId = null, note = "", operator = "administrator" } = {}) {
     const allowed = new Set(["create", "update", "merge", "retire"]);
     if (!allowed.has(action)) throw new Error("Unsupported opportunity lifecycle action.");
@@ -2391,6 +2613,11 @@ export class Repository {
     if (!candidate) return null;
     const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1").get(candidateId);
     const coverage = json(opportunity?.coverage_json, {});
+    const assignmentRow = this.db.prepare(`SELECT ea.*,d.name AS destination_name,o.status AS opportunity_status,
+      tc.status AS candidate_status FROM editorial_assignments ea LEFT JOIN destinations d ON d.slug=ea.destination_slug
+      LEFT JOIN content_opportunities o ON o.id=ea.opportunity_id LEFT JOIN topic_candidates tc ON tc.id=ea.candidate_id
+      WHERE ea.candidate_id=? ORDER BY ea.updated_at DESC LIMIT 1`).get(candidateId);
+    const editorialAssignment = assignmentRow ? hydrateEditorialAssignment(assignmentRow) : null;
     const publicationMode = normalizePublicationMode(coverage.publicationMode);
     const selectedKeys = new Set(coverage.selectedFactKeys || []);
     const destinationFacts = this.knowledgeForDestination(candidate.destination_slug);
@@ -2417,6 +2644,15 @@ export class Repository {
         audience: ["solo travelers", "first-time China visitors", "non-Chinese-speaking visitors"],
         commercial_layer_allowed: false,
       },
+      editorial_assignment: editorialAssignment ? {
+        id: editorialAssignment.id,
+        title: editorialAssignment.title,
+        brief: editorialAssignment.brief,
+        assignment_type: editorialAssignment.assignment_type,
+        target_entities: editorialAssignment.target_entities,
+        visual_brief: editorialAssignment.evaluation?.visualBrief || null,
+        instruction: "这是管理员明确给出的命题。围绕该命题和已选证据写作；不要求把目的地知识库中的所有事实塞进一篇文章。",
+      } : null,
     };
   }
 
@@ -3211,7 +3447,16 @@ export class Repository {
     this.reconcileCoverageAuditFalsePositives();
     this.reconcileEntityRelationshipCandidates();
     const researchSlugs = new Set(this.db.prepare("SELECT DISTINCT destination_slug FROM structured_sources").all().map((row) => row.destination_slug));
-    const staleKnowledgeSlugs = this.db.prepare(`
+    const classifierState = json(this.db.prepare(
+      "SELECT value_json FROM runtime_settings WHERE setting_key='claim_resolution'",
+    ).get()?.value_json, {});
+    const pendingClaimReviews = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM claim_review_cases WHERE status='pending'",
+    ).get().count;
+    const classifierChanged = classifierState.version && classifierState.version !== CLAIM_RESOLUTION_VERSION;
+    const firstClassifierStampNeedsReview = !classifierState.version && pendingClaimReviews > 0;
+    const reclassifyAll = Boolean(classifierChanged || firstClassifierStampNeedsReview);
+    const staleKnowledgeSlugs = reclassifyAll ? [...researchSlugs] : this.db.prepare(`
       WITH claim_state AS (
         SELECT ss.destination_slug AS slug, MAX(c.created_at) AS latest_claim_at
         FROM structured_sources ss JOIN claims c ON c.source_id=ss.source_id
@@ -3229,6 +3474,10 @@ export class Repository {
         OR claim_state.latest_claim_at > destinations.updated_at
     `).all().map((row) => row.slug);
     for (const slug of staleKnowledgeSlugs) this.enqueue("rebuild_knowledge", slug);
+    this.db.prepare(`
+      INSERT INTO runtime_settings(setting_key, value_json, updated_at) VALUES ('claim_resolution', ?, ?)
+      ON CONFLICT(setting_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+    `).run(JSON.stringify({ version: CLAIM_RESOLUTION_VERSION }), now());
     for (const row of this.db.prepare(`SELECT s.id FROM sources s
       JOIN structured_sources ss ON ss.source_id=s.id
       LEFT JOIN content_intake_analyses cia ON cia.source_id=s.id
@@ -3856,10 +4105,10 @@ export class Repository {
       items.push(item);
     }
     for (const row of this.db.prepare(`SELECT r.*, a.source_id AS source_id_a, a.subject AS subject_a, a.predicate AS predicate_a,
-      a.value_text AS value_a, a.source_quote AS source_quote_a, a.structured_value_json AS structured_a,
+      a.normalized_key AS normalized_key_a, a.value_text AS value_a, a.source_quote AS source_quote_a, a.structured_value_json AS structured_a,
       a.evidence_span_ids_json AS evidence_span_ids_a,
       b.source_id AS source_id_b, b.subject AS subject_b, b.predicate AS predicate_b, b.value_text AS value_b,
-      b.source_quote AS source_quote_b, b.structured_value_json AS structured_b,
+      b.normalized_key AS normalized_key_b, b.source_quote AS source_quote_b, b.structured_value_json AS structured_b,
       b.evidence_span_ids_json AS evidence_span_ids_b
       FROM claim_review_cases r JOIN claims a ON a.id=r.claim_a_id
       LEFT JOIN claims b ON b.id=r.claim_b_id WHERE r.status='pending' ORDER BY r.updated_at DESC`).all()) {
@@ -3870,6 +4119,8 @@ export class Repository {
       const item = exceptionItem(kind, row.id, "warning", presentation.title, `${row.subject_a} · ${row.predicate_a}`, presentation.detail, false, row.updated_at);
       item.claim_review = {
         id: row.id, reviewType: row.review_type, destinationSlug: row.destination_slug,
+        factGroupKey: row.review_type.includes("EXTRACTION_ERROR") ? row.id
+          : `${row.destination_slug}:${row.normalized_key_a || `${row.subject_a}:${row.predicate_a}`}:${row.review_type}`,
         explanation: presentation.explanation,
         claimA: { id: row.claim_a_id, sourceId: row.source_id_a, originalSentence: row.source_quote_a,
           evidence: this.claimReviewEvidence(row.source_id_a, row.evidence_span_ids_a, row.source_quote_a),
@@ -4036,6 +4287,7 @@ export class Repository {
   dashboard() {
     const statuses = this.db.prepare("SELECT status, COUNT(*) AS count FROM sources GROUP BY status").all();
     const operationalExceptions = this.listOperationalExceptions();
+    const operationalExceptionGroups = new Set(operationalExceptions.map(operationalExceptionGroupKey)).size;
     const exceptionCount = (kind) => operationalExceptions.filter((item) => item.kind === kind).length;
     const pendingRecommendations = this.db.prepare("SELECT COUNT(*) AS count FROM content_recommendations WHERE decision='pending'").get().count;
     const contentNeedsAttention = exceptionCount("brief") + exceptionCount("draft");
@@ -4043,11 +4295,14 @@ export class Repository {
       SELECT COUNT(DISTINCT candidate_id) AS count FROM content_opportunities
       WHERE candidate_id IS NOT NULL AND status IN ('producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft')
     `).get().count;
+    const editorialAssignments = this.db.prepare("SELECT COUNT(*) AS count FROM editorial_assignments WHERE deleted_at IS NULL").get().count;
+    const editorialAssignmentsNeedingSources = this.db.prepare("SELECT COUNT(*) AS count FROM editorial_assignments WHERE deleted_at IS NULL AND status='needs_sources'").get().count;
     return {
       sources: Object.fromEntries(statuses.map((row) => [row.status, row.count])),
       actionCounts: {
         sources: exceptionCount("source"),
         recommendations: pendingRecommendations,
+        assignments: editorialAssignmentsNeedingSources,
         knowledge: 0,
         blueprints: 0,
         content: contentNeedsAttention,
@@ -4058,7 +4313,7 @@ export class Repository {
             SELECT 1 FROM affiliate_asset_queue_tasks q WHERE q.product_category=o.product_category
               AND q.scope_type=o.scope_type AND q.scope_key=o.scope_key
           )) AS count`).get().count,
-        exceptions: operationalExceptions.length,
+        exceptions: operationalExceptionGroups,
         maintenance: exceptionCount("maintenance") + exceptionCount("sync"),
         settings: 0,
       },
@@ -4072,8 +4327,11 @@ export class Repository {
           LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
           WHERE k.consensus_status='conflicted' AND COALESCE(kr.status, '') <> 'resolved'
         `).get().count,
-        exceptions: operationalExceptions.length,
+        exceptions: operationalExceptionGroups,
+        exceptionRecords: operationalExceptions.length,
         topicCandidates: this.db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count,
+        editorialAssignments,
+        editorialAssignmentsNeedingSources,
         pendingRecommendations,
         contentPipelineItems,
         contentNeedsAttention,
@@ -4594,6 +4852,17 @@ function hydrateRecommendation(row, opportunityRows = []) {
     opportunities };
 }
 
+function hydrateEditorialAssignment(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    target_entities: json(row.target_entities_json, []),
+    evaluation: json(row.evaluation_json, {}),
+    selected_fact_keys: json(row.selected_fact_keys_json, []),
+    selected_source_ids: json(row.selected_source_ids_json, []),
+  };
+}
+
 function classificationOpportunityStatus(classification) {
   if (classification === "RESEARCH_REQUIRED") return "research_required";
   if (classification === "KNOWLEDGE_ONLY" || classification === "CLAIM_ONLY") return "knowledge_only";
@@ -4944,6 +5213,10 @@ function exceptionItem(kind, entityId, severity, title, subject, detail, retryab
     retryable,
     updatedAt,
   };
+}
+
+function operationalExceptionGroupKey(item) {
+  return item?.claim_review?.factGroupKey ? `claim-review:${item.claim_review.factGroupKey}` : item.key;
 }
 
 function wordpressSyncKey(siteUrl) {

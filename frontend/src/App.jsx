@@ -16,6 +16,7 @@ import { ViewRenderer } from "@/views";
 const endpoints = {
   sources: "/api/sources",
   recommendations: "/api/recommendations",
+  assignments: "/api/editorial-assignments",
   knowledge: "/api/knowledge",
   blueprints: "/api/editorial-blueprints",
   content: "/api/content",

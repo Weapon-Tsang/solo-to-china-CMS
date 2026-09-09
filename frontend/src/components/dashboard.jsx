@@ -1,7 +1,7 @@
 import {
   AlertTriangle, Bell, BookOpen, Bot, Box, Check, CircleAlert, Database, FileCheck2,
   FileText, Gauge, Inbox, Layers3, Library, PanelTop, RefreshCw, Route, Search, Settings2, Sparkles,
-  TicketCheck, WandSparkles,
+  TicketCheck, WandSparkles, ListChecks,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { cn, label } from "@/lib/utils";
 export const views = {
   sources: { label: "来源", title: "研究来源", description: "查看并提交由你主动选择的旅行笔记、链接、文档、图片与视频。", icon: FileText },
   recommendations: { label: "建议", title: "内容建议", description: "在文章规划前，审阅每条来源的下一步建议。", icon: Sparkles },
+  assignments: { label: "选题", title: "专题与人工命题", description: "查看系统选定的专题，也可以自行命题、检测素材并加入创作队列。", icon: ListChecks },
   knowledge: { label: "知识库", title: "目的地知识", description: "集中查看已佐证事实、冲突和时效性。", icon: BookOpen },
   blueprints: { label: "蓝图", title: "编辑蓝图", description: "把重复出现的优秀表达转化为可复用的编辑洞察。", icon: Layers3 },
   content: { label: "内容", title: "内容生产", description: "将有证据支撑的主题推进至草稿、审核和发布。", icon: WandSparkles },
@@ -105,8 +106,8 @@ export function Metrics({ totals: rawTotals = {}, onNavigate }) {
       detail: totals.activeOffers ? "仅在质检通过后叠加到发布稿" : "未配置也不影响研究与写作", stats: [[totals.wordpressInventory, "WordPress 库存"], [totals.draftsReady, "待投递草稿"]], view: "commercial",
     },
     {
-      icon: CircleAlert, tone: totals.exceptions ? "amber" : "emerald", eyebrow: "系统健康", title: totals.exceptions ? "需要关注" : "运行正常", value: totals.exceptions ?? 0, unit: "个待处理异常",
-      detail: totals.exceptions ? "查看待判断问题与处理入口" : "采集、队列与维护状态正常", stats: [[totals.conflicts, "知识冲突"], [totals.sources, "已采集来源"]], view: "exceptions",
+      icon: CircleAlert, tone: totals.exceptions ? "amber" : "emerald", eyebrow: "系统健康", title: totals.exceptions ? "需要关注" : "运行正常", value: totals.exceptions ?? 0, unit: "个待处理事项",
+      detail: totals.exceptions ? `${totals.exceptionRecords ?? totals.exceptions} 条底层异常或来源比较记录` : "采集、队列与维护状态正常", stats: [[totals.conflicts, "知识冲突"], [totals.sources, "已采集来源"]], view: "exceptions",
     },
   ];
   if (Number(rawTotals.pendingRecommendations || 0) > 0) groups[1].view = "recommendations";

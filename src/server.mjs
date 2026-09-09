@@ -458,6 +458,36 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/editorial-blueprints") {
         return sendJson(response, 200, { items: repository.getEditorialBlueprints() });
       }
+      if (request.method === "GET" && url.pathname === "/api/editorial-assignments") {
+        return sendJson(response, 200, repository.listEditorialAssignmentWorkspace(limit(url.searchParams.get("limit") || "500")));
+      }
+      if (request.method === "POST" && url.pathname === "/api/editorial-assignments") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 50_000);
+        const created = repository.createEditorialAssignment(payload, auth.status(request).username || "administrator");
+        return sendJson(response, 201, created);
+      }
+      const editorialAssignmentMatch = url.pathname.match(/^\/api\/editorial-assignments\/([^/]+)$/);
+      if (request.method === "DELETE" && editorialAssignmentMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const deleted = repository.deleteEditorialAssignment(decodeURIComponent(editorialAssignmentMatch[1]));
+        return deleted ? sendJson(response, 200, deleted) : sendJson(response, 404, { error: "Editorial assignment not found." });
+      }
+      const editorialAssignmentRecheckMatch = url.pathname.match(/^\/api\/editorial-assignments\/([^/]+)\/recheck$/);
+      if (request.method === "POST" && editorialAssignmentRecheckMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const checked = repository.reevaluateEditorialAssignment(decodeURIComponent(editorialAssignmentRecheckMatch[1]));
+        return checked ? sendJson(response, 200, checked) : sendJson(response, 404, { error: "Editorial assignment not found." });
+      }
+      const editorialAssignmentQueueMatch = url.pathname.match(/^\/api\/editorial-assignments\/([^/]+)\/queue$/);
+      if (request.method === "POST" && editorialAssignmentQueueMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        if (!contentEngine.enabled) return sendJson(response, 409, { error: "内容 AI 尚未配置，素材体检结果会保留，但暂时不能进入创作队列。" });
+        const queued = repository.queueEditorialAssignment(decodeURIComponent(editorialAssignmentQueueMatch[1]));
+        if (!queued) return sendJson(response, 404, { error: "Editorial assignment not found." });
+        void pipeline.runOne();
+        return sendJson(response, 202, queued);
+      }
       if (request.method === "GET" && url.pathname === "/api/content") {
         return sendJson(response, 200, {
           items: repository.listContent(),
@@ -482,6 +512,12 @@ export function createApplication(config = loadConfig()) {
         );
         if (!result) return sendJson(response, 404, { error: "Content opportunity not found." });
         return sendJson(response, 200, result);
+      }
+      const editorialTopicDismissMatch = url.pathname.match(/^\/api\/editorial-topics\/([^/]+)$/);
+      if (request.method === "DELETE" && editorialTopicDismissMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const dismissed = repository.dismissEditorialTopic(decodeURIComponent(editorialTopicDismissMatch[1]));
+        return dismissed ? sendJson(response, 200, dismissed) : sendJson(response, 404, { error: "Editorial topic not found." });
       }
       const recommendationDecisionMatch = url.pathname.match(/^\/api\/recommendations\/([^/]+)\/decision$/);
       if (request.method === "POST" && recommendationDecisionMatch) {

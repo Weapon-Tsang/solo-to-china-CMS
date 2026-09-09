@@ -2,6 +2,12 @@ const HARD_FACT_PREDICATES = new Set([
   "opening_time", "ticket_price", "reservation_required", "address", "station", "schedule",
 ]);
 
+// Bump this only when a classifier change can alter persisted Claim relations.
+// Startup reconciliation uses it to rebuild destinations with pending reviews,
+// so a deploy can remove newly-recognized false positives without an operator
+// clicking through every old review card.
+export const CLAIM_RESOLUTION_VERSION = "2026-09-09.1";
+
 const SOFT_PREDICATES = new Set([
   "recommended_visit_time", "best_time_to_visit", "good_for", "photography_spot",
   "recommended_for", "worth_visiting",
@@ -11,8 +17,10 @@ const SOFT_PREDICATES = new Set([
 // They are intentionally multi-valued: two good itineraries or two dishes can
 // both be true even when their values differ. Treating them as a single official
 // fact creates an O(n²) wall of false conflicts as more travel notes arrive.
-const ALTERNATIVE_PREDICATE_PATTERN = /(?:^|_)(?:itinerary|route|stops?|sequence|recommended_day|suggested_route|walking_route|recommended_visit_window|recommended_visit_time|visit_time|serves?_dish|serves?_food|serves?_cuisine|cuisine_type|food_specialty|associated_food|complimentary_items|features?|has_feature|architectural_(?:style|features?)|photo(?:graphy)?_(?:spots?|perspectives?|composition|opportunit(?:y|ies))|viewpoints?|viewing_framing|viewed_through|viewable_through|offers?_view|photo_spot_for|located_(?:near|adjacent_to|in|at)|displays?_(?:text|signage|illuminated_text|led_greeting)|led_display_text|features?_led_display|safety_(?:precaution|hazard)|tourist_trap_warning|shopping_warning|quality_warning|navigation_caution|crowd_condition)(?:_|$)/iu;
+const ALTERNATIVE_PREDICATE_PATTERN = /(?:^|_)(?:itinerary|route|stops?|sequence|recommended_day|suggested_route|walking_route|recommended_visit_window|recommended_visit_time|visit_time|serves?_dish|serves?_food|serves?_cuisine|cuisine_type|dish_(?:type|category)|specialty_dish|signature_dish|recommended_dish|must_try_food|food_specialty|associated_food|complimentary_items|features?|has_feature|architectural_(?:style|features?)|photo(?:graphy)?_(?:spots?|locations?|perspectives?|composition|opportunit(?:y|ies))|shooting_locations?|viewpoints?|viewing_framing|viewed_through|viewable_through|offers?_view|photo_spot_for|located_(?:near|adjacent_to|in|at)|displays?_(?:text|signage|illuminated_text|led_greeting)|led_display_text|features?_led_display|safety_(?:precaution|hazard)|tourist_trap_warning|shopping_warning|quality_warning|navigation_caution|crowd_(?:condition|level|density)|crowding|crowdedness|busy_period|aliases?|alternate_name|local_name|former_name)(?:_|$)/iu;
+const MULTI_NAME_PREDICATE_PATTERN = /^(?:name|alias|aliases|alternate_name|local_name|former_name)$/iu;
 const DURATION_ESTIMATE_PREDICATE_PATTERN = /(?:^|_)(?:walking|transit|travel|ride|light_rail)_(?:time|duration)(?:_minutes)?(?:_|$)/iu;
+const METRO_EXIT_PREDICATE_PATTERN = /(?:^|_)(?:(?:nearest_)?(?:metro|subway|underground|rail_transit)(?:_station)?_(?:exit|entrance)|(?:metro|subway)_access_exit)(?:_|$)|(?:最近|邻近)?(?:地铁|轨道交通|轻轨)(?:站)?(?:出口|出入口|口)/iu;
 
 // These patterns describe proposition polarity and material limits. Contrastive
 // wording (for example “different from daytime”) and colloquial intensifiers are
@@ -92,6 +100,11 @@ export function classifyClaimPair(left, right) {
     if (canonicalTypedEqual(typedA, typedB)) {
       return result("PARAPHRASE", true,
         "The claims use different wording for the same canonical typed fact.", a, b);
+    }
+    if (a.structured.canonical_predicate === "nearest_metro_exit" && sameTransitStation(typedA, typedB)
+      && (!typedA.exit || !typedB.exit)) {
+      return result("REFINEMENT", true,
+        "Both claims identify the same metro station; one additionally specifies the exit.", a, b);
     }
     if (sameScope) {
       return result("CONFLICT", false,
@@ -215,7 +228,7 @@ function result(relation, canCoexist, reason, a, b, reviewType = null) {
 
 function inferClaimKind(predicate, value) {
   const normalizedPredicate = normalizePredicate(predicate);
-  if (ALTERNATIVE_PREDICATE_PATTERN.test(normalizedPredicate)) return "SOFT_RECOMMENDATION";
+  if (ALTERNATIVE_PREDICATE_PATTERN.test(normalizedPredicate) || MULTI_NAME_PREDICATE_PATTERN.test(normalizedPredicate)) return "SOFT_RECOMMENDATION";
   if (DURATION_ESTIMATE_PREDICATE_PATTERN.test(normalizedPredicate)) return "CONTEXT_DEPENDENT";
   if (/recommend|best|good|worth|photo|visit.?time|体验|推荐|适合|值得/iu.test(`${predicate} ${value}`)) return "SOFT_RECOMMENDATION";
   if (isFeaturePredicate(predicate)) return "CONTEXT_DEPENDENT";
@@ -320,6 +333,10 @@ function canonicalFactSemantics(predicate, value, qualifiers = []) {
   const normalizedPredicate = normalizeText(predicate);
   const normalizedValue = normalizeText(value);
   const text = `${normalizedPredicate} ${normalizedValue} ${qualifiers.map(normalizeText).join(" ")}`;
+  if (METRO_EXIT_PREDICATE_PATTERN.test(normalizePredicate(predicate))) {
+    const location = canonicalMetroExit(value);
+    if (location) return { predicate: "nearest_metro_exit", value: location, polarity: "positive" };
+  }
   if (/\b(?:reservation|booking|appointment)\b|预约/iu.test(text)) {
     // An explicit negative value wins over an awkward positive predicate such as
     // “requires reservation = no reservation required”. This keeps model wording
@@ -434,6 +451,39 @@ function semanticNegationCovered(source, normalizedClaim, claim) {
 
 function canonicalTypedEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function canonicalMetroExit(value) {
+  let text = clean(value).normalize("NFKC").toLocaleLowerCase("en-US");
+  if (!text) return null;
+  const exitMatch = text.match(/(?:\bexit\s*(?:no\.?\s*)?([0-9]+|[一二三四五六七八九十]+)\b)|(?:([0-9]+|[一二三四五六七八九十]+)\s*号?\s*(?:出入口|出口|口))/iu);
+  const exit = canonicalOrdinal(exitMatch?.[1] || exitMatch?.[2]);
+  if (exitMatch) text = text.replace(exitMatch[0], " ");
+  const station = normalizeText(text
+    .replace(/\b(?:nearest|closest|nearby|the|to|from|at|of)\b/giu, " ")
+    .replace(/\b(?:metro|subway|underground|rail transit|light rail)\s*(?:station)?\b/giu, " ")
+    .replace(/(?:最近的?|邻近的?|附近的?)(?:地铁|轨道交通|轻轨)?(?:站)?/gu, " ")
+    .replace(/(?:地铁|轨道交通|轻轨)(?:车)?站/gu, " ")
+    .replace(/站\s*$/u, " "))
+    .replace(/\s+/gu, "");
+  if (!station) return null;
+  return { station, exit: exit || null };
+}
+
+function canonicalOrdinal(value) {
+  const text = String(value || "").normalize("NFKC").trim();
+  if (/^\d+$/u.test(text)) return String(Number(text));
+  if (!/^[一二三四五六七八九十]+$/u.test(text)) return null;
+  const digits = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (text === "十") return "10";
+  const [tens, ones] = text.split("十");
+  if (text.includes("十")) return String((tens ? digits[tens] : 1) * 10 + (ones ? digits[ones] : 0));
+  return String(digits[text] || "");
+}
+
+function sameTransitStation(left, right) {
+  return Boolean(left && right && typeof left === "object" && typeof right === "object"
+    && left.station && left.station === right.station);
 }
 
 function hasNegation(value) {

@@ -46,7 +46,7 @@ try {
   const database = openDatabase(path.join(directory, "release.sqlite"));
   try {
     const versions = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
-    if (versions.join(",") !== Array.from({ length: 36 }, (_, index) => index + 1).join(",")) throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
+    if (versions.join(",") !== Array.from({ length: 37 }, (_, index) => index + 1).join(",")) throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
     for (const [table, column] of [
       ["content_intake_analyses", "strategy_version"], ["content_recommendations", "strategy_version"],
       ["content_opportunities", "strategy_version"], ["topic_candidates", "strategy_version"],
@@ -66,7 +66,7 @@ try {
       ["frontend_contract_snapshots", "publish_package_schema_json"], ["wordpress_publications", "delivery_mode"],
       ["article_drafts", "content_hash"], ["quality_reviews", "draft_content_hash"],
       ["jobs", "lease_expires_at"], ["frontend_contract_snapshots", "artifact_checksum"],
-      ["content_opportunities", "lifecycle_action"],
+      ["content_opportunities", "lifecycle_action"], ["editorial_assignments", "evaluation_json"],
     ]) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
       if (!columns.includes(column)) throw new Error(`${table}.${column} is required for Content Strategy governance.`);
@@ -99,4 +99,4 @@ try {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-36, and SQLite integrity.`);
+console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-37, and SQLite integrity.`);

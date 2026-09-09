@@ -55,6 +55,46 @@ function migrate(db) {
   if (current < 34) migrationThirtyFour(db);
   if (current < 35) migrationThirtyFive(db);
   if (current < 36) migrationThirtySix(db);
+  if (current < 37) migrationThirtySeven(db);
+}
+
+function migrationThirtySeven(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE editorial_assignments (
+        id TEXT PRIMARY KEY,
+        destination_slug TEXT NOT NULL,
+        title TEXT NOT NULL,
+        assignment_type TEXT NOT NULL,
+        content_type TEXT NOT NULL,
+        brief TEXT NOT NULL DEFAULT '',
+        target_entities_json TEXT NOT NULL DEFAULT '[]',
+        desired_visual TEXT NOT NULL DEFAULT 'illustration'
+          CHECK (desired_visual IN ('none','illustration','route_sketch')),
+        status TEXT NOT NULL DEFAULT 'evaluating'
+          CHECK (status IN ('evaluating','needs_sources','ready','queued','suppressed','deleted')),
+        quality_score REAL NOT NULL DEFAULT 0,
+        evaluation_json TEXT NOT NULL DEFAULT '{}',
+        selected_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+        selected_source_ids_json TEXT NOT NULL DEFAULT '[]',
+        opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL,
+        candidate_id TEXT REFERENCES topic_candidates(id) ON DELETE SET NULL,
+        created_by TEXT NOT NULL DEFAULT 'administrator',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+      );
+      CREATE INDEX idx_editorial_assignments_active ON editorial_assignments(status,updated_at DESC)
+        WHERE deleted_at IS NULL;
+      CREATE INDEX idx_editorial_assignments_destination ON editorial_assignments(destination_slug,status,updated_at DESC);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (37, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationThirtySix(db) {

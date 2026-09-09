@@ -126,6 +126,49 @@ test("equivalent free prices and all-day opening hours are canonical paraphrases
   }
 });
 
+test("metro-station exit aliases are canonical paraphrases, while different exits remain distinct", () => {
+  for (const [left, right] of [
+    ["上新街地铁站1号出口", "上新街1号口"],
+    ["上新街站一号出入口", "上新街地铁站 Exit 1"],
+    ["Shangxinjie Metro Station Exit 1", "Exit No. 1 at Shangxinjie subway station"],
+  ]) {
+    const relation = classifyClaimPair(
+      claim(left, { predicate: "nearest_metro_exit", sourceQuote: "" }),
+      claim(right, { predicate: "nearest_subway_station_exit", sourceQuote: "" }),
+    );
+    assert.equal(relation.relation, "PARAPHRASE", `${left} / ${right}`);
+    assert.equal(relation.canCoexist, true);
+    assert.equal(relation.reviewType, null);
+  }
+
+  const refinement = classifyClaimPair(
+    claim("上新街地铁站", { predicate: "nearest_metro_exit", sourceQuote: "" }),
+    claim("上新街1号口", { predicate: "nearest_metro_exit", sourceQuote: "" }),
+  );
+  assert.equal(refinement.relation, "REFINEMENT");
+  assert.equal(refinement.reviewType, null);
+
+  const actualConflict = classifyClaimPair(
+    claim("上新街1号口", { predicate: "nearest_metro_exit", sourceQuote: "" }),
+    claim("上新街2号口", { predicate: "nearest_metro_exit", sourceQuote: "" }),
+  );
+  assert.equal(actualConflict.relation, "CONFLICT");
+  assert.equal(actualConflict.reviewType, "SOURCE_CONFLICT");
+});
+
+test("subjective crowd levels, photo locations, dish lists, and ordinary names coexist", () => {
+  for (const [predicate, left, right] of [
+    ["crowdedness", "quiet in the morning", "busy after sunset"],
+    ["photography_location", "riverfront railing", "upper viewing deck"],
+    ["signature_dish", "spicy noodles", "grilled fish"],
+    ["name", "Shibati", "十八梯"],
+  ]) {
+    const relation = classifyClaimPair(claim(left, { predicate }), claim(right, { predicate }));
+    assert.equal(relation.canCoexist, true, predicate);
+    assert.equal(relation.reviewType, null, predicate);
+  }
+});
+
 test("No. 2 place names and semantically represented Chinese guidance do not trigger negation reviews", () => {
   assert.equal(structureClaim({ predicate: "route_sequence", value: "Eling No. 2 Factory" }).polarity, "positive");
   assert.equal(detectClaimExtractionIssue({
