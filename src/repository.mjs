@@ -2001,6 +2001,7 @@ export class Repository {
       row.scope = row.structured_value.scope;
     }
     const sourceRows = allSourceRows.filter((row) => row.knowledge_eligible !== 0);
+    const claimsBySource = Map.groupBy(sourceRows, (row) => row.source_id);
     const previousReviewDecisions = new Map(this.db.prepare(`
       SELECT id, review_type, status FROM claim_review_cases
       WHERE destination_slug=? AND status IN ('resolved','dismissed')
@@ -2027,7 +2028,7 @@ export class Repository {
       const reviewedExtractionQuotes = new Set();
       for (const row of sourceRows) {
         updateStructuredClaim.run(JSON.stringify(row.structured_value), JSON.stringify(row.scope), row.structured_value.claim_kind, row.structured_value.cardinality, row.id);
-        const siblingClaims = sourceRows.filter((candidate) => candidate.source_id === row.source_id && candidate.id !== row.id);
+        const siblingClaims = claimsBySource.get(row.source_id) || [];
         const extractionIssue = detectClaimExtractionIssue(row, siblingClaims);
         if (extractionIssue) {
           const quoteKey = `${row.source_id}:${sha256(row.source_quote)}:${extractionIssue}`;
