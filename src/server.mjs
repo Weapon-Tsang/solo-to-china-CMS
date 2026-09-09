@@ -21,6 +21,7 @@ import { MaintenanceScheduler } from "./maintenance.mjs";
 import { createLogger } from "./logger.mjs";
 import { ExceptionNotifier } from "./notifications.mjs";
 import { createAuth } from "./auth.mjs";
+import { createLoginThrottle, resolveClientSource } from "./login-throttle.mjs";
 import { FrontendContractConsumer, FrontendContractError } from "./frontend-contract.mjs";
 import { getContentStrategyDocument } from "./content-strategy.mjs";
 import { VERSION } from "./version.mjs";
@@ -46,6 +47,7 @@ export function createApplication(config = loadConfig()) {
   const logger = createLogger(config.logging);
   const db = openDatabase(config.databasePath);
   const auth = createAuth(db, config.auth);
+  const loginThrottle = createLoginThrottle(config.auth.loginThrottle, { logger: logger.child({ component: "auth" }) });
   const repository = new Repository(db, {
     ...config.content, ...config.extraction, contentStrategy: config.contentStrategy,
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
@@ -117,8 +119,22 @@ export function createApplication(config = loadConfig()) {
       if (!captureOnly && request.method === "POST" && url.pathname === "/api/auth/login") {
         if (!auth.enabled) return sendJson(response, 409, { error: "Password sign-in is not configured." });
         const payload = await readJson(request, 20_000);
+        const clientSource = resolveClientSource(request, config.auth.loginThrottle);
+        const throttle = loginThrottle.check(payload.username, clientSource);
+        if (!throttle.allowed) {
+          response.setHeader("Retry-After", String(Math.max(1, Math.ceil(throttle.retryAfterMs / 1_000))));
+          return sendJson(response, 429, { error: "Sign-in temporarily unavailable. Try again later.", retryAfterMs: throttle.retryAfterMs });
+        }
         const session = await auth.login(payload.username, payload.password);
-        if (!session) return sendJson(response, 401, { error: "Incorrect username or password." });
+        if (!session) {
+          const afterFailure = loginThrottle.recordFailure(payload.username, clientSource);
+          if (!afterFailure.allowed) {
+            response.setHeader("Retry-After", String(Math.max(1, Math.ceil(afterFailure.retryAfterMs / 1_000))));
+            return sendJson(response, 429, { error: "Sign-in temporarily unavailable. Try again later.", retryAfterMs: afterFailure.retryAfterMs });
+          }
+          return sendJson(response, 401, { error: "Incorrect username or password." });
+        }
+        loginThrottle.recordSuccess(payload.username, clientSource);
         response.setHeader("Set-Cookie", session.cookie);
         return sendJson(response, 200, { authenticated: true, username: session.username, mustChangePassword: session.mustChangePassword });
       }

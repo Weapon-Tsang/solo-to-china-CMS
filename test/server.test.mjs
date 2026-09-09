@@ -446,6 +446,33 @@ test("dashboard password login creates a secure session and requires an initial 
   assert.equal(invalidatedLogout.authenticated, false);
 });
 
+test("login failures return a bounded 429 while another account on the shared source can recover", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-login-throttle-test-"));
+  const config = loadConfig({
+    HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "login-throttle.sqlite"),
+    ADMIN_USERNAME: "admin", ADMIN_PASSWORD: "correct-private-password", SESSION_SECRET: "test-login-throttle-secret-with-enough-entropy",
+    LOGIN_RATE_LIMIT_ACCOUNT_ATTEMPTS: "2", LOGIN_RATE_LIMIT_SOURCE_ATTEMPTS: "50",
+    LOGIN_RATE_LIMIT_BASE_COOLDOWN_SECONDS: "60", MAINTENANCE_ENABLED: "false", LOG_LEVEL: "error",
+  });
+  const app = createApplication(config);
+  await app.start();
+  t.after(async () => { await app.stop(); fs.rmSync(directory, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.server.address().port}/api/auth/login`;
+  const wrong = (forwarded) => fetch(url, { method: "POST", headers: {
+    "content-type": "application/json", "x-forwarded-for": forwarded,
+  }, body: JSON.stringify({ username: "not-admin", password: "wrong-password" }) });
+  assert.equal((await wrong("198.51.100.1")).status, 401);
+  const blocked = await wrong("198.51.100.2");
+  assert.equal(blocked.status, 429);
+  assert.ok(Number(blocked.headers.get("retry-after")) >= 1);
+  const blockedBody = await blocked.json();
+  assert.equal(blockedBody.error, "Sign-in temporarily unavailable. Try again later.");
+  assert.ok(blockedBody.retryAfterMs > 59_000 && blockedBody.retryAfterMs <= 60_000);
+  const legitimate = await fetch(url, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "admin", password: "correct-private-password" }) });
+  assert.equal(legitimate.status, 200);
+});
+
 test("failed HTTP bind does not start pipeline or maintenance side effects", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-bind-test-"));
   const blocker = http.createServer();

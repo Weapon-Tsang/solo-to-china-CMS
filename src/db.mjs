@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 47;
+export const SCHEMA_VERSION = 48;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -68,6 +68,23 @@ function migrate(db) {
   if (current < 45) migrationFortyFive(db);
   if (current < 46) migrationFortySix(db);
   if (current < 47) migrationFortySeven(db);
+  if (current < 48) migrationFortyEight(db);
+}
+
+function migrationFortyEight(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE editorial_assignments ADD COLUMN assignment_type_source TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (assignment_type_source IN ('legacy','manual','auto'));
+      ALTER TABLE editorial_assignments ADD COLUMN classification_json TEXT NOT NULL DEFAULT '{}';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (48, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFortySeven(db) {

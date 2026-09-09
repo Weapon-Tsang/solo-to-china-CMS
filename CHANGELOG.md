@@ -14,6 +14,9 @@
 - Replace page-array provenance with stable section/node references and store a Contract-neutral sidecar that traces factual blocks through Claims and Sources to exact evidence spans; legacy mappings remain explicitly unknown.
 - Validate final visible page artifacts against their evidence ledger, protected values and qualifiers, visible as-of dates, Claim/Source relations, and answer-bearing content before delivery.
 - Split extraction transport success, evidence coverage, publication usability, and materiality; retain partially covered Claims for bounded topics, route meaningful zero-Claim media to review, and propagate only topic-relevant coverage limitations.
+- Fence editorial assignments by explicit Entity scope and typed predicates/relations, expose per-Fact include/exclude reasons, rank automatic type candidates with confidence, and preserve operator type overrides.
+- Cancel and invalidate stale detail requests, and report full/partial/failed dashboard refresh outcomes without replacing a newer dialog or claiming false success.
+- Add bounded adaptive account/client-source login throttling, generic failure responses, password-free audit events, unknown-account timing equalization, and an explicit trusted-proxy header policy.
 
 ## 1.17.11 - 2026-09-09
 

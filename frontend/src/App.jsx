@@ -10,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, uploadChunk } from "@/lib/api";
+import { classifyRefreshOutcome, createLatestRequestCoordinator } from "@/lib/request-coordinator";
 import { cn, friendlyError, label } from "@/lib/utils";
 import { ViewRenderer } from "@/views";
 
@@ -42,6 +43,7 @@ export default function App() {
   const [detail, setDetail] = useState({ open: false, type: null, data: null, loading: false });
   const [toast, setToast] = useState({ message: "", error: false });
   const requestSequence = useRef(0);
+  const detailRequests = useRef(createLatestRequestCoordinator());
 
   const showToast = useCallback((message, isError = false) => {
     setToast({ message, error: isError });
@@ -67,12 +69,14 @@ export default function App() {
     if (!quiet) setLoading(true);
     try {
       const data = await api(endpoints[view]);
-      if (sequence !== requestSequence.current) return;
+      if (sequence !== requestSequence.current) return { ok: false, stale: true };
       setViewData({ ...data, _loadedView: view });
       setError("");
+      return { ok: true, stale: false };
     } catch (caught) {
-      if (sequence !== requestSequence.current) return;
+      if (sequence !== requestSequence.current) return { ok: false, stale: true, error: caught };
       setError(caught.message);
+      return { ok: false, stale: false, error: caught };
     } finally {
       if (sequence === requestSequence.current) setLoading(false);
     }
@@ -99,11 +103,10 @@ export default function App() {
   const refresh = useCallback(async (notify = false) => {
     setRefreshing(true);
     try {
-      await Promise.all([loadOverview(), loadView(activeView, { quiet: true })]);
-      if (notify) showToast("已刷新最新状态");
-    } catch (caught) {
-      setError(caught.message);
-      showToast(caught.message, true);
+      const [overviewResult, viewResult] = await Promise.allSettled([loadOverview(), loadView(activeView, { quiet: true })]);
+      const outcome = classifyRefreshOutcome(overviewResult, viewResult);
+      if (notify) showToast(outcome.message, outcome.state !== "success");
+      return outcome;
     } finally {
       setRefreshing(false);
     }
@@ -162,29 +165,43 @@ export default function App() {
     }
   }, [refresh, showToast]);
 
-  const openGuide = useCallback((guide) => setDetail({ open: true, type: "guide", data: { guide }, loading: false }), []);
+  const closeDetail = useCallback(() => {
+    detailRequests.current.invalidate();
+    setDetail({ open: false, type: null, data: null, loading: false });
+  }, []);
+
+  const openGuide = useCallback((guide) => {
+    detailRequests.current.invalidate();
+    setDetail({ open: true, type: "guide", data: { guide }, loading: false });
+  }, []);
 
   const openContentStrategy = useCallback(async () => {
+    const request = detailRequests.current.begin();
     setDetail({ open: true, type: "strategy", data: null, loading: true });
     try {
-      const data = await api("/api/content-strategy");
+      const data = await api("/api/content-strategy", { signal: request.signal });
+      if (!request.isCurrent()) return;
       setDetail({ open: true, type: "strategy", data, loading: false });
     } catch (caught) {
-      setDetail({ open: false, type: null, data: null, loading: false });
+      if (!request.isCurrent() || caught.name === "AbortError") return;
+      closeDetail();
       showToast(caught.message, true);
     }
-  }, [showToast]);
+  }, [closeDetail, showToast]);
 
   const openPackage = useCallback(async (type, id) => {
+    const request = detailRequests.current.begin();
     setDetail({ open: true, type, data: null, loading: true });
     try {
-      const data = await api(type === "source" ? `/api/sources/${id}` : `/api/drafts/${id}`);
+      const data = await api(type === "source" ? `/api/sources/${id}` : `/api/drafts/${id}`, { signal: request.signal });
+      if (!request.isCurrent()) return;
       setDetail({ open: true, type, data, loading: false });
     } catch (caught) {
-      setDetail({ open: false, type: null, data: null, loading: false });
+      if (!request.isCurrent() || caught.name === "AbortError") return;
+      closeDetail();
       showToast(caught.message, true);
     }
-  }, [showToast]);
+  }, [closeDetail, showToast]);
 
   const openNavigationAction = useCallback((view) => {
     setPendingActionView({ view, requestedAt: Date.now() });
@@ -228,7 +245,7 @@ export default function App() {
         </section>
         <footer className="flex flex-col gap-1 border-t border-slate-200/70 pt-4 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:pt-5"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
       </main>
-      <DetailDialog detail={detail} health={health} actionBusy={actionBusy} onOpenChange={(open) => setDetail((current) => ({ ...current, open }))} onAction={runAction} onClose={() => setDetail({ open: false, type: null, data: null, loading: false })} />
+      <DetailDialog detail={detail} health={health} actionBusy={actionBusy} onOpenChange={(open) => { if (!open) closeDetail(); }} onAction={runAction} onClose={closeDetail} />
       <Toast {...toast} />
     </div>
   );

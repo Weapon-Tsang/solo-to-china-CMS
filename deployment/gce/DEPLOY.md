@@ -21,6 +21,8 @@ GCE VM -- service account -- Vertex Imagen
 4. Create a Cloudflare Tunnel and add both public hostnames pointing to `http://engine:8080`. Do not put an interactive Cloudflare Access challenge in front of the dashboard; the application owns dashboard sign-in.
 5. Generate independent random `CAPTURE_TOKEN`, `ADMIN_TOKEN`, `ADMIN_PASSWORD`, and `SESSION_SECRET` values. The extension receives only the capture token. Store all dashboard credentials in Secret Manager.
 
+The checked-in Tunnel configuration does not prove that a Cloudflare Rate Limiting rule exists, so the application enforces its own bounded login throttle. It ignores `X-Forwarded-For` and `CF-Connecting-IP` by default. If the Engine is later restricted to a pinned proxy address, set `TRUSTED_PROXY_HEADER=cf-connecting-ip` and list only that proxy IP/CIDR in `TRUSTED_PROXY_SOURCES`; never enable a forwarded header while the Engine is directly reachable from an untrusted network.
+
 ## Build and run
 
 From an authenticated Google Cloud shell or workstation, substitute your own values:

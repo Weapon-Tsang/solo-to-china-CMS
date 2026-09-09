@@ -64,9 +64,9 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 | A10 | 1.3 | completed | `e7cc358` | Stable section/node provenance, span traces and explicit legacy-unknown compatibility verified |
 | A11 | 1.3 | completed | `e7cc358` | Deterministic visible final-artifact evidence gate verified |
 | A12 | 1.3 | completed | `e7cc358` | Migration 47; transport/coverage/usability dimensions and topic-scoped gaps verified |
-| A13 | 1.3 | pending | `d642f0f` | After A12; scoped assignment evidence selection |
-| A14 | 1.3 | pending | `d642f0f` | After A13; UI request races and refresh truthfulness |
-| A16 | 1.3 | pending | `d642f0f` | After A14; login throttling and trusted proxy handling |
+| A13 | 1.3 | completed | `36a2ec0` | Migration 48; entity/predicate-scoped selection and explainable classification verified |
+| A14 | 1.3 | completed | `36a2ec0` | Abortable latest-detail requests and truthful refresh outcomes verified |
+| A16 | 1.3 | completed | `36a2ec0` | Bounded adaptive account/source login throttle and trusted-proxy policy verified |
 | B10 | 1.3 | pending | `d642f0f` | Full-system backup manifest and restore; safety principles already active |
 | B11 | 1.3 | pending | `d642f0f` | Extend existing offline release gate; baseline captured above |
 | B03 | 1.3 | pending | `d642f0f` | Media-aware preflight and mixed PDF evidence |
@@ -183,6 +183,33 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 - Fourth-batch regression checkpoint: 289 tests passed; `npm run check` passed;
   `npm run release:check` passed 39 mandatory checks with 0 failures and 4
   documented environment warnings. The clean schema chain is now 1-47.
-- Current task: A13.
-- Next action: review assignment evidence selection and add topic/entity-scoped
-  include/exclude decisions with auditable operator-visible reasons.
+- Completed A13: migration 48 records whether an assignment type came from the
+  operator or automatic classification and retains ranked candidates/confidence.
+  Explicit target Entity IDs/names now fence selection; a route fact must match a
+  target or have an Entity Relation to it, so unrelated same-city transport no
+  longer enters an A-B route. Typed predicates and Entity types drive ranking.
+  Weak street/station words fall back to `custom`; food/accommodation intent wins
+  over a street name, while the UI keeps an explicit manual type override. Every
+  evaluated fact stores its include/exclude score and reason and the dashboard
+  renders the full decision list. Verification: 5 assignment/API tests passed.
+- Completed A14: detail requests use a dedicated latest-request coordinator and
+  AbortController. Opening B aborts A; closing or switching invalidates late data.
+  List loads return explicit outcomes, and refresh classifies full success,
+  partial success and failure instead of swallowing a list error. Quiet polling
+  retains the existing sequence guard and does not remount view-local forms.
+  Verification: 3 deterministic coordinator tests plus the production build passed.
+- Completed A16: deployment review found Cloudflare Tunnel but no checked-in or
+  otherwise verifiable edge rate-limit rule, so no edge protection was assumed.
+  The application now applies bounded TTL account/source throttles with adaptive
+  cooldown, a higher shared-source allowance, generic 401/429 responses and
+  password-free audit events. Unknown accounts perform the same asynchronous
+  scrypt path until throttled. Forwarded addresses are ignored unless both a
+  header and proxy IP/CIDR are explicitly configured. Existing persisted-session,
+  password/username change and logout revocation remain unchanged and passing.
+  Verification: 13 login/server tests passed.
+- Fifth-batch regression checkpoint: 297 tests passed; `npm run check` passed;
+  `npm run release:check` passed 39 mandatory checks with 0 failures and 4
+  documented environment warnings. The clean schema chain is now 1-48.
+- Current task: B10.
+- Next action: extend the verified SQLite snapshot into a full-system backup
+  manifest and non-mutating restore drill before proceeding to B11.

@@ -1560,11 +1560,12 @@ export class Repository {
     const timestamp = now();
     this.db.prepare(`INSERT INTO editorial_assignments(
       id,destination_slug,title,assignment_type,content_type,brief,target_entities_json,desired_visual,
-      status,created_by,created_at,updated_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      status,created_by,created_at,updated_at,assignment_type_source,classification_json
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       assignmentId, normalized.destinationSlug, normalized.title, normalized.assignmentType,
       normalized.contentType, normalized.brief, JSON.stringify(normalized.targetEntities), normalized.desiredVisual,
       "evaluating", String(actor || "administrator").slice(0, 120), timestamp, timestamp,
+      normalized.typeSource, JSON.stringify(normalized.classification),
     );
     return this.reevaluateEditorialAssignment(assignmentId);
   }
@@ -1594,6 +1595,8 @@ export class Repository {
         brief: assignment.brief,
         destinationSlug: assignment.destination_slug,
         assignmentType: assignment.assignment_type,
+        assignmentTypeSource: assignment.assignment_type_source,
+        classification: assignment.classification,
         contentType: assignment.content_type,
         targetEntities: assignment.target_entities,
         desiredVisual: assignment.desired_visual,
@@ -5314,6 +5317,8 @@ function hydrateEditorialAssignment(row) {
   return {
     ...row,
     target_entities: json(row.target_entities_json, []),
+    assignment_type_source: row.assignment_type_source || "legacy",
+    classification: json(row.classification_json, {}),
     evaluation: json(row.evaluation_json, {}),
     selected_fact_keys: json(row.selected_fact_keys_json, []),
     selected_source_ids: json(row.selected_source_ids_json, []),

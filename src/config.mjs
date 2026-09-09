@@ -51,6 +51,16 @@ export function loadConfig(env = process.env) {
       password: env.ADMIN_PASSWORD || "",
       sessionSecret: env.SESSION_SECRET || "",
       forcePasswordChange: boolean(env.ADMIN_PASSWORD_FORCE_CHANGE, env.ADMIN_PASSWORD === "123456"),
+      loginThrottle: {
+        accountAttempts: integer(env.LOGIN_RATE_LIMIT_ACCOUNT_ATTEMPTS, 5),
+        sourceAttempts: integer(env.LOGIN_RATE_LIMIT_SOURCE_ATTEMPTS, 20),
+        windowMs: integer(env.LOGIN_RATE_LIMIT_WINDOW_SECONDS, 900) * 1_000,
+        baseCooldownMs: integer(env.LOGIN_RATE_LIMIT_BASE_COOLDOWN_SECONDS, 2) * 1_000,
+        maxCooldownMs: integer(env.LOGIN_RATE_LIMIT_MAX_COOLDOWN_SECONDS, 300) * 1_000,
+        maxEntries: integer(env.LOGIN_RATE_LIMIT_MAX_ENTRIES, 5_000),
+        trustedProxyHeader: choice(env.TRUSTED_PROXY_HEADER, ["", "cf-connecting-ip", "x-forwarded-for"], ""),
+        trustedProxySources: stringList(env.TRUSTED_PROXY_SOURCES),
+      },
     },
     captureHost: hostname(env.CAPTURE_HOST),
     ai: {
@@ -219,6 +229,10 @@ function integer(value, fallback) {
 function integerList(value) {
   return String(value || "").split(",").map((item) => Number.parseInt(item.trim(), 10))
     .filter((item) => Number.isInteger(item) && item > 0);
+}
+
+function stringList(value) {
+  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function boolean(value, fallback) {

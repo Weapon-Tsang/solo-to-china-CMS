@@ -95,7 +95,9 @@ export function normalizeEditorialAssignmentInput(value = {}) {
   if (!destinationSlug) throw badRequest("请选择一个目的地。");
   if (title.length < 2) throw badRequest("请输入至少 2 个字的专题标题。");
   const suppliedType = String(value.assignmentType || value.assignment_type || "").trim().toLowerCase();
-  const assignmentType = EDITORIAL_ASSIGNMENT_TYPES[suppliedType] ? suppliedType : inferAssignmentType(title);
+  const classification = classifyAssignmentType(`${title} ${value.brief || value.direction || ""}`);
+  const typeSource = EDITORIAL_ASSIGNMENT_TYPES[suppliedType] ? "manual" : "auto";
+  const assignmentType = typeSource === "manual" ? suppliedType : classification.selected;
   const desiredVisual = ["none", "illustration", "route_sketch"].includes(value.desiredVisual)
     ? value.desiredVisual
     : assignmentType === "city_walk" ? "route_sketch" : "illustration";
@@ -107,39 +109,60 @@ export function normalizeEditorialAssignmentInput(value = {}) {
     brief: cleanText(value.brief || value.direction || "", 2_000),
     targetEntities: cleanStrings(value.targetEntities || value.target_entities, 20, 120),
     desiredVisual,
+    typeSource,
+    classification: { ...classification, selected: assignmentType, overridden: typeSource === "manual" && assignmentType !== classification.selected },
   };
 }
 
 export function selectFactsForAssignment(assignment, facts = []) {
+  return rankFactsForAssignment(assignment, facts).filter((item) => item.include).map((item) => item.fact);
+}
+
+export function rankFactsForAssignment(assignment, facts = []) {
   const profile = EDITORIAL_ASSIGNMENT_TYPES[assignment.assignmentType] || EDITORIAL_ASSIGNMENT_TYPES.custom;
   const terms = topicTokens(`${assignment.title || ""} ${assignment.brief || ""}`);
-  const entityTerms = topicTokens((assignment.targetEntities || []).join(" "));
   const destinationTerms = topicTokens(`${assignment.destinationSlug || ""} ${assignment.destinationName || ""}`);
   for (const term of destinationTerms) terms.delete(term);
-  // A dated travel observation is still usable evidence when the article states
-  // its evidence date and uncertainty. Only unresolved strict contradictions are
-  // excluded from an assignment package.
-  const eligible = facts.filter((fact) => fact.consensus_status !== "conflicted");
-  return eligible.map((fact) => {
+  const targets = (assignment.targetEntities || []).map(targetDescriptor).filter((item) => item.normalized);
+  return facts.map((fact) => {
     const text = factText(fact);
     const tokens = topicTokens(text);
-    const entityMatch = [...entityTerms].some((term) => tokens.has(term));
+    const targetMatches = targets.filter((target) => factMatchesTarget(fact, tokens, target));
+    const entityMatch = targetMatches.length > 0;
     const topicMatch = [...terms].some((term) => tokens.has(term));
-    const profileMatch = profile.topicPattern?.test(text) || relevantEntityType(assignment.assignmentType, fact);
-    const routeMatch = Boolean(profile.routePattern?.test(text));
-    const include = entityTerms.size
-      ? entityMatch || routeMatch
-      : profile.topicPattern ? profileMatch || topicMatch : topicMatch;
-    const score = (entityMatch ? 30 : 0) + (topicMatch ? 16 : 0) + (profileMatch ? 10 : 0)
-      + (routeMatch ? 8 : 0) + Math.min(8, Number(fact.support_count || 0) * 2);
-    return { fact, include, score };
-  }).filter((item) => item.include).sort((left, right) => right.score - left.score)
-    .slice(0, 80).map((item) => item.fact);
+    const predicateMatch = typedPredicateMatch(assignment.assignmentType, fact);
+    const entityTypeMatch = relevantEntityType(assignment.assignmentType, fact);
+    const routeMatch = typedPredicateMatch("route", fact);
+    const relationMatch = routeMatch && targets.some((target) => relationReferencesTarget(fact, target));
+    const routeBelongsToSelection = routeMatch && (entityMatch || relationMatch);
+    const conflicted = fact.consensus_status === "conflicted";
+    const include = !conflicted && (targets.length
+      ? entityMatch || routeBelongsToSelection
+      : assignment.assignmentType === "custom" ? topicMatch : predicateMatch || (entityTypeMatch && topicMatch));
+    const score = (entityMatch ? 40 : 0) + (relationMatch ? 24 : 0) + (topicMatch ? 16 : 0)
+      + (predicateMatch ? 12 : 0) + (entityTypeMatch ? 8 : 0) + Math.min(8, Number(fact.support_count || 0) * 2);
+    const reasons = [];
+    if (entityMatch) reasons.push(`匹配目标实体：${targetMatches.map((item) => item.label).join("、")}`);
+    if (relationMatch) reasons.push("实体关系证明该路线连接目标实体");
+    if (topicMatch) reasons.push("匹配命题或编辑边界");
+    if (predicateMatch) reasons.push("predicate 与专题类型一致");
+    if (entityTypeMatch) reasons.push("实体类型与专题类型一致");
+    const exclusionReasons = [];
+    if (conflicted) exclusionReasons.push("存在未解决的严格冲突");
+    if (!conflicted && targets.length && !entityMatch && !relationMatch) exclusionReasons.push("未匹配目标实体，也没有实体关系证明属于已选路线");
+    if (!conflicted && !targets.length && !topicMatch) exclusionReasons.push("与命题或编辑边界无直接匹配");
+    if (!conflicted && !targets.length && assignment.assignmentType !== "custom" && !predicateMatch && !entityTypeMatch) exclusionReasons.push("predicate 和实体类型均不匹配专题类型");
+    return { fact, include, score, reasons, exclusionReasons };
+  }).sort((left, right) => Number(right.include) - Number(left.include) || right.score - left.score
+    || String(left.fact.normalized_key).localeCompare(String(right.fact.normalized_key)));
 }
 
 export function evaluateEditorialAssignment({ assignment, destinationName, facts, sourceFamilyCount = 0 }) {
   const profile = EDITORIAL_ASSIGNMENT_TYPES[assignment.assignmentType] || EDITORIAL_ASSIGNMENT_TYPES.custom;
-  const selectedFacts = selectFactsForAssignment({ ...assignment, destinationName }, facts);
+  const automaticClassification = assignment.classification?.candidates
+    ? assignment.classification : classifyAssignmentType(`${assignment.title || ""} ${assignment.brief || ""}`);
+  const selection = rankFactsForAssignment({ ...assignment, destinationName }, facts);
+  const selectedFacts = selection.filter((item) => item.include).slice(0, 80).map((item) => item.fact);
   const sourceIds = [...new Set(selectedFacts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))];
   const entityNames = [...new Set(selectedFacts.map((fact) => fact.canonical_subject || fact.subject)
     .filter((name) => name && !/^unknown$/i.test(name)))];
@@ -182,6 +205,12 @@ export function evaluateEditorialAssignment({ assignment, destinationName, facts
   return {
     ready,
     score,
+    classification: {
+      ...automaticClassification,
+      activeType: assignment.assignmentType,
+      typeSource: assignment.assignmentTypeSource || "legacy",
+      overridden: assignment.assignmentTypeSource === "manual" && automaticClassification.selected !== assignment.assignmentType,
+    },
     summary: ready
       ? `素材体检通过：已筛出 ${selectedFacts.length} 条直接相关事实、${effectiveFamilyCount} 个独立来源族和 ${entityNames.length} 个具体地点/项目，可按命题边界进入创作队列。`
       : `素材暂不达标：当前只有 ${selectedFacts.length} 条直接相关事实、${effectiveFamilyCount} 个独立来源族和 ${entityNames.length} 个具体地点/项目。补齐下列缺口后再检测即可。`,
@@ -199,6 +228,14 @@ export function evaluateEditorialAssignment({ assignment, destinationName, facts
         predicate: fact.predicate,
         value: fact.preferred_value,
       })),
+      selectionDecisions: selection.map((item) => ({
+        key: item.fact.normalized_key,
+        subject: item.fact.canonical_subject || item.fact.subject,
+        predicate: item.fact.predicate,
+        included: item.include,
+        score: item.score,
+        reasons: item.include ? item.reasons : item.exclusionReasons,
+      })),
     },
     gaps: uniqueGaps,
     acquisitionRequests,
@@ -210,14 +247,33 @@ export function evaluateEditorialAssignment({ assignment, destinationName, facts
 }
 
 export function inferAssignmentType(value) {
+  return classifyAssignmentType(value).selected;
+}
+
+export function classifyAssignmentType(value) {
   const text = String(value || "");
-  if (EDITORIAL_ASSIGNMENT_TYPES.city_walk.topicPattern.test(text)) return "city_walk";
-  if (EDITORIAL_ASSIGNMENT_TYPES.food.topicPattern.test(text)) return "food";
-  if (EDITORIAL_ASSIGNMENT_TYPES.accommodation.topicPattern.test(text)) return "accommodation";
-  if (EDITORIAL_ASSIGNMENT_TYPES.attraction_list.topicPattern.test(text)) return "attraction_list";
-  if (EDITORIAL_ASSIGNMENT_TYPES.itinerary.topicPattern.test(text)) return "itinerary";
-  if (EDITORIAL_ASSIGNMENT_TYPES.practical.topicPattern.test(text)) return "practical";
-  return "custom";
+  const score = (strong, weak = null) => (text.match(strong)?.length || 0) * 4 + (weak ? text.match(weak)?.length || 0 : 0);
+  const rows = [
+    ["food", score(/food|eat|restaurant|dish|snack|menu|dining|cuisine|美食|小吃|餐厅|餐馆|菜品|菜单/giu, /街|巷|street|alley/giu)],
+    ["accommodation", score(/hotel|stay|accommodation|hostel|lodging|住宿|酒店|宾馆|青旅|住哪/giu, /area|district|区域|片区|街|巷/giu)],
+    ["city_walk", score(/city\s*walk|walking\s*(?:route|tour)|walkable\s*(?:route|tour)|城市漫步|城市散步|步行路线|徒步路线/giu, /street|alley|station|街|巷|车站|机位/giu)],
+    ["itinerary", score(/itinerary|day\s*(?:trip|route)|multi.day|行程|一日游|两日游|三日游|游览顺序/giu, /route|路线|动线|顺序/giu)],
+    ["attraction_list", score(/attraction|viewpoint|photo\s*spot|landmark|must.visit|景点|机位|地标|必去|打卡/giu)],
+    ["practical", score(/transport|ticket|booking|payment|safety|budget|how\s+to|交通|票价|预约|支付|安全|预算|怎么办/giu)],
+  ].map(([type, valueScore]) => ({ type, score: valueScore }))
+    .sort((left, right) => right.score - left.score || left.type.localeCompare(right.type));
+  const [first, second] = rows;
+  const total = rows.reduce((sum, item) => sum + item.score, 0);
+  const confidence = first.score ? Number((first.score / Math.max(first.score + (second?.score || 0), 1)).toFixed(2)) : 0;
+  const confident = first.score >= 4 && first.score - (second?.score || 0) >= 2 && confidence >= 0.6;
+  return {
+    selected: confident ? first.type : "custom",
+    confidence: confident ? confidence : Math.min(confidence, 0.59),
+    requiresReview: !confident,
+    candidates: rows.filter((item) => item.score > 0).slice(0, 3).map((item) => ({
+      type: item.type, score: item.score, confidence: total ? Number((item.score / total).toFixed(2)) : 0,
+    })),
+  };
 }
 
 function buildVisualBrief(assignment, destinationName, entities, ready) {
@@ -267,6 +323,42 @@ function relevantEntityType(type, fact) {
   if (type === "food") return ["restaurant", "food", "dish", "market"].includes(entityType);
   if (type === "accommodation") return ["hotel", "area", "neighborhood", "transport_hub"].includes(entityType);
   return false;
+}
+
+const TYPED_PREDICATES = Object.freeze({
+  route: /route|connection|connects?|between|order|sequence|walk|walking|distance|duration|metro|station|bus|transport|路线|连接|衔接|之间|顺序|步行|距离|耗时|地铁|车站|公交|交通/iu,
+  city_walk: /route|connection|connects?|between|order|sequence|walk|walking|distance|duration|路线|连接|衔接|之间|顺序|步行|距离|耗时/iu,
+  itinerary: /route|order|sequence|duration|timing|transport|路线|动线|顺序|耗时|时间|交通/iu,
+  food: /food|dish|menu|restaurant|snack|taste|dining|cuisine|美食|菜品|菜单|餐厅|小吃|口味/iu,
+  accommodation: /hotel|stay|accommodation|hostel|lodging|room|住宿|酒店|宾馆|青旅|客房/iu,
+  attraction_list: /attraction|viewpoint|photo|landmark|visit|景点|机位|地标|游览/iu,
+  practical: /transport|ticket|booking|payment|safety|budget|requirement|交通|票价|预约|支付|安全|预算|要求/iu,
+});
+
+function typedPredicateMatch(type, fact) {
+  const pattern = TYPED_PREDICATES[type];
+  return Boolean(pattern?.test(`${fact.predicate || ""} ${fact.normalized_key || ""}`));
+}
+
+function targetDescriptor(value) {
+  const label = String(value || "").trim();
+  return { label, normalized: normalizeEntityReference(label), tokens: topicTokens(label) };
+}
+
+function normalizeEntityReference(value) {
+  return String(value || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function factMatchesTarget(fact, tokens, target) {
+  const identities = [fact.entity_key, fact.subject, fact.canonical_subject, ...(fact.entity_aliases || [])]
+    .map(normalizeEntityReference).filter(Boolean);
+  if (identities.includes(target.normalized)) return true;
+  return target.tokens.size > 0 && [...target.tokens].every((term) => tokens.has(term));
+}
+
+function relationReferencesTarget(fact, target) {
+  const relations = Array.isArray(fact.claim_relations) ? fact.claim_relations : [];
+  return relations.some((relation) => normalizeEntityReference(JSON.stringify(relation)).includes(target.normalized));
 }
 
 function factText(fact) {

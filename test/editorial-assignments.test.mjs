@@ -5,7 +5,10 @@ import path from "node:path";
 import test from "node:test";
 import { loadConfig } from "../src/config.mjs";
 import { openDatabase } from "../src/db.mjs";
-import { evaluateEditorialAssignment } from "../src/editorial-assignments.mjs";
+import {
+  classifyAssignmentType, evaluateEditorialAssignment, inferAssignmentType,
+  normalizeEditorialAssignmentInput, rankFactsForAssignment,
+} from "../src/editorial-assignments.mjs";
 import { Repository } from "../src/repository.mjs";
 import { createApplication } from "../src/server.mjs";
 
@@ -34,6 +37,40 @@ test("manual City Walk assignments report concrete gaps and accept evidence-boun
   assert.equal(complete.visualBrief.generationMode, "original_illustration");
   assert.match(complete.visualBrief.instruction, /不是导航地图/);
   assert.ok(complete.selectedFactKeys.length >= 8);
+});
+
+test("explicit route entities exclude unrelated same-city transport facts with visible reasons", () => {
+  const assignment = {
+    destinationSlug: "chongqing", destinationName: "Chongqing", title: "Area A to Area B walking route",
+    brief: "Connect only the two selected neighborhoods", assignmentType: "city_walk",
+    targetEntities: ["area.a", "area.b"],
+  };
+  const connected = { ...fact("area.a.walk_to_b", "Area A", "walking connection to Area B", "Walk east to Area B", "source-a"),
+    entity_key: "area.a", entity_type: "neighborhood",
+    claim_relations: [{ relation_type: "connects_to", object_entity_key: "area.b" }] };
+  const airport = { ...fact("airport.bus.route", "Chongqing Airport", "airport bus route", "Bus to the city center", "source-b"),
+    entity_key: "transport.airport", entity_type: "transport_hub" };
+  const ranked = rankFactsForAssignment(assignment, [airport, connected]);
+  assert.equal(ranked.find((item) => item.fact === connected).include, true);
+  const excluded = ranked.find((item) => item.fact === airport);
+  assert.equal(excluded.include, false);
+  assert.match(excluded.exclusionReasons.join(" "), /未匹配目标实体/);
+  const evaluated = evaluateEditorialAssignment({ assignment, destinationName: "Chongqing", facts: [airport, connected], sourceFamilyCount: 2 });
+  assert.equal(evaluated.selectedFactKeys.includes("airport.bus.route"), false);
+  assert.equal(evaluated.evidence.selectionDecisions.find((item) => item.key === "airport.bus.route").included, false);
+});
+
+test("street words do not override food or accommodation intent and weak guesses stay custom", () => {
+  assert.equal(inferAssignmentType("Best hotels on Jiefangbei Pedestrian Street"), "accommodation");
+  assert.equal(inferAssignmentType("Where to eat on Ciqikou Old Street"), "food");
+  const weak = classifyAssignmentType("Jiefangbei Street notes");
+  assert.equal(weak.selected, "custom");
+  assert.equal(weak.requiresReview, true);
+  const manual = normalizeEditorialAssignmentInput({ destinationSlug: "chongqing", title: "Jiefangbei Street notes", assignmentType: "food" });
+  assert.equal(manual.assignmentType, "food");
+  assert.equal(manual.typeSource, "manual");
+  assert.equal(manual.classification.overridden, true);
+  assert.ok(manual.classification.candidates.length > 0);
 });
 
 test("repository keeps manual assignments separate, queues only ready work, and preserves production on list deletion", () => {
