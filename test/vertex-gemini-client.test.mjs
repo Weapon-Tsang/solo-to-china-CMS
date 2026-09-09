@@ -147,3 +147,34 @@ test("Vertex Gemini stages a large uploaded video in Cloud Storage and deletes t
   await result.cleanup();
   assert.equal(requests[1].options.method, "DELETE");
 });
+
+test("Vertex Gemini submits, polls, reads, and cleans up a Cloud Storage batch", async () => {
+  const calls = [];
+  const output = { batch_item_id: "batch_item_1", source: { language: "zh-CN", summary: "route", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 }, claims: [] };
+  const client = new VertexGeminiClient({
+    projectId: "fixture-project", location: "global", model: "gemini-3.8-flash", accessToken: "token",
+    batchEnabled: true, batchBucket: "fixture-bucket", batchPollMs: 60_000,
+  }, async (url, options = {}) => {
+    const target = String(url);
+    calls.push({ target, options });
+    if (target.includes("upload/storage/v1")) return new Response("{}", { status: 200 });
+    if (target.endsWith("/batchPredictionJobs") && options.method === "POST") return Response.json({ name: "projects/fixture-project/locations/global/batchPredictionJobs/job-1", state: "JOB_STATE_PENDING" });
+    if (target.includes("batchPredictionJobs/job-1")) return Response.json({ state: "JOB_STATE_SUCCEEDED", outputInfo: { gcsOutputDirectory: "gs://fixture-bucket/vertex-batch/output/" } });
+    if (target.includes("storage/v1/b/fixture-bucket/o?") && !target.includes("alt=media")) return Response.json({ items: [{ name: "vertex-batch/output/predictions.jsonl" }] });
+    if (target.includes("predictions.jsonl") && target.includes("alt=media")) return new Response(`${JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: JSON.stringify(output) }] }, finishReason: "STOP" }] } })}\n`);
+    if (options.method === "DELETE") return new Response(null, { status: 204 });
+    throw new Error(`Unexpected request: ${target}`);
+  });
+  const request = client.prepareBatchRequest({ id: "batch_item_1", name: "source_research_extraction",
+    schema: { type: "object", additionalProperties: false, required: ["source", "claims"], properties: { source: { type: "object" }, claims: { type: "array" } } },
+    instructions: "Extract evidence.", content: "source" });
+  const created = await client.createBatch([request]);
+  const status = await client.getBatch(created.name);
+  const rows = await client.readBatchOutput(status);
+  assert.equal(status.state, "JOB_STATE_SUCCEEDED");
+  assert.equal(rows[0].id, "batch_item_1");
+  assert.deepEqual(rows[0].output.claims, []);
+  assert.match(String(calls.find((call) => call.target.includes("upload/storage/v1"))?.options?.body), /batch_item_id/);
+  await client.cleanupBatch({ ...created, ...status });
+  assert.ok(calls.some((call) => call.options.method === "DELETE"));
+});

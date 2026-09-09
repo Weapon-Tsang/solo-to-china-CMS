@@ -22,6 +22,12 @@ export class VertexGeminiClient {
 
   get enabled() { return Boolean(this.config.projectId && this.config.model); }
 
+  get batchEnabled() {
+    return this.enabled && this.config.batchEnabled !== false
+      && /^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/.test(String(this.config.batchBucket || "").trim())
+      && String(this.config.location || "global") === "global";
+  }
+
   async completeJson({ name, schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000 }) {
     if (!this.enabled) throw new Error("Vertex AI requires GOOGLE_CLOUD_PROJECT and a selected Gemini model.");
     const accessToken = await this.accessToken();
@@ -89,6 +95,145 @@ export class VertexGeminiClient {
       correction = `The previous structured output was invalid. Return the complete corrected JSON only. Errors: ${JSON.stringify(errors.slice(0, 20))}`;
     }
     throw Object.assign(new Error("Vertex Gemini returned invalid structured output after repair attempts."), { code: "INVALID_MODEL_OUTPUT", retryable: true });
+  }
+
+  prepareBatchRequest({ id, name, schema, instructions, content }) {
+    if (!this.batchEnabled) throw new Error("Vertex Batch requires the global endpoint and VERTEX_AI_BATCH_BUCKET.");
+    const batchSchema = {
+      ...schema,
+      required: [...new Set([...(schema?.required || []), "batch_item_id"])],
+      properties: { ...(schema?.properties || {}), batch_item_id: { type: "string", enum: [id] } },
+    };
+    const request = vertexRequestBody({
+      name, schema: batchSchema,
+      instructions: `${instructions}\n- Batch processing identifier: return batch_item_id exactly as ${id}.`,
+      content, config: this.config,
+    });
+    return { id, request };
+  }
+
+  async createBatch(requests) {
+    if (!this.batchEnabled) throw new Error("Vertex Batch is not configured.");
+    if (!Array.isArray(requests) || !requests.length) throw new Error("Vertex Batch requires at least one request.");
+    const accessToken = await this.accessToken();
+    const bucket = String(this.config.batchBucket).trim();
+    const batchId = crypto.randomUUID();
+    const objectPrefix = `vertex-batch/${batchId}`;
+    const inputObject = `${objectPrefix}/input.jsonl`;
+    const outputObjectPrefix = `${objectPrefix}/output/`;
+    const input = `${requests.map((item) => JSON.stringify({ request: item.request })).join("\n")}\n`;
+    const maximumBytes = Number(this.config.batchMaxInputBytes || 900 * 1024 * 1024);
+    if (Buffer.byteLength(input) > maximumBytes) throw new Error("Vertex Batch input exceeds the configured safe Cloud Storage limit.");
+    await this.uploadObject(bucket, inputObject, input, "application/jsonl", accessToken);
+    const endpoint = `https://aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/global/batchPredictionJobs`;
+    const response = await this.fetch(endpoint, {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        displayName: `solo-source-extraction-${batchId.slice(0, 8)}`,
+        model: `publishers/google/models/${this.config.model}`,
+        inputConfig: { instancesFormat: "jsonl", gcsSource: { uris: [`gs://${bucket}/${inputObject}`] } },
+        outputConfig: { predictionsFormat: "jsonl", gcsDestination: { outputUriPrefix: `gs://${bucket}/${outputObjectPrefix}` } },
+      }),
+      signal: AbortSignal.timeout(this.config.requestTimeoutMs || 360_000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.name) {
+      await this.deleteObject(bucket, inputObject, accessToken).catch(() => null);
+      throw new ProviderRequestError("Vertex Batch", response.status, payload?.error?.message || response.statusText,
+        { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
+    }
+    return { name: payload.name, state: payload.state || "JOB_STATE_PENDING", inputUri: `gs://${bucket}/${inputObject}`,
+      outputUriPrefix: `gs://${bucket}/${outputObjectPrefix}`, itemIds: requests.map((item) => item.id),
+      pollMs: Number(this.config.batchPollMs || 60_000) };
+  }
+
+  async getBatch(name) {
+    const accessToken = await this.accessToken();
+    const response = await this.fetch(`https://aiplatform.googleapis.com/v1/${String(name).replace(/^\//, "")}`, {
+      headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30_000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new ProviderRequestError("Vertex Batch", response.status, payload?.error?.message || response.statusText,
+      { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
+    return payload;
+  }
+
+  async readBatchOutput(batch) {
+    const accessToken = await this.accessToken();
+    const outputUri = String(batch?.outputInfo?.gcsOutputDirectory || batch?.output_uri_prefix || "");
+    const parsedUri = parseGcsUri(outputUri);
+    if (!parsedUri) throw new Error("Vertex Batch completed without a readable Cloud Storage output directory.");
+    const objects = await this.listObjects(parsedUri.bucket, parsedUri.object, accessToken);
+    const jsonlObjects = objects.filter((item) => /\.jsonl$/i.test(item.name));
+    const results = [];
+    for (const item of jsonlObjects) {
+      const body = await this.downloadObject(parsedUri.bucket, item.name, accessToken);
+      for (const line of body.split(/\r?\n/).filter(Boolean)) {
+        try { results.push(parseBatchResult(JSON.parse(line))); }
+        catch (error) { results.push({ id: "", error: `Invalid Vertex Batch JSONL output: ${error.message}` }); }
+      }
+    }
+    return results;
+  }
+
+  async cleanupBatch(batch) {
+    const accessToken = await this.accessToken();
+    const uris = [batch?.input_uri, batch?.inputUri, batch?.outputInfo?.gcsOutputDirectory, batch?.output_uri_prefix, batch?.outputUriPrefix]
+      .map(parseGcsUri).filter(Boolean);
+    const seen = new Set();
+    for (const uri of uris) {
+      const key = `${uri.bucket}/${uri.object}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (/\.jsonl$/i.test(uri.object)) await this.deleteObject(uri.bucket, uri.object, accessToken).catch(() => null);
+      else {
+        const objects = await this.listObjects(uri.bucket, uri.object, accessToken).catch(() => []);
+        await Promise.allSettled(objects.map((item) => this.deleteObject(uri.bucket, item.name, accessToken)));
+      }
+    }
+  }
+
+  async uploadObject(bucket, objectName, body, contentType, accessToken) {
+    const url = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`);
+    url.searchParams.set("uploadType", "media");
+    url.searchParams.set("name", objectName);
+    const response = await this.fetch(url, { method: "POST", headers: { authorization: `Bearer ${accessToken}`, "content-type": contentType },
+      body, signal: AbortSignal.timeout(this.config.requestTimeoutMs || 360_000) });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(`Cloud Storage batch staging failed (${response.status}): ${payload?.error?.message || response.statusText}`);
+    }
+  }
+
+  async listObjects(bucket, prefix, accessToken) {
+    const values = [];
+    let pageToken = "";
+    do {
+      const url = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o`);
+      url.searchParams.set("prefix", prefix);
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const response = await this.fetch(url, { headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30_000) });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(`Cloud Storage batch output listing failed (${response.status}): ${payload?.error?.message || response.statusText}`);
+      values.push(...(payload.items || []));
+      pageToken = payload.nextPageToken || "";
+    } while (pageToken);
+    return values;
+  }
+
+  async downloadObject(bucket, objectName, accessToken) {
+    const url = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`);
+    url.searchParams.set("alt", "media");
+    const response = await this.fetch(url, { headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(this.config.requestTimeoutMs || 360_000) });
+    if (!response.ok) throw new Error(`Cloud Storage batch output download failed (${response.status}).`);
+    return response.text();
+  }
+
+  async deleteObject(bucket, objectName, accessToken) {
+    const response = await this.fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`,
+      { method: "DELETE", headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30_000) });
+    if (!response.ok && response.status !== 404) throw new Error(`Cloud Storage batch cleanup failed (${response.status}).`);
   }
 
   emitModelCall(metric) {
@@ -239,6 +384,41 @@ function extensionForVideo(mimeType) {
 function modelCallIdentity(stage, schema, instructions, content) {
   const digest = (value) => crypto.createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
   return { stage: stage || "unknown", promptHash: digest(instructions || ""), schemaHash: digest(schema || {}), inputHash: digest(content || "") };
+}
+
+function vertexRequestBody({ name, schema, instructions, content, config }) {
+  return {
+    systemInstruction: { parts: [{ text: instructions }] },
+    contents: [{ role: "user", parts: normalizeVertexParts(content) }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      ...vertexStructuredOutput(schema, config.structuredSchemaMode || "json_schema"),
+      maxOutputTokens: config.maxCompletionTokens || 16_000,
+      ...(String(config.model).startsWith("gemini-3")
+        ? { thinkingConfig: { thinkingLevel: REASONING_STAGES.has(name)
+          ? config.reasoningThinkingLevel || "MEDIUM" : config.thinkingLevel || "LOW" } }
+        : { temperature: 0.1 }),
+    },
+  };
+}
+
+function parseGcsUri(value) {
+  const match = /^gs:\/\/([^/]+)\/(.*)$/i.exec(String(value || "").trim());
+  return match ? { bucket: match[1], object: match[2] } : null;
+}
+
+function parseBatchResult(row) {
+  if (row?.status && !row?.response) return { id: "", error: row.status.message || JSON.stringify(row.status), status: row.status };
+  const payload = row?.response || row;
+  const candidate = payload?.candidates?.[0];
+  if (candidate?.finishReason === "MAX_TOKENS") return { id: "", error: "Vertex Batch structured output reached its token limit.", code: "MODEL_OUTPUT_LIMIT" };
+  const output = candidate?.content?.parts?.map((part) => part.text || "").join("");
+  const parsed = parseStructuredJson(output);
+  if (!parsed.ok || !parsed.value || typeof parsed.value !== "object") return { id: "", error: "Vertex Batch returned invalid structured JSON." };
+  const id = String(parsed.value.batch_item_id || "");
+  const value = { ...parsed.value };
+  delete value.batch_item_id;
+  return { id, output: value, usage: payload?.usageMetadata || null };
 }
 
 function normalizeVertexParts(content) {

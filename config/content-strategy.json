@@ -1,94 +1,107 @@
 {
-  "name": "SoloToChina Content Production Strategy",
-  "current_version": "1.6",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.6.md",
+  "name": "SoloToChina 内容生产策略",
+  "current_version": "1.7",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.7.md",
   "status": "active",
   "history": [
     {
-      "version": "1.6",
+      "version": "1.7",
       "effective_date": "2026-09-09",
       "status": "active",
-      "summary": "Use editorial sufficiency rather than encyclopedic completeness, and support focused features and rights-authorized single-source adaptations.",
+      "summary": "把单一来源改写、专题创作和多来源综合作为可以同时成立的创作路线；同时收紧异常规则，并用 Vertex Batch 加速大批量异步提取。",
       "changes": [
-        "Judge readiness against one bounded reader promise rather than requiring every destination fact in one article.",
-        "Create focused topic features and repeatable series from useful subtopics, lists, food, lodging, routes and photo locations.",
-        "Allow a complete rights-authorized source note to become an original English source adaptation without unrelated source mixing.",
-        "Discard individual untraceable extracted Claims while retaining supported evidence; retry only when a material text segment has no traceable Claim.",
-        "Finish the active source and its diagnostic before expanding the next source backlog."
+        "同一来源可以同时产生单一来源改写、专题文章和多来源综合机会；为第一篇文章选择主路线，不会关闭其余路线。",
+        "不同作者的一日游、两日游、路线顺序、美食清单和拍照点属于可并存的选择，不再因为内容不同就判定冲突。",
+        "免费与 0 元、全天与 24 小时等同义硬事实先标准化后比较，只有真正互斥且会影响游客决策的事实才要求人工处理。",
+        "策略解释和演化日志统一使用直白中文，并明确说明能写什么、为什么能写、证据边界和真正缺口。",
+        "大批量分段提取优先提交 Vertex Batch 异步任务，完成后再成批更新状态；小批量、视频和失败项保留实时请求兜底。"
+      ]
+    },
+    {
+      "version": "1.6",
+      "effective_date": "2026-09-09",
+      "status": "superseded",
+      "summary": "用编辑上的充分性取代百科式完整性，支持窄专题和已获编辑授权的单一来源改写。",
+      "changes": [
+        "按一个边界清楚的读者承诺判断是否可写，不要求一篇文章覆盖目的地所有事实。",
+        "可从美食、住宿、路线、机位和实用小话题持续拆分专题系列。",
+        "完整且已获编辑授权的来源可直接形成原创英文改写，不必强行混入无关来源。",
+        "无法回溯原文的单条信息主张会被排除，但不会阻塞同一来源中已有证据支持的内容。",
+        "队列优先完成靠前来源及其诊断，再继续展开后续来源。"
       ]
     },
     {
       "version": "1.5",
       "effective_date": "2026-09-08",
       "status": "superseded",
-      "summary": "Bind evidence, QA, media, final page and delivery versions while scaling article depth, FAQ and visuals to the reader task.",
+      "summary": "将证据、审核、媒体、最终页面和投递精确绑定到版本，并按真实读者任务决定篇幅、问答和配图。",
       "changes": [
-        "Bind QA, page composition and commercial output to exact draft revision, content hash and evidence hash.",
-        "Set word, FAQ and visual requirements from content type, reader intent and evidence coverage rather than one universal threshold.",
-        "Audit the current final visible Page Payload and derive FAQ structured data only from visible FAQ blocks.",
-        "Expose reader-verifiable sources and only use internal links from synchronized WordPress inventory.",
-        "Record model provenance and usage without logging prompts, secrets or source bodies."
+        "审核、页面组合和商业输出绑定到准确的草稿版本、内容哈希和证据哈希。",
+        "按内容类型、读者意图和证据覆盖决定字数、问答和配图，不使用统一硬门槛。",
+        "审核最终可见页面，FAQ 结构化数据只来自页面中实际显示的问答。",
+        "展示读者可核实的来源，内部链接只使用已同步的 WordPress 库存。",
+        "记录模型来源和用量，但不记录提示词、密钥或来源正文。"
       ]
     },
     {
       "version": "1.4",
       "effective_date": "2026-09-07",
       "status": "superseded",
-      "summary": "Model heterogeneous sources as evidence containers, audit segmented extraction and independent source families, and drive production with an explicit Opportunity state machine.",
+      "summary": "把不同类型来源统一建模为证据容器，分段提取并审计完整性，通过内容机会状态机推进生产。",
       "changes": [
-        "Add Source Segments, Evidence Spans, Extraction Coverage and Source Families for exhaustive, non-truncated claim extraction.",
-        "Add Topic Clusters and Coverage Matrices with content-type evidence requirements and explainable readiness.",
-        "Make approval apply to one exact Opportunity, persist evidence waits and resume one-to-one Candidate creation automatically.",
-        "Keep source diagnostics, research drafts, frontend pages and publish packages separate; compose commercial content only after QA.",
-        "Add chunked large-video upload, staged progress, auditable Claim exclusion and Knowledge visibility controls."
+        "增加来源分段、证据片段、提取覆盖和来源家族，避免长内容被截断或遗漏。",
+        "增加主题聚类和覆盖矩阵，按内容类型给出可解释的证据就绪度。",
+        "人工批准精确对应一个内容机会；证据不足时等待，满足后自动恢复且只创建一个候选。",
+        "来源诊断、研究草稿、前端页面和发布包保持分离，商业内容只在质量审核后组合。",
+        "增加大视频分块上传、阶段进度、可审计的信息主张排除和知识显示控制。"
       ]
     },
     {
       "version": "1.3",
       "effective_date": "2026-09-03",
       "status": "superseded",
-      "summary": "Separate entity identity, semantic relations and Claims, and introduce the isolated Affiliate Provider/Asset/Intent/Tracking phase.",
+      "summary": "分离实体身份、语义关系和信息主张，并引入独立的联盟供应商、素材、意图和追踪阶段。",
       "changes": [
-        "Add entity type, granularity and geographic constraints with auditable merge review and undo.",
-        "Separate Claim values, qualifiers and scope, and classify compatible, enrichment and refinement relations before conflicts.",
-        "Introduce Provider and Affiliate Asset registries with block intent, fallback, density limits and qualified opportunities.",
-        "Render structured commercial blocks safely and record explicit Frontend capability gaps.",
-        "Aggregate privacy-minimal impression and click events while preserving Research and Evidence Ledger separation."
+        "增加实体类型、粒度和地域约束，支持可审计的合并复核与撤销。",
+        "分离信息主张的值、限定条件和范围，在冲突前先识别兼容、补充和细化关系。",
+        "增加供应商和联盟素材登记、区块意图、兜底、密度限制和合格机会。",
+        "安全渲染结构化商业区块，并记录前端能力缺口。",
+        "以最少隐私数据聚合展示和点击事件，同时保持研究与证据账本隔离。"
       ]
     },
     {
       "version": "1.2",
       "effective_date": "2026-09-01",
       "status": "superseded",
-      "summary": "Admit explicitly authorized source-note images into the publication asset pool and prefer evidence-linked real photos in WordPress drafts.",
+      "summary": "允许明确获得授权的来源图片进入发布素材池，并在 WordPress 草稿中优先使用与证据匹配的真实照片。",
       "changes": [
-        "Record the content owner's confirmation that manually selected source-note images are authorized for SoloToChina publication.",
-        "Trace each matched source asset through its source note and WordPress media record.",
-        "Use verified maps, infographics or non-factual original illustrations only when no suitable real-world asset exists.",
-        "Preserve fact verification, human publishing decisions and the human-selected source boundary."
+        "记录内容所有者对人工选择来源图片发布授权的确认。",
+        "每个匹配的来源素材都可追溯到原笔记和 WordPress 媒体记录。",
+        "没有合适实景素材时，才使用已验证地图、信息图或非纪实原创插画。",
+        "继续保留事实核验、人工发布决定和人工选择来源的边界。"
       ]
     },
     {
       "version": "1.1",
       "effective_date": "2026-09-01",
       "status": "superseded",
-      "summary": "Add strategy history and distinguish research use of source images from publication eligibility.",
+      "summary": "增加策略历史，并明确区分来源图片用于研究理解和用于公开发布的资格。",
       "changes": [
-        "Expose immutable strategy version history and retain each downstream record's creating version.",
-        "Allow saved source images in OCR, multimodal understanding and research evidence.",
-        "Publish real-world images only when ownership, official status, license or permission is confirmed.",
-        "Keep data-backed maps and infographics deterministic and use generated images only as non-factual illustrations."
+        "向后台展示不可变的策略演化历史，下游记录保留创建时的策略版本。",
+        "保存的来源图片可用于文字识别、多模态理解和研究证据。",
+        "实景照片只有在自有、官方、许可或明确授权时才能公开发布。",
+        "地图和信息图由数据确定性生成，生成式图片只作为非纪实原创插画。"
       ]
     },
     {
       "version": "1.0",
       "effective_date": "2026-08-23",
       "status": "superseded",
-      "summary": "Establish human-selected intake, evidence-first production, human approval, SEO/GEO review and draft-only WordPress delivery.",
+      "summary": "建立人工选择来源、证据优先生产、人工批准、搜索优化审核和仅投递 WordPress 草稿的基础流程。",
       "changes": [
-        "Require explicit human capture and prohibit automatic discovery, bulk scraping and access-control bypass.",
-        "Separate Claims, destination Knowledge, content opportunities, canonical content, QA and commercial composition.",
-        "Require human approval before article planning and always deliver WordPress content as drafts."
+        "要求人工明确保存来源，禁止自动发现、批量抓取和绕过访问控制。",
+        "分离信息主张、目的地知识、内容机会、规范内容、质量审核和商业组合。",
+        "文章规划前必须人工批准，WordPress 始终只接收草稿。"
       ]
     }
   ]

@@ -2,9 +2,9 @@
 
 ## Active Content Strategy
 
-- **Active strategy:** SoloToChina Content Production Strategy 1.6
+- **Active strategy:** SoloToChina Content Production Strategy 1.7
 - **Canonical manifest:** `config/content-strategy.json`
-- **Specification:** `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.6.md`
+- **Specification:** `docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.7.md`
 - **Evolution log:** `docs/content-strategy/CHANGELOG.md` and the manifest `history` entries
 - **Status:** implemented incrementally on the existing durable SQLite pipeline; legacy records intentionally have no retroactive strategy tag.
 
@@ -42,7 +42,7 @@ The audited Frontend Registry provides the QA-selected booking, search, banner, 
 - Queue completion validates an exact operator-pasted official URL, creates one canonical `affiliate_assets` row, links the original Opportunity, and then uses the existing Composer/Event/Performance path. CSV/JSON import is row-isolated and supports dry-run.
 - The composer runs after QA, derives block intent, selects decision-appropriate precision, falls back silently, enforces density, and stores an independent Overlay. Research packages never read these tables.
 - WordPress receives generated safe commercial blocks with disclosure and sponsored link attributes. Arbitrary HTML/script is rejected.
-- App/Extension version `1.17.11`, schema migration `35`, and Content Strategy `1.6` are the expected local implementation baseline. The queue finishes the leading Source and its diagnostic before expanding later Sources. Provider pressure pauses new AI claims with bounded jittered backoff but does not rewrite the whole queue as cooling down. Extraction/classification use low Gemini thinking while planning, writing and review use medium thinking. Individual untraceable text Claims are excluded without blocking supported evidence. Readiness is based on a bounded reader promise and supports focused features plus rights-authorized single-Source adaptations.
+- App/Extension version `1.17.12`, schema migration `36`, and Content Strategy `1.7` are the expected local implementation baseline. Source Adaptation, Topic Feature, and Multi-Source Synthesis are parallel opportunities. Alternative itineraries and recommendations coexist unless same-scope hard facts are genuinely incompatible. Equivalent prices/hours and semantic negations are normalized before human review. High-volume text/image extraction uses asynchronous Vertex Batch and updates original jobs on completion; video, small tails, and failed items retain realtime fallback.
 - HTTPS Frontend Contract synchronization versions all three source URLs with the exact deployed frontend commit, preventing a CDN edge from returning the previous Registry/Page/Publish artifact immediately after deployment.
 
 Trip.com remains manual-only: an operator must create official links/embed configuration in the official platform and paste only those public artifacts into the Queue/Registry. Do not store credentials/cookies, automate dashboard login, crawl the affiliate dashboard, invent tracking parameters, or create low-value entity links at scale. See `docs/AFFILIATE_ASSET_QUEUE.md` for the operator workflow and provider-dependent limits.

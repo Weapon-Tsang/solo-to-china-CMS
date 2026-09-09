@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_ID="project-4bcb9146-c37b-43b0-b11"
-IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.17.11"
+IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.17.12"
 APP_DIR="/opt/solo-to-china"
 METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 
@@ -102,6 +102,12 @@ MANUAL_SOURCE_MAX_VIDEO_BYTES=268435456
 MANUAL_SOURCE_MAX_TOTAL_BYTES=314572800
 MANUAL_SOURCE_MAX_IMAGES=30
 MANUAL_SOURCE_GCS_BUCKET=solo-to-china-video-463584560230
+VERTEX_AI_BATCH_ENABLED=true
+VERTEX_AI_BATCH_BUCKET=solo-to-china-video-463584560230
+VERTEX_AI_BATCH_MIN_REQUESTS=20
+VERTEX_AI_BATCH_MAX_REQUESTS=1000
+VERTEX_AI_BATCH_POLL_MS=60000
+VERTEX_AI_BATCH_MAX_INPUT_BYTES=134217728
 
 WORDPRESS_SITE_URL=https://solotochina.com
 WORDPRESS_USERNAME=stc-cms

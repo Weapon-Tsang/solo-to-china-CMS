@@ -1,43 +1,63 @@
-# Content strategy changelog
+# 内容生产策略演化日志
+
+## 1.7 — 2026-09-09
+
+- 单一来源改写、专题创作和多来源综合改为可以同时成立的并行机会；一次文章生产只选择其中一个主路线，但不会关闭其他路线。
+- 一日游与两日游、不同路线顺序、不同菜品和不同机位默认是作者选择或多值推荐，不再因为文本不同就产生冲突异常。
+- 增加价格、全天开放等同义硬事实标准化，并收紧否定和限定语遗漏检查，减少无意义的人工处理。
+- 内容建议新增详细中文解释，逐条说明读者承诺、可写原因和证据边界。
+- 大批量分段提取接入 Vertex Batch；批任务完成后统一更新，小批量、视频和失败项由实时请求兜底。
 
 ## 1.6 — 2026-09-09
 
-- Replaced destination-wide encyclopedic completeness with readiness for one bounded reader promise.
-- Added focused Topic Feature and rights-authorized single-Source Adaptation modes alongside Multi-Source Synthesis.
-- Required multiple specific follow-up topic ideas when a Source can support a useful series.
-- Changed coverage handling so one untraceable Claim is excluded without blocking other supported evidence.
-- Changed queue policy to finish leading Sources and pause AI claiming without marking the entire backlog as cooling down.
+- 用一个边界清楚的读者承诺判断文章是否就绪，不再要求目的地百科式完整。
+- 增加窄专题和已授权单一来源改写，支持美食、住宿、路线、机位等系列内容。
+- 来源可以给出多个具体后续选题。
+- 单条无法回溯的提取结果会被排除，不再阻塞同一来源中已被证据支持的内容。
+- 调整队列，使靠前来源及其诊断尽快完成，并避免把整队任务统一显示为冷却。
 
-## 1.5 implementation clarification — 2026-09-08
+## 1.5 实施说明 — 2026-09-08
 
-- Documented Favorites Sync as an owner-selected Research intake path with owner-confirmed commercial media authorization and complete provenance.
-- Confirmed that concurrency/provider sizes are per-batch limits and cannot truncate Source evidence.
-- Preserved Recommendations as the only human article-production decision.
+- 明确“小红书收藏同步”是由所有者主动选择的研究来源入口，并保存完整授权和来源信息。
+- 明确并发数和模型批量大小只是每次请求的限制，不能造成来源内容截断。
+- “建议”继续作为唯一的人工文章生产批准入口。
 
 ## 1.5 — 2026-09-08
 
-Added exact draft/evidence version binding, final-page QA, reader-source traceability, task-specific content sufficiency, optional evidence-backed FAQ, subject-matched media reuse, model usage provenance and publication lifecycle impact.
+- 将审核、页面组合和商业输出绑定到准确的草稿版本、内容哈希和证据哈希。
+- 根据真实读者任务和证据决定文章篇幅、问答数量和配图，不用统一硬门槛。
+- 审核最终可见页面；FAQ 结构化数据只来自页面中真正显示的问答。
+- 展示读者可核实的来源，内部链接只来自已同步的 WordPress 内容。
+- 记录模型来源和用量，但不记录提示词、密钥或来源正文。
 
 ## 1.4 — 2026-09-07
 
-- Reframed Sources as evidence containers with preflight, text/PDF/media segmentation, exhaustive atomic Claim extraction, coverage audit, and one targeted retry.
-- Added Evidence Spans, Extraction Coverage, Source Families, Topic Clusters, Coverage Matrices, and evidence-gated Content Opportunity state transitions.
-- Made one human approval durable: incomplete Opportunities wait for evidence and resume automatically; exact ready Opportunities create one Candidate without destination-wide selection.
-- Added reversible administrator Claim exclusion and Knowledge visibility controls without deleting raw evidence or Claim history.
-- Added progress-reporting chunked video uploads and raised default document, image, video, and total upload limits.
+- 把来源建模为证据容器，经过预检、文本/PDF/媒体分段、原子信息主张提取和覆盖审计。
+- 增加证据片段、提取覆盖、来源家族、主题聚类、覆盖矩阵和证据驱动的内容机会状态。
+- 人工批准会被持久保存；证据不足的机会继续等待，满足后自动恢复且只创建一个候选。
+- 增加可撤销的信息主张排除和知识显示控制，不删除原始证据和历史。
+- 增加大视频分块上传和分阶段进度，并提高文件、图片、视频和总上传上限。
 
 ## 1.3 — 2026-09-03
 
-Separates Entity identity from semantic relatedness and Claims, adds typed/granular merge constraints with auditable undo, and replaces string inequality conflict detection with structured Claim relations and coexistence-aware review. Introduces the isolated Affiliate Provider/Asset/Intent/Slot/Opportunity/Event Phase 1, safe commercial WordPress blocks, Frontend Contract capability-gap requests, density guards, and selective precision fallback. Strategy 1.2 image authorization and all Research/Commercial boundaries remain in force.
+- 分开处理实体身份、语义相关性和信息主张，加入实体类型、粒度和地域约束以及可撤销复核。
+- 在判断冲突前，先识别可兼容、补充和细化的关系。
+- 引入独立的联盟供应商、素材、意图、位置、机会和事件阶段。
+- 安全组合商业 WordPress 区块，记录前端能力缺口并限制商业密度。
 
 ## 1.2 — 2026-09-01
 
-The content owner confirmed publication authorization from the original authors and Xiaohongshu platform for all images in explicitly human-selected, saved sources. Evidence-linked real-world photos from those sources now take priority in an approved article's visual plan and are uploaded to WordPress as draft media with source-asset traceability. Where no matching source image exists, deterministic maps/infographics and non-factual original illustrations remain the fallback.
+- 内容所有者确认：人工选择并保存的来源图片已获得原作者和平台的发布授权。
+- 获批文章优先使用与证据匹配的实景来源图片，并在 WordPress 草稿媒体中保留来源追踪。
+- 没有匹配实景图时，才使用数据确定的地图/信息图或非纪实原创插画。
 
 ## 1.1 — 2026-09-01
 
-Adds a dashboard-facing, immutable evolution log and makes the visual evidence boundary explicit. User-saved source images may support OCR, multimodal understanding, and evidence-led research. A real-world photo may enter a public article only when it is owned, official, licensed, or permission-confirmed; contextual relevance alone does not cause automatic republication. Data-backed maps and infographics remain deterministic, while generated images remain non-factual original illustrations.
+- 增加后台可查看且不可篡改的策略版本历史，下游记录保留创建时的版本。
+- 保存的来源图片可以用于文字识别、多模态理解和研究证据。
+- 实景图只有在自有、官方、许可或已确认授权时才能公开发布；相关性本身不等于发布许可。
+- 地图和信息图必须由数据确定性生成，生成式图片只承担非纪实插画用途。
 
 ## 1.0 — 2026-08-23
 
-Initial structured content-production strategy: human-selected intake, AI recommendation, explicit human approval, canonical content, structured rendering, SEO/GEO, schema, image intelligence, and draft-only publishing.
+- 建立最初的结构化内容生产流程：人工选择来源、AI 给出建议、人工批准、规范内容、结构化渲染、搜索优化、图片规划和仅投递 WordPress 草稿。

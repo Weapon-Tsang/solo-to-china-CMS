@@ -81,6 +81,12 @@ export function loadConfig(env = process.env) {
       sourceUploadsDir,
       maxVideoBytes: integer(env.MANUAL_SOURCE_MAX_VIDEO_BYTES, 256 * 1024 * 1024),
       videoBucket: String(env.MANUAL_SOURCE_GCS_BUCKET || "").trim(),
+      batchEnabled: boolean(env.VERTEX_AI_BATCH_ENABLED, true),
+      batchBucket: String(env.VERTEX_AI_BATCH_BUCKET || env.MANUAL_SOURCE_GCS_BUCKET || "").trim(),
+      batchMinimumRequests: integer(env.VERTEX_AI_BATCH_MIN_REQUESTS, 20),
+      batchMaximumRequests: integer(env.VERTEX_AI_BATCH_MAX_REQUESTS, 1_000),
+      batchPollMs: integer(env.VERTEX_AI_BATCH_POLL_MS, 60_000),
+      batchMaxInputBytes: integer(env.VERTEX_AI_BATCH_MAX_INPUT_BYTES, 128 * 1024 * 1024),
     },
     manualSources: {
       uploadDir: sourceUploadsDir,

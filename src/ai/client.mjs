@@ -17,6 +17,7 @@ export function createAiClient(config, fetchImpl = fetch) {
   };
   return {
     get enabled() { return current().enabled; },
+    get batchEnabled() { return Boolean(current().batchEnabled); },
     async completeJson(input) {
       const identity = callIdentity(config, input);
       if (responseCache.has(identity.key)) {
@@ -55,6 +56,11 @@ export function createAiClient(config, fetchImpl = fetch) {
     },
     imageParts(assets) { return current().imageParts(assets); },
     videoParts(assets) { return current().videoParts(assets); },
+    prepareBatchRequest(input) { return current().prepareBatchRequest(input); },
+    createBatch(requests) { return current().createBatch(requests); },
+    getBatch(name) { return current().getBatch(name); },
+    readBatchOutput(batch) { return current().readBatchOutput(batch); },
+    cleanupBatch(batch) { return current().cleanupBatch(batch); },
   };
 }
 

@@ -1,6 +1,6 @@
 # Favorites Sync intake interpretation
 
-This operational note applies the active Content Production Strategy 1.6 to Xiaohongshu Favorites Sync. It does not create a new strategy version or change the editorial approval gate.
+This operational note applies the active Content Production Strategy 1.7 to Xiaohongshu Favorites Sync. It does not create a new strategy version or change the editorial approval gate.
 
 ## Selection and authorization
 

@@ -141,16 +141,16 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 1.6
+## Content Production Strategy 1.7
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.6.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.6.md), and summarized by an append-only [evolution log](docs/content-strategy/CHANGELOG.md). Sources are evidence containers: preflight and segmentation account for text, PDF pages, images, and video evidence before traceable Claim extraction and coverage audit. Readiness is proportional to one bounded reader promise: a focused topic can stand alone, and a complete rights-authorized note can support an original single-source English adaptation without unrelated source mixing. Source families remain required only when the article promise genuinely needs multi-source synthesis. The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.7.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.7.md), and summarized by the Chinese [evolution log](docs/content-strategy/CHANGELOG.md). Source Adaptation, Topic Feature, and Multi-Source Synthesis are parallel opportunities: selecting one route for one article never disables the others. Author choices such as one-day/two-day itineraries, route order, food, lodging, and photo lists coexist by default. Equivalent prices and hours are canonicalized before only genuinely incompatible hard facts reach human review. High-volume text/image extraction uses asynchronous Vertex Batch with completion-based updates; video, small tails, and failed items use realtime fallback. The live operating path is:
 
 ```text
 Capture → structured research → Kimi Intake Analysis → Recommendation → human decision
                                                        → Approve article only → planning → canonical content → QA → WordPress draft
 ```
 
-The **Recommendations** tab is the single article decision point. Approval is durable: insufficient evidence enters `approved_waiting_for_evidence`, then automatically resumes as `approved_ready` when the Coverage Matrix becomes complete. Every new downstream record carries Strategy `1.4`; historical records retain the strategy version that created them.
+The **Recommendations** tab is the single article decision point. Approval is durable: insufficient evidence enters `approved_waiting_for_evidence`, then automatically resumes as `approved_ready` when the Coverage Matrix becomes complete. Every new downstream record carries the active Strategy version; historical records retain the strategy version that created them.
 
 Every source image in an explicitly saved note is owner-confirmed as authorized for SoloToChina publication. The system traces article evidence back to those source assets, prioritizes matching real-world photos as WordPress draft media, and retains their provenance. Maps and infographics are rendered from validated data, while image generation is limited to non-factual original illustrations.
 

@@ -29,7 +29,7 @@ From an authenticated Google Cloud shell or workstation, substitute your own val
 $project = "YOUR_PROJECT_ID"
 $region = "us-central1"
 $repo = "solo-to-china"
-$image = "$region-docker.pkg.dev/$project/$repo/engine:1.17.11"
+$image = "$region-docker.pkg.dev/$project/$repo/engine:1.17.12"
 
 gcloud services enable compute.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com --project $project
 gcloud artifacts repositories create $repo --repository-format=docker --location=$region --project=$project
@@ -47,7 +47,7 @@ docker compose ps
 
 The current startup helper uses native `docker run` commands on the VM so the deployment is not coupled to the Debian image's legacy Compose client. The checked-in Compose file remains useful for local administration. The `solo_to_china_data` Docker volume stores SQLite, verified backups, and generated media. Snapshot the VM persistent disk or copy verified SQLite backups to a private Cloud Storage bucket on an operations schedule.
 
-Uploaded videos larger than the inline Gemini request threshold use the private bucket named by `MANUAL_SOURCE_GCS_BUCKET`. Grant only the VM service account `roles/storage.objectAdmin` on that bucket, enforce public-access prevention and uniform bucket-level access, and apply `video-bucket-lifecycle.json`. The application deletes each `manual-source-input/` object after extraction; the lifecycle rule removes abandoned temporary objects after one day. Authorized originals remain in `solo_to_china_data` and are never governed by this bucket policy.
+Uploaded videos larger than the inline Gemini request threshold use the private bucket named by `MANUAL_SOURCE_GCS_BUCKET`. Vertex Batch JSONL input/output uses `VERTEX_AI_BATCH_BUCKET` (it may be the same private bucket). Grant the VM service account `roles/storage.objectAdmin` for application staging and grant the Vertex AI service agent (`service-PROJECT_NUMBER@gcp-sa-aiplatform.iam.gserviceaccount.com`) object read/write access on that batch bucket. Enforce public-access prevention and uniform bucket-level access, then apply `video-bucket-lifecycle.json`. The application deletes completed `manual-source-input/` and `vertex-batch/` temporary objects; the lifecycle rule removes abandoned objects after one day. Authorized originals remain in `solo_to_china_data` and are never governed by this bucket policy.
 
 ## Install the extension on every desktop Chrome
 
@@ -67,7 +67,7 @@ The cloud package is preconfigured at build time, so the founder does not enter 
 - `https://engine.example.com` presents the application sign-in screen. Do not use a weak default password on an internet-accessible deployment; the provided provisioning script creates a high-entropy initial password in the ignored local output file.
 - `https://capture.example.com/api/health` returns basic health, while `https://capture.example.com/api/dashboard` returns 404.
 - The extension can save a manually opened note and poll its own `/api/sources/{id}` status using `CAPTURE_TOKEN`.
-- Vertex AI Gemini 3.8 Flash is the default multimodal research and writing model on a fresh deployment; Kimi K3 and Kimi K2.7 Code remain explicit alternatives in Settings.
+- Vertex AI Gemini 3.8 Flash is the default multimodal research and writing model on a fresh deployment. Large text/image extraction backlogs use asynchronous Vertex Batch with completion-based updates; video, small tails, and failed items use realtime requests. Kimi K3 and Kimi K2.7 Code remain explicit alternatives in Settings.
 - With Gemini 3.1 Flash Image configured, an article produces 2-5 original non-factual visual assets and WordPress receives them as uploaded media attachments.
 
 ## Secrets and costs

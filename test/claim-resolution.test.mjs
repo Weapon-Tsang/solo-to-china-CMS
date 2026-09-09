@@ -65,6 +65,60 @@ test("hard facts use scope-aware conflict rules and extraction errors are separa
   assert.equal(extraction.reviewType, "NEGATION_EXTRACTION_ERROR");
 });
 
+test("different authors' itinerary routes coexist as alternative recommendations", () => {
+  const oneDay = claim("Jiefangbei -> Shibati -> Hongyadong", {
+    predicate: "suggested_route_day_1", sourceQuote: "Day 1: Jiefangbei, Shibati, Hongyadong",
+  });
+  const twoDay = claim("Liziba -> Eling Factory -> Guanyinqiao", {
+    predicate: "route_sequence", sourceQuote: "Day 1: Liziba, Eling Factory, Guanyinqiao",
+  });
+  const relation = classifyClaimPair(oneDay, twoDay);
+  assert.equal(relation.relation, "COMPATIBLE");
+  assert.equal(relation.canCoexist, true);
+  assert.equal(relation.reviewType, null);
+  assert.equal(structureClaim({ predicate: "itinerary_stops", value: "A -> B" }).cardinality, "MULTI_VALUE");
+});
+
+test("menu items and useful feature lists are multi-value knowledge", () => {
+  for (const predicate of ["serves_dish", "associated_food_specialty", "has_feature"]) {
+    const relation = classifyClaimPair(claim("option A", { predicate }), claim("option B", { predicate }));
+    assert.equal(relation.canCoexist, true, predicate);
+    assert.equal(relation.reviewType, null, predicate);
+  }
+});
+
+test("equivalent free prices and all-day opening hours are canonical paraphrases", () => {
+  for (const [predicate, left, right] of [
+    ["admission_fee", "free", "0 RMB"],
+    ["ticket_price", "0 CNY", "免费"],
+    ["opening_hours", "24/7", "all day"],
+    ["opening_hours", "08:00-22:00", "8:00-22:00"],
+  ]) {
+    const relation = classifyClaimPair(claim(left, { predicate, sourceQuote: "" }), claim(right, { predicate, sourceQuote: "" }));
+    assert.equal(relation.relation, "PARAPHRASE", `${predicate}: ${left} / ${right}`);
+    assert.equal(relation.reviewType, null);
+  }
+});
+
+test("No. 2 place names and semantically represented Chinese guidance do not trigger negation reviews", () => {
+  assert.equal(structureClaim({ predicate: "route_sequence", value: "Eling No. 2 Factory" }).polarity, "positive");
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "不用跑进居民楼里",
+    predicate: "residential_building_entry",
+    value_text: "unnecessary to enter residential buildings",
+  }), null);
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "本地人：动物园不是免费。需要门票25元",
+    predicate: "ticket_price",
+    value_text: "25 RMB",
+  }), null);
+  assert.equal(detectClaimExtractionIssue({
+    source_quote: "全程只有四五分钟",
+    predicate: "ride_duration",
+    value_text: "4-5 minutes",
+  }), null);
+});
+
 test("extraction review checks the complete Claim semantics instead of value text alone", () => {
   assert.equal(detectClaimExtractionIssue({
     source_quote: "重庆动物园 25r 8:00-18:00 无需预约 2号线动物园",

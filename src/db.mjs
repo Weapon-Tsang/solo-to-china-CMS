@@ -54,6 +54,51 @@ function migrate(db) {
   if (current < 33) migrationThirtyThree(db);
   if (current < 34) migrationThirtyFour(db);
   if (current < 35) migrationThirtyFive(db);
+  if (current < 36) migrationThirtySix(db);
+}
+
+function migrationThirtySix(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE vertex_batch_runs (
+        id TEXT PRIMARY KEY,
+        provider_job_name TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL,
+        location TEXT NOT NULL,
+        input_uri TEXT NOT NULL DEFAULT '',
+        output_uri_prefix TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK (status IN ('preparing','submitted','succeeded','failed','cancelled','expired')),
+        provider_state TEXT NOT NULL DEFAULT '',
+        submitted_count INTEGER NOT NULL DEFAULT 0,
+        succeeded_count INTEGER NOT NULL DEFAULT 0,
+        failed_count INTEGER NOT NULL DEFAULT 0,
+        next_poll_at TEXT NOT NULL,
+        last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+      CREATE INDEX idx_vertex_batch_runs_active ON vertex_batch_runs(status,next_poll_at,created_at);
+
+      CREATE TABLE vertex_batch_items (
+        run_id TEXT NOT NULL REFERENCES vertex_batch_runs(id) ON DELETE CASCADE,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        segment_id TEXT NOT NULL REFERENCES source_segments(id) ON DELETE CASCADE,
+        batch_item_id TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL DEFAULT 'preparing' CHECK (status IN ('preparing','submitted','succeeded','failed')),
+        last_error TEXT NOT NULL DEFAULT '',
+        completed_at TEXT,
+        PRIMARY KEY(run_id,job_id)
+      );
+      CREATE INDEX idx_vertex_batch_items_job ON vertex_batch_items(job_id,status);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (36, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationThirtyFive(db) {

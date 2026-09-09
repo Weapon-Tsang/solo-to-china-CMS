@@ -46,7 +46,14 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
     enabled: true,
     async analyzeIntake() {
       return { model: "intake-model", output: {
-        classification: "ARTICLE_CANDIDATE", production_mode: "TOPIC_FEATURE", confidence: 0.9, primary_topic: "First-Time Beijing", entities: ["Beijing"],
+        classification: "ARTICLE_CANDIDATE", production_mode: "TOPIC_FEATURE",
+        production_modes: ["TOPIC_FEATURE", "SOURCE_ADAPTATION", "MULTI_SOURCE_SYNTHESIS"],
+        production_paths: [
+          { mode: "TOPIC_FEATURE", content_type: "first_time_guide", title: "First-Time Beijing Solo Travel Guide", reader_promise: "Plan a bounded first visit", why_it_works: "The source contains practical planning evidence.", evidence_boundary: "Use the scoped facts only." },
+          { mode: "SOURCE_ADAPTATION", content_type: "itinerary", title: "Source A's Beijing Route", reader_promise: "Follow this author's route", why_it_works: "The authorized source contains a coherent route.", evidence_boundary: "Use this source only." },
+          { mode: "MULTI_SOURCE_SYNTHESIS", content_type: "comparison", title: "Two Ways to Plan a Beijing First Visit", reader_promise: "Compare compatible approaches", why_it_works: "Two independent sources support useful alternatives.", evidence_boundary: "Use compatible destination facts." },
+        ],
+        confidence: 0.9, primary_topic: "First-Time Beijing", entities: ["Beijing"],
         knowledge_points: ["Practical planning evidence"], claims: ["beijing.orientation.location"], article_potential: 88,
         information_density: 82, topic_completeness: 76, duplicate_likelihood: 5, recommended_action: "CREATE_CONTENT_PLAN",
         suggested_content_type: "first_time_guide", suggested_article_title: "First-Time Beijing Solo Travel Guide",
@@ -132,7 +139,12 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(dashboardBeforeApproval.totals.contentPipelineItems, 0);
   const recommendation = repository.listContentRecommendations()[0];
   assert.equal(recommendation.strategy_version, CONTENT_STRATEGY.version);
-  const approval = repository.decideRecommendation(recommendation.id, "approved_article");
+  assert.equal(recommendation.production_paths.length, 3);
+  assert.ok(recommendation.production_paths.every((path) => path.opportunity_id));
+  assert.ok(repository.listContentOpportunities().length >= 6);
+  const adaptationPath = recommendation.production_paths.find((path) => path.mode === "SOURCE_ADAPTATION");
+  const approval = repository.decideRecommendation(recommendation.id, "approved_article", "", { opportunityId: adaptationPath.opportunity_id });
+  assert.equal(approval.opportunityId, adaptationPath.opportunity_id);
   const dashboardAfterApproval = repository.dashboard();
   assert.equal(dashboardAfterApproval.actionCounts.recommendations, pendingRecommendationCount - 1);
   assert.equal(dashboardAfterApproval.totals.pendingRecommendations, pendingRecommendationCount - 1);

@@ -539,7 +539,142 @@ export class Repository {
     }
   }
 
-  claimJob() {
+  recoverPreparingVertexBatches() {
+    const runs = this.db.prepare("SELECT id FROM vertex_batch_runs WHERE status='preparing'").all();
+    if (!runs.length) return 0;
+    const timestamp = this.jobTimestamp();
+    transaction(this.db, () => {
+      for (const run of runs) {
+        this.db.prepare(`UPDATE vertex_batch_items SET status='failed',last_error='Batch preparation was interrupted; returned to the realtime queue.',completed_at=?
+          WHERE run_id=? AND status='preparing'`).run(timestamp, run.id);
+        this.db.prepare(`UPDATE vertex_batch_runs SET status='failed',last_error='Batch preparation was interrupted during process restart.',
+          failed_count=(SELECT COUNT(*) FROM vertex_batch_items WHERE run_id=?),completed_at=?,updated_at=? WHERE id=?`)
+          .run(run.id, timestamp, timestamp, run.id);
+      }
+    });
+    return runs.length;
+  }
+
+  countVertexBatchEligibleJobs() {
+    return Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs j
+      JOIN source_segments ss ON ss.id=j.entity_id
+      WHERE j.type='extract_segment_claims' AND j.status='queued' AND j.available_at<=?
+        AND ss.segment_type<>'video_chapter'
+        AND NOT EXISTS (
+          SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
+          WHERE vbi.job_id=j.id AND vbr.status IN ('preparing','submitted')
+        )`).get(this.jobTimestamp())?.count || 0);
+  }
+
+  reserveVertexBatchJobs({ minimum = 20, maximum = 1_000, model = '', location = 'global' } = {}) {
+    return transaction(this.db, () => {
+      if (this.db.prepare("SELECT 1 FROM vertex_batch_runs WHERE status IN ('preparing','submitted') LIMIT 1").get()) return null;
+      const timestamp = this.jobTimestamp();
+      const rows = this.db.prepare(`SELECT j.* FROM jobs j
+        JOIN source_segments ss ON ss.id=j.entity_id
+        WHERE j.type='extract_segment_claims' AND j.status='queued' AND j.available_at<=?
+          AND ss.segment_type<>'video_chapter'
+          AND NOT EXISTS (
+            SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
+            WHERE vbi.job_id=j.id AND vbr.status IN ('preparing','submitted')
+          )
+        ORDER BY j.created_at ASC LIMIT ?`).all(timestamp, Math.max(1, Number(maximum || 1_000)));
+      if (rows.length < Math.max(1, Number(minimum || 20))) return null;
+      const runId = id("vertex_batch");
+      this.db.prepare(`INSERT INTO vertex_batch_runs(id,model,location,status,next_poll_at,created_at,updated_at)
+        VALUES (?,?,?,'preparing',?,?,?)`).run(runId, model, location, timestamp, timestamp, timestamp);
+      const addItem = this.db.prepare(`INSERT INTO vertex_batch_items(run_id,job_id,segment_id,batch_item_id,status)
+        VALUES (?,?,?,?, 'preparing')`);
+      for (const row of rows) {
+        const batchItemId = `batch_item_${sha256(`${runId}:${row.id}`).slice(0, 24)}`;
+        addItem.run(runId, row.id, row.entity_id, batchItemId);
+      }
+      return { id: runId, model, location, status: 'preparing', items: rows.map((row, index) => ({
+        ...row, segment_id: row.entity_id,
+        batch_item_id: `batch_item_${sha256(`${runId}:${row.id}`).slice(0, 24)}`,
+      })) };
+    });
+  }
+
+  activateVertexBatch(runId, batch) {
+    const timestamp = this.jobTimestamp();
+    return transaction(this.db, () => {
+      const submittedIds = new Set(batch.itemIds || []);
+      const items = this.db.prepare("SELECT * FROM vertex_batch_items WHERE run_id=? AND status='preparing'").all(runId);
+      for (const item of items) {
+        if (submittedIds.has(item.batch_item_id)) {
+          this.db.prepare("UPDATE vertex_batch_items SET status='submitted',last_error='' WHERE run_id=? AND job_id=?")
+            .run(runId, item.job_id);
+          this.db.prepare(`UPDATE jobs SET attempts=attempts+1,started_at=COALESCE(started_at,?),
+            queue_latency_ms=COALESCE(queue_latency_ms,?),updated_at=? WHERE id=? AND status='queued'`)
+            .run(timestamp, Math.max(0, Date.parse(timestamp) - Date.parse(this.db.prepare("SELECT created_at FROM jobs WHERE id=?").get(item.job_id)?.created_at || timestamp)), timestamp, item.job_id);
+        } else {
+          this.db.prepare("UPDATE vertex_batch_items SET status='failed',last_error=?,completed_at=? WHERE run_id=? AND job_id=?")
+            .run("This item could not be prepared for Vertex Batch; returned to the realtime queue.", timestamp, runId, item.job_id);
+        }
+      }
+      this.db.prepare(`UPDATE vertex_batch_runs SET provider_job_name=?,input_uri=?,output_uri_prefix=?,status='submitted',
+        provider_state=?,submitted_count=?,next_poll_at=?,updated_at=? WHERE id=? AND status='preparing'`)
+        .run(batch.name, batch.inputUri, batch.outputUriPrefix, batch.state || 'JOB_STATE_PENDING', submittedIds.size,
+          new Date(this.clock().getTime() + Number(batch.pollMs || 60_000)).toISOString(), timestamp, runId);
+    });
+  }
+
+  dueVertexBatch() {
+    const run = this.db.prepare(`SELECT * FROM vertex_batch_runs WHERE status='submitted' AND next_poll_at<=?
+      ORDER BY created_at LIMIT 1`).get(this.jobTimestamp());
+    if (!run) return null;
+    return { ...run, items: this.db.prepare("SELECT * FROM vertex_batch_items WHERE run_id=? AND status='submitted' ORDER BY rowid").all(run.id) };
+  }
+
+  deferVertexBatchPoll(runId, providerState, delayMs = 60_000) {
+    const timestamp = this.jobTimestamp();
+    this.db.prepare("UPDATE vertex_batch_runs SET provider_state=?,next_poll_at=?,updated_at=? WHERE id=? AND status='submitted'")
+      .run(providerState || '', new Date(this.clock().getTime() + delayMs).toISOString(), timestamp, runId);
+  }
+
+  completeVertexBatchItem(run, item, extraction) {
+    const timestamp = this.jobTimestamp();
+    if (!this.saveSegmentExtraction(item.segment_id, extraction)) return this.releaseVertexBatchItem(run.id, item.job_id, "Source changed while the batch was running; returned for fresh extraction.");
+    this.enqueue("audit_segment_coverage", item.segment_id);
+    const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(item.job_id);
+    const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
+    transaction(this.db, () => {
+      this.db.prepare("UPDATE vertex_batch_items SET status='succeeded',last_error='',completed_at=? WHERE run_id=? AND job_id=?")
+        .run(timestamp, run.id, item.job_id);
+      this.db.prepare(`UPDATE jobs SET status='succeeded',completed_at=?,duration_ms=?,last_error=NULL,updated_at=?
+        WHERE id=? AND status='queued'`).run(timestamp, durationMs, timestamp, item.job_id);
+    });
+    return true;
+  }
+
+  releaseVertexBatchItem(runId, jobId, error) {
+    const timestamp = this.jobTimestamp();
+    const message = String(error?.message || error || "Vertex Batch item failed").slice(0, 4_000);
+    transaction(this.db, () => {
+      this.db.prepare("UPDATE vertex_batch_items SET status='failed',last_error=?,completed_at=? WHERE run_id=? AND job_id=?")
+        .run(message, timestamp, runId, jobId);
+      const job = this.db.prepare("SELECT attempts,max_attempts FROM jobs WHERE id=?").get(jobId);
+      const retry = Number(job?.attempts || 0) < Number(job?.max_attempts || 3);
+      this.db.prepare(`UPDATE jobs SET status=?,available_at=?,last_error=?,completed_at=?,updated_at=? WHERE id=? AND status='queued'`)
+        .run(retry ? 'queued' : 'failed', timestamp, message, retry ? null : timestamp, timestamp, jobId);
+    });
+  }
+
+  finishVertexBatch(runId, status, providerState = '', error = '') {
+    const timestamp = this.jobTimestamp();
+    const counts = this.db.prepare(`SELECT SUM(status='succeeded') AS succeeded,SUM(status='failed') AS failed
+      FROM vertex_batch_items WHERE run_id=?`).get(runId);
+    this.db.prepare(`UPDATE vertex_batch_runs SET status=?,provider_state=?,succeeded_count=?,failed_count=?,last_error=?,
+      completed_at=?,updated_at=? WHERE id=?`).run(status, providerState, Number(counts?.succeeded || 0), Number(counts?.failed || 0),
+      String(error || '').slice(0, 4_000), timestamp, timestamp, runId);
+  }
+
+  activeVertexBatchCount() {
+    return Number(this.db.prepare("SELECT COUNT(*) AS count FROM vertex_batch_runs WHERE status IN ('preparing','submitted')").get()?.count || 0);
+  }
+
+  claimJob({ deferBatchExtraction = false } = {}) {
     return transaction(this.db, () => {
       const timestamp = this.jobTimestamp();
       const providerReady = this.clock().getTime() >= this.providerBackoffUntil;
@@ -551,6 +686,11 @@ export class Repository {
       const job = this.db.prepare(`
         SELECT * FROM jobs
         WHERE status = 'queued' AND available_at <= ?
+          AND (? = 0 OR type <> 'extract_segment_claims')
+          AND NOT EXISTS (
+            SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
+            WHERE vbi.job_id=jobs.id AND vbr.status IN ('preparing','submitted')
+          )
           AND (? = 1 OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")}))
         ORDER BY
           CASE type
@@ -580,7 +720,7 @@ export class Repository {
           END,
           created_at ASC
         LIMIT 1
-      `).get(timestamp, providerReady ? 1 : 0, ...AI_JOB_TYPES);
+      `).get(timestamp, deferBatchExtraction ? 1 : 0, providerReady ? 1 : 0, ...AI_JOB_TYPES);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
       const claimed = this.db.prepare(`
@@ -843,7 +983,8 @@ export class Repository {
     const material = String(row.raw_text || "").trim().length >= 40 || row.asset_id;
     const assessedUncovered = Array.isArray(assessment?.uncovered_spans) ? assessment.uncovered_spans
       .map((item) => ({ locator: String(item.quote || item.locator || row.title || `segment ${row.sequence + 1}`).slice(0, 800),
-        importance: String(item.importance || "material"), reason: String(item.reason || "Material travel evidence is not covered by a Claim.").slice(0, 1000) })) : null;
+        importance: String(item.importance || "material"), reason: String(item.reason || "Material travel evidence is not covered by a Claim.").slice(0, 1000) }))
+      .filter((item) => !unsupportedClaimAuditFalsePositive(item)) : null;
     const noSupportedClaimGap = !row.asset_id && material && supportedClaims.length === 0 && row.method !== "heuristic"
       ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: "Material segment produced no traceable Claim." }] : [];
     const modalityGap = row.asset_id && receivedModality !== expectedModality
@@ -1039,12 +1180,27 @@ export class Repository {
         normalized.reasoning_summary, timestamp, timestamp);
     });
     const recommendation = this.db.prepare("SELECT * FROM content_recommendations WHERE analysis_id=?").get(analysisId);
+    this.db.prepare(`DELETE FROM content_opportunities WHERE recommendation_id=? AND strategy_version<>?
+      AND status IN ('recommended','knowledge_only','cluster','research_required','ignored')`).run(recommendation.id, this.strategyVersion);
     this.upsertContentOpportunity(source.destination_slug, sourceId, recommendation, normalized);
+    for (const path of normalized.production_paths || []) {
+      const sameAsPrimary = path.title === normalized.suggested_article_title
+        && normalizePublicationMode(path.mode) === normalizePublicationMode(normalized.production_mode)
+        && normalizeContentType(path.content_type) === normalizeContentType(normalized.suggested_content_type);
+      if (sameAsPrimary) continue;
+      this.upsertContentOpportunity(source.destination_slug, sourceId, recommendation, {
+        ...normalized,
+        primary_topic: path.title,
+        suggested_article_title: path.title,
+        suggested_content_type: path.content_type || normalized.suggested_content_type,
+        production_mode: path.mode,
+      }, { linkRecommendation: false });
+    }
     return this.getSource(sourceId).analysis;
   }
 
   listContentRecommendations(limit = 100) {
-    return this.db.prepare(`
+    const rows = this.db.prepare(`
       SELECT r.*, a.confidence, a.primary_topic, a.article_potential, a.information_density, a.topic_completeness,
         a.duplicate_likelihood, a.analysis_json, s.title AS source_title, ss.destination_name, ss.destination_slug
       FROM content_recommendations r
@@ -1052,7 +1208,10 @@ export class Repository {
       JOIN sources s ON s.id=r.source_id
       LEFT JOIN structured_sources ss ON ss.source_id=r.source_id
       ORDER BY CASE r.decision WHEN 'pending' THEN 0 ELSE 1 END, r.updated_at DESC LIMIT ?
-    `).all(limit).map(hydrateRecommendation);
+    `).all(limit);
+    const listOpportunities = this.db.prepare(`SELECT id,title,status,readiness_json,coverage_json,candidate_id
+      FROM content_opportunities WHERE recommendation_id=? ORDER BY created_at,id`);
+    return rows.map((row) => hydrateRecommendation(row, listOpportunities.all(row.id)));
   }
 
   listContentOpportunities(limit = 100) {
@@ -1100,7 +1259,7 @@ export class Repository {
     };
   }
 
-  decideRecommendation(recommendationId, decision, note = "") {
+  decideRecommendation(recommendationId, decision, note = "", { opportunityId = null } = {}) {
     const allowed = new Set(["approved_article", "knowledge_only", "cluster", "research_first", "ignored"]);
     if (!allowed.has(decision)) throw new Error("Unsupported recommendation decision.");
     const recommendation = this.db.prepare(`
@@ -1113,7 +1272,12 @@ export class Repository {
     if (!recommendation) return null;
     const analysis = json(recommendation.analysis_json, {});
     const timestamp = now();
-    let opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE recommendation_id=?").get(recommendationId);
+    let opportunity = opportunityId && decision === "approved_article"
+      ? this.db.prepare("SELECT * FROM content_opportunities WHERE id=? AND recommendation_id=?").get(opportunityId, recommendationId)
+      : recommendation.opportunity_id
+        ? this.db.prepare("SELECT * FROM content_opportunities WHERE id=? AND recommendation_id=?").get(recommendation.opportunity_id, recommendationId)
+        : this.db.prepare("SELECT * FROM content_opportunities WHERE recommendation_id=? ORDER BY created_at,id LIMIT 1").get(recommendationId);
+    if (opportunityId && decision === "approved_article" && !opportunity) throw new Error("The selected production path does not belong to this recommendation.");
     if (!opportunity) {
       this.upsertContentOpportunity(recommendation.destination_slug, recommendation.source_id, recommendation, analysis);
       opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE recommendation_id=?").get(recommendationId);
@@ -1137,19 +1301,23 @@ export class Repository {
   }
 
   upsertContentOpportunity(destinationSlug, sourceId, recommendation, analysis, overrides = {}) {
-    const topic = analysis.primary_topic || recommendation.suggested_article_title || "travel topic";
+    const topic = analysis.primary_topic || analysis.suggested_article_title || recommendation.suggested_article_title || "travel topic";
     const contentType = normalizeContentType(analysis.suggested_content_type || recommendation.suggested_content_type);
-    const topicKey = stableOpportunityKey(destinationSlug, topic, contentType);
-    const opportunityId = `opportunity_${sha256(topicKey).slice(0, 24)}`;
-    const allFacts = this.knowledgeForDestination(destinationSlug);
-    const title = analysis.suggested_article_title || recommendation.suggested_article_title || `${topic} guide`;
     const sourceRights = this.db.prepare("SELECT authorization_status,editing_allowed FROM sources WHERE id=?").get(sourceId);
     const requestedMode = normalizePublicationMode(analysis.production_mode
       || (analysis.classification === "ARTICLE_CANDIDATE" ? "TOPIC_FEATURE" : "MULTI_SOURCE_SYNTHESIS"));
     const publicationMode = requestedMode === "source_adaptation" && !Boolean(sourceRights?.editing_allowed)
       ? "topic_feature" : requestedMode;
+    const title = analysis.suggested_article_title || recommendation.suggested_article_title || `${topic} guide`;
+    const baseTopicKey = stableOpportunityKey(destinationSlug, title, contentType);
+    // Intake suggestions remain independently actionable even when another author proposes
+    // the same broad topic. Cross-source synthesis still reads destination-wide facts, but
+    // choosing it must not consume or overwrite this source's adaptation or feature routes.
+    const topicKey = `${baseTopicKey}:source:${sha256(sourceId).slice(0, 12)}`;
+    const opportunityId = `opportunity_${sha256(topicKey).slice(0, 24)}`;
+    const allFacts = this.knowledgeForDestination(destinationSlug);
     const sourceFacts = factsForSource(allFacts, sourceId);
-    const facts = publicationMode === "source_adaptation" && sourceFacts.length
+    const facts = ["source_adaptation", "topic_feature"].includes(publicationMode) && sourceFacts.length
       ? sourceFacts : scopeFactsForOpportunity(allFacts, { destinationSlug, topic, title });
     const familyCount = this.independentSourceFamilyCountForFacts(facts);
     const matrix = evaluateCoverage({ topicKey, contentType, facts, sourceFamilyCount: familyCount, publicationMode });
@@ -1175,7 +1343,9 @@ export class Repository {
     `).run(opportunityId,destinationSlug,JSON.stringify([destinationSlug]),topicKey,this.strategyVersion,sourceId,JSON.stringify([sourceId]),recommendation.id,candidateId,
       title,contentType,matrix.readiness.score,JSON.stringify(matrix.readiness),JSON.stringify(coverage),status,timestamp,timestamp,
       lifecycle.action,lifecycle.targetPostId,JSON.stringify(lifecycle.impact));
-    this.db.prepare("UPDATE content_recommendations SET opportunity_id=? WHERE id=?").run(opportunityId, recommendation.id);
+    if (overrides.linkRecommendation !== false) {
+      this.db.prepare("UPDATE content_recommendations SET opportunity_id=? WHERE id=?").run(opportunityId, recommendation.id);
+    }
     this.saveCoverageMatrix(matrix, destinationSlug);
     return opportunityId;
   }
@@ -1242,7 +1412,7 @@ export class Repository {
       const previousCoverage = json(opportunity.coverage_json, {});
       const publicationMode = normalizePublicationMode(previousCoverage.publicationMode);
       const sourceFacts = factsForSource(allFacts, opportunity.source_id);
-      const facts = publicationMode === "source_adaptation" && sourceFacts.length
+      const facts = ["source_adaptation", "topic_feature"].includes(publicationMode) && sourceFacts.length
         ? sourceFacts : scopeFactsForOpportunity(allFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
       const familyCount = this.independentSourceFamilyCountForFacts(facts);
       const matrix = evaluateCoverage({ topicKey: opportunity.topic_key, contentType: opportunity.content_type, facts, sourceFamilyCount: familyCount, publicationMode });
@@ -2931,6 +3101,7 @@ export class Repository {
   }
 
   enqueueStartupReconciliation({ wordpressEnabled = false, contractAware = false } = {}) {
+    this.reconcileCoverageAuditFalsePositives();
     const researchSlugs = new Set(this.db.prepare("SELECT DISTINCT destination_slug FROM structured_sources").all().map((row) => row.destination_slug));
     for (const slug of researchSlugs) this.enqueue("rebuild_knowledge", slug);
     for (const row of this.db.prepare(`SELECT s.id FROM sources s
@@ -2957,6 +3128,32 @@ export class Repository {
         this.enqueue(jobType, row.id);
       }
     }
+  }
+
+  reconcileCoverageAuditFalsePositives() {
+    const rows = this.db.prepare("SELECT * FROM extraction_coverage WHERE status='manual_review' AND claim_count>0").all();
+    const acceptedSourceIds = new Set();
+    const timestamp = now();
+    transaction(this.db, () => {
+      for (const row of rows) {
+        const uncovered = json(row.uncovered_spans_json, []);
+        if (!uncovered.length || !uncovered.every(unsupportedClaimAuditFalsePositive)) continue;
+        const audit = json(row.audit_json, {});
+        this.db.prepare(`UPDATE extraction_coverage SET status='passed',important_uncovered_count=0,uncovered_spans_json='[]',
+          audit_json=?,audited_at=? WHERE id=?`).run(JSON.stringify({ ...audit, autoAccepted: true,
+          autoAcceptedReason: "unsupported_extracted_claims_are_excluded_not_source_gaps", dismissedGaps: uncovered }), timestamp, row.id);
+        this.db.prepare("UPDATE source_segments SET status='complete',updated_at=? WHERE id=?").run(timestamp, row.segment_id);
+        acceptedSourceIds.add(row.source_id);
+      }
+      for (const sourceId of acceptedSourceIds) {
+        const state = this.reconcileSourceCoverageState(sourceId);
+        if (state.ready) {
+          this.db.prepare("UPDATE sources SET status='processing',last_error=NULL,updated_at=? WHERE id=?").run(timestamp, sourceId);
+          this.enqueue("finalize_source_extraction", sourceId);
+        }
+      }
+    });
+    return acceptedSourceIds.size;
   }
 
   resetDerivedResearchAndRequeue() {
@@ -4170,10 +4367,31 @@ function normalizeIntakeAnalysis(value, strategyVersion) {
     CLUSTER_CANDIDATE: "ADD_TO_CLUSTER", RESEARCH_REQUIRED: "RESEARCH_FIRST", DUPLICATE: "MERGE_OR_IGNORE",
     LOW_VALUE: "IGNORE", UNSURE: "HUMAN_REVIEW",
   }[classification];
+  const productionMode = normalizeProductionMode(value?.production_mode, classification);
+  const productionModes = [...new Set([productionMode, ...(Array.isArray(value?.production_modes) ? value.production_modes : [])
+    .map((item) => normalizeProductionMode(item, classification))])].slice(0, 3);
+  const productionPaths = (Array.isArray(value?.production_paths) ? value.production_paths : []).slice(0, 8).map((item) => ({
+    mode: normalizeProductionMode(item?.mode, classification),
+    content_type: normalizeContentType(item?.content_type || value?.suggested_content_type),
+    title: truncateText(item?.title || value?.suggested_article_title || value?.primary_topic || "Content opportunity", 180),
+    reader_promise: truncateText(item?.reader_promise || "", 600),
+    why_it_works: truncateText(item?.why_it_works || "", 1_000),
+    evidence_boundary: truncateText(item?.evidence_boundary || "", 1_000),
+  })).filter((item) => item.title && item.reader_promise);
+  if (!productionPaths.length) productionPaths.push({
+    mode: productionMode,
+    content_type: normalizeContentType(value?.suggested_content_type),
+    title: truncateText(value?.suggested_article_title || value?.primary_topic || "Content opportunity", 180),
+    reader_promise: truncateText(value?.primary_topic || "A bounded, evidence-backed travel answer", 600),
+    why_it_works: "现有来源已能支持一个边界清楚的内容主题。",
+    evidence_boundary: "只使用当前来源和已经结构化的证据；未被证据覆盖的细节不写入。",
+  });
   return {
     strategy_version: strategyVersion,
     classification,
-    production_mode: normalizeProductionMode(value?.production_mode, classification),
+    production_mode: productionMode,
+    production_modes: productionModes,
+    production_paths: productionPaths,
     confidence: normalizedFraction(value?.confidence),
     primary_topic: truncateText(value?.primary_topic || "Unclassified travel topic", 240),
     entities: cleanStrings(value?.entities, 24, 160),
@@ -4188,7 +4406,7 @@ function normalizeIntakeAnalysis(value, strategyVersion) {
     suggested_article_title: truncateText(value?.suggested_article_title || "", 180),
     missing_information: cleanStrings(value?.missing_information, 16, 240),
     possible_cluster_topics: cleanStrings(value?.possible_cluster_topics, 10, 180),
-    reasoning_summary: truncateText(value?.reasoning_summary || "Review the evidence before deciding the next content action.", 700),
+    reasoning_summary: truncateText(value?.reasoning_summary || "请先核对证据，再决定下一步内容动作。", 2_000),
   };
 }
 
@@ -4198,15 +4416,36 @@ function normalizeProductionMode(value, classification = "UNSURE") {
   return classification === "ARTICLE_CANDIDATE" ? "TOPIC_FEATURE" : "MULTI_SOURCE_SYNTHESIS";
 }
 
+function unsupportedClaimAuditFalsePositive(item) {
+  const reason = String(item?.reason || "").toLowerCase();
+  return /extracted claims?.*(?:do not|does not|without|missing).*(?:quote|traceable|source span)|(?:quote|traceable).*(?:extracted claims?)/i.test(reason);
+}
+
 function normalizePublicationMode(value) {
   const supplied = String(value || "").trim().toLowerCase();
   if (["source_adaptation", "topic_feature", "multi_source_synthesis"].includes(supplied)) return supplied;
   return "multi_source_synthesis";
 }
 
-function hydrateRecommendation(row) {
+function hydrateRecommendation(row, opportunityRows = []) {
   const analysis = row.analysis_json ? json(row.analysis_json, {}) : null;
-  return { ...row, analysis, missing_information: analysis?.missing_information || [], possible_cluster_topics: analysis?.possible_cluster_topics || [] };
+  const opportunities = opportunityRows.map((item) => ({
+    id: item.id,
+    title: item.title,
+    status: item.status,
+    candidate_id: item.candidate_id,
+    readiness: json(item.readiness_json, {}),
+    coverage: json(item.coverage_json, {}),
+  }));
+  const productionPaths = (analysis?.production_paths || []).map((path) => {
+    const opportunity = opportunities.find((item) => item.title === path.title
+      && String(item.coverage?.publicationMode || "").toUpperCase() === String(path.mode || "").toUpperCase());
+    return { ...path, opportunity_id: opportunity?.id || null, opportunity_status: opportunity?.status || null,
+      readiness: opportunity?.readiness || null, candidate_id: opportunity?.candidate_id || null };
+  });
+  return { ...row, analysis, missing_information: analysis?.missing_information || [], possible_cluster_topics: analysis?.possible_cluster_topics || [],
+    production_modes: analysis?.production_modes || [analysis?.production_mode].filter(Boolean), production_paths: productionPaths,
+    opportunities };
 }
 
 function classificationOpportunityStatus(classification) {

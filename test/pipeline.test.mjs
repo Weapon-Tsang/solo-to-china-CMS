@@ -119,6 +119,33 @@ test("coverage drops an untraceable text Claim without blocking supported eviden
   assert.equal(db.prepare("SELECT COUNT(*) count FROM claims WHERE source_id=?").get(source.id).count, 1);
 });
 
+test("coverage audit ignores and repairs legacy unsupported-Claim false positives", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/68abcdef0000000000000099",
+    title: "Traceable route audit",
+    text: "Take Metro Line 2 for this complete Chongqing route and follow the signed walking path.",
+    images: [],
+  }));
+  const [segment] = repository.prepareSourceSegments(source.id);
+  repository.saveSegmentExtraction(segment.id, {
+    method: "vertex", model: "fixture-model",
+    result: { source: { language: "en", summary: "Route", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+      claims: [{ key: "chongqing.route.metro", subject: "Route", predicate: "transport_route", value: "Metro Line 2", qualifiers: [], source_quote: "Take Metro Line 2", confidence: 0.9 }],
+      blueprint: { format: "pending", hook: "", angle: "", sections: [], strengths: [], gaps: [] } },
+  });
+  const falsePositive = { uncovered_spans: [{ quote: "segment 1", importance: "material", reason: "One or more extracted Claims do not contain a quote traceable to this segment." }] };
+  assert.equal(repository.auditSegmentCoverage(segment.id, falsePositive).status, "passed");
+  db.prepare(`UPDATE extraction_coverage SET status='manual_review',important_uncovered_count=1,uncovered_spans_json=? WHERE segment_id=?`)
+    .run(JSON.stringify(falsePositive.uncovered_spans.map((item) => ({ locator: item.quote, importance: item.importance, reason: item.reason }))), segment.id);
+  db.prepare("UPDATE source_segments SET status='failed' WHERE id=?").run(segment.id);
+  db.prepare("UPDATE sources SET status='exception',last_error='legacy false positive' WHERE id=?").run(source.id);
+  assert.equal(repository.reconcileCoverageAuditFalsePositives(), 1);
+  assert.equal(db.prepare("SELECT status FROM extraction_coverage WHERE segment_id=?").get(segment.id).status, "passed");
+  assert.equal(db.prepare("SELECT status FROM sources WHERE id=?").get(source.id).status, "processing");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='finalize_source_extraction' AND entity_id=? AND status='queued'").get(source.id).count, 1);
+});
+
 test("media segment coverage uses extraction metadata instead of a second model call", async () => {
   let audits = 0;
   const repository = {

@@ -7,6 +7,12 @@ const SOFT_PREDICATES = new Set([
   "recommended_for", "worth_visiting",
 ]);
 
+// These Claims describe an author's selection, sequence, menu, or useful set.
+// They are intentionally multi-valued: two good itineraries or two dishes can
+// both be true even when their values differ. Treating them as a single official
+// fact creates an O(n²) wall of false conflicts as more travel notes arrive.
+const ALTERNATIVE_PREDICATE_PATTERN = /(?:^|_)(?:itinerary|route|stops?|sequence|recommended_day|suggested_route|walking_route|serves?_dish|serves?_food|food_specialty|associated_food|features?|has_feature|photo(?:graphy)?_spots?|viewpoints?)(?:_|$)/iu;
+
 // These patterns describe proposition polarity and material limits. Contrastive
 // wording (for example “different from daytime”) and colloquial intensifiers are
 // not logical negation and must not create review noise.
@@ -82,7 +88,7 @@ export function classifyClaimPair(left, right) {
   const typedA = a.structured.typed_value;
   const typedB = b.structured.typed_value;
   if (sameCanonicalPredicate && typedA != null && typedB != null) {
-    if (typedA === typedB) {
+    if (canonicalTypedEqual(typedA, typedB)) {
       return result("PARAPHRASE", true,
         "The claims use different wording for the same canonical typed fact.", a, b);
     }
@@ -165,7 +171,7 @@ export function detectClaimExtractionIssue(claim, siblingClaims = []) {
   });
   const normalized = sameQuoteClaims.map(claimSemanticText).join(" ");
   if (NO_CONTACT_SOURCE_PATTERN.test(quote) && !NO_CONTACT_CLAIM_PATTERN.test(normalized)) return "NEGATION_EXTRACTION_ERROR";
-  if (hasNegation(quote) && !hasNegation(normalized)) return "NEGATION_EXTRACTION_ERROR";
+  if (hasNegation(quote) && !hasNegation(normalized) && !semanticNegationCovered(quote, normalized, claim)) return "NEGATION_EXTRACTION_ERROR";
   if (hasMaterialLimiter(quote) && !hasMaterialLimiter(normalized) && !semanticLimiterCovered(quote, normalized)) return "QUALIFIER_EXTRACTION_ERROR";
   return null;
 }
@@ -194,6 +200,7 @@ function result(relation, canCoexist, reason, a, b, reviewType = null) {
 }
 
 function inferClaimKind(predicate, value) {
+  if (ALTERNATIVE_PREDICATE_PATTERN.test(normalizePredicate(predicate))) return "SOFT_RECOMMENDATION";
   if (/recommend|best|good|worth|photo|visit.?time|体验|推荐|适合|值得/iu.test(`${predicate} ${value}`)) return "SOFT_RECOMMENDATION";
   if (isFeaturePredicate(predicate)) return "CONTEXT_DEPENDENT";
   if (/depend|season|audience|condition|视情况|取决于/iu.test(`${predicate} ${value}`)) return "CONTEXT_DEPENDENT";
@@ -311,10 +318,35 @@ function canonicalFactSemantics(predicate, value, qualifiers = []) {
       polarity: explicitlyFalse ? "negative" : explicitlyTrue ? "positive" : "unknown",
     };
   }
+  if (/(?:^|_)(?:ticket_price|ticket_price_cny|admission_fee|entry_fee|fare|cost)(?:_|$)/iu.test(normalizePredicate(predicate))) {
+    const money = canonicalMoney(value);
+    if (money) return { predicate: "price", value: money, polarity: "positive" };
+  }
+  if (/(?:^|_)(?:opening_hours?|opening_time|operating_hours?)(?:_|$)/iu.test(normalizePredicate(predicate))) {
+    const hours = canonicalOpeningHours(value, qualifiers);
+    if (hours) return { predicate: "opening_hours", value: hours, polarity: "positive" };
+  }
   return {
     predicate: normalizePredicate(predicate), value: null,
     polarity: hasNegation(`${predicate} ${value}`) ? "negative" : "positive",
   };
+}
+
+function canonicalMoney(value) {
+  const text = normalizeText(value);
+  if (/^(?:free|free admission|no charge|0(?:\s*(?:rmb|cny|yuan))?|免费|免票|零元)$/iu.test(text)) {
+    return { amount: 0, currency: "CNY" };
+  }
+  const amount = /(?:rmb|cny|yuan|元|￥|¥)?\s*(\d+(?:\.\d+)?)\s*(?:rmb|cny|yuan|元)?/iu.exec(text)?.[1];
+  return amount == null ? null : { amount: Number(amount), currency: "CNY" };
+}
+
+function canonicalOpeningHours(value, qualifiers = []) {
+  const text = normalizeText([value, ...(qualifiers || [])].join(" "));
+  if (/\b(?:24\s*7|24\s*hours?|open\s*24\s*hours?|all\s*day)\b|全天|二十四小时/iu.test(text)) return "24/7";
+  const times = [...String(value || "").matchAll(/\b(\d{1,2}):(\d{2})\b/gu)]
+    .map((match) => `${String(Number(match[1])).padStart(2, "0")}:${match[2]}`);
+  return times.length ? times.join("-") : null;
 }
 
 function normalizeText(value) {
@@ -361,10 +393,37 @@ function hasMaterialLimiter(value) {
   return LIMITER_PATTERN.test(String(value || "").replace(PROCEDURAL_CONVENIENCE_PATTERN, ""));
 }
 function semanticLimiterCovered(source, normalizedClaim) {
-  return ONLY_GLASS_SOURCE_PATTERN.test(String(source || ""))
-    && ONLY_GLASS_CLAIM_PATTERN.test(String(normalizedClaim || ""));
+  const sourceText = String(source || "");
+  const normalized = normalizeText(normalizedClaim);
+  if (ONLY_GLASS_SOURCE_PATTERN.test(sourceText) && ONLY_GLASS_CLAIM_PATTERN.test(String(normalizedClaim || ""))) return true;
+  if (/\b(?:only|except|unless|at most|at least|maximum|minimum|highest|most complete|few|when|condition)\b/iu.test(normalized)) return true;
+  if (/\d/u.test(normalized) && /\b(?:minutes?|hours?|days?|meters?|kilometers?|stops?|rmb|cny|yuan)\b/iu.test(normalized)) return true;
+  if (/除了.+还/iu.test(sourceText)) return true;
+  const sourceNumbers = new Set(sourceText.match(/\d+(?:\.\d+)?/gu) || []);
+  return sourceNumbers.size > 0 && [...sourceNumbers].every((number) => normalized.includes(number));
 }
-function hasNegation(value) { return NEGATION_PATTERN.test(String(value || "")); }
+
+function semanticNegationCovered(source, normalizedClaim, claim) {
+  const sourceText = String(source || "");
+  const normalized = normalizeText(normalizedClaim);
+  const predicate = normalizePredicate(claim?.predicate);
+  if (/\b(?:not|never|no|without|avoid|avoids|distrust|unnecessary|unsuitable|inaccessible|difficulty|prohibit|against|rather than|sensitive|non spicy)\b/iu.test(normalized)) return true;
+  if (/(?:^|_)(?:avoid|avoidance|recommended_against|difficulty|risk|time_to_avoid|crowd_advantage)(?:_|$)/iu.test(predicate)) return true;
+  if (ALTERNATIVE_PREDICATE_PATTERN.test(predicate) && /\b(?:save|before|after|instead|rather|outside|end)\b/iu.test(normalized)) return true;
+  if (/不是浪得虚名|不是.{0,8}(?:广告|广)|不用去.+也(?:能|可)|最难的不是.+而是|不要走错/iu.test(sourceText)) return true;
+  if (/不是免费/iu.test(sourceText) && /(?:^|_)(?:ticket_price|admission_fee|fare|cost)(?:_|$)/iu.test(predicate) && /\d/u.test(normalized)) return true;
+  return false;
+}
+
+function canonicalTypedEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function hasNegation(value) {
+  // "No. 2 Factory" is a proper-name ordinal, not the English negation "no".
+  const text = String(value || "").replace(/\bno\s*[.．#]?\s*\d+/giu, "numbered-place");
+  return NEGATION_PATTERN.test(text);
+}
 function matching(text, pattern) { return cleanList(String(text || "").match(pattern) || []).map(normalizeText); }
 function clean(value) { return String(value || "").replace(/\s+/g, " ").trim(); }
 function cleanList(values) { return [...new Set((values || []).map(clean).filter(Boolean))].slice(0, 24); }

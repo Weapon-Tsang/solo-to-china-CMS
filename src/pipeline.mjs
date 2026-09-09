@@ -24,12 +24,15 @@ export class Pipeline {
     this.maxConcurrent = Math.max(1, Math.min(this.concurrencyCeiling, Number(maxConcurrent || extractionConfig.concurrencyInitial || 4)));
     this.concurrencySuccessWindow = Math.max(2, Number(extractionConfig.concurrencySuccessWindow || 12));
     this.extractionOutcomes = [];
+    this.batchWorking = false;
   }
 
   start() {
     if (this.timer) return;
     const recovered = this.repository.recoverExpiredJobs?.() || 0;
     if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
+    const recoveredBatches = this.repository.recoverPreparingVertexBatches?.() || 0;
+    if (recoveredBatches) this.logger.warn("pipeline.vertex_batch_preparation_recovered", { count: recoveredBatches });
     this.timer = setInterval(() => this.pump(), this.pollMs);
     this.timer.unref();
     this.pump();
@@ -41,10 +44,101 @@ export class Pipeline {
   }
 
   pump() {
+    void this.pumpVertexBatch().catch((error) => this.logger.error("pipeline.vertex_batch_tick_failed", { error }));
     const slots = Math.max(0, this.maxConcurrent - this.working);
     for (let index = 0; index < slots; index += 1) {
       void this.runOne().catch((error) => this.logger.error("pipeline.tick_failed", { error }));
     }
+  }
+
+  async pumpVertexBatch() {
+    if (this.batchWorking || !this.extractor?.batchEnabled) return false;
+    this.batchWorking = true;
+    try {
+      const due = this.repository.dueVertexBatch?.();
+      if (due) return await this.pollVertexBatch(due);
+      if (this.repository.activeVertexBatchCount?.()) return false;
+      const minimum = Math.max(1, Number(this.extractor.config?.batchMinimumRequests || 20));
+      const maximum = Math.max(minimum, Number(this.extractor.config?.batchMaximumRequests || 1_000));
+      const run = this.repository.reserveVertexBatchJobs?.({ minimum, maximum, model: this.extractor.config?.model || "", location: this.extractor.config?.location || "global" });
+      if (!run) return false;
+      const prepared = [];
+      const maximumInputBytes = Math.max(1_048_576, Number(this.extractor.config?.batchMaxInputBytes || 128 * 1024 * 1024));
+      let preparedBytes = 0;
+      let inputFull = false;
+      for (const item of run.items) {
+        try {
+          if (inputFull) throw new Error("Deferred to the next Vertex Batch because the current JSONL input reached its safe memory limit.");
+          const pack = this.repository.getSegmentExtractionPackage(item.segment_id);
+          if (!pack || pack.staleCaptureVersion) throw new Error("Source segment changed before Vertex Batch submission.");
+          const request = await this.extractor.prepareBatchExtraction(pack.source, item.batch_item_id);
+          const requestBytes = Buffer.byteLength(JSON.stringify({ request: request.request })) + 1;
+          if (preparedBytes + requestBytes > maximumInputBytes) {
+            if (prepared.length) inputFull = true;
+            throw new Error(prepared.length
+              ? "Deferred to the next Vertex Batch because the current JSONL input reached its safe memory limit."
+              : "This segment is too large for the configured Vertex Batch input and was returned to the realtime queue.");
+          }
+          prepared.push(request);
+          preparedBytes += requestBytes;
+        } catch (error) {
+          this.repository.releaseVertexBatchItem(run.id, item.id, error);
+          this.logger.warn("pipeline.vertex_batch_item_prepare_failed", { runId: run.id, jobId: item.id, error });
+        }
+      }
+      if (!prepared.length) {
+        this.repository.finishVertexBatch(run.id, "failed", "PREPARATION_FAILED", "No extraction request could be prepared.");
+        return false;
+      }
+      try {
+        const batch = await this.extractor.createExtractionBatch(prepared);
+        this.repository.activateVertexBatch(run.id, batch);
+        this.logger.info("pipeline.vertex_batch_submitted", { runId: run.id, providerJobName: batch.name, itemCount: prepared.length, inputBytes: preparedBytes });
+        return true;
+      } catch (error) {
+        for (const item of run.items) this.repository.releaseVertexBatchItem(run.id, item.id, error);
+        this.repository.finishVertexBatch(run.id, "failed", "SUBMISSION_FAILED", error?.message || error);
+        throw error;
+      }
+    } finally {
+      this.batchWorking = false;
+    }
+  }
+
+  async pollVertexBatch(run) {
+    let batch;
+    try {
+      batch = await this.extractor.getExtractionBatch(run.provider_job_name);
+    } catch (error) {
+      this.repository.deferVertexBatchPoll(run.id, "POLL_FAILED", Number(this.extractor.config?.batchPollMs || 60_000));
+      throw error;
+    }
+    const state = String(batch.state || "JOB_STATE_UNSPECIFIED");
+    const terminal = new Set(["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED", "JOB_STATE_PARTIALLY_SUCCEEDED"]);
+    if (!terminal.has(state)) {
+      this.repository.deferVertexBatchPoll(run.id, state, Number(this.extractor.config?.batchPollMs || 60_000));
+      return false;
+    }
+    let outputs = [];
+    try { outputs = await this.extractor.readExtractionBatch({ ...run, ...batch }); }
+    catch (error) { this.logger.error("pipeline.vertex_batch_output_read_failed", { runId: run.id, error }); }
+    const byId = new Map(outputs.filter((item) => item.id).map((item) => [item.id, item]));
+    for (const item of run.items) {
+      const output = byId.get(item.batch_item_id);
+      try {
+        if (!output) throw new Error(`Vertex Batch ${state} returned no output for this segment.`);
+        const extraction = this.extractor.parseBatchExtraction(output);
+        this.repository.completeVertexBatchItem(run, item, extraction);
+      } catch (error) {
+        this.repository.releaseVertexBatchItem(run.id, item.job_id, error);
+      }
+    }
+    const finalStatus = state === "JOB_STATE_SUCCEEDED" || state === "JOB_STATE_PARTIALLY_SUCCEEDED" ? "succeeded"
+      : state === "JOB_STATE_CANCELLED" ? "cancelled" : state === "JOB_STATE_EXPIRED" ? "expired" : "failed";
+    this.repository.finishVertexBatch(run.id, finalStatus, state, batch?.error?.message || "");
+    await this.extractor.cleanupExtractionBatch({ ...run, ...batch }).catch((error) => this.logger.warn("pipeline.vertex_batch_cleanup_failed", { runId: run.id, error }));
+    this.logger.info("pipeline.vertex_batch_completed", { runId: run.id, providerState: state, outputCount: outputs.length });
+    return true;
   }
 
   async runOne() {
@@ -54,7 +148,10 @@ export class Pipeline {
     let startedAt;
     let heartbeatTimer;
     try {
-      job = this.repository.claimJob();
+      const minimum = Math.max(1, Number(this.extractor?.config?.batchMinimumRequests || 20));
+      const deferBatchExtraction = Boolean(this.extractor?.batchEnabled
+        && this.repository.countVertexBatchEligibleJobs?.() >= minimum);
+      job = this.repository.claimJob({ deferBatchExtraction });
       if (!job) return false;
       startedAt = Date.now();
       heartbeatTimer = setInterval(() => {

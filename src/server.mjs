@@ -151,6 +151,8 @@ export function createApplication(config = loadConfig()) {
           aiConfigured: extractor.enabled,
           aiProvider: extractor.enabled ? activeAi.provider : null,
           aiModel: extractor.enabled ? activeAi.model : null,
+          vertexBatchConfigured: extractor.batchEnabled,
+          vertexBatchActive: repository.activeVertexBatchCount(),
           visualProvider: visuals.enabled ? activeVisuals.provider : null,
           visualModel: visuals.enabled ? activeVisuals.model : null,
           contentStrategy: config.contentStrategy,
@@ -196,7 +198,8 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/settings/ai") {
         return sendJson(response, 200, {
-          configured: extractor.enabled, visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
+          configured: extractor.enabled, vertexBatchConfigured: extractor.batchEnabled,
+          vertexBatchActive: repository.activeVertexBatchCount(), visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
           contentStrategy: config.contentStrategy, storage: storageInfo(config), visual: repository.getVisualSettings(config.visuals.defaultModel),
           frontendContract: frontendContracts.diagnostics(),
           ...repository.getAiSettings(config.ai.defaultModel),
@@ -484,7 +487,9 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "POST" && recommendationDecisionMatch) {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
-        const result = repository.decideRecommendation(recommendationDecisionMatch[1], String(payload.decision || ""), payload.note || "");
+        const result = repository.decideRecommendation(recommendationDecisionMatch[1], String(payload.decision || ""), payload.note || "", {
+          opportunityId: payload.opportunityId || null,
+        });
         if (!result) return sendJson(response, 404, { error: "Recommendation not found." });
         void pipeline.runOne();
         return sendJson(response, 202, result);

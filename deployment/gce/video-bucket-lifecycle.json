@@ -4,7 +4,7 @@
       "action": { "type": "Delete" },
       "condition": {
         "age": 1,
-        "matchesPrefix": ["manual-source-input/"]
+        "matchesPrefix": ["manual-source-input/", "vertex-batch/"]
       }
     }
   ]

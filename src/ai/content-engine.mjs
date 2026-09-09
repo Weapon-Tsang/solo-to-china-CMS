@@ -42,10 +42,19 @@ const BRIEF_SCHEMA = objectSchema(
 );
 
 const INTAKE_SCHEMA = objectSchema(
-  ["classification", "production_mode", "confidence", "primary_topic", "entities", "knowledge_points", "claims", "article_potential", "information_density", "topic_completeness", "duplicate_likelihood", "recommended_action", "suggested_content_type", "suggested_article_title", "missing_information", "possible_cluster_topics", "reasoning_summary"],
+  ["classification", "production_mode", "production_modes", "production_paths", "confidence", "primary_topic", "entities", "knowledge_points", "claims", "article_potential", "information_density", "topic_completeness", "duplicate_likelihood", "recommended_action", "suggested_content_type", "suggested_article_title", "missing_information", "possible_cluster_topics", "reasoning_summary"],
   {
     classification: { type: "string", enum: ["ARTICLE_CANDIDATE", "KNOWLEDGE_ONLY", "CLAIM_ONLY", "CLUSTER_CANDIDATE", "RESEARCH_REQUIRED", "DUPLICATE", "LOW_VALUE", "UNSURE"] },
     production_mode: { type: "string", enum: ["SOURCE_ADAPTATION", "TOPIC_FEATURE", "MULTI_SOURCE_SYNTHESIS"] },
+    production_modes: { type: "array", minItems: 1, maxItems: 3, items: { type: "string", enum: ["SOURCE_ADAPTATION", "TOPIC_FEATURE", "MULTI_SOURCE_SYNTHESIS"] } },
+    production_paths: {
+      type: "array", minItems: 1, maxItems: 8,
+      items: objectSchema(["mode", "content_type", "title", "reader_promise", "why_it_works", "evidence_boundary"], {
+        mode: { type: "string", enum: ["SOURCE_ADAPTATION", "TOPIC_FEATURE", "MULTI_SOURCE_SYNTHESIS"] },
+        content_type: { type: "string", enum: ["city_guide", "itinerary", "attraction_guide", "food_guide", "transport_guide", "neighborhood_guide", "hotel_area_guide", "shopping_guide", "practical_guide", "first_time_guide", "comparison", "listicle", "how_to"] },
+        title: { type: "string" }, reader_promise: { type: "string" }, why_it_works: { type: "string" }, evidence_boundary: { type: "string" },
+      }),
+    },
     confidence: { type: "number", minimum: 0, maximum: 1 }, primary_topic: { type: "string" },
     entities: { type: "array", items: { type: "string" } }, knowledge_points: { type: "array", items: { type: "string" } }, claims: { type: "array", items: { type: "string" } },
     article_potential: { type: "number", minimum: 0, maximum: 100 }, information_density: { type: "number", minimum: 0, maximum: 100 },
@@ -299,21 +308,22 @@ const intakePrompt = (strategyVersion) => `Analyze one already-captured human-se
 - Use only the supplied source and structured claims. A useful narrow fact can be KNOWLEDGE_ONLY or CLAIM_ONLY, but a coherent small topic can be a standalone TOPIC_FEATURE.
 - Do not judge a travel article against an encyclopedic destination checklist. Judge whether the evidence fulfills one clear, bounded reader promise.
 - Complete itineraries, one-day routes, food lists, hotel-area guides, photo-location lists and similarly useful source notes can be ARTICLE_CANDIDATE in SOURCE_ADAPTATION mode when editing rights are supplied. They do not need unrelated destination facts or a second source.
-- Use TOPIC_FEATURE for focused ideas such as a food installment, a short listicle, a set of photo locations, or one practical subtopic. Use MULTI_SOURCE_SYNTHESIS only when the proposed promise genuinely requires combining sources.
+- Treat SOURCE_ADAPTATION, TOPIC_FEATURE and MULTI_SOURCE_SYNTHESIS as parallel, non-exclusive opportunity paths. A source may support several paths at the same time; multi-source synthesis is a creative option, not an emergency fallback.
 - Classify the source as ARTICLE_CANDIDATE, KNOWLEDGE_ONLY, CLAIM_ONLY, CLUSTER_CANDIDATE, RESEARCH_REQUIRED, DUPLICATE, LOW_VALUE, or UNSURE.
-- Select exactly one production_mode: SOURCE_ADAPTATION, TOPIC_FEATURE, or MULTI_SOURCE_SYNTHESIS. SOURCE_ADAPTATION requires source.editing_allowed=true.
+- Set production_mode to the best primary path for the first proposed article, but return every applicable path in production_modes. SOURCE_ADAPTATION requires source.editing_allowed=true; the other paths remain available independently.
+- Return concrete production_paths for the useful articles this source can support. Every path becomes an independently approvable opportunity, so assign its exact content_type, specific title, bounded reader promise, direct explanation of why it works, and exact evidence boundary. Explain in plain operator language; do not use vague labels.
 - Score article_potential, information_density, topic_completeness, and duplicate_likelihood from 0 to 100. Confidence is 0 to 1.
 - Recommend one action: CREATE_CONTENT_PLAN, ADD_TO_KNOWLEDGE, ADD_TO_CLUSTER, RESEARCH_FIRST, MERGE_OR_IGNORE, IGNORE, or HUMAN_REVIEW.
 - Return 3-8 distinct, specific possible_cluster_topics when the evidence supports a useful series. Missing broad destination coverage is not a blocker for a narrow topic.
 - Surface only missing facts that are necessary for the proposed reader promise, especially safety-critical or time-sensitive booking, price, route, opening-hour, location, or warning details.
-- reasoning_summary must be a short operator-facing explanation, never hidden chain-of-thought. Commercial conversion is outside this task.`;
+- reasoning_summary must be a detailed, direct 4-8 sentence operator-facing explanation in Chinese. State which parallel routes are usable, why, what is genuinely missing, and what is not a blocker. Never provide hidden chain-of-thought. Commercial conversion is outside this task.`;
 
 const briefPrompt = (strategyVersion) => `Create an evidence-backed English content plan and Canonical Travel Content object for SoloToChina Content Production Strategy ${strategyVersion}.
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
 - Conflicted facts require explicit handling instructions; never silently choose a side.
 - Facts marked time_sensitive or requires_official need explicit verification instructions. Exclude stale facts from the outline.
-- Follow production_mode. For source_adaptation, preserve the authorized source's useful itinerary, selection, sequence and practical intent while writing original English copy; do not copy wording or claim facts outside that source package. For topic_feature, fulfill only the bounded topic promise. For multi_source_synthesis, synthesize across sources.
+- Follow the selected production_mode for this one plan, without treating the other parallel routes as disabled. For source_adaptation, preserve the authorized source's useful itinerary, selection, sequence and practical intent while writing original English copy; do not copy wording or claim facts outside that source package. For topic_feature, fulfill only the bounded topic promise. For multi_source_synthesis, deliberately combine compatible perspectives across sources; it is a creative format, not a completeness repair step.
 - Include practical adaptation for language, booking, payment, navigation, safety, and solo logistics where evidence permits.
 - Canonical fields are structured source data for the writer and renderer. Use empty arrays or empty strings for unknown information rather than guessing.
 - Include direct answer blocks only where the supplied facts support them. The image plan must distinguish real_world_photo, infographic, map_or_route, and illustration; only illustration is eligible for image-model generation.
@@ -324,7 +334,7 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - Use only supplied claim keys; report conflicts and temporal uncertainty transparently.
 - Write for solo, first-time, non-Chinese-speaking travelers without stereotyping or alarmism.
 - Do not mention Xiaohongshu, source authors, internal claim keys, evidence ledgers, affiliate products, Trip.com, or commercial calls to action in body_markdown.
-- Follow production_mode. A rights-authorized source_adaptation may faithfully preserve one source's itinerary, selections and practical structure in original English wording. topic_feature should stay narrow. Only multi_source_synthesis must combine sources.
+- Follow the production_mode selected for this article. A rights-authorized source_adaptation may faithfully preserve one source's itinerary, selections and practical structure in original English wording. topic_feature should stay narrow. multi_source_synthesis deliberately combines compatible perspectives, while the other routes remain valid future opportunities from the same evidence.
 - Return a separate evidence ledger mapping each article section to exact claim keys and source IDs.
 - Do not use stale facts. List every used time_sensitive/requires_official claim key in verification_notes and state temporal uncertainty in reader-facing copy.
 - The article should be useful even with no commercial module. Follow this evidence-scaled content policy: ${JSON.stringify(policy)}. Never pad thin evidence to reach a word target.

@@ -1,5 +1,6 @@
 import { slugify, truncate } from "../utils.mjs";
 import { createAiClient } from "./client.mjs";
+import { validateJsonSchema } from "../frontend-contract.mjs";
 
 const EXTRACTION_SCHEMA = {
   type: "object",
@@ -33,6 +34,44 @@ export class KimiExtractor {
 
   get enabled() {
     return this.client.enabled;
+  }
+
+  get batchEnabled() {
+    return this.config.provider === "vertex" && this.client.batchEnabled;
+  }
+
+  async prepareBatchExtraction(source, batchItemId) {
+    if (!this.batchEnabled) throw new Error("Vertex Batch extraction is not configured.");
+    if ((source.assets || []).some((asset) => asset.kind === "video") || source.source_kind === "video_url") {
+      throw new Error("Video segments remain on the realtime Vertex path.");
+    }
+    const images = await this.client.imageParts(source.assets || []);
+    const prepared = this.client.prepareBatchRequest({
+      id: batchItemId,
+      name: "source_research_extraction",
+      schema: EXTRACTION_SCHEMA,
+      instructions: SYSTEM_PROMPT,
+      content: [{ type: "text", text: buildInput(source) }, ...images.parts],
+    });
+    return { ...prepared, attemptedImages: images.attempted, suppliedImages: images.parts.length };
+  }
+
+  createExtractionBatch(requests) { return this.client.createBatch(requests); }
+  getExtractionBatch(name) { return this.client.getBatch(name); }
+  readExtractionBatch(batch) { return this.client.readBatchOutput(batch); }
+  cleanupExtractionBatch(batch) { return this.client.cleanupBatch(batch); }
+
+  parseBatchExtraction(item) {
+    if (item?.error) throw Object.assign(new Error(item.error), { retryable: true, code: item.code || "VERTEX_BATCH_ITEM_FAILED" });
+    const errors = validateJsonSchema(item?.output, EXTRACTION_SCHEMA);
+    if (errors.length) throw Object.assign(new Error(`Vertex Batch returned invalid extraction JSON: ${JSON.stringify(errors.slice(0, 10))}`),
+      { retryable: true, code: "INVALID_MODEL_OUTPUT" });
+    try {
+      this.config.onModelCall?.({ stage: "source_research_extraction", provider: "vertex", model: this.config.model,
+        inputTokens: item.usage?.promptTokenCount ?? null, outputTokens: item.usage?.candidatesTokenCount ?? null,
+        cachedTokens: item.usage?.cachedContentTokenCount ?? null, latencyMs: null, attempts: 1, status: "succeeded", errorCode: null });
+    } catch { /* batch telemetry must never fail extraction import */ }
+    return { result: sanitizeResult(item.output), method: "vertex_batch", model: this.config.model };
   }
 
   async extract(source) {

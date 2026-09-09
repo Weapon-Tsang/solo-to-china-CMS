@@ -274,7 +274,7 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   const download = await fetch(`${baseUrl}/api/content-strategy/download`, { headers: { authorization: "Bearer admin-secret" } });
   assert.equal(download.status, 200);
   assert.match(download.headers.get("content-disposition"), /attachment/);
-  assert.match(await download.text(), /Authorized source images and reader trust/);
+  assert.match(await download.text(), /不变的安全边界/);
 
   const settings = await (await fetch(`${baseUrl}/api/settings/ai`)).json();
   assert.equal(settings.model, "gemini-3.8-flash");
