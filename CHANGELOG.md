@@ -21,6 +21,9 @@
 - Consolidate Node 24 tests, static/build checks, fixed-SHA Frontend contracts, version alignment, backup drills, and explicit offline/unverified quality dimensions into one release gate and CI workflow.
 - Add media-aware source admission, deterministic processing-scope estimates and manual start for high-cost captures; reject missing or unsupported evidence before a model call.
 - Preserve PDF text and visual-page inventories with page locators, route scanned/chart pages through the existing Vertex document input, and avoid automatic whole-document OCR.
+- Add a held-out, versioned article quality set and deterministic hard gates for evidence coverage, amounts, dates, exceptions, audience qualifiers, prompt injection, FAQ support, and final-page facts while keeping length, repetition, readability, metadata length, Sources presentation, and image count as editorial warnings.
+- Freeze per-stage model capability/thinking/token/timeout/retry policy, meter every realtime and Batch attempt, retain unknown costs as null with dated price provenance, and replace full draft rewrites with current-hash bounded section repair.
+- Persist dependency/config artifact keys for safe duplicate reuse, eliminate the duplicate coverage rebuild, page Entity resolution beyond 300 Claims, add age/realtime/dependency-aware scheduling and queue age, and expose measured runtime/performance reports without invented p95 or database-query estimates.
 
 ## 1.17.11 - 2026-09-09
 

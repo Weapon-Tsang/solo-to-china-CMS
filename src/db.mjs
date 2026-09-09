@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 48;
+export const SCHEMA_VERSION = 50;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -69,6 +69,67 @@ function migrate(db) {
   if (current < 46) migrationFortySix(db);
   if (current < 47) migrationFortySeven(db);
   if (current < 48) migrationFortyEight(db);
+  if (current < 49) migrationFortyNine(db);
+  if (current < 50) migrationFifty(db);
+}
+
+function migrationFifty(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE pipeline_artifacts (
+        id TEXT PRIMARY KEY,
+        stage TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        input_hash TEXT NOT NULL,
+        output_hash TEXT,
+        config_hash TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK (status IN ('started','succeeded','failed')),
+        error_class TEXT,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(stage, entity_id, input_hash, config_hash)
+      );
+      CREATE INDEX idx_pipeline_artifacts_reuse ON pipeline_artifacts(stage,entity_id,input_hash,config_hash,status);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (50, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyNine(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE model_call_metrics ADD COLUMN run_id TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN entity_id TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN attempt_number INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE model_call_metrics ADD COLUMN request_kind TEXT NOT NULL DEFAULT 'provider';
+      ALTER TABLE model_call_metrics ADD COLUMN attempt_status TEXT NOT NULL DEFAULT 'succeeded';
+      ALTER TABLE model_call_metrics ADD COLUMN retry_reason TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN thinking_tokens INTEGER;
+      ALTER TABLE model_call_metrics ADD COLUMN provider_usage_json TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN config_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE model_call_metrics ADD COLUMN policy_version TEXT NOT NULL DEFAULT 'legacy';
+      ALTER TABLE model_call_metrics ADD COLUMN cost_status TEXT NOT NULL DEFAULT 'unknown';
+      ALTER TABLE model_call_metrics ADD COLUMN price_version TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN price_source TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN price_as_of TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN request_started_at TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN request_completed_at TEXT;
+      CREATE INDEX idx_model_call_metrics_run ON model_call_metrics(run_id, stage, attempt_number);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (49, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFortyEight(db) {

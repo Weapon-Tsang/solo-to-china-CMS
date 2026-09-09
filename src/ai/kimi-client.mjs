@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { validateJsonSchema } from "../frontend-contract.mjs";
 import { ProviderRequestError } from "./provider-schema.mjs";
+import { resolveStagePolicy } from "./stage-policy.mjs";
 
 const IMAGE_HOST_SUFFIXES = ["xiaohongshu.com", "xhscdn.com", "xhscdn.net", "xhscdn.cn"];
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -18,52 +19,74 @@ export class KimiClient {
     return Boolean(this.config.apiKey);
   }
 
-  async completeJson({ name, schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000, signal = null }) {
+  async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null }) {
     if (!this.enabled) throw new Error("KIMI_API_KEY is required for AI processing.");
-    const startedAt = Date.now();
+    const policy = resolveStagePolicy(name, this.config);
+    const effectiveTimeoutMs = timeoutMs || policy.timeoutMs;
     const identity = modelCallIdentity(name, schema, instructions, content);
     const messages = [
       { role: "system", content: instructions },
       { role: "user", content },
     ];
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
+      const attemptStartedAt = Date.now();
+      const requestStartedAt = new Date(attemptStartedAt).toISOString();
       await this.config.beforeRequest?.({ provider: "kimi", model: this.config.model, stage: name, attempt: attempt + 1 });
-      const response = await this.fetch(`${this.config.baseUrl}/chat/completions`, {
+      let response;
+      try {
+        response = await this.fetch(`${this.config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.config.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({
         model: this.config.model,
         stream: false,
-        max_completion_tokens: this.config.maxCompletionTokens,
+        max_completion_tokens: policy.maxOutputTokens,
         messages,
         response_format: {
           type: "json_schema",
           json_schema: { name, strict: true, schema },
         },
       }),
-      signal: combinedSignal(signal, timeoutMs),
-      });
+      signal: combinedSignal(signal, effectiveTimeoutMs),
+        });
+      } catch (error) {
+        this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: error?.name === "AbortError" || error?.name === "TimeoutError" ? "cancelled" : "failed",
+          errorCode: error?.name || "REQUEST_FAILED", retryReason: attempt ? "request_retry" : null }));
+        throw error;
+      }
       const payload = await jsonPayload(response);
       if (!response.ok) {
-        this.emitModelCall({ ...identity, provider: "kimi", model: this.config.model, latencyMs: Date.now() - startedAt,
-          attempts: attempt + 1, status: "failed", errorCode: String(payload?.error?.code || response.status) });
+        this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: "failed", errorCode: String(payload?.error?.code || response.status), retryReason: attempt ? "provider_retry" : null,
+          usage: payload?.usage }));
         throw new ProviderRequestError("Kimi", response.status, payload?.error?.message || response.statusText,
           { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
       }
       const choice = payload?.choices?.[0];
-      if (choice?.finish_reason === "length") throw Object.assign(new Error("Kimi response reached its output limit; increase KIMI_MAX_COMPLETION_TOKENS."), { code: "MODEL_OUTPUT_LIMIT", retryable: true });
+      if (choice?.finish_reason === "length") {
+        this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: attempt ? "structured_repair" : null, usage: payload?.usage }));
+        throw Object.assign(new Error("Kimi response reached its output limit; increase KIMI_MAX_COMPLETION_TOKENS."), { code: "MODEL_OUTPUT_LIMIT", retryable: true });
+      }
       const output = choice?.message?.content;
-      if (typeof output !== "string" || !output.trim()) throw Object.assign(new Error("Kimi returned no structured output."), { code: "EMPTY_MODEL_OUTPUT", retryable: true });
+      if (typeof output !== "string" || !output.trim()) {
+        this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: "failed", errorCode: "EMPTY_MODEL_OUTPUT", retryReason: attempt ? "structured_repair" : null, usage: payload?.usage }));
+        throw Object.assign(new Error("Kimi returned no structured output."), { code: "EMPTY_MODEL_OUTPUT", retryable: true });
+      }
       let parsed;
       try { parsed = JSON.parse(output); } catch { parsed = null; }
       const errors = parsed == null ? [{ path: "$", message: "invalid JSON" }] : validateJsonSchema(parsed, schema);
       if (parsed != null && errors.length === 0) {
-        this.emitModelCall({ ...identity, provider: "kimi", model: payload.model || this.config.model,
-          inputTokens: payload.usage?.prompt_tokens ?? null, outputTokens: payload.usage?.completion_tokens ?? null,
-          cachedTokens: payload.usage?.prompt_tokens_details?.cached_tokens ?? null,
-          latencyMs: Date.now() - startedAt, attempts: attempt + 1, status: "succeeded" });
+        this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: "succeeded", usage: payload?.usage, model: payload.model || this.config.model,
+          retryReason: attempt ? "structured_repair" : null }));
         return { output: parsed, model: payload.model || this.config.model, usage: payload.usage || null };
       }
+      this.emitModelCall(attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        status: "failed", errorCode: "INVALID_MODEL_OUTPUT", retryReason: attempt ? "structured_repair" : "invalid_json_or_schema",
+        usage: payload?.usage }));
       messages.push({ role: "assistant", content: output }, { role: "user", content: `Correct the JSON and return the complete object only. Errors: ${JSON.stringify(errors.slice(0, 20))}` });
     }
     throw Object.assign(new Error("Kimi returned invalid structured output after repair."), { code: "INVALID_MODEL_OUTPUT", retryable: true });
@@ -129,6 +152,19 @@ export class KimiClient {
     if (bytes.length > byteLimit) throw Object.assign(new Error("Uploaded source asset exceeds the provider inline limit and needs a derived vision copy; the original remains stored."), { code: "AI_DERIVATIVE_REQUIRED", retryable: false });
     return `data:${contentType};base64,${bytes.toString("base64")}`;
   }
+}
+
+function attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt, status, errorCode = null,
+  retryReason = null, usage = null, model = null }) {
+  return { ...identity, provider: "kimi", model: model || policy.model,
+    inputTokens: usage?.prompt_tokens ?? null, outputTokens: usage?.completion_tokens ?? null,
+    cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? null,
+    thinkingTokens: usage?.completion_tokens_details?.reasoning_tokens ?? null,
+    providerUsage: usage || null, latencyMs: Date.now() - attemptStartedAt, attempts: attempt + 1, attemptNumber: attempt + 1,
+    status: status === "succeeded" ? "succeeded" : "failed", attemptStatus: status, errorCode, retryReason,
+    requestKind: "provider", policyVersion: policy.version, configHash: policy.configHash,
+    runId: telemetryContext?.runId || null, entityId: telemetryContext?.entityId || null,
+    requestStartedAt, requestCompletedAt: new Date().toISOString(), costUsd: null, costStatus: "unknown" };
 }
 
 function combinedSignal(signal, timeoutMs) {

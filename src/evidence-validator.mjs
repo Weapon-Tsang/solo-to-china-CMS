@@ -55,7 +55,7 @@ export function validatePageEvidence(page, contentPackage) {
       }
       const anchors = factAnchors(fact);
       if (anchors.some((anchor) => containsPhrase(block.text, anchor))) relevant = true;
-      for (const token of protectedTokens(fact)) {
+      for (const token of protectedFactTokens(fact)) {
         if (!containsPhrase(block.text, token) && !block.links.includes(token)) {
           errors.push({ code: "EVIDENCE_VALUE_MISMATCH", path: `$.blocks[${index}]`, claimKey: key, expected: token });
         }
@@ -89,10 +89,10 @@ function factAnchors(fact) {
   return [...new Set(values)];
 }
 
-function protectedTokens(fact) {
+export function protectedFactTokens(fact) {
   const text = [fact.preferred_value, ...(fact.evidence || []).flatMap((item) => item.qualifiers || [])].join(" ");
   const numbers = text.match(/(?<![\p{L}\p{N}])(?:¥|￥|CNY\s*)?\d+(?:[.,:]\d+)?(?:\s*(?:元|rmb|cny|%|am|pm|hours?|minutes?|days?))?/giu) || [];
-  const conditions = text.match(/\b(?:only|except|weekday(?:s)?|weekend(?:s)?|student(?:s)?|child(?:ren)?|adult(?:s)?|senior(?:s)?|before|after|until|from)\b/giu) || [];
+  const conditions = text.match(/\b(?:only|except|unless|not|no|never|weekday(?:s)?|weekend(?:s)?|student(?:s)?|child(?:ren)?|adult(?:s)?|senior(?:s)?|foreign visitors?|international visitors?|mainland chinese|chinese citizens?|residents?|before|after|until|from)\b/giu) || [];
   const urls = text.match(/https?:\/\/[^\s)]+/giu) || [];
   return [...new Set([...numbers, ...conditions, ...urls].map((item) => item.trim()))];
 }

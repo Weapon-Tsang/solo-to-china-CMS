@@ -69,10 +69,10 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 | A16 | 1.3 | completed | `36a2ec0` | Bounded adaptive account/source login throttle and trusted-proxy policy verified |
 | B10 | 1.3 | completed | `8005821` | Hashed v2 database/content snapshot and side-effect-free restore drill verified |
 | B11 | 1.3 | completed | `8005821` | Consolidated Node 24/fixed-SHA/version/backup gate and CI verified |
-| B03 | 1.3 | pending | `d642f0f` | Media-aware preflight and mixed PDF evidence |
-| B04 | 1.3 | pending | `d642f0f` | Evidence-bounded English quality fixtures and gates |
-| B05 | 1.3 | pending | `d642f0f` | Frozen stage policy, bounded repair, full attempt cost ledger |
-| B06 | 1.3 | pending | `d642f0f` | Durable artifact invalidation and fair scheduling |
+| B03 | 1.3 | completed | `8005821` | Media-aware preflight and mixed PDF evidence verified |
+| B04 | 1.3 | completed | `90e2daf` | Versioned held-out quality set and deterministic evidence/English gates verified |
+| B05 | 1.3 | completed | `90e2daf` | Frozen stage policy, bounded repair, every-attempt cost ledger verified |
+| B06 | 1.3 | completed | `90e2daf` | Durable artifact reuse/invalidation, cursored processing and fair scheduling verified |
 | C01 | 1.3 | pending | `d642f0f` | Depends on A10, A11, B04 |
 | C02 | 1.3 | pending | `d642f0f` | Depends on A07, A10, A11, B04, C01 |
 | C03 | 1.3 | pending | `d642f0f` | Depends on A13, C01 |
@@ -257,6 +257,42 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
   `npm run release:check` passed 44 mandatory checks with 0 failures, 4 warnings
   and 4 explicit offline/unconfigured conclusions. The clean schema chain remains
   1-48; B10/B11/B03 did not require a database migration.
-- Current task: B04.
-- Next action: review the article fact-coverage and reader-promise boundary for
-  the B04 acceptance cases before making its minimum changes.
+- Completed B04: `config/quality-evaluation-set.json` provides a versioned 12-case
+  evaluation set with three held-out cases covering concise and long-form work,
+  single/multiple/no-image/old/multimodal evidence, names/translations,
+  exceptions, title/body mismatch and prompt injection. Deterministic QA makes
+  unsupported ledger facts, protected amounts/dates/negation/audience conditions,
+  FAQ mismatch and instruction leakage blockers; word count, repetition,
+  readability, metadata length, visible Sources and image count are warnings.
+  Semantic judgment not deterministically provable is reported as unverified.
+  Verification: 5 dedicated quality-set tests and content-engine regressions passed;
+  no real-model quality improvement, ranking, indexing or citation result is claimed.
+- Completed B05: `config/model-stage-policy.json` freezes each extraction,
+  diagnosis, writing, composition, QA and repair stage's capabilities, thinking,
+  output-token budget, timeout and total attempts. Realtime calls, JSON/schema
+  retries, timeouts, truncation, cancellation, Batch outcomes and cache hits each
+  produce their own run/entity-linked ledger row with provider usage when present.
+  `config/model-pricing.json` has dated provenance and intentionally no guessed
+  price rows, so unknown costs remain null. Runtime reporting includes first-pass
+  QA, calls, cache, repairs, tokens, costs and unique-qualified-draft denominator.
+  Draft revision is a current-hash patch limited to failed metadata or three
+  existing H2 sections, followed by normal re-hash/page/QA invalidation. Verification:
+  4 dedicated policy/telemetry/repair tests passed; paid savings remain unmeasured.
+- Completed B06: migration 50 stores stage/entity/input/config/output artifact
+  identities and reuses only a matching live output, preventing duplicate paid
+  generation after retry/restart. Fact changes invalidate only briefs whose
+  evidence ledger uses the changed keys and never edit published body text;
+  title/meta edits preserve body/evidence and regenerate dependent SEO/schema/QA.
+  Coverage is rebuilt once, Entity resolution pages all Claims with a 300-item
+  cursor, Batch input stays byte/item bounded, downstream/realtime work has
+  priority, and jobs older than 15 minutes receive a fairness boost. Queue age and
+  same-environment duration/latency/count/memory reports are exposed; p95 is null
+  below 20 samples and uninstrumented DB query count is explicitly null.
+  Verification: 3 dedicated artifact/cursor/scheduling tests passed.
+- Seventh-batch regression checkpoint: 315 tests passed; `npm run check`
+  passed; `npm run release:check` passed 44 mandatory checks with 0 failures,
+  4 warnings and 4 explicit offline/unconfigured conclusions. The clean schema
+  chain is now 1-50. No paid model or production service was called.
+- Current task: C01.
+- Next action: validate reader-facing metadata, schema and answer extraction on
+  the same final-version fixture before starting C02.

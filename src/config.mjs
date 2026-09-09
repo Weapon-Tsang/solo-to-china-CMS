@@ -1,8 +1,11 @@
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const modelStagePolicy = JSON.parse(fs.readFileSync(path.join(root, "config", "model-stage-policy.json"), "utf8"));
+const modelPricing = JSON.parse(fs.readFileSync(path.join(root, "config", "model-pricing.json"), "utf8"));
 
 export const AI_MODELS = [
   { id: "vertex-gemini-3.8-flash", provider: "vertex", model: "gemini-3.8-flash", location: "global", label: "Vertex AI · Gemini 3.8 Flash", description: "默认的 Google 多模态工作模型，用于图文理解、结构化提取、写作与审核。", supportsImages: true, isDefault: true },
@@ -66,6 +69,8 @@ export function loadConfig(env = process.env) {
     captureHost: hostname(env.CAPTURE_HOST),
     ai: {
       defaultModel: AI_MODELS.some((item) => item.id === env.AI_MODEL) ? env.AI_MODEL : "vertex-gemini-3.8-flash",
+      stagePolicy: modelStagePolicy,
+      pricing: modelPricing,
     },
     kimi: {
       apiKey: env.KIMI_API_KEY || "",

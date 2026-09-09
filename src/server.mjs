@@ -7,6 +7,7 @@ import { openDatabase } from "./db.mjs";
 import { normalizeXiaohongshuCapture, ValidationError } from "./adapters/xiaohongshu.mjs";
 import { ManualSourceError, ManualSourceIngestor } from "./adapters/manual-source.mjs";
 import { KimiExtractor } from "./ai/kimi.mjs";
+import { priceModelAttempt } from "./ai/stage-policy.mjs";
 import { ContentEngine } from "./ai/content-engine.mjs";
 import { VertexImagen } from "./visuals/vertex-imagen.mjs";
 import { Pipeline } from "./pipeline.mjs";
@@ -56,8 +57,9 @@ export function createApplication(config = loadConfig()) {
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
   const aiRequestGate = createRequestGate(config.extraction.requestSpacingMs);
   const activeAi = { ...config.kimi, ...config.vertex, ...selectedAi,
+    stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing,
     beforeRequest: aiRequestGate,
-    onModelCall: (metric) => repository.recordModelCall(metric) };
+    onModelCall: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)) };
   const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
   const activeVisuals = { ...config.visuals, ...selectedVisual, beforeRequest: aiRequestGate };
   const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
@@ -777,6 +779,14 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && draftMatch) {
         const draft = repository.getDraftPackage(draftMatch[1]);
         return draft ? sendJson(response, 200, draft) : sendJson(response, 404, { error: "Draft not found." });
+      }
+      if (request.method === "PATCH" && draftMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 50_000);
+        const draft = repository.updateDraftMetadata(draftMatch[1], {
+          title: payload.title ?? null, metaDescription: payload.meta_description ?? null,
+        });
+        return sendJson(response, 200, { draft, queued: "review_draft" });
       }
       const wordpressMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/wordpress$/);
       if (request.method === "POST" && wordpressMatch) {

@@ -115,6 +115,8 @@ npm start
 
 `AI_IMAGE_BATCH_SIZE` limits one provider request, not one Source. All image batches and all videos are processed and merged. `SOURCE_TEXT_SEGMENT_MAX_CHARS` bounds each text segment without truncating the Source; an output-token limit subdivides the affected segment and retries it. Large Extension captures use SHA-256-verified chunks, and oversized images retain the original provenance plus a separate AI-safe derivative.
 
+Stage capability, thinking, token, timeout, and retry budgets are versioned in `config/model-stage-policy.json`. Pricing provenance is isolated in `config/model-pricing.json`; an absent exact price or provider token count is reported as unknown (`null`). The runtime ledger counts every provider attempt, retry, cancellation, cache hit, and bounded draft repair. SEO/GEO checks reuse the draft output and deterministic local validation rather than adding a mandatory full-document model pass.
+
 ### Model selection
 
 After an administrator enters the dashboard token, open **Settings** and choose **Kimi K3** or **Kimi K2.7 Code**. The selected model is stored in SQLite, survives restarts, and applies to subsequently started extraction and content jobs. The server key remains server-side; selecting a model never exposes it to the Chrome Extension.

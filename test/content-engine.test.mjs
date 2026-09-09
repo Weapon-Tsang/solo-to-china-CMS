@@ -27,7 +27,7 @@ test("Kimi-backed independent QA cannot approve deterministic evidence or commer
   assert.equal(reviewed.output.passed, false);
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "commercial_contamination"));
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "invalid_evidence_key"));
-  assert.ok(reviewed.output.issues.some((issue) => issue.code === "draft_too_short"));
+  assert.ok(reviewed.output.issues.some((issue) => issue.code === "draft_below_suggested_length" && issue.severity === "warning"));
   assert.equal(reviewed.output.issues.some((issue) => issue.code === "stale_evidence_used"), false);
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "missing_temporal_disclosure"));
   assert.equal(request.url, "https://api.example.test/v1/chat/completions");

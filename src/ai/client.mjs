@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { KimiClient } from "./kimi-client.mjs";
 import { VertexGeminiClient } from "./vertex-gemini-client.mjs";
+import { resolveStagePolicy } from "./stage-policy.mjs";
 
 export function createAiClient(config, fetchImpl = fetch) {
   const clients = new Map();
@@ -51,6 +52,14 @@ export function createAiClient(config, fetchImpl = fetch) {
             status: "succeeded",
             errorCode: null,
             costUsd: 0,
+            costStatus: "confirmed",
+            requestKind: "cache_hit",
+            attemptStatus: "succeeded",
+            attemptNumber: 0,
+            policyVersion: identity.policy.version,
+            configHash: identity.policy.configHash,
+            runId: input.telemetryContext?.runId || null,
+            entityId: input.telemetryContext?.entityId || null,
           });
         } catch { /* cache telemetry must never fail production */ }
         return structuredClone(cached);
@@ -89,6 +98,7 @@ function batchClientConfig(config, snapshot) {
 }
 
 function callIdentity(config, input) {
+  const policy = resolveStagePolicy(input.name, config);
   const hashes = {
     promptHash: sha256(input.instructions || ""),
     schemaHash: sha256(JSON.stringify(input.schema || {})),
@@ -96,7 +106,9 @@ function callIdentity(config, input) {
   };
   return {
     hashes,
-    key: sha256(JSON.stringify({ provider: config.provider, model: activeModel(config), name: input.name, ...hashes })),
+    policy,
+    key: sha256(JSON.stringify({ provider: config.provider, model: activeModel(config), name: input.name,
+      policyVersion: policy.version, configHash: policy.configHash, ...hashes })),
   };
 }
 

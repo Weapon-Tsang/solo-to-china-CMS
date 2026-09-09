@@ -15,6 +15,7 @@ import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunit
 import { AI_JOB_TYPES, classifyBatchFailure, isProviderPressure } from "./job-policy.mjs";
 import { pageBlockSignature } from "./evidence-validator.mjs";
 import { estimateSourceProcessing } from "./source-preflight.mjs";
+import { summarizeModelCostLedger } from "./ai/stage-policy.mjs";
 export { pageBlockSignature } from "./evidence-validator.mjs";
 import {
   EDITORIAL_ASSIGNMENT_TYPES, evaluateEditorialAssignment, normalizeEditorialAssignmentInput,
@@ -22,6 +23,12 @@ import {
 } from "./editorial-assignments.mjs";
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
+
+const REUSABLE_PIPELINE_STAGES = new Set([
+  "extract_segment_claims", "audit_segment_coverage", "analyze_source_blueprint", "analyze_source_diagnostic",
+  "analyze_intake", "resolve_entities", "plan_content", "compose_frontend_page_plan", "generate_draft",
+  "compose_frontend_page", "review_draft", "revise_draft",
+]);
 
 export class Repository {
   constructor(db, contentConfig = {}) {
@@ -48,6 +55,93 @@ export class Repository {
   jobTimestamp() { return this.clock().toISOString(); }
 
   jobLeaseExpiry() { return new Date(this.clock().getTime() + this.jobLeaseMs).toISOString(); }
+
+  preparePipelineArtifact(job, configHash = "") {
+    if (!REUSABLE_PIPELINE_STAGES.has(job?.type)) return null;
+    const inputHash = sha256(JSON.stringify(this.pipelineDependencyMaterial(job)));
+    const existing = this.db.prepare(`SELECT * FROM pipeline_artifacts
+      WHERE stage=? AND entity_id=? AND input_hash=? AND config_hash=?`).get(job.type, job.entity_id, inputHash, configHash);
+    if (existing?.status === "succeeded" && existing.output_hash
+      && existing.output_hash === this.pipelineOutputHash(job)) return { ...existing, reused: true };
+    const timestamp = this.jobTimestamp();
+    const artifactId = existing?.id || id("artifact");
+    this.db.prepare(`INSERT INTO pipeline_artifacts(id,stage,entity_id,input_hash,output_hash,config_hash,status,error_class,
+      started_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,'started',NULL,?,NULL,?,?)
+      ON CONFLICT(stage,entity_id,input_hash,config_hash) DO UPDATE SET status='started',output_hash=NULL,error_class=NULL,
+        started_at=excluded.started_at,completed_at=NULL,updated_at=excluded.updated_at`)
+      .run(artifactId, job.type, job.entity_id, inputHash, null, configHash, timestamp, timestamp, timestamp);
+    return { id: artifactId, stage: job.type, entity_id: job.entity_id, input_hash: inputHash, config_hash: configHash, reused: false };
+  }
+
+  completePipelineArtifact(artifact, job) {
+    if (!artifact || artifact.reused) return;
+    const timestamp = this.jobTimestamp();
+    this.db.prepare(`UPDATE pipeline_artifacts SET output_hash=?,status='succeeded',completed_at=?,updated_at=? WHERE id=?`)
+      .run(this.pipelineOutputHash(job), timestamp, timestamp, artifact.id);
+  }
+
+  failPipelineArtifact(artifact, error) {
+    if (!artifact || artifact.reused) return;
+    const timestamp = this.jobTimestamp();
+    this.db.prepare(`UPDATE pipeline_artifacts SET status='failed',error_class=?,completed_at=?,updated_at=? WHERE id=?`)
+      .run(String(error?.failureClass || error?.code || "execution").slice(0, 120), timestamp, timestamp, artifact.id);
+  }
+
+  pipelineDependencyMaterial(job) {
+    const entityId = job.entity_id;
+    if (["extract_segment_claims", "audit_segment_coverage"].includes(job.type)) {
+      return {
+        segment: this.db.prepare("SELECT id,source_id,content_hash,capture_version,segment_type FROM source_segments WHERE id=?").get(entityId),
+        extraction: job.type === "audit_segment_coverage"
+          ? this.db.prepare("SELECT result_json,input_manifest_json,attempt FROM segment_extractions WHERE segment_id=?").get(entityId) : null,
+      };
+    }
+    if (["analyze_source_blueprint", "analyze_source_diagnostic", "analyze_intake"].includes(job.type)) {
+      return this.db.prepare("SELECT id,content_hash,capture_version,status FROM sources WHERE id=?").get(entityId);
+    }
+    if (job.type === "resolve_entities") return this.db.prepare(`SELECT group_concat(id || ':' || source_key || ':' || value_text, '|') AS claims
+      FROM (SELECT c.id,COALESCE(NULLIF(c.original_normalized_key,''),c.normalized_key) AS source_key,c.value_text FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
+        WHERE ss.destination_slug=? AND c.lifecycle_status='active' ORDER BY c.id)`).get(entityId);
+    if (job.type === "plan_content") {
+      const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id=?").get(entityId);
+      const facts = candidate ? this.db.prepare(`SELECT k.normalized_key,k.preferred_value,k.consensus_status,k.updated_at
+        FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id WHERE d.slug=? ORDER BY k.normalized_key`).all(candidate.destination_slug) : [];
+      return { candidate, facts };
+    }
+    if (["compose_frontend_page_plan", "generate_draft"].includes(job.type)) {
+      const brief = this.db.prepare(`SELECT id,plan_json,canonical_json,evidence_ledger_json,strategy_version,updated_at
+        FROM content_briefs WHERE id=?`).get(entityId);
+      const facts = brief ? this.getBriefPackage(entityId)?.facts || [] : [];
+      return { brief, evidenceHash: evidenceHashForFacts(facts) };
+    }
+    const draft = this.db.prepare(`SELECT id,brief_id,content_hash,revision,seo_json,strategy_version,updated_at
+      FROM article_drafts WHERE id=?`).get(entityId);
+    if (job.type === "revise_draft") {
+      const review = this.db.prepare(`SELECT issues_json,draft_content_hash,evidence_hash FROM quality_reviews
+        WHERE draft_id=? ORDER BY created_at DESC LIMIT 1`).get(entityId);
+      return { draft, review };
+    }
+    const facts = draft ? this.getBriefPackage(draft.brief_id)?.facts || [] : [];
+    return { draft, evidenceHash: evidenceHashForFacts(facts) };
+  }
+
+  pipelineOutputHash(job) {
+    let value = null;
+    if (job.type === "extract_segment_claims") value = this.db.prepare("SELECT result_json,input_manifest_json FROM segment_extractions WHERE segment_id=?").get(job.entity_id);
+    else if (job.type === "audit_segment_coverage") value = this.db.prepare("SELECT * FROM extraction_coverage WHERE segment_id=?").get(job.entity_id);
+    else if (job.type === "analyze_source_blueprint") value = this.db.prepare("SELECT * FROM source_blueprints WHERE source_id=?").get(job.entity_id);
+    else if (["analyze_source_diagnostic", "analyze_intake"].includes(job.type)) value = this.db.prepare("SELECT * FROM content_intake_analyses WHERE source_id=?").get(job.entity_id);
+    else if (job.type === "resolve_entities") value = this.db.prepare(`SELECT group_concat(id || ':' || entity_key || ':' || entity_resolution_status, '|') AS value
+      FROM (SELECT c.id,c.entity_key,c.entity_resolution_status FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
+        WHERE ss.destination_slug=? ORDER BY c.id)`).get(job.entity_id);
+    else if (job.type === "plan_content") value = this.db.prepare("SELECT id,plan_json,canonical_json FROM content_briefs WHERE candidate_id=?").get(job.entity_id);
+    else if (job.type === "compose_frontend_page_plan") value = this.db.prepare("SELECT plan_json,validation_json,contract_checksum FROM frontend_page_plans WHERE brief_id=?").get(job.entity_id);
+    else if (job.type === "generate_draft") value = this.db.prepare("SELECT id,content_hash,revision FROM article_drafts WHERE brief_id=?").get(job.entity_id);
+    else if (job.type === "compose_frontend_page") value = this.db.prepare("SELECT payload_json,validation_json,draft_content_hash FROM frontend_page_compositions WHERE draft_id=?").get(job.entity_id);
+    else if (job.type === "review_draft") value = this.db.prepare("SELECT draft_content_hash,evidence_hash,passed,checks_json,issues_json FROM quality_reviews WHERE draft_id=? ORDER BY created_at DESC LIMIT 1").get(job.entity_id);
+    else if (job.type === "revise_draft") value = this.db.prepare("SELECT content_hash,revision FROM article_drafts WHERE id=?").get(job.entity_id);
+    return value ? sha256(JSON.stringify(value)) : "";
+  }
 
   recoverExpiredJobs() {
     const timestamp = this.jobTimestamp();
@@ -622,6 +716,19 @@ export class Repository {
         )`).get(type, this.jobTimestamp(), this.jobTimestamp())?.count || 0);
   }
 
+  nextVertexBatchJobType(minimum = 20) {
+    const candidates = ["extract_segment_claims", "audit_segment_coverage"]
+      .filter((type) => this.countVertexBatchEligibleJobs(type) >= Math.max(1, Number(minimum || 20)))
+      .map((type) => ({ type, oldest: this.db.prepare(`SELECT MIN(j.created_at) AS oldest FROM jobs j
+        JOIN source_segments ss ON ss.id=j.entity_id WHERE j.type=? AND j.status='queued'
+          AND j.available_at<=? AND COALESCE(j.next_eligible_at,j.available_at)<=? AND j.execution_route IN ('auto','batch')
+          AND ((j.type='extract_segment_claims' AND ss.segment_type<>'video_chapter')
+            OR (j.type='audit_segment_coverage' AND ss.asset_id IS NULL))`).get(type, this.jobTimestamp(), this.jobTimestamp())?.oldest || "" }));
+    candidates.sort((a, b) => String(a.oldest).localeCompare(String(b.oldest))
+      || (a.type === "audit_segment_coverage" ? -1 : 1));
+    return candidates[0]?.type || null;
+  }
+
   reserveVertexBatchJobs({ minimum = 20, maximum = 1_000, type = '', provider = 'vertex', model = '', location = 'global',
     projectId = '', schemaHash = '', promptHash = '', configVersion = 'legacy', configDigest = '' } = {}) {
     return transaction(this.db, () => {
@@ -914,6 +1021,8 @@ export class Repository {
           )
           AND (? = 1 OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")}))
         ORDER BY
+          CASE WHEN datetime(created_at)<=datetime(?,'-15 minutes') THEN 0 ELSE 1 END,
+          CASE execution_route WHEN 'realtime' THEN 0 WHEN 'auto' THEN 1 ELSE 2 END,
           CASE type
             WHEN 'finalize_source_extraction' THEN 0
             WHEN 'rebuild_knowledge' THEN 1
@@ -942,7 +1051,7 @@ export class Repository {
           created_at ASC
         LIMIT 1
       `).get(timestamp, timestamp, deferBatchExtraction ? 1 : 0, deferBatchCoverage ? 1 : 0,
-        providerReady ? 1 : 0, ...AI_JOB_TYPES);
+        providerReady ? 1 : 0, ...AI_JOB_TYPES, timestamp);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
       const claimed = this.db.prepare(`
@@ -2164,7 +2273,8 @@ export class Repository {
     return this.db.prepare("SELECT * FROM source_blueprints WHERE source_id=?").get(sourceId);
   }
 
-  getEntityResolutionPackage(destinationSlug, limit = 300) {
+  getEntityResolutionPackage(destinationSlug, limit = 300, cursor = null) {
+    const pageSize = Math.max(1, Math.min(1_000, Number(limit || 300)));
     const rows = this.db.prepare(`
       SELECT c.id, c.normalized_key, c.original_normalized_key, c.subject, c.predicate, c.value_text,
         c.source_quote, c.confidence, c.entity_key, c.canonical_subject, c.entity_aliases_json,
@@ -2173,12 +2283,14 @@ export class Repository {
       FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
       JOIN sources s ON s.id=c.source_id
       WHERE ss.destination_slug=? AND c.knowledge_eligible=1 AND c.lifecycle_status='active'
-      ORDER BY s.captured_at DESC, c.normalized_key LIMIT ?
-    `).all(destinationSlug, limit);
+        AND (? IS NULL OR c.id>?)
+      ORDER BY c.id LIMIT ?
+    `).all(destinationSlug, cursor, cursor, pageSize + 1);
+    const page = rows.slice(0, pageSize);
     const destination = this.db.prepare("SELECT name FROM destinations WHERE slug=?").get(destinationSlug);
     return {
       destination: { slug: destinationSlug, name: destination?.name || destinationSlug },
-      claims: rows.map((row) => ({
+      claims: page.map((row) => ({
         id: row.id, key: row.normalized_key, original_key: row.original_normalized_key || row.normalized_key,
         subject: row.subject, predicate: row.predicate, value: row.value_text, source_quote: row.source_quote,
         confidence: row.confidence, current_entity_key: row.entity_key || null,
@@ -2187,6 +2299,7 @@ export class Repository {
         captured_at: row.captured_at, source_title: row.source_title,
       })),
       known_aliases: this.listEntityAliases(destinationSlug),
+      nextCursor: rows.length > pageSize ? page.at(-1)?.id || null : null,
     };
   }
 
@@ -2802,6 +2915,32 @@ export class Repository {
       }
       for (const factId of existingFactsById.keys()) if (!activeFactIds.has(factId)) deleteKnowledgeFact.run(factId);
     });
+    const latestFacts = new Map(this.db.prepare("SELECT * FROM knowledge_facts WHERE destination_id=?").all(destinationId)
+      .map((row) => [row.id, row]));
+    const changedKeys = new Set();
+    for (const [factId, row] of latestFacts) {
+      const previous = existingFactsById.get(factId);
+      if (!previous || knowledgeDependencyHash(previous) !== knowledgeDependencyHash(row)) changedKeys.add(row.normalized_key);
+    }
+    for (const [factId, row] of existingFactsById) if (!latestFacts.has(factId)) changedKeys.add(row.normalized_key);
+    if (changedKeys.size) this.invalidateFactDependents(destinationSlug, [...changedKeys], timestamp);
+  }
+
+  invalidateFactDependents(destinationSlug, normalizedKeys, timestamp = now()) {
+    const keys = new Set((normalizedKeys || []).filter(Boolean));
+    if (!keys.size) return { draftIds: [], factKeys: [] };
+    const briefs = this.db.prepare("SELECT id,evidence_ledger_json FROM content_briefs WHERE destination_slug=?").all(destinationSlug)
+      .filter((brief) => json(brief.evidence_ledger_json, []).some((key) => keys.has(key)));
+    const draftIds = [];
+    for (const brief of briefs) {
+      const draft = this.db.prepare("SELECT id,status FROM article_drafts WHERE brief_id=?").get(brief.id);
+      if (!draft) continue;
+      draftIds.push(draft.id);
+      this.invalidateDraftDependents(draft.id, timestamp);
+      this.db.prepare("UPDATE article_drafts SET status='qa_queued',quality_report_json='{}',updated_at=? WHERE id=?").run(timestamp, draft.id);
+      this.enqueue("review_draft", draft.id);
+    }
+    return { draftIds, factKeys: [...keys] };
   }
 
   previewEvidenceIndependenceRebuild(destinationSlug) {
@@ -3131,6 +3270,24 @@ export class Repository {
     this.db.prepare("UPDATE content_opportunities SET status='drafted',updated_at=? WHERE candidate_id=?").run(timestamp, brief.candidate_id);
     if (!deferReview) this.enqueue("review_draft", draftId);
     return draftId;
+  }
+
+  updateDraftMetadata(draftId, { title = null, metaDescription = null } = {}) {
+    const contentPackage = this.getDraftPackage(draftId);
+    if (!contentPackage) throw new Error(`Article draft ${draftId} not found.`);
+    const draft = contentPackage.draft;
+    const nextTitle = title == null ? draft.title : String(title).trim();
+    if (!nextTitle) throw new Error("Draft title cannot be empty.");
+    const next = {
+      ...draft,
+      title: nextTitle,
+      meta_description: metaDescription == null ? draft.meta_description : String(metaDescription).trim(),
+      seo: { ...(draft.seo || {}), meta_title: nextTitle },
+      faqs: draft.seo?.faqs || [],
+    };
+    const savedId = this.saveDraft(draft.brief_id, next, "manual_metadata_edit", { deferReview: true });
+    this.enqueue("review_draft", savedId);
+    return this.getDraftPackage(savedId).draft;
   }
 
   getDraftPackage(draftId) {
@@ -4678,6 +4835,49 @@ export class Repository {
       }));
   }
 
+  modelRuntimeReport({ runId = null, since = null, until = null } = {}) {
+    const clauses = [];
+    const values = [];
+    if (runId) { clauses.push("run_id=?"); values.push(runId); }
+    if (since) { clauses.push("created_at>=?"); values.push(since); }
+    if (until) { clauses.push("created_at<=?"); values.push(until); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.db.prepare(`SELECT * FROM model_call_metrics ${where} ORDER BY created_at,id`).all(...values);
+    const qualifiedDraftIds = this.db.prepare(`SELECT DISTINCT draft_id FROM quality_reviews WHERE passed=1
+      ${since ? "AND created_at>=?" : ""} ${until ? "AND created_at<=?" : ""}`).all(...[since, until].filter(Boolean)).map((row) => row.draft_id);
+    const firstPass = this.db.prepare(`SELECT COUNT(*) AS total,SUM(passed) AS passed FROM quality_reviews q
+      WHERE created_at=(SELECT MIN(q2.created_at) FROM quality_reviews q2 WHERE q2.draft_id=q.draft_id)
+      ${since ? "AND created_at>=?" : ""} ${until ? "AND created_at<=?" : ""}`).get(...[since, until].filter(Boolean));
+    return {
+      ...summarizeModelCostLedger(rows, { qualifiedDraftIds }),
+      firstPassQa: { total: Number(firstPass?.total || 0), passed: Number(firstPass?.passed || 0),
+        passRate: Number(firstPass?.total || 0) ? Number(firstPass.passed || 0) / Number(firstPass.total) : null },
+    };
+  }
+
+  pipelinePerformanceReport({ since = null, until = null, concurrency = null } = {}) {
+    const clauses = ["completed_at IS NOT NULL"];
+    const values = [];
+    if (since) { clauses.push("created_at>=?"); values.push(since); }
+    if (until) { clauses.push("created_at<=?"); values.push(until); }
+    const rows = this.db.prepare(`SELECT id,type,entity_id,status,duration_ms,queue_latency_ms,failure_class
+      FROM jobs WHERE ${clauses.join(" AND ")} ORDER BY created_at,id`).all(...values);
+    const durations = rows.map((row) => row.duration_ms).filter((value) => value != null).map(Number).sort((a, b) => a - b);
+    const queue = rows.map((row) => row.queue_latency_ms).filter((value) => value != null).map(Number).sort((a, b) => a - b);
+    return {
+      environment: { node: process.version, platform: process.platform, architecture: process.arch,
+        concurrency: concurrency == null ? null : Number(concurrency) },
+      inputSetHash: sha256(JSON.stringify(rows.map((row) => [row.id, row.type, row.entity_id]))),
+      counts: { total: rows.length, succeeded: rows.filter((row) => row.status === "succeeded").length,
+        failed: rows.filter((row) => row.status === "failed").length,
+        cancelled: rows.filter((row) => row.status === "cancelled").length },
+      durationMs: performanceDistribution(durations), queueLatencyMs: performanceDistribution(queue),
+      peakMemoryBytes: typeof process.resourceUsage === "function" ? process.resourceUsage().maxRSS * 1024 : null,
+      databaseQueryCount: null,
+      databaseQueryCountReason: "SQLite query instrumentation is not enabled; no estimate is reported.",
+    };
+  }
+
   dashboard() {
     const statuses = this.db.prepare("SELECT status, COUNT(*) AS count FROM sources GROUP BY status").all();
     const operationalExceptions = this.listOperationalExceptions();
@@ -4736,22 +4936,39 @@ export class Repository {
         searchQueries: this.db.prepare("SELECT COUNT(*) AS count FROM search_console_inventory").get().count,
       },
       jobs: this.db.prepare("SELECT status, COUNT(*) AS count FROM jobs GROUP BY status").all(),
+      modelRuntime: this.modelRuntimeReport(),
+      pipelinePerformance: this.pipelinePerformanceReport(),
       modelUsage: this.db.prepare(`SELECT stage, provider, model, COUNT(*) AS calls,
-        SUM(COALESCE(input_tokens,0)) AS input_tokens, SUM(COALESCE(output_tokens,0)) AS output_tokens,
-        SUM(COALESCE(cached_tokens,0)) AS cached_tokens, ROUND(AVG(latency_ms),1) AS average_latency_ms,
-        SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failures, SUM(cost_usd) AS known_cost_usd
+        CASE WHEN COUNT(input_tokens)=COUNT(*) THEN SUM(input_tokens) ELSE NULL END AS input_tokens,
+        CASE WHEN COUNT(output_tokens)=COUNT(*) THEN SUM(output_tokens) ELSE NULL END AS output_tokens,
+        CASE WHEN COUNT(cached_tokens)=COUNT(*) THEN SUM(cached_tokens) ELSE NULL END AS cached_tokens,
+        CASE WHEN COUNT(thinking_tokens)=COUNT(*) THEN SUM(thinking_tokens) ELSE NULL END AS thinking_tokens,
+        ROUND(AVG(latency_ms),1) AS average_latency_ms,
+        SUM(CASE WHEN attempt_status='failed' THEN 1 ELSE 0 END) AS failures,
+        SUM(CASE WHEN attempt_status='cancelled' THEN 1 ELSE 0 END) AS cancellations,
+        SUM(CASE WHEN request_kind='cache_hit' THEN 1 ELSE 0 END) AS cache_hits,
+        CASE WHEN COUNT(cost_usd)=COUNT(*) THEN SUM(cost_usd) ELSE NULL END AS total_cost_usd,
+        SUM(CASE WHEN cost_status='unknown' THEN 1 ELSE 0 END) AS unknown_cost_attempts
         FROM model_call_metrics GROUP BY stage, provider, model ORDER BY calls DESC`).all(),
     };
   }
 
   recordModelCall(metric) {
     this.db.prepare(`INSERT INTO model_call_metrics(id,stage,provider,model,prompt_hash,schema_hash,input_hash,
-      input_tokens,output_tokens,cached_tokens,latency_ms,attempts,status,error_code,cost_usd,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      input_tokens,output_tokens,cached_tokens,latency_ms,attempts,status,error_code,cost_usd,created_at,
+      run_id,entity_id,attempt_number,request_kind,attempt_status,retry_reason,thinking_tokens,provider_usage_json,
+      config_hash,policy_version,cost_status,price_version,price_source,price_as_of,request_started_at,request_completed_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       id("modelcall"), metric.stage || "unknown", metric.provider || "unknown", metric.model || "unknown",
       metric.promptHash || "", metric.schemaHash || "", metric.inputHash || "", metric.inputTokens ?? null,
       metric.outputTokens ?? null, metric.cachedTokens ?? null, metric.latencyMs ?? 0, metric.attempts ?? 1,
-      metric.status || "succeeded", metric.errorCode || null, metric.costUsd ?? null, now(),
+      metric.status === "succeeded" ? "succeeded" : "failed", metric.errorCode || null, metric.costUsd ?? null, now(),
+      metric.runId || null, metric.entityId || null, metric.attemptNumber ?? metric.attempts ?? 1,
+      metric.requestKind || "provider", metric.attemptStatus || metric.status || "succeeded", metric.retryReason || null,
+      metric.thinkingTokens ?? null, metric.providerUsage ? JSON.stringify(metric.providerUsage) : null,
+      metric.configHash || "", metric.policyVersion || "legacy", metric.costStatus || "unknown",
+      metric.priceVersion || null, metric.priceSource || null, metric.priceAsOf || null,
+      metric.requestStartedAt || null, metric.requestCompletedAt || null,
     );
     if (metric.status === "succeeded" && Number(metric.attempts ?? 1) > 0 && this.providerPressureStreak) {
       this.providerSuccessStreak += 1;
@@ -4910,14 +5127,17 @@ export function contentPolicyFor(brief, facts = []) {
     .test(`${brief?.topic || ""} ${brief?.search_intent || ""} ${canonical.primary_query || ""}`);
   const faqSupported = questionIntent && substantialEvidence >= 3;
   return {
-    version: "content-policy-1.0",
+    version: "content-policy-1.1",
     content_type: type,
     minimum_words: minimumWords,
+    minimum_words_mode: "soft_editorial_guidance",
     target_words: Math.min(maximumWords, Math.max(minimumWords, substantialEvidence * 180)),
     maximum_words: maximumWords,
-    required_visible_sections: ["key_takeaways"],
+    required_visible_sections: [],
+    seo: { title_suggested_max: 60, description_suggested_max: 160, length_mode: "soft_editorial_guidance" },
     faq: { required: false, allowed: faqSupported, minimum: 0, maximum: faqSupported ? 4 : 0 },
-    visuals: { minimum: substantialEvidence >= 2 ? Math.min(baseVisuals, 2) : 1, target: Math.min(baseVisuals, Math.max(1, Math.ceil(substantialEvidence / 4))), maximum: baseVisuals + 1 },
+    visuals: { minimum: 0, target: substantialEvidence ? Math.min(baseVisuals, Math.max(1, Math.ceil(substantialEvidence / 4))) : 0,
+      maximum: baseVisuals + 1, count_mode: "soft_editorial_guidance" },
   };
 }
 
@@ -5457,6 +5677,25 @@ function normalizeValue(value) {
   return String(value).trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function performanceDistribution(sortedValues) {
+  if (!sortedValues.length) return { samples: 0, median: null, p95: null, p95Reason: "No measured samples." };
+  const percentile = (fraction) => sortedValues[Math.min(sortedValues.length - 1, Math.ceil(sortedValues.length * fraction) - 1)];
+  return {
+    samples: sortedValues.length,
+    median: percentile(0.5),
+    p95: sortedValues.length >= 20 ? percentile(0.95) : null,
+    p95Reason: sortedValues.length >= 20 ? null : "At least 20 measured samples are required for p95.",
+  };
+}
+
+function knowledgeDependencyHash(row) {
+  return sha256(JSON.stringify({
+    key: row?.normalized_key || "", value: row?.preferred_value || "", status: row?.consensus_status || "",
+    evidence: row?.evidence_json || "[]", freshness: row?.freshness_state || "", validity: row?.validity_state || "",
+    confidence: row?.consensus_confidence ?? null,
+  }));
+}
+
 function storedColumnsMatch(current, expected) {
   if (!current) return false;
   return Object.entries(expected).every(([column, value]) => (current[column] ?? null) === (value ?? null));
@@ -5482,6 +5721,7 @@ function sourceQueueStates(rows) {
       execution_route: next.execution_route || "auto", failure_class: next.failure_class || "",
       batch_attempts: Number(next.batch_attempts || 0), last_failure_code: next.last_failure_code || "",
       started_at: next.started_at || null,
+      queue_age_ms: Math.max(0, nowMs - Date.parse(next.created_at || next.updated_at)),
       attempts: Number(next.attempts || 0), max_attempts: Number(next.max_attempts || 0),
       last_error: next.last_error || null, updated_at: next.updated_at,
       queue_position: null, queue_ahead: null, _next: next });

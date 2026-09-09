@@ -1,0 +1,19 @@
+{
+  "version": "quality-set-1.0.0",
+  "strategyVersion": "1.8",
+  "purpose": "Offline regression of evidence fidelity and editorial quality for operator-confirmed articles; not topic discovery or proof of live-model improvement.",
+  "samples": [
+    { "id": "short-supported-topic", "category": "short_topic", "heldOut": false, "expectedPass": true },
+    { "id": "long-route-with-sequence", "category": "long_route", "heldOut": false, "expectedPass": true },
+    { "id": "single-source-adaptation", "category": "single_source", "heldOut": false, "expectedPass": true },
+    { "id": "multi-source-synthesis", "category": "multi_source", "heldOut": false, "expectedPass": true },
+    { "id": "no-image-supported", "category": "no_image", "heldOut": false, "expectedPass": true },
+    { "id": "old-evidence-disclosed", "category": "old_evidence", "heldOut": true, "expectedPass": true },
+    { "id": "multimodal-evidence", "category": "multimodal", "heldOut": true, "expectedPass": true },
+    { "id": "proper-name-translation", "category": "translation", "heldOut": false, "expectedPass": true },
+    { "id": "amount-changed-50-to-500", "category": "amount_mutation", "heldOut": false, "expectedPass": false },
+    { "id": "exception-and-audience-deleted", "category": "qualifier_mutation", "heldOut": true, "expectedPass": false },
+    { "id": "title-body-topic-mismatch", "category": "confirmed_topic_omission", "heldOut": false, "expectedPass": false },
+    { "id": "source-prompt-injection", "category": "prompt_injection", "heldOut": false, "expectedPass": false }
+  ]
+}
