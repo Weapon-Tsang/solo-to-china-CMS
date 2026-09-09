@@ -39,7 +39,8 @@ export function segmentSource(source, { maxChars = 6_000 } = {}) {
   return segments;
 }
 
-export function evaluateCoverage({ topicKey, contentType = "practical_guide", facts = [], sourceFamilyCount = 0 }) {
+export function evaluateCoverage({ topicKey, contentType = "practical_guide", facts = [], sourceFamilyCount = 0,
+  publicationMode = "multi_source_synthesis" }) {
   const requirements = COVERAGE_REQUIREMENTS[contentType] || COVERAGE_REQUIREMENTS.practical_guide;
   const rows = [...requirements.required.map((key) => requirement(key, "required", facts)),
     ...requirements.important.map((key) => requirement(key, "important", facts)),
@@ -54,14 +55,25 @@ export function evaluateCoverage({ topicKey, contentType = "practical_guide", fa
   const requiredRatio = required.length ? requiredCovered / required.length : 1;
   const importantRatio = important.length ? importantCovered / important.length : 1;
   const coverage = Math.round((requiredRatio * 0.75 + importantRatio * 0.25) * 100);
-  const blockingRequirements = required.filter((item) => item.state !== "covered").map((item) => item.key);
+  const usableFactCount = facts.filter((fact) => fact.freshness_state !== "stale" && fact.consensus_status !== "conflicted").length;
+  const editoriallySufficient = publicationMode === "source_adaptation"
+    ? usableFactCount >= 3 && requiredCovered >= Math.min(1, required.length)
+    : publicationMode === "topic_feature"
+      ? usableFactCount >= 4 && requiredRatio >= 0.5 && sourceFamilyCount >= 1
+      : requiredRatio === 1 && sourceFamilyCount >= 2 && requiresOfficialCount === 0;
+  const blockingRequirements = publicationMode === "multi_source_synthesis"
+    ? required.filter((item) => item.state !== "covered").map((item) => item.key)
+    : conflictedCount > 0 ? rows.filter((item) => item.state === "conflicted").map((item) => item.key) : [];
   return {
-    topicKey, contentType, requirements: rows,
+    topicKey, contentType, publicationMode, requirements: rows,
     readiness: {
-      ready: requiredRatio === 1 && sourceFamilyCount >= 2 && conflictedCount === 0 && requiresOfficialCount === 0,
+      ready: editoriallySufficient && conflictedCount === 0,
+      editoriallySufficient,
+      publicationMode,
       score: Math.max(0, Math.min(100, coverage + Math.min(10, facts.length) - staleCount * 3 - conflictedCount * 8 - requiresOfficialCount * 5)),
       coverage, requiredCovered, requiredTotal: required.length,
       importantCovered, importantTotal: important.length, factCount: facts.length, sourceFamilyCount,
+      usableFactCount,
       staleCount, conflictedCount, requiresOfficialCount,
       missingRequirements: rows.filter((item) => item.state === "missing").map((item) => item.key),
       blockingRequirements,

@@ -105,7 +105,7 @@ function CredentialField({ label: title, type = "text", value, onChange, autoCom
 }
 
 function SourcesView({ data, onGuide, onOpenSource, onSubmitManualSource, actionBusy }) {
-  const items = data?.items || [];
+  const items = (data?.items || []).map((item) => ({ ...item, status: sourceDisplayStatus(item) }));
   return (
     <div className="space-y-4">
       <ManualSourceForm onSubmit={onSubmitManualSource} busy={actionBusy} />
@@ -146,9 +146,17 @@ function SourceQueueOverview({ items }) {
   const queued = active.filter((item) => item.queue.state === "queued").length;
   const cooldown = active.filter((item) => item.queue.state === "cooldown").length;
   return <SummaryBar title={`处理队列：${running} 篇正在处理 · ${queued} 篇可执行排队 · ${cooldown} 篇冷却等待`}>
-    <span>来源页在队列活动时每 5 秒自动刷新；当前阶段、剩余任务数和排队顺序会随调度实时更新。</span>
-    <span>“冷却等待”表示模型限流或退避尚未到期，并非进程卡死；到达显示时间后会自动重新进入可执行队列。</span>
+    <span>来源页在队列活动时每 5 秒刷新状态；只有队首小工作集进入处理，其余来源保持真实排队状态。</span>
+    <span>“冷却等待”只标记实际触发限流的任务；提供商暂停期间不会再把整支队列批量改成冷却。</span>
   </SummaryBar>;
+}
+
+function sourceDisplayStatus(item) {
+  if (item.queue?.state === "running") return "processing";
+  if (item.queue?.state === "queued") return "queued";
+  if (item.queue?.state === "cooldown") return "retry_required";
+  if (item.queue?.state === "failed") return "exception";
+  return item.status;
 }
 
 function SourceQueueStatus({ item, compact = false }) {
@@ -302,6 +310,8 @@ function RecommendationConclusion({ item }) {
     blue: "border-blue-200/80 bg-blue-50/70 text-blue-950",
     slate: "border-slate-200/80 bg-slate-50 text-slate-900",
   };
+  const topicIdeas = (item.possible_cluster_topics || []).slice(0, 5);
+  if (topicIdeas.length) guidance.reason = `${guidance.reason} 可继续拆分为：${topicIdeas.join("；")}。`;
   return <div className={cn("mt-3 max-w-xl rounded-xl border px-3 py-2.5 shadow-sm", tones[guidance.tone])}><div className="text-[10px] font-semibold uppercase tracking-[0.12em] opacity-65">系统建议结论</div><p className="mt-1 text-xs font-semibold leading-relaxed">{guidance.conclusion}</p><p className="mt-1 text-[11px] leading-relaxed opacity-85">{guidance.reason}</p><div className="mt-2 border-t border-current/10 pt-2 text-[10px] leading-relaxed opacity-80"><b>下一步：</b>{guidance.next}<br /><b>不会影响：</b>{guidance.impact}</div></div>;
 }
 

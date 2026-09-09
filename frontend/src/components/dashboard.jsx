@@ -90,7 +90,7 @@ export function PageHeading({ view, health, onOpenStrategy }) {
 }
 
 export function Metrics({ totals: rawTotals = {}, onNavigate }) {
-  const totals = { ...rawTotals, topicCandidates: rawTotals.contentPipelineItems ?? rawTotals.topicCandidates };
+  const totals = { ...rawTotals, topicCandidates: Number(rawTotals.pendingRecommendations || 0) + Number(rawTotals.contentPipelineItems ?? rawTotals.topicCandidates ?? 0) };
   const groups = [
     {
       icon: FileText, tone: "blue", eyebrow: "研究资产", title: "来源已结构化", value: totals.knowledgeFacts ?? 0, unit: "条知识事实",
@@ -109,6 +109,7 @@ export function Metrics({ totals: rawTotals = {}, onNavigate }) {
       detail: totals.exceptions ? "查看待判断问题与处理入口" : "采集、队列与维护状态正常", stats: [[totals.conflicts, "知识冲突"], [totals.sources, "已采集来源"]], view: "exceptions",
     },
   ];
+  if (Number(rawTotals.pendingRecommendations || 0) > 0) groups[1].view = "recommendations";
   return (
     <section aria-label="工作台总览" className="grid grid-cols-2 gap-2 sm:gap-2.5 md:grid-cols-4">
       {groups.map((group) => <MetricGroup key={group.eyebrow} {...group} onNavigate={onNavigate} />)}
@@ -185,7 +186,7 @@ export function StatusPill({ status }) {
 }
 
 export function SummaryBar({ title, children, action }) {
-  return <Card className="mb-3 flex flex-wrap items-center gap-2.5 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3"><strong className="text-xs font-semibold text-slate-900">{title}</strong><div className="flex flex-1 flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500 sm:gap-x-4">{children}</div>{action}</Card>;
+  return <Card className="mb-3 flex flex-col items-stretch gap-2.5 px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 sm:px-4 sm:py-3"><strong className="min-w-0 text-xs font-semibold text-slate-900">{title}</strong><div className="flex min-w-0 w-full flex-col gap-x-3 gap-y-1 text-[11px] leading-relaxed text-slate-500 sm:w-auto sm:flex-1 sm:flex-row sm:flex-wrap sm:gap-x-4">{children}</div>{action}</Card>;
 }
 
 export function Toast({ message, error }) {

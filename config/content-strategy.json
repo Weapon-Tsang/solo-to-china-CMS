@@ -1,13 +1,26 @@
 {
   "name": "SoloToChina Content Production Strategy",
-  "current_version": "1.5",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.5.md",
+  "current_version": "1.6",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.6.md",
   "status": "active",
   "history": [
     {
+      "version": "1.6",
+      "effective_date": "2026-09-09",
+      "status": "active",
+      "summary": "Use editorial sufficiency rather than encyclopedic completeness, and support focused features and rights-authorized single-source adaptations.",
+      "changes": [
+        "Judge readiness against one bounded reader promise rather than requiring every destination fact in one article.",
+        "Create focused topic features and repeatable series from useful subtopics, lists, food, lodging, routes and photo locations.",
+        "Allow a complete rights-authorized source note to become an original English source adaptation without unrelated source mixing.",
+        "Discard individual untraceable extracted Claims while retaining supported evidence; retry only when a material text segment has no traceable Claim.",
+        "Finish the active source and its diagnostic before expanding the next source backlog."
+      ]
+    },
+    {
       "version": "1.5",
       "effective_date": "2026-09-08",
-      "status": "active",
+      "status": "superseded",
       "summary": "Bind evidence, QA, media, final page and delivery versions while scaling article depth, FAQ and visuals to the reader task.",
       "changes": [
         "Bind QA, page composition and commercial output to exact draft revision, content hash and evidence hash.",

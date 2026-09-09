@@ -52,6 +52,19 @@ test("Coverage Matrix blocks approval until required evidence and independent fa
   assert.equal(ready.readiness.ready, true);
 });
 
+test("focused features and authorized source adaptations use editorial sufficiency instead of encyclopedia coverage", () => {
+  const facts = ["selection.best", "items.attraction", "transport.metro", "timing.duration"]
+    .map((normalized_key) => ({ normalized_key, consensus_status: "corroborated", verification_priority: "normal", freshness_state: "current" }));
+  const feature = evaluateCoverage({ topicKey: "chongqing:photo-spots", contentType: "listicle", facts, sourceFamilyCount: 1, publicationMode: "topic_feature" });
+  assert.equal(feature.readiness.ready, true);
+  assert.equal(feature.readiness.publicationMode, "topic_feature");
+  const adaptation = evaluateCoverage({ topicKey: "chongqing:one-day", contentType: "itinerary", facts, sourceFamilyCount: 1, publicationMode: "source_adaptation" });
+  assert.equal(adaptation.readiness.ready, true);
+  assert.deepEqual(adaptation.readiness.blockingRequirements, []);
+  const synthesis = evaluateCoverage({ topicKey: "chongqing:complete", contentType: "itinerary", facts, sourceFamilyCount: 1 });
+  assert.equal(synthesis.readiness.ready, false);
+});
+
 test("an editor can classify an opportunity as create, update, merge, or retire against published inventory", (t) => {
   const { db, repository } = repositoryFixture(t);
   const source = repository.saveCapture(normalizeXiaohongshuCapture({

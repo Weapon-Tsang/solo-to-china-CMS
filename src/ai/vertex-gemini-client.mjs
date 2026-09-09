@@ -9,6 +9,7 @@ const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/i
 const MAX_INLINE_VIDEO_BYTES = 14 * 1024 * 1024;
 const MAX_REMOTE_VIDEO_BYTES = 256 * 1024 * 1024;
 const SUPPORTED_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/quicktime", "video/mpeg", "video/webm", "video/avi", "video/wmv", "video/flv", "video/3gpp"]);
+const REASONING_STAGES = new Set(["content_brief", "article_draft_v2", "quality_review_v2", "frontend_page_plan", "frontend_page_payload"]);
 
 export class VertexGeminiClient {
   constructor(config, fetchImpl = fetch) {
@@ -38,7 +39,9 @@ export class VertexGeminiClient {
         responseMimeType: "application/json", ...vertexStructuredOutput(schema, schemaMode),
         maxOutputTokens: this.config.maxCompletionTokens || 16_000,
         ...(String(this.config.model).startsWith("gemini-3")
-          ? { thinkingConfig: { thinkingLevel: this.config.thinkingLevel || "HIGH" } }
+          ? { thinkingConfig: { thinkingLevel: REASONING_STAGES.has(name)
+            ? this.config.reasoningThinkingLevel || "MEDIUM"
+            : this.config.thinkingLevel || "LOW" } }
           : { temperature: 0.1 }),
       },
     };

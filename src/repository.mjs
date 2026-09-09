@@ -30,6 +30,7 @@ export class Repository {
     this.providerRecoverySuccesses = Math.max(1, Number(contentConfig.providerRecoverySuccesses || 5));
     this.providerPressureStreak = 0;
     this.providerSuccessStreak = 0;
+    this.providerBackoffUntil = 0;
   }
 
   jobTimestamp() { return this.clock().toISOString(); }
@@ -541,6 +542,7 @@ export class Repository {
   claimJob() {
     return transaction(this.db, () => {
       const timestamp = this.jobTimestamp();
+      const providerReady = this.clock().getTime() >= this.providerBackoffUntil;
       this.db.prepare(`
         UPDATE jobs SET status='queued', locked_at=NULL, locked_by=NULL, lease_expires_at=NULL,
           heartbeat_at=NULL, available_at=?, updated_at=?
@@ -549,17 +551,36 @@ export class Repository {
       const job = this.db.prepare(`
         SELECT * FROM jobs
         WHERE status = 'queued' AND available_at <= ?
+          AND (? = 1 OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")}))
         ORDER BY
           CASE type
             WHEN 'finalize_source_extraction' THEN 0
             WHEN 'rebuild_knowledge' THEN 1
-            WHEN 'retry_segment_extraction' THEN 2
-            WHEN 'audit_segment_coverage' THEN 3
-            ELSE 4
+            WHEN 'analyze_source_diagnostic' THEN 2
+            WHEN 'plan_content' THEN 3
+            WHEN 'compose_frontend_page_plan' THEN 3
+            WHEN 'generate_draft' THEN 3
+            WHEN 'generate_visuals' THEN 3
+            WHEN 'review_draft' THEN 3
+            WHEN 'revise_draft' THEN 3
+            WHEN 'compose_frontend_page' THEN 3
+            WHEN 'compose_publish_page' THEN 3
+            WHEN 'compose_commercial' THEN 3
+            WHEN 'push_wordpress_draft' THEN 3
+            WHEN 'retry_segment_extraction' THEN 4
+            WHEN 'audit_segment_coverage' THEN 5
+            WHEN 'analyze_source_family' THEN 6
+            WHEN 'analyze_source_blueprint' THEN 7
+            WHEN 'resolve_entities' THEN 8
+            WHEN 'extract_segment_claims' THEN 9
+            WHEN 'segment_source' THEN 10
+            WHEN 'preflight_source' THEN 11
+            WHEN 'extract_source' THEN 12
+            ELSE 9
           END,
           created_at ASC
         LIMIT 1
-      `).get(timestamp);
+      `).get(timestamp, providerReady ? 1 : 0, ...AI_JOB_TYPES);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
       const claimed = this.db.prepare(`
@@ -612,7 +633,8 @@ export class Repository {
       ? Math.min(this.providerBackoffMaxMs, this.providerBackoffInitialMs * 2 ** Math.min(10, Math.max(0, this.providerPressureStreak - 1)))
       : Math.min(300_000, 10_000 * 2 ** Math.max(0, job.attempts - 1));
     const delayMs = Math.max(Number(error?.retryAfterMs || 0), Math.round(baseDelayMs * (0.8 + Math.random() * 0.4)));
-    const availableAt = new Date(Date.now() + delayMs).toISOString();
+    const availableAt = new Date(this.clock().getTime() + delayMs).toISOString();
+    if (providerPressure) this.providerBackoffUntil = Math.max(this.providerBackoffUntil, Date.parse(availableAt));
     const timestamp = this.jobTimestamp();
     const durationMs = job.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
     this.db.prepare(`
@@ -621,10 +643,6 @@ export class Repository {
       WHERE id=? AND status='running' AND locked_by=?
     `).run(retry ? "queued" : "failed", availableAt, String(error?.message || error).slice(0, 4_000),
       retry ? null : timestamp, retry ? null : durationMs, timestamp, job.id, job.locked_by || this.workerId);
-    if (providerPressure) this.db.prepare(`
-      UPDATE jobs SET available_at=CASE WHEN available_at<? THEN ? ELSE available_at END, updated_at=?
-      WHERE status='queued' AND type IN (${[...AI_JOB_TYPES].map(() => "?").join(",")})
-    `).run(availableAt, availableAt, timestamp, ...AI_JOB_TYPES);
     const message = String(error?.message || error).slice(0, 4_000);
     if (job.type === "extract_source") {
       this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
@@ -826,20 +844,20 @@ export class Repository {
     const assessedUncovered = Array.isArray(assessment?.uncovered_spans) ? assessment.uncovered_spans
       .map((item) => ({ locator: String(item.quote || item.locator || row.title || `segment ${row.sequence + 1}`).slice(0, 800),
         importance: String(item.importance || "material"), reason: String(item.reason || "Material travel evidence is not covered by a Claim.").slice(0, 1000) })) : null;
-    const groundingGap = !row.asset_id && claims.length > supportedClaims.length
-      ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: "One or more extracted Claims do not contain a quote traceable to this segment." }] : [];
+    const noSupportedClaimGap = !row.asset_id && material && supportedClaims.length === 0 && row.method !== "heuristic"
+      ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: "Material segment produced no traceable Claim." }] : [];
     const modalityGap = row.asset_id && receivedModality !== expectedModality
       ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: `Expected ${expectedModality} evidence was not received by the model.` }] : [];
-    const uncovered = [...(assessedUncovered || (material && supportedClaims.length === 0 && row.method !== "heuristic"
-      ? [{ locator: row.title || `segment ${row.sequence + 1}`, importance: "material", reason: "Material segment produced no supported Claim." }] : [])),
-      ...groundingGap, ...modalityGap];
+    const uncovered = [...(assessedUncovered || []), ...noSupportedClaimGap, ...modalityGap];
     const importantUncovered = uncovered.filter((item) => ["material", "important"].includes(item.importance)).length;
     const retryCount = Math.max(0, Number(row.attempt || 1) - 1);
-    const status = importantUncovered ? retryCount < 1 ? "retry_required" : "manual_review" : "passed";
+    const bestEffortAccepted = importantUncovered > 0 && retryCount >= 1 && supportedClaims.length > 0 && modalityGap.length === 0;
+    const status = importantUncovered ? bestEffortAccepted ? "passed" : retryCount < 1 ? "retry_required" : "manual_review" : "passed";
     const timestamp = now();
     const coverageId = `coverage_${sha256(segmentId).slice(0, 24)}`;
     const audit = { expectedModality, receivedModality, assetId: row.asset_id || null,
-      attempted: Number(assessment?.modality?.attempted || 0) };
+      attempted: Number(assessment?.modality?.attempted || 0), unsupportedClaimCount: claims.length - supportedClaims.length,
+      bestEffortAccepted };
     this.db.prepare(`INSERT INTO extraction_coverage(id,source_id,segment_id,extraction_run_id,status,candidate_evidence_count,claim_count,uncovered_spans_json,important_uncovered_count,model,audited_at,retry_count,audit_json)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,
       candidate_evidence_count=excluded.candidate_evidence_count,claim_count=excluded.claim_count,uncovered_spans_json=excluded.uncovered_spans_json,
@@ -930,7 +948,9 @@ export class Repository {
     const results = rows.map((row) => ({ row, result: json(row.result_json, {}) }));
     const primary = results.map((item) => item.result.source).filter(Boolean).sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0))[0]
       || { language: "unknown", summary: "", destination_name: "Unknown", destination_slug: "unknown", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0 };
-    const claims = results.flatMap((item) => (item.result.claims || []).map((claim) => ({ ...claim, _segment_id: item.row.id, _asset_id: item.row.asset_id })));
+    const claims = results.flatMap((item) => (item.result.claims || [])
+      .filter((claim) => item.row.asset_id || locateEvidenceQuote(item.row.raw_text, claim.source_quote).status !== "unsupported")
+      .map((claim) => ({ ...claim, _segment_id: item.row.id, _asset_id: item.row.asset_id })));
     const blueprint = mergeBlueprints(results.map((item) => item.result.blueprint).filter(Boolean));
     const method = [...new Set(rows.map((row) => row.method))].join("+");
     const model = [...new Set(rows.map((row) => row.model).filter(Boolean))].join(", ") || null;
@@ -967,6 +987,14 @@ export class Repository {
         destination: source.structured.destination_name,
         destination_slug: source.structured.destination_slug,
         summary: source.structured.summary,
+        authorization_status: source.authorization_status,
+        editing_allowed: source.editing_allowed,
+        redistribution_allowed: source.redistribution_allowed,
+        publishable: source.publishable,
+        editorial_blueprint: source.blueprint ? {
+          format: source.blueprint.format, hook: source.blueprint.hook, angle: source.blueprint.angle,
+          sections: source.blueprint.sections, strengths: source.blueprint.strengths, gaps: source.blueprint.gaps,
+        } : null,
       },
       claims: source.claims.map((claim) => ({
         key: claim.normalized_key, subject: claim.subject, predicate: claim.predicate,
@@ -1115,10 +1143,19 @@ export class Repository {
     const opportunityId = `opportunity_${sha256(topicKey).slice(0, 24)}`;
     const allFacts = this.knowledgeForDestination(destinationSlug);
     const title = analysis.suggested_article_title || recommendation.suggested_article_title || `${topic} guide`;
-    const facts = scopeFactsForOpportunity(allFacts, { destinationSlug, topic, title });
+    const sourceRights = this.db.prepare("SELECT authorization_status,editing_allowed FROM sources WHERE id=?").get(sourceId);
+    const requestedMode = normalizePublicationMode(analysis.production_mode
+      || (analysis.classification === "ARTICLE_CANDIDATE" ? "TOPIC_FEATURE" : "MULTI_SOURCE_SYNTHESIS"));
+    const publicationMode = requestedMode === "source_adaptation" && !Boolean(sourceRights?.editing_allowed)
+      ? "topic_feature" : requestedMode;
+    const sourceFacts = factsForSource(allFacts, sourceId);
+    const facts = publicationMode === "source_adaptation" && sourceFacts.length
+      ? sourceFacts : scopeFactsForOpportunity(allFacts, { destinationSlug, topic, title });
     const familyCount = this.independentSourceFamilyCountForFacts(facts);
-    const matrix = evaluateCoverage({ topicKey, contentType, facts, sourceFamilyCount: familyCount });
-    const coverage = { ...matrix, selectedFactKeys: facts.map((fact) => fact.normalized_key), legacy_signals: opportunityCoverage(destinationSlug, facts, analysis) };
+    const matrix = evaluateCoverage({ topicKey, contentType, facts, sourceFamilyCount: familyCount, publicationMode });
+    const coverage = { ...matrix, publicationMode, selectedFactKeys: facts.map((fact) => fact.normalized_key),
+      selectedSourceIds: [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))],
+      legacy_signals: opportunityCoverage(destinationSlug, facts, analysis) };
     const status = overrides.status || classificationOpportunityStatus(analysis.classification);
     const candidateId = overrides.candidateId || recommendation.approved_candidate_id || null;
     const lifecycle = this.classifyPublicationLifecycle(title);
@@ -1202,10 +1239,15 @@ export class Repository {
     const allFacts = this.knowledgeForDestination(destinationSlug);
     const opportunities = this.db.prepare("SELECT * FROM content_opportunities WHERE destination_slug=?").all(destinationSlug);
     for (const opportunity of opportunities) {
-      const facts = scopeFactsForOpportunity(allFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
+      const previousCoverage = json(opportunity.coverage_json, {});
+      const publicationMode = normalizePublicationMode(previousCoverage.publicationMode);
+      const sourceFacts = factsForSource(allFacts, opportunity.source_id);
+      const facts = publicationMode === "source_adaptation" && sourceFacts.length
+        ? sourceFacts : scopeFactsForOpportunity(allFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
       const familyCount = this.independentSourceFamilyCountForFacts(facts);
-      const matrix = evaluateCoverage({ topicKey: opportunity.topic_key, contentType: opportunity.content_type, facts, sourceFamilyCount: familyCount });
-      const coverage = { ...matrix, selectedFactKeys: facts.map((fact) => fact.normalized_key) };
+      const matrix = evaluateCoverage({ topicKey: opportunity.topic_key, contentType: opportunity.content_type, facts, sourceFamilyCount: familyCount, publicationMode });
+      const coverage = { ...matrix, publicationMode, selectedFactKeys: facts.map((fact) => fact.normalized_key),
+        selectedSourceIds: [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))] };
       this.saveCoverageMatrix(matrix, destinationSlug);
       const current = opportunity.status;
       const next = current === "approved_waiting_for_evidence" && matrix.readiness.ready ? "approved_ready" : current;
@@ -2070,15 +2112,25 @@ export class Repository {
   getTopicPackage(candidateId) {
     const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
     if (!candidate) return null;
-    const opportunity = this.db.prepare("SELECT coverage_json FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1").get(candidateId);
-    const selectedKeys = new Set(json(opportunity?.coverage_json, {}).selectedFactKeys || []);
+    const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1").get(candidateId);
+    const coverage = json(opportunity?.coverage_json, {});
+    const publicationMode = normalizePublicationMode(coverage.publicationMode);
+    const selectedKeys = new Set(coverage.selectedFactKeys || []);
     const destinationFacts = this.knowledgeForDestination(candidate.destination_slug);
     const scopedFacts = selectedKeys.size
       ? destinationFacts.filter((fact) => selectedKeys.has(fact.normalized_key))
       : scopeFactsForOpportunity(destinationFacts, { title: candidate.proposed_title, topic_key: candidate.topic_key });
+    const source = publicationMode === "source_adaptation" && opportunity?.source_id ? this.getSource(opportunity.source_id) : null;
     return {
       candidate,
       facts: scopedFacts,
+      production_mode: publicationMode,
+      source_reference: source ? {
+        id: source.id, title: source.title, summary: source.structured?.summary || "",
+        authorization_status: source.authorization_status, editing_allowed: source.editing_allowed,
+        blueprint: source.blueprint ? { format: source.blueprint.format, hook: source.blueprint.hook,
+          angle: source.blueprint.angle, sections: source.blueprint.sections, strengths: source.blueprint.strengths } : null,
+      } : null,
       editorial_patterns: this.getEditorialBlueprints().slice(0, 8).map((item) => ({
         format: item.format, angle: item.angle, sample_count: item.sample_count,
         section_patterns: item.section_patterns.slice(0, 8), strengths: item.strengths.slice(0, 8), gaps: item.gaps.slice(0, 8),
@@ -2881,6 +2933,11 @@ export class Repository {
   enqueueStartupReconciliation({ wordpressEnabled = false, contractAware = false } = {}) {
     const researchSlugs = new Set(this.db.prepare("SELECT DISTINCT destination_slug FROM structured_sources").all().map((row) => row.destination_slug));
     for (const slug of researchSlugs) this.enqueue("rebuild_knowledge", slug);
+    for (const row of this.db.prepare(`SELECT s.id FROM sources s
+      JOIN structured_sources ss ON ss.source_id=s.id
+      LEFT JOIN content_intake_analyses cia ON cia.source_id=s.id
+      WHERE s.status='processed' AND (cia.id IS NULL OR cia.strategy_version<>?)
+      ORDER BY s.captured_at ASC`).all(this.strategyVersion)) this.enqueue("analyze_source_diagnostic", row.id);
     for (const row of this.db.prepare("SELECT slug FROM destinations").all()) {
       if (!researchSlugs.has(row.slug)) this.enqueue("rebuild_topics", row.slug);
     }
@@ -3706,6 +3763,7 @@ export class Repository {
       if (this.providerSuccessStreak >= this.providerRecoverySuccesses) {
         this.providerPressureStreak = 0;
         this.providerSuccessStreak = 0;
+        this.providerBackoffUntil = 0;
       }
     }
   }
@@ -4115,6 +4173,7 @@ function normalizeIntakeAnalysis(value, strategyVersion) {
   return {
     strategy_version: strategyVersion,
     classification,
+    production_mode: normalizeProductionMode(value?.production_mode, classification),
     confidence: normalizedFraction(value?.confidence),
     primary_topic: truncateText(value?.primary_topic || "Unclassified travel topic", 240),
     entities: cleanStrings(value?.entities, 24, 160),
@@ -4131,6 +4190,18 @@ function normalizeIntakeAnalysis(value, strategyVersion) {
     possible_cluster_topics: cleanStrings(value?.possible_cluster_topics, 10, 180),
     reasoning_summary: truncateText(value?.reasoning_summary || "Review the evidence before deciding the next content action.", 700),
   };
+}
+
+function normalizeProductionMode(value, classification = "UNSURE") {
+  const supplied = String(value || "").trim().toUpperCase();
+  if (["SOURCE_ADAPTATION", "TOPIC_FEATURE", "MULTI_SOURCE_SYNTHESIS"].includes(supplied)) return supplied;
+  return classification === "ARTICLE_CANDIDATE" ? "TOPIC_FEATURE" : "MULTI_SOURCE_SYNTHESIS";
+}
+
+function normalizePublicationMode(value) {
+  const supplied = String(value || "").trim().toLowerCase();
+  if (["source_adaptation", "topic_feature", "multi_source_synthesis"].includes(supplied)) return supplied;
+  return "multi_source_synthesis";
 }
 
 function hydrateRecommendation(row) {
@@ -4285,9 +4356,13 @@ function sourceQueueStates(rows) {
 
 function extractionJobPriority(type) {
   if (type === "finalize_source_extraction") return 0;
-  if (type === "retry_segment_extraction") return 1;
-  if (type === "audit_segment_coverage") return 2;
-  return 3;
+  if (type === "retry_segment_extraction") return 4;
+  if (type === "audit_segment_coverage") return 5;
+  if (type === "extract_segment_claims") return 9;
+  if (type === "segment_source") return 10;
+  if (type === "preflight_source") return 11;
+  if (type === "extract_source") return 12;
+  return 9;
 }
 
 function compareEligibleJobs(a, b) {
@@ -4533,6 +4608,10 @@ export function scopeFactsForOpportunity(facts, { destinationSlug, topic, title 
     const factTerms = topicTokens(`${fact.normalized_key || ""} ${fact.subject || ""} ${fact.predicate || ""}`);
     return [...terms].some((term) => factTerms.has(term));
   });
+}
+
+function factsForSource(facts, sourceId) {
+  return (facts || []).filter((fact) => (fact.evidence || []).some((item) => item.source_id === sourceId));
 }
 
 function locateEvidenceQuote(rawText, quote) {

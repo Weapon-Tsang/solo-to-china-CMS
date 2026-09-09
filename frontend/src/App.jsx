@@ -33,6 +33,7 @@ export default function App() {
   const [totals, setTotals] = useState({});
   const [actionCounts, setActionCounts] = useState({});
   const [viewData, setViewData] = useState(null);
+  const [pendingActionView, setPendingActionView] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
@@ -66,7 +67,7 @@ export default function App() {
     try {
       const data = await api(endpoints[view]);
       if (sequence !== requestSequence.current) return;
-      setViewData(data);
+      setViewData({ ...data, _loadedView: view });
       setError("");
     } catch (caught) {
       if (sequence !== requestSequence.current) return;
@@ -184,6 +185,20 @@ export default function App() {
     }
   }, [showToast]);
 
+  const openNavigationAction = useCallback((view) => {
+    setPendingActionView({ view, requestedAt: Date.now() });
+    setActiveView(view);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingActionView || pendingActionView.view !== activeView || loading || viewData?._loadedView !== activeView) return;
+    if (activeView === "sources") {
+      const target = (viewData.items || []).find((item) => item.queue?.state === "failed" || item.status === "exception");
+      if (target) void openPackage("source", target.id);
+    }
+    setPendingActionView(null);
+  }, [activeView, loading, openPackage, pendingActionView, viewData]);
+
   if (!auth) return <LoadingView />;
   if (auth.enabled && !auth.authenticated) return <LoginScreen onAuthenticated={loadAuth} />;
   if (auth.enabled && auth.mustChangePassword) return <ChangePasswordScreen onChanged={loadAuth} />;
@@ -198,12 +213,12 @@ export default function App() {
           <div className="sticky top-[53px] z-30 -mx-1 py-1.5 sm:top-[62px] sm:hidden">
             <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 p-1.5 shadow-sm backdrop-blur">
               <TabsList aria-label="手机端后台菜单" className="grid h-auto w-full grid-cols-3 gap-1 border-0 bg-transparent p-0 shadow-none">
-                {Object.entries(views).map(([key, item]) => { const Icon = item.icon; return <TabsTrigger key={key} value={key} title={item.title} className="relative h-11 min-w-0 w-full px-1.5"><Icon className="size-3.5 shrink-0" /><span className="truncate">{item.label}</span><NavigationBadge count={actionCounts[key]} active={activeView === key} compact /></TabsTrigger>; })}
+                {Object.entries(views).map(([key, item]) => { const Icon = item.icon; const badge = <NavigationBadge count={actionCounts[key]} active={activeView === key} compact />; return <TabsTrigger key={key} value={key} title={item.title} className="relative h-11 min-w-0 w-full px-1.5"><Icon className="size-3.5 shrink-0" /><span className="truncate">{item.label}</span>{key === "sources" ? <NavigationAction count={actionCounts[key]} onActivate={() => openNavigationAction(key)}>{badge}</NavigationAction> : badge}</TabsTrigger>; })}
               </TabsList>
             </div>
           </div>
           <div className="sticky top-[62px] z-30 -mx-1 hidden overflow-x-auto px-1 py-1.5 scrollbar-none sm:block">
-            <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span><NavigationBadge count={actionCounts[key]} active={activeView === key} /></TabsTrigger>; })}</TabsList>
+            <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; const badge = <NavigationBadge count={actionCounts[key]} active={activeView === key} />; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span>{key === "sources" ? <NavigationAction count={actionCounts[key]} onActivate={() => openNavigationAction(key)}>{badge}</NavigationAction> : badge}</TabsTrigger>; })}</TabsList>
           </div>
         </Tabs>
         {health && !health.aiConfigured && <AiAlert onConfigure={() => openGuide("ai")} />}
@@ -216,6 +231,12 @@ export default function App() {
       <Toast {...toast} />
     </div>
   );
+}
+
+function NavigationAction({ count, onActivate, children }) {
+  if (Number(count || 0) <= 0) return children;
+  const activate = (event) => { event.preventDefault(); event.stopPropagation(); onActivate(); };
+  return <span aria-label="打开首个待处理项目" onPointerDown={(event) => event.stopPropagation()} onClick={activate}>{children}</span>;
 }
 
 function NavigationBadge({ count, active = false, compact = false }) {

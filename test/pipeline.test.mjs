@@ -91,6 +91,49 @@ test("a manual coverage segment does not fail its source before every segment se
   assert.equal(audit.manualReview.operator, "tester");
 });
 
+test("coverage drops an untraceable text Claim without blocking supported evidence", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/traceable-claims",
+    title: "Traceable Chongqing route",
+    text: "Take Metro Line 2 to reach the downtown route. This complete selected note also explains the walking sequence for first-time visitors.",
+    images: [],
+  }));
+  const [segment] = repository.prepareSourceSegments(source.id);
+  repository.saveSegmentExtraction(segment.id, {
+    method: "test_text", model: "fixture-model",
+    result: {
+      source: { language: "en", summary: "Route", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+      claims: [
+        { key: "chongqing.route.metro", subject: "Downtown route", predicate: "transport route", value: "Metro Line 2", qualifiers: [], source_quote: "Take Metro Line 2", confidence: 0.9 },
+        { key: "chongqing.route.fabricated", subject: "Downtown route", predicate: "opening time", value: "08:00", qualifiers: [], source_quote: "Opens every day at 08:00", confidence: 0.8 },
+      ],
+      blueprint: { format: "itinerary", hook: "Easy route", angle: "first visit", sections: [], strengths: [], gaps: [] },
+    },
+  });
+  const audit = repository.auditSegmentCoverage(segment.id, { uncovered_spans: [] });
+  assert.equal(audit.status, "passed");
+  assert.equal(audit.claimCount, 1);
+  assert.equal(audit.unsupportedClaimCount, 1);
+  repository.finalizeSegmentedExtraction(source.id);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM claims WHERE source_id=?").get(source.id).count, 1);
+});
+
+test("media segment coverage uses extraction metadata instead of a second model call", async () => {
+  let audits = 0;
+  const repository = {
+    claimJob: () => ({ id: "job-audit-image", type: "audit_segment_coverage", entity_id: "segment-image" }),
+    getSegmentCoveragePackage: () => ({ expectedModality: "image", staleCaptureVersion: false }),
+    auditSegmentCoverage: () => ({ status: "passed", sourceState: { ready: false } }),
+    sourceCoverageReady: () => false,
+    completeJob: () => true,
+    failJob: (_job, error) => assert.fail(error),
+  };
+  const pipeline = new Pipeline(repository, { auditCoverage: async () => { audits += 1; } });
+  assert.equal(await pipeline.runOne(), true);
+  assert.equal(audits, 0);
+});
+
 test("entity resolution falls back deterministically when model structured output is invalid", async () => {
   const completed = [];
   const enqueued = [];

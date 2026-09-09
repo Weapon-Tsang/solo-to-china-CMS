@@ -119,10 +119,11 @@ test("deterministic Contract failures do not enter the automatic retry loop", ()
   }
 });
 
-test("provider quota exhaustion remains queued, honors shared adaptive backoff, and cools down every AI job", () => {
+test("provider quota exhaustion pauses AI claiming without rewriting the whole visible queue", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-provider-quota-test-"));
   const database = openDatabase(path.join(directory, "quota.sqlite"));
-  const repository = new Repository(database, { providerBackoffInitialMs: 5_000, providerBackoffMaxMs: 300_000 });
+  let current = new Date("2026-09-09T00:00:00.000Z");
+  const repository = new Repository(database, { providerBackoffInitialMs: 5_000, providerBackoffMaxMs: 300_000, clock: () => current });
   try {
     const limitedId = repository.enqueue("extract_segment_claims", "segment-limited");
     database.prepare("UPDATE jobs SET max_attempts=1 WHERE id=?").run(limitedId);
@@ -136,17 +137,21 @@ test("provider quota exhaustion remains queued, honors shared adaptive backoff, 
     const content = database.prepare("SELECT status, available_at FROM jobs WHERE id=?").get(contentId);
     assert.equal(retried.status, "queued");
     assert.equal(retried.attempts, 1);
-    assert.ok(Date.parse(retried.available_at) > Date.now());
+    assert.ok(Date.parse(retried.available_at) > current.getTime());
     assert.equal(waiting.status, "queued");
-    assert.ok(Date.parse(waiting.available_at) > Date.now());
-    assert.ok(Date.parse(content.available_at) > Date.now());
-    assert.ok(Date.parse(retried.available_at) - Date.now() < 7_000);
+    assert.equal(waiting.available_at, current.toISOString());
+    assert.equal(content.available_at, current.toISOString());
+    assert.ok(Date.parse(retried.available_at) - current.getTime() < 7_000);
+    assert.equal(repository.claimJob(), null);
 
-    database.prepare("UPDATE jobs SET available_at=? WHERE id=?").run(new Date().toISOString(), contentId);
+    const housekeepingId = repository.enqueue("rebuild_editorial", "global");
+    assert.equal(repository.claimJob().id, housekeepingId);
+    repository.completeJob(housekeepingId);
+    current = new Date(repository.providerBackoffUntil + 1);
     const secondLimited = repository.claimJob();
     assert.equal(secondLimited.id, contentId);
     repository.failJob(secondLimited, error);
-    const secondDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(contentId).available_at) - Date.now();
+    const secondDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(contentId).available_at) - current.getTime();
     assert.ok(secondDelayMs >= 7_500 && secondDelayMs < 13_000);
 
     for (let index = 0; index < 5; index += 1) repository.recordModelCall({
@@ -154,11 +159,11 @@ test("provider quota exhaustion remains queued, honors shared adaptive backoff, 
       latencyMs: 1, attempts: 1, status: "succeeded",
     });
     const recoveredId = repository.enqueue("review_draft", "draft-after-recovery");
-    database.prepare("UPDATE jobs SET available_at=? WHERE id=?").run(new Date().toISOString(), recoveredId);
+    database.prepare("UPDATE jobs SET available_at=? WHERE id=?").run(current.toISOString(), recoveredId);
     const recovered = repository.claimJob();
     assert.equal(recovered.id, recoveredId);
     repository.failJob(recovered, error);
-    const recoveredDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(recoveredId).available_at) - Date.now();
+    const recoveredDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(recoveredId).available_at) - current.getTime();
     assert.ok(recoveredDelayMs >= 3_500 && recoveredDelayMs < 7_000);
   } finally {
     database.close();
@@ -175,10 +180,12 @@ test("completion-stage jobs bypass an older extraction backlog without bypassing
     const auditId = repository.enqueue("audit_segment_coverage", "segment-ready");
     const finalizeId = repository.enqueue("finalize_source_extraction", "source-ready");
     const knowledgeId = repository.enqueue("rebuild_knowledge", "chongqing");
+    const diagnosticId = repository.enqueue("analyze_source_diagnostic", "source-complete");
     database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-01T00:00:00.000Z", extractionId);
     database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-02T00:00:00.000Z", auditId);
     database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-03T00:00:00.000Z", finalizeId);
     database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-04T00:00:00.000Z", knowledgeId);
+    database.prepare("UPDATE jobs SET created_at=? WHERE id=?").run("2020-01-05T00:00:00.000Z", diagnosticId);
 
     const finalize = repository.claimJob();
     assert.equal(finalize.id, finalizeId);
@@ -186,6 +193,9 @@ test("completion-stage jobs bypass an older extraction backlog without bypassing
     const knowledge = repository.claimJob();
     assert.equal(knowledge.id, knowledgeId);
     repository.completeJob(knowledge.id);
+    const diagnostic = repository.claimJob();
+    assert.equal(diagnostic.id, diagnosticId);
+    repository.completeJob(diagnostic.id);
     const audit = repository.claimJob();
     assert.equal(audit.id, auditId);
     repository.completeJob(audit.id);

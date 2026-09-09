@@ -42,9 +42,10 @@ const BRIEF_SCHEMA = objectSchema(
 );
 
 const INTAKE_SCHEMA = objectSchema(
-  ["classification", "confidence", "primary_topic", "entities", "knowledge_points", "claims", "article_potential", "information_density", "topic_completeness", "duplicate_likelihood", "recommended_action", "suggested_content_type", "suggested_article_title", "missing_information", "possible_cluster_topics", "reasoning_summary"],
+  ["classification", "production_mode", "confidence", "primary_topic", "entities", "knowledge_points", "claims", "article_potential", "information_density", "topic_completeness", "duplicate_likelihood", "recommended_action", "suggested_content_type", "suggested_article_title", "missing_information", "possible_cluster_topics", "reasoning_summary"],
   {
     classification: { type: "string", enum: ["ARTICLE_CANDIDATE", "KNOWLEDGE_ONLY", "CLAIM_ONLY", "CLUSTER_CANDIDATE", "RESEARCH_REQUIRED", "DUPLICATE", "LOW_VALUE", "UNSURE"] },
+    production_mode: { type: "string", enum: ["SOURCE_ADAPTATION", "TOPIC_FEATURE", "MULTI_SOURCE_SYNTHESIS"] },
     confidence: { type: "number", minimum: 0, maximum: 1 }, primary_topic: { type: "string" },
     entities: { type: "array", items: { type: "string" } }, knowledge_points: { type: "array", items: { type: "string" } }, claims: { type: "array", items: { type: "string" } },
     article_potential: { type: "number", minimum: 0, maximum: 100 }, information_density: { type: "number", minimum: 0, maximum: 100 },
@@ -262,6 +263,8 @@ export class ContentEngine {
 function draftInputDto(contentPackage) {
   return {
     brief: contentPackage.brief,
+    production_mode: contentPackage.production_mode || "multi_source_synthesis",
+    source_reference: contentPackage.source_reference || null,
     content_policy: contentPackage.content_policy,
     facts: (contentPackage.facts || []).map((fact) => ({
       normalized_key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate,
@@ -293,11 +296,16 @@ function reviewInputDto(contentPackage) {
 }
 const intakePrompt = (strategyVersion) => `Analyze one already-captured human-selected China travel source for SoloToChina Content Production Strategy ${strategyVersion}.
 - This is decision support, not article generation. Do not write an article and do not reveal private reasoning.
-- Use only the supplied source and structured claims. A useful narrow fact can be KNOWLEDGE_ONLY or CLAIM_ONLY.
+- Use only the supplied source and structured claims. A useful narrow fact can be KNOWLEDGE_ONLY or CLAIM_ONLY, but a coherent small topic can be a standalone TOPIC_FEATURE.
+- Do not judge a travel article against an encyclopedic destination checklist. Judge whether the evidence fulfills one clear, bounded reader promise.
+- Complete itineraries, one-day routes, food lists, hotel-area guides, photo-location lists and similarly useful source notes can be ARTICLE_CANDIDATE in SOURCE_ADAPTATION mode when editing rights are supplied. They do not need unrelated destination facts or a second source.
+- Use TOPIC_FEATURE for focused ideas such as a food installment, a short listicle, a set of photo locations, or one practical subtopic. Use MULTI_SOURCE_SYNTHESIS only when the proposed promise genuinely requires combining sources.
 - Classify the source as ARTICLE_CANDIDATE, KNOWLEDGE_ONLY, CLAIM_ONLY, CLUSTER_CANDIDATE, RESEARCH_REQUIRED, DUPLICATE, LOW_VALUE, or UNSURE.
+- Select exactly one production_mode: SOURCE_ADAPTATION, TOPIC_FEATURE, or MULTI_SOURCE_SYNTHESIS. SOURCE_ADAPTATION requires source.editing_allowed=true.
 - Score article_potential, information_density, topic_completeness, and duplicate_likelihood from 0 to 100. Confidence is 0 to 1.
 - Recommend one action: CREATE_CONTENT_PLAN, ADD_TO_KNOWLEDGE, ADD_TO_CLUSTER, RESEARCH_FIRST, MERGE_OR_IGNORE, IGNORE, or HUMAN_REVIEW.
-- Surface missing facts such as verified booking process, price, route, opening hours, location, or warnings when the source is not enough for a safe standalone guide.
+- Return 3-8 distinct, specific possible_cluster_topics when the evidence supports a useful series. Missing broad destination coverage is not a blocker for a narrow topic.
+- Surface only missing facts that are necessary for the proposed reader promise, especially safety-critical or time-sensitive booking, price, route, opening-hour, location, or warning details.
 - reasoning_summary must be a short operator-facing explanation, never hidden chain-of-thought. Commercial conversion is outside this task.`;
 
 const briefPrompt = (strategyVersion) => `Create an evidence-backed English content plan and Canonical Travel Content object for SoloToChina Content Production Strategy ${strategyVersion}.
@@ -305,7 +313,7 @@ const briefPrompt = (strategyVersion) => `Create an evidence-backed English cont
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
 - Conflicted facts require explicit handling instructions; never silently choose a side.
 - Facts marked time_sensitive or requires_official need explicit verification instructions. Exclude stale facts from the outline.
-- Build an original synthesis, not a translation or imitation of any one UGC source.
+- Follow production_mode. For source_adaptation, preserve the authorized source's useful itinerary, selection, sequence and practical intent while writing original English copy; do not copy wording or claim facts outside that source package. For topic_feature, fulfill only the bounded topic promise. For multi_source_synthesis, synthesize across sources.
 - Include practical adaptation for language, booking, payment, navigation, safety, and solo logistics where evidence permits.
 - Canonical fields are structured source data for the writer and renderer. Use empty arrays or empty strings for unknown information rather than guessing.
 - Include direct answer blocks only where the supplied facts support them. The image plan must distinguish real_world_photo, infographic, map_or_route, and illustration; only illustration is eligible for image-model generation.
@@ -316,7 +324,7 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - Use only supplied claim keys; report conflicts and temporal uncertainty transparently.
 - Write for solo, first-time, non-Chinese-speaking travelers without stereotyping or alarmism.
 - Do not mention Xiaohongshu, source authors, internal claim keys, evidence ledgers, affiliate products, Trip.com, or commercial calls to action in body_markdown.
-- Synthesize across sources. Do not translate one source section-by-section.
+- Follow production_mode. A rights-authorized source_adaptation may faithfully preserve one source's itinerary, selections and practical structure in original English wording. topic_feature should stay narrow. Only multi_source_synthesis must combine sources.
 - Return a separate evidence ledger mapping each article section to exact claim keys and source IDs.
 - Do not use stale facts. List every used time_sensitive/requires_official claim key in verification_notes and state temporal uncertainty in reader-facing copy.
 - The article should be useful even with no commercial module. Follow this evidence-scaled content policy: ${JSON.stringify(policy)}. Never pad thin evidence to reach a word target.

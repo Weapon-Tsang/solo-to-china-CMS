@@ -131,7 +131,7 @@ export class Pipeline {
           const coveragePackage = this.repository.getSegmentCoveragePackage(job.entity_id);
           if (!coveragePackage) throw new Error(`Source segment ${job.entity_id} has no extraction result.`);
           if (coveragePackage.staleCaptureVersion) break;
-          const assessment = typeof this.extractor.auditCoverage === "function"
+          const assessment = coveragePackage.expectedModality === "text" && typeof this.extractor.auditCoverage === "function"
             ? await this.extractor.auditCoverage(coveragePackage)
             : null;
           const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
@@ -162,7 +162,7 @@ export class Pipeline {
           if (!this.repository.saveSegmentExtraction(job.entity_id, extraction, { retry: true })) break;
           const retriedPackage = this.repository.getSegmentCoveragePackage(job.entity_id);
           if (!retriedPackage || retriedPackage.staleCaptureVersion) break;
-          const assessment = typeof this.extractor.auditCoverage === "function"
+          const assessment = retriedPackage.expectedModality === "text" && typeof this.extractor.auditCoverage === "function"
             ? await this.extractor.auditCoverage(retriedPackage)
             : null;
           const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);

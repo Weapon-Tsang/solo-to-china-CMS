@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.17.11 - 2026-09-09
+
+- Finish active Source coverage, finalization and intake diagnostics before expanding the remaining extraction backlog.
+- Pause AI job claiming under Vertex provider pressure without marking every queued Source as cooling down.
+- Use low Gemini thinking for extraction/classification and medium thinking for planning, writing and review; remove redundant image/video coverage model calls.
+- Drop individual untraceable text Claims while preserving valid Claims, and reserve manual review for material segments with no traceable evidence.
+- Add Content Strategy 1.6 editorial sufficiency, focused Topic Features, rights-authorized single-Source adaptations and multiple specific series ideas.
+- Fix the mobile Sources status summary layout and make a Sources-tab action badge open the first Source requiring intervention.
+
 ## 1.17.10 - 2026-09-09
 
 - Smooth AI traffic with a shared one-second request gate so a restarted worker does not send its initial batch simultaneously.

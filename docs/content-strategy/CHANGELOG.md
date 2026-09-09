@@ -1,5 +1,13 @@
 # Content strategy changelog
 
+## 1.6 — 2026-09-09
+
+- Replaced destination-wide encyclopedic completeness with readiness for one bounded reader promise.
+- Added focused Topic Feature and rights-authorized single-Source Adaptation modes alongside Multi-Source Synthesis.
+- Required multiple specific follow-up topic ideas when a Source can support a useful series.
+- Changed coverage handling so one untraceable Claim is excluded without blocking other supported evidence.
+- Changed queue policy to finish leading Sources and pause AI claiming without marking the entire backlog as cooling down.
+
 ## 1.5 implementation clarification — 2026-09-08
 
 - Documented Favorites Sync as an owner-selected Research intake path with owner-confirmed commercial media authorization and complete provenance.

@@ -20,8 +20,21 @@ test("Vertex Gemini uses the configured model and structured JSON response", asy
   const body = JSON.parse(request.options.body);
   assert.equal(body.generationConfig.responseMimeType, "application/json");
   assert.equal(body.generationConfig.temperature, undefined);
-  assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "HIGH");
+  assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "LOW");
   assert.equal(body.systemInstruction.parts[0].text, "Be precise.");
+});
+
+test("Vertex Gemini reserves medium thinking for writing and review stages", async () => {
+  let body;
+  const client = new VertexGeminiClient({
+    projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
+    thinkingLevel: "LOW", reasoningThinkingLevel: "MEDIUM",
+  }, async (_url, options) => {
+    body = JSON.parse(options.body);
+    return Response.json({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] });
+  });
+  await client.completeJson({ name: "content_brief", schema: { type: "object" }, instructions: "Plan.", content: "evidence" });
+  assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "MEDIUM");
 });
 
 test("Vertex Gemini converts shared text parts and retries malformed structured output once", async () => {

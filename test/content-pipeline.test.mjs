@@ -46,7 +46,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
     enabled: true,
     async analyzeIntake() {
       return { model: "intake-model", output: {
-        classification: "ARTICLE_CANDIDATE", confidence: 0.9, primary_topic: "First-Time Beijing", entities: ["Beijing"],
+        classification: "ARTICLE_CANDIDATE", production_mode: "TOPIC_FEATURE", confidence: 0.9, primary_topic: "First-Time Beijing", entities: ["Beijing"],
         knowledge_points: ["Practical planning evidence"], claims: ["beijing.orientation.location"], article_potential: 88,
         information_density: 82, topic_completeness: 76, duplicate_likelihood: 5, recommended_action: "CREATE_CONTENT_PLAN",
         suggested_content_type: "first_time_guide", suggested_article_title: "First-Time Beijing Solo Travel Guide",
