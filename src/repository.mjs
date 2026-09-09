@@ -2045,10 +2045,18 @@ export class Repository {
               "The original source contains negation or a limiting qualifier that is absent from the normalized Claim.", status, timestamp, timestamp);
         }
       }
-      // Generalization links only exist between broad and specific Claims that
-      // share a predicate. Group first instead of scanning every pair in the
-      // destination (7k Claims would otherwise mean roughly 25m comparisons).
-      const generalizationGroups = Map.groupBy(sourceRows, (row) => normalizeValue(row.predicate));
+      // A broad Claim can generalize a specific Claim only when they express
+      // the same canonical fact. Group by predicate and canonical value so a
+      // generic "metro access" Claim is never linked to every specific Claim
+      // with that predicate, and large destinations avoid a broad x specific
+      // cross product.
+      const generalizationGroups = Map.groupBy(sourceRows, (row) => {
+        const predicate = row.structured_value.canonical_predicate || normalizeValue(row.predicate);
+        const value = row.structured_value.typed_value != null
+          ? JSON.stringify(row.structured_value.typed_value)
+          : normalizeValue(row.value_text);
+        return `${predicate}:${value}`;
+      });
       for (const predicateRows of generalizationGroups.values()) {
         const broadRows = predicateRows.filter((row) => ["collection", "category", "general_topic"].includes(row.granularity));
         const specificRows = predicateRows.filter((row) => row.granularity === "specific_entity");

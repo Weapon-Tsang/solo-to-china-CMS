@@ -353,6 +353,7 @@ test("knowledge aggregation preserves broad-to-specific generalization links aft
   for (const [externalId, item] of [
     ["68abcdef0000000000000021", { key: "collection.chongqing_attractions.metro_access", subject: "multiple Chongqing attractions", value: "reachable by metro" }],
     ["68abcdef0000000000000022", { key: "attraction.hongyadong.metro_access", subject: "Hongyadong", value: "reachable by metro" }],
+    ["68abcdef0000000000000023", { key: "attraction.nanshan.metro_access", subject: "Nanshan", value: "requires a taxi" }],
   ]) {
     const source = repository.saveCapture(normalizeXiaohongshuCapture({
       url: `https://www.xiaohongshu.com/explore/${externalId}`, title: item.subject,
@@ -366,7 +367,9 @@ test("knowledge aggregation preserves broad-to-specific generalization links aft
     }, "test", "fixture-model");
   }
   repository.rebuildKnowledge("chongqing");
-  const relation = db.prepare("SELECT relation_type,can_coexist FROM claim_relations WHERE relation_type='GENERALIZATION'").get();
+  const relations = db.prepare("SELECT relation_type,can_coexist FROM claim_relations WHERE relation_type='GENERALIZATION'").all();
+  assert.equal(relations.length, 1);
+  const relation = relations[0];
   assert.equal(relation.relation_type, "GENERALIZATION");
   assert.equal(relation.can_coexist, 1);
 });
