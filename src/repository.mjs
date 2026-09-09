@@ -4,6 +4,7 @@ import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 import { contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
 import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "./claim-resolution.mjs";
+import { evidenceResolutionMode, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
 import { legacyOfferToAsset } from "./commercial.mjs";
 import {
@@ -1633,11 +1634,7 @@ export class Repository {
   }
 
   independentSourceFamilyCountForFacts(facts) {
-    const sourceIds = [...new Set((facts || []).flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))];
-    if (!sourceIds.length) return 0;
-    const placeholders = sourceIds.map(() => "?").join(",");
-    return Number(this.db.prepare(`SELECT COUNT(DISTINCT family_id) AS count FROM source_family_memberships WHERE source_id IN (${placeholders})`)
-      .get(...sourceIds)?.count || 0);
+    return new Set((facts || []).flatMap(independentEvidenceKeysForFact)).size;
   }
 
   rebuildTopicClusters(destinationSlug) {
@@ -2240,6 +2237,10 @@ export class Repository {
     const allSourceRows = this.db.prepare(`
       SELECT c.*, ss.destination_name, ss.destination_slug, s.captured_at, s.published_at,
         s.canonical_url AS source_url, s.title AS source_title, s.authority_level AS source_authority_level,
+        s.adapter AS source_adapter, s.author_name AS source_author_name, s.author_url AS source_author_url,
+        s.completeness_status AS source_completeness_status,
+        (SELECT group_concat(sfm.family_id, '|') FROM source_family_memberships sfm
+          WHERE sfm.source_id=s.id AND sfm.relation_type IN ('EXACT_DUPLICATE','NEAR_DUPLICATE','DERIVED_FROM')) AS source_family_ids,
         s.observed_at AS source_observed_at, s.verified_at AS source_verified_at,
         s.effective_from AS source_effective_from, s.effective_to AS source_effective_to
       FROM claims c JOIN structured_sources ss ON ss.source_id = c.source_id
@@ -2287,8 +2288,9 @@ export class Repository {
           preferred_value, support_count, contradiction_count, evidence_json, updated_at,
           freshness_state, latest_evidence_at, verification_priority, entity_key, canonical_subject,
           entity_aliases_json, entity_resolution_status, entity_type, granularity, entity_location_json,
-          claim_relations_json, visibility_status, visibility_reason, visibility_updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          claim_relations_json, visibility_status, visibility_reason, visibility_updated_at,
+          consensus_method, consensus_confidence, consensus_detail_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(destination_id, normalized_key) DO UPDATE SET subject=excluded.subject,
           predicate=excluded.predicate, consensus_status=excluded.consensus_status,
           preferred_value=excluded.preferred_value, support_count=excluded.support_count,
@@ -2300,7 +2302,8 @@ export class Repository {
           entity_type=excluded.entity_type, granularity=excluded.granularity,
           entity_location_json=excluded.entity_location_json, claim_relations_json=excluded.claim_relations_json,
           visibility_status=excluded.visibility_status, visibility_reason=excluded.visibility_reason,
-          visibility_updated_at=excluded.visibility_updated_at
+          visibility_updated_at=excluded.visibility_updated_at, consensus_method=excluded.consensus_method,
+          consensus_confidence=excluded.consensus_confidence, consensus_detail_json=excluded.consensus_detail_json
       `);
       const deleteKnowledgeFact = this.db.prepare("DELETE FROM knowledge_facts WHERE id=?");
       const activeFactIds = new Set();
@@ -2363,16 +2366,25 @@ export class Repository {
         const canonicalPredicates = new Set(rows.map((row) => row.structured_value.canonical_predicate).filter(Boolean));
         const typedFact = canonicalPredicates.size === 1 && rows.every((row) => row.structured_value.typed_value != null);
         const canonicalPredicate = typedFact ? [...canonicalPredicates][0] : null;
-        const variants = Map.groupBy(rows, (row) => typedFact
+        const variantKey = (row) => typedFact
           ? `${canonicalPredicate}:${JSON.stringify(row.structured_value.typed_value)}`
-          : normalizeValue(row.value_text));
+          : normalizeValue(row.value_text);
+        const variants = Map.groupBy(rows, variantKey);
+        const resolutionMode = evidenceResolutionMode(rows);
+        const evidenceConsensus = resolveEvidenceConsensus(rows, {
+          variantKey,
+          nowMs: Date.parse(timestamp),
+          staleAfterDays: this.contentConfig.volatileStaleAfterDays,
+        });
         const ranked = [...variants.entries()].sort((a, b) => b[1].length - a[1].length
           || knowledgeValueSpecificity(b[1][0].value_text) - knowledgeValueSpecificity(a[1][0].value_text));
         const relations = [];
         for (let left = 0; left < rows.length; left += 1) {
           for (let right = left + 1; right < rows.length; right += 1) {
             const comparison = classifyClaimPair(rows[left], rows[right]);
-            const reviewId = comparison.reviewType && !comparison.reviewType.includes("EXTRACTION_ERROR")
+            const automaticallyResolved = resolutionMode === "RECENCY_WEIGHTED"
+              && comparison.reviewType && !comparison.reviewType.includes("EXTRACTION_ERROR");
+            const reviewId = !automaticallyResolved && comparison.reviewType && !comparison.reviewType.includes("EXTRACTION_ERROR")
               ? `claim_review_${sha256(`${rows[left].id}:${rows[right].id}:${comparison.reviewType}`).slice(0, 24)}`
               : null;
             const reviewStatus = reviewId ? previousReviewDecisions.get(reviewId)?.status || "pending" : null;
@@ -2380,10 +2392,13 @@ export class Repository {
               insertClaimReview.run(reviewId, destinationSlug, rows[left].id, rows[right].id,
                 comparison.reviewType, comparison.reason, reviewStatus, timestamp, timestamp);
             }
-            const effectiveComparison = reviewStatus === "dismissed"
-              ? { ...comparison, relation: "COMPATIBLE", canCoexist: true,
-                reason: `${comparison.reason} Operator dismissed this comparison as a false positive.` }
-              : comparison;
+            const effectiveComparison = automaticallyResolved
+              ? { ...comparison, relation: "COMPATIBLE", canCoexist: true, reviewType: null,
+                reason: `${comparison.reason} Values are retained as dated observations and resolved by independent-source, quality, and recency weighting.` }
+              : reviewStatus === "dismissed"
+                ? { ...comparison, relation: "COMPATIBLE", canCoexist: true,
+                  reason: `${comparison.reason} Operator dismissed this comparison as a false positive.` }
+                : comparison;
             relations.push({ claim_a_id: rows[left].id, claim_b_id: rows[right].id, ...effectiveComparison });
             const relationId = `claim_relation_${sha256(`${rows[left].id}:${rows[right].id}`).slice(0, 24)}`;
             insertClaimRelation.run(relationId, destinationSlug, rows[left].id, rows[right].id, effectiveComparison.relation,
@@ -2391,15 +2406,24 @@ export class Repository {
           }
         }
         const conflicts = relations.filter((relation) => !relation.canCoexist);
-        const status = conflicts.length ? "conflicted" : rows.length > 1 ? "corroborated" : "single_source";
-        const preferredValue = typedFact
-          ? String(ranked[0][1][0].structured_value.typed_value)
+        const status = conflicts.length ? "conflicted"
+          : evidenceConsensus.autoResolved
+            ? evidenceConsensus.supportCount > 1 ? "corroborated" : "single_source"
+            : rows.length > 1 ? "corroborated" : "single_source";
+        const consensusWinner = rows.find((row) => variantKey(row) === evidenceConsensus.preferredVariantKey)
+          || ranked[0][1][0];
+        const preferredValue = evidenceConsensus.autoResolved
+          ? typedFact ? displayTypedKnowledgeValue(consensusWinner.structured_value.typed_value) : evidenceConsensus.preferredValue
           : ranked[0][1][0].value_text;
-        const freshness = classifyFreshness(rows, this.contentConfig);
-        const hasCurrentOfficialEvidence = rows.some((row) => Number(row.source_authority_level || 4) === 1)
-          && freshness.state !== "stale";
-        const verificationPriority = status === "conflicted" || (freshness.volatile && !hasCurrentOfficialEvidence)
-          ? "requires_official" : status === "single_source" || freshness.state === "stale" ? "review" : "normal";
+        const legacyFreshness = classifyFreshness(rows, this.contentConfig);
+        const freshness = evidenceConsensus.autoResolved
+          ? { state: evidenceConsensus.freshnessState, latestEvidenceAt: evidenceConsensus.latestEvidenceAt, volatile: true }
+          : legacyFreshness;
+        const verificationPriority = evidenceConsensus.autoResolved
+          ? freshness.state === "stale" || evidenceConsensus.method === "LATEST_WEIGHTED_PROVISIONAL"
+            || evidenceConsensus.method === "SINGLE_SOURCE_LATEST" ? "review" : "normal"
+          : status === "conflicted" ? "review"
+            : status === "single_source" || freshness.state === "stale" ? "review" : "normal";
         const entity = aggregateEntityIdentity(rows);
         const evidence = rows.map((row) => ({
           source_id: row.source_id,
@@ -2430,8 +2454,9 @@ export class Repository {
           predicate: canonicalPredicate || rows[0].predicate,
           consensus_status: status,
           preferred_value: preferredValue,
-          support_count: status === "conflicted" ? ranked[0][1].length : rows.length,
-          contradiction_count: conflicts.length,
+          support_count: evidenceConsensus.autoResolved ? evidenceConsensus.supportCount
+            : status === "conflicted" ? ranked[0][1].length : rows.length,
+          contradiction_count: evidenceConsensus.autoResolved ? evidenceConsensus.contradictionCount : conflicts.length,
           evidence_json: JSON.stringify(evidence),
           freshness_state: freshness.state,
           latest_evidence_at: freshness.latestEvidenceAt,
@@ -2447,6 +2472,11 @@ export class Repository {
           visibility_status: visibility?.visibility_status || "visible",
           visibility_reason: visibility?.reason || null,
           visibility_updated_at: visibility?.updated_at || null,
+          consensus_method: evidenceConsensus.autoResolved ? evidenceConsensus.method
+            : status === "conflicted" ? "STRICT_SEMANTIC_REVIEW" : "SEMANTIC_COMPATIBILITY",
+          consensus_confidence: evidenceConsensus.autoResolved ? evidenceConsensus.confidence
+            : status === "conflicted" ? 0 : Math.min(0.98, 0.55 + Math.min(rows.length, 5) * 0.08),
+          consensus_detail_json: JSON.stringify(evidenceConsensus),
         };
         activeFactIds.add(factId);
         if (!storedColumnsMatch(existingFactsById.get(factId), nextFact)) upsertKnowledgeFact.run(
@@ -2456,6 +2486,7 @@ export class Repository {
           nextFact.canonical_subject, nextFact.entity_aliases_json, nextFact.entity_resolution_status, nextFact.entity_type,
           nextFact.granularity, nextFact.entity_location_json, nextFact.claim_relations_json,
           nextFact.visibility_status, nextFact.visibility_reason, nextFact.visibility_updated_at,
+          nextFact.consensus_method, nextFact.consensus_confidence, nextFact.consensus_detail_json,
         );
       }
       for (const factId of existingFactsById.keys()) if (!activeFactIds.has(factId)) deleteKnowledgeFact.run(factId);
@@ -2489,20 +2520,23 @@ export class Repository {
 
   rebuildTopicCandidates(destinationSlug, minFacts = 5, maxPerDestination = 1) {
     const allFacts = this.knowledgeForDestination(destinationSlug);
-    const facts = allFacts.filter((fact) => fact.freshness_state !== "stale");
+    // Dated evidence remains usable when its age and uncertainty are disclosed.
+    // Recency changes its weight; it no longer erases otherwise useful research.
+    const facts = allFacts;
     if (facts.length < minFacts || maxPerDestination < 1) return [];
     const destination = this.db.prepare("SELECT name FROM destinations WHERE slug = ?").get(destinationSlug);
     if (!destination) return [];
     const conflictCount = facts.filter((fact) => fact.consensus_status === "conflicted").length;
     const staleFactCount = allFacts.filter((fact) => fact.freshness_state === "stale").length;
-    const verificationFactCount = facts.filter((fact) => fact.verification_priority === "requires_official").length;
-    const evidenceCount = new Set(facts.flatMap((fact) => fact.evidence.map((item) => item.source_id))).size;
+    const verificationFactCount = facts.filter((fact) => fact.freshness_state === "stale"
+      || fact.consensus_method === "LATEST_WEIGHTED_PROVISIONAL").length;
+    const evidenceCount = this.independentSourceFamilyCountForFacts(facts);
     if (evidenceCount < 2) return [];
     const timestamp = now();
     const proposals = [{
       topicKey: `${destinationSlug}:first-time-solo-guide`,
       title: `First-Time ${destination.name} Solo Travel Guide`,
-      rationale: `${facts.length} knowledge facts from ${evidenceCount} independent sources; ${conflictCount} conflicts, ${staleFactCount} stale facts, and ${verificationFactCount} official-verification flags require editorial handling.`,
+      rationale: `${facts.length} knowledge facts from ${evidenceCount} independent sources; ${conflictCount} strict conflicts, ${staleFactCount} dated facts, and ${verificationFactCount} provisional recency-weighted conclusions are disclosed to the writer.`,
       coverageScore: Math.max(0, Math.min(100, facts.length * 8 + evidenceCount * 6 - conflictCount * 5 - staleFactCount * 4)),
       evidenceCount,
       conflictCount,
@@ -2513,7 +2547,7 @@ export class Repository {
     const subjects = Map.groupBy(facts, (fact) => fact.subject.trim().toLowerCase());
     for (const subjectFacts of subjects.values()) {
       if (subjectFacts.length < 3) continue;
-      const subjectSources = new Set(subjectFacts.flatMap((fact) => fact.evidence.map((item) => item.source_id))).size;
+      const subjectSources = this.independentSourceFamilyCountForFacts(subjectFacts);
       if (subjectSources < 2) continue;
       const subjectConflicts = subjectFacts.filter((fact) => fact.consensus_status === "conflicted").length;
       const subject = subjectFacts[0].subject;
@@ -2525,14 +2559,15 @@ export class Repository {
         evidenceCount: subjectSources,
         conflictCount: subjectConflicts,
         staleFactCount: subjectFacts.filter((fact) => fact.freshness_state === "stale").length,
-        verificationFactCount: subjectFacts.filter((fact) => fact.verification_priority === "requires_official").length,
+        verificationFactCount: subjectFacts.filter((fact) => fact.freshness_state === "stale"
+          || fact.consensus_method === "LATEST_WEIGHTED_PROVISIONAL").length,
         selectionPriority: 1,
       });
     }
 
     const itineraryFacts = facts.filter((fact) => /route|transport|duration|time|day|itinerary|station|metro|travel.?between|order|sequence|district|area/i
       .test(`${fact.normalized_key} ${fact.subject} ${fact.predicate}`));
-    const itinerarySources = new Set(itineraryFacts.flatMap((fact) => fact.evidence.map((item) => item.source_id))).size;
+    const itinerarySources = this.independentSourceFamilyCountForFacts(itineraryFacts);
     if (itineraryFacts.length >= 6 && itinerarySources >= 2) {
       const itineraryConflicts = itineraryFacts.filter((fact) => fact.consensus_status === "conflicted").length;
       proposals.push({
@@ -2543,7 +2578,8 @@ export class Repository {
         evidenceCount: itinerarySources,
         conflictCount: itineraryConflicts,
         staleFactCount: itineraryFacts.filter((fact) => fact.freshness_state === "stale").length,
-        verificationFactCount: itineraryFacts.filter((fact) => fact.verification_priority === "requires_official").length,
+        verificationFactCount: itineraryFacts.filter((fact) => fact.freshness_state === "stale"
+          || fact.consensus_method === "LATEST_WEIGHTED_PROVISIONAL").length,
         selectionPriority: 1,
       });
     }
@@ -3975,6 +4011,9 @@ export class Repository {
       freshness_state: row.freshness_state,
       latest_evidence_at: row.latest_evidence_at,
       verification_priority: resolvedVerificationPriority(row),
+      consensus_method: row.consensus_method || "legacy_count",
+      consensus_confidence: Number(row.consensus_confidence || 0),
+      consensus_detail: json(row.consensus_detail_json, {}),
       manual_resolution: hydrateKnowledgeResolution(row),
     }));
   }
@@ -4084,18 +4123,16 @@ export class Repository {
         kr.note AS resolution_note, kr.resolved_at AS resolution_resolved_at
       FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
       LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
-      WHERE (k.consensus_status='conflicted' AND COALESCE(kr.status, '') <> 'resolved' AND NOT EXISTS (
+      WHERE k.consensus_status='conflicted' AND COALESCE(kr.status, '') <> 'resolved' AND NOT EXISTS (
         SELECT 1 FROM claim_review_cases crc JOIN claims ca ON ca.id=crc.claim_a_id
         WHERE crc.destination_slug=d.slug AND crc.status='pending' AND ca.normalized_key=k.normalized_key
-      )) OR k.freshness_state='stale'
+      )
     `).all()) {
-      const stale = row.freshness_state === "stale";
-      const item = exceptionItem("knowledge", row.id, stale ? "blocker" : "warning",
-        stale ? "知识事实已过期，需要更新来源" : "知识事实存在冲突，需要判断",
-        `${row.subject} · ${row.predicate}`, stale ? `最近一条证据时间：${row.latest_evidence_at || "未知"}`
-          : "系统发现同一事实下存在不能自动合并的不同取值，暂时不会把它用于内容生产。",
+      const item = exceptionItem("knowledge", row.id, "warning",
+        "知识事实存在严格冲突，需要判断", `${row.subject} · ${row.predicate}`,
+        "系统只会把同一对象、同一时间和同一适用条件下不能同时成立的高后果事实列入这里；动态事实差异由时效共识自动处理。",
         false, row.updated_at);
-      if (!stale) item.knowledge = {
+      item.knowledge = {
         id: row.id,
         destinationSlug: row.destination_slug,
         normalizedKey: row.normalized_key,
@@ -4268,6 +4305,9 @@ export class Repository {
       entity_resolution_status: row.entity_resolution_status || "unresolved",
       entity_location: json(row.entity_location_json, {}),
       claim_relations: json(row.claim_relations_json, []),
+      consensus_method: row.consensus_method || "legacy_count",
+      consensus_confidence: Number(row.consensus_confidence || 0),
+      consensus_detail: json(row.consensus_detail_json, {}),
       manual_resolution: hydrateKnowledgeResolution(row),
       verification_priority: resolvedVerificationPriority(row),
     }));
@@ -4503,7 +4543,7 @@ function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy
 export function contentPolicyFor(brief, facts = []) {
   const canonical = json(brief?.canonical_json, brief?.canonical || {});
   const type = canonical.content_type || "first_time_guide";
-  const substantialEvidence = facts.filter((fact) => fact.freshness_state !== "stale").length;
+  const substantialEvidence = facts.filter((fact) => (fact.evidence || []).length > 0).length;
   const profiles = {
     city_guide: [1000, 2400, 3], first_time_guide: [1000, 2400, 3], itinerary: [900, 2200, 3],
     comparison: [700, 1700, 2], listicle: [700, 1800, 2], food_guide: [800, 2000, 3],
@@ -5043,6 +5083,22 @@ function knowledgeValueSpecificity(value) {
   const normalized = normalizeValue(value);
   if (/^(?:true|false|yes|no|present|absent|available|unavailable|有|无|是|否)$/.test(normalized)) return 0;
   return normalized.length;
+}
+
+function displayTypedKnowledgeValue(value) {
+  if (value && typeof value === "object" && Number.isFinite(Number(value.amount))) {
+    return `${value.currency || "CNY"} ${Number(value.amount)}`;
+  }
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function independentEvidenceKeysForFact(fact) {
+  const consensusKeys = (fact?.consensus_detail?.variants || [])
+    .flatMap((variant) => variant.independenceKeys || [])
+    .filter(Boolean);
+  if (consensusKeys.length) return consensusKeys;
+  return (fact?.evidence || []).map((item) => item.source_id ? `source:${item.source_id}` : null).filter(Boolean);
 }
 
 function normalizeClaimRole(value, subject = "", predicate = "") {

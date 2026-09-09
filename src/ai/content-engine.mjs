@@ -279,8 +279,12 @@ function draftInputDto(contentPackage) {
       normalized_key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate,
       preferred_value: fact.preferred_value, consensus_status: fact.consensus_status,
       freshness_state: fact.freshness_state, verification_priority: fact.verification_priority,
-      evidence: (fact.evidence || []).map((item) => ({ source_id: item.source_id, quote: item.quote, canonical_url: item.canonical_url,
-        source_title: item.source_title, published_at: item.published_at, verified_at: item.verified_at })),
+      latest_evidence_at: fact.latest_evidence_at, consensus_method: fact.consensus_method,
+      consensus_confidence: fact.consensus_confidence, consensus_detail: fact.consensus_detail,
+      evidence: (fact.evidence || []).map((item) => ({ source_id: item.source_id, value: item.value,
+        quote: item.quote, canonical_url: item.canonical_url, source_title: item.source_title,
+        published_at: item.published_at, observed_at: item.observed_at, captured_at: item.captured_at,
+        verified_at: item.verified_at, authority_level: item.authority_level })),
     })),
     reader_sources: contentPackage.reader_sources || [],
     internal_link_inventory: contentPackage.internal_link_inventory || [],
@@ -321,8 +325,8 @@ const intakePrompt = (strategyVersion) => `Analyze one already-captured human-se
 const briefPrompt = (strategyVersion) => `Create an evidence-backed English content plan and Canonical Travel Content object for SoloToChina Content Production Strategy ${strategyVersion}.
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
-- Conflicted facts require explicit handling instructions; never silently choose a side.
-- Facts marked time_sensitive or requires_official need explicit verification instructions. Exclude stale facts from the outline.
+- Unresolved strict safety/semantic conflicts require explicit handling instructions; never silently choose a side.
+- Dynamic prices, hours, reservations, schedules and access details are already selected by an auditable independent-source, source-quality and recency-weighted consensus. They do not require manual official verification. Include the supplied current value when useful, state the evidence date and normal change risk, and prefer higher-confidence conclusions. Dated evidence may be used with a clear as-of caveat rather than discarded.
 - Follow the selected production_mode for this one plan, without treating the other parallel routes as disabled. For source_adaptation, preserve the authorized source's useful itinerary, selection, sequence and practical intent while writing original English copy; do not copy wording or claim facts outside that source package. For topic_feature, fulfill only the bounded topic promise. For multi_source_synthesis, deliberately combine compatible perspectives across sources; it is a creative format, not a completeness repair step.
 - When editorial_assignment is present, it is an explicit administrator-provided writing assignment. Follow its title, brief, and target_entities closely, but use only its selected evidence package. Do not broaden it into a destination encyclopedia. Honor visual_brief when safe: route_sketch means an original conceptual editorial illustration, not a geographically accurate navigation map; never invent roads, coordinates, labels, or travel times.
 - Include practical adaptation for language, booking, payment, navigation, safety, and solo logistics where evidence permits.
@@ -332,12 +336,12 @@ const briefPrompt = (strategyVersion) => `Create an evidence-backed English cont
 
 const draftPrompt = (policy) => `Write an original, publication-quality English China travel guide from the supplied brief and evidence package.
 - Never invent a price, opening hour, policy, route, booking rule, safety guarantee, or other fact.
-- Use only supplied claim keys; report conflicts and temporal uncertainty transparently.
+- Use only supplied claim keys; report strict conflicts and temporal uncertainty transparently.
 - Write for solo, first-time, non-Chinese-speaking travelers without stereotyping or alarmism.
 - Do not mention Xiaohongshu, source authors, internal claim keys, evidence ledgers, affiliate products, Trip.com, or commercial calls to action in body_markdown.
 - Follow the production_mode selected for this article. A rights-authorized source_adaptation may faithfully preserve one source's itinerary, selections and practical structure in original English wording. topic_feature should stay narrow. multi_source_synthesis deliberately combines compatible perspectives, while the other routes remain valid future opportunities from the same evidence.
 - Return a separate evidence ledger mapping each article section to exact claim keys and source IDs.
-- Do not use stale facts. List every used time_sensitive/requires_official claim key in verification_notes and state temporal uncertainty in reader-facing copy.
+- For every used time_sensitive, provisional_latest, or refresh_recommended fact, list its claim key in verification_notes and state its supplied evidence date and normal change risk in reader-facing copy. This is disclosure, not an instruction for a human to verify an official page.
 - The article should be useful even with no commercial module. Follow this evidence-scaled content policy: ${JSON.stringify(policy)}. Never pad thin evidence to reach a word target.
 - Make the body easy for Search and AI answer systems to parse: use one answer-first opening paragraph, descriptive H2/H3 headings, short scannable sections, and a visible "Key takeaways" list. Do not make unsupported claims just for SEO.
 - FAQ is optional. Include it only when content_policy.faq.allowed is true and the supplied evidence answers real reader questions. When present, include the exact same questions and answers in a visible "Frequently asked questions" section of body_markdown; otherwise return an empty faqs array and omit that section.
@@ -407,12 +411,13 @@ function applyDeterministicGates(review, contentPackage) {
   addGate("conflict-disclosure", hiddenConflicts.length === 0, hiddenConflicts.length ? `Used conflicted facts without ledger disclosure: ${hiddenConflicts.join(", ")}` : "Used conflicts are disclosed or avoided.", "hidden_conflict");
   const staleKeys = facts.filter((fact) => fact.freshness_state === "stale").map((fact) => fact.normalized_key);
   const usedStaleKeys = staleKeys.filter((key) => ledgerKeys.has(key));
-  addGate("stale-evidence", usedStaleKeys.length === 0, usedStaleKeys.length ? `Draft uses stale facts that must be refreshed or omitted: ${usedStaleKeys.join(", ")}` : "No stale evidence is used.", "stale_evidence_used");
-  const verificationKeys = facts.filter((fact) => fact.freshness_state === "time_sensitive" || fact.verification_priority === "requires_official")
+  const verificationKeys = facts.filter((fact) => fact.freshness_state === "time_sensitive"
+    || ["RECENCY_WEIGHTED_CONSENSUS", "LATEST_WEIGHTED_PROVISIONAL", "SINGLE_SOURCE_LATEST"].includes(fact.consensus_method))
     .map((fact) => fact.normalized_key);
   const acknowledgedVerification = new Set(draft.verification_notes || []);
-  const hiddenVerification = verificationKeys.filter((key) => ledgerKeys.has(key) && !acknowledgedVerification.has(key));
-  addGate("temporal-verification", hiddenVerification.length === 0, hiddenVerification.length ? `Used time-sensitive facts without verification notes: ${hiddenVerification.join(", ")}` : "Time-sensitive evidence is flagged or avoided.", "missing_verification_note");
+  const datedDisclosureKeys = new Set([...verificationKeys, ...usedStaleKeys]);
+  const hiddenVerification = [...datedDisclosureKeys].filter((key) => ledgerKeys.has(key) && !acknowledgedVerification.has(key));
+  addGate("temporal-disclosure", hiddenVerification.length === 0, hiddenVerification.length ? `Used dynamic or dated facts without an as-of disclosure: ${hiddenVerification.join(", ")}` : "Dynamic and dated evidence is disclosed or avoided.", "missing_temporal_disclosure");
   const policy = contentPackage.content_policy || { minimum_words: 800, faq: { required: true, allowed: true }, visuals: { minimum: 2, maximum: 5 } };
   addGate("minimum-depth", wordCount(draft.body_markdown) >= policy.minimum_words,
     `Draft has ${wordCount(draft.body_markdown)} words; this task requires at least ${policy.minimum_words} evidence-backed words.`, "draft_too_short");

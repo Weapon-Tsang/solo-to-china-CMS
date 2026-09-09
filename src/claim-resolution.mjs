@@ -6,7 +6,7 @@ const HARD_FACT_PREDICATES = new Set([
 // Startup reconciliation uses it to rebuild destinations with pending reviews,
 // so a deploy can remove newly-recognized false positives without an operator
 // clicking through every old review card.
-export const CLAIM_RESOLUTION_VERSION = "2026-09-09.1";
+export const CLAIM_RESOLUTION_VERSION = "2026-09-09.2";
 
 const SOFT_PREDICATES = new Set([
   "recommended_visit_time", "best_time_to_visit", "good_for", "photography_spot",
@@ -20,6 +20,7 @@ const SOFT_PREDICATES = new Set([
 const ALTERNATIVE_PREDICATE_PATTERN = /(?:^|_)(?:itinerary|route|stops?|sequence|recommended_day|suggested_route|walking_route|recommended_visit_window|recommended_visit_time|visit_time|serves?_dish|serves?_food|serves?_cuisine|cuisine_type|dish_(?:type|category)|specialty_dish|signature_dish|recommended_dish|must_try_food|food_specialty|associated_food|complimentary_items|features?|has_feature|architectural_(?:style|features?)|photo(?:graphy)?_(?:spots?|locations?|perspectives?|composition|opportunit(?:y|ies))|shooting_locations?|viewpoints?|viewing_framing|viewed_through|viewable_through|offers?_view|photo_spot_for|located_(?:near|adjacent_to|in|at)|displays?_(?:text|signage|illuminated_text|led_greeting)|led_display_text|features?_led_display|safety_(?:precaution|hazard)|tourist_trap_warning|shopping_warning|quality_warning|navigation_caution|crowd_(?:condition|level|density)|crowding|crowdedness|busy_period|aliases?|alternate_name|local_name|former_name)(?:_|$)/iu;
 const MULTI_NAME_PREDICATE_PATTERN = /^(?:name|alias|aliases|alternate_name|local_name|former_name)$/iu;
 const DURATION_ESTIMATE_PREDICATE_PATTERN = /(?:^|_)(?:walking|transit|travel|ride|light_rail)_(?:time|duration)(?:_minutes)?(?:_|$)/iu;
+const EXCLUSIVE_FACT_PREDICATE_PATTERN = /(?:^|_)(?:opening_(?:time|hours?)|operating_hours?|ticket_price|admission_fee|entry_fee|price|cost|fare|reservation_required|booking_required|appointment_required|address|nearest_(?:metro|subway|station)|schedule|timetable|availability|closure_status)(?:_|$)/iu;
 const METRO_EXIT_PREDICATE_PATTERN = /(?:^|_)(?:(?:nearest_)?(?:metro|subway|underground|rail_transit)(?:_station)?_(?:exit|entrance)|(?:metro|subway)_access_exit)(?:_|$)|(?:最近|邻近)?(?:地铁|轨道交通|轻轨)(?:站)?(?:出口|出入口|口)/iu;
 
 // These patterns describe proposition polarity and material limits. Contrastive
@@ -57,12 +58,15 @@ export function structureClaim({ predicate, value, qualifiers = [], sourceQuote 
     ...qualifierValues,
     ...(parenthetical ? parenthetical[2].split(/[,;；，]/u) : []),
   ]);
+  const canonical = canonicalFactSemantics(predicate, rawValue, qualifierValues);
+  const canonicalPredicate = normalizePredicate(canonical.predicate);
   const claimKind = SOFT_PREDICATES.has(normalizedPredicate)
     ? "SOFT_RECOMMENDATION"
-    : HARD_FACT_PREDICATES.has(normalizedPredicate) ? "HARD_FACT" : inferClaimKind(normalizedPredicate, rawValue);
+    : HARD_FACT_PREDICATES.has(normalizedPredicate) || HARD_FACT_PREDICATES.has(canonicalPredicate)
+      || EXCLUSIVE_FACT_PREDICATE_PATTERN.test(normalizedPredicate) || EXCLUSIVE_FACT_PREDICATE_PATTERN.test(canonicalPredicate)
+      ? "HARD_FACT" : inferClaimKind(normalizedPredicate, rawValue);
   const cardinality = claimKind === "SOFT_RECOMMENDATION"
     ? "MULTI_VALUE" : claimKind === "CONTEXT_DEPENDENT" ? "CONTEXT_DEPENDENT" : "SINGLE_VALUE";
-  const canonical = canonicalFactSemantics(predicate, rawValue, qualifierValues);
   return {
     value: primaryValue,
     normalized_value: normalizeText(primaryValue),
@@ -233,7 +237,10 @@ function inferClaimKind(predicate, value) {
   if (/recommend|best|good|worth|photo|visit.?time|体验|推荐|适合|值得/iu.test(`${predicate} ${value}`)) return "SOFT_RECOMMENDATION";
   if (isFeaturePredicate(predicate)) return "CONTEXT_DEPENDENT";
   if (/depend|season|audience|condition|视情况|取决于/iu.test(`${predicate} ${value}`)) return "CONTEXT_DEPENDENT";
-  return "HARD_FACT";
+  // Open-world default: an unknown model-generated predicate has no declared
+  // single-value semantics. Preserve different observations as complementary
+  // until the schema explicitly marks the property as mutually exclusive.
+  return "CONTEXT_DEPENDENT";
 }
 
 function inferScope(values) {

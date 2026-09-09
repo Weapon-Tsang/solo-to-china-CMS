@@ -46,7 +46,7 @@ try {
   const database = openDatabase(path.join(directory, "release.sqlite"));
   try {
     const versions = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
-    if (versions.join(",") !== Array.from({ length: 37 }, (_, index) => index + 1).join(",")) throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
+    if (versions.join(",") !== Array.from({ length: 38 }, (_, index) => index + 1).join(",")) throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
     for (const [table, column] of [
       ["content_intake_analyses", "strategy_version"], ["content_recommendations", "strategy_version"],
       ["content_opportunities", "strategy_version"], ["topic_candidates", "strategy_version"],
@@ -62,7 +62,8 @@ try {
       ["sources", "acquisition_origin"], ["sources", "completeness_status"], ["sources", "authorization_status"], ["sources", "publishable"],
       ["source_assets", "media_identity"], ["source_assets", "original_sha256"], ["source_assets", "authorization_status"], ["source_assets", "provenance_json"],
       ["source_segments", "capture_version"], ["jobs", "dedupe_key"],
-      ["knowledge_facts", "claim_relations_json"], ["knowledge_facts", "visibility_status"], ["commercial_compositions", "commercial_blocks_json"],
+      ["knowledge_facts", "claim_relations_json"], ["knowledge_facts", "visibility_status"], ["knowledge_facts", "consensus_method"],
+      ["knowledge_facts", "consensus_confidence"], ["knowledge_facts", "consensus_detail_json"], ["commercial_compositions", "commercial_blocks_json"],
       ["frontend_contract_snapshots", "publish_package_schema_json"], ["wordpress_publications", "delivery_mode"],
       ["article_drafts", "content_hash"], ["quality_reviews", "draft_content_hash"],
       ["jobs", "lease_expires_at"], ["frontend_contract_snapshots", "artifact_checksum"],
@@ -99,4 +100,4 @@ try {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-37, and SQLite integrity.`);
+console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-38, and SQLite integrity.`);

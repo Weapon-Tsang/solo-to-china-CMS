@@ -169,6 +169,16 @@ test("subjective crowd levels, photo locations, dish lists, and ordinary names c
   }
 });
 
+test("unknown predicates use open-world coexistence instead of assuming single-value truth", () => {
+  const relation = classifyClaimPair(
+    claim("stone steps", { predicate: "visitor_experience_detail" }),
+    claim("riverside boardwalk", { predicate: "visitor_experience_detail" }),
+  );
+  assert.equal(structureClaim({ predicate: "visitor_experience_detail", value: "stone steps" }).claim_kind, "CONTEXT_DEPENDENT");
+  assert.equal(relation.canCoexist, true);
+  assert.equal(relation.reviewType, null);
+});
+
 test("No. 2 place names and semantically represented Chinese guidance do not trigger negation reviews", () => {
   assert.equal(structureClaim({ predicate: "route_sequence", value: "Eling No. 2 Factory" }).polarity, "positive");
   assert.equal(detectClaimExtractionIssue({

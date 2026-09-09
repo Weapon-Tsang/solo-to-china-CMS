@@ -116,7 +116,10 @@ export function selectFactsForAssignment(assignment, facts = []) {
   const entityTerms = topicTokens((assignment.targetEntities || []).join(" "));
   const destinationTerms = topicTokens(`${assignment.destinationSlug || ""} ${assignment.destinationName || ""}`);
   for (const term of destinationTerms) terms.delete(term);
-  const eligible = facts.filter((fact) => fact.freshness_state !== "stale" && fact.consensus_status !== "conflicted");
+  // A dated travel observation is still usable evidence when the article states
+  // its evidence date and uncertainty. Only unresolved strict contradictions are
+  // excluded from an assignment package.
+  const eligible = facts.filter((fact) => fact.consensus_status !== "conflicted");
   return eligible.map((fact) => {
     const text = factText(fact);
     const tokens = topicTokens(text);

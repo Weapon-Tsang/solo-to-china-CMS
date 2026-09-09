@@ -56,6 +56,35 @@ function migrate(db) {
   if (current < 35) migrationThirtyFive(db);
   if (current < 36) migrationThirtySix(db);
   if (current < 37) migrationThirtySeven(db);
+  if (current < 38) migrationThirtyEight(db);
+}
+
+function migrationThirtyEight(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE knowledge_facts ADD COLUMN consensus_method TEXT NOT NULL DEFAULT 'legacy_count';
+      ALTER TABLE knowledge_facts ADD COLUMN consensus_confidence REAL NOT NULL DEFAULT 0;
+      ALTER TABLE knowledge_facts ADD COLUMN consensus_detail_json TEXT NOT NULL DEFAULT '{}';
+
+      INSERT INTO jobs(id, type, entity_id, status, attempts, max_attempts, available_at, created_at, updated_at, dedupe_key)
+      SELECT 'job_evidence_consensus_v38_' || lower(hex(randomblob(12))), 'rebuild_knowledge', ss.destination_slug,
+        'queued', 0, 3, datetime('now'), datetime('now'), datetime('now'), 'rebuild_knowledge:' || ss.destination_slug
+      FROM structured_sources ss
+      WHERE ss.destination_slug<>'' AND ss.destination_slug<>'unknown'
+        AND NOT EXISTS (
+          SELECT 1 FROM jobs j WHERE j.dedupe_key='rebuild_knowledge:' || ss.destination_slug
+            AND j.status IN ('queued','running')
+        )
+      GROUP BY ss.destination_slug;
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (38, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationThirtySeven(db) {

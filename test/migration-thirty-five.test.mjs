@@ -11,7 +11,7 @@ test("migration 35 adds lossless capture versions, rights, identity indexes, and
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const databasePath = path.join(directory, "v34.sqlite");
   const source = fs.readFileSync(fileURLToPath(new URL("../src/db.mjs", import.meta.url)), "utf8")
-    .replace(/^  if \(current < 3[5-7]\).*$/gm, "");
+    .replace(/^  if \(current < 3[5-8]\).*$/gm, "");
   const modulePath = path.join(directory, "db-v34.mjs");
   fs.writeFileSync(modulePath, source);
   const { openDatabase: openV34Database } = await import(`${pathToFileURL(modulePath).href}?v=34`);
@@ -28,7 +28,7 @@ test("migration 35 adds lossless capture versions, rights, identity indexes, and
 
   const upgraded = openDatabase(databasePath);
   try {
-    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 37);
+    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 38);
     const migrated = upgraded.prepare("SELECT * FROM sources WHERE id='src-v34'").get();
     assert.equal(migrated.completeness_status, "complete");
     assert.equal(migrated.authorization_status, "owner_confirmed");

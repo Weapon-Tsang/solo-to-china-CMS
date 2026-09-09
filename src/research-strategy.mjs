@@ -47,22 +47,25 @@ export function evaluateCoverage({ topicKey, contentType = "practical_guide", fa
     ...requirements.optional.map((key) => requirement(key, "optional", facts))];
   const required = rows.filter((item) => item.priority === "required");
   const important = rows.filter((item) => item.priority === "important");
-  const requiredCovered = required.filter((item) => item.state === "covered").length;
-  const importantCovered = important.filter((item) => item.state === "covered").length;
-  const staleCount = rows.filter((item) => item.state === "stale").length;
+  const countsAsEvidence = (item) => ["covered", "dated"].includes(item.state);
+  const requiredCovered = required.filter(countsAsEvidence).length;
+  const importantCovered = important.filter(countsAsEvidence).length;
+  const staleCount = rows.filter((item) => item.state === "dated").length;
   const conflictedCount = rows.filter((item) => item.state === "conflicted").length;
-  const requiresOfficialCount = rows.filter((item) => item.state === "requires_verification").length;
+  // Retained in the response/database shape for backward compatibility. Strategy 1.8
+  // no longer creates a manual "official verification" readiness gate.
+  const requiresOfficialCount = 0;
   const requiredRatio = required.length ? requiredCovered / required.length : 1;
   const importantRatio = important.length ? importantCovered / important.length : 1;
   const coverage = Math.round((requiredRatio * 0.75 + importantRatio * 0.25) * 100);
-  const usableFactCount = facts.filter((fact) => fact.freshness_state !== "stale" && fact.consensus_status !== "conflicted").length;
+  const usableFactCount = facts.filter((fact) => fact.consensus_status !== "conflicted").length;
   const editoriallySufficient = publicationMode === "source_adaptation"
     ? usableFactCount >= 3 && requiredCovered >= Math.min(1, required.length)
     : publicationMode === "topic_feature"
       ? usableFactCount >= 4 && requiredRatio >= 0.5 && sourceFamilyCount >= 1
-      : requiredRatio === 1 && sourceFamilyCount >= 2 && requiresOfficialCount === 0;
+      : requiredRatio === 1 && sourceFamilyCount >= 2;
   const blockingRequirements = publicationMode === "multi_source_synthesis"
-    ? required.filter((item) => item.state !== "covered").map((item) => item.key)
+    ? required.filter((item) => ["missing", "conflicted"].includes(item.state)).map((item) => item.key)
     : conflictedCount > 0 ? rows.filter((item) => item.state === "conflicted").map((item) => item.key) : [];
   return {
     topicKey, contentType, publicationMode, requirements: rows,
@@ -70,7 +73,7 @@ export function evaluateCoverage({ topicKey, contentType = "practical_guide", fa
       ready: editoriallySufficient && conflictedCount === 0,
       editoriallySufficient,
       publicationMode,
-      score: Math.max(0, Math.min(100, coverage + Math.min(10, facts.length) - staleCount * 3 - conflictedCount * 8 - requiresOfficialCount * 5)),
+      score: Math.max(0, Math.min(100, coverage + Math.min(10, facts.length) - staleCount - conflictedCount * 8)),
       coverage, requiredCovered, requiredTotal: required.length,
       importantCovered, importantTotal: important.length, factCount: facts.length, sourceFamilyCount,
       usableFactCount,
@@ -156,8 +159,11 @@ function requirement(key, priority, facts) {
   const matching = facts.filter((fact) => matchesRequirement(key, fact));
   let state = "missing";
   if (matching.some((fact) => fact.consensus_status === "conflicted")) state = "conflicted";
-  else if (matching.some((fact) => fact.verification_priority === "requires_official")) state = "requires_verification";
-  else if (matching.length && matching.every((fact) => fact.freshness_state === "stale")) state = "stale";
+  // A dynamic claim is a dated observation, not a timeless assertion. Old rows that
+  // still carry the legacy requires_official flag are deliberately downgraded to
+  // dated evidence and remain usable with a reader-facing as-of disclosure.
+  else if (matching.length && matching.every((fact) => fact.freshness_state === "stale"
+    || fact.verification_priority === "requires_official")) state = "dated";
   else if (matching.length) state = "covered";
   return { key, priority, state, factKeys: matching.map((fact) => fact.normalized_key).filter(Boolean) };
 }

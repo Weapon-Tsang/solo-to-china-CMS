@@ -15,7 +15,7 @@ test("Kimi-backed independent QA cannot approve deterministic evidence or commer
   const reviewed = await engine.review({
     facts: [
       { normalized_key: "valid.fact", consensus_status: "corroborated", freshness_state: "stale", verification_priority: "review" },
-      { normalized_key: "timed.fact", consensus_status: "corroborated", freshness_state: "time_sensitive", verification_priority: "requires_official" },
+      { normalized_key: "timed.fact", consensus_status: "corroborated", freshness_state: "time_sensitive", verification_priority: "normal", consensus_method: "RECENCY_WEIGHTED_CONSENSUS" },
     ],
     draft: {
       body_markdown: "Book this affiliate deal on Trip.com.",
@@ -28,8 +28,8 @@ test("Kimi-backed independent QA cannot approve deterministic evidence or commer
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "commercial_contamination"));
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "invalid_evidence_key"));
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "draft_too_short"));
-  assert.ok(reviewed.output.issues.some((issue) => issue.code === "stale_evidence_used"));
-  assert.ok(reviewed.output.issues.some((issue) => issue.code === "missing_verification_note"));
+  assert.equal(reviewed.output.issues.some((issue) => issue.code === "stale_evidence_used"), false);
+  assert.ok(reviewed.output.issues.some((issue) => issue.code === "missing_temporal_disclosure"));
   assert.equal(request.url, "https://api.example.test/v1/chat/completions");
   assert.equal(request.body.response_format.type, "json_schema");
 });

@@ -65,6 +65,26 @@ test("focused features and authorized source adaptations use editorial sufficien
   assert.equal(synthesis.readiness.ready, false);
 });
 
+test("dated dynamic evidence remains usable and never creates an official-verification blocker", () => {
+  const facts = [
+    ["orientation.location", "current", "normal"],
+    ["transport.metro", "stale", "review"],
+    ["booking.reservation", "stale", "requires_official"],
+    ["payment.methods", "current", "normal"],
+  ].map(([normalized_key, freshness_state, verification_priority]) => ({
+    normalized_key, freshness_state, verification_priority, consensus_status: "corroborated",
+  }));
+  const result = evaluateCoverage({
+    topicKey: "beijing:first-dated", contentType: "first_time_guide", facts, sourceFamilyCount: 2,
+  });
+  assert.equal(result.readiness.ready, true);
+  assert.equal(result.readiness.usableFactCount, 4);
+  assert.equal(result.readiness.staleCount, 2);
+  assert.equal(result.readiness.requiresOfficialCount, 0);
+  assert.deepEqual(result.readiness.blockingRequirements, []);
+  assert.deepEqual(result.requirements.filter((item) => item.state === "dated").map((item) => item.key), ["transport", "booking"]);
+});
+
 test("an editor can classify an opportunity as create, update, merge, or retire against published inventory", (t) => {
   const { db, repository } = repositoryFixture(t);
   const source = repository.saveCapture(normalizeXiaohongshuCapture({

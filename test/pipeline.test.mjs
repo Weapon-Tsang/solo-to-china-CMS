@@ -4,7 +4,7 @@ import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { Pipeline } from "../src/pipeline.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
-test("pipeline separates extraction, claims, knowledge conflict detection, and editorial patterns", async (t) => {
+test("pipeline separates extraction, claims, semantic coexistence, and editorial patterns", async (t) => {
   const { repository } = repositoryFixture(t);
   const extractor = {
     async extract(source) {
@@ -46,8 +46,8 @@ test("pipeline separates extraction, claims, knowledge conflict detection, and e
   assert.equal(dashboard.totals.sources, 2);
   assert.equal(dashboard.totals.claims, 2);
   assert.equal(dashboard.totals.knowledgeFacts, 1);
-  assert.equal(dashboard.totals.conflicts, 1);
-  assert.equal(dashboard.actionCounts.exceptions, 1);
+  assert.equal(dashboard.totals.conflicts, 0);
+  assert.equal(dashboard.actionCounts.exceptions, 0);
   assert.equal(dashboard.actionCounts.recommendations, 0);
   assert.equal(repository.getEditorialBlueprints()[0].sample_count, 2);
   assert.equal(repository.getKnowledge()[0].evidence.length, 2);

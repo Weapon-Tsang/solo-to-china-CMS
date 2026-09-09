@@ -84,7 +84,7 @@ test("a warning knowledge conflict can be resolved by an administrator and then 
 
   const exception = repository.listOperationalExceptions().find((item) => item.key === "knowledge:fact1");
   assert.equal(exception.severity, "warning");
-  assert.equal(exception.title, "知识事实存在冲突，需要判断");
+  assert.equal(exception.title, "知识事实存在严格冲突，需要判断");
   assert.equal(exception.knowledge.id, "fact1");
 
   const resolution = repository.resolveKnowledgeConflict("fact1", "19:30-22:30", "Verified against the operator notice.");
@@ -192,16 +192,17 @@ test("claim review exceptions include both source records, text context, and the
   assert.match(review.claimB.evidence.assets[0].previewUrl, /^\/api\/source-assets\/asset_[^/]+\/preview$/);
 });
 
-test("dismissing a source-conflict false positive keeps it compatible after knowledge rebuild", (t) => {
+test("dynamic hard-fact differences are resolved by recency weighting without an operator queue", (t) => {
   const { db, repository } = repositoryFixture(t);
-  for (const [externalId, value, quote] of [
-    ["aaaaaaaaaaaaaaaaaaaaaaaa", "true", "Advance reservation is required."],
-    ["bbbbbbbbbbbbbbbbbbbbbbbb", "false", "No advance reservation is required."],
+  for (const [externalId, value, quote, capturedAt] of [
+    ["aaaaaaaaaaaaaaaaaaaaaaaa", "true", "Advance reservation is required.", "2026-01-01T00:00:00.000Z"],
+    ["bbbbbbbbbbbbbbbbbbbbbbbb", "false", "No advance reservation is required.", "2026-09-09T00:00:00.000Z"],
   ]) {
     const source = repository.saveCapture(normalizeXiaohongshuCapture({
       url: `https://www.xiaohongshu.com/explore/${externalId}`,
       title: externalId,
       text: `A selected source reports: ${quote}`,
+      capturedAt,
       images: [],
     }));
     repository.saveExtraction(source.id, {
@@ -212,16 +213,14 @@ test("dismissing a source-conflict false positive keeps it compatible after know
   }
 
   repository.rebuildKnowledge("chongqing");
-  let review = db.prepare("SELECT * FROM claim_review_cases WHERE review_type='SOURCE_CONFLICT'").get();
-  assert.equal(review.status, "pending");
-  repository.decideClaimReviewCase(review.id, "dismissed", "Different ticket types were implied by the sources.");
-  repository.rebuildKnowledge("chongqing");
-
-  review = db.prepare("SELECT * FROM claim_review_cases WHERE id=?").get(review.id);
-  assert.equal(review.status, "dismissed");
+  const review = db.prepare("SELECT * FROM claim_review_cases WHERE review_type='SOURCE_CONFLICT'").get();
+  assert.equal(review, undefined);
   const fact = repository.knowledgeForDestination("chongqing")[0];
-  assert.equal(fact.consensus_status, "corroborated");
-  assert.equal(fact.contradiction_count, 0);
+  assert.equal(fact.preferred_value, "false");
+  assert.equal(fact.consensus_status, "single_source");
+  assert.equal(fact.consensus_method, "LATEST_WEIGHTED_PROVISIONAL");
+  assert.equal(fact.verification_priority, "review");
+  assert.equal(fact.contradiction_count, 1);
   assert.equal(fact.claim_relations[0].relation, "COMPATIBLE");
   assert.equal(repository.listOperationalExceptions().some((item) => item.kind === "source_conflict" || item.kind === "knowledge"), false);
 });
