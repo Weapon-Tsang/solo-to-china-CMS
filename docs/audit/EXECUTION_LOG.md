@@ -73,15 +73,15 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 | B04 | 1.3 | completed | `90e2daf` | Versioned held-out quality set and deterministic evidence/English gates verified |
 | B05 | 1.3 | completed | `90e2daf` | Frozen stage policy, bounded repair, every-attempt cost ledger verified |
 | B06 | 1.3 | completed | `90e2daf` | Durable artifact reuse/invalidation, cursored processing and fair scheduling verified |
-| C01 | 1.3 | pending | `d642f0f` | Depends on A10, A11, B04 |
-| C02 | 1.3 | pending | `d642f0f` | Depends on A07, A10, A11, B04, C01 |
-| C03 | 1.3 | pending | `d642f0f` | Depends on A13, C01 |
-| C04 | 1.3 | pending | `d642f0f` | Depends on A01, A11, B03, B06 |
-| C05 | 1.3 | pending | `d642f0f` | Depends on A11, B11, C01-C04 |
-| B07 | 1.3 | pending | `d642f0f` | Content AST compatibility migration; rerun C01-C05 afterward |
-| B08 | 1.3 | pending | `d642f0f` | Existing action-oriented admin workspaces only |
-| B09 | 1.3 | pending | `d642f0f` | Existing commercial event/revision consistency only |
-| B12 | 1.3 | pending | `d642f0f` | Incremental service/view extraction; rerun C01-C05 afterward |
+| C01 | 1.3 | completed | `39cbd0f` | Versioned SEO artifacts, scope/canonical guards and targeted invalidation verified |
+| C02 | 1.3 | completed | `39cbd0f` | Deterministic Article/WebPage/Breadcrumb/FAQ consistency verified |
+| C03 | 1.3 | completed | `39cbd0f` | Published-target inventory, natural anchors and scoped invalidation verified |
+| C04 | 1.3 | completed | `2d8719c` | Migration 52; public media identity, reuse and responsive delivery verified |
+| C05 | 1.3 | completed | `2d8719c` | CMS final-HTML validator verified; three Frontend handoff failures recorded |
+| B07 | 1.3 | completed | `2d8719c` | Migration 53; semantic content tree and compatibility renderers verified |
+| B08 | 1.3 | completed | `9929fbb` | Migration 55; paged operational views, quality dimensions and safe actions verified |
+| B09 | 1.3 | completed | `9929fbb` | Migration 54; version-bound Commercial attribution and unknown conversion semantics verified |
+| B12 | 1.3 | completed | `9929fbb` | Seven enforceable boundaries and reversible module extraction verified |
 
 ## Current checkpoint
 
@@ -401,6 +401,31 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
   explicitly untested external/outcome conclusions. The clean schema chain is
   now 1-55. C01-C05 affected acceptance tests passed after all Stage 5 changes.
   No paid model or production service was called by the verification gates.
-- Current task: deployment.
-- Next action: commit and push B08/B09/B12, then follow the GCE deployment runbook
-  with a pre-upgrade snapshot and verify the deployed health/version/schema.
+- Deployment checkpoint: Cloud Build `fad51e58-51da-46ac-9dce-1fe620799a06`
+  published application image digest
+  `sha256:26f79920dfe76e26beb1c13fcd525c7b7926447f90814312e97b03162c1b8749`
+  from commit `bc15f1e`. The GCE startup script created the verified pre-upgrade
+  database-and-content snapshot before replacing the containers; because the
+  script runs with `set -e`, its later successful completion also verifies the
+  snapshot command returned successfully. Serial output then confirmed the exact
+  application digest, `engine` and `cloudflared` running, and `Deployment
+  completed successfully.`
+- Post-deploy verification: `https://engine.solotochina.com/api/health` and
+  `/api/ready` returned HTTP 200; the latter reported `database: ready` and the
+  former reported application `1.17.23`, content strategy `1.8`, zero active
+  Batch jobs, and a healthy Frontend Contract at fixed commit
+  `f44ce1092ced93dfb47d9b3eae83d0d5e4b97086`. The Capture health route returned
+  200 while its root returned 404, preserving the no-dashboard boundary. Schema
+  55 was verified directly in clean local migration tests and indirectly in the
+  deployed runtime by successful startup plus database readiness; no production
+  endpoint exposes the numeric schema version, so a direct production schema-number
+  read remains unavailable rather than inferred.
+- Final status: all 30 v1.3 task IDs are completed. No task is marked
+  `already_fixed`, `not_applicable` or `blocked`; no task remains pending. The
+  separate Frontend handoff failures and external/outcome checks remain explicitly
+  unverified and do not reduce the CMS acceptance standard.
+- Current task: completed.
+- Next action: address the documented Frontend C05 handoff in the Frontend
+  repository, then rerun the real final-HTML check; production ranking, indexing,
+  traffic, Core Web Vitals and AI citations require later observation and are not
+  claimed by this audit.
