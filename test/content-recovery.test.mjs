@@ -19,6 +19,17 @@ function fixture(t) {
   return {db,repository};
 }
 
+test('draft detail reuses its evidence hash without rebuilding the entire content workspace', t=>{
+  const {repository}=fixture(t);
+  repository.saveReview('draft-r',{passed:false,score:30,issues:[],checks:[],unsupported_claims:[]},'fixture');
+  const original=repository.getBriefPackage.bind(repository);
+  let loads=0;
+  repository.getBriefPackage=(...args)=>{ loads++; return original(...args); };
+  repository.getDraftPackage('draft-r');
+  assert.equal(loads,1,'detail must load its brief once, not recompute workspace evidence');
+  assert.deepEqual(repository.listContent({candidateId:'unrelated-topic'}),[]);
+});
+
 test('recovery report is read-only and targeted compose neither rewrites nor runs QA', t=>{
   const {db,repository}=fixture(t);
   const before=db.prepare('SELECT count(*) n FROM jobs').get().n;

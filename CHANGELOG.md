@@ -1,6 +1,12 @@
 # Changelog
 
-## 1.17.25 - Unreleased
+## 1.17.26 - Unreleased
+
+- Scope draft-detail operation reads to its candidate and reuse the current evidence hash, avoiding whole-workspace recomputation for each recovery panel.
+- Reuse the already scoped fact package when listing recovery assets. No global or stale cache is introduced.
+- Keep Strategy 1.9 and schema 55; add a failing-then-passing evidence-load regression.
+
+## 1.17.25
 
 - Activate Strategy 1.9: separate source recommendations, editorial directions and approved production; freeze approved scope and validate planned evidence membership.
 - Add version-guarded, transactional bulk decisions and explicit default/direction confirmation; preserve assignments and historical proposals across upgrades.

@@ -16,8 +16,8 @@ function context(repo, candidateId) {
     .all(candidateId, brief?.id || '', draft?.id || '');
   return { candidate, brief, draft, activeJobs };
 }
-function assetsFor(repo, ctx) {
-  const facts = repo.getTopicPackage(ctx.candidate.id)?.facts || [];
+function assetsFor(repo, ctx, packageFacts = null) {
+  const facts = packageFacts ?? repo.getTopicPackage(ctx.candidate.id)?.facts ?? [];
   const ids = new Set(facts.flatMap(f => (f.evidence || []).map(e => e.source_id)));
   if (ctx.draft) for (const row of repo.db.prepare(`SELECT sa.source_id FROM article_visuals av JOIN source_assets sa ON sa.id=av.source_asset_id WHERE av.draft_id=?`).all(ctx.draft.id)) ids.add(row.source_id);
   if (!ids.size) return [];
@@ -33,7 +33,7 @@ export function contentRecoveryReport(repo, candidateId) {
   const ctx = context(repo,candidateId);
   if (!ctx) return null;
   const pkg = ctx.draft ? repo.getDraftPackage(ctx.draft.id) : repo.getTopicPackage(candidateId);
-  const assets = assetsFor(repo,ctx);
+  const assets = assetsFor(repo,ctx,pkg.facts || []);
   const sources = new Map();
   for (const fact of pkg.facts || []) for (const e of fact.evidence || []) if (e.source_id) sources.set(e.source_id,{id:e.source_id,title:e.source_title || e.title || e.source_id,url:e.canonical_url});
   for (const asset of assets) sources.set(asset.source_id,{id:asset.source_id,title:asset.source_title,url:asset.submitted_url || asset.canonical_url});

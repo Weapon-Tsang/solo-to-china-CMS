@@ -1,6 +1,6 @@
 # SoloToChina Content Production Strategy 1.9
 
-状态：active；2026-09-10。应用 1.17.25；schema 55 不变。唯一版本清单为 `config/content-strategy.json`。继承 1.8 的证据、授权、时效共识、人工命题和商业隔离原则，变更以本规范为准。审计交付 requirementsVersion=1.3 独立于应用／策略版本。
+状态：active；2026-09-10。应用 1.17.26；schema 55 不变。唯一版本清单为 `config/content-strategy.json`。继承 1.8 的证据、授权、时效共识、人工命题和商业隔离原则，变更以本规范为准。审计交付 requirementsVersion=1.3 独立于应用／策略版本。
 
 ## 生产单位与审批
 

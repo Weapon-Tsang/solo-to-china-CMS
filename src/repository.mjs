@@ -3454,7 +3454,10 @@ export class Repository {
     const publication = this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id = ?").get(draftId) || null;
     const compositionRow = this.db.prepare(`SELECT * FROM commercial_compositions
       WHERE draft_id=? AND draft_revision=? AND draft_content_hash=?`).get(draftId, draft.revision, draft.content_hash) || null;
-    const operation = this.listContent().find((item) => item.draft_id === draftId)?.operation || null;
+    const operation = this.listContent({
+      candidateId: briefPackage.candidate.id,
+      evidenceHashes: new Map([[draftId, currentEvidenceHash]]),
+    }).find((item) => item.draft_id === draftId)?.operation || null;
     return {
       ...briefPackage,
       evidence_hash: currentEvidenceHash,
@@ -3670,7 +3673,7 @@ export class Repository {
     if (this.getFrontendPublishComposition(draftId)) this.markFrontendPublishComposition(draftId, "delivery_failed");
   }
 
-  listContent() {
+  listContent({ candidateId = null, evidenceHashes = new Map() } = {}) {
     const rows = this.db.prepare(`
       SELECT tc.*, cb.id AS brief_id, cb.status AS brief_status, ad.id AS draft_id, ad.status AS draft_status,
         ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score,
@@ -3687,8 +3690,9 @@ export class Repository {
       LEFT JOIN wordpress_publications wp ON wp.draft_id = ad.id
       LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
       LEFT JOIN frontend_publish_compositions pc ON pc.draft_id = ad.id
+      WHERE (? IS NULL OR tc.id=?)
       ORDER BY tc.coverage_score DESC, tc.updated_at DESC
-    `).all();
+    `).all(candidateId, candidateId);
     const draftIds = rows.map((row) => row.draft_id).filter(Boolean);
     if (!draftIds.length) return rows;
     const placeholders = draftIds.map(() => "?").join(",");
@@ -3721,7 +3725,9 @@ export class Repository {
     const staleReviews = new Set();
     const operations = new Map(operationRows.map((row) => {
       const review = this.db.prepare('SELECT evidence_hash FROM quality_reviews WHERE draft_id=? ORDER BY created_at DESC LIMIT 1').get(row.draft_id);
-      if (review && review.evidence_hash !== evidenceHashForFacts(this.getBriefPackage(row.brief_id)?.facts || [])) {
+      const currentHash = review ? (evidenceHashes.get(row.draft_id)
+        ?? evidenceHashForFacts(this.getBriefPackage(row.brief_id)?.facts || [])) : null;
+      if (review && review.evidence_hash !== currentHash) {
         row.qa_passed=null;row.qa_score=null;row.quality_report_json='{}';staleReviews.add(row.draft_id);
       }
       return [row.draft_id, buildContentTaskCard(row)];
