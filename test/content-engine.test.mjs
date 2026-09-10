@@ -60,3 +60,39 @@ test("page composition extracts CMS node references before Frontend validation",
   assert.deepEqual(result.provenance.entries[0].claimKeys, ["transport.metro"]);
   assert.ok(requestBody.response_format.json_schema.schema.properties.blocks.items.required.includes("_cms_content_node_id"));
 });
+
+test("page composition augments every oneOf component variant with CMS provenance", async () => {
+  let requestBody;
+  const output = {
+    metadata: { title: "Guide" },
+    blocks: [{ type: "paragraph", data: { html: "Use the metro." },
+      _cms_content_node_id: "node_transport", _cms_source_section_ids: ["section_plan"],
+      _cms_claim_keys: ["transport.metro"], _cms_factuality: "factual" }],
+  };
+  const fetchStub = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return new Response(JSON.stringify({ model: "page-model", choices: [{ finish_reason: "stop",
+      message: { content: JSON.stringify(output) } }] }),
+    { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const engine = new ContentEngine({ apiKey: "key", model: "model", baseUrl: "https://api.example.test/v1" }, fetchStub);
+  const variant = (type, data) => ({ type: "object", additionalProperties: false, required: ["type", "data"], properties: {
+    type: { type: "string", enum: [type] }, data,
+  } });
+  const pageSchema = { type: "object", additionalProperties: false, required: ["metadata", "blocks"], properties: {
+    metadata: { type: "object", additionalProperties: false, required: ["title"], properties: { title: { type: "string" } } },
+    blocks: { type: "array", items: { oneOf: [
+      variant("heading", { type: "object", properties: { text: { type: "string" } } }),
+      variant("paragraph", { type: "object", properties: { html: { type: "string" } } }),
+    ] } },
+  } };
+  const result = await engine.composeFrontendPage({ frontend_page_plan: { plan: { blocks: [{
+    content_node_id: "node_transport", source_section_ids: ["section_plan"], claim_keys: ["transport.metro"], factuality: "factual",
+  }] } }, brief: { strategy_version: "1.8", canonical: {} }, draft: {} }, { components: [] }, pageSchema);
+  const variants = requestBody.response_format.json_schema.schema.properties.blocks.items.oneOf;
+  assert.equal(variants.length, 2);
+  assert.ok(variants.every((item) => item.required.includes("_cms_content_node_id")));
+  assert.ok(variants.every((item) => item.properties._cms_claim_keys.type === "array"));
+  assert.equal(result.provenance.valid, true);
+  assert.equal("_cms_content_node_id" in result.output.blocks[0], false);
+});

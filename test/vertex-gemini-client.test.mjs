@@ -87,6 +87,35 @@ test("Vertex Gemini reports an exhausted structured output before attempting to 
   }), /structured output reached its token limit/);
 });
 
+test("Vertex Gemini retries a generic JSON Schema 400 once with the OpenAPI transport", async () => {
+  const requests = [];
+  const client = new VertexGeminiClient({
+    projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
+  }, async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    if (requests.length === 1) return Response.json({ error: { code: 400, message: "Request contains an invalid argument." } }, { status: 400 });
+    return Response.json({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] });
+  });
+  const result = await client.completeJson({ name: "frontend_page_payload", schema: {
+    type: "object", required: ["ok"], properties: { ok: { type: "boolean" } },
+  }, instructions: "Compose.", content: "draft" });
+  assert.deepEqual(result.output, { ok: true });
+  assert.equal(requests.length, 2);
+  assert.ok(requests[0].generationConfig.responseJsonSchema);
+  assert.ok(requests[1].generationConfig.responseSchema);
+  assert.equal(requests[1].generationConfig.responseJsonSchema, undefined);
+});
+
+test("Vertex content planning output limits require input correction instead of repeating a no-op retry", async () => {
+  const client = new VertexGeminiClient({
+    projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
+  }, async () => Response.json({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: '{"partial":' }] } }] }));
+  await assert.rejects(() => client.completeJson({
+    name: "content_brief", schema: { type: "object" }, instructions: "Plan.", content: "mixed evidence",
+  }), (error) => error.code === "MODEL_OUTPUT_LIMIT" && error.retryable === false
+    && /content planning/i.test(error.message) && !/Source segment/i.test(error.message));
+});
+
 test("Vertex Gemini uses the global API host for Gemini 3.8 Flash", async () => {
   let requestedUrl = "";
   const client = new VertexGeminiClient({

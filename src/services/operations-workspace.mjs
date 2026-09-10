@@ -1,3 +1,5 @@
+import { isOperationalFailureRetryable } from "../job-policy.mjs";
+
 const VALID_STATES = new Set(["passed", "warning", "failed", "not_tested"]);
 
 export function normalizeWorkspaceQuery(input = {}, defaults = {}) {
@@ -42,14 +44,27 @@ export function buildContentTaskCard(row) {
   };
   const failed = Object.entries(dimensions).filter(([, value]) => value.status === "failed");
   const warnings = Object.entries(dimensions).filter(([, value]) => value.status === "warning");
-  const stage = retryStage(row, failed);
+  const failedJob = row.failed_job_type ? {
+    type: row.failed_job_type,
+    last_error: row.failed_job_error,
+    failure_class: row.failed_job_failure_class,
+    last_failure_code: row.failed_job_code,
+  } : null;
+  const pipelineBlocker = failedJob ? {
+    dimension: "pipeline",
+    reason: failedJob.last_error || `The ${failedJob.type} stage failed.`,
+    target: failedJob.type,
+    retryable: isOperationalFailureRetryable(failedJob),
+  } : null;
+  const stage = retryStage(row, failed, failedJob);
   return {
-    status: failed.length ? "failed" : warnings.length ? "warning"
+    status: failed.length || pipelineBlocker ? "failed" : warnings.length ? "warning"
       : Object.values(dimensions).every((item) => item.status === "passed") ? "passed" : "not_tested",
     dimensions,
-    blockers: failed.map(([key, value]) => ({ dimension: key, reason: value.reason, target: value.target })),
+    blockers: [...failed.map(([key, value]) => ({ dimension: key, reason: value.reason, target: value.target })),
+      ...(pipelineBlocker ? [pipelineBlocker] : [])],
     completedArtifacts: completedArtifacts(row, seo, schema, ast),
-    nextAction: actionFor(row, stage, failed),
+    nextAction: actionFor(row, stage, failed, pipelineBlocker),
     retry: stage ? { mode: "failed_stage_only", stage, endpoint: `/api/topics/${encodeURIComponent(row.id)}/retry` } : null,
     actions: [
       { id: "continue", mode: "preview_then_execute", previewEndpoint: `/api/topics/${encodeURIComponent(row.id)}/action-preview?action=continue` },
@@ -110,7 +125,8 @@ function dimension(status, reason, target, fix, row) {
     runVersion: row.draft_strategy_version || row.strategy_version || "unknown" };
 }
 
-function retryStage(row, failed) {
+function retryStage(row, failed, failedJob = null) {
+  if (failedJob) return isOperationalFailureRetryable(failedJob) ? failedJob.type : null;
   if (!row.brief_id) return "plan_content";
   if (!row.draft_id) return "generate_draft";
   if (failed.some(([key]) => key === "content_quality")) return "revise_draft";
@@ -121,8 +137,13 @@ function retryStage(row, failed) {
   return null;
 }
 
-function actionFor(row, stage, failed) {
-  if (stage) return { label: `Retry ${stage} only`, stage, reason: failed[0]?.[1]?.reason || "Continue from the first incomplete production artifact." };
+function actionFor(row, stage, failed, pipelineBlocker = null) {
+  if (stage) return { label: `Retry ${stage} only`, stage,
+    reason: failed[0]?.[1]?.reason || pipelineBlocker?.reason || "Continue from the first incomplete production artifact." };
+  if (pipelineBlocker && !pipelineBlocker.retryable) return {
+    label: `Correct ${pipelineBlocker.target} input`, stage: "manual_correction",
+    reason: pipelineBlocker.reason,
+  };
   if (row.wordpress_status === "synced") return { label: "Verify final HTML", stage: "external_validation", reason: "CMS delivery is complete; production HTML remains a separate check." };
   return { label: "Review current state", stage: "manual_review", reason: "No safe automatic retry is currently required." };
 }

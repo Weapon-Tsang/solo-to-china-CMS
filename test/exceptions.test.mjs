@@ -17,6 +17,37 @@ test("operational exception queue exposes and safely retries an exhausted generi
   assert.equal(job.last_error, null);
 });
 
+test("operational exception queue refuses a no-op retry for permanent provider and asset failures", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const providerJobId = repository.enqueue("compose_frontend_page", "draft-provider-400");
+  db.prepare("UPDATE jobs SET status='failed', attempts=3, last_error='Vertex Gemini request failed (400): Request contains an invalid argument.' WHERE id=?").run(providerJobId);
+  const assetJobId = repository.enqueue("compose_frontend_page", "draft-asset-403");
+  db.prepare("UPDATE jobs SET status='failed', attempts=3, last_error='Authorized source image download failed (403).' WHERE id=?").run(assetJobId);
+
+  const exceptions = repository.listOperationalExceptions();
+  assert.equal(exceptions.find((item) => item.key === `job:${providerJobId}`).retryable, false);
+  assert.equal(exceptions.find((item) => item.key === `job:${assetJobId}`).retryable, false);
+  assert.equal(repository.retryOperationalException(`job:${providerJobId}`), false);
+  assert.equal(repository.retryOperationalException(`job:${assetJobId}`), false);
+  assert.deepEqual(db.prepare("SELECT status FROM jobs WHERE id IN (?,?) ORDER BY id").all(providerJobId, assetJobId)
+    .map((row) => row.status), ["failed", "failed"]);
+});
+
+test("a derived draft exception inherits the permanent failed job retry decision", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('topic-derived','chongqing','derived','Derived guide','fixture',100,1,0,'drafted','now','now')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('brief-derived','chongqing','Derived guide','[]','informational','drafted','now','now','topic-derived')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-derived','brief-derived','Derived guide','derived-guide','Body','{}','exception','now','now',1,'hash')`).run();
+  const jobId = repository.enqueue("compose_frontend_page", "draft-derived");
+  db.prepare("UPDATE jobs SET status='failed', attempts=3, last_error='Authorized source image download failed (403).' WHERE id=?").run(jobId);
+  const exception = repository.listOperationalExceptions().find((item) => item.key === "draft:draft-derived");
+  assert.equal(exception.retryable, false);
+  assert.equal(repository.retryOperationalException(exception.key, { contractAware: true }), false);
+});
+
 test("a later successful job clears older duplicate failures from the active exception queue", (t) => {
   const { db, repository } = repositoryFixture(t);
   const failedId = repository.enqueue("resolve_entities", "chongqing");

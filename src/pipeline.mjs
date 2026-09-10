@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { composeFirstTimeGuideFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
+import { composePageFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
+import { validatePlanningDestination } from "./destination-consistency.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
 import { validateMediaDelivery } from "./media-delivery.mjs";
 import { isAiJobType, isProviderPressure } from "./job-policy.mjs";
@@ -527,6 +528,12 @@ export class Pipeline {
           this.requireContentEngine();
           const contentPackage = this.repository.getTopicPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
+          const destinationValidation = validatePlanningDestination(contentPackage);
+          if (!destinationValidation.valid) {
+            throw Object.assign(new Error(`${destinationValidation.code}: ${destinationValidation.message}`), {
+              code: destinationValidation.code, retryable: false, details: destinationValidation,
+            });
+          }
           const planned = await guarded((signal) => this.contentEngine.plan(contentPackage, { signal, telemetryContext }));
           const contractAware = this.canComposeFrontendPage;
           const briefId = this.repository.saveBrief(job.entity_id, planned.output, planned.model, { deferDraft: contractAware });
@@ -591,7 +598,7 @@ export class Pipeline {
             this.repository.createFrontendCapabilityRequest({ draftId: job.entity_id, briefId: contentPackage.brief?.id || null, semanticNeed: "article-page-payload", useCase: contentPackage.draft?.title || "Article draft", reason: "The active Frontend Contract exposes no stable components for the final page payload." });
             throw new Error("MISSING_FRONTEND_CAPABILITY: no stable Frontend component can express this page.");
           }
-          const composed = composeFirstTimeGuideFromAst(contentPackage.draft.content_ast, capabilities, contract.pageSchema.schema)
+          const composed = composePageFromAst(contentPackage.draft.content_ast, capabilities, contract.pageSchema.schema)
             || await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext }));
           const validation = this.frontendContracts.validatePagePayload(composed.output);
           const savedPage = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
@@ -711,6 +718,8 @@ export class Pipeline {
             } else {
               const publishableDraft = {
                 ...contentPackage.draft,
+                visuals: this.repository.listDraftVisualsForDelivery?.(contentPackage.draft.id)
+                  || contentPackage.draft.visuals || [],
                 body_markdown: contentPackage.commercial_composition.publishable_body_markdown,
                 content_blocks: contentPackage.commercial_composition.content_blocks?.length
                   ? contentPackage.commercial_composition.content_blocks
@@ -791,7 +800,9 @@ export class Pipeline {
 
   async uploadVisualMedia(contentPackage, options = {}) {
     if (!this.wordpress?.enabled || typeof this.wordpress.resolveVisualMedia !== "function") return [];
-    const uploaded = await this.wordpress.resolveVisualMedia(contentPackage.draft?.visuals || [], null, options);
+    const deliveryVisuals = this.repository.listDraftVisualsForDelivery?.(contentPackage.draft?.id)
+      || contentPackage.draft?.visuals || [];
+    const uploaded = await this.wordpress.resolveVisualMedia(deliveryVisuals, null, options);
     options.assertLease?.();
     for (const visual of uploaded) this.repository.saveWordPressVisual(visual.visualId, visual);
     return uploaded;

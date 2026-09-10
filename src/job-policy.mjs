@@ -48,3 +48,11 @@ export function classifyBatchFailure(error, { phase = "result" } = {}) {
   if (isProviderPressure(error) || (phase !== "prepare" && error?.retryable === true)) return "retryable_provider";
   return "permanent_input";
 }
+
+export function isOperationalFailureRetryable(row = {}) {
+  if (["permanent_input", "input_too_large"].includes(row.failure_class)) return false;
+  if (["retryable_provider", "capacity", "batch_incompatible"].includes(row.failure_class)) return true;
+  const detail = String(row.last_error || row.failed_job_error || "");
+  if (/\b(?:400|401|403|404|405|409|410|413|422)\b|invalid argument|not an allowlisted|unsupported image|image.*too large|output.*token limit|structured output reached its token limit/i.test(detail)) return false;
+  return true;
+}

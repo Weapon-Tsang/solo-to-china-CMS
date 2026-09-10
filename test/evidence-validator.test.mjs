@@ -38,6 +38,22 @@ test("layout variants and an explicitly non-factual image do not break evidence 
   assert.equal(result.valid, true);
 });
 
+test("atomic blocks validate evidence at the shared ledger-section boundary", () => {
+  const heading = { type: "heading", variant: "section", data: { text: "Ticket plan", level: 2 } };
+  const paragraph = { type: "paragraph", variant: "default", data: { content: "The Test Museum ticket costs CNY 50." } };
+  const list = { type: "list", variant: "unordered", data: { items: ["Only on weekdays", "Checked September 7, 2026"] } };
+  const contentPackage = packageFor(paragraph);
+  const factual = contentPackage.frontend_page.validation.blockProvenance[0];
+  contentPackage.frontend_page.validation.blockProvenance = [
+    { ...factual, blockId: "block-heading", contentNodeId: "node-heading", factuality: "non_factual",
+      claimKeys: [], sourceIds: [], claimTraces: [], blockSignature: pageBlockSignature(heading) },
+    { ...factual, blockId: "block-paragraph", blockSignature: pageBlockSignature(paragraph) },
+    { ...factual, blockId: "block-list", contentNodeId: "node-list", blockSignature: pageBlockSignature(list) },
+  ];
+  const result = validatePageEvidence({ metadata: { title: "Guide" }, blocks: [heading, paragraph, list] }, contentPackage);
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
 test("an empty ledger cannot support a factual page", () => {
   const contentPackage = packageFor(goodBlock);
   contentPackage.draft.evidence_ledger = [];

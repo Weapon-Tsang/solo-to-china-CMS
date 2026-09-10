@@ -74,7 +74,7 @@ export class VertexGeminiClient {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         const message = payload?.error?.message || response.statusText;
-        if (response.status === 400 && schemaMode === "json_schema" && /responseJsonSchema|unknown field|unsupported/i.test(message)) {
+        if (response.status === 400 && schemaMode === "json_schema") {
           this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
             status: "failed", errorCode: "SCHEMA_MODE_UNSUPPORTED", retryReason: "schema_transport_fallback", usage: payload?.usageMetadata }));
           schemaMode = "openapi";
@@ -93,7 +93,7 @@ export class VertexGeminiClient {
       if (candidate?.finishReason === "MAX_TOKENS") {
         this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: attempt ? "structured_repair" : null, usage: payload?.usageMetadata }));
-        throw Object.assign(new Error("Vertex Gemini structured output reached its token limit; the Source segment must be split and retried."), { code: "MODEL_OUTPUT_LIMIT", retryable: true });
+        throw outputLimitError(name);
       }
       if (!output?.trim()) {
         this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
@@ -366,6 +366,18 @@ export class VertexGeminiClient {
     this.tokenExpiresAt = Date.now() + Math.max(60, Number(payload.expires_in || 300) - 60) * 1_000;
     return this.token;
   }
+}
+
+function outputLimitError(stage) {
+  if (stage === "source_research_extraction" || stage === "segment_claim_coverage_audit" || !stage) {
+    return Object.assign(new Error("Vertex Gemini structured output reached its token limit; the Source segment must be split and retried."), {
+      code: "MODEL_OUTPUT_LIMIT", retryable: true,
+    });
+  }
+  const label = stage === "content_brief" ? "content planning" : String(stage).replaceAll("_", " ");
+  return Object.assign(new Error(`Vertex Gemini ${label} structured output reached its token limit; narrow or correct the stage input before retrying.`), {
+    code: "MODEL_OUTPUT_LIMIT", retryable: false,
+  });
 }
 
 function xiaohongshuMediaUrl(value) {

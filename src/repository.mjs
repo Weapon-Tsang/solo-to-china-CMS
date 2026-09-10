@@ -12,7 +12,7 @@ import {
   normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
-import { AI_JOB_TYPES, classifyBatchFailure, isProviderPressure } from "./job-policy.mjs";
+import { AI_JOB_TYPES, classifyBatchFailure, isOperationalFailureRetryable, isProviderPressure } from "./job-policy.mjs";
 import { pageBlockSignature } from "./evidence-validator.mjs";
 import { estimateSourceProcessing } from "./source-preflight.mjs";
 import { summarizeModelCostLedger } from "./ai/stage-policy.mjs";
@@ -1119,12 +1119,14 @@ export class Repository {
     if (providerPressure) this.providerBackoffUntil = Math.max(this.providerBackoffUntil, Date.parse(availableAt));
     const timestamp = this.jobTimestamp();
     const durationMs = job.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
+    const failureClass = terminalFailureClass(error, retry, providerPressure);
+    const failureCode = String(error?.code || error?.status || "").slice(0, 120);
     const changed = this.db.prepare(`
       UPDATE jobs SET status=?, available_at=?, next_eligible_at=?,last_error=?, completed_at=?, duration_ms=?,
-        locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
+        failure_class=?,last_failure_code=?,locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
       WHERE id=? AND status='running' AND locked_by=? AND lease_generation=?
     `).run(retry ? "queued" : "failed", availableAt, retry ? availableAt : null, String(error?.message || error).slice(0, 4_000),
-      retry ? null : timestamp, retry ? null : durationMs, timestamp, job.id, job.locked_by || this.workerId,
+      retry ? null : timestamp, retry ? null : durationMs, failureClass, failureCode, timestamp, job.id, job.locked_by || this.workerId,
       Number(job.lease_generation || 0)).changes;
     if (changed !== 1) return false;
     const message = String(error?.message || error).slice(0, 4_000);
@@ -3474,6 +3476,20 @@ export class Repository {
       .map((row) => ({ ...row, media_metadata: json(row.media_metadata_json, {}) }));
   }
 
+  listDraftVisualsForDelivery(draftId) {
+    if (!draftId) return [];
+    return this.db.prepare(`
+      SELECT av.*, sa.local_path AS source_asset_local_path,
+        sa.ai_derivative_data_url AS source_asset_data_url
+      FROM article_visuals av LEFT JOIN source_assets sa ON sa.id=av.source_asset_id
+      WHERE av.draft_id=? ORDER BY av.slot
+    `).all(draftId).map((row) => ({
+      ...row,
+      media_path: row.media_path || row.source_asset_local_path || "",
+      media_metadata: json(row.media_metadata_json, {}),
+    }));
+  }
+
   replaceDraftVisuals(draftId, visuals, strategyVersion) {
     const timestamp = now();
     transaction(this.db, () => {
@@ -3654,6 +3670,8 @@ export class Repository {
       ad.quality_report_json, ad.seo_json, ad.schema_jsonld, ad.content_ast_json,
       ad.strategy_version AS draft_strategy_version, qr.passed AS qa_passed, qr.score AS qa_score,
       wp.status AS wordpress_status, cc.status AS commercial_status, pc.status AS publish_composition_status,
+      failed.type AS failed_job_type, failed.last_error AS failed_job_error,
+      failed.failure_class AS failed_job_failure_class, failed.last_failure_code AS failed_job_code,
       COALESCE(metrics.model_call_count, 0) AS model_call_count,
       COALESCE(metrics.unknown_cost_count, 0) AS unknown_cost_count, metrics.known_cost_usd
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id JOIN topic_candidates tc ON tc.id=cb.candidate_id
@@ -3661,6 +3679,12 @@ export class Repository {
       LEFT JOIN wordpress_publications wp ON wp.draft_id=ad.id
       LEFT JOIN commercial_compositions cc ON cc.draft_id=ad.id
       LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=ad.id
+      LEFT JOIN jobs failed ON failed.id=(SELECT failed_job.id FROM jobs failed_job
+        WHERE failed_job.entity_id=ad.id AND failed_job.status='failed'
+          AND NOT EXISTS (SELECT 1 FROM jobs recovered_job
+            WHERE recovered_job.entity_id=failed_job.entity_id AND recovered_job.type=failed_job.type
+              AND recovered_job.status='succeeded' AND recovered_job.updated_at>=failed_job.updated_at)
+        ORDER BY failed_job.updated_at DESC LIMIT 1)
       LEFT JOIN (SELECT entity_id, COUNT(*) AS model_call_count,
         SUM(CASE WHEN cost_status='known' AND cost_usd IS NOT NULL THEN 0 ELSE 1 END) AS unknown_cost_count,
         SUM(CASE WHEN cost_status='known' THEN cost_usd ELSE 0 END) AS known_cost_usd
@@ -4802,7 +4826,7 @@ export class Repository {
       items.push(exceptionItem("source", row.id, "blocker", "Source extraction failed", row.title || row.id, row.last_error, true, row.updated_at));
     }
     for (const row of this.db.prepare(`
-      SELECT id, type, entity_id, last_error, updated_at FROM jobs
+      SELECT id, type, entity_id, last_error, updated_at, failure_class, last_failure_code, attempts, max_attempts FROM jobs
       WHERE status='failed' AND type NOT IN (
         'extract_source','sync_wordpress_inventory','sync_search_console','push_wordpress_draft','generate_draft','review_draft','revise_draft'
       )
@@ -4812,7 +4836,7 @@ export class Repository {
           AND recovered.status='succeeded' AND recovered.updated_at>=jobs.updated_at
       )
     `).all()) {
-      items.push(exceptionItem("job", row.id, "blocker", `Job failed: ${row.type}`, row.entity_id, row.last_error, true, row.updated_at));
+      items.push(exceptionItem("job", row.id, "blocker", `Job failed: ${row.type}`, row.entity_id, row.last_error, isOperationalFailureRetryable(row), row.updated_at));
     }
     for (const row of this.db.prepare(`
       SELECT k.*, d.slug AS destination_slug, kr.status AS resolution_status, kr.preferred_value AS resolved_value,
@@ -4899,7 +4923,11 @@ export class Repository {
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id
       WHERE ad.status='exception' OR (ad.status='qa_failed' AND ad.revision>=2)
     `).all()) {
-      items.push({ ...exceptionItem("draft", row.id, "blocker", "Draft needs editorial intervention", row.title, row.status, true, row.updated_at), candidateId: row.candidate_id });
+      const failedJob = this.db.prepare(`SELECT failure_class,last_error FROM jobs
+        WHERE entity_id=? AND status='failed' ORDER BY updated_at DESC LIMIT 1`).get(row.id);
+      const retryable = failedJob ? isOperationalFailureRetryable(failedJob) : true;
+      items.push({ ...exceptionItem("draft", row.id, "blocker", "Draft needs editorial intervention", row.title,
+        failedJob?.last_error || row.status, retryable, row.updated_at), candidateId: row.candidate_id });
     }
     for (const row of this.db.prepare(`
       SELECT wp.draft_id, wp.last_error, wp.updated_at, ad.title, cb.candidate_id
@@ -4933,8 +4961,12 @@ export class Repository {
     const kind = exceptionKey.slice(0, separator);
     const entityId = exceptionKey.slice(separator + 1);
     if (!kind || !entityId) return false;
+    const exception = this.listOperationalExceptions().find((item) => item.key === exceptionKey);
+    if (!exception?.retryable) return false;
     if (kind === "source") return this.retrySource(entityId);
     if (kind === "job") {
+      const job = this.db.prepare("SELECT * FROM jobs WHERE id=? AND status='failed'").get(entityId);
+      if (!job || !isOperationalFailureRetryable(job)) return false;
       const result = this.db.prepare(`
         UPDATE jobs SET status='queued', attempts=0, available_at=?, locked_at=NULL, last_error=NULL, updated_at=?
         WHERE id=? AND status='failed'
@@ -6183,6 +6215,16 @@ function exceptionItem(kind, entityId, severity, title, subject, detail, retryab
     retryable,
     updatedAt,
   };
+}
+
+function terminalFailureClass(error, retry, providerPressure) {
+  if (retry) return providerPressure ? "retryable_provider" : "";
+  const code = String(error?.code || "").toUpperCase();
+  const status = Number(error?.status || 0);
+  if (code === "MODEL_OUTPUT_LIMIT") return "input_too_large";
+  if (providerPressure || error?.retryable === true) return "retryable_provider";
+  if (error?.retryable === false || (status >= 400 && status < 500)) return "permanent_input";
+  return "";
 }
 
 function operationalExceptionGroupKey(item) {

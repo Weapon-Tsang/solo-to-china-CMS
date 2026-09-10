@@ -727,12 +727,15 @@ function objectSchema(required, properties) {
 function pageSchemaWithCmsProvenance(pageSchema) {
   const schema = structuredClone(pageSchema);
   const block = schema?.properties?.blocks?.items;
-  if (!block?.properties) return schema;
-  block.properties._cms_content_node_id = { type: "string" };
-  block.properties._cms_source_section_ids = { type: "array", items: { type: "string" } };
-  block.properties._cms_claim_keys = { type: "array", items: { type: "string" } };
-  block.properties._cms_factuality = { type: "string", enum: ["factual", "non_factual"] };
-  block.required = [...new Set([...(block.required || []), "_cms_content_node_id", "_cms_source_section_ids", "_cms_claim_keys", "_cms_factuality"])];
+  const variants = block?.properties ? [block]
+    : Array.isArray(block?.oneOf) ? block.oneOf.filter((item) => item?.properties) : [];
+  for (const variant of variants) {
+    variant.properties._cms_content_node_id = { type: "string" };
+    variant.properties._cms_source_section_ids = { type: "array", items: { type: "string" } };
+    variant.properties._cms_claim_keys = { type: "array", items: { type: "string" } };
+    variant.properties._cms_factuality = { type: "string", enum: ["factual", "non_factual"] };
+    variant.required = [...new Set([...(variant.required || []), "_cms_content_node_id", "_cms_source_section_ids", "_cms_claim_keys", "_cms_factuality"])];
+  }
   return schema;
 }
 

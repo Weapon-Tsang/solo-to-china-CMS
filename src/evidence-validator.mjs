@@ -25,13 +25,18 @@ export function validatePageEvidence(page, contentPackage) {
   const factual = provenance.filter((entry) => entry.factuality === "factual");
   if (factual.length && !ledger.length) errors.push({ code: "EMPTY_FACTUAL_LEDGER", path: "$.draft.evidence_ledger" });
 
-  visible.blocks.forEach((block, index) => {
-    if (String(block.type).startsWith("affiliate_")) return;
-    const entry = (provenanceBySignature.get(block.signature) || []).shift();
+  const mappedBlocks = visible.blocks.map((block, index) => {
+    if (String(block.type).startsWith("affiliate_")) return { block, index, entry: null, commercial: true };
+    const entry = (provenanceBySignature.get(block.signature) || []).shift() || null;
     if (!entry) {
       errors.push({ code: "BLOCK_PROVENANCE_MISSING", path: `$.blocks[${index}]` });
-      return;
+      return { block, index, entry };
     }
+    return { block, index, entry };
+  });
+
+  mappedBlocks.forEach(({ block, index, entry, commercial }) => {
+    if (commercial || !entry) return;
     if (entry.factuality === "non_factual") return;
     if (entry.mappingStatus !== "explicit_v2" || !entry.contentNodeId || !entry.claimKeys?.length) {
       errors.push({ code: "FACTUAL_BLOCK_UNMAPPED", path: `$.blocks[${index}]` });
@@ -42,6 +47,11 @@ export function validatePageEvidence(page, contentPackage) {
     if (!traces.length || JSON.stringify(traceSources) !== JSON.stringify([...(entry.sourceIds || [])].sort())) {
       errors.push({ code: "CLAIM_SOURCE_RELATION_INVALID", path: `$.blocks[${index}]` });
     }
+    const sectionIds = new Set(entry.sourceSectionIds || []);
+    const sectionBlocks = sectionIds.size ? mappedBlocks.filter((item) => item.entry
+      && (item.entry.sourceSectionIds || []).some((sectionId) => sectionIds.has(sectionId))) : [];
+    const evidenceText = sectionBlocks.length ? sectionBlocks.map((item) => item.block.text).join(" ") : block.text;
+    const evidenceLinks = sectionBlocks.length ? sectionBlocks.flatMap((item) => item.block.links) : block.links;
     let relevant = false;
     for (const key of entry.claimKeys) {
       const fact = facts.get(key);
@@ -54,9 +64,9 @@ export function validatePageEvidence(page, contentPackage) {
         errors.push({ code: "FORGED_SOURCE_REFERENCE", path: `$.blocks[${index}]`, claimKey: key });
       }
       const anchors = factAnchors(fact);
-      if (anchors.some((anchor) => containsPhrase(block.text, anchor))) relevant = true;
+      if (anchors.some((anchor) => containsPhrase(evidenceText, anchor))) relevant = true;
       for (const token of protectedFactTokens(fact)) {
-        if (!containsPhrase(block.text, token) && !block.links.includes(token)) {
+        if (!containsPhrase(evidenceText, token) && !evidenceLinks.includes(token)) {
           errors.push({ code: "EVIDENCE_VALUE_MISMATCH", path: `$.blocks[${index}]`, claimKey: key, expected: token });
         }
       }

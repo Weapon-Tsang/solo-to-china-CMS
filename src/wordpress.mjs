@@ -157,7 +157,8 @@ export class WordPressDraftAdapter {
     const output = [];
     const reusable = new Map();
     for (const visual of visuals.filter((item) => (
-      item.status === "generated" && (item.media_path || (item.source_asset_id && item.source_remote_url))
+      item.status === "generated" && (item.media_path
+        || (item.source_asset_id && (item.source_asset_data_url || item.source_remote_url)))
     ))) {
       const assetKey = visual.source_asset_id ? `source:${visual.source_asset_id}` : visual.media_path ? `file:${path.resolve(visual.media_path)}` : null;
       if (assetKey && reusable.has(assetKey)) {
@@ -188,7 +189,7 @@ export class WordPressDraftAdapter {
   async uploadMedia(visual, options = {}) {
     const asset = visual.media_path
       ? { filename: path.basename(visual.media_path), contentType: mimeForFilename(visual.media_path), bytes: fs.readFileSync(visual.media_path) }
-      : await this.downloadAuthorizedSourceAsset(visual, options);
+      : storedAuthorizedSourceAsset(visual) || await this.downloadAuthorizedSourceAsset(visual, options);
     const response = await this.fetch(`${this.config.siteUrl}/wp-json/wp/v2/media`, {
       method: "POST",
       headers: {
@@ -208,15 +209,16 @@ export class WordPressDraftAdapter {
 
   async downloadAuthorizedSourceAsset(visual, options = {}) {
     const sourceUrl = safeAuthorizedSourceImageUrl(visual.source_remote_url);
-    if (!sourceUrl) throw new Error("Authorized source image URL is not an allowlisted Xiaohongshu HTTPS asset.");
+    if (!sourceUrl) throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_INVALID", "Authorized source image URL is not an allowlisted Xiaohongshu HTTPS asset.");
     const response = await this.fetch(sourceUrl, { signal: combinedSignal(options.signal, 30_000) });
-    if (!response.ok) throw new Error(`Authorized source image download failed (${response.status}).`);
+    if (!response.ok) throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_UNAVAILABLE",
+      `Authorized source image download failed (${response.status}).`, response.status);
     const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
-    if (!/^image\/(?:jpeg|jpg|png|webp)$/.test(contentType)) throw new Error("Authorized source asset is not a supported image.");
+    if (!/^image\/(?:jpeg|jpg|png|webp)$/.test(contentType)) throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_INVALID", "Authorized source asset is not a supported image.");
     const declaredBytes = Number.parseInt(response.headers.get("content-length") || "", 10);
-    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_SOURCE_IMAGE_BYTES) throw new Error("Authorized source asset is too large for WordPress upload.");
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_SOURCE_IMAGE_BYTES) throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_TOO_LARGE", "Authorized source asset is too large for WordPress upload.");
     const bytes = Buffer.from(await response.arrayBuffer());
-    if (!bytes.length || bytes.length > MAX_SOURCE_IMAGE_BYTES) throw new Error("Authorized source asset is empty or too large for WordPress upload.");
+    if (!bytes.length || bytes.length > MAX_SOURCE_IMAGE_BYTES) throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_INVALID", "Authorized source asset is empty or too large for WordPress upload.");
     return {
       bytes,
       contentType: contentType === "image/jpg" ? "image/jpeg" : contentType,
@@ -243,6 +245,26 @@ export class WordPressDraftAdapter {
     if (!response.ok) throw new Error(`WordPress API failed (${response.status}): ${body?.message || response.statusText}`);
     return { body, response };
   }
+}
+
+function storedAuthorizedSourceAsset(visual) {
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\r\n]+)$/u
+    .exec(String(visual.source_asset_data_url || ""));
+  if (!match) return null;
+  const bytes = Buffer.from(match[2], "base64");
+  if (!bytes.length || bytes.length > MAX_SOURCE_IMAGE_BYTES) {
+    throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_INVALID", "Stored authorized source image is empty or too large for WordPress upload.");
+  }
+  const contentType = match[1];
+  return { bytes, contentType, filename: `source-${visual.id}.${extensionForContentType(contentType)}` };
+}
+
+function authorizedSourceError(code, message, status = 0) {
+  return Object.assign(new Error(message), {
+    code,
+    status,
+    retryable: status === 408 || status === 425 || status === 429 || status >= 500,
+  });
 }
 
 function combinedSignal(signal, timeoutMs) {

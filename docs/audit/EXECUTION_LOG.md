@@ -429,3 +429,54 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
   repository, then rerun the real final-HTML check; production ranking, indexing,
   traffic, Core Web Vitals and AI citations require later observation and are not
   claimed by this audit.
+
+## 2026-09-10 production exception follow-up
+
+- Task ID: `INC01`; `requirementsVersion=1.3`; status: `in_progress`;
+  baseline/current implementation HEAD: `4960a0a7e6c49b65b44f5ffdcb3e19865f8b6036`
+  plus the uncommitted `1.17.24` incident remediation recorded below.
+- Read-only production inventory: all 13 Content rows and all 24 Exception rows
+  were inspected with pagination exhausted. The Exception view contained 13 real
+  failed jobs plus 11 draft-status projections: nine
+  `compose_frontend_page` Vertex HTTP 400 records affecting eight Drafts, three
+  authorized source-image HTTP 403 records affecting three Drafts, and one
+  `plan_content` output-limit record affecting one Topic. The repeated Draft cards
+  are projections of those failures, not additional provider requests.
+- Confirmed causes: the deployed Page Schema is a 23-variant `oneOf` contract and
+  the old deterministic compatibility path covered only `first_time_guide` plus
+  legacy `articleSection`; generic Vertex 400 responses did not trigger the
+  existing schema-transport fallback. Authorized Xiaohongshu CDN URLs had expired
+  and the affected historical assets had neither retained bytes nor a local file.
+  The output-limit Topic explicitly named Chongqing while it was scoped to
+  `beijing-palace-museum`, allowing mixed destination evidence into planning.
+  Exception/card retryability was hardcoded and recovered jobs could remain visible.
+- Minimal implementation: `src/content-blocks.mjs`, `src/pipeline.mjs`,
+  `src/ai/content-engine.mjs`, `src/ai/vertex-gemini-client.mjs`,
+  `src/destination-consistency.mjs`, `src/evidence-validator.mjs`,
+  `src/job-policy.mjs`, `src/repository.mjs`,
+  `src/services/operations-workspace.mjs`, and `src/wordpress.mjs` now provide
+  Contract-validated atomic deterministic composition for every Content AST type,
+  `oneOf` provenance injection, one bounded generic HTTP 400 schema-transport
+  fallback, destination mismatch blocking, stage-aware output-limit handling,
+  retained authorized-media delivery, durable retry classification, recovered-job
+  suppression, and ledger-section evidence validation. Associated regression tests,
+  version files, release notes, deployment image reference and handoff were updated.
+- Verification: `npm test` passed 358/358; `npm run check` passed the production
+  build, syntax checks and seven service-boundary checks; `npm run release:check`
+  passed all 50 mandatory checks with 0 failures, 4 warnings and 5 explicitly
+  untested/unconfigured external conclusions. A separate read-only probe against
+  the currently published Frontend Contract `1.3.0` / JSON Schema `2020-12`
+  produced deterministic `heading`, `paragraph`, and `list` blocks with zero
+  component or Page Schema errors.
+- Dependencies and unverified conditions: no schema migration is required and
+  Content Strategy remains `1.8`. No paid model, production database, job queue or
+  WordPress content was mutated. Existing permanent records are deliberately not
+  auto-retried: destination scope must be corrected before rebuilding its evidence,
+  and the three historical expired source images require an authorized retained
+  copy or operator recapture. Production behavior remains unverified until the
+  image is deployed; real WordPress/theme HTML, rankings, indexing, traffic, Core
+  Web Vitals and AI citations remain outside this offline result.
+- Next action: commit and push the `1.17.24` remediation, deploy through the GCE
+  startup path (which creates and verifies a pre-upgrade snapshot), then verify
+  public health/readiness and save the exact deployment checkpoint without
+  altering production content or retrying production jobs.

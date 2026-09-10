@@ -78,7 +78,84 @@ export function renderContentAstMarkdown(ast) {
   }).join("\n\n");
 }
 
+export function composePageFromAst(ast, capabilities = {}, pageSchema = {}) {
+  const atomic = composeAtomicPageFromAst(ast, capabilities, pageSchema);
+  return atomic || composeLegacyFirstTimeGuideFromAst(ast, capabilities, pageSchema);
+}
+
 export function composeFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema = {}) {
+  return composePageFromAst(ast, capabilities, pageSchema);
+}
+
+function composeAtomicPageFromAst(ast, capabilities, pageSchema) {
+  if (!Array.isArray(ast?.nodes) || !ast.nodes.length) return null;
+  const available = new Map((capabilities.components || [])
+    .filter((item) => item?.id && item.status !== "deprecated")
+    .map((item) => [item.id, item]));
+  const heading = available.get("heading");
+  const paragraph = available.get("paragraph");
+  const list = available.get("list");
+  if (!heading?.schema?.properties?.text || !heading.schema.properties.level
+      || !paragraph?.schema?.properties?.content || !list?.schema?.properties?.items) return null;
+  const faq = available.get("faq") || available.get("faqList");
+  const blocks = [];
+  const provenance = [];
+  const append = (block, nodes, { factuality = null } = {}) => {
+    const sourceNodes = nodes.filter(Boolean);
+    const index = blocks.length;
+    const resolvedFactuality = factuality || (sourceNodes.some((node) => node.fact_refs?.length) ? "factual" : "non_factual");
+    blocks.push(block);
+    provenance.push({
+      blockIndex: index,
+      blockSignature: pageBlockSignature(block),
+      contentNodeId: sourceNodes.find((node) => node.type !== "heading")?.id || sourceNodes[0]?.id || null,
+      sourceSectionIds: [...new Set(sourceNodes.flatMap((node) => node.source_section_ids || []))],
+      claimKeys: resolvedFactuality === "factual" ? [...new Set(sourceNodes.flatMap((node) => node.fact_refs || []))] : [],
+      factuality: resolvedFactuality,
+    });
+  };
+  for (let index = 0; index < ast.nodes.length; index += 1) {
+    const node = ast.nodes[index];
+    if (node.type === "heading" && Number(node.level || 2) === 2 && faq?.schema?.properties?.items
+        && ast.faq?.length && /frequently asked questions|^faq$/i.test(node.visible_text)) {
+      const sectionNodes = [node];
+      while (index + 1 < ast.nodes.length) {
+        const next = ast.nodes[index + 1];
+        if (next.type === "heading" && Number(next.level || 2) === 2) break;
+        sectionNodes.push(next);
+        index += 1;
+      }
+      const data = { items: ast.faq.map((item) => ({ question: item.question, answer: inlineHtml(item.answer) })) };
+      if (faq.schema.properties.title) data.title = node.visible_text;
+      append({ type: faq.id, variant: preferredVariant(faq, "default"), data }, sectionNodes);
+      continue;
+    }
+    if (node.type === "heading") {
+      const level = Math.min(3, Math.max(2, Number(node.level) || 2));
+      append({ type: heading.id, variant: preferredVariant(heading, level === 2 ? "section" : "subsection"),
+        data: { text: node.visible_text, level } }, [node], { factuality: "non_factual" });
+      continue;
+    }
+    if (node.type === "paragraph") {
+      append({ type: paragraph.id, variant: preferredVariant(paragraph, "default"),
+        data: { content: inlineHtml(node.visible_text) } }, [node]);
+      continue;
+    }
+    if (node.type === "list" && node.items?.length) {
+      append({ type: list.id, variant: preferredVariant(list, "unordered"), data: { items: [...node.items] } }, [node]);
+      continue;
+    }
+    return null;
+  }
+  if (!blocks.length || blocks.some((block) => !block.variant)) return null;
+  return {
+    output: { metadata: pageMetadata(ast, pageSchema), blocks },
+    model: "deterministic-content-ast-compat-2",
+    provenance: { version: "content-ast-compat-2", valid: true, errors: [], entries: provenance },
+  };
+}
+
+function composeLegacyFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema = {}) {
   if (ast?.content_type !== "first_time_guide") return null;
   const component = (capabilities.components || []).find((item) => item.id === "articleSection" && item.status !== "deprecated");
   if (!component || !component.schema?.properties?.heading || !component.schema?.properties?.body) return null;
@@ -103,11 +180,7 @@ export function composeFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema 
       ? (node.items || []).map((item) => `- ${item}`).join("\n") : node.visible_text).join("\n\n");
     return { type: component.id, ...(variant ? { variant } : {}), data: { heading: section.heading.visible_text, body } };
   });
-  const metadataProperties = pageSchema?.properties?.metadata?.properties || {};
-  const metadata = {};
-  const put = (key, value) => { if (metadataProperties[key]) metadata[key] = value; };
-  put("pageId", ast.content_hash); put("title", ast.title); put("slug", ast.slug); put("contentType", ast.content_type); put("excerpt", ast.summary);
-  metadata.title ||= ast.title;
+  const metadata = pageMetadata(ast, pageSchema);
   const provenance = blocks.map((block, index) => {
     const section = sections[index];
     const nodes = [section.heading, ...section.content];
@@ -118,6 +191,33 @@ export function composeFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema 
   return { output: { metadata, blocks }, model: "deterministic-content-ast-compat-1", provenance: {
     version: "content-ast-compat-1", valid: true, errors: [], entries: provenance,
   } };
+}
+
+function pageMetadata(ast, pageSchema) {
+  const metadataProperties = pageSchema?.properties?.metadata?.properties || {};
+  const metadata = {};
+  const put = (key, value) => { if (metadataProperties[key]) metadata[key] = value; };
+  put("pageId", ast.content_hash);
+  put("title", ast.title);
+  put("slug", ast.slug);
+  put("contentType", ast.content_type);
+  put("excerpt", ast.summary);
+  metadata.title ||= ast.title;
+  return metadata;
+}
+
+function preferredVariant(component, preferred) {
+  const variants = component?.variants || [];
+  return variants.includes(preferred) ? preferred : variants[0] || null;
+}
+
+function inlineHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[character])
+    .replace(/\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g, '<a href="$2" rel="noopener" target="_blank">$1</a>')
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>");
 }
 
 export function contentBlockSummary(blocks) {

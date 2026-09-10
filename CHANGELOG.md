@@ -1,6 +1,14 @@
 # Changelog
 
-## 1.17.23 - Unreleased (audit requirements 1.3)
+## 1.17.24 - Unreleased
+
+- Compose every supported article type deterministically from the frozen Content AST when the Frontend exposes its stable atomic heading, paragraph, and list components, avoiding an unnecessary model/schema round trip and validating the resulting payload against the live Contract.
+- Retry a generic Vertex JSON Schema HTTP 400 once through the supported OpenAPI transport, classify permanent 4xx, expired authorized-media URLs, and content-stage output limits as correction-required, and prevent the dashboard from offering a no-op retry.
+- Reject an explicitly named destination that conflicts with the assigned destination before content planning, and distinguish content-stage output exhaustion from source-segment splitting.
+- Prefer retained authorized source bytes or local originals during media delivery so an expiring source CDN URL is not the only usable copy.
+- Show active failed jobs on Content cards, suppress failures recovered by a later successful run, and validate atomic blocks against evidence shared at their original ledger-section boundary.
+
+## 1.17.23 - 2026-09-10 (audit requirements 1.3)
 
 - Persist structured extraction input manifests so image/video coverage uses submitted asset evidence rather than method-name guesses; legacy records remain explicitly unknown.
 - Separate Vertex Batch inference completion, output reading, item ingestion, quarantine, and cleanup so transient Cloud Storage failures resume without repeated inference or premature deletion.

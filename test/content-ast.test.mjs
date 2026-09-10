@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildContentAst, composeFirstTimeGuideFromAst, renderContentAstMarkdown } from "../src/content-blocks.mjs";
+import { buildContentAst, composeFirstTimeGuideFromAst, composePageFromAst, renderContentAstMarkdown } from "../src/content-blocks.mjs";
+import { validateJsonSchema } from "../src/frontend-contract.mjs";
 import { synchronizeSchemaWithPage } from "../src/publish-page.mjs";
 import { synchronizeSeoMetadata, validateSeoGeoArtifact } from "../src/seo-geo.mjs";
 
@@ -53,4 +54,58 @@ test("unsupported content types or missing Registry capabilities use the existin
   const ast = buildContentAst({ draft, brief: { id: "brief-1", content_type: "first_time_guide" } });
   assert.equal(composeFirstTimeGuideFromAst(ast, { components: [] }, pageSchema), null);
   assert.equal(composeFirstTimeGuideFromAst({ ...ast, content_type: "itinerary" }, { components: [articleSection(["default"])] }, pageSchema), null);
+});
+
+test("production atomic components compose every content type without a model or invented component IDs", () => {
+  const ast = buildContentAst({
+    draft,
+    brief: { id: "brief-itinerary", content_type: "itinerary" },
+  });
+  const components = [
+    { id: "heading", status: "stable", variants: ["section", "subsection"], schema: {
+      properties: { text: { type: "string" }, level: { type: "integer" } },
+    } },
+    { id: "paragraph", status: "stable", variants: ["default"], schema: {
+      properties: { content: { type: "string" } },
+    } },
+    { id: "list", status: "stable", variants: ["unordered", "ordered"], schema: {
+      properties: { items: { type: "array" } },
+    } },
+    { id: "faq", status: "stable", variants: ["default"], schema: {
+      properties: { items: { type: "array" } },
+    } },
+  ];
+  const blockSchema = (type, variant, data) => ({
+    type: "object", additionalProperties: false, required: ["type", "variant", "data"],
+    properties: { type: { const: type }, variant: { enum: variant }, data },
+  });
+  const productionPageSchema = {
+    type: "object", additionalProperties: false, required: ["metadata", "blocks"],
+    properties: {
+      metadata: { type: "object", additionalProperties: false,
+        required: ["pageId", "title", "slug", "contentType"], properties: {
+          pageId: { type: "string" }, title: { type: "string" }, slug: { type: "string" },
+          contentType: { type: "string" }, excerpt: { type: "string" },
+        } },
+      blocks: { type: "array", items: { oneOf: [
+        blockSchema("heading", ["section", "subsection"], { type: "object", additionalProperties: false,
+          required: ["text", "level"], properties: { text: { type: "string" }, level: { type: "integer", enum: [2, 3] } } }),
+        blockSchema("paragraph", ["default"], { type: "object", additionalProperties: false,
+          required: ["content"], properties: { content: { type: "string", contentMediaType: "text/html" } } }),
+        blockSchema("list", ["unordered", "ordered"], { type: "object", additionalProperties: false,
+          required: ["items"], properties: { items: { type: "array", minItems: 1, items: { type: "string" } } } }),
+        blockSchema("faq", ["default"], { type: "object", additionalProperties: false,
+          required: ["items"], properties: { items: { type: "array", minItems: 1, items: { type: "object",
+            required: ["question", "answer"], properties: { question: { type: "string" }, answer: { type: "string" } } } } } }),
+      ] } },
+    },
+  };
+
+  const page = composePageFromAst(ast, { components }, productionPageSchema);
+  assert.equal(page.model, "deterministic-content-ast-compat-2");
+  assert.deepEqual([...new Set(page.output.blocks.map((block) => block.type))], ["heading", "paragraph", "list", "faq"]);
+  assert.equal(page.output.blocks.some((block) => block.type === "articleSection"), false);
+  assert.equal(page.output.metadata.contentType, "itinerary");
+  assert.equal(page.provenance.entries.length, page.output.blocks.length);
+  assert.deepEqual(validateJsonSchema(page.output, productionPageSchema), []);
 });

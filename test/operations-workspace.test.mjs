@@ -48,6 +48,53 @@ test("CMS artifact checks never claim that final HTML was verified", () => {
   assert.equal(operation.dimensions.production_cost.status, "warning");
 });
 
+test("content cards expose permanent pipeline failures without offering a no-op retry", () => {
+  const operation = buildContentTaskCard({
+    id: "topic-400", brief_id: "brief-400", draft_id: "draft-400", draft_strategy_version: "1.4",
+    seo_json: JSON.stringify({ meta_title: "Title", meta_description: "Description", canonical_url: "https://example.test/a/", canonical_status: "valid" }),
+    schema_jsonld: JSON.stringify({ "@graph": [{ "@type": "Article" }] }),
+    content_ast_json: JSON.stringify({ nodes: [{ id: "node-1", visible_text: "Text" }] }),
+    failed_job_type: "compose_frontend_page",
+    failed_job_error: "Vertex Gemini request failed (400): Request contains an invalid argument.",
+    failed_job_failure_class: "",
+  });
+  assert.equal(operation.status, "failed");
+  assert.equal(operation.blockers.at(-1).dimension, "pipeline");
+  assert.equal(operation.blockers.at(-1).retryable, false);
+  assert.equal(operation.retry, null);
+  assert.equal(operation.nextAction.stage, "manual_correction");
+  assert.deepEqual(operation.estimatedAdditionalCalls, { status: "none_expected", stages: [] });
+});
+
+test("content cards still offer a bounded failed-stage retry for transient provider pressure", () => {
+  const operation = buildContentTaskCard({
+    id: "topic-429", brief_id: "brief-429", draft_id: "draft-429", draft_strategy_version: "1.4",
+    seo_json: "{}", schema_jsonld: "{}", content_ast_json: "{}",
+    failed_job_type: "compose_frontend_page",
+    failed_job_error: "Vertex Gemini request failed (429): Resource exhausted.",
+    failed_job_failure_class: "retryable_provider",
+  });
+  assert.equal(operation.status, "failed");
+  assert.equal(operation.retry.stage, "compose_frontend_page");
+  assert.deepEqual(operation.estimatedAdditionalCalls.stages, ["compose_frontend_page"]);
+});
+
+test("content cards ignore a failed job after the same stage succeeds", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('topic-recovered','chongqing','recovered','Recovered guide','fixture',80,0,0,'drafted','2026-09-10T10:00:00.000Z','2026-09-10T10:00:00.000Z')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('brief-recovered','chongqing','Recovered guide','[]','informational','drafted','2026-09-10T10:00:00.000Z','2026-09-10T10:00:00.000Z','topic-recovered')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-recovered','brief-recovered','Recovered guide','recovered-guide','Body','{}','drafted','2026-09-10T10:00:00.000Z','2026-09-10T10:00:00.000Z',1,'hash')`).run();
+  db.prepare(`INSERT INTO jobs(id,type,entity_id,status,attempts,max_attempts,available_at,last_error,failure_class,created_at,updated_at)
+    VALUES ('job-failed','compose_frontend_page','draft-recovered','failed',1,3,'2026-09-10T10:01:00.000Z','invalid argument','permanent_input','2026-09-10T10:01:00.000Z','2026-09-10T10:01:00.000Z')`).run();
+  db.prepare(`INSERT INTO jobs(id,type,entity_id,status,attempts,max_attempts,available_at,created_at,updated_at,completed_at)
+    VALUES ('job-succeeded','compose_frontend_page','draft-recovered','succeeded',1,3,'2026-09-10T10:02:00.000Z','2026-09-10T10:02:00.000Z','2026-09-10T10:02:00.000Z','2026-09-10T10:02:00.000Z')`).run();
+  const item = repository.listContent().find((row) => row.id === "topic-recovered");
+  assert.equal(item.operation.blockers.some((blocker) => blocker.dimension === "pipeline"), false);
+});
+
 test("draft comparison and high-impact cancellation require a recorded preview", (t) => {
   const { db, repository } = repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
