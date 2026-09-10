@@ -48,3 +48,8 @@ article_potential、information_density、topic_completeness、duplicate_likelih
 The earlier 367-test checkpoint above is historical. App 1.17.25 / Strategy 1.9 now adds shared proposal approval/freeze, version-guarded batch decisions, honest object counts/coverage, scoped plan references, separate prose/delivery QA and upgrade-safe historical preservation.
 Final offline release gate: 50 required checks passed, 0 failed; full suite 379 passed. Browser desktop isolated approval flow passed (3 sources, 6 paths, exactly 3 approved, 0 production jobs with absent evidence). Real mobile device, real paid model, recapture and production WP remain unverified.
 No old 403 or genuine factual gap is declared fixed by a UI/code test. The common recovery entry supplies source URLs, authorization/retained-byte status, editorial correction and explicit named-stage actions. See EXECUTION_LOG.md for commit/deployment checkpoint.
+
+## Deployed result
+
+App 1.17.26 / Strategy 1.9 deployed from ab30840; verified pre-upgrade system snapshot and healthy persistent database. Final gate: 380 tests, 50 mandatory checks, no failures. All 17 production recovery endpoints returned 200 (one sample median 1.216 s); the prior timeout case returned in 1.285 s after eliminating whole-workspace recomputation from a single draft read.
+The 28 historical exception rows remain deliberately auditable; external missing media and genuine factual gaps still require the deployed correction workflow. No paid production job or WordPress write was triggered by this verification. Full-list content read in the same sample took 8.733 s, so further whole-list latency work must be measured separately rather than claimed fixed.
