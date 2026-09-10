@@ -181,6 +181,30 @@ test("repository construction cannot steal a live job and only an expired lease 
   }
 });
 
+test("pipeline periodically recovers leases that expire after process startup", async (t) => {
+  const calls = { jobs: 0, batches: 0, claims: 0 };
+  const repository = {
+    recoverExpiredJobs() { calls.jobs += 1; return calls.jobs === 2 ? 1 : 0; },
+    recoverPreparingVertexBatches() { calls.batches += 1; return 0; },
+    claimJob() { calls.claims += 1; return null; },
+  };
+  const pipeline = new Pipeline(repository, { batchEnabled: false }, {
+    pollMs: 60_000,
+    maxConcurrent: 1,
+    recoveryIntervalMs: 1_000,
+  });
+  t.after(() => pipeline.stop());
+
+  pipeline.start();
+  assert.equal(calls.jobs, 1);
+  pipeline.nextRecoveryAt = 0;
+  pipeline.pump();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.jobs, 2);
+  assert.equal(calls.batches, 2);
+  assert.ok(calls.claims >= 1);
+});
+
 test("a stale lease generation cannot complete, fail, or mutate the reclaimed entity", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-fence-test-"));
   const database = openDatabase(path.join(directory, "fence.sqlite"));

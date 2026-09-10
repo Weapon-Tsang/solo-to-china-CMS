@@ -10,7 +10,7 @@ import { evaluateSourcePreflight } from "./source-preflight.mjs";
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class Pipeline {
-  constructor(repository, extractor, { pollMs = 750, maxConcurrent = null, heartbeatIntervalMs = null, extractionConfig = {}, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null, frontendContracts = null, contentConfig = {}, logger = silentLogger } = {}) {
+  constructor(repository, extractor, { pollMs = 750, maxConcurrent = null, heartbeatIntervalMs = null, recoveryIntervalMs = 60_000, extractionConfig = {}, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null, frontendContracts = null, contentConfig = {}, logger = silentLogger } = {}) {
     this.repository = repository;
     this.extractor = extractor;
     this.pollMs = pollMs;
@@ -31,6 +31,8 @@ export class Pipeline {
     this.extractionOutcomes = [];
     this.batchWorking = false;
     this.heartbeatIntervalMs = heartbeatIntervalMs == null ? null : Math.max(1, Number(heartbeatIntervalMs));
+    this.recoveryIntervalMs = Math.max(1_000, Number(recoveryIntervalMs || 60_000));
+    this.nextRecoveryAt = 0;
   }
 
   start() {
@@ -39,6 +41,7 @@ export class Pipeline {
     if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
     const recoveredBatches = this.repository.recoverPreparingVertexBatches?.() || 0;
     if (recoveredBatches) this.logger.warn("pipeline.vertex_batch_preparation_recovered", { count: recoveredBatches });
+    this.nextRecoveryAt = Date.now() + this.recoveryIntervalMs;
     this.timer = setInterval(() => this.pump(), this.pollMs);
     this.timer.unref();
     this.pump();
@@ -50,6 +53,13 @@ export class Pipeline {
   }
 
   pump() {
+    if (Date.now() >= this.nextRecoveryAt) {
+      this.nextRecoveryAt = Date.now() + this.recoveryIntervalMs;
+      const recovered = this.repository.recoverExpiredJobs?.() || 0;
+      if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
+      const recoveredBatches = this.repository.recoverPreparingVertexBatches?.() || 0;
+      if (recoveredBatches) this.logger.warn("pipeline.vertex_batch_preparation_recovered", { count: recoveredBatches });
+    }
     void this.pumpVertexBatch().catch((error) => this.logger.error("pipeline.vertex_batch_tick_failed", { error }));
     const slots = Math.max(0, this.maxConcurrent - this.working);
     for (let index = 0; index < slots; index += 1) {
