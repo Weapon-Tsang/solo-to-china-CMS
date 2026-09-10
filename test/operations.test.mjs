@@ -98,6 +98,31 @@ test("startup queues only destinations whose Knowledge is older than active Clai
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='rebuild_knowledge' AND entity_id='chongqing'").get().count, 1);
 });
 
+test("approved-opportunity startup reconciliation rebuilds coverage once per destination", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const timestamp = new Date().toISOString();
+  const insert = db.prepare(`INSERT INTO content_opportunities(
+    id,destination_slug,topic_key,strategy_version,title,readiness_score,status,created_at,updated_at
+  ) VALUES (?,?,?,?,?,?,?,?,?)`);
+  insert.run("op-cq-1", "chongqing", "chongqing:route-1", "2.0", "Route one", 40,
+    "approved_waiting_for_evidence", timestamp, timestamp);
+  insert.run("op-cq-2", "chongqing", "chongqing:route-2", "2.0", "Route two", 50,
+    "approved_waiting_for_evidence", timestamp, timestamp);
+  insert.run("op-cq-ready", "chongqing", "chongqing:route-3", "2.0", "Route three", 100,
+    "approved_ready", timestamp, timestamp);
+  insert.run("op-bj-1", "beijing", "beijing:route-1", "2.0", "Beijing route", 40,
+    "approved_waiting_for_evidence", timestamp, timestamp);
+
+  const rebuilt = [];
+  const reconciled = [];
+  repository.rebuildCoverageMatrices = (slug) => rebuilt.push(slug);
+  repository.reconcileApprovedOpportunity = (id) => { reconciled.push(id); return { candidateId: id, queued: false }; };
+
+  repository.reconcileApprovedOpportunities();
+  assert.deepEqual(rebuilt.sort(), ["beijing", "chongqing"]);
+  assert.deepEqual(reconciled.sort(), ["op-bj-1", "op-cq-1", "op-cq-2", "op-cq-ready"]);
+});
+
 test("a new Claim classifier revision rechecks pending reviews once at startup", (t) => {
   const { db, repository } = repositoryFixture(t);
   const source = repository.saveCapture(normalizeXiaohongshuCapture({

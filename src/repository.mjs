@@ -2177,16 +2177,17 @@ export class Repository {
 
   reconcileApprovedOpportunities(destinationSlug = null) {
     const rows = destinationSlug
-      ? this.db.prepare("SELECT id FROM content_opportunities WHERE destination_slug=? AND status IN ('approved_waiting_for_evidence','approved_ready')").all(destinationSlug)
-      : this.db.prepare("SELECT id FROM content_opportunities WHERE status IN ('approved_waiting_for_evidence','approved_ready')").all();
+      ? this.db.prepare("SELECT id,destination_slug,status FROM content_opportunities WHERE destination_slug=? AND status IN ('approved_waiting_for_evidence','approved_ready')").all(destinationSlug)
+      : this.db.prepare("SELECT id,destination_slug,status FROM content_opportunities WHERE status IN ('approved_waiting_for_evidence','approved_ready')").all();
+    // A coverage rebuild already updates every opportunity in the destination. Repeating
+    // that full scan for each waiting opportunity makes startup quadratic and can delay
+    // the HTTP listener for minutes on a mature destination knowledge base.
+    const destinationsToRebuild = new Set(rows
+      .filter((row) => row.status === "approved_waiting_for_evidence")
+      .map((row) => row.destination_slug));
+    for (const slug of destinationsToRebuild) this.rebuildCoverageMatrices(slug);
     const results = [];
-    for (const row of rows) {
-      const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(row.id);
-      if (opportunity.status === "approved_waiting_for_evidence") {
-        this.rebuildCoverageMatrices(opportunity.destination_slug);
-      }
-      results.push(this.reconcileApprovedOpportunity(row.id));
-    }
+    for (const row of rows) results.push(this.reconcileApprovedOpportunity(row.id));
     return results;
   }
 
