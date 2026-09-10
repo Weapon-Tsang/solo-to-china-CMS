@@ -494,3 +494,78 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
   use the bounded retry only after those inputs change. The eight affected Drafts
   with the former Vertex 400 can use the deterministic atomic composer on their
   next explicitly initiated run. No automatic production retry is pending.
+
+## 2026-09-10 — Recovery UX and intake-volume follow-up
+
+- Task ID: incident-followup; requirementsVersion=1.3; status=in_progress;
+  baseline HEAD=812ec76. See CONTENT_RECOVERY_2026-09-10.md for findings and exact breakpoint.
+- Read-only production evidence: 74 source recommendations (66 article candidates),
+  269 underlying opportunity paths, 237 marked ready; 16 recommendations approved.
+  Recommendations are keyed by source; opportunity keys deliberately include source identity.
+  This is not 74 independently qualified or approved article topics.
+- Local changes: recovery service/policy and UI, explicit-stage actions, retained-source links,
+  authorized asset binding, manual editorial correction, destination correction, revision-aware
+  QA display, actual queue labels, temporal-note/exit-token fixes, media checkpointing and
+  nested transaction rollback. No intake eligibility algorithm was changed.
+- Tests: baseline npm test 358/358; targeted recovery 9/9; final npm test 367/367;
+  npm run check passed (build/syntax/service boundaries); git diff --check passed.
+- Not verified: browser end-to-end UI, full destination-correction and manual-stage pipeline
+  integration, paid model execution, recapture and WordPress delivery. New code is local only;
+  not committed, pushed or deployed. Production records were not rewritten or retried.
+- Next: finish recovery integration/UI verification and release checks before deployment.
+  The newer user question about 74 opportunities is answered from code and read-only live counts;
+  do not interpret it as authorization to delete or reclassify existing suggestions.
+
+## 2026-09-10 — Strategy-first workflow redesign, first bounded batch
+
+- Task ID: strategy-workflow-followup; requirementsVersion=1.3; status=in_progress;
+  HEAD=812ec76e9e53672569075338643ca106341d8e21; active strategy=1.8; app=1.17.24.
+- User steering: reassess production strategy and lifecycle before version/release;
+  do not bundle disconnected incident patches as a completed upgrade.
+- Design: docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.9_DRAFT.md (not active).
+  Separates Source, source analysis, concrete editorial proposal, approval, stage jobs and delivery;
+  preserves three production modes, manual topics, evidence/history, Research/Commercial and WP draft protections.
+- Code-reviewed cause: dashboard mixed pendingRecommendations + contentPipelineItems under
+  “topic discovery”; this was not a count of independently qualified article topics.
+- First-batch files: src/services/recommendation-bulk.mjs, src/server.mjs,
+  frontend/src/workspaces/recommendation-bulk.jsx, frontend/src/views.jsx,
+  frontend/src/components/dashboard.jsx, test/recommendation-bulk.test.mjs.
+- Implemented locally: common single/path/bulk decision command; ownership and stale-selection guards;
+  repeat-safe approval; per-item rollback; explicit path preview; one batch request/one action refresh;
+  separate source/proposal/approval totals; manual-topic role explanation.
+- Actual commands: node --test test/recommendation-bulk.test.mjs (7/7 passed);
+  npm test (374/374 passed, output/strategy-workflow-tests.txt);
+  npm run check (passed, output/strategy-workflow-check.txt); git diff --check (passed).
+  Initial new test failures were corrected invalid note-identity fixtures and tests counting extraction jobs
+  as article-production jobs; no production quality criteria were relaxed to pass tests.
+- Browser skill: local real UI/API/isolated SQLite at 127.0.0.1:4319, no loaded .env,
+  no model/WordPress execution. Verified 3 sources/6 proposals; batch selected one alternate and two default
+  paths; processed=3, failed=0, queued=0 for insufficient evidence; other paths retained.
+  A later single explicit alternate approval changed approved directions from3 to4 without auto-approving the rest.
+  Browser native confirm timed out; replaced new approval confirms with visible in-page preview lists,
+  then repeated the successful flow. No browser console errors in checked batch page.
+- No migration, backup restore, production writes, paid calls, commits, pushes, deployment or version activation
+  performed by this batch. Existing user/earlier worktree edits preserved. No tasks marked already_fixed or
+  not_applicable in this follow-up. Overall redesign remains in_progress, not completed.
+- Dependencies/unverified: proposal scope identity stronger than recommendation updated_at; manual assignment
+  approval parity; promise-level evidence gate; semantic grouping; separate textual/final QA; full recovery pipeline;
+  mobile regression; release gate and production integration. Prior recovery edits remain local/unreleased.
+- Next: phase2—review actual proposal/Brief evidence selection against the promised scope and integrate manual
+  assignments, without inventing hard source-count thresholds or deleting historical proposals; then phase3 QA/recovery,
+  full end-to-end/regression and only then version activation/release. No authorization question is needed to continue local work.
+
+## 2026-09-10 Strategy 1.9 workflow release follow-up (pre-deploy)
+
+- Task IDs: INC02 / FLOW01 / FLOW02; requirementsVersion=1.3; status=in_progress (implementation and offline validation completed; deployment pending).
+- Baseline/current pre-commit HEAD: 812ec76e9e53672569075338643ca106341d8e21, codex/audit-v1.3; original working changes preserved. This is the user-requested production workflow follow-up, not a repeat of the 30 completed audit items.
+- INC02: shared source-linked recovery UI/API, retained authorized asset binding, editorial body/ledger/date-note correction, pre-brief destination correction, exact stage retries, media checkpoints and no automatic paid stage chaining. Fixed stale revision/evidence QA display, invalid token boundaries and date-note matching; no lowering of final delivery gates.
+- FLOW01: single/bulk approvals use common transactional commands, explicit direction selection, stale timestamp and semantic proposal fingerprint checks, per-row rollback/results, duplicate/ownership protection. Manual assignment approval freezes the same proposal record. Preserve approved scope and old proposals across coverage rebuild/reanalysis.
+- FLOW02: distinguish recommendations/directions/approved production; remove fact-count coverage bonus; carry reader promise/boundary into planning and validate scoped non-conflicting fact references; exact normalized comparison groups only (not semantic dedup). Separate prose and media/page delivery subresults within the existing review call. Topics becomes 创作规划 without removing assignments or records.
+- Upgrade safety: strategy version change does not enqueue historical-source reanalysis; older strategy candidates cannot bypass approval. Schema stays 55; no data migration or historical content mutation is required.
+- Changed files: src/services/{content-recovery,content-recovery-policy,recommendation-bulk,editorial-proposal,operations-workspace}.mjs; src/{repository,pipeline,db,server,research-strategy,evidence-validator}.mjs; src/ai/content-engine.mjs; frontend/src/{App,views}.jsx and dashboard/quality/recovery/bulk/utils; three new test files; diagnostic scripts; version/strategy/changelog/handoff/deployment documentation.
+- Verification: npm test before version switch 379/379 passed. First post-switch release gate caught the required strategy-download safety heading missing; restored that heading, did not relax test. Final npm run release:check passed 50 mandatory checks, 0 failures, 4 warnings, 5 explicitly untested conclusions; includes all 379 tests, production build/static/boundaries, fixed-SHA Frontend Contract, clean migrations, backup restore drill and isolated server/WP adapter smoke. git diff --check passed.
+- Targeted tests: node --test test/content-recovery.test.mjs test/editorial-proposal.test.mjs test/recommendation-bulk.test.mjs: 21/21 passed. Normal approve/plan/draft/review/WP-draft mocked integration and bulk tests: 9/9 passed.
+- Browser skill: real isolated desktop UI/API/SQLite on 127.0.0.1:4319 with production execution explicitly disabled. At 1.17.25/1.9, three source recommendations/six directions showed three named default articles in inline confirmation; execution returned success=3, skipped=0, failed=0, queued=0 (missing evidence). Exactly three directions approved, not all six. Earlier single alternate-direction approval also verified. Real mobile-device behavior remains unverified.
+- Version alignment: App/Extension 1.17.25, Content Strategy 1.9, requirementsVersion=1.3, schema 55. Strategy document describes actual existing stage order; early prose QA and semantic dedup in the design draft are not claimed as implemented.
+- External conditions: historical source-image 403 needs a legitimate original/recapture; factual copy and evidence gaps still require correction through the new entry. No model or production WP call made to clear incidents. Existing historical source/draft versions preserved, old scores not relabeled as new review passes.
+- Next: commit and push the validated implementation, build the pinned image, create verified pre-upgrade system snapshot, deploy exact CMS instance and verify read-only health/content/recovery endpoints. Record actual build/digest/backup evidence before marking deployment complete.

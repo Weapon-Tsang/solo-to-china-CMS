@@ -3,7 +3,8 @@ import { Card } from "@/components/ui/card";
 import { StatusPill } from "@/components/dashboard";
 
 const TITLES = {
-  content_quality: "内容质量",
+  content_quality: "正文质量",
+  delivery_quality: "图片与页面交付",
   seo_technical: "SEO 技术检查",
   geo_content_consistency: "GEO 内容一致性",
   production_cost: "生产开销",

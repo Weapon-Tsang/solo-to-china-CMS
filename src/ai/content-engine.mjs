@@ -3,6 +3,7 @@ import { CONTENT_STRATEGY } from "../content-strategy.mjs";
 import { createAiClient } from "./client.mjs";
 import { pageBlockSignature, protectedFactTokens, validatePageEvidence } from "../evidence-validator.mjs";
 import { titlePromiseRisks } from "../seo-geo.mjs";
+import { separateQualityResults } from "../services/content-recovery-policy.mjs";
 
 const BRIEF_SCHEMA = objectSchema(
   ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions", "canonical"],
@@ -257,7 +258,8 @@ export class ContentEngine {
         issues: (issues || []).slice(0, 12),
         brief: contentPackage.brief,
         facts: draftInputDto(contentPackage).facts,
-        draft: existing,
+        draft: { title:existing.title,body_markdown:existing.body_markdown,meta_description:existing.meta_description,
+          seo:existing.seo,evidence_ledger:existing.evidence_ledger,verification_notes:existing.verification_notes },
       }), options,
     });
     result.output = applyBoundedDraftRepair(existing, result.output, issues);
@@ -341,7 +343,8 @@ export function applyBoundedDraftRepair(draft, patch, issues = []) {
   }
   const issueCodes = (issues || []).map((issue) => String(issue?.code || issue || "").toLowerCase());
   const metadataAllowed = issueCodes.some((code) => /seo|title|meta|keyword|slug/.test(code));
-  const metadata = patch.metadata || {};
+  const currentMetadata = {title:draft.title,meta_description:draft.meta_description,meta_title:draft.seo?.meta_title,focus_keyword:draft.seo?.focus_keyword};
+  const metadata = Object.fromEntries(Object.entries(patch.metadata || {}).filter(([key,value])=>value!==currentMetadata[key]));
   if (Object.keys(metadata).length && !metadataAllowed) {
     throw Object.assign(new Error("Metadata changes were not authorized by the failed QA fields."), { code: "INVALID_DRAFT_REPAIR_SCOPE" });
   }
@@ -430,6 +433,7 @@ const intakePrompt = (strategyVersion) => `Analyze one already-captured human-se
 - reasoning_summary must be a detailed, direct 4-8 sentence operator-facing explanation in Chinese. State which parallel routes are usable, why, what is genuinely missing, and what is not a blocker. Never provide hidden chain-of-thought. Commercial conversion is outside this task.`;
 
 const briefPrompt = (strategyVersion) => `Create an evidence-backed English content plan and Canonical Travel Content object for SoloToChina Content Production Strategy ${strategyVersion}.
+- approved_proposal is the operator-approved scope. Preserve its readerPromise, destination, production mode and evidenceBoundary. Do not expand a narrow proposal into a whole-city guide. Cover each promised section with exact supplied claim keys; if support is absent, disclose the gap rather than invent facts.
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
 - Evidence marked partial_usable is valid only for the supplied Claim. Treat its coverage_limitations as explicit boundaries: narrow the reader promise, omit unsupported details, and never describe the source or topic as complete. Unrelated source gaps are already removed from this topic package.
@@ -501,6 +505,7 @@ When the Registry publishes an image component, use it only for supplied visuals
 Current capability candidates (machine-derived):\n${JSON.stringify(promptCapabilities(capabilities))}`;
 
 const REVIEW_PROMPT = `Act as an independent senior editor. Audit the English draft against its evidence package and brief.
+Grade reader-facing prose and factual support only. Missing image downloads, renderers, page composition or provider errors are separate deterministic delivery checks, not reasons to lower this editorial score. Never relax factual support or evidence scope.
 Fail the draft for any unsupported factual assertion, hidden conflict, misleading certainty, source-key leakage, affiliate contamination, or unsafe advice.
 Also check originality, usefulness for solo/first-time/non-Chinese-speaking visitors, SEO/GEO structure, clarity, and whether the evidence ledger honestly covers factual sections.
 Do not rewrite the article. Return actionable blockers and warnings.`;
@@ -559,9 +564,10 @@ export function applyDeterministicGates(review, contentPackage) {
   const staleKeys = facts.filter((fact) => fact.freshness_state === "stale").map((fact) => fact.normalized_key);
   const usedStaleKeys = staleKeys.filter((key) => ledgerKeys.has(key));
   const verificationKeys = facts.filter((fact) => fact.freshness_state === "time_sensitive"
-    || ["RECENCY_WEIGHTED_CONSENSUS", "LATEST_WEIGHTED_PROVISIONAL", "SINGLE_SOURCE_LATEST"].includes(fact.consensus_method))
+    || ["RECENCY_WEIGHTED_CONSENSUS", "LATEST_WEIGHTED_PROVISIONAL"].includes(fact.consensus_method))
     .map((fact) => fact.normalized_key);
-  const acknowledgedVerification = new Set(draft.verification_notes || []);
+  const acknowledgedVerification = new Set((draft.verification_notes || [])
+    .map((note) => String(note).split(/[:：]/, 1)[0].trim()));
   const datedDisclosureKeys = new Set([...verificationKeys, ...usedStaleKeys]);
   const hiddenVerification = [...datedDisclosureKeys].filter((key) => ledgerKeys.has(key) && !acknowledgedVerification.has(key));
   addGate("temporal-disclosure", hiddenVerification.length === 0, hiddenVerification.length ? `Used dynamic or dated facts without an as-of disclosure: ${hiddenVerification.join(", ")}` : "Dynamic and dated evidence is disclosed or avoided.", "missing_temporal_disclosure");
@@ -646,7 +652,7 @@ export function applyDeterministicGates(review, contentPackage) {
     const evidenceValidation = validatePageEvidence(payload, contentPackage);
     addGate("final-page-evidence", evidenceValidation.valid,
       evidenceValidation.valid ? "Every factual semantic node retains its evidence values, conditions, source relation and visible date disclosure."
-        : `Final page evidence mismatch: ${evidenceValidation.errors.map((item) => item.code).join(", ")}`,
+        : `Final page evidence mismatch: ${[...new Set(evidenceValidation.errors.map((item) => `${item.code} at ${item.path}${item.claimKey ? ` (${item.claimKey})` : ""}${item.expected ? ` expected: ${item.expected}` : ""}`))].join("; ")}`,
       "final_page_evidence_invalid");
   }
   const graph = draft.schema_jsonld?.["@graph"] || [];
@@ -664,6 +670,7 @@ export function applyDeterministicGates(review, contentPackage) {
   const finalIssues = uniqueBy(issues, (item) => `${item.code}:${item.message}`);
   return {
     ...review,
+    ...separateQualityResults(review, finalIssues),
     checks: uniqueBy(checks, (item) => `${item.name}:${item.detail}`),
     issues: finalIssues,
     passed: review.passed && !finalIssues.some((item) => item.severity === "blocker"),

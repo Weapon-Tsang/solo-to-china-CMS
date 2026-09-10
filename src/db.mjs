@@ -2640,6 +2640,19 @@ function migrationOne(db) {
 }
 
 export function transaction(db, work) {
+  if (db.isTransaction) {
+    const name = `nested_${++transactionSequence}`;
+    db.exec(`SAVEPOINT ${name}`);
+    try {
+      const result = work();
+      db.exec(`RELEASE SAVEPOINT ${name}`);
+      return result;
+    } catch (error) {
+      db.exec(`ROLLBACK TO SAVEPOINT ${name}`);
+      db.exec(`RELEASE SAVEPOINT ${name}`);
+      throw error;
+    }
+  }
   db.exec("BEGIN IMMEDIATE");
   try {
     const result = work();
@@ -2650,3 +2663,4 @@ export function transaction(db, work) {
     throw error;
   }
 }
+let transactionSequence = 0;

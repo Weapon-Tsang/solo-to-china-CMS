@@ -1,6 +1,14 @@
 # Changelog
 
-## 1.17.24 - Unreleased
+## 1.17.25 - Unreleased
+
+- Activate Strategy 1.9: separate source recommendations, editorial directions and approved production; freeze approved scope and validate planned evidence membership.
+- Add version-guarded, transactional bulk decisions and explicit default/direction confirmation; preserve assignments and historical proposals across upgrades.
+- Separate prose quality from media/page delivery, invalidate stale reviews, and recover only the responsible stage without automatic paid stage chaining.
+- Add source-linked media recovery, retained authorized asset binding, editorial evidence correction and pre-planning destination correction; fix date-note matching and evidence token boundaries.
+- Keep schema 55, frontend capability contracts, Research/Commercial isolation and WordPress draft-only gates unchanged.
+
+## 1.17.24
 
 - Compose every supported article type deterministically from the frozen Content AST when the Frontend exposes its stable atomic heading, paragraph, and list components, avoiding an unnecessary model/schema round trip and validating the resulting payload against the live Contract.
 - Retry a generic Vertex JSON Schema HTTP 400 once through the supported OpenAPI transport, classify permanent 4xx, expired authorized-media URLs, and content-stage output limits as correction-required, and prevent the dashboard from offering a no-op retry.

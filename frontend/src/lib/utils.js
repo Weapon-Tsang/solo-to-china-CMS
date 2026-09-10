@@ -12,6 +12,13 @@ export function label(value) {
   const chinese = { processing: "处理中", captured: "已采集", queued: "排队中", processed: "提取完成", needs_ai: "等待 AI", exception: "需要处理", running: "执行中", pending: "待处理", succeeded: "成功", failed: "失败", configured: "已配置", ready: "就绪", candidate: "候选", corroborated: "已佐证", conflicted: "存在冲突", active: "启用", inactive: "停用", ready_for_wordpress: "可发送到 WordPress", not_configured: "未配置", warning: "注意", blocker: "阻塞", single_source: "单一来源", research_required: "需补充研究", approved_article: "已批准文章", knowledge_only: "仅入知识库", cluster: "归入专题", research_first: "优先补充研究", ignored: "已忽略", stale: "可能过期", current: "当前", requires_official: "需官方核验", medium: "中", high: "高", low: "低", not_synced: "未同步", draft: "草稿", commercial_ready: "商品已组合", wordpress_draft: "WordPress 草稿", passed: "通过", published: "已发布" };
   chinese.resolved = "已人工确认";
   Object.assign(chinese, {
+    not_tested: "尚未验证", qa_queued: "等待质检", qa_failed: "质检未通过", awaiting_review: "等待完成编排 / 质检",
+    review_draft: "质量审核", revise_draft: "修订正文", compose_frontend_page: "页面编排", plan_content: "内容规划",
+    review_draft_queued: "质检排队中（未改写）", review_draft_running: "正在质检（未改写）",
+    revise_draft_queued: "修订排队中", revise_draft_running: "正在修订",
+    compose_frontend_page_queued: "页面编排排队中", compose_frontend_page_running: "正在编排页面",
+    plan_content_queued: "内容规划排队中", plan_content_running: "正在规划",
+    generate_visuals_queued: "图片处理排队中", generate_visuals_running: "正在处理图片",
     verified: "已核验", unverified: "未核验", partial: "部分完成", complete: "完整", completed: "已完成",
     retrying: "重试中", retry_required: "等待定向重试", manual_review: "需要人工检查", extracted: "已提取，等待审计",
     paragraph_group: "段落组", image: "图片", video: "视频", text: "文本", document: "文档",

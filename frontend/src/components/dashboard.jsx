@@ -13,7 +13,7 @@ import { cn, label } from "@/lib/utils";
 export const views = {
   sources: { label: "来源", title: "研究来源", description: "查看并提交由你主动选择的旅行笔记、链接、文档、图片与视频。", icon: FileText },
   recommendations: { label: "建议", title: "内容建议", description: "在文章规划前，审阅每条来源的下一步建议。", icon: Sparkles },
-  assignments: { label: "选题", title: "专题与人工命题", description: "查看系统选定的专题，也可以自行命题、检测素材并加入创作队列。", icon: ListChecks },
+  assignments: { label: "创作规划", title: "创作规划与人工命题", description: "自行命题、明确范围并检测素材；已在建议中批准的文章不需要再次审批。", icon: ListChecks },
   knowledge: { label: "知识库", title: "目的地知识", description: "集中查看已佐证事实、冲突和时效性。", icon: BookOpen },
   blueprints: { label: "蓝图", title: "编辑蓝图", description: "把重复出现的优秀表达转化为可复用的编辑洞察。", icon: Layers3 },
   content: { label: "内容", title: "内容生产", description: "将有证据支撑的主题推进至草稿、审核和发布。", icon: WandSparkles },
@@ -91,15 +91,15 @@ export function PageHeading({ view, health, onOpenStrategy }) {
 }
 
 export function Metrics({ totals: rawTotals = {}, onNavigate }) {
-  const totals = { ...rawTotals, topicCandidates: Number(rawTotals.pendingRecommendations || 0) + Number(rawTotals.contentPipelineItems ?? rawTotals.topicCandidates ?? 0) };
+  const totals = rawTotals;
   const groups = [
     {
       icon: FileText, tone: "blue", eyebrow: "研究资产", title: "来源已结构化", value: totals.knowledgeFacts ?? 0, unit: "条知识事实",
       detail: totals.conflicts ? `${totals.conflicts} 项冲突需要处理` : "暂无事实冲突", stats: [[totals.sources, "来源"], [totals.claims, "信息主张"]], view: "knowledge",
     },
     {
-      icon: Route, tone: "indigo", eyebrow: "内容机会", title: "选题发现", value: totals.topicCandidates ?? 0, unit: "个候选主题",
-      detail: totals.topicCandidates ? "查看候选主题与文章生产状态" : "继续积累独立来源以发现选题", stats: [[totals.draftsReady, "可用草稿"], [totals.wordpressInventory, "站内文章"]], view: "content",
+      icon: Route, tone: "indigo", eyebrow: "编辑决策", title: "来源建议待决定", value: totals.pendingRecommendations ?? 0, unit: "条来源建议",
+      detail: "来源建议不是独立选题；批准具体创作方向后才进入生产", stats: [[totals.contentPipelineItems ?? 0, "内容流程记录"], [totals.draftsReady, "可用草稿"]], view: "recommendations",
     },
     {
       icon: Box, tone: "fuchsia", eyebrow: "商业图层", title: "联盟商品", value: totals.activeOffers ?? 0, unit: "个可用商品",

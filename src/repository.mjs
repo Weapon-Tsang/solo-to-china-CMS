@@ -26,6 +26,8 @@ import {
   selectFactsForAssignment,
 } from "./editorial-assignments.mjs";
 import { buildContentTaskCard, normalizeWorkspaceQuery, paginateWorkspace } from "./services/operations-workspace.mjs";
+import { freezeProposal, proposalFingerprint, proposalForOpportunity } from "./services/editorial-proposal.mjs";
+import { qualityRepairStage } from "./services/content-recovery-policy.mjs";
 import { insertCommercialEvent, listCommercialPerformance } from "./repositories/commercial-events.mjs";
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
@@ -1594,8 +1596,7 @@ export class Repository {
         normalized.reasoning_summary, timestamp, timestamp);
     });
     const recommendation = this.db.prepare("SELECT * FROM content_recommendations WHERE analysis_id=?").get(analysisId);
-    this.db.prepare(`DELETE FROM content_opportunities WHERE recommendation_id=? AND strategy_version<>?
-      AND status IN ('recommended','knowledge_only','cluster','research_required','ignored')`).run(recommendation.id, this.strategyVersion);
+    // A strategy upgrade must not delete historical unapproved proposals.
     this.upsertContentOpportunity(source.destination_slug, sourceId, recommendation, normalized);
     for (const path of normalized.production_paths || []) {
       const sameAsPrimary = path.title === normalized.suggested_article_title
@@ -1608,6 +1609,7 @@ export class Repository {
         suggested_article_title: path.title,
         suggested_content_type: path.content_type || normalized.suggested_content_type,
         production_mode: path.mode,
+        reader_promise: path.reader_promise, evidence_boundary: path.evidence_boundary,
       }, { linkRecommendation: false });
     }
     return this.getSource(sourceId).analysis;
@@ -1623,7 +1625,7 @@ export class Repository {
       LEFT JOIN structured_sources ss ON ss.source_id=r.source_id
       ORDER BY CASE r.decision WHEN 'pending' THEN 0 ELSE 1 END, r.updated_at DESC LIMIT ?
     `).all(limit);
-    const listOpportunities = this.db.prepare(`SELECT id,title,status,readiness_json,coverage_json,candidate_id
+    const listOpportunities = this.db.prepare(`SELECT id,title,status,readiness_json,coverage_json,candidate_id,destination_slug,content_type,source_id
       FROM content_opportunities WHERE recommendation_id=? ORDER BY created_at,id`);
     return rows.map((row) => hydrateRecommendation(row, listOpportunities.all(row.id)));
   }
@@ -1768,10 +1770,15 @@ export class Repository {
       FROM editorial_assignments ea LEFT JOIN destinations d ON d.slug=ea.destination_slug WHERE ea.id=?`).get(assignmentId));
   }
 
-  queueEditorialAssignment(assignmentId) {
+  queueEditorialAssignment(assignmentId, expectedUpdatedAt = null) {
+    return transaction(this.db, () => this.queueEditorialAssignmentAtomic(assignmentId, expectedUpdatedAt));
+  }
+
+  queueEditorialAssignmentAtomic(assignmentId, expectedUpdatedAt = null) {
     const current = this.db.prepare("SELECT * FROM editorial_assignments WHERE id=? AND deleted_at IS NULL").get(assignmentId);
     if (!current) return null;
     if (current.status === "queued") return hydrateEditorialAssignment(current);
+    if (expectedUpdatedAt && expectedUpdatedAt !== current.updated_at) throw conflictError("命题已改变，请刷新后重新确认批准范围。");
     const assignment = this.reevaluateEditorialAssignment(assignmentId);
     if (!assignment?.evaluation?.ready) throw conflictError("素材体检尚未通过。请按缺口提示补充采集后再重试。");
     const timestamp = now();
@@ -1810,6 +1817,7 @@ export class Repository {
         lifecycle.action,lifecycle.targetPostId,JSON.stringify(lifecycle.impact));
     this.db.prepare("UPDATE editorial_assignments SET opportunity_id=?,updated_at=? WHERE id=?")
       .run(opportunityId, timestamp, assignmentId);
+    this.freezeOpportunityApproval(opportunityId);
     const reconciled = this.reconcileApprovedOpportunity(opportunityId);
     const opportunity = this.db.prepare("SELECT status,suppression_reason FROM content_opportunities WHERE id=?").get(opportunityId);
     if (reconciled.suppressed || opportunity?.status === "suppressed") {
@@ -1940,12 +1948,22 @@ export class Repository {
     `).run(decision, String(note || "").slice(0, 1_000), opportunity.id, timestamp, timestamp, recommendationId);
     this.db.prepare("UPDATE content_opportunities SET status=?,approved_at=?,updated_at=? WHERE id=?")
       .run(opportunityStatus, decision === "approved_article" ? timestamp : null, timestamp, opportunity.id);
+    if (decision === "approved_article") this.freezeOpportunityApproval(opportunity.id);
     const reconciled = decision === "approved_article" && ready ? this.reconcileApprovedOpportunity(opportunity.id) : { candidateId: null, queued: false };
     return {
       recommendationId, opportunityId: opportunity.id, decision, status: opportunityStatus,
       queued: Boolean(reconciled.queued), candidateId: reconciled.candidateId || null,
       needsEvidence: decision === "approved_article" && !ready, readiness,
     };
+  }
+
+  freezeOpportunityApproval(opportunityId) {
+    const row = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(opportunityId);
+    if (!row) throw conflictError("创作方向不存在。");
+    const coverage = json(row.coverage_json, {});
+    if (!coverage.approval) coverage.approval = freezeProposal(row);
+    this.db.prepare("UPDATE content_opportunities SET coverage_json=? WHERE id=?").run(JSON.stringify(coverage), opportunityId);
+    return coverage.approval;
   }
 
   upsertContentOpportunity(destinationSlug, sourceId, recommendation, analysis, overrides = {}) {
@@ -1963,13 +1981,17 @@ export class Repository {
     // choosing it must not consume or overwrite this source's adaptation or feature routes.
     const topicKey = `${baseTopicKey}:source:${sha256(sourceId).slice(0, 12)}`;
     const opportunityId = `opportunity_${sha256(topicKey).slice(0, 24)}`;
+    const existingApproved = this.db.prepare("SELECT id FROM content_opportunities WHERE id=? AND approved_at IS NOT NULL").get(opportunityId);
+    if (existingApproved) return existingApproved.id;
     const allFacts = this.knowledgeForDestination(destinationSlug);
     const sourceFacts = factsForSource(allFacts, sourceId);
     const facts = ["source_adaptation", "topic_feature"].includes(publicationMode) && sourceFacts.length
       ? sourceFacts : scopeFactsForOpportunity(allFacts, { destinationSlug, topic, title });
     const familyCount = this.independentSourceFamilyCountForFacts(facts);
     const matrix = evaluateCoverage({ topicKey, contentType, facts, sourceFamilyCount: familyCount, publicationMode });
-    const coverage = { ...matrix, publicationMode, selectedFactKeys: facts.map((fact) => fact.normalized_key),
+    const matchingPath = (analysis.production_paths || []).find(path => path.title === title && normalizePublicationMode(path.mode) === publicationMode);
+    const coverage = { ...matrix, publicationMode, proposal: { readerPromise: analysis.reader_promise || matchingPath?.reader_promise || title,
+      evidenceBoundary: analysis.evidence_boundary || matchingPath?.evidence_boundary || "", targetEntities: [] }, selectedFactKeys: facts.map((fact) => fact.normalized_key),
       selectedSourceIds: [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))],
       legacy_signals: opportunityCoverage(destinationSlug, facts, analysis) };
     const status = overrides.status || classificationOpportunityStatus(analysis.classification);
@@ -2055,12 +2077,13 @@ export class Repository {
     for (const opportunity of opportunities) {
       const previousCoverage = json(opportunity.coverage_json, {});
       const publicationMode = normalizePublicationMode(previousCoverage.publicationMode);
+      if (previousCoverage.manualAssignmentId) continue; // Manual scope is rebuilt only by its own evaluator.
       const sourceFacts = factsForSource(allFacts, opportunity.source_id);
       const facts = ["source_adaptation", "topic_feature"].includes(publicationMode) && sourceFacts.length
         ? sourceFacts : scopeFactsForOpportunity(allFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
       const familyCount = this.independentSourceFamilyCountForFacts(facts);
       const matrix = evaluateCoverage({ topicKey: opportunity.topic_key, contentType: opportunity.content_type, facts, sourceFamilyCount: familyCount, publicationMode });
-      const coverage = { ...matrix, publicationMode, selectedFactKeys: facts.map((fact) => fact.normalized_key),
+      const coverage = { ...previousCoverage, ...matrix, publicationMode, selectedFactKeys: facts.map((fact) => fact.normalized_key),
         selectedSourceIds: [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))] };
       this.saveCoverageMatrix(matrix, destinationSlug);
       const current = opportunity.status;
@@ -3144,12 +3167,12 @@ export class Repository {
   queueCandidate(candidateId) {
     const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
     if (!candidate || !["candidate", "brief_queued"].includes(candidate.status)) return false;
-    if (candidate.strategy_version === this.strategyVersion) {
+    if (candidate.strategy_version) {
       const approved = this.db.prepare(`
         SELECT id FROM content_opportunities
         WHERE candidate_id=? AND strategy_version=? AND status='producing'
         LIMIT 1
-      `).get(candidateId, this.strategyVersion);
+      `).get(candidateId, candidate.strategy_version);
       if (!approved) return false;
     }
     this.db.prepare("UPDATE topic_candidates SET status = 'brief_queued', updated_at = ? WHERE id = ?").run(now(), candidateId);
@@ -3178,6 +3201,7 @@ export class Repository {
     const source = publicationMode === "source_adaptation" && opportunity?.source_id ? this.getSource(opportunity.source_id) : null;
     return {
       candidate,
+      approved_proposal: coverage.approval?.proposal || proposalForOpportunity(opportunity || candidate),
       facts: scopedFacts,
       production_mode: publicationMode,
       source_reference: source ? {
@@ -3377,19 +3401,18 @@ export class Repository {
   }
 
   retryContentStage(candidateId) {
-    const row = this.db.prepare(`SELECT cb.id AS brief_id,ad.id AS draft_id,qr.passed AS qa_passed,
-      cc.status AS commercial_status,pc.status AS publish_composition_status,wp.status AS wordpress_status
-      FROM topic_candidates tc LEFT JOIN content_briefs cb ON cb.candidate_id=tc.id
-      LEFT JOIN article_drafts ad ON ad.brief_id=cb.id
-      LEFT JOIN quality_reviews qr ON qr.id=(SELECT id FROM quality_reviews WHERE draft_id=ad.id ORDER BY created_at DESC LIMIT 1)
-      LEFT JOIN commercial_compositions cc ON cc.draft_id=ad.id LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=ad.id
-      LEFT JOIN wordpress_publications wp ON wp.draft_id=ad.id WHERE tc.id=?`).get(candidateId);
-    if (!row?.brief_id) return "plan_content";
-    if (!row.draft_id) return "generate_draft";
-    if (!row.qa_passed) return "revise_draft";
-    if (!row.commercial_status) return "compose_commercial";
-    if (!row.publish_composition_status) return "compose_publish_page";
-    if (row.wordpress_status === "failed") return "push_wordpress_draft";
+    const candidate = this.db.prepare("SELECT id FROM topic_candidates WHERE id=?").get(candidateId);
+    if (!candidate) return null;
+    const brief = this.db.prepare("SELECT id FROM content_briefs WHERE candidate_id=?").get(candidateId);
+    if (!brief) return "plan_content";
+    const draft = this.db.prepare("SELECT id FROM article_drafts WHERE brief_id=?").get(brief.id);
+    if (!draft) return "generate_draft";
+    const pkg = this.getDraftPackage(draft.id);
+    if (pkg.frontend_page_plan && !pkg.frontend_page?.current) return "compose_frontend_page";
+    if (!pkg.review) return "review_draft";
+    if (!pkg.review.passed) return qualityRepairStage(pkg.review.issues);
+    if (!pkg.commercial_composition) return "compose_commercial";
+    if (pkg.frontend_page && !this.db.prepare("SELECT id FROM frontend_publish_compositions WHERE draft_id=?").get(draft.id)) return "compose_publish_page";
     return null;
   }
 
@@ -3434,6 +3457,7 @@ export class Repository {
     const operation = this.listContent().find((item) => item.draft_id === draftId)?.operation || null;
     return {
       ...briefPackage,
+      evidence_hash: currentEvidenceHash,
       operation,
       draft: {
         ...draft,
@@ -3595,6 +3619,7 @@ export class Repository {
     }
     const facts = this.getBriefPackage(draft.brief_id)?.facts || [];
     const evidenceHash = evidenceHashForFacts(facts);
+    if (expectedVersion?.evidenceHash && expectedVersion.evidenceHash !== evidenceHash) throw Object.assign(new Error("STALE_EVIDENCE_VERSION: evidence changed during quality review."), {retryable:false});
     this.db.prepare(`
       INSERT INTO quality_reviews(id, draft_id, passed, score, checks_json, issues_json,
         unsupported_claims_json, reviewer, strategy_version, created_at, draft_revision, draft_content_hash, evidence_hash)
@@ -3656,7 +3681,8 @@ export class Repository {
       LEFT JOIN content_briefs cb ON cb.candidate_id = tc.id
       LEFT JOIN article_drafts ad ON ad.brief_id = cb.id
       LEFT JOIN quality_reviews qr ON qr.id = (
-        SELECT id FROM quality_reviews WHERE draft_id = ad.id ORDER BY created_at DESC LIMIT 1
+        SELECT id FROM quality_reviews WHERE draft_id = ad.id AND draft_revision=ad.revision
+          AND draft_content_hash=ad.content_hash ORDER BY created_at DESC LIMIT 1
       )
       LEFT JOIN wordpress_publications wp ON wp.draft_id = ad.id
       LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
@@ -3667,7 +3693,8 @@ export class Repository {
     if (!draftIds.length) return rows;
     const placeholders = draftIds.map(() => "?").join(",");
     const operationRows = this.db.prepare(`SELECT ad.id AS draft_id, tc.id, cb.id AS brief_id,
-      ad.quality_report_json, ad.seo_json, ad.schema_jsonld, ad.content_ast_json,
+      CASE WHEN qr.id IS NOT NULL THEN ad.quality_report_json ELSE '{}' END AS quality_report_json,
+      ad.seo_json, ad.schema_jsonld, ad.content_ast_json,
       ad.strategy_version AS draft_strategy_version, qr.passed AS qa_passed, qr.score AS qa_score,
       wp.status AS wordpress_status, cc.status AS commercial_status, pc.status AS publish_composition_status,
       failed.type AS failed_job_type, failed.last_error AS failed_job_error,
@@ -3675,7 +3702,8 @@ export class Repository {
       COALESCE(metrics.model_call_count, 0) AS model_call_count,
       COALESCE(metrics.unknown_cost_count, 0) AS unknown_cost_count, metrics.known_cost_usd
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id JOIN topic_candidates tc ON tc.id=cb.candidate_id
-      LEFT JOIN quality_reviews qr ON qr.id=(SELECT id FROM quality_reviews WHERE draft_id=ad.id ORDER BY created_at DESC LIMIT 1)
+      LEFT JOIN quality_reviews qr ON qr.id=(SELECT id FROM quality_reviews WHERE draft_id=ad.id
+        AND draft_revision=ad.revision AND draft_content_hash=ad.content_hash ORDER BY created_at DESC LIMIT 1)
       LEFT JOIN wordpress_publications wp ON wp.draft_id=ad.id
       LEFT JOIN commercial_compositions cc ON cc.draft_id=ad.id
       LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=ad.id
@@ -3690,8 +3718,22 @@ export class Repository {
         SUM(CASE WHEN cost_status='known' THEN cost_usd ELSE 0 END) AS known_cost_usd
         FROM model_call_metrics WHERE entity_id IN (${placeholders}) GROUP BY entity_id) metrics ON metrics.entity_id=ad.id
       WHERE ad.id IN (${placeholders})`).all(...draftIds, ...draftIds);
-    const operations = new Map(operationRows.map((row) => [row.draft_id, buildContentTaskCard(row)]));
-    return rows.map((row) => row.draft_id ? { ...row, operation: operations.get(row.draft_id) || null } : row);
+    const staleReviews = new Set();
+    const operations = new Map(operationRows.map((row) => {
+      const review = this.db.prepare('SELECT evidence_hash FROM quality_reviews WHERE draft_id=? ORDER BY created_at DESC LIMIT 1').get(row.draft_id);
+      if (review && review.evidence_hash !== evidenceHashForFacts(this.getBriefPackage(row.brief_id)?.facts || [])) {
+        row.qa_passed=null;row.qa_score=null;row.quality_report_json='{}';staleReviews.add(row.draft_id);
+      }
+      return [row.draft_id, buildContentTaskCard(row)];
+    }));
+    const active = this.db.prepare("SELECT entity_id,type,status FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").all();
+    return rows.map((row) => {
+      const job = active.find((j) => [row.id,row.brief_id,row.draft_id].includes(j.entity_id));
+      if (staleReviews.has(row.draft_id)) { row.qa_score=null;row.qa_passed=null; }
+      return { ...row, workflow_status: job ? `${job.type}_${job.status}`
+        : row.draft_status === "qa_queued" ? "awaiting_review" : row.draft_status || row.brief_status || row.status,
+        ...(row.draft_id ? { operation: operations.get(row.draft_id) || null } : {}) };
+    });
   }
 
   upsertAffiliateProviderAccount(account) {
@@ -4141,13 +4183,23 @@ export class Repository {
       WHERE tc.id=?
     `).get(candidateId);
     if (!row) return null;
+    if (this.db.prepare("SELECT id FROM jobs WHERE entity_id IN (?,?,?) AND status IN ('queued','running') LIMIT 1")
+      .get(candidateId,row.brief_id || '',row.draft_id || '')) return null;
+    const failed = row.draft_id && this.db.prepare(`SELECT * FROM jobs WHERE entity_id=? AND status='failed'
+      AND NOT EXISTS (SELECT 1 FROM jobs ok WHERE ok.entity_id=jobs.entity_id AND ok.type=jobs.type AND ok.status='succeeded' AND ok.updated_at>=jobs.updated_at)
+      ORDER BY updated_at DESC LIMIT 1`).get(row.draft_id);
+    if (failed) {
+      if (!isOperationalFailureRetryable(failed)) return null;
+      this.enqueue(failed.type,row.draft_id,{dedupeKey:`manual-stage:${failed.type}:${row.draft_id}`});
+      return failed.type;
+    }
     if (!row.brief_id) return this.queueCandidate(candidateId) ? "plan_content" : null;
     if (!row.draft_id) {
       this.db.prepare("UPDATE content_briefs SET status='ready', last_error=NULL, updated_at=? WHERE id=?").run(now(), row.brief_id);
       this.enqueue("generate_draft", row.brief_id);
       return "generate_draft";
     }
-    if (contractAware && (row.frontend_page_status === "stale_contract" || row.publish_composition_status === "stale_contract")) {
+    if (contractAware && (!this.getFrontendPageComposition(row.draft_id)?.current || row.frontend_page_status === "stale_contract" || row.publish_composition_status === "stale_contract")) {
       this.enqueue("compose_frontend_page", row.draft_id);
       return "compose_frontend_page";
     }
@@ -4166,8 +4218,11 @@ export class Repository {
       return jobType;
     }
     if (!row.qa_passed) {
-      this.enqueue("revise_draft", row.draft_id);
-      return "revise_draft";
+      const pkg = this.getDraftPackage(row.draft_id);
+      const stage = !pkg.review ? "review_draft" : qualityRepairStage(pkg.review.issues);
+      if (!stage) return null;
+      this.enqueue(stage, row.draft_id, {dedupeKey:`manual-stage:${stage}:${row.draft_id}`});
+      return stage;
     }
     return null;
   }
@@ -4210,8 +4265,8 @@ export class Repository {
     for (const row of this.db.prepare(`SELECT s.id FROM sources s
       JOIN structured_sources ss ON ss.source_id=s.id
       LEFT JOIN content_intake_analyses cia ON cia.source_id=s.id
-      WHERE s.status='processed' AND (cia.id IS NULL OR cia.strategy_version<>?)
-      ORDER BY s.captured_at ASC`).all(this.strategyVersion)) this.enqueue("analyze_source_diagnostic", row.id);
+      WHERE s.status='processed' AND cia.id IS NULL
+      ORDER BY s.captured_at ASC`).all()) this.enqueue("analyze_source_diagnostic", row.id);
     for (const row of this.db.prepare("SELECT slug FROM destinations").all()) {
       if (!researchSlugs.has(row.slug)) this.enqueue("rebuild_topics", row.slug);
     }
@@ -4836,7 +4891,10 @@ export class Repository {
           AND recovered.status='succeeded' AND recovered.updated_at>=jobs.updated_at
       )
     `).all()) {
-      items.push(exceptionItem("job", row.id, "blocker", `Job failed: ${row.type}`, row.entity_id, row.last_error, isOperationalFailureRetryable(row), row.updated_at));
+      const owner = this.db.prepare(`SELECT tc.id FROM topic_candidates tc
+        LEFT JOIN content_briefs cb ON cb.candidate_id=tc.id LEFT JOIN article_drafts ad ON ad.brief_id=cb.id
+        WHERE tc.id=? OR cb.id=? OR ad.id=? LIMIT 1`).get(row.entity_id,row.entity_id,row.entity_id);
+      items.push({ ...exceptionItem("job", row.id, "blocker", `Job failed: ${row.type}`, row.entity_id, row.last_error, isOperationalFailureRetryable(row), row.updated_at),candidateId:owner?.id || null });
     }
     for (const row of this.db.prepare(`
       SELECT k.*, d.slug AS destination_slug, kr.status AS resolution_status, kr.preferred_value AS resolved_value,
@@ -4924,7 +4982,9 @@ export class Repository {
       WHERE ad.status='exception' OR (ad.status='qa_failed' AND ad.revision>=2)
     `).all()) {
       const failedJob = this.db.prepare(`SELECT failure_class,last_error FROM jobs
-        WHERE entity_id=? AND status='failed' ORDER BY updated_at DESC LIMIT 1`).get(row.id);
+        WHERE entity_id=? AND status='failed' AND NOT EXISTS (SELECT 1 FROM jobs ok
+          WHERE ok.entity_id=jobs.entity_id AND ok.type=jobs.type AND ok.status='succeeded' AND ok.updated_at>=jobs.updated_at)
+        ORDER BY updated_at DESC LIMIT 1`).get(row.id);
       const retryable = failedJob ? isOperationalFailureRetryable(failedJob) : true;
       items.push({ ...exceptionItem("draft", row.id, "blocker", "Draft needs editorial intervention", row.title,
         failedJob?.last_error || row.status, retryable, row.updated_at), candidateId: row.candidate_id });
@@ -5791,6 +5851,7 @@ function hydrateRecommendation(row, opportunityRows = []) {
     title: item.title,
     status: item.status,
     candidate_id: item.candidate_id,
+    proposal: proposalForOpportunity(item), proposalFingerprint: proposalFingerprint(item),
     readiness: json(item.readiness_json, {}),
     coverage: json(item.coverage_json, {}),
   }));

@@ -12,6 +12,9 @@ import { ContentEngine } from "./ai/content-engine.mjs";
 import { VertexImagen } from "./visuals/vertex-imagen.mjs";
 import { Pipeline } from "./pipeline.mjs";
 import { Repository } from "./repository.mjs";
+import { decideRecommendationCommand, decideRecommendationsBulk } from "./services/recommendation-bulk.mjs";
+import { groupProposals } from "./services/editorial-proposal.mjs";
+import { contentRecoveryReport, executeContentRecovery } from "./services/content-recovery.mjs";
 import { WordPressDraftAdapter } from "./wordpress.mjs";
 import { SearchConsoleAdapter } from "./search-console.mjs";
 import {
@@ -503,7 +506,8 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "POST" && editorialAssignmentQueueMatch) {
         authorizeAdmin(request, config.adminToken, auth);
         if (!contentEngine.enabled) return sendJson(response, 409, { error: "内容 AI 尚未配置，素材体检结果会保留，但暂时不能进入创作队列。" });
-        const queued = repository.queueEditorialAssignment(decodeURIComponent(editorialAssignmentQueueMatch[1]));
+        const payload = await readJson(request, 20_000);
+        const queued = repository.queueEditorialAssignment(decodeURIComponent(editorialAssignmentQueueMatch[1]), payload.updatedAt || null);
         if (!queued) return sendJson(response, 404, { error: "Editorial assignment not found." });
         void pipeline.runOne();
         return sendJson(response, 202, queued);
@@ -515,7 +519,14 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {
-        return sendJson(response, 200, { items: repository.listContentRecommendations(limit(url.searchParams.get("limit"))), opportunities: repository.listContentOpportunities(limit(url.searchParams.get("limit"))) });
+        return sendJson(response, 200, { items: repository.listContentRecommendations(limit(url.searchParams.get("limit"))), opportunities: repository.listContentOpportunities(limit(url.searchParams.get("limit"))),
+          comparisonGroups: groupProposals(repository.listContentOpportunities(limit(url.searchParams.get("limit")))),
+          summary: {
+            recommendations: repository.db.prepare('SELECT count(*) n FROM content_recommendations').get().n,
+            pending: repository.db.prepare("SELECT count(*) n FROM content_recommendations WHERE decision='pending'").get().n,
+            opportunities: repository.db.prepare('SELECT count(*) n FROM content_opportunities').get().n,
+            approved: repository.db.prepare('SELECT count(*) n FROM content_opportunities WHERE approved_at IS NOT NULL').get().n,
+          } });
       }
       const opportunityLifecycleMatch = url.pathname.match(/^\/api\/opportunities\/([^/]+)\/lifecycle$/);
       if (request.method === "POST" && opportunityLifecycleMatch) {
@@ -539,15 +550,20 @@ export function createApplication(config = loadConfig()) {
         const dismissed = repository.dismissEditorialTopic(decodeURIComponent(editorialTopicDismissMatch[1]));
         return dismissed ? sendJson(response, 200, dismissed) : sendJson(response, 404, { error: "Editorial topic not found." });
       }
+      if (request.method === "POST" && url.pathname === "/api/recommendations/bulk-decision") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const result = decideRecommendationsBulk(repository, await readJson(request, 100_000));
+        if (result.queued) void pipeline.runOne();
+        return sendJson(response, 200, result);
+      }
       const recommendationDecisionMatch = url.pathname.match(/^\/api\/recommendations\/([^/]+)\/decision$/);
       if (request.method === "POST" && recommendationDecisionMatch) {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
-        const result = repository.decideRecommendation(recommendationDecisionMatch[1], String(payload.decision || ""), payload.note || "", {
-          opportunityId: payload.opportunityId || null,
-        });
+        const result = decideRecommendationCommand(repository, {recommendationId:recommendationDecisionMatch[1],decision:String(payload.decision || ""),
+          note:payload.note || "",opportunityId:payload.opportunityId || null,updatedAt:payload.updatedAt,proposalFingerprint:payload.proposalFingerprint});
         if (!result) return sendJson(response, 404, { error: "Recommendation not found." });
-        void pipeline.runOne();
+        if (result.queued) void pipeline.runOne();
         return sendJson(response, 202, result);
       }
       if (request.method === "GET" && url.pathname === "/api/exceptions") {
@@ -765,6 +781,15 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "POST" && generateMatch) {
         authorizeAdmin(request, config.adminToken, auth);
         return sendJson(response, 409, { error: "Approve an Intake Recommendation before planning content." });
+      }
+      const recoveryMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/recovery$/);
+      if (recoveryMatch && ["GET", "POST"].includes(request.method)) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const candidateId = decodeURIComponent(recoveryMatch[1]);
+        const result = request.method === "GET" ? contentRecoveryReport(repository, candidateId)
+          : executeContentRecovery(repository, candidateId, await readJson(request, 500_000), auth.status(request).username || "administrator");
+        if (result?.queued) void pipeline.runOne();
+        return sendJson(response, result ? (result.queued ? 202 : 200) : 404, result || { error: "Content task not found." });
       }
       const retryContentMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/retry$/);
       if (request.method === "POST" && retryContentMatch) {

@@ -1,4 +1,5 @@
 import { isOperationalFailureRetryable } from "../job-policy.mjs";
+import { qualityRepairStage } from "./content-recovery-policy.mjs";
 
 const VALID_STATES = new Set(["passed", "warning", "failed", "not_tested"]);
 
@@ -38,6 +39,7 @@ export function buildContentTaskCard(row) {
   const productionCost = costDimension(row);
   const dimensions = {
     content_quality: quality,
+    delivery_quality: deliveryDimension(row, qualityReport),
     seo_technical: seoTechnical,
     geo_content_consistency: geoConsistency,
     production_cost: productionCost,
@@ -82,12 +84,22 @@ export function buildContentTaskCard(row) {
 
 function qualityDimension(row, report) {
   if (!row.draft_id) return dimension("not_tested", "No draft exists, so content quality has not been reviewed.", "draft", "Create the approved draft.", row);
+  if (report.content_quality) {
+    const result=report.content_quality;
+    return dimension(result.passed?'passed':'failed',result.passed?'当前正文与证据审核通过；图片和页面交付另行检查。':result.issues?.find(i=>i.severity==='blocker')?.message || '正文质量审核未通过。','draft.body_markdown',result.passed?'无需因图片或页面失败重写正文。':'修正列出的正文或证据问题，再重新质检。',row);
+  }
   if (row.qa_passed === 1) return dimension("passed", "The current draft revision passed its evidence-backed quality review.", "quality_review", "No quality repair is required.", row);
   if (row.qa_score != null || Object.keys(report).length) {
-    const issue = report.issues?.[0];
+    const issue = report.issues?.find((item) => item.severity === "blocker") || report.issues?.[0];
     return dimension("failed", issue?.message || issue?.reason || "The current draft revision failed content quality review.", issue?.path || issue?.field || "draft.body_markdown", "Repair only the failed draft fields or sections, then rerun quality review.", row);
   }
   return dimension("not_tested", "The current draft revision has no completed quality review.", "quality_review", "Run the draft quality-review stage.", row);
+}
+
+function deliveryDimension(row, report) {
+  if (!row.draft_id || !report.delivery_quality) return dimension('not_tested','当前版本尚无独立交付检查结论；历史综合评分不能充当正文或交付的单独通过证明。','frontend_page','完成图片、页面编排和最终质检。',row);
+  const result=report.delivery_quality;
+  return dimension(result.passed?'passed':'failed',result.passed?'当前审核中的图片/页面校验通过；公开HTML仍需目标环境验证。':result.issues?.find(i=>i.severity==='blocker')?.message || '交付检查未通过。','frontend_page',result.passed?'保留交付保护。':'按问题补齐授权媒体或重新编排页面，不重写无关正文。',row);
 }
 
 function seoDimension(row, seo, schema) {
@@ -129,7 +141,8 @@ function retryStage(row, failed, failedJob = null) {
   if (failedJob) return isOperationalFailureRetryable(failedJob) ? failedJob.type : null;
   if (!row.brief_id) return "plan_content";
   if (!row.draft_id) return "generate_draft";
-  if (failed.some(([key]) => key === "content_quality")) return "revise_draft";
+  if (failed.some(([key]) => key === "content_quality")) return qualityRepairStage(parseJson(row.quality_report_json, {}).issues || []);
+  if (failed.some(([key]) => key === "delivery_quality")) return qualityRepairStage(parseJson(row.quality_report_json, {}).delivery_quality?.issues || []);
   if (failed.some(([key]) => key === "seo_technical" || key === "geo_content_consistency")) return "compose_frontend_page";
   if (row.wordpress_status === "failed") return "push_wordpress_draft";
   if (!row.commercial_status && row.qa_passed === 1) return "compose_commercial";
@@ -150,7 +163,7 @@ function actionFor(row, stage, failed, pipelineBlocker = null) {
 
 function additionalCalls(stage) {
   if (!stage) return { status: "none_expected", stages: [] };
-  const modelStages = new Set(["plan_content", "generate_draft", "revise_draft", "compose_frontend_page"]);
+  const modelStages = new Set(["plan_content", "generate_draft", "revise_draft", "compose_frontend_page", "review_draft"]);
   return { status: modelStages.has(stage) ? "bounded_to_named_stage" : "no_model_call_expected", stages: [stage] };
 }
 

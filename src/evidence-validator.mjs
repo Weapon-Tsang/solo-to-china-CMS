@@ -101,15 +101,17 @@ function factAnchors(fact) {
 
 export function protectedFactTokens(fact) {
   const text = [fact.preferred_value, ...(fact.evidence || []).flatMap((item) => item.qualifiers || [])].join(" ");
-  const numbers = text.match(/(?<![\p{L}\p{N}])(?:¥|￥|CNY\s*)?\d+(?:[.,:]\d+)?(?:\s*(?:元|rmb|cny|%|am|pm|hours?|minutes?|days?))?/giu) || [];
+  const numbers = text.match(/(?<![\p{L}\p{N}])(?:¥|￥|CNY\s*)?\d+(?:[.,:]\d+)?(?:[A-Z](?![\p{L}\p{N}]))?(?:\s*(?:元|%|(?:rmb|cny|am|pm|hours?|minutes?|days?)(?![\p{L}\p{N}])))?/giu) || [];
   const conditions = text.match(/\b(?:only|except|unless|not|no|never|weekday(?:s)?|weekend(?:s)?|student(?:s)?|child(?:ren)?|adult(?:s)?|senior(?:s)?|foreign visitors?|international visitors?|mainland chinese|chinese citizens?|residents?|before|after|until|from)\b/giu) || [];
   const urls = text.match(/https?:\/\/[^\s)]+/giu) || [];
   return [...new Set([...numbers, ...conditions, ...urls].map((item) => item.trim()))];
 }
 
-function isDynamicFact(fact) {
-  return fact.freshness_state === "time_sensitive" || /RECENCY|LATEST|price|cost|hours?|schedule|booking|reservation|policy|route|metro|train|bus/i
-    .test(`${fact.consensus_method || ""} ${fact.normalized_key || ""} ${fact.predicate || ""}`);
+export function isDynamicFact(fact) {
+  // SINGLE_SOURCE_LATEST describes source selection, not the volatility of the claim.
+  return ["time_sensitive", "stale"].includes(fact.freshness_state)
+    || /(?:^|[._\s-])(?:price|prices|cost|fee|fare|hours|schedule|booking|reservation|policy|minimum_spend|opening_hours|ticket_price|admission_fee)(?:$|[._\s-])/i
+      .test(`${fact.normalized_key || ""} ${fact.predicate || ""}`);
 }
 
 function dateVisible(text, iso) {

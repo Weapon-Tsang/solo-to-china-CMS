@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { qualityRepairStage } from "./services/content-recovery-policy.mjs";
+import { validatePlannedEvidence } from "./services/editorial-proposal.mjs";
 import { composePageFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
 import { validatePlanningDestination } from "./destination-consistency.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
@@ -535,6 +537,8 @@ export class Pipeline {
             });
           }
           const planned = await guarded((signal) => this.contentEngine.plan(contentPackage, { signal, telemetryContext }));
+          const plannedEvidence = validatePlannedEvidence(planned.output, contentPackage);
+          if (!plannedEvidence.valid) throw Object.assign(new Error(`PLAN_EVIDENCE_INVALID: ${plannedEvidence.errors.map(item=>`${item.section || ''} ${item.key || ''}: ${item.message}`).join('; ')}`), {retryable:false, code:'PLAN_EVIDENCE_INVALID', details:plannedEvidence});
           const contractAware = this.canComposeFrontendPage;
           const briefId = this.repository.saveBrief(job.entity_id, planned.output, planned.model, { deferDraft: contractAware });
           if (contractAware) this.repository.enqueue("compose_frontend_page_plan", briefId);
@@ -604,7 +608,7 @@ export class Pipeline {
           const savedPage = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
             { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash }, composed.provenance);
           if (!savedPage.validation.valid) throw new Error(`Frontend page payload is invalid: ${savedPage.validation.errors.map((item) => item.code).join(", ")}`);
-          this.repository.enqueue("review_draft", job.entity_id);
+          if (!job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("review_draft", job.entity_id);
           break;
         }
         case "review_draft": {
@@ -613,9 +617,11 @@ export class Pipeline {
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           const reviewed = await guarded((signal) => this.contentEngine.review(contentPackage, { signal, telemetryContext }));
           const revision = this.repository.saveReview(job.entity_id, reviewed.output, reviewed.model,
-            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash });
-          if (reviewed.output.passed) this.repository.enqueue("compose_commercial", job.entity_id);
-          if (!reviewed.output.passed && revision < 2) this.repository.enqueue("revise_draft", job.entity_id);
+            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash, evidenceHash:contentPackage.evidence_hash });
+          if (reviewed.output.passed && !job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("compose_commercial", job.entity_id);
+          if (!reviewed.output.passed && revision < 2 && !job.dedupe_key?.startsWith("manual-stage:") && qualityRepairStage(reviewed.output.issues) === "revise_draft") {
+            this.repository.enqueue("revise_draft", job.entity_id);
+          }
           break;
         }
         case "revise_draft": {
@@ -624,9 +630,11 @@ export class Pipeline {
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           const drafted = await guarded((signal) => this.contentEngine.repairDraft(contentPackage, contentPackage.review?.issues || [], { signal, telemetryContext }));
           const contractAware = this.canComposeFrontendPage;
-          const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model, { deferReview: contractAware });
-          if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
-          else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);
+          const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model, { deferReview: contractAware || job.dedupe_key?.startsWith("manual-stage:") });
+          if (!job.dedupe_key?.startsWith("manual-stage:")) {
+            if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
+            else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);
+          }
           break;
         }
         case "compose_commercial": {
@@ -802,7 +810,10 @@ export class Pipeline {
     if (!this.wordpress?.enabled || typeof this.wordpress.resolveVisualMedia !== "function") return [];
     const deliveryVisuals = this.repository.listDraftVisualsForDelivery?.(contentPackage.draft?.id)
       || contentPackage.draft?.visuals || [];
-    const uploaded = await this.wordpress.resolveVisualMedia(deliveryVisuals, null, options);
+    const uploaded = await this.wordpress.resolveVisualMedia(deliveryVisuals, (visual) => {
+      options.assertLease?.();
+      this.repository.saveWordPressVisual(visual.visualId, visual);
+    }, options);
     options.assertLease?.();
     for (const visual of uploaded) this.repository.saveWordPressVisual(visual.visualId, visual);
     return uploaded;
