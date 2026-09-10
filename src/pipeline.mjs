@@ -33,6 +33,7 @@ export class Pipeline {
     this.heartbeatIntervalMs = heartbeatIntervalMs == null ? null : Math.max(1, Number(heartbeatIntervalMs));
     this.recoveryIntervalMs = Math.max(1_000, Number(recoveryIntervalMs || 60_000));
     this.nextRecoveryAt = 0;
+    this.activeAbortControllers = new Set();
   }
 
   start() {
@@ -50,6 +51,11 @@ export class Pipeline {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    for (const controller of this.activeAbortControllers) {
+      if (!controller.signal.aborted) controller.abort(Object.assign(new Error("PIPELINE_SHUTDOWN"), { code: "JOB_LEASE_LOST" }));
+    }
+    const released = this.repository.releaseOwnedJobs?.() || 0;
+    if (released) this.logger.warn("pipeline.owned_jobs_released", { count: released });
   }
 
   pump() {
@@ -278,6 +284,7 @@ export class Pipeline {
       if (!job) return false;
       startedAt = Date.now();
       abortController = new AbortController();
+      this.activeAbortControllers.add(abortController);
       assertLease = () => {
         if (abortController.signal.aborted || (typeof this.repository.ownsJob === "function"
           && !this.repository.ownsJob(job.id, job.locked_by, job.lease_generation))) {
@@ -768,18 +775,23 @@ export class Pipeline {
       return true;
     } catch (error) {
       if (job) {
-        this.repository.failPipelineArtifact?.(pipelineArtifact, error);
-        this.recordExtractionOutcome(job, { ok: false, error });
-        this.repository.failJob(job, error);
-        this.logger.error("pipeline.job_failed", {
-          jobId: job.id, jobType: job.type, entityId: job.entity_id, attempt: job.attempts,
-          durationMs: startedAt ? Date.now() - startedAt : null, error,
-        });
+        if (isJobLeaseLost(error)) {
+          this.logger.warn("pipeline.job_lease_lost", { jobId: job.id, jobType: job.type, entityId: job.entity_id });
+        } else {
+          this.repository.failPipelineArtifact?.(pipelineArtifact, error);
+          this.recordExtractionOutcome(job, { ok: false, error });
+          this.repository.failJob(job, error);
+          this.logger.error("pipeline.job_failed", {
+            jobId: job.id, jobType: job.type, entityId: job.entity_id, attempt: job.attempts,
+            durationMs: startedAt ? Date.now() - startedAt : null, error,
+          });
+        }
       } else this.logger.error("pipeline.unhandled_error", { error });
       return false;
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (abortController && !abortController.signal.aborted) abortController.abort();
+      if (abortController) this.activeAbortControllers.delete(abortController);
       this.working -= 1;
     }
   }

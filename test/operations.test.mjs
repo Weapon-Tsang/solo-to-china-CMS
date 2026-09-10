@@ -181,6 +181,22 @@ test("repository construction cannot steal a live job and only an expired lease 
   }
 });
 
+test("a worker can release only its own running jobs during graceful shutdown", (t) => {
+  const { db } = repositoryFixture(t);
+  const owner = new Repository(db, { workerId: "worker-owner" });
+  const peer = new Repository(db, { workerId: "worker-peer" });
+  const ownerJob = owner.enqueue("rebuild_editorial", "owned");
+  owner.claimJob();
+  const peerJob = peer.enqueue("rebuild_editorial", "peer");
+  peer.claimJob();
+
+  assert.equal(owner.releaseOwnedJobs(), 1);
+  assert.deepEqual({ ...db.prepare("SELECT status,locked_by FROM jobs WHERE id=?").get(ownerJob) },
+    { status: "queued", locked_by: null });
+  assert.deepEqual({ ...db.prepare("SELECT status,locked_by FROM jobs WHERE id=?").get(peerJob) },
+    { status: "running", locked_by: "worker-peer" });
+});
+
 test("pipeline periodically recovers leases that expire after process startup", async (t) => {
   const calls = { jobs: 0, batches: 0, claims: 0 };
   const repository = {
@@ -203,6 +219,18 @@ test("pipeline periodically recovers leases that expire after process startup", 
   assert.equal(calls.jobs, 2);
   assert.equal(calls.batches, 2);
   assert.ok(calls.claims >= 1);
+});
+
+test("pipeline shutdown aborts active work and releases the current worker leases", () => {
+  let released = 0;
+  const repository = { releaseOwnedJobs() { released += 1; return 2; } };
+  const pipeline = new Pipeline(repository, { batchEnabled: false });
+  const controller = new AbortController();
+  pipeline.activeAbortControllers.add(controller);
+
+  pipeline.stop();
+  assert.equal(controller.signal.aborted, true);
+  assert.equal(released, 1);
 });
 
 test("a stale lease generation cannot complete, fail, or mutate the reclaimed entity", () => {

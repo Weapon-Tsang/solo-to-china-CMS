@@ -173,7 +173,12 @@ if docker inspect engine >/dev/null 2>&1; then
     /var/lib/solo-to-china/solo-to-china.sqlite \
     /var/lib/solo-to-china/backups >/dev/null
 fi
-docker rm --force engine cloudflared >/dev/null 2>&1 || true
+for container_name in engine cloudflared; do
+  if docker inspect "$container_name" >/dev/null 2>&1; then
+    docker stop --time 30 "$container_name" >/dev/null
+  fi
+done
+docker rm engine cloudflared >/dev/null 2>&1 || true
 docker run --detach --name engine --restart unless-stopped \
   --network solo-to-china \
   --env-file "${APP_DIR}/.env.production" \

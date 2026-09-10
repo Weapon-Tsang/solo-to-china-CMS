@@ -160,6 +160,15 @@ export class Repository {
     `).run(timestamp, timestamp, timestamp, timestamp).changes;
   }
 
+  releaseOwnedJobs() {
+    const timestamp = this.jobTimestamp();
+    return this.db.prepare(`
+      UPDATE jobs SET status='queued', locked_at=NULL, locked_by=NULL, lease_expires_at=NULL,
+        heartbeat_at=NULL, available_at=?, next_eligible_at=?, updated_at=?
+      WHERE status='running' AND locked_by=?
+    `).run(timestamp, timestamp, timestamp, this.workerId).changes;
+  }
+
   get strategyVersion() {
     return this.contentConfig.contentStrategy?.version || CONTENT_STRATEGY.version;
   }
