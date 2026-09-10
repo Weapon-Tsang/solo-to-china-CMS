@@ -30,6 +30,9 @@
 - Persist WordPress media URL, intrinsic dimensions, MIME, bytes, SHA-256 and responsive derivatives; deduplicate the same source asset, enforce evidence/alt/public-URL rules, and render one high-priority first image with lazy later images in the Legacy path.
 - Validate fixed published/draft HTML fixtures across visible body, one-H1, SEO, schema, link/media, sitemap, robots and device-equivalence dimensions while keeping production HTML, indexing, ranking, CWV and AI citation conclusions explicitly separate.
 - Add a first-time-guide Content AST compatibility path with stable semantic/evidence/media references and deterministic Registry mapping, preserving Markdown, visible facts, FAQ and schema while retaining the existing fallback for unsupported types.
+- Add cursor-safe operations workspaces with real total counts, four independent draft readiness dimensions, explicit untested states and failed-stage-only retry guidance.
+- Version Commercial overlays and event attribution by article revision, asset and source; reject money on clicks and keep unconfirmed bookings/commission unknown rather than zero.
+- Begin the tested in-process Repository/UI split with machine-checked service boundaries, extracted Commercial event persistence and an isolated content-quality workspace, retaining the API and SQLite facade.
 
 ## 1.17.11 - 2026-09-09
 

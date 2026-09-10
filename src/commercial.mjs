@@ -186,6 +186,13 @@ export function resolveAffiliateAsset(intent, assets, clock = new Date()) {
 
 export function normalizeCommercialEvent(input, strategyVersion) {
   const eventType = enumValue(input?.eventType || input?.event_type, new Set(["impression", "click", "booking", "commission"]), "eventType", false);
+  const rawAmount = input?.valueAmount ?? input?.value_amount;
+  if (rawAmount != null && eventType !== "commission") throw new CommercialValidationError("Only a commission event may carry valueAmount; clicks and bookings are not revenue.");
+  if (rawAmount != null && (!Number.isFinite(Number(rawAmount)) || Number(rawAmount) < 0)) throw new CommercialValidationError("Commission valueAmount must be a non-negative number or null.");
+  const rawRevision = input?.articleRevision ?? input?.article_revision;
+  const articleRevision = rawRevision == null || rawRevision === "" ? null : Number.parseInt(rawRevision, 10);
+  if (articleRevision != null && (!Number.isInteger(articleRevision) || articleRevision < 1)) throw new CommercialValidationError("articleRevision must be a positive integer or omitted as unknown.");
+  const conversionDataStatus = enumValue(input?.conversionDataStatus || input?.conversion_data_status || "unknown", new Set(["unknown", "confirmed"]), "conversionDataStatus", false);
   return {
     id: id("commercial_event"), eventType, articleId: singleLine(truncate(input.articleId || input.article_id, 300)) || null,
     draftId: singleLine(truncate(input.draftId || input.draft_id, 300)) || null, offerId: singleLine(truncate(input.offerId || input.offer_id, 300)) || null,
@@ -195,7 +202,9 @@ export function normalizeCommercialEvent(input, strategyVersion) {
     placement: singleLine(truncate(input.placement, 100)), entityKey: singleLine(truncate(input.entity || input.entityKey || input.entity_key, 300)),
     routeKey: singleLine(truncate(input.route || input.routeKey || input.route_key, 300)), destinationSlug: slugify(input.destination || input.destinationSlug || input.destination_slug || ""),
     device: singleLine(truncate(input.device, 100)), locale: singleLine(truncate(input.locale, 30)), strategyVersion,
-    valueAmount: Number.isFinite(Number(input.valueAmount || input.value_amount)) ? Number(input.valueAmount || input.value_amount) : null,
+    articleRevision, overlayVersion: singleLine(truncate(input.overlayVersion || input.overlay_version, 300)) || null,
+    eventSource: singleLine(truncate(input.eventSource || input.event_source, 300)) || "unknown",
+    conversionDataStatus, valueAmount: rawAmount == null ? null : Number(rawAmount),
     occurredAt: safeDate(input.timestamp || input.occurredAt || input.occurred_at) || now(),
   };
 }

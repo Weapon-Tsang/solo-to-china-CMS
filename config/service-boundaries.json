@@ -1,0 +1,23 @@
+{
+  "version": "service-boundaries-1",
+  "compatibilityFacade": "src/repository.mjs",
+  "boundaries": {
+    "source_evidence": ["src/adapters", "src/capture-upload.mjs", "src/source-preflight.mjs", "src/evidence-validator.mjs", "src/evidence-consensus.mjs"],
+    "knowledge": ["src/claim-resolution.mjs", "src/entity-resolution.mjs"],
+    "editorial": ["src/editorial-assignments.mjs", "src/services/operations-workspace.mjs"],
+    "job_batch": ["src/job-policy.mjs", "src/ai/stage-policy.mjs"],
+    "publishing": ["src/publish-page.mjs", "src/wordpress.mjs", "src/seo-geo.mjs", "src/media-delivery.mjs", "src/final-html-validator.mjs"],
+    "commercial": ["src/commercial.mjs", "src/affiliate-queue.mjs", "src/repositories/commercial-events.mjs"],
+    "statistics": ["src/release-check.mjs"]
+  },
+  "dependencyRules": [
+    {
+      "from": "source_evidence",
+      "forbidImportFragments": ["/commercial.mjs", "/affiliate-queue.mjs", "/repositories/commercial-events.mjs"]
+    },
+    {
+      "from": "knowledge",
+      "forbidImportFragments": ["/commercial.mjs", "/affiliate-queue.mjs", "/repositories/commercial-events.mjs"]
+    }
+  ]
+}

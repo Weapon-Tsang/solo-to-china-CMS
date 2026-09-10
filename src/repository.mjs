@@ -25,6 +25,8 @@ import {
   EDITORIAL_ASSIGNMENT_TYPES, evaluateEditorialAssignment, normalizeEditorialAssignmentInput,
   selectFactsForAssignment,
 } from "./editorial-assignments.mjs";
+import { buildContentTaskCard, normalizeWorkspaceQuery, paginateWorkspace } from "./services/operations-workspace.mjs";
+import { insertCommercialEvent, listCommercialPerformance } from "./repositories/commercial-events.mjs";
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
 
@@ -1653,13 +1655,24 @@ export class Repository {
     return rows.map(hydrateEditorialAssignment);
   }
 
-  listEditorialAssignmentWorkspace(limit = 100) {
-    const assignments = this.listEditorialAssignments(limit);
-    const manualOpportunityIds = new Set(assignments.map((item) => item.opportunity_id).filter(Boolean));
-    const systemTopics = this.listContentOpportunities(limit)
+  listEditorialAssignmentWorkspace(input = 100) {
+    const query = normalizeWorkspaceQuery(input);
+    const allAssignments = this.listEditorialAssignments(500_000);
+    const assignmentPage = paginateWorkspace(allAssignments, query, {
+      searchable: (item) => `${item.id} ${item.title} ${item.brief} ${item.destination_slug} ${(item.target_entities || []).join(" ")}`,
+      statusOf: (item) => item.status,
+    });
+    const assignments = assignmentPage.items;
+    const manualOpportunityIds = new Set(allAssignments.map((item) => item.opportunity_id).filter(Boolean));
+    const allSystemTopics = this.listContentOpportunities(500_000)
       .filter((item) => !manualOpportunityIds.has(item.id) && !item.coverage?.manualAssignmentId
         && item.suppression_reason !== "operator_removed_from_topic_list"
         && !["ignored", "knowledge_only", "suppressed"].includes(item.status));
+    const systemPage = paginateWorkspace(allSystemTopics, query, {
+      searchable: (item) => `${item.id} ${item.title} ${item.destination_slug} ${item.content_type}`,
+      statusOf: (item) => item.status,
+    });
+    const systemTopics = systemPage.items;
     const destinations = this.db.prepare(`
       SELECT d.slug,d.name,COUNT(CASE WHEN k.visibility_status='visible' THEN k.id END) AS fact_count,
         COUNT(DISTINCT CASE WHEN k.visibility_status='visible' THEN k.canonical_subject END) AS entity_count
@@ -1676,12 +1689,14 @@ export class Repository {
         minimumEntities: profile.minimumEntities,
       })),
       summary: {
-        manual: assignments.length,
-        ready: assignments.filter((item) => item.status === "ready").length,
-        needsSources: assignments.filter((item) => item.status === "needs_sources").length,
-        queued: assignments.filter((item) => item.status === "queued").length,
-        system: systemTopics.length,
+        manual: allAssignments.length,
+        ready: allAssignments.filter((item) => item.status === "ready").length,
+        needsSources: allAssignments.filter((item) => item.status === "needs_sources").length,
+        queued: allAssignments.filter((item) => item.status === "queued").length,
+        system: allSystemTopics.length,
       },
+      totalCount: { assignments: assignmentPage.totalCount, systemTopics: systemPage.totalCount },
+      pagination: { assignments: { nextCursor: assignmentPage.nextCursor }, systemTopics: { nextCursor: systemPage.nextCursor }, query: assignmentPage.query },
     };
   }
 
@@ -3283,6 +3298,7 @@ export class Repository {
     }
     this.invalidateDraftDependents(draftId, timestamp);
     this.replaceDraftVisuals(draftId, metadata.visuals, brief.strategy_version || this.strategyVersion);
+    this.recordDraftRevision(draftId, model || "unknown");
     this.db.prepare("UPDATE topic_candidates SET status='drafted', updated_at=? WHERE id=?").run(timestamp, brief.candidate_id);
     this.db.prepare("UPDATE content_briefs SET status='drafted', updated_at=? WHERE id=?").run(timestamp, briefId);
     this.db.prepare("UPDATE content_opportunities SET status='drafted',updated_at=? WHERE candidate_id=?").run(timestamp, brief.candidate_id);
@@ -3308,6 +3324,100 @@ export class Repository {
     return this.getDraftPackage(savedId).draft;
   }
 
+  recordDraftRevision(draftId, changedBy = "unknown") {
+    const draft = this.db.prepare(`SELECT id,revision,content_hash,title,slug,body_markdown,meta_description,
+      evidence_ledger_json,unresolved_conflicts_json,verification_notes_json,seo_json,schema_jsonld,
+      content_blocks_json,content_ast_json,strategy_version,model,updated_at FROM article_drafts WHERE id=?`).get(draftId);
+    if (!draft) return null;
+    const snapshot = { ...draft };
+    this.db.prepare(`INSERT OR IGNORE INTO draft_revisions(id,draft_id,revision,content_hash,snapshot_json,changed_by,created_at)
+      VALUES (?,?,?,?,?,?,?)`).run(`draft_revision_${sha256(`${draftId}:${draft.revision}:${draft.content_hash}`).slice(0, 24)}`,
+      draftId, draft.revision, draft.content_hash, JSON.stringify(snapshot), String(changedBy).slice(0, 200), draft.updated_at || now());
+    return { draftId, revision: draft.revision, contentHash: draft.content_hash };
+  }
+
+  listDraftRevisions(draftId) {
+    return this.db.prepare(`SELECT id,draft_id,revision,content_hash,changed_by,created_at
+      FROM draft_revisions WHERE draft_id=? ORDER BY revision DESC`).all(draftId);
+  }
+
+  compareDraftRevisions(draftId, fromRevision, toRevision) {
+    const rows = this.db.prepare(`SELECT revision,content_hash,snapshot_json,changed_by,created_at
+      FROM draft_revisions WHERE draft_id=? AND revision IN (?,?) ORDER BY revision`).all(draftId, fromRevision, toRevision);
+    if (rows.length !== 2) return null;
+    const [from, to] = rows.map((row) => ({ ...row, snapshot: json(row.snapshot_json, {}) }));
+    const fields = ["title", "slug", "body_markdown", "meta_description", "evidence_ledger_json", "seo_json", "schema_jsonld", "content_ast_json"];
+    return {
+      draftId, from: { revision: from.revision, contentHash: from.content_hash, changedBy: from.changed_by, createdAt: from.created_at },
+      to: { revision: to.revision, contentHash: to.content_hash, changedBy: to.changed_by, createdAt: to.created_at },
+      changedFields: fields.filter((field) => String(from.snapshot[field] ?? "") !== String(to.snapshot[field] ?? "")),
+      snapshots: { from: from.snapshot, to: to.snapshot },
+    };
+  }
+
+  previewContentAction(candidateId, action, actor = "administrator") {
+    if (!["continue", "retry_failed_stage", "cancel"].includes(action)) throw new Error("Unsupported content action preview.");
+    const item = this.listContent().find((row) => row.id === candidateId);
+    if (!item) return null;
+    const queuedJobs = this.db.prepare("SELECT id,type,status FROM jobs WHERE entity_id IN (?,?,?) AND status IN ('queued','running') ORDER BY created_at")
+      .all(candidateId, item.brief_id || "", item.draft_id || "");
+    const preview = {
+      candidateId, action, currentStatus: item.draft_status || item.brief_status || item.status,
+      affectedJobs: queuedJobs, preserves: ["sources", "claims", "knowledge", "draft_revisions", "commercial_events"],
+      nextStage: action === "cancel" ? null : item.operation?.retry?.stage || this.retryContentStage(candidateId),
+      additionalCalls: action === "cancel" ? { status: "none_expected", stages: [] }
+        : item.operation?.estimatedAdditionalCalls || { status: "bounded_to_named_stage", stages: [] },
+    };
+    const previewId = id("content_action_preview");
+    this.db.prepare(`INSERT INTO content_operation_history(id,candidate_id,action,status,preview_json,result_json,actor,created_at)
+      VALUES (?,?,?,'previewed',?,'{}',?,?)`).run(previewId, candidateId, action, JSON.stringify(preview), String(actor).slice(0, 200), now());
+    return { id: previewId, ...preview };
+  }
+
+  retryContentStage(candidateId) {
+    const row = this.db.prepare(`SELECT cb.id AS brief_id,ad.id AS draft_id,qr.passed AS qa_passed,
+      cc.status AS commercial_status,pc.status AS publish_composition_status,wp.status AS wordpress_status
+      FROM topic_candidates tc LEFT JOIN content_briefs cb ON cb.candidate_id=tc.id
+      LEFT JOIN article_drafts ad ON ad.brief_id=cb.id
+      LEFT JOIN quality_reviews qr ON qr.id=(SELECT id FROM quality_reviews WHERE draft_id=ad.id ORDER BY created_at DESC LIMIT 1)
+      LEFT JOIN commercial_compositions cc ON cc.draft_id=ad.id LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=ad.id
+      LEFT JOIN wordpress_publications wp ON wp.draft_id=ad.id WHERE tc.id=?`).get(candidateId);
+    if (!row?.brief_id) return "plan_content";
+    if (!row.draft_id) return "generate_draft";
+    if (!row.qa_passed) return "revise_draft";
+    if (!row.commercial_status) return "compose_commercial";
+    if (!row.publish_composition_status) return "compose_publish_page";
+    if (row.wordpress_status === "failed") return "push_wordpress_draft";
+    return null;
+  }
+
+  cancelContent(candidateId, previewId, actor = "administrator") {
+    const history = this.db.prepare(`SELECT * FROM content_operation_history
+      WHERE id=? AND candidate_id=? AND action='cancel' AND status='previewed'`).get(previewId, candidateId);
+    if (!history) throw conflictError("A current cancel preview is required.");
+    const timestamp = now();
+    const result = transaction(this.db, () => {
+      const item = this.db.prepare("SELECT id,status FROM topic_candidates WHERE id=?").get(candidateId);
+      if (!item) return null;
+      const related = this.db.prepare(`SELECT cb.id AS brief_id,ad.id AS draft_id FROM content_briefs cb
+        LEFT JOIN article_drafts ad ON ad.brief_id=cb.id WHERE cb.candidate_id=?`).get(candidateId) || {};
+      const cancelledJobs = this.db.prepare(`DELETE FROM jobs WHERE status='queued' AND entity_id IN (?,?,?)`)
+        .run(candidateId, related.brief_id || "", related.draft_id || "").changes;
+      this.db.prepare("UPDATE topic_candidates SET status='dismissed',suppression_reason='operator_cancelled',updated_at=? WHERE id=?").run(timestamp, candidateId);
+      this.db.prepare("UPDATE content_opportunities SET status='suppressed',suppression_reason='operator_cancelled',updated_at=? WHERE candidate_id=?").run(timestamp, candidateId);
+      return { candidateId, status: "cancelled", cancelledJobs, preservedDraftId: related.draft_id || null };
+    });
+    this.db.prepare("UPDATE content_operation_history SET status=?,result_json=?,actor=? WHERE id=?")
+      .run(result ? "completed" : "rejected", JSON.stringify(result || {}), String(actor).slice(0, 200), previewId);
+    return result;
+  }
+
+  listContentOperationHistory(candidateId) {
+    return this.db.prepare(`SELECT id,candidate_id,action,status,preview_json,result_json,actor,created_at
+      FROM content_operation_history WHERE candidate_id=? ORDER BY created_at DESC`).all(candidateId)
+      .map((row) => ({ ...row, preview: json(row.preview_json, {}), result: json(row.result_json, {}) }));
+  }
+
   getDraftPackage(draftId) {
     const draft = this.db.prepare("SELECT * FROM article_drafts WHERE id = ?").get(draftId);
     if (!draft) return null;
@@ -3319,8 +3429,10 @@ export class Repository {
     const publication = this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id = ?").get(draftId) || null;
     const compositionRow = this.db.prepare(`SELECT * FROM commercial_compositions
       WHERE draft_id=? AND draft_revision=? AND draft_content_hash=?`).get(draftId, draft.revision, draft.content_hash) || null;
+    const operation = this.listContent().find((item) => item.draft_id === draftId)?.operation || null;
     return {
       ...briefPackage,
+      operation,
       draft: {
         ...draft,
         evidence_ledger: json(draft.evidence_ledger_json, []),
@@ -3518,7 +3630,7 @@ export class Repository {
   }
 
   listContent() {
-    return this.db.prepare(`
+    const rows = this.db.prepare(`
       SELECT tc.*, cb.id AS brief_id, cb.status AS brief_status, ad.id AS draft_id, ad.status AS draft_status,
         ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score,
         wp.post_id AS wordpress_post_id, wp.post_url AS wordpress_post_url, wp.status AS wordpress_status,
@@ -3535,6 +3647,27 @@ export class Repository {
       LEFT JOIN frontend_publish_compositions pc ON pc.draft_id = ad.id
       ORDER BY tc.coverage_score DESC, tc.updated_at DESC
     `).all();
+    const draftIds = rows.map((row) => row.draft_id).filter(Boolean);
+    if (!draftIds.length) return rows;
+    const placeholders = draftIds.map(() => "?").join(",");
+    const operationRows = this.db.prepare(`SELECT ad.id AS draft_id, tc.id, cb.id AS brief_id,
+      ad.quality_report_json, ad.seo_json, ad.schema_jsonld, ad.content_ast_json,
+      ad.strategy_version AS draft_strategy_version, qr.passed AS qa_passed, qr.score AS qa_score,
+      wp.status AS wordpress_status, cc.status AS commercial_status, pc.status AS publish_composition_status,
+      COALESCE(metrics.model_call_count, 0) AS model_call_count,
+      COALESCE(metrics.unknown_cost_count, 0) AS unknown_cost_count, metrics.known_cost_usd
+      FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id JOIN topic_candidates tc ON tc.id=cb.candidate_id
+      LEFT JOIN quality_reviews qr ON qr.id=(SELECT id FROM quality_reviews WHERE draft_id=ad.id ORDER BY created_at DESC LIMIT 1)
+      LEFT JOIN wordpress_publications wp ON wp.draft_id=ad.id
+      LEFT JOIN commercial_compositions cc ON cc.draft_id=ad.id
+      LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=ad.id
+      LEFT JOIN (SELECT entity_id, COUNT(*) AS model_call_count,
+        SUM(CASE WHEN cost_status='known' AND cost_usd IS NOT NULL THEN 0 ELSE 1 END) AS unknown_cost_count,
+        SUM(CASE WHEN cost_status='known' THEN cost_usd ELSE 0 END) AS known_cost_usd
+        FROM model_call_metrics WHERE entity_id IN (${placeholders}) GROUP BY entity_id) metrics ON metrics.entity_id=ad.id
+      WHERE ad.id IN (${placeholders})`).all(...draftIds, ...draftIds);
+    const operations = new Map(operationRows.map((row) => [row.draft_id, buildContentTaskCard(row)]));
+    return rows.map((row) => row.draft_id ? { ...row, operation: operations.get(row.draft_id) || null } : row);
   }
 
   upsertAffiliateProviderAccount(account) {
@@ -3811,26 +3944,29 @@ export class Repository {
   }
 
   recordCommercialEvent(event) {
-    this.db.prepare(`INSERT INTO commercial_events(id, event_type, article_id, draft_id, offer_id,
-      affiliate_asset_id, provider, category, slot_key, component_variant, placement, entity_key, route_key,
-      destination_slug, device, locale, strategy_version, value_amount, occurred_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(event.id, event.eventType, event.articleId, event.draftId, event.offerId, event.affiliateAssetId,
-        event.provider, event.category, event.slotKey, event.componentVariant, event.placement, event.entityKey,
-        event.routeKey, event.destinationSlug, event.device, event.locale, event.strategyVersion,
-        event.valueAmount, event.occurredAt, now());
-    return { id: event.id, eventType: event.eventType, occurredAt: event.occurredAt };
+    let attributionStatus = "unknown";
+    if (event.draftId) {
+      const state = this.db.prepare(`SELECT ad.revision, cc.overlay_version,
+        EXISTS(SELECT 1 FROM commercial_slots cs WHERE cs.draft_id=ad.id AND cs.affiliate_asset_id=?) AS asset_matches
+        FROM article_drafts ad LEFT JOIN commercial_compositions cc ON cc.draft_id=ad.id WHERE ad.id=?`)
+        .get(event.affiliateAssetId, event.draftId);
+      if (!state) throw conflictError("Commercial event draft does not exist.");
+      if (event.articleRevision != null && event.articleRevision !== state.revision) throw conflictError("Commercial event articleRevision does not match the current draft revision.");
+      if (event.overlayVersion && event.overlayVersion !== state.overlay_version) throw conflictError("Commercial event overlayVersion does not match the current commercial overlay.");
+      if (event.affiliateAssetId && !state.asset_matches) throw conflictError("Commercial event affiliateAssetId is not present in this draft overlay.");
+      attributionStatus = event.articleRevision != null && event.overlayVersion && event.affiliateAssetId && event.eventSource !== "unknown"
+        ? "traceable" : "unknown";
+    }
+    insertCommercialEvent(this.db, event, now());
+    return { id: event.id, eventType: event.eventType, occurredAt: event.occurredAt,
+      articleRevision: event.articleRevision, overlayVersion: event.overlayVersion,
+      affiliateAssetId: event.affiliateAssetId, eventSource: event.eventSource,
+      conversionDataStatus: event.conversionDataStatus, attributionStatus,
+      valueAmount: event.eventType === "commission" ? event.valueAmount : null };
   }
 
   commercialPerformance() {
-    const rows = this.db.prepare(`SELECT provider, category, slot_key, component_variant, destination_slug,
-      SUM(event_type='impression') AS impressions, SUM(event_type='click') AS clicks,
-      SUM(event_type='booking') AS bookings, SUM(CASE WHEN event_type='commission' THEN COALESCE(value_amount,0) ELSE 0 END) AS commission
-      FROM commercial_events GROUP BY provider, category, slot_key, component_variant, destination_slug
-      ORDER BY commission DESC, clicks DESC`).all();
-    return rows.map((row) => ({ ...row, ctr: row.impressions ? row.clicks / row.impressions : 0,
-      conversion_rate: row.clicks ? row.bookings / row.clicks : 0, epc: row.clicks ? row.commission / row.clicks : 0,
-      rpm: row.impressions ? row.commission * 1_000 / row.impressions : 0 }));
+    return listCommercialPerformance(this.db);
   }
 
   upsertCommissionRule(rule) {
@@ -3899,6 +4035,7 @@ export class Repository {
     const compositionId = `composition_${sha256(draftId).slice(0, 24)}`;
     const draft = this.db.prepare("SELECT revision, content_hash FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) throw new Error(`Article draft ${draftId} not found.`);
+    const overlayVersion = `overlay_${sha256(`${draftId}:${draft.revision}:${draft.content_hash}:${this.strategyVersion}`).slice(0, 24)}`;
     transaction(this.db, () => {
       this.db.prepare("DELETE FROM commercial_slots WHERE draft_id=?").run(draftId);
       this.db.prepare("DELETE FROM affiliate_opportunities WHERE draft_id=?").run(draftId);
@@ -3926,18 +4063,18 @@ export class Repository {
           opportunity.scopeType, opportunity.scopeKey, opportunity.score, JSON.stringify(opportunity.factors), opportunity.reason, timestamp, timestamp);
       this.db.prepare(`INSERT INTO commercial_compositions(id, draft_id, publishable_body_markdown, slots_json, offer_ids_json,
         disclosure_text, status, created_at, updated_at, asset_ids_json, commercial_blocks_json,
-        content_blocks_json, strategy_version, draft_revision, draft_content_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        content_blocks_json, strategy_version, draft_revision, draft_content_hash, overlay_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(draft_id) DO UPDATE SET publishable_body_markdown=excluded.publishable_body_markdown,
           slots_json=excluded.slots_json, offer_ids_json=excluded.offer_ids_json, disclosure_text=excluded.disclosure_text,
           status=excluded.status, updated_at=excluded.updated_at, asset_ids_json=excluded.asset_ids_json,
           commercial_blocks_json=excluded.commercial_blocks_json, content_blocks_json=excluded.content_blocks_json,
           strategy_version=excluded.strategy_version, draft_revision=excluded.draft_revision,
-          draft_content_hash=excluded.draft_content_hash`)
+          draft_content_hash=excluded.draft_content_hash, overlay_version=excluded.overlay_version`)
         .run(compositionId, draftId, composition.publishableBodyMarkdown, JSON.stringify(composition.slots),
           JSON.stringify(composition.offerIds), composition.disclosureText, composition.status, timestamp, timestamp,
           JSON.stringify(composition.assetIds || []), JSON.stringify(composition.commercialBlocks || []),
-          JSON.stringify(composition.contentBlocks || []), this.strategyVersion, draft.revision, draft.content_hash);
+          JSON.stringify(composition.contentBlocks || []), this.strategyVersion, draft.revision, draft.content_hash, overlayVersion);
       this.db.prepare("UPDATE article_drafts SET status='commercial_ready', updated_at=? WHERE id=?").run(timestamp, draftId);
     });
     this.enqueueAffiliateQueueFromComposition(composition);
@@ -4774,6 +4911,21 @@ export class Repository {
     const severityRank = { blocker: 0, warning: 1 };
     return items.sort((a, b) => severityRank[a.severity] - severityRank[b.severity]
       || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  }
+
+  listOperationalExceptionWorkspace(input = {}) {
+    const all = this.listOperationalExceptions();
+    const page = paginateWorkspace(all, input, {
+      searchable: (item) => `${item.key} ${item.title} ${item.subject} ${item.detail} ${item.kind}`,
+      statusOf: (item) => item.severity,
+    });
+    return {
+      ...page,
+      summary: {
+        blockers: all.filter((item) => item.severity === "blocker").length,
+        warnings: all.filter((item) => item.severity === "warning").length,
+      },
+    };
   }
 
   retryOperationalException(exceptionKey, { contractAware = false } = {}) {

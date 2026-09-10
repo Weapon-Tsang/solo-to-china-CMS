@@ -479,7 +479,7 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, { items: repository.getEditorialBlueprints() });
       }
       if (request.method === "GET" && url.pathname === "/api/editorial-assignments") {
-        return sendJson(response, 200, repository.listEditorialAssignmentWorkspace(limit(url.searchParams.get("limit") || "500")));
+        return sendJson(response, 200, repository.listEditorialAssignmentWorkspace(workspaceQuery(url, 500)));
       }
       if (request.method === "POST" && url.pathname === "/api/editorial-assignments") {
         authorizeAdmin(request, config.adminToken, auth);
@@ -551,7 +551,7 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 202, result);
       }
       if (request.method === "GET" && url.pathname === "/api/exceptions") {
-        return sendJson(response, 200, { items: repository.listOperationalExceptions() });
+        return sendJson(response, 200, repository.listOperationalExceptionWorkspace(workspaceQuery(url, 100)));
       }
       if (request.method === "GET" && url.pathname === "/api/maintenance") {
         return sendJson(response, 200, {
@@ -775,6 +775,24 @@ export function createApplication(config = loadConfig()) {
         void pipeline.runOne();
         return sendJson(response, 202, { queued: true, jobType });
       }
+      const contentActionPreviewMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/action-preview$/);
+      if (request.method === "GET" && contentActionPreviewMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const preview = repository.previewContentAction(decodeURIComponent(contentActionPreviewMatch[1]), String(url.searchParams.get("action") || "retry_failed_stage"), auth.status(request).username || "administrator");
+        return preview ? sendJson(response, 200, preview) : sendJson(response, 404, { error: "Content task not found." });
+      }
+      const contentCancelMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/cancel$/);
+      if (request.method === "POST" && contentCancelMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.cancelContent(decodeURIComponent(contentCancelMatch[1]), String(payload.previewId || payload.preview_id || ""), auth.status(request).username || "administrator");
+        return result ? sendJson(response, 200, result) : sendJson(response, 404, { error: "Content task not found." });
+      }
+      const contentHistoryMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/history$/);
+      if (request.method === "GET" && contentHistoryMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        return sendJson(response, 200, { items: repository.listContentOperationHistory(decodeURIComponent(contentHistoryMatch[1])) });
+      }
       const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)$/);
       if (request.method === "GET" && draftMatch) {
         const draft = repository.getDraftPackage(draftMatch[1]);
@@ -787,6 +805,18 @@ export function createApplication(config = loadConfig()) {
           title: payload.title ?? null, metaDescription: payload.meta_description ?? null,
         });
         return sendJson(response, 200, { draft, queued: "review_draft" });
+      }
+      const draftRevisionsMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/revisions$/);
+      if (request.method === "GET" && draftRevisionsMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const draftId = decodeURIComponent(draftRevisionsMatch[1]);
+        const from = Number.parseInt(url.searchParams.get("from") || "", 10);
+        const to = Number.parseInt(url.searchParams.get("to") || "", 10);
+        if (Number.isInteger(from) && Number.isInteger(to)) {
+          const comparison = repository.compareDraftRevisions(draftId, from, to);
+          return comparison ? sendJson(response, 200, comparison) : sendJson(response, 404, { error: "Both draft revisions are required." });
+        }
+        return sendJson(response, 200, { items: repository.listDraftRevisions(draftId) });
       }
       const wordpressMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/wordpress$/);
       if (request.method === "POST" && wordpressMatch) {
@@ -1055,6 +1085,15 @@ function serveMedia(mediaDir, basename, response) {
 
 function limit(value) {
   return Math.max(1, Math.min(500, Number.parseInt(value || "100", 10) || 100));
+}
+
+function workspaceQuery(url, defaultLimit = 100) {
+  return {
+    limit: limit(url.searchParams.get("limit") || String(defaultLimit)),
+    cursor: url.searchParams.get("cursor") || "",
+    search: url.searchParams.get("search") || "",
+    status: url.searchParams.get("status") || "",
+  };
 }
 
 if (import.meta.main) {

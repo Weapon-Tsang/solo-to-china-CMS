@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 53;
+export const SCHEMA_VERSION = 55;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -74,6 +74,64 @@ function migrate(db) {
   if (current < 51) migrationFiftyOne(db);
   if (current < 52) migrationFiftyTwo(db);
   if (current < 53) migrationFiftyThree(db);
+  if (current < 54) migrationFiftyFour(db);
+  if (current < 55) migrationFiftyFive(db);
+}
+
+function migrationFiftyFive(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE draft_revisions (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL,
+        content_hash TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        changed_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(draft_id, revision)
+      );
+      CREATE INDEX idx_draft_revisions_history ON draft_revisions(draft_id, revision DESC);
+      CREATE TABLE content_operation_history (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL REFERENCES topic_candidates(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('previewed','completed','rejected')),
+        preview_json TEXT NOT NULL,
+        result_json TEXT NOT NULL DEFAULT '{}',
+        actor TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_content_operation_history ON content_operation_history(candidate_id, created_at DESC);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (55, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFiftyFour(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE commercial_compositions ADD COLUMN overlay_version TEXT;
+      ALTER TABLE commercial_events ADD COLUMN article_revision INTEGER;
+      ALTER TABLE commercial_events ADD COLUMN overlay_version TEXT;
+      ALTER TABLE commercial_events ADD COLUMN event_source TEXT NOT NULL DEFAULT 'unknown';
+      ALTER TABLE commercial_events ADD COLUMN conversion_data_status TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (conversion_data_status IN ('unknown','confirmed'));
+      CREATE INDEX idx_commercial_events_attribution
+        ON commercial_events(draft_id, article_revision, overlay_version, affiliate_asset_id, occurred_at DESC);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (54, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFiftyThree(db) {

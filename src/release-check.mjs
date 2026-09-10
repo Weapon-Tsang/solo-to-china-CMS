@@ -101,6 +101,9 @@ try {
       ["content_opportunities", "lifecycle_action"], ["editorial_assignments", "evaluation_json"],
       ["editorial_assignments", "assignment_type_source"], ["editorial_assignments", "classification_json"],
       ["frontend_publish_compositions", "page_content_hash"], ["frontend_publish_compositions", "seo_artifact_hash"],
+      ["commercial_compositions", "overlay_version"], ["commercial_events", "article_revision"],
+      ["commercial_events", "overlay_version"], ["commercial_events", "event_source"],
+      ["commercial_events", "conversion_data_status"],
     ]) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
       if (!columns.includes(column)) throw new Error(`${table}.${column} is required for Content Strategy governance.`);
@@ -120,6 +123,9 @@ try {
       "affiliate_provider_accounts", "affiliate_assets", "affiliate_asset_mappings", "commercial_intents",
       "commercial_slots", "affiliate_opportunities", "commercial_events", "commission_rules"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for Entity, Claim, or Commercial Phase 1.`);
+    }
+    for (const table of ["draft_revisions", "content_operation_history"]) {
+      if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for resumable content operations.`);
     }
     for (const table of ["source_evidence_reviews", "app_sessions", "model_call_metrics", "capture_versions", "favorites_sync_runs"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required by the audited release.`);

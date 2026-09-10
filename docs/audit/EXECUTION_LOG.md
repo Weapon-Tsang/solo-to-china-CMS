@@ -362,3 +362,45 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 - Current task: B08.
 - Next action: complete B08, B09 and B12 as the final bounded implementation batch,
   then rerun every affected C01-C05 acceptance and the full delivery gates.
+- Completed B08: Editorial Assignment and operational-exception workspaces now
+  expose cursor pagination, resumable search/status filters and filtered
+  `totalCount` independently from the current page. Content rows and draft detail
+  show content quality, SEO technical readiness, GEO content consistency and
+  production cost as separate passed/warning/failed/not_tested conclusions with
+  reason, target, repair, run version and bounded next call scope. A quality
+  failure remains failed regardless of SEO completeness or numeric score; CMS
+  artifacts never stand in for final HTML, rankings, traffic or AI citations.
+  Migration 55 also retains draft revision snapshots and content-operation history;
+  cancellation requires a recorded preview, removes only queued jobs and preserves
+  evidence and artifacts, while the admin can compare the changed revision fields.
+- Completed B09: migration 54 versions the Commercial overlay and adds nullable
+  article revision/overlay plus explicit event source and conversion-data status
+  to events. Provided associations are checked against the current draft, slot
+  and asset before insertion. Clicks cannot carry monetary value; conversion and
+  commission remain null when provider conversion data is unknown, while an
+  explicitly confirmed zero-event fixture reports zero. Research Draft and no-
+  inventory no-op behavior are unchanged.
+- Completed B12 first reversible slice: the compatible Repository/SQLite/API
+  facade remains in place while operations presentation/pagination, Commercial
+  event SQL and the content-quality UI move to focused modules. A machine-readable
+  seven-boundary map and dependency test prohibit Source/Evidence and Knowledge
+  imports of Commercial. The fixed pre/post 250-item fixture kept its 181,950-byte
+  response; observed duration was 28.01 ms before and 28.15 ms after. DB query
+  count remains explicitly not instrumented, so no performance percentage is
+  claimed. Responsibilities and rollback boundary are documented.
+- Final-batch focused verification: 47 operations, Commercial, assignments,
+  content-pipeline, C01-C05 and dependency cases passed. The full final
+  delivery gates follow this checkpoint.
+- Current task: final C01-C05 regression and deployment.
+- Next action: run migration/quality/media/HTML regressions, full tests, static
+  checks and release gate; then commit/push the final three items and deploy with
+  the documented pre-upgrade snapshot and post-deploy verification.
+- Tenth-batch and final implementation checkpoint: 344 tests passed; `npm run
+  check` passed including the seven-boundary dependency gate; `npm run
+  release:check` passed 50 mandatory checks with 0 failures, 4 warnings and 5
+  explicitly untested external/outcome conclusions. The clean schema chain is
+  now 1-55. C01-C05 affected acceptance tests passed after all Stage 5 changes.
+  No paid model or production service was called by the verification gates.
+- Current task: deployment.
+- Next action: commit and push B08/B09/B12, then follow the GCE deployment runbook
+  with a pre-upgrade snapshot and verify the deployed health/version/schema.
