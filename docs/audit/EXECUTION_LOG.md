@@ -432,9 +432,9 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
 
 ## 2026-09-10 production exception follow-up
 
-- Task ID: `INC01`; `requirementsVersion=1.3`; status: `in_progress`;
-  baseline/current implementation HEAD: `4960a0a7e6c49b65b44f5ffdcb3e19865f8b6036`
-  plus the uncommitted `1.17.24` incident remediation recorded below.
+- Task ID: `INC01`; `requirementsVersion=1.3`; status: `completed`;
+  baseline HEAD: `4960a0a7e6c49b65b44f5ffdcb3e19865f8b6036`;
+  implementation commit: `cff6391e067b7b280f8fc354b7514dd4ba2ef808`.
 - Read-only production inventory: all 13 Content rows and all 24 Exception rows
   were inspected with pagination exhausted. The Exception view contained 13 real
   failed jobs plus 11 draft-status projections: nine
@@ -468,15 +468,29 @@ Every task follows `review -> test -> minimum change -> verify -> record`.
   the currently published Frontend Contract `1.3.0` / JSON Schema `2020-12`
   produced deterministic `heading`, `paragraph`, and `list` blocks with zero
   component or Page Schema errors.
+- Deployment: Cloud Build `012650dd-8ad2-4afd-b3a0-7c9a56efef59` published
+  `engine:1.17.24` with digest
+  `sha256:a14f7388bfe02d4ec6df2b2f3e39cc8dd2dcc472fdb0489b610472b219f352bb`.
+  The exact `solo-to-china-engine` instance startup log recorded the verified
+  pre-upgrade snapshot step, both containers running, and `Deployment completed
+  successfully.` Public health/readiness returned HTTP 200 with application
+  `1.17.24`, Content Strategy `1.8`, Frontend Contract `1.3.0` healthy and database
+  ready. Capture health remained 200 and its root remained 404.
+- Post-deploy read-only verification: the full Exception workspace still contains
+  the same 24 historical records with no next page; all 24 now report
+  `retryable=false`. The Content workspace contains 13 rows; all 11 failed Draft
+  cards expose `manual_correction` and none offers a retry. No record was deleted,
+  requeued or otherwise rewritten by this verification.
 - Dependencies and unverified conditions: no schema migration is required and
   Content Strategy remains `1.8`. No paid model, production database, job queue or
   WordPress content was mutated. Existing permanent records are deliberately not
   auto-retried: destination scope must be corrected before rebuilding its evidence,
   and the three historical expired source images require an authorized retained
-  copy or operator recapture. Production behavior remains unverified until the
-  image is deployed; real WordPress/theme HTML, rankings, indexing, traffic, Core
-  Web Vitals and AI citations remain outside this offline result.
-- Next action: commit and push the `1.17.24` remediation, deploy through the GCE
-  startup path (which creates and verifies a pre-upgrade snapshot), then verify
-  public health/readiness and save the exact deployment checkpoint without
-  altering production content or retrying production jobs.
+  copy or operator recapture. The corrected paths are deployed, but no production
+  Draft was rerun; real WordPress/theme HTML, rankings, indexing, traffic, Core Web
+  Vitals and AI citations remain outside this verification.
+- Next action: operators may correct the mismatched Topic destination and recapture
+  or supply retained authorized copies for the three expired source images, then
+  use the bounded retry only after those inputs change. The eight affected Drafts
+  with the former Vertex 400 can use the deterministic atomic composer on their
+  next explicitly initiated run. No automatic production retry is pending.
