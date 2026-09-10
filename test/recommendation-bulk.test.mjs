@@ -19,9 +19,10 @@ function fixture(t, count=2) {
 const input=item=>({recommendationId:item.id,updatedAt:item.updated_at,opportunityId:item.opportunity_id});
 
 test('source analyses and parallel proposals never create jobs before explicit approval',t=>{
-  const {db,items}=fixture(t,3);
+  const {db,repository,items}=fixture(t,3);
   assert.equal(items.length,3);
   assert.ok(items.every(item=>item.opportunities.length>=2));
+  assert.equal(repository.listContentOpportunities().length,0,'unapproved source proposals are not counted as content opportunities');
   assert.equal(db.prepare("SELECT count(*) n FROM jobs WHERE type IN ('plan_content','draft_article','review_draft','compose_frontend_page')").get().n,0);
 });
 test('batch approves only selected paths, preserves missing-evidence gate and is idempotent',t=>{
@@ -31,6 +32,7 @@ test('batch approves only selected paths, preserves missing-evidence gate and is
   assert.equal(result.processed,2);
   assert.equal(result.queued,0);
   assert.ok(result.results.every(r=>r.outcome==='approved_waiting_for_evidence'));
+  assert.equal(repository.listContentOpportunities().length,2,'only the two approved article plans become visible opportunities');
   for(const item of items)assert.ok(db.prepare('SELECT status FROM content_opportunities WHERE recommendation_id=? AND id<>?').all(item.id,item.opportunity_id).every(p=>p.status==='recommended'||p.status==='research_required'));
   assert.equal(decideRecommendationsBulk(repository,payload).skipped,2);
   assert.equal(db.prepare("SELECT count(*) n FROM jobs WHERE type IN ('plan_content','draft_article','review_draft','compose_frontend_page')").get().n,0);

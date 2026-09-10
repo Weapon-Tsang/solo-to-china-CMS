@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.18.0 - Unreleased
+
+- Activate Content Strategy 2.0 and separate captured Sources, Claims/Knowledge, editorial article plans, and counted production opportunities. Unapproved single-source proposals no longer inflate opportunity totals.
+- Bound planning to 48 unique facts and 12 per section, and require supported evidence per promised section instead of forcing drafts to exhaust the destination knowledge base.
+- Present concise Chinese recovery diagnoses and recommended actions, re-check historical failures under current rules, and cap automatic draft/page repair at two attempts without rewriting valid stages.
+- Add batch article-plan approval and mobile-sized selection controls with one consistent approval concept.
+- Capture source edit/publication timestamps when detectable, retain ordinary authorized image bytes, and let an idempotent re-capture restore missing historical media.
+
 ## 1.17.26 - Unreleased
 
 - Scope draft-detail operation reads to its candidate and reuse the current evidence hash, avoiding whole-workspace recomputation for each recovery panel.

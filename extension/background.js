@@ -334,7 +334,12 @@ async function enrichImageDerivatives(capture) {
       const blob = await response.blob();
       const bytes = new Uint8Array(await blob.arrayBuffer());
       image.originalSha256 = await hashBytes(bytes);
-      if (bytes.byteLength <= 5_500_000) continue;
+      image.mimeType = /^image\/(?:jpeg|png|webp|gif)$/i.test(blob.type) ? blob.type.toLowerCase() : "image/jpeg";
+      if (bytes.byteLength <= 5_500_000) {
+        image.aiDerivativeDataUrl = `data:${image.mimeType};base64,${bytesToBase64(bytes)}`;
+        image.aiDerivativeSha256 = image.originalSha256;
+        continue;
+      }
       const bitmap = await createImageBitmap(blob);
       let scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
       let derivative;
@@ -446,7 +451,7 @@ async function workerTab(session, slot, url) { let id = session.workerTabs?.[slo
 async function ensureDiscoveryTab(session) { try { return await chrome.tabs.get(session.discoveryTabId); } catch { const tab = await chrome.tabs.create({ url: session.scopeUrl, active: false }); session.discoveryTabId = tab.id; session.cursor.domOffset = 0; await persistProgress(session); return tab; } }
 async function closeWorkerTabs(session) { for (const id of session.workerTabs || []) if (id) await chrome.tabs.remove(id).catch(() => null); if (session.automatic && session.discoveryTabId) await chrome.tabs.remove(session.discoveryTabId).catch(() => null); }
 async function openXiaohongshu() { const session = await loadState(); const url = session?.scopeUrl || "https://www.xiaohongshu.com/"; const tab = await chrome.tabs.create({ url, active: true }); return { ok: true, tabId: tab.id }; }
-async function injectExtractor(tabId) { await chrome.scripting.executeScript({ target: { tabId }, files: ["page-extractor.js"] }); }
+async function injectExtractor(tabId) { await chrome.scripting.executeScript({ target: { tabId }, files: ["capture-utils.js", "page-extractor.js"] }); }
 async function execute(tabId, func, args) { const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func, args: args === undefined ? [] : [args] }); return result; }
 async function waitForTab(tabId, timeoutMs) { const current = await chrome.tabs.get(tabId); if (current.status === "complete") return; await new Promise((resolve, reject) => { const timer = setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); reject(syncError("TAB_LOAD_TIMEOUT", "The note detail page did not finish loading.", true)); }, timeoutMs); const listener = (id, info) => { if (id === tabId && info.status === "complete") { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(listener); resolve(); } }; chrome.tabs.onUpdated.addListener(listener); }); }
 

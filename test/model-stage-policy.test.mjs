@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAiClient } from "../src/ai/client.mjs";
-import { applyBoundedDraftRepair } from "../src/ai/content-engine.mjs";
+import { applyBoundedDraftRepair, applyDeterministicGates } from "../src/ai/content-engine.mjs";
 import { priceModelAttempt, resolveStagePolicy, summarizeModelCostLedger } from "../src/ai/stage-policy.mjs";
 
 const schema = { type: "object", additionalProperties: false, required: ["answer"], properties: { answer: { type: "string" } } };
@@ -69,4 +69,41 @@ test("bounded repair rejects stale revisions and preserves every untouched secti
   assert.match(repaired.body_markdown, /Corrected ticket copy/);
   assert.match(repaired.body_markdown, /Keep this exact copy/);
   assert.equal(repaired.title, "Guide");
+});
+
+test("evidence repair may update only bounded known claim keys", () => {
+  const draft = { content_hash:"current",title:"Guide",meta_description:"Desc",seo:{meta_title:"Guide"},
+    body_markdown:"Intro.\n\n## Visit\n\nSupported body.",evidence_ledger:[],verification_notes:[],visuals:[] };
+  const patch = { base_content_hash:"current",replacement_sections:[],metadata:{},
+    evidence_ledger:[{section_id:"visit",claim_keys:["place.hours"]}],verification_notes:["place.hours: as of 2026-09-10"] };
+  const repaired = applyBoundedDraftRepair(draft,patch,[{code:"confirmed_topic_coverage_missing"}],{validFactKeys:["place.hours"]});
+  assert.deepEqual(repaired.evidence_ledger,patch.evidence_ledger);
+  assert.throws(()=>applyBoundedDraftRepair(draft,{...patch,evidence_ledger:[{section_id:"visit",claim_keys:["invented.fact"]}]},
+    [{code:"confirmed_topic_coverage_missing"}],{validFactKeys:["place.hours"]}),/unknown fact/i);
+});
+
+test("non-evidence repair may echo an unchanged ledger but cannot alter it", () => {
+  const draft = { content_hash:"current",title:"Guide",meta_description:"Desc",seo:{meta_title:"Guide"},
+    body_markdown:"Intro.\n\n## Visit\n\nSupported body.",evidence_ledger:[{section_id:"visit",claim_keys:["place.hours"]}],
+    verification_notes:["Checked"],visuals:[] };
+  const patch = { base_content_hash:"current",replacement_sections:[],metadata:{meta_description:"A clearer summary."},
+    evidence_ledger:draft.evidence_ledger,verification_notes:draft.verification_notes };
+  assert.equal(applyBoundedDraftRepair(draft,patch,[{code:"seo_description_missing"}]).meta_description,"A clearer summary.");
+  assert.throws(()=>applyBoundedDraftRepair(draft,{...patch,evidence_ledger:[]},[{code:"seo_description_missing"}]),/not authorized/i);
+});
+
+test("quality coverage checks each promised section instead of exhausting every available fact", () => {
+  const facts=Array.from({length:100},(_,index)=>({normalized_key:`place.fact_${index}`,preferred_value:`description ${index}`,evidence:[]}));
+  const result=applyDeterministicGates({passed:true,score:90,issues:[],checks:[],unsupported_claims:[]},{
+    brief:{plan:{title:"Guide",outline:[
+      {section_id:"one",heading:"One",claim_keys:facts.slice(0,50).map(f=>f.normalized_key)},
+      {section_id:"two",heading:"Two",claim_keys:facts.slice(50).map(f=>f.normalized_key)},
+    ]}},facts,content_policy:{minimum_words:1,faq:{allowed:false},visuals:{minimum:0,maximum:0}},
+    draft:{title:"Guide",body_markdown:"Useful description for a reader.",meta_description:"What this useful guide covers.",
+      seo:{meta_title:"Guide",focus_keyword:"guide",secondary_keywords:[],search_intent:"informational",takeaways:[],faqs:[]},
+      evidence_ledger:[{section_id:"one",claim_keys:["place.fact_0"]},{section_id:"two",claim_keys:["place.fact_50"]}],
+      verification_notes:[],unresolved_conflicts:[],visuals:[],faqs:[]},
+  });
+  assert.equal(result.checks.find(check=>check.name==='confirmed-topic-coverage').passed,true);
+  assert.equal(result.issues.some(issue=>issue.code==='confirmed_topic_coverage_missing'),false);
 });

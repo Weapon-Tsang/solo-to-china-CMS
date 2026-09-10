@@ -1,13 +1,26 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "1.9",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.9.md",
+  "current_version": "2.0",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.0.md",
   "status": "active",
   "history": [
     {
-      "version": "1.9",
+      "version": "2.0",
       "effective_date": "2026-09-10",
       "status": "active",
+      "summary": "将来源、知识、文章方案和实际内容机会重新分层，并以中文诊断和有界自动修复替代大段内部代码与无差别人工介入。",
+      "changes": [
+        "采集来源只新增 Claims、知识和编辑建议；未批准的单来源文章方案不再计入内容机会或系统选题。",
+        "实际内容机会只来自人工批准的文章方案、人工命题，或满足至少两个独立来源的目的地级知识汇总门槛。",
+        "规划最多选择 48 条证据、每节最多 12 条；质量审核要求每个事实章节有证据，而不是要求正文穷举整个素材库。",
+        "正文、证据台账、页面和图片失败按责任阶段分类，显示中文原因，并最多自动修复两次后才转人工。",
+        "采集扩展保留普通尺寸授权图片的实际字节；同内容重采也可补回历史缺失图片，并记录可识别的编辑或发布时间。"
+      ]
+    },
+    {
+      "version": "1.9",
+      "effective_date": "2026-09-10",
+      "status": "superseded",
       "summary": "以明确的创作提案和人工批准为生产单位，分离正文质量与交付故障，提供有边界的批量决策和阶段恢复。",
       "changes": [
         "来源建议、创作方向与已批准生产任务分别计数；相同确定性提案分组比较，不自动合并或删除。",

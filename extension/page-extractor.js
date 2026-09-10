@@ -113,13 +113,16 @@
     const text = [title, bodyText || description].filter(Boolean).join("\n\n");
     const textHash = await hash(text);
     const domHash = await hash(html);
+    const sourceTimestamp = globalThis.SoloToChinaCaptureUtils?.extractSourceTimestamp(document, root, new Date())
+      || { value:document.querySelector("time")?.dateTime || null,kind:"unknown",raw:"",confidence:"low" };
     const capture = {
       url: location.href,
       title,
       text,
       html,
       author: { name: authorName, url: authorElement?.href || "" },
-      publishedAt: document.querySelector("time")?.dateTime || "",
+      publishedAt: sourceTimestamp.value || "",
+      sourceTimestamp,
       images,
       videos,
       capturedAt: new Date().toISOString(),

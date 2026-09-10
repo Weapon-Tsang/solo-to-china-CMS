@@ -101,7 +101,7 @@ const DRAFT_SCHEMA = objectSchema(
 );
 
 const DRAFT_REPAIR_SCHEMA = objectSchema(
-  ["base_content_hash", "replacement_sections", "metadata"],
+  ["base_content_hash", "replacement_sections", "metadata", "evidence_ledger", "verification_notes"],
   {
     base_content_hash: { type: "string" },
     replacement_sections: {
@@ -114,6 +114,16 @@ const DRAFT_REPAIR_SCHEMA = objectSchema(
       title: { type: "string" }, meta_description: { type: "string" },
       meta_title: { type: "string" }, focus_keyword: { type: "string" },
     }),
+    evidence_ledger: {
+      type: "array", maxItems: 24,
+      items: objectSchema(["section_id", "section", "content_node_ids", "claim_keys", "source_ids"], {
+        section_id: { type: "string" }, section: { type: "string" },
+        content_node_ids: { type: "array", items: { type: "string" } },
+        claim_keys: { type: "array", maxItems: 12, items: { type: "string" } },
+        source_ids: { type: "array", items: { type: "string" } },
+      }),
+    },
+    verification_notes: { type: "array", maxItems: 48, items: { type: "string" } },
   },
 );
 
@@ -249,20 +259,14 @@ export class ContentEngine {
   async repairDraft(contentPackage, issues = [], options = {}) {
     const existing = contentPackage?.draft;
     if (!existing?.content_hash) throw new Error("Bounded repair requires a persisted draft content hash.");
+    const repairInput = compactDraftRepairInput(contentPackage, issues);
     const result = await this.respond({
       name: "bounded_draft_repair",
       schema: DRAFT_REPAIR_SCHEMA,
       instructions: DRAFT_REPAIR_PROMPT,
-      input: JSON.stringify({
-        base_content_hash: existing.content_hash,
-        issues: (issues || []).slice(0, 12),
-        brief: contentPackage.brief,
-        facts: draftInputDto(contentPackage).facts,
-        draft: { title:existing.title,body_markdown:existing.body_markdown,meta_description:existing.meta_description,
-          seo:existing.seo,evidence_ledger:existing.evidence_ledger,verification_notes:existing.verification_notes },
-      }), options,
+      input: JSON.stringify(repairInput), options,
     });
-    result.output = applyBoundedDraftRepair(existing, result.output, issues);
+    result.output = applyBoundedDraftRepair(existing, result.output, issues, { validFactKeys: repairInput.facts.map((fact) => fact.normalized_key) });
     return result;
   }
 
@@ -319,7 +323,7 @@ export class ContentEngine {
   }
 }
 
-export function applyBoundedDraftRepair(draft, patch, issues = []) {
+export function applyBoundedDraftRepair(draft, patch, issues = [], { validFactKeys = [] } = {}) {
   if (!draft?.content_hash || patch?.base_content_hash !== draft.content_hash) {
     throw Object.assign(new Error("Draft repair base hash does not match the current persisted revision."), { code: "STALE_DRAFT_REPAIR" });
   }
@@ -351,6 +355,20 @@ export function applyBoundedDraftRepair(draft, patch, issues = []) {
   const seo = { ...(draft.seo || {}) };
   if (metadata.meta_title != null) seo.meta_title = truncate(metadata.meta_title, 70);
   if (metadata.focus_keyword != null) seo.focus_keyword = truncate(metadata.focus_keyword, 160);
+  const evidenceAllowed = issueCodes.some((code) => /evidence|coverage|temporal|conflict|factual/.test(code));
+  const nextLedger = patch.evidence_ledger || draft.evidence_ledger || [];
+  const nextNotes = patch.verification_notes || draft.verification_notes || [];
+  const ledgerChanged = JSON.stringify(nextLedger) !== JSON.stringify(draft.evidence_ledger || []);
+  const notesChanged = JSON.stringify(nextNotes) !== JSON.stringify(draft.verification_notes || []);
+  if ((ledgerChanged || notesChanged) && !evidenceAllowed) {
+    throw Object.assign(new Error("Evidence ledger changes were not authorized by the failed QA fields."), { code: "INVALID_DRAFT_REPAIR_SCOPE" });
+  }
+  const allowedKeys = new Set(validFactKeys);
+  const ledgerKeys = nextLedger.flatMap((entry) => entry?.claim_keys || []);
+  if (nextLedger.length > 24 || nextLedger.some((entry) => !entry || !Array.isArray(entry.claim_keys) || entry.claim_keys.length > 12)
+      || (allowedKeys.size && ledgerKeys.some((key) => !allowedKeys.has(key)))) {
+    throw Object.assign(new Error("Repaired evidence ledger exceeds its bounded scope or references an unknown fact."), { code: "INVALID_DRAFT_REPAIR_SCOPE" });
+  }
   return {
     ...draft,
     body_markdown: body.trim(),
@@ -358,9 +376,9 @@ export function applyBoundedDraftRepair(draft, patch, issues = []) {
     meta_description: metadata.meta_description == null ? draft.meta_description : truncate(metadata.meta_description, 160),
     seo,
     faqs: draft.faqs || draft.seo?.faqs || [],
-    evidence_ledger: draft.evidence_ledger || [],
+    evidence_ledger: nextLedger,
     unresolved_conflicts: draft.unresolved_conflicts || [],
-    verification_notes: draft.verification_notes || [],
+    verification_notes: nextNotes.slice(0, 48),
     visuals: draft.visuals || [],
   };
 }
@@ -402,6 +420,51 @@ function draftInputDto(contentPackage) {
   };
 }
 
+function compactDraftRepairInput(contentPackage, issues = []) {
+  const draft = contentPackage.draft;
+  const brief = contentPackage.brief || {};
+  const issueCodes = new Set((issues || []).map((issue) => String(issue?.code || '')));
+  const mentioned = new Set();
+  for (const issue of issues || []) {
+    for (const match of String(issue?.message || '').matchAll(/[a-z][a-z0-9_]+(?:\.[a-z0-9_]+){1,4}/gi)) mentioned.add(match[0]);
+  }
+  for (const entry of draft.evidence_ledger || []) for (const key of entry.claim_keys || []) mentioned.add(key);
+  for (const section of brief.plan?.outline || brief.outline || []) for (const key of section.claim_keys || []) mentioned.add(key);
+  const allFacts = draftInputDto(contentPackage).facts;
+  const facts = allFacts.filter((fact) => mentioned.has(fact.normalized_key)).slice(0, 48);
+  const fallbackFacts = facts.length ? facts : allFacts.slice(0, 48);
+  const compactIssues = (issues || []).slice(0, 12).map((issue) => ({
+    code: issue.code, severity: issue.severity,
+    message: String(issue.message || '').split(',').slice(0, 8).join(',').slice(0, 1_200),
+  }));
+  return {
+    base_content_hash: draft.content_hash,
+    issues: compactIssues,
+    allowed_changes: {
+      evidence_ledger: [...issueCodes].some((code) => /evidence|coverage|temporal|conflict|factual/.test(code)),
+      metadata: [...issueCodes].some((code) => /seo|title|meta|keyword|slug/.test(code)),
+      maximum_replacement_sections: 3,
+    },
+    brief: {
+      title: brief.plan?.title || brief.title,
+      reader_promise: brief.plan?.reader_promise || brief.canonical?.reader_promise,
+      outline: (brief.plan?.outline || brief.outline || []).map((section) => ({
+        section_id: section.section_id, heading: section.heading,
+        claim_keys: (section.claim_keys || []).filter((key) => fallbackFacts.some((fact) => fact.normalized_key === key)).slice(0, 12),
+      })),
+    },
+    facts: fallbackFacts.map((fact) => ({
+      normalized_key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate,
+      preferred_value: fact.preferred_value, consensus_status: fact.consensus_status,
+      freshness_state: fact.freshness_state, latest_evidence_at: fact.latest_evidence_at,
+      evidence: (fact.evidence || []).slice(0, 2).map((item) => ({ source_id: item.source_id, value: item.value,
+        published_at: item.published_at, observed_at: item.observed_at, captured_at: item.captured_at })),
+    })),
+    draft: { title:draft.title, body_markdown:draft.body_markdown, meta_description:draft.meta_description,
+      seo:draft.seo, evidence_ledger:draft.evidence_ledger, verification_notes:draft.verification_notes },
+  };
+}
+
 function reviewInputDto(contentPackage) {
   return {
     brief: { plan: contentPackage.brief?.plan, canonical: contentPackage.brief?.canonical, strategy_version: contentPackage.brief?.strategy_version },
@@ -425,7 +488,7 @@ const intakePrompt = (strategyVersion) => `Analyze one already-captured human-se
 - Treat SOURCE_ADAPTATION, TOPIC_FEATURE and MULTI_SOURCE_SYNTHESIS as parallel, non-exclusive opportunity paths. A source may support several paths at the same time; multi-source synthesis is a creative option, not an emergency fallback.
 - Classify the source as ARTICLE_CANDIDATE, KNOWLEDGE_ONLY, CLAIM_ONLY, CLUSTER_CANDIDATE, RESEARCH_REQUIRED, DUPLICATE, LOW_VALUE, or UNSURE.
 - Set production_mode to the best primary path for the first proposed article, but return every applicable path in production_modes. SOURCE_ADAPTATION requires source.editing_allowed=true; the other paths remain available independently.
-- Return concrete production_paths for the useful articles this source can support. Every path becomes an independently approvable opportunity, so assign its exact content_type, specific title, bounded reader promise, direct explanation of why it works, and exact evidence boundary. Explain in plain operator language; do not use vague labels.
+- Return concrete production_paths as editorial proposals only. A captured source adds Claims and Knowledge; it does not create a content opportunity by itself. A proposal becomes an actual production opportunity only after explicit approval or a destination-level multi-source synthesis gate. Assign each proposal an exact content_type, specific title, bounded reader promise, direct explanation of why it works, and exact evidence boundary.
 - Score article_potential, information_density, topic_completeness, and duplicate_likelihood from 0 to 100. Confidence is 0 to 1.
 - Recommend one action: CREATE_CONTENT_PLAN, ADD_TO_KNOWLEDGE, ADD_TO_CLUSTER, RESEARCH_FIRST, MERGE_OR_IGNORE, IGNORE, or HUMAN_REVIEW.
 - Return 3-8 distinct, specific possible_cluster_topics when the evidence supports a useful series. Missing broad destination coverage is not a blocker for a narrow topic.
@@ -436,6 +499,7 @@ const briefPrompt = (strategyVersion) => `Create an evidence-backed English cont
 - approved_proposal is the operator-approved scope. Preserve its readerPromise, destination, production mode and evidenceBoundary. Do not expand a narrow proposal into a whole-city guide. Cover each promised section with exact supplied claim keys; if support is absent, disclose the gap rather than invent facts.
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
+- Select only the evidence needed to fulfill the approved reader promise: at most 48 unique claim keys for the whole plan and at most 12 per section. The remaining destination knowledge stays available for other articles; it is not mandatory coverage for this draft.
 - Evidence marked partial_usable is valid only for the supplied Claim. Treat its coverage_limitations as explicit boundaries: narrow the reader promise, omit unsupported details, and never describe the source or topic as complete. Unrelated source gaps are already removed from this topic package.
 - Unresolved strict safety/semantic conflicts require explicit handling instructions; never silently choose a side.
 - Dynamic prices, hours, reservations, schedules and access details are already selected by an auditable independent-source, source-quality and recency-weighted consensus. They do not require manual official verification. Include the supplied current value when useful, state the evidence date and normal change risk, and prefer higher-confidence conclusions. Dated evidence may be used with a clear as-of caveat rather than discarded.
@@ -469,7 +533,9 @@ const DRAFT_REPAIR_PROMPT = `Repair only the failed fields or H2 sections named 
 - Return the exact base_content_hash supplied by the caller.
 - replacement_sections may contain at most three existing H2 headings. Supply body content only; do not add or rename headings.
 - Change metadata only when a QA issue explicitly identifies title, meta, keyword, slug or SEO metadata.
+- Change evidence_ledger or verification_notes only for evidence, coverage, conflict or temporal-disclosure failures. Remove invalid or unused keys instead of forcing every available fact into the prose; keep at most 12 claim keys per section and 48 total.
 - Preserve specific names, amounts, dates, conditions, exceptions and audience qualifiers. Do not add facts or experiences.
+- Keep replacement text concise and do not expand the article merely to reach a word target.
 - Return JSON only. The caller will reject stale hashes and out-of-scope patches, re-hash the assembled draft and run QA again.`;
 
 const ENTITY_RESOLUTION_PROMPT = `Resolve destination entities in SoloToChina's evidence store.
@@ -528,12 +594,13 @@ export function applyDeterministicGates(review, contentPackage) {
 
   const invalidKeys = [...ledgerKeys].filter((key) => !validKeys.has(key));
   addGate("evidence-key-integrity", invalidKeys.length === 0, invalidKeys.length ? `Unknown claim keys: ${invalidKeys.join(", ")}` : "All ledger keys exist in the research package.", "invalid_evidence_key");
-  const requiredKeys = new Set(contentPackage.brief?.evidence_ledger || (contentPackage.brief?.plan?.outline || [])
-    .flatMap((section) => section.claim_keys || []));
-  const uncoveredBriefKeys = [...requiredKeys].filter((key) => !ledgerKeys.has(key));
-  addGate("confirmed-topic-coverage", uncoveredBriefKeys.length === 0,
-    uncoveredBriefKeys.length ? `The draft omits evidence selected by the confirmed brief: ${uncoveredBriefKeys.join(", ")}`
-      : "The draft ledger covers the evidence selected by the confirmed brief.", "confirmed_topic_coverage_missing");
+  const plannedSections = contentPackage.brief?.plan?.outline || contentPackage.brief?.outline || [];
+  const draftSections = draft.evidence_ledger || [];
+  const uncoveredSections = plannedSections.filter((section) => (section.claim_keys || []).length
+    && !draftSections.some((entry) => entry.section_id === section.section_id && (entry.claim_keys || []).some((key) => (section.claim_keys || []).includes(key))));
+  addGate("confirmed-topic-coverage", uncoveredSections.length === 0,
+    uncoveredSections.length ? `Planned sections without any supported evidence in the draft ledger: ${uncoveredSections.map((section) => section.heading || section.section_id).join(", ")}`
+      : "Every evidence-bearing planned section uses at least one selected fact; unused background facts are not mandatory coverage.", "confirmed_topic_coverage_missing");
   const protectedMismatches = [];
   let semanticUnverified = 0;
   for (const key of ledgerKeys) {

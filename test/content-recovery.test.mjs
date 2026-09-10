@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { qualityRepairStage } from '../src/services/content-recovery-policy.mjs';
+import { explainQualityIssue, qualityRepairStage, recoveryDiagnosis } from '../src/services/content-recovery-policy.mjs';
 import { buildContentTaskCard } from '../src/services/operations-workspace.mjs';
 import { isDynamicFact, protectedFactTokens } from '../src/evidence-validator.mjs';
 import { repositoryFixture } from '../test-support/repository-fixture.mjs';
@@ -30,7 +30,7 @@ test('draft detail reuses its evidence hash without rebuilding the entire conten
   assert.deepEqual(repository.listContent({candidateId:'unrelated-topic'}),[]);
 });
 
-test('recovery report is read-only and targeted compose neither rewrites nor runs QA', t=>{
+test('recovery report is read-only and targeted compose continues from the selected stage', t=>{
   const {db,repository}=fixture(t);
   const before=db.prepare('SELECT count(*) n FROM jobs').get().n;
   const report=contentRecoveryReport(repository,'topic-r');
@@ -38,25 +38,26 @@ test('recovery report is read-only and targeted compose neither rewrites nor run
   assert.equal(report.localCheck.diagnosticOnly,true);
   assert.equal(db.prepare('SELECT count(*) n FROM jobs').get().n,before);
   const result=executeContentRecovery(repository,'topic-r',{action:'compose_frontend_page',revision:1});
-  assert.equal(result.stageOnly,true);
+  assert.equal(result.stageOnly,false);
   const jobs=db.prepare('SELECT type,dedupe_key FROM jobs').all();
   assert.deepEqual(jobs.map(j=>j.type),['compose_frontend_page']);
-  assert.match(jobs[0].dedupe_key,/^manual-stage:/);
-  assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'revise_draft',revision:1}),/已有排队/);
+  assert.match(jobs[0].dedupe_key,/^recovery-stage:/);
+  assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'revise_draft',revision:1}),/已经有排队/);
   assert.equal(repository.listContent()[0].workflow_status,'compose_frontend_page_queued');
 });
 test('recovery refuses stale revisions, unknown images, missing page and existing-brief destination mutation',t=>{
   const {repository}=fixture(t);
-  assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'compose_frontend_page',revision:0}),/已变更/);
+  assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'compose_frontend_page',revision:0}),/其他任务更新/);
   assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'bind_asset',revision:1,assetId:'fake'}),/授权/);
   assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'review_draft',revision:1}),/页面尚未/);
   assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'correct_destination',revision:1,destination:'beijing'}),/已有规划/);
 });
-test('manual correction preserves revisions and does not enqueue paid production',t=>{
+test('manual correction preserves revisions and queues only page composition',t=>{
   const {db,repository}=fixture(t);
   executeContentRecovery(repository,'topic-r',{action:'save_editorial_correction',revision:1,body:'Corrected intro.\n\n## Visit\n\nSupported prose.',evidenceLedger:[],verificationNotes:[]});
   assert.equal(db.prepare('SELECT revision FROM article_drafts').get().revision,2);
-  assert.equal(db.prepare('SELECT count(*) n FROM jobs').get().n,0);
+  assert.equal(db.prepare('SELECT count(*) n FROM jobs').get().n,1);
+  assert.equal(db.prepare('SELECT type FROM jobs').get().type,'compose_frontend_page');
   assert.equal(repository.listDraftRevisions('draft-r').length,2);
 });
 test('old revision QA cannot masquerade as current QA on content list',t=>{
@@ -97,6 +98,43 @@ test('media/page blockers do not automatically rewrite otherwise valid text', ()
   assert.equal(qualityRepairStage([{code:'WORD_COUNT_BELOW_TARGET',severity:'warning'}]), null);
   assert.equal(qualityRepairStage([{code:'UNSUPPORTED_FACTUAL_CLAIMS',severity:'blocker'}]), 'revise_draft');
 });
+test('automatic quality repair is deduplicated per revision and stops after two attempts',t=>{
+  const {db,repository}=fixture(t);
+  const issues=[{code:'confirmed_topic_coverage_missing',severity:'blocker',message:'missing'}];
+  const first=repository.automaticQualityRepairState('draft-r',issues,{enqueue:true});
+  assert.equal(first.queued,true);assert.equal(first.attempts,1);
+  const active=repository.automaticQualityRepairState('draft-r',issues,{enqueue:true});
+  assert.equal(active.reason,'job_already_active');assert.equal(active.attempts,1);
+  db.prepare("UPDATE jobs SET status='failed'").run();
+  assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:true}).reason,'revision_already_attempted');
+  db.prepare("UPDATE article_drafts SET revision=2,content_hash='hash-2'").run();
+  assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:true}).attempts,2);
+  db.prepare("UPDATE jobs SET status='failed'").run();
+  db.prepare("UPDATE article_drafts SET revision=3,content_hash='hash-3'").run();
+  assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:true}).reason,'attempt_limit_reached');
+});
+test('strategy startup rechecks a historical failure only once per draft revision',t=>{
+  const {db,repository}=fixture(t);
+  repository.saveReview('draft-r',{passed:false,score:40,issues:[{code:'protected_evidence_mismatch',severity:'blocker',message:'mismatch'}],checks:[],unsupported_claims:[]},'fixture');
+  repository.enqueueStartupReconciliation();
+  repository.enqueueStartupReconciliation();
+  assert.equal(db.prepare("SELECT count(*) n FROM jobs WHERE dedupe_key LIKE 'strategy-quality-recheck:%'").get().n,1);
+});
+test('strategy startup does not retry a media-only failure before retained bytes are restored',t=>{
+  const {db,repository}=fixture(t);
+  repository.saveReview('draft-r',{passed:false,score:40,issues:[{code:'required_visual_missing',severity:'blocker',message:'missing'}],checks:[],unsupported_claims:[]},'fixture');
+  repository.enqueueStartupReconciliation();
+  assert.equal(db.prepare("SELECT count(*) n FROM jobs WHERE dedupe_key LIKE 'strategy-quality-recheck:%'").get().n,0);
+});
+test('operator diagnosis is concise Chinese and hides long code lists behind technical detail',()=>{
+  const issue=explainQualityIssue({code:'protected_evidence_mismatch',severity:'blocker',message:`Changed: ${Array.from({length:30},(_,i)=>`claim.${i}`).join(', ')}`});
+  assert.match(issue.title,/关键事实/);assert.match(issue.action,/修订/);assert.match(issue.technicalDetail,/另有/);
+  const diagnosis=recoveryDiagnosis({review:{issues:[{code:'required_visual_missing',severity:'blocker',message:'missing'}]}});
+  assert.match(diagnosis.headline,/实景图/);assert.equal(diagnosis.recommendedAction.id,null);
+  const configuration=recoveryDiagnosis({failedJob:{type:'compose_frontend_page',last_error:'Content production requires a configured Kimi key or Vertex AI project.'}});
+  assert.match(configuration.headline,/模型尚未配置/);assert.equal(configuration.automatic.reason,'operation_must_be_resolved_first');
+  assert.match(configuration.recommendedAction.why,/重复点击仍会失败/);
+});
 test('single-source stable photo descriptions do not require a fabricated as-of date', () => {
   assert.equal(isDynamicFact({normalized_key:'attraction.station.photo_spot_metro',consensus_method:'SINGLE_SOURCE_LATEST',freshness_state:'current'}), false);
   assert.equal(isDynamicFact({normalized_key:'attraction.museum.ticket_price',freshness_state:'current'}), true);
@@ -106,6 +144,6 @@ test('single-source stable photo descriptions do not require a fabricated as-of 
 test('next action prioritizes blockers over length warnings', () => {
   const card = buildContentTaskCard({id:'t',brief_id:'b',draft_id:'d',qa_score:50,qa_passed:0,
     quality_report_json:JSON.stringify({issues:[{severity:'warning',message:'Short'},{severity:'blocker',code:'required_visual_missing',message:'Missing factual photo'}]})});
-  assert.equal(card.dimensions.content_quality.reason, 'Missing factual photo');
+  assert.match(card.dimensions.content_quality.reason, /缺少可交付的实景图/);
   assert.notEqual(card.retry?.stage, 'revise_draft');
 });

@@ -43,7 +43,7 @@ test("CMS artifact checks never claim that final HTML was verified", () => {
     wordpress_status: null, model_call_count: 2, unknown_cost_count: 2,
   });
   assert.equal(operation.dimensions.seo_technical.status, "not_tested");
-  assert.match(operation.dimensions.seo_technical.reason, /final Frontend\/WordPress HTML/);
+  assert.match(operation.dimensions.seo_technical.reason, /最终前端／WordPress HTML/);
   assert.equal(operation.dimensions.geo_content_consistency.status, "passed");
   assert.equal(operation.dimensions.production_cost.status, "warning");
 });

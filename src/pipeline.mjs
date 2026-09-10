@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { qualityRepairStage } from "./services/content-recovery-policy.mjs";
 import { validatePlannedEvidence } from "./services/editorial-proposal.mjs";
 import { composePageFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
 import { validatePlanningDestination } from "./destination-consistency.mjs";
@@ -619,8 +618,8 @@ export class Pipeline {
           const revision = this.repository.saveReview(job.entity_id, reviewed.output, reviewed.model,
             { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash, evidenceHash:contentPackage.evidence_hash });
           if (reviewed.output.passed && !job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("compose_commercial", job.entity_id);
-          if (!reviewed.output.passed && revision < 2 && !job.dedupe_key?.startsWith("manual-stage:") && qualityRepairStage(reviewed.output.issues) === "revise_draft") {
-            this.repository.enqueue("revise_draft", job.entity_id);
+          if (!reviewed.output.passed && !job.dedupe_key?.startsWith("manual-stage:")) {
+            this.repository.automaticQualityRepairState(job.entity_id, reviewed.output.issues, { enqueue: true });
           }
           break;
         }

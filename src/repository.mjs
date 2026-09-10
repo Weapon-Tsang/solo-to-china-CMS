@@ -479,6 +479,7 @@ export class Repository {
     const sourceVersionIdentity = capture.sourceVersionIdentity || contentHash;
 
     return transaction(this.db, () => {
+      const restoredAssetIds = [];
       // A note ID remains stable when Xiaohongshu changes a share URL or adds
       // transient tokens. Canonical URL remains the fallback for old captures.
       const existingByExternalId = capture.externalId
@@ -497,7 +498,26 @@ export class Repository {
         sourceId = existing.id;
         duplicate = true;
         captureVersion = existing.capture_version;
-        this.db.prepare("UPDATE sources SET captured_at = ?, updated_at = ? WHERE id = ?").run(capture.capturedAt, timestamp, sourceId);
+        this.db.prepare(`UPDATE sources SET captured_at=?,published_at=COALESCE(?,published_at),submission_metadata_json=?,
+          raw_payload_json=?,extension_version=?,updated_at=? WHERE id=?`).run(capture.capturedAt,capture.publishedAt,
+          JSON.stringify(submissionMetadata),JSON.stringify(capture),extensionVersion,timestamp,sourceId);
+        const findRefreshAsset = this.db.prepare(`SELECT id,ai_derivative_data_url FROM source_assets
+          WHERE source_id=? AND kind=? AND (media_identity=? OR position=?) LIMIT 1`);
+        const refreshAsset = this.db.prepare(`UPDATE source_assets SET remote_url=?,mime_type=CASE WHEN ?<>'' THEN ? ELSE mime_type END,
+          original_sha256=CASE WHEN ?<>'' THEN ? ELSE original_sha256 END,
+          ai_derivative_data_url=CASE WHEN ?<>'' THEN ? ELSE ai_derivative_data_url END,
+          ai_derivative_sha256=CASE WHEN ?<>'' THEN ? ELSE ai_derivative_sha256 END,
+          provenance_json=? WHERE source_id=? AND kind=? AND (media_identity=? OR position=?)`);
+        for (const asset of capture.assets || []) {
+          if (!asset.aiDerivativeDataUrl && !asset.originalSha256) continue;
+          const storedAsset = findRefreshAsset.get(sourceId, asset.kind, asset.mediaIdentity || asset.url, asset.position);
+          refreshAsset.run(asset.url,asset.mimeType || '',asset.mimeType || '',asset.originalSha256 || '',asset.originalSha256 || '',
+            asset.aiDerivativeDataUrl || '',asset.aiDerivativeDataUrl || '',asset.aiDerivativeSha256 || '',asset.aiDerivativeSha256 || '',
+            JSON.stringify({ sourceId,externalId:capture.externalId || null,canonicalUrl:capture.canonicalUrl,capturedAt:capture.capturedAt,
+              captureVersion,acquisitionOrigin,syncScopeKey,extensionVersion,mediaSourceUrl:asset.url,mediaRefreshedAt:timestamp,...asset.provenance }),
+            sourceId,asset.kind,asset.mediaIdentity || asset.url,asset.position);
+          if (storedAsset && !storedAsset.ai_derivative_data_url && asset.aiDerivativeDataUrl) restoredAssetIds.push(storedAsset.id);
+        }
       } else if (existing) {
         sourceId = existing.id;
         captureVersion = existing.capture_version + 1;
@@ -587,6 +607,24 @@ export class Repository {
         }
       }
 
+      // A same-content re-capture may restore bytes that an expired CDN URL could
+      // no longer provide. Resume only drafts that already reference those exact
+      // assets and are still blocked; do not rerun extraction or upstream writing.
+      const resumedDraftIds = [];
+      if (restoredAssetIds.length) {
+        const placeholders = restoredAssetIds.map(() => "?").join(",");
+        const drafts = this.db.prepare(`SELECT DISTINCT ad.id,ad.revision FROM article_visuals av
+          JOIN article_drafts ad ON ad.id=av.draft_id
+          WHERE av.source_asset_id IN (${placeholders}) AND ad.status IN ('exception','qa_failed')`).all(...restoredAssetIds);
+        for (const draft of drafts) {
+          const dedupeKey = `media-restored:compose_frontend_page:${draft.id}:r${draft.revision}`;
+          if (this.db.prepare("SELECT id FROM jobs WHERE dedupe_key=? LIMIT 1").get(dedupeKey)) continue;
+          if (this.db.prepare("SELECT id FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1").get(draft.id)) continue;
+          this.enqueue("compose_frontend_page", draft.id, { dedupeKey });
+          resumedDraftIds.push(draft.id);
+        }
+      }
+
       const queueDepth = this.db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status IN ('queued','running')").get().count;
 
       return {
@@ -598,6 +636,8 @@ export class Repository {
         processingEstimate: submissionMetadata.processingEstimate,
         captureVersion,
         completenessStatus,
+        restoredAssets: restoredAssetIds.length,
+        resumedDraftIds,
         queueDepth,
         advice: queueDepth >= 500 ? "slow_down" : "continue",
         identity: {
@@ -1597,7 +1637,7 @@ export class Repository {
     });
     const recommendation = this.db.prepare("SELECT * FROM content_recommendations WHERE analysis_id=?").get(analysisId);
     // A strategy upgrade must not delete historical unapproved proposals.
-    this.upsertContentOpportunity(source.destination_slug, sourceId, recommendation, normalized);
+    this.upsertContentOpportunity(source.destination_slug, sourceId, recommendation, normalized, { status: "recommended" });
     for (const path of normalized.production_paths || []) {
       const sameAsPrimary = path.title === normalized.suggested_article_title
         && normalizePublicationMode(path.mode) === normalizePublicationMode(normalized.production_mode)
@@ -1610,7 +1650,7 @@ export class Repository {
         suggested_content_type: path.content_type || normalized.suggested_content_type,
         production_mode: path.mode,
         reader_promise: path.reader_promise, evidence_boundary: path.evidence_boundary,
-      }, { linkRecommendation: false });
+      }, { linkRecommendation: false, status: "recommended" });
     }
     return this.getSource(sourceId).analysis;
   }
@@ -1634,6 +1674,8 @@ export class Repository {
     return this.db.prepare(`
       SELECT o.*, tc.coverage_score AS candidate_coverage_score, tc.status AS candidate_status
       FROM content_opportunities o LEFT JOIN topic_candidates tc ON tc.id=o.candidate_id
+      WHERE o.recommendation_id IS NULL OR o.approved_at IS NOT NULL OR o.candidate_id IS NOT NULL
+        OR o.status IN ('approved_waiting_for_evidence','approved_ready','producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft','suppressed')
       ORDER BY CASE o.status WHEN 'recommended' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END, o.readiness_score DESC, o.updated_at DESC
       LIMIT ?
     `).all(limit).map((row) => ({
@@ -1990,7 +2032,8 @@ export class Repository {
     const familyCount = this.independentSourceFamilyCountForFacts(facts);
     const matrix = evaluateCoverage({ topicKey, contentType, facts, sourceFamilyCount: familyCount, publicationMode });
     const matchingPath = (analysis.production_paths || []).find(path => path.title === title && normalizePublicationMode(path.mode) === publicationMode);
-    const coverage = { ...matrix, publicationMode, proposal: { readerPromise: analysis.reader_promise || matchingPath?.reader_promise || title,
+    const coverage = { ...matrix, publicationMode, editorialProposalOnly: !overrides.candidateId,
+      proposal: { readerPromise: analysis.reader_promise || matchingPath?.reader_promise || title,
       evidenceBoundary: analysis.evidence_boundary || matchingPath?.evidence_boundary || "", targetEntities: [] }, selectedFactKeys: facts.map((fact) => fact.normalized_key),
       selectedSourceIds: [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))],
       legacy_signals: opportunityCoverage(destinationSlug, facts, analysis) };
@@ -4233,6 +4276,25 @@ export class Repository {
     return null;
   }
 
+  automaticQualityRepairState(draftId, issues = [], { enqueue = false, maxAttempts = 2 } = {}) {
+    const draft = this.db.prepare("SELECT id,revision FROM article_drafts WHERE id=?").get(draftId);
+    if (!draft) return { eligible: false, queued: false, stage: null, attempts: 0, maxAttempts, reason: "draft_missing" };
+    const stage = qualityRepairStage(issues);
+    const attempts = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs
+      WHERE entity_id=? AND dedupe_key LIKE 'auto-quality-repair:%'`).get(draftId)?.count || 0);
+    if (!stage) return { eligible: false, queued: false, stage: null, attempts, maxAttempts, reason: "manual_media_or_no_blocker" };
+    if (attempts >= maxAttempts) return { eligible: false, queued: false, stage, attempts, maxAttempts, reason: "attempt_limit_reached" };
+    const active = this.db.prepare("SELECT id,type,status FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1").get(draftId);
+    if (active) return { eligible: true, queued: false, stage, attempts, maxAttempts, reason: "job_already_active", activeJob: active };
+    const dedupeKey = `auto-quality-repair:${stage}:${draftId}:r${draft.revision}`;
+    const attempted = this.db.prepare("SELECT id,status FROM jobs WHERE dedupe_key=? LIMIT 1").get(dedupeKey);
+    if (attempted) return { eligible: false, queued: false, stage, attempts, maxAttempts, reason: "revision_already_attempted" };
+    if (!enqueue) return { eligible: true, queued: false, stage, attempts, maxAttempts, reason: "ready_to_queue" };
+    const jobId = this.enqueue(stage, draftId, { dedupeKey });
+    return { eligible: true, queued: Boolean(jobId), stage, jobId, attempts: attempts + (jobId ? 1 : 0), maxAttempts,
+      reason: jobId ? "queued" : "queue_rejected" };
+  }
+
   enqueueStartupReconciliation({ wordpressEnabled = false, contractAware = false } = {}) {
     this.reconcileCoverageAuditFalsePositives();
     this.reconcileEntityRelationshipCandidates();
@@ -4277,6 +4339,23 @@ export class Repository {
       if (!researchSlugs.has(row.slug)) this.enqueue("rebuild_topics", row.slug);
     }
     this.reconcileApprovedOpportunities();
+    // Strategy upgrades must re-check historical failures with the current rules before
+    // spending a bounded repair attempt. Old reviews may contain false positives from a
+    // superseded evidence-coverage policy, so they are never fed straight into revise_draft.
+    for (const row of this.db.prepare(`SELECT ad.id,ad.revision,qr.issues_json,
+        EXISTS(SELECT 1 FROM frontend_page_compositions fp
+          WHERE fp.draft_id=ad.id AND fp.draft_revision=ad.revision AND fp.draft_content_hash=ad.content_hash) AS has_current_page
+        ,EXISTS(SELECT 1 FROM article_visuals av JOIN source_assets sa ON sa.id=av.source_asset_id
+          WHERE av.draft_id=ad.id AND COALESCE(sa.ai_derivative_data_url,'')='' AND COALESCE(sa.local_path,'')='') AS missing_source_bytes
+      FROM article_drafts ad
+      JOIN quality_reviews qr ON qr.id=(SELECT id FROM quality_reviews WHERE draft_id=ad.id ORDER BY created_at DESC LIMIT 1)
+      WHERE qr.passed=0 AND ad.status IN ('qa_failed','exception')`).all()) {
+      if (!qualityRepairStage(json(row.issues_json, [])) || row.missing_source_bytes) continue;
+      const jobType = row.has_current_page ? "review_draft" : "compose_frontend_page";
+      const dedupeKey = `strategy-quality-recheck:${CONTENT_STRATEGY.version}:${jobType}:${row.id}:r${row.revision}`;
+      const alreadyAttempted = this.db.prepare("SELECT id FROM jobs WHERE dedupe_key=? LIMIT 1").get(dedupeKey);
+      if (!alreadyAttempted) this.enqueue(jobType, row.id, { dedupeKey });
+    }
     if (wordpressEnabled) {
       for (const row of this.db.prepare(`SELECT ad.id, cc.id AS commercial_id, pc.id AS publish_id,
           fp.id AS frontend_page_id, fp.status AS frontend_page_status
@@ -5504,11 +5583,23 @@ function evidenceHashForFacts(facts) {
 
 function normalizeBriefPlan(plan) {
   const normalized = structuredClone(plan || {});
+  const selected = new Set();
+  let requestedCount = 0;
   normalized.outline = (normalized.outline || []).map((section) => {
-    const claimKeys = [...new Set(section.claim_keys || [])].sort();
+    const requested = [...new Set(section.claim_keys || [])].sort();
+    requestedCount += requested.length;
+    const claimKeys = requested.filter((key) => selected.has(key) || selected.size < 48).slice(0, 12);
+    for (const key of claimKeys) selected.add(key);
     const sectionId = validSemanticId(section.section_id) || `section_${sha256(JSON.stringify({ heading: section.heading || "", claimKeys })).slice(0, 20)}`;
     return { ...section, section_id: sectionId, claim_keys: claimKeys };
   });
+  normalized.evidence_selection = {
+    requested_count: requestedCount,
+    selected_count: selected.size,
+    omitted_count: Math.max(0, requestedCount - normalized.outline.reduce((sum, section) => sum + section.claim_keys.length, 0)),
+    max_total: 48,
+    max_per_section: 12,
+  };
   return normalized;
 }
 

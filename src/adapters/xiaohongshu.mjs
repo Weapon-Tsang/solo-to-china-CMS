@@ -54,7 +54,7 @@ export function normalizeXiaohongshuCapture(input) {
     rawHtml,
     assets,
     completeness,
-    submissionMetadata: { processingEstimate },
+    submissionMetadata: { processingEstimate, sourceTimestamp: normalizeSourceTimestamp(input.sourceTimestamp) },
     acquisitionOrigin,
     syncScopeKey: truncate(input.syncScopeKey || input.client?.syncScopeKey, 500),
     rights,
@@ -86,12 +86,28 @@ function normalizeAssets(values) {
       duration: finiteNumber(value?.duration),
       mediaIdentity: identity,
       originalSha256: validSha256(value?.originalSha256),
+      mimeType: safeImageMime(value?.mimeType),
       aiDerivativeDataUrl: safeImageDataUrl(value?.aiDerivativeDataUrl),
       aiDerivativeSha256: validSha256(value?.aiDerivativeSha256),
       provenance: value?.provenance && typeof value.provenance === "object" ? value.provenance : {},
     });
   }
   return assets;
+}
+
+function safeImageMime(value) {
+  const mime = String(value || '').toLowerCase();
+  return /^image\/(?:jpeg|png|webp|gif)$/.test(mime) ? mime : '';
+}
+
+function normalizeSourceTimestamp(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    value: safeDate(value.value),
+    kind: ['edited','published','unknown'].includes(value.kind) ? value.kind : 'unknown',
+    raw: truncate(value.raw, 200),
+    confidence: ['high','medium','low','none'].includes(value.confidence) ? value.confidence : 'none',
+  };
 }
 
 function normalizeCompleteness(value, { rawText, rawHtml, assets }) {

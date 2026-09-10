@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
+import vm from "node:vm";
 import { normalizeXiaohongshuCapture, ValidationError } from "../src/adapters/xiaohongshu.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
@@ -46,6 +48,56 @@ test("capture storage is idempotent and preserves content revisions", (t) => {
   assert.equal(fixture.repository.getSource(first.id).capture_version, 2);
   const queued = fixture.db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type = 'extract_source' AND status = 'queued'").get().count;
   assert.equal(queued, 1);
+});
+
+test("duplicate recapture restores authorized image bytes without creating a content revision", (t) => {
+  const fixture = repositoryFixture(t);
+  const originalSha256 = "a".repeat(64);
+  const input = { url:"https://www.xiaohongshu.com/explore/media-refresh",title:"Authorized Chongqing view",
+    text:"A sufficiently detailed authorized note about a real Chongqing travel scene.",
+    images:[{url:"https://sns-img.xhscdn.com/refresh.jpg",mediaIdentity:"photo-1",originalSha256,mimeType:"image/jpeg"}] };
+  const first = fixture.repository.saveCapture(normalizeXiaohongshuCapture(input));
+  assert.equal(fixture.db.prepare("SELECT ai_derivative_data_url FROM source_assets WHERE source_id=?").get(first.id).ai_derivative_data_url, "");
+  const assetId = fixture.db.prepare("SELECT id FROM source_assets WHERE source_id=?").get(first.id).id;
+  fixture.db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('topic-media','chongqing','media','Media recovery','fixture',80,1,0,'drafted','now','now')`).run();
+  fixture.db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('brief-media','chongqing','Media recovery','[]','informational','drafted','now','now','topic-media')`).run();
+  fixture.db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-media','brief-media','Media recovery','media-recovery','Body.','{}','exception','now','now',1,'hash-media')`).run();
+  fixture.db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,created_at,updated_at,source_asset_id)
+    VALUES ('visual-media','draft-media',0,'hero','Recovered view','View','','now','now',?)`).run(assetId);
+  const second = fixture.repository.saveCapture(normalizeXiaohongshuCapture({ ...input,images:[{...input.images[0],
+    aiDerivativeDataUrl:"data:image/jpeg;base64,aGVsbG8=",aiDerivativeSha256:originalSha256}] }));
+  assert.equal(second.duplicate,true);
+  assert.equal(second.captureVersion,1);
+  assert.equal(second.restoredAssets,1);
+  assert.deepEqual(second.resumedDraftIds,['draft-media']);
+  assert.equal(fixture.db.prepare("SELECT ai_derivative_data_url FROM source_assets WHERE source_id=?").get(first.id).ai_derivative_data_url,
+    "data:image/jpeg;base64,aGVsbG8=");
+  assert.equal(fixture.db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='extract_source'").get().count,1);
+  assert.equal(fixture.db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='compose_frontend_page'").get().count,1);
+  const repeated = fixture.repository.saveCapture(normalizeXiaohongshuCapture({ ...input,images:[{...input.images[0],
+    aiDerivativeDataUrl:"data:image/jpeg;base64,aGVsbG8=",aiDerivativeSha256:originalSha256}] }));
+  assert.equal(repeated.restoredAssets,0);
+  assert.equal(fixture.db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='compose_frontend_page'").get().count,1);
+});
+
+test("capture parser records edited source time separately from capture time", () => {
+  const source = fs.readFileSync(new URL("../extension/capture-utils.js",import.meta.url),"utf8");
+  const context = { Date };
+  context.globalThis = context;
+  vm.runInNewContext(source,context);
+  const parsed = context.SoloToChinaCaptureUtils.parseSourceDate("编辑于 2026年9月8日 18:30",new Date("2026-09-10T12:00:00+08:00"));
+  assert.equal(parsed.kind,"edited");
+  assert.equal(parsed.confidence,"high");
+  const relative = context.SoloToChinaCaptureUtils.parseSourceDate("发布于 2 天前",new Date("2026-09-10T12:00:00+08:00"));
+  assert.equal(relative.kind,"published");
+  assert.equal(relative.confidence,"low");
+  const capture = normalizeXiaohongshuCapture({ url:"https://www.xiaohongshu.com/explore/source-time",title:"Dated note",
+    text:"A sufficiently detailed note with an explicit source editing timestamp.",publishedAt:parsed.value,sourceTimestamp:parsed });
+  assert.equal(capture.submissionMetadata.sourceTimestamp.kind,"edited");
+  assert.equal(capture.publishedAt,parsed.value);
 });
 
 test("capture identity uses the Xiaohongshu note ID before transient share URLs", (t) => {

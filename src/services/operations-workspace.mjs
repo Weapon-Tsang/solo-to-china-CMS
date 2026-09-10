@@ -1,5 +1,5 @@
 import { isOperationalFailureRetryable } from "../job-policy.mjs";
-import { qualityRepairStage } from "./content-recovery-policy.mjs";
+import { explainOperationalFailure, explainQualityIssue, qualityRepairStage } from "./content-recovery-policy.mjs";
 
 const VALID_STATES = new Set(["passed", "warning", "failed", "not_tested"]);
 
@@ -33,13 +33,13 @@ export function buildContentTaskCard(row) {
   const seo = parseJson(row.seo_json, {});
   const schema = parseJson(row.schema_jsonld, {});
   const ast = parseJson(row.content_ast_json, {});
-  const quality = qualityDimension(row, qualityReport);
+  const quality = localizedQualityDimension(row, qualityReport);
   const seoTechnical = seoDimension(row, seo, schema);
   const geoConsistency = geoDimension(row, seo, schema, ast);
   const productionCost = costDimension(row);
   const dimensions = {
     content_quality: quality,
-    delivery_quality: deliveryDimension(row, qualityReport),
+    delivery_quality: localizedDeliveryDimension(row, qualityReport),
     seo_technical: seoTechnical,
     geo_content_consistency: geoConsistency,
     production_cost: productionCost,
@@ -52,9 +52,10 @@ export function buildContentTaskCard(row) {
     failure_class: row.failed_job_failure_class,
     last_failure_code: row.failed_job_code,
   } : null;
+  const operational = explainOperationalFailure(failedJob);
   const pipelineBlocker = failedJob ? {
     dimension: "pipeline",
-    reason: failedJob.last_error || `The ${failedJob.type} stage failed.`,
+    reason: `${operational.headline}：${operational.reason}`,
     target: failedJob.type,
     retryable: isOperationalFailureRetryable(failedJob),
   } : null;
@@ -78,8 +79,33 @@ export function buildContentTaskCard(row) {
     ],
     estimatedAdditionalCalls: additionalCalls(stage),
     runVersion: row.draft_strategy_version || row.strategy_version || "unknown",
-    disclaimer: "Technical and content readiness only; this does not predict rankings, traffic, or AI citations.",
+    disclaimer: "这里只表示技术与内容是否就绪，不预测排名、流量或 AI 引用。",
   };
+}
+
+function localizedQualityDimension(row, report) {
+  if (!row.draft_id) return dimension("not_tested", "尚无草稿，因此还没有进行正文质量审核。", "draft", "先生成已批准的草稿。", row);
+  if (report.content_quality) {
+    const result = report.content_quality;
+    if (result.passed) return dimension("passed", "当前正文与证据质量审核已通过；图片和页面交付仍单独检查。", "quality_review", "无需因为图片或页面失败而重写正文。", row);
+    const explained = explainQualityIssue(result.issues?.find((issue) => issue.severity === "blocker") || result.issues?.[0]);
+    return dimension("failed", `${explained.title}：${explained.reason}`, "draft.body_markdown", explained.action, row);
+  }
+  if (row.qa_passed === 1) return dimension("passed", "当前草稿版本已通过基于证据的正文质量审核。", "quality_review", "无需修订正文。", row);
+  if (row.qa_score != null || Object.keys(report).length) {
+    const issue = report.issues?.find((item) => item.severity === "blocker") || report.issues?.[0];
+    const explained = explainQualityIssue(issue);
+    return dimension("failed", `${explained.title}：${explained.reason}`, issue?.path || issue?.field || "draft.body_markdown", explained.action, row);
+  }
+  return dimension("not_tested", "当前草稿版本尚未完成质量审核。", "quality_review", "运行草稿质量审核。", row);
+}
+
+function localizedDeliveryDimension(row, report) {
+  if (!row.draft_id || !report.delivery_quality) return dimension("not_tested", "当前版本尚无独立交付质量结论；历史综合分不能当作正文或交付通过证明。", "frontend_page", "完成图片和页面编排后重新质检。", row);
+  const result = report.delivery_quality;
+  if (result.passed) return dimension("passed", "当前版本的图片和页面校验已通过；线上 HTML 仍需在目标环境验证。", "frontend_page", "无需交付修复。", row);
+  const explained = explainQualityIssue(result.issues?.find((issue) => issue.severity === "blocker") || result.issues?.[0]);
+  return dimension("failed", `${explained.title}：${explained.reason}`, "frontend_page", explained.action, row);
 }
 
 function qualityDimension(row, report) {
@@ -103,32 +129,32 @@ function deliveryDimension(row, report) {
 }
 
 function seoDimension(row, seo, schema) {
-  if (!row.draft_id) return dimension("not_tested", "SEO fields do not exist until a draft is created.", "seo", "Create the draft.", row);
+  if (!row.draft_id) return dimension("not_tested", "还没有草稿，因此尚未生成或检查 SEO 字段。", "seo", "先生成已批准方案的草稿。", row);
   const missing = [];
-  if (!(seo.meta_title || seo.seo_title)) missing.push("meta title");
-  if (!seo.meta_description) missing.push("meta description");
-  if (!seo.canonical_url || seo.canonical_status === "invalid") missing.push("validated canonical");
-  if (!Object.keys(schema).length) missing.push("structured data");
-  if (missing.length) return dimension("failed", `CMS SEO artifact is missing: ${missing.join(", ")}.`, `seo.${missing[0].replaceAll(" ", "_")}`, "Edit the named SEO field and rerun QA only.", row);
-  if (row.wordpress_status !== "synced") return dimension("not_tested", "CMS SEO artifacts are present, but final Frontend/WordPress HTML and crawler behavior have not been verified.", "rendered_html", "Validate the delivered HTML, robots rules, and sitemap in the target environment.", row);
-  return dimension("warning", "CMS SEO artifacts were delivered; live indexing and search display remain outside this check.", "wordpress_publication", "Run a live rendered-HTML and crawler check.", row);
+  if (!(seo.meta_title || seo.seo_title)) missing.push("页面标题");
+  if (!seo.meta_description) missing.push("页面摘要");
+  if (!seo.canonical_url || seo.canonical_status === "invalid") missing.push("规范网址");
+  if (!Object.keys(schema).length) missing.push("结构化数据");
+  if (missing.length) return dimension("failed", `CMS 还缺少：${missing.join("、")}。这表示技术交付字段不完整，不代表正文事实一定有错。`, "seo", "只补齐缺失字段并重新质检，不重写无关正文。", row);
+  if (row.wordpress_status !== "synced") return dimension("not_tested", "CMS 内的 SEO 字段已经存在，但最终前端／WordPress HTML、robots 和站点地图尚未在目标环境验证。", "rendered_html", "交付后在目标环境检查最终 HTML、robots 和站点地图。", row);
+  return dimension("warning", "CMS 已交付 SEO 字段；真实索引和搜索展示不属于这项本地检查。", "wordpress_publication", "对线上页面运行最终 HTML 和爬虫配置检查。", row);
 }
 
 function geoDimension(row, seo, schema, ast) {
-  if (!row.draft_id) return dimension("not_tested", "No semantic article artifact exists yet.", "content_ast", "Create the draft.", row);
+  if (!row.draft_id) return dimension("not_tested", "还没有语义化文章产物，因此尚未检查正文与结构化数据是否一致。", "content_ast", "先生成草稿。", row);
   const hasAst = Array.isArray(ast.nodes) && ast.nodes.length > 0;
   const hasGraph = Array.isArray(schema["@graph"]) && schema["@graph"].length > 0;
-  if (!hasAst || !hasGraph) return dimension("failed", "The frozen visible-content tree or synchronized schema is missing.", !hasAst ? "content_ast.nodes" : "schema_jsonld.@graph", "Recompose the semantic page artifact without rewriting evidence text.", row);
-  if (row.qa_passed !== 1) return dimension("warning", "Semantic text and schema exist, but content quality has not passed for this revision.", "quality_review", "Resolve content-quality failures before treating GEO consistency as ready.", row);
-  return dimension("passed", "Visible text, FAQ/SEO metadata, and schema derive from the current frozen semantic artifact.", "content_ast", "No GEO-specific model rewrite is required.", row);
+  if (!hasAst || !hasGraph) return dimension("failed", "可见正文树或与它同步的结构化数据尚未生成完整。", !hasAst ? "content_ast.nodes" : "schema_jsonld.@graph", "重新编排语义页面，不改写已有证据正文。", row);
+  if (row.qa_passed !== 1) return dimension("warning", "语义正文和结构化数据已存在，但当前修订的正文质量尚未通过。", "quality_review", "先解决正文质量阻塞，再把 GEO 一致性视为就绪。", row);
+  return dimension("passed", "可见正文、FAQ／SEO 元数据和结构化数据来自同一份当前语义产物。", "content_ast", "不需要为 GEO 单独重写正文。", row);
 }
 
 function costDimension(row) {
   const calls = Number(row.model_call_count || 0);
   const unknown = Number(row.unknown_cost_count || 0);
-  if (!calls) return dimension("not_tested", "No run-linked model cost records were found; amount is unknown, not zero.", "model_call_metrics", "Retain provider usage and dated pricing provenance on the next paid run.", row);
-  if (unknown) return dimension("warning", `${calls} model call records exist, but ${unknown} have unknown cost.`, "model_call_metrics.cost_usd", "Configure dated pricing provenance; do not infer a monetary amount.", row);
-  return { ...dimension("passed", `${calls} model call records have attributable cost metadata.`, "model_call_metrics.cost_usd", "Review the run ledger before another paid retry.", row),
+  if (!calls) return dimension("not_tested", "没有找到与本次生产关联的模型调用记录；费用是未知，不是 0。", "model_call_metrics", "下次付费调用要保留用量和带日期的定价来源。", row);
+  if (unknown) return dimension("warning", `已有 ${calls} 条模型调用记录，其中 ${unknown} 条费用未知。`, "model_call_metrics.cost_usd", "配置带日期的价格来源；不要猜测金额。", row);
+  return { ...dimension("passed", `${calls} 条模型调用都已有可归属的费用记录。`, "model_call_metrics.cost_usd", "再次付费重试前查看本次运行账本。", row),
     amountUsd: Number(row.known_cost_usd || 0) };
 }
 
@@ -151,14 +177,20 @@ function retryStage(row, failed, failedJob = null) {
 }
 
 function actionFor(row, stage, failed, pipelineBlocker = null) {
-  if (stage) return { label: `Retry ${stage} only`, stage,
-    reason: failed[0]?.[1]?.reason || pipelineBlocker?.reason || "Continue from the first incomplete production artifact." };
+  if (stage) return { label: stageLabel(stage), stage,
+    reason: failed[0]?.[1]?.reason || pipelineBlocker?.reason || "从第一个未完成的生产产物继续。" };
   if (pipelineBlocker && !pipelineBlocker.retryable) return {
-    label: `Correct ${pipelineBlocker.target} input`, stage: "manual_correction",
+    label: "修正失败阶段的输入", stage: "manual_correction",
     reason: pipelineBlocker.reason,
   };
-  if (row.wordpress_status === "synced") return { label: "Verify final HTML", stage: "external_validation", reason: "CMS delivery is complete; production HTML remains a separate check." };
-  return { label: "Review current state", stage: "manual_review", reason: "No safe automatic retry is currently required." };
+  if (row.wordpress_status === "synced") return { label: "验证最终 HTML", stage: "external_validation", reason: "CMS 交付已完成；线上 HTML 仍需单独检查。" };
+  return { label: "查看当前状态", stage: "manual_review", reason: "当前没有需要安全自动重试的阶段。" };
+}
+
+function stageLabel(stage) {
+  return ({ plan_content:"仅重新规划内容",generate_draft:"仅重新生成草稿",revise_draft:"仅修订失败内容",
+    compose_frontend_page:"仅重新编排页面",review_draft:"仅重新质检",push_wordpress_draft:"仅重新投递 WordPress",
+    compose_commercial:"仅重新组合商业层",compose_publish_page:"仅重新生成发布包" })[stage] || `仅重试 ${stage}`;
 }
 
 function additionalCalls(stage) {

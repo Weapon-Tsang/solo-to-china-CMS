@@ -143,9 +143,9 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 1.7
+## Content Production Strategy 2.0
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.7.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_1.7.md), and summarized by the Chinese [evolution log](docs/content-strategy/CHANGELOG.md). Source Adaptation, Topic Feature, and Multi-Source Synthesis are parallel opportunities: selecting one route for one article never disables the others. Author choices such as one-day/two-day itineraries, route order, food, lodging, and photo lists coexist by default. Equivalent prices and hours are canonicalized before only genuinely incompatible hard facts reach human review. High-volume text/image extraction and text coverage audits use asynchronous Vertex Batch with completion-based updates; video, small tails, and failed items use realtime fallback. The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.0.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.0.md), and summarized by the Chinese [evolution log](docs/content-strategy/CHANGELOG.md). Captured sources enrich Claims and Knowledge first. A concrete article plan becomes a counted content opportunity only through human approval, a human assignment, or a corroborated destination-level topic gate. Draft planning uses a bounded evidence selection, while failures are classified by text, evidence, page, or retained media and receive at most two automatic repair attempts before human intervention. The live operating path is:
 
 ```text
 Capture → structured research → Kimi Intake Analysis → Recommendation → human decision

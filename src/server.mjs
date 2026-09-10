@@ -524,7 +524,9 @@ export function createApplication(config = loadConfig()) {
           summary: {
             recommendations: repository.db.prepare('SELECT count(*) n FROM content_recommendations').get().n,
             pending: repository.db.prepare("SELECT count(*) n FROM content_recommendations WHERE decision='pending'").get().n,
-            opportunities: repository.db.prepare('SELECT count(*) n FROM content_opportunities').get().n,
+            opportunities: repository.db.prepare(`SELECT count(*) n FROM content_opportunities
+              WHERE recommendation_id IS NULL OR approved_at IS NOT NULL OR candidate_id IS NOT NULL
+                OR status IN ('approved_waiting_for_evidence','approved_ready','producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft','suppressed')`).get().n,
             approved: repository.db.prepare('SELECT count(*) n FROM content_opportunities WHERE approved_at IS NOT NULL').get().n,
           } });
       }
