@@ -101,6 +101,10 @@ test('media/page blockers do not automatically rewrite otherwise valid text', ()
 test('automatic quality repair is deduplicated per revision and stops after two attempts',t=>{
   const {db,repository}=fixture(t);
   const issues=[{code:'confirmed_topic_coverage_missing',severity:'blocker',message:'missing'}];
+  repository.saveReview('draft-r',{passed:false,score:40,issues,checks:[],unsupported_claims:[]},'fixture');
+  const listed=repository.listContent()[0];
+  assert.equal(listed.operation.automaticRepair.reason,'ready_to_queue');
+  assert.equal(listed.operation.automaticRepair.maxAttempts,2);
   const first=repository.automaticQualityRepairState('draft-r',issues,{enqueue:true});
   assert.equal(first.queued,true);assert.equal(first.attempts,1);
   const active=repository.automaticQualityRepairState('draft-r',issues,{enqueue:true});

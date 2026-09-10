@@ -1,6 +1,12 @@
 # Changelog
 
-## 1.18.0 - Unreleased
+## 1.18.1 - Unreleased
+
+- Replace the duplicated, non-interactive Content opportunity list with a production-lifecycle overview that explains why the records exist and directs operators to the actionable table.
+- Show the first Chinese quality blocker and the bounded automatic-repair state directly on each Content row, including active work, two-attempt exhaustion, operational interruption, and real-input requirements.
+- Localize production lifecycle labels such as Producing and Drafted while preserving the Strategy 2.0 approval, evidence, QA, Research/Commercial, and WordPress safety gates.
+
+## 1.18.0 - 2026-09-11
 
 - Activate Content Strategy 2.0 and separate captured Sources, Claims/Knowledge, editorial article plans, and counted production opportunities. Unapproved single-source proposals no longer inflate opportunity totals.
 - Bound planning to 48 unique facts and 12 per section, and require supported evidence per promised section instead of forcing drafts to exhaust the destination knowledge base.

@@ -5,6 +5,7 @@ import { friendlyError, label, formatDuration } from "../frontend/src/lib/utils.
 
 const appSource = fs.readFileSync(new URL("../frontend/src/App.jsx", import.meta.url), "utf8");
 const viewsSource = fs.readFileSync(new URL("../frontend/src/views.jsx", import.meta.url), "utf8");
+const qualityStatusSource = fs.readFileSync(new URL("../frontend/src/workspaces/content-quality-status.jsx", import.meta.url), "utf8");
 const dialogSource = fs.readFileSync(new URL("../frontend/src/components/ui/dialog.jsx", import.meta.url), "utf8");
 const interfaceSource = `${appSource}\n${viewsSource}\n${dialogSource}`;
 
@@ -62,6 +63,17 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
     "保存为最终事实",
   ]) assert.ok(viewsSource.includes(text), `人工判定界面缺少大白话说明：${text}`);
   assert.match(viewsSource, /disabled=\{actionBusy \|\| !evidenceReady\}/, "证据不完整时必须禁用人工结论按钮");
+});
+
+test("content workspace explains records, failures, and bounded automatic repair before opening details", () => {
+  for (const text of ["生产队列概览", "已经批准并进入生产生命周期", "不等于", "唯一逐篇工作区"]) {
+    assert.ok(viewsSource.includes(text), `内容队列缺少直白说明：${text}`);
+  }
+  for (const text of ["未通过原因：", "自动处理：", "已自动修复", "需要补齐真实输入"]) {
+    assert.ok(qualityStatusSource.includes(text), `内容行缺少失败或自修复说明：${text}`);
+  }
+  assert.equal(label("producing"), "生产中");
+  assert.equal(label("drafted"), "已有草稿");
 });
 
 test("shared status, category, and duration labels use Chinese display text", () => {

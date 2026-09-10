@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { StatusPill } from "@/components/dashboard";
@@ -14,7 +15,14 @@ export function ContentQualityStatus({ operation, actionBusy = false, onRetry = 
   const [inspection, setInspection] = useState("");
   if (!operation?.dimensions) return <span className="text-[10px] text-slate-400">检查尚未建立</span>;
   const entries = Object.entries(operation.dimensions);
-  if (compact) return <div className="mt-2 flex flex-wrap gap-1.5">{entries.map(([key, item]) => <span key={key} title={item.reason} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[9px] text-slate-600"><span>{TITLES[key]}</span><StatusPill status={item.status} /></span>)}</div>;
+  if (compact) {
+    const primaryBlocker = operation.blockers?.[0];
+    return <div className="mt-2">
+      <div className="flex flex-wrap gap-1.5">{entries.map(([key, item]) => <span key={key} title={item.reason} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[9px] text-slate-600"><span>{TITLES[key]}</span><StatusPill status={item.status} /></span>)}</div>
+      {primaryBlocker && <p className="mt-2 max-w-2xl rounded-lg bg-red-50 px-2.5 py-2 text-[10px] leading-relaxed text-red-800"><strong>未通过原因：</strong>{primaryBlocker.reason}</p>}
+      {operation.status === "failed" && <p className="mt-1 max-w-2xl px-1 text-[10px] leading-relaxed text-slate-500"><strong>自动处理：</strong>{compactAutomationText(operation.automaticRepair, operation.nextAction)}</p>}
+    </div>;
+  }
   const compare = async () => {
     const action = operation.actions?.find((item) => item.id === "compare_revisions");
     if (!action?.endpoint) return setInspection("当前还没有可比较的稿件修订。");
@@ -41,5 +49,14 @@ export function ContentQualityStatus({ operation, actionBusy = false, onRetry = 
     {inspection && <p className="mt-2 rounded-md bg-slate-50 px-2 py-1.5 text-[10px] text-slate-600">{inspection}</p>}
   </Card>;
 }
-import { useState } from "react";
+
+function compactAutomationText(automatic, nextAction) {
+  if (automatic?.reason === "job_already_active") return "系统正在自动处理，不需要重复点击。";
+  if (automatic?.reason === "attempt_limit_reached") return `已自动修复 ${automatic.attempts}/${automatic.maxAttempts} 次仍未通过，已停止循环，需要人工判断。`;
+  if (automatic?.reason === "revision_already_attempted") return "当前版本已经自动修复过；为避免重复改写和重复费用，需先查看结果。";
+  if (automatic?.reason === "operation_must_be_resolved_first") return "被模型、配置、超时或图片等流程故障中断，需先处理该故障。";
+  if (automatic?.reason === "manual_media_or_no_blocker") return "这类问题不能凭空生成原图或替你决定事实取舍，需要补齐真实输入。";
+  if (automatic?.eligible) return `属于可自动修复范围；系统最多尝试 ${automatic.maxAttempts} 次。`;
+  return nextAction?.reason || "打开处理入口查看本条任务为什么停止。";
+}
 import { api } from "@/lib/api";

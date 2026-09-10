@@ -624,7 +624,13 @@ function ContentView({ data, onNavigate, onOpenDraft, onAction, actionBusy }) {
 }
 
 function OpportunityQueue({ items }) {
-  return <Card className="mb-3 p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-slate-900">内容机会状态</p><p className="mt-1 text-xs text-slate-500">批准只作用于精确机会；证据不足会保留批准并自动等待，不会误选同目的地的其他主题。</p></div><span className="text-xs font-semibold tabular-nums">{items.length}</span></div><div className="mt-3 space-y-2">{items.map((item) => <div key={item.id} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[1fr_auto]"><div><p className="text-xs font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-[10px] text-slate-500">覆盖 {Math.round(item.readiness_score || 0)}% · 缺少：{(item.readiness?.blockingRequirements || []).join("、") || "无阻塞项"}</p></div><StatusPill status={item.status} /></div>)}</div></Card>;
+  const counts = items.reduce((result, item) => ({ ...result, [item.status]: (result[item.status] || 0) + 1 }), {});
+  const order = ["approved_waiting_for_evidence", "approved_ready", "producing", "drafted", "qa_failed", "ready_for_wordpress", "wordpress_draft", "suppressed"];
+  return <Card className="mb-3 p-4 sm:p-5">
+    <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-slate-900">生产队列概览</p><p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">这里的 {items.length} 条是已经批准并进入生产生命周期的内容对象，包含等待证据、生产中、已有草稿和质检未通过；不等于 {items.length} 篇可以发布的文章。</p></div><span className="text-xs font-semibold tabular-nums">{items.length}</span></div>
+    <div className="mt-3 flex flex-wrap gap-2">{order.filter((status) => counts[status]).map((status) => <span key={status} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] text-slate-600"><StatusPill status={status} /><b>{counts[status]} 篇</b></span>)}</div>
+    <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-[11px] leading-relaxed text-blue-900"><strong>怎么处理：</strong>下方“内容生产说明”表格是唯一逐篇工作区。点击有草稿的整行可打开详情；每一行的“查看原因 / 处理入口”都会直接说明第一条失败原因、自动修复是否正在执行、是否已达到两次上限，以及需要补正文、证据、图片还是页面。</div>
+  </Card>;
 }
 
 function ContentFlowWorkspace({ items, knowledgeOnly, onNavigate, onOpenDraft, onAction, actionBusy }) {

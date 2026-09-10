@@ -12,6 +12,8 @@ export function label(value) {
   const chinese = { processing: "处理中", captured: "已采集", queued: "排队中", processed: "提取完成", needs_ai: "等待 AI", exception: "需要处理", running: "执行中", pending: "待处理", succeeded: "成功", failed: "失败", configured: "已配置", ready: "就绪", candidate: "候选", corroborated: "已佐证", conflicted: "存在冲突", active: "启用", inactive: "停用", ready_for_wordpress: "可发送到 WordPress", not_configured: "未配置", warning: "注意", blocker: "阻塞", single_source: "单一来源", research_required: "需补充研究", approved_article: "已批准文章", knowledge_only: "仅入知识库", cluster: "归入专题", research_first: "优先补充研究", ignored: "已忽略", stale: "可能过期", current: "当前", requires_official: "需官方核验", medium: "中", high: "高", low: "低", not_synced: "未同步", draft: "草稿", commercial_ready: "商品已组合", wordpress_draft: "WordPress 草稿", passed: "通过", published: "已发布" };
   chinese.resolved = "已人工确认";
   Object.assign(chinese, {
+    producing: "生产中", drafted: "已有草稿", brief_ready: "规划已完成",
+    approved_waiting_for_evidence: "已批准，等待证据", approved_ready: "已批准，待生产",
     not_tested: "尚未验证", qa_queued: "等待质检", qa_failed: "质检未通过", awaiting_review: "等待完成编排 / 质检",
     review_draft: "质量审核", revise_draft: "修订正文", compose_frontend_page: "页面编排", plan_content: "内容规划",
     review_draft_queued: "质检排队中（未改写）", review_draft_running: "正在质检（未改写）",

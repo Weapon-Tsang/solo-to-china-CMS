@@ -3783,7 +3783,16 @@ export class Repository {
       if (review && review.evidence_hash !== currentHash) {
         row.qa_passed=null;row.qa_score=null;row.quality_report_json='{}';staleReviews.add(row.draft_id);
       }
-      return [row.draft_id, buildContentTaskCard(row)];
+      const operation = buildContentTaskCard(row);
+      const reviewIssues = json(row.quality_report_json, {}).issues || [];
+      operation.automaticRepair = this.automaticQualityRepairState(row.draft_id, reviewIssues, { enqueue: false });
+      if (row.failed_job_type) operation.automaticRepair = {
+        ...operation.automaticRepair,
+        eligible: false,
+        queued: false,
+        reason: "operation_must_be_resolved_first",
+      };
+      return [row.draft_id, operation];
     }));
     const active = this.db.prepare("SELECT entity_id,type,status FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").all();
     return rows.map((row) => {
