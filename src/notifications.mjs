@@ -22,7 +22,7 @@ export class ExceptionNotifier {
   async deliver() {
     if (!this.enabled) return { itemCount: 0, metadata: { configured: false, skipped: true } };
     const threshold = SEVERITY[this.config.minimumSeverity] || SEVERITY.blocker;
-    const exceptions = this.repository.listOperationalExceptions()
+    const exceptions = (this.repository.listSystemHealthIssues?.() || this.repository.listOperationalExceptions())
       .filter((item) => (SEVERITY[item.severity] || 0) >= threshold)
       .filter((item) => !(item.kind === "maintenance" && item.entityId === "exception_notifications"));
     this.repository.pruneResolvedNotificationState(exceptions.map((item) => item.key));

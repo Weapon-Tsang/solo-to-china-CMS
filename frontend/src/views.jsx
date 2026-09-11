@@ -6,20 +6,19 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, SectionTitle, StatusPill, SummaryBar, TableShell } from "@/components/dashboard";
-import { cn, formatDate, formatDuration, label } from "@/lib/utils";
+import { cn, formatDate, formatDuration, friendlyError, label } from "@/lib/utils";
+import { RecommendationBulk, RecommendationSelect } from "@/workspaces/recommendation-bulk";
+import { ContentRecovery } from "@/workspaces/content-recovery";
+import { ContentQualityStatus } from "@/workspaces/content-quality-status";
+import { ConfirmAction } from "@/components/confirm-action";
 
 export function ViewRenderer(props) {
   const components = {
     sources: SourcesView,
     recommendations: RecommendationsView,
-    assignments: AssignmentsView,
-    knowledge: KnowledgeView,
-    blueprints: BlueprintsView,
     content: ContentView,
-    wordpress: WordPressView,
+    knowledge: KnowledgeView,
     commercial: CommercialView,
-    exceptions: ExceptionsView,
-    maintenance: MaintenanceView,
     settings: SettingsView,
   };
   const Component = components[props.view];
@@ -42,7 +41,7 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
     body: JSON.stringify({ model: visualModel }),
   }, `已切换到 ${data?.visual?.models?.find((item) => item.id === visualModel)?.label || visualModel}`);
   return <div className="grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(16rem,.72fr)]">
-    <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">图文处理与写作模型</div><p className="mt-1 text-xs leading-relaxed text-slate-500">用于来源读取、图片识别、事实整理、内容规划、英文写作与质量审核。每次输出都会记录实际模型。</p></div><StatusPill status={data?.configured ? "configured" : "needs_ai"} /></div>
+    <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">图文处理与写作模型</div><p className="mt-1 text-xs leading-relaxed text-slate-500">用于来源读取、图片识别、事实整理、内容组织、英文写作与质量审核。每次输出都会记录实际模型。</p></div><StatusPill status={data?.configured ? "configured" : "needs_ai"} /></div>
       <div className="mt-4 space-y-2 sm:mt-5">{(data?.models || []).map((item) => <label key={item.id} className={cn("flex cursor-pointer gap-3 rounded-xl border p-3 transition", model === item.id ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300")}><input className="mt-1 accent-slate-900" type="radio" name="ai-model" value={item.id} checked={model === item.id} onChange={() => setModel(item.id)} /><span><span className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-slate-900"><span>{item.label}</span>{item.isDefault && <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700">默认</span>}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{item.description}</span><span className="mt-1 block text-[10px] text-emerald-600">支持图文多模态输入{item.preview ? " · 预览版" : ""}</span></span></label>)}</div>
       <div className="mt-4 flex flex-wrap items-center gap-2.5 sm:mt-5 sm:gap-3"><Button size="sm" disabled={actionBusy || !data?.configured || model === data?.id} onClick={saveAi}><CheckCircle2 /> 保存图文模型</Button><span className="text-[11px] text-slate-400">来源：{data?.source === "dashboard" ? "后台设置" : "环境配置"}</span>{data?.vertexBatchConfigured && <span className="text-[11px] text-emerald-600">大批量异步提取已启用{data?.vertexBatchActive ? ` · ${data.vertexBatchActive} 个批任务进行中` : ""}</span>}</div>
     </Card>
@@ -53,7 +52,28 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
     <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div><div className="text-sm font-semibold text-slate-900">系统与数据存储</div><p className="mt-1 text-xs leading-relaxed text-slate-500">模型密钥只保留在服务器环境中；研究来源、信息主张、知识库和草稿使用持久化数据库保存。</p></div><span className="grid size-8 place-items-center rounded-lg bg-sky-50 text-sky-700"><Database className="size-4" /></span></div><div className="mt-4 space-y-3 text-xs text-slate-600"><div className="flex items-center justify-between gap-3"><span>当前部署</span><span className="font-medium text-slate-900">{data?.storage?.label || "正在识别"}</span></div><div className="flex items-center justify-between gap-3"><span>跨设备访问</span><span className="font-medium text-slate-900">{data?.storage?.crossDevice ? "支持：登录同一后台即可" : "当前仅本机"}</span></div><div className="flex items-center justify-between gap-3"><span>应用版本</span><span className="font-medium text-slate-900">{data?.appVersion || health?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>内容策略</span><span className="font-medium text-slate-900">v{data?.contentStrategy?.version || health?.contentStrategy?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>SEO / GEO 结构化包</span><StatusPill status="ready" /></div><div className="flex items-center justify-between gap-3"><span>云端生图服务</span><StatusPill status={health?.visualGenerationConfigured ? "ready" : "pending"} /></div></div><p className="mt-4 border-t border-slate-100 pt-3 text-[11px] leading-relaxed text-slate-400 sm:mt-5">{data?.storage?.description || "数据库状态将在服务启动后显示。"}</p></Card>
     <CredentialSettingsCard auth={auth} onAction={onAction} onAuthRefresh={onAuthRefresh} actionBusy={actionBusy} />
     <FrontendContractSettingsCard contract={data?.frontendContract} onAction={onAction} actionBusy={actionBusy} />
+    <SettingsOperations data={data} onAction={onAction} actionBusy={actionBusy} />
   </div>;
+}
+
+function SettingsOperations({ data, onAction, actionBusy }) {
+  const exceptionTotal = Number(data?.operations?.exceptionTotal ?? data?.operations?.exceptions?.length ?? 0);
+  const groups = [
+    ["系统健康", `${exceptionTotal} 项基础设施故障`, data?.operations?.exceptions],
+    ["维护与回填", `${data?.operations?.maintenance?.pendingTasks || 0} 类任务仍在处理`, data?.operations?.maintenance?.cards],
+    ["WordPress 与搜索", `${data?.operations?.wordpressInventory?.length || 0} 篇库存文章`, data?.operations?.wordpressInventory],
+    ["编辑蓝图与经验层", `${data?.operations?.blueprints?.length || 0} 个蓝图 · ${data?.operations?.experiences?.length || 0} 个 Experience Block`, data?.operations?.experiences],
+    ["失败经验与金标文章", `${data?.operations?.failureLessons?.length || 0} 条失败经验 · ${data?.operations?.goldenArticles?.length || 0} 篇金标文章`, data?.operations?.failureLessons],
+  ];
+  const backfill = () => onAction("/api/backfills/media", { method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({dryRun:true}) },
+    (result) => `媒体回填预检完成：${result.recoveryEligible || 0} 项可由服务端恢复，${result.browserRepairRequired || 0} 项需要浏览器修复。`);
+  const experienceBackfill = () => onAction("/api/backfills/experience", {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({dryRun:true})},
+    (result) => `Experience 回填预检完成：${result.eligible || 0} 个来源符合条件。`);
+  const recommendationBackfill = () => onAction("/api/backfills/recommendations", {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({dryRun:true})},
+    (result) => `建议对账预检完成：覆盖 ${result.destinations?.length || 0} 个目的地。`);
+  const cleanupPreview = () => onAction("/api/backfills/failed-production-cleanup", {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({dryRun:true})},
+    (result) => `历史失败预检完成：${result.safeToRollback || 0} 项可安全回流，${result.migrationReview || 0} 项仅标记复核。`);
+  return <Card className="p-4 sm:p-5 xl:col-span-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-semibold text-slate-900">高级系统能力</div><p className="mt-1 text-xs text-slate-500">原独立菜单已收拢为可展开卡片，日常工作区只保留六个入口。批量修复必须先预检，再按运行手册执行。</p></div><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={actionBusy} onClick={backfill}><RefreshCw />预检媒体回填</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={experienceBackfill}>预检 Experience</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={recommendationBackfill}>预检建议对账</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={cleanupPreview}>预检历史失败</Button></div></div><div className="mt-4 grid gap-2 sm:grid-cols-2">{groups.map(([title,summary,items]) => <details key={title} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-800">{title}<span className="ml-2 font-normal text-slate-500">{summary}</span></summary><div className="mt-2 max-h-48 overflow-auto text-[10px] leading-relaxed text-slate-500">{(items || []).length ? (items || []).slice(0,20).map((item,index) => <p key={item.id || item.session_id || index} className="border-t border-slate-100 py-1.5 first:border-0">{item.title || item.failure_code || item.backfill_type || item.status || item.id || "记录"}</p>) : <p>暂无记录</p>}</div></details>)}</div></Card>;
 }
 
 function FrontendContractSettingsCard({ contract, onAction, actionBusy }) {
@@ -65,7 +85,7 @@ function FrontendContractSettingsCard({ contract, onAction, actionBusy }) {
   const sync = () => onAction("/api/frontend-contract/sync", { method: "POST" }, "已加入前端能力契约同步队列。");
   return <Card className="p-4 sm:p-5 xl:col-span-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-semibold text-slate-900">前端能力契约</div><p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">前端发布可渲染组件与页面 Schema；CMS 只选择组件、变体和顺序，并在生成与发布前校验。这里显示当前已同步的能力，不会扫描或猜测前端代码。</p></div><StatusPill status={ready ? "ready" : contract?.status === "major_mismatch" || contract?.status === "invalid" ? "exception" : "pending"} /></div>
     <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4"><ContractSetting label="同步状态" value={stateLabel} /><ContractSetting label="契约版本" value={contract?.active?.contractVersion ? `v${contract.active.contractVersion}` : "—"} /><ContractSetting label="页面 Schema" value={contract?.active?.schemaVersion ? `v${contract.active.schemaVersion}` : "—"} /><ContractSetting label="可用组件" value={contract?.active ? `${contract.stableComponents || 0} 个稳定 / ${contract.availableComponents || 0} 个总计` : "暂无"} /></div>
-    <div className="mt-3 grid gap-2 rounded-lg bg-slate-50 p-3 text-[11px] text-slate-500 sm:grid-cols-2"><div><span className="text-slate-400">来源仓库：</span><span className="break-all text-slate-700">{contract?.sourceRepository || "未配置"}</span></div><div><span className="text-slate-400">最近成功同步：</span><span className="text-slate-700">{contract?.lastSuccessAt ? formatDate(contract.lastSuccessAt) : "尚无"}</span></div>{contract?.lastError && <div className="sm:col-span-2"><span className="text-amber-700">最近错误：</span>{contract.lastError}</div>}</div>
+    <div className="mt-3 grid gap-2 rounded-lg bg-slate-50 p-3 text-[11px] text-slate-500 sm:grid-cols-2"><div><span className="text-slate-400">来源仓库：</span><span className="break-all text-slate-700">{contract?.sourceRepository || "未配置"}</span></div><div><span className="text-slate-400">最近成功同步：</span><span className="text-slate-700">{contract?.lastSuccessAt ? formatDate(contract.lastSuccessAt) : "尚无"}</span></div>{contract?.lastError && <div className="sm:col-span-2"><span className="text-amber-700">最近错误：</span>{friendlyError(contract.lastError)}</div>}</div>
     <div className="mt-4 flex flex-wrap items-center gap-3"><Button size="sm" variant="outline" disabled={actionBusy || !configured} onClick={sync}><RefreshCw /> 同步前端 Contract</Button><span className="text-[11px] text-slate-400">{configured ? "同步失败时仅可使用最近一次通过验证的缓存；重大版本需通过诊断 API 显式确认后才会恢复生产。" : "请在服务器环境中配置 Component Registry 与 Page Schema 的发布地址。"}</span></div>
   </Card>;
 }
@@ -126,13 +146,14 @@ function SourcesView({ data, onGuide, onOpenSource, onSubmitManualSource, action
             <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="line-clamp-2 text-[15px] font-semibold leading-relaxed text-slate-900"><span className="mr-1 tabular-nums text-slate-400">{item.list_number}.</span>{item.title || "未命名来源"}</h2><p className="mt-1.5 text-[11px] text-slate-400">{sourceTypeLabel(item)} · v{item.capture_version}</p></div><StatusPill status={item.status} /></div>
             <SourceQueueStatus item={item} compact />
             <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[11px] text-slate-500"><span>{item.destination_name || "目的地识别中"}</span><span className="font-medium tabular-nums text-slate-700">{sourceProgressLabel(item)}</span></div>
+            <p className="mt-1 text-[10px] text-slate-500">{sourceCaptureLabel(item)} · {sourceMediaLabel(item)} · {sourceExperienceLabel(item)}</p>
             <p className="mt-2 text-[10px] text-slate-400">点击查看来源详情与提取结果</p>
           </button>)}
         </section>
-        <div className="hidden md:block"><TableShell><Table><TableHeader><TableRow><TableHead>来源</TableHead><TableHead>状态</TableHead><TableHead>处理队列</TableHead><TableHead className="hidden md:table-cell">目的地</TableHead><TableHead>处理进度</TableHead><TableHead className="hidden lg:table-cell">采集时间</TableHead></TableRow></TableHeader>
+        <div className="hidden md:block"><TableShell><Table><TableHeader><TableRow><TableHead>来源 / 平台作者</TableHead><TableHead>采集状态</TableHead><TableHead>完整性</TableHead><TableHead>抽取状态</TableHead><TableHead>媒体耐久化</TableHead><TableHead>Experience</TableHead><TableHead className="hidden md:table-cell">目的地</TableHead><TableHead>处理进度</TableHead><TableHead className="hidden lg:table-cell">采集时间</TableHead></TableRow></TableHeader>
           <TableBody>{items.map((item) => <TableRow key={item.id} tabIndex={0} role="button" className="cursor-pointer focus-visible:bg-slate-50 focus-visible:outline-none" onClick={() => onOpenSource(item.id)} onKeyDown={(event) => event.key === "Enter" && onOpenSource(item.id)}>
             <TableCell><div className="max-w-md font-medium text-slate-900"><span className="mr-1.5 tabular-nums text-slate-400">{item.list_number}.</span>{item.title || "未命名来源"}</div><div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-slate-400"><span>{sourceTypeLabel(item)}</span><span>· v{item.capture_version}</span></div></TableCell>
-            <TableCell><StatusPill status={item.status} /></TableCell><TableCell><SourceQueueStatus item={item} /></TableCell><TableCell className="hidden md:table-cell">{item.destination_name || "—"}</TableCell><TableCell className="whitespace-nowrap text-xs tabular-nums">{sourceProgressLabel(item)}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.captured_at)}</TableCell>
+            <TableCell><StatusPill status={item.status} /></TableCell><TableCell><span className="text-xs text-slate-700">{sourceCaptureLabel(item)}</span></TableCell><TableCell><SourceQueueStatus item={item} /></TableCell><TableCell><span className="text-xs text-slate-700">{sourceMediaLabel(item)}</span></TableCell><TableCell><span className="text-xs text-slate-700">{sourceExperienceLabel(item)}</span></TableCell><TableCell className="hidden md:table-cell">{item.destination_name || "—"}</TableCell><TableCell className="whitespace-nowrap text-xs tabular-nums">{sourceProgressLabel(item)}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.captured_at)}</TableCell>
           </TableRow>)}</TableBody>
         </Table></TableShell></div>
       </>}
@@ -236,6 +257,24 @@ function sourceTypeLabel(item) {
   return labels[item.source_kind] || "人工提交来源";
 }
 
+function sourceCaptureLabel(item) {
+  return item.completeness_status === "complete" ? "正文完整" : "正文待修复";
+}
+
+function sourceMediaLabel(item) {
+  const stored=Number(item.stored_original_count || 0); const discovered=Number(item.discovered_media_count || 0);
+  if (stored===discovered) return `媒体原件 ${stored}/${discovered}`;
+  if (Number(item.browser_repair_count || 0)>0) return `媒体原件 ${stored}/${discovered} · 等待浏览器补采`;
+  if (Number(item.server_repair_count || 0)>0) return `媒体原件 ${stored}/${discovered} · 系统后台恢复中`;
+  return `媒体原件 ${stored}/${discovered} · 暂时无法恢复`;
+}
+
+function sourceExperienceLabel(item) {
+  if (item.experience_status === "succeeded" && !item.experience_degraded) return "体验信息已提取";
+  if (item.experience_status === "succeeded" && item.experience_degraded) return "体验信息因媒体缺失暂时降级";
+  return "等待体验信息提取";
+}
+
 function sourceProgressLabel(item) {
   const claims = Number(item.claim_count || 0);
   const segments = Number(item.segment_count || 0);
@@ -250,136 +289,83 @@ function failureReasonLabel(code) {
   return { AUTH_REQUIRED: "需要登录或授权", BOT_PROTECTION: "触发反爬/人机验证", RATE_LIMITED: "访问频率受限", FETCH_TIMEOUT: "链接响应超时", EMPTY_CONTENT: "未提取到正文", EMPTY_DOCUMENT: "文档没有可提取正文", DOCUMENT_PARSE_FAILED: "文档解析失败", INVALID_VIDEO_FILE: "视频文件无效", FILE_TOO_LARGE: "文件体积超限", UPLOAD_TOO_LARGE: "本次上传体积超限", PRIVATE_NETWORK_BLOCKED: "已阻止内网地址", UNSUPPORTED_CONTENT_TYPE: "不支持的链接内容格式", REMOTE_HTTP_ERROR: "目标网站返回错误" }[code] || "提交失败";
 }
 
-function AssignmentsView({ data, onAction, actionBusy, onNavigate }) {
-  const destinations = data?.destinations || [];
-  const assignmentTypes = data?.assignmentTypes || [];
-  const assignments = data?.assignments || [];
-  const systemTopics = data?.systemTopics || [];
-  const [destinationSlug, setDestinationSlug] = useState(destinations[0]?.slug || "");
-  const [title, setTitle] = useState("");
-  const [assignmentType, setAssignmentType] = useState("city_walk");
-  const [targetEntities, setTargetEntities] = useState("");
-  const [brief, setBrief] = useState("");
-  const [desiredVisual, setDesiredVisual] = useState("route_sketch");
-  useEffect(() => {
-    if (!destinationSlug && destinations[0]?.slug) setDestinationSlug(destinations[0].slug);
-  }, [destinationSlug, destinations]);
-  const submit = async (event) => {
-    event.preventDefault();
-    const created = await onAction("/api/editorial-assignments", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        destinationSlug,
-        title,
-        assignmentType,
-        targetEntities: targetEntities.split(/[,，\n]/u).map((item) => item.trim()).filter(Boolean),
-        brief,
-        desiredVisual,
-      }),
-    }, (result) => result.status === "ready" ? "命题已新增，素材体检通过。" : "命题已新增，系统列出了需要补采的素材。" );
-    if (created) {
-      setTitle(""); setTargetEntities(""); setBrief("");
-    }
-  };
-  const remove = (item) => {
-    if (!window.confirm(`从命题清单移除“${item.title}”？`)) return;
-    void onAction(`/api/editorial-assignments/${item.id}`, { method: "DELETE" }, (result) => result.message || "命题已移除。");
-  };
-  const removeSystemTopic = (item) => {
-    if (!window.confirm(`从系统选题清单移除“${item.title}”？`)) return;
-    void onAction(`/api/editorial-topics/${item.id}`, { method: "DELETE" }, (result) => result.message || "系统选题已移除。");
-  };
-  return <div className="space-y-4">
-    <SummaryBar title={`${assignments.length} 个人工命题 · ${systemTopics.length} 个系统选题`}>
-      <span>人工命题与系统自动发现的选题并行存在，互不覆盖。</span>
-      <span>新增命题只做素材体检；你点击“加入创作队列”才视为批准生产。</span>
-    </SummaryBar>
-    <section className="grid gap-4 xl:grid-cols-[minmax(20rem,.8fr)_minmax(0,1.2fr)]">
-      <Card className="p-4 sm:p-5">
-        <div><h2 className="text-sm font-semibold text-slate-900">新增人工命题</h2><p className="mt-1 text-[11px] leading-relaxed text-slate-500">像命题作文一样给出方向。可指定城市、沿途 Attraction 和创作边界，系统会从知识库筛选直接相关的素材。</p></div>
-        {destinations.length ? <form className="mt-4 space-y-3" onSubmit={submit}>
-          <label className="block"><span className="text-[11px] font-medium text-slate-700">目的地</span><select value={destinationSlug} onChange={(event) => setDestinationSlug(event.target.value)} className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400">{destinations.map((item) => <option key={item.slug} value={item.slug}>{item.name} · {item.fact_count} 条知识</option>)}</select></label>
-          <label className="block"><span className="text-[11px] font-medium text-slate-700">专题标题 / 命题</span><input required minLength={2} maxLength={180} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：重庆 City Walk：山城步道与江景机位" className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-slate-400" /></label>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block"><span className="text-[11px] font-medium text-slate-700">专题类型</span><select value={assignmentType} onChange={(event) => { const value = event.target.value; setAssignmentType(value); if (value === "city_walk") setDesiredVisual("route_sketch"); }} className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400">{assignmentTypes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-            <label className="block"><span className="text-[11px] font-medium text-slate-700">视觉方向</span><select value={desiredVisual} onChange={(event) => setDesiredVisual(event.target.value)} className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-slate-400"><option value="route_sketch">路线概念手稿</option><option value="illustration">原创编辑插画</option><option value="none">暂不指定</option></select></label>
-          </div>
-          <label className="block"><span className="text-[11px] font-medium text-slate-700">指定地点 / Attraction（可选）</span><input value={targetEntities} onChange={(event) => setTargetEntities(event.target.value)} placeholder="洪崖洞，山城巷，十八梯" className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-slate-400" /><span className="mt-1 block text-[10px] text-slate-400">用逗号分隔。填写后，缺口提示会具体到这些地点及其衔接路线。</span></label>
-          <label className="block"><span className="text-[11px] font-medium text-slate-700">写作要求 / 边界（可选）</span><textarea rows={4} maxLength={2000} value={brief} onChange={(event) => setBrief(event.target.value)} placeholder="例如：面向第一次到重庆的独行游客；路线控制在半天；重点写步行顺序、坡度、交通和最佳拍摄时段。" className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-slate-400" /></label>
-          <Button className="w-full" disabled={actionBusy || !destinationSlug || title.trim().length < 2}><Plus /> 新增并检测素材</Button>
-        </form> : <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">还没有可选目的地。请先采集来源并完成知识库提取。</div>}
-      </Card>
-      <section className="space-y-3">
-        <SectionTitle title="人工命题清单" description="素材不足时按城市和地点显示补采任务；补采完成后可一键重新检测。" />
-        {assignments.length ? assignments.map((item) => <EditorialAssignmentCard key={item.id} item={item} onAction={onAction} onRemove={remove} actionBusy={actionBusy} />) : <Card className="p-6 text-center text-xs text-slate-500">尚未添加人工命题。</Card>}
-      </section>
-    </section>
-    <section>
-      <SectionTitle title="系统选定的专题 / 选题" description="这些来自来源分析与并行创作策略；人工命题不会替换或消耗它们。" />
-      {systemTopics.length ? <TableShell><Table><TableHeader><TableRow><TableHead>选题</TableHead><TableHead>内容类型</TableHead><TableHead>素材就绪度</TableHead><TableHead>状态</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{systemTopics.map((item) => <TableRow key={item.id}><TableCell><div className="max-w-lg font-medium text-slate-900">{item.title}</div><div className="mt-1 text-[10px] text-slate-400">{item.destination_slug}</div></TableCell><TableCell>{label(item.content_type)}</TableCell><TableCell className="font-medium tabular-nums">{Math.round(item.readiness_score || 0)}%</TableCell><TableCell><StatusPill status={item.status} /></TableCell><TableCell><Button size="sm" variant="ghost" disabled={actionBusy} onClick={() => removeSystemTopic(item)}><Trash2 /> 移除</Button></TableCell></TableRow>)}</TableBody></Table></TableShell> : <EmptyState icon="content" title="暂无系统选题" description="系统会在来源完成分析后，把可用的专题创作路径显示在这里。" action={() => onNavigate("sources")} actionLabel="查看来源" />}
-    </section>
-  </div>;
-}
-
-function EditorialAssignmentCard({ item, onAction, onRemove, actionBusy }) {
-  const evaluation = item.evaluation || {};
-  const evidence = evaluation.evidence || {};
-  const visibleStatus = item.status === "queued" && item.opportunity_status ? item.opportunity_status : item.status;
-  const recheck = () => onAction(`/api/editorial-assignments/${item.id}/recheck`, { method: "POST" }, (result) => result.status === "ready" ? "重新检测通过，可以加入创作队列。" : "已重新检测，仍有素材缺口。" );
-  const queue = () => onAction(`/api/editorial-assignments/${item.id}/queue`, { method: "POST" }, "命题已批准并加入创作队列。" );
-  return <Card className="p-4 sm:p-5">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold leading-relaxed text-slate-900">{item.title}</h3><StatusPill status={visibleStatus} /></div><p className="mt-1 text-[11px] text-slate-500">{item.destination_name || item.destination_slug} · {label(item.assignment_type)} · {label(item.content_type)}</p></div><div className="text-right"><strong className="text-xl font-semibold tabular-nums text-slate-900">{Math.round(item.quality_score || 0)}</strong><span className="text-[10px] text-slate-400"> / 100</span></div></div>
-    {item.brief && <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600"><b>命题要求：</b>{item.brief}</p>}
-    <p className={cn("mt-3 rounded-xl border p-3 text-xs leading-relaxed", evaluation.ready ? "border-emerald-200 bg-emerald-50 text-emerald-900" : item.status === "suppressed" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-blue-100 bg-blue-50 text-blue-900")}>{evaluation.summary || "正在等待素材体检。"}</p>
-    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><AssignmentStat label="相关事实" value={evidence.factCount || 0} /><AssignmentStat label="独立来源" value={evidence.sourceFamilyCount || 0} /><AssignmentStat label="地点 / 项目" value={evidence.entityCount || 0} /><AssignmentStat label="路线证据" value={evidence.routeFactCount || 0} /></div>
-    {(evaluation.acquisitionRequests || []).length > 0 && <div className="mt-3"><p className="text-[11px] font-semibold text-slate-700">需要补采</p><ul className="mt-2 space-y-2">{evaluation.acquisitionRequests.map((request, index) => <li key={`${request.evidenceType}-${index}`} className="rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2 text-[11px] leading-relaxed text-amber-900">{request.message}</li>)}</ul></div>}
-    {(evidence.selectedFactPreview || []).length > 0 && <details className="mt-3 rounded-lg border border-slate-100 px-3 py-2 text-[11px] text-slate-500"><summary className="cursor-pointer font-medium text-slate-700">查看已筛选素材（{evidence.selectedFactPreview.length} 条预览）</summary><ul className="mt-2 space-y-1.5">{evidence.selectedFactPreview.map((fact) => <li key={fact.key}><b>{fact.subject}</b> · {fact.predicate}：{fact.value}</li>)}</ul></details>}
-    {evaluation.visualBrief && <p className="mt-3 text-[10px] leading-relaxed text-violet-700"><b>视觉计划：</b>{evaluation.visualBrief.instruction}</p>}
-    <div className="mt-4 flex flex-wrap gap-2">{item.status === "needs_sources" && <Button size="sm" variant="secondary" disabled={actionBusy} onClick={recheck}><RefreshCw /> 重新检测</Button>}{item.status === "ready" && <Button size="sm" disabled={actionBusy} onClick={queue}><CheckCircle2 /> 加入创作队列</Button>}{item.status === "queued" && <Button size="sm" variant="secondary" disabled>已进入创作队列</Button>}<Button size="sm" variant="ghost" disabled={actionBusy} onClick={() => onRemove(item)}><Trash2 /> 删除命题</Button></div>
-  </Card>;
-}
-
-function AssignmentStat({ label: title, value }) {
-  return <div className="rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-2"><strong className="block text-sm tabular-nums text-slate-900">{value}</strong><span className="text-[9px] text-slate-500">{title}</span></div>;
-}
-
 function RecommendationsView({ data, onAction, actionBusy, onNavigate }) {
+  const items=data?.items || [];
+  const [selected,setSelected]=useState([]);
+  const decide=(item,decision) => onAction(`/api/opportunities/${encodeURIComponent(item.id)}/decision`,{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({decision})
+  },(result)=>decision==="approve" ? result.needsEvidence ? "已批准；必要证据补齐后自动进入生产。" : "已批准并进入内容生产。"
+    : decision==="defer" ? "已暂缓；该机会可稍后重新处理。" : "已忽略；研究资料仍完整保留。");
+  const bulk=(decision)=>onAction("/api/opportunities/bulk-decision",{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({decision,ids:selected})
+  },(result)=>`批量完成 ${result.processed} 项，失败 ${result.failed} 项，入队 ${result.queued} 项。`).then((result)=>result&&setSelected([]));
+  if(!items.length) return <EmptyState icon="content" title="建议收件箱为空" description="来源诊断和知识聚合会在形成可执行文章机会后显示在这里；知识型、低价值和非行动项不会混入。" action={()=>onNavigate("sources")} actionLabel="查看研究来源"/>;
+  return <div className="space-y-4"><SummaryBar title={`待决策内容机会 ${items.length} 项`}><span>内部机会 {data?.summary?.internalOpportunities ?? items.length} 项 · 已合并重复 {data?.summary?.merged ?? 0} 项 · 系统处理中 {data?.summary?.processingGap ?? 0} 项</span><span>当前列表只显示可以批准、暂缓或忽略的机会；仍在修复和重算的记录不会要求人工决策。</span></SummaryBar>
+    <Card className="flex flex-wrap items-center gap-2 p-3"><Button size="sm" variant="outline" disabled={actionBusy} onClick={()=>setSelected(items.map(item=>item.id))}>全选当前页</Button><Button size="sm" variant="ghost" disabled={actionBusy} onClick={()=>setSelected([])}>清空</Button><span className="mr-auto text-xs text-slate-500">已选 {selected.length}</span><Button size="sm" disabled={actionBusy||!selected.length} onClick={()=>bulk("approve")}>批量批准</Button><Button size="sm" variant="outline" disabled={actionBusy||!selected.length} onClick={()=>bulk("defer")}>批量暂缓</Button><Button size="sm" variant="ghost" disabled={actionBusy||!selected.length} onClick={()=>bulk("ignore")}>批量忽略</Button></Card>
+    <section className="grid gap-3 lg:grid-cols-2">{items.map(item=>{const checked=selected.includes(item.id);const readiness=item.readiness||{};return <Card key={item.id} className="p-4"><label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium"><input className="size-5 accent-slate-900" type="checkbox" checked={checked} onChange={event=>setSelected(event.target.checked?[...new Set([...selected,item.id])]:selected.filter(id=>id!==item.id))}/>{checked?"已选择":"选择机会"}</label><div className="mt-2 flex items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-[11px] text-slate-500">{item.destination_name||item.destination_slug} · {item.productionTypeLabel}</p></div><span className={cn("rounded-full px-2 py-1 text-[10px] font-semibold",item.processing_state==="CURRENT"?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700")}>{item.displayStatus}</span></div><div className="mt-3 flex flex-wrap gap-2"><span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700">发布动作 {publicationActionLabel(item.seo_action)}</span><span className={cn("rounded-full px-2 py-1 text-[10px] font-semibold",readiness.ready?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700")}>{readiness.ready?"素材就绪":"等待关键证据"}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] text-slate-600">就绪度 {Math.round(item.readiness_score||0)}</span></div>{item.previousFailureSummary&&<p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">{item.previousFailureSummary}</p>}<p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.recommendationReason}</p><div className="mt-4 flex gap-2"><Button size="sm" disabled={actionBusy} onClick={()=>decide(item,"approve")}><CheckCircle2/>批准</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={()=>decide(item,"defer")}>暂缓</Button><Button size="sm" variant="ghost" disabled={actionBusy} onClick={()=>decide(item,"ignore")}>忽略</Button></div></Card>})}</section></div>;
+}
+
+function publicationActionLabel(value) {
+  return ({NEW:"新建文章",UPDATE:"更新现有文章",EXPAND:"扩展现有文章",MERGE:"合并到现有文章",SKIP:"不发布"})[value] || "待确认";
+}
+
+function LegacyRecommendationsView({ data, onAction, actionBusy, onNavigate }) {
+  const [selected, setSelected] = useState([]);
+  const [approvalPreview, setApprovalPreview] = useState(null);
   const items = data?.items || [];
   const opportunities = data?.opportunities || [];
-  const decide = (id, decision, message, options = {}) => onAction(`/api/recommendations/${id}/decision`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision, ...options }),
-  }, decision === "approved_article" ? (result) => result.queued
+  const executeDecision = (id, decision, message, options = {}) => onAction(`/api/recommendations/${id}/decision`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decision, updatedAt: items.find(item => item.id === id)?.updated_at, ...options }),
+  }, (result) => result.status === "skipped" ? result.reason : decision === "approved_article" ? result.queued
     ? "已批准该内容机会，证据就绪并已进入内容生产。"
     : result.status === "suppressed" ? "已批准，但检测到已有内容冲突，当前已抑制。"
       : `已批准该内容机会，仍缺少证据：${(result.readiness?.blockingRequirements || []).join("、") || "等待覆盖要求满足"}。`
     : message);
+  const decide = (id, decision, message, options = {}) => {
+    if (decision !== "approved_article") return executeDecision(id, decision, message, options);
+    const item = items.find(row=>row.id===id);
+    const path = item?.opportunities?.find(row=>row.id===options.opportunityId);
+    if (!path) return;
+    setApprovalPreview({id,decision,message,options:{...options,updatedAt:item.updated_at,proposalFingerprint:path.proposalFingerprint},title:path.title});
+  };
   if (!items.length) return <EmptyState icon="content" title="暂时没有内容建议" description="AI 完成来源提取后，系统会在这里建议：沉淀为知识、归入专题、补充研究，或进入文章候选。" action={() => onNavigate("sources")} actionLabel="查看研究来源" />;
   return <div className="space-y-4">
-    <SummaryBar title="“建议”如何使用"><span>它是人工审批关口：系统只推荐下一步，不会自动发布文章。</span><span>“补充研究”表示现有证据不足，优先核验官方信息。</span></SummaryBar>
-    {opportunities.length > 0 && <SummaryBar title={`${opportunities.length} 个内容机会`}><span>文章就绪度以证据为准，不等于会自动发布。</span><span>{opportunities.filter((item) => item.status === "research_required").length} 个需要补充研究</span></SummaryBar>}
-    <section className="space-y-3 lg:hidden">{items.map((item) => <Card key={item.id} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold leading-relaxed text-slate-900">{item.source_title || item.primary_topic}</h2><div className="mt-1 flex flex-wrap gap-1.5"><StatusPill status={item.classification} /><span className="text-[10px] text-slate-400">策略 v{item.strategy_version}</span></div></div><span className="shrink-0 text-xs font-semibold tabular-nums text-slate-600">{Math.round(item.article_potential)}<small className="ml-0.5 font-normal text-slate-400">/100</small></span></div><RecommendationConclusion item={item} decide={decide} actionBusy={actionBusy} />{item.suggested_article_title && item.classification === "ARTICLE_CANDIDATE" && <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] font-medium text-slate-700">建议文章：{item.suggested_article_title}</p>}<details className="mt-3 text-[11px] text-slate-500"><summary className="cursor-pointer select-none font-medium text-slate-600">查看质量信号与模型依据</summary><p className="mt-2 leading-relaxed">信息密度 {Math.round(item.information_density)} · 完整度 {Math.round(item.topic_completeness)} · 可信度 {Math.round(item.confidence * 100)}%</p><p className="mt-2 leading-relaxed text-slate-400">{item.reasoning_summary || "暂无原始说明"}</p></details><div className="mt-4"><RecommendationDecision item={item} decide={decide} actionBusy={actionBusy} mobile /></div></Card>)}</section>
-    <div className="hidden lg:block"><TableShell><Table><TableHeader><TableRow><TableHead>来源与系统结论</TableHead><TableHead className="hidden md:table-cell">质量信号</TableHead><TableHead className="hidden lg:table-cell">需要补齐的证据</TableHead><TableHead>你的决定</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell><div className="max-w-md font-medium text-slate-900">{item.source_title || item.primary_topic}</div><div className="mt-1 flex flex-wrap gap-1.5"><StatusPill status={item.classification} /><span className="text-[10px] text-slate-400">策略 v{item.strategy_version}</span></div><RecommendationConclusion item={item} decide={decide} actionBusy={actionBusy} />{item.suggested_article_title && item.classification === "ARTICLE_CANDIDATE" && <p className="mt-2 text-[11px] font-medium text-slate-700">建议文章标题：{item.suggested_article_title}</p>}<details className="mt-2 max-w-xl text-[10px] text-slate-400"><summary className="cursor-pointer select-none hover:text-slate-600">查看模型原始分析依据</summary><p className="mt-1 leading-relaxed">{item.reasoning_summary || "暂无原始说明"}</p></details></TableCell><TableCell className="hidden md:table-cell"><div className="text-xs font-medium text-slate-700">文章潜力 {Math.round(item.article_potential)} / 100</div><div className="mt-1 text-[10px] leading-relaxed text-slate-400">信息密度 {Math.round(item.information_density)} · 完整度 {Math.round(item.topic_completeness)} · 可信度 {Math.round(item.confidence * 100)}%</div></TableCell><TableCell className="hidden max-w-sm lg:table-cell"><RecommendationEvidenceNeed item={item} /></TableCell><TableCell><RecommendationDecision item={item} decide={decide} actionBusy={actionBusy} /></TableCell></TableRow>)}</TableBody></Table></TableShell></div>
+    <SummaryBar title="“建议”如何使用"><span>来源先进入 Claims 和知识库；这里仅展示系统提出的文章方案，未批准方案不计入“内容机会”。</span><span>“批准文章方案”就是从一个或多个创作方向中确定一篇进入生产，不是两次审批，也不会自动公开发布。</span></SummaryBar>
+    <SummaryBar title={`当前显示 ${items.length} 条来源建议`}><span>全库 {data?.summary?.recommendations ?? items.length} 条来源建议 · 待决定 {data?.summary?.pending ?? items.filter(i=>i.decision==="pending").length} 条</span><span>实际内容机会 {data?.summary?.opportunities ?? opportunities.length} 个：仅统计已批准方案和通过多来源知识门槛的系统选题；已批准 {data?.summary?.approved ?? "—"} 个。</span></SummaryBar>
+    {approvalPreview && <section role="dialog" aria-label="单条创作方向批准确认" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-xs">
+      <strong>将批准：{approvalPreview.title}</strong>
+      <p className="my-2">只批准这一个创作方向；证据就绪后可能产生模型与媒体费用，不会公开发布。</p>
+      <div className="flex gap-2"><Button size="sm" disabled={actionBusy} onClick={async()=>{await executeDecision(approvalPreview.id,approvalPreview.decision,approvalPreview.message,approvalPreview.options);setApprovalPreview(null);}}>确认批准此方向</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={()=>setApprovalPreview(null)}>返回修改</Button></div>
+    </section>}
+    {data?.comparisonGroups?.length>0 && <details className="rounded-lg border p-3 text-xs"><summary>当前窗口可比较的相同承诺（{data.comparisonGroups.length} 组）</summary><p className="my-2">仅提示明确相同的范围，不代表语义去重完成；不同作者和不同路线仍保留。</p>{data.comparisonGroups.map(group=><div key={group.id} className="my-2 border-t pt-2"><p>{group.reason}</p>{group.items.map(item=><p key={item.id}>{item.title} · {item.mode} · {label(item.status)}</p>)}</div>)}</details>}
+    <RecommendationBulk items={items} selected={selected} setSelected={setSelected} onAction={onAction} actionBusy={actionBusy} />
+    <section className="space-y-3 lg:hidden">{items.map((item) => <Card key={item.id} className="p-4"><RecommendationSelect item={item} selected={selected} setSelected={setSelected} disabled={actionBusy} /><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold leading-relaxed text-slate-900">{item.source_title || item.primary_topic}</h2><div className="mt-1 flex flex-wrap gap-1.5"><StatusPill status={item.classification} /><span className="text-[10px] text-slate-400">策略 v{item.strategy_version}</span></div></div><span className="shrink-0 text-xs font-semibold tabular-nums text-slate-600">{Math.round(item.article_potential)}<small className="ml-0.5 font-normal text-slate-400">/100</small></span></div><RecommendationConclusion item={item} decide={decide} actionBusy={actionBusy} />{item.suggested_article_title && item.classification === "ARTICLE_CANDIDATE" && <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] font-medium text-slate-700">建议文章：{item.suggested_article_title}</p>}<details className="mt-3 text-[11px] text-slate-500"><summary className="cursor-pointer select-none font-medium text-slate-600">查看质量信号与模型依据</summary><p className="mt-2 leading-relaxed">信息密度 {Math.round(item.information_density)} · 完整度 {Math.round(item.topic_completeness)} · 可信度 {Math.round(item.confidence * 100)}%</p><p className="mt-2 leading-relaxed text-slate-400">{item.reasoning_summary || "暂无原始说明"}</p></details><div className="mt-4"><RecommendationDecision item={item} decide={decide} actionBusy={actionBusy} mobile /></div></Card>)}</section>
+    <div className="hidden lg:block"><TableShell><Table><TableHeader><TableRow><TableHead>来源与系统结论</TableHead><TableHead className="hidden md:table-cell">质量信号</TableHead><TableHead className="hidden lg:table-cell">需要补齐的证据</TableHead><TableHead>你的决定</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell><RecommendationSelect item={item} selected={selected} setSelected={setSelected} disabled={actionBusy} /><div className="max-w-md font-medium text-slate-900">{item.source_title || item.primary_topic}</div><div className="mt-1 flex flex-wrap gap-1.5"><StatusPill status={item.classification} /><span className="text-[10px] text-slate-400">策略 v{item.strategy_version}</span></div><RecommendationConclusion item={item} decide={decide} actionBusy={actionBusy} />{item.suggested_article_title && item.classification === "ARTICLE_CANDIDATE" && <p className="mt-2 text-[11px] font-medium text-slate-700">建议文章标题：{item.suggested_article_title}</p>}<details className="mt-2 max-w-xl text-[10px] text-slate-400"><summary className="cursor-pointer select-none hover:text-slate-600">查看模型原始分析依据</summary><p className="mt-1 leading-relaxed">{item.reasoning_summary || "暂无原始说明"}</p></details></TableCell><TableCell className="hidden md:table-cell"><div className="text-xs font-medium text-slate-700">文章潜力 {Math.round(item.article_potential)} / 100</div><div className="mt-1 text-[10px] leading-relaxed text-slate-400">信息密度 {Math.round(item.information_density)} · 完整度 {Math.round(item.topic_completeness)} · 可信度 {Math.round(item.confidence * 100)}%</div></TableCell><TableCell className="hidden max-w-sm lg:table-cell"><RecommendationEvidenceNeed item={item} /></TableCell><TableCell><RecommendationDecision item={item} decide={decide} actionBusy={actionBusy} /></TableCell></TableRow>)}</TableBody></Table></TableShell></div>
   </div>;
 }
 
 function RecommendationDecision({ item, decide, actionBusy, mobile = false }) {
-  if (item.decision !== "pending") return <><StatusPill status={item.decision} /><div className="mt-1 text-[10px] text-slate-400">{item.approved_candidate_id ? "内容规划已排队" : "决定已记录"}</div></>;
+  if (item.decision !== "pending") return <><StatusPill status={item.decision} /><div className="mt-1 text-[10px] text-slate-400">{item.approved_candidate_id ? "文章创建已排队" : "决定已记录"}</div></>;
   const primary = recommendationNextAction(item);
   const alternatives = Object.values(recommendationActions).filter((action) => action.decision !== primary.decision);
-  const submit = (action) => decide(item.id, action.decision, action.message);
+  const defaultPath = (item.opportunities || []).find(path => path.id === item.opportunity_id);
+  const submit = (action) => {
+    if (action.decision === "approved_article" && !defaultPath) return;
+    return decide(item.id, action.decision, action.message, action.decision === "approved_article" ? { opportunityId: defaultPath.id } : {});
+  };
   return <div className={cn("space-y-2", mobile ? "w-full" : "max-w-48")}>
+    {defaultPath && <p className="text-[10px] text-slate-600">默认文章方案：{defaultPath.title}</p>}
     <div className="rounded-xl border border-slate-900 bg-slate-900 p-2 shadow-sm"><p className="px-1 text-[10px] font-medium text-slate-300">推荐下一步</p><Button size="sm" className="mt-1 h-8 w-full bg-white px-2 text-[10px] text-slate-950 hover:bg-slate-100" disabled={actionBusy} onClick={() => submit(primary)}><CheckCircle2 className="size-3.5" />推荐：{primary.label}</Button><p className="mt-1.5 px-1 text-[10px] leading-relaxed text-slate-300">{primary.help}</p></div>
     <details className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[10px] text-slate-500"><summary className="cursor-pointer select-none font-medium text-slate-600">其他处理方式</summary><div className={cn("mt-2 gap-1.5", mobile ? "grid grid-cols-2" : "flex flex-wrap")}>{alternatives.map((action) => <Button key={action.decision} variant={action.decision === "ignored" ? "ghost" : "secondary"} size="sm" className={cn("h-8 px-2 text-[10px]", mobile && "w-full")} disabled={actionBusy} onClick={() => submit(action)}>{action.label}</Button>)}</div></details>
   </div>;
 }
 
 const recommendationActions = {
-  approved_article: { decision: "approved_article", label: "批准文章", message: "已批准文章候选；证据就绪后将开始规划。", help: "建立内容规划队列；后续仍会经过事实、质量和发布前审核。" },
+  approved_article: { decision: "approved_article", label: "批准文章方案", message: "已批准文章方案；素材就绪后将开始创建。", help: "批准后才建立实际文章任务；后续仍会经过事实、质量和发布前审核。" },
   knowledge_only: { decision: "knowledge_only", label: "仅入知识库", message: "已标记为仅进入知识库", help: "保留来源、信息主张和知识事实，用作未来选题的可追溯证据。" },
-  cluster: { decision: "cluster", label: "归入专题", message: "已加入专题机会", help: "将它与相同目的地或主题的来源汇总，等证据更完整后再规划。" },
+  cluster: { decision: "cluster", label: "归入专题", message: "已加入专题机会", help: "将它与相同目的地或主题的来源汇总，等证据更完整后再创建文章。" },
   research_first: { decision: "research_first", label: "补充研究", message: "已标记为优先补充研究", help: "优先补足官方入口、票价、开放时间、证件和交通等时效信息。" },
-  ignored: { decision: "ignored", label: "忽略", message: "已忽略此建议", help: "不进入内容规划；原始来源仍保留，便于日后回看。" },
+  ignored: { decision: "ignored", label: "忽略", message: "已忽略此建议", help: "不创建文章；原始来源仍保留，便于日后回看。" },
 };
 
 function recommendationNextAction(item) {
@@ -408,7 +394,7 @@ function RecommendationConclusion({ item, decide, actionBusy }) {
   const topicIdeas = (item.possible_cluster_topics || []).slice(0, 5);
   const productionPaths = (item.production_paths || item.analysis?.production_paths || []).slice(0, 8);
   if (topicIdeas.length) guidance.reason = `${guidance.reason} 可继续拆分为：${topicIdeas.join("；")}。`;
-  return <div className={cn("mt-3 max-w-xl rounded-xl border px-3 py-2.5 shadow-sm", tones[guidance.tone])}><div className="text-[10px] font-semibold uppercase tracking-[0.12em] opacity-65">系统建议结论</div><p className="mt-1 text-xs font-semibold leading-relaxed">{guidance.conclusion}</p><p className="mt-1 text-[11px] leading-relaxed opacity-85">{guidance.reason}</p>{productionPaths.length > 0 && <details className="mt-2 border-t border-current/10 pt-2 text-[10px] leading-relaxed"><summary className="cursor-pointer font-semibold">查看并行创作路线（{productionPaths.length}）</summary><div className="mt-2 space-y-2">{productionPaths.map((path, index) => { const approved = ["approved_waiting_for_evidence", "approved_ready", "producing", "drafted", "qa_failed", "ready_for_wordpress", "wordpress_draft"].includes(path.opportunity_status); return <div key={`${path.mode}-${index}`} className="rounded-lg border border-current/10 bg-white/50 p-2"><div className="font-semibold">{productionModeLabel(path.mode)}：{path.title}</div><p className="mt-1"><b>文章类型：</b>{path.content_type || "按主题判断"}</p><p className="mt-1"><b>给读者什么：</b>{path.reader_promise}</p><p className="mt-1"><b>为什么能写：</b>{path.why_it_works}</p><p className="mt-1"><b>证据边界：</b>{path.evidence_boundary}</p>{decide && <Button type="button" size="sm" className="mt-2 h-7 px-2 text-[10px]" disabled={actionBusy || approved || !path.opportunity_id} onClick={() => decide(item.id, "approved_article", "已批准这条创作路线。", { opportunityId: path.opportunity_id })}>{approved ? "这条路线已批准" : path.opportunity_id ? "批准这条路线" : "等待策略分析完成"}</Button>}</div>; })}</div></details>}<div className="mt-2 border-t border-current/10 pt-2 text-[10px] leading-relaxed opacity-80"><b>下一步：</b>{guidance.next}<br /><b>不会影响：</b>{guidance.impact}</div></div>;
+  return <div className={cn("mt-3 max-w-xl rounded-xl border px-3 py-2.5 shadow-sm", tones[guidance.tone])}><div className="text-[10px] font-semibold uppercase tracking-[0.12em] opacity-65">系统建议结论</div><p className="mt-1 text-xs font-semibold leading-relaxed">{guidance.conclusion}</p><p className="mt-1 text-[11px] leading-relaxed opacity-85">{guidance.reason}</p>{productionPaths.length > 0 && <details className="mt-2 border-t border-current/10 pt-2 text-[10px] leading-relaxed"><summary className="cursor-pointer font-semibold">查看可选文章方案（{productionPaths.length}）</summary><div className="mt-2 space-y-2">{productionPaths.map((path, index) => { const approved = ["approved_waiting_for_evidence", "approved_ready", "producing", "drafted", "qa_failed", "ready_for_wordpress", "wordpress_draft"].includes(path.opportunity_status); return <div key={`${path.mode}-${index}`} className="rounded-lg border border-current/10 bg-white/50 p-2"><div className="font-semibold">{productionModeLabel(path.mode)}：{path.title}</div><p className="mt-1"><b>文章类型：</b>{path.content_type || "按主题判断"}</p><p className="mt-1"><b>给读者什么：</b>{path.reader_promise}</p><p className="mt-1"><b>为什么能写：</b>{path.why_it_works}</p><p className="mt-1"><b>证据边界：</b>{path.evidence_boundary}</p>{decide && <Button type="button" size="sm" className="mt-2 min-h-11 px-3 text-[10px]" disabled={actionBusy || approved || !path.opportunity_id} onClick={() => decide(item.id, "approved_article", "已批准这篇文章方案。", { opportunityId: path.opportunity_id })}>{approved ? "这篇方案已批准" : path.opportunity_id ? "批准这篇文章方案" : "等待策略分析完成"}</Button>}</div>; })}</div></details>}<div className="mt-2 border-t border-current/10 pt-2 text-[10px] leading-relaxed opacity-80"><b>下一步：</b>{guidance.next}<br /><b>不会影响：</b>{guidance.impact}</div></div>;
 }
 
 function productionModeLabel(mode) {
@@ -425,12 +411,12 @@ function recommendationGuidance(item) {
   const type = String(item?.classification || "UNSURE").toUpperCase();
   const map = {
     DUPLICATE: { tone: "amber", conclusion: "不新建文章；作为已有主题的补充佐证。", reason: "系统发现该笔记与已采集的目的地攻略在景点、预约或行程提醒上高度重叠，新增的独立信息不足以支撑另一篇文章。", next: "优先点击“仅入知识库”；只有发现明确的新事实或官方链接时，再归入专题或补充研究。", impact: "来源、已提取的 信息主张和知识事实仍会保留，用来增强已有主题的证据。", evidenceNeed: "不需要补齐整篇文章；如要提升价值，只补充与已有资料不同、可核验的新事实。" },
-    ARTICLE_CANDIDATE: { tone: "emerald", conclusion: "可作为新文章候选，但尚未自动发布。", reason: "这篇来源呈现了相对清晰的旅行问题和可写角度，当前信号显示具备独立内容潜力。", next: "核对右侧缺失信息后点击“批准文章”；满足证据门槛时系统才会创建内容规划。", impact: "批准仅进入规划队列，英文草稿和 WordPress 投递仍会经过质量审核。", evidenceNeed: "优先补齐高时效或影响游客决策的事实，例如预约、票价、开放时间和外籍游客规则。" },
+    ARTICLE_CANDIDATE: { tone: "emerald", conclusion: "来源可提出文章方案，但尚未成为内容机会。", reason: "系统从这篇来源识别出一个或多个可写方向；这些只是供你选择的编辑建议，不会因为采集了一篇来源就自动创建一篇文章。", next: "核对方案边界后点击“批准文章方案”；批准后才创建实际内容机会。", impact: "批准仅进入创建队列，英文草稿和 WordPress 投递仍会经过质量审核。", evidenceNeed: "只补齐文章承诺必需的时效或安全事实，例如预约、票价、开放时间和外籍游客规则。" },
     RESEARCH_REQUIRED: { tone: "amber", conclusion: "暂不写文章；先补充官方或第二来源验证。", reason: "当前来源有价值，但关键旅行决策信息的证据不完整或时效性较高，直接成文容易误导游客。", next: "点击“补充研究”，随后保存官方页面或另一篇能交叉验证的高质量来源。", impact: "现有 信息主张和知识事实会继续入库，只是不会进入可发布内容队列。", evidenceNeed: "优先核验预约、票价、开放时间、证件要求、交通和取消规则。" },
-    KNOWLEDGE_ONLY: { tone: "blue", conclusion: "沉淀为知识事实，不单独规划文章。", reason: "内容对目的地知识有帮助，但它更适合作为文章中的一个事实或提醒，而不是独立选题。", next: "点击“仅入知识库”；后续系统会在匹配的文章规划中引用它。", impact: "不会丢弃该来源；它可与后续来源合并，未来也可能形成更完整主题。", evidenceNeed: "继续收集同一景点或同一旅行问题的互补事实，尤其是官方或第二来源。" },
+    KNOWLEDGE_ONLY: { tone: "blue", conclusion: "沉淀为知识事实，不单独创建文章。", reason: "内容对目的地知识有帮助，但它更适合作为文章中的一个事实或提醒，而不是独立选题。", next: "点击“仅入知识库”；后续系统会在匹配的文章中引用它。", impact: "不会丢弃该来源；它可与后续来源合并，未来也可能形成更完整主题。", evidenceNeed: "继续收集同一景点或同一旅行问题的互补事实，尤其是官方或第二来源。" },
     CLAIM_ONLY: { tone: "blue", conclusion: "保留为单条可追溯信息，不创建新选题。", reason: "该来源提供的是一个较小的信息点，尚不足以构成完整旅行指南。", next: "选择“仅入知识库”，并在保存后续相关来源时让系统自动聚合。", impact: "单条事实仍能被未来的文章作为证据使用。", evidenceNeed: "补充同一主题的背景、路线、费用、规则或实操信息。" },
     CLUSTER_CANDIDATE: { tone: "blue", conclusion: "归入现有专题，等待更多互补来源后统一策划。", reason: "它与已有主题相关，但目前更适合参与一个更完整的目的地专题。", next: "点击“归入专题”，继续积累同一主题的不同视角和可验证事实。", impact: "不会生成重复文章；现有知识会保留在专题的证据池中。", evidenceNeed: "补齐专题覆盖面，避免来源都重复描述同一个景点或同一个提醒。" },
-    LOW_VALUE: { tone: "slate", conclusion: "暂不进入内容规划；保留来源记录即可。", reason: "信息密度、独特性或可验证性不足，当前不值得投入额外写作成本。", next: "可选择“忽略”或“仅入知识库”；除非后续出现可交叉验证的新价值。", impact: "不会删除原始来源，仍可回看和重新提取。", evidenceNeed: "需要更具体、可执行且能被验证的旅行信息。" },
+    LOW_VALUE: { tone: "slate", conclusion: "暂不创建文章；保留来源记录即可。", reason: "信息密度、独特性或可验证性不足，当前不值得投入额外写作成本。", next: "可选择“忽略”或“仅入知识库”；除非后续出现可交叉验证的新价值。", impact: "不会删除原始来源，仍可回看和重新提取。", evidenceNeed: "需要更具体、可执行且能被验证的旅行信息。" },
     UNSURE: { tone: "slate", conclusion: "需要人工确认下一步。", reason: "系统无法可靠判断它应独立成文、归入专题还是仅作为知识事实。", next: "优先查看原始来源与模型依据，再选择“仅入知识库”或“补充研究”。", impact: "未决定前，系统不会自动发布或删除任何内容。", evidenceNeed: "需要更清楚的目的地、事实类型或交叉来源。" },
   };
   return map[type] || map.UNSURE;
@@ -566,7 +552,7 @@ function BlueprintsView({ data, onNavigate }) {
   const pendingCount = items.length - reusable.length;
   if (!reusable.length) return <EmptyState icon="blueprint" title="蓝图正在等待归纳" description="来源已被安全保存；图文提取完成后，系统才会把稳定的写作模式加入这里。" action={() => onNavigate("sources")} actionLabel="查看研究来源" />;
   const sampleCount = reusable.reduce((total, item) => total + Number(item.sample_count || 0), 0);
-  return <div className="space-y-3 sm:space-y-4"><SummaryBar title="编辑蓝图如何参与创作"><span>蓝图归纳的是“怎样组织信息更有帮助”，不会翻译或直接复用来源内容。</span><span>后续文章规划会参考其角度、形式和章节，但所有事实仍只取自知识库。</span>{pendingCount > 0 && <span className="text-amber-700">另有 {pendingCount} 条等待 AI 归纳，暂不计入写作模式。</span>}</SummaryBar><section className="grid gap-2.5 sm:grid-cols-3"><BlueprintStat label="可复用写作模式" value={reusable.length} hint="由已提取来源自动归纳" tone="blue" /><BlueprintStat label="支撑样本" value={sampleCount} hint="同类来源越多，模式越稳定" tone="violet" /><BlueprintStat label="当前用途" value="规划" hint="只提供结构参考，不直接成文" tone="emerald" /></section><section className="grid gap-3 lg:grid-cols-2">{reusable.map((item, index) => <BlueprintCard key={item.id} item={item} index={index} />)}</section></div>;
+  return <div className="space-y-3 sm:space-y-4"><SummaryBar title="编辑蓝图如何参与创作"><span>蓝图归纳的是“怎样组织信息更有帮助”，不会翻译或直接复用来源内容。</span><span>后续文章会参考其角度、形式和章节，但所有事实仍只取自知识库。</span>{pendingCount > 0 && <span className="text-amber-700">另有 {pendingCount} 条等待 AI 归纳，暂不计入写作模式。</span>}</SummaryBar><section className="grid gap-2.5 sm:grid-cols-3"><BlueprintStat label="可复用写作模式" value={reusable.length} hint="由已提取来源自动归纳" tone="blue" /><BlueprintStat label="支撑样本" value={sampleCount} hint="同类来源越多，模式越稳定" tone="violet" /><BlueprintStat label="当前用途" value="写作组织" hint="只提供结构参考，不直接成文" tone="emerald" /></section><section className="grid gap-3 lg:grid-cols-2">{reusable.map((item, index) => <BlueprintCard key={item.id} item={item} index={index} />)}</section></div>;
 }
 
 function isPendingBlueprint(item) {
@@ -582,33 +568,43 @@ function BlueprintStat({ label: title, value, hint, tone }) {
 
 function BlueprintCard({ item, index }) {
   const sections = Array.isArray(item.section_patterns) ? item.section_patterns.map((entry) => entry?.value).filter(Boolean) : [];
-  return <Card className="overflow-hidden p-4 shadow-sm sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-600">写作模式 {String(index + 1).padStart(2, "0")}</p><h2 className="mt-1 text-sm font-semibold leading-relaxed text-slate-900">{item.format || "待归纳的写作形式"}</h2></div><span className="shrink-0 rounded-full border border-violet-100 bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700">{item.sample_count || 0} 个样本</span></div><section className="mt-4 rounded-xl border border-slate-100 bg-slate-50/80 p-3"><p className="text-[10px] font-semibold text-slate-500">可复用角度</p><p className="mt-1.5 text-xs leading-relaxed text-slate-800">{item.angle || "暂无角度说明"}</p></section><section className="mt-4"><div className="flex items-center justify-between gap-3"><h3 className="text-[11px] font-semibold text-slate-700">推荐章节顺序</h3><span className="text-[10px] text-slate-400">仅供规划参考</span></div>{sections.length ? <ol className="mt-2.5 space-y-2">{sections.slice(0, 6).map((section, sectionIndex) => <li key={`${item.id}-${sectionIndex}`} className="flex gap-2 rounded-lg border border-slate-100 px-2.5 py-2"><span className="grid size-4 shrink-0 place-items-center rounded-full bg-slate-100 text-[9px] font-semibold text-slate-500">{sectionIndex + 1}</span><span className="text-[11px] leading-relaxed text-slate-600">{section}</span></li>)}</ol> : <p className="mt-2.5 text-[11px] text-slate-400">系统尚未归纳出稳定的章节结构。</p>}</section><details className="mt-4 border-t border-slate-100 pt-3 text-[11px] text-slate-500"><summary className="cursor-pointer select-none font-medium text-slate-600">蓝图使用边界</summary><p className="mt-2 leading-relaxed">蓝图只影响内容规划的组织方式；不会把小红书表达翻译、复制到文章，也不会覆盖知识库中的证据与冲突规则。</p></details></Card>;
+  return <Card className="overflow-hidden p-4 shadow-sm sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-600">写作模式 {String(index + 1).padStart(2, "0")}</p><h2 className="mt-1 text-sm font-semibold leading-relaxed text-slate-900">{item.format || "待归纳的写作形式"}</h2></div><span className="shrink-0 rounded-full border border-violet-100 bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700">{item.sample_count || 0} 个样本</span></div><section className="mt-4 rounded-xl border border-slate-100 bg-slate-50/80 p-3"><p className="text-[10px] font-semibold text-slate-500">可复用角度</p><p className="mt-1.5 text-xs leading-relaxed text-slate-800">{item.angle || "暂无角度说明"}</p></section><section className="mt-4"><div className="flex items-center justify-between gap-3"><h3 className="text-[11px] font-semibold text-slate-700">推荐章节顺序</h3><span className="text-[10px] text-slate-400">仅供写作参考</span></div>{sections.length ? <ol className="mt-2.5 space-y-2">{sections.slice(0, 6).map((section, sectionIndex) => <li key={`${item.id}-${sectionIndex}`} className="flex gap-2 rounded-lg border border-slate-100 px-2.5 py-2"><span className="grid size-4 shrink-0 place-items-center rounded-full bg-slate-100 text-[9px] font-semibold text-slate-500">{sectionIndex + 1}</span><span className="text-[11px] leading-relaxed text-slate-600">{section}</span></li>)}</ol> : <p className="mt-2.5 text-[11px] text-slate-400">系统尚未归纳出稳定的章节结构。</p>}</section><details className="mt-4 border-t border-slate-100 pt-3 text-[11px] text-slate-500"><summary className="cursor-pointer select-none font-medium text-slate-600">蓝图使用边界</summary><p className="mt-2 leading-relaxed">蓝图只影响文章的组织方式；不会把小红书表达翻译、复制到文章，也不会覆盖知识库中的证据与冲突规则。</p></details></Card>;
 }
 
-function ContentView({ data, onNavigate, onOpenDraft }) {
+function ContentView({ data, onNavigate, onOpenDraft, onAction, actionBusy }) {
   const items = data?.items || [];
   const opportunities = data?.opportunities || [];
-  const knowledgeOnly = opportunities.filter((item) => item.status === "knowledge_only");
-  const tracked = opportunities.filter((item) => ["approved_waiting_for_evidence","approved_ready","producing","drafted","qa_failed","ready_for_wordpress","wordpress_draft","suppressed"].includes(item.status));
-  const opportunityQueue = tracked.length ? <OpportunityQueue items={tracked} /> : null;
-  if (knowledgeOnly.length) return <>{opportunityQueue}<ContentFlowWorkspace items={items} knowledgeOnly={knowledgeOnly} onNavigate={onNavigate} onOpenDraft={onOpenDraft} /></>;
-  if (!items.length) return <>{opportunityQueue || <EmptyState icon="content" title="暂无可生产的选题" description="当一个目的地具备足够的独立证据并通过建议页审批后，选题会自动出现在这里。" action={() => onNavigate("knowledge")} actionLabel="查看目的地知识" />}</>;
-  return <>{opportunityQueue}<SummaryBar title="内容生产说明"><span>这里管理已批准选题的规划、英文草稿、质量审核和 WordPress 草稿投递。</span><span>点击已有草稿的行可查看详情。</span></SummaryBar><TableShell><Table><TableHeader><TableRow><TableHead>选题</TableHead><TableHead>覆盖度</TableHead><TableHead className="hidden md:table-cell">证据</TableHead><TableHead>流程状态</TableHead><TableHead className="hidden lg:table-cell">质检 / WordPress</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id} tabIndex={item.draft_id ? 0 : undefined} role={item.draft_id ? "button" : undefined} className={cn(item.draft_id && "cursor-pointer")} onClick={() => item.draft_id && onOpenDraft(item.draft_id)} onKeyDown={(event) => event.key === "Enter" && item.draft_id && onOpenDraft(item.draft_id)}><TableCell><div className="max-w-md font-medium text-slate-900">{item.draft_title || item.proposed_title}</div><div className="mt-1 max-w-lg text-[11px] leading-relaxed text-slate-400">{item.rationale}</div>{item.suppression_reason && <div className="mt-1 text-[10px] font-medium text-amber-600">已抑制：{item.suppression_reason}</div>}</TableCell><TableCell className="font-medium tabular-nums">{Math.round(item.coverage_score)}%</TableCell><TableCell className="hidden md:table-cell">{item.evidence_count} 个来源 · {item.conflict_count} 项严格冲突<div className="mt-1 text-[10px] text-slate-400">{item.stale_fact_count || 0} 项带日期证据 · {item.verification_fact_count || 0} 项自动时效结论</div></TableCell><TableCell><StatusPill status={item.draft_status || item.brief_status || item.status} /></TableCell><TableCell className="hidden lg:table-cell">{item.qa_score == null ? "—" : `${Math.round(item.qa_score)} · ${item.qa_passed ? "通过" : "未通过"}`}<div className="mt-1 text-[10px] text-slate-400">商品：{label(item.commercial_status || "pending")}（{item.commercial_offer_count || 0}）· WP：{label(item.wordpress_status || "not_synced")}</div></TableCell></TableRow>)}</TableBody></Table></TableShell></>;
-}
-
-function OpportunityQueue({ items }) {
-  return <Card className="mb-3 p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-slate-900">内容机会状态</p><p className="mt-1 text-xs text-slate-500">批准只作用于精确机会；证据不足会保留批准并自动等待，不会误选同目的地的其他主题。</p></div><span className="text-xs font-semibold tabular-nums">{items.length}</span></div><div className="mt-3 space-y-2">{items.map((item) => <div key={item.id} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[1fr_auto]"><div><p className="text-xs font-semibold text-slate-800">{item.title}</p><p className="mt-1 text-[10px] text-slate-500">覆盖 {Math.round(item.readiness_score || 0)}% · 缺少：{(item.readiness?.blockingRequirements || []).join("、") || "无阻塞项"}</p></div><StatusPill status={item.status} /></div>)}</div></Card>;
-}
-
-function ContentFlowWorkspace({ items, knowledgeOnly, onNavigate, onOpenDraft }) {
+  const approved = opportunities.filter((item) => Boolean(item.approved_at));
+  const rows = approved.map((opportunity) => ({ ...opportunity,
+    ...(items.find((item) => item.id === opportunity.candidate_id || item.candidate_id === opportunity.candidate_id) || {}),
+    opportunity_id: opportunity.id, candidate_id: opportunity.candidate_id }));
+  const created = rows.filter((item) => Boolean(item.draft_id || item.draft_title || item.body)).length;
+  const failed = rows.filter((item) => Boolean(contentFailureReason(item))).length;
+  if (!approved.length && !items.length) return <EmptyState icon="content" title="还没有开始生产的内容" description="批准后，只有真正进入生产队列的文章才会显示在这里；等待证据的批准不会占位。" action={() => onNavigate("recommendations")} actionLabel="查看建议" />;
   return <div className="space-y-3">
-    <SummaryBar title="内容生产流程"><span>“仅入知识库”已完成：事实已沉淀，但不会创建候选文章或草稿。</span><span>需要新文章时，请在“建议”中批准文章或补充研究。</span></SummaryBar>
-    <section className="grid gap-3 xl:grid-cols-[minmax(0,1.15fr)_minmax(18rem,.85fr)]">
-      <Card className="p-4 sm:p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold text-slate-900">已入库，未进入内容生产</p><p className="mt-1 text-[11px] leading-relaxed text-slate-500">这些来源被保留为后续选题的佐证，不会自动写成文章，避免重复或证据不足的内容进入发布队列。</p></div><StatusPill status="knowledge_only" /></div><div className="mt-4 space-y-2.5">{knowledgeOnly.map((item) => <div key={item.source_id || item.id} className="rounded-xl border border-slate-100 bg-slate-50/80 p-3"><p className="text-xs font-semibold text-slate-900">{item.title || item.proposed_title || "已归档来源"}</p><p className="mt-1 text-[11px] leading-relaxed text-slate-500">{item.decision_summary || item.rationale || "系统已将该来源的可用事实写入知识库。"}</p><p className="mt-2 text-[10px] font-medium text-emerald-700">下一步：如需围绕该主题写文，请返回“建议”并选择“批准文章”。</p></div>)}</div><Button className="mt-4" size="sm" onClick={() => onNavigate("recommendations")}>查看建议与下一步</Button></Card>
-      <Card className="p-4 sm:p-5"><p className="text-xs font-semibold text-slate-900">内容队列状态</p><div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/70 p-3"><strong className="text-2xl font-semibold tabular-nums text-slate-950">{items.length}</strong><span className="ml-1.5 text-xs font-medium text-slate-600">篇候选 / 草稿</span><p className="mt-1 text-[11px] leading-relaxed text-slate-500">候选文章只来自已被“批准文章”的建议；仅入知识库不会改变这个数字。</p></div><Button className="mt-4" variant="secondary" size="sm" onClick={() => onNavigate("knowledge")}>查看已沉淀的知识事实</Button></Card>
-    </section>
-    {items.length > 0 && <TableShell><Table><TableHeader><TableRow><TableHead>候选文章</TableHead><TableHead>覆盖度</TableHead><TableHead>流程状态</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id} role={item.draft_id ? "button" : undefined} tabIndex={item.draft_id ? 0 : undefined} className={cn(item.draft_id && "cursor-pointer")} onClick={() => item.draft_id && onOpenDraft(item.draft_id)} onKeyDown={(event) => event.key === "Enter" && item.draft_id && onOpenDraft(item.draft_id)}><TableCell><div className="font-medium text-slate-900">{item.draft_title || item.proposed_title}</div><p className="mt-1 text-[11px] text-slate-500">{item.rationale}</p></TableCell><TableCell className="font-medium tabular-nums">{Math.round(item.coverage_score || 0)}%</TableCell><TableCell><StatusPill status={item.draft_status || item.brief_status || item.status} /></TableCell></TableRow>)}</TableBody></Table></TableShell>}
+    <Card className="p-4 sm:p-5"><div className="grid gap-3 sm:grid-cols-3"><ContentCount label="正在生产或已完成" value={approved.length} tone="blue" /><ContentCount label="已生成正文" value={created} tone="green" /><ContentCount label="需要处理" value={failed} tone={failed ? "red" : "slate"} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">这里只显示已启动的生产记录。等待证据、仍在修复或仅存在于内部推荐池的项目不会显示。</p></Card>
+    <TableShell><Table><TableHeader><TableRow><TableHead>生产内容</TableHead><TableHead>当前阶段</TableHead><TableHead>结果与处理</TableHead></TableRow></TableHeader><TableBody>{rows.map((item) => {
+      const state = item.workflow_status || item.draft_status || item.brief_status || item.status;
+      const reason = contentFailureReason(item);
+      return <TableRow key={item.opportunity_id} tabIndex={item.draft_id ? 0 : undefined} role={item.draft_id ? "button" : undefined} className={cn(item.draft_id && "cursor-pointer")} onClick={() => item.draft_id && onOpenDraft(item.draft_id)} onKeyDown={(event) => event.key === "Enter" && item.draft_id && onOpenDraft(item.draft_id)}><TableCell><div className="max-w-xl font-medium text-slate-900">{item.draft_title || item.proposed_title || item.title || "未命名文章"}</div></TableCell><TableCell><StatusPill status={state} /></TableCell><TableCell><p className={cn("max-w-xl text-[11px] leading-relaxed", reason ? "text-red-700" : "text-slate-500")}>{reason || (item.draft_id ? "内容已创建，可点击本行查看。" : "生产任务已进入队列，当前无需人工处理。")}</p>{reason && item.candidate_id && <ContentRecovery candidateId={item.candidate_id} onAction={onAction} actionBusy={actionBusy} />}</TableCell></TableRow>;
+    })}{rows.length === 0 && <TableRow><TableCell colSpan={3} className="py-8 text-center text-xs text-slate-500">还没有开始生产的内容。</TableCell></TableRow>}</TableBody></Table></TableShell>
   </div>;
+}
+
+function ContentCount({ label: title, value, tone }) {
+  const tones = { blue: "bg-blue-50 text-blue-800", green: "bg-emerald-50 text-emerald-800", red: "bg-red-50 text-red-800", slate: "bg-slate-50 text-slate-700" };
+  return <div className={cn("rounded-xl p-3", tones[tone] || tones.slate)}><strong className="text-2xl tabular-nums">{value}</strong><span className="ml-2 text-xs font-medium">篇</span><p className="mt-1 text-[11px]">{title}</p></div>;
+}
+
+function contentFailureReason(item) {
+  const state = item.workflow_status || item.draft_status || item.brief_status || item.status;
+  const requirements = item.readiness?.blockingRequirements || item.coverage?.readiness?.blockingRequirements || [];
+  if (item.status === "approved_waiting_for_evidence") return `素材尚未满足创建条件：${requirements.map((value) => friendlyError(value, "素材条件")).join("；") || "缺少完成本文承诺所需的证据。"}`;
+  if (item.suppression_reason) return `检测到重复内容：${item.suppression_reason}`;
+  const blocker = item.operation?.blockers?.[0];
+  if (blocker?.reason) return blocker.reason;
+  if (["failed", "qa_failed", "suppressed"].includes(state) || item.operation?.status === "failed") return item.operation?.nextAction?.reason || "生产在当前阶段停止；请打开处理入口查看原因并按建议继续。";
+  return "";
 }
 
 function WordPressView({ data, onGuide }) {
@@ -616,7 +612,7 @@ function WordPressView({ data, onGuide }) {
   // Strategy 1.4 keeps this tab as read-only WordPress inventory. CMS
   // production and delivery states belong to Content Opportunities.
   const items = data.items || [];
-  const summary = <SummaryBar title={`已追踪 ${items.length} 篇文章`}><span>同步：{label(data.sync?.status || "pending")}</span>{data.sync?.last_succeeded_at && <span>最近成功：{formatDate(data.sync.last_succeeded_at)}</span>}{data.sync?.last_error && <span className="text-red-600">{data.sync.last_error}</span>}</SummaryBar>;
+  const summary = <SummaryBar title={`已追踪 ${items.length} 篇文章`}><span>同步：{label(data.sync?.status || "pending")}</span>{data.sync?.last_succeeded_at && <span>最近成功：{formatDate(data.sync.last_succeeded_at)}</span>}{data.sync?.last_error && <span className="text-red-600">{friendlyError(data.sync.last_error)}</span>}</SummaryBar>;
   if (!items.length) return <>{summary}<EmptyState icon="wordpress" title="文章库存为空" description="首次同步仍在等待，或者该 WordPress 站点目前没有文章。" /></>;
   return <>{summary}<TableShell><Table><TableHeader><TableRow><TableHead>文章</TableHead><TableHead>状态</TableHead><TableHead className="hidden md:table-cell">固定链接</TableHead><TableHead className="hidden lg:table-cell">修改时间</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell><div className="flex items-center gap-1.5 font-medium text-slate-900">{item.post_url ? <a className="inline-flex items-center gap-1 hover:text-blue-600" href={item.post_url} target="_blank" rel="noreferrer">{item.title || "未命名文章"}<ExternalLink className="size-3" /></a> : item.title || "未命名文章"}</div><div className="mt-1 text-[10px] text-slate-400">WordPress #{item.post_id}</div></TableCell><TableCell><StatusPill status={item.status} /></TableCell><TableCell className="hidden md:table-cell">{item.slug}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.modified_at)}</TableCell></TableRow>)}</TableBody></Table></TableShell></>;
 }
@@ -630,24 +626,25 @@ function CommercialView({ data, onGuide, onAction, actionBusy }) {
   const commissionRules = data?.commissionRules || [];
   return <>
     <SummaryBar title={`${providers.length} 个提供商 · ${items.length} 个资产`}><span>{opportunities.length} 个高价值 联盟营销机会</span><span>{queue.length} 个建链任务</span><span>{performance.length} 组归因指标 · {commissionRules.length} 条可维护佣金规则</span></SummaryBar>
-    <AffiliateQueue items={queue} onAction={onAction} actionBusy={actionBusy} />
     <SectionTitle title="联盟营销提供商" description="V1 使用人工模式；账号凭证和登录态不进入 CMS" />
     <TableShell><Table><TableHeader><TableRow><TableHead>提供商</TableHead><TableHead>连接方式</TableHead><TableHead>站点 / 语言</TableHead><TableHead>活跃资产</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{providers.map((item) => <TableRow key={item.id}><TableCell><div className="font-medium text-slate-900">{item.display_name}</div><div className="mt-1 text-[10px] text-slate-400">{item.provider_key}</div></TableCell><TableCell>{label(item.connection_mode)}</TableCell><TableCell>{item.site_name || "—"} · {item.default_language || "en"}</TableCell><TableCell className="tabular-nums">{item.active_asset_count || 0}</TableCell><TableCell><StatusPill status={item.status || "configured"} /></TableCell></TableRow>)}</TableBody></Table></TableShell>
-    <SectionTitle title="联盟资产登记表" description="支持目的地、区域、路线和精选实体范围" />
+    <SectionTitle title="已有联盟资产" description="链接资产按目的地、区域、路线或实体范围复用，不绑定到单篇文章" />
     <TableShell><Table><TableHeader><TableRow><TableHead>资产</TableHead><TableHead>范围</TableHead><TableHead>展示类型</TableHead><TableHead>商品类别</TableHead><TableHead className="hidden md:table-cell">提供商</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell><div className="font-medium text-slate-900">{item.title || item.id}</div><div className="mt-1 text-[10px] text-slate-400">优先级 {item.priority} · {item.language || "en"}</div></TableCell><TableCell>{label(item.scope_type)}<div className="mt-1 text-[10px] text-slate-400">{item.scope_key || item.destination_slug || "global"}</div></TableCell><TableCell>{label(item.asset_type)}</TableCell><TableCell>{label(item.product_category)}</TableCell><TableCell className="hidden md:table-cell">{item.provider}</TableCell><TableCell><StatusPill status={item.active ? "active" : "inactive"} /><div className="mt-1 text-[10px] text-slate-400">{item.valid_until ? `有效至 ${formatDate(item.valid_until)}` : "未设置截止时间"}</div></TableCell></TableRow>)}</TableBody></Table></TableShell>
+    <AffiliateQueue items={queue} onAction={onAction} actionBusy={actionBusy} />
     {opportunities.length > 0 && <><SectionTitle title="高价值机会" description="仅显示超过人工维护门槛的精度缺口" /><TableShell><Table><TableHeader><TableRow><TableHead>范围</TableHead><TableHead>类别</TableHead><TableHead>评分</TableHead><TableHead className="hidden md:table-cell">原因</TableHead></TableRow></TableHeader><TableBody>{opportunities.map((item) => <TableRow key={item.id}><TableCell>{label(item.scope_type)} · {item.scope_key}</TableCell><TableCell>{label(item.product_category)}</TableCell><TableCell>{Math.round(item.score)}</TableCell><TableCell className="hidden md:table-cell">{item.reason}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
-    {performance.length > 0 && <><SectionTitle title="成效数据" description="展示曝光、点击及后续预订与佣金归因" /><TableShell><Table><TableHeader><TableRow><TableHead>提供商 / 类别</TableHead><TableHead>位置</TableHead><TableHead>曝光次数</TableHead><TableHead>点击 / 点击率</TableHead><TableHead>佣金</TableHead></TableRow></TableHeader><TableBody>{performance.map((item) => <TableRow key={`${item.provider}:${item.category}:${item.slot_key}:${item.destination_slug}`}><TableCell>{item.provider} · {label(item.category)}</TableCell><TableCell>{item.slot_key || "—"}</TableCell><TableCell>{item.impressions}</TableCell><TableCell>{item.clicks} · {Math.round((item.ctr || 0) * 1000) / 10}%</TableCell><TableCell>{Number(item.commission || 0).toFixed(2)}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
+    {performance.length > 0 && <><SectionTitle title="联盟事件一致性" description="点击不等于订单或佣金；未接入并确认转化数据时金额显示未知" /><TableShell><Table><TableHeader><TableRow><TableHead>提供商 / 类别</TableHead><TableHead>位置</TableHead><TableHead>曝光次数</TableHead><TableHead>点击 / 点击率</TableHead><TableHead>订单 / 佣金</TableHead></TableRow></TableHeader><TableBody>{performance.map((item) => <TableRow key={`${item.provider}:${item.category}:${item.slot_key}:${item.destination_slug}`}><TableCell>{item.provider} · {label(item.category)}<div className="mt-1 text-[10px] text-slate-400">归因：{label(item.attribution_status)} · 修订 {item.trace?.articleRevisions || 0} · Overlay {item.trace?.overlayVersions || 0} · 资产 {item.trace?.affiliateAssets || 0}</div></TableCell><TableCell>{item.slot_key || "—"}</TableCell><TableCell>{item.impressions}</TableCell><TableCell>{item.clicks} · {Math.round((item.ctr || 0) * 1000) / 10}%</TableCell><TableCell>{item.conversion_data_status === "confirmed" ? `${item.bookings} · ${Number(item.commission).toFixed(2)}` : "未知 · 未接入或未确认"}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
   </>;
 }
 
 function AffiliateQueue({ items, onAction, actionBusy }) {
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("ACTIVE");
   const [category, setCategory] = useState("");
   const [scope, setScope] = useState("");
   const [urls, setUrls] = useState({});
   const [importFile, setImportFile] = useState(null);
   const [importPreview, setImportPreview] = useState(null);
-  const filtered = useMemo(() => items.filter((item) => (!status || item.status === status)
+  const filtered = useMemo(() => items.filter((item) => (!status || (status === "ACTIVE"
+    ? ["PENDING", "READY_FOR_MANUAL", "INVALID"].includes(item.status) : item.status === status))
     && (!category || item.product_category === category) && (!scope || item.scope_type === scope)), [items, status, category, scope]);
   const active = items.filter((item) => ["PENDING", "READY_FOR_MANUAL", "INVALID"].includes(item.status)).length;
   const fieldClass = "rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-slate-400";
@@ -680,10 +677,10 @@ function AffiliateQueue({ items, onAction, actionBusy }) {
     if (result) setImportPreview(result);
   };
   return <section className="space-y-3">
-    <SectionTitle title="联盟资产建链队列" description="Trip.com 半自动人工建链；CMS 不接触账号、Cookie、登录态或后台页面" />
+    <SectionTitle title="待建链任务" description="仅由真实高意图内容机会与联盟资产缺口生成；当前为零是正常状态" />
     <Card className="p-4"><div className="flex flex-wrap items-center gap-2">
       <select aria-label="队列状态" className={fieldClass} value={status} onChange={(event) => setStatus(event.target.value)}>
-        <option value="">全部状态</option>{["PENDING", "READY_FOR_MANUAL", "COMPLETED", "SKIPPED", "INVALID"].map((value) => <option key={value} value={value}>{label(value)}</option>)}
+        <option value="ACTIVE">待处理</option><option value="">全部状态</option>{["PENDING", "READY_FOR_MANUAL", "COMPLETED", "SKIPPED", "INVALID"].map((value) => <option key={value} value={value}>{label(value)}</option>)}
       </select>
       <select aria-label="商品类别" className={fieldClass} value={category} onChange={(event) => setCategory(event.target.value)}>
         <option value="">全部类别</option>{["HOTEL", "FLIGHT", "TRAIN", "ATTRACTION", "TOUR_ACTIVITY", "FLIGHT_HOTEL", "CAR_RENTAL", "AIRPORT_TRANSFER", "PLANNER"].map((value) => <option key={value} value={value}>{label(value)}</option>)}
@@ -691,7 +688,6 @@ function AffiliateQueue({ items, onAction, actionBusy }) {
       <select aria-label="范围" className={fieldClass} value={scope} onChange={(event) => setScope(event.target.value)}>
         <option value="">全部范围</option>{["ENTITY", "ROUTE", "AREA", "DESTINATION", "COUNTRY", "CATEGORY", "GLOBAL"].map((value) => <option key={value} value={value}>{label(value)}</option>)}
       </select>
-      <Button size="sm" disabled={actionBusy} onClick={() => onAction("/api/commercial/affiliate-queue/seed", { method: "POST" }, "初始 Seed 已同步")}><RefreshCw />同步初始 Seed</Button>
       <Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => exportQueue("csv")}><FileUp />导出 CSV</Button>
       <Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => exportQueue("json")}><FileUp />导出 JSON</Button>
     </div><div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
@@ -701,7 +697,7 @@ function AffiliateQueue({ items, onAction, actionBusy }) {
       {importPreview && <span className="text-[11px] text-slate-500">总计 {importPreview.total} · 有效 {importPreview.valid} · 错误 {importPreview.failed} · 已保护 {importPreview.protected}</span>}
     </div></Card>
     <SummaryBar title={active + " 个待人工处理任务"}><span>共 {items.length} 个，当前筛选显示 {filtered.length} 个</span><span>只需复制 trip_sub1，并回填官方 联盟链接</span></SummaryBar>
-    {!filtered.length ? <EmptyState icon="offer" title="当前筛选没有建链任务" description="任务只来自显式 Seed 或达到阈值的高意向 联盟营销机会，不会按城市、路线或实体批量组合生成。" /> :
+    {!filtered.length ? <EmptyState icon="offer" title="当前没有待建链任务" description="只有高意图内容出现资产缺口时才会创建任务；已有可复用资产或暂无缺口时，零任务就是正常结果。" /> :
       <div className="grid gap-3 lg:grid-cols-2">{filtered.map((task) => {
         const guidance = tripTaskGuidance(task);
         const mutable = !["COMPLETED", "SKIPPED"].includes(task.status);
@@ -737,24 +733,24 @@ function tripTaskGuidance(task) {
 function ExceptionsView({ data, onAction, actionBusy }) {
   const items = data?.items || [];
   const manualReviewItems = items.filter((item) => Boolean(item.knowledge?.id || item.entity_alias?.id || item.claim_review?.id));
-  if (manualReviewItems.length) return <ExceptionsWorkspace items={items} onAction={onAction} actionBusy={actionBusy} />;
+  if (manualReviewItems.length) return <ExceptionsWorkspace items={items} totalCount={data?.totalCount} onAction={onAction} actionBusy={actionBusy} />;
   if (!items.length) return <EmptyState icon="check" title="当前没有需要处理的问题" description="采集、队列和知识库目前没有需要你介入的异常。" healthy />;
   const retry = (item) => onAction(`/api/exceptions/${encodeURIComponent(item.key)}/retry`, { method: "POST" }, "已重新加入处理队列");
   return <div className="space-y-3">
-    <SummaryBar title={`${items.length} 个待处理问题`}><span>票价、营业时间、预约和交通等动态差异已由多来源时效共识自动处理；这里只保留系统失败、语义抽取缺失和高后果严格冲突。</span></SummaryBar>
-    <section className="space-y-3 md:hidden">{items.map((item) => <Card key={item.key} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold leading-relaxed text-slate-900">{item.title}</h2><p className="mt-1 text-xs text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.detail}</p><div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[10px] text-slate-400"><span>{label(item.kind)}</span><span>{formatDate(item.updatedAt)}</span></div>{item.retryable ? <Button className="mt-3 w-full" variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <p className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">需要补充或核验新的证据。当前事实会保留，但不会被用于自动生成内容。</p>}</Card>)}</section>
-    <div className="hidden md:block"><TableShell><Table><TableHeader><TableRow><TableHead>问题</TableHead><TableHead>类型</TableHead><TableHead>优先级</TableHead><TableHead className="hidden md:table-cell">更新时间</TableHead><TableHead>处理</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.key}><TableCell><div className="font-medium text-slate-900">{item.title}</div><div className="mt-1 text-xs text-slate-600">{item.subject}</div><div className="mt-1 max-w-xl text-[10px] leading-relaxed text-slate-400">{item.detail}</div></TableCell><TableCell>{label(item.kind)}</TableCell><TableCell><StatusPill status={item.severity} /></TableCell><TableCell className="hidden whitespace-nowrap md:table-cell">{formatDate(item.updatedAt)}</TableCell><TableCell>{item.retryable ? <Button variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <span className="text-[10px] text-slate-400">需要新的证据</span>}</TableCell></TableRow>)}</TableBody></Table></TableShell></div>
+    <SummaryBar title={`${data?.totalCount ?? items.length} 个待处理问题`}><span>当前页 {items.length} 条；你选择的来源会作为日常价格、营业时间、预约和交通信息的默认依据，只有真实互斥的事实才会请你决定。</span></SummaryBar>
+    <section className="space-y-3 md:hidden">{items.map((item) => <Card key={item.key} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold leading-relaxed text-slate-900">{item.title}</h2><p className="mt-1 text-xs text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.detail}</p><ContentRecovery candidateId={item.candidateId} onAction={onAction} actionBusy={actionBusy} /><div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[10px] text-slate-400"><span>{label(item.kind)}</span><span>{formatDate(item.updatedAt)}</span></div>{item.retryable ? <Button className="mt-3 w-full" variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <p className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">需要补充或核验新的证据。当前事实会保留，但不会被用于自动生成内容。</p>}</Card>)}</section>
+    <div className="hidden md:block"><TableShell><Table><TableHeader><TableRow><TableHead>问题</TableHead><TableHead>类型</TableHead><TableHead>优先级</TableHead><TableHead className="hidden md:table-cell">更新时间</TableHead><TableHead>处理</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.key}><TableCell><div className="font-medium text-slate-900">{item.title}</div><div className="mt-1 text-xs text-slate-600">{item.subject}</div><div className="mt-1 max-w-xl text-[10px] leading-relaxed text-slate-400">{item.detail}</div><ContentRecovery candidateId={item.candidateId} onAction={onAction} actionBusy={actionBusy} /></TableCell><TableCell>{label(item.kind)}</TableCell><TableCell><StatusPill status={item.severity} /></TableCell><TableCell className="hidden whitespace-nowrap md:table-cell">{formatDate(item.updatedAt)}</TableCell><TableCell>{item.retryable ? <Button variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <span className="text-[10px] text-slate-400">打开恢复入口查看前置动作</span>}</TableCell></TableRow>)}</TableBody></Table></TableShell></div>
   </div>;
 }
 
-function ExceptionsWorkspace({ items, onAction, actionBusy }) {
+function ExceptionsWorkspace({ items, totalCount, onAction, actionBusy }) {
   const retry = (item) => onAction(`/api/exceptions/${encodeURIComponent(item.key)}/retry`, { method: "POST" }, "已重新加入处理队列");
   const issueGroups = new Set(items.map((item) => item.claim_review?.factGroupKey || item.key)).size;
   const groupedComparisonCount = items.filter((item) => item.claim_review?.factGroupKey).length;
   const summary = issueGroups < items.length
     ? `${issueGroups} 个待处理事项 · ${items.length} 条记录`
-    : `${issueGroups} 个待处理事项`;
-  return <div className="space-y-3"><SummaryBar title={summary}><span>同一事实组可能产生多条来源比较，但只算一个待处理事项。系统会自动处理同义、细化、可并存和动态时效差异；当前仍含 {groupedComparisonCount} 条需要严格处理的来源比较记录。</span></SummaryBar><div className="grid gap-3 lg:grid-cols-2">{items.map((item) => <Card key={item.key} className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-xs text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.detail}</p>{item.knowledge?.id ? <KnowledgeConflictResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.entity_alias?.id ? <EntityAliasResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.claim_review?.id ? <ClaimReviewResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.retryable ? <Button className="mt-4" variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <p className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">需要补充新的来源证据；现有事实会保留，但不会自动用于内容生产。</p>}</Card>)}</div></div>;
+    : `${totalCount ?? issueGroups} 个待处理事项`;
+  return <div className="space-y-3"><SummaryBar title={summary}><span>同一事实组可能产生多条来源比较，但只算一个待处理事项。系统会自动合并同义、细化和可并存的信息；当前仍含 {groupedComparisonCount} 条真正需要判断的来源比较记录。</span></SummaryBar><div className="grid gap-3 lg:grid-cols-2">{items.map((item) => <Card key={item.key} className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-xs text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.detail}</p><ContentRecovery candidateId={item.candidateId} onAction={onAction} actionBusy={actionBusy} />{item.knowledge?.id ? <KnowledgeConflictResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.entity_alias?.id ? <EntityAliasResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.claim_review?.id ? <ClaimReviewResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.retryable ? <Button className="mt-4" variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <p className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">请打开恢复入口查看责任阶段：输入错误需修正配置，图片问题需补授权素材，正文问题才需要编辑或补证据。</p>}</Card>)}</div></div>;
 }
 
 function EntityAliasResolution({ item, onAction, actionBusy }) {
@@ -808,7 +804,7 @@ function ClaimEvidencePanel({ title, claim, actionBusy, onRetry }) {
 
 function LegacyExceptionsWorkspace({ items, onAction, actionBusy }) {
   const retry = (item) => onAction(`/api/exceptions/${encodeURIComponent(item.key)}/retry`, { method: "POST" }, "已重新加入处理队列");
-  return <div className="space-y-3"><SummaryBar title={`${items.length} 个待处理问题`}><span>“注意”表示需要人工确认，不会自动重试；在确认前，该冲突事实不会进入文章生产。</span></SummaryBar><div className="grid gap-3 lg:grid-cols-2">{items.map((item) => <Card key={item.key} className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-xs text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.detail}</p>{item.knowledge?.id ? <KnowledgeConflictResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.retryable ? <Button className="mt-4" variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <p className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">此问题需补充新的来源证据；现有事实会保留，但不会自动用于内容生产。</p>}</Card>)}</div></div>;
+  return <div className="space-y-3"><SummaryBar title={`${items.length} 个待处理问题`}><span>“注意”表示需要人工确认，不会自动重试；在确认前，该冲突事实不会进入文章生产。</span></SummaryBar><div className="grid gap-3 lg:grid-cols-2">{items.map((item) => <Card key={item.key} className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-xs text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.detail}</p><ContentRecovery candidateId={item.candidateId} onAction={onAction} actionBusy={actionBusy} />{item.knowledge?.id ? <KnowledgeConflictResolution item={item} onAction={onAction} actionBusy={actionBusy} /> : item.retryable ? <Button className="mt-4" variant="secondary" size="sm" disabled={actionBusy} onClick={() => retry(item)}><RotateCcw />重新执行</Button> : <p className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">请按具体问题修正输入或补齐证据；不会无条件重跑整条生产链。</p>}</Card>)}</div></div>;
 }
 
 function KnowledgeConflictResolution({ item, onAction, actionBusy }) {
@@ -829,12 +825,16 @@ function MaintenanceView({ data, onAction, actionBusy }) {
   const notifications = data?.notifications || { configured: false, failed: 0, repeatHours: 24, minimumSeverity: "blocker" };
   const wordpress = data?.wordpressSync;
   const searchConsole = data?.searchConsoleSync;
+  const [resetPreview, setResetPreview] = useState(false);
   const resetDerivedResearch = () => {
-    if (!window.confirm("确认清空知识库、信息主张、建议、蓝图和内容生产结果，并保留原始来源后重新处理吗？")) return;
+    setResetPreview(true);
+  };
+  const confirmResetDerivedResearch = async () => {
     onAction("/api/maintenance/reset-derived-research", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ confirmation: "RESET_DERIVED_RESEARCH" }),
-    }, (result) => `已保留 ${result.preservedSources || 0} 个原始来源，并重新加入 Strategy 1.4 处理队列。`);
+    }, (result) => `已保留 ${result.preservedSources || 0} 个原始来源，并重新加入处理队列。`);
+    setResetPreview(false);
   };
   const cards = [
     [Activity, "活动队列", telemetry.active, telemetry.oldestQueuedAgeSeconds ? `最久等待 ${formatDuration(telemetry.oldestQueuedAgeSeconds * 1000)}` : "没有等待中的任务", telemetry.active ? "warning" : "success"],
@@ -850,14 +850,15 @@ function MaintenanceView({ data, onAction, actionBusy }) {
     <SummaryBar title={data?.enabled ? "自动维护已启用" : "自动维护已停用"} action={<Button size="sm" disabled={!data?.enabled || actionBusy} onClick={() => onAction("/api/maintenance/run", { method: "POST" }, "维护任务已完成")}><RefreshCw className={cn(actionBusy && "animate-spin")} /> 立即运行</Button>}><span>每 {data?.intervalMinutes || 15} 分钟检查一次</span><span>{label(data?.logging?.format || "json")} 日志</span></SummaryBar>
     {favoritesRuns.length > 0 && <><SectionTitle title="小红书收藏同步" description="仅保存聚合进度，不包含账号、Cookie 或浏览器会话数据" /><TableShell><Table><TableHeader><TableRow><TableHead>收藏范围</TableHead><TableHead>状态</TableHead><TableHead>扫描 / 新增</TableHead><TableHead>接收 / 重复</TableHead><TableHead className="hidden md:table-cell">失败</TableHead><TableHead className="hidden lg:table-cell">更新时间 / 耗时</TableHead></TableRow></TableHeader><TableBody>{favoritesRuns.map((run) => <TableRow key={run.session_id}><TableCell><p className="font-medium text-slate-900">{run.scope_label || "小红书收藏"}</p><p className="max-w-64 truncate text-[10px] text-slate-500">{run.mode === "full" ? "完整历史同步" : "增量同步"}</p></TableCell><TableCell><StatusPill status={run.status} /></TableCell><TableCell>{run.stats?.discovered || 0} / {run.stats?.new || 0}</TableCell><TableCell>{run.stats?.captured || 0} / {run.stats?.duplicate || 0}</TableCell><TableCell className="hidden md:table-cell">{run.stats?.failed || 0}</TableCell><TableCell className="hidden lg:table-cell"><p>{formatDate(run.updated_at)}</p><p className="text-[10px] text-slate-500">{formatDuration(run.duration_ms)}</p></TableCell></TableRow>)}</TableBody></Table></TableShell></>}
     <SectionTitle title="维护任务" description="持久化调度在服务重启后继续生效" />
-    <TableShell><Table><TableHeader><TableRow><TableHead>任务</TableHead><TableHead>状态</TableHead><TableHead className="hidden md:table-cell">上次成功</TableHead><TableHead>处理项</TableHead><TableHead className="hidden lg:table-cell">结果</TableHead></TableRow></TableHeader><TableBody>{(data?.runs || []).map((run) => <TableRow key={run.task_key}><TableCell className="font-medium text-slate-900">{maintenanceLabel(run.task_key)}</TableCell><TableCell><StatusPill status={run.status} /></TableCell><TableCell className="hidden whitespace-nowrap md:table-cell">{formatDate(run.last_succeeded_at)}</TableCell><TableCell>{run.item_count}</TableCell><TableCell className="hidden max-w-xl text-[11px] lg:table-cell">{run.last_error || maintenanceResult(run.metadata)}</TableCell></TableRow>)}<IntegrationRow title="WordPress 文章库存" state={wordpress} result="只读同步站点文章" /><IntegrationRow title="Search Console 查询" state={searchConsole} result="只读检测搜索内容冲突" /></TableBody></Table></TableShell>
+    <TableShell><Table><TableHeader><TableRow><TableHead>任务</TableHead><TableHead>状态</TableHead><TableHead className="hidden md:table-cell">上次成功</TableHead><TableHead>处理项</TableHead><TableHead className="hidden lg:table-cell">结果</TableHead></TableRow></TableHeader><TableBody>{(data?.runs || []).map((run) => <TableRow key={run.task_key}><TableCell className="font-medium text-slate-900">{maintenanceLabel(run.task_key)}</TableCell><TableCell><StatusPill status={run.status} /></TableCell><TableCell className="hidden whitespace-nowrap md:table-cell">{formatDate(run.last_succeeded_at)}</TableCell><TableCell>{run.item_count}</TableCell><TableCell className="hidden max-w-xl text-[11px] lg:table-cell">{run.last_error ? friendlyError(run.last_error) : maintenanceResult(run.metadata)}</TableCell></TableRow>)}<IntegrationRow title="WordPress 文章库存" state={wordpress} result="只读同步站点文章" /><IntegrationRow title="Search Console 查询" state={searchConsole} result="只读检测搜索内容冲突" /></TableBody></Table></TableShell>
     {telemetry.types?.length > 0 && <><SectionTitle title="任务性能" description={`最近 ${telemetry.windowHours} 小时`} /><TableShell><Table><TableHeader><TableRow><TableHead>任务类型</TableHead><TableHead>排队</TableHead><TableHead>运行中</TableHead><TableHead>已完成</TableHead><TableHead>成功率</TableHead><TableHead className="hidden md:table-cell">p95 耗时</TableHead></TableRow></TableHeader><TableBody>{telemetry.types.map((item) => <TableRow key={item.type}><TableCell className="font-medium text-slate-900">{maintenanceLabel(item.type)}</TableCell><TableCell>{item.queued}</TableCell><TableCell>{item.running}</TableCell><TableCell>{item.completed}</TableCell><TableCell>{item.completed ? `${Math.round(item.succeeded / item.completed * 100)}%` : "—"}</TableCell><TableCell className="hidden md:table-cell">{formatDuration(item.durationP95Ms)}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
-    <Card className="border-amber-200 bg-amber-50/60 p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-semibold text-amber-950">研究派生数据重建</p><p className="mt-1 text-[11px] leading-relaxed text-amber-800">清空旧信息主张、知识、建议、蓝图和内容生产结果；保留原始来源、文件与授权图片，并按内容策略 1.4 重新处理。</p></div><Button variant="secondary" size="sm" disabled={actionBusy} onClick={resetDerivedResearch}><RotateCcw />清空并重新处理</Button></div></Card>
+    <Card className="border-amber-200 bg-amber-50/60 p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-semibold text-amber-950">研究派生数据重建</p><p className="mt-1 text-[11px] leading-relaxed text-amber-800">清空旧信息主张、知识、建议、蓝图和内容生产结果；保留原始来源、文件与授权图片，并按当前内容策略重新处理。</p></div><Button variant="secondary" size="sm" disabled={actionBusy} onClick={resetDerivedResearch}><RotateCcw />清空并重新处理</Button></div></Card>
+    <ConfirmAction open={resetPreview} onOpenChange={setResetPreview} title="确认重建研究数据？" description="这会清空由来源生成的知识、建议和内容结果，再从原始来源重新处理。" detail="原始来源、上传文件和已经保存的授权图片会保留。此操作耗时可能较长。" confirmLabel="确认清空并重建" destructive busy={actionBusy} onConfirm={confirmResetDerivedResearch} />
   </>;
 }
 
 function IntegrationRow({ title, state, result }) {
-  return <TableRow><TableCell className="font-medium text-slate-900">{title}</TableCell><TableCell><StatusPill status={state?.status || "not_configured"} /></TableCell><TableCell className="hidden md:table-cell">{formatDate(state?.last_succeeded_at)}</TableCell><TableCell>{state?.item_count || 0}</TableCell><TableCell className="hidden lg:table-cell">{state?.last_error || result}</TableCell></TableRow>;
+  return <TableRow><TableCell className="font-medium text-slate-900">{title}</TableCell><TableCell><StatusPill status={state?.status || "not_configured"} /></TableCell><TableCell className="hidden md:table-cell">{formatDate(state?.last_succeeded_at)}</TableCell><TableCell>{state?.item_count || 0}</TableCell><TableCell className="hidden lg:table-cell">{state?.last_error ? friendlyError(state.last_error) : result}</TableCell></TableRow>;
 }
 
 function OperationCard({ icon: Icon, title, value, detail, tone, className }) {

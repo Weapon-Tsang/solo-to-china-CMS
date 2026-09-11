@@ -1,6 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const elements = {
-  sync: $("#sync"), full: $("#full-sync"), save: $("#save"), pause: $("#pause"), resume: $("#resume"), cancel: $("#cancel"), stopQueue: $("#stop-queue"),
+  sync: $("#sync"), repair: $("#repair-sync"), full: $("#full-sync"), save: $("#save"), pause: $("#pause"), resume: $("#resume"), cancel: $("#cancel"), stopQueue: $("#stop-queue"),
   endpoint: $("#endpoint"), token: $("#token"), saveSettings: $("#save-settings"), autoSync: $("#auto-sync"), concurrencyMode: $("#concurrency-mode"), customConcurrency: $("#custom-concurrency"), customConcurrencyField: $("#custom-concurrency-field"),
   identityBatchSize: $("#identity-batch-size"), discoveryBatchSize: $("#discovery-batch-size"), knownStreak: $("#known-streak"), queueHighWatermark: $("#queue-high-watermark"), maxRetries: $("#max-retries"), detailTimeout: $("#detail-timeout"),
   autoMinHours: $("#auto-min-hours"),
@@ -40,6 +40,7 @@ const refreshTimer = setInterval(() => {
 window.addEventListener("unload", () => clearInterval(refreshTimer));
 
 elements.sync.addEventListener("click", () => command("START_SYNC", { mode: "incremental" }));
+elements.repair.addEventListener("click", () => command("START_SYNC", { mode: "repair" }));
 elements.full.addEventListener("click", () => command("START_SYNC", { mode: "full" }));
 elements.save.addEventListener("click", () => command("SAVE_CURRENT"));
 elements.pause.addEventListener("click", () => command("PAUSE_SYNC"));
@@ -139,7 +140,7 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
   const stats = session?.stats || { discovered: 0, known: 0, new: 0, captured: 0, duplicate: 0, failed: 0, retrying: 0 };
   const queued = session?.queue?.filter((item) => ["queued", "retry_wait"].includes(item.status)).length || 0;
   elements.counts.innerHTML = [
-    ["已发现", stats.discovered], ["已存在", stats.known], ["新增", stats.new], ["已采集", stats.captured],
+    ["已发现", stats.discovered], ["已存在", stats.known], ["新增", stats.new], ["待修复", stats.repair], ["已采集", stats.captured],
     ["内容重复", stats.duplicate], ["排队中", queued], ["失败", stats.failed],
   ].map(([label, value]) => `<div><span>${label}</span><strong>${Number(value || 0)}</strong></div>`).join("");
 
@@ -151,6 +152,7 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
   elements.resume.textContent = completedWithFailures || session?.status === "paused_failed_items" ? "重试失败项" : "继续同步";
   elements.stopQueue.hidden = !running || session.discoveryComplete;
   elements.sync.disabled = running || paused || (!activeSession && !currentScope);
+  elements.repair.disabled = running || paused || (!activeSession && !currentScope);
   elements.full.disabled = running || paused || (!activeSession && !currentScope);
 
   if (transientNotice) {
@@ -217,7 +219,8 @@ function renderStatus({ session, currentScope, currentPageKind, settings, stats,
   }
   if (session.phase === "acquisition") {
     const retrying = Number(stats.retrying || 0);
-    elements.status.textContent = `正在采集新增收藏……排队 ${queued} 条，已完成 ${stats.captured + stats.duplicate} 条，当前并发 ${session.concurrency || settings.customConcurrency}${retrying ? `，等待重试 ${retrying} 条` : ""}。`;
+    const action = session.mode === "repair" ? "正在修复缺失数据" : session.mode === "full" ? "正在完整核验收藏" : "正在采集新增收藏";
+    elements.status.textContent = `${action}……排队 ${queued} 条，已完成 ${stats.captured + stats.duplicate} 条，当前并发 ${session.concurrency || settings.customConcurrency}${retrying ? `，等待重试 ${retrying} 条` : ""}。`;
     return;
   }
   elements.status.textContent = "正在保存同步结果和检查点……";

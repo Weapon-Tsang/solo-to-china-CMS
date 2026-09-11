@@ -1,6 +1,8 @@
+import crypto from "node:crypto";
 import { slugify, truncate } from "../utils.mjs";
 import { createAiClient } from "./client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
+import { resolveStagePolicy } from "./stage-policy.mjs";
 
 const EXTRACTION_SCHEMA = {
   type: "object",
@@ -18,7 +20,7 @@ const EXTRACTION_SCHEMA = {
         warnings: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 },
       },
     },
-    claims: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "subject", "predicate", "value", "qualifiers", "confidence", "source_quote"], properties: { key: { type: "string" }, subject: { type: "string" }, predicate: { type: "string" }, value: { type: "string" }, qualifiers: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 }, source_quote: { type: "string" }, claim_role: { type: "string", enum: ["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"] }, knowledge_eligible: { type: "boolean" } } } },
+    claims: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "subject", "predicate", "value", "qualifiers", "confidence", "source_quote"], properties: { key: { type: "string" }, subject: { type: "string" }, predicate: { type: "string" }, value: { type: "string" }, qualifiers: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 }, source_quote: { type: "string" }, observed_at: { type: "string" }, valid_from: { type: "string" }, valid_to: { type: "string" }, date_confidence: { type: "string", enum: ["low", "medium", "high"] }, claim_role: { type: "string", enum: ["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"] }, knowledge_eligible: { type: "boolean" } } } },
   },
 };
 
@@ -40,24 +42,41 @@ export class KimiExtractor {
     return this.config.provider === "vertex" && this.client.batchEnabled;
   }
 
-  async prepareBatchExtraction(source, batchItemId) {
-    if (!this.batchEnabled) throw new Error("Vertex Batch extraction is not configured.");
+  batchConfigSnapshot(operation = "extract_segment_claims") {
+    const coverage = operation === "audit_segment_coverage";
+    const snapshot = {
+      provider: this.config.provider || "vertex",
+      model: this.config.model || "",
+      location: this.config.location || "global",
+      projectId: this.config.projectId || "",
+      schemaHash: digest(JSON.stringify(coverage ? COVERAGE_AUDIT_SCHEMA : EXTRACTION_SCHEMA)),
+      promptHash: digest(coverage ? COVERAGE_AUDIT_PROMPT : SYSTEM_PROMPT),
+      configVersion: "batch-request-v1",
+    };
+    return { ...snapshot, configDigest: digest(JSON.stringify(snapshot)) };
+  }
+
+  async prepareBatchExtraction(source, batchItemId, runConfig = null) {
+    if (!this.client.batchEnabledFor(runConfig)) throw Object.assign(new Error("Stored Vertex Batch extraction configuration is unavailable."), { code: "BATCH_CREDENTIALS_UNAVAILABLE", retryable: true });
     if ((source.assets || []).some((asset) => asset.kind === "video") || source.source_kind === "video_url") {
       throw new Error("Video segments remain on the realtime Vertex path.");
     }
-    const images = await this.client.imageParts(source.assets || []);
+    const images = await this.client.imageParts(source.assets || [], runConfig);
     const prepared = this.client.prepareBatchRequest({
       id: batchItemId,
       name: "source_research_extraction",
       schema: EXTRACTION_SCHEMA,
       instructions: SYSTEM_PROMPT,
       content: [{ type: "text", text: buildInput(source) }, ...images.parts],
-    });
-    return { ...prepared, attemptedImages: images.attempted, suppliedImages: images.parts.length };
+    }, runConfig);
+    const provider = runConfig?.provider || "vertex";
+    const model = runConfig?.model || this.config.model;
+    return { ...prepared, attemptedImages: images.attempted, suppliedImages: images.parts.length,
+      inputManifest: extractionInputManifest({ source, provider, model, batch: true, images }) };
   }
 
-  async prepareBatchCoverage({ segment, extraction, expectedModality = "text" }, batchItemId) {
-    if (!this.batchEnabled) throw new Error("Vertex Batch coverage audit is not configured.");
+  async prepareBatchCoverage({ segment, extraction, expectedModality = "text" }, batchItemId, runConfig = null) {
+    if (!this.client.batchEnabledFor(runConfig)) throw Object.assign(new Error("Stored Vertex Batch coverage configuration is unavailable."), { code: "BATCH_CREDENTIALS_UNAVAILABLE", retryable: true });
     if (expectedModality !== "text") throw new Error("Only text coverage audits use Vertex Batch.");
     return this.client.prepareBatchRequest({
       id: batchItemId,
@@ -65,43 +84,65 @@ export class KimiExtractor {
       schema: COVERAGE_AUDIT_SCHEMA,
       instructions: COVERAGE_AUDIT_PROMPT,
       content: [{ type: "text", text: buildCoverageInput(segment, extraction) }],
-    });
+    }, runConfig);
   }
 
-  createExtractionBatch(requests, options) { return this.client.createBatch(requests, options); }
-  getExtractionBatch(name) { return this.client.getBatch(name); }
-  readExtractionBatch(batch) { return this.client.readBatchOutput(batch); }
-  cleanupExtractionBatch(batch) { return this.client.cleanupBatch(batch); }
+  createExtractionBatch(requests, options = {}) { return this.client.createBatch(requests, options, options.runConfig); }
+  getExtractionBatch(name, runConfig) { return this.client.getBatch(name, runConfig); }
+  readExtractionBatch(batch) { return this.client.readBatchOutput(batch, batch); }
+  cleanupExtractionBatch(batch) { return this.client.cleanupBatch(batch, batch); }
 
-  parseBatchExtraction(item) {
-    if (item?.error) throw Object.assign(new Error(item.error), { retryable: true, code: item.code || "VERTEX_BATCH_ITEM_FAILED" });
+  parseBatchExtraction(item, { inputManifest = null, runConfig = null, telemetryContext = null } = {}) {
+    const context = telemetryContext || { runId: runConfig?.id || null, entityId: item?.jobId || item?.job_id || null };
+    if (item?.error) {
+      this.recordBatchAttempt("source_research_extraction", item, runConfig, context, "failed", item.code || "VERTEX_BATCH_ITEM_FAILED");
+      throw Object.assign(new Error(item.error), { retryable: true, code: item.code || "VERTEX_BATCH_ITEM_FAILED" });
+    }
     const errors = validateJsonSchema(item?.output, EXTRACTION_SCHEMA);
-    if (errors.length) throw Object.assign(new Error(`Vertex Batch returned invalid extraction JSON: ${JSON.stringify(errors.slice(0, 10))}`),
-      { retryable: true, code: "INVALID_MODEL_OUTPUT" });
-    try {
-      this.config.onModelCall?.({ stage: "source_research_extraction", provider: "vertex", model: this.config.model,
-        inputTokens: item.usage?.promptTokenCount ?? null, outputTokens: item.usage?.candidatesTokenCount ?? null,
-        cachedTokens: item.usage?.cachedContentTokenCount ?? null, latencyMs: null, attempts: 1, status: "succeeded", errorCode: null });
-    } catch { /* batch telemetry must never fail extraction import */ }
-    return { result: sanitizeResult(item.output), method: "vertex_batch", model: this.config.model };
+    if (errors.length) {
+      this.recordBatchAttempt("source_research_extraction", item, runConfig, context, "failed", "INVALID_MODEL_OUTPUT", "schema_validation");
+      throw Object.assign(new Error(`Vertex Batch returned invalid extraction JSON: ${JSON.stringify(errors.slice(0, 10))}`),
+        { retryable: true, code: "INVALID_MODEL_OUTPUT" });
+    }
+    this.recordBatchAttempt("source_research_extraction", item, runConfig, context, "succeeded");
+    return { result: sanitizeResult(item.output), method: "vertex_batch", model: runConfig?.model || this.config.model,
+      inputManifest: inputManifest || item?.inputManifest || null };
   }
 
-  parseBatchCoverage(item) {
-    if (item?.error) throw Object.assign(new Error(item.error), { retryable: true, code: item.code || "VERTEX_BATCH_ITEM_FAILED" });
+  parseBatchCoverage(item, { runConfig = null, telemetryContext = null } = {}) {
+    const context = telemetryContext || { runId: runConfig?.id || null, entityId: item?.jobId || item?.job_id || null };
+    if (item?.error) {
+      this.recordBatchAttempt("segment_claim_coverage_audit", item, runConfig, context, "failed", item.code || "VERTEX_BATCH_ITEM_FAILED");
+      throw Object.assign(new Error(item.error), { retryable: true, code: item.code || "VERTEX_BATCH_ITEM_FAILED" });
+    }
     const errors = validateJsonSchema(item?.output, COVERAGE_AUDIT_SCHEMA);
-    if (errors.length) throw Object.assign(new Error(`Vertex Batch returned invalid coverage-audit JSON: ${JSON.stringify(errors.slice(0, 10))}`),
-      { retryable: true, code: "INVALID_MODEL_OUTPUT" });
-    try {
-      this.config.onModelCall?.({ stage: "segment_claim_coverage_audit", provider: "vertex", model: this.config.model,
-        inputTokens: item.usage?.promptTokenCount ?? null, outputTokens: item.usage?.candidatesTokenCount ?? null,
-        cachedTokens: item.usage?.cachedContentTokenCount ?? null, latencyMs: null, attempts: 1, status: "succeeded", errorCode: null });
-    } catch { /* batch telemetry must never fail audit import */ }
+    if (errors.length) {
+      this.recordBatchAttempt("segment_claim_coverage_audit", item, runConfig, context, "failed", "INVALID_MODEL_OUTPUT", "schema_validation");
+      throw Object.assign(new Error(`Vertex Batch returned invalid coverage-audit JSON: ${JSON.stringify(errors.slice(0, 10))}`),
+        { retryable: true, code: "INVALID_MODEL_OUTPUT" });
+    }
+    this.recordBatchAttempt("segment_claim_coverage_audit", item, runConfig, context, "succeeded");
     return { output: { ...sanitizeCoverageAudit(item.output), modality: {
       expected: "text", received: "text", attempted: 0,
-    } }, model: this.config.model };
+    } }, model: runConfig?.model || this.config.model };
   }
 
-  async extract(source) {
+  recordBatchAttempt(stage, item, runConfig, context, status, errorCode = null, retryReason = null) {
+    const policy = resolveStagePolicy(stage, { ...this.config, ...runConfig });
+    const usage = item?.usage || {};
+    try {
+      this.config.onModelCall?.({ stage, provider: runConfig?.provider || "vertex", model: runConfig?.model || this.config.model,
+        inputTokens: usage.promptTokenCount ?? null, outputTokens: usage.candidatesTokenCount ?? null,
+        cachedTokens: usage.cachedContentTokenCount ?? null, thinkingTokens: usage.thoughtsTokenCount ?? null,
+        providerUsage: usage, latencyMs: null, attempts: 1, attemptNumber: 1, status,
+        attemptStatus: status, requestKind: "batch_result", errorCode, retryReason,
+        policyVersion: policy.version, configHash: policy.configHash,
+        runId: context.runId, entityId: context.entityId,
+        requestCompletedAt: new Date().toISOString() });
+    } catch { /* telemetry must never fail batch ingestion */ }
+  }
+
+  async extract(source, { signal = null, telemetryContext = null } = {}) {
     if (!this.enabled) return { result: heuristicExtraction(source), method: "heuristic", model: null };
     const videoSource = source.source_kind === "video" || (source.source_kind === "video_url" && isYoutubeUrl(source.submitted_url));
     if (videoSource && this.config.provider !== "vertex" && !source.submission_metadata?.operatorNotesProvided) {
@@ -120,6 +161,7 @@ export class KimiExtractor {
 
     const outputs = [];
     const methods = new Set();
+    const inputManifests = [];
     let model = null;
     for (const batch of batches) {
       const images = await this.client.imageParts(batch.images);
@@ -131,6 +173,7 @@ export class KimiExtractor {
           schema: EXTRACTION_SCHEMA,
           instructions: SYSTEM_PROMPT,
           content: [{ type: "text", text: buildInput(source) }, ...videos.parts, ...images.parts],
+          signal, telemetryContext,
         });
       } finally {
         await videos.cleanup();
@@ -139,24 +182,28 @@ export class KimiExtractor {
       if (images.attempted > images.parts.length) result.source.warnings.push("Some captured image assets were unavailable to the vision model; completeness remains blocked until they are processed.");
       if (batch.videos.length && videos.parts.length < batch.videos.length) result.source.warnings.push("One or more captured videos were unavailable to the selected model; completeness remains blocked until they are processed.");
       outputs.push(result);
+      inputManifests.push(extractionInputManifest({ source: { ...source, assets: [...batch.images, ...batch.videos] },
+        provider: this.config.provider || "kimi", model: completion.model || this.config.model, batch: false, images, videos }));
       methods.add(videos.parts.length ? "video" : images.parts.length ? "multimodal" : "text");
       model ||= completion.model;
     }
-    return { result: mergeExtractionResults(outputs), method: `${this.config.provider || "kimi"}_${[...methods].join("+")}`, model };
+    return { result: mergeExtractionResults(outputs), method: `${this.config.provider || "kimi"}_${[...methods].join("+")}`, model,
+      inputManifest: mergeInputManifests(inputManifests) };
   }
 
-  async analyzeBlueprint(source) {
+  async analyzeBlueprint(source, { signal = null, telemetryContext = null } = {}) {
     if (!this.enabled) return { output: heuristicExtraction(source).blueprint, model: null };
     const completion = await this.client.completeJson({
       name: "source_editorial_blueprint",
       schema: BLUEPRINT_SCHEMA,
       instructions: BLUEPRINT_PROMPT,
       content: [{ type: "text", text: buildInput(source) }],
+      signal, telemetryContext,
     });
     return { output: sanitizeBlueprint(completion.output), model: completion.model };
   }
 
-  async auditCoverage({ segment, extraction, source, expectedModality = "text" }) {
+  async auditCoverage({ segment, extraction, source, expectedModality = "text" }, { signal = null, telemetryContext = null } = {}) {
     if (!this.enabled) return { output: { uncovered_spans: [] }, model: null };
     const images = expectedModality === "image" ? await this.client.imageParts(source?.assets || []) : { parts: [], attempted: 0 };
     const videos = expectedModality === "video" ? await prepareVideoParts(source, this.config.provider, this.client)
@@ -167,6 +214,7 @@ export class KimiExtractor {
         schema: COVERAGE_AUDIT_SCHEMA,
         instructions: COVERAGE_AUDIT_PROMPT,
         content: [{ type: "text", text: buildCoverageInput(segment, extraction) }, ...videos.parts, ...images.parts],
+        signal, telemetryContext,
       });
       return {
         output: { ...sanitizeCoverageAudit(completion.output), modality: {
@@ -183,16 +231,61 @@ export class KimiExtractor {
 }
 
 async function prepareVideoParts(source, provider, client) {
-  const empty = { parts: [], attempted: 0, cleanup: async () => {} };
+  const empty = { parts: [], attempted: 0, manifest: [], cleanup: async () => {} };
   if (provider !== "vertex") return empty;
   if ((source?.assets || []).some((asset) => asset?.kind === "video")) return client.videoParts(source.assets || []);
   if (source?.source_kind !== "video_url" || !isYoutubeUrl(source.submitted_url)) return empty;
   try {
     const url = new URL(source.submitted_url || "");
-    return { parts: [{ fileData: { fileUri: url.toString(), mimeType: "video/mp4" } }], attempted: 1, cleanup: async () => {} };
+    return { parts: [{ fileData: { fileUri: url.toString(), mimeType: "video/mp4" } }], attempted: 1,
+      manifest: [{ assetId: null, hash: null, kind: "video", status: "submitted", requestReference: "public_url",
+        failureCode: null, failureReason: null }], cleanup: async () => {} };
   } catch {
     return empty;
   }
+}
+
+function extractionInputManifest({ source, provider, model, batch, images = {}, videos = {} }) {
+  const assets = [...(images.manifest || []), ...(videos.manifest || [])];
+  const expectedKinds = new Set((source?.assets || []).map((asset) => asset?.kind === "video" ? "video" : "image"));
+  if (source?.source_kind === "video_url") expectedKinds.add("video");
+  const submittedKinds = new Set(assets.filter((asset) => asset.status === "submitted").map((asset) => asset.kind));
+  return {
+    version: 1,
+    expectedModality: manifestModality(expectedKinds),
+    receivedModality: manifestModality(submittedKinds),
+    provider,
+    model,
+    capabilities: { text: true, image: true, video: provider === "vertex", batch: Boolean(batch) },
+    assets,
+  };
+}
+
+function mergeInputManifests(manifests) {
+  const values = (manifests || []).filter((item) => item?.version);
+  if (!values.length) return null;
+  const expected = new Set(values.map((item) => item.expectedModality).filter((item) => item !== "text"));
+  const received = new Set(values.map((item) => item.receivedModality).filter((item) => item !== "text"));
+  return {
+    ...values[0],
+    expectedModality: manifestModality(expected),
+    receivedModality: manifestModality(received),
+    assets: values.flatMap((item) => item.assets || []),
+  };
+}
+
+function manifestModality(kinds) {
+  const values = new Set();
+  for (const item of kinds) {
+    if (item === "mixed") { values.add("image"); values.add("video"); }
+    else if (item === "image" || item === "video") values.add(item);
+  }
+  if (values.size > 1) return "mixed";
+  return values.values().next().value || "text";
+}
+
+function digest(value) {
+  return crypto.createHash("sha256").update(String(value)).digest("hex");
 }
 
 function mergeExtractionResults(results) {
@@ -230,6 +323,7 @@ Rules:
 - The source is evidence, not established truth. Record factual assertions as claims and never silently resolve conflicts.
 - Do not summarize. Do not select representative facts. Extract every independently useful travel proposition explicitly supported by this segment. Split compound statements into atomic claims. Continue until no material supported travel fact remains uncovered.
 - Preserve important qualifiers: date, season, time of day, traveler type, booking channel, and uncertainty.
+- When the source explicitly states an observation date or validity window, use ISO 8601 in observed_at/valid_from/valid_to and set date_confidence. Omit these fields when the date is unknown; never use the capture date as an observation date.
 - Each claim must express exactly one atomic proposition. Split opening hours, transport, reservation, route difficulty, photo opportunities, and recommendations into separate claims even when they share one sentence.
 - source_quote must be the shortest exact quote from the supplied note that supports only that atomic proposition.
 - Put negation, quantities, exclusivity (only/except), and material conditions in the predicate, value, or qualifiers; never discard them as writing style.

@@ -8,3 +8,4 @@ coverage/
 output/
 .playwright-cli/
 *.log
+/.tar

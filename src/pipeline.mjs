@@ -1,11 +1,17 @@
-import { markdownToContentBlocks } from "./content-blocks.mjs";
+import crypto from "node:crypto";
+import { validatePlannedEvidence } from "./services/editorial-proposal.mjs";
+import { composePageFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
+import { validatePlanningDestination } from "./destination-consistency.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
+import { validateMediaDelivery } from "./media-delivery.mjs";
 import { isAiJobType, isProviderPressure } from "./job-policy.mjs";
+import { evaluateSourcePreflight } from "./source-preflight.mjs";
+import { recoverRemoteOriginal } from "./source-media-store.mjs";
 
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class Pipeline {
-  constructor(repository, extractor, { pollMs = 750, maxConcurrent = null, extractionConfig = {}, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null, frontendContracts = null, contentConfig = {}, logger = silentLogger } = {}) {
+  constructor(repository, extractor, { pollMs = 750, maxConcurrent = null, heartbeatIntervalMs = null, recoveryIntervalMs = 60_000, extractionConfig = {}, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null, frontendContracts = null, contentConfig = {}, logger = silentLogger } = {}) {
     this.repository = repository;
     this.extractor = extractor;
     this.pollMs = pollMs;
@@ -25,6 +31,10 @@ export class Pipeline {
     this.concurrencySuccessWindow = Math.max(2, Number(extractionConfig.concurrencySuccessWindow || 12));
     this.extractionOutcomes = [];
     this.batchWorking = false;
+    this.heartbeatIntervalMs = heartbeatIntervalMs == null ? null : Math.max(1, Number(heartbeatIntervalMs));
+    this.recoveryIntervalMs = Math.max(1_000, Number(recoveryIntervalMs || 60_000));
+    this.nextRecoveryAt = 0;
+    this.activeAbortControllers = new Set();
   }
 
   start() {
@@ -33,6 +43,7 @@ export class Pipeline {
     if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
     const recoveredBatches = this.repository.recoverPreparingVertexBatches?.() || 0;
     if (recoveredBatches) this.logger.warn("pipeline.vertex_batch_preparation_recovered", { count: recoveredBatches });
+    this.nextRecoveryAt = Date.now() + this.recoveryIntervalMs;
     this.timer = setInterval(() => this.pump(), this.pollMs);
     this.timer.unref();
     this.pump();
@@ -41,9 +52,21 @@ export class Pipeline {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    for (const controller of this.activeAbortControllers) {
+      if (!controller.signal.aborted) controller.abort(Object.assign(new Error("PIPELINE_SHUTDOWN"), { code: "JOB_LEASE_LOST" }));
+    }
+    const released = this.repository.releaseOwnedJobs?.() || 0;
+    if (released) this.logger.warn("pipeline.owned_jobs_released", { count: released });
   }
 
   pump() {
+    if (Date.now() >= this.nextRecoveryAt) {
+      this.nextRecoveryAt = Date.now() + this.recoveryIntervalMs;
+      const recovered = this.repository.recoverExpiredJobs?.() || 0;
+      if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
+      const recoveredBatches = this.repository.recoverPreparingVertexBatches?.() || 0;
+      if (recoveredBatches) this.logger.warn("pipeline.vertex_batch_preparation_recovered", { count: recoveredBatches });
+    }
     void this.pumpVertexBatch().catch((error) => this.logger.error("pipeline.vertex_batch_tick_failed", { error }));
     const slots = Math.max(0, this.maxConcurrent - this.working);
     for (let index = 0; index < slots; index += 1) {
@@ -52,15 +75,26 @@ export class Pipeline {
   }
 
   async pumpVertexBatch() {
-    if (this.batchWorking || !this.extractor?.batchEnabled) return false;
+    if (this.batchWorking) return false;
     this.batchWorking = true;
     try {
       const due = this.repository.dueVertexBatch?.();
+      if (due?.cleanupOnly) return await this.cleanupVertexBatch(due);
       if (due) return await this.pollVertexBatch(due);
+      if (!this.extractor?.batchEnabled) return false;
       if (this.repository.activeVertexBatchCount?.()) return false;
       const minimum = Math.max(1, Number(this.extractor.config?.batchMinimumRequests || 20));
       const maximum = Math.max(minimum, Number(this.extractor.config?.batchMaximumRequests || 1_000));
-      const run = this.repository.reserveVertexBatchJobs?.({ minimum, maximum, model: this.extractor.config?.model || "", location: this.extractor.config?.location || "global" });
+      const jobType = this.repository.nextVertexBatchJobType?.(minimum)
+        || ["extract_segment_claims", "audit_segment_coverage"]
+          .find((type) => this.repository.countVertexBatchEligibleJobs?.(type) >= minimum);
+      if (!jobType) return false;
+      const snapshot = this.extractor.batchConfigSnapshot?.(jobType) || {
+        provider: this.extractor.config?.provider || "vertex", model: this.extractor.config?.model || "",
+        location: this.extractor.config?.location || "global", projectId: this.extractor.config?.projectId || "",
+        configVersion: "legacy", configDigest: "",
+      };
+      const run = this.repository.reserveVertexBatchJobs?.({ minimum, maximum, type: jobType, ...snapshot });
       if (!run) return false;
       const prepared = [];
       const maximumInputBytes = Math.max(1_048_576, Number(this.extractor.config?.batchMaxInputBytes || 128 * 1024 * 1024));
@@ -68,29 +102,42 @@ export class Pipeline {
       let inputFull = false;
       for (const item of run.items) {
         try {
-          if (inputFull) throw new Error("Deferred to the next Vertex Batch because the current JSONL input reached its safe memory limit.");
+          if (inputFull) throw Object.assign(new Error("Deferred to the next Vertex Batch because the current JSONL input reached its safe memory limit."),
+            { code: "VERTEX_BATCH_CAPACITY", failureClass: "capacity", retryable: true });
           let request;
           if (item.type === "audit_segment_coverage") {
             const pack = this.repository.getSegmentCoveragePackage(item.segment_id);
-            if (!pack || pack.staleCaptureVersion) throw new Error("Source segment changed before Vertex Batch coverage audit submission.");
-            if (pack.expectedModality !== "text") throw new Error("Image and video coverage checks remain on the local completion path.");
-            request = await this.extractor.prepareBatchCoverage(pack, item.batch_item_id);
+            if (!pack || pack.staleCaptureVersion) throw Object.assign(new Error("Source segment changed before Vertex Batch coverage audit submission."), { code: "VERTEX_BATCH_PERMANENT_INPUT", retryable: false });
+            if (pack.expectedModality !== "text") throw Object.assign(new Error("Image and video coverage checks remain on the local completion path."), { code: "VERTEX_BATCH_PERMANENT_INPUT", retryable: false });
+            request = await this.extractor.prepareBatchCoverage(pack, item.batch_item_id, run);
           } else {
             const pack = this.repository.getSegmentExtractionPackage(item.segment_id);
-            if (!pack || pack.staleCaptureVersion) throw new Error("Source segment changed before Vertex Batch submission.");
-            request = await this.extractor.prepareBatchExtraction(pack.source, item.batch_item_id);
+            if (!pack || pack.staleCaptureVersion) throw Object.assign(new Error("Source segment changed before Vertex Batch submission."), { code: "VERTEX_BATCH_PERMANENT_INPUT", retryable: false });
+            request = await this.extractor.prepareBatchExtraction(pack.source, item.batch_item_id, run);
           }
-          const requestBytes = Buffer.byteLength(JSON.stringify({ request: request.request })) + 1;
+          if (typeof this.repository.heartbeatVertexBatchPreparation === "function"
+            && !this.repository.heartbeatVertexBatchPreparation(run)) {
+            throw Object.assign(new Error("VERTEX_BATCH_PREPARATION_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
+          }
+          const requestBytes = Buffer.byteLength(JSON.stringify({
+            transport_key: request.transportKey || request.id,
+            request: request.request,
+          })) + 1;
           if (preparedBytes + requestBytes > maximumInputBytes) {
             if (prepared.length) inputFull = true;
-            throw new Error(prepared.length
+            throw Object.assign(new Error(prepared.length
               ? "Deferred to the next Vertex Batch because the current JSONL input reached its safe memory limit."
-              : "This segment is too large for the configured Vertex Batch input and was returned to the realtime queue.");
+              : "This segment is too large for the configured Vertex Batch input and was returned to the realtime queue."),
+            prepared.length
+              ? { code: "VERTEX_BATCH_CAPACITY", failureClass: "capacity", retryable: true }
+              : { code: "VERTEX_BATCH_INPUT_TOO_LARGE", failureClass: "input_too_large", retryable: true });
           }
+          this.repository.recordVertexBatchItemInput?.(run.id, item.id, request.inputManifest, request);
           prepared.push(request);
           preparedBytes += requestBytes;
         } catch (error) {
-          this.repository.releaseVertexBatchItem(run.id, item.id, error);
+          if (isJobLeaseLost(error)) throw error;
+          this.repository.releaseVertexBatchItem(run.id, item.id, error, { phase: "prepare" });
           this.logger.warn("pipeline.vertex_batch_item_prepare_failed", { runId: run.id, jobId: item.id, error });
         }
       }
@@ -99,13 +146,18 @@ export class Pipeline {
         return false;
       }
       try {
-        const batch = await this.extractor.createExtractionBatch(prepared, { operation: run.jobType || "extract_segment_claims" });
-        this.repository.activateVertexBatch(run.id, batch);
+        const batch = await this.extractor.createExtractionBatch(prepared, {
+          operation: run.jobType || "extract_segment_claims", runConfig: run, idempotencyKey: run.id,
+        });
+        if (!this.repository.activateVertexBatch(run.id, batch, run)) {
+          throw Object.assign(new Error("VERTEX_BATCH_PREPARATION_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
+        }
         this.logger.info("pipeline.vertex_batch_submitted", { runId: run.id, jobType: run.jobType,
           providerJobName: batch.name, itemCount: prepared.length, inputBytes: preparedBytes });
         return true;
       } catch (error) {
-        for (const item of run.items) this.repository.releaseVertexBatchItem(run.id, item.id, error);
+        if (isJobLeaseLost(error)) throw error;
+        for (const item of run.items) this.repository.releaseVertexBatchItem(run.id, item.id, error, { phase: "submission" });
         this.repository.finishVertexBatch(run.id, "failed", "SUBMISSION_FAILED", error?.message || error);
         throw error;
       }
@@ -117,9 +169,14 @@ export class Pipeline {
   async pollVertexBatch(run) {
     let batch;
     try {
-      batch = await this.extractor.getExtractionBatch(run.provider_job_name);
+      batch = await this.extractor.getExtractionBatch(run.provider_job_name, run);
     } catch (error) {
-      this.repository.deferVertexBatchPoll(run.id, "POLL_FAILED", Number(this.extractor.config?.batchPollMs || 60_000));
+      const providerState = error?.code === "BATCH_CREDENTIALS_UNAVAILABLE" ? "CREDENTIALS_UNAVAILABLE" : "POLL_FAILED";
+      this.repository.deferVertexBatchPoll(run.id, providerState, Number(this.extractor.config?.batchPollMs || 60_000), error);
+      if (providerState === "CREDENTIALS_UNAVAILABLE") {
+        this.logger.warn("pipeline.vertex_batch_credentials_unavailable", { runId: run.id, provider: run.provider, error });
+        return false;
+      }
       throw error;
     }
     const state = String(batch.state || "JOB_STATE_UNSPECIFIED");
@@ -128,31 +185,84 @@ export class Pipeline {
       this.repository.deferVertexBatchPoll(run.id, state, Number(this.extractor.config?.batchPollMs || 60_000));
       return false;
     }
-    let outputs = [];
+    let outputs;
     try { outputs = await this.extractor.readExtractionBatch({ ...run, ...batch }); }
-    catch (error) { this.logger.error("pipeline.vertex_batch_output_read_failed", { runId: run.id, error }); }
-    const byId = new Map(outputs.filter((item) => item.id).map((item) => [item.id, item]));
+    catch (error) {
+      this.repository.deferVertexBatchOutputRead(run.id, state, error, Number(this.extractor.config?.batchPollMs || 60_000));
+      this.logger.error("pipeline.vertex_batch_output_read_failed", { runId: run.id, error });
+      return false;
+    }
+    const outputChecksum = crypto.createHash("sha256").update(outputs.map((item) => item?.transport?.checksum || JSON.stringify(item)).join("\n")).digest("hex");
+    const ingestingRun = this.repository.beginVertexBatchIngestion(run.id, state, outputChecksum) || run;
+    const correlation = correlateBatchOutputs(run.items, outputs);
+    for (const anomaly of correlation.anomalies) {
+      this.repository.recordVertexBatchOutputAnomaly?.(run.id, anomaly.output, anomaly.reason);
+    }
+    const missing = [];
     for (const item of run.items) {
-      const output = byId.get(item.batch_item_id);
+      if (correlation.duplicates.has(item.job_id)) {
+        this.repository.releaseVertexBatchItem(run.id, item.job_id, Object.assign(
+          new Error("Vertex Batch returned duplicate transport correlation for this item; outputs were quarantined."),
+          { code: "VERTEX_BATCH_DUPLICATE_CORRELATION", retryable: false }));
+        continue;
+      }
+      const output = correlation.byJobId.get(item.job_id);
+      if (!output) { missing.push(item); continue; }
+      if (output.modelReportedId && output.modelReportedId !== item.batch_item_id) {
+        this.repository.recordVertexBatchCorrelationWarning?.(run.id, item.job_id,
+          `Model-reported batch_item_id ${output.modelReportedId} did not match transport key ${item.batch_item_id}; the transport key remained authoritative.`);
+      }
       try {
-        if (!output) throw new Error(`Vertex Batch ${state} returned no output for this segment.`);
         if (item.job_type === "audit_segment_coverage") {
-          const assessment = this.extractor.parseBatchCoverage(output);
-          this.repository.completeVertexBatchCoverageItem(run, item, assessment);
+          const assessment = this.extractor.parseBatchCoverage(output, { runConfig: run,
+            telemetryContext: { runId: run.id, entityId: item.segment_id } });
+          this.repository.completeVertexBatchCoverageItem(run, item, assessment, output.transport);
         } else {
-          const extraction = this.extractor.parseBatchExtraction(output);
-          this.repository.completeVertexBatchItem(run, item, extraction);
+          const extraction = this.extractor.parseBatchExtraction(output, { inputManifest: parseStoredJson(item.input_manifest_json), runConfig: run,
+            telemetryContext: { runId: run.id, entityId: item.segment_id } });
+          this.repository.completeVertexBatchItem(run, item, extraction, output.transport);
         }
       } catch (error) {
         this.repository.releaseVertexBatchItem(run.id, item.job_id, error);
       }
     }
-    const finalStatus = state === "JOB_STATE_SUCCEEDED" || state === "JOB_STATE_PARTIALLY_SUCCEEDED" ? "succeeded"
-      : state === "JOB_STATE_CANCELLED" ? "cancelled" : state === "JOB_STATE_EXPIRED" ? "expired" : "failed";
-    this.repository.finishVertexBatch(run.id, finalStatus, state, batch?.error?.message || "");
-    await this.extractor.cleanupExtractionBatch({ ...run, ...batch }).catch((error) => this.logger.warn("pipeline.vertex_batch_cleanup_failed", { runId: run.id, error }));
+    if (missing.length) {
+      const maximumReadAttempts = Math.max(1, Number(this.extractor.config?.batchOutputReadMaxAttempts || 5));
+      if (Number(ingestingRun.output_read_attempts || 0) < maximumReadAttempts) {
+        this.repository.deferVertexBatchOutputRead(run.id, state,
+          `${missing.length} submitted Batch item(s) are not present in the downloaded output yet.`,
+          Number(this.extractor.config?.batchPollMs || 60_000), 0);
+        return false;
+      }
+      for (const item of missing) this.repository.releaseVertexBatchItem(run.id, item.job_id,
+        Object.assign(new Error(`Vertex Batch ${state} returned no output for this segment after ${maximumReadAttempts} reads.`),
+          { code: "VERTEX_BATCH_OUTPUT_MISSING", retryable: false }));
+    }
+    const counts = this.repository.vertexBatchItemCounts(run.id);
+    const providerSucceeded = state === "JOB_STATE_SUCCEEDED" || state === "JOB_STATE_PARTIALLY_SUCCEEDED";
+    if (!providerSucceeded || counts.failed > 0 || counts.succeeded !== counts.total) {
+      const failedStatus = state === "JOB_STATE_CANCELLED" ? "cancelled" : state === "JOB_STATE_EXPIRED" ? "expired" : "failed";
+      this.repository.finishVertexBatch(run.id, failedStatus, state,
+        batch?.error?.message || `${counts.failed} of ${counts.total} Batch item(s) did not ingest reliably.`, "quarantined");
+      this.logger.warn("pipeline.vertex_batch_quarantined", { runId: run.id, providerState: state, ...counts });
+      return true;
+    }
+    this.repository.finishVertexBatch(run.id, "succeeded", state, "", "ready_cleanup");
+    await this.cleanupVertexBatch({ ...run, ...batch, cleanupOnly: true });
     this.logger.info("pipeline.vertex_batch_completed", { runId: run.id, providerState: state, outputCount: outputs.length });
     return true;
+  }
+
+  async cleanupVertexBatch(run) {
+    try {
+      await this.extractor.cleanupExtractionBatch(run);
+      this.repository.markVertexBatchCleaned(run.id);
+      return true;
+    } catch (error) {
+      this.repository.deferVertexBatchCleanup(run.id, error, Number(this.extractor.config?.batchPollMs || 60_000));
+      this.logger.warn("pipeline.vertex_batch_cleanup_failed", { runId: run.id, error });
+      return false;
+    }
   }
 
   async runOne() {
@@ -161,6 +271,10 @@ export class Pipeline {
     let job;
     let startedAt;
     let heartbeatTimer;
+    let abortController;
+    let pipelineArtifact;
+    let assertLease = () => {};
+    let guarded = async (operation) => operation();
     try {
       const minimum = Math.max(1, Number(this.extractor?.config?.batchMinimumRequests || 20));
       const deferBatchExtraction = Boolean(this.extractor?.batchEnabled
@@ -170,25 +284,72 @@ export class Pipeline {
       job = this.repository.claimJob({ deferBatchExtraction, deferBatchCoverage });
       if (!job) return false;
       startedAt = Date.now();
+      abortController = new AbortController();
+      this.activeAbortControllers.add(abortController);
+      assertLease = () => {
+        if (abortController.signal.aborted || (typeof this.repository.ownsJob === "function"
+          && !this.repository.ownsJob(job.id, job.locked_by, job.lease_generation))) {
+          throw Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
+        }
+      };
+      guarded = async (operation) => {
+        assertLease();
+        const result = await operation(abortController.signal);
+        assertLease();
+        return result;
+      };
       heartbeatTimer = setInterval(() => {
-        if (!this.repository.heartbeatJob?.(job.id, job.locked_by)) {
+        if (!this.repository.heartbeatJob?.(job.id, job.locked_by, job.lease_generation)) {
+          abortController.abort(Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST" }));
           this.logger.error("pipeline.job_lease_lost", { jobId: job.id, workerId: job.locked_by });
         }
-      }, Math.max(10_000, Math.floor((this.repository.jobLeaseMs || 60_000) / 3)));
+      }, this.heartbeatIntervalMs || Math.max(10_000, Math.floor((this.repository.jobLeaseMs || 60_000) / 3)));
       heartbeatTimer.unref();
+      const telemetryContext = { runId: job.id, entityId: job.entity_id };
+      const artifactConfigHash = crypto.createHash("sha256").update(JSON.stringify({
+        provider: this.contentEngine?.config?.provider || this.extractor?.config?.provider || null,
+        model: this.contentEngine?.config?.model || this.extractor?.config?.model || null,
+        policy: this.contentEngine?.config?.stagePolicy?.version || this.extractor?.config?.stagePolicy?.version || "legacy",
+        frontendContract: this.frontendContracts?.active?.checksum || null,
+      })).digest("hex");
+      pipelineArtifact = this.repository.preparePipelineArtifact?.(job, artifactConfigHash) || null;
       this.logger.info("pipeline.job_started", { jobId: job.id, jobType: job.type, entityId: job.entity_id, attempt: job.attempts });
+      if (pipelineArtifact?.reused) {
+        if (!this.repository.completeJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
+        this.logger.info("pipeline.job_reused", { jobId: job.id, jobType: job.type, entityId: job.entity_id,
+          inputHash: pipelineArtifact.input_hash, outputHash: pipelineArtifact.output_hash });
+        return true;
+      }
       switch (job.type) {
+        case "backfill_media_asset":
+        case "repair_media_asset": {
+          const asset = this.repository.getMediaRecoveryAsset(job.entity_id);
+          if (!asset || asset.durability_status === "ORIGINAL_STORED") break;
+          if (!this.repository.startMediaRecovery(asset.id)) break;
+          try {
+            const stored = await guarded((signal) => recoverRemoteOriginal(asset, this.extractor?.config?.sourceUploadsDir
+              || this.repository.contentConfig?.sourceUploadsDir || "data/source-uploads", { signal }));
+            this.repository.saveRecoveredMedia(asset.id, stored);
+          } catch (error) {
+            if (isJobLeaseLost(error)) throw error;
+            const browserRequired = error?.retryable === false || /(?:401|403|404|410|HASH_MISMATCH|INVALID|UNSUPPORTED)/i.test(String(error?.code || ""));
+            this.repository.failMediaRecovery(asset.id, error, { browserRequired });
+            throw error;
+          }
+          break;
+        }
         case "sync_frontend_contract":
           if (!this.frontendContracts?.configured) throw new Error("FRONTEND_CONTRACT_UNCONFIGURED: Frontend Contract sources are not configured.");
-          await this.frontendContracts.sync();
+          await guarded((signal) => this.frontendContracts.sync({ signal, idempotencyKey: job.id, assertLease }));
           break;
         case "sync_wordpress_inventory": {
           if (!this.wordpress?.enabled) throw new Error("WordPress inventory sync is not configured.");
           this.repository.startWordPressInventorySync(this.wordpress.config.siteUrl);
           try {
-            const items = await this.wordpress.listContentInventory();
+            const items = await guarded((signal) => this.wordpress.listContentInventory({ signal, idempotencyKey: job.id }));
             this.repository.replaceWordPressInventory(this.wordpress.config.siteUrl, items);
           } catch (error) {
+            if (isJobLeaseLost(error)) throw error;
             this.repository.failWordPressInventorySync(this.wordpress.config.siteUrl, error);
             throw error;
           }
@@ -198,9 +359,10 @@ export class Pipeline {
           if (!this.searchConsole?.enabled) throw new Error("Search Console sync is not configured.");
           this.repository.startSearchConsoleSync(this.searchConsole.config.siteUrl);
           try {
-            const inventory = await this.searchConsole.listQueryInventory();
+            const inventory = await guarded((signal) => this.searchConsole.listQueryInventory({ signal, idempotencyKey: job.id }));
             this.repository.replaceSearchConsoleInventory(this.searchConsole.config.siteUrl, inventory);
           } catch (error) {
+            if (isJobLeaseLost(error)) throw error;
             this.repository.failSearchConsoleSync(this.searchConsole.config.siteUrl, error);
             throw error;
           }
@@ -215,6 +377,19 @@ export class Pipeline {
         case "preflight_source": {
           const source = this.repository.getSource(job.entity_id);
           if (!source) throw new Error(`Source ${job.entity_id} no longer exists.`);
+          const preflight = evaluateSourcePreflight(source, {
+            provider: this.extractor?.config?.provider || "kimi",
+            sourceUploadsDir: this.extractor?.config?.sourceUploadsDir,
+            imageBatchSize: this.extractor?.config?.imageBatchSize,
+            textSegmentMaxChars: this.repository.contentConfig?.sourceTextSegmentMaxChars,
+          });
+          this.repository.recordSourcePreflight?.(source.id, preflight);
+          if (!preflight.ready) {
+            const error = new Error(`Source preflight blocked processing: ${preflight.issues.map((item) => `${item.code}: ${item.message}`).join("; ")}`);
+            error.code = "SOURCE_PREFLIGHT_BLOCKED";
+            error.retryable = false;
+            throw error;
+          }
           this.repository.enqueue("segment_source", source.id);
           break;
         }
@@ -228,7 +403,7 @@ export class Pipeline {
           if (!pack) throw new Error(`Source segment ${job.entity_id} no longer exists.`);
           if (pack.staleCaptureVersion) break;
           try {
-            const extraction = await this.extractor.extract(pack.source);
+            const extraction = await guarded((signal) => this.extractor.extract(pack.source, { signal, telemetryContext }));
             if (!this.repository.saveSegmentExtraction(job.entity_id, extraction)) break;
             this.repository.enqueue("audit_segment_coverage", job.entity_id);
           } catch (error) {
@@ -245,7 +420,7 @@ export class Pipeline {
           if (!coveragePackage) throw new Error(`Source segment ${job.entity_id} has no extraction result.`);
           if (coveragePackage.staleCaptureVersion) break;
           const assessment = coveragePackage.expectedModality === "text" && typeof this.extractor.auditCoverage === "function"
-            ? await this.extractor.auditCoverage(coveragePackage)
+            ? await guarded((signal) => this.extractor.auditCoverage(coveragePackage, { signal, telemetryContext }))
             : null;
           const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
           if (audit.status === "stale") break;
@@ -261,7 +436,7 @@ export class Pipeline {
           const targets = (previous?.coverage?.uncovered_spans || []).map((item, index) =>
             `${index + 1}. ${item.locator || item.quote || "Unlocated span"} — ${item.reason || "not covered"}`);
           pack.source.raw_text = `${pack.source.raw_text}\n\nTARGETED COVERAGE RETRY\nOnly add atomic Claims needed to cover these audited gaps. Preserve exact evidence quotes.\n${targets.join("\n")}`;
-          const retryExtraction = await this.extractor.extract(pack.source);
+          const retryExtraction = await guarded((signal) => this.extractor.extract(pack.source, { signal, telemetryContext }));
           const priorResult = previous?.extraction || {};
           const extraction = {
             ...retryExtraction,
@@ -276,7 +451,7 @@ export class Pipeline {
           const retriedPackage = this.repository.getSegmentCoveragePackage(job.entity_id);
           if (!retriedPackage || retriedPackage.staleCaptureVersion) break;
           const assessment = retriedPackage.expectedModality === "text" && typeof this.extractor.auditCoverage === "function"
-            ? await this.extractor.auditCoverage(retriedPackage)
+            ? await guarded((signal) => this.extractor.auditCoverage(retriedPackage, { signal, telemetryContext }))
             : null;
           const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
           if (audit.status === "stale") break;
@@ -285,17 +460,27 @@ export class Pipeline {
         }
         case "finalize_source_extraction": {
           const finalized = this.repository.finalizeSegmentedExtraction(job.entity_id);
-          this.repository.enqueue("analyze_source_family", job.entity_id);
-          if (typeof this.extractor.analyzeBlueprint === "function") this.repository.enqueue("analyze_source_blueprint", job.entity_id);
-          else this.repository.enqueue("rebuild_editorial", "global");
-          if (this.contentEngine?.enabled) this.repository.enqueue("analyze_source_diagnostic", job.entity_id);
+          if (this.contentEngine?.enabled && typeof this.contentEngine.analyzeExperience === "function") {
+            this.repository.enqueue("extract_source_experience", job.entity_id);
+          } else {
+            this.repository.saveExperienceExtraction(job.entity_id, { blocks: [] }, "no_ai");
+            this.enqueueSourceSemanticDownstream(job.entity_id);
+          }
           this.logger.info("pipeline.source_finalized", { sourceId: job.entity_id, ...finalized });
+          break;
+        }
+        case "extract_source_experience": {
+          const experiencePackage = this.repository.getExperienceExtractionPackage(job.entity_id);
+          if (!experiencePackage) throw new Error(`Source ${job.entity_id} is not ready for Experience extraction.`);
+          const extracted = await guarded((signal) => this.contentEngine.analyzeExperience(experiencePackage, { signal, telemetryContext }));
+          this.repository.saveExperienceExtraction(job.entity_id, extracted.output, extracted.model, experiencePackage);
+          this.enqueueSourceSemanticDownstream(job.entity_id);
           break;
         }
         case "analyze_source_blueprint": {
           const source = this.repository.getSource(job.entity_id);
           if (!source?.structured) throw new Error(`Source ${job.entity_id} is not ready for editorial blueprint analysis.`);
-          const analyzed = await this.extractor.analyzeBlueprint(source);
+          const analyzed = await guarded((signal) => this.extractor.analyzeBlueprint(source, { signal, telemetryContext }));
           this.repository.saveSourceBlueprint(job.entity_id, analyzed.output);
           this.repository.enqueue("rebuild_editorial", "global");
           break;
@@ -313,26 +498,33 @@ export class Pipeline {
           this.requireContentEngine();
           const intakePackage = this.repository.getIntakePackage(job.entity_id);
           if (!intakePackage) throw new Error(`Source ${job.entity_id} is not ready for diagnostic analysis.`);
-          const analyzed = await this.contentEngine.analyzeIntake(intakePackage);
+          const analyzed = await guarded((signal) => this.contentEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
           this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model);
           break;
         }
         case "resolve_entities": {
-          const entityPackage = this.repository.getEntityResolutionPackage(job.entity_id);
-          if (this.contentEngine?.enabled && typeof this.contentEngine.resolveEntities === "function" && entityPackage.claims.length) {
-            try {
-              const resolved = await this.contentEngine.resolveEntities(entityPackage);
-              this.repository.applyEntityResolution(job.entity_id, resolved.output, resolved.model);
-            } catch (error) {
-              if (!isRecoverableStructuredOutputError(error)) throw error;
-              this.logger.warn("pipeline.entity_resolution_model_output_invalid", {
-                jobId: job.id, entityId: job.entity_id, error,
-              });
+          let cursor = null;
+          do {
+            const entityPackage = this.repository.getEntityResolutionPackage(job.entity_id, 300, cursor);
+            if (this.contentEngine?.enabled && typeof this.contentEngine.resolveEntities === "function" && entityPackage.claims.length) {
+              try {
+                const resolved = await guarded((signal) => this.contentEngine.resolveEntities(entityPackage, { signal,
+                  telemetryContext: { ...telemetryContext, entityId: `${job.entity_id}:${cursor || "start"}` } }));
+                this.repository.applyEntityResolution(job.entity_id, resolved.output, resolved.model);
+              } catch (error) {
+                if (!isRecoverableStructuredOutputError(error)) throw error;
+                this.logger.warn("pipeline.entity_resolution_model_output_invalid", {
+                  jobId: job.id, entityId: job.entity_id, cursor, error,
+                });
+                this.repository.resolveEntitiesDeterministically(job.entity_id);
+                cursor = null;
+                break;
+              }
+            } else if (!cursor) {
               this.repository.resolveEntitiesDeterministically(job.entity_id);
             }
-          } else {
-            this.repository.resolveEntitiesDeterministically(job.entity_id);
-          }
+            cursor = entityPackage.nextCursor;
+          } while (cursor);
           this.repository.enqueue("rebuild_knowledge", job.entity_id);
           break;
         }
@@ -360,9 +552,7 @@ export class Pipeline {
           break;
         }
         case "rebuild_content_opportunities": {
-          // Opportunity identity is durable and created by Source diagnostics;
-          // this stage refreshes readiness without manufacturing candidates.
-          this.repository.rebuildCoverageMatrices(job.entity_id);
+          this.repository.rebuildKnowledgeOpportunities(job.entity_id);
           this.repository.enqueue("reconcile_approved_opportunities", job.entity_id);
           break;
         }
@@ -374,18 +564,69 @@ export class Pipeline {
           this.requireContentEngine();
           const intakePackage = this.repository.getIntakePackage(job.entity_id);
           if (!intakePackage) throw new Error(`Source ${job.entity_id} is not ready for intake analysis.`);
-          const analyzed = await this.contentEngine.analyzeIntake(intakePackage);
+          const analyzed = await guarded((signal) => this.contentEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
           this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model);
+          break;
+        }
+        case "assemble_editorial": {
+          this.requireContentEngine();
+          const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id);
+          if (!assemblyPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
+          const assembled = typeof this.contentEngine.assembleEditorial === "function"
+            ? await guarded((signal) => this.contentEngine.assembleEditorial(assemblyPackage, { signal, telemetryContext }))
+            : { output: { selected_fact_keys:(assemblyPackage.facts || []).map((item) => item.normalized_key),
+              selected_experience_block_ids:(assemblyPackage.available_experiences || []).map((item) => item.id),
+              selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:"Deterministic compatibility assembly." }, model:"compatibility" };
+          this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage);
+          this.repository.enqueue("plan_content", job.entity_id);
           break;
         }
         case "plan_content": {
           this.requireContentEngine();
+          if (!this.repository.getEditorialAssembly(job.entity_id)) {
+            const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id);
+            if (!assemblyPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
+            const assembled = typeof this.contentEngine.assembleEditorial === "function"
+              ? await guarded((signal) => this.contentEngine.assembleEditorial(assemblyPackage, { signal, telemetryContext }))
+              : { output:{ selected_fact_keys:(assemblyPackage.facts || []).map((item) => item.normalized_key),
+                selected_experience_block_ids:(assemblyPackage.available_experiences || []).map((item) => item.id),
+                selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:"Deterministic compatibility assembly." },model:"compatibility" };
+            this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage);
+          }
           const contentPackage = this.repository.getTopicPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
-          const planned = await this.contentEngine.plan(contentPackage);
-          const contractAware = this.canComposeFrontendPage;
-          const briefId = this.repository.saveBrief(job.entity_id, planned.output, planned.model, { deferDraft: contractAware });
-          if (contractAware) this.repository.enqueue("compose_frontend_page_plan", briefId);
+          const destinationValidation = validatePlanningDestination(contentPackage);
+          if (!destinationValidation.valid) {
+            throw Object.assign(new Error(`${destinationValidation.code}: ${destinationValidation.message}`), {
+              code: destinationValidation.code, retryable: false, details: destinationValidation,
+            });
+          }
+          const planned = await guarded((signal) => this.contentEngine.plan(contentPackage, { signal, telemetryContext }));
+          const plannedEvidence = validatePlannedEvidence(planned.output, contentPackage);
+          if (!plannedEvidence.valid) throw Object.assign(new Error(`PLAN_EVIDENCE_INVALID: ${plannedEvidence.errors.map(item=>`${item.section || ''} ${item.key || ''}: ${item.message}`).join('; ')}`), {retryable:false, code:'PLAN_EVIDENCE_INVALID', details:plannedEvidence});
+          const briefId = this.repository.saveBrief(job.entity_id, planned.output, planned.model, { deferDraft: true });
+          this.repository.enqueue("plan_narrative", briefId);
+          break;
+        }
+        case "plan_narrative": {
+          this.requireContentEngine();
+          const contentPackage = this.repository.getBriefPackage(job.entity_id);
+          if (!contentPackage) throw new Error(`Content brief ${job.entity_id} no longer exists.`);
+          const planned = typeof this.contentEngine.planNarrative === "function"
+            ? await guarded((signal) => this.contentEngine.planNarrative(contentPackage, { signal, telemetryContext }))
+            : { model:"compatibility",output:{ opening_job:"State the practical answer immediately.",
+              throughline:contentPackage.brief?.reader_promise || contentPackage.brief?.topic || "Help the traveler decide.",
+              route_sequence:(contentPackage.brief?.canonical?.outline || []).map((section) => section.section_id).filter(Boolean),
+              experience_placements:[],supporting_fact_keys:(contentPackage.facts || []).map((fact) => fact.normalized_key),
+              conditional_branches:[],tradeoffs:[],exclusions:[],closing_decision:"End with the next concrete traveler decision." } };
+          this.repository.saveNarrativePlan(job.entity_id, planned.output, planned.model);
+          this.repository.enqueue("assemble_writing_packet", job.entity_id);
+          break;
+        }
+        case "assemble_writing_packet": {
+          this.repository.assembleWritingPacket(job.entity_id);
+          if (this.canComposeFrontendPage) this.repository.enqueue("compose_frontend_page_plan", job.entity_id);
+          else this.repository.enqueue("generate_draft", job.entity_id);
           break;
         }
         case "compose_frontend_page_plan": {
@@ -398,7 +639,7 @@ export class Pipeline {
             this.repository.createFrontendCapabilityRequest({ briefId: job.entity_id, semanticNeed: "article-page-composition", useCase: contentPackage.brief?.topic || "Content brief", reason: "The active Frontend Contract exposes no stable components for this page composition." });
             throw new Error("MISSING_FRONTEND_CAPABILITY: no stable Frontend component can express this page.");
           }
-          const composed = await this.contentEngine.composePagePlan(contentPackage, capabilities);
+          const composed = await guarded((signal) => this.contentEngine.composePagePlan(contentPackage, capabilities, { signal, telemetryContext }));
           const validation = this.frontendContracts.validateCompositionPlan(composed.output);
           this.repository.saveFrontendPagePlan(job.entity_id, contract, composed.output, validation, composed.model);
           if (!validation.valid) throw new Error(`Frontend page plan is invalid: ${validation.errors.map((item) => item.code).join(", ")}`);
@@ -409,9 +650,9 @@ export class Pipeline {
           this.requireContentEngine();
           const contentPackage = this.repository.getBriefPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Content brief ${job.entity_id} no longer exists.`);
-          const drafted = await this.contentEngine.draft(contentPackage);
+          const drafted = await guarded((signal) => this.contentEngine.draft(contentPackage, null, { signal, telemetryContext }));
           const contractAware = this.canComposeFrontendPage;
-          const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model, { deferReview: contractAware });
+          const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model);
           if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
           else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);
           break;
@@ -422,9 +663,11 @@ export class Pipeline {
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           for (const visual of this.repository.plannedVisuals(job.entity_id)) {
             try {
-              const result = await this.visuals.generate(visual, contentPackage.draft);
+              const method = visual.acquisition_strategy === "localize_source_image" ? "localizeSourceImage" : "generate";
+              const result = await guarded((signal) => this.visuals[method](visual, contentPackage.draft, { signal, idempotencyKey: `${job.id}:${visual.id}` }));
               this.repository.saveGeneratedVisual(visual.id, result);
             } catch (error) {
+              if (isJobLeaseLost(error)) throw error;
               const failed = this.repository.failVisual(visual.id, error);
               if (failed.retryable || visual.factual_image_required) throw error;
               this.logger.warn("pipeline.optional_visual_skipped", { visualId: visual.id, draftId: job.entity_id, error });
@@ -438,41 +681,48 @@ export class Pipeline {
           const contract = this.requireFrontendContract();
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
-          await this.uploadVisualMedia(contentPackage);
+          await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
           const capabilities = this.frontendContracts.resolveForArticle({ canonical: contentPackage.brief?.canonical || {}, draft: contentPackage.draft || {} });
           if (!capabilities.components.length) {
             this.repository.createFrontendCapabilityRequest({ draftId: job.entity_id, briefId: contentPackage.brief?.id || null, semanticNeed: "article-page-payload", useCase: contentPackage.draft?.title || "Article draft", reason: "The active Frontend Contract exposes no stable components for the final page payload." });
             throw new Error("MISSING_FRONTEND_CAPABILITY: no stable Frontend component can express this page.");
           }
-          const composed = await this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema);
+          const composed = composePageFromAst(contentPackage.draft.content_ast, capabilities, contract.pageSchema.schema)
+            || await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext }));
           const validation = this.frontendContracts.validatePagePayload(composed.output);
-          this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
-            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash });
-          if (!validation.valid) throw new Error(`Frontend page payload is invalid: ${validation.errors.map((item) => item.code).join(", ")}`);
-          this.repository.enqueue("review_draft", job.entity_id);
+          const savedPage = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
+            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash }, composed.provenance);
+          if (!savedPage.validation.valid) throw new Error(`Frontend page payload is invalid: ${savedPage.validation.errors.map((item) => item.code).join(", ")}`);
+          if (!job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("review_draft", job.entity_id);
           break;
         }
         case "review_draft": {
           this.requireContentEngine();
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
-          const reviewed = await this.contentEngine.review(contentPackage);
+          const reviewed = await guarded((signal) => this.contentEngine.review(contentPackage, { signal, telemetryContext }));
           const revision = this.repository.saveReview(job.entity_id, reviewed.output, reviewed.model,
-            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash });
-          if (reviewed.output.passed) this.repository.enqueue("compose_commercial", job.entity_id);
-          if (!reviewed.output.passed && revision < 2) this.repository.enqueue("revise_draft", job.entity_id);
+            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash, evidenceHash:contentPackage.evidence_hash });
+          const pageReady = !this.canComposeFrontendPage || Boolean(contentPackage.frontend_page?.current);
+          if (reviewed.output.passed && pageReady && !job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("compose_commercial", job.entity_id);
+          if (!reviewed.output.passed && !job.dedupe_key?.startsWith("manual-stage:")) {
+            this.repository.automaticQualityRepairState(job.entity_id, reviewed.output.issues, { enqueue: true });
+          }
           break;
         }
         case "revise_draft": {
           this.requireContentEngine();
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
-          const drafted = await this.contentEngine.draft(contentPackage, contentPackage.review?.issues || []);
+          const drafted = await guarded((signal) => this.contentEngine.repairDraft(contentPackage, contentPackage.review?.issues || [], { signal, telemetryContext }));
           const contractAware = this.canComposeFrontendPage;
-          const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model, { deferReview: contractAware });
-          if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
-          else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);
+          const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model,
+            { deferReview: job.dedupe_key?.startsWith("manual-stage:") });
+          if (!job.dedupe_key?.startsWith("manual-stage:")) {
+            if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
+            else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);
+          }
           break;
         }
         case "compose_commercial": {
@@ -514,8 +764,10 @@ export class Pipeline {
           if (!finalPageValidation.valid) throw invalidPublishPage("FINAL_PAGE_INVALID", finalPageValidation);
           const finalArtifactValidation = validateFinalPageArtifact(finalPage, contentPackage);
           if (!finalArtifactValidation.valid) throw invalidPublishPage("FINAL_PAGE_QA_FAILED", finalArtifactValidation);
-          await this.uploadVisualMedia(contentPackage);
+          await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
+          const mediaValidation = validateMediaDelivery(contentPackage.draft.visuals, { requireMetadata: true });
+          if (!mediaValidation.valid) throw invalidPublishPage("MEDIA_DELIVERY_INVALID", mediaValidation);
           if (!contentPackage.draft?.seo?.meta_title || !contentPackage.draft?.meta_description) {
             throw new PublishCompositionError("SEO_PACKAGE_MISSING", "A generated SEO title and meta description are required before delivery.");
           }
@@ -558,19 +810,22 @@ export class Pipeline {
             if (this.frontendContracts?.configured) {
               const publishPackage = structuredClone(contentPackage.publish_composition.publish_package);
               publishPackage.publication.existing_post_id = publication.post_id || publishPackage.publication.existing_post_id || null;
-              result = await this.wordpress.upsertContractDraft(publishPackage);
+              result = await guarded((signal) => this.wordpress.upsertContractDraft(publishPackage, { signal, idempotencyKey: job.id }));
             } else {
               const publishableDraft = {
                 ...contentPackage.draft,
+                visuals: this.repository.listDraftVisualsForDelivery?.(contentPackage.draft.id)
+                  || contentPackage.draft.visuals || [],
                 body_markdown: contentPackage.commercial_composition.publishable_body_markdown,
                 content_blocks: contentPackage.commercial_composition.content_blocks?.length
                   ? contentPackage.commercial_composition.content_blocks
                   : markdownToContentBlocks(contentPackage.commercial_composition.publishable_body_markdown),
               };
-              result = await this.wordpress.upsertDraft(publishableDraft, publication.post_id);
+              result = await guarded((signal) => this.wordpress.upsertDraft(publishableDraft, publication.post_id, { signal, idempotencyKey: job.id }));
             }
             this.repository.completeWordPressPublication(job.entity_id, result);
           } catch (error) {
+            if (isJobLeaseLost(error)) throw error;
             this.repository.failWordPressPublication(job.entity_id, error);
             if (["CONTRACT_MISMATCH", "CONTRACT_VERSION_MISMATCH"].includes(error?.code)) {
               this.repository.markFrontendPublishComposition(job.entity_id, "stale_contract");
@@ -584,22 +839,31 @@ export class Pipeline {
         default:
           throw new Error(`Unknown job type: ${job.type}`);
       }
-      if (!this.repository.completeJob(job.id, job.locked_by)) throw Object.assign(new Error("JOB_LEASE_LOST"), { retryable: false });
+      assertLease();
+      if (!this.repository.completeJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
+      this.repository.completePipelineArtifact?.(pipelineArtifact, job);
       this.recordExtractionOutcome(job, { ok: true });
       this.logger.info("pipeline.job_succeeded", { jobId: job.id, jobType: job.type, durationMs: Date.now() - startedAt });
       return true;
     } catch (error) {
       if (job) {
-        this.recordExtractionOutcome(job, { ok: false, error });
-        this.repository.failJob(job, error);
-        this.logger.error("pipeline.job_failed", {
-          jobId: job.id, jobType: job.type, entityId: job.entity_id, attempt: job.attempts,
-          durationMs: startedAt ? Date.now() - startedAt : null, error,
-        });
+        if (isJobLeaseLost(error)) {
+          this.logger.warn("pipeline.job_lease_lost", { jobId: job.id, jobType: job.type, entityId: job.entity_id });
+        } else {
+          this.repository.failPipelineArtifact?.(pipelineArtifact, error);
+          this.recordExtractionOutcome(job, { ok: false, error });
+          this.repository.failJob(job, error);
+          this.logger.error("pipeline.job_failed", {
+            jobId: job.id, jobType: job.type, entityId: job.entity_id, attempt: job.attempts,
+            durationMs: startedAt ? Date.now() - startedAt : null, error,
+          });
+        }
       } else this.logger.error("pipeline.unhandled_error", { error });
       return false;
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (abortController && !abortController.signal.aborted) abortController.abort();
+      if (abortController) this.activeAbortControllers.delete(abortController);
       this.working -= 1;
     }
   }
@@ -625,6 +889,13 @@ export class Pipeline {
     if (!this.contentEngine?.enabled) throw new Error("Content production requires a configured Kimi key or Vertex AI project.");
   }
 
+  enqueueSourceSemanticDownstream(sourceId) {
+    this.repository.enqueue("analyze_source_family", sourceId);
+    if (typeof this.extractor?.analyzeBlueprint === "function") this.repository.enqueue("analyze_source_blueprint", sourceId);
+    else this.repository.enqueue("rebuild_editorial", "global");
+    if (this.contentEngine?.enabled) this.repository.enqueue("analyze_source_diagnostic", sourceId);
+  }
+
   get canComposeFrontendPage() {
     return Boolean(this.frontendContracts?.diagnostics().canCompose);
   }
@@ -635,18 +906,60 @@ export class Pipeline {
     return contract;
   }
 
-  async uploadVisualMedia(contentPackage) {
+  async uploadVisualMedia(contentPackage, options = {}) {
     if (!this.wordpress?.enabled || typeof this.wordpress.resolveVisualMedia !== "function") return [];
-    const persisted = new Set();
-    const uploaded = await this.wordpress.resolveVisualMedia(contentPackage.draft?.visuals || [], (visual) => {
+    const deliveryVisuals = this.repository.listDraftVisualsForDelivery?.(contentPackage.draft?.id)
+      || contentPackage.draft?.visuals || [];
+    const uploaded = await this.wordpress.resolveVisualMedia(deliveryVisuals, (visual) => {
+      options.assertLease?.();
       this.repository.saveWordPressVisual(visual.visualId, visual);
-      persisted.add(visual.visualId);
-    });
-    for (const visual of uploaded) {
-      if (!persisted.has(visual.visualId)) this.repository.saveWordPressVisual(visual.visualId, visual);
-    }
+    }, options);
+    options.assertLease?.();
+    for (const visual of uploaded) this.repository.saveWordPressVisual(visual.visualId, visual);
     return uploaded;
   }
+}
+
+function parseStoredJson(value) {
+  try { return value ? JSON.parse(value) : null; } catch { return null; }
+}
+
+function isJobLeaseLost(error) {
+  return error?.code === "JOB_LEASE_LOST" || error?.message === "JOB_LEASE_LOST";
+}
+
+function correlateBatchOutputs(items, outputs) {
+  const byTransportKey = new Map();
+  const byRequestFingerprint = new Map();
+  for (const item of items || []) {
+    byTransportKey.set(item.transport_key || item.batch_item_id, item);
+    if (item.request_fingerprint) byRequestFingerprint.set(item.request_fingerprint, item);
+  }
+  const candidates = new Map();
+  const anomalies = [];
+  for (const output of outputs || []) {
+    const item = (output?.id && byTransportKey.get(output.id))
+      || (output?.requestFingerprint && byRequestFingerprint.get(output.requestFingerprint));
+    if (!item) {
+      anomalies.push({ output, reason: output?.id
+        ? `Unknown Vertex Batch transport key: ${output.id}`
+        : "Vertex Batch output had neither a known transport key nor a matching request fingerprint." });
+      continue;
+    }
+    const values = candidates.get(item.job_id) || [];
+    values.push(output);
+    candidates.set(item.job_id, values);
+  }
+  const byJobId = new Map();
+  const duplicates = new Set();
+  for (const [jobId, values] of candidates) {
+    if (values.length === 1) byJobId.set(jobId, values[0]);
+    else {
+      duplicates.add(jobId);
+      for (const output of values) anomalies.push({ output, reason: `Duplicate Vertex Batch transport correlation for job ${jobId}.` });
+    }
+  }
+  return { byJobId, duplicates, anomalies };
 }
 
 function invalidPublishPage(code, validation) {

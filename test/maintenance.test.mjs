@@ -36,7 +36,8 @@ test("maintenance scheduler backs up, reconciles, prunes, and records durable st
   assert.equal(first.results.filter((item) => item.status === "succeeded").length, 4);
   assert.equal(database.prepare("SELECT COUNT(*) AS count FROM jobs WHERE id=?").get(oldJob).count, 0);
   assert.equal(repository.listMaintenanceRuns().length, 4);
-  assert.equal(fs.readdirSync(path.join(directory, "backups")).filter((name) => name.endsWith(".sqlite")).length, 1);
+  assert.equal(fs.readdirSync(path.join(directory, "backups")).filter((name) => name.endsWith(".snapshot")).length, 1);
+  assert.equal(first.results.find((item) => item.task === "database_backup").metadata.fileCount, 1);
 
   const second = await scheduler.runDue();
   assert.ok(second.results.every((item) => item.status === "fresh"));

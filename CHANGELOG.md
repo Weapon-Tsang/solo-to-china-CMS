@@ -1,5 +1,114 @@
 # Changelog
 
+## 2.0.3 - Unreleased
+
+- Reconcile internal opportunities into an actionable recommendation inbox with current-version checks, processing-versus-evidence gaps, semantic deduplication, collision handling, and safe historical-failure retries.
+- Limit Content to work that has entered production, separate infrastructure health from maintenance, and aggregate media, Experience, reconciliation, and failure-governance maintenance by task.
+- Make media repair invalidate stale Experience and recommendation projections before automatically recalculating downstream knowledge, diagnostics, and opportunities.
+- Remove hardcoded affiliate queue seeds, clarify zero-task states, and replace raw implementation terms with operator-readable Chinese copy across the CMS and extension.
+
+## 2.0.2 - 2026-09-11
+
+- Prevent slow dashboard requests from being invalidated by overlapping five-second polls, and cancel obsolete page loads when operators switch menus.
+- Bound Content to approved production records and Settings to a 100-item exception preview while preserving the complete exception count and durable browser-repair backlog.
+
+## 2.0.1 - 2026-09-11
+
+- Classify remote source-media recovery failures separately from external model authorization failures.
+- Keep browser-repair handoffs visible with accurate media guidance until the authorized originals are stored, while retaining the repair manifest and failed jobs as audit history.
+
+## 2.0.0 - 2026-09-11
+
+- Require SHA-256-verified durable originals for every authorized Xiaohongshu image and video before source extraction; add chunked media upload, server recovery, browser repair manifests, and auditable media backfills.
+- Add grounded Experience Blocks after Claims, then produce drafts through Editorial Assembly, Narrative Plan, and a human-readable Writing Packet instead of a database-shaped evidence dump.
+- Make Recommendations an opportunity-only inbox with independent single/bulk decisions, Knowledge-event opportunities, and explicit NEW/UPDATE/EXPAND/MERGE/SKIP SEO actions.
+- Add eight editorial QA signals with soft length guidance, optional FAQ, independent media QA, Editorial Lessons, and Golden Articles.
+- Turn terminal content-production failures into reusable Failure Lessons, remove only transient production artifacts, preserve research, and require reapproval through `recommended_again`.
+- Consolidate the dashboard into six top-level business areas and add safe dry-run-first backfills, schema 57, fair queue priorities, tests, and operator runbooks.
+
+## 1.18.3 - 2026-09-11
+
+- Stabilize the private HTTP origin behind Cloudflare Tunnel by extending Node's keep-alive window beyond the connector pool's reuse window.
+- Pin the production connector to `cloudflare/cloudflared:2026.8.2` over HTTP/2 after isolating a `2026.9.0` Docker-bridge regression during rollout.
+
+## 1.18.2 - 2026-09-11
+
+- Localize operator-facing diagnostics and quality failures, including safe Chinese fallbacks for malformed or provider-originated output.
+- Replace browser-native confirmation prompts with a responsive in-app dialog and simplify Content to one approved-versus-created production view with explicit blockers.
+- Remove the manual content-planning workspace and active runtime API while preserving approval-driven evidence preparation, drafting, QA, and draft delivery.
+- Persist authorized source-image bytes and relations before writing, constrain source-image localization to the retained original, and keep text QA independent from media delivery failures.
+- Activate Content Strategy 2.1 and database schema 56 with Content AST, bounded repair, trusted operator-fact, and media provenance corrections.
+
+## 1.18.1 - 2026-09-11
+
+- Replace the duplicated, non-interactive Content opportunity list with a production-lifecycle overview that explains why the records exist and directs operators to the actionable table.
+- Show the first Chinese quality blocker and the bounded automatic-repair state directly on each Content row, including active work, two-attempt exhaustion, operational interruption, and real-input requirements.
+- Localize production lifecycle labels such as Producing and Drafted while preserving the Strategy 2.0 approval, evidence, QA, Research/Commercial, and WordPress safety gates.
+
+## 1.18.0 - 2026-09-11
+
+- Activate Content Strategy 2.0 and separate captured Sources, Claims/Knowledge, editorial article plans, and counted production opportunities. Unapproved single-source proposals no longer inflate opportunity totals.
+- Bound planning to 48 unique facts and 12 per section, and require supported evidence per promised section instead of forcing drafts to exhaust the destination knowledge base.
+- Present concise Chinese recovery diagnoses and recommended actions, re-check historical failures under current rules, and cap automatic draft/page repair at two attempts without rewriting valid stages.
+- Add batch article-plan approval and mobile-sized selection controls with one consistent approval concept.
+- Capture source edit/publication timestamps when detectable, retain ordinary authorized image bytes, and let an idempotent re-capture restore missing historical media.
+
+## 1.17.26 - Unreleased
+
+- Scope draft-detail operation reads to its candidate and reuse the current evidence hash, avoiding whole-workspace recomputation for each recovery panel.
+- Reuse the already scoped fact package when listing recovery assets. No global or stale cache is introduced.
+- Keep Strategy 1.9 and schema 55; add a failing-then-passing evidence-load regression.
+
+## 1.17.25
+
+- Activate Strategy 1.9: separate source recommendations, editorial directions and approved production; freeze approved scope and validate planned evidence membership.
+- Add version-guarded, transactional bulk decisions and explicit default/direction confirmation; preserve assignments and historical proposals across upgrades.
+- Separate prose quality from media/page delivery, invalidate stale reviews, and recover only the responsible stage without automatic paid stage chaining.
+- Add source-linked media recovery, retained authorized asset binding, editorial evidence correction and pre-planning destination correction; fix date-note matching and evidence token boundaries.
+- Keep schema 55, frontend capability contracts, Research/Commercial isolation and WordPress draft-only gates unchanged.
+
+## 1.17.24
+
+- Compose every supported article type deterministically from the frozen Content AST when the Frontend exposes its stable atomic heading, paragraph, and list components, avoiding an unnecessary model/schema round trip and validating the resulting payload against the live Contract.
+- Retry a generic Vertex JSON Schema HTTP 400 once through the supported OpenAPI transport, classify permanent 4xx, expired authorized-media URLs, and content-stage output limits as correction-required, and prevent the dashboard from offering a no-op retry.
+- Reject an explicitly named destination that conflicts with the assigned destination before content planning, and distinguish content-stage output exhaustion from source-segment splitting.
+- Prefer retained authorized source bytes or local originals during media delivery so an expiring source CDN URL is not the only usable copy.
+- Show active failed jobs on Content cards, suppress failures recovered by a later successful run, and validate atomic blocks against evidence shared at their original ledger-section boundary.
+
+## 1.17.23 - 2026-09-10 (audit requirements 1.3)
+
+- Persist structured extraction input manifests so image/video coverage uses submitted asset evidence rather than method-name guesses; legacy records remain explicitly unknown.
+- Separate Vertex Batch inference completion, output reading, item ingestion, quarantine, and cleanup so transient Cloud Storage failures resume without repeated inference or premature deletion.
+- Correlate Batch rows with Vertex's transport `keyField`, retain request fingerprints as a recovery path, quarantine duplicate/unknown rows, and treat model-reported IDs only as a cross-check.
+- Persist Batch failure classes, route decisions, attempt budgets, and next-eligible timestamps so permanent preparation failures terminate, oversized inputs use realtime, provider failures back off, and local capacity does not spend the error budget.
+- Freeze provider, model, location, project, schema, prompt, and configuration identity on submitted Batch runs; historical Vertex work continues through its stored adapter after the default model changes.
+- Fence job ownership with a monotonic lease generation, abort guarded model and delivery calls when heartbeats lose ownership, reject stale completion/failure writes, and recover only expired Batch preparations.
+- Separate publication, observation, capture, verification, and validity-window semantics; scheduled and historical evidence is retained but excluded from current conclusions.
+- Separate manual submitter metadata from author/publisher identity, preserve original/canonical/final public URLs, and deduplicate uploaded files and repeated URLs by stable source identity.
+- Resolve overlapping duplicate families, stable source identities, and stable authors as deterministic connected components with folded-source audit detail and a dry-run rebuild preview.
+- Replace page-array provenance with stable section/node references and store a Contract-neutral sidecar that traces factual blocks through Claims and Sources to exact evidence spans; legacy mappings remain explicitly unknown.
+- Validate final visible page artifacts against their evidence ledger, protected values and qualifiers, visible as-of dates, Claim/Source relations, and answer-bearing content before delivery.
+- Split extraction transport success, evidence coverage, publication usability, and materiality; retain partially covered Claims for bounded topics, route meaningful zero-Claim media to review, and propagate only topic-relevant coverage limitations.
+- Fence editorial assignments by explicit Entity scope and typed predicates/relations, expose per-Fact include/exclude reasons, rank automatic type candidates with confidence, and preserve operator type overrides.
+- Cancel and invalidate stale detail requests, and report full/partial/failed dashboard refresh outcomes without replacing a newer dialog or claiming false success.
+- Add bounded adaptive account/client-source login throttling, generic failure responses, password-free audit events, unknown-account timing equalization, and an explicit trusted-proxy header policy.
+- Replace database-only backups with hashed database-and-content snapshots, database-file reference verification, versioned rollback metadata, and an isolated mock delivery restore drill.
+- Consolidate Node 24 tests, static/build checks, fixed-SHA Frontend contracts, version alignment, backup drills, and explicit offline/unverified quality dimensions into one release gate and CI workflow.
+- Add media-aware source admission, deterministic processing-scope estimates and manual start for high-cost captures; reject missing or unsupported evidence before a model call.
+- Preserve PDF text and visual-page inventories with page locators, route scanned/chart pages through the existing Vertex document input, and avoid automatic whole-document OCR.
+- Add a held-out, versioned article quality set and deterministic hard gates for evidence coverage, amounts, dates, exceptions, audience qualifiers, prompt injection, FAQ support, and final-page facts while keeping length, repetition, readability, metadata length, Sources presentation, and image count as editorial warnings.
+- Freeze per-stage model capability/thinking/token/timeout/retry policy, meter every realtime and Batch attempt, retain unknown costs as null with dated price provenance, and replace full draft rewrites with current-hash bounded section repair.
+- Persist dependency/config artifact keys for safe duplicate reuse, eliminate the duplicate coverage rebuild, page Entity resolution beyond 300 Claims, add age/realtime/dependency-aware scheduling and queue age, and expose measured runtime/performance reports without invented p95 or database-query estimates.
+- Keep SEO titles and descriptions evidence-bounded and independently editable without mechanical search-snippet truncation; version page and SEO artifacts so metadata-only edits reuse research and writing while invalidating final checks.
+- Synchronize visible metadata, canonical URLs, Article/WebPage/Breadcrumb schema and optional visible FAQ from one deterministic source; omit invented authors, dates, products, ratings and private media URLs.
+- Select internal links only from relevant published same-site WordPress inventory, validate real anchors and targets, report duplicate risk without automatic consolidation, and invalidate only page blocks affected by route/status changes.
+- Persist WordPress media URL, intrinsic dimensions, MIME, bytes, SHA-256 and responsive derivatives; deduplicate the same source asset, enforce evidence/alt/public-URL rules, and render one high-priority first image with lazy later images in the Legacy path.
+- Validate fixed published/draft HTML fixtures across visible body, one-H1, SEO, schema, link/media, sitemap, robots and device-equivalence dimensions while keeping production HTML, indexing, ranking, CWV and AI citation conclusions explicitly separate.
+- Add a first-time-guide Content AST compatibility path with stable semantic/evidence/media references and deterministic Registry mapping, preserving Markdown, visible facts, FAQ and schema while retaining the existing fallback for unsupported types.
+- Add cursor-safe operations workspaces with real total counts, four independent draft readiness dimensions, explicit untested states and failed-stage-only retry guidance.
+- Version Commercial overlays and event attribution by article revision, asset and source; reject money on clicks and keep unconfirmed bookings/commission unknown rather than zero.
+- Begin the tested in-process Repository/UI split with machine-checked service boundaries, extracted Commercial event persistence and an isolated content-quality workspace, retaining the API and SQLite facade.
+
 ## 1.17.11 - 2026-09-09
 
 - Finish active Source coverage, finalization and intake diagnostics before expanding the remaining extraction backlog.

@@ -1,7 +1,7 @@
 import {
   AlertTriangle, Bell, BookOpen, Bot, Box, Check, CircleAlert, Database, FileCheck2,
   FileText, Gauge, Inbox, Layers3, Library, PanelTop, RefreshCw, Route, Search, Settings2, Sparkles,
-  TicketCheck, WandSparkles, ListChecks,
+  TicketCheck, WandSparkles,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -12,16 +12,11 @@ import { cn, label } from "@/lib/utils";
 
 export const views = {
   sources: { label: "来源", title: "研究来源", description: "查看并提交由你主动选择的旅行笔记、链接、文档、图片与视频。", icon: FileText },
-  recommendations: { label: "建议", title: "内容建议", description: "在文章规划前，审阅每条来源的下一步建议。", icon: Sparkles },
-  assignments: { label: "选题", title: "专题与人工命题", description: "查看系统选定的专题，也可以自行命题、检测素材并加入创作队列。", icon: ListChecks },
-  knowledge: { label: "知识库", title: "目的地知识", description: "集中查看已佐证事实、冲突和时效性。", icon: BookOpen },
-  blueprints: { label: "蓝图", title: "编辑蓝图", description: "把重复出现的优秀表达转化为可复用的编辑洞察。", icon: Layers3 },
+  recommendations: { label: "建议", title: "建议收件箱", description: "只显示可独立批准、暂缓或忽略的实际内容机会。", icon: Sparkles },
   content: { label: "内容", title: "内容生产", description: "将有证据支撑的主题推进至草稿、审核和发布。", icon: WandSparkles },
-  wordpress: { label: "WordPress", title: "WordPress 文章库存", description: "同步既有文章，避免新选题与站内内容重复。", icon: PanelTop },
+  knowledge: { label: "知识库", title: "目的地知识", description: "集中查看已佐证事实、冲突、时效性与旅行经验层。", icon: BookOpen },
   commercial: { label: "商品", title: "商业商品", description: "管理独立的联盟层，不污染研究知识库。", icon: TicketCheck },
-  exceptions: { label: "异常", title: "需要处理", description: "只显示真正需要人工判断或介入的问题。", icon: CircleAlert },
-  maintenance: { label: "维护", title: "系统维护", description: "静默完成备份、校验、同步和清理。", icon: Gauge },
-  settings: { label: "设置", title: "系统设置", description: "选择用于提取、规划、写作和审核的 AI 模型。", icon: Settings2 },
+  settings: { label: "设置", title: "设置与系统", description: "集中管理模型、WordPress、维护、异常、回填、编辑经验与前端契约。", icon: Settings2 },
 };
 
 export const emptyIcons = {
@@ -91,23 +86,23 @@ export function PageHeading({ view, health, onOpenStrategy }) {
 }
 
 export function Metrics({ totals: rawTotals = {}, onNavigate }) {
-  const totals = { ...rawTotals, topicCandidates: Number(rawTotals.pendingRecommendations || 0) + Number(rawTotals.contentPipelineItems ?? rawTotals.topicCandidates ?? 0) };
+  const totals = rawTotals;
   const groups = [
     {
       icon: FileText, tone: "blue", eyebrow: "研究资产", title: "来源已结构化", value: totals.knowledgeFacts ?? 0, unit: "条知识事实",
       detail: totals.conflicts ? `${totals.conflicts} 项冲突需要处理` : "暂无事实冲突", stats: [[totals.sources, "来源"], [totals.claims, "信息主张"]], view: "knowledge",
     },
     {
-      icon: Route, tone: "indigo", eyebrow: "内容机会", title: "选题发现", value: totals.topicCandidates ?? 0, unit: "个候选主题",
-      detail: totals.topicCandidates ? "查看候选主题与文章生产状态" : "继续积累独立来源以发现选题", stats: [[totals.draftsReady, "可用草稿"], [totals.wordpressInventory, "站内文章"]], view: "content",
+      icon: Route, tone: "indigo", eyebrow: "编辑决策", title: "内容机会待决定", value: totals.pendingRecommendations ?? 0, unit: "个可执行机会",
+      detail: "每个创作方向独立批准、暂缓或忽略", stats: [[totals.contentPipelineItems ?? 0, "内容流程记录"], [totals.draftsReady, "可用草稿"]], view: "recommendations",
     },
     {
       icon: Box, tone: "fuchsia", eyebrow: "商业图层", title: "联盟商品", value: totals.activeOffers ?? 0, unit: "个可用商品",
       detail: totals.activeOffers ? "仅在质检通过后叠加到发布稿" : "未配置也不影响研究与写作", stats: [[totals.wordpressInventory, "WordPress 库存"], [totals.draftsReady, "待投递草稿"]], view: "commercial",
     },
     {
-      icon: CircleAlert, tone: totals.exceptions ? "amber" : "emerald", eyebrow: "系统健康", title: totals.exceptions ? "需要关注" : "运行正常", value: totals.exceptions ?? 0, unit: "个待处理事项",
-      detail: totals.exceptions ? `${totals.exceptionRecords ?? totals.exceptions} 条底层异常或来源比较记录` : "采集、队列与维护状态正常", stats: [[totals.conflicts, "知识冲突"], [totals.sources, "已采集来源"]], view: "exceptions",
+      icon: CircleAlert, tone: totals.exceptions ? "amber" : "emerald", eyebrow: "系统健康", title: totals.exceptions ? "基础设施需关注" : "运行正常", value: totals.exceptions ?? 0, unit: "个系统故障",
+      detail: totals.exceptions ? `${totals.exceptionRecords ?? totals.exceptions} 条认证、数据库、网络或外部集成故障` : "认证、数据库、网络与外部集成正常", stats: [[totals.processingGapOpportunities ?? 0, "系统重算中"], [totals.internalOpportunities ?? 0, "内部机会"]], view: "settings",
     },
   ];
   if (Number(rawTotals.pendingRecommendations || 0) > 0) groups[1].view = "recommendations";

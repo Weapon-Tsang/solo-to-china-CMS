@@ -28,11 +28,15 @@ export function segmentSource(source, { maxChars = 6_000 } = {}) {
   const segments = pieces.map((piece, index) => makeSegment(source.id, piece, index));
   for (const [index, asset] of (source.assets || []).entries()) {
     if (!asset || !["image", "video_cover", "video"].includes(asset.kind)) continue;
-    const type = asset.kind === "video" ? "video_chapter" : "image";
+    const pdfPages = asset.provenance?.documentKind === "pdf" && Array.isArray(asset.provenance?.pdfPages)
+      ? asset.provenance.pdfPages.map(Number).filter((value) => Number.isInteger(value) && value > 0) : [];
+    const type = pdfPages.length ? "pdf_page" : asset.kind === "video" ? "video_chapter" : "image";
     const sequence = segments.length;
     segments.push(makeSegment(source.id, {
-      type, text: asset.alt_text || asset.original_filename || "", title: asset.original_filename || `Asset ${index + 1}`,
-      assetId: asset.id, imageIndex: asset.kind === "video" ? null : index + 1,
+      type, text: pdfPages.length ? `PDF visual evidence on page${pdfPages.length === 1 ? "" : "s"} ${pdfPages.join(", ")}.`
+        : asset.alt_text || asset.original_filename || "", title: asset.original_filename || `Asset ${index + 1}`,
+      assetId: asset.id, imageIndex: pdfPages.length || asset.kind === "video" ? null : index + 1,
+      pageStart: pdfPages.length ? Math.min(...pdfPages) : null, pageEnd: pdfPages.length ? Math.max(...pdfPages) : null,
     }, sequence));
   }
   if (!segments.length) segments.push(makeSegment(source.id, { type: "other", text: "", title: source.title || "Source" }, 0));
@@ -73,7 +77,8 @@ export function evaluateCoverage({ topicKey, contentType = "practical_guide", fa
       ready: editoriallySufficient && conflictedCount === 0,
       editoriallySufficient,
       publicationMode,
-      score: Math.max(0, Math.min(100, coverage + Math.min(10, facts.length) - staleCount - conflictedCount * 8)),
+      score: coverage,
+      scoreMeaning: "Keyword-slot material coverage only; fact volume cannot raise this score and it is not factual accuracy or editorial quality. The planned outline must independently bind supported evidence before writing.",
       coverage, requiredCovered, requiredTotal: required.length,
       importantCovered, importantTotal: important.length, factCount: facts.length, sourceFamilyCount,
       usableFactCount,
@@ -159,11 +164,6 @@ function requirement(key, priority, facts) {
   const matching = facts.filter((fact) => matchesRequirement(key, fact));
   let state = "missing";
   if (matching.some((fact) => fact.consensus_status === "conflicted")) state = "conflicted";
-  // A dynamic claim is a dated observation, not a timeless assertion. Old rows that
-  // still carry the legacy requires_official flag are deliberately downgraded to
-  // dated evidence and remain usable with a reader-facing as-of disclosure.
-  else if (matching.length && matching.every((fact) => fact.freshness_state === "stale"
-    || fact.verification_priority === "requires_official")) state = "dated";
   else if (matching.length) state = "covered";
   return { key, priority, state, factKeys: matching.map((fact) => fact.normalized_key).filter(Boolean) };
 }

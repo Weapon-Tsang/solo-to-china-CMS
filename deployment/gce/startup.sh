@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_ID="project-4bcb9146-c37b-43b0-b11"
-IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:1.17.23"
+IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:2.0.3"
 APP_DIR="/opt/solo-to-china"
 METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 
@@ -122,9 +122,12 @@ FRONTEND_CONTRACT_SOURCE_REPOSITORY=https://github.com/Weapon-Tsang/solo-to-chin
 FRONTEND_COMPONENT_REGISTRY_SOURCE=https://solotochina.com/wp-json/stc/v1/component-registry/generated
 FRONTEND_PAGE_SCHEMA_SOURCE=https://solotochina.com/wp-json/stc/v1/page-schema
 FRONTEND_PUBLISH_PACKAGE_SCHEMA_SOURCE=https://solotochina.com/wp-json/stc/v1/cms-publish-package-schema
-FRONTEND_CONTRACT_COMMIT_SHA=fcd1cb0e936b666c888ade7ea8b648799e3fb3be
+FRONTEND_CONTRACT_COMMIT_SHA=f44ce1092ced93dfb47d9b3eae83d0d5e4b97086
 FRONTEND_CONTRACT_SYNC_HOURS=6
 FRONTEND_CONTRACT_TIMEOUT_MS=15000
+BACKUP_RETENTION=14
+BACKUP_OFFSITE_LOCATION=
+BACKUP_OFFSITE_RETENTION_DAYS=0
 EOF
 chmod 0600 "${APP_DIR}/.env.production"
 
@@ -147,11 +150,11 @@ services:
       - "8080"
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.8.2
     restart: unless-stopped
     depends_on:
       - engine
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate --protocol http2 run --token ${CLOUDFLARE_TUNNEL_TOKEN}
 
 volumes:
   solo_to_china_data:
@@ -161,16 +164,21 @@ log 'Authenticating to Artifact Registry and starting services.'
 REGISTRY_TOKEN="$(metadata_token)"
 printf '%s' "$REGISTRY_TOKEN" | docker login --username oauth2accesstoken --password-stdin asia-east1-docker.pkg.dev
 docker pull "$IMAGE"
-docker pull cloudflare/cloudflared:latest
+docker pull cloudflare/cloudflared:2026.8.2
 docker network inspect solo-to-china >/dev/null 2>&1 || docker network create solo-to-china >/dev/null
 docker volume inspect solo_to_china_data >/dev/null 2>&1 || docker volume create solo_to_china_data >/dev/null
 if docker inspect engine >/dev/null 2>&1; then
-  log 'Creating a verified SQLite backup in the persistent volume before replacing the engine container.'
-  docker exec engine node src/backup.mjs \
+  log 'Creating a verified database-and-content snapshot in the persistent volume before replacing the engine container.'
+  docker exec --env BACKUP_REASON=pre-upgrade engine node src/backup.mjs \
     /var/lib/solo-to-china/solo-to-china.sqlite \
     /var/lib/solo-to-china/backups >/dev/null
 fi
-docker rm --force engine cloudflared >/dev/null 2>&1 || true
+for container_name in engine cloudflared; do
+  if docker inspect "$container_name" >/dev/null 2>&1; then
+    docker stop --time 30 "$container_name" >/dev/null
+  fi
+done
+docker rm engine cloudflared >/dev/null 2>&1 || true
 docker run --detach --name engine --restart unless-stopped \
   --network solo-to-china \
   --env-file "${APP_DIR}/.env.production" \
@@ -184,8 +192,8 @@ docker run --detach --name engine --restart unless-stopped \
   "$IMAGE" >/dev/null
 docker run --detach --name cloudflared --restart unless-stopped \
   --network solo-to-china \
-  cloudflare/cloudflared:latest \
-  tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN" >/dev/null
+  cloudflare/cloudflared:2026.8.2 \
+  tunnel --no-autoupdate --protocol http2 run --token "$CLOUDFLARE_TUNNEL_TOKEN" >/dev/null
 sleep 8
 log 'Container status:'
 docker ps --format 'table {{.Names}}\t{{.Status}}'

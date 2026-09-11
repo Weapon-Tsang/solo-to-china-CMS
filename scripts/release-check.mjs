@@ -4,12 +4,15 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createBackup, drillBackup } from "../src/backup.mjs";
 import { openDatabase } from "../src/db.mjs";
 import { CONTENT_STRATEGY } from "../src/content-strategy.mjs";
+import { compareRenderedVariants, validateRenderedHtmlArtifact } from "../src/final-html-validator.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-const timeoutMs = 15_000;
+const releaseGate = JSON.parse(fs.readFileSync(path.join(root, "config", "release-gate.json"), "utf8"));
+const timeoutMs = releaseGate.performance.isolatedSmokeFailureMs;
 const smokeOnly = process.argv.includes("--smoke-only");
 let report;
 
@@ -30,10 +33,20 @@ async function main() {
     const staticCheck = npmInvocation(["run", "check"]);
     const unitTests = npmInvocation(["test"]);
     const crossRepoCheck = npmInvocation(["run", "test:cross-repo"]);
-    buildReady = await report.command("Code", "Static checks and Vite production build", staticCheck.command, staticCheck.args, 120_000);
-    await report.command("Code", "Unit and integration tests", unitTests.command, unitTests.args, 120_000);
-    await report.command("Code", "Real cross-repository Frontend Contract gate", crossRepoCheck.command, crossRepoCheck.args, 120_000);
-    await report.command("Database", "Version alignment and clean migration chain", process.execPath, ["src/release-check.mjs"], 30_000);
+    const staticResult = await report.command("Code", "Static checks and Vite production build", staticCheck.command, staticCheck.args, 120_000);
+    buildReady = staticResult.ok;
+    const unitResult = await report.command("Code", "Unit and integration tests", unitTests.command, unitTests.args,
+      releaseGate.performance.unitTestFailureMs);
+    if (unitResult.ok && unitResult.durationMs > releaseGate.performance.unitTestWarningMs) {
+      report.warning("Performance", "Unit-test duration budget",
+        `${unitResult.durationMs} ms exceeded the ${releaseGate.performance.unitTestWarningMs} ms warning budget; correctness still passed.`);
+    } else if (unitResult.ok) {
+      report.pass("Performance", "Unit-test duration budget",
+        `${unitResult.durationMs} ms; baseline ${releaseGate.performance.baseline.durationMs} ms under documented sample conditions`);
+    }
+    const crossRepoResult = await report.command("Code", "Fixed-SHA Frontend Contract gate", crossRepoCheck.command, crossRepoCheck.args, 120_000);
+    const versionResult = await report.command("Database", "Version alignment and clean migration chain", process.execPath, ["src/release-check.mjs"], 30_000);
+    recordQualityDimensions({ unitTestsPassed: unitResult.ok, crossRepoPassed: crossRepoResult.ok, versionPassed: versionResult.ok });
   } else {
     report.warning("Environment", "Smoke-only mode", "Build, static checks, and unit tests were intentionally skipped.");
   }
@@ -51,6 +64,7 @@ async function main() {
   report.warning("External Services", "Search Console production", "Not called; the isolated server runs without Google credentials.");
   report.notTested("Chrome Extension", "Real Chrome Load Unpacked", "Requires a human Chrome profile and an explicit user click.");
   report.notTested("Chrome Extension", "Real Xiaohongshu capture", "Requires a user-selected, already-open note in a real tab.");
+  report.notTested("Search Outcomes", "Rankings, traffic, indexing, and AI citations", "Not verifiable in offline CI and never inferred from schema or content checks.");
   report.warning("Logs", "Node SQLite ExperimentalWarning", "Known Node runtime warning; it is recorded but not treated as a release failure.");
   report.finish();
 }
@@ -105,6 +119,12 @@ async function runIsolatedSmoke() {
     child = null;
     verifyTemporaryDatabase(databasePath);
     report.pass("Database", "Temporary SQLite database", "schema, migrations, capture insert/update/select, foreign keys, and integrity verified");
+    const backup = createBackup({ databasePath, backupDir, sourceUploadsDir: path.join(directory, "source-uploads"),
+      generatedMediaDir: path.join(directory, "generated-media"), retention: 2, codeRevision: "release-gate", reason: "release-gate" });
+    const drill = drillBackup(backup.backupPath);
+    if (drill.drill !== "passed" || drill.externalSideEffects !== false) throw new Error("System snapshot restore drill did not remain offline.");
+    report.pass("Backup", "System snapshot restore drill",
+      `${drill.restored.fileCount} hashed file(s), ${drill.references.length} database reference(s), external side effects disabled`);
     report.pass("Logs", "Server stdout/stderr captured", `${stdout.length} stdout bytes, ${stderr.length} stderr bytes`);
     report.check("Logs", "No fatal server exceptions", () => assertCleanLogs(`${stdout}\n${stderr}`));
   } catch (error) {
@@ -121,6 +141,37 @@ async function runIsolatedSmoke() {
       report.fail("Database", "Temporary database cleanup", error.message || String(error));
     }
   }
+}
+
+function recordQualityDimensions({ unitTestsPassed, crossRepoPassed, versionPassed }) {
+  if (unitTestsPassed && versionPassed) {
+    report.pass("Quality Dimensions", "Schema syntax and contract structure", "Offline schema, migration, and negative-fixture tests executed.");
+    report.pass("Quality Dimensions", "Visible content and factual relationships", "Evidence/provenance validators and content integration fixtures executed.");
+  } else {
+    report.notTested("Quality Dimensions", "Schema syntax and factual relationships", "The required offline test or version gate failed.");
+  }
+  if (crossRepoPassed) report.pass("Quality Dimensions", "CMS/Frontend contract compatibility", `Frontend ${releaseGate.frontend.commitSha} executed.`);
+  else report.notTested("Quality Dimensions", "CMS/Frontend contract compatibility", "The fixed-SHA contract gate failed or was unavailable.");
+  const fixturePath = path.join(root, releaseGate.finalHtmlFixture.path);
+  report.check("Quality Dimensions", "Fixed published HTML fixture", () => {
+    const html = fs.readFileSync(fixturePath, "utf8");
+    const result = validateRenderedHtmlArtifact({
+      html, status: "publish", url: releaseGate.finalHtmlFixture.url, httpStatus: 200,
+      robotsTxt: "User-agent: *\nDisallow: /wp-admin/",
+      sitemapXml: `<urlset><url><loc>${releaseGate.finalHtmlFixture.url}</loc></url></urlset>`,
+      expectedTitle: releaseGate.finalHtmlFixture.title, expectedDescription: releaseGate.finalHtmlFixture.description,
+      fixture: { type: releaseGate.finalHtmlFixture.type, frontendCommitSha: releaseGate.frontend.commitSha },
+    });
+    const variants = compareRenderedVariants({ mobile: html, desktop: html });
+    if (!result.valid || !variants.valid) throw new Error([...result.errors, ...variants.errors].map((item) => item.code).join(", "));
+    report.pass("Quality Dimensions", "content_quality", result.dimensions.content_quality.status);
+    report.pass("Quality Dimensions", "seo_artifact", result.dimensions.seo_artifact.status);
+    report.pass("Quality Dimensions", "structured_data", result.dimensions.structured_data.status);
+    report.pass("Quality Dimensions", "rendered_html", `${result.dimensions.rendered_html.status}; fixed fixture only`);
+    report.pass("Quality Dimensions", "crawler_configuration", result.dimensions.crawler_configuration.status);
+    report.notTested("Quality Dimensions", "production_cost", "No paid model or production request was made by the offline fixture.");
+  });
+  report.notTested("Technical Accessibility", "Production WordPress/theme HTML and crawler response", "Requires a fixed Frontend SHA deployed in a real WordPress/theme environment; the CMS fixture is not production proof.");
 }
 
 async function smokeReadApis(baseUrl) {
@@ -362,6 +413,7 @@ function onceExit(child, milliseconds) {
 
 async function runProcess(command, args, milliseconds) {
   return new Promise((resolve) => {
+    const startedAt = Date.now();
     let child;
     try {
       child = spawn(command, args, {
@@ -372,7 +424,7 @@ async function runProcess(command, args, milliseconds) {
         shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(command),
       });
     } catch (error) {
-      resolve({ ok: false, output: error.message || String(error) });
+      resolve({ ok: false, output: error.message || String(error), durationMs: Date.now() - startedAt });
       return;
     }
     let output = "";
@@ -380,10 +432,10 @@ async function runProcess(command, args, milliseconds) {
     child.stderr.on("data", (chunk) => { output += chunk; });
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      resolve({ ok: false, output: `${output}\nTimed out after ${milliseconds}ms.` });
+      resolve({ ok: false, output: `${output}\nTimed out after ${milliseconds}ms.`, durationMs: Date.now() - startedAt });
     }, milliseconds);
-    child.once("error", (error) => { clearTimeout(timer); resolve({ ok: false, output: `${output}\n${error.message}` }); });
-    child.once("exit", (code) => { clearTimeout(timer); resolve({ ok: code === 0, output }); });
+    child.once("error", (error) => { clearTimeout(timer); resolve({ ok: false, output: `${output}\n${error.message}`, durationMs: Date.now() - startedAt }); });
+    child.once("exit", (code) => { clearTimeout(timer); resolve({ ok: code === 0, output, durationMs: Date.now() - startedAt }); });
   });
 }
 
@@ -431,9 +483,9 @@ class ReleaseReport {
 
   async command(section, name, command, args, milliseconds) {
     const result = await runProcess(command, args, milliseconds);
-    if (result.ok) { this.pass(section, name); return true; }
+    if (result.ok) { this.pass(section, name, `${result.durationMs} ms`); return result; }
     this.fail(section, name, summarize(result.output));
-    return false;
+    return result;
   }
 
   pass(section, name, detail = "") { this.entries.push({ status: "PASS", section, name, detail }); }
@@ -455,11 +507,13 @@ class ReleaseReport {
     }
     const failures = this.entries.filter((entry) => entry.status === "FAIL");
     const warnings = this.entries.filter((entry) => entry.status === "WARNING");
+    const notTested = this.entries.filter((entry) => entry.status === "NOT TESTED");
     const passed = this.entries.filter((entry) => entry.status === "PASS");
     console.log("\n========================================");
-    console.log(failures.length ? "RESULT: NOT READY FOR EXTENSION INTEGRATION" : "RESULT: READY FOR EXTENSION INTEGRATION");
+    console.log(failures.length ? "RESULT: OFFLINE RELEASE GATE FAILED" : "RESULT: OFFLINE RELEASE GATE PASSED");
     console.log(`Mandatory checks: ${passed.length} passed`);
     console.log(`Warnings: ${warnings.length}`);
+    console.log(`Not tested/unconfigured: ${notTested.length}`);
     console.log(`Failures: ${failures.length}`);
     if (failures.length) {
       console.log("\nFAILURES:");

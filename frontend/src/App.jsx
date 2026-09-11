@@ -10,21 +10,19 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, uploadChunk } from "@/lib/api";
+import { classifyRefreshOutcome, createInFlightRequestCoordinator, createLatestRequestCoordinator } from "@/lib/request-coordinator";
 import { cn, friendlyError, label } from "@/lib/utils";
 import { ViewRenderer } from "@/views";
+import { ContentRecovery, QualityIssue } from "@/workspaces/content-recovery";
+import { ContentQualityStatus } from "@/workspaces/content-quality-status";
 
 const endpoints = {
   sources: "/api/sources",
   recommendations: "/api/recommendations",
-  assignments: "/api/editorial-assignments",
-  knowledge: "/api/knowledge",
-  blueprints: "/api/editorial-blueprints",
   content: "/api/content",
-  wordpress: "/api/wordpress/inventory",
+  knowledge: "/api/knowledge",
   commercial: "/api/commercial",
-  exceptions: "/api/exceptions",
-  maintenance: "/api/maintenance",
-  settings: "/api/settings/ai",
+  settings: "/api/settings",
 };
 
 export default function App() {
@@ -42,6 +40,9 @@ export default function App() {
   const [detail, setDetail] = useState({ open: false, type: null, data: null, loading: false });
   const [toast, setToast] = useState({ message: "", error: false });
   const requestSequence = useRef(0);
+  const overviewRequests = useRef(createInFlightRequestCoordinator());
+  const viewRequests = useRef(createInFlightRequestCoordinator());
+  const detailRequests = useRef(createLatestRequestCoordinator());
 
   const showToast = useCallback((message, isError = false) => {
     setToast({ message, error: isError });
@@ -53,30 +54,32 @@ export default function App() {
     return () => clearTimeout(timeout);
   }, [toast]);
 
-  const loadOverview = useCallback(async () => {
-    const [nextHealth, dashboard] = await Promise.all([api("/api/health"), api("/api/dashboard")]);
+  const loadOverview = useCallback(() => overviewRequests.current.run("overview", async ({ signal }) => {
+    const [nextHealth, dashboard] = await Promise.all([api("/api/health", { signal }), api("/api/dashboard", { signal })]);
     setHealth(nextHealth);
     setTotals(dashboard.totals || {});
     setActionCounts(dashboard.actionCounts || {});
-  }, []);
+  }), []);
 
   const loadAuth = useCallback(async () => setAuth(await api("/api/auth/status")), []);
 
-  const loadView = useCallback(async (view, { quiet = false } = {}) => {
+  const loadView = useCallback((view, { quiet = false } = {}) => viewRequests.current.run(view, async ({ signal }) => {
     const sequence = ++requestSequence.current;
     if (!quiet) setLoading(true);
     try {
-      const data = await api(endpoints[view]);
-      if (sequence !== requestSequence.current) return;
+      const data = await api(endpoints[view], { signal });
+      if (sequence !== requestSequence.current) return { ok: false, stale: true };
       setViewData({ ...data, _loadedView: view });
       setError("");
+      return { ok: true, stale: false };
     } catch (caught) {
-      if (sequence !== requestSequence.current) return;
+      if (sequence !== requestSequence.current) return { ok: false, stale: true, error: caught };
       setError(caught.message);
+      return { ok: false, stale: false, error: caught };
     } finally {
       if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }), []);
 
   useEffect(() => {
     void loadAuth().catch((caught) => setError(caught.message));
@@ -99,11 +102,10 @@ export default function App() {
   const refresh = useCallback(async (notify = false) => {
     setRefreshing(true);
     try {
-      await Promise.all([loadOverview(), loadView(activeView, { quiet: true })]);
-      if (notify) showToast("已刷新最新状态");
-    } catch (caught) {
-      setError(caught.message);
-      showToast(caught.message, true);
+      const [overviewResult, viewResult] = await Promise.allSettled([loadOverview(), loadView(activeView, { quiet: true })]);
+      const outcome = classifyRefreshOutcome(overviewResult, viewResult);
+      if (notify) showToast(outcome.message, outcome.state !== "success");
+      return outcome;
     } finally {
       setRefreshing(false);
     }
@@ -162,29 +164,43 @@ export default function App() {
     }
   }, [refresh, showToast]);
 
-  const openGuide = useCallback((guide) => setDetail({ open: true, type: "guide", data: { guide }, loading: false }), []);
+  const closeDetail = useCallback(() => {
+    detailRequests.current.invalidate();
+    setDetail({ open: false, type: null, data: null, loading: false });
+  }, []);
+
+  const openGuide = useCallback((guide) => {
+    detailRequests.current.invalidate();
+    setDetail({ open: true, type: "guide", data: { guide }, loading: false });
+  }, []);
 
   const openContentStrategy = useCallback(async () => {
+    const request = detailRequests.current.begin();
     setDetail({ open: true, type: "strategy", data: null, loading: true });
     try {
-      const data = await api("/api/content-strategy");
+      const data = await api("/api/content-strategy", { signal: request.signal });
+      if (!request.isCurrent()) return;
       setDetail({ open: true, type: "strategy", data, loading: false });
     } catch (caught) {
-      setDetail({ open: false, type: null, data: null, loading: false });
+      if (!request.isCurrent() || caught.name === "AbortError") return;
+      closeDetail();
       showToast(caught.message, true);
     }
-  }, [showToast]);
+  }, [closeDetail, showToast]);
 
   const openPackage = useCallback(async (type, id) => {
+    const request = detailRequests.current.begin();
     setDetail({ open: true, type, data: null, loading: true });
     try {
-      const data = await api(type === "source" ? `/api/sources/${id}` : `/api/drafts/${id}`);
+      const data = await api(type === "source" ? `/api/sources/${id}` : `/api/drafts/${id}`, { signal: request.signal });
+      if (!request.isCurrent()) return;
       setDetail({ open: true, type, data, loading: false });
     } catch (caught) {
-      setDetail({ open: false, type: null, data: null, loading: false });
+      if (!request.isCurrent() || caught.name === "AbortError") return;
+      closeDetail();
       showToast(caught.message, true);
     }
-  }, [showToast]);
+  }, [closeDetail, showToast]);
 
   const openNavigationAction = useCallback((view) => {
     setPendingActionView({ view, requestedAt: Date.now() });
@@ -228,7 +244,7 @@ export default function App() {
         </section>
         <footer className="flex flex-col gap-1 border-t border-slate-200/70 pt-4 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:pt-5"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
       </main>
-      <DetailDialog detail={detail} health={health} actionBusy={actionBusy} onOpenChange={(open) => setDetail((current) => ({ ...current, open }))} onAction={runAction} onClose={() => setDetail({ open: false, type: null, data: null, loading: false })} />
+      <DetailDialog detail={detail} health={health} actionBusy={actionBusy} onOpenChange={(open) => { if (!open) closeDetail(); }} onAction={runAction} onClose={closeDetail} />
       <Toast {...toast} />
     </div>
   );
@@ -302,6 +318,8 @@ function DetailDialog({ detail, health, actionBusy, onOpenChange, onAction, onCl
 
 function SourceDetail({ source, actionBusy, onAction, onClose }) {
   const retry = async () => { if (await onAction(`/api/sources/${source.id}/retry`, { method: "POST" }, "已重新加入提取队列")) onClose(); };
+  const processingEstimate = source.submission_metadata?.processingEstimate;
+  const awaitingManualStart = Boolean(processingEstimate?.requiresManualStart && !source.segments?.length && !source.claims?.length);
   const reviewEvidence = (decision, authorityLevel) => onAction(`/api/sources/${source.id}/evidence-review`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ decision, authorityLevel, note: "在来源详情中完成审核" }),
@@ -309,20 +327,35 @@ function SourceDetail({ source, actionBusy, onAction, onClose }) {
   const originalUrl = /^https?:\/\//.test(source.submitted_url || "") ? source.submitted_url : /^https?:\/\//.test(source.canonical_url || "") ? source.canonical_url : "";
   return <>
     <DialogHeader><Badge variant="info" className="w-max"><FileText className="size-3" /> 来源详情</Badge><DialogTitle>{source.title || "未命名来源"}</DialogTitle><DialogDescription>原始证据、上传文件来源、结构化提取、信息主张和编辑模式均可追溯到当前来源。</DialogDescription></DialogHeader>
-    <div className="mb-4 flex flex-wrap items-center gap-2">{originalUrl && <Button variant="secondary" size="sm" asChild><a href={originalUrl} target="_blank" rel="noreferrer"><ExternalLink /> 打开原文</a></Button>}<Button size="sm" disabled={actionBusy} onClick={retry}><RefreshCw className={cn(actionBusy && "animate-spin")} /> 重新提取</Button><Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => reviewEvidence("verified", 1)}><CheckCircle2 /> 核验为官方来源</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => reviewEvidence("unverified", 4)}>标记为未核验</Button><StatusPill status={source.status} /><Badge variant={source.verified_at ? "success" : "warning"}>权威等级 L{source.authority_level || 4} · {source.verified_at ? "已核验" : "未核验"}</Badge></div>
+    <div className="mb-4 flex flex-wrap items-center gap-2">{originalUrl && <Button variant="secondary" size="sm" asChild><a href={originalUrl} target="_blank" rel="noreferrer"><ExternalLink /> 打开原文</a></Button>}<Button size="sm" disabled={actionBusy} onClick={retry}><RefreshCw className={cn(actionBusy && "animate-spin")} /> {awaitingManualStart ? "开始提取" : "重新提取"}</Button><Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => reviewEvidence("verified", 1)}><CheckCircle2 /> 核验为官方来源</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => reviewEvidence("unverified", 4)}>标记为未核验</Button><StatusPill status={source.status} /><Badge variant={source.verified_at ? "success" : "warning"}>权威等级 L{source.authority_level || 4} · {source.verified_at ? "已核验" : "未核验"}</Badge></div>
     {source.last_error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><strong>处理失败</strong><p className="mt-1 leading-relaxed">{friendlyError(source.last_error)}</p><small>请先修正访问权限、模型配置或来源内容问题，再重新执行提取。</small></div>}
+    {processingEstimate && <DetailCard title="处理规模预估" className="mb-3"><p>预计提取调用 {processingEstimate.estimatedExtractionCalls} 次 · 文本分段 {processingEstimate.textSegments} 个 · 媒体 {processingEstimate.assetCount} 项 · 文件 {(processingEstimate.totalFileBytes / 1024 / 1024).toFixed(2)} MB</p><small>{awaitingManualStart ? `尚未调用模型；请确认范围后手动开始。${processingEstimate.manualStartReasons?.join("；") || ""}` : "仅按技术处理范围估算，不评价内容价值。"}</small></DetailCard>}
+    <div className="mb-3 grid gap-3 md:grid-cols-2"><DetailCard title="媒体原件耐久化"><p>{source.media_manifest?.mediaDurability?.originalsStored || 0} / {source.media_manifest?.mediaDurability?.discovered || 0} 个原件已保存</p><small>状态：{source.media_manifest?.mediaDurability?.status || "等待发现"} · 浏览器修复 {source.media_manifest?.mediaDurability?.browserRepairRequired || 0}</small></DetailCard><DetailCard title={`旅行经验层（${source.experience_blocks?.length || 0}）`}>{source.experience_blocks?.length ? <ul className="space-y-2">{source.experience_blocks.map((block)=><li key={block.id}><strong>{block.title}</strong><small>{label(block.type)} · 序列 {block.sequence.length} · 决策 {block.decision_logic.length} · 证据跨度 {block.evidence_span_ids.length}</small></li>)}</ul>:<p>尚无可追溯 Experience Block；写作者不得编造第一人称经历。</p>}</DetailCard></div>
     <div className="grid gap-3 md:grid-cols-2"><DetailCard title="结构化来源"><p>{source.structured?.summary || "等待提取"}</p><small>目的地：{source.structured?.destination_name || "—"} · 置信度 {source.structured?.confidence ?? "—"}</small></DetailCard><DetailCard title="编辑蓝图"><p>{source.blueprint?.angle === "pending-ai-analysis" ? "等待 AI 分析" : source.blueprint?.angle || "等待提取"}</p><small>{source.blueprint?.format === "unclassified" ? "待分类" : source.blueprint?.format || "—"}</small></DetailCard>{source.files?.length > 0 && <DetailCard title={`原始文件（${source.files.length}）`} className="md:col-span-2"><ul className="space-y-1">{source.files.map((file) => <li key={file.id}><strong className="text-xs text-slate-700">{file.original_filename}</strong><small className="ml-2">{file.mime_type} · {(file.size_bytes / 1024 / 1024).toFixed(2)} MB · SHA-256 {file.sha256.slice(0, 12)}…</small></li>)}</ul></DetailCard>}{source.segments?.length > 0 && <SegmentCoverageList source={source} actionBusy={actionBusy} onAction={onAction} onClose={onClose} />}<DetailCard title={`信息主张（${source.claims.length}）`} className="md:col-span-2">{source.claims.length ? <ul className="space-y-3">{source.claims.map((claim) => <li key={claim.id} className={claim.lifecycle_status === "excluded" ? "opacity-50" : ""}><div className="flex items-start justify-between gap-3"><div><strong className="text-xs text-slate-800">{claim.subject} {claim.predicate}</strong><p>{claim.value_text}</p><small>“{claim.source_quote}”</small></div><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => onAction(`/api/claims/${claim.id}/${claim.lifecycle_status === "excluded" ? "restore" : "exclude"}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "后台人工管理" }) }, claim.lifecycle_status === "excluded" ? "信息主张已恢复" : "信息主张已排除并将重建知识库")}>{claim.lifecycle_status === "excluded" ? "恢复" : "排除"}</Button></div></li>)}</ul> : <p>尚未提取信息主张。</p>}</DetailCard><DetailCard title="原始采集文本" className="md:col-span-2"><pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{source.raw_text}</pre></DetailCard></div>
   </>;
 }
 
 function DraftDetail({ item, health, actionBusy, onAction, onClose }) {
   const { draft, review, commercial_composition: composition } = item;
+  const [seoTitle, setSeoTitle] = useState(draft.seo?.meta_title || draft.title || "");
+  const [seoDescription, setSeoDescription] = useState(draft.meta_description || "");
+  const titleLength = [...seoTitle].length;
+  const descriptionLength = [...seoDescription].length;
   const push = async () => { if (await onAction(`/api/drafts/${draft.id}/wordpress`, { method: "POST" }, "草稿已加入 WordPress 投递队列")) onClose(); };
+  const saveSeo = async () => {
+    if (await onAction(`/api/drafts/${draft.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: seoTitle, meta_description: seoDescription }) }, "SEO 标题与描述已保存，最终检查已重新排队")) onClose();
+  };
+  const retryFailedStage = async (retry) => {
+    if (await onAction(retry.endpoint, { method: "POST" }, `已只重试失败阶段：${retry.stage}`)) onClose();
+  };
   return <>
     <DialogHeader><Badge variant="info" className="w-max"><Layers3 className="size-3" /> 文章草稿 · 修订版 {draft.revision}</Badge><DialogTitle>{draft.title}</DialogTitle><DialogDescription>面向读者的正文与内部证据台账、商业内容层保持分离。</DialogDescription></DialogHeader>
     <div className="mb-4 flex flex-wrap items-center gap-2"><StatusPill status={draft.status} /><Badge>质量审核 {review ? `${Math.round(review.score)} / 100` : "待处理"}</Badge>{review?.passed && health?.wordpressConfigured && draft.status === "ready_for_wordpress" && <Button size="sm" disabled={actionBusy} onClick={push}><Send /> 发送到 WordPress 草稿箱</Button>}</div>
-    {review?.issues?.length > 0 && <DetailCard title="质量审核问题" className="mb-3 border-amber-200 bg-amber-50/40"><ul className="space-y-2">{review.issues.map((issue, index) => <li key={`${issue.message}-${index}`} className="text-xs text-amber-900"><strong>{label(issue.severity)}：</strong> {issue.message}</li>)}</ul></DetailCard>}
-    <div className="grid gap-3"><DetailCard title="读者正文（Markdown）"><pre className="max-h-[420px] overflow-auto whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">{draft.body_markdown}</pre></DetailCard><DetailCard title="SEO / GEO 信息包"><p><strong>页面标题：</strong> {draft.seo?.meta_title || draft.title}</p><p><strong>核心关键词：</strong> {draft.seo?.focus_keyword || "待处理"}</p><p><strong>核心要点：</strong> {draft.seo?.key_takeaways?.length || 0} · <strong>常见问题：</strong> {draft.seo?.faqs?.length || 0} · <strong>JSON-LD：</strong> {draft.schema_jsonld?.["@graph"]?.length || 0} 个实体</p></DetailCard><DetailCard title={`原创配图计划（${draft.visuals?.length || 0}）`}><ul className="space-y-2">{(draft.visuals || []).map((visual) => <li key={visual.id} className="rounded-lg bg-slate-50 px-3 py-2"><div className="flex items-center justify-between gap-3"><strong>{label(visual.placement)}</strong><StatusPill status={visual.status} /></div><p className="mt-1">{visual.alt_text}</p>{visual.media_url && <a className="mt-1 inline-block text-[11px] text-blue-600 hover:underline" href={visual.media_url} target="_blank" rel="noreferrer">打开生成图片</a>}</li>)}</ul></DetailCard><DetailCard title="内部证据台账"><p>{draft.evidence_ledger.length} 个已映射章节 · {draft.unresolved_conflicts.length} 项未解决冲突 · {draft.verification_notes.length} 项时效性核验备注</p></DetailCard><DetailCard title="商业内容层"><p>{composition ? `${composition.offer_ids.length} 个商品 · ${label(composition.status)}` : "等待编排"}</p>{composition?.status === "composed" && <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-slate-600">{composition.publishable_body_markdown.slice(draft.body_markdown.length).trim()}</pre>}</DetailCard></div>
+    <ContentRecovery candidateId={item.candidate?.id} onAction={onAction} actionBusy={actionBusy} />
+    <ContentQualityStatus operation={item.operation} actionBusy={actionBusy} onRetry={retryFailedStage} onAction={onAction} />
+    <DetailCard title="编辑反馈与金标" className="mb-3"><div className="flex flex-wrap gap-2">{["满意","AI味重","太啰嗦","信息太平","像数据库","结构不好","很好"].map((feedback)=><Button key={feedback} size="sm" variant="outline" disabled={actionBusy} onClick={()=>onAction(`/api/drafts/${draft.id}/editorial-feedback`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({feedback})},`已记录“${feedback}”，后续组装与叙事规划会参考。`)}>{feedback}</Button>)}<Button size="sm" disabled={actionBusy} onClick={()=>onAction(`/api/drafts/${draft.id}/golden`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({principles:["evidence-led","concise","traveler-decision-focused"]})},"已标记为金标文章。")}>标记金标</Button></div></DetailCard>
+    {review?.issues?.length > 0 && <DetailCard title="质量审核问题" className="mb-3 border-amber-200 bg-amber-50/40"><ul className="space-y-2">{review.issues.map((issue, index) => <li key={`${issue.message}-${index}`} className="text-xs text-amber-900"><QualityIssue issue={issue} /></li>)}</ul></DetailCard>}
+    <div className="grid gap-3"><DetailCard title="读者正文（Markdown）"><pre className="max-h-[420px] overflow-auto whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">{draft.body_markdown}</pre></DetailCard><DetailCard title="SEO / GEO 编辑预览"><label className="block text-xs font-semibold text-slate-700">页面标题<input className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-normal" value={seoTitle} maxLength={200} onChange={(event) => setSeoTitle(event.target.value)} /></label><p className={titleLength > 60 ? "text-amber-700" : "text-slate-500"}>{titleLength} 个字符{titleLength > 60 ? " · 超出编辑建议长度，请人工判断，不会机械截断" : " · 在编辑建议范围内"}</p><label className="mt-3 block text-xs font-semibold text-slate-700">页面描述<textarea className="mt-1 min-h-20 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-normal" value={seoDescription} maxLength={500} onChange={(event) => setSeoDescription(event.target.value)} /></label><p className={descriptionLength > 160 ? "text-amber-700" : "text-slate-500"}>{descriptionLength} 个字符{descriptionLength > 160 ? " · 超出编辑建议长度，请人工判断，不会机械截断" : " · 在编辑建议范围内"}</p><p className="mt-2 text-[11px] text-slate-500">仅供编辑预览；搜索引擎可能改写或截断标题与描述，不承诺展示方式或点击率。</p><div className="mt-3 flex items-center gap-2"><Button size="sm" variant="outline" disabled={actionBusy || !seoTitle.trim() || !seoDescription.trim()} onClick={saveSeo}>保存并重新检查</Button><span className="text-[11px] text-slate-500">正文与证据提取不会重跑。</span></div><p className="mt-3"><strong>核心关键词：</strong> {draft.seo?.focus_keyword || "待处理"}</p><p><strong>核心要点：</strong> {draft.seo?.key_takeaways?.length || 0} · <strong>常见问题：</strong> {draft.seo?.faqs?.length || 0} · <strong>JSON-LD：</strong> {draft.schema_jsonld?.["@graph"]?.length || 0} 个实体</p></DetailCard><DetailCard title={`原创配图计划（${draft.visuals?.length || 0}）`}><ul className="space-y-2">{(draft.visuals || []).map((visual) => <li key={visual.id} className="rounded-lg bg-slate-50 px-3 py-2"><div className="flex items-center justify-between gap-3"><strong>{label(visual.placement)}</strong><StatusPill status={visual.status} /></div><p className="mt-1">{visual.alt_text}</p>{visual.media_url && <a className="mt-1 inline-block text-[11px] text-blue-600 hover:underline" href={visual.media_url} target="_blank" rel="noreferrer">打开生成图片</a>}</li>)}</ul></DetailCard><DetailCard title="内部证据台账"><p>{draft.evidence_ledger.length} 个已映射章节 · {draft.unresolved_conflicts.length} 项未解决冲突 · {draft.verification_notes.length} 项时效性核验备注</p></DetailCard><DetailCard title="商业内容层"><p>{composition ? `${composition.offer_ids.length} 个商品 · ${label(composition.status)}` : "等待编排"}</p>{composition?.status === "composed" && <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-slate-600">{composition.publishable_body_markdown.slice(draft.body_markdown.length).trim()}</pre>}</DetailCard></div>
   </>;
 }
 
@@ -357,7 +390,7 @@ const guides = {
   capture: { icon: AppWindow, title: "采集第一个来源", description: "来源发现由人工主导；扩展只读取你明确打开并保存的笔记。", steps: ["在 Chrome 扩展程序页面以“加载已解压的扩展程序”方式加载仓库中的 extension/ 文件夹。", "打开一篇你已筛选的小红书笔记。", "点击“保存当前笔记”，该来源会自动进入提取流程。"], code: "引擎地址：http://127.0.0.1:4310" },
   ai: { icon: KeyRound, title: "启用 AI 内容提取", description: "在服务器环境中配置 AI 提供商后重启引擎；已经排队等待 AI 的采集内容不会丢失。", steps: ["在 .env 或进程环境中设置所需的 API 配置。", "可在“系统设置”中选择当前可用的图文处理模型。", "从页面顶部的状态标记确认当前启用的模型。"], code: "$env:KIMI_API_KEY = \"your-kimi-key\"\n$env:AI_MODEL = \"kimi-k3\"\nnpm start" },
   wordpress: { icon: Settings2, title: "连接 WordPress", description: "使用最小权限的 WordPress 应用程序密码。引擎只创建草稿，不会直接发布。", steps: ["在 WordPress 中为编辑账号创建应用程序密码。", "在引擎环境中设置站点地址、用户名和应用程序密码。", "重启引擎，文章库存会自动开始同步。"], code: "WORDPRESS_SITE_URL=https://example.com\nWORDPRESS_USERNAME=editor\nWORDPRESS_APPLICATION_PASSWORD=xxxx xxxx xxxx" },
-  commercial: { icon: TicketCheck, title: "配置联盟营销资产", description: "提供商账号和可复用资产与研究、知识、规划及质量审核流程隔离。", steps: ["创建 MANUAL 类型的 Trip.com 提供商；不要保存后台凭证或 Cookie。", "只将官方链接或结构化嵌入配置填入联盟资产登记表。", "按目的地、区域、路线或精选实体映射资产；精确资产缺失时会按既有规则回退。"], code: "POST /api/commercial/providers\nPOST /api/commercial/assets\nAuthorization: Bearer <ADMIN_TOKEN>" },
+  commercial: { icon: TicketCheck, title: "配置联盟营销资产", description: "提供商账号和可复用资产与研究、知识、文章创建及质量审核流程隔离。", steps: ["创建 MANUAL 类型的 Trip.com 提供商；不要保存后台凭证或 Cookie。", "只将官方链接或结构化嵌入配置填入联盟资产登记表。", "按目的地、区域、路线或精选实体映射资产；精确资产缺失时会按既有规则回退。"], code: "POST /api/commercial/providers\nPOST /api/commercial/assets\nAuthorization: Bearer <ADMIN_TOKEN>" },
 };
 
 function GuideContent({ guide }) {
@@ -372,7 +405,7 @@ function ContentStrategyDetail({ strategy }) {
   const steps = [
     ["人工选源", "只保存你已打开并明确选择的小红书笔记；不自动搜索、翻页或抓取。"],
     ["事实与建议", "系统提取可追溯的 信息主张和知识事实，再给出唯一的推荐下一步；不会自行发布文章。"],
-    ["人工批准", "只有“批准文章”会启动内容规划；证据不足、重复或冲突会优先留在知识层或补充研究。"],
+    ["人工批准", "只有“批准文章”会启动文章创建；证据不足、重复或冲突会优先留在知识层或补充研究。"],
     ["英文内容生产", "基于已验证事实生成面向国际自由行游客的原创英文草稿，并附 SEO / GEO、FAQ 和 Schema.org 包。"],
     ["质量与草稿发布", "通过证据、冲突、图片和结构化数据检查后，才写入 WordPress 草稿，最终发布仍由你决定。"],
   ];
@@ -385,7 +418,7 @@ function ContentStrategyDetail({ strategy }) {
     <div className="space-y-4">
       <section className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">运行路径</p>
-        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-800"><span>人工采集</span><span className="text-slate-300">→</span><span>结构化事实</span><span className="text-slate-300">→</span><span>建议与人工决定</span><span className="text-slate-300">→</span><span>内容规划</span><span className="text-slate-300">→</span><span>QA</span><span className="text-slate-300">→</span><span>WordPress 草稿</span></div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-800"><span>人工采集</span><span className="text-slate-300">→</span><span>结构化事实</span><span className="text-slate-300">→</span><span>建议与人工决定</span><span className="text-slate-300">→</span><span>文章创建</span><span className="text-slate-300">→</span><span>质量审核</span><span className="text-slate-300">→</span><span>WordPress 草稿</span></div>
       </section>
       <ol className="space-y-3">{steps.map(([title, description], index) => <li className="flex gap-3" key={title}><span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-900 text-[10px] font-semibold text-white">{index + 1}</span><div><h3 className="text-xs font-semibold text-slate-900">{title}</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{description}</p></div></li>)}</ol>
       <section className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-950"><b>图片策略：</b>你人工筛选并保存的笔记图片已标记为授权发布素材。文章证据引用同一来源且图片支持对应场景时，实景图会优先进入 WordPress 草稿；其余视觉槽位再使用已验证数据的地图、信息图或无事实断言的原创插画。</section>

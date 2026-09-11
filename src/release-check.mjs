@@ -2,13 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { openDatabase } from "./db.mjs";
+import { openDatabase, SCHEMA_VERSION } from "./db.mjs";
 import { VERSION } from "./version.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "extension", "manifest.json"), "utf8"));
+const releaseGate = JSON.parse(fs.readFileSync(path.join(root, "config", "release-gate.json"), "utf8"));
 if (packageJson.version !== VERSION || manifest.version !== VERSION) {
   throw new Error(`Release versions must all be ${VERSION} (package=${packageJson.version}, extension=${manifest.version}).`);
 }
@@ -18,6 +19,9 @@ const handoffPath = path.join(root, "docs", "HANDOFF.md");
 const frontendContractDocument = path.join(root, "docs", "FRONTEND_CONTRACT_INTEGRATION.md");
 const strategyText = fs.readFileSync(strategyDocument, "utf8");
 const handoffText = fs.readFileSync(handoffPath, "utf8");
+const changelogText = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
+const deploymentText = fs.readFileSync(path.join(root, "deployment", "gce", "startup.sh"), "utf8");
+const workflowText = fs.readFileSync(path.join(root, ".github", "workflows", "release-gate.yml"), "utf8");
 const dashboardSource = fs.readFileSync(path.join(root, "frontend", "src", "components", "dashboard.jsx"), "utf8");
 const contentViewSource = fs.readFileSync(path.join(root, "frontend", "src", "views.jsx"), "utf8");
 const serverSource = fs.readFileSync(path.join(root, "src", "server.mjs"), "utf8");
@@ -30,6 +34,23 @@ if (!CONTENT_STRATEGY.history.some((entry) => entry.version === CONTENT_STRATEGY
 }
 if (!handoffText.includes(`Content Production Strategy ${CONTENT_STRATEGY.version}`) || !handoffText.includes("config/content-strategy.json")) {
   throw new Error("Handoff does not reference the active strategy manifest and version.");
+}
+if (!handoffText.includes(`App/Extension version \`${VERSION}\`, schema migration \`${SCHEMA_VERSION}\`, and Content Strategy \`${CONTENT_STRATEGY.version}\``)) {
+  throw new Error("Handoff baseline does not match the app, migration, and Content Strategy versions.");
+}
+if (!new RegExp(`^## ${VERSION.replaceAll(".", "\\.")} - Unreleased\\b`, "m").test(changelogText)) {
+  throw new Error(`CHANGELOG must identify ${VERSION} as the current unreleased version without inventing a release date.`);
+}
+if (!deploymentText.includes(`engine:${VERSION}`)) throw new Error(`Deployment image is not pinned to app version ${VERSION}.`);
+if (!/^[a-f0-9]{40}$/.test(releaseGate.frontend?.commitSha || "")) throw new Error("Release gate requires a fixed 40-character Frontend commit SHA.");
+if (!deploymentText.includes(`FRONTEND_CONTRACT_COMMIT_SHA=${releaseGate.frontend.commitSha}`)) {
+  throw new Error("Deployment and release gate Frontend commit SHAs differ.");
+}
+if (!workflowText.includes(`ref: ${releaseGate.frontend.commitSha}`) || !workflowText.includes("node-version: 24") || !workflowText.includes("npm run release:check")) {
+  throw new Error("CI workflow does not enforce the fixed Frontend SHA, Node 24, and consolidated release gate.");
+}
+if (Number.parseInt(packageJson.engines?.node?.match(/\d+/)?.[0] || "0", 10) < releaseGate.nodeMajor) {
+  throw new Error(`package.json must require Node ${releaseGate.nodeMajor}+.`);
 }
 if (!dashboardSource.includes("health?.contentStrategy")) {
   throw new Error("Admin UI does not consume Content Strategy metadata from the backend.");
@@ -46,15 +67,17 @@ try {
   const database = openDatabase(path.join(directory, "release.sqlite"));
   try {
     const versions = database.prepare("SELECT version FROM schema_migrations ORDER BY version").all().map((row) => row.version);
-    if (versions.join(",") !== Array.from({ length: 38 }, (_, index) => index + 1).join(",")) throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
+    if (versions.join(",") !== Array.from({ length: SCHEMA_VERSION }, (_, index) => index + 1).join(",")) throw new Error(`Unexpected migration chain: ${versions.join(",")}`);
     for (const [table, column] of [
       ["content_intake_analyses", "strategy_version"], ["content_recommendations", "strategy_version"],
       ["content_opportunities", "strategy_version"], ["topic_candidates", "strategy_version"],
       ["content_briefs", "strategy_version"], ["content_briefs", "canonical_json"],
       ["article_drafts", "strategy_version"], ["article_drafts", "content_blocks_json"],
+      ["article_drafts", "content_ast_json"],
       ["quality_reviews", "strategy_version"], ["wordpress_publications", "strategy_version"],
       ["article_visuals", "strategy_version"], ["article_visuals", "image_type"], ["article_visuals", "acquisition_strategy"],
       ["article_visuals", "source_asset_id"], ["article_visuals", "source_remote_url"],
+      ["article_visuals", "media_metadata_json"],
       ["claims", "structured_value_json"], ["claims", "scope_json"], ["claims", "entity_type"],
       ["claims", "extraction_run_id"], ["claims", "extraction_revision"], ["claims", "claim_role"], ["claims", "knowledge_eligible"],
       ["claims", "evidence_span_ids_json"], ["claims", "lifecycle_status"], ["claims", "source_authority_level"],
@@ -67,7 +90,25 @@ try {
       ["frontend_contract_snapshots", "publish_package_schema_json"], ["wordpress_publications", "delivery_mode"],
       ["article_drafts", "content_hash"], ["quality_reviews", "draft_content_hash"],
       ["jobs", "lease_expires_at"], ["frontend_contract_snapshots", "artifact_checksum"],
+      ["jobs", "execution_route"], ["jobs", "failure_class"], ["jobs", "batch_attempts"], ["jobs", "next_eligible_at"],
+      ["vertex_batch_runs", "provider"], ["vertex_batch_runs", "schema_hash"], ["vertex_batch_runs", "config_digest"],
+      ["jobs", "lease_generation"], ["vertex_batch_runs", "preparation_lease_expires_at"],
+      ["sources", "date_kind"], ["sources", "valid_from"], ["sources", "valid_to"],
+      ["claims", "date_kind"], ["claims", "valid_from"], ["claims", "valid_to"],
+      ["knowledge_facts", "validity_state"],
+      ["sources", "submitted_by"], ["sources", "source_publisher"], ["sources", "source_identity"],
+      ["sources", "source_version_identity"], ["sources", "original_url"], ["sources", "final_url"],
       ["content_opportunities", "lifecycle_action"], ["editorial_assignments", "evaluation_json"],
+      ["editorial_assignments", "assignment_type_source"], ["editorial_assignments", "classification_json"],
+      ["frontend_publish_compositions", "page_content_hash"], ["frontend_publish_compositions", "seo_artifact_hash"],
+      ["commercial_compositions", "overlay_version"], ["commercial_events", "article_revision"],
+      ["commercial_events", "overlay_version"], ["commercial_events", "event_source"],
+      ["commercial_events", "conversion_data_status"],
+      ["source_assets", "durability_status"], ["source_assets", "ai_readability_status"],
+      ["source_assets", "repair_status"], ["jobs", "priority"], ["jobs", "production_attempt_id"],
+      ["content_opportunities", "lifecycle_state"], ["content_opportunities", "seo_action"],
+      ["content_opportunities", "last_failure_lesson_id"], ["content_opportunities", "previous_failure_json"],
+      ["golden_articles", "title"], ["golden_articles", "snapshot_json"],
     ]) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
       if (!columns.includes(column)) throw new Error(`${table}.${column} is required for Content Strategy governance.`);
@@ -88,6 +129,14 @@ try {
       "commercial_slots", "affiliate_opportunities", "commercial_events", "commission_rules"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for Entity, Claim, or Commercial Phase 1.`);
     }
+    for (const table of ["draft_revisions", "content_operation_history"]) {
+      if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for resumable content operations.`);
+    }
+    for (const table of ["source_media_backfill_runs", "system_backfill_runs", "experience_extraction_runs", "experience_blocks",
+      "editorial_assemblies", "narrative_plans", "writing_packets", "failure_lessons", "production_rollbacks",
+      "editorial_lessons", "golden_articles", "published_content_impacts"]) {
+      if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required by Content Strategy 3.0.`);
+    }
     for (const table of ["source_evidence_reviews", "app_sessions", "model_call_metrics", "capture_versions", "favorites_sync_runs"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required by the audited release.`);
     }
@@ -100,4 +149,4 @@ try {
   fs.rmSync(directory, { recursive: true, force: true });
 }
 
-console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-38, and SQLite integrity.`);
+console.log(`Release check passed: app version alignment, Content Strategy ${CONTENT_STRATEGY.version} governance, migrations 1-${SCHEMA_VERSION}, and SQLite integrity.`);

@@ -12,7 +12,7 @@ test("migration 38 stores auditable automated evidence consensus", (t) => {
     db.close();
     fs.rmSync(directory, { recursive: true, force: true });
   });
-  assert.equal(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 38);
+  assert.ok(db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version >= 38);
   const columns = new Set(db.prepare("PRAGMA table_info(knowledge_facts)").all().map((row) => row.name));
   assert.ok(columns.has("consensus_method"));
   assert.ok(columns.has("consensus_confidence"));

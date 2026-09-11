@@ -106,11 +106,11 @@ export function createSession({ scope, mode = "incremental", settings = {}, chec
   const config = normalizeSettings(settings);
   return {
     sessionId: crypto.randomUUID(), scopeKey: scope.key, scopeUrl: scope.url, scopeLabel: scope.label || "Xiaohongshu favorites",
-    mode: mode === "full" ? "full" : "incremental", startedAt: now, updatedAt: now, status: "running", phase: "discovery",
+    mode: ["incremental", "repair", "full"].includes(mode) ? mode : "incremental", startedAt: now, updatedAt: now, status: "running", phase: "discovery",
     queue: [], activeTasks: [], seenIdentityKeys: [], cursor: { scannedWindows: 0, scrollY: 0, collectionEnd: false, collectionEndStreak: 0 },
     checkpoint: checkpoint || { topIdentityKeys: [], lastSuccessfulSyncAt: null },
     scan: { consecutiveKnown: 0, checkpointSeen: false, reliableCheckpoint: Boolean(checkpoint?.topIdentityKeys?.length) },
-    stats: { discovered: 0, known: 0, new: 0, captured: 0, duplicate: 0, failed: 0, retrying: 0 },
+    stats: { discovered: 0, known: 0, new: 0, repair: 0, captured: 0, duplicate: 0, failed: 0, retrying: 0 },
     config, concurrency: initialConcurrency(config), concurrencySamples: [], lastError: null,
   };
 }
@@ -199,15 +199,23 @@ export function applyIdentityBatch(sessionInput, cardsInput, identityResults = [
     topKeys.push(card.identityKey);
     const identity = byExternalId.get(card.externalId) || byUrl.get(card.canonicalUrl) || { known: false };
     session.stats.discovered += 1;
-    if (identity.known) {
+    const repairActions = Array.isArray(identity.requiredActions) ? identity.requiredActions : [];
+    const needsBrowserCapture = Boolean(identity.sourceExists && repairActions.some((action) =>
+      ["BROWSER_MEDIA_REPAIR", "RECAPTURE_TEXT_DOM", "VERIFY_MEDIA_ORIGINALS"].includes(action)));
+    const shouldQueue = session.mode === "repair" ? needsBrowserCapture
+      : session.mode === "full" ? (!identity.sourceExists || needsBrowserCapture)
+        : !identity.known;
+    if (!shouldQueue) {
       session.stats.known += 1;
       session.scan.consecutiveKnown += 1;
       if ((session.checkpoint?.topIdentityKeys || []).includes(card.identityKey)) session.scan.checkpointSeen = true;
     } else {
-      session.stats.new += 1;
+      if (needsBrowserCapture) session.stats.repair = Number(session.stats.repair || 0) + 1;
+      else session.stats.new += 1;
       windowNew += 1;
       session.scan.consecutiveKnown = 0;
-      session.queue.push({ ...card, taskId: crypto.randomUUID(), status: "queued", attempts: 0, retryAt: null, error: null });
+      session.queue.push({ ...card, repairActions, sourceId:identity.sourceId || null,
+        taskId: crypto.randomUUID(), status: "queued", attempts: 0, retryAt: null, error: null });
     }
   }
   session.seenIdentityKeys = [...existing];
@@ -224,7 +232,7 @@ export function applyIdentityBatch(sessionInput, cardsInput, identityResults = [
 
 export function shouldStopDiscovery(session) {
   const confirmedCollectionEnd = Boolean(session.cursor?.collectionEnd && Number(session.cursor?.collectionEndStreak || 0) >= 2);
-  if (session.mode === "full") return confirmedCollectionEnd;
+  if (["repair", "full"].includes(session.mode)) return confirmedCollectionEnd;
   if (confirmedCollectionEnd) return true;
   return Boolean(session.scan?.checkpointSeen && session.scan?.reliableCheckpoint
     && session.scan?.consecutiveKnown >= session.config.stopAfterConsecutiveKnown

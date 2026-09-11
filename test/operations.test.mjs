@@ -8,6 +8,7 @@ import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { openDatabase } from "../src/db.mjs";
 import { createLogger } from "../src/logger.mjs";
 import { ExceptionNotifier } from "../src/notifications.mjs";
+import { Pipeline } from "../src/pipeline.mjs";
 import { Repository } from "../src/repository.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
@@ -97,6 +98,31 @@ test("startup queues only destinations whose Knowledge is older than active Clai
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='rebuild_knowledge' AND entity_id='chongqing'").get().count, 1);
 });
 
+test("approved-opportunity startup reconciliation rebuilds coverage once per destination", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const timestamp = new Date().toISOString();
+  const insert = db.prepare(`INSERT INTO content_opportunities(
+    id,destination_slug,topic_key,strategy_version,title,readiness_score,status,created_at,updated_at
+  ) VALUES (?,?,?,?,?,?,?,?,?)`);
+  insert.run("op-cq-1", "chongqing", "chongqing:route-1", "2.0", "Route one", 40,
+    "approved_waiting_for_evidence", timestamp, timestamp);
+  insert.run("op-cq-2", "chongqing", "chongqing:route-2", "2.0", "Route two", 50,
+    "approved_waiting_for_evidence", timestamp, timestamp);
+  insert.run("op-cq-ready", "chongqing", "chongqing:route-3", "2.0", "Route three", 100,
+    "approved_ready", timestamp, timestamp);
+  insert.run("op-bj-1", "beijing", "beijing:route-1", "2.0", "Beijing route", 40,
+    "approved_waiting_for_evidence", timestamp, timestamp);
+
+  const rebuilt = [];
+  const reconciled = [];
+  repository.rebuildCoverageMatrices = (slug) => rebuilt.push(slug);
+  repository.reconcileApprovedOpportunity = (id) => { reconciled.push(id); return { candidateId: id, queued: false }; };
+
+  repository.reconcileApprovedOpportunities();
+  assert.deepEqual(rebuilt.sort(), ["beijing", "chongqing"]);
+  assert.deepEqual(reconciled.sort(), ["op-bj-1", "op-cq-1", "op-cq-2", "op-cq-ready"]);
+});
+
 test("a new Claim classifier revision rechecks pending reviews once at startup", (t) => {
   const { db, repository } = repositoryFixture(t);
   const source = repository.saveCapture(normalizeXiaohongshuCapture({
@@ -155,6 +181,138 @@ test("repository construction cannot steal a live job and only an expired lease 
   }
 });
 
+test("a worker can release only its own running jobs during graceful shutdown", (t) => {
+  const { db } = repositoryFixture(t);
+  const owner = new Repository(db, { workerId: "worker-owner" });
+  const peer = new Repository(db, { workerId: "worker-peer" });
+  const ownerJob = owner.enqueue("rebuild_editorial", "owned");
+  owner.claimJob();
+  const peerJob = peer.enqueue("rebuild_editorial", "peer");
+  peer.claimJob();
+
+  assert.equal(owner.releaseOwnedJobs(), 1);
+  assert.deepEqual({ ...db.prepare("SELECT status,locked_by FROM jobs WHERE id=?").get(ownerJob) },
+    { status: "queued", locked_by: null });
+  assert.deepEqual({ ...db.prepare("SELECT status,locked_by FROM jobs WHERE id=?").get(peerJob) },
+    { status: "running", locked_by: "worker-peer" });
+});
+
+test("pipeline periodically recovers leases that expire after process startup", async (t) => {
+  const calls = { jobs: 0, batches: 0, claims: 0 };
+  const repository = {
+    recoverExpiredJobs() { calls.jobs += 1; return calls.jobs === 2 ? 1 : 0; },
+    recoverPreparingVertexBatches() { calls.batches += 1; return 0; },
+    claimJob() { calls.claims += 1; return null; },
+  };
+  const pipeline = new Pipeline(repository, { batchEnabled: false }, {
+    pollMs: 60_000,
+    maxConcurrent: 1,
+    recoveryIntervalMs: 1_000,
+  });
+  t.after(() => pipeline.stop());
+
+  pipeline.start();
+  assert.equal(calls.jobs, 1);
+  pipeline.nextRecoveryAt = 0;
+  pipeline.pump();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.jobs, 2);
+  assert.equal(calls.batches, 2);
+  assert.ok(calls.claims >= 1);
+});
+
+test("pipeline shutdown aborts active work and releases the current worker leases", () => {
+  let released = 0;
+  const repository = { releaseOwnedJobs() { released += 1; return 2; } };
+  const pipeline = new Pipeline(repository, { batchEnabled: false });
+  const controller = new AbortController();
+  pipeline.activeAbortControllers.add(controller);
+
+  pipeline.stop();
+  assert.equal(controller.signal.aborted, true);
+  assert.equal(released, 1);
+});
+
+test("a stale lease generation cannot complete, fail, or mutate the reclaimed entity", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-fence-test-"));
+  const database = openDatabase(path.join(directory, "fence.sqlite"));
+  let current = new Date("2026-09-10T02:00:00.000Z");
+  try {
+    const sourceRepository = new Repository(database, { workerId: "worker-a", jobLeaseMs: 30_000, clock: () => current });
+    const source = sourceRepository.saveCapture(normalizeXiaohongshuCapture({
+      url: "https://www.xiaohongshu.com/explore/444444444444444444444444", title: "Fenced source",
+      text: "A complete source used to verify monotonic lease fencing across worker recovery.", images: [],
+    }));
+    database.prepare("DELETE FROM jobs").run();
+    const jobId = sourceRepository.enqueue("extract_source", source.id);
+    const stale = sourceRepository.claimJob();
+    assert.equal(stale.lease_generation, 1);
+    current = new Date(current.getTime() + 31_000);
+    const owner = new Repository(database, { workerId: "worker-b", jobLeaseMs: 30_000, clock: () => current });
+    assert.equal(owner.recoverExpiredJobs(), 1);
+    const live = owner.claimJob();
+    assert.equal(live.lease_generation, 2);
+    assert.equal(sourceRepository.completeJob(jobId, stale.locked_by, stale.lease_generation), false);
+    assert.equal(sourceRepository.failJob(stale, Object.assign(new Error("stale worker failure"), { retryable: false })), false);
+    assert.equal(database.prepare("SELECT status FROM sources WHERE id=?").get(source.id).status, "processing");
+    assert.deepEqual({ ...database.prepare("SELECT status,locked_by,lease_generation FROM jobs WHERE id=?").get(jobId) },
+      { status: "running", locked_by: "worker-b", lease_generation: 2 });
+    assert.equal(owner.completeJob(jobId, live.locked_by, live.lease_generation), true);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("heartbeat ownership loss aborts the model call and prevents stale extraction writes", async (t) => {
+  const { db, repository } = repositoryFixture(t, { workerId: "worker-a", jobLeaseMs: 30_000 });
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/555555555555555555555555", title: "Abort source",
+    text: "A complete source used to prove heartbeat loss cancels ongoing model work before persistence.", images: [],
+  }));
+  db.prepare("DELETE FROM jobs").run();
+  const [segment] = repository.prepareSourceSegments(source.id);
+  const jobId = repository.enqueue("extract_segment_claims", segment.id);
+  let aborted = false;
+  const extractor = {
+    batchEnabled: false, config: {},
+    async extract(_pack, { signal }) {
+      setTimeout(() => db.prepare("UPDATE jobs SET locked_by='worker-b',lease_generation=lease_generation+1 WHERE id=?").run(jobId), 0);
+      return new Promise((resolve, reject) => signal.addEventListener("abort", () => {
+        aborted = true;
+        reject(signal.reason);
+      }, { once: true }));
+    },
+  };
+  const pipeline = new Pipeline(repository, extractor, { maxConcurrent: 1, heartbeatIntervalMs: 5 });
+  assert.equal(await pipeline.runOne(), false);
+  assert.equal(aborted, true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM segment_extractions WHERE segment_id=?").get(segment.id).count, 0);
+  const stored = db.prepare("SELECT status,locked_by,lease_generation,last_error FROM jobs WHERE id=?").get(jobId);
+  assert.equal(stored.status, "running");
+  assert.equal(stored.locked_by, "worker-b");
+  assert.equal(stored.lease_generation, 2);
+  assert.equal(stored.last_error, null);
+});
+
+test("startup recovery leaves a live Batch preparation lease alone and reclaims only expiry", (t) => {
+  let current = new Date("2026-09-10T03:00:00.000Z");
+  const { db, repository } = repositoryFixture(t, { workerId: "worker-a", jobLeaseMs: 30_000, clock: () => current });
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/666666666666666666666666", title: "Preparing source",
+    text: "A complete source used to verify preparation lease recovery behavior.", images: [],
+  }));
+  db.prepare("DELETE FROM jobs").run();
+  const [segment] = repository.prepareSourceSegments(source.id);
+  repository.enqueue("extract_segment_claims", segment.id);
+  const run = repository.reserveVertexBatchJobs({ minimum: 1, maximum: 1 });
+  assert.equal(repository.recoverPreparingVertexBatches(), 0);
+  assert.equal(db.prepare("SELECT status FROM vertex_batch_runs WHERE id=?").get(run.id).status, "preparing");
+  current = new Date(current.getTime() + 31_000);
+  assert.equal(repository.recoverPreparingVertexBatches(), 1);
+  assert.equal(db.prepare("SELECT status FROM vertex_batch_runs WHERE id=?").get(run.id).status, "failed");
+});
+
 test("deterministic Contract failures do not enter the automatic retry loop", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-contract-failure-"));
   const database = openDatabase(path.join(directory, "failure.sqlite"));
@@ -204,15 +362,21 @@ test("provider quota exhaustion pauses AI claiming without rewriting the whole v
     repository.completeJob(housekeepingId);
     current = new Date(repository.providerBackoffUntil + 1);
     const secondLimited = repository.claimJob();
-    assert.equal(secondLimited.id, contentId);
+    assert.equal(secondLimited.id, waitingId);
     repository.failJob(secondLimited, error);
-    const secondDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(contentId).available_at) - current.getTime();
+    const secondDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(waitingId).available_at) - current.getTime();
     assert.ok(secondDelayMs >= 7_500 && secondDelayMs < 13_000);
 
     for (let index = 0; index < 5; index += 1) repository.recordModelCall({
       stage: "test", provider: "vertex", model: "fixture", promptHash: "p", schemaHash: "s", inputHash: String(index),
       latencyMs: 1, attempts: 1, status: "succeeded",
     });
+    const resumedExtraction = repository.claimJob();
+    assert.equal(resumedExtraction.id,limitedId);
+    repository.completeJob(resumedExtraction.id);
+    const pendingContent = repository.claimJob();
+    assert.equal(pendingContent.id,contentId);
+    repository.completeJob(pendingContent.id);
     const recoveredId = repository.enqueue("review_draft", "draft-after-recovery");
     database.prepare("UPDATE jobs SET available_at=? WHERE id=?").run(current.toISOString(), recoveredId);
     const recovered = repository.claimJob();
@@ -248,13 +412,13 @@ test("completion-stage jobs bypass an older extraction backlog without bypassing
     const knowledge = repository.claimJob();
     assert.equal(knowledge.id, knowledgeId);
     repository.completeJob(knowledge.id);
-    const diagnostic = repository.claimJob();
-    assert.equal(diagnostic.id, diagnosticId);
-    repository.completeJob(diagnostic.id);
     const audit = repository.claimJob();
     assert.equal(audit.id, auditId);
     repository.completeJob(audit.id);
     assert.equal(repository.claimJob().id, extractionId);
+    const diagnostic = repository.claimJob();
+    assert.equal(diagnostic.id, diagnosticId);
+    repository.completeJob(diagnostic.id);
 
     const unavailableFinalizeId = repository.enqueue("finalize_source_extraction", "source-cooling-down");
     database.prepare("UPDATE jobs SET available_at=? WHERE id=?").run("2999-01-01T00:00:00.000Z", unavailableFinalizeId);
@@ -286,7 +450,7 @@ test("exception webhook sends a deduplicated operational payload with optional b
 
   const jobId = repository.enqueue("plan_content", "missing-topic");
   database.prepare("UPDATE jobs SET max_attempts=1 WHERE id=?").run(jobId);
-  repository.failJob(repository.claimJob(), new Error("topic package missing"));
+  repository.failJob(repository.claimJob(), new Error("AI_PROVIDER_AUTH: missing production credential"));
   const notifier = new ExceptionNotifier(repository, {
     webhookUrl: `http://127.0.0.1:${webhook.address().port}/exceptions`,
     webhookToken: "notification-secret",
@@ -315,7 +479,7 @@ test("failed exception webhook delivery is durable and retryable", async () => {
   try {
     const jobId = repository.enqueue("plan_content", "missing-topic");
     database.prepare("UPDATE jobs SET max_attempts=1 WHERE id=?").run(jobId);
-    repository.failJob(repository.claimJob(), new Error("topic package missing"));
+    repository.failJob(repository.claimJob(), new Error("AI_PROVIDER_AUTH: missing production credential"));
     const config = { webhookUrl: "http://127.0.0.1:4310/exceptions", repeatHours: 24 };
     const failing = new ExceptionNotifier(repository, config, { fetchImpl: async () => new Response("", { status: 503 }) });
     await assert.rejects(() => failing.deliver(), /HTTP 503/);

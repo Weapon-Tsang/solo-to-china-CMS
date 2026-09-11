@@ -9,6 +9,7 @@ export function createAuth(db, config) {
 
   ensureBootstrapUser(db, config);
   const signingKey = crypto.createHash("sha256").update(config.sessionSecret).digest();
+  const dummyUser = db.prepare("SELECT password_salt, password_hash FROM app_users ORDER BY username LIMIT 1").get();
 
   return {
     enabled: true,
@@ -21,7 +22,9 @@ export function createAuth(db, config) {
     },
     async login(username, password) {
       const user = findUser(db, username);
-      if (!user || !(await verifyPassword(password, user.password_salt, user.password_hash))) return null;
+      const candidate = user || dummyUser;
+      const valid = await verifyPassword(password, candidate.password_salt, candidate.password_hash);
+      if (!user || !valid) return null;
       return { username: user.username, mustChangePassword: Boolean(user.force_password_change), cookie: createCookie(user.username, signingKey, db) };
     },
     async changePassword(request, currentPassword, nextPassword) {

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-import { friendlyError, label, formatDuration } from "../frontend/src/lib/utils.js";
+import { friendlyError, label, formatDuration, normalizeQualityIssue } from "../frontend/src/lib/utils.js";
 
 const appSource = fs.readFileSync(new URL("../frontend/src/App.jsx", import.meta.url), "utf8");
 const viewsSource = fs.readFileSync(new URL("../frontend/src/views.jsx", import.meta.url), "utf8");
+const qualityStatusSource = fs.readFileSync(new URL("../frontend/src/workspaces/content-quality-status.jsx", import.meta.url), "utf8");
 const dialogSource = fs.readFileSync(new URL("../frontend/src/components/ui/dialog.jsx", import.meta.url), "utf8");
 const interfaceSource = `${appSource}\n${viewsSource}\n${dialogSource}`;
 
@@ -23,7 +24,7 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
     "实体身份审核",
     "前端能力契约",
     "目的地知识地图",
-    "联盟资产建链队列",
+    "待建链任务",
     "处理队列",
     "冷却等待",
   ];
@@ -64,6 +65,17 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
   assert.match(viewsSource, /disabled=\{actionBusy \|\| !evidenceReady\}/, "证据不完整时必须禁用人工结论按钮");
 });
 
+test("content workspace explains records, failures, and bounded automatic repair before opening details", () => {
+  for (const text of ["已启动的生产记录", "已生成正文", "需要处理", "结果与处理"]) {
+    assert.ok(viewsSource.includes(text), `内容队列缺少直白说明：${text}`);
+  }
+  for (const text of ["未通过原因：", "自动处理：", "已自动修复", "需要补齐真实输入"]) {
+    assert.ok(qualityStatusSource.includes(text), `内容行缺少失败或自修复说明：${text}`);
+  }
+  assert.equal(label("producing"), "创作中");
+  assert.equal(label("drafted"), "已创建内容");
+});
+
 test("shared status, category, and duration labels use Chinese display text", () => {
   assert.equal(label("paragraph_group"), "段落组");
   assert.equal(label("READY_FOR_MANUAL"), "等待人工建链");
@@ -72,4 +84,13 @@ test("shared status, category, and duration labels use Chinese display text", ()
   assert.equal(label("extracted"), "已提取，等待审计");
   assert.match(friendlyError("Coverage audit still found material evidence without Claims after one targeted retry."), /覆盖审计/);
   assert.equal(formatDuration(61_000), "1 分钟");
+});
+
+test("empty, string, and malformed QA issues always render actionable Chinese text", () => {
+  for (const issue of [null, "qa_failed", {}, { severity: "warning", message: "empty output" }]) {
+    const normalized = normalizeQualityIssue(issue);
+    assert.match(normalized.title, /[\u3400-\u9fff]/u);
+    assert.match(normalized.reason, /[\u3400-\u9fff]/u);
+    assert.match(normalized.action, /[\u3400-\u9fff]/u);
+  }
 });

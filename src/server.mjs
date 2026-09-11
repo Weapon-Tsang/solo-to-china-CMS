@@ -7,10 +7,14 @@ import { openDatabase } from "./db.mjs";
 import { normalizeXiaohongshuCapture, ValidationError } from "./adapters/xiaohongshu.mjs";
 import { ManualSourceError, ManualSourceIngestor } from "./adapters/manual-source.mjs";
 import { KimiExtractor } from "./ai/kimi.mjs";
+import { priceModelAttempt } from "./ai/stage-policy.mjs";
 import { ContentEngine } from "./ai/content-engine.mjs";
 import { VertexImagen } from "./visuals/vertex-imagen.mjs";
 import { Pipeline } from "./pipeline.mjs";
 import { Repository } from "./repository.mjs";
+import { decideRecommendationCommand, decideRecommendationsBulk } from "./services/recommendation-bulk.mjs";
+import { groupProposals } from "./services/editorial-proposal.mjs";
+import { contentRecoveryReport, executeContentRecovery } from "./services/content-recovery.mjs";
 import { WordPressDraftAdapter } from "./wordpress.mjs";
 import { SearchConsoleAdapter } from "./search-console.mjs";
 import {
@@ -21,11 +25,13 @@ import { MaintenanceScheduler } from "./maintenance.mjs";
 import { createLogger } from "./logger.mjs";
 import { ExceptionNotifier } from "./notifications.mjs";
 import { createAuth } from "./auth.mjs";
+import { createLoginThrottle, resolveClientSource } from "./login-throttle.mjs";
 import { FrontendContractConsumer, FrontendContractError } from "./frontend-contract.mjs";
 import { getContentStrategyDocument } from "./content-strategy.mjs";
 import { VERSION } from "./version.mjs";
 import { ChunkedUploadManager } from "./chunked-upload.mjs";
 import { CaptureUploadManager } from "./capture-upload.mjs";
+import { CaptureMediaUploadManager } from "./capture-media-upload.mjs";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -46,22 +52,26 @@ export function createApplication(config = loadConfig()) {
   const logger = createLogger(config.logging);
   const db = openDatabase(config.databasePath);
   const auth = createAuth(db, config.auth);
+  const loginThrottle = createLoginThrottle(config.auth.loginThrottle, { logger: logger.child({ component: "auth" }) });
   const repository = new Repository(db, {
     ...config.content, ...config.extraction, contentStrategy: config.contentStrategy,
+    sourceUploadsDir: config.manualSources.uploadDir,
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
     affiliateOpportunityThreshold: config.commercial.opportunityThreshold,
   });
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
   const aiRequestGate = createRequestGate(config.extraction.requestSpacingMs);
   const activeAi = { ...config.kimi, ...config.vertex, ...selectedAi,
+    stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing,
     beforeRequest: aiRequestGate,
-    onModelCall: (metric) => repository.recordModelCall(metric) };
+    onModelCall: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)) };
   const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
   const activeVisuals = { ...config.visuals, ...selectedVisual, beforeRequest: aiRequestGate };
   const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
   const manualSources = new ManualSourceIngestor(config.manualSources);
   const chunkedUploads = new ChunkedUploadManager(config.manualSources);
   const captureUploads = new CaptureUploadManager(config.captureUploads);
+  const captureMediaUploads = new CaptureMediaUploadManager(config.captureMediaUploads);
   const extractor = new KimiExtractor(activeAi);
   const contentEngine = new ContentEngine(activeAi);
   const visuals = new VertexImagen(activeVisuals);
@@ -117,8 +127,22 @@ export function createApplication(config = loadConfig()) {
       if (!captureOnly && request.method === "POST" && url.pathname === "/api/auth/login") {
         if (!auth.enabled) return sendJson(response, 409, { error: "Password sign-in is not configured." });
         const payload = await readJson(request, 20_000);
+        const clientSource = resolveClientSource(request, config.auth.loginThrottle);
+        const throttle = loginThrottle.check(payload.username, clientSource);
+        if (!throttle.allowed) {
+          response.setHeader("Retry-After", String(Math.max(1, Math.ceil(throttle.retryAfterMs / 1_000))));
+          return sendJson(response, 429, { error: "Sign-in temporarily unavailable. Try again later.", retryAfterMs: throttle.retryAfterMs });
+        }
         const session = await auth.login(payload.username, payload.password);
-        if (!session) return sendJson(response, 401, { error: "Incorrect username or password." });
+        if (!session) {
+          const afterFailure = loginThrottle.recordFailure(payload.username, clientSource);
+          if (!afterFailure.allowed) {
+            response.setHeader("Retry-After", String(Math.max(1, Math.ceil(afterFailure.retryAfterMs / 1_000))));
+            return sendJson(response, 429, { error: "Sign-in temporarily unavailable. Try again later.", retryAfterMs: afterFailure.retryAfterMs });
+          }
+          return sendJson(response, 401, { error: "Incorrect username or password." });
+        }
+        loginThrottle.recordSuccess(payload.username, clientSource);
         response.setHeader("Set-Cookie", session.cookie);
         return sendJson(response, 200, { authenticated: true, username: session.username, mustChangePassword: session.mustChangePassword });
       }
@@ -205,6 +229,29 @@ export function createApplication(config = loadConfig()) {
           ...repository.getAiSettings(config.ai.defaultModel),
         });
       }
+      if (request.method === "GET" && url.pathname === "/api/settings") {
+        const exceptionWorkspace = repository.listSystemHealthWorkspace({ limit: 100 });
+        return sendJson(response, 200, {
+          configured: extractor.enabled, vertexBatchConfigured: extractor.batchEnabled,
+          vertexBatchActive: repository.activeVertexBatchCount(), visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
+          contentStrategy: config.contentStrategy, storage: storageInfo(config), visual: repository.getVisualSettings(config.visuals.defaultModel),
+          frontendContract: frontendContracts.diagnostics(), ...repository.getAiSettings(config.ai.defaultModel),
+          operations: {
+            exceptions: exceptionWorkspace.items,
+            exceptionTotal: exceptionWorkspace.totalCount,
+            maintenance: { runs:repository.listMaintenanceRuns(),telemetry:repository.jobTelemetry(config.telemetry.windowHours),
+              favoritesSyncRuns:repository.listFavoritesSyncRuns(20),...repository.maintenanceOverview() },
+            wordpressInventory: repository.listWordPressInventory(),
+            blueprints: repository.getEditorialBlueprints(),
+            experiences: repository.listExperienceBlocks().slice(0,100),
+            failureLessons: repository.listFailureLessons(100),
+            goldenArticles: repository.db.prepare(`SELECT ga.* FROM golden_articles ga
+              WHERE ga.active=1 ORDER BY ga.updated_at DESC LIMIT 100`).all(),
+            mediaBackfills: repository.db.prepare("SELECT * FROM source_media_backfill_runs ORDER BY updated_at DESC LIMIT 50").all(),
+            systemBackfills: repository.listSystemBackfillRuns(50),
+          },
+        });
+      }
       if (request.method === "GET" && url.pathname === "/api/frontend-contract") {
         return sendJson(response, 200, { ...frontendContracts.diagnostics(), snapshots: repository.listFrontendContractSnapshots() });
       }
@@ -258,6 +305,21 @@ export function createApplication(config = loadConfig()) {
           const error = new Error("Identity check requires an items array with at most 100 entries."); error.statusCode = 400; throw error;
         }
         return sendJson(response, 200, { items: repository.checkCaptureIdentities(payload.items) });
+      }
+      if (request.method === "POST" && url.pathname === "/api/capture-media-uploads") {
+        authorizeCapture(request, config.captureToken);
+        return sendJson(response, 201, captureMediaUploads.create(await readJson(request, 20_000)));
+      }
+      const captureMediaChunkMatch = url.pathname.match(/^\/api\/capture-media-uploads\/([^/]+)\/chunks\/(\d+)$/);
+      if (request.method === "PUT" && captureMediaChunkMatch) {
+        authorizeCapture(request, config.captureToken);
+        const bytes = await readBytes(request, config.captureMediaUploads.chunkBytes + 1024);
+        return sendJson(response, 200, captureMediaUploads.writeChunk(captureMediaChunkMatch[1], Number(captureMediaChunkMatch[2]), bytes));
+      }
+      const captureMediaCompleteMatch = url.pathname.match(/^\/api\/capture-media-uploads\/([^/]+)\/complete$/);
+      if (request.method === "POST" && captureMediaCompleteMatch) {
+        authorizeCapture(request, config.captureToken);
+        return sendJson(response, 200, captureMediaUploads.complete(captureMediaCompleteMatch[1]));
       }
       if (request.method === "POST" && url.pathname === "/api/favorites-sync-runs") {
         authorizeCapture(request, config.captureToken);
@@ -313,7 +375,9 @@ export function createApplication(config = loadConfig()) {
           ...saved,
           sourceKind: prepared.capture.sourceKind,
           warnings: prepared.warnings,
-          message: saved.duplicate ? "该来源内容已存在，未重复排队。" : "来源已安全入库并进入提取与内容生产流程。",
+          message: saved.duplicate ? "该来源版本已存在，未重复排队。"
+            : saved.requiresManualStart ? "来源已安全保存。处理规模较高，请查看估算后在来源详情中手动开始提取。"
+              : "来源已安全保存并进入提取、知识整理和内容评估流程。",
         });
       }
       if (request.method === "POST" && url.pathname === "/api/manual-source-uploads") {
@@ -347,17 +411,40 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/sources") {
         return sendJson(response, 200, { items: repository.listSources(limit(url.searchParams.get("limit"))) });
       }
+      if (request.method === "POST" && url.pathname === "/api/backfills/media") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.enqueueMediaDurabilityBackfill({ dryRun: payload.dryRun !== false });
+        if (!result.dryRun && result.queued) void pipeline.runOne();
+        return sendJson(response, result.dryRun ? 200 : 202, result);
+      }
+      const systemBackfillMatch = url.pathname.match(/^\/api\/backfills\/(experience|recommendations|failed-production-cleanup)$/);
+      if (request.method === "POST" && systemBackfillMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const options = {dryRun:payload.dryRun !== false,approvedFromRunId:payload.approvedFromRunId || null};
+        const result = systemBackfillMatch[1] === "experience" ? repository.runExperienceBackfill(options)
+          : systemBackfillMatch[1] === "recommendations" ? repository.runRecommendationReconciliationBackfill(options)
+            : repository.runFailedProductionCleanupBackfill(options);
+        if (!result.dryRun && result.queued) void pipeline.runOne();
+        return sendJson(response,result.dryRun ? 200 : 202,result);
+      }
       const sourceAssetPreviewMatch = url.pathname.match(/^\/api\/source-assets\/([^/]+)\/preview$/);
       if (request.method === "GET" && sourceAssetPreviewMatch) {
         const asset = repository.getSourceAssetPreview(decodeURIComponent(sourceAssetPreviewMatch[1]));
-        if (!asset) return sendJson(response, 404, { error: "Source evidence image not found." });
-        return serveSourceAssetPreview(asset, response);
+        if (!asset) return sendJson(response, 404, { error: "没有找到这张来源图片。" });
+        return serveSourceAssetPreview(asset, response, config.manualSources.uploadDir);
       }
       const sourceMatch = url.pathname.match(/^\/api\/sources\/([^/]+)$/);
       if (request.method === "GET" && sourceMatch) {
         if (captureOnly) authorizeCapture(request, config.captureToken);
         const source = repository.getSource(sourceMatch[1]);
         return source ? sendJson(response, 200, sourceForApi(source)) : sendJson(response, 404, { error: "Source not found." });
+      }
+      const sourceRepairManifestMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/repair-manifest$/);
+      if (request.method === "GET" && sourceRepairManifestMatch) {
+        const manifest = repository.mediaRepairManifest(decodeURIComponent(sourceRepairManifestMatch[1]));
+        return manifest ? sendJson(response, 200, manifest) : sendJson(response, 404, { error: "Source not found." });
       }
       const segmentCoverageReviewMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/segments\/([^/]+)\/coverage-review$/);
       if (request.method === "POST" && segmentCoverageReviewMatch) {
@@ -458,44 +545,53 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/editorial-blueprints") {
         return sendJson(response, 200, { items: repository.getEditorialBlueprints() });
       }
-      if (request.method === "GET" && url.pathname === "/api/editorial-assignments") {
-        return sendJson(response, 200, repository.listEditorialAssignmentWorkspace(limit(url.searchParams.get("limit") || "500")));
-      }
-      if (request.method === "POST" && url.pathname === "/api/editorial-assignments") {
-        authorizeAdmin(request, config.adminToken, auth);
-        const payload = await readJson(request, 50_000);
-        const created = repository.createEditorialAssignment(payload, auth.status(request).username || "administrator");
-        return sendJson(response, 201, created);
-      }
-      const editorialAssignmentMatch = url.pathname.match(/^\/api\/editorial-assignments\/([^/]+)$/);
-      if (request.method === "DELETE" && editorialAssignmentMatch) {
-        authorizeAdmin(request, config.adminToken, auth);
-        const deleted = repository.deleteEditorialAssignment(decodeURIComponent(editorialAssignmentMatch[1]));
-        return deleted ? sendJson(response, 200, deleted) : sendJson(response, 404, { error: "Editorial assignment not found." });
-      }
-      const editorialAssignmentRecheckMatch = url.pathname.match(/^\/api\/editorial-assignments\/([^/]+)\/recheck$/);
-      if (request.method === "POST" && editorialAssignmentRecheckMatch) {
-        authorizeAdmin(request, config.adminToken, auth);
-        const checked = repository.reevaluateEditorialAssignment(decodeURIComponent(editorialAssignmentRecheckMatch[1]));
-        return checked ? sendJson(response, 200, checked) : sendJson(response, 404, { error: "Editorial assignment not found." });
-      }
-      const editorialAssignmentQueueMatch = url.pathname.match(/^\/api\/editorial-assignments\/([^/]+)\/queue$/);
-      if (request.method === "POST" && editorialAssignmentQueueMatch) {
-        authorizeAdmin(request, config.adminToken, auth);
-        if (!contentEngine.enabled) return sendJson(response, 409, { error: "内容 AI 尚未配置，素材体检结果会保留，但暂时不能进入创作队列。" });
-        const queued = repository.queueEditorialAssignment(decodeURIComponent(editorialAssignmentQueueMatch[1]));
-        if (!queued) return sendJson(response, 404, { error: "Editorial assignment not found." });
-        void pipeline.runOne();
-        return sendJson(response, 202, queued);
-      }
       if (request.method === "GET" && url.pathname === "/api/content") {
         return sendJson(response, 200, {
-          items: repository.listContent(),
-          opportunities: repository.listContentOpportunities(limit(url.searchParams.get("limit"))),
+          items: repository.listContent({ productionOnly: true }),
+          opportunities: repository.listProductionContentOpportunities(limit(url.searchParams.get("limit"))),
         });
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {
-        return sendJson(response, 200, { items: repository.listContentRecommendations(limit(url.searchParams.get("limit"))), opportunities: repository.listContentOpportunities(limit(url.searchParams.get("limit"))) });
+        const reconciliation=repository.reconcileRecommendationInbox();
+        const inbox = repository.listRecommendationInbox(limit(url.searchParams.get("limit")),{reconcile:false});
+        return sendJson(response, 200, { items: inbox, diagnostics: repository.listContentRecommendations(limit(url.searchParams.get("limit"))), opportunities: inbox,
+          comparisonGroups: groupProposals(inbox),
+          summary: {
+            recommendations: repository.db.prepare('SELECT count(*) n FROM content_recommendations').get().n,
+            pending: repository.db.prepare("SELECT count(*) n FROM content_recommendations WHERE decision='pending'").get().n,
+            opportunities: repository.db.prepare(`SELECT count(*) n FROM content_opportunities
+              WHERE recommendation_id IS NULL OR approved_at IS NOT NULL OR candidate_id IS NOT NULL
+                OR status IN ('approved_waiting_for_evidence','approved_ready','producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft','suppressed')`).get().n,
+            approved: repository.db.prepare('SELECT count(*) n FROM content_opportunities WHERE approved_at IS NOT NULL').get().n,
+            internalOpportunities: reconciliation.internalOpportunities,
+            actionableInbox: reconciliation.actionableInbox,
+            processingGap: reconciliation.processingGap,
+            evidenceGap: reconciliation.evidenceGap,
+            merged: reconciliation.merged,
+            superseded: reconciliation.superseded,
+          } });
+      }
+      const opportunityDecisionMatch = url.pathname.match(/^\/api\/opportunities\/([^/]+)\/decision$/);
+      if (request.method === "POST" && opportunityDecisionMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.decideOpportunity(decodeURIComponent(opportunityDecisionMatch[1]), String(payload.decision || ""), payload.note || "");
+        if (!result) return sendJson(response, 404, { error: "Content opportunity not found." });
+        if (result.queued) void pipeline.runOne();
+        return sendJson(response, result.queued ? 202 : 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/opportunities/bulk-decision") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 100_000);
+        const ids = [...new Set(Array.isArray(payload.ids) ? payload.ids.map(String) : [])];
+        if (!ids.length || ids.length > 100) return sendJson(response, 400, { error: "Choose 1-100 opportunity IDs." });
+        const results = ids.map((opportunityId) => {
+          try { return { ok:true,...repository.decideOpportunity(opportunityId,String(payload.decision || ""),payload.note || "") }; }
+          catch (error) { return { ok:false,opportunityId,error:error.message }; }
+        });
+        const queued = results.filter((item) => item.queued).length;
+        if (queued) void pipeline.runOne();
+        return sendJson(response, 200, { processed:results.filter((item) => item.ok).length,failed:results.filter((item) => !item.ok).length,queued,results });
       }
       const opportunityLifecycleMatch = url.pathname.match(/^\/api\/opportunities\/([^/]+)\/lifecycle$/);
       if (request.method === "POST" && opportunityLifecycleMatch) {
@@ -519,19 +615,24 @@ export function createApplication(config = loadConfig()) {
         const dismissed = repository.dismissEditorialTopic(decodeURIComponent(editorialTopicDismissMatch[1]));
         return dismissed ? sendJson(response, 200, dismissed) : sendJson(response, 404, { error: "Editorial topic not found." });
       }
+      if (request.method === "POST" && url.pathname === "/api/recommendations/bulk-decision") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const result = decideRecommendationsBulk(repository, await readJson(request, 100_000));
+        if (result.queued) void pipeline.runOne();
+        return sendJson(response, 200, result);
+      }
       const recommendationDecisionMatch = url.pathname.match(/^\/api\/recommendations\/([^/]+)\/decision$/);
       if (request.method === "POST" && recommendationDecisionMatch) {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
-        const result = repository.decideRecommendation(recommendationDecisionMatch[1], String(payload.decision || ""), payload.note || "", {
-          opportunityId: payload.opportunityId || null,
-        });
+        const result = decideRecommendationCommand(repository, {recommendationId:recommendationDecisionMatch[1],decision:String(payload.decision || ""),
+          note:payload.note || "",opportunityId:payload.opportunityId || null,updatedAt:payload.updatedAt,proposalFingerprint:payload.proposalFingerprint});
         if (!result) return sendJson(response, 404, { error: "Recommendation not found." });
-        void pipeline.runOne();
+        if (result.queued) void pipeline.runOne();
         return sendJson(response, 202, result);
       }
       if (request.method === "GET" && url.pathname === "/api/exceptions") {
-        return sendJson(response, 200, { items: repository.listOperationalExceptions() });
+        return sendJson(response, 200, repository.listSystemHealthWorkspace(workspaceQuery(url, 100)));
       }
       if (request.method === "GET" && url.pathname === "/api/maintenance") {
         return sendJson(response, 200, {
@@ -542,6 +643,7 @@ export function createApplication(config = loadConfig()) {
           searchConsoleSync: repository.getSearchConsoleSyncState(searchConsole.config.siteUrl),
           telemetry: repository.jobTelemetry(config.telemetry.windowHours),
           favoritesSyncRuns: repository.listFavoritesSyncRuns(20),
+          ...repository.maintenanceOverview(),
           notifications: {
             configured: notifier.enabled,
             minimumSeverity: config.notifications.minimumSeverity,
@@ -746,6 +848,15 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         return sendJson(response, 409, { error: "Approve an Intake Recommendation before planning content." });
       }
+      const recoveryMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/recovery$/);
+      if (recoveryMatch && ["GET", "POST"].includes(request.method)) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const candidateId = decodeURIComponent(recoveryMatch[1]);
+        const result = request.method === "GET" ? contentRecoveryReport(repository, candidateId)
+          : executeContentRecovery(repository, candidateId, await readJson(request, 500_000), auth.status(request).username || "administrator");
+        if (result?.queued) void pipeline.runOne();
+        return sendJson(response, result ? (result.queued ? 202 : 200) : 404, result || { error: "Content task not found." });
+      }
       const retryContentMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/retry$/);
       if (request.method === "POST" && retryContentMatch) {
         authorizeAdmin(request, config.adminToken, auth);
@@ -755,10 +866,62 @@ export function createApplication(config = loadConfig()) {
         void pipeline.runOne();
         return sendJson(response, 202, { queued: true, jobType });
       }
+      const contentActionPreviewMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/action-preview$/);
+      if (request.method === "GET" && contentActionPreviewMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const preview = repository.previewContentAction(decodeURIComponent(contentActionPreviewMatch[1]), String(url.searchParams.get("action") || "retry_failed_stage"), auth.status(request).username || "administrator");
+        return preview ? sendJson(response, 200, preview) : sendJson(response, 404, { error: "Content task not found." });
+      }
+      const contentCancelMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/cancel$/);
+      if (request.method === "POST" && contentCancelMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.cancelContent(decodeURIComponent(contentCancelMatch[1]), String(payload.previewId || payload.preview_id || ""), auth.status(request).username || "administrator");
+        return result ? sendJson(response, 200, result) : sendJson(response, 404, { error: "Content task not found." });
+      }
+      const contentHistoryMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/history$/);
+      if (request.method === "GET" && contentHistoryMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        return sendJson(response, 200, { items: repository.listContentOperationHistory(decodeURIComponent(contentHistoryMatch[1])) });
+      }
       const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)$/);
       if (request.method === "GET" && draftMatch) {
         const draft = repository.getDraftPackage(draftMatch[1]);
         return draft ? sendJson(response, 200, draft) : sendJson(response, 404, { error: "Draft not found." });
+      }
+      if (request.method === "PATCH" && draftMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 50_000);
+        const draft = repository.updateDraftMetadata(draftMatch[1], {
+          title: payload.title ?? null, metaDescription: payload.meta_description ?? null,
+        });
+        return sendJson(response, 200, { draft, queued: "review_draft" });
+      }
+      const draftRevisionsMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/revisions$/);
+      if (request.method === "GET" && draftRevisionsMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const draftId = decodeURIComponent(draftRevisionsMatch[1]);
+        const from = Number.parseInt(url.searchParams.get("from") || "", 10);
+        const to = Number.parseInt(url.searchParams.get("to") || "", 10);
+        if (Number.isInteger(from) && Number.isInteger(to)) {
+          const comparison = repository.compareDraftRevisions(draftId, from, to);
+          return comparison ? sendJson(response, 200, comparison) : sendJson(response, 404, { error: "Both draft revisions are required." });
+        }
+        return sendJson(response, 200, { items: repository.listDraftRevisions(draftId) });
+      }
+      const draftFeedbackMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/editorial-feedback$/);
+      if (request.method === "POST" && draftFeedbackMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload=await readJson(request,20_000);
+        const result=repository.recordEditorialFeedback(decodeURIComponent(draftFeedbackMatch[1]),String(payload.feedback || ""),payload.principle || "");
+        return result ? sendJson(response,200,result) : sendJson(response,404,{error:"Draft not found."});
+      }
+      const draftGoldenMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/golden$/);
+      if (request.method === "POST" && draftGoldenMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload=await readJson(request,20_000);
+        const result=repository.markGoldenArticle(decodeURIComponent(draftGoldenMatch[1]),payload.principles || []);
+        return result ? sendJson(response,200,result) : sendJson(response,404,{error:"Draft not found."});
       }
       const wordpressMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/wordpress$/);
       if (request.method === "POST" && wordpressMatch) {
@@ -789,6 +952,12 @@ export function createApplication(config = loadConfig()) {
       });
     }
   });
+  // cloudflared keeps a small pool of HTTP/1.1 connections to this private
+  // origin. Keep those sockets alive longer than the connector's reuse window
+  // so an idle pooled socket cannot race Node's five-second default timeout.
+  server.keepAliveTimeout = 120_000;
+  if ("keepAliveTimeoutBuffer" in server) server.keepAliveTimeoutBuffer = 5_000;
+  server.headersTimeout = 130_000;
 
   return {
     server,
@@ -885,9 +1054,9 @@ function isCaptureHost(request, captureHost) {
 
 function isCaptureRoute(method, pathname) {
   return (method === "GET" && ["/api/health", "/api/ready"].includes(pathname))
-    || (method === "POST" && ["/api/captures", "/api/captures/identity-check", "/api/capture-uploads", "/api/favorites-sync-runs"].includes(pathname))
-    || (method === "PUT" && /^\/api\/capture-uploads\/[^/]+\/chunks\/\d+$/.test(pathname))
-    || (method === "POST" && /^\/api\/capture-uploads\/[^/]+\/complete$/.test(pathname))
+    || (method === "POST" && ["/api/captures", "/api/captures/identity-check", "/api/capture-uploads", "/api/capture-media-uploads", "/api/favorites-sync-runs"].includes(pathname))
+    || (method === "PUT" && /^\/api\/(?:capture-uploads|capture-media-uploads)\/[^/]+\/chunks\/\d+$/.test(pathname))
+    || (method === "POST" && /^\/api\/(?:capture-uploads|capture-media-uploads)\/[^/]+\/complete$/.test(pathname))
     || (method === "GET" && (pathname === "/api/favorites-sync-runs" || /^\/api\/sources\/[^/]+$/.test(pathname)));
 }
 
@@ -959,7 +1128,23 @@ function sourceForApi(source) {
   };
 }
 
-function serveSourceAssetPreview(asset, response) {
+function serveSourceAssetPreview(asset, response, storageRoot) {
+  const filename = path.resolve(String(asset.local_path || ""));
+  const root = path.resolve(storageRoot);
+  if (asset.local_path && filename.startsWith(`${root}${path.sep}`)) {
+    try {
+      const stat = fs.statSync(filename);
+      if (stat.isFile()) {
+        response.writeHead(200, {
+          "content-type": asset.mime_type || MIME[path.extname(filename)] || "application/octet-stream",
+          "content-length": stat.size,
+          "cache-control": "private, max-age=300",
+          "x-content-type-options": "nosniff",
+        });
+        return fs.createReadStream(filename).pipe(response);
+      }
+    } catch { /* continue to the legacy inline preview */ }
+  }
   const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)$/u.exec(String(asset.ai_derivative_data_url || ""));
   if (match) {
     const bytes = Buffer.from(match[2], "base64");
@@ -973,14 +1158,7 @@ function serveSourceAssetPreview(asset, response) {
       return response.end(bytes);
     }
   }
-  try {
-    const original = new URL(String(asset.remote_url || ""));
-    if (original.protocol === "https:") {
-      response.writeHead(302, { location: original.toString(), "cache-control": "private, max-age=60" });
-      return response.end();
-    }
-  } catch { /* invalid or unavailable original URL */ }
-  return sendJson(response, 404, { error: "This evidence image has no stored preview. Re-extract the source before deciding." });
+  return sendJson(response, 404, { error: "这张图片尚未保存到系统中，请重新采集原文后再处理。" });
 }
 
 function serveStatic(publicDir, pathname, response) {
@@ -1027,6 +1205,15 @@ function serveMedia(mediaDir, basename, response) {
 
 function limit(value) {
   return Math.max(1, Math.min(500, Number.parseInt(value || "100", 10) || 100));
+}
+
+function workspaceQuery(url, defaultLimit = 100) {
+  return {
+    limit: limit(url.searchParams.get("limit") || String(defaultLimit)),
+    cursor: url.searchParams.get("cursor") || "",
+    search: url.searchParams.get("search") || "",
+    status: url.searchParams.get("status") || "",
+  };
 }
 
 if (import.meta.main) {

@@ -20,6 +20,9 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
     LOG_LEVEL: "error",
   });
   const app = createApplication(config);
+  assert.equal(app.server.keepAliveTimeout, 120_000);
+  if ("keepAliveTimeoutBuffer" in app.server) assert.equal(app.server.keepAliveTimeoutBuffer, 5_000);
+  assert.equal(app.server.headersTimeout, 130_000);
   await app.start();
   t.after(async () => {
     await app.stop();
@@ -49,6 +52,27 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
   assert.equal(dashboard.actionCounts.settings, 1);
   const sources = await (await fetch(`${baseUrl}/api/sources`)).json();
   assert.equal(sources.items[0].destination_name, "Chengdu");
+});
+
+test("settings payload keeps the total exception count while bounding the preview", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-settings-preview-"));
+  const config = loadConfig({
+    HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "api.sqlite"),
+    MAINTENANCE_ENABLED: "false", LOG_LEVEL: "error",
+  });
+  const app = createApplication(config);
+  for (let index = 0; index < 105; index += 1) app.repository.enqueue("rebuild_topic_clusters", `settings-fixture-${index}`);
+  app.repository.db.prepare(`UPDATE jobs SET status='failed',last_failure_code='AI_PROVIDER_AUTH',
+    last_error='Authentication credentials rejected',updated_at='2026-09-11T00:00:00.000Z'`).run();
+  await app.start();
+  t.after(async () => {
+    await app.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
+  const settings = await (await fetch(`${baseUrl}/api/settings`)).json();
+  assert.equal(settings.operations.exceptionTotal, 105);
+  assert.equal(settings.operations.exceptions.length, 100);
 });
 
 test("authenticated source evidence preview streams the stored review image", async (t) => {
@@ -255,6 +279,9 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   const content = await (await fetch(`${baseUrl}/api/content`)).json();
   assert.ok(Array.isArray(content.items));
   assert.ok(Array.isArray(content.opportunities));
+  const fullSettings = await (await fetch(`${baseUrl}/api/settings`)).json();
+  assert.ok(Array.isArray(fullSettings.operations.exceptions));
+  assert.equal(fullSettings.operations.exceptionTotal, 0);
   const missing = await fetch(`${baseUrl}/api/not-found`);
   assert.equal(missing.status, 404);
   assert.deepEqual(await missing.json(), { error: "Not found." });
@@ -444,6 +471,33 @@ test("dashboard password login creates a secure session and requires an initial 
   assert.equal(logout.status, 204);
   const invalidatedLogout = await (await fetch(`${baseUrl}/api/auth/status`, { headers: { cookie: loginCookie } })).json();
   assert.equal(invalidatedLogout.authenticated, false);
+});
+
+test("login failures return a bounded 429 while another account on the shared source can recover", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-login-throttle-test-"));
+  const config = loadConfig({
+    HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "login-throttle.sqlite"),
+    ADMIN_USERNAME: "admin", ADMIN_PASSWORD: "correct-private-password", SESSION_SECRET: "test-login-throttle-secret-with-enough-entropy",
+    LOGIN_RATE_LIMIT_ACCOUNT_ATTEMPTS: "2", LOGIN_RATE_LIMIT_SOURCE_ATTEMPTS: "50",
+    LOGIN_RATE_LIMIT_BASE_COOLDOWN_SECONDS: "60", MAINTENANCE_ENABLED: "false", LOG_LEVEL: "error",
+  });
+  const app = createApplication(config);
+  await app.start();
+  t.after(async () => { await app.stop(); fs.rmSync(directory, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.server.address().port}/api/auth/login`;
+  const wrong = (forwarded) => fetch(url, { method: "POST", headers: {
+    "content-type": "application/json", "x-forwarded-for": forwarded,
+  }, body: JSON.stringify({ username: "not-admin", password: "wrong-password" }) });
+  assert.equal((await wrong("198.51.100.1")).status, 401);
+  const blocked = await wrong("198.51.100.2");
+  assert.equal(blocked.status, 429);
+  assert.ok(Number(blocked.headers.get("retry-after")) >= 1);
+  const blockedBody = await blocked.json();
+  assert.equal(blockedBody.error, "Sign-in temporarily unavailable. Try again later.");
+  assert.ok(blockedBody.retryAfterMs > 59_000 && blockedBody.retryAfterMs <= 60_000);
+  const legitimate = await fetch(url, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "admin", password: "correct-private-password" }) });
+  assert.equal(legitimate.status, 200);
 });
 
 test("failed HTTP bind does not start pipeline or maintenance side effects", async (t) => {

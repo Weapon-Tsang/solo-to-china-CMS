@@ -11,7 +11,7 @@ test("migration 33 adds an indexed queue without changing existing affiliate dat
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const databasePath = path.join(directory, "v32.sqlite");
   const source = fs.readFileSync(fileURLToPath(new URL("../src/db.mjs", import.meta.url)), "utf8")
-    .replace(/^  if \(current < 3[3-8]\).*$/gm, "");
+    .replace(/^  if \(current < (\d+)\).*$/gm, (line, version) => Number(version) >= 33 ? "" : line);
   const v32ModulePath = path.join(directory, "db-v32.mjs");
   fs.writeFileSync(v32ModulePath, source);
   const { openDatabase: openV32Database } = await import(`${pathToFileURL(v32ModulePath).href}?v=32`);
@@ -24,7 +24,7 @@ test("migration 33 adds an indexed queue without changing existing affiliate dat
 
   const upgraded = openDatabase(databasePath);
   try {
-    assert.equal(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 38);
+    assert.ok(upgraded.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version >= 33);
     assert.equal(upgraded.prepare("SELECT display_name FROM affiliate_provider_accounts WHERE id='provider-existing'").get().display_name, "Trip.com");
     const indexes = new Set(upgraded.prepare("PRAGMA index_list(affiliate_asset_queue_tasks)").all().map((item) => item.name));
     assert.ok(indexes.has("idx_affiliate_queue_status_key"));

@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+export const SCHEMA_VERSION = 58;
+
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = new DatabaseSync(filename);
@@ -57,6 +59,737 @@ function migrate(db) {
   if (current < 36) migrationThirtySix(db);
   if (current < 37) migrationThirtySeven(db);
   if (current < 38) migrationThirtyEight(db);
+  if (current < 39) migrationThirtyNine(db);
+  if (current < 40) migrationForty(db);
+  if (current < 41) migrationFortyOne(db);
+  if (current < 42) migrationFortyTwo(db);
+  if (current < 43) migrationFortyThree(db);
+  if (current < 44) migrationFortyFour(db);
+  if (current < 45) migrationFortyFive(db);
+  if (current < 46) migrationFortySix(db);
+  if (current < 47) migrationFortySeven(db);
+  if (current < 48) migrationFortyEight(db);
+  if (current < 49) migrationFortyNine(db);
+  if (current < 50) migrationFifty(db);
+  if (current < 51) migrationFiftyOne(db);
+  if (current < 52) migrationFiftyTwo(db);
+  if (current < 53) migrationFiftyThree(db);
+  if (current < 54) migrationFiftyFour(db);
+  if (current < 55) migrationFiftyFive(db);
+  if (current < 56) migrationFiftySix(db);
+  if (current < 57) migrationFiftySeven(db);
+  if (current < 58) migrationFiftyEight(db);
+}
+
+function migrationFiftyEight(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE sources ADD COLUMN recommendation_reconciled_version TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN recommendation_reconciled_at TEXT;
+
+      ALTER TABLE content_opportunities ADD COLUMN processing_state TEXT NOT NULL DEFAULT 'PROCESSING_GAP'
+        CHECK (processing_state IN ('PROCESSING_GAP','EVIDENCE_GAP','CURRENT'));
+      ALTER TABLE content_opportunities ADD COLUMN processing_detail_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE content_opportunities ADD COLUMN canonical_intent_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE content_opportunities ADD COLUMN inbox_state TEXT NOT NULL DEFAULT 'INTERNAL'
+        CHECK (inbox_state IN ('INTERNAL','ACTIONABLE','MERGED','SUPERSEDED'));
+      ALTER TABLE content_opportunities ADD COLUMN primary_opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL;
+      ALTER TABLE content_opportunities ADD COLUMN recommendation_reconciled_version TEXT NOT NULL DEFAULT '';
+      ALTER TABLE content_opportunities ADD COLUMN recommendation_reconciled_at TEXT;
+      CREATE INDEX idx_content_opportunities_actionable_inbox
+        ON content_opportunities(inbox_state,lifecycle_state,readiness_score DESC,updated_at DESC);
+      CREATE INDEX idx_content_opportunities_canonical_intent
+        ON content_opportunities(canonical_intent_key,destination_slug,updated_at DESC);
+
+      UPDATE affiliate_asset_queue_tasks SET status='SKIPPED',
+        skipped_at=COALESCE(skipped_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        invalid_reason='Retired legacy hardcoded seed; future tasks require a real high-intent asset gap.',
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE source_type='SEED' AND status IN ('PENDING','READY_FOR_MANUAL','INVALID');
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (58, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFiftySeven(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE source_assets ADD COLUMN durability_status TEXT NOT NULL DEFAULT 'REMOTE_ONLY'
+        CHECK (durability_status IN ('ORIGINAL_STORED','DERIVATIVE_ONLY','REMOTE_ONLY','UNAVAILABLE'));
+      ALTER TABLE source_assets ADD COLUMN ai_readability_status TEXT NOT NULL DEFAULT 'temporarily_unavailable'
+        CHECK (ai_readability_status IN ('processable','temporarily_unavailable','unsupported'));
+      ALTER TABLE source_assets ADD COLUMN repair_status TEXT NOT NULL DEFAULT 'server_recovery_pending'
+        CHECK (repair_status IN ('not_needed','server_recovery_pending','server_recovery_running','browser_repair_required','unavailable'));
+      ALTER TABLE source_assets ADD COLUMN repair_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE source_assets ADD COLUMN storage_error TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN recovered_at TEXT;
+      UPDATE source_assets SET
+        durability_status=CASE
+          WHEN local_path<>'' AND original_bytes_status='saved_original' THEN 'ORIGINAL_STORED'
+          WHEN local_path<>'' AND original_bytes_status='saved_unknown'
+            AND source_id IN (SELECT id FROM sources WHERE adapter<>'xiaohongshu') THEN 'ORIGINAL_STORED'
+          WHEN local_path<>'' OR ai_derivative_data_url<>'' THEN 'DERIVATIVE_ONLY'
+          WHEN remote_url<>'' THEN 'REMOTE_ONLY'
+          ELSE 'UNAVAILABLE' END,
+        ai_readability_status=CASE
+          WHEN local_path<>'' OR ai_derivative_data_url<>'' THEN 'processable'
+          WHEN remote_url<>'' THEN 'temporarily_unavailable'
+          ELSE 'unsupported' END,
+        repair_status=CASE
+          WHEN local_path<>'' AND original_bytes_status='saved_original' THEN 'not_needed'
+          WHEN local_path<>'' AND original_bytes_status='saved_unknown'
+            AND source_id IN (SELECT id FROM sources WHERE adapter<>'xiaohongshu') THEN 'not_needed'
+          WHEN remote_url<>'' THEN 'server_recovery_pending'
+          ELSE 'unavailable' END;
+      CREATE INDEX idx_source_assets_durability ON source_assets(durability_status,repair_status,source_id);
+
+      ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 50;
+      ALTER TABLE jobs ADD COLUMN production_attempt_id TEXT;
+      CREATE INDEX idx_jobs_priority_ready ON jobs(status,priority,available_at,created_at);
+
+      ALTER TABLE favorites_sync_runs ADD COLUMN sync_mode_v2 TEXT NOT NULL DEFAULT 'incremental'
+        CHECK (sync_mode_v2 IN ('incremental','repair','full'));
+      UPDATE favorites_sync_runs SET sync_mode_v2=mode;
+
+      CREATE TABLE source_media_backfill_runs (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL CHECK (status IN ('dry_run','queued','running','completed','failed')),
+        scanned_count INTEGER NOT NULL DEFAULT 0,
+        original_stored_count INTEGER NOT NULL DEFAULT 0,
+        recovery_queued_count INTEGER NOT NULL DEFAULT 0,
+        browser_repair_count INTEGER NOT NULL DEFAULT 0,
+        unavailable_count INTEGER NOT NULL DEFAULT 0,
+        report_json TEXT NOT NULL DEFAULT '{}',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE system_backfill_runs (
+        id TEXT PRIMARY KEY,
+        backfill_type TEXT NOT NULL CHECK (backfill_type IN ('experience','recommendation_reconciliation','failed_production_cleanup')),
+        status TEXT NOT NULL CHECK (status IN ('dry_run','queued','completed','failed')),
+        dry_run INTEGER NOT NULL DEFAULT 1 CHECK (dry_run IN (0,1)),
+        approved_from_run_id TEXT REFERENCES system_backfill_runs(id) ON DELETE SET NULL,
+        report_json TEXT NOT NULL DEFAULT '{}',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_system_backfill_runs_type ON system_backfill_runs(backfill_type,created_at DESC);
+
+      CREATE TABLE experience_extraction_runs (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        extraction_run_id TEXT REFERENCES extraction_runs(id) ON DELETE SET NULL,
+        capture_version INTEGER NOT NULL,
+        input_hash TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('running','succeeded','failed','superseded')),
+        degraded INTEGER NOT NULL DEFAULT 0 CHECK (degraded IN (0,1)),
+        model TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(source_id,input_hash)
+      );
+      CREATE INDEX idx_experience_runs_source ON experience_extraction_runs(source_id,status,updated_at DESC);
+      CREATE TABLE experience_blocks (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        extraction_run_id TEXT NOT NULL REFERENCES experience_extraction_runs(id) ON DELETE CASCADE,
+        segment_ids_json TEXT NOT NULL DEFAULT '[]',
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        traveler_goal TEXT NOT NULL DEFAULT '',
+        sequence_json TEXT NOT NULL DEFAULT '[]',
+        decision_logic_json TEXT NOT NULL DEFAULT '[]',
+        conditions_json TEXT NOT NULL DEFAULT '[]',
+        tradeoffs_json TEXT NOT NULL DEFAULT '[]',
+        warnings_json TEXT NOT NULL DEFAULT '[]',
+        alternatives_json TEXT NOT NULL DEFAULT '[]',
+        supporting_claim_ids_json TEXT NOT NULL DEFAULT '[]',
+        evidence_span_ids_json TEXT NOT NULL DEFAULT '[]',
+        confidence REAL NOT NULL DEFAULT 0,
+        grounding_status TEXT NOT NULL DEFAULT 'grounded' CHECK (grounding_status IN ('grounded','degraded')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_experience_blocks_source ON experience_blocks(source_id,type,updated_at DESC);
+
+      CREATE TABLE editorial_assemblies (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL UNIQUE REFERENCES topic_candidates(id) ON DELETE CASCADE,
+        opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL,
+        input_hash TEXT NOT NULL,
+        selected_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+        selected_experience_block_ids_json TEXT NOT NULL DEFAULT '[]',
+        selected_source_ids_json TEXT NOT NULL DEFAULT '[]',
+        selected_blueprint_source_ids_json TEXT NOT NULL DEFAULT '[]',
+        exclusions_json TEXT NOT NULL DEFAULT '[]',
+        rationale TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready','failed')),
+        model TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE narrative_plans (
+        id TEXT PRIMARY KEY,
+        brief_id TEXT NOT NULL UNIQUE REFERENCES content_briefs(id) ON DELETE CASCADE,
+        opening_job TEXT NOT NULL DEFAULT '',
+        throughline TEXT NOT NULL DEFAULT '',
+        route_sequence_json TEXT NOT NULL DEFAULT '[]',
+        experience_placements_json TEXT NOT NULL DEFAULT '[]',
+        supporting_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+        conditional_branches_json TEXT NOT NULL DEFAULT '[]',
+        tradeoffs_json TEXT NOT NULL DEFAULT '[]',
+        exclusions_json TEXT NOT NULL DEFAULT '[]',
+        closing_decision TEXT NOT NULL DEFAULT '',
+        model TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE writing_packets (
+        id TEXT PRIMARY KEY,
+        brief_id TEXT NOT NULL UNIQUE REFERENCES content_briefs(id) ON DELETE CASCADE,
+        narrative_plan_id TEXT NOT NULL REFERENCES narrative_plans(id) ON DELETE CASCADE,
+        packet_text TEXT NOT NULL,
+        evidence_ledger_json TEXT NOT NULL DEFAULT '[]',
+        selected_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+        selected_experience_block_ids_json TEXT NOT NULL DEFAULT '[]',
+        input_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE failure_lessons (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL CHECK (scope IN ('GLOBAL','SOURCE','OPPORTUNITY','STAGE')),
+        failure_code TEXT NOT NULL,
+        category TEXT NOT NULL,
+        normalized_reason TEXT NOT NULL,
+        source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
+        opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL,
+        failing_stage TEXT NOT NULL,
+        previous_input_json TEXT NOT NULL DEFAULT '{}',
+        remediation_rule TEXT NOT NULL,
+        retry_safe INTEGER NOT NULL DEFAULT 0 CHECK (retry_safe IN (0,1)),
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','superseded','resolved')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_failure_lessons_active ON failure_lessons(status,scope,failure_code,created_at DESC);
+      CREATE TABLE production_rollbacks (
+        id TEXT PRIMARY KEY,
+        opportunity_id TEXT NOT NULL REFERENCES content_opportunities(id) ON DELETE CASCADE,
+        failure_lesson_id TEXT REFERENCES failure_lessons(id) ON DELETE SET NULL,
+        failing_stage TEXT NOT NULL,
+        removed_artifacts_json TEXT NOT NULL DEFAULT '{}',
+        preserved_assets_json TEXT NOT NULL DEFAULT '{}',
+        previous_status TEXT NOT NULL,
+        result_status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE editorial_lessons (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT REFERENCES article_drafts(id) ON DELETE SET NULL,
+        feedback TEXT NOT NULL CHECK (feedback IN ('满意','AI味重','太啰嗦','信息太平','像数据库','结构不好','很好')),
+        principle TEXT NOT NULL DEFAULT '',
+        active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_editorial_lessons_active ON editorial_lessons(active,created_at DESC);
+      CREATE TABLE golden_articles (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT UNIQUE REFERENCES article_drafts(id) ON DELETE SET NULL,
+        title TEXT NOT NULL DEFAULT '',
+        snapshot_json TEXT NOT NULL DEFAULT '{}',
+        principles_json TEXT NOT NULL DEFAULT '[]',
+        active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE published_content_impacts (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+        opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL,
+        changed_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+        impact_reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'recommended' CHECK (status IN ('recommended','approved','dismissed','revision_drafted')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      ALTER TABLE content_opportunities ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'recommended'
+        CHECK (lifecycle_state IN ('recommended','deferred','approved','producing','finished','recommended_again','ignored'));
+      ALTER TABLE content_opportunities ADD COLUMN seo_action TEXT NOT NULL DEFAULT 'NEW'
+        CHECK (seo_action IN ('NEW','UPDATE','EXPAND','MERGE','SKIP'));
+      ALTER TABLE content_opportunities ADD COLUMN last_failure_lesson_id TEXT REFERENCES failure_lessons(id) ON DELETE SET NULL;
+      ALTER TABLE content_opportunities ADD COLUMN previous_failure_json TEXT NOT NULL DEFAULT '{}';
+      UPDATE content_opportunities SET lifecycle_state=CASE
+        WHEN status IN ('approved_waiting_for_evidence','approved_ready') THEN 'approved'
+        WHEN status IN ('producing','drafted','qa_failed','ready_for_wordpress') THEN 'producing'
+        WHEN status='wordpress_draft' THEN 'finished'
+        WHEN status IN ('ignored','suppressed','knowledge_only','cluster','research_required') THEN 'ignored'
+        ELSE 'recommended' END,
+        seo_action=CASE lifecycle_action WHEN 'update' THEN 'UPDATE' WHEN 'merge' THEN 'MERGE'
+          WHEN 'retire' THEN 'SKIP' ELSE 'NEW' END;
+      CREATE INDEX idx_content_opportunities_inbox ON content_opportunities(lifecycle_state,readiness_score DESC,updated_at DESC);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (57, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFiftySix(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE source_assets ADD COLUMN storage_status TEXT NOT NULL DEFAULT 'discovered'
+        CHECK (storage_status IN ('discovered','pending','saved','failed'));
+      ALTER TABLE source_assets ADD COLUMN original_bytes_status TEXT NOT NULL DEFAULT 'missing'
+        CHECK (original_bytes_status IN ('missing','invalid','saved_unknown','saved_derivative','saved_original'));
+      ALTER TABLE source_assets ADD COLUMN stored_sha256 TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN stored_size_bytes INTEGER;
+      ALTER TABLE source_assets ADD COLUMN language_status TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (language_status IN ('unknown','english','chinese','mixed','no_text'));
+      ALTER TABLE source_assets ADD COLUMN nearby_text TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN caption_text TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN dom_order INTEGER;
+      UPDATE source_assets SET storage_status='saved',original_bytes_status='saved_unknown'
+        WHERE local_path<>'' OR ai_derivative_data_url<>'';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (56, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFiftyFive(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE draft_revisions (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL,
+        content_hash TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        changed_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(draft_id, revision)
+      );
+      CREATE INDEX idx_draft_revisions_history ON draft_revisions(draft_id, revision DESC);
+      CREATE TABLE content_operation_history (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL REFERENCES topic_candidates(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('previewed','completed','rejected')),
+        preview_json TEXT NOT NULL,
+        result_json TEXT NOT NULL DEFAULT '{}',
+        actor TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_content_operation_history ON content_operation_history(candidate_id, created_at DESC);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (55, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFiftyFour(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE commercial_compositions ADD COLUMN overlay_version TEXT;
+      ALTER TABLE commercial_events ADD COLUMN article_revision INTEGER;
+      ALTER TABLE commercial_events ADD COLUMN overlay_version TEXT;
+      ALTER TABLE commercial_events ADD COLUMN event_source TEXT NOT NULL DEFAULT 'unknown';
+      ALTER TABLE commercial_events ADD COLUMN conversion_data_status TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (conversion_data_status IN ('unknown','confirmed'));
+      CREATE INDEX idx_commercial_events_attribution
+        ON commercial_events(draft_id, article_revision, overlay_version, affiliate_asset_id, occurred_at DESC);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (54, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFiftyThree(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE article_drafts ADD COLUMN content_ast_json TEXT NOT NULL DEFAULT '{}';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (53, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFiftyTwo(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE article_visuals ADD COLUMN media_metadata_json TEXT NOT NULL DEFAULT '{}';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (52, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFiftyOne(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE frontend_publish_compositions ADD COLUMN page_content_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE frontend_publish_compositions ADD COLUMN seo_artifact_hash TEXT NOT NULL DEFAULT '';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (51, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFifty(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      CREATE TABLE pipeline_artifacts (
+        id TEXT PRIMARY KEY,
+        stage TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        input_hash TEXT NOT NULL,
+        output_hash TEXT,
+        config_hash TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK (status IN ('started','succeeded','failed')),
+        error_class TEXT,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(stage, entity_id, input_hash, config_hash)
+      );
+      CREATE INDEX idx_pipeline_artifacts_reuse ON pipeline_artifacts(stage,entity_id,input_hash,config_hash,status);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (50, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyNine(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE model_call_metrics ADD COLUMN run_id TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN entity_id TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN attempt_number INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE model_call_metrics ADD COLUMN request_kind TEXT NOT NULL DEFAULT 'provider';
+      ALTER TABLE model_call_metrics ADD COLUMN attempt_status TEXT NOT NULL DEFAULT 'succeeded';
+      ALTER TABLE model_call_metrics ADD COLUMN retry_reason TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN thinking_tokens INTEGER;
+      ALTER TABLE model_call_metrics ADD COLUMN provider_usage_json TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN config_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE model_call_metrics ADD COLUMN policy_version TEXT NOT NULL DEFAULT 'legacy';
+      ALTER TABLE model_call_metrics ADD COLUMN cost_status TEXT NOT NULL DEFAULT 'unknown';
+      ALTER TABLE model_call_metrics ADD COLUMN price_version TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN price_source TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN price_as_of TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN request_started_at TEXT;
+      ALTER TABLE model_call_metrics ADD COLUMN request_completed_at TEXT;
+      CREATE INDEX idx_model_call_metrics_run ON model_call_metrics(run_id, stage, attempt_number);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (49, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyEight(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE editorial_assignments ADD COLUMN assignment_type_source TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (assignment_type_source IN ('legacy','manual','auto'));
+      ALTER TABLE editorial_assignments ADD COLUMN classification_json TEXT NOT NULL DEFAULT '{}';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (48, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortySeven(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE extraction_coverage ADD COLUMN transport_status TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (transport_status IN ('unknown','succeeded','failed'));
+      ALTER TABLE extraction_coverage ADD COLUMN evidence_coverage TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (evidence_coverage IN ('unknown','complete','partial','none','not_applicable'));
+      ALTER TABLE extraction_coverage ADD COLUMN publication_usability TEXT NOT NULL DEFAULT 'review_needed'
+        CHECK (publication_usability IN ('usable','partial_usable','non_material','review_needed'));
+      ALTER TABLE extraction_coverage ADD COLUMN materiality TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (materiality IN ('unknown','material','non_material'));
+      UPDATE extraction_coverage SET
+        transport_status=CASE WHEN status='failed' THEN 'failed' ELSE 'succeeded' END,
+        evidence_coverage=CASE
+          WHEN status='passed' AND important_uncovered_count=0 THEN 'complete'
+          WHEN claim_count>0 THEN 'partial'
+          WHEN important_uncovered_count>0 THEN 'none'
+          ELSE 'unknown' END,
+        publication_usability=CASE
+          WHEN status='passed' THEN 'usable'
+          ELSE 'review_needed' END,
+        materiality=CASE
+          WHEN status='passed' AND claim_count=0 AND important_uncovered_count=0 THEN 'non_material'
+          WHEN claim_count>0 OR important_uncovered_count>0 THEN 'material'
+          ELSE 'unknown' END;
+      CREATE INDEX idx_extraction_coverage_usability
+        ON extraction_coverage(source_id, publication_usability, evidence_coverage);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (47, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortySix(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE sources ADD COLUMN submitted_by TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN source_publisher TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN source_identity TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN source_version_identity TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN original_url TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN final_url TEXT NOT NULL DEFAULT '';
+      UPDATE sources SET author_name='' WHERE adapter='manual' AND author_name='人工提交';
+      UPDATE sources SET original_url=submitted_url,final_url=submitted_url
+        WHERE submitted_url LIKE 'http://%' OR submitted_url LIKE 'https://%';
+      UPDATE sources SET source_identity='url:' || lower(submitted_url)
+        WHERE adapter='manual' AND (submitted_url LIKE 'http://%' OR submitted_url LIKE 'https://%');
+      UPDATE sources SET source_identity=adapter || ':' || external_id
+        WHERE source_identity='' AND adapter<>'manual' AND external_id<>'';
+      UPDATE sources SET source_identity='file:' || (
+        SELECT sf.sha256 FROM source_files sf WHERE sf.source_id=sources.id ORDER BY sf.id LIMIT 1
+      ) WHERE source_identity='' AND EXISTS (SELECT 1 FROM source_files sf WHERE sf.source_id=sources.id);
+      UPDATE sources SET source_version_identity=content_hash WHERE source_version_identity='';
+      CREATE INDEX idx_sources_identity ON sources(source_identity) WHERE source_identity<>'';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (46, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyFive(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE sources ADD COLUMN date_kind TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (date_kind IN ('unknown','captured_at','published_at','observed_at','verified_at','valid_from','valid_to'));
+      ALTER TABLE sources ADD COLUMN date_confidence TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (date_confidence IN ('unknown','low','medium','high'));
+      ALTER TABLE sources ADD COLUMN valid_from TEXT;
+      ALTER TABLE sources ADD COLUMN valid_to TEXT;
+      ALTER TABLE claims ADD COLUMN date_kind TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (date_kind IN ('unknown','captured_at','published_at','observed_at','verified_at','valid_from','valid_to'));
+      ALTER TABLE claims ADD COLUMN date_confidence TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (date_confidence IN ('unknown','low','medium','high'));
+      ALTER TABLE claims ADD COLUMN valid_from TEXT;
+      ALTER TABLE claims ADD COLUMN valid_to TEXT;
+      ALTER TABLE knowledge_facts ADD COLUMN validity_state TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (validity_state IN ('current','scheduled','historical','unknown'));
+      UPDATE sources SET observed_at=NULL WHERE published_at IS NOT NULL AND observed_at=published_at;
+      UPDATE sources SET date_kind='published_at',date_confidence='medium' WHERE published_at IS NOT NULL;
+      UPDATE claims SET observed_at=NULL WHERE source_id IN (
+        SELECT s.id FROM sources s WHERE s.published_at IS NOT NULL AND claims.observed_at=s.published_at
+      );
+      UPDATE claims SET date_kind='published_at',date_confidence='medium'
+        WHERE source_id IN (SELECT id FROM sources WHERE published_at IS NOT NULL);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (45, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyFour(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE jobs ADD COLUMN lease_generation INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vertex_batch_runs ADD COLUMN preparation_owner TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN preparation_generation INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vertex_batch_runs ADD COLUMN preparation_lease_expires_at TEXT;
+      CREATE INDEX idx_vertex_batch_preparation_lease ON vertex_batch_runs(status,preparation_lease_expires_at);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (44, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyThree(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE vertex_batch_runs ADD COLUMN provider TEXT NOT NULL DEFAULT 'vertex';
+      ALTER TABLE vertex_batch_runs ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN schema_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN prompt_hash TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN config_version TEXT NOT NULL DEFAULT 'legacy';
+      ALTER TABLE vertex_batch_runs ADD COLUMN config_digest TEXT NOT NULL DEFAULT '';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (43, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyTwo(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE jobs ADD COLUMN failure_class TEXT NOT NULL DEFAULT ''
+        CHECK (failure_class IN ('','permanent_input','retryable_provider','input_too_large','capacity','batch_incompatible'));
+      ALTER TABLE jobs ADD COLUMN batch_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE jobs ADD COLUMN next_eligible_at TEXT;
+      ALTER TABLE jobs ADD COLUMN last_failure_code TEXT NOT NULL DEFAULT '';
+      UPDATE jobs SET next_eligible_at=available_at WHERE status='queued';
+      CREATE INDEX idx_jobs_batch_route_ready ON jobs(status,execution_route,next_eligible_at,type,created_at);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (42, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationFortyOne(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE jobs ADD COLUMN execution_route TEXT NOT NULL DEFAULT 'auto'
+        CHECK (execution_route IN ('auto','batch','realtime'));
+      ALTER TABLE vertex_batch_items ADD COLUMN transport_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_items ADD COLUMN request_fingerprint TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_items ADD COLUMN correlation_warning TEXT NOT NULL DEFAULT '';
+      UPDATE vertex_batch_items SET transport_key=batch_item_id WHERE transport_key='';
+      CREATE UNIQUE INDEX idx_vertex_batch_transport_key ON vertex_batch_items(run_id,transport_key);
+      CREATE INDEX idx_vertex_batch_request_fingerprint ON vertex_batch_items(run_id,request_fingerprint);
+
+      CREATE TABLE vertex_batch_output_anomalies (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES vertex_batch_runs(id) ON DELETE CASCADE,
+        transport_key TEXT NOT NULL DEFAULT '',
+        request_fingerprint TEXT NOT NULL DEFAULT '',
+        output_object TEXT NOT NULL DEFAULT '',
+        output_line INTEGER,
+        output_checksum TEXT NOT NULL DEFAULT '',
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(run_id,output_checksum,reason)
+      );
+      CREATE INDEX idx_vertex_batch_output_anomalies_run ON vertex_batch_output_anomalies(run_id,created_at);
+      INSERT INTO schema_migrations(version, applied_at) VALUES (41, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationForty(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE vertex_batch_runs ADD COLUMN result_state TEXT NOT NULL DEFAULT 'awaiting_inference'
+        CHECK (result_state IN ('awaiting_inference','reading','ingesting','ready_cleanup','cleaned','quarantined'));
+      ALTER TABLE vertex_batch_runs ADD COLUMN output_read_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE vertex_batch_runs ADD COLUMN output_checksum TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN last_output_error TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_runs ADD COLUMN cleanup_eligible_at TEXT;
+      ALTER TABLE vertex_batch_runs ADD COLUMN cleaned_at TEXT;
+      ALTER TABLE vertex_batch_items ADD COLUMN output_object TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_items ADD COLUMN output_line INTEGER;
+      ALTER TABLE vertex_batch_items ADD COLUMN output_checksum TEXT NOT NULL DEFAULT '';
+      ALTER TABLE vertex_batch_items ADD COLUMN ingested_at TEXT;
+      INSERT INTO schema_migrations(version, applied_at) VALUES (40, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function migrationThirtyNine(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE segment_extractions ADD COLUMN input_modality TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (input_modality IN ('text','image','video','mixed','unknown'));
+      ALTER TABLE segment_extractions ADD COLUMN input_manifest_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE vertex_batch_items ADD COLUMN input_modality TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (input_modality IN ('text','image','video','mixed','unknown'));
+      ALTER TABLE vertex_batch_items ADD COLUMN input_manifest_json TEXT NOT NULL DEFAULT '{}';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (39, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationThirtyEight(db) {
@@ -2210,6 +2943,19 @@ function migrationOne(db) {
 }
 
 export function transaction(db, work) {
+  if (db.isTransaction) {
+    const name = `nested_${++transactionSequence}`;
+    db.exec(`SAVEPOINT ${name}`);
+    try {
+      const result = work();
+      db.exec(`RELEASE SAVEPOINT ${name}`);
+      return result;
+    } catch (error) {
+      db.exec(`ROLLBACK TO SAVEPOINT ${name}`);
+      db.exec(`RELEASE SAVEPOINT ${name}`);
+      throw error;
+    }
+  }
   db.exec("BEGIN IMMEDIATE");
   try {
     const result = work();
@@ -2220,3 +2966,4 @@ export function transaction(db, work) {
     throw error;
   }
 }
+let transactionSequence = 0;

@@ -21,6 +21,21 @@ GCE VM -- service account -- Vertex Imagen
 4. Create a Cloudflare Tunnel and add both public hostnames pointing to `http://engine:8080`. Do not put an interactive Cloudflare Access challenge in front of the dashboard; the application owns dashboard sign-in.
 5. Generate independent random `CAPTURE_TOKEN`, `ADMIN_TOKEN`, `ADMIN_PASSWORD`, and `SESSION_SECRET` values. The extension receives only the capture token. Store all dashboard credentials in Secret Manager.
 
+The checked-in Tunnel configuration does not prove that a Cloudflare Rate Limiting rule exists, so the application enforces its own bounded login throttle. It ignores `X-Forwarded-For` and `CF-Connecting-IP` by default. If the Engine is later restricted to a pinned proxy address, set `TRUSTED_PROXY_HEADER=cf-connecting-ip` and list only that proxy IP/CIDR in `TRUSTED_PROXY_SOURCES`; never enable a forwarded header while the Engine is directly reachable from an untrusted network.
+
+The production connector pins `cloudflare/cloudflared:2026.8.2` and uses Cloudflare Tunnel's supported `http2` transport. This avoids the cross-edge response cancellation observed with QUIC on this VM, prevents an unreviewed `latest` image from changing production, and keeps the same outbound-only port 7844 tunnel model. If the network policy changes, run Cloudflare's connectivity pre-check before changing `--protocol`; TCP port 7844 must remain available for HTTP/2.
+
+Backups are versioned system snapshot directories, not standalone SQLite files. Each snapshot contains a `VACUUM INTO` database image, original uploads, generated media, hashes for every file, database-to-file reference mappings, application/content-strategy/schema/code versions, and retention/offsite-policy metadata. Secret values are excluded; the manifest lists only the Secret Manager references that must be restored separately. Before replacing an existing container, `startup.sh` creates and verifies a `pre-upgrade` snapshot. Keep `BACKUP_OFFSITE_LOCATION` and `BACKUP_OFFSITE_RETENTION_DAYS` aligned with the separately managed offsite replication policy; configuring those values records policy but does not itself upload the snapshot.
+
+Verify and drill a snapshot before rollback:
+
+```bash
+docker exec engine node src/backup.mjs --verify /var/lib/solo-to-china/backups/solo-to-china-<timestamp>.snapshot
+docker exec engine node src/backup.mjs --drill /var/lib/solo-to-china/backups/solo-to-china-<timestamp>.snapshot
+```
+
+The drill restores into an isolated temporary directory, checks every manifest hash, opens every database-referenced evidence/draft-media file, and advances one recovered draft through an offline mock delivery boundary. It never initializes a model client or WordPress adapter. A rollback must restore `database.sqlite`, `files/source-uploads`, and `files/generated-media` together to the paths named by the manifest, restore secrets from Secret Manager, and run the exact `requiredCodeRevision`/`requiredApplicationVersion`; never restore only the database over media from another snapshot.
+
 ## Build and run
 
 From an authenticated Google Cloud shell or workstation, substitute your own values:
@@ -29,7 +44,7 @@ From an authenticated Google Cloud shell or workstation, substitute your own val
 $project = "YOUR_PROJECT_ID"
 $region = "us-central1"
 $repo = "solo-to-china"
-$image = "$region-docker.pkg.dev/$project/$repo/engine:1.17.23"
+$image = "$region-docker.pkg.dev/$project/$repo/engine:2.0.3"
 
 gcloud services enable compute.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com --project $project
 gcloud artifacts repositories create $repo --repository-format=docker --location=$region --project=$project

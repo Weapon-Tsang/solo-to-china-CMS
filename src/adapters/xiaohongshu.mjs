@@ -1,4 +1,5 @@
 import { canonicalizeUrl, sha256, truncate } from "../utils.mjs";
+import { estimateSourceProcessing } from "../source-preflight.mjs";
 
 const ALLOWED_HOSTS = new Set(["www.xiaohongshu.com", "xiaohongshu.com"]);
 const AUTHORIZED_ORIGINS = new Set(["xhs_manual_extension", "xhs_favorites_sync"]);
@@ -20,7 +21,6 @@ export function normalizeXiaohongshuCapture(input) {
   }
 
   const rawText = String(input.text || "").trim();
-  if (rawText.length < 20) throw new ValidationError("The current page did not expose enough note text to save.");
 
   const canonicalUrl = canonicalizeUrl(url.pathname.startsWith("/board/")
     ? `https://www.xiaohongshu.com/explore/${externalId}`
@@ -34,7 +34,13 @@ export function normalizeXiaohongshuCapture(input) {
   ]);
   const rawHtml = String(input.html || "");
   const completeness = normalizeCompleteness(input.completeness, { rawText, rawHtml, assets });
+  if (rawText.length < 20 && assets.length === 0) {
+    throw new ValidationError("The current page did not expose usable note text or media to save.");
+  }
   const rights = authorizedRights(acquisitionOrigin);
+
+  const processingEstimate = estimateSourceProcessing({ rawText, assets });
+  const sourceTimestamp = normalizeSourceTimestamp(input.sourceTimestamp);
 
   return {
     adapter: "xiaohongshu",
@@ -43,12 +49,13 @@ export function normalizeXiaohongshuCapture(input) {
     title: truncate(input.title, 1_000).trim(),
     authorName: truncate(input.author?.name, 500).trim(),
     authorUrl: safeHttpUrl(input.author?.url),
-    publishedAt: safeDate(input.publishedAt),
+    publishedAt: sourceTimestamp ? sourceTimestamp.kind === "published" ? sourceTimestamp.value : null : safeDate(input.publishedAt),
     capturedAt: safeDate(input.capturedAt) || new Date().toISOString(),
     rawText,
     rawHtml,
     assets,
     completeness,
+    submissionMetadata: { processingEstimate, sourceTimestamp },
     acquisitionOrigin,
     syncScopeKey: truncate(input.syncScopeKey || input.client?.syncScopeKey, 500),
     rights,
@@ -80,12 +87,40 @@ function normalizeAssets(values) {
       duration: finiteNumber(value?.duration),
       mediaIdentity: identity,
       originalSha256: validSha256(value?.originalSha256),
+      mimeType: safeMediaMime(value?.mimeType, kind),
       aiDerivativeDataUrl: safeImageDataUrl(value?.aiDerivativeDataUrl),
       aiDerivativeSha256: validSha256(value?.aiDerivativeSha256),
+      originalDataUrl: safeImageDataUrl(value?.originalDataUrl),
+      originalStorageRef: safeStorageRef(value?.originalStorageRef),
+      nearbyText: truncate(value?.nearbyText || value?.provenance?.nearbyText, 2_000),
+      captionText: truncate(value?.captionText || value?.provenance?.captionText, 1_000),
+      domOrder: nonNegativeInteger(value?.domOrder ?? value?.provenance?.domOrder),
+      languageStatus: ["unknown", "english", "chinese", "mixed", "no_text"].includes(value?.languageStatus) ? value.languageStatus : "unknown",
       provenance: value?.provenance && typeof value.provenance === "object" ? value.provenance : {},
     });
   }
   return assets;
+}
+
+function safeMediaMime(value, kind) {
+  const mime = String(value || '').toLowerCase();
+  if (kind === "video") return /^video\/(?:mp4|webm|quicktime)$/.test(mime) ? mime : '';
+  return /^image\/(?:jpeg|png|webp|gif)$/.test(mime) ? mime : '';
+}
+
+function safeStorageRef(value) {
+  const text = String(value || "");
+  return /^media\/[a-f0-9]{2}\/[a-f0-9]{64}\.(?:jpg|png|webp|gif|mp4|webm|mov)$/i.test(text) ? text : "";
+}
+
+function normalizeSourceTimestamp(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    value: safeDate(value.value),
+    kind: ['edited','published','unknown'].includes(value.kind) ? value.kind : 'unknown',
+    raw: truncate(value.raw, 200),
+    confidence: ['high','medium','low','none'].includes(value.confidence) ? value.confidence : 'none',
+  };
 }
 
 function normalizeCompleteness(value, { rawText, rawHtml, assets }) {

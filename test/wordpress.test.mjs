@@ -135,6 +135,35 @@ test("WordPress adapter uploads an authorized evidence-linked Xiaohongshu source
   assert.match(postBody.content, /wp-image-13/);
 });
 
+test("authorized source download classifies an expired CDN URL as permanent", async () => {
+  const adapter = new WordPressDraftAdapter({
+    siteUrl: "https://site.test", username: "editor", applicationPassword: "app password",
+  }, async () => new Response("forbidden", { status: 403 }));
+  await assert.rejects(() => adapter.resolveVisualMedia([{
+    id: "visual-expired", status: "generated", source_asset_id: "asset-expired",
+    source_remote_url: "https://ci.xhscdn.com/expired.jpg",
+  }]), (error) => error.code === "AUTHORIZED_SOURCE_IMAGE_UNAVAILABLE" && error.status === 403 && error.retryable === false);
+});
+
+test("authorized source upload can use a stored capture derivative without a live CDN URL", async () => {
+  const requests = [];
+  const adapter = new WordPressDraftAdapter({
+    siteUrl: "https://site.test", username: "editor", applicationPassword: "app password",
+  }, async (url, options = {}) => {
+    requests.push(String(url));
+    assert.equal(String(url), "https://site.test/wp-json/wp/v2/media");
+    assert.equal(options.headers["content-type"], "image/webp");
+    assert.equal(Buffer.from(options.body).toString(), "stored-derivative");
+    return Response.json({ id: 77, source_url: "https://site.test/uploads/stored.webp" }, { status: 201 });
+  });
+  const result = await adapter.resolveVisualMedia([{
+    id: "visual-stored", status: "generated", source_asset_id: "asset-stored",
+    source_asset_data_url: `data:image/webp;base64,${Buffer.from("stored-derivative").toString("base64")}`,
+  }]);
+  assert.equal(result[0].id, 77);
+  assert.deepEqual(requests, ["https://site.test/wp-json/wp/v2/media"]);
+});
+
 test("WordPress inventory sync reads every page without changing posts", async () => {
   const requests = [];
   const fetchStub = async (url, options) => {
@@ -220,7 +249,7 @@ test("WordPress renderers place generated visual media safely within the article
   const visuals = [{ id: 12, url: "https://site.test/uploads/guide.png", alt: "Beijing skyline", caption: "An original editorial visual" }];
   const html = markdownToSafeHtml("## Plan\n\nParagraph", visuals);
   const blocks = markdownToWordPressBlocks("## Plan\n\nParagraph", visuals);
-  assert.match(html, /<figure><img src="https:\/\/site\.test\/uploads\/guide\.png" alt="Beijing skyline"\/>/);
+  assert.match(html, /<figure><img src="https:\/\/site\.test\/uploads\/guide\.png" alt="Beijing skyline" fetchpriority="high" decoding="async"\/>/);
   assert.match(blocks, /<!-- wp:image \{\"id\":12/);
   assert.match(blocks, /wp-element-caption/);
 });

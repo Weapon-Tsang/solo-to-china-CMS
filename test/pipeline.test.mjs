@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { Pipeline } from "../src/pipeline.mjs";
+import { scopeFactsForOpportunity } from "../src/repository.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
 test("pipeline separates extraction, claims, semantic coexistence, and editorial patterns", async (t) => {
@@ -72,7 +73,7 @@ test("a manual coverage segment does not fail its source before every segment se
   repository.saveSegmentExtraction(segments[0].id, extraction());
   assert.equal(repository.auditSegmentCoverage(segments[0].id, { uncovered_spans: [{ quote: "long introduction", importance: "material", reason: "Potential visitor fact is uncovered." }] }).status, "retry_required");
   repository.saveSegmentExtraction(segments[0].id, extraction(), { retry: true });
-  assert.equal(repository.auditSegmentCoverage(segments[0].id, { uncovered_spans: [{ quote: "long introduction", importance: "material", reason: "Potential visitor fact is still uncovered." }] }).status, "manual_review");
+  assert.equal(repository.auditSegmentCoverage(segments[0].id, { uncovered_spans: [{ quote: "long introduction", importance: "material", reason: "Potential visitor fact is still uncovered." }] }).status, "review_needed");
   assert.equal(db.prepare("SELECT status,last_error FROM sources WHERE id=?").get(source.id).status, "processing");
 
   for (const [index, segment] of segments.slice(1).entries()) {
@@ -112,11 +113,91 @@ test("coverage drops an untraceable text Claim without blocking supported eviden
     },
   });
   const audit = repository.auditSegmentCoverage(segment.id, { uncovered_spans: [] });
-  assert.equal(audit.status, "passed");
+  assert.equal(audit.status, "usable");
   assert.equal(audit.claimCount, 1);
   assert.equal(audit.unsupportedClaimCount, 1);
   repository.finalizeSegmentedExtraction(source.id);
   assert.equal(db.prepare("SELECT COUNT(*) count FROM claims WHERE source_id=?").get(source.id).count, 1);
+});
+
+test("coverage keeps one supported Claim usable without claiming full segment coverage", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/partial-coverage",
+    title: "Chongqing metro and visitor checklist",
+    text: "Take Metro Line 2 to the riverside. The source also contains nine other important visitor details that require targeted extraction and must not be hidden.",
+    images: [],
+  }));
+  const [segment] = repository.prepareSourceSegments(source.id);
+  const extraction = {
+    method: "test_text", model: "fixture-model",
+    result: {
+      source: { language: "en", summary: "Route", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+      claims: [{ key: "chongqing.route.metro", subject: "Riverside route", predicate: "metro route", value: "Metro Line 2", qualifiers: [], source_quote: "Take Metro Line 2", confidence: 0.9 }],
+      blueprint: { format: "guide", hook: "", angle: "", sections: [], strengths: [], gaps: [] },
+    },
+  };
+  const uncovered_spans = Array.from({ length: 9 }, (_, index) => ({
+    quote: `visitor detail ${index + 2}`, importance: "material", reason: `Important visitor detail ${index + 2} remains uncovered.`,
+  }));
+  repository.saveSegmentExtraction(segment.id, extraction);
+  assert.equal(repository.auditSegmentCoverage(segment.id, { uncovered_spans }).status, "retry_required");
+  repository.saveSegmentExtraction(segment.id, extraction, { retry: true });
+  const audit = repository.auditSegmentCoverage(segment.id, { uncovered_spans });
+  assert.equal(audit.status, "partial_usable");
+  assert.equal(audit.evidenceCoverage, "partial");
+  assert.equal(audit.claimCount, 1);
+  assert.equal(audit.sourceState.ready, true);
+  assert.equal(audit.sourceState.complete, false);
+  assert.deepEqual({ ...db.prepare(`SELECT transport_status,evidence_coverage,publication_usability
+    FROM extraction_coverage WHERE segment_id=?`).get(segment.id) }, {
+    transport_status: "succeeded", evidence_coverage: "partial", publication_usability: "partial_usable",
+  });
+  repository.finalizeSegmentedExtraction(source.id);
+  repository.rebuildKnowledge("chongqing");
+  assert.equal(repository.knowledgeForDestination("chongqing").some((fact) => fact.normalized_key === "chongqing.route.metro"), true);
+});
+
+test("zero-Claim media uses local materiality rules and never silently passes meaningful images", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/media-materiality",
+    title: "Visitor image notes",
+    text: "This source includes supporting images for a selected travel note and enough text to form its own segment.",
+    images: [
+      { url: "https://example.com/logo.jpg", alt: "decorative logo divider" },
+      { url: "https://example.com/hours.jpg", alt: "Ticket board showing weekday opening hours" },
+    ],
+  }));
+  const images = repository.prepareSourceSegments(source.id).filter((segment) => segment.assetId);
+  const emptyExtraction = (manifest) => ({ method: "test_image", model: "fixture-model", inputManifest: manifest,
+    result: { source: { language: "en", summary: "Image", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.7 }, claims: [],
+      blueprint: { format: "guide", hook: "", angle: "", sections: [], strengths: [], gaps: [] } } });
+  const manifestFor = (segment) => ({ version: 1, expectedModality: "image", receivedModality: "image", provider: "test", model: "fixture-model",
+    capabilities: { text: true, image: true, video: false, batch: false }, assets: [{ assetId: segment.assetId, kind: "image", status: "submitted" }] });
+
+  repository.saveSegmentExtraction(images[0].id, emptyExtraction(manifestFor(images[0])));
+  const decorative = repository.auditSegmentCoverage(images[0].id);
+  assert.equal(decorative.status, "non_material");
+  assert.equal(decorative.materiality, "non_material");
+
+  repository.saveSegmentExtraction(images[1].id, emptyExtraction(manifestFor(images[1])));
+  assert.equal(repository.auditSegmentCoverage(images[1].id).status, "retry_required");
+  repository.saveSegmentExtraction(images[1].id, emptyExtraction(manifestFor(images[1])), { retry: true });
+  assert.equal(repository.auditSegmentCoverage(images[1].id).status, "review_needed");
+  assert.equal(db.prepare("SELECT publication_usability FROM extraction_coverage WHERE segment_id=?").get(images[1].id).publication_usability, "review_needed");
+});
+
+test("topic scoping carries relevant partial-coverage gaps but drops unrelated ones", () => {
+  const [fact] = scopeFactsForOpportunity([{
+    normalized_key: "chongqing.route.metro", subject: "Riverside metro route", predicate: "metro schedule",
+    validity_state: "current", preferred_value: "Metro Line 2", evidence: [{ source_id: "source-1", coverage_limitations: [
+      { locator: "Weekend metro schedule", reason: "Weekend train frequency remains uncovered." },
+      { locator: "Restaurant payment", reason: "Card acceptance at nearby restaurants remains uncovered." },
+    ] }],
+  }], { destinationSlug: "chongqing", topic: "weekend metro schedule", title: "Chongqing Metro Line 2 on weekends" });
+  assert.equal(fact.evidence[0].coverage_limitations.length, 1);
+  assert.match(fact.evidence[0].coverage_limitations[0].reason, /frequency/);
 });
 
 test("coverage audit ignores and repairs legacy unsupported-Claim false positives", (t) => {
@@ -135,7 +216,7 @@ test("coverage audit ignores and repairs legacy unsupported-Claim false positive
       blueprint: { format: "pending", hook: "", angle: "", sections: [], strengths: [], gaps: [] } },
   });
   const falsePositive = { uncovered_spans: [{ quote: "segment 1", importance: "material", reason: "One or more extracted Claims do not contain a quote traceable to this segment." }] };
-  assert.equal(repository.auditSegmentCoverage(segment.id, falsePositive).status, "passed");
+  assert.equal(repository.auditSegmentCoverage(segment.id, falsePositive).status, "usable");
   db.prepare(`UPDATE extraction_coverage SET status='manual_review',important_uncovered_count=1,uncovered_spans_json=? WHERE segment_id=?`)
     .run(JSON.stringify(falsePositive.uncovered_spans.map((item) => ({ locator: item.quote, importance: item.importance, reason: item.reason }))), segment.id);
   db.prepare("UPDATE source_segments SET status='failed' WHERE id=?").run(segment.id);
@@ -151,7 +232,7 @@ test("media segment coverage uses extraction metadata instead of a second model 
   const repository = {
     claimJob: () => ({ id: "job-audit-image", type: "audit_segment_coverage", entity_id: "segment-image" }),
     getSegmentCoveragePackage: () => ({ expectedModality: "image", staleCaptureVersion: false }),
-    auditSegmentCoverage: () => ({ status: "passed", sourceState: { ready: false } }),
+    auditSegmentCoverage: () => ({ status: "usable", sourceState: { ready: false } }),
     sourceCoverageReady: () => false,
     completeJob: () => true,
     failJob: (_job, error) => assert.fail(error),
@@ -159,6 +240,71 @@ test("media segment coverage uses extraction metadata instead of a second model 
   const pipeline = new Pipeline(repository, { auditCoverage: async () => { audits += 1; } });
   assert.equal(await pipeline.runOne(), true);
   assert.equal(audits, 0);
+});
+
+test("coverage trusts the persisted input manifest instead of guessing batch modality", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/68abcdef0000000000000199",
+    title: "Chongqing image evidence",
+    text: "A selected image source with enough context for the extraction pipeline.",
+    images: [{ url: "https://example.com/batch-image.jpg", alt: "Hongyadong at night" }],
+  }));
+  const imageSegment = repository.prepareSourceSegments(source.id).find((segment) => segment.assetId);
+  const asset = db.prepare("SELECT * FROM source_assets WHERE id=?").get(imageSegment.assetId);
+
+  repository.saveSegmentExtraction(imageSegment.id, {
+    method: "vertex_batch",
+    model: "gemini-3.8-flash",
+    inputManifest: {
+      version: 1,
+      expectedModality: "image",
+      receivedModality: "image",
+      provider: "vertex",
+      model: "gemini-3.8-flash",
+      capabilities: { text: true, image: true, video: false, batch: true },
+      assets: [{ assetId: asset.id, hash: asset.original_sha256 || null, kind: "image", status: "submitted", requestReference: "inline_data" }],
+    },
+    result: {
+      source: { language: "en", summary: "Image", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+      claims: [{ key: "chongqing.hongyadong.night_view", subject: "Hongyadong", predicate: "features_view", value: "Night view", qualifiers: [], source_quote: "Hongyadong at night", confidence: 0.9 }],
+      blueprint: { format: "guide", hook: "", angle: "", sections: [], strengths: [], gaps: [] },
+    },
+  });
+
+  const audit = repository.auditSegmentCoverage(imageSegment.id);
+  assert.equal(audit.receivedModality, "image");
+  assert.equal(audit.status, "usable");
+  assert.equal(audit.attempted, 1);
+
+  repository.saveSegmentExtraction(imageSegment.id, {
+    method: "vertex_batch",
+    model: "gemini-3.8-flash",
+    inputManifest: {
+      version: 1,
+      expectedModality: "image",
+      receivedModality: "text",
+      provider: "vertex",
+      model: "gemini-3.8-flash",
+      capabilities: { text: true, image: true, video: false, batch: true },
+      assets: [{ assetId: asset.id, hash: asset.original_sha256 || null, kind: "image", status: "failed",
+        requestReference: null, failureCode: "IMAGE_FETCH_FAILED", failureReason: "Image fetch failed (503)." }],
+    },
+    result: {
+      source: { language: "en", summary: "Text fallback", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.6 },
+      claims: [],
+      blueprint: { format: "guide", hook: "", angle: "", sections: [], strengths: [], gaps: [] },
+    },
+  });
+  const failed = repository.auditSegmentCoverage(imageSegment.id);
+  assert.equal(failed.receivedModality, "text");
+  assert.equal(failed.status, "retry_required");
+  assert.match(failed.uncovered[0].reason, /Image fetch failed \(503\)/);
+
+  db.prepare("UPDATE segment_extractions SET input_modality='unknown',input_manifest_json='{}' WHERE segment_id=?").run(imageSegment.id);
+  const legacy = repository.auditSegmentCoverage(imageSegment.id);
+  assert.equal(legacy.receivedModality, "unknown");
+  assert.equal(legacy.status, "retry_required");
 });
 
 test("entity resolution falls back deterministically when model structured output is invalid", async () => {

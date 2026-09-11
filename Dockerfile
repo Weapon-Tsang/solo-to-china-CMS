@@ -17,6 +17,7 @@ COPY --from=build /app/src ./src
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/config ./config
 COPY --from=build /app/docs ./docs
+COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/package.json ./package.json
 
 EXPOSE 8080

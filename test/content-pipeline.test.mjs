@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { Pipeline } from "../src/pipeline.mjs";
@@ -7,6 +8,7 @@ import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 import { CommercialComposer, normalizeCommercialOffer } from "../src/commercial.mjs";
 import { FrontendContractConsumer } from "../src/frontend-contract.mjs";
 import { defaultComponents, frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
+import { pageBlockSignature } from "../src/repository.mjs";
 
 test("human approval drives recommendation, brief, draft, QA, and WordPress draft delivery", async (t) => {
   const { db, repository } = repositoryFixture(t);
@@ -24,11 +26,26 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   });
   await frontendContracts.sync();
   const sourceExtractor = {
+    config: { sourceUploadsDir: repository.contentConfig.sourceUploadsDir },
     async extract(source) {
       return {
         method: "test_multimodal", model: "source-model",
+        inputManifest: source.assets?.length ? {
+          version: 1, expectedModality: source.assets[0].kind === "video" ? "video" : "image",
+          receivedModality: source.assets[0].kind === "video" ? "video" : "image",
+          provider: "test", model: "source-model",
+          capabilities: { text: true, image: true, video: true, batch: false },
+          assets: source.assets.map((asset, index) => ({
+            assetId: asset.id, kind: asset.kind === "video" ? "video" : "image", status: "submitted",
+            requestReference: `test-part-${index}`,
+          })),
+        } : {
+          version: 1, expectedModality: "text", receivedModality: "text",
+          provider: "test", model: "source-model",
+          capabilities: { text: true, image: true, video: true, batch: false }, assets: [],
+        },
         result: {
-          source: { language: "zh-CN", summary: "Research", destination_name: "Beijing", destination_slug: "beijing", traveler_fit: ["solo"], practical_tips: [], warnings: [], confidence: 0.9 },
+          source: { language: "en", summary: "Research", destination_name: "Beijing", destination_slug: "beijing", traveler_fit: ["solo"], practical_tips: [], warnings: [], confidence: 0.9 },
           claims: [
             ["beijing.orientation.location", "Beijing orientation", "location", "Central Beijing"],
             ["beijing.transport.metro", "Beijing transport", "metro transport", "Use the metro"],
@@ -64,18 +81,20 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       return { model: "planner-model", output: {
         title: "First-Time Beijing Solo Travel Guide", primary_keyword: "beijing solo travel", search_intent: "informational",
         audience: ["solo travelers"], angle: "first visit", reader_promise: "Plan with confidence",
-        outline: [{ heading: "Plan", purpose: "Practical steps", claim_keys: ["beijing.orientation.location", "beijing.transport.metro"] }],
+        outline: [{ section_id: "section_plan", heading: "Plan", purpose: "Practical steps", claim_keys: ["beijing.orientation.location", "beijing.transport.metro"] }],
         adaptation_requirements: ["language"], conflict_instructions: [],
       } };
     },
     async draft(contentPackage) {
+      assert.ok(contentPackage.authorized_source_assets?.some((asset) => asset.mime_type === "image/png" && asset.preview_url),
+        "saved authorized source images must be selected before writing starts");
       const sourceIds = [...new Set(contentPackage.facts
         .filter((fact) => ["beijing.orientation.location", "beijing.transport.metro"].includes(fact.normalized_key))
         .flatMap((fact) => fact.evidence.map((evidence) => evidence.source_id)))];
       return { model: "writer-model", output: {
         title: "First-Time Beijing Solo Travel Guide", slug: "beijing-solo-guide", meta_description: "A practical first-time Beijing guide.",
-        body_markdown: "## Plan\n\nEvidence-backed practical guidance for independent visitors.",
-        evidence_ledger: [{ section: "Plan", claim_keys: ["beijing.orientation.location", "beijing.transport.metro"], source_ids: sourceIds }],
+        body_markdown: "## Plan\n\nCentral Beijing is the orientation point. Use the metro; this transport evidence was checked on September 7, 2026.",
+        evidence_ledger: [{ section_id: "section_plan", section: "Plan", content_node_ids: ["node_plan"], claim_keys: ["beijing.orientation.location", "beijing.transport.metro"], source_ids: sourceIds }],
         unresolved_conflicts: [],
         visuals: [
           { placement: "hero", purpose: "Show Source A real-world travel scene", alt_text: "Source A real-world travel scene", caption: "Beijing orientation", generation_prompt: "", aspect_ratio: "16:9", image_type: "real_world_photo", image_role: "hero", image_subject: "Source A real-world travel scene", factual_image_required: true },
@@ -85,14 +104,17 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
     },
     async composePagePlan() {
       return { model: "composer-model", output: {
-        blocks: [{ type: "articleSection", variant: "answer-first", semantic_role: "answer", writer_guidance: "Start with the practical evidence-backed answer." }],
+        blocks: [{ content_node_id: "node_plan", source_section_ids: ["section_plan"], claim_keys: ["beijing.orientation.location", "beijing.transport.metro"], factuality: "factual", type: "articleSection", variant: "answer-first", semantic_role: "answer", writer_guidance: "Start with the practical evidence-backed answer." }],
       } };
     },
     async composeFrontendPage() {
+      const block = { type: "articleSection", variant: "answer-first", data: { heading: "Plan", body: "Central Beijing is the orientation point. Use the metro; this transport evidence was checked on September 7, 2026." } };
       return { model: "payload-composer-model", output: {
         metadata: { title: "First-Time Beijing Solo Travel Guide" },
-        blocks: [{ type: "articleSection", variant: "answer-first", data: { heading: "Plan", body: "Evidence-backed practical guidance for independent visitors." } }],
-      } };
+        blocks: [block],
+      }, provenance: { version: "2", valid: true, errors: [], entries: [{ contentNodeId: "node_plan",
+        blockSignature: pageBlockSignature(block), sourceSectionIds: ["section_plan"],
+        claimKeys: ["beijing.orientation.location", "beijing.transport.metro"], factuality: "factual" }] } };
     },
     async review() {
       return { model: "reviewer-model", output: { passed: true, score: 92, checks: [], issues: [], unsupported_claims: [] } };
@@ -120,7 +142,9 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       text: externalId === "autoA"
         ? "Beijing orientation: Central Beijing. Use the metro. Reserve timed attractions. Carry a working mobile payment method. Plan admission and transit costs."
         : "Beijing booking: Central Beijing. Use the metro. Reserve timed attractions. Carry a working mobile payment method. Plan admission and transit costs. Passport checks, museum entry, ticket windows, weekend crowds, airport arrival, luggage storage, hotel check-in, translation, local etiquette, and emergency contacts are reviewed independently.",
-      images: [{ url: `https://ci.xhscdn.com/${externalId}.jpg`, alt: `${title} real-world travel scene` }],
+      images: [{ url: `https://ci.xhscdn.com/${externalId}.jpg`, alt: `${title} real-world travel scene`,
+        originalDataUrl: `data:image/png;base64,${Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),Buffer.from(externalId)]).toString("base64")}`,
+        originalSha256: createHash("sha256").update(Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),Buffer.from(externalId)])).digest("hex") }],
     }));
   }
   db.prepare("UPDATE sources SET authority_level=1, verified_at='2026-09-07T00:00:00.000Z'").run();
@@ -141,10 +165,17 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(recommendation.strategy_version, CONTENT_STRATEGY.version);
   assert.equal(recommendation.production_paths.length, 3);
   assert.ok(recommendation.production_paths.every((path) => path.opportunity_id));
-  assert.ok(repository.listContentOpportunities().length >= 6);
+  assert.equal(repository.listContentOpportunities().length, 0, "unapproved source proposals are not content opportunities");
+  assert.equal(repository.listApprovedContentOpportunities().length, 0);
+  assert.equal(repository.listContent({ approvedOnly: true }).length, 0);
   const adaptationPath = recommendation.production_paths.find((path) => path.mode === "SOURCE_ADAPTATION");
   const approval = repository.decideRecommendation(recommendation.id, "approved_article", "", { opportunityId: adaptationPath.opportunity_id });
   assert.equal(approval.opportunityId, adaptationPath.opportunity_id);
+  assert.equal(repository.listContentOpportunities().length, 1, "the approved article plan becomes a content opportunity");
+  const [approvedOpportunity] = repository.listApprovedContentOpportunities();
+  assert.equal(Boolean(approvedOpportunity), true);
+  assert.equal("coverage_json" in approvedOpportunity, false);
+  assert.equal("readiness_json" in approvedOpportunity, false);
   const dashboardAfterApproval = repository.dashboard();
   assert.equal(dashboardAfterApproval.actionCounts.recommendations, pendingRecommendationCount - 1);
   assert.equal(dashboardAfterApproval.totals.pendingRecommendations, pendingRecommendationCount - 1);
@@ -154,7 +185,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
 
   const content = repository.listContent();
   assert.equal(content.length, 1);
-  assert.equal(content[0].draft_status, "wordpress_draft");
+  assert.equal(repository.listContent({ approvedOnly: true }).length, 1);
+  assert.equal(content[0].draft_status, "wordpress_draft", JSON.stringify(repository.listOperationalExceptions()));
   assert.equal(content[0].qa_passed, 1);
   assert.equal(content[0].wordpress_post_id, 42);
   assert.equal(wordpress.calls.length, 1);
@@ -175,6 +207,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(generatedPackage.frontend_page.payload.blocks[0].type, "articleSection");
   assert.equal(generatedPackage.frontend_page.validation.valid, true);
   assert.equal(generatedPackage.publish_composition.validation.valid, true);
+  assert.match(generatedPackage.publish_composition.page_content_hash, /^[a-f0-9]{64}$/);
+  assert.match(generatedPackage.publish_composition.seo_artifact_hash, /^[a-f0-9]{64}$/);
   assert.deepEqual(generatedPackage.publish_composition.publish_package.page.blocks, wordpress.calls[0].publishPackage.page.blocks);
   assert.equal(generatedPackage.frontend_page.contract_version, "1.2.0");
   assert.equal(generatedPackage.brief.strategy_version, CONTENT_STRATEGY.version);
@@ -220,4 +254,18 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(afterRevision.commercial_composition, null, "commercial output is version-bound");
   assert.equal(afterRevision.frontend_page.current, false, "page composition becomes stale after a draft revision");
   assert.deepEqual(afterRevision.draft.visuals.map((visual) => visual.id), visualIds, "unchanged visual assets are reused");
+
+  db.prepare("DELETE FROM jobs WHERE entity_id=?").run(content[0].draft_id);
+  const extractionCount = db.prepare("SELECT COUNT(*) AS count FROM segment_extractions").get().count;
+  const bodyBeforeMetadataEdit = afterRevision.draft.body_markdown;
+  const edited = repository.updateDraftMetadata(content[0].draft_id, {
+    title: "First-Time Beijing Solo Travel Guide — 2026 Notes",
+    metaDescription: "Practical, evidence-bounded notes for a first solo visit to Beijing.",
+  });
+  assert.equal(edited.body_markdown, bodyBeforeMetadataEdit, "metadata editing does not invoke or replace writer output");
+  assert.equal(edited.model, "manual_metadata_edit");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM segment_extractions").get().count, extractionCount,
+    "metadata editing does not rerun evidence extraction");
+  assert.deepEqual(db.prepare("SELECT type FROM jobs WHERE entity_id=? AND status='queued' ORDER BY type").all(content[0].draft_id).map((row) => row.type),
+    ["review_draft"], "metadata editing invalidates downstream work and reruns only the final content check");
 });

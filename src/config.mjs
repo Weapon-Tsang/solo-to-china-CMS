@@ -1,8 +1,11 @@
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const modelStagePolicy = JSON.parse(fs.readFileSync(path.join(root, "config", "model-stage-policy.json"), "utf8"));
+const modelPricing = JSON.parse(fs.readFileSync(path.join(root, "config", "model-pricing.json"), "utf8"));
 
 export const AI_MODELS = [
   { id: "vertex-gemini-3.8-flash", provider: "vertex", model: "gemini-3.8-flash", location: "global", label: "Vertex AI · Gemini 3.8 Flash", description: "默认的 Google 多模态工作模型，用于图文理解、结构化提取、写作与审核。", supportsImages: true, isDefault: true },
@@ -37,6 +40,8 @@ export function loadConfig(env = process.env) {
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
   const sourceUploadsDir = path.resolve(root, env.SOURCE_UPLOADS_DIR || "data/source-uploads");
   const captureUploadsDir = path.resolve(root, env.CAPTURE_UPLOADS_DIR || "data/capture-uploads");
+  const captureMediaUploadsDir = path.resolve(root, env.CAPTURE_MEDIA_UPLOADS_DIR || "data/capture-media-uploads");
+  const generatedMediaDir = path.resolve(root, env.GENERATED_MEDIA_DIR || "data/generated-media");
   const imageProvider = env.IMAGE_PROVIDER || env.VISUAL_PROVIDER || "none";
   return {
     root,
@@ -51,10 +56,22 @@ export function loadConfig(env = process.env) {
       password: env.ADMIN_PASSWORD || "",
       sessionSecret: env.SESSION_SECRET || "",
       forcePasswordChange: boolean(env.ADMIN_PASSWORD_FORCE_CHANGE, env.ADMIN_PASSWORD === "123456"),
+      loginThrottle: {
+        accountAttempts: integer(env.LOGIN_RATE_LIMIT_ACCOUNT_ATTEMPTS, 5),
+        sourceAttempts: integer(env.LOGIN_RATE_LIMIT_SOURCE_ATTEMPTS, 20),
+        windowMs: integer(env.LOGIN_RATE_LIMIT_WINDOW_SECONDS, 900) * 1_000,
+        baseCooldownMs: integer(env.LOGIN_RATE_LIMIT_BASE_COOLDOWN_SECONDS, 2) * 1_000,
+        maxCooldownMs: integer(env.LOGIN_RATE_LIMIT_MAX_COOLDOWN_SECONDS, 300) * 1_000,
+        maxEntries: integer(env.LOGIN_RATE_LIMIT_MAX_ENTRIES, 5_000),
+        trustedProxyHeader: choice(env.TRUSTED_PROXY_HEADER, ["", "cf-connecting-ip", "x-forwarded-for"], ""),
+        trustedProxySources: stringList(env.TRUSTED_PROXY_SOURCES),
+      },
     },
     captureHost: hostname(env.CAPTURE_HOST),
     ai: {
       defaultModel: AI_MODELS.some((item) => item.id === env.AI_MODEL) ? env.AI_MODEL : "vertex-gemini-3.8-flash",
+      stagePolicy: modelStagePolicy,
+      pricing: modelPricing,
     },
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
@@ -104,6 +121,12 @@ export function loadConfig(env = process.env) {
       chunkBytes: integer(env.CAPTURE_UPLOAD_CHUNK_BYTES, 2 * 1024 * 1024),
       maxAgeMs: integer(env.CAPTURE_UPLOAD_MAX_AGE_HOURS, 24) * 60 * 60 * 1000,
     },
+    captureMediaUploads: {
+      uploadDir: captureMediaUploadsDir,
+      storageDir: sourceUploadsDir,
+      maxBytes: integer(env.CAPTURE_MEDIA_MAX_BYTES, 512 * 1024 * 1024),
+      chunkBytes: integer(env.CAPTURE_MEDIA_CHUNK_BYTES, 4 * 1024 * 1024),
+    },
     extraction: {
       concurrencyMode: choice(env.AI_CONCURRENCY_MODE || env.EXTRACT_CONCURRENCY_MODE, ["auto", "fixed"], "auto"),
       concurrencyInitial: integer(env.AI_CONCURRENCY_INITIAL || env.EXTRACT_CONCURRENCY_INITIAL, 2),
@@ -124,7 +147,7 @@ export function loadConfig(env = process.env) {
       model: env.IMAGE_MODEL || env.VERTEX_IMAGEN_MODEL || "gemini-3.1-flash-image",
       coverQuality: env.IMAGE_COVER_QUALITY || "1K",
       inlineQuality: env.IMAGE_INLINE_QUALITY || "1K",
-      mediaDir: path.resolve(root, env.GENERATED_MEDIA_DIR || "data/generated-media"),
+      mediaDir: generatedMediaDir,
       publicBaseUrl: (env.PUBLIC_BASE_URL || "").replace(/\/$/, ""),
       accessToken: env.VERTEX_AI_ACCESS_TOKEN || "",
       requestTimeoutMs: integer(env.VERTEX_IMAGE_TIMEOUT_MS, 120_000),
@@ -137,6 +160,8 @@ export function loadConfig(env = process.env) {
       publicSiteUrl: (env.PUBLIC_CONTENT_SITE_URL || "").replace(/\/$/, ""),
       publisherName: env.CONTENT_PUBLISHER_NAME || "SoloToChina",
       publisherLogoUrl: env.CONTENT_PUBLISHER_LOGO_URL || "",
+      authorName: String(env.CONTENT_AUTHOR_NAME || "").trim(),
+      editorName: String(env.CONTENT_EDITOR_NAME || "").trim(),
     },
     frontendContract: {
       sourceRepository: env.FRONTEND_CONTRACT_SOURCE_REPOSITORY || "",
@@ -206,6 +231,11 @@ export function loadConfig(env = process.env) {
       jobHistoryRetentionDays: integer(env.JOB_HISTORY_RETENTION_DAYS, 30),
       backupDir: path.resolve(root, env.BACKUP_DIR || "backups"),
       backupRetention: integer(env.BACKUP_RETENTION, 14),
+      backupOffsiteLocation: String(env.BACKUP_OFFSITE_LOCATION || "").trim(),
+      backupOffsiteRetentionDays: integer(env.BACKUP_OFFSITE_RETENTION_DAYS, 0),
+      sourceUploadsDir,
+      generatedMediaDir,
+      codeRevision: String(env.ENGINE_IMAGE || env.APP_REVISION || "").trim(),
       databasePath,
     },
   };
@@ -219,6 +249,10 @@ function integer(value, fallback) {
 function integerList(value) {
   return String(value || "").split(",").map((item) => Number.parseInt(item.trim(), 10))
     .filter((item) => Number.isInteger(item) && item > 0);
+}
+
+function stringList(value) {
+  return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function boolean(value, fallback) {

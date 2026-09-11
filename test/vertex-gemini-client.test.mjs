@@ -3,7 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { VertexGeminiClient } from "../src/ai/vertex-gemini-client.mjs";
+import { createAiClient } from "../src/ai/client.mjs";
+import { parseBatchResult, VertexGeminiClient } from "../src/ai/vertex-gemini-client.mjs";
 
 test("Vertex Gemini uses the configured model and structured JSON response", async () => {
   let request;
@@ -22,6 +23,25 @@ test("Vertex Gemini uses the configured model and structured JSON response", asy
   assert.equal(body.generationConfig.temperature, undefined);
   assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "LOW");
   assert.equal(body.systemInstruction.parts[0].text, "Be precise.");
+});
+
+test("AI client dispatches an old Batch poll through its stored Vertex adapter after a Kimi switch", async () => {
+  let requestUrl = "";
+  const config = {
+    provider: "vertex", projectId: "project-old", location: "global", model: "model-old",
+    batchBucket: "valid-bucket", batchEnabled: true, accessToken: "test-token",
+  };
+  const client = createAiClient(config, async (url) => {
+    requestUrl = String(url);
+    return new Response(JSON.stringify({ name: "projects/project-old/locations/global/batchPredictionJobs/job-1", state: "JOB_STATE_RUNNING" }), { status: 200 });
+  });
+  config.provider = "kimi";
+  config.model = "kimi-new";
+  const result = await client.getBatch("projects/project-old/locations/global/batchPredictionJobs/job-1", {
+    provider: "vertex", project_id: "project-old", location: "global", model: "model-old",
+  });
+  assert.equal(result.state, "JOB_STATE_RUNNING");
+  assert.match(requestUrl, /aiplatform\.googleapis\.com\/v1\/projects\/project-old\/locations\/global\/batchPredictionJobs\/job-1$/);
 });
 
 test("Vertex Gemini reserves medium thinking for writing and review stages", async () => {
@@ -65,6 +85,35 @@ test("Vertex Gemini reports an exhausted structured output before attempting to 
   await assert.rejects(() => client.completeJson({
     schema: { type: "object" }, instructions: "Be precise.", content: "source text",
   }), /structured output reached its token limit/);
+});
+
+test("Vertex Gemini retries a generic JSON Schema 400 once with the OpenAPI transport", async () => {
+  const requests = [];
+  const client = new VertexGeminiClient({
+    projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
+  }, async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    if (requests.length === 1) return Response.json({ error: { code: 400, message: "Request contains an invalid argument." } }, { status: 400 });
+    return Response.json({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] });
+  });
+  const result = await client.completeJson({ name: "frontend_page_payload", schema: {
+    type: "object", required: ["ok"], properties: { ok: { type: "boolean" } },
+  }, instructions: "Compose.", content: "draft" });
+  assert.deepEqual(result.output, { ok: true });
+  assert.equal(requests.length, 2);
+  assert.ok(requests[0].generationConfig.responseJsonSchema);
+  assert.ok(requests[1].generationConfig.responseSchema);
+  assert.equal(requests[1].generationConfig.responseJsonSchema, undefined);
+});
+
+test("Vertex content planning output limits require input correction instead of repeating a no-op retry", async () => {
+  const client = new VertexGeminiClient({
+    projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
+  }, async () => Response.json({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: '{"partial":' }] } }] }));
+  await assert.rejects(() => client.completeJson({
+    name: "content_brief", schema: { type: "object" }, instructions: "Plan.", content: "mixed evidence",
+  }), (error) => error.code === "MODEL_OUTPUT_LIMIT" && error.retryable === false
+    && /content planning/i.test(error.message) && !/Source segment/i.test(error.message));
 });
 
 test("Vertex Gemini uses the global API host for Gemini 3.8 Flash", async () => {
@@ -161,7 +210,7 @@ test("Vertex Gemini submits, polls, reads, and cleans up a Cloud Storage batch",
     if (target.endsWith("/batchPredictionJobs") && options.method === "POST") return Response.json({ name: "projects/fixture-project/locations/global/batchPredictionJobs/job-1", state: "JOB_STATE_PENDING" });
     if (target.includes("batchPredictionJobs/job-1")) return Response.json({ state: "JOB_STATE_SUCCEEDED", outputInfo: { gcsOutputDirectory: "gs://fixture-bucket/vertex-batch/output/" } });
     if (target.includes("storage/v1/b/fixture-bucket/o?") && !target.includes("alt=media")) return Response.json({ items: [{ name: "vertex-batch/output/predictions.jsonl" }] });
-    if (target.includes("predictions.jsonl") && target.includes("alt=media")) return new Response(`${JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: JSON.stringify(output) }] }, finishReason: "STOP" }] } })}\n`);
+    if (target.includes("predictions.jsonl") && target.includes("alt=media")) return new Response(`${JSON.stringify({ key: "batch_item_1", response: { candidates: [{ content: { parts: [{ text: JSON.stringify(output) }] }, finishReason: "STOP" }] } })}\n`);
     if (options.method === "DELETE") return new Response(null, { status: 204 });
     throw new Error(`Unexpected request: ${target}`);
   });
@@ -174,7 +223,33 @@ test("Vertex Gemini submits, polls, reads, and cleans up a Cloud Storage batch",
   assert.equal(status.state, "JOB_STATE_SUCCEEDED");
   assert.equal(rows[0].id, "batch_item_1");
   assert.deepEqual(rows[0].output.claims, []);
-  assert.match(String(calls.find((call) => call.target.includes("upload/storage/v1"))?.options?.body), /batch_item_id/);
+  const uploaded = String(calls.find((call) => call.target.includes("upload/storage/v1"))?.options?.body);
+  assert.match(uploaded, /transport_key/);
+  assert.match(uploaded, /batch_item_id/);
+  const createBody = JSON.parse(calls.find((call) => call.target.endsWith("/batchPredictionJobs"))?.options?.body);
+  assert.deepEqual(createBody.instanceConfig, { instanceType: "object", keyField: "transport_key" });
   await client.cleanupBatch({ ...created, ...status });
   assert.ok(calls.some((call) => call.options.method === "DELETE"));
+});
+
+test("Vertex Batch correlation survives provider errors, output limits, and invalid model JSON", () => {
+  const providerError = parseBatchResult({ key: "transport-error", status: { code: 13, message: "backend failed" } });
+  assert.equal(providerError.id, "transport-error");
+  assert.equal(providerError.code, "13");
+
+  const outputLimit = parseBatchResult({ key: "transport-limit", response: { candidates: [{ finishReason: "MAX_TOKENS" }] } });
+  assert.equal(outputLimit.id, "transport-limit");
+  assert.equal(outputLimit.code, "MODEL_OUTPUT_LIMIT");
+  assert.equal(outputLimit.finishReason, "MAX_TOKENS");
+
+  const invalid = parseBatchResult({ key: "transport-invalid", response: { candidates: [{ finishReason: "STOP",
+    content: { parts: [{ text: "not json" }] } }] } });
+  assert.equal(invalid.id, "transport-invalid");
+  assert.equal(invalid.code, "INVALID_MODEL_OUTPUT");
+
+  const success = parseBatchResult({ key: "transport-authoritative", response: { candidates: [{ finishReason: "STOP",
+    content: { parts: [{ text: JSON.stringify({ batch_item_id: "model-wrong", value: 1 }) }] } }] } });
+  assert.equal(success.id, "transport-authoritative");
+  assert.equal(success.modelReportedId, "model-wrong");
+  assert.deepEqual(success.output, { value: 1 });
 });

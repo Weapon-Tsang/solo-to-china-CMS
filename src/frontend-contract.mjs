@@ -104,7 +104,7 @@ export class FrontendContractConsumer {
     return { status: "OK", supported, missing: requested.filter((componentId) => !supported.includes(componentId)), contract: snapshotSummary(active) };
   }
 
-  async sync() {
+  async sync(options = {}) {
     if (!this.configured) {
       const error = new FrontendContractError("FRONTEND_CONTRACT_UNCONFIGURED", "Both FRONTEND_COMPONENT_REGISTRY_SOURCE and FRONTEND_PAGE_SCHEMA_SOURCE are required.");
       this.repository.recordFrontendContractAttempt("unconfigured", error.message);
@@ -115,9 +115,9 @@ export class FrontendContractConsumer {
       const publishPackageSchemaSource = resolvePublishPackageSchemaSource(this.config);
       const frontendCommitSha = String(this.config.frontendCommitSha || "").trim();
       const [registryResource, pageSchemaResource, publishPackageResource] = await Promise.all([
-        readJsonDocument(this.config.registrySource, this.fetch, this.config.timeoutMs, frontendCommitSha),
-        readJsonDocument(this.config.pageSchemaSource, this.fetch, this.config.timeoutMs, frontendCommitSha),
-        publishPackageSchemaSource ? readJsonDocument(publishPackageSchemaSource, this.fetch, this.config.timeoutMs, frontendCommitSha) : null,
+        readJsonDocument(this.config.registrySource, this.fetch, this.config.timeoutMs, frontendCommitSha, options.signal),
+        readJsonDocument(this.config.pageSchemaSource, this.fetch, this.config.timeoutMs, frontendCommitSha, options.signal),
+        publishPackageSchemaSource ? readJsonDocument(publishPackageSchemaSource, this.fetch, this.config.timeoutMs, frontendCommitSha, options.signal) : null,
       ]);
       const registry = normalizeRegistry(registryResource.document);
       const pageSchema = normalizePageSchema(pageSchemaResource.document, registry.schemaVersion, registry.contractVersion);
@@ -137,6 +137,7 @@ export class FrontendContractConsumer {
       const previous = this.active;
       const diff = previous ? diffContracts(previous, { ...registry, pageSchema }) : emptyDiff();
       const majorMismatch = Boolean(previous && semverMajor(previous.contractVersion) !== semverMajor(registry.contractVersion));
+      options.assertLease?.();
       const result = this.repository.saveFrontendContractSnapshot({
         sourceRepository: this.config.sourceRepository || "",
         registrySource: this.config.registrySource,
@@ -157,6 +158,7 @@ export class FrontendContractConsumer {
       });
       return { ...this.diagnostics(), synced: true, update: diff, majorMismatch, snapshot: result };
     } catch (error) {
+      if (error?.code === "JOB_LEASE_LOST" || error?.message === "JOB_LEASE_LOST") throw error;
       const message = error?.message || String(error);
       this.repository.recordFrontendContractAttempt(this.active ? "stale" : "invalid", message);
       if (error instanceof FrontendContractError) throw error;
@@ -392,7 +394,7 @@ function emptyDiff() {
   return { addedComponents: [], removedComponents: [], deprecatedComponents: [], variantChanges: [], schemaChanges: [], pageSchemaChanged: false };
 }
 
-async function readJsonDocument(source, fetchImpl, timeoutMs = 15_000, frontendCommitSha = "") {
+async function readJsonDocument(source, fetchImpl, timeoutMs = 15_000, frontendCommitSha = "", signal = null) {
   const location = String(source || "").trim();
   if (!location) throw new FrontendContractError("MISSING_CONTRACT_SOURCE", "A Frontend Contract source is missing.");
   let text;
@@ -401,7 +403,7 @@ async function readJsonDocument(source, fetchImpl, timeoutMs = 15_000, frontendC
     const requestUrl = versionedContractUrl(location, frontendCommitSha);
     const response = await fetchImpl(requestUrl, {
       headers: { accept: "application/json", "cache-control": "no-cache" },
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) throw new FrontendContractError("CONTRACT_FETCH_FAILED", `Unable to fetch ${location} (${response.status}).`);
     const declaredLength = Number.parseInt(response.headers.get("content-length") || "", 10);

@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { extractPdfText, ManualSourceError, ManualSourceIngestor } from "../src/adapters/manual-source.mjs";
 import { KimiClient } from "../src/ai/kimi-client.mjs";
+import { readerSources } from "../src/repository.mjs";
+import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
 function fixture(t, overrides = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-manual-source-"));
@@ -26,7 +28,33 @@ test("manual public-link submission extracts visible content and classifies WeCh
   assert.equal(prepared.capture.submittedUrl, "https://mp.weixin.qq.com/s/example");
   assert.equal(prepared.capture.title, "重庆两日攻略");
   assert.match(prepared.capture.rawText, /洪崖洞晚上亮灯/);
-  assert.match(prepared.capture.canonicalUrl, /^manual-source:\/\//);
+  assert.equal(prepared.capture.canonicalUrl, "https://mp.weixin.qq.com/s/example");
+  assert.equal(prepared.capture.originalUrl, "https://mp.weixin.qq.com/s/example");
+  assert.equal(prepared.capture.finalUrl, "https://mp.weixin.qq.com/s/example");
+  assert.equal(prepared.capture.authorName, "");
+  assert.equal(prepared.capture.submittedBy, "administrator");
+  assert.match(prepared.capture.sourceIdentity, /^url:https:\/\//);
+});
+
+test("reader sources prefer the real final URL and never expose manual file URIs", () => {
+  const sources = readerSources([{ evidence: [
+    { source_title: "Redirected source", final_url: "https://example.com/final", canonical_url: "manual-source://one" },
+    { source_title: "Uploaded guide", canonical_url: "manual-source://two", original_url: "" },
+  ] }]);
+  assert.deepEqual(sources.map((item) => item.url), ["https://example.com/final"]);
+});
+
+test("repeated manual submission of one original URL updates one Source identity", async (t) => {
+  const { repository } = repositoryFixture(t);
+  const { ingestor } = fixture(t, {
+    fetchImpl: async () => new Response("<html><title>Same source</title><article>Enough identical public travel evidence for a stable source.</article></html>",
+      { headers: { "content-type": "text/html" } }),
+  });
+  const first = repository.saveCapture((await ingestor.prepare({ kind: "web_url", url: "https://example.com/guide", authorName: "Writer" })).capture);
+  const repeated = repository.saveCapture((await ingestor.prepare({ kind: "web_url", url: "https://example.com/guide", authorName: "Writer" })).capture);
+  assert.equal(repeated.id, first.id);
+  assert.equal(repeated.duplicate, true);
+  assert.equal(repository.db.prepare("SELECT COUNT(*) AS count FROM sources WHERE source_identity=?").get("url:https://example.com/guide").count, 1);
 });
 
 test("manual link failures expose an actionable authentication code", async (t) => {

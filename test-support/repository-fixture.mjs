@@ -11,5 +11,5 @@ export function repositoryFixture(t, contentConfig = {}) {
     db.close();
     fs.rmSync(directory, { recursive: true, force: true });
   });
-  return { db, repository: new Repository(db, contentConfig) };
+  return { directory, db, repository: new Repository(db, { sourceUploadsDir: path.join(directory, "source-images"), ...contentConfig }) };
 }

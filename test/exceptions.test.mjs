@@ -17,6 +17,68 @@ test("operational exception queue exposes and safely retries an exhausted generi
   assert.equal(job.last_error, null);
 });
 
+test("operational exception queue refuses a no-op retry for permanent provider and asset failures", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const providerJobId = repository.enqueue("compose_frontend_page", "draft-provider-400");
+  db.prepare("UPDATE jobs SET status='failed', attempts=3, last_error='Vertex Gemini request failed (400): Request contains an invalid argument.' WHERE id=?").run(providerJobId);
+  const assetJobId = repository.enqueue("compose_frontend_page", "draft-asset-403");
+  db.prepare("UPDATE jobs SET status='failed', attempts=3, last_error='Authorized source image download failed (403).' WHERE id=?").run(assetJobId);
+
+  const exceptions = repository.listOperationalExceptions();
+  const providerException = exceptions.find((item) => item.key === `job:${providerJobId}`);
+  const assetException = exceptions.find((item) => item.key === `job:${assetJobId}`);
+  assert.equal(providerException.retryable, false);
+  assert.equal(assetException.retryable, false);
+  assert.match(providerException.title, /模型|页面/);
+  assert.doesNotMatch(`${providerException.title} ${providerException.detail}`, /Vertex|invalid argument/i);
+  assert.match(assetException.title, /图片/);
+  assert.doesNotMatch(`${assetException.title} ${assetException.detail}`, /Authorized source image|403/i);
+  assert.equal(repository.retryOperationalException(`job:${providerJobId}`), false);
+  assert.equal(repository.retryOperationalException(`job:${assetJobId}`), false);
+  assert.deepEqual(db.prepare("SELECT status FROM jobs WHERE id IN (?,?) ORDER BY id").all(providerJobId, assetJobId)
+    .map((row) => row.status), ["failed", "failed"]);
+});
+
+test("browser media repair handoffs remain visible with accurate media guidance until repaired", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/media-repair-exception",
+    title: "Media repair exception",
+    text: "This selected source has enough text but its authorized original still needs browser repair.",
+    images: [{ url: "https://sns-img.xhscdn.com/expired-original.jpg", mediaIdentity: "expired-original" }],
+  }));
+  const asset = db.prepare("SELECT id FROM source_assets WHERE source_id=?").get(source.id);
+  const job = db.prepare("SELECT id FROM jobs WHERE type='repair_media_asset' AND entity_id=?").get(asset.id);
+  db.prepare(`UPDATE jobs SET status='failed', attempts=3, failure_class='permanent_input',
+    last_failure_code='REMOTE_MEDIA_403', last_error='Remote media returned HTTP 403.' WHERE id=?`).run(job.id);
+  db.prepare(`UPDATE source_assets SET repair_status='browser_repair_required',
+    storage_error='Remote media returned HTTP 403.' WHERE id=?`).run(asset.id);
+
+  const repair = repository.listOperationalExceptions().find((item) => item.key === `job:${job.id}`);
+  assert.match(repair.title, /原件.*浏览器修复/);
+  assert.doesNotMatch(`${repair.title} ${repair.detail}`, /模型服务拒绝/);
+  assert.equal(db.prepare("SELECT status FROM jobs WHERE id=?").get(job.id).status, "failed");
+  assert.equal(repository.mediaRepairManifest(source.id).mediaDurability.browserRepairRequired, 1);
+
+  db.prepare("UPDATE source_assets SET durability_status='ORIGINAL_STORED', repair_status='not_needed' WHERE id=?").run(asset.id);
+  assert.equal(repository.listOperationalExceptions().some((item) => item.key === `job:${job.id}`), false);
+});
+
+test("a derived draft exception inherits the permanent failed job retry decision", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('topic-derived','chongqing','derived','Derived guide','fixture',100,1,0,'drafted','now','now')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('brief-derived','chongqing','Derived guide','[]','informational','drafted','now','now','topic-derived')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-derived','brief-derived','Derived guide','derived-guide','Body','{}','exception','now','now',1,'hash')`).run();
+  const jobId = repository.enqueue("compose_frontend_page", "draft-derived");
+  db.prepare("UPDATE jobs SET status='failed', attempts=3, last_error='Authorized source image download failed (403).' WHERE id=?").run(jobId);
+  const exception = repository.listOperationalExceptions().find((item) => item.key === "draft:draft-derived");
+  assert.equal(exception.retryable, false);
+  assert.equal(repository.retryOperationalException(exception.key, { contractAware: true }), false);
+});
+
 test("a later successful job clears older duplicate failures from the active exception queue", (t) => {
   const { db, repository } = repositoryFixture(t);
   const failedId = repository.enqueue("resolve_entities", "chongqing");
@@ -179,8 +241,8 @@ test("claim review exceptions include both source records, text context, and the
   const review = exceptionItems.find((item) => item.claim_review?.id === "review-evidence").claim_review;
   const duplicate = exceptionItems.find((item) => item.claim_review?.id === "review-evidence-duplicate").claim_review;
   assert.equal(review.factGroupKey, duplicate.factGroupKey);
-  assert.equal(repository.dashboard().totals.exceptions, 1);
-  assert.equal(repository.dashboard().totals.exceptionRecords, 2);
+  assert.equal(repository.dashboard().totals.exceptions, 0,"editorial evidence decisions do not pollute System Health");
+  assert.equal(repository.dashboard().totals.exceptionRecords, 0);
   assert.equal(review.claimA.sourceId, sourceA.id);
   assert.equal(review.claimB.sourceId, sourceB.id);
   assert.equal(review.claimA.evidence.available, true);
@@ -192,7 +254,7 @@ test("claim review exceptions include both source records, text context, and the
   assert.match(review.claimB.evidence.assets[0].previewUrl, /^\/api\/source-assets\/asset_[^/]+\/preview$/);
 });
 
-test("dynamic hard-fact differences are resolved by recency weighting without an operator queue", (t) => {
+test("mutually exclusive daily hard facts create one reusable operator decision", (t) => {
   const { db, repository } = repositoryFixture(t);
   for (const [externalId, value, quote, capturedAt] of [
     ["aaaaaaaaaaaaaaaaaaaaaaaa", "true", "Advance reservation is required.", "2026-01-01T00:00:00.000Z"],
@@ -214,13 +276,12 @@ test("dynamic hard-fact differences are resolved by recency weighting without an
 
   repository.rebuildKnowledge("chongqing");
   const review = db.prepare("SELECT * FROM claim_review_cases WHERE review_type='SOURCE_CONFLICT'").get();
-  assert.equal(review, undefined);
+  assert.ok(review);
   const fact = repository.knowledgeForDestination("chongqing")[0];
-  assert.equal(fact.preferred_value, "false");
-  assert.equal(fact.consensus_status, "single_source");
-  assert.equal(fact.consensus_method, "LATEST_WEIGHTED_PROVISIONAL");
+  assert.equal(fact.consensus_status, "conflicted");
+  assert.equal(fact.consensus_method, "STRICT_SEMANTIC_REVIEW");
   assert.equal(fact.verification_priority, "review");
   assert.equal(fact.contradiction_count, 1);
-  assert.equal(fact.claim_relations[0].relation, "COMPATIBLE");
-  assert.equal(repository.listOperationalExceptions().some((item) => item.kind === "source_conflict" || item.kind === "knowledge"), false);
+  assert.equal(fact.claim_relations[0].relation, "CONFLICT");
+  assert.equal(repository.listOperationalExceptions().filter((item) => item.kind === "source_conflict").length, 1);
 });

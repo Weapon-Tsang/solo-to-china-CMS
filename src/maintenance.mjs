@@ -76,9 +76,16 @@ export class MaintenanceScheduler {
         const backup = createBackup({
           databasePath: this.config.databasePath,
           backupDir: this.config.backupDir,
+          sourceUploadsDir: this.config.sourceUploadsDir,
+          generatedMediaDir: this.config.generatedMediaDir,
           retention: this.config.backupRetention,
+          offsiteLocation: this.config.backupOffsiteLocation,
+          offsiteRetentionDays: this.config.backupOffsiteRetentionDays,
+          codeRevision: this.config.codeRevision,
+          reason: "scheduled",
         });
-        return { itemCount: 1, metadata: { backup: backup.backup, bytes: backup.bytes, sha256: backup.sha256, schemaVersion: backup.schemaVersion } };
+        return { itemCount: 1, metadata: { backup: backup.backup, bytes: backup.bytes, sha256: backup.sha256,
+          schemaVersion: backup.schemaVersion, fileCount: backup.fileCount } };
       });
       await this.runTask(results, TASKS.cleanup, 24, force, () => ({
         itemCount: this.repository.pruneSucceededJobs(this.config.jobHistoryRetentionDays),

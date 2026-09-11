@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { markdownToContentBlocks } from "./content-blocks.mjs";
+import { parseMediaMetadata, responsiveImageAttributes, wordpressMediaMetadata } from "./media-delivery.mjs";
 
 const SOURCE_IMAGE_HOST_SUFFIXES = ["xiaohongshu.com", "xhscdn.com", "xhscdn.net", "xhscdn.cn"];
 const MAX_SOURCE_IMAGE_BYTES = 12 * 1024 * 1024;
@@ -26,7 +27,7 @@ export class WordPressDraftAdapter {
     return Boolean(this.config.siteUrl && this.config.username && this.config.applicationPassword);
   }
 
-  async listContentInventory() {
+  async listContentInventory(options = {}) {
     if (!this.enabled) throw new Error("WordPress inventory sync is not configured.");
     assertSafeSiteUrl(this.config.siteUrl);
     const inventory = [];
@@ -40,7 +41,7 @@ export class WordPressDraftAdapter {
         page: String(page),
         _fields: "id,slug,status,link,modified,title",
       });
-      const { body, response } = await this.requestWithResponse(`/wp-json/wp/v2/posts?${params}`, { method: "GET" });
+      const { body, response } = await this.requestWithResponse(`/wp-json/wp/v2/posts?${params}`, { method: "GET", signal: options.signal });
       if (!Array.isArray(body)) throw new Error("WordPress inventory response must be an array.");
       inventory.push(...body.map((post) => ({
         postId: post.id,
@@ -56,16 +57,16 @@ export class WordPressDraftAdapter {
     return inventory;
   }
 
-  async upsertDraft(draft, existingPostId = null) {
+  async upsertDraft(draft, existingPostId = null, options = {}) {
     if (!this.enabled) throw new Error("WordPress draft delivery is not configured.");
     assertSafeSiteUrl(this.config.siteUrl);
     if (existingPostId) {
-      const current = await this.request(`/wp-json/wp/v2/posts/${existingPostId}?context=edit`, { method: "GET" });
+      const current = await this.request(`/wp-json/wp/v2/posts/${existingPostId}?context=edit`, { method: "GET", signal: options.signal });
       if (current.status !== "draft") {
         throw new Error(`WordPress post ${existingPostId} is '${current.status}', so the engine refuses to overwrite it.`);
       }
     }
-    const visuals = await this.resolveVisualMedia(draft.visuals || []);
+    const visuals = await this.resolveVisualMedia(draft.visuals || [], null, options);
     const contentBlocks = Array.isArray(draft.content_blocks) && draft.content_blocks.length
       ? draft.content_blocks : markdownToContentBlocks(draft.body_markdown);
     const post = {
@@ -92,6 +93,8 @@ export class WordPressDraftAdapter {
     const result = await this.request(`/wp-json/wp/v2/posts${existingPostId ? `/${existingPostId}` : ""}`, {
       method: "POST",
       body: JSON.stringify(post),
+      signal: options.signal,
+      idempotencyKey: options.idempotencyKey,
     });
     if (result.status !== "draft") throw new Error("WordPress did not confirm draft status; refusing to record the sync.");
     return {
@@ -100,7 +103,7 @@ export class WordPressDraftAdapter {
     };
   }
 
-  async upsertContractDraft(publishPackage) {
+  async upsertContractDraft(publishPackage, options = {}) {
     if (!this.enabled) throw new Error("WordPress draft delivery is not configured.");
     assertSafeSiteUrl(this.config.siteUrl);
     const configuredEndpoint = String(this.config.cmsArticleEndpoint || "").trim();
@@ -122,9 +125,10 @@ export class WordPressDraftAdapter {
         authorization: `Basic ${Buffer.from(`${this.config.username}:${this.config.applicationPassword}`).toString("base64")}`,
         "content-type": "application/json",
         accept: "application/json",
+        ...(options.idempotencyKey ? { "idempotency-key": options.idempotencyKey } : {}),
       },
       body: serializedPackage,
-      signal: AbortSignal.timeout(60_000),
+      signal: combinedSignal(options.signal, 60_000),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -149,53 +153,72 @@ export class WordPressDraftAdapter {
     };
   }
 
-  async resolveVisualMedia(visuals, onUploaded = null) {
+  async resolveVisualMedia(visuals, onUploaded = null, options = {}) {
     const output = [];
+    const reusable = new Map();
     for (const visual of visuals.filter((item) => (
-      item.status === "generated" && (item.media_path || (item.source_asset_id && item.source_remote_url))
+      item.status === "generated" && (item.media_path
+        || (item.source_asset_id && (item.source_asset_data_url || item.source_remote_url)))
     ))) {
-      if (visual.wordpress_media_id && visual.wordpress_media_url) {
-        output.push({ visualId: visual.id, id: visual.wordpress_media_id, url: visual.wordpress_media_url, alt: visual.alt_text, caption: visual.caption });
+      const assetKey = visual.source_asset_id ? `source:${visual.source_asset_id}` : visual.media_path ? `file:${path.resolve(visual.media_path)}` : null;
+      if (assetKey && reusable.has(assetKey)) {
+        const resolved = { visualId: visual.id, ...reusable.get(assetKey), alt: visual.alt_text, caption: visual.caption,
+          role: visual.image_role, imageType: visual.image_type, acquisitionStrategy: visual.acquisition_strategy };
+        output.push(resolved);
+        if (onUploaded) await onUploaded(resolved);
         continue;
       }
-      const media = await this.uploadMedia(visual);
-      const resolved = { visualId: visual.id, ...media, alt: visual.alt_text, caption: visual.caption };
+      if (visual.wordpress_media_id && visual.wordpress_media_url) {
+        const media = { id: visual.wordpress_media_id, url: visual.wordpress_media_url,
+          metadata: parseMediaMetadata(visual.media_metadata || visual.media_metadata_json) };
+        if (assetKey) reusable.set(assetKey, media);
+        output.push({ visualId: visual.id, ...media, alt: visual.alt_text, caption: visual.caption,
+          role: visual.image_role, imageType: visual.image_type, acquisitionStrategy: visual.acquisition_strategy });
+        continue;
+      }
+      const media = await this.uploadMedia(visual, options);
+      if (assetKey) reusable.set(assetKey, media);
+      const resolved = { visualId: visual.id, ...media, alt: visual.alt_text, caption: visual.caption,
+        role: visual.image_role, imageType: visual.image_type, acquisitionStrategy: visual.acquisition_strategy };
       output.push(resolved);
       if (onUploaded) await onUploaded(resolved);
     }
     return output;
   }
 
-  async uploadMedia(visual) {
+  async uploadMedia(visual, options = {}) {
     const asset = visual.media_path
       ? { filename: path.basename(visual.media_path), contentType: mimeForFilename(visual.media_path), bytes: fs.readFileSync(visual.media_path) }
-      : await this.downloadAuthorizedSourceAsset(visual);
+      : storedAuthorizedSourceAsset(visual) || await this.downloadAuthorizedSourceAsset(visual, options);
     const response = await this.fetch(`${this.config.siteUrl}/wp-json/wp/v2/media`, {
       method: "POST",
       headers: {
         authorization: `Basic ${Buffer.from(`${this.config.username}:${this.config.applicationPassword}`).toString("base64")}`,
         "content-type": asset.contentType,
         "content-disposition": `attachment; filename=\"${asset.filename}\"`,
+        ...(options.idempotencyKey ? { "idempotency-key": `${options.idempotencyKey}:${visual.id}` } : {}),
       },
       body: asset.bytes,
-      signal: AbortSignal.timeout(60_000),
+      signal: combinedSignal(options.signal, 60_000),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || !body.id) throw new Error(`WordPress media upload failed (${response.status}): ${body?.message || response.statusText}`);
-    return { id: body.id, url: body.source_url || body.guid?.rendered || "" };
+    const metadata = wordpressMediaMetadata(body, asset);
+    return { id: body.id, url: metadata.url || "", metadata };
   }
 
-  async downloadAuthorizedSourceAsset(visual) {
+  async downloadAuthorizedSourceAsset(visual, options = {}) {
     const sourceUrl = safeAuthorizedSourceImageUrl(visual.source_remote_url);
-    if (!sourceUrl) throw new Error("Authorized source image URL is not an allowlisted Xiaohongshu HTTPS asset.");
-    const response = await this.fetch(sourceUrl, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) throw new Error(`Authorized source image download failed (${response.status}).`);
+    if (!sourceUrl) throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_INVALID", "Authorized source image URL is not an allowlisted Xiaohongshu HTTPS asset.");
+    const response = await this.fetch(sourceUrl, { signal: combinedSignal(options.signal, 30_000) });
+    if (!response.ok) throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_UNAVAILABLE",
+      `Authorized source image download failed (${response.status}).`, response.status);
     const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
-    if (!/^image\/(?:jpeg|jpg|png|webp)$/.test(contentType)) throw new Error("Authorized source asset is not a supported image.");
+    if (!/^image\/(?:jpeg|jpg|png|webp)$/.test(contentType)) throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_INVALID", "Authorized source asset is not a supported image.");
     const declaredBytes = Number.parseInt(response.headers.get("content-length") || "", 10);
-    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_SOURCE_IMAGE_BYTES) throw new Error("Authorized source asset is too large for WordPress upload.");
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_SOURCE_IMAGE_BYTES) throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_TOO_LARGE", "Authorized source asset is too large for WordPress upload.");
     const bytes = Buffer.from(await response.arrayBuffer());
-    if (!bytes.length || bytes.length > MAX_SOURCE_IMAGE_BYTES) throw new Error("Authorized source asset is empty or too large for WordPress upload.");
+    if (!bytes.length || bytes.length > MAX_SOURCE_IMAGE_BYTES) throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_INVALID", "Authorized source asset is empty or too large for WordPress upload.");
     return {
       bytes,
       contentType: contentType === "image/jpg" ? "image/jpeg" : contentType,
@@ -214,13 +237,39 @@ export class WordPressDraftAdapter {
       headers: {
         authorization: `Basic ${Buffer.from(`${this.config.username}:${this.config.applicationPassword}`).toString("base64")}`,
         "content-type": "application/json",
+        ...(options.idempotencyKey ? { "idempotency-key": options.idempotencyKey } : {}),
       },
-      signal: AbortSignal.timeout(60_000),
+      signal: combinedSignal(options.signal, 60_000),
     });
     const body = await response.json();
     if (!response.ok) throw new Error(`WordPress API failed (${response.status}): ${body?.message || response.statusText}`);
     return { body, response };
   }
+}
+
+function storedAuthorizedSourceAsset(visual) {
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\r\n]+)$/u
+    .exec(String(visual.source_asset_data_url || ""));
+  if (!match) return null;
+  const bytes = Buffer.from(match[2], "base64");
+  if (!bytes.length || bytes.length > MAX_SOURCE_IMAGE_BYTES) {
+    throw authorizedSourceError("AUTHORIZED_SOURCE_IMAGE_INVALID", "Stored authorized source image is empty or too large for WordPress upload.");
+  }
+  const contentType = match[1];
+  return { bytes, contentType, filename: `source-${visual.id}.${extensionForContentType(contentType)}` };
+}
+
+function authorizedSourceError(code, message, status = 0) {
+  return Object.assign(new Error(message), {
+    code,
+    status,
+    retryable: status === 408 || status === 425 || status === 429 || status >= 500,
+  });
+}
+
+function combinedSignal(signal, timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 export function markdownToSafeHtml(markdown, visuals = []) {
@@ -250,19 +299,24 @@ function injectVisuals(blocks, visuals, renderer) {
   const ordered = [...visuals].filter((item) => item.id && item.url);
   ordered.forEach((visual, index) => {
     const position = Math.min(output.length, Math.max(1, Math.round((index + 1) * output.length / (ordered.length + 1)) + index));
-    output.splice(position, 0, renderer(visual));
+    output.splice(position, 0, renderer(visual, index));
   });
   return output;
 }
 
-function wordpressVisual(visual) {
+function wordpressVisual(visual, index = 0) {
   const caption = visual.caption ? `\n<figcaption class=\"wp-element-caption\">${escapeHtml(visual.caption)}</figcaption>` : "";
-  return `<!-- wp:image {"id":${visual.id},"sizeSlug":"large","linkDestination":"none"} -->\n<figure class=\"wp-block-image size-large\"><img src=\"${escapeHtml(visual.url)}\" alt=\"${escapeHtml(visual.alt || "")}\" class=\"wp-image-${visual.id}\"/>${caption}</figure>\n<!-- /wp:image -->`;
+  return `<!-- wp:image {"id":${visual.id},"sizeSlug":"large","linkDestination":"none"} -->\n<figure class=\"wp-block-image size-large\"><img src=\"${escapeHtml(visual.url)}\" alt=\"${escapeHtml(visual.alt || "")}\" class=\"wp-image-${visual.id}\"${imageAttributes(visual, index === 0)}/>${caption}</figure>\n<!-- /wp:image -->`;
 }
 
-function htmlVisual(visual) {
+function htmlVisual(visual, index = 0) {
   const caption = visual.caption ? `<figcaption>${escapeHtml(visual.caption)}</figcaption>` : "";
-  return `<figure><img src=\"${escapeHtml(visual.url)}\" alt=\"${escapeHtml(visual.alt || "")}\"/>${caption}</figure>`;
+  return `<figure><img src=\"${escapeHtml(visual.url)}\" alt=\"${escapeHtml(visual.alt || "")}\"${imageAttributes(visual, index === 0)}/>${caption}</figure>`;
+}
+
+function imageAttributes(visual, featured) {
+  return Object.entries(responsiveImageAttributes(visual.metadata, { featured }))
+    .map(([name, value]) => ` ${name}=\"${escapeHtml(value)}\"`).join("");
 }
 
 function mimeForFilename(filename) {

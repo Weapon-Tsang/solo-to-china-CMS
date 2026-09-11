@@ -4,6 +4,7 @@ import path from "node:path";
 import { KimiClient } from "./kimi-client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
 import { ProviderRequestError, vertexStructuredOutput } from "./provider-schema.mjs";
+import { resolveStagePolicy } from "./stage-policy.mjs";
 
 const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 const MAX_INLINE_VIDEO_BYTES = 14 * 1024 * 1024;
@@ -28,14 +29,15 @@ export class VertexGeminiClient {
       && String(this.config.location || "global") === "global";
   }
 
-  async completeJson({ name, schema, instructions, content, timeoutMs = this.config.requestTimeoutMs || 360_000 }) {
+  async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null }) {
     if (!this.enabled) throw new Error("Vertex AI requires GOOGLE_CLOUD_PROJECT and a selected Gemini model.");
     const accessToken = await this.accessToken();
     const location = this.config.location || "us-central1";
     const apiHost = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
     const endpoint = `https://${apiHost}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const parts = normalizeVertexParts(content);
-    const startedAt = Date.now();
+    const policy = resolveStagePolicy(name, this.config);
+    const effectiveTimeoutMs = timeoutMs || policy.timeoutMs;
     const identity = modelCallIdentity(name, schema, instructions, content);
     let schemaMode = this.config.structuredSchemaMode || "json_schema";
     const requestBody = {
@@ -43,55 +45,72 @@ export class VertexGeminiClient {
       contents: [{ role: "user", parts }],
       generationConfig: {
         responseMimeType: "application/json", ...vertexStructuredOutput(schema, schemaMode),
-        maxOutputTokens: this.config.maxCompletionTokens || 16_000,
+        maxOutputTokens: policy.maxOutputTokens,
         ...(String(this.config.model).startsWith("gemini-3")
-          ? { thinkingConfig: { thinkingLevel: REASONING_STAGES.has(name)
-            ? this.config.reasoningThinkingLevel || "MEDIUM"
-            : this.config.thinkingLevel || "LOW" } }
+          ? { thinkingConfig: { thinkingLevel: policy.thinking } }
           : { temperature: 0.1 }),
       },
     };
     let correction = "";
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
+      const attemptStartedAt = Date.now();
+      const requestStartedAt = new Date(attemptStartedAt).toISOString();
       requestBody.contents[0].parts = correction ? [...parts, { text: correction }] : parts;
       await this.config.beforeRequest?.({ provider: "vertex", model: this.config.model, stage: name, attempt: attempt + 1 });
-      const response = await this.fetch(endpoint, {
+      let response;
+      try {
+        response = await this.fetch(endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+        signal: combinedSignal(signal, effectiveTimeoutMs),
+        });
+      } catch (error) {
+        this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: error?.name === "AbortError" || error?.name === "TimeoutError" ? "cancelled" : "failed",
+          errorCode: error?.name || "REQUEST_FAILED", retryReason: attempt ? "request_retry" : null }));
+        throw error;
+      }
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         const message = payload?.error?.message || response.statusText;
-        if (response.status === 400 && schemaMode === "json_schema" && /responseJsonSchema|unknown field|unsupported/i.test(message)) {
+        if (response.status === 400 && schemaMode === "json_schema") {
+          this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+            status: "failed", errorCode: "SCHEMA_MODE_UNSUPPORTED", retryReason: "schema_transport_fallback", usage: payload?.usageMetadata }));
           schemaMode = "openapi";
           delete requestBody.generationConfig.responseJsonSchema;
           Object.assign(requestBody.generationConfig, vertexStructuredOutput(schema, schemaMode));
           continue;
         }
-        this.emitModelCall({ ...identity, provider: "vertex", model: this.config.model, latencyMs: Date.now() - startedAt,
-          attempts: attempt + 1, status: "failed", errorCode: String(payload?.error?.code || response.status) });
+        this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: "failed", errorCode: String(payload?.error?.code || response.status), retryReason: attempt ? "provider_retry" : null,
+          usage: payload?.usageMetadata }));
         throw new ProviderRequestError("Vertex Gemini", response.status, message,
           { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
       }
       const candidate = payload?.candidates?.[0];
       const output = candidate?.content?.parts?.map((part) => part.text || "").join("");
       if (candidate?.finishReason === "MAX_TOKENS") {
-        throw Object.assign(new Error("Vertex Gemini structured output reached its token limit; the Source segment must be split and retried."), { code: "MODEL_OUTPUT_LIMIT", retryable: true });
+        this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: attempt ? "structured_repair" : null, usage: payload?.usageMetadata }));
+        throw outputLimitError(name);
       }
-      if (!output?.trim()) throw new Error("Vertex Gemini returned no structured output.");
+      if (!output?.trim()) {
+        this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: "failed", errorCode: "EMPTY_MODEL_OUTPUT", retryReason: attempt ? "structured_repair" : null, usage: payload?.usageMetadata }));
+        throw new Error("Vertex Gemini returned no structured output.");
+      }
       const parsed = parseStructuredJson(output);
       const errors = parsed.ok ? validateJsonSchema(parsed.value, schema) : [{ path: "$", message: "invalid JSON" }];
       if (parsed.ok && errors.length === 0) {
-        this.emitModelCall({ ...identity, provider: "vertex", model: this.config.model,
-          inputTokens: payload.usageMetadata?.promptTokenCount ?? null,
-          outputTokens: payload.usageMetadata?.candidatesTokenCount ?? null,
-          cachedTokens: payload.usageMetadata?.cachedContentTokenCount ?? null,
-          latencyMs: Date.now() - startedAt, attempts: attempt + 1, status: "succeeded" });
+        this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+          status: "succeeded", retryReason: attempt ? "structured_repair" : null, usage: payload?.usageMetadata }));
         return { output: parsed.value, model: this.config.model,
           ...(payload.usageMetadata ? { usage: payload.usageMetadata } : {}) };
       }
+      this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+        status: "failed", errorCode: "INVALID_MODEL_OUTPUT", retryReason: attempt ? "structured_repair" : "invalid_json_or_schema",
+        usage: payload?.usageMetadata }));
       correction = `The previous structured output was invalid. Return the complete corrected JSON only. Errors: ${JSON.stringify(errors.slice(0, 20))}`;
     }
     throw Object.assign(new Error("Vertex Gemini returned invalid structured output after repair attempts."), { code: "INVALID_MODEL_OUTPUT", retryable: true });
@@ -109,19 +128,19 @@ export class VertexGeminiClient {
       instructions: `${instructions}\n- Batch processing identifier: return batch_item_id exactly as ${id}.`,
       content, config: this.config,
     });
-    return { id, request };
+    return { id, transportKey: id, request };
   }
 
-  async createBatch(requests, { operation = "extract_segment_claims" } = {}) {
+  async createBatch(requests, { operation = "extract_segment_claims", idempotencyKey = "", signal = null } = {}) {
     if (!this.batchEnabled) throw new Error("Vertex Batch is not configured.");
     if (!Array.isArray(requests) || !requests.length) throw new Error("Vertex Batch requires at least one request.");
     const accessToken = await this.accessToken();
     const bucket = String(this.config.batchBucket).trim();
-    const batchId = crypto.randomUUID();
+    const batchId = String(idempotencyKey || crypto.randomUUID()).replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 96);
     const objectPrefix = `vertex-batch/${batchId}`;
     const inputObject = `${objectPrefix}/input.jsonl`;
     const outputObjectPrefix = `${objectPrefix}/output/`;
-    const input = `${requests.map((item) => JSON.stringify({ request: item.request })).join("\n")}\n`;
+    const input = `${requests.map((item) => JSON.stringify({ transport_key: item.transportKey || item.id, request: item.request })).join("\n")}\n`;
     const maximumBytes = Number(this.config.batchMaxInputBytes || 900 * 1024 * 1024);
     if (Buffer.byteLength(input) > maximumBytes) throw new Error("Vertex Batch input exceeds the configured safe Cloud Storage limit.");
     await this.uploadObject(bucket, inputObject, input, "application/jsonl", accessToken);
@@ -133,9 +152,10 @@ export class VertexGeminiClient {
         displayName: `solo-${String(operation).replace(/[^a-z0-9_-]+/giu, "-").slice(0, 40)}-${batchId.slice(0, 8)}`,
         model: `publishers/google/models/${this.config.model}`,
         inputConfig: { instancesFormat: "jsonl", gcsSource: { uris: [`gs://${bucket}/${inputObject}`] } },
+        instanceConfig: { instanceType: "object", keyField: "transport_key" },
         outputConfig: { predictionsFormat: "jsonl", gcsDestination: { outputUriPrefix: `gs://${bucket}/${outputObjectPrefix}` } },
       }),
-      signal: AbortSignal.timeout(this.config.requestTimeoutMs || 360_000),
+      signal: combinedSignal(signal, this.config.requestTimeoutMs || 360_000),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.name) {
@@ -169,9 +189,14 @@ export class VertexGeminiClient {
     const results = [];
     for (const item of jsonlObjects) {
       const body = await this.downloadObject(parsedUri.bucket, item.name, accessToken);
-      for (const line of body.split(/\r?\n/).filter(Boolean)) {
-        try { results.push(parseBatchResult(JSON.parse(line))); }
-        catch (error) { results.push({ id: "", error: `Invalid Vertex Batch JSONL output: ${error.message}` }); }
+      const lines = body.split(/\r?\n/);
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (!line.trim()) continue;
+        const transport = { objectName: item.name, lineNumber: index + 1,
+          checksum: crypto.createHash("sha256").update(line).digest("hex") };
+        try { results.push({ ...parseBatchResult(JSON.parse(line)), transport }); }
+        catch (error) { results.push({ id: "", error: `Invalid Vertex Batch JSONL output: ${error.message}`, transport }); }
       }
     }
     return results;
@@ -244,6 +269,7 @@ export class VertexGeminiClient {
     const result = await this.assetClient.imageParts(assets);
     return {
       attempted: result.attempted,
+      manifest: result.manifest || [],
       parts: result.parts.map((part) => {
         const match = /^data:([^;]+);base64,(.+)$/s.exec(part.image_url.url);
         return match ? { inlineData: { mimeType: match[1], data: match[2] } } : null;
@@ -264,6 +290,7 @@ export class VertexGeminiClient {
       }
       return {
         parts: prepared.flatMap((item) => item.parts), attempted: prepared.reduce((total, item) => total + item.attempted, 0),
+        manifest: prepared.flatMap((item) => item.manifest || []),
         cleanup: async () => { await Promise.allSettled(prepared.map((item) => item.cleanup())); },
       };
     }
@@ -274,7 +301,8 @@ export class VertexGeminiClient {
     if (!bytes.length) throw new Error("Uploaded source video is empty.");
     const maxInlineVideoBytes = Number(this.config.maxInlineVideoBytes || MAX_INLINE_VIDEO_BYTES);
     if (bytes.length <= maxInlineVideoBytes) {
-      return { parts: [{ inlineData: { mimeType, data: bytes.toString("base64") } }], attempted: 1, cleanup: async () => {} };
+      return { parts: [{ inlineData: { mimeType, data: bytes.toString("base64") } }], attempted: 1,
+        manifest: [inputAssetManifest(asset, "video", "submitted", "inline_data")], cleanup: async () => {} };
     }
 
     const bucket = String(this.config.videoBucket || "").trim();
@@ -300,7 +328,8 @@ export class VertexGeminiClient {
       const deleteUrl = `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`;
       await this.fetch(deleteUrl, { method: "DELETE", headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30_000) }).catch(() => null);
     };
-    return { parts: [{ fileData: { fileUri: `gs://${bucket}/${objectName}`, mimeType } }], attempted: 1, cleanup };
+    return { parts: [{ fileData: { fileUri: `gs://${bucket}/${objectName}`, mimeType } }], attempted: 1,
+      manifest: [inputAssetManifest(asset, "video", "submitted", "cloud_file")], cleanup };
   }
 
   async loadVideoAsset(asset) {
@@ -337,6 +366,18 @@ export class VertexGeminiClient {
     this.tokenExpiresAt = Date.now() + Math.max(60, Number(payload.expires_in || 300) - 60) * 1_000;
     return this.token;
   }
+}
+
+function outputLimitError(stage) {
+  if (stage === "source_research_extraction" || stage === "segment_claim_coverage_audit" || !stage) {
+    return Object.assign(new Error("Vertex Gemini structured output reached its token limit; the Source segment must be split and retried."), {
+      code: "MODEL_OUTPUT_LIMIT", retryable: true,
+    });
+  }
+  const label = stage === "content_brief" ? "content planning" : String(stage).replaceAll("_", " ");
+  return Object.assign(new Error(`Vertex Gemini ${label} structured output reached its token limit; narrow or correct the stage input before retrying.`), {
+    code: "MODEL_OUTPUT_LIMIT", retryable: false,
+  });
 }
 
 function xiaohongshuMediaUrl(value) {
@@ -386,6 +427,18 @@ function modelCallIdentity(stage, schema, instructions, content) {
   return { stage: stage || "unknown", promptHash: digest(instructions || ""), schemaHash: digest(schema || {}), inputHash: digest(content || "") };
 }
 
+function vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt, status,
+  errorCode = null, retryReason = null, usage = null }) {
+  return { ...identity, provider: "vertex", model: policy.model,
+    inputTokens: usage?.promptTokenCount ?? null, outputTokens: usage?.candidatesTokenCount ?? null,
+    cachedTokens: usage?.cachedContentTokenCount ?? null, thinkingTokens: usage?.thoughtsTokenCount ?? null,
+    providerUsage: usage || null, latencyMs: Date.now() - attemptStartedAt, attempts: attempt + 1,
+    attemptNumber: attempt + 1, status: status === "succeeded" ? "succeeded" : "failed", attemptStatus: status,
+    errorCode, retryReason, requestKind: "provider", policyVersion: policy.version, configHash: policy.configHash,
+    runId: telemetryContext?.runId || null, entityId: telemetryContext?.entityId || null,
+    requestStartedAt, requestCompletedAt: new Date().toISOString(), costUsd: null, costStatus: "unknown" };
+}
+
 function vertexRequestBody({ name, schema, instructions, content, config }) {
   return {
     systemInstruction: { parts: [{ text: instructions }] },
@@ -407,18 +460,42 @@ function parseGcsUri(value) {
   return match ? { bucket: match[1], object: match[2] } : null;
 }
 
-function parseBatchResult(row) {
-  if (row?.status && !row?.response) return { id: "", error: row.status.message || JSON.stringify(row.status), status: row.status };
+function inputAssetManifest(asset, kind, status, requestReference, error = null) {
+  return {
+    assetId: asset?.id || null,
+    hash: asset?.original_sha256 || asset?.originalSha256 || asset?.ai_derivative_sha256 || asset?.aiDerivativeSha256 || null,
+    kind,
+    status,
+    requestReference,
+    failureCode: error?.code ? String(error.code) : null,
+    failureReason: error ? String(error?.message || error).slice(0, 1_000) : null,
+  };
+}
+
+function combinedSignal(signal, timeoutMs) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+export function parseBatchResult(row) {
+  const id = String(row?.key || "");
+  const requestFingerprint = row?.instance?.request || row?.request
+    ? crypto.createHash("sha256").update(JSON.stringify(row?.instance?.request || row.request)).digest("hex") : "";
+  if (row?.status && !row?.response) return { id, requestFingerprint,
+    error: row.status.message || JSON.stringify(row.status), code: String(row.status.code || "VERTEX_BATCH_ITEM_FAILED"), status: row.status };
   const payload = row?.response || row;
   const candidate = payload?.candidates?.[0];
-  if (candidate?.finishReason === "MAX_TOKENS") return { id: "", error: "Vertex Batch structured output reached its token limit.", code: "MODEL_OUTPUT_LIMIT" };
+  const finishReason = String(candidate?.finishReason || "");
+  if (finishReason === "MAX_TOKENS") return { id, requestFingerprint, finishReason,
+    error: "Vertex Batch structured output reached its token limit.", code: "MODEL_OUTPUT_LIMIT" };
   const output = candidate?.content?.parts?.map((part) => part.text || "").join("");
   const parsed = parseStructuredJson(output);
-  if (!parsed.ok || !parsed.value || typeof parsed.value !== "object") return { id: "", error: "Vertex Batch returned invalid structured JSON." };
-  const id = String(parsed.value.batch_item_id || "");
+  if (!parsed.ok || !parsed.value || typeof parsed.value !== "object") return { id, requestFingerprint, finishReason,
+    error: "Vertex Batch returned invalid structured JSON.", code: "INVALID_MODEL_OUTPUT" };
+  const modelReportedId = String(parsed.value.batch_item_id || "");
   const value = { ...parsed.value };
   delete value.batch_item_id;
-  return { id, output: value, usage: payload?.usageMetadata || null };
+  return { id, requestFingerprint, modelReportedId, finishReason, output: value, usage: payload?.usageMetadata || null };
 }
 
 function normalizeVertexParts(content) {
