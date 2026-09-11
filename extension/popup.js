@@ -1,3 +1,5 @@
+import { acquisitionStatus, completionStatus, deriveSyncProgress, progressCards } from "./popup-state.js";
+
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   sync: $("#sync"), repair: $("#repair-sync"), full: $("#full-sync"), save: $("#save"), pause: $("#pause"), resume: $("#resume"), cancel: $("#cancel"), stopQueue: $("#stop-queue"),
@@ -145,11 +147,9 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
   elements.lastSync.textContent = last?.completedAt ? new Date(last.completedAt).toLocaleString("zh-CN") : "从未同步";
 
   const stats = session?.stats || { discovered: 0, known: 0, new: 0, captured: 0, duplicate: 0, failed: 0, retrying: 0 };
-  const queued = session?.queue?.filter((item) => ["queued", "retry_wait"].includes(item.status)).length || 0;
-  elements.counts.innerHTML = [
-    ["已发现", stats.discovered], ["已存在", stats.known], ["新增", stats.new], ["待修复", stats.repair], ["已采集", stats.captured],
-    ["内容重复", stats.duplicate], ["排队中", queued], ["失败", stats.failed],
-  ].map(([label, value]) => `<div><span>${label}</span><strong>${Number(value || 0)}</strong></div>`).join("");
+  const progress = deriveSyncProgress(session || { stats, mode: "incremental", queue: [] });
+  elements.counts.innerHTML = progressCards(session || { stats, mode: "incremental", queue: [] })
+    .map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join("");
   renderConcurrency(session, settings);
 
   const running = session?.status === "running";
@@ -167,7 +167,7 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
     elements.status.textContent = transientNotice;
     transientNotice = "";
   } else {
-    renderStatus({ session, currentScope, currentPageKind, settings, stats, queued });
+    renderStatus({ session, currentScope, currentPageKind, settings, stats, progress });
   }
   $("#open-xhs")?.addEventListener("click", () => command("OPEN_XHS"));
   if (busy) setBusy(true);
@@ -199,7 +199,7 @@ function renderConcurrency(session, settings) {
   ].join("<br>");
 }
 
-function renderStatus({ session, currentScope, currentPageKind, settings, stats, queued }) {
+function renderStatus({ session, currentScope, currentPageKind, settings, stats, progress }) {
   if (!session) {
     elements.status.textContent = currentScope
       ? "已正确识别当前收藏夹，等待采集指令……"
@@ -219,13 +219,14 @@ function renderStatus({ session, currentScope, currentPageKind, settings, stats,
     return;
   }
   if (["completed_with_failures", "paused_failed_items"].includes(session.status) && Number(stats.failed || 0) > 0) {
-    elements.status.textContent = `同步完成：已修复 ${stats.captured + stats.duplicate}，无法自动恢复 ${stats.failed}。可仅重试失败项。`;
+    elements.status.textContent = `${completionStatus(session)} 可仅重试失败项。`;
     elements.status.className = "error";
     return;
   } else if (session.status === "completed") {
-    elements.status.textContent = stats.new
-      ? `同步完成：CMS 已接收 ${stats.captured + stats.duplicate} 条新增收藏，失败 ${stats.failed} 条。`
-      : "同步完成：当前收藏夹没有需要采集的新内容。";
+    elements.status.textContent = session.mode === "repair" || session.mode === "full"
+      ? completionStatus(session)
+      : stats.new ? `同步完成：CMS 已接收 ${progress.completed} 条新增收藏，失败 ${stats.failed} 条。`
+        : "同步完成：当前收藏夹没有需要采集的新内容。";
     return;
   }
   if (session.status === "cancelled") {
@@ -257,9 +258,7 @@ function renderStatus({ session, currentScope, currentPageKind, settings, stats,
       elements.status.textContent = "后台任务已自动恢复，继续处理中。";
       return;
     }
-    const retrying = Number(stats.retrying || 0);
-    const action = session.mode === "repair" ? "正在修复缺失数据" : session.mode === "full" ? "正在完整核验收藏" : "正在采集新增收藏";
-    elements.status.textContent = `${action}……排队 ${queued} 条，已完成 ${stats.captured + stats.duplicate} 条${retrying ? `，等待重试 ${retrying} 条` : ""}。`;
+    elements.status.textContent = acquisitionStatus(session);
     return;
   }
   elements.status.textContent = "正在保存同步结果和检查点……";

@@ -53,3 +53,7 @@ Content Strategy：`3.0`（未变）
 ## 用户工作流
 
 保持 Chrome 已登录小红书，打开目标收藏夹，点击一次“修复缺失数据”，随后可关闭 Popup 或切换标签页/程序。后台会继续处理全部可修复 Source；只有登录失效、真实验证码/安全验证或 Capture Token 无效时才需要用户回来处理。
+
+## Popup 进度文案补充
+
+`stats.repair` 保持“本轮识别出的需修复总数”，不再显示为容易被理解成剩余数量的“待修复”。Repair 使用“修复进度 已完成 / 总数、正在修复、等待修复、等待重试、失败”；Incremental 保持收藏采集语义；Full 使用“需核验总数、已核验、正在核验、等待核验、等待重试、失败”。`opening/loading/extracting/submitting` 计为 in-flight，`queued` 与 `retry_wait` 分开统计。完成状态明确显示本轮已结束；少量永久失败显示为“无法自动恢复”，并只提供失败项重试。

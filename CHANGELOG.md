@@ -2,6 +2,7 @@
 
 ## 2.0.5 - Unreleased
 
+- Give Repair, Incremental, and Full Verification distinct Popup progress labels; Repair now presents completed/total progress and counts real in-flight, queued, and retry-wait tasks separately instead of presenting the cumulative repair total as remaining work.
 - Resume running Favorites/Repair sessions automatically after MV3 worker restarts, reconcile expired task leases with a durable alarm watchdog, and reserve full-session pauses for login, verification, capture authorization, and explicit user pause.
 - Replace Note batch barriers with continuously claiming worker slots, apply concurrency settings to a running session immediately, and adapt Auto mode from a 24-task rolling pressure window without treating long media-heavy Notes or isolated media failures as global pressure.
 - Process missing originals through a shared 12-pipeline media semaphore with separate upload, large-file, and memory guards; browser Repair now receives exact missing-media identities and leaves server-recoverable or already stored originals alone.

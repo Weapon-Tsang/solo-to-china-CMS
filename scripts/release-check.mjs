@@ -320,7 +320,7 @@ async function verifyExtension() {
     for (const asset of assets) assertFile(path.join(extensionDir, asset), `extension/${asset}`);
     const popup = fs.readFileSync(path.join(extensionDir, manifest.action.default_popup), "utf8");
     if (!/http:\/\/127\.0\.0\.1:4310/.test(popup)) throw new Error("Popup default Engine URL is not aligned with the local server.");
-    for (const injectedAsset of ["page-extractor.js", "sync-core.js"]) assertFile(path.join(extensionDir, injectedAsset), `extension/${injectedAsset}`);
+    for (const injectedAsset of ["page-extractor.js", "sync-core.js", "popup-state.js"]) assertFile(path.join(extensionDir, injectedAsset), `extension/${injectedAsset}`);
   });
   report.check("Chrome Extension", "Durable repair scheduler", () => {
     const core = fs.readFileSync(path.join(extensionDir, "sync-core.js"), "utf8");
