@@ -637,13 +637,14 @@ function CommercialView({ data, onGuide, onAction, actionBusy }) {
 }
 
 function AffiliateQueue({ items, onAction, actionBusy }) {
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("ACTIVE");
   const [category, setCategory] = useState("");
   const [scope, setScope] = useState("");
   const [urls, setUrls] = useState({});
   const [importFile, setImportFile] = useState(null);
   const [importPreview, setImportPreview] = useState(null);
-  const filtered = useMemo(() => items.filter((item) => (!status || item.status === status)
+  const filtered = useMemo(() => items.filter((item) => (!status || (status === "ACTIVE"
+    ? ["PENDING", "READY_FOR_MANUAL", "INVALID"].includes(item.status) : item.status === status))
     && (!category || item.product_category === category) && (!scope || item.scope_type === scope)), [items, status, category, scope]);
   const active = items.filter((item) => ["PENDING", "READY_FOR_MANUAL", "INVALID"].includes(item.status)).length;
   const fieldClass = "rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-slate-400";
@@ -679,7 +680,7 @@ function AffiliateQueue({ items, onAction, actionBusy }) {
     <SectionTitle title="待建链任务" description="仅由真实高意图内容机会与联盟资产缺口生成；当前为零是正常状态" />
     <Card className="p-4"><div className="flex flex-wrap items-center gap-2">
       <select aria-label="队列状态" className={fieldClass} value={status} onChange={(event) => setStatus(event.target.value)}>
-        <option value="">全部状态</option>{["PENDING", "READY_FOR_MANUAL", "COMPLETED", "SKIPPED", "INVALID"].map((value) => <option key={value} value={value}>{label(value)}</option>)}
+        <option value="ACTIVE">待处理</option><option value="">全部状态</option>{["PENDING", "READY_FOR_MANUAL", "COMPLETED", "SKIPPED", "INVALID"].map((value) => <option key={value} value={value}>{label(value)}</option>)}
       </select>
       <select aria-label="商品类别" className={fieldClass} value={category} onChange={(event) => setCategory(event.target.value)}>
         <option value="">全部类别</option>{["HOTEL", "FLIGHT", "TRAIN", "ATTRACTION", "TOUR_ACTIVITY", "FLIGHT_HOTEL", "CAR_RENTAL", "AIRPORT_TRANSFER", "PLANNER"].map((value) => <option key={value} value={value}>{label(value)}</option>)}

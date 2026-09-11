@@ -261,6 +261,7 @@ test("skip is idempotent and completed tasks cannot be skipped", (t) => {
 
 test("repository queue filters status, category, and scope", (t) => {
   const repository = fixture(t); createTask(repository); createTask(repository, { productCategory: "TRAIN", scopeType: "ROUTE", scopeKey: "beijing-xian", routeKey: "beijing-xian", assetType: "DEEP_LINK", tripToolType: "TRAINS" });
+  assert.equal(repository.listAffiliateQueueTasks({ status: "ACTIVE" }).length, 2);
   assert.equal(repository.listAffiliateQueueTasks({ productCategory: "TRAIN" }).length, 1);
   assert.equal(repository.listAffiliateQueueTasks({ scopeType: "ROUTE" }).length, 1);
   assert.equal(repository.listAffiliateQueueTasks({ status: "COMPLETED" }).length, 0);

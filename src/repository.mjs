@@ -4696,7 +4696,8 @@ export class Repository {
 
   listAffiliateQueueTasks({ status = "", productCategory = "", scopeType = "", provider = "" } = {}) {
     const clauses = []; const values = [];
-    if (status) { clauses.push("status=?"); values.push(String(status).toUpperCase()); }
+    if (String(status).toUpperCase() === "ACTIVE") clauses.push("status IN ('PENDING','READY_FOR_MANUAL','INVALID')");
+    else if (status) { clauses.push("status=?"); values.push(String(status).toUpperCase()); }
     if (productCategory) { clauses.push("product_category=?"); values.push(String(productCategory).toUpperCase()); }
     if (scopeType) { clauses.push("scope_type=?"); values.push(String(scopeType).toUpperCase()); }
     if (provider) { clauses.push("lower(provider)=lower(?)"); values.push(provider); }
