@@ -104,6 +104,14 @@ test("Experience Blocks reject invented provenance and persist grounded sequence
     VALUES ('span-experience',?,'segment-experience','text','Book the first entry slot','{}','now')`).run(sourceId);
   const backfill=repository.runExperienceBackfill({dryRun:false});
   assert.equal(db.prepare("SELECT status FROM system_backfill_runs WHERE id=?").get(backfill.id).status,"queued");
+  assert.equal(db.prepare(`SELECT COUNT(*) count FROM jobs WHERE type='extract_source_experience'
+    AND entity_id=? AND status IN ('queued','running')`).get(sourceId).count,1);
+  repository.enqueue("extract_source_experience",sourceId,{dedupeKey:`experience-backfill:${sourceId}:legacy`,priority:70});
+  assert.equal(repository.coalesceQueuedExperienceJobs(),1);
+  assert.equal(db.prepare(`SELECT COUNT(*) count FROM jobs WHERE type='extract_source_experience'
+    AND entity_id=? AND status IN ('queued','running')`).get(sourceId).count,1);
+  assert.equal(db.prepare(`SELECT last_failure_code FROM jobs WHERE type='extract_source_experience'
+    AND entity_id=? AND status='failed'`).get(sourceId).last_failure_code,"DUPLICATE_EXPERIENCE_JOB");
   const input=repository.getExperienceExtractionPackage(sourceId);
   const saved=repository.saveExperienceExtraction(sourceId,{blocks:[
     {type:"route_strategy",title:"Invented route",segment_ids:["not-a-segment"],supporting_claim_ids:[claimId],sequence:["Invented"]},

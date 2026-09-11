@@ -897,10 +897,33 @@ export class Repository {
       ORDER BY s.captured_at,s.id`).all();
     const report = {eligible:rows.length,queued:0,sourceIds:rows.map((row) => row.id)};
     if (!dryRun) for (const row of rows) {
-      this.enqueue("extract_source_experience",row.id,{dedupeKey:`experience-backfill:${row.id}:v${row.capture_version}`,priority:70});
+      // Share the canonical key with startup/source-completion scheduling so a
+      // historical backfill cannot purchase the same model call twice.
+      this.enqueue("extract_source_experience",row.id,{dedupeKey:`extract_source_experience:${row.id}`,priority:70});
       report.queued += 1;
     }
     return this.saveSystemBackfillRun("experience",dryRun,report);
+  }
+
+  coalesceQueuedExperienceJobs() {
+    const timestamp=now(); let superseded=0;
+    const entities=this.db.prepare(`SELECT entity_id FROM jobs WHERE type='extract_source_experience'
+      AND status IN ('queued','running') GROUP BY entity_id HAVING COUNT(*)>1`).all();
+    for (const {entity_id} of entities) {
+      const rows=this.db.prepare(`SELECT id,status FROM jobs WHERE type='extract_source_experience' AND entity_id=?
+        AND status IN ('queued','running') ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END,priority,created_at,id`).all(entity_id);
+      const keep=rows[0]?.id;
+      for (const row of rows.slice(1)) {
+        if (row.status!=="queued") continue;
+        superseded += this.db.prepare(`UPDATE jobs SET status='failed',completed_at=?,duration_ms=0,
+          failure_class='',last_failure_code='DUPLICATE_EXPERIENCE_JOB',
+          last_error='Superseded duplicate Experience backfill job; no model call was made.',
+          next_eligible_at=NULL,updated_at=? WHERE id=? AND status='queued' AND id<>?`)
+          .run(timestamp,timestamp,row.id,keep).changes;
+      }
+    }
+    if (superseded) this.refreshExperienceBackfillRuns();
+    return superseded;
   }
 
   refreshExperienceBackfillRuns() {
@@ -917,9 +940,21 @@ export class Repository {
         active += Number(this.db.prepare(`SELECT COUNT(*) n FROM jobs WHERE type='extract_source_experience'
           AND status IN ('queued','running') AND entity_id IN (${placeholders})`).get(...page)?.n || 0);
       }
+      const failureCodes=[];
+      for (let offset=0;offset<sourceIds.length;offset+=500) {
+        const page=sourceIds.slice(offset,offset+500); const placeholders=page.map(() => "?").join(",");
+        for (const row of this.db.prepare(`SELECT COALESCE(NULLIF(last_failure_code,''),'UNKNOWN') code,COUNT(*) count
+          FROM jobs WHERE type='extract_source_experience' AND status='failed' AND entity_id IN (${placeholders})
+          GROUP BY COALESCE(NULLIF(last_failure_code,''),'UNKNOWN')`).all(...page)) {
+          const existing=failureCodes.find((item)=>item.code===row.code);
+          if (existing) existing.count+=Number(row.count || 0);
+          else failureCodes.push({code:row.code,count:Number(row.count || 0)});
+        }
+      }
+      failureCodes.sort((a,b)=>b.count-a.count || a.code.localeCompare(b.code));
       const pending=Math.max(0,sourceIds.length-succeeded); const status=pending===0 ? "completed" : active===0 ? "failed" : "queued";
       this.db.prepare(`UPDATE system_backfill_runs SET status=?,report_json=?,completed_at=CASE WHEN ?<>'queued' THEN ? ELSE NULL END,updated_at=? WHERE id=?`)
-        .run(status,JSON.stringify({...report,succeeded,pending,failed:status==="failed" ? pending : 0}),status,timestamp,timestamp,run.id);
+        .run(status,JSON.stringify({...report,succeeded,pending,failed:status==="failed" ? pending : 0,failureCodes}),status,timestamp,timestamp,run.id);
     }
     return runs.length;
   }
@@ -4921,6 +4956,7 @@ export class Repository {
       if (!row.has_experience) this.enqueue("extract_source_experience", row.id);
       else if (!row.has_diagnostic) this.enqueue("analyze_source_diagnostic", row.id);
     }
+    this.coalesceQueuedExperienceJobs();
     for (const row of this.db.prepare("SELECT slug FROM destinations").all()) {
       if (!researchSlugs.has(row.slug)) this.enqueue("rebuild_topics", row.slug);
     }
