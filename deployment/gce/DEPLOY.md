@@ -23,6 +23,8 @@ GCE VM -- service account -- Vertex Imagen
 
 The checked-in Tunnel configuration does not prove that a Cloudflare Rate Limiting rule exists, so the application enforces its own bounded login throttle. It ignores `X-Forwarded-For` and `CF-Connecting-IP` by default. If the Engine is later restricted to a pinned proxy address, set `TRUSTED_PROXY_HEADER=cf-connecting-ip` and list only that proxy IP/CIDR in `TRUSTED_PROXY_SOURCES`; never enable a forwarded header while the Engine is directly reachable from an untrusted network.
 
+The production connector is pinned to Cloudflare Tunnel's supported `http2` transport. This avoids the cross-edge response cancellation observed with QUIC on this VM while keeping the same outbound-only port 7844 tunnel model. If the network policy changes, run Cloudflare's connectivity pre-check before changing `--protocol`; TCP port 7844 must remain available for HTTP/2.
+
 Backups are versioned system snapshot directories, not standalone SQLite files. Each snapshot contains a `VACUUM INTO` database image, original uploads, generated media, hashes for every file, database-to-file reference mappings, application/content-strategy/schema/code versions, and retention/offsite-policy metadata. Secret values are excluded; the manifest lists only the Secret Manager references that must be restored separately. Before replacing an existing container, `startup.sh` creates and verifies a `pre-upgrade` snapshot. Keep `BACKUP_OFFSITE_LOCATION` and `BACKUP_OFFSITE_RETENTION_DAYS` aligned with the separately managed offsite replication policy; configuring those values records policy but does not itself upload the snapshot.
 
 Verify and drill a snapshot before rollback:

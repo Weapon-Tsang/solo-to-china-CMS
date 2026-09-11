@@ -154,7 +154,7 @@ services:
     restart: unless-stopped
     depends_on:
       - engine
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate --protocol http2 run --token ${CLOUDFLARE_TUNNEL_TOKEN}
 
 volumes:
   solo_to_china_data:
@@ -193,7 +193,7 @@ docker run --detach --name engine --restart unless-stopped \
 docker run --detach --name cloudflared --restart unless-stopped \
   --network solo-to-china \
   cloudflare/cloudflared:latest \
-  tunnel --no-autoupdate run --token "$CLOUDFLARE_TUNNEL_TOKEN" >/dev/null
+  tunnel --no-autoupdate --protocol http2 run --token "$CLOUDFLARE_TUNNEL_TOKEN" >/dev/null
 sleep 8
 log 'Container status:'
 docker ps --format 'table {{.Names}}\t{{.Status}}'
