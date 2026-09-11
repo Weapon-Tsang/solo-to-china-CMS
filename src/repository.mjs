@@ -916,13 +916,20 @@ export class Repository {
   runExperienceBackfill({ dryRun = true } = {}) {
     const rows = this.db.prepare(`SELECT s.id,s.title,s.capture_version FROM sources s
       WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
-        AND NOT EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded')
+        AND NOT EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')
+        AND NOT EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
+          AND er.capture_version=s.capture_version AND er.degraded=0)
       ORDER BY s.captured_at,s.id`).all();
-    const report = {eligible:rows.length,queued:0,sourceIds:rows.map((row) => row.id)};
+    const blockedByMedia=Number(this.db.prepare(`SELECT COUNT(*) n FROM sources s
+      WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
+        AND EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')`).get()?.n || 0);
+    const report = {eligible:rows.length,blockedByMedia,queued:0,sourceIds:rows.map((row) => row.id)};
     if (!dryRun) for (const row of rows) {
       // Share the canonical key with startup/source-completion scheduling so a
       // historical backfill cannot purchase the same model call twice.
-      this.enqueue("extract_source_experience",row.id,{dedupeKey:`extract_source_experience:${row.id}`,priority:70});
+      this.enqueue("extract_source_experience",row.id,{
+        dedupeKey:`experience-current:${row.id}:${row.capture_version}:${this.strategyVersion}`,priority:70,
+      });
       report.queued += 1;
     }
     return this.saveSystemBackfillRun("experience",dryRun,report);
@@ -958,8 +965,9 @@ export class Repository {
       let succeeded=0; let active=0;
       for (let offset=0;offset<sourceIds.length;offset+=500) {
         const page=sourceIds.slice(offset,offset+500); const placeholders=page.map(() => "?").join(",");
-        succeeded += Number(this.db.prepare(`SELECT COUNT(DISTINCT source_id) n FROM experience_extraction_runs
-          WHERE status='succeeded' AND source_id IN (${placeholders})`).get(...page)?.n || 0);
+        succeeded += Number(this.db.prepare(`SELECT COUNT(DISTINCT er.source_id) n FROM experience_extraction_runs er
+          JOIN sources s ON s.id=er.source_id WHERE er.status='succeeded' AND er.capture_version=s.capture_version
+          AND er.degraded=0 AND er.source_id IN (${placeholders})`).get(...page)?.n || 0);
         active += Number(this.db.prepare(`SELECT COUNT(*) n FROM jobs WHERE type='extract_source_experience'
           AND status IN ('queued','running') AND entity_id IN (${placeholders})`).get(...page)?.n || 0);
       }
@@ -5982,8 +5990,12 @@ export class Repository {
       SUM(repair_status='browser_repair_required') AS browser_pending,
       SUM(durability_status='UNAVAILABLE' OR repair_status='unavailable') AS unavailable FROM source_assets`).get();
     const experience=this.db.prepare(`SELECT COUNT(*) AS eligible,
+      SUM(EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
+        AND er.capture_version=s.capture_version AND er.degraded=0)) AS completed,
       SUM(NOT EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
-        AND er.capture_version=s.capture_version AND er.degraded=0)) AS pending
+        AND er.capture_version=s.capture_version AND er.degraded=0)
+        AND NOT EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')) AS pending,
+      SUM(EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')) AS blocked
       FROM sources s WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')`).get();
     const failure=this.db.prepare(`SELECT COUNT(*) AS total,
       SUM(status='active' AND retry_safe=1) AS retry_eligible FROM failure_lessons`).get();
@@ -5992,7 +6004,8 @@ export class Repository {
         completed:Number(media.stored || 0),pending:Number(media.server_pending || 0)+Number(media.browser_pending || 0),
         blocked:Number(media.browser_pending || 0)+Number(media.unavailable || 0),nextOwner:Number(media.browser_pending || 0) ? "browser_extension" : "system"},
       {key:"experience_backfill",title:"体验信息补齐",total:Number(experience.eligible || 0),
-        completed:Math.max(0,Number(experience.eligible || 0)-Number(experience.pending || 0)),pending:Number(experience.pending || 0),blocked:0,nextOwner:"system"},
+        completed:Number(experience.completed || 0),pending:Number(experience.pending || 0),blocked:Number(experience.blocked || 0),
+        nextOwner:Number(experience.blocked || 0) ? "browser_extension" : "system"},
       {key:"recommendation_reconciliation",title:"推荐收件箱校准",total:reconciliation.internalOpportunities,
         completed:reconciliation.actionableInbox,pending:reconciliation.processingGap,blocked:0,nextOwner:"system",
         detail:{actionable:reconciliation.actionableInbox,evidenceGap:reconciliation.evidenceGap,merged:reconciliation.merged,superseded:reconciliation.superseded}},

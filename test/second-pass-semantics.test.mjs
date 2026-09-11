@@ -124,3 +124,22 @@ test("repairing the last missing original invalidates recommendations and queues
   assert.equal(refreshed.recommendation_reconciled_version,"");
   assert.equal(db.prepare(`SELECT COUNT(*) n FROM jobs WHERE type='extract_source_experience' AND entity_id=? AND status='queued'`).get(sourceId).n,1);
 });
+
+test("Experience backfill waits for original media and detects stale capture versions", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const blockedSource=saveSource(repository,{externalId:"experienceblocked",images:[{
+    url:"https://sns-img.xhscdn.com/experience-blocked.jpg",mediaIdentity:"experience-blocked",aiDerivativeDataUrl:"data:image/jpeg;base64,YQ==",
+  }]});
+  db.prepare("UPDATE sources SET completeness_status='complete',status='processed' WHERE id=?").run(blockedSource);
+  const currentSource=saveSource(repository,{externalId:"experiencestale"});
+  repository.saveExperienceExtraction(currentSource,{blocks:[]},"test");
+  db.prepare("UPDATE sources SET capture_version=capture_version+1 WHERE id=?").run(currentSource);
+
+  const preview=repository.runExperienceBackfill({dryRun:true});
+  assert.equal(preview.blockedByMedia,1,JSON.stringify(db.prepare("SELECT source_id,durability_status,repair_status FROM source_assets").all()));
+  assert.equal(preview.eligible,1,JSON.stringify(db.prepare(`SELECT s.id,s.status,s.capture_version,s.completeness_status,
+    er.capture_version AS experience_capture_version,er.status AS experience_status,er.degraded
+    FROM sources s LEFT JOIN experience_extraction_runs er ON er.source_id=s.id ORDER BY s.id`).all()));
+  assert.deepEqual(preview.sourceIds,[currentSource]);
+  assert.equal(preview.sourceIds.includes(blockedSource),false);
+});
