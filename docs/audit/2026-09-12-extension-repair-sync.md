@@ -48,7 +48,7 @@ Content Strategy：`3.0`（未变）
 - Media semaphore：并发 fixture 全部完成，active 不超过设置值。
 - Repair correctness：server-only recovery 不进入浏览器队列；browser repair Task 只携带缺失 originals；修复后 manifest 的 missing originals 为空。
 
-最终门禁：`npm run check` 通过；`npm test` 为 1227/1227 通过；`npm run release:check` 为 50 项强制检查通过、0 失败。真实小红书人工验收仍需用户 Chrome Profile 安装 2.0.5 Extension 后执行；离线测试不伪称验证了验证码、真实 CDN 波动或 Chrome 内存压力场景。
+最终门禁：`npm run check` 通过；`npm test` 为 1231/1231 通过；`npm run release:check` 为 50 项强制检查通过、0 失败。真实小红书人工验收仍需用户 Chrome Profile 安装 2.0.5 Extension 后执行；离线测试不伪称验证了验证码、真实 CDN 波动或 Chrome 内存压力场景。
 
 ## 用户工作流
 
@@ -57,3 +57,12 @@ Content Strategy：`3.0`（未变）
 ## Popup 进度文案补充
 
 `stats.repair` 保持“本轮识别出的需修复总数”，不再显示为容易被理解成剩余数量的“待修复”。Repair 使用“修复进度 已完成 / 总数、正在修复、等待修复、等待重试、失败”；Incremental 保持收藏采集语义；Full 使用“需核验总数、已核验、正在核验、等待核验、等待重试、失败”。`opening/loading/extracting/submitting` 计为 in-flight，`queued` 与 `retry_wait` 分开统计。完成状态明确显示本轮已结束；少量永久失败显示为“无法自动恢复”，并只提供失败项重试。
+
+## Production deployment
+
+- Runtime code HEAD: `54849a6` on `codex/audit-v1.3`; the documentation-only deployment record commit follows it.
+- Cloud Build `81e58fd9-0a17-4f9e-8959-ba83e7aa59da` completed successfully. Image: `asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine:2.0.5`; digest: `sha256:1c51f03fc7f5f3e64f841aaa4931ec18cfdf0541109d92f9e355193d61d5eb63`.
+- Deployment target: GCE instance `solo-to-china-engine`, zone `asia-east1-b`, project `project-4bcb9146-c37b-43b0-b11`. Startup created the verified database-and-content snapshot before container replacement, then reported both `engine` and `cloudflared` running and `Deployment completed successfully` at `2026-09-11T21:56:32Z`.
+- Public probes returned HTTP 200 for Engine health/readiness and Capture health. Runtime reported app `2.0.5`, Content Strategy `3.0`, database `ready`, and Frontend Contract `healthy`; the Capture dashboard boundary returned HTTP 404 as required.
+- Health reported `queueActive=281` and `vertexBatchActive=1`, representing existing background production work rather than a rollout failure. The known Guest Agent Cloud Logging permission warning remained non-blocking and IAM was not broadened.
+- The GCE rollout deploys the CMS/Engine runtime. The updated browser-extension popup is delivered in the pushed source and still requires reloading/installing Extension 2.0.5 in the authorized Chrome profile; no Chrome Web Store publication is claimed.
