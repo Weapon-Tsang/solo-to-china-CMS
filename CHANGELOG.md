@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.1 - Unreleased
+
+- Classify remote source-media recovery failures separately from external model authorization failures.
+- Keep browser-repair handoffs visible with accurate media guidance until the authorized originals are stored, while retaining the repair manifest and failed jobs as audit history.
+
 ## 2.0.0 - 2026-09-11
 
 - Require SHA-256-verified durable originals for every authorized Xiaohongshu image and video before source extraction; add chunked media upload, server recovery, browser repair manifests, and auditable media backfills.

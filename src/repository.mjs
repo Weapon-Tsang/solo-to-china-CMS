@@ -5596,8 +5596,13 @@ export class Repository {
       items.push(exceptionItem("source", row.id, "blocker", failure.headline, row.title || row.id, failureDetail(failure), true, row.updated_at));
     }
     for (const row of this.db.prepare(`
-      SELECT id, type, entity_id, last_error, updated_at, failure_class, last_failure_code, attempts, max_attempts FROM jobs
-      WHERE status='failed' AND type NOT IN (
+      SELECT jobs.id, jobs.type, jobs.entity_id, jobs.last_error, jobs.updated_at, jobs.failure_class,
+        jobs.last_failure_code, jobs.attempts, jobs.max_attempts,
+        media.durability_status AS media_durability_status, media.repair_status AS media_repair_status
+      FROM jobs
+      LEFT JOIN source_assets media ON media.id=jobs.entity_id
+        AND jobs.type IN ('backfill_media_asset','repair_media_asset')
+      WHERE jobs.status='failed' AND jobs.type NOT IN (
         'extract_source','sync_wordpress_inventory','sync_search_console','push_wordpress_draft'
       )
       AND NOT EXISTS (
@@ -5606,6 +5611,11 @@ export class Repository {
           AND recovered.status='succeeded' AND recovered.updated_at>=jobs.updated_at
       )
     `).all()) {
+      // A later browser capture can make an old recovery failure obsolete. Keep
+      // browser-repair-required assets visible until those original bytes are
+      // actually stored; the operator still needs to act on each repair item.
+      if (['backfill_media_asset', 'repair_media_asset'].includes(row.type)
+        && row.media_durability_status === 'ORIGINAL_STORED') continue;
       if (PRODUCTION_JOB_TYPES.has(row.type) && !isSystemLevelFailure(row.last_failure_code,row.last_error)) {
         const learned = this.db.prepare(`SELECT 1 FROM failure_lessons WHERE failing_stage=?
           AND json_extract(previous_input_json,'$.entityId')=? LIMIT 1`).get(row.type,row.entity_id);

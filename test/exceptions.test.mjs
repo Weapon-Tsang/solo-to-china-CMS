@@ -39,6 +39,31 @@ test("operational exception queue refuses a no-op retry for permanent provider a
     .map((row) => row.status), ["failed", "failed"]);
 });
 
+test("browser media repair handoffs remain visible with accurate media guidance until repaired", (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/media-repair-exception",
+    title: "Media repair exception",
+    text: "This selected source has enough text but its authorized original still needs browser repair.",
+    images: [{ url: "https://sns-img.xhscdn.com/expired-original.jpg", mediaIdentity: "expired-original" }],
+  }));
+  const asset = db.prepare("SELECT id FROM source_assets WHERE source_id=?").get(source.id);
+  const job = db.prepare("SELECT id FROM jobs WHERE type='repair_media_asset' AND entity_id=?").get(asset.id);
+  db.prepare(`UPDATE jobs SET status='failed', attempts=3, failure_class='permanent_input',
+    last_failure_code='REMOTE_MEDIA_403', last_error='Remote media returned HTTP 403.' WHERE id=?`).run(job.id);
+  db.prepare(`UPDATE source_assets SET repair_status='browser_repair_required',
+    storage_error='Remote media returned HTTP 403.' WHERE id=?`).run(asset.id);
+
+  const repair = repository.listOperationalExceptions().find((item) => item.key === `job:${job.id}`);
+  assert.match(repair.title, /原件.*浏览器修复/);
+  assert.doesNotMatch(`${repair.title} ${repair.detail}`, /模型服务拒绝/);
+  assert.equal(db.prepare("SELECT status FROM jobs WHERE id=?").get(job.id).status, "failed");
+  assert.equal(repository.mediaRepairManifest(source.id).mediaDurability.browserRepairRequired, 1);
+
+  db.prepare("UPDATE source_assets SET durability_status='ORIGINAL_STORED', repair_status='not_needed' WHERE id=?").run(asset.id);
+  assert.equal(repository.listOperationalExceptions().some((item) => item.key === `job:${job.id}`), false);
+});
+
 test("a derived draft exception inherits the permanent failed job retry decision", (t) => {
   const { db, repository } = repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)

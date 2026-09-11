@@ -87,6 +87,24 @@ export function explainOperationalFailure(job) {
     action: { id: 'configure_ai', label: '先到“设置”配置 AI 模型', why: '配置完成后再重试失败阶段，否则重复点击仍会失败。' },
     technicalDetail: details,
   };
+  const mediaRecoveryFailure = ['backfill_media_asset', 'repair_media_asset'].includes(type)
+    || code.startsWith('REMOTE_MEDIA_');
+  if (mediaRecoveryFailure) {
+    const browserRepairRequired = job.media_repair_status === 'browser_repair_required'
+      || [401, 403, 404, 410].includes(status)
+      || /(?:INVALID|HASH_MISMATCH|TOO_LARGE|UNSUPPORTED)/.test(code);
+    return browserRepairRequired ? {
+      category: 'media', headline: '来源原件需要浏览器修复',
+      reason: '服务器无法继续读取旧的外部图片或视频地址；来源、证据和修复清单仍然保留。这不是外部模型拒绝服务。',
+      action: { id: 'recapture_media', label: '用浏览器重新采集原件', why: '在已授权的原始笔记页面运行素材修复后，系统会保存原件并继续后续处理。' },
+      technicalDetail: details,
+    } : {
+      category: 'media', headline: '来源原件自动保存没有完成',
+      reason: '服务器本次没有成功保存外部图片或视频原件；来源和证据仍然保留。这不是外部模型拒绝服务。',
+      action: { id: type || null, label: '重新尝试保存原件', why: '这是可重试的媒体读取问题，无需修改模型权限或重新生成文章。' },
+      technicalDetail: details,
+    };
+  }
   const sourceMediaFailure = code.startsWith('AUTHORIZED_SOURCE') || code.startsWith('SOURCE_IMAGE')
     || (/authorized source image download failed/i.test(message) && ['generate_visuals', 'compose_frontend_page'].includes(type));
   if (sourceMediaFailure) return {

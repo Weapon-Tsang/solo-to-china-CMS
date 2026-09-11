@@ -145,6 +145,13 @@ test('operator diagnosis is concise Chinese and hides long code lists behind tec
   assert.match(model403.reason,/不代表来源图片失效/);
   const source403=recoveryDiagnosis({failedJob:{type:'compose_frontend_page',last_error:'Authorized source image download failed (403).'}});
   assert.match(source403.headline,/图片/);
+  const media403=recoveryDiagnosis({failedJob:{type:'backfill_media_asset',last_failure_code:'REMOTE_MEDIA_403',last_error:'Remote media returned HTTP 403.'}});
+  assert.match(media403.headline,/原件.*浏览器修复/);
+  assert.doesNotMatch(`${media403.headline} ${media403.reason}`,/模型服务拒绝/);
+  assert.equal(media403.recommendedAction.id,'recapture_media');
+  const media503=recoveryDiagnosis({failedJob:{type:'backfill_media_asset',last_failure_code:'REMOTE_MEDIA_503',last_error:'Remote media returned HTTP 503.'}});
+  assert.match(media503.headline,/自动保存没有完成/);
+  assert.doesNotMatch(media503.recommendedAction.label,/浏览器/);
 });
 test('single-source stable photo descriptions do not require a fabricated as-of date', () => {
   assert.equal(isDynamicFact({normalized_key:'attraction.station.photo_spot_metro',consensus_method:'SINGLE_SOURCE_LATEST',freshness_state:'current'}), false);
