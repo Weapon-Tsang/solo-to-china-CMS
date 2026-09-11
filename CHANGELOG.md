@@ -1,6 +1,11 @@
 # Changelog
 
-## 1.18.2 - Unreleased
+## 1.18.3 - Unreleased
+
+- Stabilize the private HTTP origin behind Cloudflare Tunnel by extending Node's keep-alive window beyond the connector pool's reuse window.
+- Pin the production connector to `cloudflare/cloudflared:2026.8.2` over HTTP/2 after isolating a `2026.9.0` Docker-bridge regression during rollout.
+
+## 1.18.2 - 2026-09-11
 
 - Localize operator-facing diagnostics and quality failures, including safe Chinese fallbacks for malformed or provider-originated output.
 - Replace browser-native confirmation prompts with a responsive in-app dialog and simplify Content to one approved-versus-created production view with explicit blockers.

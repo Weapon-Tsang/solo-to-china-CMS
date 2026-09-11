@@ -20,6 +20,9 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
     LOG_LEVEL: "error",
   });
   const app = createApplication(config);
+  assert.equal(app.server.keepAliveTimeout, 120_000);
+  if ("keepAliveTimeoutBuffer" in app.server) assert.equal(app.server.keepAliveTimeoutBuffer, 5_000);
+  assert.equal(app.server.headersTimeout, 130_000);
   await app.start();
   t.after(async () => {
     await app.stop();

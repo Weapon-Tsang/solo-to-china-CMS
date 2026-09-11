@@ -844,6 +844,12 @@ export function createApplication(config = loadConfig()) {
       });
     }
   });
+  // cloudflared keeps a small pool of HTTP/1.1 connections to this private
+  // origin. Keep those sockets alive longer than the connector's reuse window
+  // so an idle pooled socket cannot race Node's five-second default timeout.
+  server.keepAliveTimeout = 120_000;
+  if ("keepAliveTimeoutBuffer" in server) server.keepAliveTimeoutBuffer = 5_000;
+  server.headersTimeout = 130_000;
 
   return {
     server,
