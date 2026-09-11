@@ -23,6 +23,8 @@
   };
 
   function scanFavorites({ limit = 100, offset = 0 } = {}) {
+    const blocking = detectBlockingPage();
+    if (blocking) return { cards: [], blocking, collectionEnd: false, pageUrl: location.href };
     const output = [];
     const seen = new Set();
     let position = 0;
@@ -64,7 +66,7 @@
   async function scrollFavoritesWindow() {
     const before = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
     window.scrollTo({ top: before, behavior: "instant" });
-    await wait(900);
+    await waitForMutation(document.documentElement, 1_200);
     const after = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
     return { advanced: after > before || window.scrollY > 0, scrollY: window.scrollY, scrollHeight: after,
       collectionEnd: window.scrollY + window.innerHeight >= after - 80 && after === before };
@@ -76,15 +78,12 @@
     if (failure) return { ok: false, error: failure };
     const externalId = location.pathname.match(/\/(?:explore|discovery\/item)\/([A-Za-z0-9]+)/)?.[1]
       || location.pathname.match(/\/board\/[A-Za-z0-9]+\/([A-Za-z0-9]+)/)?.[1];
-    if (!externalId) return error("NAVIGATION_INTERRUPTED", "Xiaohongshu interrupted the note navigation. Complete any login or verification prompt, then resume.", false);
+    if (!externalId) return error("NAVIGATION_INTERRUPTED", "Xiaohongshu interrupted the note navigation. The worker will reopen this note automatically.", true);
 
     let root = first(SELECTORS.noteRoot);
-    while (!root && Date.now() - startedAt < 30_000) {
-      await wait(250);
-      const blocked = detectBlockingPage();
-      if (blocked) return { ok: false, error: blocked };
-      root = first(SELECTORS.noteRoot);
-    }
+    if (!root) root = await waitForSelector(SELECTORS.noteRoot, 30_000);
+    const delayedBlock = detectBlockingPage();
+    if (delayedBlock) return { ok: false, error: delayedBlock };
     if (!root) return error("CONTENT_NOT_READY", "The note content did not render before the load timeout.", true);
 
     await expandVisibleText(root);
@@ -150,7 +149,7 @@
       const label = String(button.textContent || "").trim();
       if (/^(展开|更多|全文|show more|read more)$/i.test(label) && visible(button)) {
         button.click();
-        await wait(250);
+        await waitForMutation(root, 500);
       }
     }
   }
@@ -166,7 +165,7 @@
       if (!next || next.disabled || next.getAttribute("aria-disabled") === "true") break;
       const before = observed.size + observedVideos.size;
       next.click();
-      await wait(180);
+      await waitForMutation(root, 700);
       for (const image of collectImages(root)) observed.set(image.mediaIdentity, image);
       for (const video of collectVideos(root)) observedVideos.set(video.mediaIdentity, video);
       stableRounds = observed.size + observedVideos.size === before ? stableRounds + 1 : 0;
@@ -193,9 +192,9 @@
     while (stable < 3 && Date.now() < deadline) {
       root.scrollTo?.({ top: root.scrollHeight, behavior: "instant" });
       window.scrollTo({ top: Math.min(document.documentElement.scrollHeight, root.getBoundingClientRect().bottom + window.scrollY), behavior: "instant" });
-      await wait(200);
+      const changed = await waitForMutation(root, 700);
       const current = root.scrollHeight;
-      stable = current === previous ? stable + 1 : 0;
+      stable = current === previous && !changed ? stable + 1 : 0;
       previous = current;
     }
     return stable >= 3;
@@ -242,19 +241,57 @@
     const text = String(document.body?.innerText || "").slice(0, 30_000);
     const route = `${location.pathname}${location.search}`;
     const hasNoteDetail = Boolean(document.querySelector("#noteContainer,[class*='note-detail'],main article"));
+    const hasVerificationWidget = Boolean(document.querySelector("iframe[src*='captcha' i],iframe[src*='verify' i],[class*='captcha' i],[class*='verify' i],[class*='slider' i]"));
     if (/captcha|verify|verification|security|challenge/i.test(route) && !hasNoteDetail) {
       return detail("VERIFICATION_REQUIRED", "Xiaohongshu requires manual verification. Complete it in Chrome, then resume.", false);
     }
     if (/登录后|登录查看更多|手机号登录|扫码登录|log\s*in|sign\s*in/i.test(text) && !hasNoteDetail) {
       return detail("NOT_LOGGED_IN", "Xiaohongshu login is required. Log in manually, then resume.", false);
     }
-    if (/验证码|安全验证|访问验证|滑块|captcha|verify you are human|unusual traffic/i.test(text)) {
+    if (!hasNoteDetail && (hasVerificationWidget || /验证码|安全验证|访问验证|滑块|captcha|verify you are human|unusual traffic/i.test(text))) {
       return detail("VERIFICATION_REQUIRED", "Xiaohongshu requires manual verification. Complete it in Chrome, then resume.", false);
     }
     if (/笔记不存在|内容已删除|无法查看|页面不存在|当前笔记暂时无法浏览|请打开小红书App扫码查看|not found|unavailable/i.test(text)) {
       return detail("NOTE_UNAVAILABLE", "This note is unavailable, private, or deleted.", false);
     }
     return null;
+  }
+
+  function waitForMutation(root, timeoutMs = 700) {
+    if (!root || typeof MutationObserver !== "function") return wait(timeoutMs).then(() => false);
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (changed) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        observer.disconnect();
+        resolve(changed);
+      };
+      const observer = new MutationObserver(() => finish(true));
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      observer.observe(root, { childList: true, subtree: true, attributes: true });
+    });
+  }
+
+  function waitForSelector(selectors, timeoutMs) {
+    if (typeof MutationObserver !== "function") return wait(timeoutMs).then(() => first(selectors));
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        observer.disconnect();
+        resolve(value);
+      };
+      const observer = new MutationObserver(() => {
+        const match = first(selectors);
+        if (match || detectBlockingPage()) finish(match);
+      });
+      const timer = setTimeout(() => finish(first(selectors)), timeoutMs);
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+    });
   }
 
   function error(code, message, retryable) { return { ok: false, error: detail(code, message, retryable) }; }

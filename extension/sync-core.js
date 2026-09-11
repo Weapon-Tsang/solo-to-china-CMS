@@ -10,11 +10,29 @@ export const SYNC_DEFAULTS = Object.freeze({
   concurrencyInitial: 4,
   concurrencyMax: 12,
   customConcurrency: 4,
+  mediaConcurrency: 12,
+  mediaUploadConcurrency: 6,
+  mediaMemoryBudgetBytes: 96 * 1024 * 1024,
+  taskLeaseMs: 3 * 60 * 1000,
+  watchdogStallMs: 2 * 60 * 1000,
+  retryBaseMs: 5_000,
+  retryMaxMs: 2 * 60 * 1000,
+  concurrencyWindowSize: 24,
+  concurrencyMinSamples: 20,
 });
 
 export const TASK_STATES = Object.freeze([
   "discovered", "queued", "opening", "loading", "extracting", "submitting", "captured", "duplicate",
-  "retry_wait", "failed", "paused_login_required", "paused_verification_required", "cancelled",
+  "retry_wait", "failed", "paused_login_required", "paused_verification_required", "paused_capture_unauthorized", "cancelled",
+]);
+
+export const HUMAN_PAUSE_STATES = Object.freeze([
+  "paused_login_required", "paused_verification_required", "paused_capture_unauthorized", "paused_by_user",
+]);
+
+const IN_FLIGHT_TASK_STATES = new Set(["opening", "loading", "extracting", "submitting"]);
+const LOCAL_FAILURE_CODES = new Set([
+  "NOTE_UNAVAILABLE", "MEDIA_HTTP_403", "MEDIA_HTTP_404", "MEDIA_TYPE_UNSUPPORTED", "MEDIA_URL_EXPIRED", "SELECTOR_MISMATCH",
 ]);
 
 export function classifyCaptureApiError(status, payload = {}) {
@@ -31,8 +49,12 @@ export function classifyCaptureApiError(status, payload = {}) {
     code: "CAPTURE_SERVER_UNAVAILABLE", retryable: true,
     message: serverMessage || "The capture server returned an error.",
   };
+  if (status === 429) return {
+    code: "CAPTURE_RATE_LIMITED", retryable: true,
+    message: serverMessage || "The capture server asked the extension to slow down.",
+  };
   return {
-    code: "CAPTURE_REJECTED", retryable: status === 408 || status === 429,
+    code: "CAPTURE_REJECTED", retryable: status === 408,
     message: serverMessage || `Capture request failed (${status}).`,
   };
 }
@@ -110,8 +132,11 @@ export function createSession({ scope, mode = "incremental", settings = {}, chec
     queue: [], activeTasks: [], seenIdentityKeys: [], cursor: { scannedWindows: 0, scrollY: 0, collectionEnd: false, collectionEndStreak: 0 },
     checkpoint: checkpoint || { topIdentityKeys: [], lastSuccessfulSyncAt: null },
     scan: { consecutiveKnown: 0, checkpointSeen: false, reliableCheckpoint: Boolean(checkpoint?.topIdentityKeys?.length) },
-    stats: { discovered: 0, known: 0, new: 0, repair: 0, captured: 0, duplicate: 0, failed: 0, retrying: 0 },
-    config, concurrency: initialConcurrency(config), concurrencySamples: [], lastError: null,
+    stats: { discovered: 0, known: 0, new: 0, repair: 0, captured: 0, duplicate: 0, failed: 0, unavailable: 0, retrying: 0 },
+    config, concurrency: initialConcurrency(config), concurrencySamples: [],
+    concurrencyController: { reason: "warming_up", lastChangeAt: null },
+    mediaConcurrency: config.mediaConcurrency, mediaConcurrencyController: { reason: "settings", lastChangeAt: null },
+    workerSlots: [], lastProgressAt: now, recoveryNoticeAt: null, lastError: null,
   };
 }
 
@@ -134,10 +159,34 @@ export function recoverSession(input, now = new Date().toISOString()) {
   }
   const completed = new Set(session.queue.filter((task) => ["captured", "duplicate"].includes(task.status)).map((task) => task.identityKey));
   for (const task of session.queue) {
-    if (!completed.has(task.identityKey) && ["opening", "loading", "extracting", "submitting"].includes(task.status)) task.status = "queued";
+    if (!completed.has(task.identityKey) && IN_FLIGHT_TASK_STATES.has(task.status)) {
+      task.status = "queued";
+      clearTaskLease(task);
+      task.retryAt = null;
+      task.tabId = null;
+      task.recoveredAt = now;
+    }
   }
   session.activeTasks = [];
-  if (!["completed", "cancelled"].includes(session.status)) session.status = session.status.startsWith("paused_") ? session.status : "paused_recovered";
+  session.config = normalizeSettings(session.config || {});
+  session.concurrency = fixedConcurrency(session.config) ?? clamp(Number(session.concurrency) || initialConcurrency(session.config), 1, session.config.concurrencyMax);
+  session.concurrencySamples = Array.isArray(session.concurrencySamples)
+    ? session.concurrencySamples.slice(-session.config.concurrencyWindowSize) : [];
+  session.workerSlots = Array.isArray(session.workerSlots) ? session.workerSlots : [];
+  session.mediaConcurrency = clamp(Number(session.mediaConcurrency) || session.config.mediaConcurrency, 1, session.config.mediaConcurrency);
+  session.mediaConcurrencyController ||= { reason: "settings", lastChangeAt: null };
+  session.stats = { unavailable: 0, ...session.stats };
+  if (session.status === "paused_failed_items" || (session.phase === "completed" && hasUnresolvedFailures(session))) {
+    session.status = "completed_with_failures";
+    session.phase = "completed";
+    session.completedAt ||= now;
+  } else if (!["completed", "completed_with_failures", "cancelled"].includes(session.status)
+    && !HUMAN_PAUSE_STATES.includes(session.status)) {
+    session.status = "running";
+    session.completedAt = null;
+    session.recoveryNoticeAt = now;
+  }
+  session.lastProgressAt = now;
   session.updatedAt = now;
   return session;
 }
@@ -152,8 +201,8 @@ export function prepareSessionCompletion(input, now = new Date().toISOString()) 
   session.phase = "completed";
   session.updatedAt = now;
   if (hasUnresolvedFailures(session)) {
-    session.status = "paused_failed_items";
-    session.completedAt = null;
+    session.status = "completed_with_failures";
+    session.completedAt = now;
     return session;
   }
   session.status = "completed";
@@ -162,7 +211,6 @@ export function prepareSessionCompletion(input, now = new Date().toISOString()) 
 }
 
 export function prepareSessionResume(input, now = new Date().toISOString()) {
-  const previousStatus = String(input?.status || "");
   const session = recoverSession(input, now);
   for (const task of session.queue) {
     if (task.status === "failed" || task.status.startsWith("paused_")) {
@@ -171,14 +219,17 @@ export function prepareSessionResume(input, now = new Date().toISOString()) {
       task.retryAt = null;
       task.tabId = null;
       task.error = null;
+      task.permanent = false;
+      task.unavailable = false;
+      clearTaskLease(task);
     }
   }
   session.status = "running";
   session.completedAt = null;
   session.lastError = null;
   session.stats.failed = 0;
+  session.stats.unavailable = 0;
   session.stats.retrying = 0;
-  if (previousStatus === "paused_verification_required") session.concurrency = 1;
   if (session.queue.some((task) => task.status === "queued")) session.phase = "acquisition";
   else if (session.phase === "completed") session.phase = "discovery";
   session.updatedAt = now;
@@ -201,7 +252,7 @@ export function applyIdentityBatch(sessionInput, cardsInput, identityResults = [
     session.stats.discovered += 1;
     const repairActions = Array.isArray(identity.requiredActions) ? identity.requiredActions : [];
     const needsBrowserCapture = Boolean(identity.sourceExists && repairActions.some((action) =>
-      ["BROWSER_MEDIA_REPAIR", "RECAPTURE_TEXT_DOM", "VERIFY_MEDIA_ORIGINALS"].includes(action)));
+      ["BROWSER_MEDIA_REPAIR", "RECAPTURE_TEXT_DOM"].includes(action)));
     const shouldQueue = session.mode === "repair" ? needsBrowserCapture
       : session.mode === "full" ? (!identity.sourceExists || needsBrowserCapture)
         : !identity.known;
@@ -214,7 +265,9 @@ export function applyIdentityBatch(sessionInput, cardsInput, identityResults = [
       else session.stats.new += 1;
       windowNew += 1;
       session.scan.consecutiveKnown = 0;
-      session.queue.push({ ...card, repairActions, sourceId:identity.sourceId || null,
+      const repairMediaIdentities = Array.isArray(identity.repairMedia?.missingOriginals)
+        ? identity.repairMedia.missingOriginals.map((asset) => String(asset.mediaIdentity || "")).filter(Boolean) : null;
+      session.queue.push({ ...card, repairActions, repairMediaIdentities, sourceId:identity.sourceId || null,
         taskId: crypto.randomUUID(), status: "queued", attempts: 0, retryAt: null, error: null });
     }
   }
@@ -249,9 +302,91 @@ export function transitionTask(sessionInput, taskId, status, details = {}) {
   if (status === "captured" && previous !== "captured") session.stats.captured += 1;
   if (status === "duplicate" && previous !== "duplicate") session.stats.duplicate += 1;
   if (status === "failed" && previous !== "failed") session.stats.failed += 1;
+  if (status === "failed" && details.unavailable && !task.unavailableCounted) {
+    session.stats.unavailable = Number(session.stats.unavailable || 0) + 1;
+    task.unavailableCounted = true;
+  }
+  if (["captured", "duplicate"].includes(status) && previous === "failed") {
+    session.stats.failed = Math.max(0, Number(session.stats.failed || 0) - 1);
+    if (task.unavailableCounted) session.stats.unavailable = Math.max(0, Number(session.stats.unavailable || 0) - 1);
+  }
   session.stats.retrying = session.queue.filter((item) => item.status === "retry_wait").length;
+  session.activeTasks = session.queue.filter((item) => IN_FLIGHT_TASK_STATES.has(item.status)).map((item) => item.taskId);
+  session.lastProgressAt = task.updatedAt;
   session.updatedAt = task.updatedAt;
   return session;
+}
+
+export function applySettingsToSession(input, settings, now = new Date().toISOString()) {
+  const session = structuredClone(input);
+  session.config = normalizeSettings({ ...(session.config || {}), ...(settings || {}) });
+  const fixed = fixedConcurrency(session.config);
+  session.concurrency = fixed == null
+    ? clamp(Number(session.concurrency) || initialConcurrency(session.config), 1, session.config.concurrencyMax)
+    : fixed;
+  session.concurrencyController = {
+    ...(session.concurrencyController || {}),
+    reason: fixed == null ? (session.concurrencyController?.reason || "auto_optimizing") : "settings",
+  };
+  session.mediaConcurrency = session.config.mediaConcurrency;
+  session.mediaConcurrencyController = { reason: "settings", lastChangeAt: now };
+  session.updatedAt = now;
+  return session;
+}
+
+export function leaseNextTask(input, { workerId, leaseId = crypto.randomUUID(), now = new Date().toISOString() } = {}) {
+  let session = structuredClone(input);
+  if (session.status !== "running" || session.phase !== "acquisition") return { session, task: null };
+  const nowMs = Date.parse(now);
+  const task = session.queue.find((item) => item.status === "queued"
+    || (item.status === "retry_wait" && Date.parse(item.retryAt || 0) <= nowMs));
+  if (!task) return { session, task: null };
+  const leaseExpiresAt = new Date(nowMs + session.config.taskLeaseMs).toISOString();
+  session = transitionTask(session, task.taskId, "opening", {
+    attempts: Number(task.attempts || 0) + 1,
+    workerId: String(workerId || "worker"), leaseId, leaseStartedAt: now, leaseExpiresAt,
+    startedAt: task.startedAt || now, retryAt: null, tabId: null, error: null, updatedAt: now,
+  });
+  return { session, task: structuredClone(session.queue.find((item) => item.taskId === task.taskId)) };
+}
+
+export function reconcileStrandedTasks(input, { now = new Date().toISOString(), force = false } = {}) {
+  let session = structuredClone(input);
+  const nowMs = Date.parse(now);
+  let recovered = 0;
+  for (const task of session.queue || []) {
+    if (!IN_FLIGHT_TASK_STATES.has(task.status)) continue;
+    const expired = !Number.isFinite(Date.parse(task.leaseExpiresAt || "")) || Date.parse(task.leaseExpiresAt) <= nowMs;
+    if (!force && !expired) continue;
+    const taskId = task.taskId;
+    session = transitionTask(session, taskId, "queued", {
+      retryAt: null, tabId: null, recoveredAt: now,
+      error: task.error || { code: "LEASE_RECOVERED", message: "A stranded browser task was safely requeued.", retryable: true },
+      updatedAt: now,
+    });
+    clearTaskLease(session.queue.find((item) => item.taskId === taskId));
+    recovered += 1;
+  }
+  if (recovered) {
+    session.recoveryNoticeAt = now;
+    session.lastProgressAt = now;
+  }
+  return { session, recovered };
+}
+
+export function classifyTaskDisposition(error = {}, attempts = 0, maxRetries = SYNC_DEFAULTS.maxRetries) {
+  const code = String(error.code || "NETWORK_ERROR");
+  if (code === "NOT_LOGGED_IN") return { action: "pause", status: "paused_login_required" };
+  if (code === "VERIFICATION_REQUIRED") return { action: "pause", status: "paused_verification_required" };
+  if (code === "CAPTURE_UNAUTHORIZED" || code === "UNAUTHORIZED") return { action: "pause", status: "paused_capture_unauthorized" };
+  if (error.retryable !== false && Number(attempts || 0) < Number(maxRetries || 0)) return { action: "retry", status: "retry_wait" };
+  return { action: "fail", status: "failed", unavailable: code === "NOTE_UNAVAILABLE" };
+}
+
+export function retryDelayMs(attempt, { baseMs = SYNC_DEFAULTS.retryBaseMs, maxMs = SYNC_DEFAULTS.retryMaxMs, random = Math.random } = {}) {
+  const exponential = Math.min(maxMs, baseMs * (2 ** Math.max(0, Number(attempt || 1) - 1)));
+  const jitter = 0.8 + Math.max(0, Math.min(1, Number(random()))) * 0.4;
+  return Math.max(100, Math.round(exponential * jitter));
 }
 
 export function compactSessionState(sessionInput, terminalRetention = 50) {
@@ -272,23 +407,99 @@ export function compactSessionState(sessionInput, terminalRetention = 50) {
   return session;
 }
 
-export function nextConcurrency(current, sample, settings = {}) {
-  const config = normalizeSettings(settings);
+export function updateSessionConcurrency(input, sample, now = new Date().toISOString()) {
+  const session = structuredClone(input);
+  const config = normalizeSettings(session.config || {});
+  session.config = config;
   const fixed = fixedConcurrency(config);
-  if (fixed != null) return fixed;
-  let next = clamp(Number(current) || initialConcurrency(config), 1, config.concurrencyMax);
-  if (sample.verification || sample.loginRequired) return 1;
-  if (sample.memoryPressure || sample.rateLimited || sample.backpressure || sample.tabCrash || sample.timeoutRate >= 0.2 || sample.errorRate >= 0.15) {
-    return Math.max(1, next >= 10 ? 8 : next >= 8 ? 6 : next >= 6 ? 4 : Math.floor(next / 2));
+  const normalized = normalizeTaskSample(sample, now);
+  session.concurrencySamples = [...(session.concurrencySamples || []), normalized].slice(-config.concurrencyWindowSize);
+  session.concurrencyController = { ...(session.concurrencyController || {}) };
+  if (fixed != null) {
+    session.concurrency = fixed;
+    session.concurrencyController.reason = "settings";
+    const reason = pressureReason(normalized);
+    const mediaCurrent = clamp(Number(session.mediaConcurrency) || config.mediaConcurrency, 1, config.mediaConcurrency);
+    if (["rate_limited", "memory_pressure", "cms_backpressure"].includes(reason)) {
+      session.mediaConcurrency = Math.max(2, mediaCurrent - Math.max(1, Math.ceil(mediaCurrent * 0.25)));
+      session.mediaConcurrencyController = { reason, lastChangeAt: now, samplesAtLastChange: session.concurrencySamples.length };
+    } else {
+      const recent = session.concurrencySamples.slice(-config.concurrencyMinSamples);
+      const healthy = recent.length >= config.concurrencyMinSamples
+        && recent.every((item) => item.result === "succeeded" || item.localFailure)
+        && recent.every((item) => !pressureReason(item));
+      const samplesSinceChange = session.concurrencySamples.length - Number(session.mediaConcurrencyController?.samplesAtLastChange || 0);
+      session.mediaConcurrency = healthy && mediaCurrent < config.mediaConcurrency && samplesSinceChange >= 4 ? mediaCurrent + 1 : mediaCurrent;
+      session.mediaConcurrencyController ||= { reason: "settings", lastChangeAt: null };
+      if (session.mediaConcurrency > mediaCurrent) session.mediaConcurrencyController = {
+        reason: "auto_optimizing", lastChangeAt: now, samplesAtLastChange: session.concurrencySamples.length,
+      };
+    }
+    return session;
   }
-  if ((sample.successRate ?? 0) >= 0.95 && (sample.p95LoadMs ?? Infinity) <= 12_000 && !sample.memoryPressure) {
-    return clamp(next >= 8 ? next + 2 : next + 1, 1, config.concurrencyMax);
+
+  const samples = session.concurrencySamples;
+  const recent = samples.slice(-config.concurrencyMinSamples);
+  const current = clamp(Number(session.concurrency) || initialConcurrency(config), 1, config.concurrencyMax);
+  const elapsed = Date.parse(now) - Date.parse(session.concurrencyController.lastChangeAt || 0);
+  const samplesSinceChange = samples.length - Number(session.concurrencyController.samplesAtLastChange || 0);
+  const latestPressure = pressureReason(normalized);
+  const tabCrashBurst = recent.slice(-3).filter((item) => item.tabCrash).length >= 2;
+  const enough = recent.length >= config.concurrencyMinSamples;
+  const systemicFailures = enough ? recent.filter((item) => item.result === "failed" && !item.localFailure).length / recent.length : 0;
+  const timeoutRate = enough ? recent.filter((item) => item.timeout).length / recent.length : 0;
+  const rollingPressureCandidate = tabCrashBurst ? "tab_crash"
+    : systemicFailures >= 0.3 ? "sustained_failures"
+      : timeoutRate >= 0.25 ? "note_timeouts" : "";
+  const rollingPressure = samplesSinceChange >= 4 ? rollingPressureCandidate : "";
+  const reason = latestPressure || rollingPressure;
+  if (reason) {
+    session.concurrency = Math.max(1, current - Math.max(1, Math.ceil(current * 0.25)));
+    session.concurrencyController = { reason, lastChangeAt: now, samplesAtLastChange: samples.length };
+    if (["rate_limited", "memory_pressure", "cms_backpressure"].includes(reason)) {
+      const mediaCurrent = clamp(Number(session.mediaConcurrency) || config.mediaConcurrency, 1, config.mediaConcurrency);
+      session.mediaConcurrency = Math.max(2, mediaCurrent - Math.max(1, Math.ceil(mediaCurrent * 0.25)));
+      session.mediaConcurrencyController = { reason, lastChangeAt: now, samplesAtLastChange: samples.length };
+    }
+    return session;
   }
-  return next;
+
+  const healthy = enough && recent.every((item) => item.result === "succeeded" || item.localFailure)
+    && recent.every((item) => !pressureReason(item));
+  if (healthy && current < config.concurrencyMax && samplesSinceChange >= 4 && (!Number.isFinite(elapsed) || elapsed >= 30_000)) {
+    session.concurrency = current + 1;
+    session.concurrencyController = { reason: "auto_optimizing", lastChangeAt: now, samplesAtLastChange: samples.length };
+  } else {
+    session.concurrency = current;
+    const retainedPressure = [...recent].reverse().map(pressureReason).find(Boolean) || rollingPressureCandidate;
+    session.concurrencyController.reason = retainedPressure
+      || (samples.length < config.concurrencyMinSamples ? "warming_up" : "auto_optimizing");
+  }
+  const mediaCurrent = clamp(Number(session.mediaConcurrency) || config.mediaConcurrency, 1, config.mediaConcurrency);
+  const mediaSamplesSinceChange = samples.length - Number(session.mediaConcurrencyController?.samplesAtLastChange || 0);
+  if (healthy && mediaCurrent < config.mediaConcurrency && mediaSamplesSinceChange >= 4) {
+    session.mediaConcurrency = mediaCurrent + 1;
+    session.mediaConcurrencyController = { reason: "auto_optimizing", lastChangeAt: now, samplesAtLastChange: samples.length };
+  } else {
+    session.mediaConcurrency = mediaCurrent;
+    session.mediaConcurrencyController ||= { reason: "settings", lastChangeAt: null };
+  }
+  return session;
+}
+
+export function nextConcurrency(current, samples, settings = {}) {
+  const config = normalizeSettings(settings);
+  const list = Array.isArray(samples) ? samples : [samples];
+  let session = { config, concurrency: current, concurrencySamples: [], concurrencyController: {} };
+  for (const [index, sample] of list.entries()) {
+    session = updateSessionConcurrency(session, sample, new Date(Date.UTC(2026, 0, 1, 0, index, 0)).toISOString());
+  }
+  return session.concurrency;
 }
 
 export function normalizeSettings(value = {}) {
-  const settings = { ...SYNC_DEFAULTS, ...value };
+  const settings = { ...SYNC_DEFAULTS };
+  for (const key of Object.keys(SYNC_DEFAULTS)) if (value[key] !== undefined) settings[key] = value[key];
   settings.identityBatchSize = clampInteger(settings.identityBatchSize, 1, 100, SYNC_DEFAULTS.identityBatchSize);
   settings.discoveryBatchSize = clampInteger(settings.discoveryBatchSize, 10, 200, SYNC_DEFAULTS.discoveryBatchSize);
   settings.stopAfterConsecutiveKnown = clampInteger(settings.stopAfterConsecutiveKnown, 3, 100, SYNC_DEFAULTS.stopAfterConsecutiveKnown);
@@ -296,9 +507,18 @@ export function normalizeSettings(value = {}) {
   settings.maxRetries = clampInteger(settings.maxRetries, 0, 10, SYNC_DEFAULTS.maxRetries);
   settings.detailLoadTimeoutMs = clampInteger(settings.detailLoadTimeoutMs, 10_000, 120_000, SYNC_DEFAULTS.detailLoadTimeoutMs);
   settings.autoMinIntervalHours = clampInteger(settings.autoMinIntervalHours, 1, 168, SYNC_DEFAULTS.autoMinIntervalHours);
-  settings.concurrencyMax = clampInteger(settings.concurrencyMax, 1, 12, SYNC_DEFAULTS.concurrencyMax);
+  settings.concurrencyMax = clampInteger(settings.concurrencyMax, 1, 16, SYNC_DEFAULTS.concurrencyMax);
   settings.concurrencyInitial = clampInteger(settings.concurrencyInitial, 1, settings.concurrencyMax, SYNC_DEFAULTS.concurrencyInitial);
-  settings.customConcurrency = clampInteger(settings.customConcurrency, 1, 12, SYNC_DEFAULTS.customConcurrency);
+  settings.customConcurrency = clampInteger(settings.customConcurrency, 1, 16, SYNC_DEFAULTS.customConcurrency);
+  settings.mediaConcurrency = clampInteger(settings.mediaConcurrency, 1, 16, SYNC_DEFAULTS.mediaConcurrency);
+  settings.mediaUploadConcurrency = clampInteger(settings.mediaUploadConcurrency, 1, settings.mediaConcurrency, SYNC_DEFAULTS.mediaUploadConcurrency);
+  settings.mediaMemoryBudgetBytes = clampInteger(settings.mediaMemoryBudgetBytes, 32 * 1024 * 1024, 512 * 1024 * 1024, SYNC_DEFAULTS.mediaMemoryBudgetBytes);
+  settings.taskLeaseMs = clampInteger(settings.taskLeaseMs, 60_000, 15 * 60 * 1000, SYNC_DEFAULTS.taskLeaseMs);
+  settings.watchdogStallMs = clampInteger(settings.watchdogStallMs, 30_000, 10 * 60 * 1000, SYNC_DEFAULTS.watchdogStallMs);
+  settings.retryBaseMs = clampInteger(settings.retryBaseMs, 1_000, 60_000, SYNC_DEFAULTS.retryBaseMs);
+  settings.retryMaxMs = clampInteger(settings.retryMaxMs, settings.retryBaseMs, 10 * 60 * 1000, SYNC_DEFAULTS.retryMaxMs);
+  settings.concurrencyWindowSize = clampInteger(settings.concurrencyWindowSize, 20, 30, SYNC_DEFAULTS.concurrencyWindowSize);
+  settings.concurrencyMinSamples = clampInteger(settings.concurrencyMinSamples, 20, settings.concurrencyWindowSize, SYNC_DEFAULTS.concurrencyMinSamples);
   settings.concurrencyMode = ["auto", "conservative", "balanced", "aggressive", "custom"].includes(settings.concurrencyMode)
     ? settings.concurrencyMode : "auto";
   return settings;
@@ -310,8 +530,100 @@ export function initialConcurrency(settings = {}, hardwareConcurrency = globalTh
   return fixed ?? clamp(Math.floor(Number(hardwareConcurrency || 4) / 2), Math.min(4, config.concurrencyMax), Math.min(8, config.concurrencyMax));
 }
 
+export class AsyncSemaphore {
+  constructor(limit = 1) {
+    this.limit = Math.max(1, Number(limit) || 1);
+    this.active = 0;
+    this.waiters = [];
+  }
+  setLimit(limit) {
+    this.limit = Math.max(1, Number(limit) || 1);
+    this.#drain();
+  }
+  async acquire(weight = 1) {
+    const requested = Math.max(1, Math.min(this.limit, Number(weight) || 1));
+    if (!this.waiters.length && this.active + requested <= this.limit) {
+      this.active += requested;
+      return this.#release(requested);
+    }
+    return new Promise((resolve) => {
+      this.waiters.push({ requested, resolve });
+      this.#drain();
+    });
+  }
+  async run(handler, weight = 1) {
+    const release = await this.acquire(weight);
+    try { return await handler(); }
+    finally { release(); }
+  }
+  #release(weight) {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.active = Math.max(0, this.active - weight);
+      this.#drain();
+    };
+  }
+  #drain() {
+    while (this.waiters.length && this.active + this.waiters[0].requested <= this.limit) {
+      const waiter = this.waiters.shift();
+      this.active += waiter.requested;
+      waiter.resolve(this.#release(waiter.requested));
+    }
+  }
+}
+
+export async function runContinuousPool(items, concurrency, handler) {
+  const values = Array.from(items || []);
+  const results = new Array(values.length);
+  let cursor = 0;
+  const worker = async (slot) => {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      try { results[index] = { status: "fulfilled", value: await handler(values[index], index, slot) }; }
+      catch (reason) { results[index] = { status: "rejected", reason }; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(values.length, Math.max(1, Number(concurrency) || 1)) }, (_, slot) => worker(slot)));
+  return results;
+}
+
 function fixedConcurrency(config) {
   return { conservative: 2, balanced: 4, aggressive: 8, custom: config.customConcurrency }[config.concurrencyMode] ?? null;
+}
+function pressureReason(sample) {
+  if (sample.verificationDetected || sample.loginRequired) return "verification_risk";
+  if (sample.rateLimited) return "rate_limited";
+  if (sample.memoryPressure) return "memory_pressure";
+  if (sample.cmsBackpressure || sample.backpressure) return "cms_backpressure";
+  return "";
+}
+function normalizeTaskSample(value = {}, now) {
+  const errorClass = String(value.errorClass || value.errorCode || "");
+  return {
+    noteLoadMs: finite(value.noteLoadMs), extractionMs: finite(value.extractionMs),
+    mediaDownloadMs: finite(value.mediaDownloadMs), mediaUploadMs: finite(value.mediaUploadMs),
+    submitMs: finite(value.submitMs), totalMs: finite(value.totalMs),
+    result: value.result === "failed" ? "failed" : "succeeded", errorClass,
+    rateLimited: Boolean(value.rateLimited || errorClass === "MEDIA_HTTP_429" || errorClass === "CAPTURE_RATE_LIMITED"),
+    verificationDetected: Boolean(value.verificationDetected || errorClass === "VERIFICATION_REQUIRED"),
+    loginRequired: Boolean(value.loginRequired || errorClass === "NOT_LOGGED_IN"),
+    tabCrash: Boolean(value.tabCrash || ["WORKER_TAB_CLOSED", "TAB_CRASH"].includes(errorClass)),
+    timeout: Boolean(value.timeout || /TIMEOUT/.test(errorClass)),
+    cmsBackpressure: Boolean(value.cmsBackpressure || value.backpressure),
+    memoryPressure: Boolean(value.memoryPressure), mediaCount: finite(value.mediaCount), mediaBytes: finite(value.mediaBytes),
+    localFailure: value.localFailure === true || LOCAL_FAILURE_CODES.has(errorClass), completedAt: value.completedAt || now,
+  };
+}
+function finite(value) { const number = Number(value); return Number.isFinite(number) && number >= 0 ? number : 0; }
+function clearTaskLease(task) {
+  if (!task) return;
+  task.leaseId = null;
+  task.leaseStartedAt = null;
+  task.leaseExpiresAt = null;
+  task.workerId = null;
 }
 function clampInteger(value, min, max, fallback) { const number = Number(value); return Number.isInteger(number) ? clamp(number, min, max) : clamp(fallback, min, max); }
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }

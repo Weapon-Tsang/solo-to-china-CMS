@@ -1,6 +1,6 @@
 {
   "name": "solo-to-china-research-engine",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "private": true,
   "description": "Human-selected research capture and content intelligence engine for SoloToChina.",
   "type": "module",
@@ -12,6 +12,7 @@
     "start": "node --env-file-if-exists=.env src/server.mjs",
     "build": "vite build",
     "package:extension:cloud": "node scripts/package-extension-cloud.mjs",
+    "benchmark:extension-repair": "node scripts/benchmark-extension-repair.mjs",
     "dev": "vite",
     "dev:server": "node --env-file-if-exists=.env --watch src/server.mjs",
     "test": "node --test",

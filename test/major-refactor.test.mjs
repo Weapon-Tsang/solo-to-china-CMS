@@ -8,7 +8,7 @@ import { CaptureMediaUploadManager } from "../src/capture-media-upload.mjs";
 import { SCHEMA_VERSION } from "../src/db.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
-test("schema 58 installs the durable editorial, failure, reconciliation, and backfill boundaries", (t) => {
+test("current schema installs the durable editorial, failure, reconciliation, and backfill boundaries", (t) => {
   const { db } = repositoryFixture(t);
   assert.equal(db.prepare("SELECT MAX(version) version FROM schema_migrations").get().version,SCHEMA_VERSION);
   for (const table of ["experience_blocks","editorial_assemblies","narrative_plans","writing_packets",
@@ -49,6 +49,10 @@ test("browser media repair makes the original durable and resumes blocked extrac
   const first=repository.saveCapture(normalizeXiaohongshuCapture(input));
   assert.equal(first.extractionQueued,false);
   assert.equal(first.mediaDurabilityStatus,"REMOTE_ONLY");
+  db.prepare("UPDATE source_assets SET repair_status='browser_repair_required' WHERE source_id=?").run(first.id);
+  const requested=repository.checkCaptureIdentities([{externalId:"browser-repair",url:input.url}])[0];
+  assert.ok(requested.requiredActions.includes("BROWSER_MEDIA_REPAIR"));
+  assert.deepEqual(requested.repairMedia.missingOriginals.map((asset)=>asset.mediaIdentity),["browser-photo"]);
   const storageRef=`media/${sha256.slice(0,2)}/${sha256}.jpg`;
   const filename=path.join(directory,"source-images",...storageRef.split("/"));
   fs.mkdirSync(path.dirname(filename),{recursive:true});
@@ -60,6 +64,7 @@ test("browser media repair makes the original durable and resumes blocked extrac
   assert.equal(db.prepare("SELECT durability_status FROM source_assets WHERE source_id=?").get(first.id).durability_status,"ORIGINAL_STORED");
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='repair_media_asset' AND status='queued'").get().n,0);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='extract_source' AND status='queued'").get().n,1);
+  assert.deepEqual(repository.checkCaptureIdentities([{externalId:"browser-repair",url:input.url}])[0].repairMedia.missingOriginals,[]);
   assert.equal(repository.saveCapture(normalizeXiaohongshuCapture({...input,images:[{...input.images[0],originalStorageRef:storageRef}]})).extractionQueued,false);
 });
 

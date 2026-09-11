@@ -322,6 +322,18 @@ async function verifyExtension() {
     if (!/http:\/\/127\.0\.0\.1:4310/.test(popup)) throw new Error("Popup default Engine URL is not aligned with the local server.");
     for (const injectedAsset of ["page-extractor.js", "sync-core.js"]) assertFile(path.join(extensionDir, injectedAsset), `extension/${injectedAsset}`);
   });
+  report.check("Chrome Extension", "Durable repair scheduler", () => {
+    const core = fs.readFileSync(path.join(extensionDir, "sync-core.js"), "utf8");
+    const background = fs.readFileSync(path.join(extensionDir, "background.js"), "utf8");
+    const extractor = fs.readFileSync(path.join(extensionDir, "page-extractor.js"), "utf8");
+    for (const token of ["leaseNextTask", "reconcileStrandedTasks", "completed_with_failures", "concurrencyWindowSize", "mediaConcurrency"]) {
+      if (!core.includes(token)) throw new Error(`Missing durable repair primitive: ${token}.`);
+    }
+    for (const token of ["ensureWorkerPool", "applySettingsToSession", "mediaRequests", "void drive()", "watchdog"]) {
+      if (!background.includes(token)) throw new Error(`Missing background repair behavior: ${token}.`);
+    }
+    if (!extractor.includes("MutationObserver")) throw new Error("Background extraction must prefer DOM events over fixed polling.");
+  });
 }
 
 async function runExtensionChecks() {

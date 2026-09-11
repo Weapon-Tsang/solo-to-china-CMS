@@ -1,6 +1,6 @@
 # SoloToChina Content Production Strategy 3.0
 
-状态：active；生效日期：2026-09-12。应用 2.0.4；schema 59。唯一版本清单为 `config/content-strategy.json`。
+状态：active；生效日期：2026-09-12。应用 2.0.5；schema 59。唯一版本清单为 `config/content-strategy.json`。
 
 ## 2.0.4 运行约束补充
 

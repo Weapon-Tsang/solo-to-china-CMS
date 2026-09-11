@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.5 - Unreleased
+
+- Resume running Favorites/Repair sessions automatically after MV3 worker restarts, reconcile expired task leases with a durable alarm watchdog, and reserve full-session pauses for login, verification, capture authorization, and explicit user pause.
+- Replace Note batch barriers with continuously claiming worker slots, apply concurrency settings to a running session immediately, and adapt Auto mode from a 24-task rolling pressure window without treating long media-heavy Notes or isolated media failures as global pressure.
+- Process missing originals through a shared 12-pipeline media semaphore with separate upload, large-file, and memory guards; browser Repair now receives exact missing-media identities and leaves server-recoverable or already stored originals alone.
+- Finish all processable work as `completed_with_failures`, expose an isolated retry action, show configured versus effective concurrency, and benchmark 30-Note repair fixtures against the former two-wide batch/serial scheduler.
+
 ## 2.0.4 - Unreleased
 
 - Preserve the writer's actual visual count, skip unsupported renderers, and require durable authorized provenance plus a real localized file before a localized source photo can pass WordPress delivery.

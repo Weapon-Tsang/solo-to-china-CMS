@@ -1,6 +1,7 @@
 import {
-  applyIdentityBatch, classifyCaptureApiError, compactSessionState, createSession, hasUnresolvedFailures, initialConcurrency, nextConcurrency,
-  isFavoritesAlbumOverviewUrl, normalizeSettings, recoverSession, scopeFromUrl, shouldStopDiscovery, transitionTask,
+  applyIdentityBatch, applySettingsToSession, AsyncSemaphore, classifyCaptureApiError, classifyTaskDisposition, compactSessionState, createSession,
+  hasUnresolvedFailures, initialConcurrency, isFavoritesAlbumOverviewUrl, leaseNextTask, normalizeSettings, reconcileStrandedTasks,
+  recoverSession, retryDelayMs, scopeFromUrl, shouldStopDiscovery, transitionTask, updateSessionConcurrency,
   prepareSessionCompletion, prepareSessionResume,
 } from "./sync-core.js";
 
@@ -15,25 +16,31 @@ const AUTO_ALARM = "stc-favorites-auto";
 const DIRECT_CAPTURE_BYTES = 3_500_000;
 const UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
 const DIRECT_DERIVATIVE_BYTES = 5_500_000;
-const ORIGINAL_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const ENGINE_REQUEST_TIMEOUT_MS = 45_000;
 const MEDIA_REQUEST_TIMEOUT_MS = 30_000;
+const LARGE_MEDIA_THRESHOLD_BYTES = 8 * 1024 * 1024;
 let driving = false;
 let driveTimer = null;
 let stateMutation = Promise.resolve();
+const workerLoops = new Map();
+const mediaRequests = new AsyncSemaphore(12);
+const mediaUploads = new AsyncSemaphore(6);
+const largeMediaPipelines = new AsyncSemaphore(2);
+const mediaMemory = new AsyncSemaphore(96);
 
 chrome.runtime.onInstalled.addListener(() => {
-  void chrome.alarms.create(TICK_ALARM, { periodInMinutes: 1 });
+  void ensureAlarms();
   void refreshAutoAlarm();
 });
 chrome.runtime.onStartup.addListener(() => { void restoreAfterRestart(); void refreshAutoAlarm(); });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === TICK_ALARM) void drive();
+  if (alarm.name === TICK_ALARM) void watchdog();
   if (alarm.name === AUTO_ALARM) void startAutomaticSync();
 });
 
 // A service worker can be restarted independently of the Chrome profile.
 // Reconcile persisted work immediately instead of waiting for the minute alarm.
+void ensureAlarms();
 void restoreAfterRestart();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -50,8 +57,16 @@ async function handleMessage(message) {
       const settings = await settingsWithConnection({ ...previous, ...requested,
         token: String(requested.token || "").trim() || previous.token });
       await chrome.storage.local.set({ [SETTINGS_KEY]: settings, endpoint: settings.endpoint, token: settings.token });
+      configureMediaResources(settings);
+      const session = await mutateState(null, (current) => current && !["completed", "completed_with_failures", "cancelled"].includes(current.status)
+        ? applySettingsToSession(current, settings) : current);
+      if (session) configureSessionMediaResources(session);
       await refreshAutoAlarm();
-      return { ok: true, settings: publicSettings(settings) };
+      if (session?.status === "running") {
+        ensureWorkerPool(session);
+        void drive();
+      }
+      return { ok: true, settings: publicSettings(settings), session };
     }
     case "START_SYNC": return startSync(["incremental","repair","full"].includes(message.mode) ? message.mode : "incremental");
     case "PAUSE_SYNC": return pauseSync("paused_by_user");
@@ -66,7 +81,7 @@ async function handleMessage(message) {
 
 async function startSync(mode, automatic = false) {
   const state = await loadState();
-  if (state && !["completed", "cancelled"].includes(state.status)) return { ok: false, error: syncError("SESSION_ALREADY_RUNNING", "A Favorites Sync session is already active.", false) };
+  if (state && !["completed", "completed_with_failures", "cancelled"].includes(state.status)) return { ok: false, error: syncError("SESSION_ALREADY_RUNNING", "A Favorites Sync session is already active.", false) };
   const settings = await loadSettings();
   let tab;
   if (automatic) {
@@ -80,6 +95,7 @@ async function startSync(mode, automatic = false) {
     return { ok: false, error: syncError("INVALID_FAVORITES_SCOPE", "Open the target Xiaohongshu favorites collection before starting sync.", false) };
   }
   await assertFavoritesSyncApi(settings);
+  configureMediaResources(settings);
   const scopes = await loadScopes();
   const session = createSession({ scope, mode, settings, checkpoint: scopes[scope.key]?.checkpoint || null });
   session.discoveryTabId = tab.id;
@@ -98,6 +114,7 @@ async function drive() {
   try {
     let session = await loadState();
     if (!session || session.status !== "running") return;
+    if (Date.parse(session.driveRetryAt || 0) > Date.now()) return;
     if (session.phase === "discovery") {
       session = await discoverWindow(session);
       session = await persistProgress(session);
@@ -105,18 +122,11 @@ async function drive() {
     }
     if (session.phase === "acquisition") {
       session = await acquireQueue(session);
-      session = await persistProgress(session);
       if (session.status !== "running") return;
     }
     if (session.phase === "completed") await completeSession(session);
   } catch (error) {
-    const session = await loadState();
-    if (session && session.status === "running") {
-      session.status = "paused_error";
-      session.lastError = serializeError(error);
-      session.updatedAt = new Date().toISOString();
-      await saveState(session);
-    }
+    await handleDriverError(error);
   } finally {
     driving = false;
     const current = await loadState().catch(() => null);
@@ -139,6 +149,7 @@ async function discoverWindow(session) {
       limit: session.config.discoveryBatchSize, offset: 0,
     });
   }
+  if (scan?.blocking) throw Object.assign(new Error(scan.blocking.message), scan.blocking);
   if (!scan?.cards) throw syncError("SELECTOR_MISMATCH", "No favorites cards could be read from the current collection.", true);
   const unseenCards = scan.cards.filter((card) => !session.seenIdentityKeys.includes(`xiaohongshu:${card.externalId}`));
   const identityRows = [];
@@ -168,112 +179,202 @@ async function discoverWindow(session) {
 }
 
 async function acquireQueue(session) {
-  const ready = session.queue.filter((task) => task.status === "queued" || (task.status === "retry_wait" && Date.parse(task.retryAt || 0) <= Date.now()));
-  if (!ready.length) {
-    const retrying = session.queue.some((task) => task.status === "retry_wait");
-    if (retrying) return session;
-    if (hasUnresolvedFailures(session)) {
-      session.status = "paused_failed_items";
-      return session;
-    }
-    if (!session.discoveryComplete && !session.stopAfterQueue) { session.phase = "discovery"; return session; }
-    session.phase = "completed";
-    return session;
+  const reconciled = reconcileStrandedTasks(session);
+  session = reconciled.session;
+  const runnable = session.queue.some((task) => task.status === "queued"
+    || (task.status === "retry_wait" && Date.parse(task.retryAt || 0) <= Date.now()));
+  const inFlight = session.queue.some((task) => ["opening", "loading", "extracting", "submitting"].includes(task.status));
+  const retrying = session.queue.some((task) => task.status === "retry_wait");
+  if (!runnable && !inFlight) {
+    if (retrying) return persistProgress(session);
+    if (!session.discoveryComplete && !session.stopAfterQueue) session.phase = "discovery";
+    else session.phase = "completed";
+    return persistProgress(session);
   }
-  const count = Math.max(1, Math.min(session.concurrency || initialConcurrency(session.config), ready.length));
-  const started = Date.now();
-  const results = await Promise.allSettled(ready.slice(0, count).map((task, slot) => acquireTask(session.sessionId, task.taskId, slot)));
-  session = await loadState();
-  if (!session || session.status !== "running") return session;
-  const failures = results.filter((result) => result.status === "rejected").length;
-  session.concurrency = nextConcurrency(session.concurrency, {
-    successRate: (results.length - failures) / results.length,
-    errorRate: failures / results.length,
-    p95LoadMs: Date.now() - started,
-    backpressure: results.some((result) => result.status === "fulfilled" && result.value?.advice === "slow_down"),
-  }, session.config);
   session = compactSessionState(session);
   session = await persistProgress(session);
+  ensureWorkerPool(session);
   return session;
 }
 
-async function acquireTask(sessionId, taskId, slot) {
-  let session;
-  let task;
-  await mutateState(sessionId, (current) => {
-    task = current?.queue.find((item) => item.taskId === taskId);
-    if (!current || current.status !== "running" || !task || !["queued", "retry_wait"].includes(task.status)) return current;
-    session = transitionTask(current, taskId, "opening", { attempts: Number(task.attempts || 0) + 1 });
-    return session;
-  });
-  if (!session) return null;
+function ensureWorkerPool(session) {
+  if (!session || session.status !== "running" || session.phase !== "acquisition") return;
+  const target = Math.max(1, Math.min(16, session.concurrency || initialConcurrency(session.config)));
+  for (let slot = 0; slot < target; slot += 1) {
+    const key = `${session.sessionId}:${slot}`;
+    if (workerLoops.has(key)) continue;
+    const workerId = session.workerSlots?.[slot]?.workerId || `note-worker-${slot}-${crypto.randomUUID()}`;
+    const promise = runWorkerSlot(session.sessionId, slot, workerId)
+      .catch(() => null)
+      .finally(() => {
+        workerLoops.delete(key);
+        void drive();
+      });
+    workerLoops.set(key, promise);
+  }
+}
+
+async function runWorkerSlot(sessionId, slot, workerId) {
+  while (true) {
+    let claimed = null;
+    const state = await mutateState(sessionId, (current) => {
+      if (!current || current.status !== "running" || current.phase !== "acquisition"
+        || slot >= Number(current.concurrency || 1)) return current;
+      const leased = leaseNextTask(current, { workerId });
+      claimed = leased.task;
+      return leased.session;
+    });
+    if (!claimed || !state || state.status !== "running") return;
+    await acquireTask(sessionId, claimed.taskId, slot, workerId, claimed.leaseId);
+  }
+}
+
+async function acquireTask(sessionId, taskId, slot, workerId, leaseId) {
+  let session = await assertTaskLease(sessionId, taskId, leaseId);
+  const task = session.queue.find((item) => item.taskId === taskId);
+  const metric = { startedAt: Date.now(), result: "failed", mediaCount: 0, mediaBytes: 0 };
   try {
-    const tab = await workerTab(session, slot, task.navigationUrl || task.canonicalUrl);
-    session = await updateTask(sessionId, taskId, "loading", { tabId: tab.id });
-    assertNotCancelled(session);
+    const tab = await workerTab(sessionId, slot, workerId, task.navigationUrl || task.canonicalUrl);
+    session = await updateTask(sessionId, taskId, "loading", { tabId: tab.id }, leaseId);
+    assertRunnable(session, taskId, leaseId);
+    let stageStarted = Date.now();
     await waitForTab(tab.id, session.config.detailLoadTimeoutMs);
+    metric.noteLoadMs = Date.now() - stageStarted;
     await injectExtractor(tab.id);
-    session = await updateTask(sessionId, taskId, "extracting");
-    assertNotCancelled(session);
+    session = await updateTask(sessionId, taskId, "extracting", {}, leaseId);
+    assertRunnable(session, taskId, leaseId);
+    stageStarted = Date.now();
     const extracted = await execute(tab.id, (options) => globalThis.SoloToChinaXhs.prepareAndExtract(options), {
       acquisitionOrigin: "xhs_favorites_sync", syncScopeKey: session.scopeKey,
     });
+    metric.extractionMs = Date.now() - stageStarted;
     if (!extracted?.ok) throw Object.assign(new Error(extracted?.error?.message || "Note extraction failed."), extracted?.error || {});
-    const capture = await persistCaptureMedia(extracted.capture);
-    session = await updateTask(sessionId, taskId, "submitting");
-    assertNotCancelled(session);
+    const onlyMediaIdentities = task.sourceId && Array.isArray(task.repairMediaIdentities)
+      ? new Set(task.repairMediaIdentities) : null;
+    const persisted = await persistCaptureMedia(extracted.capture, () => heartbeatTask(sessionId, taskId, leaseId), onlyMediaIdentities);
+    const capture = persisted.capture;
+    Object.assign(metric, persisted.metrics);
+    metric.memoryPressure = browserMemoryPressure();
+    session = await updateTask(sessionId, taskId, "submitting", {}, leaseId);
+    assertRunnable(session, taskId, leaseId);
+    stageStarted = Date.now();
     const response = await submitCapture(capture);
+    metric.submitMs = Date.now() - stageStarted;
     if (response.completenessStatus !== "complete") throw Object.assign(new Error("Capture was persisted as partial and will be retried before entering Research."), {
       code: "CONTENT_NOT_READY", retryable: true,
     });
     if (!response.mediaDurabilityComplete) throw Object.assign(new Error("Media discovery completed, but one or more original files were not durably stored. This note remains in the repair queue."), {
       code: "MEDIA_ORIGINAL_NOT_STORED", retryable: true,
     });
-    session = await updateTask(sessionId, taskId, response.duplicate ? "duplicate" : "captured", {
+    metric.result = "succeeded";
+    metric.cmsBackpressure = response.advice === "slow_down";
+    metric.totalMs = Date.now() - metric.startedAt;
+    session = await finishTask(sessionId, taskId, leaseId, response.duplicate ? "duplicate" : "captured", {
       sourceId: response.id, captureVersion: response.captureVersion, tabId: null, error: null,
-    });
+    }, metric);
     return response;
   } catch (caught) {
-    await handleTaskError(sessionId, taskId, caught);
-    throw caught;
+    metric.totalMs = Date.now() - metric.startedAt;
+    await handleTaskError(sessionId, taskId, leaseId, caught, metric);
+    return null;
   }
 }
 
-async function handleTaskError(sessionId, taskId, caught) {
+async function handleTaskError(sessionId, taskId, leaseId, caught, metric = {}) {
   const error = serializeError(caught);
   const updated = await mutateState(sessionId, (current) => {
     if (!current) return current;
     const task = current.queue.find((item) => item.taskId === taskId);
-    if (!task || current.status === "cancelled" || task.status === "cancelled") return current;
+    if (!task || task.leaseId !== leaseId || current.status === "cancelled" || task.status === "cancelled") return current;
     let session = current;
-    if (["paused_login_required", "paused_verification_required"].includes(current.status)
-      && !["NOT_LOGGED_IN", "VERIFICATION_REQUIRED", "NAVIGATION_INTERRUPTED"].includes(error.code)) {
+    if (current.status !== "running") {
       session = transitionTask(session, taskId, "queued", { error, retryAt: null, tabId: null });
+      clearLease(session, taskId);
       return session;
     }
-    if (error.code === "NOT_LOGGED_IN") {
-      session = transitionTask(session, taskId, "paused_login_required", { error });
-      session.status = "paused_login_required";
+    const disposition = classifyTaskDisposition(error, task.attempts, session.config.maxRetries);
+    if (disposition.action === "pause") {
+      session = transitionTask(session, taskId, disposition.status, { error, tabId: null });
+      session.status = disposition.status;
       session.stats.paused = (session.stats.paused || 0) + 1;
-    } else if (["VERIFICATION_REQUIRED", "NAVIGATION_INTERRUPTED"].includes(error.code)) {
-      session = transitionTask(session, taskId, "paused_verification_required", { error });
-      session.status = "paused_verification_required";
-      session.concurrency = 1;
-      session.stats.paused = (session.stats.paused || 0) + 1;
-    } else if (error.code === "CAPTURE_UNAUTHORIZED") {
-      session = transitionTask(session, taskId, "failed", { error });
-      session.status = "paused_capture_unauthorized";
-    } else if (error.retryable !== false && Number(task.attempts || 0) < session.config.maxRetries) {
-      const delays = [5_000, 15_000, 45_000];
+    } else if (disposition.action === "retry") {
+      const delay = Math.max(Number(error.retryAfterMs || metric.retryAfterMs || 0), retryDelayMs(task.attempts, {
+        baseMs: session.config.retryBaseMs, maxMs: session.config.retryMaxMs,
+      }));
       session = transitionTask(session, taskId, "retry_wait", { error,
-        retryAt: new Date(Date.now() + (delays[Math.max(0, task.attempts - 1)] || 45_000)).toISOString() });
+        retryAt: new Date(Date.now() + delay).toISOString(), tabId: null });
     } else {
-      session = transitionTask(session, taskId, "failed", { error });
+      session = transitionTask(session, taskId, "failed", { error, permanent: true,
+        unavailable: disposition.unavailable, tabId: null });
     }
+    clearLease(session, taskId);
     session.lastError = error;
+    session = updateSessionConcurrency(session, metricFromError(metric, error));
     return session;
   });
-  if (updated?.status?.startsWith("paused_")) await reportSession(updated).catch(() => null);
+  if (updated && ["paused_login_required", "paused_verification_required", "paused_capture_unauthorized"].includes(updated.status)) {
+    await reportSession(updated).catch(() => null);
+  }
+  if (updated) configureSessionMediaResources(updated);
+}
+
+async function finishTask(sessionId, taskId, leaseId, status, details, metric) {
+  const updated = await mutateState(sessionId, (current) => {
+    const task = current?.queue.find((item) => item.taskId === taskId);
+    if (!current || current.status !== "running" || !task || task.leaseId !== leaseId) return current;
+    let next = transitionTask(current, taskId, status, details);
+    clearLease(next, taskId);
+    next = updateSessionConcurrency(next, metric);
+    return next;
+  });
+  if (updated) configureSessionMediaResources(updated);
+  return updated;
+}
+
+async function heartbeatTask(sessionId, taskId, leaseId) {
+  return mutateState(sessionId, (current) => {
+    const task = current?.queue.find((item) => item.taskId === taskId);
+    if (!current || current.status !== "running" || !task || task.leaseId !== leaseId) return current;
+    const now = new Date().toISOString();
+    task.leaseExpiresAt = new Date(Date.now() + current.config.taskLeaseMs).toISOString();
+    task.updatedAt = now;
+    current.lastProgressAt = now;
+    return current;
+  });
+}
+
+async function assertTaskLease(sessionId, taskId, leaseId) {
+  const session = await loadState();
+  assertRunnable(session, taskId, leaseId, sessionId);
+  return session;
+}
+
+function assertRunnable(session, taskId, leaseId, sessionId = session?.sessionId) {
+  const task = session?.queue?.find((item) => item.taskId === taskId);
+  if (!session || session.sessionId !== sessionId || session.status !== "running" || task?.leaseId !== leaseId) {
+    throw syncError("TASK_LEASE_LOST", "The browser task lease is no longer active.", false);
+  }
+}
+
+function clearLease(session, taskId) {
+  const task = session?.queue?.find((item) => item.taskId === taskId);
+  if (!task) return;
+  task.leaseId = null;
+  task.leaseStartedAt = null;
+  task.leaseExpiresAt = null;
+  task.workerId = null;
+  session.activeTasks = session.queue.filter((item) => ["opening", "loading", "extracting", "submitting"].includes(item.status)).map((item) => item.taskId);
+}
+
+function metricFromError(metric, error) {
+  const code = String(error.code || "NETWORK_ERROR");
+  return {
+    ...metric, result: "failed", errorClass: code,
+    rateLimited: Boolean(metric.rateLimited) || code.endsWith("_429") || code === "CAPTURE_RATE_LIMITED",
+    verificationDetected: code === "VERIFICATION_REQUIRED", loginRequired: code === "NOT_LOGGED_IN",
+    tabCrash: ["WORKER_TAB_CLOSED", "TAB_CRASH"].includes(code), timeout: /TIMEOUT/.test(code),
+    cmsBackpressure: Boolean(metric.cmsBackpressure) || Boolean(error.backpressure) || ["CAPTURE_SERVER_UNAVAILABLE"].includes(code),
+  };
 }
 
 async function submitCapture(capture) {
@@ -317,6 +418,9 @@ async function apiJson(url, options, token) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const details = classifyCaptureApiError(response.status, payload);
+    details.backpressure = response.status === 429 || response.status === 503;
+    const retryAfter = retryAfterMs(response.headers.get("retry-after"));
+    if (retryAfter > 0) details.retryAfterMs = retryAfter;
     throw Object.assign(new Error(details.message), details);
   }
   return payload;
@@ -328,59 +432,102 @@ async function saveCurrentNote() {
   await injectExtractor(tab.id);
   const extracted = await execute(tab.id, (options) => globalThis.SoloToChinaXhs.prepareAndExtract(options), { acquisitionOrigin: "xhs_manual_extension" });
   if (!extracted?.ok) throw Object.assign(new Error(extracted?.error?.message || "Could not read this note."), extracted?.error || {});
-  const capture = await persistCaptureMedia(extracted.capture);
-  const result = await submitCapture(capture);
+  const persisted = await persistCaptureMedia(extracted.capture);
+  const result = await submitCapture(persisted.capture);
   if (!result.mediaDurabilityComplete) throw syncError("MEDIA_ORIGINAL_NOT_STORED", "笔记正文已保存，但仍有媒体原件未持久化；请保持当前页面可访问后重试。", true);
   return { ok: true, capture: { title: extracted.capture.title }, result };
 }
 
-async function persistCaptureMedia(capture) {
+async function persistCaptureMedia(capture, onProgress = async () => {}, onlyMediaIdentities = null) {
   const failures = [];
-  const media = [...(capture.images || []), ...(capture.videos || [])];
-  for (const asset of media) {
-    try {
-      const response = await fetchWithTimeout(asset.url, {}, MEDIA_REQUEST_TIMEOUT_MS);
-      if (!response.ok) throw syncError(`MEDIA_HTTP_${response.status}`, `Media download returned HTTP ${response.status}.`, response.status >= 500 || response.status === 429);
-      const blob = await response.blob();
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      if (!bytes.byteLength) throw syncError("MEDIA_EMPTY", "Media download returned no bytes.", true);
-      asset.originalSha256 = await hashBytes(bytes);
-      asset.mimeType = mediaMime(blob.type, asset.kind, asset.url);
-      if (!asset.mimeType) throw syncError("MEDIA_TYPE_UNSUPPORTED", "Media response is not a supported image or video type.", false);
-      const stored = await uploadMediaOriginal(asset, bytes);
-      asset.originalStorageRef = stored.storageRef;
-      if (asset.kind === "video") continue;
-      if (bytes.byteLength <= DIRECT_DERIVATIVE_BYTES) {
-        asset.aiDerivativeDataUrl = `data:${asset.mimeType};base64,${bytesToBase64(bytes)}`;
-        asset.aiDerivativeSha256 = asset.originalSha256;
-        continue;
-      }
-      const bitmap = await createImageBitmap(blob);
-      let scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
-      let derivative;
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        const canvas = new OffscreenCanvas(Math.max(1, Math.round(bitmap.width * scale)), Math.max(1, Math.round(bitmap.height * scale)));
-        canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-        derivative = await canvas.convertToBlob({ type: "image/webp", quality: Math.max(0.55, 0.84 - attempt * 0.08) });
-        if (derivative.size <= 5_500_000) break;
-        scale *= 0.72;
-      }
-      bitmap.close();
-      if (derivative?.size <= 5_500_000) {
-        const derivativeBytes = new Uint8Array(await derivative.arrayBuffer());
-        asset.aiDerivativeDataUrl = `data:image/webp;base64,${bytesToBase64(derivativeBytes)}`;
-        asset.aiDerivativeSha256 = await hashBytes(derivativeBytes);
-      }
-    } catch (error) {
-      asset.persistenceError = serializeError(error);
-      failures.push({ mediaIdentity: asset.mediaIdentity || asset.url, kind: asset.kind || "image", error: serializeError(error) });
+  const discoveredMedia = [...(capture.images || []), ...(capture.videos || [])];
+  const media = onlyMediaIdentities instanceof Set
+    ? discoveredMedia.filter((asset) => onlyMediaIdentities.has(asset.mediaIdentity || asset.url)) : discoveredMedia;
+  const metrics = { mediaCount: media.length, discoveredMediaCount: discoveredMedia.length, mediaBytes: 0, mediaDownloadMs: 0, mediaUploadMs: 0 };
+  const results = await Promise.all(media.map((asset) => persistMediaAsset(asset, onProgress)));
+  for (const [index, result] of results.entries()) {
+    const asset = media[index];
+    metrics.mediaBytes += Number(result.metrics?.bytes || 0);
+    metrics.mediaDownloadMs += Number(result.metrics?.downloadMs || 0);
+    metrics.mediaUploadMs += Number(result.metrics?.uploadMs || 0);
+    if (result.error) {
+      asset.persistenceError = result.error;
+      failures.push({ mediaIdentity: asset.mediaIdentity || asset.url, kind: asset.kind || "image", error: result.error });
+      metrics.rateLimited ||= result.error.code === "MEDIA_HTTP_429" || result.error.code === "CAPTURE_RATE_LIMITED";
+      metrics.cmsBackpressure ||= Boolean(result.error.backpressure) || result.error.code === "CAPTURE_SERVER_UNAVAILABLE";
+      metrics.retryAfterMs = Math.max(Number(metrics.retryAfterMs || 0), Number(result.error.retryAfterMs || 0));
     }
   }
   capture.mediaPersistenceFailures = failures;
-  return capture;
+  return { capture, metrics };
 }
 
-async function uploadMediaOriginal(asset, bytes) {
+async function persistMediaAsset(asset, onProgress) {
+  const metrics = { bytes: 0, downloadMs: 0, uploadMs: 0 };
+  try {
+    return await mediaRequests.run(async () => {
+      const downloadStarted = Date.now();
+      const response = await fetchWithTimeout(asset.url, {}, MEDIA_REQUEST_TIMEOUT_MS);
+      if (!response.ok) {
+        const failure = syncError(`MEDIA_HTTP_${response.status}`, `Media download returned HTTP ${response.status}.`, response.status >= 500 || response.status === 429);
+        failure.backpressure = response.status === 429 || response.status === 503;
+        const retryAfter = retryAfterMs(response.headers.get("retry-after"));
+        if (retryAfter > 0) failure.retryAfterMs = retryAfter;
+        throw failure;
+      }
+      const expectedBytes = Math.max(1, Number(response.headers.get("content-length") || 8 * 1024 * 1024));
+      const memoryWeight = Math.max(1, Math.ceil(expectedBytes / (1024 * 1024)));
+      const releaseMemory = await mediaMemory.acquire(memoryWeight);
+      const pipeline = async () => {
+        const blob = await response.blob();
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        metrics.downloadMs = Date.now() - downloadStarted;
+        metrics.bytes = bytes.byteLength;
+        if (!bytes.byteLength) throw syncError("MEDIA_EMPTY", "Media download returned no bytes.", true);
+        asset.originalSha256 = await hashBytes(bytes);
+        asset.mimeType = mediaMime(blob.type, asset.kind, asset.url);
+        if (!asset.mimeType) throw syncError("MEDIA_TYPE_UNSUPPORTED", "Media response is not a supported image or video type.", false);
+        const uploadStarted = Date.now();
+        const stored = await mediaUploads.run(() => uploadMediaOriginal(asset, bytes, onProgress));
+        metrics.uploadMs = Date.now() - uploadStarted;
+        asset.originalStorageRef = stored.storageRef;
+        await onProgress();
+        if (asset.kind === "video") return;
+        if (bytes.byteLength <= DIRECT_DERIVATIVE_BYTES) {
+          asset.aiDerivativeDataUrl = `data:${asset.mimeType};base64,${bytesToBase64(bytes)}`;
+          asset.aiDerivativeSha256 = asset.originalSha256;
+          return;
+        }
+        const bitmap = await createImageBitmap(blob);
+        let scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
+        let derivative;
+        try {
+          for (let attempt = 0; attempt < 4; attempt += 1) {
+            const canvas = new OffscreenCanvas(Math.max(1, Math.round(bitmap.width * scale)), Math.max(1, Math.round(bitmap.height * scale)));
+            canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+            derivative = await canvas.convertToBlob({ type: "image/webp", quality: Math.max(0.55, 0.84 - attempt * 0.08) });
+            if (derivative.size <= DIRECT_DERIVATIVE_BYTES) break;
+            scale *= 0.72;
+          }
+        } finally { bitmap.close(); }
+        if (derivative?.size <= DIRECT_DERIVATIVE_BYTES) {
+          const derivativeBytes = new Uint8Array(await derivative.arrayBuffer());
+          asset.aiDerivativeDataUrl = `data:image/webp;base64,${bytesToBase64(derivativeBytes)}`;
+          asset.aiDerivativeSha256 = await hashBytes(derivativeBytes);
+        }
+      };
+      try {
+        if (expectedBytes >= LARGE_MEDIA_THRESHOLD_BYTES) await largeMediaPipelines.run(pipeline);
+        else await pipeline();
+      } finally { releaseMemory(); }
+      return { metrics };
+    });
+  } catch (error) {
+    return { metrics, error: serializeError(error) };
+  }
+}
+
+async function uploadMediaOriginal(asset, bytes, onProgress = async () => {}) {
   const settings = await loadSettings();
   const created = await apiJson(`${settings.endpoint}/api/capture-media-uploads`, { method: "POST", body: JSON.stringify({
     kind: asset.kind === "video" ? "video" : "image", mimeType: asset.mimeType, size: bytes.byteLength, sha256: asset.originalSha256,
@@ -388,6 +535,7 @@ async function uploadMediaOriginal(asset, bytes) {
   for (let offset = 0, index = 0; offset < bytes.length; offset += created.chunkBytes, index += 1) {
     await apiJson(`${settings.endpoint}/api/capture-media-uploads/${encodeURIComponent(created.uploadId)}/chunks/${index}`,
       { method: "PUT", body: bytes.slice(offset, Math.min(bytes.length, offset + created.chunkBytes)), raw: true }, settings.token);
+    await onProgress();
   }
   return apiJson(`${settings.endpoint}/api/capture-media-uploads/${encodeURIComponent(created.uploadId)}/complete`,
     { method: "POST", body: "{}" }, settings.token);
@@ -412,6 +560,9 @@ async function pauseSync(status) {
   const session = await mutateState(null, (current) => {
     if (!current || current.status !== "running") return current;
     current.status = status;
+    const reconciled = reconcileStrandedTasks(current, { force: true });
+    current = reconciled.session;
+    current.status = status;
     return current;
   });
   if (!session || session.status !== status) return { ok: false, error: syncError("NO_ACTIVE_SESSION", "No running sync session was found.", false) };
@@ -420,22 +571,21 @@ async function pauseSync(status) {
 }
 async function resumeSync() {
   const current = await loadState();
-  if (!current || current.status === "cancelled" || (current.status === "completed" && !hasUnresolvedFailures(current))) {
+  if (!current || current.status === "cancelled" || current.status === "completed") {
     return { ok: false, error: syncError("NO_RESUMABLE_SESSION", "No resumable sync session was found.", false) };
   }
   try {
     await assertFavoritesSyncApi();
   } catch (error) {
     await mutateState(null, (current) => {
-      if (!current || current.status === "cancelled" || (current.status === "completed" && !hasUnresolvedFailures(current))) return current;
-      current.status = "paused_error";
+      if (!current || current.status === "cancelled" || current.status === "completed") return current;
       current.lastError = serializeError(error);
       return current;
     });
     throw error;
   }
   const session = await mutateState(null, (current) => {
-    if (!current || current.status === "cancelled" || (current.status === "completed" && !hasUnresolvedFailures(current))) return current;
+    if (!current || current.status === "cancelled" || current.status === "completed") return current;
     return prepareSessionResume(current);
   });
   if (!session || session.status !== "running") return { ok: false, error: syncError("NO_RESUMABLE_SESSION", "No resumable sync session was found.", false) };
@@ -460,11 +610,6 @@ async function stopAfterQueue() { const session = await mutateState(null, (curre
 
 async function completeSession(session) {
   session = prepareSessionCompletion(session);
-  if (session.status === "paused_failed_items") {
-    await saveState(session);
-    await reportSession(session).catch(() => null);
-    return;
-  }
   const scopes = await loadScopes();
   scopes[session.scopeKey] = { scopeUrl: session.scopeUrl, lastSuccessfulSyncAt: session.completedAt,
     checkpoint: { topIdentityKeys: session.currentTopIdentityKeys || [], lastSuccessfulSyncAt: session.completedAt }, summary: session.stats };
@@ -480,25 +625,105 @@ async function completeSession(session) {
 }
 
 async function archiveSession(session) { const history = (await chrome.storage.local.get({ [HISTORY_KEY]: [] }))[HISTORY_KEY]; await chrome.storage.local.set({ [HISTORY_KEY]: [summary(session), ...history.filter((item) => item.sessionId !== session.sessionId)].slice(0, 20) }); }
+async function ensureAlarms() { await chrome.alarms.create(TICK_ALARM, { periodInMinutes: 1 }); }
+async function watchdog() {
+  const session = await mutateState(null, (current) => {
+    if (!current || current.status !== "running") return current;
+    const stalled = Date.now() - Date.parse(current.lastProgressAt || current.updatedAt || 0) >= current.config.watchdogStallMs;
+    const reconciled = reconcileStrandedTasks(current, { force: stalled });
+    return reconciled.session;
+  });
+  if (session?.status === "running") {
+    ensureWorkerPool(session);
+    void drive();
+  }
+}
+async function handleDriverError(caught) {
+  const error = serializeError(caught);
+  const session = await mutateState(null, (current) => {
+    if (!current || current.status !== "running") return current;
+    const disposition = classifyTaskDisposition(error, current.driverAttempts || 0, current.config.maxRetries);
+    if (disposition.action === "pause") current.status = disposition.status;
+    else {
+      current.driverAttempts = Number(current.driverAttempts || 0) + 1;
+      current.driveRetryAt = new Date(Date.now() + retryDelayMs(current.driverAttempts, {
+        baseMs: current.config.retryBaseMs, maxMs: current.config.retryMaxMs,
+      })).toISOString();
+    }
+    current.lastError = error;
+    return current;
+  });
+  if (session && ["paused_login_required", "paused_verification_required", "paused_capture_unauthorized"].includes(session.status)) {
+    await reportSession(session).catch(() => null);
+  }
+}
+function configureMediaResources(settings) {
+  const config = normalizeSettings(settings);
+  mediaRequests.setLimit(config.mediaConcurrency);
+  mediaUploads.setLimit(config.mediaUploadConcurrency);
+  mediaMemory.setLimit(Math.max(32, Math.floor(config.mediaMemoryBudgetBytes / (1024 * 1024))));
+}
+function configureSessionMediaResources(session) {
+  const config = normalizeSettings(session?.config || {});
+  mediaRequests.setLimit(Math.max(1, Math.min(config.mediaConcurrency, Number(session?.mediaConcurrency) || config.mediaConcurrency)));
+  mediaUploads.setLimit(config.mediaUploadConcurrency);
+  mediaMemory.setLimit(Math.max(32, Math.floor(config.mediaMemoryBudgetBytes / (1024 * 1024))));
+}
+function browserMemoryPressure() {
+  const memory = globalThis.performance?.memory;
+  return Boolean(memory?.jsHeapSizeLimit && memory.usedJSHeapSize / memory.jsHeapSizeLimit >= 0.85);
+}
 async function restoreAfterRestart() {
   const session = await loadState();
-  if (!session || ["completed", "cancelled"].includes(session.status)) return;
+  if (!session || ["completed", "completed_with_failures", "cancelled"].includes(session.status)) return;
   if (session.status === "running" && session.phase === "completed") {
     await completeSession(session);
     return;
   }
-  await saveState(recoverSession(session));
+  const recovered = recoverSession(session);
+  configureSessionMediaResources(recovered);
+  await saveState(recovered);
+  if (recovered.status === "running") void drive();
 }
 async function startAutomaticSync() { const settings = await loadSettings(); if (settings.autoSync === "off") return; const history = (await chrome.storage.local.get({ [HISTORY_KEY]: [] }))[HISTORY_KEY]; const last = history.find((item) => item.scopeKey === settings.lastScopeKey); if (last && Date.now() - Date.parse(last.completedAt || last.updatedAt) < settings.autoMinIntervalHours * 3_600_000) return; await startSync("incremental", true); }
 async function refreshAutoAlarm() { const settings = await loadSettings(); await chrome.alarms.clear(AUTO_ALARM); if (settings.autoSync === "daily") await chrome.alarms.create(AUTO_ALARM, { periodInMinutes: 24 * 60 }); if (settings.autoSync === "startup") void startAutomaticSync(); }
 
-async function workerTab(session, slot, url) { let id = session.workerTabs?.[slot]; if (id) { try { const tab = await chrome.tabs.update(id, { url, active: false }); return tab; } catch { id = null; } } const tab = await chrome.tabs.create({ url, active: false }); await mutateState(session.sessionId, (fresh) => { fresh.workerTabs ||= []; fresh.workerTabs[slot] = tab.id; return fresh; }); return tab; }
+async function workerTab(sessionId, slot, workerId, url) {
+  const session = await loadState();
+  let id = session?.workerSlots?.[slot]?.tabId || session?.workerTabs?.[slot];
+  if (id) {
+    try { return await chrome.tabs.update(id, { url, active: false }); }
+    catch { id = null; }
+  }
+  const tab = await chrome.tabs.create({ url, active: false });
+  await mutateState(sessionId, (fresh) => {
+    fresh.workerSlots ||= [];
+    fresh.workerSlots[slot] = { workerId, tabId: tab.id, updatedAt: new Date().toISOString() };
+    fresh.workerTabs ||= [];
+    fresh.workerTabs[slot] = tab.id;
+    return fresh;
+  });
+  return tab;
+}
 async function ensureDiscoveryTab(session) { try { return await chrome.tabs.get(session.discoveryTabId); } catch { const tab = await chrome.tabs.create({ url: session.scopeUrl, active: false }); session.discoveryTabId = tab.id; session.cursor.domOffset = 0; await persistProgress(session); return tab; } }
-async function closeWorkerTabs(session) { for (const id of session.workerTabs || []) if (id) await chrome.tabs.remove(id).catch(() => null); if (session.automatic && session.discoveryTabId) await chrome.tabs.remove(session.discoveryTabId).catch(() => null); }
+async function closeWorkerTabs(session) { const ids = new Set([...(session.workerTabs || []), ...(session.workerSlots || []).map((slot) => slot?.tabId)].filter(Boolean)); for (const id of ids) await chrome.tabs.remove(id).catch(() => null); if (session.automatic && session.discoveryTabId) await chrome.tabs.remove(session.discoveryTabId).catch(() => null); }
 async function openXiaohongshu() { const session = await loadState(); const url = session?.scopeUrl || "https://www.xiaohongshu.com/"; const tab = await chrome.tabs.create({ url, active: true }); return { ok: true, tabId: tab.id }; }
 async function injectExtractor(tabId) { await chrome.scripting.executeScript({ target: { tabId }, files: ["capture-utils.js", "page-extractor.js"] }); }
 async function execute(tabId, func, args) { const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func, args: args === undefined ? [] : [args] }); return result; }
-async function waitForTab(tabId, timeoutMs) { const current = await chrome.tabs.get(tabId); if (current.status === "complete") return; await new Promise((resolve, reject) => { const timer = setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); reject(syncError("TAB_LOAD_TIMEOUT", "The note detail page did not finish loading.", true)); }, timeoutMs); const listener = (id, info) => { if (id === tabId && info.status === "complete") { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(listener); resolve(); } }; chrome.tabs.onUpdated.addListener(listener); }); }
+async function waitForTab(tabId, timeoutMs) {
+  let current;
+  try { current = await chrome.tabs.get(tabId); }
+  catch { throw syncError("WORKER_TAB_CLOSED", "The worker tab was closed and will be rebuilt.", true); }
+  if (current.status === "complete") return;
+  await new Promise((resolve, reject) => {
+    const cleanup = () => { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(updated); chrome.tabs.onRemoved.removeListener(removed); };
+    const timer = setTimeout(() => { cleanup(); reject(syncError("TAB_LOAD_TIMEOUT", "The note detail page did not finish loading.", true)); }, timeoutMs);
+    const updated = (id, info) => { if (id === tabId && info.status === "complete") { cleanup(); resolve(); } };
+    const removed = (id) => { if (id === tabId) { cleanup(); reject(syncError("WORKER_TAB_CLOSED", "The worker tab was closed and will be rebuilt.", true)); } };
+    chrome.tabs.onUpdated.addListener(updated);
+    chrome.tabs.onRemoved.addListener(removed);
+  });
+}
 
 async function loadSettings() { const stored = await chrome.storage.local.get({ endpoint: DEFAULT_ENDPOINT, token: DEFAULT_CAPTURE_TOKEN, [SETTINGS_KEY]: {} }); return settingsWithConnection({ endpoint: stored.endpoint, token: stored.token, ...stored[SETTINGS_KEY] }); }
 async function settingsWithConnection(value) { const endpoint = String(value.endpoint || DEFAULT_ENDPOINT).replace(/\/$/, ""); return { ...normalizeSettings(value), endpoint, token: String(value.token || DEFAULT_CAPTURE_TOKEN), autoSync: ["off", "startup", "daily"].includes(value.autoSync) ? value.autoSync : "off", lastScopeUrl: value.lastScopeUrl || "", lastScopeKey: value.lastScopeKey || "" }; }
@@ -515,10 +740,10 @@ async function mutateState(sessionId, mutator) {
   stateMutation = operation.catch(() => null);
   return operation;
 }
-async function updateTask(sessionId, taskId, status, details = {}) {
+async function updateTask(sessionId, taskId, status, details = {}, leaseId = null) {
   return mutateState(sessionId, (current) => {
     const task = current?.queue.find((item) => item.taskId === taskId);
-    if (!current || current.status === "cancelled" || task?.status === "cancelled") return current;
+    if (!current || current.status !== "running" || task?.status === "cancelled" || (leaseId && task?.leaseId !== leaseId)) return current;
     return transitionTask(current, taskId, status, details);
   });
 }
@@ -530,6 +755,8 @@ async function persistProgress(candidate) {
       candidate.stopAfterQueue = true;
       candidate.phase = "acquisition";
     }
+    candidate.driverAttempts = 0;
+    candidate.driveRetryAt = null;
     return candidate;
   });
 }
@@ -538,8 +765,12 @@ function scheduleDrive(session) {
   const retryTimes = session.phase === "acquisition"
     ? session.queue.filter((task) => task.status === "retry_wait").map((task) => Date.parse(task.retryAt || 0)).filter(Number.isFinite)
     : [];
-  const delay = retryTimes.length && !session.queue.some((task) => task.status === "queued")
-    ? Math.max(100, Math.min(60_000, Math.min(...retryTimes) - Date.now())) : 100;
+  const requestedAt = Date.parse(session.driveRetryAt || 0);
+  if (Number.isFinite(requestedAt)) retryTimes.push(requestedAt);
+  const hasQueued = session.queue.some((task) => task.status === "queued");
+  const delay = retryTimes.length && !hasQueued
+    ? Math.max(250, Math.min(60_000, Math.min(...retryTimes) - Date.now()))
+    : session.activeTasks?.length ? 1_000 : 100;
   driveTimer = setTimeout(() => { driveTimer = null; void drive(); }, delay);
 }
 async function loadScopes() { return (await chrome.storage.local.get({ [SCOPES_KEY]: {} }))[SCOPES_KEY]; }
@@ -563,9 +794,14 @@ async function reportSession(session) {
 }
 function publicSettings(settings) { const { token, ...safe } = settings; return { ...safe, tokenConfigured: Boolean(token) }; }
 function summary(session) { return { sessionId: session.sessionId, scopeKey: session.scopeKey, scopeLabel: session.scopeLabel, mode: session.mode, status: session.status, startedAt: session.startedAt, completedAt: session.completedAt || null, updatedAt: session.updatedAt, stats: session.stats, lastError: session.lastError }; }
-function serializeError(value) { return { code: String(value?.code || "NETWORK_ERROR"), message: String(value?.message || value || "Unknown error"), retryable: value?.retryable !== false, timestamp: new Date().toISOString() }; }
+function serializeError(value) { return { code: String(value?.code || "NETWORK_ERROR"), message: String(value?.message || value || "Unknown error"), retryable: value?.retryable !== false, backpressure: Boolean(value?.backpressure), retryAfterMs: Number(value?.retryAfterMs || 0), timestamp: new Date().toISOString() }; }
 function syncError(code, message, retryable) { return Object.assign(new Error(message), { code, retryable }); }
-function assertNotCancelled(session) { if (session?.status === "cancelled") throw syncError("SESSION_CANCELLED", "The Favorites Sync session was cancelled.", false); }
+function retryAfterMs(value) {
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds > 0) return Math.round(seconds * 1_000);
+  const at = Date.parse(String(value || ""));
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : 0;
+}
 async function fetchWithTimeout(url, options = {}, timeoutMs = ENGINE_REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(Object.assign(new Error("Request timed out."), { code: "REQUEST_TIMEOUT" })), timeoutMs);
@@ -574,3 +810,5 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = ENGINE_REQUEST_TI
 }
 async function hashBytes(bytes) { const digest = await crypto.subtle.digest("SHA-256", bytes); return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join(""); }
 function bytesToBase64(bytes) { let output = ""; const block = 0x8000; for (let index = 0; index < bytes.length; index += block) output += String.fromCharCode(...bytes.subarray(index, index + block)); return btoa(output); }
+
+export { handleMessage, restoreAfterRestart, watchdog };

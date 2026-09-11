@@ -746,6 +746,7 @@ export class Repository {
           mediaDiscovery: { images: { expected: null, discovered: 0 }, videos: { expected: null, discovered: 0 } },
           mediaDurability: { status: "missing", complete: false, originalsStored: 0, discovered: 0, remoteOnly: 0,
             derivativeOnly: 0, unavailable: 0, serverRecoverable: 0, browserRepairRequired: 0 },
+          repairMedia: { missingOriginals: [] },
           extractionStatus: "missing", experience: { status: "missing", complete: false }, requiredActions: ["CAPTURE_NEW"] };
     });
   }
@@ -754,7 +755,7 @@ export class Repository {
     const source = this.db.prepare(`SELECT id,status,completeness_status,completeness_json,raw_text,raw_html
       FROM sources WHERE id=?`).get(sourceId);
     if (!source) return null;
-    const assets = this.db.prepare(`SELECT kind,durability_status,repair_status,ai_readability_status
+    const assets = this.db.prepare(`SELECT kind,media_identity,durability_status,repair_status,ai_readability_status
       FROM source_assets WHERE source_id=?`).all(sourceId);
     const completeness = json(source.completeness_json, {});
     const summarize = (kind) => {
@@ -781,6 +782,11 @@ export class Repository {
       capture: { text: source.raw_text ? "complete" : "missing", dom: source.raw_html ? "complete" : "missing", status: source.completeness_status },
       mediaDiscovery: { images: summarize("image"), videos: summarize("video") },
       mediaDurability: durability,
+      repairMedia: {
+        missingOriginals: assets.filter((asset) => asset.durability_status !== "ORIGINAL_STORED").map((asset) => ({
+          mediaIdentity: asset.media_identity, kind: asset.kind, repairStatus: asset.repair_status,
+        })),
+      },
       aiReadability: { processable: assets.filter((asset) => asset.ai_readability_status === "processable").length,
         temporarilyUnavailable: assets.filter((asset) => asset.ai_readability_status === "temporarily_unavailable").length,
         unsupported: assets.filter((asset) => asset.ai_readability_status === "unsupported").length },

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  applyIdentityBatch, canonicalizeNoteUrl, classifyCaptureApiError, compactSessionState, createSession, hasUnresolvedFailures, nextConcurrency,
-  isFavoritesAlbumOverviewUrl, normalizeCard, noteIdentity, recoverSession, scopeFromUrl, shouldStopDiscovery, transitionTask,
+  applyIdentityBatch, applySettingsToSession, AsyncSemaphore, canonicalizeNoteUrl, classifyCaptureApiError, classifyTaskDisposition,
+  compactSessionState, createSession, hasUnresolvedFailures, HUMAN_PAUSE_STATES, leaseNextTask, nextConcurrency, reconcileStrandedTasks, retryDelayMs,
+  runContinuousPool, isFavoritesAlbumOverviewUrl, normalizeCard, normalizeSettings, noteIdentity, recoverSession, scopeFromUrl,
+  shouldStopDiscovery, transitionTask, updateSessionConcurrency,
   prepareSessionCompletion, prepareSessionResume,
 } from "../extension/sync-core.js";
 
@@ -13,6 +15,7 @@ test("capture API errors distinguish an outdated backend from content rejection"
   });
   assert.equal(classifyCaptureApiError(401).code, "CAPTURE_UNAUTHORIZED");
   assert.equal(classifyCaptureApiError(503).code, "CAPTURE_SERVER_UNAVAILABLE");
+  assert.equal(classifyCaptureApiError(429).code, "CAPTURE_RATE_LIMITED");
   assert.equal(classifyCaptureApiError(422, { error: "invalid capture" }).code, "CAPTURE_REJECTED");
 });
 
@@ -73,7 +76,7 @@ test("incremental discovery requires a reliable checkpoint, a clean window, and 
   assert.equal(session.queue.length, 8);
   session = applyIdentityBatch(session, checkpointCards, identities(checkpointCards, true));
   assert.equal(shouldStopDiscovery(session), true);
-  assert.deepEqual(session.stats, { discovered: 20, known: 12, new: 8, repair: 0, captured: 0, duplicate: 0, failed: 0, retrying: 0 });
+  assert.deepEqual(session.stats, { discovered: 20, known: 12, new: 8, repair: 0, captured: 0, duplicate: 0, failed: 0, unavailable: 0, retrying: 0 });
 });
 
 test("a new or reordered discovery window cannot trigger an early incremental stop", () => {
@@ -107,7 +110,7 @@ test("restart recovery keeps successful tasks and requeues only unfinished work"
   session = transitionTask(session, session.queue[0].taskId, "captured", { sourceId: "src_done" });
   session = transitionTask(session, session.queue[1].taskId, "extracting");
   const recovered = recoverSession(session, "2026-09-08T01:00:00.000Z");
-  assert.equal(recovered.status, "paused_recovered");
+  assert.equal(recovered.status, "running");
   assert.equal(recovered.queue[0].status, "captured");
   assert.equal(recovered.queue[1].status, "queued");
 });
@@ -120,7 +123,7 @@ test("recovery rediscovers unfinished legacy tasks that lack the visible card na
   session.status = "paused_error";
   session.phase = "acquisition";
   const recovered = recoverSession(session);
-  assert.equal(recovered.status, "paused_error");
+  assert.equal(recovered.status, "running");
   assert.equal(recovered.phase, "discovery");
   assert.equal(recovered.queue.length, 0);
   assert.equal(recovered.seenIdentityKeys.length, 0);
@@ -138,6 +141,20 @@ test("streaming session compaction bounds terminal task history while retaining 
   assert.equal(compacted.queue.filter((task) => task.status === "queued").length, 30);
   for (const task of compacted.queue.filter((item) => item.status === "queued")) assert.ok(compacted.seenIdentityKeys.includes(task.identityKey));
   assert.equal(compacted.stats.captured, 150);
+});
+
+test("Repair queues only browser work and carries only missing original media identities", () => {
+  let session = createSession({ scope, mode: "repair" });
+  const cards = [card("server-only"), card("browser-required")];
+  session = applyIdentityBatch(session, cards, [
+    { externalId: "server-only", sourceExists: true, requiredActions: ["SERVER_MEDIA_RECOVERY", "VERIFY_MEDIA_ORIGINALS"],
+      repairMedia: { missingOriginals: [{ mediaIdentity: "server-media" }] } },
+    { externalId: "browser-required", sourceExists: true, sourceId: "src-browser", requiredActions: ["BROWSER_MEDIA_REPAIR"],
+      repairMedia: { missingOriginals: [{ mediaIdentity: "missing-a" }, { mediaIdentity: "missing-b" }] } },
+  ]);
+  assert.equal(session.queue.length, 1);
+  assert.equal(session.queue[0].externalId, "browser-required");
+  assert.deepEqual(session.queue[0].repairMediaIdentities, ["missing-a", "missing-b"]);
 });
 
 test("failed tasks remain recoverable and a completed partial run can resume without duplicating captures", () => {
@@ -176,8 +193,8 @@ test("completion state is committed before cleanup and unresolved failures remai
   partial = transitionTask(partial, partial.queue[0].taskId, "failed", { error: { code: "CAPTURE_REQUEST_TIMEOUT" } });
   partial.phase = "completed";
   const paused = prepareSessionCompletion(partial, "2026-09-09T05:01:00.000Z");
-  assert.equal(paused.status, "paused_failed_items");
-  assert.equal(paused.completedAt, null);
+  assert.equal(paused.status, "completed_with_failures");
+  assert.equal(paused.completedAt, "2026-09-09T05:01:00.000Z");
   assert.equal(hasUnresolvedFailures(paused), true);
   assert.equal(prepareSessionResume(paused).phase, "acquisition");
 });
@@ -200,10 +217,97 @@ test("a legacy completed partial run rediscovers token-free failed items", () =>
 });
 
 test("adaptive concurrency remains bounded, grows on healthy samples, and backs off on pressure", () => {
-  const settings = { concurrencyMode: "auto", concurrencyInitial: 4, concurrencyMax: 12 };
-  assert.equal(nextConcurrency(4, { successRate: 1, errorRate: 0, p95LoadMs: 3_000 }, settings), 5);
-  assert.equal(nextConcurrency(12, { successRate: 1, errorRate: 0, p95LoadMs: 3_000 }, settings), 12);
-  assert.equal(nextConcurrency(10, { errorRate: 0.3, successRate: 0.7 }, settings), 8);
-  assert.equal(nextConcurrency(8, { verification: true }, settings), 1);
-  assert.equal(nextConcurrency(4, { successRate: 1, p95LoadMs: 2_000 }, { ...settings, concurrencyMode: "conservative" }), 2);
+  const settings = { concurrencyMode: "auto", concurrencyInitial: 4, concurrencyMax: 16 };
+  const healthy = Array.from({ length: 20 }, () => ({ result: "succeeded", noteLoadMs: 45_000, totalMs: 70_000 }));
+  assert.equal(nextConcurrency(4, healthy, settings), 5);
+  assert.equal(nextConcurrency(16, healthy, settings), 16);
+  assert.equal(nextConcurrency(10, { result: "failed", rateLimited: true }, settings), 7);
+  assert.equal(nextConcurrency(8, { result: "failed", errorClass: "MEDIA_HTTP_403" }, settings), 8);
+  assert.equal(nextConcurrency(4, healthy, { ...settings, concurrencyMode: "conservative" }), 2);
+  assert.equal(normalizeSettings({ customConcurrency: 16, concurrencyMax: 16 }).customConcurrency, 16);
+});
+
+test("live settings immediately update the running session without replacing it", () => {
+  const started = createSession({ scope, settings: { concurrencyMode: "custom", customConcurrency: 2 } });
+  const updated = applySettingsToSession(started, { concurrencyMode: "custom", customConcurrency: 8 }, "2026-09-12T01:00:00.000Z");
+  assert.equal(updated.sessionId, started.sessionId);
+  assert.equal(updated.config.customConcurrency, 8);
+  assert.equal(updated.concurrency, 8);
+  assert.equal(updated.status, "running");
+});
+
+test("durable task leases are exclusive and watchdog recovery requeues only stranded work", () => {
+  let session = createSession({ scope, settings: { taskLeaseMs: 60_000 } });
+  session.phase = "acquisition";
+  session = applyIdentityBatch(session, [card("lease-one"), card("lease-two")], identities([card("lease-one"), card("lease-two")], false));
+  const first = leaseNextTask(session, { workerId: "worker-1", leaseId: "lease-1", now: "2026-09-12T02:00:00.000Z" });
+  const second = leaseNextTask(first.session, { workerId: "worker-2", leaseId: "lease-2", now: "2026-09-12T02:00:10.000Z" });
+  assert.equal(first.task.externalId, "lease-one");
+  assert.equal(second.task.externalId, "lease-two");
+  assert.notEqual(first.task.taskId, second.task.taskId);
+  const recovered = reconcileStrandedTasks(second.session, { now: "2026-09-12T02:01:01.000Z" });
+  assert.equal(recovered.recovered, 1);
+  assert.equal(recovered.session.queue.find((task) => task.taskId === first.task.taskId).status, "queued");
+  assert.equal(recovered.session.queue.find((task) => task.taskId === second.task.taskId).status, "opening");
+});
+
+test("only human-required failures pause a session and ordinary task errors stay local", () => {
+  assert.ok(HUMAN_PAUSE_STATES.includes("paused_by_user"));
+  for (const [code, status] of [
+    ["NOT_LOGGED_IN", "paused_login_required"],
+    ["VERIFICATION_REQUIRED", "paused_verification_required"],
+    ["CAPTURE_UNAUTHORIZED", "paused_capture_unauthorized"],
+  ]) assert.deepEqual(classifyTaskDisposition({ code, retryable: false }, 1, 3), { action: "pause", status });
+
+  for (const code of ["NAVIGATION_INTERRUPTED", "TAB_LOAD_TIMEOUT", "CONTENT_NOT_READY", "CAPTURE_SERVER_UNAVAILABLE", "WORKER_TAB_CLOSED"]) {
+    assert.equal(classifyTaskDisposition({ code, retryable: true }, 1, 3).action, "retry");
+  }
+  for (const code of ["NOTE_UNAVAILABLE", "MEDIA_HTTP_403"]) {
+    assert.equal(classifyTaskDisposition({ code, retryable: false }, 1, 3).action, "fail");
+  }
+  assert.equal(retryDelayMs(3, { baseMs: 1_000, maxMs: 30_000, random: () => 0.5 }), 4_000);
+});
+
+test("continuous worker pool lets a free slot claim new work before a slow note finishes", async () => {
+  const completed = [];
+  const delays = [40, 2, 2, 2];
+  const results = await runContinuousPool(delays, 2, async (delay, index) => {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    completed.push(index);
+    return index;
+  });
+  assert.deepEqual(results.map((result) => result.status), ["fulfilled", "fulfilled", "fulfilled", "fulfilled"]);
+  assert.ok(completed.indexOf(2) < completed.indexOf(0), JSON.stringify(completed));
+});
+
+test("global media semaphore respects its limit and still processes every asset", async () => {
+  const semaphore = new AsyncSemaphore(3);
+  let active = 0;
+  let maximum = 0;
+  const items = Array.from({ length: 24 }, (_, index) => index);
+  const results = await Promise.all(items.map((item) => semaphore.run(async () => {
+    active += 1;
+    maximum = Math.max(maximum, active);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    active -= 1;
+    return item;
+  })));
+  assert.equal(maximum, 3);
+  assert.deepEqual(results, items);
+});
+
+test("rolling controller ignores isolated media failures and does not require a 12 second note p95", () => {
+  let session = createSession({ scope, settings: { concurrencyMode: "auto", concurrencyInitial: 4, concurrencyMax: 12 } });
+  for (let index = 0; index < 20; index += 1) {
+    session = updateSessionConcurrency(session, {
+      result: index === 5 ? "failed" : "succeeded",
+      errorClass: index === 5 ? "MEDIA_HTTP_403" : "",
+      noteLoadMs: 25_000, totalMs: 60_000,
+    }, new Date(Date.UTC(2026, 8, 12, 3, index, 0)).toISOString());
+  }
+  assert.equal(session.concurrency, 5);
+  assert.equal(session.concurrencySamples.length, 20);
+  const pressured = updateSessionConcurrency(session, { result: "failed", errorClass: "MEDIA_HTTP_429", rateLimited: true }, "2026-09-12T04:00:00.000Z");
+  assert.ok(pressured.mediaConcurrency < session.mediaConcurrency);
+  assert.equal(pressured.mediaConcurrencyController.reason, "rate_limited");
 });

@@ -13,6 +13,8 @@
       .counts { display: grid; grid-template-columns: repeat(2,1fr); gap: 6px; margin: 12px 0; }
       .counts div { display: flex; align-items: center; justify-content: space-between; padding: 7px 9px; border: 1px solid #d9e0dc; border-radius: 8px; background: #fff; font-size: 11px; }
       .counts strong { font-size: 14px; color: #176b50; }
+      .concurrency { margin: -4px 0 12px; padding: 8px 9px; border: 1px solid #d9e0dc; border-radius: 8px; background: #fff; color: #43574e; font-size: 11px; line-height: 1.55; }
+      .concurrency strong { color: #176b50; }
       button { width: 100%; min-height: 40px; border: 0; border-radius: 8px; background: #176b50; color: #fff; font: inherit; font-size: 12px; font-weight: 720; cursor: pointer; }
       button:hover:not(:disabled) { filter: brightness(1.08); }
       button:disabled { opacity: .48; cursor: wait; }
@@ -39,6 +41,7 @@
     <p class="subtitle">收藏即完成资料筛选。扩展会完整采集笔记；文章仍须在 CMS 推荐中心审核批准。</p>
     <p class="meta"><strong>当前范围：</strong><span id="scope">正在读取……</span><br><strong>上次同步：</strong><span id="last-sync">正在读取……</span></p>
     <section id="counts" class="counts"></section>
+    <section id="concurrency-state" class="concurrency"></section>
     <button id="sync">同步新增收藏</button>
     <div class="grid"><button id="repair-sync" class="secondary">修复缺失数据</button><button id="full-sync" class="secondary">完整核验</button></div>
     <button id="save" class="quiet" style="margin-top:7px">保存当前笔记</button>
@@ -54,7 +57,9 @@
         <label>采集令牌<input id="token" type="password" autocomplete="off"></label>
         <label>自动同步<select id="auto-sync"><option value="off">关闭</option><option value="startup">Chrome 启动时</option><option value="daily">每天一次</option></select></label>
         <label>并发策略<select id="concurrency-mode"><option value="auto">自动（推荐）</option><option value="conservative">保守 · 2</option><option value="balanced">均衡 · 4</option><option value="aggressive">高性能 · 8</option><option value="custom">自定义</option></select></label>
-        <label id="custom-concurrency-field" hidden>自定义并发数<input id="custom-concurrency" type="number" min="1" max="12" value="4"></label>
+        <label id="custom-concurrency-field" hidden>自定义并发数<input id="custom-concurrency" type="number" min="1" max="16" value="4"></label>
+        <label>自动并发上限<input id="concurrency-max" type="number" min="1" max="16" value="12"></label>
+        <label>全局媒体并发<input id="media-concurrency" type="number" min="1" max="16" value="12"></label>
         <label>身份查询批量<input id="identity-batch-size" type="number" min="1" max="100" value="50"></label>
         <label>发现扫描批量<input id="discovery-batch-size" type="number" min="10" max="200" value="100"></label>
         <label>连续已知停止阈值<input id="known-streak" type="number" min="3" max="100" value="12"></label>

@@ -2,6 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 const elements = {
   sync: $("#sync"), repair: $("#repair-sync"), full: $("#full-sync"), save: $("#save"), pause: $("#pause"), resume: $("#resume"), cancel: $("#cancel"), stopQueue: $("#stop-queue"),
   endpoint: $("#endpoint"), token: $("#token"), saveSettings: $("#save-settings"), autoSync: $("#auto-sync"), concurrencyMode: $("#concurrency-mode"), customConcurrency: $("#custom-concurrency"), customConcurrencyField: $("#custom-concurrency-field"),
+  concurrencyMax: $("#concurrency-max"), mediaConcurrency: $("#media-concurrency"), concurrencyState: $("#concurrency-state"),
   identityBatchSize: $("#identity-batch-size"), discoveryBatchSize: $("#discovery-batch-size"), knownStreak: $("#known-streak"), queueHighWatermark: $("#queue-high-watermark"), maxRetries: $("#max-retries"), detailTimeout: $("#detail-timeout"),
   autoMinHours: $("#auto-min-hours"),
   scope: $("#scope"), lastSync: $("#last-sync"), status: $("#status"), counts: $("#counts"), actions: $("#actions"), settingsPanel: $("#connection-settings"),
@@ -94,6 +95,8 @@ async function saveSettings() {
       autoSync: elements.autoSync.value,
       concurrencyMode: elements.concurrencyMode.value,
       customConcurrency: Number(elements.customConcurrency.value || 4),
+      concurrencyMax: Number(elements.concurrencyMax.value || 12),
+      mediaConcurrency: Number(elements.mediaConcurrency.value || 12),
       identityBatchSize: Number(elements.identityBatchSize.value || 50),
       discoveryBatchSize: Number(elements.discoveryBatchSize.value || 100),
       stopAfterConsecutiveKnown: Number(elements.knownStreak.value || 12),
@@ -103,7 +106,7 @@ async function saveSettings() {
       autoMinIntervalHours: Number(elements.autoMinHours.value || 12),
     } });
     if (!response?.ok) return showError(response?.error);
-    transientNotice = "设置已保存并通过连接检查。";
+    transientNotice = response.session?.status === "running" ? "设置已保存，并已实时应用到当前任务。" : "设置已保存并通过连接检查。";
     await refresh();
   } catch (error) {
     showError(error);
@@ -119,6 +122,8 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
   elements.autoSync.value = settings.autoSync || "off";
   elements.concurrencyMode.value = settings.concurrencyMode || "auto";
   elements.customConcurrency.value = settings.customConcurrency || 4;
+  elements.concurrencyMax.value = settings.concurrencyMax || 12;
+  elements.mediaConcurrency.value = settings.mediaConcurrency || 12;
   elements.identityBatchSize.value = settings.identityBatchSize || 50;
   elements.discoveryBatchSize.value = settings.discoveryBatchSize || 100;
   elements.knownStreak.value = settings.stopAfterConsecutiveKnown || 12;
@@ -130,7 +135,9 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
   elements.concurrencyMode.onchange = () => { elements.customConcurrencyField.hidden = elements.concurrencyMode.value !== "custom"; };
   if (CLOUD_CONFIGURED) elements.settingsPanel.hidden = true;
 
-  const completedWithFailures = session?.status === "completed" && Number(session?.stats?.failed || 0) > 0;
+  const completedWithFailures = session?.status === "completed_with_failures"
+    || session?.status === "paused_failed_items"
+    || (session?.status === "completed" && Number(session?.stats?.failed || 0) > 0);
   const activeSession = session && (!['completed', 'cancelled'].includes(session.status) || completedWithFailures) ? session : null;
   const last = history?.find((item) => item.scopeKey === currentScope?.key) || history?.[0];
   elements.scope.textContent = activeSession?.scopeLabel || currentScope?.label
@@ -143,13 +150,14 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
     ["已发现", stats.discovered], ["已存在", stats.known], ["新增", stats.new], ["待修复", stats.repair], ["已采集", stats.captured],
     ["内容重复", stats.duplicate], ["排队中", queued], ["失败", stats.failed],
   ].map(([label, value]) => `<div><span>${label}</span><strong>${Number(value || 0)}</strong></div>`).join("");
+  renderConcurrency(session, settings);
 
   const running = session?.status === "running";
   const paused = session?.status?.startsWith("paused_") || completedWithFailures;
   elements.actions.hidden = !session || (session.status === "cancelled") || (session.status === "completed" && !completedWithFailures);
   elements.pause.hidden = !running;
   elements.resume.hidden = !paused;
-  elements.resume.textContent = completedWithFailures || session?.status === "paused_failed_items" ? "重试失败项" : "继续同步";
+  elements.resume.textContent = completedWithFailures ? "仅重试失败项" : "继续同步";
   elements.stopQueue.hidden = !running || session.discoveryComplete;
   elements.sync.disabled = running || paused || (!activeSession && !currentScope);
   elements.repair.disabled = running || paused || (!activeSession && !currentScope);
@@ -163,6 +171,32 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
   }
   $("#open-xhs")?.addEventListener("click", () => command("OPEN_XHS"));
   if (busy) setBusy(true);
+}
+
+function renderConcurrency(session, settings) {
+  const mode = session?.config?.concurrencyMode || settings.concurrencyMode || "auto";
+  const labels = { auto: "自动", conservative: "保守", balanced: "均衡", aggressive: "高吞吐", custom: "自定义" };
+  const configured = mode === "auto" ? (session?.config?.concurrencyMax || settings.concurrencyMax || 12)
+    : mode === "custom" ? (session?.config?.customConcurrency || settings.customConcurrency || 4)
+      : ({ conservative: 2, balanced: 4, aggressive: 8 }[mode] || 4);
+  const actual = Number(session?.concurrency || configured);
+  const active = Number(session?.activeTasks?.length || 0);
+  const reasons = {
+    warming_up: "收集近期任务样本", auto_optimizing: "自动优化吞吐", rate_limited: "检测到小红书 429",
+    verification_risk: "检测到验证风险", memory_pressure: "浏览器资源压力", cms_backpressure: "CMS 正在限流",
+    tab_crash: "Worker Tab 连续异常", note_timeouts: "Note 超时率升高", sustained_failures: "持续系统性失败", settings: "按设定运行",
+  };
+  const reason = reasons[session?.concurrencyController?.reason] || (mode === "auto" ? "自动优化吞吐" : "按设定运行");
+  const mediaConfigured = session?.config?.mediaConcurrency || settings.mediaConcurrency || 12;
+  const mediaActual = session?.mediaConcurrency || mediaConfigured;
+  const mediaReason = reasons[session?.mediaConcurrencyController?.reason] || "按设定运行";
+  elements.concurrencyState.innerHTML = [
+    `<strong>并发策略：</strong>${labels[mode] || mode}`,
+    `<strong>${mode === "auto" ? "设定上限" : "设定并发"}：</strong>${configured}`,
+    `<strong>实际并发：</strong>${actual}${session?.status === "running" ? `（活动 ${active}）` : ""}`,
+    `<strong>状态：</strong>${reason}`,
+    `<strong>媒体并发：</strong>${mediaActual}/${mediaConfigured}${mediaActual < mediaConfigured ? `（${mediaReason}）` : ""}`,
+  ].join("<br>");
 }
 
 function renderStatus({ session, currentScope, currentPageKind, settings, stats, queued }) {
@@ -184,9 +218,10 @@ function renderStatus({ session, currentScope, currentPageKind, settings, stats,
     elements.status.className = "error";
     return;
   }
-  if ((session.status === "completed" || session.status === "paused_failed_items") && Number(stats.failed || 0) > 0) {
-    elements.status.textContent = `同步已暂停：${stats.failed} 项尚未采集，完成小红书验证后点击“重试失败项”。已采集的 ${stats.captured} 项不会重复。`;
+  if (["completed_with_failures", "paused_failed_items"].includes(session.status) && Number(stats.failed || 0) > 0) {
+    elements.status.textContent = `同步完成：已修复 ${stats.captured + stats.duplicate}，无法自动恢复 ${stats.failed}。可仅重试失败项。`;
     elements.status.className = "error";
+    return;
   } else if (session.status === "completed") {
     elements.status.textContent = stats.new
       ? `同步完成：CMS 已接收 ${stats.captured + stats.duplicate} 条新增收藏，失败 ${stats.failed} 条。`
@@ -206,7 +241,7 @@ function renderStatus({ session, currentScope, currentPageKind, settings, stats,
     return;
   }
   if (session.status === "paused_recovered") {
-    elements.status.textContent = "检测到上次未完成的同步任务，队列已恢复，请点击“继续同步”。";
+    elements.status.textContent = "后台任务已自动恢复，继续处理中。";
     return;
   }
   if (session.status?.startsWith("paused_")) {
@@ -218,9 +253,13 @@ function renderStatus({ session, currentScope, currentPageKind, settings, stats,
     return;
   }
   if (session.phase === "acquisition") {
+    if (session.recoveryNoticeAt && Date.now() - Date.parse(session.recoveryNoticeAt) < 5 * 60 * 1000) {
+      elements.status.textContent = "后台任务已自动恢复，继续处理中。";
+      return;
+    }
     const retrying = Number(stats.retrying || 0);
     const action = session.mode === "repair" ? "正在修复缺失数据" : session.mode === "full" ? "正在完整核验收藏" : "正在采集新增收藏";
-    elements.status.textContent = `${action}……排队 ${queued} 条，已完成 ${stats.captured + stats.duplicate} 条，当前并发 ${session.concurrency || settings.customConcurrency}${retrying ? `，等待重试 ${retrying} 条` : ""}。`;
+    elements.status.textContent = `${action}……排队 ${queued} 条，已完成 ${stats.captured + stats.duplicate} 条${retrying ? `，等待重试 ${retrying} 条` : ""}。`;
     return;
   }
   elements.status.textContent = "正在保存同步结果和检查点……";
