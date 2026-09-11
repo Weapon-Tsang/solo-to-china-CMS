@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.18.3 - Unreleased
+## 1.18.3 - 2026-09-11
 
 - Stabilize the private HTTP origin behind Cloudflare Tunnel by extending Node's keep-alive window beyond the connector pool's reuse window.
 - Pin the production connector to `cloudflare/cloudflared:2026.8.2` over HTTP/2 after isolating a `2026.9.0` Docker-bridge regression during rollout.
