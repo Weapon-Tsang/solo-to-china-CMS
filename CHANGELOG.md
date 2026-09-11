@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 - Unreleased
+## 2.0.0 - 2026-09-11
 
 - Require SHA-256-verified durable originals for every authorized Xiaohongshu image and video before source extraction; add chunked media upload, server recovery, browser repair manifests, and auditable media backfills.
 - Add grounded Experience Blocks after Claims, then produce drafts through Editorial Assembly, Narrative Plan, and a human-readable Writing Packet instead of a database-shaped evidence dump.
