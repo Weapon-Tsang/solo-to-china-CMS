@@ -101,8 +101,8 @@ export function Metrics({ totals: rawTotals = {}, onNavigate }) {
       detail: totals.activeOffers ? "仅在质检通过后叠加到发布稿" : "未配置也不影响研究与写作", stats: [[totals.wordpressInventory, "WordPress 库存"], [totals.draftsReady, "待投递草稿"]], view: "commercial",
     },
     {
-      icon: CircleAlert, tone: totals.exceptions ? "amber" : "emerald", eyebrow: "系统健康", title: totals.exceptions ? "需要关注" : "运行正常", value: totals.exceptions ?? 0, unit: "个待处理事项",
-      detail: totals.exceptions ? `${totals.exceptionRecords ?? totals.exceptions} 条底层异常或来源比较记录` : "采集、队列与维护状态正常", stats: [[totals.conflicts, "知识冲突"], [totals.sources, "已采集来源"]], view: "settings",
+      icon: CircleAlert, tone: totals.exceptions ? "amber" : "emerald", eyebrow: "系统健康", title: totals.exceptions ? "基础设施需关注" : "运行正常", value: totals.exceptions ?? 0, unit: "个系统故障",
+      detail: totals.exceptions ? `${totals.exceptionRecords ?? totals.exceptions} 条认证、数据库、网络或外部集成故障` : "认证、数据库、网络与外部集成正常", stats: [[totals.processingGapOpportunities ?? 0, "系统重算中"], [totals.internalOpportunities ?? 0, "内部机会"]], view: "settings",
     },
   ];
   if (Number(rawTotals.pendingRecommendations || 0) > 0) groups[1].view = "recommendations";

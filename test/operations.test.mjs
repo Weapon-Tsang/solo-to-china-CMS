@@ -450,7 +450,7 @@ test("exception webhook sends a deduplicated operational payload with optional b
 
   const jobId = repository.enqueue("plan_content", "missing-topic");
   database.prepare("UPDATE jobs SET max_attempts=1 WHERE id=?").run(jobId);
-  repository.failJob(repository.claimJob(), new Error("topic package missing"));
+  repository.failJob(repository.claimJob(), new Error("AI_PROVIDER_AUTH: missing production credential"));
   const notifier = new ExceptionNotifier(repository, {
     webhookUrl: `http://127.0.0.1:${webhook.address().port}/exceptions`,
     webhookToken: "notification-secret",
@@ -479,7 +479,7 @@ test("failed exception webhook delivery is durable and retryable", async () => {
   try {
     const jobId = repository.enqueue("plan_content", "missing-topic");
     database.prepare("UPDATE jobs SET max_attempts=1 WHERE id=?").run(jobId);
-    repository.failJob(repository.claimJob(), new Error("topic package missing"));
+    repository.failJob(repository.claimJob(), new Error("AI_PROVIDER_AUTH: missing production credential"));
     const config = { webhookUrl: "http://127.0.0.1:4310/exceptions", repeatHours: 24 };
     const failing = new ExceptionNotifier(repository, config, { fetchImpl: async () => new Response("", { status: 503 }) });
     await assert.rejects(() => failing.deliver(), /HTTP 503/);

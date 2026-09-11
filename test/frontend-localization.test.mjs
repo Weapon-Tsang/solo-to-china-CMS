@@ -24,7 +24,7 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
     "实体身份审核",
     "前端能力契约",
     "目的地知识地图",
-    "联盟资产建链队列",
+    "待建链任务",
     "处理队列",
     "冷却等待",
   ];
@@ -66,7 +66,7 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
 });
 
 test("content workspace explains records, failures, and bounded automatic repair before opening details", () => {
-  for (const text of ["建议中已批准", "已创建内容", "未完成，需要处理", "未完成原因与处理"]) {
+  for (const text of ["已启动的生产记录", "已生成正文", "需要处理", "结果与处理"]) {
     assert.ok(viewsSource.includes(text), `内容队列缺少直白说明：${text}`);
   }
   for (const text of ["未通过原因：", "自动处理：", "已自动修复", "需要补齐真实输入"]) {

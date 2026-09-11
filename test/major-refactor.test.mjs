@@ -8,7 +8,7 @@ import { CaptureMediaUploadManager } from "../src/capture-media-upload.mjs";
 import { SCHEMA_VERSION } from "../src/db.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
-test("schema 57 installs the durable editorial, failure, and backfill boundaries", (t) => {
+test("schema 58 installs the durable editorial, failure, reconciliation, and backfill boundaries", (t) => {
   const { db } = repositoryFixture(t);
   assert.equal(db.prepare("SELECT MAX(version) version FROM schema_migrations").get().version,SCHEMA_VERSION);
   for (const table of ["experience_blocks","editorial_assemblies","narrative_plans","writing_packets",
@@ -97,6 +97,7 @@ test("Experience Blocks reject invented provenance and persist grounded sequence
   const sourceId=saveResearchSource(repository,"experience-a",[
     ["chengdu.panda.entry","Chengdu Panda Base","entry","Book the first entry slot"],
   ],"Book the first entry slot, then walk to the quieter upper enclosures.");
+  db.prepare("DELETE FROM experience_extraction_runs WHERE source_id=?").run(sourceId);
   db.prepare(`INSERT INTO source_segments(id,source_id,segment_type,sequence,title,raw_text,content_hash,semantic_hash,status,created_at,updated_at)
     VALUES ('segment-experience',?,'paragraph_group',0,'Route','Book the first entry slot, then walk uphill.','a','b','complete','now','now')`).run(sourceId);
   const claimId=db.prepare("SELECT id FROM claims WHERE source_id=?").get(sourceId).id;
@@ -206,5 +207,6 @@ function saveResearchSource(repository,externalId,claims,text) {
     traveler_fit:["solo"],practical_tips:[],warnings:[],confidence:.9},claims:claims.map(([key,subject,predicate,value]) =>
       ({key,subject,predicate,value,qualifiers:[],source_quote:value,confidence:.9})),
     blueprint:{format:"guide",hook:"practical",angle:"independent travel",sections:[],strengths:[],gaps:[]}},"test","test");
+  repository.saveExperienceExtraction(saved.id,{blocks:[]},"test");
   return saved.id;
 }

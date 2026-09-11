@@ -62,7 +62,8 @@ test("settings payload keeps the total exception count while bounding the previe
   });
   const app = createApplication(config);
   for (let index = 0; index < 105; index += 1) app.repository.enqueue("rebuild_topic_clusters", `settings-fixture-${index}`);
-  app.repository.db.prepare(`UPDATE jobs SET status='failed',last_error='Settings preview fixture',updated_at='2026-09-11T00:00:00.000Z'`).run();
+  app.repository.db.prepare(`UPDATE jobs SET status='failed',last_failure_code='AI_PROVIDER_AUTH',
+    last_error='Authentication credentials rejected',updated_at='2026-09-11T00:00:00.000Z'`).run();
   await app.start();
   t.after(async () => {
     await app.stop();

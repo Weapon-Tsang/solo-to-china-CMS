@@ -78,32 +78,15 @@ test("an existing task keeps its immutable trip_sub1", (t) => {
   assert.equal(second.trip_sub1, first.trip_sub1);
 });
 
-test("initial tasks come only from the explicit small seed file", () => {
+test("production starts with no mandatory Affiliate queue tasks", () => {
   const seeds = loadAffiliateQueueSeeds();
-  assert.equal(seeds.length, 4);
-  assert.deepEqual(new Set(seeds.map((item) => item.destinationSlug)), new Set(["beijing", "shanghai"]));
-  assert.ok(seeds.filter((item) => item.productCategory === "ATTRACTION").every((item) => item.tripToolType === "ATTRACTIONS_TOURS"));
+  assert.deepEqual(seeds, []);
 });
 
-test("seeding is idempotent and does not expand combinations", (t) => {
+test("default seed sync is a no-op and zero tasks is valid", (t) => {
   const repository = fixture(t);
-  assert.equal(repository.seedAffiliateQueue().created, 4);
-  assert.equal(repository.seedAffiliateQueue().existing, 4);
-  assert.equal(repository.listAffiliateQueueTasks().length, 4);
-});
-
-test("seed sync refreshes operator guidance without changing task identity or trip_sub1", (t) => {
-  const repository = fixture(t);
-  const before = createTask(repository, {
-    productCategory: "ATTRACTION", tripToolType: "CUSTOM_LINK", scopeKey: "beijing",
-    destinationSlug: "beijing", tripDestination: "Beijing", suggestedTitle: "Tickets and attractions in Beijing",
-  });
-  const report = repository.seedAffiliateQueue();
-  const after = repository.getAffiliateQueueTask(before.id);
-  assert.equal(report.updated, 1);
-  assert.equal(after.trip_tool_type, "ATTRACTIONS_TOURS");
-  assert.equal(after.task_key, before.task_key);
-  assert.equal(after.trip_sub1, before.trip_sub1);
+  assert.deepEqual(repository.seedAffiliateQueue(), { created: 0, updated: 0, existing: 0, suppressedByAsset: 0, items: [] });
+  assert.deepEqual(repository.listAffiliateQueueTasks(), []);
 });
 
 test("Trip.com tool mappings match the current Affiliate Link builder fields", () => {
@@ -306,9 +289,10 @@ test("affiliate queue write APIs require admin auth and expose the manual workfl
   assert.equal(denied.status, 401);
   const seeded = await fetch(`${base}/api/commercial/affiliate-queue/seed`, { method: "POST", headers: { authorization: "Bearer queue-admin" } });
   assert.equal(seeded.status, 200);
-  assert.equal((await seeded.json()).created, 4);
+  assert.equal((await seeded.json()).created, 0);
+  app.repository.createAffiliateQueueTask(taskInput({ scopeKey: "beijing", destinationSlug: "beijing" }));
   const listed = await (await fetch(`${base}/api/commercial/affiliate-queue?product_category=HOTEL`)).json();
-  assert.equal(listed.items.length, 2);
+  assert.equal(listed.items.length, 1);
   const task = listed.items[0];
   const completed = await fetch(`${base}/api/commercial/affiliate-queue/${task.id}/complete`, {
     method: "POST", headers: { authorization: "Bearer queue-admin", "content-type": "application/json" },

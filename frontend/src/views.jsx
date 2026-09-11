@@ -59,8 +59,8 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
 function SettingsOperations({ data, onAction, actionBusy }) {
   const exceptionTotal = Number(data?.operations?.exceptionTotal ?? data?.operations?.exceptions?.length ?? 0);
   const groups = [
-    ["系统健康与异常", `${exceptionTotal} 项需处理`, data?.operations?.exceptions],
-    ["维护与回填", `${data?.operations?.maintenance?.runs?.length || 0} 条维护记录 · ${(data?.operations?.mediaBackfills?.length || 0) + (data?.operations?.systemBackfills?.length || 0)} 条回填`, [...(data?.operations?.systemBackfills || []),...(data?.operations?.mediaBackfills || [])]],
+    ["系统健康", `${exceptionTotal} 项基础设施故障`, data?.operations?.exceptions],
+    ["维护与回填", `${data?.operations?.maintenance?.pendingTasks || 0} 类任务仍在处理`, data?.operations?.maintenance?.cards],
     ["WordPress 与搜索", `${data?.operations?.wordpressInventory?.length || 0} 篇库存文章`, data?.operations?.wordpressInventory],
     ["编辑蓝图与经验层", `${data?.operations?.blueprints?.length || 0} 个蓝图 · ${data?.operations?.experiences?.length || 0} 个 Experience Block`, data?.operations?.experiences],
     ["失败经验与金标文章", `${data?.operations?.failureLessons?.length || 0} 条失败经验 · ${data?.operations?.goldenArticles?.length || 0} 篇金标文章`, data?.operations?.failureLessons],
@@ -146,14 +146,14 @@ function SourcesView({ data, onGuide, onOpenSource, onSubmitManualSource, action
             <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="line-clamp-2 text-[15px] font-semibold leading-relaxed text-slate-900"><span className="mr-1 tabular-nums text-slate-400">{item.list_number}.</span>{item.title || "未命名来源"}</h2><p className="mt-1.5 text-[11px] text-slate-400">{sourceTypeLabel(item)} · v{item.capture_version}</p></div><StatusPill status={item.status} /></div>
             <SourceQueueStatus item={item} compact />
             <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[11px] text-slate-500"><span>{item.destination_name || "目的地识别中"}</span><span className="font-medium tabular-nums text-slate-700">{sourceProgressLabel(item)}</span></div>
-            <p className="mt-1 text-[10px] text-slate-500">采集 {item.completeness_status} · 媒体 {item.stored_original_count}/{item.discovered_media_count} 原件 · Experience {item.experience_status || "pending"}</p>
+            <p className="mt-1 text-[10px] text-slate-500">{sourceCaptureLabel(item)} · {sourceMediaLabel(item)} · {sourceExperienceLabel(item)}</p>
             <p className="mt-2 text-[10px] text-slate-400">点击查看来源详情与提取结果</p>
           </button>)}
         </section>
         <div className="hidden md:block"><TableShell><Table><TableHeader><TableRow><TableHead>来源 / 平台作者</TableHead><TableHead>采集状态</TableHead><TableHead>完整性</TableHead><TableHead>抽取状态</TableHead><TableHead>媒体耐久化</TableHead><TableHead>Experience</TableHead><TableHead className="hidden md:table-cell">目的地</TableHead><TableHead>处理进度</TableHead><TableHead className="hidden lg:table-cell">采集时间</TableHead></TableRow></TableHeader>
           <TableBody>{items.map((item) => <TableRow key={item.id} tabIndex={0} role="button" className="cursor-pointer focus-visible:bg-slate-50 focus-visible:outline-none" onClick={() => onOpenSource(item.id)} onKeyDown={(event) => event.key === "Enter" && onOpenSource(item.id)}>
             <TableCell><div className="max-w-md font-medium text-slate-900"><span className="mr-1.5 tabular-nums text-slate-400">{item.list_number}.</span>{item.title || "未命名来源"}</div><div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-slate-400"><span>{sourceTypeLabel(item)}</span><span>· v{item.capture_version}</span></div></TableCell>
-            <TableCell><StatusPill status={item.status} /></TableCell><TableCell><StatusPill status={item.completeness_status || "unknown"} /></TableCell><TableCell><SourceQueueStatus item={item} /></TableCell><TableCell><StatusPill status={item.media_durability_status}/><p className="mt-1 text-[10px] text-slate-400">{item.stored_original_count}/{item.discovered_media_count}</p></TableCell><TableCell><StatusPill status={item.experience_status || "pending"}/></TableCell><TableCell className="hidden md:table-cell">{item.destination_name || "—"}</TableCell><TableCell className="whitespace-nowrap text-xs tabular-nums">{sourceProgressLabel(item)}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.captured_at)}</TableCell>
+            <TableCell><StatusPill status={item.status} /></TableCell><TableCell><span className="text-xs text-slate-700">{sourceCaptureLabel(item)}</span></TableCell><TableCell><SourceQueueStatus item={item} /></TableCell><TableCell><span className="text-xs text-slate-700">{sourceMediaLabel(item)}</span></TableCell><TableCell><span className="text-xs text-slate-700">{sourceExperienceLabel(item)}</span></TableCell><TableCell className="hidden md:table-cell">{item.destination_name || "—"}</TableCell><TableCell className="whitespace-nowrap text-xs tabular-nums">{sourceProgressLabel(item)}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.captured_at)}</TableCell>
           </TableRow>)}</TableBody>
         </Table></TableShell></div>
       </>}
@@ -257,6 +257,24 @@ function sourceTypeLabel(item) {
   return labels[item.source_kind] || "人工提交来源";
 }
 
+function sourceCaptureLabel(item) {
+  return item.completeness_status === "complete" ? "正文完整" : "正文待修复";
+}
+
+function sourceMediaLabel(item) {
+  const stored=Number(item.stored_original_count || 0); const discovered=Number(item.discovered_media_count || 0);
+  if (stored===discovered) return `媒体原件 ${stored}/${discovered}`;
+  if (Number(item.browser_repair_count || 0)>0) return `媒体原件 ${stored}/${discovered} · 等待浏览器补采`;
+  if (Number(item.server_repair_count || 0)>0) return `媒体原件 ${stored}/${discovered} · 系统后台恢复中`;
+  return `媒体原件 ${stored}/${discovered} · 暂时无法恢复`;
+}
+
+function sourceExperienceLabel(item) {
+  if (item.experience_status === "succeeded" && !item.experience_degraded) return "体验信息已提取";
+  if (item.experience_status === "succeeded" && item.experience_degraded) return "体验信息因媒体缺失暂时降级";
+  return "等待体验信息提取";
+}
+
 function sourceProgressLabel(item) {
   const claims = Number(item.claim_count || 0);
   const segments = Number(item.segment_count || 0);
@@ -282,9 +300,13 @@ function RecommendationsView({ data, onAction, actionBusy, onNavigate }) {
     method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({decision,ids:selected})
   },(result)=>`批量完成 ${result.processed} 项，失败 ${result.failed} 项，入队 ${result.queued} 项。`).then((result)=>result&&setSelected([]));
   if(!items.length) return <EmptyState icon="content" title="建议收件箱为空" description="来源诊断和知识聚合会在形成可执行文章机会后显示在这里；知识型、低价值和非行动项不会混入。" action={()=>onNavigate("sources")} actionLabel="查看研究来源"/>;
-  return <div className="space-y-4"><SummaryBar title={`可执行内容机会 ${items.length} 项`}><span>每一项都有独立生命周期；批准一个方向不会消耗同一来源的其他方向。</span><span>SEO 动作为 NEW / UPDATE / EXPAND / MERGE / SKIP，站内重叠不会被静默丢弃。</span></SummaryBar>
+  return <div className="space-y-4"><SummaryBar title={`待决策内容机会 ${items.length} 项`}><span>内部机会 {data?.summary?.internalOpportunities ?? items.length} 项 · 已合并重复 {data?.summary?.merged ?? 0} 项 · 系统处理中 {data?.summary?.processingGap ?? 0} 项</span><span>当前列表只显示可以批准、暂缓或忽略的机会；仍在修复和重算的记录不会要求人工决策。</span></SummaryBar>
     <Card className="flex flex-wrap items-center gap-2 p-3"><Button size="sm" variant="outline" disabled={actionBusy} onClick={()=>setSelected(items.map(item=>item.id))}>全选当前页</Button><Button size="sm" variant="ghost" disabled={actionBusy} onClick={()=>setSelected([])}>清空</Button><span className="mr-auto text-xs text-slate-500">已选 {selected.length}</span><Button size="sm" disabled={actionBusy||!selected.length} onClick={()=>bulk("approve")}>批量批准</Button><Button size="sm" variant="outline" disabled={actionBusy||!selected.length} onClick={()=>bulk("defer")}>批量暂缓</Button><Button size="sm" variant="ghost" disabled={actionBusy||!selected.length} onClick={()=>bulk("ignore")}>批量忽略</Button></Card>
-    <section className="grid gap-3 lg:grid-cols-2">{items.map(item=>{const checked=selected.includes(item.id);const readiness=item.readiness||{};const mode=item.coverage?.publicationMode||"topic_feature";return <Card key={item.id} className="p-4"><label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium"><input className="size-5 accent-slate-900" type="checkbox" checked={checked} onChange={event=>setSelected(event.target.checked?[...new Set([...selected,item.id])]:selected.filter(id=>id!==item.id))}/>{checked?"已选择":"选择机会"}</label><div className="mt-2 flex items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-[11px] text-slate-500">{item.destination_name||item.destination_slug} · {productionModeLabel(mode)}</p></div><StatusPill status={item.lifecycle_state}/></div><div className="mt-3 flex flex-wrap gap-2"><span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700">SEO {item.seo_action}</span><span className={cn("rounded-full px-2 py-1 text-[10px] font-semibold",readiness.ready?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700")}>{readiness.ready?"素材就绪":`待补 ${readiness.blockingRequirements?.length||0} 项`}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] text-slate-600">就绪度 {Math.round(item.readiness_score||0)}</span></div>{item.previousFailure?.reason&&<p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[10px] text-amber-900">上次失败：{item.previousFailure.reason}<br/>本次规则：{item.previousFailure.remediation}</p>}<p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.reasoning_summary||item.coverage?.proposal?.readerPromise||"该机会由当前证据范围生成。"}</p><div className="mt-4 flex gap-2"><Button size="sm" disabled={actionBusy} onClick={()=>decide(item,"approve")}><CheckCircle2/>批准</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={()=>decide(item,"defer")}>暂缓</Button><Button size="sm" variant="ghost" disabled={actionBusy} onClick={()=>decide(item,"ignore")}>忽略</Button></div></Card>})}</section></div>;
+    <section className="grid gap-3 lg:grid-cols-2">{items.map(item=>{const checked=selected.includes(item.id);const readiness=item.readiness||{};return <Card key={item.id} className="p-4"><label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs font-medium"><input className="size-5 accent-slate-900" type="checkbox" checked={checked} onChange={event=>setSelected(event.target.checked?[...new Set([...selected,item.id])]:selected.filter(id=>id!==item.id))}/>{checked?"已选择":"选择机会"}</label><div className="mt-2 flex items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-slate-900">{item.title}</h2><p className="mt-1 text-[11px] text-slate-500">{item.destination_name||item.destination_slug} · {item.productionTypeLabel}</p></div><span className={cn("rounded-full px-2 py-1 text-[10px] font-semibold",item.processing_state==="CURRENT"?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700")}>{item.displayStatus}</span></div><div className="mt-3 flex flex-wrap gap-2"><span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700">发布动作 {publicationActionLabel(item.seo_action)}</span><span className={cn("rounded-full px-2 py-1 text-[10px] font-semibold",readiness.ready?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700")}>{readiness.ready?"素材就绪":"等待关键证据"}</span><span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] text-slate-600">就绪度 {Math.round(item.readiness_score||0)}</span></div>{item.previousFailureSummary&&<p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[10px] leading-relaxed text-amber-900">{item.previousFailureSummary}</p>}<p className="mt-3 text-[11px] leading-relaxed text-slate-500">{item.recommendationReason}</p><div className="mt-4 flex gap-2"><Button size="sm" disabled={actionBusy} onClick={()=>decide(item,"approve")}><CheckCircle2/>批准</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={()=>decide(item,"defer")}>暂缓</Button><Button size="sm" variant="ghost" disabled={actionBusy} onClick={()=>decide(item,"ignore")}>忽略</Button></div></Card>})}</section></div>;
+}
+
+function publicationActionLabel(value) {
+  return ({NEW:"新建文章",UPDATE:"更新现有文章",EXPAND:"扩展现有文章",MERGE:"合并到现有文章",SKIP:"不发布"})[value] || "待确认";
 }
 
 function LegacyRecommendationsView({ data, onAction, actionBusy, onNavigate }) {
@@ -558,14 +580,14 @@ function ContentView({ data, onNavigate, onOpenDraft, onAction, actionBusy }) {
     opportunity_id: opportunity.id, candidate_id: opportunity.candidate_id }));
   const created = rows.filter((item) => Boolean(item.draft_id || item.draft_title || item.body)).length;
   const failed = rows.filter((item) => Boolean(contentFailureReason(item))).length;
-  if (!approved.length && !items.length) return <EmptyState icon="content" title="还没有已批准的文章" description="在“建议”中批准文章后，系统会在这里显示创建进度和结果。" action={() => onNavigate("recommendations")} actionLabel="查看建议" />;
+  if (!approved.length && !items.length) return <EmptyState icon="content" title="还没有开始生产的内容" description="批准后，只有真正进入生产队列的文章才会显示在这里；等待证据的批准不会占位。" action={() => onNavigate("recommendations")} actionLabel="查看建议" />;
   return <div className="space-y-3">
-    <Card className="p-4 sm:p-5"><div className="grid gap-3 sm:grid-cols-3"><ContentCount label="建议中已批准" value={approved.length} tone="blue" /><ContentCount label="已创建内容" value={created} tone="green" /><ContentCount label="未完成，需要处理" value={failed} tone={failed ? "red" : "slate"} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">每篇已批准文章只显示一次。未完成的文章会直接列出原因；点击已有内容的行可查看正文和检查结果。</p></Card>
-    <TableShell><Table><TableHeader><TableRow><TableHead>已批准文章</TableHead><TableHead>当前结果</TableHead><TableHead>未完成原因与处理</TableHead></TableRow></TableHeader><TableBody>{rows.map((item) => {
+    <Card className="p-4 sm:p-5"><div className="grid gap-3 sm:grid-cols-3"><ContentCount label="正在生产或已完成" value={approved.length} tone="blue" /><ContentCount label="已生成正文" value={created} tone="green" /><ContentCount label="需要处理" value={failed} tone={failed ? "red" : "slate"} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">这里只显示已启动的生产记录。等待证据、仍在修复或仅存在于内部推荐池的项目不会显示。</p></Card>
+    <TableShell><Table><TableHeader><TableRow><TableHead>生产内容</TableHead><TableHead>当前阶段</TableHead><TableHead>结果与处理</TableHead></TableRow></TableHeader><TableBody>{rows.map((item) => {
       const state = item.workflow_status || item.draft_status || item.brief_status || item.status;
       const reason = contentFailureReason(item);
-      return <TableRow key={item.opportunity_id} tabIndex={item.draft_id ? 0 : undefined} role={item.draft_id ? "button" : undefined} className={cn(item.draft_id && "cursor-pointer")} onClick={() => item.draft_id && onOpenDraft(item.draft_id)} onKeyDown={(event) => event.key === "Enter" && item.draft_id && onOpenDraft(item.draft_id)}><TableCell><div className="max-w-xl font-medium text-slate-900">{item.draft_title || item.proposed_title || item.title || "未命名文章"}</div></TableCell><TableCell><StatusPill status={state} /></TableCell><TableCell><p className={cn("max-w-xl text-[11px] leading-relaxed", reason ? "text-red-700" : "text-slate-500")}>{reason || (item.draft_id ? "内容已创建，可点击本行查看。" : "系统正在处理，不需要手动操作。")}</p>{reason && item.candidate_id && <ContentRecovery candidateId={item.candidate_id} onAction={onAction} actionBusy={actionBusy} />}</TableCell></TableRow>;
-    })}{rows.length === 0 && <TableRow><TableCell colSpan={3} className="py-8 text-center text-xs text-slate-500">还没有已批准的文章。</TableCell></TableRow>}</TableBody></Table></TableShell>
+      return <TableRow key={item.opportunity_id} tabIndex={item.draft_id ? 0 : undefined} role={item.draft_id ? "button" : undefined} className={cn(item.draft_id && "cursor-pointer")} onClick={() => item.draft_id && onOpenDraft(item.draft_id)} onKeyDown={(event) => event.key === "Enter" && item.draft_id && onOpenDraft(item.draft_id)}><TableCell><div className="max-w-xl font-medium text-slate-900">{item.draft_title || item.proposed_title || item.title || "未命名文章"}</div></TableCell><TableCell><StatusPill status={state} /></TableCell><TableCell><p className={cn("max-w-xl text-[11px] leading-relaxed", reason ? "text-red-700" : "text-slate-500")}>{reason || (item.draft_id ? "内容已创建，可点击本行查看。" : "生产任务已进入队列，当前无需人工处理。")}</p>{reason && item.candidate_id && <ContentRecovery candidateId={item.candidate_id} onAction={onAction} actionBusy={actionBusy} />}</TableCell></TableRow>;
+    })}{rows.length === 0 && <TableRow><TableCell colSpan={3} className="py-8 text-center text-xs text-slate-500">还没有开始生产的内容。</TableCell></TableRow>}</TableBody></Table></TableShell>
   </div>;
 }
 
@@ -581,7 +603,7 @@ function contentFailureReason(item) {
   if (item.suppression_reason) return `检测到重复内容：${item.suppression_reason}`;
   const blocker = item.operation?.blockers?.[0];
   if (blocker?.reason) return blocker.reason;
-  if (["failed", "qa_failed", "suppressed"].includes(state) || item.operation?.status === "failed") return item.operation?.nextAction?.reason || "这篇文章没有完成。请打开处理入口查看原因并从失败步骤继续。";
+  if (["failed", "qa_failed", "suppressed"].includes(state) || item.operation?.status === "failed") return item.operation?.nextAction?.reason || "生产在当前阶段停止；请打开处理入口查看原因并按建议继续。";
   return "";
 }
 
@@ -604,11 +626,11 @@ function CommercialView({ data, onGuide, onAction, actionBusy }) {
   const commissionRules = data?.commissionRules || [];
   return <>
     <SummaryBar title={`${providers.length} 个提供商 · ${items.length} 个资产`}><span>{opportunities.length} 个高价值 联盟营销机会</span><span>{queue.length} 个建链任务</span><span>{performance.length} 组归因指标 · {commissionRules.length} 条可维护佣金规则</span></SummaryBar>
-    <AffiliateQueue items={queue} onAction={onAction} actionBusy={actionBusy} />
     <SectionTitle title="联盟营销提供商" description="V1 使用人工模式；账号凭证和登录态不进入 CMS" />
     <TableShell><Table><TableHeader><TableRow><TableHead>提供商</TableHead><TableHead>连接方式</TableHead><TableHead>站点 / 语言</TableHead><TableHead>活跃资产</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{providers.map((item) => <TableRow key={item.id}><TableCell><div className="font-medium text-slate-900">{item.display_name}</div><div className="mt-1 text-[10px] text-slate-400">{item.provider_key}</div></TableCell><TableCell>{label(item.connection_mode)}</TableCell><TableCell>{item.site_name || "—"} · {item.default_language || "en"}</TableCell><TableCell className="tabular-nums">{item.active_asset_count || 0}</TableCell><TableCell><StatusPill status={item.status || "configured"} /></TableCell></TableRow>)}</TableBody></Table></TableShell>
-    <SectionTitle title="联盟资产登记表" description="支持目的地、区域、路线和精选实体范围" />
+    <SectionTitle title="已有联盟资产" description="链接资产按目的地、区域、路线或实体范围复用，不绑定到单篇文章" />
     <TableShell><Table><TableHeader><TableRow><TableHead>资产</TableHead><TableHead>范围</TableHead><TableHead>展示类型</TableHead><TableHead>商品类别</TableHead><TableHead className="hidden md:table-cell">提供商</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell><div className="font-medium text-slate-900">{item.title || item.id}</div><div className="mt-1 text-[10px] text-slate-400">优先级 {item.priority} · {item.language || "en"}</div></TableCell><TableCell>{label(item.scope_type)}<div className="mt-1 text-[10px] text-slate-400">{item.scope_key || item.destination_slug || "global"}</div></TableCell><TableCell>{label(item.asset_type)}</TableCell><TableCell>{label(item.product_category)}</TableCell><TableCell className="hidden md:table-cell">{item.provider}</TableCell><TableCell><StatusPill status={item.active ? "active" : "inactive"} /><div className="mt-1 text-[10px] text-slate-400">{item.valid_until ? `有效至 ${formatDate(item.valid_until)}` : "未设置截止时间"}</div></TableCell></TableRow>)}</TableBody></Table></TableShell>
+    <AffiliateQueue items={queue} onAction={onAction} actionBusy={actionBusy} />
     {opportunities.length > 0 && <><SectionTitle title="高价值机会" description="仅显示超过人工维护门槛的精度缺口" /><TableShell><Table><TableHeader><TableRow><TableHead>范围</TableHead><TableHead>类别</TableHead><TableHead>评分</TableHead><TableHead className="hidden md:table-cell">原因</TableHead></TableRow></TableHeader><TableBody>{opportunities.map((item) => <TableRow key={item.id}><TableCell>{label(item.scope_type)} · {item.scope_key}</TableCell><TableCell>{label(item.product_category)}</TableCell><TableCell>{Math.round(item.score)}</TableCell><TableCell className="hidden md:table-cell">{item.reason}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
     {performance.length > 0 && <><SectionTitle title="联盟事件一致性" description="点击不等于订单或佣金；未接入并确认转化数据时金额显示未知" /><TableShell><Table><TableHeader><TableRow><TableHead>提供商 / 类别</TableHead><TableHead>位置</TableHead><TableHead>曝光次数</TableHead><TableHead>点击 / 点击率</TableHead><TableHead>订单 / 佣金</TableHead></TableRow></TableHeader><TableBody>{performance.map((item) => <TableRow key={`${item.provider}:${item.category}:${item.slot_key}:${item.destination_slug}`}><TableCell>{item.provider} · {label(item.category)}<div className="mt-1 text-[10px] text-slate-400">归因：{label(item.attribution_status)} · 修订 {item.trace?.articleRevisions || 0} · Overlay {item.trace?.overlayVersions || 0} · 资产 {item.trace?.affiliateAssets || 0}</div></TableCell><TableCell>{item.slot_key || "—"}</TableCell><TableCell>{item.impressions}</TableCell><TableCell>{item.clicks} · {Math.round((item.ctr || 0) * 1000) / 10}%</TableCell><TableCell>{item.conversion_data_status === "confirmed" ? `${item.bookings} · ${Number(item.commission).toFixed(2)}` : "未知 · 未接入或未确认"}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
   </>;
@@ -654,7 +676,7 @@ function AffiliateQueue({ items, onAction, actionBusy }) {
     if (result) setImportPreview(result);
   };
   return <section className="space-y-3">
-    <SectionTitle title="联盟资产建链队列" description="Trip.com 半自动人工建链；CMS 不接触账号、Cookie、登录态或后台页面" />
+    <SectionTitle title="待建链任务" description="仅由真实高意图内容机会与联盟资产缺口生成；当前为零是正常状态" />
     <Card className="p-4"><div className="flex flex-wrap items-center gap-2">
       <select aria-label="队列状态" className={fieldClass} value={status} onChange={(event) => setStatus(event.target.value)}>
         <option value="">全部状态</option>{["PENDING", "READY_FOR_MANUAL", "COMPLETED", "SKIPPED", "INVALID"].map((value) => <option key={value} value={value}>{label(value)}</option>)}
@@ -665,7 +687,6 @@ function AffiliateQueue({ items, onAction, actionBusy }) {
       <select aria-label="范围" className={fieldClass} value={scope} onChange={(event) => setScope(event.target.value)}>
         <option value="">全部范围</option>{["ENTITY", "ROUTE", "AREA", "DESTINATION", "COUNTRY", "CATEGORY", "GLOBAL"].map((value) => <option key={value} value={value}>{label(value)}</option>)}
       </select>
-      <Button size="sm" disabled={actionBusy} onClick={() => onAction("/api/commercial/affiliate-queue/seed", { method: "POST" }, "初始 Seed 已同步")}><RefreshCw />同步初始 Seed</Button>
       <Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => exportQueue("csv")}><FileUp />导出 CSV</Button>
       <Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => exportQueue("json")}><FileUp />导出 JSON</Button>
     </div><div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
@@ -675,7 +696,7 @@ function AffiliateQueue({ items, onAction, actionBusy }) {
       {importPreview && <span className="text-[11px] text-slate-500">总计 {importPreview.total} · 有效 {importPreview.valid} · 错误 {importPreview.failed} · 已保护 {importPreview.protected}</span>}
     </div></Card>
     <SummaryBar title={active + " 个待人工处理任务"}><span>共 {items.length} 个，当前筛选显示 {filtered.length} 个</span><span>只需复制 trip_sub1，并回填官方 联盟链接</span></SummaryBar>
-    {!filtered.length ? <EmptyState icon="offer" title="当前筛选没有建链任务" description="任务只来自显式 Seed 或达到阈值的高意向 联盟营销机会，不会按城市、路线或实体批量组合生成。" /> :
+    {!filtered.length ? <EmptyState icon="offer" title="当前没有待建链任务" description="只有高意图内容出现资产缺口时才会创建任务；已有可复用资产或暂无缺口时，零任务就是正常结果。" /> :
       <div className="grid gap-3 lg:grid-cols-2">{filtered.map((task) => {
         const guidance = tripTaskGuidance(task);
         const mutable = !["COMPLETED", "SKIPPED"].includes(task.status);

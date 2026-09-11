@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 57;
+export const SCHEMA_VERSION = 58;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -78,6 +78,43 @@ function migrate(db) {
   if (current < 55) migrationFiftyFive(db);
   if (current < 56) migrationFiftySix(db);
   if (current < 57) migrationFiftySeven(db);
+  if (current < 58) migrationFiftyEight(db);
+}
+
+function migrationFiftyEight(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE sources ADD COLUMN recommendation_reconciled_version TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sources ADD COLUMN recommendation_reconciled_at TEXT;
+
+      ALTER TABLE content_opportunities ADD COLUMN processing_state TEXT NOT NULL DEFAULT 'PROCESSING_GAP'
+        CHECK (processing_state IN ('PROCESSING_GAP','EVIDENCE_GAP','CURRENT'));
+      ALTER TABLE content_opportunities ADD COLUMN processing_detail_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE content_opportunities ADD COLUMN canonical_intent_key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE content_opportunities ADD COLUMN inbox_state TEXT NOT NULL DEFAULT 'INTERNAL'
+        CHECK (inbox_state IN ('INTERNAL','ACTIONABLE','MERGED','SUPERSEDED'));
+      ALTER TABLE content_opportunities ADD COLUMN primary_opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL;
+      ALTER TABLE content_opportunities ADD COLUMN recommendation_reconciled_version TEXT NOT NULL DEFAULT '';
+      ALTER TABLE content_opportunities ADD COLUMN recommendation_reconciled_at TEXT;
+      CREATE INDEX idx_content_opportunities_actionable_inbox
+        ON content_opportunities(inbox_state,lifecycle_state,readiness_score DESC,updated_at DESC);
+      CREATE INDEX idx_content_opportunities_canonical_intent
+        ON content_opportunities(canonical_intent_key,destination_slug,updated_at DESC);
+
+      UPDATE affiliate_asset_queue_tasks SET status='SKIPPED',
+        skipped_at=COALESCE(skipped_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        invalid_reason='Retired legacy hardcoded seed; future tasks require a real high-intent asset gap.',
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE source_type='SEED' AND status IN ('PENDING','READY_FOR_MANUAL','INVALID');
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (58, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFiftySeven(db) {

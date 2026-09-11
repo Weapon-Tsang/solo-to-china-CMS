@@ -230,7 +230,7 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "GET" && url.pathname === "/api/settings") {
-        const exceptionWorkspace = repository.listOperationalExceptionWorkspace({ limit: 100 });
+        const exceptionWorkspace = repository.listSystemHealthWorkspace({ limit: 100 });
         return sendJson(response, 200, {
           configured: extractor.enabled, vertexBatchConfigured: extractor.batchEnabled,
           vertexBatchActive: repository.activeVertexBatchCount(), visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
@@ -240,7 +240,7 @@ export function createApplication(config = loadConfig()) {
             exceptions: exceptionWorkspace.items,
             exceptionTotal: exceptionWorkspace.totalCount,
             maintenance: { runs:repository.listMaintenanceRuns(),telemetry:repository.jobTelemetry(config.telemetry.windowHours),
-              favoritesSyncRuns:repository.listFavoritesSyncRuns(20) },
+              favoritesSyncRuns:repository.listFavoritesSyncRuns(20),...repository.maintenanceOverview() },
             wordpressInventory: repository.listWordPressInventory(),
             blueprints: repository.getEditorialBlueprints(),
             experiences: repository.listExperienceBlocks().slice(0,100),
@@ -547,12 +547,13 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/content") {
         return sendJson(response, 200, {
-          items: repository.listContent({ approvedOnly: true }),
-          opportunities: repository.listApprovedContentOpportunities(limit(url.searchParams.get("limit"))),
+          items: repository.listContent({ productionOnly: true }),
+          opportunities: repository.listProductionContentOpportunities(limit(url.searchParams.get("limit"))),
         });
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {
         const inbox = repository.listRecommendationInbox(limit(url.searchParams.get("limit")));
+        const reconciliation=repository.reconcileRecommendationInbox();
         return sendJson(response, 200, { items: inbox, diagnostics: repository.listContentRecommendations(limit(url.searchParams.get("limit"))), opportunities: inbox,
           comparisonGroups: groupProposals(inbox),
           summary: {
@@ -562,6 +563,12 @@ export function createApplication(config = loadConfig()) {
               WHERE recommendation_id IS NULL OR approved_at IS NOT NULL OR candidate_id IS NOT NULL
                 OR status IN ('approved_waiting_for_evidence','approved_ready','producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft','suppressed')`).get().n,
             approved: repository.db.prepare('SELECT count(*) n FROM content_opportunities WHERE approved_at IS NOT NULL').get().n,
+            internalOpportunities: reconciliation.internalOpportunities,
+            actionableInbox: reconciliation.actionableInbox,
+            processingGap: reconciliation.processingGap,
+            evidenceGap: reconciliation.evidenceGap,
+            merged: reconciliation.merged,
+            superseded: reconciliation.superseded,
           } });
       }
       const opportunityDecisionMatch = url.pathname.match(/^\/api\/opportunities\/([^/]+)\/decision$/);
@@ -625,7 +632,7 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 202, result);
       }
       if (request.method === "GET" && url.pathname === "/api/exceptions") {
-        return sendJson(response, 200, repository.listOperationalExceptionWorkspace(workspaceQuery(url, 100)));
+        return sendJson(response, 200, repository.listSystemHealthWorkspace(workspaceQuery(url, 100)));
       }
       if (request.method === "GET" && url.pathname === "/api/maintenance") {
         return sendJson(response, 200, {
@@ -636,6 +643,7 @@ export function createApplication(config = loadConfig()) {
           searchConsoleSync: repository.getSearchConsoleSyncState(searchConsole.config.siteUrl),
           telemetry: repository.jobTelemetry(config.telemetry.windowHours),
           favoritesSyncRuns: repository.listFavoritesSyncRuns(20),
+          ...repository.maintenanceOverview(),
           notifications: {
             configured: notifier.enabled,
             minimumSeverity: config.notifications.minimumSeverity,

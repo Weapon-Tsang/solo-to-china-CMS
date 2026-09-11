@@ -1,6 +1,13 @@
 # Changelog
 
-## 2.0.2 - Unreleased
+## 2.0.3 - Unreleased
+
+- Reconcile internal opportunities into an actionable recommendation inbox with current-version checks, processing-versus-evidence gaps, semantic deduplication, collision handling, and safe historical-failure retries.
+- Limit Content to work that has entered production, separate infrastructure health from maintenance, and aggregate media, Experience, reconciliation, and failure-governance maintenance by task.
+- Make media repair invalidate stale Experience and recommendation projections before automatically recalculating downstream knowledge, diagnostics, and opportunities.
+- Remove hardcoded affiliate queue seeds, clarify zero-task states, and replace raw implementation terms with operator-readable Chinese copy across the CMS and extension.
+
+## 2.0.2 - 2026-09-11
 
 - Prevent slow dashboard requests from being invalidated by overlapping five-second polls, and cancel obsolete page loads when operators switch menus.
 - Bound Content to approved production records and Settings to a 100-item exception preview while preserving the complete exception count and durable browser-repair backlog.

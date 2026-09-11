@@ -1,6 +1,6 @@
 {
   "name": "solo-to-china-research-engine",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "private": true,
   "description": "Human-selected research capture and content intelligence engine for SoloToChina.",
   "type": "module",

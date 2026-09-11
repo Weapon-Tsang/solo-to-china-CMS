@@ -241,8 +241,8 @@ test("claim review exceptions include both source records, text context, and the
   const review = exceptionItems.find((item) => item.claim_review?.id === "review-evidence").claim_review;
   const duplicate = exceptionItems.find((item) => item.claim_review?.id === "review-evidence-duplicate").claim_review;
   assert.equal(review.factGroupKey, duplicate.factGroupKey);
-  assert.equal(repository.dashboard().totals.exceptions, 1);
-  assert.equal(repository.dashboard().totals.exceptionRecords, 2);
+  assert.equal(repository.dashboard().totals.exceptions, 0,"editorial evidence decisions do not pollute System Health");
+  assert.equal(repository.dashboard().totals.exceptionRecords, 0);
   assert.equal(review.claimA.sourceId, sourceA.id);
   assert.equal(review.claimB.sourceId, sourceB.id);
   assert.equal(review.claimA.evidence.available, true);

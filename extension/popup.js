@@ -219,7 +219,8 @@ function renderStatus({ session, currentScope, currentPageKind, settings, stats,
   }
   if (session.phase === "acquisition") {
     const retrying = Number(stats.retrying || 0);
-    elements.status.textContent = `正在采集新增收藏……排队 ${queued} 条，已完成 ${stats.captured + stats.duplicate} 条，当前并发 ${session.concurrency || settings.customConcurrency}${retrying ? `，等待重试 ${retrying} 条` : ""}。`;
+    const action = session.mode === "repair" ? "正在修复缺失数据" : session.mode === "full" ? "正在完整核验收藏" : "正在采集新增收藏";
+    elements.status.textContent = `${action}……排队 ${queued} 条，已完成 ${stats.captured + stats.duplicate} 条，当前并发 ${session.concurrency || settings.customConcurrency}${retrying ? `，等待重试 ${retrying} 条` : ""}。`;
     return;
   }
   elements.status.textContent = "正在保存同步结果和检查点……";
