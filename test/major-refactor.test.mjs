@@ -117,10 +117,14 @@ test("Experience Blocks reject invented provenance and persist grounded sequence
     {type:"route_strategy",title:"Invented route",segment_ids:["not-a-segment"],supporting_claim_ids:[claimId],sequence:["Invented"]},
     {type:"route_strategy",title:"Early-entry sequence",traveler_goal:"Avoid the busiest flow",segment_ids:["segment-experience"],
       supporting_claim_ids:[claimId],evidence_span_ids:["span-experience"],sequence:["Book the first entry slot","Walk uphill"],confidence:.9},
+    ...Array.from({length:24},(_,index)=>({type:"field_note",title:`Grounded note ${index+1}`,segment_ids:["segment-experience"],
+      supporting_claim_ids:[claimId],evidence_span_ids:["span-experience"],sequence:[`Step ${index+1}`],confidence:.8})),
   ]},"test",input);
-  assert.equal(saved.blocks.length,1);
-  assert.equal(saved.blocks[0].title,"Early-entry sequence");
-  assert.deepEqual(saved.blocks[0].supporting_claim_ids,[claimId]);
+  assert.equal(saved.blocks.length,20);
+  const earlyEntry=saved.blocks.find((block)=>block.title==="Early-entry sequence");
+  assert.ok(earlyEntry);
+  assert.deepEqual(earlyEntry.supporting_claim_ids,[claimId]);
+  assert.equal(saved.blocks.some((block)=>block.title==="Invented route"),false);
   assert.equal(repository.getSource(sourceId).claims.length,1);
   assert.equal(db.prepare("SELECT status FROM system_backfill_runs WHERE id=?").get(backfill.id).status,"completed");
 });

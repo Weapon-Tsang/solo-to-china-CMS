@@ -70,7 +70,9 @@ const INTAKE_SCHEMA = objectSchema(
 );
 
 const EXPERIENCE_SCHEMA = objectSchema(["blocks"], {
-  blocks: { type: "array", maxItems: 20, items: objectSchema(
+  // Keep the provider schema below Vertex's structured-output complexity
+  // ceiling. The repository enforces the 20-block cap deterministically.
+  blocks: { type: "array", items: objectSchema(
     ["type", "title", "traveler_goal", "segment_ids", "sequence", "decision_logic", "conditions", "tradeoffs", "warnings", "alternatives", "supporting_claim_ids", "evidence_span_ids", "confidence"],
     {
       type: { type: "string", enum: ["ROUTE", "DECISION", "CONDITION", "TRADEOFF", "WARNING", "ALTERNATIVE", "PROCESS", "FIELD_NOTE"] },

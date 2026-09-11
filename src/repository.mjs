@@ -1065,7 +1065,7 @@ export class Repository {
       supporting_claim_ids: uniqueStrings(block?.supporting_claim_ids).filter((value) => validClaims.has(value)),
       evidence_span_ids: uniqueStrings(block?.evidence_span_ids).filter((value) => validSpans.has(value)),
       confidence: Math.max(0, Math.min(1, Number(block?.confidence || 0))),
-    })).filter((block) => block.segment_ids.length && (block.supporting_claim_ids.length || block.evidence_span_ids.length));
+    })).filter((block) => block.segment_ids.length && (block.supporting_claim_ids.length || block.evidence_span_ids.length)).slice(0,20);
     transaction(this.db, () => {
       this.db.prepare(`UPDATE experience_extraction_runs SET status='superseded',updated_at=?
         WHERE source_id=? AND status='succeeded' AND input_hash<>?`).run(timestamp, sourceId, input.input_hash);
