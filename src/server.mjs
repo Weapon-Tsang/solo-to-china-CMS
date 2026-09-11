@@ -552,8 +552,8 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {
-        const inbox = repository.listRecommendationInbox(limit(url.searchParams.get("limit")));
         const reconciliation=repository.reconcileRecommendationInbox();
+        const inbox = repository.listRecommendationInbox(limit(url.searchParams.get("limit")),{reconcile:false});
         return sendJson(response, 200, { items: inbox, diagnostics: repository.listContentRecommendations(limit(url.searchParams.get("limit"))), opportunities: inbox,
           comparisonGroups: groupProposals(inbox),
           summary: {

@@ -2311,11 +2311,18 @@ export class Repository {
     const rows=this.db.prepare(`SELECT o.*,r.reasoning_summary,r.strategy_version AS recommendation_strategy_version
       FROM content_opportunities o LEFT JOIN content_recommendations r ON r.id=o.recommendation_id
       WHERE ${clauses.join(" AND ")} ORDER BY o.updated_at DESC,o.id`).all(...values);
+    const sourceStateCache=new Map();
+    const cachedSourceState=(sourceId,requireDiagnostic) => {
+      const key=`${sourceId}:${requireDiagnostic ? "diagnostic" : "base"}`;
+      if (!sourceStateCache.has(key)) sourceStateCache.set(key,this.sourceProcessingState(sourceId,{requireDiagnostic}));
+      return sourceStateCache.get(key);
+    };
     const evaluated=rows.map((row) => {
       const sourceIds=uniqueStrings([
         row.source_id,...json(row.source_ids_json,[]),...(json(row.coverage_json,{}).selectedSourceIds || []),
       ],10_000);
-      const sourceStates=sourceIds.map((sourceId) => ({sourceId,...this.sourceProcessingState(sourceId,{requireDiagnostic:Boolean(row.recommendation_id)} )}));
+      const requireDiagnostic=Boolean(row.recommendation_id);
+      const sourceStates=sourceIds.map((sourceId) => ({sourceId,...cachedSourceState(sourceId,requireDiagnostic)}));
       const versionCurrent=row.strategy_version===this.strategyVersion
         && (!row.recommendation_strategy_version || row.recommendation_strategy_version===this.strategyVersion);
       const processingGaps=sourceStates.filter((item) => item.state==="PROCESSING_GAP");
@@ -2342,6 +2349,9 @@ export class Repository {
       primaries.set(key,items[0].row.id);
     }
     const timestamp=now();
+    const updateOpportunity=this.db.prepare(`UPDATE content_opportunities SET processing_state=?,processing_detail_json=?,canonical_intent_key=?,
+      inbox_state=?,primary_opportunity_id=?,recommendation_reconciled_version=?,recommendation_reconciled_at=? WHERE id=?`);
+    const updateSource=this.db.prepare(`UPDATE sources SET recommendation_reconciled_version=?,recommendation_reconciled_at=? WHERE id=?`);
     transaction(this.db,() => {
       for (const item of evaluated) {
         const primaryId=primaries.get(item.canonicalIntentKey) || null;
@@ -2350,14 +2360,19 @@ export class Repository {
         const detail={versionCurrent:item.versionCurrent,gaps:item.processingGaps.map((entry) => ({sourceId:entry.sourceId,gaps:entry.gaps})),
           nextOwner:item.processingState==="PROCESSING_GAP" ? "system" : item.processingState==="EVIDENCE_GAP" ? "editor" : "editor",
           retryEligible:item.retryEligible};
-        this.db.prepare(`UPDATE content_opportunities SET processing_state=?,processing_detail_json=?,canonical_intent_key=?,
-          inbox_state=?,primary_opportunity_id=?,recommendation_reconciled_version=?,recommendation_reconciled_at=? WHERE id=?`)
-          .run(item.processingState,JSON.stringify(detail),item.canonicalIntentKey,inboxState,
-            inboxState==="MERGED" ? primaryId : null,this.strategyVersion,timestamp,item.row.id);
+        const detailJson=JSON.stringify(detail); const mergedPrimary=inboxState==="MERGED" ? primaryId : null;
+        const changed=item.row.processing_state!==item.processingState || item.row.processing_detail_json!==detailJson
+          || item.row.canonical_intent_key!==item.canonicalIntentKey || item.row.inbox_state!==inboxState
+          || (item.row.primary_opportunity_id || null)!==mergedPrimary
+          || item.row.recommendation_reconciled_version!==this.strategyVersion;
+        if (changed) updateOpportunity.run(item.processingState,detailJson,item.canonicalIntentKey,inboxState,
+          mergedPrimary,this.strategyVersion,timestamp,item.row.id);
       }
-      const currentSourceIds=new Set(evaluated.flatMap((item) => item.sourceStates.filter((state) => state.state==="CURRENT").map((state) => state.sourceId)));
-      for (const sourceId of currentSourceIds) this.db.prepare(`UPDATE sources SET recommendation_reconciled_version=?,recommendation_reconciled_at=? WHERE id=?`)
-        .run(this.strategyVersion,timestamp,sourceId);
+      const currentSources=new Map(evaluated.flatMap((item) => item.sourceStates.filter((state) => state.state==="CURRENT")
+        .map((state) => [state.sourceId,state])));
+      for (const [sourceId,state] of currentSources) if (state.reconciledVersion!==this.strategyVersion) {
+        updateSource.run(this.strategyVersion,timestamp,sourceId);
+      }
     });
     const stateCounts=(state) => evaluated.filter((item) => item.processingState===state).length;
     return {
@@ -2369,8 +2384,8 @@ export class Repository {
     };
   }
 
-  listRecommendationInbox(limit = 100) {
-    this.reconcileRecommendationInbox();
+  listRecommendationInbox(limit = 100,{reconcile=true}={}) {
+    if (reconcile) this.reconcileRecommendationInbox();
     return this.db.prepare(`SELECT o.*,r.classification,r.recommended_action,r.reasoning_summary,
         s.title AS source_title,ss.destination_name
       FROM content_opportunities o
