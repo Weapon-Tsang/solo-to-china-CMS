@@ -1,6 +1,6 @@
 # SoloToChina Research & Content Engine
 
-SoloToChina 的内部研究基础设施。当前采集路径采用 **Human Discovery + Human Favorite Selection → Incremental Favorites Sync / Manual Capture → Automated Research Pipeline**：用户用收藏完成研究价值和授权确认，Chrome Extension 负责可恢复的增量采集，系统再负责持久化、抽取、Claim 建模、冲突检测和 Editorial Blueprint 聚合。
+SoloToChina 的内部研究与内容生产基础设施。当前采集路径采用 **Human Discovery + Human Favorite Selection → Incremental / Repair / Full Sync → Durable Research Pipeline**：用户用收藏完成研究价值和授权确认，Chrome Extension 将正文、DOM 以及全部授权图片/视频原件校验后持久化，系统再负责 Claims、Experience、Knowledge、内容机会和人工批准后的原创写作。
 
 后台“来源”页也支持管理员主动提交公开的小红书、微信公众号、视频和普通网页链接，以及 PDF、Word、图片和视频文件。提交内容会进入同一套 Source → Claims → Knowledge → Blueprint → 内容建议流程；链接读取失败会明确区分登录墙、反爬、限流、超时、空内容和不支持格式。参见 [Manual Source Ingestion](docs/MANUAL_SOURCE_INGESTION.md)。
 
@@ -10,19 +10,20 @@ SoloToChina 的内部研究基础设施。当前采集路径采用 **Human Disco
 
 ```text
 Human Favorite Selection
-  → Incremental Favorites Sync or explicit single-note Save
-  → complete Raw Source + DOM snapshot + all discovered image/video references
+  → Incremental / Repair / Full Favorites Sync or explicit single-note Save
+  → complete Raw Source + DOM snapshot + verified original image/video bytes
   → Durable SQLite job queue
   → Multimodal structured extraction (optional Kimi provider)
-  → Claims + Source Blueprint
+  → Claims → grounded Experience Blocks + Source Blueprint
   → Destination Knowledge Base + conflict state
   → Editorial Blueprint Library
-  → Automatic Topic Candidate (evidence threshold)
-  → Evidence-backed Brief → Original English Draft
-  → Independent QA + one automatic revision
+  → actionable Opportunity (source diagnostic or Knowledge event)
+  → independent human approve / defer / ignore
+  → Editorial Assembly → Narrative Plan → Writing Packet → Original English Draft
+  → Independent prose QA + independent media/delivery checks
   → Commercial Overlay (optional, isolated, deterministic)
   → WordPress draft-only delivery (optional)
-  → Minimal exception/review dashboard
+  → Failure Lesson + recommended_again when bounded production fails
 ```
 
 - 单进程低运维部署：Node 24、内置 SQLite，React 前端在启动前构建为静态资源并由同一服务托管。
@@ -30,8 +31,8 @@ Human Favorite Selection
 - 未配置 AI Key 时 Capture 不会失败，Source 会进入 `needs_ai`，可稍后批量重跑。
 - Research 聚合只读取 `sources` / `claims` / `structured_sources` 等研究表。
 - Commercial 数据位于独立 Affiliate Provider / Asset / Intent / Composition / Event 表族，不进入任何 Research 查询或 Prompt；`commercial_offers` 仅作为旧同步 API 的兼容入口。
-- 自动选题至少要求 `AUTO_CONTENT_MIN_FACTS` 个 KB Facts 和 2 条独立 Source；Affiliate inventory 不参与评分。
-- QA 同时包含独立模型 Review 和不可绕过的代码检查；失败 Draft 最多自动修订一次。
+- Knowledge 变化达到当前主题覆盖门槛时可形成多来源机会；单来源改写、专题与多来源综合保持为互不消耗的并行路线，Affiliate inventory 不参与评分。
+- QA 同时包含独立模型 Review 和不可绕过的代码检查；篇幅是软信号，FAQ 可选，正文质量与媒体可用性互不冒充。
 - WordPress 只创建/更新 `draft`。用户发布后，系统会拒绝再次覆盖该文章。
 - Commercial Composer 从不修改 Research Draft；它创建独立 Publishable Overlay。没有相关 Offer 时是严格 no-op。
 
@@ -59,7 +60,7 @@ The dashboard is a React + Vite application styled with Tailwind CSS and source-
 2. 开启 Developer mode。
 3. 点击 Load unpacked，选择仓库内的 `extension/` 目录。
 4. 在 Chrome 中保持小红书已登录，打开目标收藏页/收藏夹。
-5. 点击 **Sync New Favorites**；首次回填可选 **Full Historical Sync**。页面结构异常时仍可打开单篇笔记并点 **Save Current Note**。
+5. 日常点击 **Sync New Favorites**；修复历史原件点击 **Repair Stored Favorites**；首次或完整重扫选择 **Full Historical Sync**。页面结构异常时仍可打开单篇笔记并点 **Save Current Note**。
 
 扩展默认连接 `http://127.0.0.1:4310`。如设置了 `CAPTURE_TOKEN`，在扩展的 Connection settings 中填入相同值。
 
@@ -72,7 +73,7 @@ The dashboard is a React + Vite application styled with Tailwind CSS and source-
 - `https://*.xiaohongshu.com/*`：访问收藏页和详情页；`xhscdn` 权限用于读取用户已授权媒体并计算原始哈希/生成 AI 尺寸衍生件；
 - Engine host permission：向本地或打包时配置的 Capture Host 发送身份批量查询、分片 Capture 和聚合状态。
 
-Extension 不申请 `cookies` 权限。日常增量同步用 checkpoint 与连续 12 个已知身份的组合停止条件，不需要重扫整个历史收藏；完整历史同步按有界窗口流式运行，没有固定 Session 总数上限。Capture 被 CMS 接受后浏览器立即处理下一篇，AI 抽取继续使用现有 SQLite durable Job queue。
+Extension 不申请 `cookies` 权限。日常增量同步用 checkpoint 与连续已知身份停止条件；Repair 只消费 CMS 返回的修复清单；完整历史同步按有界窗口流式运行，没有固定 Session 总数上限。每个媒体原件以分块上传、大小、MIME 和 SHA-256 校验完成后 Capture 才可被接受，AI 抽取继续使用 SQLite durable Job queue。
 
 ## AI 配置
 
@@ -143,16 +144,17 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 2.1
+## Content Production Strategy 3.0
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.1.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.1.md), and summarized by the Chinese [evolution log](docs/content-strategy/CHANGELOG.md). Captured sources enrich Claims and Knowledge first. A concrete article proposal becomes a counted content opportunity through human approval or a corroborated destination-level topic gate. The former manual planning workspace has been removed; automatic evidence and structure preparation remains an internal production step. Failures are classified by text, evidence, page, model permissions, or retained media and receive at most two automatic repair attempts before human intervention. The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.0.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.0.md), and summarized by the Chinese [evolution log](docs/content-strategy/CHANGELOG.md). Captured sources create Claims and grounded Experience Blocks before Knowledge and opportunities. A concrete opportunity is approved independently, then receives a bounded Editorial Assembly, Narrative Plan and human-readable Writing Packet. Terminal editorial failures learn from the attempt, remove only transient production assets and require reapproval. The live operating path is:
 
 ```text
-Capture → structured research → Intake Analysis → Recommendation → human decision
-                                                  → Approve article → create content → QA + delivery checks → WordPress draft
+Capture + durable originals → Claims → Experience → Knowledge / source diagnostic
+  → actionable Opportunity → human decision
+  → Editorial Assembly → Narrative → Writing Packet → Draft → QA + delivery → WordPress draft
 ```
 
-The **Recommendations** tab is the single article decision point. Approval is durable: insufficient evidence enters `approved_waiting_for_evidence`, then automatically resumes as `approved_ready` when the Coverage Matrix becomes complete. Every new downstream record carries the active Strategy version; historical records retain the strategy version that created them.
+The **Recommendations** tab is the single article decision point. Each path has its own lifecycle and explicit `NEW` / `UPDATE` / `EXPAND` / `MERGE` / `SKIP` treatment. Approval is durable: insufficient evidence waits until a Knowledge event makes the Coverage Matrix complete. Every new downstream record carries the active Strategy version; historical records retain the strategy version that created them.
 
 Every source image in an explicitly saved note is owner-confirmed as authorized for SoloToChina publication. The system traces article evidence back to those source assets, prioritizes matching real-world photos as WordPress draft media, and retains their provenance. Maps and infographics are rendered from validated data, while image generation is limited to non-factual original illustrations.
 
@@ -162,7 +164,7 @@ The production package uses a persistent Google Compute Engine VM, Docker Compos
 
 ## WordPress inventory and topic protection
 
-When WordPress credentials are configured, the engine reads published and in-progress posts into a local inventory before rebuilding topic candidates. Exact slug/title matches and high-overlap titles are marked `dismissed` with a `wordpress:` suppression reason, so they cannot enter automatic planning. The inventory request never edits WordPress content.
+When WordPress credentials are configured, the engine reads published and in-progress posts into a local inventory before rebuilding opportunities. Exact matches become explicit `UPDATE` work, partial overlap becomes `EXPAND`, and strong duplication can become `MERGE`; none are silently discarded or applied automatically. The inventory request never edits WordPress content.
 
 ```text
 WORDPRESS_INVENTORY_SYNC_HOURS=24

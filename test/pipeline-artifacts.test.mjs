@@ -50,7 +50,7 @@ test("entity resolution pages through the entire claim set instead of truncating
   assert.equal(new Set([...first.claims, ...second.claims].map((claim) => claim.id)).size, 305);
 });
 
-test("queue policy exposes age, favors downstream QA, and reports only measured percentiles", (t) => {
+test("queue policy exposes age, keeps interactive Research ahead of production, and reports only measured percentiles", (t) => {
   const { db, repository } = repositoryFixture(t);
   const source = capturedSource(repository, "43");
   db.prepare("DELETE FROM jobs").run();
@@ -58,7 +58,7 @@ test("queue policy exposes age, favors downstream QA, and reports only measured 
   repository.enqueue("preflight_source", source.id);
   repository.enqueue("review_draft", "draft-new");
   const claimed = repository.claimJob();
-  assert.equal(claimed.type, "review_draft");
+  assert.equal(claimed.type, "extract_segment_claims");
   repository.completeJob(claimed.id);
   const report = repository.pipelinePerformanceReport({ concurrency: 2 });
   assert.equal(report.environment.concurrency, 2);

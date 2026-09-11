@@ -40,6 +40,7 @@ export function loadConfig(env = process.env) {
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
   const sourceUploadsDir = path.resolve(root, env.SOURCE_UPLOADS_DIR || "data/source-uploads");
   const captureUploadsDir = path.resolve(root, env.CAPTURE_UPLOADS_DIR || "data/capture-uploads");
+  const captureMediaUploadsDir = path.resolve(root, env.CAPTURE_MEDIA_UPLOADS_DIR || "data/capture-media-uploads");
   const generatedMediaDir = path.resolve(root, env.GENERATED_MEDIA_DIR || "data/generated-media");
   const imageProvider = env.IMAGE_PROVIDER || env.VISUAL_PROVIDER || "none";
   return {
@@ -119,6 +120,12 @@ export function loadConfig(env = process.env) {
       maxBytes: integer(env.CAPTURE_UPLOAD_MAX_BYTES, 128 * 1024 * 1024),
       chunkBytes: integer(env.CAPTURE_UPLOAD_CHUNK_BYTES, 2 * 1024 * 1024),
       maxAgeMs: integer(env.CAPTURE_UPLOAD_MAX_AGE_HOURS, 24) * 60 * 60 * 1000,
+    },
+    captureMediaUploads: {
+      uploadDir: captureMediaUploadsDir,
+      storageDir: sourceUploadsDir,
+      maxBytes: integer(env.CAPTURE_MEDIA_MAX_BYTES, 512 * 1024 * 1024),
+      chunkBytes: integer(env.CAPTURE_MEDIA_CHUNK_BYTES, 4 * 1024 * 1024),
     },
     extraction: {
       concurrencyMode: choice(env.AI_CONCURRENCY_MODE || env.EXTRACT_CONCURRENCY_MODE, ["auto", "fixed"], "auto"),

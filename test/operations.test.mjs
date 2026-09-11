@@ -362,15 +362,21 @@ test("provider quota exhaustion pauses AI claiming without rewriting the whole v
     repository.completeJob(housekeepingId);
     current = new Date(repository.providerBackoffUntil + 1);
     const secondLimited = repository.claimJob();
-    assert.equal(secondLimited.id, contentId);
+    assert.equal(secondLimited.id, waitingId);
     repository.failJob(secondLimited, error);
-    const secondDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(contentId).available_at) - current.getTime();
+    const secondDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(waitingId).available_at) - current.getTime();
     assert.ok(secondDelayMs >= 7_500 && secondDelayMs < 13_000);
 
     for (let index = 0; index < 5; index += 1) repository.recordModelCall({
       stage: "test", provider: "vertex", model: "fixture", promptHash: "p", schemaHash: "s", inputHash: String(index),
       latencyMs: 1, attempts: 1, status: "succeeded",
     });
+    const resumedExtraction = repository.claimJob();
+    assert.equal(resumedExtraction.id,limitedId);
+    repository.completeJob(resumedExtraction.id);
+    const pendingContent = repository.claimJob();
+    assert.equal(pendingContent.id,contentId);
+    repository.completeJob(pendingContent.id);
     const recoveredId = repository.enqueue("review_draft", "draft-after-recovery");
     database.prepare("UPDATE jobs SET available_at=? WHERE id=?").run(current.toISOString(), recoveredId);
     const recovered = repository.claimJob();
@@ -406,13 +412,13 @@ test("completion-stage jobs bypass an older extraction backlog without bypassing
     const knowledge = repository.claimJob();
     assert.equal(knowledge.id, knowledgeId);
     repository.completeJob(knowledge.id);
-    const diagnostic = repository.claimJob();
-    assert.equal(diagnostic.id, diagnosticId);
-    repository.completeJob(diagnostic.id);
     const audit = repository.claimJob();
     assert.equal(audit.id, auditId);
     repository.completeJob(audit.id);
     assert.equal(repository.claimJob().id, extractionId);
+    const diagnostic = repository.claimJob();
+    assert.equal(diagnostic.id, diagnosticId);
+    repository.completeJob(diagnostic.id);
 
     const unavailableFinalizeId = repository.enqueue("finalize_source_extraction", "source-cooling-down");
     database.prepare("UPDATE jobs SET available_at=? WHERE id=?").run("2999-01-01T00:00:00.000Z", unavailableFinalizeId);

@@ -73,7 +73,7 @@ test("incremental discovery requires a reliable checkpoint, a clean window, and 
   assert.equal(session.queue.length, 8);
   session = applyIdentityBatch(session, checkpointCards, identities(checkpointCards, true));
   assert.equal(shouldStopDiscovery(session), true);
-  assert.deepEqual(session.stats, { discovered: 20, known: 12, new: 8, captured: 0, duplicate: 0, failed: 0, retrying: 0 });
+  assert.deepEqual(session.stats, { discovered: 20, known: 12, new: 8, repair: 0, captured: 0, duplicate: 0, failed: 0, retrying: 0 });
 });
 
 test("a new or reordered discovery window cannot trigger an early incremental stop", () => {

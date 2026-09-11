@@ -1,13 +1,28 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "2.1",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.1.md",
+  "current_version": "3.0",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.0.md",
   "status": "active",
   "history": [
     {
-      "version": "2.1",
+      "version": "3.0",
       "effective_date": "2026-09-11",
       "status": "active",
+      "summary": "建立原始媒体耐久化、Experience 语义层、Writing Packet 写作输入、机会生命周期与失败学习闭环，并将后台收敛为六个业务入口。",
+      "changes": [
+        "小红书图片和视频原件采用校验过的分块上传与持久化状态机；原件未落盘时不允许开始来源抽取，并支持增量、修复与全量三种同步。",
+        "Claims 后新增可追溯的 Experience Blocks，保存路线、顺序、条件、权衡、提醒和决策逻辑，不把叙事结构伪装成原子事实。",
+        "内容生产改为 Editorial Assembly、Narrative Plan、Writing Packet、Draft 的显式流水线，写作模型只接收本次选择的可读证据包。",
+        "建议页只展示可执行内容机会；每个方向独立批准、暂缓或忽略，并以 NEW、UPDATE、EXPAND、MERGE、SKIP 明示 SEO 处理动作。",
+        "普通内容生产失败生成 Failure Lesson、清理瞬态产物并回到 recommended_again；研究资产保留且再次生产必须重新批准。",
+        "后台顶级菜单固定为来源、建议、内容、知识库、商品、设置；系统健康、迁移、回填与高级维护统一收进设置。",
+        "新增安全可审计的媒体、Experience、建议重算和失败产物清理回填，以及交互优先、历史回填低优先级的公平队列。"
+      ]
+    },
+    {
+      "version": "2.1",
+      "effective_date": "2026-09-11",
+      "status": "superseded",
       "summary": "简化为建议批准与内容结果的一一对应界面，移除人工创作规划功能，并强化中文诊断、原图留存、保真图片翻译和独立正文质检。",
       "changes": [
         "移除创作规划菜单、人工命题接口和专用运行代码；内部自动写作准备仍作为生产实现步骤保留。",

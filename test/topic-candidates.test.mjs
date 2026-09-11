@@ -35,7 +35,7 @@ test("Strategy 1.4 extraction builds topic clusters without manufacturing pre-ap
   assert.equal(repository.listContent().length, 0);
 });
 
-test("WordPress inventory suppresses an overlapping topic before content planning", (t) => {
+test("WordPress inventory keeps an overlapping topic and classifies it as explicit UPDATE work", (t) => {
   const { db, repository } = repositoryFixture(t);
   seedKnowledge(db, { factCount: 5 });
   repository.replaceWordPressInventory("https://site.test", [{
@@ -47,10 +47,11 @@ test("WordPress inventory suppresses an overlapping topic before content plannin
     modifiedAt: "2026-08-01T00:00:00",
   }]);
   const generated = repository.rebuildTopicCandidates("beijing", 5, 1);
-  assert.equal(generated.length, 0);
+  assert.equal(generated.length, 1);
   const [topic] = repository.listContent();
-  assert.equal(topic.status, "dismissed");
-  assert.match(topic.suppression_reason, /^wordpress:42:/);
+  assert.equal(topic.status, "candidate");
+  assert.equal(topic.suppression_reason, null);
+  assert.equal(repository.classifyPublicationLifecycle(topic.proposed_title).seoAction, "UPDATE");
   assert.equal(repository.queueCandidate(topic.id), false);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='plan_content'").get().count, 0);
   repository.replaceWordPressInventory("https://site.test", []);
@@ -58,6 +59,7 @@ test("WordPress inventory suppresses an overlapping topic before content plannin
   assert.equal(restored.length, 1);
   assert.equal(restored[0].status, "candidate");
   assert.equal(restored[0].suppression_reason, null);
+  assert.equal(repository.classifyPublicationLifecycle(restored[0].proposed_title).seoAction, "NEW");
 });
 
 test("itinerary discovery requires route evidence from multiple sources and never displaces the core guide", (t) => {
@@ -70,7 +72,7 @@ test("itinerary discovery requires route evidence from multiple sources and neve
   assert.ok(expanded.some((topic) => topic.topic_key === "beijing:practical-solo-itinerary"));
 });
 
-test("Search Console query inventory suppresses and restores overlapping topics automatically", (t) => {
+test("Search Console overlap remains a diagnostic and never silently suppresses a topic", (t) => {
   const { db, repository } = repositoryFixture(t);
   seedKnowledge(db, { factCount: 5 });
   repository.replaceSearchConsoleInventory("sc-domain:site.test", {
@@ -80,9 +82,10 @@ test("Search Console query inventory suppresses and restores overlapping topics 
       clicks: 12, impressions: 120, ctr: 0.1, position: 4,
     }],
   });
-  assert.equal(repository.rebuildTopicCandidates("beijing", 5, 1).length, 0);
-  const [suppressed] = repository.listContent();
-  assert.match(suppressed.suppression_reason, /^search_console:gsc_/);
+  assert.equal(repository.rebuildTopicCandidates("beijing", 5, 1).length, 1);
+  const [candidate] = repository.listContent();
+  assert.equal(candidate.status,"candidate");
+  assert.equal(candidate.suppression_reason,null);
   repository.replaceSearchConsoleInventory("sc-domain:site.test", { startDate: "2026-07-28", endDate: "2026-08-23", rows: [] });
   const restored = repository.rebuildTopicCandidates("beijing", 5, 1);
   assert.equal(restored.length, 1);

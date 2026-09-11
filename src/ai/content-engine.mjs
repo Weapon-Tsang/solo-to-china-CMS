@@ -69,6 +69,54 @@ const INTAKE_SCHEMA = objectSchema(
   },
 );
 
+const EXPERIENCE_SCHEMA = objectSchema(["blocks"], {
+  blocks: { type: "array", maxItems: 20, items: objectSchema(
+    ["type", "title", "traveler_goal", "segment_ids", "sequence", "decision_logic", "conditions", "tradeoffs", "warnings", "alternatives", "supporting_claim_ids", "evidence_span_ids", "confidence"],
+    {
+      type: { type: "string", enum: ["ROUTE", "DECISION", "CONDITION", "TRADEOFF", "WARNING", "ALTERNATIVE", "PROCESS", "FIELD_NOTE"] },
+      title: { type: "string" }, traveler_goal: { type: "string" },
+      segment_ids: { type: "array", items: { type: "string" } },
+      sequence: { type: "array", items: { type: "string" } },
+      decision_logic: { type: "array", items: { type: "string" } },
+      conditions: { type: "array", items: { type: "string" } },
+      tradeoffs: { type: "array", items: { type: "string" } },
+      warnings: { type: "array", items: { type: "string" } },
+      alternatives: { type: "array", items: { type: "string" } },
+      supporting_claim_ids: { type: "array", items: { type: "string" } },
+      evidence_span_ids: { type: "array", items: { type: "string" } },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+    }),
+  },
+});
+
+const ASSEMBLY_SCHEMA = objectSchema(
+  ["selected_fact_keys", "selected_experience_block_ids", "selected_source_ids", "selected_blueprint_source_ids", "exclusions", "rationale"],
+  {
+    selected_fact_keys: { type: "array", maxItems: 48, items: { type: "string" } },
+    selected_experience_block_ids: { type: "array", maxItems: 24, items: { type: "string" } },
+    selected_source_ids: { type: "array", maxItems: 24, items: { type: "string" } },
+    selected_blueprint_source_ids: { type: "array", maxItems: 8, items: { type: "string" } },
+    exclusions: { type: "array", maxItems: 32, items: { type: "string" } },
+    rationale: { type: "string" },
+  },
+);
+
+const NARRATIVE_SCHEMA = objectSchema(
+  ["opening_job", "throughline", "route_sequence", "experience_placements", "supporting_fact_keys", "conditional_branches", "tradeoffs", "exclusions", "closing_decision"],
+  {
+    opening_job: { type: "string" }, throughline: { type: "string" },
+    route_sequence: { type: "array", maxItems: 24, items: { type: "string" } },
+    experience_placements: { type: "array", maxItems: 24, items: objectSchema(["experience_block_id", "section_id", "purpose"], {
+      experience_block_id: { type: "string" }, section_id: { type: "string" }, purpose: { type: "string" },
+    }) },
+    supporting_fact_keys: { type: "array", maxItems: 48, items: { type: "string" } },
+    conditional_branches: { type: "array", maxItems: 24, items: { type: "string" } },
+    tradeoffs: { type: "array", maxItems: 24, items: { type: "string" } },
+    exclusions: { type: "array", maxItems: 24, items: { type: "string" } },
+    closing_decision: { type: "string" },
+  },
+);
+
 const DRAFT_SCHEMA = objectSchema(
   ["title", "slug", "meta_description", "body_markdown", "evidence_ledger", "unresolved_conflicts", "verification_notes", "seo", "faqs", "visuals"],
   {
@@ -235,6 +283,33 @@ export class ContentEngine {
     });
   }
 
+  async analyzeExperience(sourcePackage, options = {}) {
+    return this.respond({
+      name: "experience_extraction",
+      schema: EXPERIENCE_SCHEMA,
+      instructions: EXPERIENCE_PROMPT,
+      input: JSON.stringify(sourcePackage), options,
+    });
+  }
+
+  async assembleEditorial(assemblyPackage, options = {}) {
+    return this.respond({
+      name: "editorial_assembly",
+      schema: ASSEMBLY_SCHEMA,
+      instructions: ASSEMBLY_PROMPT,
+      input: JSON.stringify(assemblyPackage), options,
+    });
+  }
+
+  async planNarrative(contentPackage, options = {}) {
+    return this.respond({
+      name: "narrative_plan",
+      schema: NARRATIVE_SCHEMA,
+      instructions: NARRATIVE_PROMPT,
+      input: JSON.stringify(contentPackage), options,
+    });
+  }
+
   async draft(contentPackage, revisionFeedback = null, options = {}) {
     const policy = contentPackage.content_policy || {};
     const result = await this.respond({
@@ -393,12 +468,18 @@ function markdownH2Sections(body) {
 }
 
 function draftInputDto(contentPackage) {
+  const selectedKeys = new Set(contentPackage.writing_packet?.selected_fact_keys || contentPackage.brief?.evidence_ledger || []);
   return {
     brief: contentPackage.brief,
+    writing_packet: contentPackage.writing_packet ? {
+      text: contentPackage.writing_packet.packet_text,
+      evidence_ledger: contentPackage.writing_packet.evidence_ledger,
+    } : null,
+    narrative_plan: contentPackage.narrative_plan || null,
     production_mode: contentPackage.production_mode || "multi_source_synthesis",
     source_reference: contentPackage.source_reference || null,
     content_policy: contentPackage.content_policy,
-    facts: (contentPackage.facts || []).map((fact) => ({
+    evidence_ledger_facts: (contentPackage.facts || []).filter((fact) => !selectedKeys.size || selectedKeys.has(fact.normalized_key)).map((fact) => ({
       normalized_key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate,
       preferred_value: fact.preferred_value, consensus_status: fact.consensus_status,
       freshness_state: fact.freshness_state, verification_priority: fact.verification_priority,
@@ -421,6 +502,10 @@ function draftInputDto(contentPackage) {
   };
 }
 
+function factDtos(contentPackage) {
+  return draftInputDto(contentPackage).evidence_ledger_facts || [];
+}
+
 function compactDraftRepairInput(contentPackage, issues = []) {
   const draft = contentPackage.draft;
   const brief = contentPackage.brief || {};
@@ -434,7 +519,7 @@ function compactDraftRepairInput(contentPackage, issues = []) {
   const affectedSections = outline.filter((section) => issueText.includes(String(section.heading || section.section_id || "").toLowerCase()));
   for (const section of affectedSections) for (const key of section.claim_keys || []) mentioned.add(key);
   if (!mentioned.size) for (const entry of draft.evidence_ledger || []) for (const key of entry.claim_keys || []) mentioned.add(key);
-  const allFacts = draftInputDto(contentPackage).facts;
+  const allFacts = factDtos(contentPackage);
   const facts = allFacts.filter((fact) => mentioned.has(fact.normalized_key));
   const fallbackFacts = facts.length ? facts : allFacts;
   const compactIssues = (issues || []).slice(0, 12).map((issue) => ({
@@ -474,7 +559,7 @@ function reviewInputDto(contentPackage) {
   return {
     brief: { plan: contentPackage.brief?.plan, canonical: contentPackage.brief?.canonical, strategy_version: contentPackage.brief?.strategy_version },
     content_policy: contentPackage.content_policy,
-    facts: draftInputDto(contentPackage).facts,
+    facts: factDtos(contentPackage),
     reader_sources: contentPackage.reader_sources || [],
     draft: contentPackage.draft,
     frontend_page: contentPackage.frontend_page ? {
@@ -500,6 +585,26 @@ const intakePrompt = (strategyVersion) => `Analyze one already-captured human-se
 - Surface only missing facts that are necessary for the proposed reader promise, especially safety-critical or time-sensitive booking, price, route, opening-hour, location, or warning details.
 - reasoning_summary must be a detailed, direct 4-8 sentence operator-facing explanation in Chinese. State which parallel routes are usable, why, what is genuinely missing, and what is not a blocker. Never provide hidden chain-of-thought. Commercial conversion is outside this task.`;
 
+const EXPERIENCE_PROMPT = `Extract grounded traveler Experience Blocks from the captured source after Claim extraction.
+- An Experience Block preserves useful sequence, decision logic, conditions, trade-offs, warnings, alternatives or field-observation context that atomic Claims alone lose.
+- Use only supplied segments, Claims and evidence spans. Every block must cite at least one supplied segment and at least one supplied Claim or evidence span. Copy IDs exactly.
+- Never invent a first-person experience, route step, condition or preference. Do not turn generic descriptions into anecdotes.
+- Keep Claims as factual atoms and Experience Blocks as a separate semantic layer. Empty blocks is correct when no grounded experience exists.
+- Media durability may be degraded; use text and available evidence and report no unavailable visual detail.`;
+
+const ASSEMBLY_PROMPT = `Act as an editorial commissioning desk. Select the smallest coherent evidence set for the approved opportunity before outlining.
+- Choose exact supplied IDs only. Preserve the approved reader promise and production mode.
+- Select facts for accuracy, Experience Blocks for route/decision/trade-off texture, and blueprints only for reusable structural lessons.
+- Prefer independent source families for multi-source synthesis. Do not require several sources for a bounded source adaptation.
+- Exclude tangential, duplicate, conflicted, stale, failed-before, or unsupported material and explain exclusions briefly.
+- Failure lessons and editorial lessons are constraints, not content to quote. Return selection decisions, not an article.`;
+
+const NARRATIVE_PROMPT = `Design the article's narrative logic from the approved brief and editorial assembly.
+- Decide the opening's practical job, the throughline, route or decision sequence, experience placements, conditional branches, trade-offs, exclusions, and closing decision.
+- Use exact supplied fact keys, section IDs and Experience Block IDs. Never invent lived experience or first-person narration.
+- Avoid encyclopedia/database structure, repetitive section templates, generic travel prose and artificial comprehensiveness.
+- Preserve conditions and uncertainty. The result is a plan for the writer, not reader-facing copy.`;
+
 const briefPrompt = (strategyVersion) => `Create an evidence-backed English content plan and Canonical Travel Content object for SoloToChina Content Production Strategy ${strategyVersion}.
 - approved_proposal is the operator-approved scope. Preserve its readerPromise, destination, production mode and evidenceBoundary. Do not expand a narrow proposal into a whole-city guide. Cover each promised section with exact supplied claim keys; if support is absent, disclose the gap rather than invent facts.
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
@@ -515,6 +620,8 @@ const briefPrompt = (strategyVersion) => `Create an evidence-backed English cont
 - Affiliate inventory and commercial conversion are outside this task and must not appear.`;
 
 const draftPrompt = (policy) => `Write an original, publication-quality English China travel guide from the supplied brief and evidence package.
+- Treat writing_packet.text as the commissioned writing input. Use its narrative sequence and evidence ledger; do not expand the full destination Knowledge store into an encyclopedic fact dump.
+- Never invent first-person experience. Ground traveler situations in supplied Experience Blocks and describe them in transparent third person.
 - Never invent a price, opening hour, policy, route, booking rule, safety guarantee, or other fact.
 - Use only supplied claim keys; report strict conflicts and temporal uncertainty transparently.
 - Write for solo, first-time, non-Chinese-speaking travelers without stereotyping or alarmism.
@@ -580,6 +687,7 @@ const REVIEW_PROMPT = `Act as an independent senior editor. Audit the English dr
 Grade reader-facing prose and factual support only. Missing image downloads, renderers, page composition or provider errors are separate deterministic delivery checks, not reasons to lower this editorial score. Never relax factual support or evidence scope.
 Fail the draft for any unsupported factual assertion, hidden conflict, misleading certainty, source-key leakage, affiliate contamination, or unsafe advice.
 Also check originality, usefulness for solo/first-time/non-Chinese-speaking visitors, SEO/GEO structure, clarity, and whether the evidence ledger honestly covers factual sections.
+Use these editorial issue codes when applicable: DATABASE_DUMP, GENERIC_AI_TRANSITIONS, REPETITIVE_EXPLANATION, UNIFORM_SECTION_RHYTHM, EXCESSIVE_HEDGING, NO_TRAVELER_DECISION, NO_CAUSAL_FLOW, FAKE_FIRST_PERSON.
 Do not rewrite the article. Return actionable blockers and warnings.`;
 
 export function applyDeterministicGates(review, contentPackage) {
@@ -630,6 +738,42 @@ export function applyDeterministicGates(review, contentPackage) {
   addGate("prompt-injection-isolation", !promptInjectionLeak,
     promptInjectionLeak ? "Source-borne prompt instructions leaked into reader-facing copy." : "No source-borne instruction pattern appears in reader-facing copy.",
     "prompt_injection_leak");
+  const fakeFirstPerson = /(?:^|[.!?]\s+)I\s+(?:arrived|visited|booked|paid|took|walked|found|noticed|recommend|stayed|ate)\b|\bmy (?:trip|visit|experience|hotel|route)\b/i.test(draft.body_markdown);
+  addGate("experience-authenticity", !fakeFirstPerson,
+    fakeFirstPerson ? "The draft invents a first-person travel experience that is not an attributed source quote." : "No fabricated first-person experience detected.",
+    "FAKE_FIRST_PERSON");
+  const genericIntro = /^(?:China|This (?:guide|article)|Whether you(?:'re| are)|Planning a trip)[^\n]{80,}/i.test(String(draft.body_markdown || "").trim());
+  addWarning("specific-opening", !genericIntro,
+    genericIntro ? "Opening is generic instead of performing the practical job in the Narrative Plan." : "Opening begins with a specific reader job.",
+    "GENERIC_AI_TRANSITIONS");
+  const listLines = (String(draft.body_markdown || "").match(/^(?:[-*]|\d+\.)\s+/gm) || []).length;
+  const databaseDump = listLines >= 18 && listLines > wordCount(draft.body_markdown) / 18;
+  addGate("editorial-synthesis", !databaseDump,
+    databaseDump ? "The article reads like a database export: too many disconnected fact-list rows without narrative decisions." : "Facts are synthesized into reader decisions.",
+    "DATABASE_DUMP");
+  const bodyText = String(draft.body_markdown || "");
+  const genericTransitions = (bodyText.match(/\b(?:moreover|furthermore|in conclusion|it is worth noting|delve into|embark on|tapestry|bustling metropolis)\b/giu) || []).length;
+  addWarning("ai-transition-quality", genericTransitions < 3,
+    genericTransitions < 3 ? "No repeated generic AI transition pattern detected." : "Generic transitions repeatedly replace specific causal or traveler-focused links.",
+    "GENERIC_AI_TRANSITIONS");
+  const sectionLengths = markdownH2Sections(bodyText).map((section) => wordCount(bodyText.slice(section.contentStart,section.end))).filter((value) => value > 0);
+  const uniformRhythm = sectionLengths.length >= 4 && Math.max(...sectionLengths) - Math.min(...sectionLengths) <= Math.max(20,Math.round(sectionLengths.reduce((a,b) => a+b,0) / sectionLengths.length * 0.15));
+  addWarning("section-rhythm", !uniformRhythm,
+    uniformRhythm ? "Sections follow an unnaturally uniform length and rhythm instead of the needs of each decision." : "Section depth varies with the reader's decision needs.",
+    "UNIFORM_SECTION_RHYTHM");
+  const hedgeCount = (bodyText.match(/\b(?:perhaps|possibly|might|may|could|generally|typically|usually|in many cases|it seems)\b/giu) || []).length;
+  const excessiveHedging = hedgeCount >= Math.max(5,Math.ceil(wordCount(bodyText) / 80));
+  addWarning("editorial-confidence", !excessiveHedging,
+    excessiveHedging ? "The prose overuses hedging instead of preserving uncertainty only where the evidence requires it." : "Uncertainty is expressed without excessive hedging.",
+    "EXCESSIVE_HEDGING");
+  const hasTravelerDecision = /\b(?:choose|use|book|reserve|take|avoid|plan|decide|prefer|start|go|walk|allow|bring|carry|switch|skip)\b/iu.test(bodyText);
+  addWarning("traveler-decision", hasTravelerDecision,
+    hasTravelerDecision ? "The article helps the traveler take or choose a concrete next step." : "The article presents information without helping the traveler make a decision.",
+    "NO_TRAVELER_DECISION");
+  const hasCausalFlow = wordCount(bodyText) < 120 || /\b(?:because|so that|which means|therefore|if|when|before|after|but|instead|otherwise|trade-?off)\b/iu.test(bodyText);
+  addWarning("causal-flow", hasCausalFlow,
+    hasCausalFlow ? "The prose links facts to conditions, consequences, or trade-offs." : "The article lacks causal flow between facts and traveler decisions.",
+    "NO_CAUSAL_FLOW");
   const conflictedKeys = facts.filter((fact) => fact.consensus_status === "conflicted").map((fact) => fact.normalized_key);
   const acknowledged = new Set(draft.unresolved_conflicts || []);
   const hiddenConflicts = conflictedKeys.filter((key) => ledgerKeys.has(key) && !acknowledged.has(key));
@@ -713,6 +857,9 @@ export function applyDeterministicGates(review, contentPackage) {
     "Deterministic schema must contain an Article and no placeholder values.", "schema_inconsistent");
 
   const repeatedParagraphs = duplicateParagraphs(draft.body_markdown);
+  addWarning("repetitive-explanation", repeatedParagraphs.length === 0,
+    repeatedParagraphs.length ? `${repeatedParagraphs.length} explanation pattern(s) repeat without adding a new decision or condition.` : "No repetitive explanation pattern found.",
+    "REPETITIVE_EXPLANATION");
   addWarning("information-repetition", repeatedParagraphs.length === 0,
     repeatedParagraphs.length ? `${repeatedParagraphs.length} repeated paragraph pattern(s) need editing.` : "No mechanically repeated substantive paragraph found.",
     "repetitive_copy");

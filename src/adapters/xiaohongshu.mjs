@@ -87,10 +87,11 @@ function normalizeAssets(values) {
       duration: finiteNumber(value?.duration),
       mediaIdentity: identity,
       originalSha256: validSha256(value?.originalSha256),
-      mimeType: safeImageMime(value?.mimeType),
+      mimeType: safeMediaMime(value?.mimeType, kind),
       aiDerivativeDataUrl: safeImageDataUrl(value?.aiDerivativeDataUrl),
       aiDerivativeSha256: validSha256(value?.aiDerivativeSha256),
       originalDataUrl: safeImageDataUrl(value?.originalDataUrl),
+      originalStorageRef: safeStorageRef(value?.originalStorageRef),
       nearbyText: truncate(value?.nearbyText || value?.provenance?.nearbyText, 2_000),
       captionText: truncate(value?.captionText || value?.provenance?.captionText, 1_000),
       domOrder: nonNegativeInteger(value?.domOrder ?? value?.provenance?.domOrder),
@@ -101,9 +102,15 @@ function normalizeAssets(values) {
   return assets;
 }
 
-function safeImageMime(value) {
+function safeMediaMime(value, kind) {
   const mime = String(value || '').toLowerCase();
+  if (kind === "video") return /^video\/(?:mp4|webm|quicktime)$/.test(mime) ? mime : '';
   return /^image\/(?:jpeg|png|webp|gif)$/.test(mime) ? mime : '';
+}
+
+function safeStorageRef(value) {
+  const text = String(value || "");
+  return /^media\/[a-f0-9]{2}\/[a-f0-9]{64}\.(?:jpg|png|webp|gif|mp4|webm|mov)$/i.test(text) ? text : "";
 }
 
 function normalizeSourceTimestamp(value) {

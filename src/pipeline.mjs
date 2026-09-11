@@ -6,6 +6,7 @@ import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCo
 import { validateMediaDelivery } from "./media-delivery.mjs";
 import { isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
+import { recoverRemoteOriginal } from "./source-media-store.mjs";
 
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -320,6 +321,23 @@ export class Pipeline {
         return true;
       }
       switch (job.type) {
+        case "backfill_media_asset":
+        case "repair_media_asset": {
+          const asset = this.repository.getMediaRecoveryAsset(job.entity_id);
+          if (!asset || asset.durability_status === "ORIGINAL_STORED") break;
+          if (!this.repository.startMediaRecovery(asset.id)) break;
+          try {
+            const stored = await guarded((signal) => recoverRemoteOriginal(asset, this.extractor?.config?.sourceUploadsDir
+              || this.repository.contentConfig?.sourceUploadsDir || "data/source-uploads", { signal }));
+            this.repository.saveRecoveredMedia(asset.id, stored);
+          } catch (error) {
+            if (isJobLeaseLost(error)) throw error;
+            const browserRequired = error?.retryable === false || /(?:401|403|404|410|HASH_MISMATCH|INVALID|UNSUPPORTED)/i.test(String(error?.code || ""));
+            this.repository.failMediaRecovery(asset.id, error, { browserRequired });
+            throw error;
+          }
+          break;
+        }
         case "sync_frontend_contract":
           if (!this.frontendContracts?.configured) throw new Error("FRONTEND_CONTRACT_UNCONFIGURED: Frontend Contract sources are not configured.");
           await guarded((signal) => this.frontendContracts.sync({ signal, idempotencyKey: job.id, assertLease }));
@@ -442,11 +460,21 @@ export class Pipeline {
         }
         case "finalize_source_extraction": {
           const finalized = this.repository.finalizeSegmentedExtraction(job.entity_id);
-          this.repository.enqueue("analyze_source_family", job.entity_id);
-          if (typeof this.extractor.analyzeBlueprint === "function") this.repository.enqueue("analyze_source_blueprint", job.entity_id);
-          else this.repository.enqueue("rebuild_editorial", "global");
-          if (this.contentEngine?.enabled) this.repository.enqueue("analyze_source_diagnostic", job.entity_id);
+          if (this.contentEngine?.enabled && typeof this.contentEngine.analyzeExperience === "function") {
+            this.repository.enqueue("extract_source_experience", job.entity_id);
+          } else {
+            this.repository.saveExperienceExtraction(job.entity_id, { blocks: [] }, "no_ai");
+            this.enqueueSourceSemanticDownstream(job.entity_id);
+          }
           this.logger.info("pipeline.source_finalized", { sourceId: job.entity_id, ...finalized });
+          break;
+        }
+        case "extract_source_experience": {
+          const experiencePackage = this.repository.getExperienceExtractionPackage(job.entity_id);
+          if (!experiencePackage) throw new Error(`Source ${job.entity_id} is not ready for Experience extraction.`);
+          const extracted = await guarded((signal) => this.contentEngine.analyzeExperience(experiencePackage, { signal, telemetryContext }));
+          this.repository.saveExperienceExtraction(job.entity_id, extracted.output, extracted.model, experiencePackage);
+          this.enqueueSourceSemanticDownstream(job.entity_id);
           break;
         }
         case "analyze_source_blueprint": {
@@ -524,9 +552,7 @@ export class Pipeline {
           break;
         }
         case "rebuild_content_opportunities": {
-          // Opportunity identity is durable and created by Source diagnostics;
-          // Coverage was refreshed by build_coverage_matrix. This compatibility
-          // stage now only reconciles durable approvals and never repeats it.
+          this.repository.rebuildKnowledgeOpportunities(job.entity_id);
           this.repository.enqueue("reconcile_approved_opportunities", job.entity_id);
           break;
         }
@@ -542,8 +568,31 @@ export class Pipeline {
           this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model);
           break;
         }
+        case "assemble_editorial": {
+          this.requireContentEngine();
+          const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id);
+          if (!assemblyPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
+          const assembled = typeof this.contentEngine.assembleEditorial === "function"
+            ? await guarded((signal) => this.contentEngine.assembleEditorial(assemblyPackage, { signal, telemetryContext }))
+            : { output: { selected_fact_keys:(assemblyPackage.facts || []).map((item) => item.normalized_key),
+              selected_experience_block_ids:(assemblyPackage.available_experiences || []).map((item) => item.id),
+              selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:"Deterministic compatibility assembly." }, model:"compatibility" };
+          this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage);
+          this.repository.enqueue("plan_content", job.entity_id);
+          break;
+        }
         case "plan_content": {
           this.requireContentEngine();
+          if (!this.repository.getEditorialAssembly(job.entity_id)) {
+            const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id);
+            if (!assemblyPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
+            const assembled = typeof this.contentEngine.assembleEditorial === "function"
+              ? await guarded((signal) => this.contentEngine.assembleEditorial(assemblyPackage, { signal, telemetryContext }))
+              : { output:{ selected_fact_keys:(assemblyPackage.facts || []).map((item) => item.normalized_key),
+                selected_experience_block_ids:(assemblyPackage.available_experiences || []).map((item) => item.id),
+                selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:"Deterministic compatibility assembly." },model:"compatibility" };
+            this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage);
+          }
           const contentPackage = this.repository.getTopicPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
           const destinationValidation = validatePlanningDestination(contentPackage);
@@ -555,9 +604,29 @@ export class Pipeline {
           const planned = await guarded((signal) => this.contentEngine.plan(contentPackage, { signal, telemetryContext }));
           const plannedEvidence = validatePlannedEvidence(planned.output, contentPackage);
           if (!plannedEvidence.valid) throw Object.assign(new Error(`PLAN_EVIDENCE_INVALID: ${plannedEvidence.errors.map(item=>`${item.section || ''} ${item.key || ''}: ${item.message}`).join('; ')}`), {retryable:false, code:'PLAN_EVIDENCE_INVALID', details:plannedEvidence});
-          const contractAware = this.canComposeFrontendPage;
-          const briefId = this.repository.saveBrief(job.entity_id, planned.output, planned.model, { deferDraft: contractAware });
-          if (contractAware) this.repository.enqueue("compose_frontend_page_plan", briefId);
+          const briefId = this.repository.saveBrief(job.entity_id, planned.output, planned.model, { deferDraft: true });
+          this.repository.enqueue("plan_narrative", briefId);
+          break;
+        }
+        case "plan_narrative": {
+          this.requireContentEngine();
+          const contentPackage = this.repository.getBriefPackage(job.entity_id);
+          if (!contentPackage) throw new Error(`Content brief ${job.entity_id} no longer exists.`);
+          const planned = typeof this.contentEngine.planNarrative === "function"
+            ? await guarded((signal) => this.contentEngine.planNarrative(contentPackage, { signal, telemetryContext }))
+            : { model:"compatibility",output:{ opening_job:"State the practical answer immediately.",
+              throughline:contentPackage.brief?.reader_promise || contentPackage.brief?.topic || "Help the traveler decide.",
+              route_sequence:(contentPackage.brief?.canonical?.outline || []).map((section) => section.section_id).filter(Boolean),
+              experience_placements:[],supporting_fact_keys:(contentPackage.facts || []).map((fact) => fact.normalized_key),
+              conditional_branches:[],tradeoffs:[],exclusions:[],closing_decision:"End with the next concrete traveler decision." } };
+          this.repository.saveNarrativePlan(job.entity_id, planned.output, planned.model);
+          this.repository.enqueue("assemble_writing_packet", job.entity_id);
+          break;
+        }
+        case "assemble_writing_packet": {
+          this.repository.assembleWritingPacket(job.entity_id);
+          if (this.canComposeFrontendPage) this.repository.enqueue("compose_frontend_page_plan", job.entity_id);
+          else this.repository.enqueue("generate_draft", job.entity_id);
           break;
         }
         case "compose_frontend_page_plan": {
@@ -818,6 +887,13 @@ export class Pipeline {
 
   requireContentEngine() {
     if (!this.contentEngine?.enabled) throw new Error("Content production requires a configured Kimi key or Vertex AI project.");
+  }
+
+  enqueueSourceSemanticDownstream(sourceId) {
+    this.repository.enqueue("analyze_source_family", sourceId);
+    if (typeof this.extractor?.analyzeBlueprint === "function") this.repository.enqueue("analyze_source_blueprint", sourceId);
+    else this.repository.enqueue("rebuild_editorial", "global");
+    if (this.contentEngine?.enabled) this.repository.enqueue("analyze_source_diagnostic", sourceId);
   }
 
   get canComposeFrontendPage() {

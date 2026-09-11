@@ -104,6 +104,11 @@ try {
       ["commercial_compositions", "overlay_version"], ["commercial_events", "article_revision"],
       ["commercial_events", "overlay_version"], ["commercial_events", "event_source"],
       ["commercial_events", "conversion_data_status"],
+      ["source_assets", "durability_status"], ["source_assets", "ai_readability_status"],
+      ["source_assets", "repair_status"], ["jobs", "priority"], ["jobs", "production_attempt_id"],
+      ["content_opportunities", "lifecycle_state"], ["content_opportunities", "seo_action"],
+      ["content_opportunities", "last_failure_lesson_id"], ["content_opportunities", "previous_failure_json"],
+      ["golden_articles", "title"], ["golden_articles", "snapshot_json"],
     ]) {
       const columns = database.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
       if (!columns.includes(column)) throw new Error(`${table}.${column} is required for Content Strategy governance.`);
@@ -126,6 +131,11 @@ try {
     }
     for (const table of ["draft_revisions", "content_operation_history"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for resumable content operations.`);
+    }
+    for (const table of ["source_media_backfill_runs", "system_backfill_runs", "experience_extraction_runs", "experience_blocks",
+      "editorial_assemblies", "narrative_plans", "writing_packets", "failure_lessons", "production_rollbacks",
+      "editorial_lessons", "golden_articles", "published_content_impacts"]) {
+      if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required by Content Strategy 3.0.`);
     }
     for (const table of ["source_evidence_reviews", "app_sessions", "model_call_metrics", "capture_versions", "favorites_sync_runs"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required by the audited release.`);

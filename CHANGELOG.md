@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0 - Unreleased
+
+- Require SHA-256-verified durable originals for every authorized Xiaohongshu image and video before source extraction; add chunked media upload, server recovery, browser repair manifests, and auditable media backfills.
+- Add grounded Experience Blocks after Claims, then produce drafts through Editorial Assembly, Narrative Plan, and a human-readable Writing Packet instead of a database-shaped evidence dump.
+- Make Recommendations an opportunity-only inbox with independent single/bulk decisions, Knowledge-event opportunities, and explicit NEW/UPDATE/EXPAND/MERGE/SKIP SEO actions.
+- Add eight editorial QA signals with soft length guidance, optional FAQ, independent media QA, Editorial Lessons, and Golden Articles.
+- Turn terminal content-production failures into reusable Failure Lessons, remove only transient production artifacts, preserve research, and require reapproval through `recommended_again`.
+- Consolidate the dashboard into six top-level business areas and add safe dry-run-first backfills, schema 57, fair queue priorities, tests, and operator runbooks.
+
 ## 1.18.3 - 2026-09-11
 
 - Stabilize the private HTTP origin behind Cloudflare Tunnel by extending Node's keep-alive window beyond the connector pool's reuse window.

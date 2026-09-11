@@ -1,5 +1,15 @@
 # 内容生产策略演化日志
 
+## 3.0 — 2026-09-11
+
+- 授权图片和视频原件必须校验后持久化；媒体缺口通过服务端恢复或浏览器 Repair 清单闭环，未落盘时不开始来源抽取。
+- Claims 后新增可溯源 Experience Blocks，显式保存路线、顺序、条件、权衡、提醒与决策逻辑。
+- 写作链路升级为 Editorial Assembly → Narrative Plan → Writing Packet → Draft，避免把全库记录直接交给写作模型。
+- “建议”只展示可执行机会，每个方向独立决策，并明确 NEW、UPDATE、EXPAND、MERGE、SKIP。
+- 普通生产终态失败生成 Failure Lesson、清除瞬态产物并回到 recommended_again，研究资产保持不变。
+- 后台固定六个顶级入口；回填默认 dry-run，历史清理必须引用经检查的 dry-run ID。
+- 规范见 `CONTENT_PRODUCTION_STRATEGY_3.0.md`。
+
 ## 2.1 — 2026-09-11
 
 - “建议”保留为唯一人工文章批准入口；“内容”按已批准文章一一展示创建结果、失败原因和处理入口。

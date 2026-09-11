@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 56;
+export const SCHEMA_VERSION = 57;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -77,6 +77,245 @@ function migrate(db) {
   if (current < 54) migrationFiftyFour(db);
   if (current < 55) migrationFiftyFive(db);
   if (current < 56) migrationFiftySix(db);
+  if (current < 57) migrationFiftySeven(db);
+}
+
+function migrationFiftySeven(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE source_assets ADD COLUMN durability_status TEXT NOT NULL DEFAULT 'REMOTE_ONLY'
+        CHECK (durability_status IN ('ORIGINAL_STORED','DERIVATIVE_ONLY','REMOTE_ONLY','UNAVAILABLE'));
+      ALTER TABLE source_assets ADD COLUMN ai_readability_status TEXT NOT NULL DEFAULT 'temporarily_unavailable'
+        CHECK (ai_readability_status IN ('processable','temporarily_unavailable','unsupported'));
+      ALTER TABLE source_assets ADD COLUMN repair_status TEXT NOT NULL DEFAULT 'server_recovery_pending'
+        CHECK (repair_status IN ('not_needed','server_recovery_pending','server_recovery_running','browser_repair_required','unavailable'));
+      ALTER TABLE source_assets ADD COLUMN repair_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE source_assets ADD COLUMN storage_error TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN recovered_at TEXT;
+      UPDATE source_assets SET
+        durability_status=CASE
+          WHEN local_path<>'' AND original_bytes_status='saved_original' THEN 'ORIGINAL_STORED'
+          WHEN local_path<>'' AND original_bytes_status='saved_unknown'
+            AND source_id IN (SELECT id FROM sources WHERE adapter<>'xiaohongshu') THEN 'ORIGINAL_STORED'
+          WHEN local_path<>'' OR ai_derivative_data_url<>'' THEN 'DERIVATIVE_ONLY'
+          WHEN remote_url<>'' THEN 'REMOTE_ONLY'
+          ELSE 'UNAVAILABLE' END,
+        ai_readability_status=CASE
+          WHEN local_path<>'' OR ai_derivative_data_url<>'' THEN 'processable'
+          WHEN remote_url<>'' THEN 'temporarily_unavailable'
+          ELSE 'unsupported' END,
+        repair_status=CASE
+          WHEN local_path<>'' AND original_bytes_status='saved_original' THEN 'not_needed'
+          WHEN local_path<>'' AND original_bytes_status='saved_unknown'
+            AND source_id IN (SELECT id FROM sources WHERE adapter<>'xiaohongshu') THEN 'not_needed'
+          WHEN remote_url<>'' THEN 'server_recovery_pending'
+          ELSE 'unavailable' END;
+      CREATE INDEX idx_source_assets_durability ON source_assets(durability_status,repair_status,source_id);
+
+      ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 50;
+      ALTER TABLE jobs ADD COLUMN production_attempt_id TEXT;
+      CREATE INDEX idx_jobs_priority_ready ON jobs(status,priority,available_at,created_at);
+
+      ALTER TABLE favorites_sync_runs ADD COLUMN sync_mode_v2 TEXT NOT NULL DEFAULT 'incremental'
+        CHECK (sync_mode_v2 IN ('incremental','repair','full'));
+      UPDATE favorites_sync_runs SET sync_mode_v2=mode;
+
+      CREATE TABLE source_media_backfill_runs (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL CHECK (status IN ('dry_run','queued','running','completed','failed')),
+        scanned_count INTEGER NOT NULL DEFAULT 0,
+        original_stored_count INTEGER NOT NULL DEFAULT 0,
+        recovery_queued_count INTEGER NOT NULL DEFAULT 0,
+        browser_repair_count INTEGER NOT NULL DEFAULT 0,
+        unavailable_count INTEGER NOT NULL DEFAULT 0,
+        report_json TEXT NOT NULL DEFAULT '{}',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE system_backfill_runs (
+        id TEXT PRIMARY KEY,
+        backfill_type TEXT NOT NULL CHECK (backfill_type IN ('experience','recommendation_reconciliation','failed_production_cleanup')),
+        status TEXT NOT NULL CHECK (status IN ('dry_run','queued','completed','failed')),
+        dry_run INTEGER NOT NULL DEFAULT 1 CHECK (dry_run IN (0,1)),
+        approved_from_run_id TEXT REFERENCES system_backfill_runs(id) ON DELETE SET NULL,
+        report_json TEXT NOT NULL DEFAULT '{}',
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_system_backfill_runs_type ON system_backfill_runs(backfill_type,created_at DESC);
+
+      CREATE TABLE experience_extraction_runs (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        extraction_run_id TEXT REFERENCES extraction_runs(id) ON DELETE SET NULL,
+        capture_version INTEGER NOT NULL,
+        input_hash TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('running','succeeded','failed','superseded')),
+        degraded INTEGER NOT NULL DEFAULT 0 CHECK (degraded IN (0,1)),
+        model TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(source_id,input_hash)
+      );
+      CREATE INDEX idx_experience_runs_source ON experience_extraction_runs(source_id,status,updated_at DESC);
+      CREATE TABLE experience_blocks (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        extraction_run_id TEXT NOT NULL REFERENCES experience_extraction_runs(id) ON DELETE CASCADE,
+        segment_ids_json TEXT NOT NULL DEFAULT '[]',
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        traveler_goal TEXT NOT NULL DEFAULT '',
+        sequence_json TEXT NOT NULL DEFAULT '[]',
+        decision_logic_json TEXT NOT NULL DEFAULT '[]',
+        conditions_json TEXT NOT NULL DEFAULT '[]',
+        tradeoffs_json TEXT NOT NULL DEFAULT '[]',
+        warnings_json TEXT NOT NULL DEFAULT '[]',
+        alternatives_json TEXT NOT NULL DEFAULT '[]',
+        supporting_claim_ids_json TEXT NOT NULL DEFAULT '[]',
+        evidence_span_ids_json TEXT NOT NULL DEFAULT '[]',
+        confidence REAL NOT NULL DEFAULT 0,
+        grounding_status TEXT NOT NULL DEFAULT 'grounded' CHECK (grounding_status IN ('grounded','degraded')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_experience_blocks_source ON experience_blocks(source_id,type,updated_at DESC);
+
+      CREATE TABLE editorial_assemblies (
+        id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL UNIQUE REFERENCES topic_candidates(id) ON DELETE CASCADE,
+        opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL,
+        input_hash TEXT NOT NULL,
+        selected_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+        selected_experience_block_ids_json TEXT NOT NULL DEFAULT '[]',
+        selected_source_ids_json TEXT NOT NULL DEFAULT '[]',
+        selected_blueprint_source_ids_json TEXT NOT NULL DEFAULT '[]',
+        exclusions_json TEXT NOT NULL DEFAULT '[]',
+        rationale TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready','failed')),
+        model TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE narrative_plans (
+        id TEXT PRIMARY KEY,
+        brief_id TEXT NOT NULL UNIQUE REFERENCES content_briefs(id) ON DELETE CASCADE,
+        opening_job TEXT NOT NULL DEFAULT '',
+        throughline TEXT NOT NULL DEFAULT '',
+        route_sequence_json TEXT NOT NULL DEFAULT '[]',
+        experience_placements_json TEXT NOT NULL DEFAULT '[]',
+        supporting_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+        conditional_branches_json TEXT NOT NULL DEFAULT '[]',
+        tradeoffs_json TEXT NOT NULL DEFAULT '[]',
+        exclusions_json TEXT NOT NULL DEFAULT '[]',
+        closing_decision TEXT NOT NULL DEFAULT '',
+        model TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE writing_packets (
+        id TEXT PRIMARY KEY,
+        brief_id TEXT NOT NULL UNIQUE REFERENCES content_briefs(id) ON DELETE CASCADE,
+        narrative_plan_id TEXT NOT NULL REFERENCES narrative_plans(id) ON DELETE CASCADE,
+        packet_text TEXT NOT NULL,
+        evidence_ledger_json TEXT NOT NULL DEFAULT '[]',
+        selected_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+        selected_experience_block_ids_json TEXT NOT NULL DEFAULT '[]',
+        input_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE failure_lessons (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL CHECK (scope IN ('GLOBAL','SOURCE','OPPORTUNITY','STAGE')),
+        failure_code TEXT NOT NULL,
+        category TEXT NOT NULL,
+        normalized_reason TEXT NOT NULL,
+        source_id TEXT REFERENCES sources(id) ON DELETE SET NULL,
+        opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL,
+        failing_stage TEXT NOT NULL,
+        previous_input_json TEXT NOT NULL DEFAULT '{}',
+        remediation_rule TEXT NOT NULL,
+        retry_safe INTEGER NOT NULL DEFAULT 0 CHECK (retry_safe IN (0,1)),
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','superseded','resolved')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_failure_lessons_active ON failure_lessons(status,scope,failure_code,created_at DESC);
+      CREATE TABLE production_rollbacks (
+        id TEXT PRIMARY KEY,
+        opportunity_id TEXT NOT NULL REFERENCES content_opportunities(id) ON DELETE CASCADE,
+        failure_lesson_id TEXT REFERENCES failure_lessons(id) ON DELETE SET NULL,
+        failing_stage TEXT NOT NULL,
+        removed_artifacts_json TEXT NOT NULL DEFAULT '{}',
+        preserved_assets_json TEXT NOT NULL DEFAULT '{}',
+        previous_status TEXT NOT NULL,
+        result_status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE editorial_lessons (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT REFERENCES article_drafts(id) ON DELETE SET NULL,
+        feedback TEXT NOT NULL CHECK (feedback IN ('满意','AI味重','太啰嗦','信息太平','像数据库','结构不好','很好')),
+        principle TEXT NOT NULL DEFAULT '',
+        active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_editorial_lessons_active ON editorial_lessons(active,created_at DESC);
+      CREATE TABLE golden_articles (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT UNIQUE REFERENCES article_drafts(id) ON DELETE SET NULL,
+        title TEXT NOT NULL DEFAULT '',
+        snapshot_json TEXT NOT NULL DEFAULT '{}',
+        principles_json TEXT NOT NULL DEFAULT '[]',
+        active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE published_content_impacts (
+        id TEXT PRIMARY KEY,
+        draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+        opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL,
+        changed_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+        impact_reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'recommended' CHECK (status IN ('recommended','approved','dismissed','revision_drafted')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      ALTER TABLE content_opportunities ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'recommended'
+        CHECK (lifecycle_state IN ('recommended','deferred','approved','producing','finished','recommended_again','ignored'));
+      ALTER TABLE content_opportunities ADD COLUMN seo_action TEXT NOT NULL DEFAULT 'NEW'
+        CHECK (seo_action IN ('NEW','UPDATE','EXPAND','MERGE','SKIP'));
+      ALTER TABLE content_opportunities ADD COLUMN last_failure_lesson_id TEXT REFERENCES failure_lessons(id) ON DELETE SET NULL;
+      ALTER TABLE content_opportunities ADD COLUMN previous_failure_json TEXT NOT NULL DEFAULT '{}';
+      UPDATE content_opportunities SET lifecycle_state=CASE
+        WHEN status IN ('approved_waiting_for_evidence','approved_ready') THEN 'approved'
+        WHEN status IN ('producing','drafted','qa_failed','ready_for_wordpress') THEN 'producing'
+        WHEN status='wordpress_draft' THEN 'finished'
+        WHEN status IN ('ignored','suppressed','knowledge_only','cluster','research_required') THEN 'ignored'
+        ELSE 'recommended' END,
+        seo_action=CASE lifecycle_action WHEN 'update' THEN 'UPDATE' WHEN 'merge' THEN 'MERGE'
+          WHEN 'retire' THEN 'SKIP' ELSE 'NEW' END;
+      CREATE INDEX idx_content_opportunities_inbox ON content_opportunities(lifecycle_state,readiness_score DESC,updated_at DESC);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (57, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFiftySix(db) {

@@ -100,11 +100,12 @@ test("an editor can classify an opportunity as create, update, merge, or retire 
   db.prepare(`INSERT INTO content_opportunities(id,destination_slug,topic_key,strategy_version,source_id,title,readiness_score,status,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?)`).run("opportunity-lifecycle", "beijing", "beijing:existing", "1.5", source.id, "Existing Guide", 100, "recommended", timestamp, timestamp);
 
-  for (const action of ["update", "merge", "retire"]) {
+  for (const action of ["update", "expand", "merge", "retire"]) {
     const result = repository.setOpportunityLifecycle("opportunity-lifecycle", action, { targetPostId: 42, note: `${action} reviewed`, operator: "editor" });
     assert.equal(result.lifecycleAction, action);
     assert.equal(result.targetPostId, 42);
     assert.equal(result.publicationImpact.requiresEditorialApproval, true);
+    assert.equal(result.seoAction, {update:"UPDATE",expand:"EXPAND",merge:"MERGE",retire:"SKIP"}[action]);
   }
   const create = repository.setOpportunityLifecycle("opportunity-lifecycle", "create", { operator: "editor" });
   assert.equal(create.targetPostId, null);

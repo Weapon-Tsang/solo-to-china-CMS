@@ -14,6 +14,7 @@ const TICK_ALARM = "stc-favorites-tick";
 const AUTO_ALARM = "stc-favorites-auto";
 const DIRECT_CAPTURE_BYTES = 3_500_000;
 const UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
+const DIRECT_DERIVATIVE_BYTES = 5_500_000;
 const ORIGINAL_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const ENGINE_REQUEST_TIMEOUT_MS = 45_000;
 const MEDIA_REQUEST_TIMEOUT_MS = 30_000;
@@ -52,7 +53,7 @@ async function handleMessage(message) {
       await refreshAutoAlarm();
       return { ok: true, settings: publicSettings(settings) };
     }
-    case "START_SYNC": return startSync(message.mode === "full" ? "full" : "incremental");
+    case "START_SYNC": return startSync(["incremental","repair","full"].includes(message.mode) ? message.mode : "incremental");
     case "PAUSE_SYNC": return pauseSync("paused_by_user");
     case "RESUME_SYNC": return resumeSync();
     case "CANCEL_SYNC": return cancelSync();
@@ -218,12 +219,15 @@ async function acquireTask(sessionId, taskId, slot) {
       acquisitionOrigin: "xhs_favorites_sync", syncScopeKey: session.scopeKey,
     });
     if (!extracted?.ok) throw Object.assign(new Error(extracted?.error?.message || "Note extraction failed."), extracted?.error || {});
-    const capture = await enrichImageDerivatives(extracted.capture);
+    const capture = await persistCaptureMedia(extracted.capture);
     session = await updateTask(sessionId, taskId, "submitting");
     assertNotCancelled(session);
     const response = await submitCapture(capture);
     if (response.completenessStatus !== "complete") throw Object.assign(new Error("Capture was persisted as partial and will be retried before entering Research."), {
       code: "CONTENT_NOT_READY", retryable: true,
+    });
+    if (!response.mediaDurabilityComplete) throw Object.assign(new Error("Media discovery completed, but one or more original files were not durably stored. This note remains in the repair queue."), {
+      code: "MEDIA_ORIGINAL_NOT_STORED", retryable: true,
     });
     session = await updateTask(sessionId, taskId, response.duplicate ? "duplicate" : "captured", {
       sourceId: response.id, captureVersion: response.captureVersion, tabId: null, error: null,
@@ -324,22 +328,31 @@ async function saveCurrentNote() {
   await injectExtractor(tab.id);
   const extracted = await execute(tab.id, (options) => globalThis.SoloToChinaXhs.prepareAndExtract(options), { acquisitionOrigin: "xhs_manual_extension" });
   if (!extracted?.ok) throw Object.assign(new Error(extracted?.error?.message || "Could not read this note."), extracted?.error || {});
-  return { ok: true, capture: { title: extracted.capture.title }, result: await submitCapture(await enrichImageDerivatives(extracted.capture)) };
+  const capture = await persistCaptureMedia(extracted.capture);
+  const result = await submitCapture(capture);
+  if (!result.mediaDurabilityComplete) throw syncError("MEDIA_ORIGINAL_NOT_STORED", "笔记正文已保存，但仍有媒体原件未持久化；请保持当前页面可访问后重试。", true);
+  return { ok: true, capture: { title: extracted.capture.title }, result };
 }
 
-async function enrichImageDerivatives(capture) {
-  for (const image of capture.images || []) {
+async function persistCaptureMedia(capture) {
+  const failures = [];
+  const media = [...(capture.images || []), ...(capture.videos || [])];
+  for (const asset of media) {
     try {
-      const response = await fetchWithTimeout(image.url, {}, MEDIA_REQUEST_TIMEOUT_MS);
-      if (!response.ok) continue;
+      const response = await fetchWithTimeout(asset.url, {}, MEDIA_REQUEST_TIMEOUT_MS);
+      if (!response.ok) throw syncError(`MEDIA_HTTP_${response.status}`, `Media download returned HTTP ${response.status}.`, response.status >= 500 || response.status === 429);
       const blob = await response.blob();
       const bytes = new Uint8Array(await blob.arrayBuffer());
-      image.originalSha256 = await hashBytes(bytes);
-      image.mimeType = /^image\/(?:jpeg|png|webp|gif)$/i.test(blob.type) ? blob.type.toLowerCase() : "image/jpeg";
-      if (bytes.byteLength <= ORIGINAL_IMAGE_MAX_BYTES) {
-        image.originalDataUrl = `data:${image.mimeType};base64,${bytesToBase64(bytes)}`;
-        image.aiDerivativeDataUrl = image.originalDataUrl;
-        image.aiDerivativeSha256 = image.originalSha256;
+      if (!bytes.byteLength) throw syncError("MEDIA_EMPTY", "Media download returned no bytes.", true);
+      asset.originalSha256 = await hashBytes(bytes);
+      asset.mimeType = mediaMime(blob.type, asset.kind, asset.url);
+      if (!asset.mimeType) throw syncError("MEDIA_TYPE_UNSUPPORTED", "Media response is not a supported image or video type.", false);
+      const stored = await uploadMediaOriginal(asset, bytes);
+      asset.originalStorageRef = stored.storageRef;
+      if (asset.kind === "video") continue;
+      if (bytes.byteLength <= DIRECT_DERIVATIVE_BYTES) {
+        asset.aiDerivativeDataUrl = `data:${asset.mimeType};base64,${bytesToBase64(bytes)}`;
+        asset.aiDerivativeSha256 = asset.originalSha256;
         continue;
       }
       const bitmap = await createImageBitmap(blob);
@@ -355,14 +368,44 @@ async function enrichImageDerivatives(capture) {
       bitmap.close();
       if (derivative?.size <= 5_500_000) {
         const derivativeBytes = new Uint8Array(await derivative.arrayBuffer());
-        image.aiDerivativeDataUrl = `data:image/webp;base64,${bytesToBase64(derivativeBytes)}`;
-        image.aiDerivativeSha256 = await hashBytes(derivativeBytes);
+        asset.aiDerivativeDataUrl = `data:image/webp;base64,${bytesToBase64(derivativeBytes)}`;
+        asset.aiDerivativeSha256 = await hashBytes(derivativeBytes);
       }
-    } catch {
-      // Original URL and completeness provenance remain; provider coverage will surface an unavailable derivative.
+    } catch (error) {
+      asset.persistenceError = serializeError(error);
+      failures.push({ mediaIdentity: asset.mediaIdentity || asset.url, kind: asset.kind || "image", error: serializeError(error) });
     }
   }
+  capture.mediaPersistenceFailures = failures;
   return capture;
+}
+
+async function uploadMediaOriginal(asset, bytes) {
+  const settings = await loadSettings();
+  const created = await apiJson(`${settings.endpoint}/api/capture-media-uploads`, { method: "POST", body: JSON.stringify({
+    kind: asset.kind === "video" ? "video" : "image", mimeType: asset.mimeType, size: bytes.byteLength, sha256: asset.originalSha256,
+  }) }, settings.token);
+  for (let offset = 0, index = 0; offset < bytes.length; offset += created.chunkBytes, index += 1) {
+    await apiJson(`${settings.endpoint}/api/capture-media-uploads/${encodeURIComponent(created.uploadId)}/chunks/${index}`,
+      { method: "PUT", body: bytes.slice(offset, Math.min(bytes.length, offset + created.chunkBytes)), raw: true }, settings.token);
+  }
+  return apiJson(`${settings.endpoint}/api/capture-media-uploads/${encodeURIComponent(created.uploadId)}/complete`,
+    { method: "POST", body: "{}" }, settings.token);
+}
+
+function mediaMime(value, kind, url) {
+  const supplied = String(value || "").toLowerCase().split(";")[0];
+  if (kind === "video") {
+    if (/^video\/(?:mp4|webm|quicktime)$/.test(supplied)) return supplied;
+    if (/\.webm(?:$|\?)/i.test(url)) return "video/webm";
+    if (/\.mov(?:$|\?)/i.test(url)) return "video/quicktime";
+    return "video/mp4";
+  }
+  if (/^image\/(?:jpeg|png|webp|gif)$/.test(supplied)) return supplied;
+  if (/\.png(?:$|\?)/i.test(url)) return "image/png";
+  if (/\.webp(?:$|\?)/i.test(url)) return "image/webp";
+  if (/\.gif(?:$|\?)/i.test(url)) return "image/gif";
+  return "image/jpeg";
 }
 
 async function pauseSync(status) {

@@ -76,7 +76,8 @@ test("duplicate recapture restores authorized image bytes without creating a con
   assert.deepEqual(second.resumedDraftIds,['draft-media']);
   assert.equal(fixture.db.prepare("SELECT ai_derivative_data_url FROM source_assets WHERE source_id=?").get(first.id).ai_derivative_data_url,
     "data:image/jpeg;base64,aGVsbG8=");
-  assert.equal(fixture.db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='extract_source'").get().count,1);
+  assert.equal(fixture.db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='extract_source'").get().count,0);
+  assert.equal(fixture.db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='repair_media_asset'").get().count,1);
   assert.equal(fixture.db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='compose_frontend_page'").get().count,1);
   const repeated = fixture.repository.saveCapture(normalizeXiaohongshuCapture({ ...input,images:[{...input.images[0],
     aiDerivativeDataUrl:"data:image/jpeg;base64,aGVsbG8=",aiDerivativeSha256:originalSha256}] }));
