@@ -54,6 +54,26 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
   assert.equal(sources.items[0].destination_name, "Chengdu");
 });
 
+test("settings payload keeps the total exception count while bounding the preview", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-settings-preview-"));
+  const config = loadConfig({
+    HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "api.sqlite"),
+    MAINTENANCE_ENABLED: "false", LOG_LEVEL: "error",
+  });
+  const app = createApplication(config);
+  for (let index = 0; index < 105; index += 1) app.repository.enqueue("rebuild_topic_clusters", `settings-fixture-${index}`);
+  app.repository.db.prepare(`UPDATE jobs SET status='failed',last_error='Settings preview fixture',updated_at='2026-09-11T00:00:00.000Z'`).run();
+  await app.start();
+  t.after(async () => {
+    await app.stop();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
+  const settings = await (await fetch(`${baseUrl}/api/settings`)).json();
+  assert.equal(settings.operations.exceptionTotal, 105);
+  assert.equal(settings.operations.exceptions.length, 100);
+});
+
 test("authenticated source evidence preview streams the stored review image", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-evidence-preview-"));
   const config = loadConfig({
@@ -258,6 +278,9 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   const content = await (await fetch(`${baseUrl}/api/content`)).json();
   assert.ok(Array.isArray(content.items));
   assert.ok(Array.isArray(content.opportunities));
+  const fullSettings = await (await fetch(`${baseUrl}/api/settings`)).json();
+  assert.ok(Array.isArray(fullSettings.operations.exceptions));
+  assert.equal(fullSettings.operations.exceptionTotal, 0);
   const missing = await fetch(`${baseUrl}/api/not-found`);
   assert.equal(missing.status, 404);
   assert.deepEqual(await missing.json(), { error: "Not found." });

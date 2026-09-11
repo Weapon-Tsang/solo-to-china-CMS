@@ -166,10 +166,16 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(recommendation.production_paths.length, 3);
   assert.ok(recommendation.production_paths.every((path) => path.opportunity_id));
   assert.equal(repository.listContentOpportunities().length, 0, "unapproved source proposals are not content opportunities");
+  assert.equal(repository.listApprovedContentOpportunities().length, 0);
+  assert.equal(repository.listContent({ approvedOnly: true }).length, 0);
   const adaptationPath = recommendation.production_paths.find((path) => path.mode === "SOURCE_ADAPTATION");
   const approval = repository.decideRecommendation(recommendation.id, "approved_article", "", { opportunityId: adaptationPath.opportunity_id });
   assert.equal(approval.opportunityId, adaptationPath.opportunity_id);
   assert.equal(repository.listContentOpportunities().length, 1, "the approved article plan becomes a content opportunity");
+  const [approvedOpportunity] = repository.listApprovedContentOpportunities();
+  assert.equal(Boolean(approvedOpportunity), true);
+  assert.equal("coverage_json" in approvedOpportunity, false);
+  assert.equal("readiness_json" in approvedOpportunity, false);
   const dashboardAfterApproval = repository.dashboard();
   assert.equal(dashboardAfterApproval.actionCounts.recommendations, pendingRecommendationCount - 1);
   assert.equal(dashboardAfterApproval.totals.pendingRecommendations, pendingRecommendationCount - 1);
@@ -179,6 +185,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
 
   const content = repository.listContent();
   assert.equal(content.length, 1);
+  assert.equal(repository.listContent({ approvedOnly: true }).length, 1);
   assert.equal(content[0].draft_status, "wordpress_draft", JSON.stringify(repository.listOperationalExceptions()));
   assert.equal(content[0].qa_passed, 1);
   assert.equal(content[0].wordpress_post_id, 42);

@@ -230,13 +230,15 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "GET" && url.pathname === "/api/settings") {
+        const exceptionWorkspace = repository.listOperationalExceptionWorkspace({ limit: 100 });
         return sendJson(response, 200, {
           configured: extractor.enabled, vertexBatchConfigured: extractor.batchEnabled,
           vertexBatchActive: repository.activeVertexBatchCount(), visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
           contentStrategy: config.contentStrategy, storage: storageInfo(config), visual: repository.getVisualSettings(config.visuals.defaultModel),
           frontendContract: frontendContracts.diagnostics(), ...repository.getAiSettings(config.ai.defaultModel),
           operations: {
-            exceptions: repository.listOperationalExceptions(),
+            exceptions: exceptionWorkspace.items,
+            exceptionTotal: exceptionWorkspace.totalCount,
             maintenance: { runs:repository.listMaintenanceRuns(),telemetry:repository.jobTelemetry(config.telemetry.windowHours),
               favoritesSyncRuns:repository.listFavoritesSyncRuns(20) },
             wordpressInventory: repository.listWordPressInventory(),
@@ -545,8 +547,8 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/content") {
         return sendJson(response, 200, {
-          items: repository.listContent(),
-          opportunities: repository.listContentOpportunities(limit(url.searchParams.get("limit"))),
+          items: repository.listContent({ approvedOnly: true }),
+          opportunities: repository.listApprovedContentOpportunities(limit(url.searchParams.get("limit"))),
         });
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {

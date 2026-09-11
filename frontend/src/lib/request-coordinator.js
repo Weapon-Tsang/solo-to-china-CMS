@@ -17,6 +17,37 @@ export function createLatestRequestCoordinator() {
   };
 }
 
+export function createInFlightRequestCoordinator() {
+  let active = null;
+  return {
+    run(key, task) {
+      const normalizedKey = String(key);
+      if (active?.key === normalizedKey) return active.promise;
+      active?.controller.abort();
+      const controller = new AbortController();
+      let promise;
+      try {
+        promise = Promise.resolve(task({ signal: controller.signal }));
+      } catch (error) {
+        promise = Promise.reject(error);
+      }
+      active = { key: normalizedKey, controller, promise };
+      const clear = () => {
+        if (active?.promise === promise) active = null;
+      };
+      promise.then(clear, clear);
+      return promise;
+    },
+    isPending(key) {
+      return active?.key === String(key);
+    },
+    invalidate() {
+      active?.controller.abort();
+      active = null;
+    },
+  };
+}
+
 export function classifyRefreshOutcome(overviewResult, viewResult) {
   const overviewOk = overviewResult.status === "fulfilled";
   const viewOk = viewResult.status === "fulfilled" && viewResult.value?.ok === true;

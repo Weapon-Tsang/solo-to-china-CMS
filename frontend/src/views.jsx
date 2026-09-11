@@ -57,8 +57,9 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
 }
 
 function SettingsOperations({ data, onAction, actionBusy }) {
+  const exceptionTotal = Number(data?.operations?.exceptionTotal ?? data?.operations?.exceptions?.length ?? 0);
   const groups = [
-    ["系统健康与异常", `${data?.operations?.exceptions?.length || 0} 项需处理`, data?.operations?.exceptions],
+    ["系统健康与异常", `${exceptionTotal} 项需处理`, data?.operations?.exceptions],
     ["维护与回填", `${data?.operations?.maintenance?.runs?.length || 0} 条维护记录 · ${(data?.operations?.mediaBackfills?.length || 0) + (data?.operations?.systemBackfills?.length || 0)} 条回填`, [...(data?.operations?.systemBackfills || []),...(data?.operations?.mediaBackfills || [])]],
     ["WordPress 与搜索", `${data?.operations?.wordpressInventory?.length || 0} 篇库存文章`, data?.operations?.wordpressInventory],
     ["编辑蓝图与经验层", `${data?.operations?.blueprints?.length || 0} 个蓝图 · ${data?.operations?.experiences?.length || 0} 个 Experience Block`, data?.operations?.experiences],

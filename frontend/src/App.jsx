@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, uploadChunk } from "@/lib/api";
-import { classifyRefreshOutcome, createLatestRequestCoordinator } from "@/lib/request-coordinator";
+import { classifyRefreshOutcome, createInFlightRequestCoordinator, createLatestRequestCoordinator } from "@/lib/request-coordinator";
 import { cn, friendlyError, label } from "@/lib/utils";
 import { ViewRenderer } from "@/views";
 import { ContentRecovery, QualityIssue } from "@/workspaces/content-recovery";
@@ -40,6 +40,8 @@ export default function App() {
   const [detail, setDetail] = useState({ open: false, type: null, data: null, loading: false });
   const [toast, setToast] = useState({ message: "", error: false });
   const requestSequence = useRef(0);
+  const overviewRequests = useRef(createInFlightRequestCoordinator());
+  const viewRequests = useRef(createInFlightRequestCoordinator());
   const detailRequests = useRef(createLatestRequestCoordinator());
 
   const showToast = useCallback((message, isError = false) => {
@@ -52,20 +54,20 @@ export default function App() {
     return () => clearTimeout(timeout);
   }, [toast]);
 
-  const loadOverview = useCallback(async () => {
-    const [nextHealth, dashboard] = await Promise.all([api("/api/health"), api("/api/dashboard")]);
+  const loadOverview = useCallback(() => overviewRequests.current.run("overview", async ({ signal }) => {
+    const [nextHealth, dashboard] = await Promise.all([api("/api/health", { signal }), api("/api/dashboard", { signal })]);
     setHealth(nextHealth);
     setTotals(dashboard.totals || {});
     setActionCounts(dashboard.actionCounts || {});
-  }, []);
+  }), []);
 
   const loadAuth = useCallback(async () => setAuth(await api("/api/auth/status")), []);
 
-  const loadView = useCallback(async (view, { quiet = false } = {}) => {
+  const loadView = useCallback((view, { quiet = false } = {}) => viewRequests.current.run(view, async ({ signal }) => {
     const sequence = ++requestSequence.current;
     if (!quiet) setLoading(true);
     try {
-      const data = await api(endpoints[view]);
+      const data = await api(endpoints[view], { signal });
       if (sequence !== requestSequence.current) return { ok: false, stale: true };
       setViewData({ ...data, _loadedView: view });
       setError("");
@@ -77,7 +79,7 @@ export default function App() {
     } finally {
       if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }), []);
 
   useEffect(() => {
     void loadAuth().catch((caught) => setError(caught.message));

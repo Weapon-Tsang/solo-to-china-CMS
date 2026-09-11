@@ -1,6 +1,11 @@
 # Changelog
 
-## 2.0.1 - Unreleased
+## 2.0.2 - Unreleased
+
+- Prevent slow dashboard requests from being invalidated by overlapping five-second polls, and cancel obsolete page loads when operators switch menus.
+- Bound Content to approved production records and Settings to a 100-item exception preview while preserving the complete exception count and durable browser-repair backlog.
+
+## 2.0.1 - 2026-09-11
 
 - Classify remote source-media recovery failures separately from external model authorization failures.
 - Keep browser-repair handoffs visible with accurate media guidance until the authorized originals are stored, while retaining the repair manifest and failed jobs as audit history.

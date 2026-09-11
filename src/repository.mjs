@@ -2212,6 +2212,22 @@ export class Repository {
     }));
   }
 
+  listApprovedContentOpportunities(limit = 100) {
+    return this.db.prepare(`
+      SELECT o.id,o.candidate_id,o.destination_slug,o.content_type,o.title,o.status,o.lifecycle_state,
+        o.approved_at,o.suppression_reason,o.readiness_score,o.readiness_json,o.coverage_json,o.updated_at,
+        tc.coverage_score AS candidate_coverage_score,tc.status AS candidate_status
+      FROM content_opportunities o LEFT JOIN topic_candidates tc ON tc.id=o.candidate_id
+      WHERE o.approved_at IS NOT NULL
+      ORDER BY o.updated_at DESC
+      LIMIT ?
+    `).all(Math.max(1, Math.min(500, Number(limit) || 100))).map(({ coverage_json, readiness_json, ...row }) => ({
+      ...row,
+      coverage: json(coverage_json, {}),
+      readiness: json(readiness_json, {}),
+    }));
+  }
+
   listRecommendationInbox(limit = 100) {
     return this.db.prepare(`SELECT o.*,r.classification,r.recommended_action,r.reasoning_summary,
         s.title AS source_title,ss.destination_name
@@ -4318,7 +4334,7 @@ export class Repository {
     if (this.getFrontendPublishComposition(draftId)) this.markFrontendPublishComposition(draftId, "delivery_failed");
   }
 
-  listContent({ candidateId = null, evidenceHashes = new Map() } = {}) {
+  listContent({ candidateId = null, approvedOnly = false, evidenceHashes = new Map() } = {}) {
     const rows = this.db.prepare(`
       SELECT tc.*, cb.id AS brief_id, cb.status AS brief_status, ad.id AS draft_id, ad.status AS draft_status,
         ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score,
@@ -4336,8 +4352,10 @@ export class Repository {
       LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
       LEFT JOIN frontend_publish_compositions pc ON pc.draft_id = ad.id
       WHERE (? IS NULL OR tc.id=?)
+        AND (?=0 OR EXISTS (SELECT 1 FROM content_opportunities approved
+          WHERE approved.candidate_id=tc.id AND approved.approved_at IS NOT NULL))
       ORDER BY tc.coverage_score DESC, tc.updated_at DESC
-    `).all(candidateId, candidateId);
+    `).all(candidateId, candidateId, approvedOnly ? 1 : 0);
     const draftIds = rows.map((row) => row.draft_id).filter(Boolean);
     if (!draftIds.length) return rows;
     const placeholders = draftIds.map(() => "?").join(",");
