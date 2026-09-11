@@ -150,7 +150,7 @@ services:
       - "8080"
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.8.2
     restart: unless-stopped
     depends_on:
       - engine
@@ -164,7 +164,7 @@ log 'Authenticating to Artifact Registry and starting services.'
 REGISTRY_TOKEN="$(metadata_token)"
 printf '%s' "$REGISTRY_TOKEN" | docker login --username oauth2accesstoken --password-stdin asia-east1-docker.pkg.dev
 docker pull "$IMAGE"
-docker pull cloudflare/cloudflared:latest
+docker pull cloudflare/cloudflared:2026.8.2
 docker network inspect solo-to-china >/dev/null 2>&1 || docker network create solo-to-china >/dev/null
 docker volume inspect solo_to_china_data >/dev/null 2>&1 || docker volume create solo_to_china_data >/dev/null
 if docker inspect engine >/dev/null 2>&1; then
@@ -192,7 +192,7 @@ docker run --detach --name engine --restart unless-stopped \
   "$IMAGE" >/dev/null
 docker run --detach --name cloudflared --restart unless-stopped \
   --network solo-to-china \
-  cloudflare/cloudflared:latest \
+  cloudflare/cloudflared:2026.8.2 \
   tunnel --no-autoupdate --protocol http2 run --token "$CLOUDFLARE_TUNNEL_TOKEN" >/dev/null
 sleep 8
 log 'Container status:'
