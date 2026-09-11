@@ -20,7 +20,8 @@ test("final evidence validation rejects missing answers, changed values, qualifi
   assert.ok(codes(validate(missingQualifier)).includes("EVIDENCE_VALUE_MISMATCH"));
 
   const missingDate = { ...goodBlock, data: { ...goodBlock.data, body: goodBlock.data.body.replace(", as of September 7, 2026", "") } };
-  assert.ok(codes(validate(missingDate)).includes("VISIBLE_AS_OF_MISSING"));
+  assert.equal(codes(validate(missingDate)).includes("VISIBLE_AS_OF_MISSING"), false);
+  assert.equal(validate(missingDate).valid, true);
 
   const forged = packageFor(goodBlock);
   forged.frontend_page.validation.blockProvenance[0].claimTraces[0].sourceId = "source-forged";

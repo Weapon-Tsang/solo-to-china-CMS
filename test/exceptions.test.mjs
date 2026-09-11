@@ -25,8 +25,14 @@ test("operational exception queue refuses a no-op retry for permanent provider a
   db.prepare("UPDATE jobs SET status='failed', attempts=3, last_error='Authorized source image download failed (403).' WHERE id=?").run(assetJobId);
 
   const exceptions = repository.listOperationalExceptions();
-  assert.equal(exceptions.find((item) => item.key === `job:${providerJobId}`).retryable, false);
-  assert.equal(exceptions.find((item) => item.key === `job:${assetJobId}`).retryable, false);
+  const providerException = exceptions.find((item) => item.key === `job:${providerJobId}`);
+  const assetException = exceptions.find((item) => item.key === `job:${assetJobId}`);
+  assert.equal(providerException.retryable, false);
+  assert.equal(assetException.retryable, false);
+  assert.match(providerException.title, /模型|页面/);
+  assert.doesNotMatch(`${providerException.title} ${providerException.detail}`, /Vertex|invalid argument/i);
+  assert.match(assetException.title, /图片/);
+  assert.doesNotMatch(`${assetException.title} ${assetException.detail}`, /Authorized source image|403/i);
   assert.equal(repository.retryOperationalException(`job:${providerJobId}`), false);
   assert.equal(repository.retryOperationalException(`job:${assetJobId}`), false);
   assert.deepEqual(db.prepare("SELECT status FROM jobs WHERE id IN (?,?) ORDER BY id").all(providerJobId, assetJobId)
@@ -223,7 +229,7 @@ test("claim review exceptions include both source records, text context, and the
   assert.match(review.claimB.evidence.assets[0].previewUrl, /^\/api\/source-assets\/asset_[^/]+\/preview$/);
 });
 
-test("dynamic hard-fact differences are resolved by recency weighting without an operator queue", (t) => {
+test("mutually exclusive daily hard facts create one reusable operator decision", (t) => {
   const { db, repository } = repositoryFixture(t);
   for (const [externalId, value, quote, capturedAt] of [
     ["aaaaaaaaaaaaaaaaaaaaaaaa", "true", "Advance reservation is required.", "2026-01-01T00:00:00.000Z"],
@@ -245,13 +251,12 @@ test("dynamic hard-fact differences are resolved by recency weighting without an
 
   repository.rebuildKnowledge("chongqing");
   const review = db.prepare("SELECT * FROM claim_review_cases WHERE review_type='SOURCE_CONFLICT'").get();
-  assert.equal(review, undefined);
+  assert.ok(review);
   const fact = repository.knowledgeForDestination("chongqing")[0];
-  assert.equal(fact.preferred_value, "false");
-  assert.equal(fact.consensus_status, "single_source");
-  assert.equal(fact.consensus_method, "LATEST_WEIGHTED_PROVISIONAL");
+  assert.equal(fact.consensus_status, "conflicted");
+  assert.equal(fact.consensus_method, "STRICT_SEMANTIC_REVIEW");
   assert.equal(fact.verification_priority, "review");
   assert.equal(fact.contradiction_count, 1);
-  assert.equal(fact.claim_relations[0].relation, "COMPATIBLE");
-  assert.equal(repository.listOperationalExceptions().some((item) => item.kind === "source_conflict" || item.kind === "knowledge"), false);
+  assert.equal(fact.claim_relations[0].relation, "CONFLICT");
+  assert.equal(repository.listOperationalExceptions().filter((item) => item.kind === "source_conflict").length, 1);
 });

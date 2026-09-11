@@ -5,9 +5,10 @@ export function markdownToContentBlocks(markdown) {
   const lines = String(markdown || "").replace(/\r/g, "").split("\n");
   const blocks = [];
   let list = [];
+  let listOrdered = false;
   const flushList = () => {
     if (!list.length) return;
-    blocks.push({ type: "list", items: list });
+    blocks.push({ type: "list", items: list, ordered: listOrdered });
     list = [];
   };
   for (const rawLine of lines) {
@@ -20,7 +21,14 @@ export function markdownToContentBlocks(markdown) {
       continue;
     }
     const bullet = line.match(/^[-*]\s+(.+)$/);
-    if (bullet) { list.push(bullet[1]); continue; }
+    const ordered = line.match(/^\d+[.)]\s+(.+)$/);
+    if (bullet || ordered) {
+      const nextOrdered = Boolean(ordered);
+      if (list.length && nextOrdered !== listOrdered) flushList();
+      listOrdered = nextOrdered;
+      list.push((ordered || bullet)[1]);
+      continue;
+    }
     flushList();
     blocks.push({ type: "paragraph", text: line });
   }
@@ -35,7 +43,7 @@ export function buildContentAst({ draft = {}, brief = {}, visuals = [] } = {}) {
   const occurrence = new Map();
   const usedPreferredIds = new Set();
   const nodes = blocks.map((block) => {
-    if (block.type === "heading") activeLedger = ledger.find((entry) => normalize(entry.section) === normalize(block.text)) || activeLedger;
+    if (block.type === "heading") activeLedger = ledger.find((entry) => normalize(entry.section) === normalize(block.text)) || null;
     const signature = JSON.stringify(block);
     const count = (occurrence.get(signature) || 0) + 1;
     occurrence.set(signature, count);
@@ -48,32 +56,34 @@ export function buildContentAst({ draft = {}, brief = {}, visuals = [] } = {}) {
       semantic_role: block.type === "heading" ? "section_heading" : activeLedger?.claim_keys?.length ? "factual" : "editorial",
       visible_text: block.type === "list" ? block.items.join("\n") : block.text,
       ...(block.level ? { level: block.level } : {}),
-      ...(block.type === "list" ? { items: [...block.items] } : {}),
+      ...(block.type === "list" ? { items: [...block.items], ordered: Boolean(block.ordered) } : {}),
       fact_refs: [...new Set(activeLedger?.claim_keys || [])],
       source_section_ids: activeLedger?.section_id ? [activeLedger.section_id] : [],
       source_ids: [...new Set(activeLedger?.source_ids || [])],
       media_refs: [],
     };
   });
+  const media = visuals.map((visual, index) => ({ id: visual.id || `visual_${index + 1}`, role: visual.image_role || "context",
+    placement: visual.placement || "content", alt: visual.alt_text || "", caption: visual.caption || "",
+    media_id: visual.wordpress_media_id || null, source_asset_id: visual.source_asset_id || null,
+    media_url: visual.wordpress_media_url || visual.media_url || "", factual: Boolean(visual.factual_image_required) }));
   const ast = {
     version: "content-ast-compat-1",
     content_type: brief.content_type || brief.canonical?.content_type || "first_time_guide",
     title: String(draft.title || ""), slug: String(draft.slug || ""),
     summary: String(draft.meta_description || ""),
     faq: (draft.faqs || draft.seo?.faqs || []).map((item) => ({ question: String(item.question || ""), answer: String(item.answer || "") })),
-    nodes,
-    media: visuals.map((visual) => ({ id: visual.id || null, role: visual.image_role || "context",
-      placement: visual.placement || "content", alt: visual.alt_text || "", caption: visual.caption || "",
-      media_id: visual.wordpress_media_id || null })),
+    nodes: placeMediaNodes(nodes, media, brief.id || "brief"),
+    media,
   };
   ast.content_hash = crypto.createHash("sha256").update(JSON.stringify(ast)).digest("hex");
   return ast;
 }
 
 export function renderContentAstMarkdown(ast) {
-  return (ast?.nodes || []).map((node) => {
+  return (ast?.nodes || []).filter((node) => node.type !== "media").map((node) => {
     if (node.type === "heading") return `${"#".repeat(Math.min(4, Math.max(2, Number(node.level) || 2)))} ${node.visible_text}`;
-    if (node.type === "list") return (node.items || []).map((item) => `- ${item}`).join("\n");
+    if (node.type === "list") return (node.items || []).map((item, index) => node.ordered ? `${index + 1}. ${item}` : `- ${item}`).join("\n");
     return node.visible_text;
   }).join("\n\n");
 }
@@ -95,6 +105,8 @@ function composeAtomicPageFromAst(ast, capabilities, pageSchema) {
   const heading = available.get("heading");
   const paragraph = available.get("paragraph");
   const list = available.get("list");
+  const image = available.get("image") || [...available.values()].find((item) => item.category === "media"
+    && (item.schema?.properties?.media_id || item.schema?.properties?.mediaId));
   if (!heading?.schema?.properties?.text || !heading.schema.properties.level
       || !paragraph?.schema?.properties?.content || !list?.schema?.properties?.items) return null;
   const faq = available.get("faq") || available.get("faqList");
@@ -142,7 +154,18 @@ function composeAtomicPageFromAst(ast, capabilities, pageSchema) {
       continue;
     }
     if (node.type === "list" && node.items?.length) {
-      append({ type: list.id, variant: preferredVariant(list, "unordered"), data: { items: [...node.items] } }, [node]);
+      append({ type: list.id, variant: preferredVariant(list, node.ordered ? "ordered" : "unordered"), data: { items: [...node.items] } }, [node]);
+      continue;
+    }
+    if (node.type === "media") {
+      if (!image || !node.media_id) continue;
+      const data = {};
+      if (image.schema.properties.media_id) data.media_id = node.media_id;
+      if (image.schema.properties.mediaId) data.mediaId = node.media_id;
+      if (image.schema.properties.alt) data.alt = node.alt;
+      if (image.schema.properties.alt_text) data.alt_text = node.alt;
+      if (image.schema.properties.caption) data.caption = node.caption;
+      append({ type: image.id, variant: preferredVariant(image, node.role || "default"), data }, [node], { factuality: "non_factual" });
       continue;
     }
     return null;
@@ -218,6 +241,27 @@ function inlineHtml(value) {
     .replace(/\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g, '<a href="$2" rel="noopener" target="_blank">$1</a>')
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>");
+}
+
+function placeMediaNodes(nodes, media, briefId) {
+  const output = [...nodes];
+  for (const item of media) {
+    const node = { id: `node_${crypto.createHash("sha256").update(`${briefId}:media:${item.id}`).digest("hex").slice(0, 20)}`,
+      type: "media", semantic_role: item.factual ? "evidence_media" : "editorial_media", visible_text: "",
+      media_ref: item.id, media_id: item.media_id, source_asset_id: item.source_asset_id, media_url: item.media_url,
+      role: item.role, placement: item.placement, alt: item.alt, caption: item.caption,
+      fact_refs: [], source_section_ids: [], source_ids: [], media_refs: [item.id] };
+    let index = output.length;
+    if (item.placement === "hero") index = 0;
+    else if (item.placement === "after_intro") index = Math.max(0, output.findIndex((entry) => entry.type === "paragraph") + 1);
+    else if (item.placement === "mid_article") index = Math.ceil(output.length / 2);
+    else if (item.placement === "before_faq") {
+      const faqIndex = output.findIndex((entry) => entry.type === "heading" && /frequently asked questions|^faq$/i.test(entry.visible_text));
+      index = faqIndex < 0 ? output.length : faqIndex;
+    }
+    output.splice(index, 0, node);
+  }
+  return output;
 }
 
 export function contentBlockSummary(blocks) {

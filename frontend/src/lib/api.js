@@ -1,8 +1,10 @@
+import { friendlyError } from "@/lib/utils";
+
 export async function api(url, options = {}, canPrompt = true) {
   const response = await fetch(url, { ...options, credentials: "same-origin", headers: { ...(options.headers || {}) } });
   const body = response.status === 204 ? null : await response.json();
   if (!response.ok) {
-    const error = new Error(body?.error || `Request failed: ${response.status}`);
+    const error = new Error(friendlyError(body?.error, { code: body?.code, status: response.status }));
     error.code = body?.code || "REQUEST_FAILED";
     error.details = body?.details || null;
     error.status = response.status;
@@ -23,7 +25,7 @@ export function uploadChunk(url, blob, onProgress) {
       let body = null;
       try { body = request.responseText ? JSON.parse(request.responseText) : null; } catch { body = null; }
       if (request.status >= 200 && request.status < 300) resolve(body);
-      else { const error = new Error(body?.error || `上传失败：${request.status}`); error.code = body?.code || "UPLOAD_FAILED"; reject(error); }
+      else { const error = new Error(friendlyError(body?.error || `上传失败：${request.status}`, { code: body?.code, status: request.status })); error.code = body?.code || "UPLOAD_FAILED"; reject(error); }
     };
     request.send(blob);
   });

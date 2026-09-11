@@ -1,7 +1,7 @@
 import {
   AlertTriangle, Bell, BookOpen, Bot, Box, Check, CircleAlert, Database, FileCheck2,
   FileText, Gauge, Inbox, Layers3, Library, PanelTop, RefreshCw, Route, Search, Settings2, Sparkles,
-  TicketCheck, WandSparkles, ListChecks,
+  TicketCheck, WandSparkles,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -12,8 +12,7 @@ import { cn, label } from "@/lib/utils";
 
 export const views = {
   sources: { label: "来源", title: "研究来源", description: "查看并提交由你主动选择的旅行笔记、链接、文档、图片与视频。", icon: FileText },
-  recommendations: { label: "建议", title: "内容建议", description: "在文章规划前，审阅每条来源的下一步建议。", icon: Sparkles },
-  assignments: { label: "创作规划", title: "创作规划与人工命题", description: "自行命题、明确范围并检测素材；已在建议中批准的文章不需要再次审批。", icon: ListChecks },
+  recommendations: { label: "建议", title: "内容建议", description: "在开始写作前，审阅每条来源的下一步建议。", icon: Sparkles },
   knowledge: { label: "知识库", title: "目的地知识", description: "集中查看已佐证事实、冲突和时效性。", icon: BookOpen },
   blueprints: { label: "蓝图", title: "编辑蓝图", description: "把重复出现的优秀表达转化为可复用的编辑洞察。", icon: Layers3 },
   content: { label: "内容", title: "内容生产", description: "将有证据支撑的主题推进至草稿、审核和发布。", icon: WandSparkles },
@@ -21,7 +20,7 @@ export const views = {
   commercial: { label: "商品", title: "商业商品", description: "管理独立的联盟层，不污染研究知识库。", icon: TicketCheck },
   exceptions: { label: "异常", title: "需要处理", description: "只显示真正需要人工判断或介入的问题。", icon: CircleAlert },
   maintenance: { label: "维护", title: "系统维护", description: "静默完成备份、校验、同步和清理。", icon: Gauge },
-  settings: { label: "设置", title: "系统设置", description: "选择用于提取、规划、写作和审核的 AI 模型。", icon: Settings2 },
+  settings: { label: "设置", title: "系统设置", description: "选择用于提取、内容组织、写作和审核的 AI 模型。", icon: Settings2 },
 };
 
 export const emptyIcons = {

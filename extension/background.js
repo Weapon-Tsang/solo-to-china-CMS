@@ -14,6 +14,7 @@ const TICK_ALARM = "stc-favorites-tick";
 const AUTO_ALARM = "stc-favorites-auto";
 const DIRECT_CAPTURE_BYTES = 3_500_000;
 const UPLOAD_CHUNK_BYTES = 2 * 1024 * 1024;
+const ORIGINAL_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const ENGINE_REQUEST_TIMEOUT_MS = 45_000;
 const MEDIA_REQUEST_TIMEOUT_MS = 30_000;
 let driving = false;
@@ -335,8 +336,9 @@ async function enrichImageDerivatives(capture) {
       const bytes = new Uint8Array(await blob.arrayBuffer());
       image.originalSha256 = await hashBytes(bytes);
       image.mimeType = /^image\/(?:jpeg|png|webp|gif)$/i.test(blob.type) ? blob.type.toLowerCase() : "image/jpeg";
-      if (bytes.byteLength <= 5_500_000) {
-        image.aiDerivativeDataUrl = `data:${image.mimeType};base64,${bytesToBase64(bytes)}`;
+      if (bytes.byteLength <= ORIGINAL_IMAGE_MAX_BYTES) {
+        image.originalDataUrl = `data:${image.mimeType};base64,${bytesToBase64(bytes)}`;
+        image.aiDerivativeDataUrl = image.originalDataUrl;
         image.aiDerivativeSha256 = image.originalSha256;
         continue;
       }

@@ -188,7 +188,7 @@ function actionFor(row, stage, failed, pipelineBlocker = null) {
 }
 
 function stageLabel(stage) {
-  return ({ plan_content:"仅重新规划内容",generate_draft:"仅重新生成草稿",revise_draft:"仅修订失败内容",
+  return ({ plan_content:"仅重新准备写作",generate_draft:"仅重新生成草稿",revise_draft:"仅修订失败内容",
     compose_frontend_page:"仅重新编排页面",review_draft:"仅重新质检",push_wordpress_draft:"仅重新投递 WordPress",
     compose_commercial:"仅重新组合商业层",compose_publish_page:"仅重新生成发布包" })[stage] || `仅重试 ${stage}`;
 }

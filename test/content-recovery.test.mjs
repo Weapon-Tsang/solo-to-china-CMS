@@ -20,7 +20,7 @@ function fixture(t) {
 }
 
 test('draft detail reuses its evidence hash without rebuilding the entire content workspace', t=>{
-  const {repository}=fixture(t);
+  const {db,repository}=fixture(t);
   repository.saveReview('draft-r',{passed:false,score:30,issues:[],checks:[],unsupported_claims:[]},'fixture');
   const original=repository.getBriefPackage.bind(repository);
   let loads=0;
@@ -45,19 +45,20 @@ test('recovery report is read-only and targeted compose continues from the selec
   assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'revise_draft',revision:1}),/已经有排队/);
   assert.equal(repository.listContent()[0].workflow_status,'compose_frontend_page_queued');
 });
-test('recovery refuses stale revisions, unknown images, missing page and existing-brief destination mutation',t=>{
-  const {repository}=fixture(t);
+test('recovery refuses stale revisions, unknown images and existing-brief destination mutation while allowing independent QA',t=>{
+  const {db,repository}=fixture(t);
   assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'compose_frontend_page',revision:0}),/其他任务更新/);
   assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'bind_asset',revision:1,assetId:'fake'}),/授权/);
-  assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'review_draft',revision:1}),/页面尚未/);
-  assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'correct_destination',revision:1,destination:'beijing'}),/已有规划/);
+  assert.equal(executeContentRecovery(repository,'topic-r',{action:'review_draft',revision:1}).action,'review_draft');
+  db.prepare("DELETE FROM jobs").run();
+  assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'correct_destination',revision:1,destination:'beijing'}),/写作准备/);
 });
-test('manual correction preserves revisions and queues only page composition',t=>{
+test('manual correction preserves revisions and queues independent QA plus page composition',t=>{
   const {db,repository}=fixture(t);
   executeContentRecovery(repository,'topic-r',{action:'save_editorial_correction',revision:1,body:'Corrected intro.\n\n## Visit\n\nSupported prose.',evidenceLedger:[],verificationNotes:[]});
   assert.equal(db.prepare('SELECT revision FROM article_drafts').get().revision,2);
-  assert.equal(db.prepare('SELECT count(*) n FROM jobs').get().n,1);
-  assert.equal(db.prepare('SELECT type FROM jobs').get().type,'compose_frontend_page');
+  assert.equal(db.prepare('SELECT count(*) n FROM jobs').get().n,2);
+  assert.deepEqual(db.prepare('SELECT type FROM jobs ORDER BY type').all().map((row)=>row.type),['compose_frontend_page','review_draft']);
   assert.equal(repository.listDraftRevisions('draft-r').length,2);
 });
 test('old revision QA cannot masquerade as current QA on content list',t=>{
@@ -138,6 +139,12 @@ test('operator diagnosis is concise Chinese and hides long code lists behind tec
   const configuration=recoveryDiagnosis({failedJob:{type:'compose_frontend_page',last_error:'Content production requires a configured Kimi key or Vertex AI project.'}});
   assert.match(configuration.headline,/模型尚未配置/);assert.equal(configuration.automatic.reason,'operation_must_be_resolved_first');
   assert.match(configuration.recommendedAction.why,/重复点击仍会失败/);
+  const model403=recoveryDiagnosis({failedJob:{type:'compose_frontend_page',last_error:'Vertex Gemini request failed (403): permission denied'}});
+  assert.match(model403.headline,/模型服务/);
+  assert.doesNotMatch(model403.headline,/图片/);
+  assert.match(model403.reason,/不代表来源图片失效/);
+  const source403=recoveryDiagnosis({failedJob:{type:'compose_frontend_page',last_error:'Authorized source image download failed (403).'}});
+  assert.match(source403.headline,/图片/);
 });
 test('single-source stable photo descriptions do not require a fabricated as-of date', () => {
   assert.equal(isDynamicFact({normalized_key:'attraction.station.photo_spot_metro',consensus_method:'SINGLE_SOURCE_LATEST',freshness_state:'current'}), false);

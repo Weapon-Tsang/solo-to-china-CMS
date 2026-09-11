@@ -1,9 +1,9 @@
-export const EVIDENCE_CONSENSUS_VERSION = "2026-09-10.1";
+export const EVIDENCE_CONSENSUS_VERSION = "2026-09-11.1";
 
-// Dynamic travel facts are not editorial emergencies. They are observations
-// made at different times by sources with different independence and quality.
-// The current working value is therefore selected from the evidence set, not
-// delegated to an operator or made dependent on one permanently-official URL.
+// The operator explicitly chooses every source that enters this system. Daily
+// travel details from those sources are usable by default; dates and a second
+// "official" check are not artificial gates. A real mutually-exclusive claim
+// comparison still becomes one persisted review decision.
 const DYNAMIC_FACT_PATTERN = /(?:^|_)(?:price|cost|fees?|fares?|ticket|admission|opening|hours?|schedule|timetable|booking|reservation|appointment|policy|rules?|closure|closed|availability|address|location|entrance|exit|metro|subway|station|train|bus|ferry|route|payment)(?:_|$)|(?:price|cost|ticket|opening|hours?|schedule|booking|reservation|metro|subway|station)/iu;
 const SAFETY_CRITICAL_PATTERN = /(?:^|[\s._])(?:emergency|evacuation|allergen(?:_warning)?|medical|fire|disaster|prohibited|legal_requirement|visa_requirement|safety_hazard)(?=$|[\s._])/iu;
 
@@ -17,7 +17,7 @@ export function evidenceResolutionMode(rows = []) {
   const semanticallyMultiValue = rows.length > 0 && rows.every((row) => row.structured_value?.claim_kind
     && (row.structured_value.claim_kind !== "HARD_FACT" || row.structured_value.cardinality !== "SINGLE_VALUE"));
   if (semanticallyMultiValue) return "SEMANTIC_COMPATIBILITY";
-  return DYNAMIC_FACT_PATTERN.test(semanticText) ? "RECENCY_WEIGHTED" : "SEMANTIC_COMPATIBILITY";
+  return DYNAMIC_FACT_PATTERN.test(semanticText) ? "TRUSTED_SOURCE_POLICY" : "SEMANTIC_COMPATIBILITY";
 }
 
 export function resolveEvidenceConsensus(rows = [], {
@@ -76,8 +76,9 @@ export function resolveEvidenceConsensus(rows = [], {
   const method = !currentVotes.length
     ? excludedState === "scheduled" ? "SCHEDULED_ONLY" : excludedState === "historical" ? "HISTORICAL_ONLY" : "UNDATED_ARCHIVE"
     : singleVariant
-    ? supportCount >= 2 ? "MULTI_SOURCE_AGREEMENT" : "SINGLE_SOURCE_LATEST"
-    : hasWeightedAgreement ? "RECENCY_WEIGHTED_CONSENSUS" : "LATEST_WEIGHTED_PROVISIONAL";
+    ? mode === "TRUSTED_SOURCE_POLICY" ? "TRUSTED_SOURCE_POLICY" : supportCount >= 2 ? "MULTI_SOURCE_AGREEMENT" : "SINGLE_SOURCE_LATEST"
+    : mode === "TRUSTED_SOURCE_POLICY" ? "TRUSTED_SOURCE_CONFLICT"
+      : hasWeightedAgreement ? "RECENCY_WEIGHTED_CONSENSUS" : "LATEST_WEIGHTED_PROVISIONAL";
   const confidence = clamp(
     0.28 + scoreShare * 0.42 + Math.min(0.18, supportCount * 0.06)
       + (hasWeightedAgreement ? 0.08 : 0) - (ranked.length > 1 && !hasWeightedAgreement ? 0.08 : 0),
@@ -104,8 +105,8 @@ export function resolveEvidenceConsensus(rows = [], {
     currentEvidenceCount: currentVotes.length,
     scheduledEvidenceCount: excludedVotes.filter((vote) => vote.validityState === "scheduled").length,
     historicalEvidenceCount: excludedVotes.filter((vote) => vote.validityState === "historical").length,
-    freshnessState: ageDays > staleAfterDays ? "stale" : mode === "RECENCY_WEIGHTED" ? "time_sensitive" : "current",
-    autoResolved: mode === "RECENCY_WEIGHTED",
+    freshnessState: mode === "TRUSTED_SOURCE_POLICY" ? "current" : ageDays > staleAfterDays ? "stale" : "current",
+    autoResolved: false,
     independenceGroups: independence.groups.map((group) => ({
       key: group.key,
       sourceIds: group.sourceIds,

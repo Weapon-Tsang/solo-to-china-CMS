@@ -34,7 +34,7 @@
 
   function extractSourceTimestamp(document, root = document, now = new Date()) {
     const candidates = [];
-    for (const node of root.querySelectorAll('time,[datetime],[class*="date" i],[class*="time" i],[class*="publish" i],[class*="update" i],[class*="edit" i]')) {
+    for (const node of root.querySelectorAll('time,[datetime],[class*="date" i],[class*="publish" i],[class*="update" i],[class*="edit" i]')) {
       const raw = node.getAttribute?.("datetime") || node.dateTime || node.textContent || "";
       const direct = node.getAttribute?.("datetime") ? validIso(raw) : null;
       const parsed = direct ? {
@@ -43,14 +43,8 @@
         raw,
         confidence:"high",
       } : parseSourceDate(raw,now);
-      if (parsed) candidates.push(parsed);
-    }
-    if (!candidates.length) {
-      const text = String(root.innerText || root.textContent || "").slice(0, 5000);
-      for (const match of text.matchAll(/(?:编辑于|更新于|发布于)?\s*(?:20\d{2}[年月./-]\d{1,2}[月./-]\d{1,2}日?|\d{1,2}[月./-]\d{1,2}日?|昨天|今天|\d+\s*(?:天|小时|分钟)前)/g)) {
-        const parsed = parseSourceDate(match[0],now);
-        if (parsed) candidates.push(parsed);
-      }
+      const dedicatedTimeElement = node.tagName === "TIME" || node.hasAttribute?.("datetime");
+      if (parsed && (parsed.kind !== "unknown" || dedicatedTimeElement)) candidates.push(parsed);
     }
     const kindScore = { edited:3,published:2,unknown:1 };
     const confidenceScore = { high:3,medium:2,low:1 };

@@ -29,7 +29,7 @@ test("Kimi-backed independent QA cannot approve deterministic evidence or commer
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "invalid_evidence_key"));
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "draft_below_suggested_length" && issue.severity === "warning"));
   assert.equal(reviewed.output.issues.some((issue) => issue.code === "stale_evidence_used"), false);
-  assert.ok(reviewed.output.issues.some((issue) => issue.code === "missing_temporal_disclosure"));
+  assert.equal(reviewed.output.issues.some((issue) => issue.code === "missing_temporal_disclosure"), false);
   assert.equal(request.url, "https://api.example.test/v1/chat/completions");
   assert.equal(request.body.response_format.type, "json_schema");
 });

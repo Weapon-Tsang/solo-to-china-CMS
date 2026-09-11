@@ -1,6 +1,14 @@
 # Changelog
 
-## 1.18.1 - Unreleased
+## 1.18.2 - Unreleased
+
+- Localize operator-facing diagnostics and quality failures, including safe Chinese fallbacks for malformed or provider-originated output.
+- Replace browser-native confirmation prompts with a responsive in-app dialog and simplify Content to one approved-versus-created production view with explicit blockers.
+- Remove the manual content-planning workspace and active runtime API while preserving approval-driven evidence preparation, drafting, QA, and draft delivery.
+- Persist authorized source-image bytes and relations before writing, constrain source-image localization to the retained original, and keep text QA independent from media delivery failures.
+- Activate Content Strategy 2.1 and database schema 56 with Content AST, bounded repair, trusted operator-fact, and media provenance corrections.
+
+## 1.18.1 - 2026-09-11
 
 - Replace the duplicated, non-interactive Content opportunity list with a production-lifecycle overview that explains why the records exist and directs operators to the actionable table.
 - Show the first Chinese quality blocker and the bounded automatic-repair state directly on each Content row, including active work, two-attempt exhaustion, operational interruption, and real-input requirements.

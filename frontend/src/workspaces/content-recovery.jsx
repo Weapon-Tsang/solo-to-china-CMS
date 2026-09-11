@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
-import { label } from '@/lib/utils';
+import { label, normalizeQualityIssue as normalizeQualityIssueValue } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { ConfirmAction } from '@/components/confirm-action';
 
 const ACTION_LABELS = {
   compose_frontend_page: '仅重新编排页面',
   review_draft: '仅重新质检',
   revise_draft: '仅修订失败内容',
-  plan_content: '从规划继续生产',
+  plan_content: '继续创建内容',
 };
 
 export function ContentRecovery({ candidateId,onAction,actionBusy=false }) {
@@ -16,6 +17,7 @@ export function ContentRecovery({ candidateId,onAction,actionBusy=false }) {
   const [busy,setBusy] = useState(false);
   const [destination,setDestination] = useState('');
   const [assets,setAssets] = useState({});
+  const [pendingAction,setPendingAction] = useState(null);
   if (!candidateId) return null;
   const endpoint = `/api/topics/${encodeURIComponent(candidateId)}/recovery`;
   const refresh = async () => {
@@ -24,13 +26,18 @@ export function ContentRecovery({ candidateId,onAction,actionBusy=false }) {
     catch (cause) { setError(cause.message); }
     finally { setBusy(false); }
   };
-  const execute = async (action,extra={}) => {
-    const prompt = action === 'compose_frontend_page' ? '只重建页面，不重写正文；成功后会自动重新质检。'
+  const execute = (action,extra={}) => {
+    const description = action === 'compose_frontend_page' ? '只重建页面，不重写正文；成功后会自动重新质检。'
       : action === 'revise_draft' ? '只修订质量失败涉及的内容；成功后会自动编排并质检。'
         : action === 'bind_asset' ? '请确认所选原图与图片说明相符，并且已有发布授权。绑定后会自动继续页面编排。'
           : '系统会从所选的最小阶段继续，并保留当前版本历史。';
-    if (!window.confirm(prompt)) return;
-    if (await onAction(endpoint,{ method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ action,revision:report.revision,...extra }) },'恢复动作已提交。')) await refresh();
+    setPendingAction({ action, extra, description });
+  };
+  const confirmExecute = async () => {
+    const pending = pendingAction;
+    if (!pending) return;
+    if (await onAction(endpoint,{ method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ action:pending.action,revision:report.revision,...pending.extra }) },'处理动作已提交。')) await refresh();
+    setPendingAction(null);
   };
   const disabled = actionBusy || busy || Boolean(report?.activeJobs?.length);
   const diagnosis = report?.diagnosis;
@@ -48,7 +55,6 @@ export function ContentRecovery({ candidateId,onAction,actionBusy=false }) {
         {recommended && <p className="mt-2 leading-relaxed"><strong>建议怎么处理：</strong>{recommended.label}。{recommended.why}</p>}
         {canExecuteRecommended && <Button className="mt-3 min-h-11 w-full sm:w-auto" size="sm" disabled={disabled} onClick={() => execute(recommended.id)}>{recommended.label}</Button>}
         {recommended?.id === 'recapture_media' && <p className="mt-3 font-medium text-amber-900">请展开下方“原文与图片恢复”，系统已列出这篇草稿用到的具体原文链接。</p>}
-        {diagnosis?.technicalDetail && <details className="mt-3 text-[11px] text-slate-500"><summary className="cursor-pointer">查看技术明细（排查人员使用）</summary><pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-white p-2">{diagnosis.technicalDetail}</pre></details>}
       </div>
 
       <div className="rounded-lg bg-blue-50 p-3 leading-relaxed">
@@ -56,7 +62,7 @@ export function ContentRecovery({ candidateId,onAction,actionBusy=false }) {
         <p className="mt-1 text-slate-600">最多自动修复 {diagnosis?.automatic?.maxAttempts ?? 2} 次；超过次数、缺原图或需要编辑判断时才转人工，避免无限重跑和重复费用。</p>
       </div>
 
-      <p>素材准备度 {report.coverage.score}%：{report.coverage.explanation}</p>
+      <p>可用素材 {report.coverage.score}%：{report.coverage.explanation}</p>
       <p>当前版本：{report.revision ?? '尚无草稿'}；{report.activeJobs.length ? report.activeJobs.map((job) => `${label(job.type)}（${label(job.status)}）`).join('、') : '当前没有排队或运行中的生产任务。'}</p>
 
       {report.canCorrectDestination && <div className="rounded-lg border p-3">
@@ -74,18 +80,18 @@ export function ContentRecovery({ candidateId,onAction,actionBusy=false }) {
             <Button className="min-h-11" size="sm" variant="outline" disabled={disabled} onClick={() => execute('compose_frontend_page')}>仅重新编排页面</Button>
             <Button className="min-h-11" size="sm" variant="outline" disabled={disabled} onClick={() => execute('review_draft')}>仅重新质检</Button>
             <Button className="min-h-11" size="sm" variant="outline" disabled={disabled} onClick={() => execute('revise_draft')}>仅修订失败内容</Button>
-          </> : <Button className="min-h-11" size="sm" disabled={disabled || !report.destinationCheck.valid} onClick={() => execute('plan_content')}>从规划继续生产</Button>}
+          </> : <Button className="min-h-11" size="sm" disabled={disabled || !report.destinationCheck.valid} onClick={() => execute('plan_content')}>继续创建内容</Button>}
         </div>
       </details>
 
       {report.editorial && <EditorialCorrection key={report.revision} value={report.editorial} disabled={disabled} onSave={(extra) => execute('save_editorial_correction',extra)} />}
 
-      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-semibold text-slate-800">本机规则复核：{diagnosis?.issues?.blockerCount || 0} 个阻塞，{diagnosis?.issues?.warningCount || 0} 个提醒</summary>
-        <p className="mt-2 text-slate-500">这里先说人话；内部证据编号只放在每项的“技术明细”里，平时不需要看。</p>
+      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-semibold text-slate-800">质量检查结果：{diagnosis?.issues?.blockerCount || 0} 个未通过，{diagnosis?.issues?.warningCount || 0} 个提醒</summary>
+        <p className="mt-2 text-slate-500">这里只显示可以直接理解和处理的原因。</p>
         <div className="mt-3 space-y-2">{diagnosis?.issues?.blockers?.map((issue) => <QualityIssue key={issue.code} issue={issue} />)}{diagnosis?.issues?.warnings?.map((issue) => <QualityIssue key={issue.code} issue={issue} />)}</div>
       </details>
 
-      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-semibold text-slate-800">原文与图片恢复（{report.visuals.length} 个图片槽位）</summary>
+      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-semibold text-slate-800">原文与图片恢复（{report.visuals.length} 张待用图片）</summary>
         <p className="my-2 leading-relaxed">{report.recaptureMessage}</p>
         <div className="rounded-lg bg-slate-50 p-2"><strong>这篇草稿对应的原文：</strong>{report.sources.map((source) => <SourceLink key={source.id} source={source} />)}</div>
         {report.visuals.map((visual) => <div key={visual.id} className="my-3 rounded-lg border p-3"><strong>图片 {visual.slot + 1}：{visual.alt}</strong><p>{visual.delivered ? '已交付图片' : label(visual.status)} · {visual.acquisition}</p>
@@ -94,9 +100,10 @@ export function ContentRecovery({ candidateId,onAction,actionBusy=false }) {
           <Button className="min-h-11 w-full sm:w-auto" size="sm" disabled={disabled || !assets[visual.id]} onClick={() => execute('bind_asset',{visualId:visual.id,assetId:assets[visual.id]})}>确认绑定这张原图并继续</Button>
         </div>)}
       </details>
-      <p className="text-slate-500">Not Tested＝还没有完成验证；注意＝提醒，不等于失败；阻塞＝当前不能交付。素材准备度不代表质检通过。</p>
+      <p className="text-slate-500">“尚未验证”表示检查还没完成；“提醒”不影响继续；“未通过”表示当前还不能交付。</p>
     </section>}
     {error && <p className="mt-2 text-red-700">{error}</p>}
+    <ConfirmAction open={Boolean(pendingAction)} onOpenChange={(open) => !open && setPendingAction(null)} title="确认执行这项处理？" description={pendingAction?.description || ''} detail="正文、来源证据和已有历史版本都会保留。" confirmLabel="确认执行" busy={actionBusy || busy} onConfirm={confirmExecute} />
   </div>;
 }
 
@@ -131,9 +138,9 @@ function EditorialCorrection({value,disabled,onSave}) {
 }
 
 export function QualityIssue({issue}) {
-  return <article className={`rounded-lg border p-3 ${issue.severity === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'}`}>
-    <strong>{issue.severity === 'warning' ? '提醒' : '阻塞'}：{issue.title}</strong>
-    <p className="mt-1">{issue.reason}</p><p className="mt-1"><strong>怎么处理：</strong>{issue.action}</p>
-    {issue.technicalDetail && <details className="mt-2 text-[11px] text-slate-500"><summary className="cursor-pointer">查看技术明细（给开发排查用）</summary><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-white p-2">{issue.code}: {issue.technicalDetail}</pre></details>}
+  const normalized = normalizeQualityIssueValue(issue);
+  return <article className={`rounded-lg border p-3 ${normalized.severity === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'}`}>
+    <strong>{normalized.severity === 'warning' ? '提醒' : '未通过'}：{normalized.title}</strong>
+    <p className="mt-1">{normalized.reason}</p><p className="mt-1"><strong>怎么处理：</strong>{normalized.action}</p>
   </article>;
 }

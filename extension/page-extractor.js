@@ -121,7 +121,7 @@
       text,
       html,
       author: { name: authorName, url: authorElement?.href || "" },
-      publishedAt: sourceTimestamp.value || "",
+      publishedAt: sourceTimestamp.kind === "published" ? sourceTimestamp.value || "" : "",
       sourceTimestamp,
       images,
       videos,
@@ -209,12 +209,17 @@
 
   function collectImages(root) {
     const output = new Map();
-    for (const image of root.querySelectorAll(SELECTORS.mediaImages.join(","))) {
+    const images = [...root.querySelectorAll(SELECTORS.mediaImages.join(","))];
+    for (const [domOrder, image] of images.entries()) {
       const url = image.currentSrc || image.src;
       if (!/^https:\/\//.test(url) || (image.naturalWidth && image.naturalWidth < 160) || (image.naturalHeight && image.naturalHeight < 120)) continue;
       const identity = image.dataset?.src || image.getAttribute("data-src") || url.replace(/[?&](?:imageView2|imageMogr2)[^&]*/g, "");
+      const container = image.closest("figure,[class*='swiper-slide'],[class*='carousel-item'],article,section") || image.parentElement;
+      const captionText = image.closest("figure")?.querySelector("figcaption")?.textContent?.trim() || "";
+      const nearbyText = String(container?.innerText || container?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 2000);
       output.set(identity, { url, alt: image.alt || "", width: image.naturalWidth || null, height: image.naturalHeight || null,
-        mediaIdentity: identity, position: output.size, provenance: { traversal: "detail_carousel" } });
+        mediaIdentity: identity, position: output.size, nearbyText, captionText, domOrder,
+        provenance: { traversal: "detail_carousel", nearbyText, captionText, domOrder } });
     }
     return [...output.values()];
   }

@@ -16,8 +16,8 @@ const ISSUE_GUIDANCE = {
   seo_metadata_missing: ['SEO 基础字段缺失', '标题、焦点短语或摘要至少缺少一项。', '仅补齐缺失的 SEO 字段。'],
   unsupported_title_promise: ['标题承诺超出证据', '标题承诺的范围比已确认选题或证据能够支持的范围更大。', '缩小标题和正文承诺，不新增未经证实的内容。'],
   seo_title_description_duplicate: ['标题和摘要重复', '搜索摘要只是重复标题，没有告诉读者文章具体解决什么问题。', '重写摘要，不必重写全文。'],
-  strategy_version_mismatch: ['草稿和规划版本不一致', '这篇草稿不是按当前已确认的内容规划版本生成，继续交付可能混入旧规则。', '用当前规划重新生成或修订草稿，然后重新质检。'],
-  canonical_content_incomplete: ['文章的核心回答结构不完整', '当前规划缺少直接回答或结构化答案块，读者可能看不出文章究竟解决什么问题。', '补齐文章开头的直接回答和必要答案块，不扩写无关内容。'],
+  strategy_version_mismatch: ['草稿和写作规则版本不一致', '这篇草稿不是按当前已确认的写作规则生成，继续交付可能混入旧规则。', '用当前规则重新生成或修订草稿，然后重新质检。'],
+  canonical_content_incomplete: ['文章的核心回答结构不完整', '当前文章缺少直接回答或结构化答案块，读者可能看不出文章究竟解决什么问题。', '补齐文章开头的直接回答和必要答案块，不扩写无关内容。'],
   schema_inconsistent: ['结构化数据与文章不一致', 'Article 结构化数据缺失、含占位值，或没有与当前可见正文同步。', '重新编排页面并生成与正文一致的结构化数据。'],
   heading_hierarchy_invalid: ['标题层级不连续', '正文标题顺序跳级或结构不清，影响读者和机器理解页面层次。', '只调整标题层级，不改写事实内容。'],
   image_strategy_invalid: ['配图类型与事实要求不匹配', '需要实景原图的地点或路线被当成可生成插图，或者图片缺少可追溯用途。', '改用已授权实景图，或删除没有证据支持的配图计划。'],
@@ -47,48 +47,92 @@ function compactDetails(message, limit = 6) {
   return `${prefix} ${items.slice(0, limit).join(', ')}，另有 ${items.length - limit} 项（技术明细中可查看全部）`;
 }
 
+function operatorSafeDetails(message) {
+  const text = String(message || '').trim();
+  if (!text) return '系统没有记录更多说明。';
+  if (/[\u3400-\u9fff]/u.test(text) && !/[A-Za-z]{12,}/u.test(text)) return compactDetails(text);
+  const itemCount = text.includes(':') ? text.slice(text.indexOf(':') + 1).split(',').filter((item) => item.trim()).length : 0;
+  return itemCount > 6 ? `系统共记录 ${itemCount} 个相关检查项，另有 ${itemCount - 6} 项已保存在服务日志中。` : '原始错误已保存在服务日志中，页面不显示内部英文信息。';
+}
+
 export function explainQualityIssue(issue = {}) {
-  const code = String(issue.code || 'unknown_quality_issue');
+  const value = typeof issue === 'string' ? { message: issue } : issue && typeof issue === 'object' ? issue : {};
+  const code = String(value.code || 'unknown_quality_issue');
   const [title, reason, action] = ISSUE_GUIDANCE[code] || [
-    issue.severity === 'warning' ? '需要编辑复核' : '质量规则未通过',
-    '系统检测到一项尚未归类的质量问题。',
-    '查看技术明细并按失败阶段进行有界修复。',
+    value.severity === 'warning' ? '需要编辑复核' : '质量检查没有通过',
+    '系统检测到一项尚未归类的质量问题，原始结果已经保留。',
+    '重新执行本次检查；如果仍未给出原因，请查看服务日志。',
   ];
-  return { code, severity: issue.severity || 'blocker', title, reason, action, technicalDetail: compactDetails(issue.message) };
+  return { code, severity: value.severity || 'blocker', title, reason, action, technicalDetail: operatorSafeDetails(value.message) };
 }
 
 export function explainOperationalFailure(job) {
   if (!job) return null;
   const message = String(job.last_error || job.error || '');
   const type = String(job.type || '');
+  const code = String(job.last_failure_code || job.code || '').toUpperCase();
+  const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
+  const details = operatorSafeDetails(message);
   if (/requires a configured Kimi key or Vertex AI project/i.test(message)) return {
     category: 'configuration', headline: '生产模型尚未配置',
     reason: '系统没有可用的 Kimi 密钥或 Vertex AI 项目，因此生产阶段无法执行；这不是文章内容错误。',
     action: { id: 'configure_ai', label: '先到“设置”配置 AI 模型', why: '配置完成后再重试失败阶段，否则重复点击仍会失败。' },
-    technicalDetail: compactDetails(message),
+    technicalDetail: details,
   };
-  if (/403|Authorized source image download failed/i.test(message)) return {
-    category: 'media', headline: '授权图片只有失效链接，没有留存文件',
-    reason: '采集时保存了图片地址，但旧版没有保存大多数普通尺寸图片的实际字节；来源 CDN 链接过期后就会返回 403。',
+  const sourceMediaFailure = code.startsWith('AUTHORIZED_SOURCE') || code.startsWith('SOURCE_IMAGE')
+    || (/authorized source image download failed/i.test(message) && ['generate_visuals', 'compose_frontend_page'].includes(type));
+  if (sourceMediaFailure) return {
+    category: 'media', headline: '来源图片没有成功保存',
+    reason: '这篇文章需要的授权原图没有留存在系统中，旧链接现在无法读取。已有正文和证据不会丢失。',
     action: { id: 'recapture_media', label: '打开原文并重新采集图片', why: '新版采集器会保留已授权原图；重新采集后系统可继续页面编排。' },
-    technicalDetail: compactDetails(message),
+    technicalDetail: details,
+  };
+  if (status === 403 && /wordpress/i.test(type)) return {
+    category: 'configuration', headline: 'WordPress 拒绝了草稿写入',
+    reason: '当前 WordPress 账号或应用密码没有草稿写入权限，文章内容仍保留在系统中。',
+    action: { id: null, label: '检查 WordPress 权限', why: '确认站点地址、用户名、应用密码和文章写入权限后，再重试发送草稿。' },
+    technicalDetail: details,
+  };
+  if (status === 403) return {
+    category: 'configuration', headline: '外部模型服务拒绝了请求',
+    reason: '当前项目、模型或凭据没有执行这一步的权限；这不代表来源图片失效，也不代表文章事实有错。',
+    action: { id: 'configure_ai', label: '检查模型服务权限', why: '确认项目、地区、模型和服务账号权限后，再重试失败阶段。' },
+    technicalDetail: details,
+  };
+  if (/aborted|aborterror|timed? ?out|timeout/i.test(message)) return {
+    category: 'operation', headline: '处理超过了等待时间',
+    reason: '外部服务没有在本次等待时间内完成。系统已经保留输入和已有版本，可以从当前步骤继续。',
+    action: { id: type || null, label: '重新执行当前步骤', why: '无需清空历史或重跑已经成功的步骤。' },
+    technicalDetail: details,
+  };
+  if (/no structured output|empty structured|returned no .*output/i.test(message)) return {
+    category: 'operation', headline: '模型没有返回可用结果',
+    reason: '模型调用已结束，但结果格式不完整，系统无法安全写入文章。输入和已有版本仍然保留。',
+    action: { id: type || null, label: '重新执行当前步骤', why: '系统只会重试本次失败的步骤。' },
+    technicalDetail: details,
+  };
+  if (/qa_failed|quality .*failed|review .*failed/i.test(message)) return {
+    category: 'content', headline: '质量检查没有通过',
+    reason: '系统已停止自动循环，需要根据文章内列出的具体问题进行定向修订。',
+    action: { id: 'revise_draft', label: '只修订未通过的内容', why: '保留已经通过的正文、证据和图片。' },
+    technicalDetail: details,
   };
   if (type === 'compose_frontend_page' && /400|invalid argument/i.test(message)) return {
     category: 'page', headline: '页面编排提交的数据不符合模型接口要求',
-    reason: '页面编排输入过大或结构与 Vertex 接口不兼容，因此正文虽然还在，页面没有成功生成。',
+    reason: '页面编排输入过大或结构与外部模型接口不兼容，因此正文虽然还在，页面没有成功生成。',
     action: { id: 'compose_frontend_page', label: '仅重新编排页面', why: '不重写正文，只重建页面数据，完成后会自动质检。' },
-    technicalDetail: compactDetails(message),
+    technicalDetail: details,
   };
   if (/token limit|MODEL_OUTPUT_LIMIT|structured output reached/i.test(message)) return {
-    category: 'content', headline: type === 'plan_content' ? '内容规划输入过大' : '自动修订输出超过上限',
+    category: 'content', headline: type === 'plan_content' ? '写作准备输入过大' : '自动修订输出超过上限',
     reason: '旧流程把过多事实编号和重复错误明细一次性交给模型，超出了结构化输出限制。',
-    action: { id: type === 'plan_content' ? 'plan_content' : 'revise_draft', label: type === 'plan_content' ? '用精简证据重新规划' : '仅修订失败内容', why: '新版会压缩事实范围和错误明细，并限制修订次数。' },
-    technicalDetail: compactDetails(message),
+    action: { id: type === 'plan_content' ? 'plan_content' : 'revise_draft', label: type === 'plan_content' ? '用精简证据重新准备' : '仅修订失败内容', why: '新版会压缩事实范围和错误明细，并限制修订次数。' },
+    technicalDetail: details,
   };
   return {
-    category: 'operation', headline: '生产任务执行失败', reason: '这是流程或外部服务错误，不等于文章事实一定有错。',
-    action: { id: type || null, label: '重试失败阶段', why: '先查看折叠的技术明细；若输入和服务配置已经修正，再只重试这个阶段。' },
-    technicalDetail: compactDetails(message),
+    category: 'operation', headline: '这一步没有完成', reason: '暂时无法确定具体原因，系统已保存错误记录；这不等于文章事实一定有错。',
+    action: { id: type || null, label: '重新执行当前步骤', why: '如果再次失败，请根据新的中文说明处理，或由维护人员查看服务日志。' },
+    technicalDetail: details,
   };
 }
 

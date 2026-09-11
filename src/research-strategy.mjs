@@ -164,11 +164,6 @@ function requirement(key, priority, facts) {
   const matching = facts.filter((fact) => matchesRequirement(key, fact));
   let state = "missing";
   if (matching.some((fact) => fact.consensus_status === "conflicted")) state = "conflicted";
-  // A dynamic claim is a dated observation, not a timeless assertion. Old rows that
-  // still carry the legacy requires_official flag are deliberately downgraded to
-  // dated evidence and remain usable with a reader-facing as-of disclosure.
-  else if (matching.length && matching.every((fact) => fact.freshness_state === "stale"
-    || fact.verification_priority === "requires_official")) state = "dated";
   else if (matching.length) state = "covered";
   return { key, priority, state, factKeys: matching.map((fact) => fact.normalized_key).filter(Boolean) };
 }

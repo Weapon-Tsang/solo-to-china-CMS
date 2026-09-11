@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 55;
+export const SCHEMA_VERSION = 56;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -76,6 +76,33 @@ function migrate(db) {
   if (current < 53) migrationFiftyThree(db);
   if (current < 54) migrationFiftyFour(db);
   if (current < 55) migrationFiftyFive(db);
+  if (current < 56) migrationFiftySix(db);
+}
+
+function migrationFiftySix(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE source_assets ADD COLUMN storage_status TEXT NOT NULL DEFAULT 'discovered'
+        CHECK (storage_status IN ('discovered','pending','saved','failed'));
+      ALTER TABLE source_assets ADD COLUMN original_bytes_status TEXT NOT NULL DEFAULT 'missing'
+        CHECK (original_bytes_status IN ('missing','invalid','saved_unknown','saved_derivative','saved_original'));
+      ALTER TABLE source_assets ADD COLUMN stored_sha256 TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN stored_size_bytes INTEGER;
+      ALTER TABLE source_assets ADD COLUMN language_status TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (language_status IN ('unknown','english','chinese','mixed','no_text'));
+      ALTER TABLE source_assets ADD COLUMN nearby_text TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN caption_text TEXT NOT NULL DEFAULT '';
+      ALTER TABLE source_assets ADD COLUMN dom_order INTEGER;
+      UPDATE source_assets SET storage_status='saved',original_bytes_status='saved_unknown'
+        WHERE local_path<>'' OR ai_derivative_data_url<>'';
+      INSERT INTO schema_migrations(version, applied_at) VALUES (56, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFiftyFive(db) {

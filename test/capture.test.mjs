@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
 import vm from "node:vm";
+import { createHash } from "node:crypto";
 import { normalizeXiaohongshuCapture, ValidationError } from "../src/adapters/xiaohongshu.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
@@ -97,7 +98,35 @@ test("capture parser records edited source time separately from capture time", (
   const capture = normalizeXiaohongshuCapture({ url:"https://www.xiaohongshu.com/explore/source-time",title:"Dated note",
     text:"A sufficiently detailed note with an explicit source editing timestamp.",publishedAt:parsed.value,sourceTimestamp:parsed });
   assert.equal(capture.submissionMetadata.sourceTimestamp.kind,"edited");
-  assert.equal(capture.publishedAt,parsed.value);
+  assert.equal(capture.publishedAt,null);
+});
+
+test("authorized source images are saved as verified local files with nearby text relations", (t) => {
+  const fixture = repositoryFixture(t);
+  const base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+  const bytes = Buffer.from(base64, "base64");
+  const originalSha256 = createHash("sha256").update(bytes).digest("hex");
+  const capture = normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/saved-image-bytes",
+    title: "Saved authorized image",
+    text: "A selected note with a real scene and enough nearby explanatory text.",
+    images: [{
+      url: "https://sns-img.xhscdn.com/original.png", mimeType: "image/jpeg", originalSha256,
+      originalDataUrl: `data:image/png;base64,${base64}`,
+      nearbyText: "The east entrance beside the metro exit.", captionText: "East entrance", domOrder: 7,
+    }],
+  });
+  const saved = fixture.repository.saveCapture(capture);
+  const asset = fixture.db.prepare("SELECT * FROM source_assets WHERE source_id=?").get(saved.id);
+  assert.equal(asset.storage_status, "saved");
+  assert.equal(asset.original_bytes_status, "saved_original");
+  assert.equal(asset.mime_type, "image/png");
+  assert.equal(asset.stored_sha256, originalSha256);
+  assert.equal(asset.stored_size_bytes, bytes.length);
+  assert.equal(asset.nearby_text, "The east entrance beside the metro exit.");
+  assert.equal(asset.caption_text, "East entrance");
+  assert.equal(asset.dom_order, 7);
+  assert.equal(fs.readFileSync(asset.local_path).equals(bytes), true);
 });
 
 test("capture identity uses the Xiaohongshu note ID before transient share URLs", (t) => {

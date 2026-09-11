@@ -19,7 +19,6 @@ import { ContentQualityStatus } from "@/workspaces/content-quality-status";
 const endpoints = {
   sources: "/api/sources",
   recommendations: "/api/recommendations",
-  assignments: "/api/editorial-assignments",
   knowledge: "/api/knowledge",
   blueprints: "/api/editorial-blueprints",
   content: "/api/content",
@@ -391,7 +390,7 @@ const guides = {
   capture: { icon: AppWindow, title: "采集第一个来源", description: "来源发现由人工主导；扩展只读取你明确打开并保存的笔记。", steps: ["在 Chrome 扩展程序页面以“加载已解压的扩展程序”方式加载仓库中的 extension/ 文件夹。", "打开一篇你已筛选的小红书笔记。", "点击“保存当前笔记”，该来源会自动进入提取流程。"], code: "引擎地址：http://127.0.0.1:4310" },
   ai: { icon: KeyRound, title: "启用 AI 内容提取", description: "在服务器环境中配置 AI 提供商后重启引擎；已经排队等待 AI 的采集内容不会丢失。", steps: ["在 .env 或进程环境中设置所需的 API 配置。", "可在“系统设置”中选择当前可用的图文处理模型。", "从页面顶部的状态标记确认当前启用的模型。"], code: "$env:KIMI_API_KEY = \"your-kimi-key\"\n$env:AI_MODEL = \"kimi-k3\"\nnpm start" },
   wordpress: { icon: Settings2, title: "连接 WordPress", description: "使用最小权限的 WordPress 应用程序密码。引擎只创建草稿，不会直接发布。", steps: ["在 WordPress 中为编辑账号创建应用程序密码。", "在引擎环境中设置站点地址、用户名和应用程序密码。", "重启引擎，文章库存会自动开始同步。"], code: "WORDPRESS_SITE_URL=https://example.com\nWORDPRESS_USERNAME=editor\nWORDPRESS_APPLICATION_PASSWORD=xxxx xxxx xxxx" },
-  commercial: { icon: TicketCheck, title: "配置联盟营销资产", description: "提供商账号和可复用资产与研究、知识、规划及质量审核流程隔离。", steps: ["创建 MANUAL 类型的 Trip.com 提供商；不要保存后台凭证或 Cookie。", "只将官方链接或结构化嵌入配置填入联盟资产登记表。", "按目的地、区域、路线或精选实体映射资产；精确资产缺失时会按既有规则回退。"], code: "POST /api/commercial/providers\nPOST /api/commercial/assets\nAuthorization: Bearer <ADMIN_TOKEN>" },
+  commercial: { icon: TicketCheck, title: "配置联盟营销资产", description: "提供商账号和可复用资产与研究、知识、文章创建及质量审核流程隔离。", steps: ["创建 MANUAL 类型的 Trip.com 提供商；不要保存后台凭证或 Cookie。", "只将官方链接或结构化嵌入配置填入联盟资产登记表。", "按目的地、区域、路线或精选实体映射资产；精确资产缺失时会按既有规则回退。"], code: "POST /api/commercial/providers\nPOST /api/commercial/assets\nAuthorization: Bearer <ADMIN_TOKEN>" },
 };
 
 function GuideContent({ guide }) {
@@ -406,7 +405,7 @@ function ContentStrategyDetail({ strategy }) {
   const steps = [
     ["人工选源", "只保存你已打开并明确选择的小红书笔记；不自动搜索、翻页或抓取。"],
     ["事实与建议", "系统提取可追溯的 信息主张和知识事实，再给出唯一的推荐下一步；不会自行发布文章。"],
-    ["人工批准", "只有“批准文章”会启动内容规划；证据不足、重复或冲突会优先留在知识层或补充研究。"],
+    ["人工批准", "只有“批准文章”会启动文章创建；证据不足、重复或冲突会优先留在知识层或补充研究。"],
     ["英文内容生产", "基于已验证事实生成面向国际自由行游客的原创英文草稿，并附 SEO / GEO、FAQ 和 Schema.org 包。"],
     ["质量与草稿发布", "通过证据、冲突、图片和结构化数据检查后，才写入 WordPress 草稿，最终发布仍由你决定。"],
   ];
@@ -419,7 +418,7 @@ function ContentStrategyDetail({ strategy }) {
     <div className="space-y-4">
       <section className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">运行路径</p>
-        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-800"><span>人工采集</span><span className="text-slate-300">→</span><span>结构化事实</span><span className="text-slate-300">→</span><span>建议与人工决定</span><span className="text-slate-300">→</span><span>内容规划</span><span className="text-slate-300">→</span><span>QA</span><span className="text-slate-300">→</span><span>WordPress 草稿</span></div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-800"><span>人工采集</span><span className="text-slate-300">→</span><span>结构化事实</span><span className="text-slate-300">→</span><span>建议与人工决定</span><span className="text-slate-300">→</span><span>文章创建</span><span className="text-slate-300">→</span><span>质量审核</span><span className="text-slate-300">→</span><span>WordPress 草稿</span></div>
       </section>
       <ol className="space-y-3">{steps.map(([title, description], index) => <li className="flex gap-3" key={title}><span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-900 text-[10px] font-semibold text-white">{index + 1}</span><div><h3 className="text-xs font-semibold text-slate-900">{title}</h3><p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{description}</p></div></li>)}</ol>
       <section className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-950"><b>图片策略：</b>你人工筛选并保存的笔记图片已标记为授权发布素材。文章证据引用同一来源且图片支持对应场景时，实景图会优先进入 WordPress 草稿；其余视觉槽位再使用已验证数据的地图、信息图或无事实断言的原创插画。</section>

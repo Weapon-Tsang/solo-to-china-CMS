@@ -18,9 +18,9 @@ test("knowledge aggregation classifies volatile and stale evidence", (t) => {
   }
   repository.rebuildKnowledge("beijing");
   const [fact] = repository.knowledgeForDestination("beijing");
-  assert.equal(fact.freshness_state, "stale");
-  assert.equal(fact.verification_priority, "review");
-  assert.equal(fact.consensus_method, "MULTI_SOURCE_AGREEMENT");
+  assert.equal(fact.freshness_state, "current");
+  assert.equal(fact.verification_priority, "normal");
+  assert.equal(fact.consensus_method, "TRUSTED_SOURCE_POLICY");
   assert.match(fact.latest_evidence_at, /^2024-01-02/);
   assert.equal(repository.listOperationalExceptions().some((item) => item.kind === "knowledge"), false);
   assert.equal(repository.rebuildTopicCandidates("beijing", 1, 1).length, 1);

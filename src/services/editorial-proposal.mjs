@@ -34,7 +34,7 @@ export function validatePlannedEvidence(plan, contentPackage) {
   const facts = new Map((contentPackage.facts || []).map(f=>[f.normalized_key,f]));
   const sections = plan?.outline || [];
   const errors = [];
-  if (!sections.length) errors.push({code:'OUTLINE_MISSING',message:'文章规划没有大纲，不能开始写作。'});
+  if (!sections.length) errors.push({code:'OUTLINE_MISSING',message:'文章缺少必要的内容结构，不能开始写作。'});
   const selected = new Set();
   for (const section of sections) {
     for (const key of section.claim_keys || []) {

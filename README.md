@@ -143,13 +143,13 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 2.0
+## Content Production Strategy 2.1
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.0.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.0.md), and summarized by the Chinese [evolution log](docs/content-strategy/CHANGELOG.md). Captured sources enrich Claims and Knowledge first. A concrete article plan becomes a counted content opportunity only through human approval, a human assignment, or a corroborated destination-level topic gate. Draft planning uses a bounded evidence selection, while failures are classified by text, evidence, page, or retained media and receive at most two automatic repair attempts before human intervention. The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.1.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.1.md), and summarized by the Chinese [evolution log](docs/content-strategy/CHANGELOG.md). Captured sources enrich Claims and Knowledge first. A concrete article proposal becomes a counted content opportunity through human approval or a corroborated destination-level topic gate. The former manual planning workspace has been removed; automatic evidence and structure preparation remains an internal production step. Failures are classified by text, evidence, page, model permissions, or retained media and receive at most two automatic repair attempts before human intervention. The live operating path is:
 
 ```text
-Capture → structured research → Kimi Intake Analysis → Recommendation → human decision
-                                                       → Approve article only → planning → canonical content → QA → WordPress draft
+Capture → structured research → Intake Analysis → Recommendation → human decision
+                                                  → Approve article → create content → QA + delivery checks → WordPress draft
 ```
 
 The **Recommendations** tab is the single article decision point. Approval is durable: insufficient evidence enters `approved_waiting_for_evidence`, then automatically resumes as `approved_ready` when the Coverage Matrix becomes complete. Every new downstream record carries the active Strategy version; historical records retain the strategy version that created them.

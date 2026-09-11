@@ -583,7 +583,7 @@ export class Pipeline {
           if (!contentPackage) throw new Error(`Content brief ${job.entity_id} no longer exists.`);
           const drafted = await guarded((signal) => this.contentEngine.draft(contentPackage, null, { signal, telemetryContext }));
           const contractAware = this.canComposeFrontendPage;
-          const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model, { deferReview: contractAware });
+          const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model);
           if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
           else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);
           break;
@@ -594,7 +594,8 @@ export class Pipeline {
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           for (const visual of this.repository.plannedVisuals(job.entity_id)) {
             try {
-              const result = await guarded((signal) => this.visuals.generate(visual, contentPackage.draft, { signal, idempotencyKey: `${job.id}:${visual.id}` }));
+              const method = visual.acquisition_strategy === "localize_source_image" ? "localizeSourceImage" : "generate";
+              const result = await guarded((signal) => this.visuals[method](visual, contentPackage.draft, { signal, idempotencyKey: `${job.id}:${visual.id}` }));
               this.repository.saveGeneratedVisual(visual.id, result);
             } catch (error) {
               if (isJobLeaseLost(error)) throw error;
@@ -634,7 +635,8 @@ export class Pipeline {
           const reviewed = await guarded((signal) => this.contentEngine.review(contentPackage, { signal, telemetryContext }));
           const revision = this.repository.saveReview(job.entity_id, reviewed.output, reviewed.model,
             { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash, evidenceHash:contentPackage.evidence_hash });
-          if (reviewed.output.passed && !job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("compose_commercial", job.entity_id);
+          const pageReady = !this.canComposeFrontendPage || Boolean(contentPackage.frontend_page?.current);
+          if (reviewed.output.passed && pageReady && !job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("compose_commercial", job.entity_id);
           if (!reviewed.output.passed && !job.dedupe_key?.startsWith("manual-stage:")) {
             this.repository.automaticQualityRepairState(job.entity_id, reviewed.output.issues, { enqueue: true });
           }
@@ -646,7 +648,8 @@ export class Pipeline {
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           const drafted = await guarded((signal) => this.contentEngine.repairDraft(contentPackage, contentPackage.review?.issues || [], { signal, telemetryContext }));
           const contractAware = this.canComposeFrontendPage;
-          const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model, { deferReview: contractAware || job.dedupe_key?.startsWith("manual-stage:") });
+          const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model,
+            { deferReview: job.dedupe_key?.startsWith("manual-stage:") });
           if (!job.dedupe_key?.startsWith("manual-stage:")) {
             if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
             else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);

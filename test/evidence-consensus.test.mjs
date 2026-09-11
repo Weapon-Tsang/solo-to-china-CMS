@@ -4,7 +4,7 @@ import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus
 
 const nowMs = Date.parse("2026-09-10T00:00:00.000Z");
 
-test("recent independent evidence can supersede a larger but materially older cluster", () => {
+test("operator-selected daily facts remain usable without a date gate while conflicts stay explicit", () => {
   const rows = [
     row("recent-a", "CNY 50", "2026-09-08", "author-a"),
     row("recent-b", "CNY 50", "2026-09-09", "author-b"),
@@ -13,8 +13,8 @@ test("recent independent evidence can supersede a larger but materially older cl
     row("old-c", "CNY 40", "2026-02-03", "author-e"),
   ];
   const result = resolveEvidenceConsensus(rows, { nowMs, variantKey: (item) => item.value_text });
-  assert.equal(result.mode, "RECENCY_WEIGHTED");
-  assert.equal(result.method, "RECENCY_WEIGHTED_CONSENSUS");
+  assert.equal(result.mode, "TRUSTED_SOURCE_POLICY");
+  assert.equal(result.method, "TRUSTED_SOURCE_CONFLICT");
   assert.equal(result.preferredValue, "CNY 50");
   assert.equal(result.supportCount, 2);
   assert.equal(result.contradictionCount, 3);
@@ -22,6 +22,8 @@ test("recent independent evidence can supersede a larger but materially older cl
   assert.equal(result.latestEvidenceAt, null);
   assert.equal(result.dateKind, "captured_at");
   assert.equal(result.dateConfidence, "low");
+  assert.equal(result.freshnessState, "current");
+  assert.equal(result.autoResolved, false);
 });
 
 test("posts in one source family or by one author count as one independent vote", () => {
@@ -34,7 +36,7 @@ test("posts in one source family or by one author count as one independent vote"
   assert.equal(result.independentSourceCount, 2);
   assert.deepEqual(result.variants.flatMap((variant) => variant.independenceKeys).sort(), ["author:xiaohongshu:other author", "family:family-copy"]);
   assert.equal(result.supportCount, 1);
-  assert.equal(result.method, "LATEST_WEIGHTED_PROVISIONAL");
+  assert.equal(result.method, "TRUSTED_SOURCE_CONFLICT");
 });
 
 test("manual submitter identity never merges distinct sources while repeated originals deduplicate", () => {

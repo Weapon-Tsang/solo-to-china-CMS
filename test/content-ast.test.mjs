@@ -109,3 +109,48 @@ test("production atomic components compose every content type without a model or
   assert.equal(page.provenance.entries.length, page.output.blocks.length);
   assert.deepEqual(validateJsonSchema(page.output, productionPageSchema), []);
 });
+
+test("an unlisted section does not inherit the previous section evidence and ordered lists stay ordered", () => {
+  const ast = buildContentAst({
+    draft: { ...draft, body_markdown: "## Supported\n\nFact.\n\n## Editorial note\n\n1. First\n2. Second",
+      evidence_ledger: [{ section_id: "supported", section: "Supported", claim_keys: ["museum.ticket.price"], source_ids: ["source-1"] }] },
+    brief: { id: "brief-no-inheritance", content_type: "first_time_guide" },
+  });
+  const editorialList = ast.nodes.find((node) => node.type === "list");
+  assert.equal(editorialList.ordered, true);
+  assert.deepEqual(editorialList.fact_refs, []);
+  assert.deepEqual(editorialList.source_section_ids, []);
+  assert.match(renderContentAstMarkdown(ast), /1\. First\n2\. Second/);
+});
+
+test("media placements become stable AST nodes with retained source references", () => {
+  const ast = buildContentAst({ draft, brief: { id: "brief-media", content_type: "first_time_guide" }, visuals: [{
+    id: "visual-real", placement: "after_intro", image_role: "evidence", alt_text: "Museum entrance",
+    caption: "Entrance sign", source_asset_id: "asset-original", wordpress_media_id: 91, factual_image_required: true,
+  }] });
+  const mediaNode = ast.nodes.find((node) => node.type === "media");
+  assert.equal(mediaNode.source_asset_id, "asset-original");
+  assert.equal(mediaNode.media_id, 91);
+  assert.deepEqual(mediaNode.media_refs, ["visual-real"]);
+  assert.equal(renderContentAstMarkdown(ast), markdown);
+});
+
+test("a stable image component consumes AST media without flattening the surrounding article", () => {
+  const ast = buildContentAst({ draft, brief: { id: "brief-image-component", content_type: "first_time_guide" }, visuals: [{
+    id: "visual-delivered", placement: "after_intro", image_role: "evidence", alt_text: "Museum entrance",
+    caption: "Entrance", wordpress_media_id: 88, source_asset_id: "asset-88", factual_image_required: true,
+  }] });
+  const components = [
+    { id: "heading", status: "stable", variants: ["section"], schema: { properties: { text: {}, level: {} } } },
+    { id: "paragraph", status: "stable", variants: ["default"], schema: { properties: { content: {} } } },
+    { id: "list", status: "stable", variants: ["unordered", "ordered"], schema: { properties: { items: {} } } },
+    { id: "image", category: "media", status: "stable", variants: ["evidence", "default"], schema: {
+      properties: { media_id: {}, alt: {}, caption: {} },
+    } },
+  ];
+  const page = composePageFromAst(ast, { components }, pageSchema);
+  const imageBlock = page.output.blocks.find((block) => block.type === "image");
+  assert.equal(imageBlock.data.media_id, 88);
+  assert.equal(imageBlock.data.alt, "Museum entrance");
+  assert.ok(page.output.blocks.some((block) => block.type === "paragraph"));
+});

@@ -70,9 +70,6 @@ export function validatePageEvidence(page, contentPackage) {
           errors.push({ code: "EVIDENCE_VALUE_MISMATCH", path: `$.blocks[${index}]`, claimKey: key, expected: token });
         }
       }
-      if (isDynamicFact(fact) && fact.latest_evidence_at && !dateVisible(visible.text, fact.latest_evidence_at)) {
-        errors.push({ code: "VISIBLE_AS_OF_MISSING", path: `$.blocks[${index}]`, claimKey: key });
-      }
     }
     if (!relevant) errors.push({ code: "FACTUAL_ANSWER_MISSING", path: `$.blocks[${index}]`, contentNodeId: entry.contentNodeId });
   });
@@ -100,33 +97,35 @@ function factAnchors(fact) {
 }
 
 export function protectedFactTokens(fact) {
-  const text = [fact.preferred_value, ...(fact.evidence || []).flatMap((item) => item.qualifiers || [])].join(" ");
-  const numbers = text.match(/(?<![\p{L}\p{N}])(?:¥|￥|CNY\s*)?\d+(?:[.,:]\d+)?(?:[A-Z](?![\p{L}\p{N}]))?(?:\s*(?:元|%|(?:rmb|cny|am|pm|hours?|minutes?|days?)(?![\p{L}\p{N}])))?/giu) || [];
-  const conditions = text.match(/\b(?:only|except|unless|not|no|never|weekday(?:s)?|weekend(?:s)?|student(?:s)?|child(?:ren)?|adult(?:s)?|senior(?:s)?|foreign visitors?|international visitors?|mainland chinese|chinese citizens?|residents?|before|after|until|from)\b/giu) || [];
+  const fields = [fact.preferred_value, ...(fact.evidence || []).flatMap((item) => [item.value, ...(item.qualifiers || [])])]
+    .map((value) => String(value || "").trim()).filter(Boolean);
+  const text = fields.join(" ");
+  const numbers = fields.flatMap((field) => field.match(/(?<![\p{L}\p{N}])(?:(?:¥|￥|CNY|RMB)\s*)?\d+(?:[.,:]\d+)?(?:[A-Z](?![\p{L}\p{N}]))?(?:\s*(?:元|%|(?:rmb|cny|am|pm|hours?|minutes?|days?)(?![\p{L}\p{N}])))?/giu) || []);
+  const dates = fields.flatMap((field) => field.match(/\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/gu) || []);
+  const conditions = fields.flatMap((field) => {
+    const protectedQualifier = /^(?:except|unless|not|no|never|only\b|after\b|before\b|from\b|until\b|students?\b|children\b|adults?\b|seniors?\b|foreign visitors?\b|international visitors?\b|mainland chinese\b|chinese citizens?\b|residents?\b)/iu.test(field);
+    if (protectedQualifier && field.length <= 120) return [field];
+    return [...field.matchAll(/\b(?:except|unless|not|no|never)\s+[^,.;:]{1,60}/giu),
+      ...field.matchAll(/\bonly\s+(?:for|on|available|valid|open|accepted|allowed|applies?|runs?|operates?)\s+[\p{L}\p{N}'’-]+/giu),
+      ...field.matchAll(/\b(?:foreign visitors?|international visitors?|mainland chinese|chinese citizens?|students?|children|adults?|seniors?|residents?)\b/giu)]
+      .map((match) => match[0].trim());
+  });
   const urls = text.match(/https?:\/\/[^\s)]+/giu) || [];
-  return [...new Set([...numbers, ...conditions, ...urls].map((item) => item.trim()))];
+  return [...new Set([...numbers, ...dates, ...conditions, ...urls].map((item) => item.trim()))];
 }
 
-export function isDynamicFact(fact) {
-  // SINGLE_SOURCE_LATEST describes source selection, not the volatility of the claim.
-  return ["time_sensitive", "stale"].includes(fact.freshness_state)
-    || /(?:^|[._\s-])(?:price|prices|cost|fee|fare|hours|schedule|booking|reservation|policy|minimum_spend|opening_hours|ticket_price|admission_fee)(?:$|[._\s-])/i
-      .test(`${fact.normalized_key || ""} ${fact.predicate || ""}`);
-}
-
-function dateVisible(text, iso) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.valueOf())) return false;
-  const variants = [date.toISOString().slice(0, 10),
-    new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" }).format(date),
-    new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" }).format(date)];
-  return variants.some((value) => containsPhrase(text, value));
+// Kept as descriptive metadata for diagnostics and repair selection. Dynamic
+// facts no longer require a publication date or a second-source recheck.
+export function isDynamicFact(fact = {}) {
+  const key = String(fact.normalized_key || `${fact.subject || ""}.${fact.predicate || ""}`).toLowerCase();
+  return fact.freshness_state === "stale"
+    || /(?:price|cost|fee|ticket|hour|opening|schedule|reservation|booking|access|route|policy|rule)/.test(key);
 }
 
 function containsPhrase(text, phrase) {
   const haystack = normalize(text); const needle = normalize(phrase);
   if (!needle) return false;
-  if (!/\d/.test(needle)) return haystack.includes(needle);
+  if (/[^\x00-\x7F]/u.test(needle) && !/[A-Za-z0-9]/u.test(needle)) return haystack.includes(needle);
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(haystack);
 }

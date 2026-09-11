@@ -40,6 +40,7 @@ export function normalizeXiaohongshuCapture(input) {
   const rights = authorizedRights(acquisitionOrigin);
 
   const processingEstimate = estimateSourceProcessing({ rawText, assets });
+  const sourceTimestamp = normalizeSourceTimestamp(input.sourceTimestamp);
 
   return {
     adapter: "xiaohongshu",
@@ -48,13 +49,13 @@ export function normalizeXiaohongshuCapture(input) {
     title: truncate(input.title, 1_000).trim(),
     authorName: truncate(input.author?.name, 500).trim(),
     authorUrl: safeHttpUrl(input.author?.url),
-    publishedAt: safeDate(input.publishedAt),
+    publishedAt: sourceTimestamp ? sourceTimestamp.kind === "published" ? sourceTimestamp.value : null : safeDate(input.publishedAt),
     capturedAt: safeDate(input.capturedAt) || new Date().toISOString(),
     rawText,
     rawHtml,
     assets,
     completeness,
-    submissionMetadata: { processingEstimate, sourceTimestamp: normalizeSourceTimestamp(input.sourceTimestamp) },
+    submissionMetadata: { processingEstimate, sourceTimestamp },
     acquisitionOrigin,
     syncScopeKey: truncate(input.syncScopeKey || input.client?.syncScopeKey, 500),
     rights,
@@ -89,6 +90,11 @@ function normalizeAssets(values) {
       mimeType: safeImageMime(value?.mimeType),
       aiDerivativeDataUrl: safeImageDataUrl(value?.aiDerivativeDataUrl),
       aiDerivativeSha256: validSha256(value?.aiDerivativeSha256),
+      originalDataUrl: safeImageDataUrl(value?.originalDataUrl),
+      nearbyText: truncate(value?.nearbyText || value?.provenance?.nearbyText, 2_000),
+      captionText: truncate(value?.captionText || value?.provenance?.captionText, 1_000),
+      domOrder: nonNegativeInteger(value?.domOrder ?? value?.provenance?.domOrder),
+      languageStatus: ["unknown", "english", "chinese", "mixed", "no_text"].includes(value?.languageStatus) ? value.languageStatus : "unknown",
       provenance: value?.provenance && typeof value.provenance === "object" ? value.provenance : {},
     });
   }

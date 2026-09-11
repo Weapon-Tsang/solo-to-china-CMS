@@ -79,10 +79,11 @@ test("dated dynamic evidence remains usable and never creates an official-verifi
   });
   assert.equal(result.readiness.ready, true);
   assert.equal(result.readiness.usableFactCount, 4);
-  assert.equal(result.readiness.staleCount, 2);
+  assert.equal(result.readiness.staleCount, 0);
   assert.equal(result.readiness.requiresOfficialCount, 0);
   assert.deepEqual(result.readiness.blockingRequirements, []);
-  assert.deepEqual(result.requirements.filter((item) => item.state === "dated").map((item) => item.key), ["transport", "booking"]);
+  assert.deepEqual(result.requirements.filter((item) => item.state === "dated"), []);
+  assert.equal(result.requirements.every((item) => item.state !== "conflicted"), true);
 });
 
 test("an editor can classify an opportunity as create, update, merge, or retire against published inventory", (t) => {

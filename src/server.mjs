@@ -54,6 +54,7 @@ export function createApplication(config = loadConfig()) {
   const loginThrottle = createLoginThrottle(config.auth.loginThrottle, { logger: logger.child({ component: "auth" }) });
   const repository = new Repository(db, {
     ...config.content, ...config.extraction, contentStrategy: config.contentStrategy,
+    sourceUploadsDir: config.manualSources.uploadDir,
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
     affiliateOpportunityThreshold: config.commercial.opportunityThreshold,
   });
@@ -373,8 +374,8 @@ export function createApplication(config = loadConfig()) {
       const sourceAssetPreviewMatch = url.pathname.match(/^\/api\/source-assets\/([^/]+)\/preview$/);
       if (request.method === "GET" && sourceAssetPreviewMatch) {
         const asset = repository.getSourceAssetPreview(decodeURIComponent(sourceAssetPreviewMatch[1]));
-        if (!asset) return sendJson(response, 404, { error: "Source evidence image not found." });
-        return serveSourceAssetPreview(asset, response);
+        if (!asset) return sendJson(response, 404, { error: "没有找到这张来源图片。" });
+        return serveSourceAssetPreview(asset, response, config.manualSources.uploadDir);
       }
       const sourceMatch = url.pathname.match(/^\/api\/sources\/([^/]+)$/);
       if (request.method === "GET" && sourceMatch) {
@@ -480,37 +481,6 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/editorial-blueprints") {
         return sendJson(response, 200, { items: repository.getEditorialBlueprints() });
-      }
-      if (request.method === "GET" && url.pathname === "/api/editorial-assignments") {
-        return sendJson(response, 200, repository.listEditorialAssignmentWorkspace(workspaceQuery(url, 500)));
-      }
-      if (request.method === "POST" && url.pathname === "/api/editorial-assignments") {
-        authorizeAdmin(request, config.adminToken, auth);
-        const payload = await readJson(request, 50_000);
-        const created = repository.createEditorialAssignment(payload, auth.status(request).username || "administrator");
-        return sendJson(response, 201, created);
-      }
-      const editorialAssignmentMatch = url.pathname.match(/^\/api\/editorial-assignments\/([^/]+)$/);
-      if (request.method === "DELETE" && editorialAssignmentMatch) {
-        authorizeAdmin(request, config.adminToken, auth);
-        const deleted = repository.deleteEditorialAssignment(decodeURIComponent(editorialAssignmentMatch[1]));
-        return deleted ? sendJson(response, 200, deleted) : sendJson(response, 404, { error: "Editorial assignment not found." });
-      }
-      const editorialAssignmentRecheckMatch = url.pathname.match(/^\/api\/editorial-assignments\/([^/]+)\/recheck$/);
-      if (request.method === "POST" && editorialAssignmentRecheckMatch) {
-        authorizeAdmin(request, config.adminToken, auth);
-        const checked = repository.reevaluateEditorialAssignment(decodeURIComponent(editorialAssignmentRecheckMatch[1]));
-        return checked ? sendJson(response, 200, checked) : sendJson(response, 404, { error: "Editorial assignment not found." });
-      }
-      const editorialAssignmentQueueMatch = url.pathname.match(/^\/api\/editorial-assignments\/([^/]+)\/queue$/);
-      if (request.method === "POST" && editorialAssignmentQueueMatch) {
-        authorizeAdmin(request, config.adminToken, auth);
-        if (!contentEngine.enabled) return sendJson(response, 409, { error: "内容 AI 尚未配置，素材体检结果会保留，但暂时不能进入创作队列。" });
-        const payload = await readJson(request, 20_000);
-        const queued = repository.queueEditorialAssignment(decodeURIComponent(editorialAssignmentQueueMatch[1]), payload.updatedAt || null);
-        if (!queued) return sendJson(response, 404, { error: "Editorial assignment not found." });
-        void pipeline.runOne();
-        return sendJson(response, 202, queued);
       }
       if (request.method === "GET" && url.pathname === "/api/content") {
         return sendJson(response, 200, {
@@ -1044,7 +1014,23 @@ function sourceForApi(source) {
   };
 }
 
-function serveSourceAssetPreview(asset, response) {
+function serveSourceAssetPreview(asset, response, storageRoot) {
+  const filename = path.resolve(String(asset.local_path || ""));
+  const root = path.resolve(storageRoot);
+  if (asset.local_path && filename.startsWith(`${root}${path.sep}`)) {
+    try {
+      const stat = fs.statSync(filename);
+      if (stat.isFile()) {
+        response.writeHead(200, {
+          "content-type": asset.mime_type || MIME[path.extname(filename)] || "application/octet-stream",
+          "content-length": stat.size,
+          "cache-control": "private, max-age=300",
+          "x-content-type-options": "nosniff",
+        });
+        return fs.createReadStream(filename).pipe(response);
+      }
+    } catch { /* continue to the legacy inline preview */ }
+  }
   const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)$/u.exec(String(asset.ai_derivative_data_url || ""));
   if (match) {
     const bytes = Buffer.from(match[2], "base64");
@@ -1058,14 +1044,7 @@ function serveSourceAssetPreview(asset, response) {
       return response.end(bytes);
     }
   }
-  try {
-    const original = new URL(String(asset.remote_url || ""));
-    if (original.protocol === "https:") {
-      response.writeHead(302, { location: original.toString(), "cache-control": "private, max-age=60" });
-      return response.end();
-    }
-  } catch { /* invalid or unavailable original URL */ }
-  return sendJson(response, 404, { error: "This evidence image has no stored preview. Re-extract the source before deciding." });
+  return sendJson(response, 404, { error: "这张图片尚未保存到系统中，请重新采集原文后再处理。" });
 }
 
 function serveStatic(publicDir, pathname, response) {

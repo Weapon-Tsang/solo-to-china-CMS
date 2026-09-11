@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { Pipeline } from "../src/pipeline.mjs";
@@ -25,6 +26,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   });
   await frontendContracts.sync();
   const sourceExtractor = {
+    config: { sourceUploadsDir: repository.contentConfig.sourceUploadsDir },
     async extract(source) {
       return {
         method: "test_multimodal", model: "source-model",
@@ -43,7 +45,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
           capabilities: { text: true, image: true, video: true, batch: false }, assets: [],
         },
         result: {
-          source: { language: "zh-CN", summary: "Research", destination_name: "Beijing", destination_slug: "beijing", traveler_fit: ["solo"], practical_tips: [], warnings: [], confidence: 0.9 },
+          source: { language: "en", summary: "Research", destination_name: "Beijing", destination_slug: "beijing", traveler_fit: ["solo"], practical_tips: [], warnings: [], confidence: 0.9 },
           claims: [
             ["beijing.orientation.location", "Beijing orientation", "location", "Central Beijing"],
             ["beijing.transport.metro", "Beijing transport", "metro transport", "Use the metro"],
@@ -84,6 +86,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       } };
     },
     async draft(contentPackage) {
+      assert.ok(contentPackage.authorized_source_assets?.some((asset) => asset.mime_type === "image/png" && asset.preview_url),
+        "saved authorized source images must be selected before writing starts");
       const sourceIds = [...new Set(contentPackage.facts
         .filter((fact) => ["beijing.orientation.location", "beijing.transport.metro"].includes(fact.normalized_key))
         .flatMap((fact) => fact.evidence.map((evidence) => evidence.source_id)))];
@@ -138,7 +142,9 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       text: externalId === "autoA"
         ? "Beijing orientation: Central Beijing. Use the metro. Reserve timed attractions. Carry a working mobile payment method. Plan admission and transit costs."
         : "Beijing booking: Central Beijing. Use the metro. Reserve timed attractions. Carry a working mobile payment method. Plan admission and transit costs. Passport checks, museum entry, ticket windows, weekend crowds, airport arrival, luggage storage, hotel check-in, translation, local etiquette, and emergency contacts are reviewed independently.",
-      images: [{ url: `https://ci.xhscdn.com/${externalId}.jpg`, alt: `${title} real-world travel scene` }],
+      images: [{ url: `https://ci.xhscdn.com/${externalId}.jpg`, alt: `${title} real-world travel scene`,
+        originalDataUrl: `data:image/png;base64,${Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),Buffer.from(externalId)]).toString("base64")}`,
+        originalSha256: createHash("sha256").update(Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),Buffer.from(externalId)])).digest("hex") }],
     }));
   }
   db.prepare("UPDATE sources SET authority_level=1, verified_at='2026-09-07T00:00:00.000Z'").run();

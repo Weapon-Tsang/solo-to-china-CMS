@@ -1,13 +1,27 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "2.0",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.0.md",
+  "current_version": "2.1",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_2.1.md",
   "status": "active",
   "history": [
     {
+      "version": "2.1",
+      "effective_date": "2026-09-11",
+      "status": "active",
+      "summary": "简化为建议批准与内容结果的一一对应界面，移除人工创作规划功能，并强化中文诊断、原图留存、保真图片翻译和独立正文质检。",
+      "changes": [
+        "移除创作规划菜单、人工命题接口和专用运行代码；内部自动写作准备仍作为生产实现步骤保留。",
+        "内容页按已批准文章逐篇显示创建结果，失败或阻塞时直接显示中文原因和最小处理入口。",
+        "所有确认操作改用适配移动端的站内对话框，质量问题缺字段时显示可操作的中文兜底说明。",
+        "授权来源图片必须先保存并校验真实字节，写作前按图片自身上下文匹配；中文图使用原图输入并只翻译可读文字。",
+        "用户选择来源中的日常票价、时间和预约信息无需额外官方核验或日期门槛，只有真正互斥信息进入一次人工决定。",
+        "正文质量审核与图片、页面交付并行且相互独立；内容 AST 不再跨章节继承证据，并保留有序列表和媒体节点。"
+      ]
+    },
+    {
       "version": "2.0",
       "effective_date": "2026-09-10",
-      "status": "active",
+      "status": "superseded",
       "summary": "将来源、知识、文章方案和实际内容机会重新分层，并以中文诊断和有界自动修复替代大段内部代码与无差别人工介入。",
       "changes": [
         "采集来源只新增 Claims、知识和编辑建议；未批准的单来源文章方案不再计入内容机会或系统选题。",

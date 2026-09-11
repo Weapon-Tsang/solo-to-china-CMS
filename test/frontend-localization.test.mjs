@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-import { friendlyError, label, formatDuration } from "../frontend/src/lib/utils.js";
+import { friendlyError, label, formatDuration, normalizeQualityIssue } from "../frontend/src/lib/utils.js";
 
 const appSource = fs.readFileSync(new URL("../frontend/src/App.jsx", import.meta.url), "utf8");
 const viewsSource = fs.readFileSync(new URL("../frontend/src/views.jsx", import.meta.url), "utf8");
@@ -66,14 +66,14 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
 });
 
 test("content workspace explains records, failures, and bounded automatic repair before opening details", () => {
-  for (const text of ["生产队列概览", "已经批准并进入生产生命周期", "不等于", "唯一逐篇工作区"]) {
+  for (const text of ["建议中已批准", "已创建内容", "未完成，需要处理", "未完成原因与处理"]) {
     assert.ok(viewsSource.includes(text), `内容队列缺少直白说明：${text}`);
   }
   for (const text of ["未通过原因：", "自动处理：", "已自动修复", "需要补齐真实输入"]) {
     assert.ok(qualityStatusSource.includes(text), `内容行缺少失败或自修复说明：${text}`);
   }
-  assert.equal(label("producing"), "生产中");
-  assert.equal(label("drafted"), "已有草稿");
+  assert.equal(label("producing"), "创作中");
+  assert.equal(label("drafted"), "已创建内容");
 });
 
 test("shared status, category, and duration labels use Chinese display text", () => {
@@ -84,4 +84,13 @@ test("shared status, category, and duration labels use Chinese display text", ()
   assert.equal(label("extracted"), "已提取，等待审计");
   assert.match(friendlyError("Coverage audit still found material evidence without Claims after one targeted retry."), /覆盖审计/);
   assert.equal(formatDuration(61_000), "1 分钟");
+});
+
+test("empty, string, and malformed QA issues always render actionable Chinese text", () => {
+  for (const issue of [null, "qa_failed", {}, { severity: "warning", message: "empty output" }]) {
+    const normalized = normalizeQualityIssue(issue);
+    assert.match(normalized.title, /[\u3400-\u9fff]/u);
+    assert.match(normalized.reason, /[\u3400-\u9fff]/u);
+    assert.match(normalized.action, /[\u3400-\u9fff]/u);
+  }
 });

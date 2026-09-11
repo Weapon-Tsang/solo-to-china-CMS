@@ -32,7 +32,7 @@ function assetsFor(repo, ctx, packageFacts = null) {
       JOIN source_assets sa ON sa.id=av.source_asset_id WHERE av.draft_id=?`).all(ctx.draft.id)) ids.add(row.source_id);
   }
   if (!ids.size) return [];
-  return repo.db.prepare(`SELECT sa.id,sa.source_id,sa.position,sa.alt_text,sa.remote_url,
+  return repo.db.prepare(`SELECT sa.id,sa.source_id,sa.position,sa.alt_text,sa.remote_url,sa.language_status,
     sa.local_path,CASE WHEN sa.ai_derivative_data_url IS NOT NULL AND sa.ai_derivative_data_url<>'' THEN 1 ELSE 0 END AS has_bytes,
     sa.authorization_status,sa.publishable,s.authorization_status AS source_authorization,s.publishable AS source_publishable,
     s.title AS source_title,s.canonical_url,s.submitted_url,s.captured_at
@@ -98,7 +98,7 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
     if (ctx.candidate.status === 'dismissed') conflict('已移除的选题不能从恢复入口绕过确认。');
     let result;
     if (input.action === 'correct_destination') {
-      if (ctx.brief) conflict('已有规划或草稿时不能直接改归属；请保留原稿并通过人工命题创建正确版本。');
+      if (ctx.brief) conflict('已有写作准备记录或草稿时不能直接改归属；请保留原稿并从内容建议创建正确版本。');
       const destination = repo.db.prepare('SELECT slug FROM destinations WHERE slug=?').get(String(input.destination || ''));
       if (!destination) conflict('请选择有效目的地。');
       const topic = repo.getTopicPackage(candidateId);
@@ -134,7 +134,7 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
         || entry.claim_keys.some((key) => !keys.has(key)))) conflict('台账必须包含 section 和 claim_keys，且只能引用本篇已有证据编号。');
       repo.recordDraftRevision(ctx.draft.id, actor);
       repo.saveDraft(ctx.brief.id, { ...pkg.draft,body_markdown:input.body,evidence_ledger:input.evidenceLedger,
-        verification_notes:input.verificationNotes }, 'human-correction', { deferReview:true });
+        verification_notes:input.verificationNotes }, 'human-correction');
       repo.db.prepare("UPDATE article_drafts SET status='drafted' WHERE id=?").run(ctx.draft.id);
       const jobId = repo.enqueue('compose_frontend_page', ctx.draft.id, { dedupeKey:`recovery-stage:compose_frontend_page:${ctx.draft.id}:r${ctx.draft.revision + 1}` });
       result = { action:input.action,jobId,queued:Boolean(jobId),requiresRecomposition:true };
@@ -145,30 +145,32 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       const visual = repo.db.prepare('SELECT * FROM article_visuals WHERE id=? AND draft_id=?').get(input.visualId,ctx.draft.id);
       if (!visual) conflict('图片槽位不存在。');
       repo.recordDraftRevision(ctx.draft.id,actor);
-      repo.db.prepare(`UPDATE article_visuals SET source_asset_id=?,source_remote_url=?,acquisition_strategy='use_authorized_source_image',
-        status='generated',media_path=NULL,media_url=NULL,wordpress_media_id=NULL,wordpress_media_url=NULL,updated_at=? WHERE id=?`)
-        .run(asset.id,asset.remote_url,now(),visual.id);
+      const localize = ['chinese','mixed'].includes(asset.language_status);
+      repo.db.prepare(`UPDATE article_visuals SET source_asset_id=?,source_remote_url=?,acquisition_strategy=?,
+        status=?,media_path=NULL,media_url=NULL,wordpress_media_id=NULL,wordpress_media_url=NULL,updated_at=? WHERE id=?`)
+        .run(asset.id,asset.remote_url,localize ? 'localize_source_image' : 'use_authorized_source_image',
+          localize ? 'planned' : 'generated',now(),visual.id);
       repo.db.prepare("UPDATE article_drafts SET revision=revision+1,quality_report_json='{}',status='drafted',updated_at=? WHERE id=?")
         .run(now(),ctx.draft.id);
       repo.invalidateDraftDependents(ctx.draft.id);
       repo.recordDraftRevision(ctx.draft.id,actor);
-      const jobId = repo.enqueue('compose_frontend_page',ctx.draft.id,{ dedupeKey:`recovery-stage:compose_frontend_page:${ctx.draft.id}:r${ctx.draft.revision + 1}` });
+      const nextStage = localize ? 'generate_visuals' : 'compose_frontend_page';
+      const jobId = repo.enqueue(nextStage,ctx.draft.id,{ dedupeKey:`recovery-stage:${nextStage}:${ctx.draft.id}:r${ctx.draft.revision + 1}` });
       result = { action:input.action,visualId:visual.id,previousAssetId:visual.source_asset_id,assetId:asset.id,jobId,queued:Boolean(jobId) };
     } else {
       const stage = String(input.action || '');
       if (!['compose_frontend_page','review_draft','revise_draft','plan_content'].includes(stage)) conflict('不支持的恢复操作。');
       if (stage === 'plan_content') {
-        if (ctx.brief) conflict('已有规划不会被重新覆盖。');
+        if (ctx.brief) conflict('已有写作准备记录，不会被重新覆盖。');
         const check = validatePlanningDestination(repo.getTopicPackage(candidateId));
         if (!check.valid) conflict(check.message);
         const approved = repo.db.prepare(`SELECT id,readiness_json FROM content_opportunities WHERE candidate_id=? AND
           (status IN ('approved_ready','producing') OR (status='suppressed' AND suppression_reason='destination_recovery_requires_confirmation' AND approved_at IS NOT NULL))`).get(candidateId);
-        if (!approved) conflict('请先在建议或人工命题中确认文章方案。');
+        if (!approved) conflict('请先在内容建议中确认文章方案。');
         if (!json(approved.readiness_json,{}).ready) conflict('更正目的地后素材仍未准备好，请先补充证据。');
         repo.db.prepare("UPDATE content_opportunities SET status='producing',suppression_reason=NULL,updated_at=? WHERE id=?")
           .run(now(),approved.id);
-      } else if (!ctx.draft) conflict('请先完成规划和草稿。');
-      if (stage === 'review_draft' && !repo.getFrontendPageComposition(ctx.draft.id)?.current) conflict('当前版本页面尚未编排完成，请先编排页面。');
+      } else if (!ctx.draft) conflict('请先完成写作准备并生成草稿。');
       if (stage === 'compose_frontend_page') {
         const report = contentRecoveryReport(repo,candidateId);
         if (report.visuals.some((visual) => visual.assetId && !visual.delivered

@@ -27,6 +27,40 @@ export class VertexImagen {
     throw new Error("The selected visual provider cannot generate image files.");
   }
 
+  async localizeSourceImage(visual, draft, options = {}) {
+    if (!this.enabled || this.config.provider !== "vertex_gemini") {
+      throw Object.assign(new Error("中文图片翻译需要已配置的 Vertex Gemini 图片模型。"), { retryable: false, code: "IMAGE_LOCALIZATION_NOT_CONFIGURED" });
+    }
+    if (visual.image_type !== "real_world_photo" || visual.acquisition_strategy !== "localize_source_image"
+        || !visual.source_asset_id) {
+      throw Object.assign(new Error("图片翻译只接受已授权并已保存的实景原图。"), { retryable: false, code: "INVALID_IMAGE_LOCALIZATION_SOURCE" });
+    }
+    const source = readSourceImage(visual);
+    const accessToken = await this.accessToken();
+    const location = this.config.location || "global";
+    const host = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
+    const endpoint = `${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
+    const prompt = `Translate only clearly readable Chinese text in this authorized source photo into concise English for international travelers.
+Preserve the photographed reality exactly: do not alter the scene, people, objects, buildings, food, route geometry, crop, perspective, lighting, colors, logos, or non-Chinese labels. Do not invent, remove, beautify, or reconstruct any object. Keep uncertain or unreadable text unchanged. Return the edited image.`;
+    await this.config.beforeRequest?.({ provider: "vertex_gemini", model: this.config.model, stage: "localize_source_image", attempt: 1 });
+    const response = await this.fetch(endpoint, {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: { role: "USER", parts: [{ text: prompt }, { inlineData: { mimeType: source.mimeType, data: source.base64 } }] },
+        generationConfig: { responseModalities: ["TEXT", "IMAGE"], imageConfig: { aspectRatio: visual.aspect_ratio } },
+      }),
+      signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new ProviderRequestError("Vertex Gemini 图片翻译", response.status, payload?.error?.message || response.statusText,
+      { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
+    const part = payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
+    if (!part) throw new Error("图片模型没有返回可用的翻译图片。");
+    return this.storeImage({ base64: part.inlineData.data, mimeType: part.inlineData.mimeType, visual, draft,
+      provider: "vertex_gemini", model: this.config.model });
+  }
+
   async generateImagenImage(visual, draft, options = {}) {
     const accessToken = await this.accessToken();
     const endpoint = `https://${this.config.location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(this.config.location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:predict`;
@@ -140,4 +174,22 @@ function combinedSignal(signal, timeoutMs) {
 
 function normalizeMime(value) {
   return ["image/png", "image/jpeg"].includes(value) ? value : "image/png";
+}
+
+function readSourceImage(visual) {
+  if (visual.source_asset_local_path) {
+    const bytes = fs.readFileSync(visual.source_asset_local_path);
+    if (!bytes.length) throw Object.assign(new Error("已保存的原图为空，无法翻译。"), { retryable: false });
+    return { base64: bytes.toString("base64"), mimeType: normalizeSourceMime(visual.source_asset_mime_type, bytes) };
+  }
+  const match = String(visual.source_asset_data_url || "").match(/^data:(image\/(?:png|jpeg));base64,(.+)$/is);
+  if (match) return { mimeType: match[1].toLowerCase(), base64: match[2] };
+  throw Object.assign(new Error("没有找到已保存的原图文件，无法翻译。"), { retryable: false, code: "SOURCE_IMAGE_BYTES_MISSING" });
+}
+
+function normalizeSourceMime(supplied, bytes) {
+  if (bytes.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))) return "image/png";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (["image/png", "image/jpeg"].includes(supplied)) return supplied;
+  throw Object.assign(new Error("原图格式不受图片翻译模型支持。"), { retryable: false, code: "SOURCE_IMAGE_FORMAT_UNSUPPORTED" });
 }

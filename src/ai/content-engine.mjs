@@ -415,6 +415,7 @@ function draftInputDto(contentPackage) {
         coverage_limitations: item.coverage_limitations || [] })),
     })),
     reader_sources: contentPackage.reader_sources || [],
+    authorized_source_assets: contentPackage.authorized_source_assets || [],
     internal_link_inventory: contentPackage.internal_link_inventory || [],
     frontend_page_plan: contentPackage.frontend_page_plan?.plan || null,
   };
@@ -428,11 +429,14 @@ function compactDraftRepairInput(contentPackage, issues = []) {
   for (const issue of issues || []) {
     for (const match of String(issue?.message || '').matchAll(/[a-z][a-z0-9_]+(?:\.[a-z0-9_]+){1,4}/gi)) mentioned.add(match[0]);
   }
-  for (const entry of draft.evidence_ledger || []) for (const key of entry.claim_keys || []) mentioned.add(key);
-  for (const section of brief.plan?.outline || brief.outline || []) for (const key of section.claim_keys || []) mentioned.add(key);
+  const issueText = (issues || []).map((issue) => `${issue?.code || ""} ${issue?.message || ""}`).join(" ").toLowerCase();
+  const outline = brief.plan?.outline || brief.outline || [];
+  const affectedSections = outline.filter((section) => issueText.includes(String(section.heading || section.section_id || "").toLowerCase()));
+  for (const section of affectedSections) for (const key of section.claim_keys || []) mentioned.add(key);
+  if (!mentioned.size) for (const entry of draft.evidence_ledger || []) for (const key of entry.claim_keys || []) mentioned.add(key);
   const allFacts = draftInputDto(contentPackage).facts;
-  const facts = allFacts.filter((fact) => mentioned.has(fact.normalized_key)).slice(0, 48);
-  const fallbackFacts = facts.length ? facts : allFacts.slice(0, 48);
+  const facts = allFacts.filter((fact) => mentioned.has(fact.normalized_key));
+  const fallbackFacts = facts.length ? facts : allFacts;
   const compactIssues = (issues || []).slice(0, 12).map((issue) => ({
     code: issue.code, severity: issue.severity,
     message: String(issue.message || '').split(',').slice(0, 8).join(',').slice(0, 1_200),
@@ -457,7 +461,8 @@ function compactDraftRepairInput(contentPackage, issues = []) {
       normalized_key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate,
       preferred_value: fact.preferred_value, consensus_status: fact.consensus_status,
       freshness_state: fact.freshness_state, latest_evidence_at: fact.latest_evidence_at,
-      evidence: (fact.evidence || []).slice(0, 2).map((item) => ({ source_id: item.source_id, value: item.value,
+      evidence: (fact.evidence || []).map((item) => ({ source_id: item.source_id, value: item.value,
+        quote: item.quote, qualifiers: item.qualifiers || [], coverage_limitations: item.coverage_limitations || [],
         published_at: item.published_at, observed_at: item.observed_at, captured_at: item.captured_at })),
     })),
     draft: { title:draft.title, body_markdown:draft.body_markdown, meta_description:draft.meta_description,
@@ -502,9 +507,8 @@ const briefPrompt = (strategyVersion) => `Create an evidence-backed English cont
 - Select only the evidence needed to fulfill the approved reader promise: at most 48 unique claim keys for the whole plan and at most 12 per section. The remaining destination knowledge stays available for other articles; it is not mandatory coverage for this draft.
 - Evidence marked partial_usable is valid only for the supplied Claim. Treat its coverage_limitations as explicit boundaries: narrow the reader promise, omit unsupported details, and never describe the source or topic as complete. Unrelated source gaps are already removed from this topic package.
 - Unresolved strict safety/semantic conflicts require explicit handling instructions; never silently choose a side.
-- Dynamic prices, hours, reservations, schedules and access details are already selected by an auditable independent-source, source-quality and recency-weighted consensus. They do not require manual official verification. Include the supplied current value when useful, state the evidence date and normal change risk, and prefer higher-confidence conclusions. Dated evidence may be used with a clear as-of caveat rather than discarded.
+- The operator explicitly selected these sources. Prices, hours, reservations, schedules and access details are usable as supplied and do not require another official-page check or a fabricated publication-date gate. Preserve genuine mutually-exclusive conflicts for one grouped human decision; do not invent a conflict merely because dates are missing.
 - Follow the selected production_mode for this one plan, without treating the other parallel routes as disabled. For source_adaptation, preserve the authorized source's useful itinerary, selection, sequence and practical intent while writing original English copy; do not copy wording or claim facts outside that source package. For topic_feature, fulfill only the bounded topic promise. For multi_source_synthesis, deliberately combine compatible perspectives across sources; it is a creative format, not a completeness repair step.
-- When editorial_assignment is present, it is an explicit administrator-provided writing assignment. Follow its title, brief, and target_entities closely, but use only its selected evidence package. Do not broaden it into a destination encyclopedia. Honor visual_brief when safe: route_sketch means an original conceptual editorial illustration, not a geographically accurate navigation map; never invent roads, coordinates, labels, or travel times.
 - Include practical adaptation for language, booking, payment, navigation, safety, and solo logistics where evidence permits.
 - Canonical fields are structured source data for the writer and renderer. Use empty arrays or empty strings for unknown information rather than guessing.
 - Include direct answer blocks only where the supplied facts support them. The image plan must distinguish real_world_photo, infographic, map_or_route, and illustration; only illustration is eligible for image-model generation.
@@ -517,7 +521,7 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - Do not mention Xiaohongshu, source authors, internal claim keys, evidence ledgers, affiliate products, Trip.com, or commercial calls to action in body_markdown.
 - Follow the production_mode selected for this article. A rights-authorized source_adaptation may faithfully preserve one source's itinerary, selections and practical structure in original English wording. topic_feature should stay narrow. multi_source_synthesis deliberately combines compatible perspectives, while the other routes remain valid future opportunities from the same evidence.
 - Return a separate evidence ledger mapping each article section to exact claim keys and source IDs.
-- For every used time_sensitive, provisional_latest, or refresh_recommended fact, list its claim key in verification_notes and state its supplied evidence date and normal change risk in reader-facing copy. This is disclosure, not an instruction for a human to verify an official page.
+- Preserve any explicit dates and validity ranges supplied by a source, but do not invent an “as of” date or force repetitive change-risk disclaimers when a source did not provide one.
 - The article should be useful even with no commercial module. Follow this evidence-scaled content policy: ${JSON.stringify(policy)}. Never pad thin evidence to reach a word target.
 - Make the body easy to understand: answer the confirmed reader promise directly, then use descriptive headings or concise lists only where the material benefits from them. No fixed heading or summary module is mandatory. Do not make unsupported claims just for SEO.
 - FAQ is optional. Include it only when content_policy.faq.allowed is true and the supplied evidence answers real reader questions. When present, include the exact same questions and answers in a visible "Frequently asked questions" section of body_markdown; otherwise return an empty faqs array and omit that section.
@@ -526,6 +530,8 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - Preserve the internal evidence ledger for every factual section. A visible Sources section is optional unless the confirmed brief requests one; if used, show human-readable titles, real URLs and supplied dates without internal IDs.
 - If the evidence package includes a frontend_page_plan, honor its semantic section order and writer guidance in the reader-facing article. It is a composition plan, not permission to invent components, props, or visual styling.
 - Return only evidence-supported, rights-safe image plans, never filler to meet a count. Every included item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. When a factual real-world visual supports the evidence, plan REAL_WORLD_PHOTO: the pipeline will prioritize an explicitly saved, user-authorized source image that is linked to the article evidence. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
+- Select real-world photo subjects from authorized_source_assets before writing when a saved asset actually matches the subject. These entries describe local retained files; do not copy or expose preview URLs in body_markdown.
+- Use a concise, practical guide voice. Prefer direct instructions and short useful paragraphs; avoid literary scene-setting, generic enthusiasm, and padding.
 - If revision_feedback exists, fix every blocker without adding unsupported facts.`;
 
 const DRAFT_REPAIR_PROMPT = `Repair only the failed fields or H2 sections named by the supplied QA issues.
@@ -628,16 +634,6 @@ export function applyDeterministicGates(review, contentPackage) {
   const acknowledged = new Set(draft.unresolved_conflicts || []);
   const hiddenConflicts = conflictedKeys.filter((key) => ledgerKeys.has(key) && !acknowledged.has(key));
   addGate("conflict-disclosure", hiddenConflicts.length === 0, hiddenConflicts.length ? `Used conflicted facts without ledger disclosure: ${hiddenConflicts.join(", ")}` : "Used conflicts are disclosed or avoided.", "hidden_conflict");
-  const staleKeys = facts.filter((fact) => fact.freshness_state === "stale").map((fact) => fact.normalized_key);
-  const usedStaleKeys = staleKeys.filter((key) => ledgerKeys.has(key));
-  const verificationKeys = facts.filter((fact) => fact.freshness_state === "time_sensitive"
-    || ["RECENCY_WEIGHTED_CONSENSUS", "LATEST_WEIGHTED_PROVISIONAL"].includes(fact.consensus_method))
-    .map((fact) => fact.normalized_key);
-  const acknowledgedVerification = new Set((draft.verification_notes || [])
-    .map((note) => String(note).split(/[:：]/, 1)[0].trim()));
-  const datedDisclosureKeys = new Set([...verificationKeys, ...usedStaleKeys]);
-  const hiddenVerification = [...datedDisclosureKeys].filter((key) => ledgerKeys.has(key) && !acknowledgedVerification.has(key));
-  addGate("temporal-disclosure", hiddenVerification.length === 0, hiddenVerification.length ? `Used dynamic or dated facts without an as-of disclosure: ${hiddenVerification.join(", ")}` : "Dynamic and dated evidence is disclosed or avoided.", "missing_temporal_disclosure");
   const policy = contentPackage.content_policy || { minimum_words: 800, faq: { required: true, allowed: true }, visuals: { minimum: 2, maximum: 5 } };
   addWarning("suggested-depth", wordCount(draft.body_markdown) >= policy.minimum_words,
     `Draft has ${wordCount(draft.body_markdown)} words; ${policy.minimum_words} is an evidence-scaled editorial suggestion, not a pass/fail threshold.`, "draft_below_suggested_length");
@@ -684,8 +680,8 @@ export function applyDeterministicGates(review, contentPackage) {
     "The post title owns H1; body Markdown may use orderly H2/H3/H4 headings only.", "heading_hierarchy_invalid");
   const visualStrategySafe = (draft.visuals || []).every((visual) => {
     if (visual.image_type === "real_world_photo") {
-      if (visual.acquisition_strategy === "use_authorized_source_image") {
-        return visual.factual_image_required && Boolean(visual.source_asset_id && visual.source_remote_url);
+      if (["use_authorized_source_image", "localize_source_image"].includes(visual.acquisition_strategy)) {
+        return visual.factual_image_required && Boolean(visual.source_asset_id);
       }
       return visual.acquisition_strategy === "search_real_image" && visual.factual_image_required;
     }
@@ -695,18 +691,8 @@ export function applyDeterministicGates(review, contentPackage) {
   });
   addGate("image-strategy", visualStrategySafe,
     "Image plans must never use an image model to fabricate a factual real-world photo or route.", "image_strategy_invalid");
-  const incompleteRequiredVisuals = (draft.visuals || []).filter((visual) => visual.factual_image_required
-    && !(visual.status === "generated" && (visual.media_url || visual.wordpress_media_url)));
-  addGate("required-visual-assets", incompleteRequiredVisuals.length === 0,
-    incompleteRequiredVisuals.length ? "One or more factual visuals lack a verified media asset." : "All required factual visuals have real assets.",
-    "required_visual_missing");
-  const unsupportedVisualRenders = (draft.visuals || []).filter((visual) => ["render_infographic", "render_map"].includes(visual.acquisition_strategy)
-    && visual.status !== "generated");
-  addGate("specialized-visual-renderers", unsupportedVisualRenders.length === 0,
-    unsupportedVisualRenders.length ? "A planned map or infographic has no completed renderer output." : "Specialized visuals are complete or not required.",
-    "visual_renderer_incomplete");
   const page = contentPackage.frontend_page;
-  if (page || contentPackage.frontend_page_plan) {
+  if (page) {
     const payload = page?.payload || {};
     const pageText = visiblePageText(payload);
     const criticalHeadings = [...String(draft.body_markdown || "").matchAll(/^##\s+(.+)$/gm)].map((match) => normalizeComparable(match[1]));

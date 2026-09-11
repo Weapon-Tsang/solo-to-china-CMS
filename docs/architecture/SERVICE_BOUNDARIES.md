@@ -6,13 +6,13 @@ This is a gradual in-process split. `src/repository.mjs` remains the compatible 
 | --- | --- | --- |
 | Source / Evidence | Capture admission, source assets, evidence spans, coverage | `src/adapters/`, `src/capture-upload.mjs`, `src/source-preflight.mjs`, `src/evidence-validator.mjs`, `src/evidence-consensus.mjs` |
 | Knowledge | Claim semantics, entity identity, knowledge resolution | `src/claim-resolution.mjs`, `src/entity-resolution.mjs` |
-| Editorial | Human assignments, task pagination, independent readiness dimensions | `src/editorial-assignments.mjs`, `src/services/operations-workspace.mjs` |
+| Editorial | Approved-article task presentation, recovery and independent readiness dimensions | `src/services/operations-workspace.mjs`, `src/services/content-recovery.mjs` |
 | Job / Batch | Queue policy, provider attempts, artifact reuse | `src/job-policy.mjs`, `src/ai/stage-policy.mjs` |
 | Publishing | Page composition, SEO/schema, media, WordPress delivery | `src/publish-page.mjs`, `src/seo-geo.mjs`, `src/media-delivery.mjs`, `src/final-html-validator.mjs`, `src/wordpress.mjs` |
 | Commercial | Assets, overlay, event attribution and money semantics | `src/commercial.mjs`, `src/affiliate-queue.mjs`, `src/repositories/commercial-events.mjs` |
 | Statistics | Offline release and runtime reporting | `src/release-check.mjs` |
 
-The first extraction keeps pure task presentation/pagination in the Editorial service, commercial event persistence/reporting in a Repository child module, and content quality UI state in `frontend/src/workspaces/content-quality-status.jsx`. Transactional methods stay behind the facade until their behavior has a focused contract test; moving them is not a reason to change tables or API payload compatibility.
+The first extraction keeps pure task presentation/pagination in the Editorial service, commercial event persistence/reporting in a Repository child module, and content quality UI state in `frontend/src/workspaces/content-quality-status.jsx`. The former manual editorial-assignment feature and HTTP routes were removed in 1.18.2; historical tables remain read-compatible so existing approved production records are not destroyed. Transactional methods stay behind the facade until their behavior has a focused contract test; moving them is not a reason to change tables or API payload compatibility.
 
 `config/service-boundaries.json` is machine-readable. `npm run boundaries:check` rejects Source/Evidence or Knowledge imports of Commercial modules. The facade and pipeline may coordinate boundaries, but Research aggregation must never read affiliate tables.
 
