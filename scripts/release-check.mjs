@@ -182,7 +182,7 @@ async function smokeReadApis(baseUrl) {
     ["Knowledge API", "/api/knowledge", (body) => Array.isArray(body?.items)],
     ["Editorial blueprints API", "/api/editorial-blueprints", (body) => Array.isArray(body?.items)],
     ["Content API", "/api/content", (body) => Array.isArray(body?.items)],
-    ["Recommendations API", "/api/recommendations", (body) => Array.isArray(body?.items) && Array.isArray(body?.opportunities)],
+    ["Recommendations API", "/api/recommendations", (body) => Array.isArray(body?.items) && Object.hasOwn(body || {}, "nextCursor")],
     ["WordPress inventory API", "/api/wordpress/inventory", (body) => typeof body?.configured === "boolean" && Array.isArray(body?.items)],
     ["Search Console API", "/api/search-console", (body) => typeof body?.configured === "boolean" && Array.isArray(body?.items)],
     ["Commercial offers API", "/api/commercial/offers", (body) => Array.isArray(body?.items)],

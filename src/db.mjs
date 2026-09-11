@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 58;
+export const SCHEMA_VERSION = 59;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -79,6 +79,58 @@ function migrate(db) {
   if (current < 56) migrationFiftySix(db);
   if (current < 57) migrationFiftySeven(db);
   if (current < 58) migrationFiftyEight(db);
+  if (current < 59) migrationFiftyNine(db);
+}
+
+function migrationFiftyNine(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE affiliate_assets ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'operational'
+        CHECK (lifecycle_state IN ('operational','archived','legacy_test_seed'));
+      ALTER TABLE affiliate_assets ADD COLUMN archived_at TEXT;
+      ALTER TABLE affiliate_assets ADD COLUMN archive_reason TEXT NOT NULL DEFAULT '';
+      ALTER TABLE affiliate_asset_mappings ADD COLUMN active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1));
+      ALTER TABLE knowledge_resolutions ADD COLUMN resolution_type TEXT NOT NULL DEFAULT 'preferred_value'
+        CHECK (resolution_type IN ('preferred_value','coexist_scope'));
+
+      UPDATE affiliate_assets SET active=0, lifecycle_state='legacy_test_seed',
+        archived_at=COALESCE(archived_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        archive_reason='Archived historical Trip.com seed asset; preserved for audit only.',
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE id IN (
+        SELECT affiliate_asset_id FROM affiliate_asset_queue_tasks
+        WHERE source_type='SEED' AND task_key IN (
+          'trip:hotel:destination:beijing',
+          'trip:hotel:destination:shanghai',
+          'trip:attraction:destination:beijing',
+          'trip:attraction:destination:shanghai'
+        ) AND affiliate_asset_id IS NOT NULL
+      );
+
+      UPDATE affiliate_asset_mappings SET active=0
+      WHERE affiliate_asset_id IN (SELECT id FROM affiliate_assets WHERE lifecycle_state='legacy_test_seed');
+
+      CREATE INDEX idx_affiliate_assets_operational
+        ON affiliate_assets(lifecycle_state,active,provider_account_id,priority DESC,updated_at DESC);
+      CREATE INDEX idx_affiliate_mappings_operational
+        ON affiliate_asset_mappings(active,destination_slug,scope_type,scope_key);
+      CREATE INDEX idx_knowledge_facts_directory
+        ON knowledge_facts(destination_id,visibility_status,canonical_subject,subject,id);
+      CREATE INDEX idx_knowledge_facts_review
+        ON knowledge_facts(consensus_status,visibility_status,destination_id,updated_at DESC);
+      CREATE INDEX idx_content_recommendations_inbox
+        ON content_recommendations(decision,updated_at DESC,source_id);
+      CREATE INDEX idx_jobs_light_status
+        ON jobs(status,updated_at DESC,type);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (59, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFiftyEight(db) {

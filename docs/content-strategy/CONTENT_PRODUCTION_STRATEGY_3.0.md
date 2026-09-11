@@ -1,6 +1,14 @@
 # SoloToChina Content Production Strategy 3.0
 
-状态：active；生效日期：2026-09-12。应用 2.0.3；schema 58。唯一版本清单为 `config/content-strategy.json`。
+状态：active；生效日期：2026-09-12。应用 2.0.4；schema 59。唯一版本清单为 `config/content-strategy.json`。
+
+## 2.0.4 运行约束补充
+
+- Writer 返回多少个有效视觉方案，就只保留多少个；`target` 仅作建议，不得补齐占位图。零视觉文章可以通过编辑质量检查。
+- 当前没有地图和信息图渲染器，`map_or_route` 与 `infographic` 不进入执行计划，也不降级为插画或阻塞任务。
+- 实景图只允许使用持久化原件且来源与资产均经所有者确认并允许发布。`localize_source_image` 只能翻译画面内中文，必须落地真实本地文件并完成 WordPress 上传，不能改变事实场景。
+- 内容页只展示已经进入生产且存在任务、Brief、Draft 或发布记录的项目。仅批准、等待证据、系统推荐或历史测试数据不得占位。
+- 知识库内统一处理严格冲突、Claim 提取复核和实体判断；商业资产默认只展示 operational 数据，零有效资产属于正常状态。
 
 ## 目标
 

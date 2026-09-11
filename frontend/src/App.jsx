@@ -31,7 +31,7 @@ export default function App() {
   const [auth, setAuth] = useState(null);
   const [totals, setTotals] = useState({});
   const [actionCounts, setActionCounts] = useState({});
-  const [viewData, setViewData] = useState(null);
+  const [viewCache, setViewCache] = useState({});
   const [pendingActionView, setPendingActionView] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -40,9 +40,13 @@ export default function App() {
   const [detail, setDetail] = useState({ open: false, type: null, data: null, loading: false });
   const [toast, setToast] = useState({ message: "", error: false });
   const requestSequence = useRef(0);
+  const viewCacheRef = useRef({});
   const overviewRequests = useRef(createInFlightRequestCoordinator());
   const viewRequests = useRef(createInFlightRequestCoordinator());
   const detailRequests = useRef(createLatestRequestCoordinator());
+  const viewData = viewCache[activeView]?.data || null;
+
+  useEffect(() => { viewCacheRef.current = viewCache; }, [viewCache]);
 
   const showToast = useCallback((message, isError = false) => {
     setToast({ message, error: isError });
@@ -55,21 +59,31 @@ export default function App() {
   }, [toast]);
 
   const loadOverview = useCallback(() => overviewRequests.current.run("overview", async ({ signal }) => {
-    const [nextHealth, dashboard] = await Promise.all([api("/api/health", { signal }), api("/api/dashboard", { signal })]);
+    const [nextHealth, dashboard] = await Promise.all([api("/api/health", { signal }), api("/api/dashboard/summary", { signal })]);
     setHealth(nextHealth);
     setTotals(dashboard.totals || {});
     setActionCounts(dashboard.actionCounts || {});
+  }), []);
+
+  const loadStatusSummary = useCallback(() => overviewRequests.current.run("status", async ({ signal }) => {
+    const dashboard = await api("/api/dashboard/summary", { signal });
+    setTotals(dashboard.totals || {});
+    setActionCounts(dashboard.actionCounts || {});
+    setHealth((current) => ({ ...(current || {}), ok: dashboard.health?.ok !== false, queueActive: dashboard.queue?.active || 0 }));
   }), []);
 
   const loadAuth = useCallback(async () => setAuth(await api("/api/auth/status")), []);
 
   const loadView = useCallback((view, { quiet = false } = {}) => viewRequests.current.run(view, async ({ signal }) => {
     const sequence = ++requestSequence.current;
-    if (!quiet) setLoading(true);
+    if (!quiet && !viewCacheRef.current[view]?.data) setLoading(true);
     try {
-      const data = await api(endpoints[view], { signal });
+      const data = view === "knowledge"
+        ? await Promise.all([api("/api/knowledge/summary", { signal }), api("/api/knowledge/subjects?limit=50", { signal })])
+          .then(([summary, subjects]) => ({ summary, subjects: subjects.items || [], nextCursor: subjects.nextCursor || null }))
+        : await api(endpoints[view], { signal });
       if (sequence !== requestSequence.current) return { ok: false, stale: true };
-      setViewData({ ...data, _loadedView: view });
+      setViewCache((current) => ({ ...current, [view]: { data: { ...data, _loadedView: view }, loadedAt: Date.now() } }));
       setError("");
       return { ok: true, stale: false };
     } catch (caught) {
@@ -87,17 +101,16 @@ export default function App() {
 
   useEffect(() => {
     if (!auth?.authenticated || auth.mustChangePassword) return;
-    setViewData(null);
     void Promise.all([loadOverview(), loadView(activeView)]).catch((caught) => setError(caught.message));
   }, [activeView, auth, loadOverview, loadView]);
 
   useEffect(() => {
     if (!auth?.authenticated || auth.mustChangePassword) return undefined;
     const interval = setInterval(() => {
-      void Promise.all([loadOverview(), loadView(activeView, { quiet: true })]).catch((caught) => setError(caught.message));
-    }, health?.queueActive > 0 ? 5_000 : 60_000);
+      void loadStatusSummary().catch((caught) => setError(caught.message));
+    }, health?.queueActive > 0 ? 7_500 : 60_000);
     return () => clearInterval(interval);
-  }, [activeView, auth, health?.queueActive, loadOverview, loadView]);
+  }, [auth, health?.queueActive, loadStatusSummary]);
 
   const refresh = useCallback(async (notify = false) => {
     setRefreshing(true);
@@ -213,7 +226,7 @@ export default function App() {
       const target = (viewData.items || []).find((item) => item.queue?.state === "failed" || item.status === "exception");
       if (target) void openPackage("source", target.id);
     }
-    setPendingActionView(null);
+    if (activeView !== "knowledge") setPendingActionView(null);
   }, [activeView, loading, openPackage, pendingActionView, viewData]);
 
   if (!auth) return <LoadingView />;
@@ -230,17 +243,17 @@ export default function App() {
           <div className="sticky top-[53px] z-30 -mx-1 py-1.5 sm:top-[62px] sm:hidden">
             <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 p-1.5 shadow-sm backdrop-blur">
               <TabsList aria-label="手机端后台菜单" className="grid h-auto w-full grid-cols-3 gap-1 border-0 bg-transparent p-0 shadow-none">
-                {Object.entries(views).map(([key, item]) => { const Icon = item.icon; const badge = <NavigationBadge count={actionCounts[key]} active={activeView === key} compact />; return <TabsTrigger key={key} value={key} title={item.title} className="relative h-11 min-w-0 w-full px-1.5"><Icon className="size-3.5 shrink-0" /><span className="truncate">{item.label}</span>{key === "sources" ? <NavigationAction count={actionCounts[key]} onActivate={() => openNavigationAction(key)}>{badge}</NavigationAction> : badge}</TabsTrigger>; })}
+                {Object.entries(views).map(([key, item]) => { const Icon = item.icon; const badge = <NavigationBadge count={actionCounts[key]} active={activeView === key} compact />; return <TabsTrigger key={key} value={key} title={item.title} className="relative h-11 min-w-0 w-full px-1.5"><Icon className="size-3.5 shrink-0" /><span className="truncate">{item.label}</span>{["sources", "knowledge"].includes(key) ? <NavigationAction count={actionCounts[key]} onActivate={() => openNavigationAction(key)}>{badge}</NavigationAction> : badge}</TabsTrigger>; })}
               </TabsList>
             </div>
           </div>
           <div className="sticky top-[62px] z-30 -mx-1 hidden overflow-x-auto px-1 py-1.5 scrollbar-none sm:block">
-            <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; const badge = <NavigationBadge count={actionCounts[key]} active={activeView === key} />; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span>{key === "sources" ? <NavigationAction count={actionCounts[key]} onActivate={() => openNavigationAction(key)}>{badge}</NavigationAction> : badge}</TabsTrigger>; })}</TabsList>
+            <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; const badge = <NavigationBadge count={actionCounts[key]} active={activeView === key} />; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span>{["sources", "knowledge"].includes(key) ? <NavigationAction count={actionCounts[key]} onActivate={() => openNavigationAction(key)}>{badge}</NavigationAction> : badge}</TabsTrigger>; })}</TabsList>
           </div>
         </Tabs>
         {health && !health.aiConfigured && <AiAlert onConfigure={() => openGuide("ai")} />}
         <section aria-live="polite">
-          {loading ? <LoadingView /> : error ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} onSubmitManualSource={submitManualSource} actionBusy={actionBusy} />}
+          {loading && !viewData ? <LoadingView /> : error && !viewData ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} reviewRequest={pendingActionView?.view === "knowledge" ? pendingActionView.requestedAt : null} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} onSubmitManualSource={submitManualSource} actionBusy={actionBusy} />}
         </section>
         <footer className="flex flex-col gap-1 border-t border-slate-200/70 pt-4 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:pt-5"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
       </main>

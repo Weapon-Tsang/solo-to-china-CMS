@@ -6,7 +6,7 @@ const HARD_FACT_PREDICATES = new Set([
 // Startup reconciliation uses it to rebuild destinations with pending reviews,
 // so a deploy can remove newly-recognized false positives without an operator
 // clicking through every old review card.
-export const CLAIM_RESOLUTION_VERSION = "2026-09-09.2";
+export const CLAIM_RESOLUTION_VERSION = "2026-09-12.1";
 
 const SOFT_PREDICATES = new Set([
   "recommended_visit_time", "best_time_to_visit", "good_for", "photography_spot",
@@ -153,6 +153,11 @@ export function classifyClaimPair(left, right) {
   // or "photo_composition" and "viewed_through". Only canonical aliases (price,
   // hours, reservation, and future typed facts) are allowed to cross predicate
   // boundaries and conflict. Everything else remains complementary.
+  if (!sameCanonicalPredicate && isPricePredicate(a.predicate) && isPricePredicate(b.predicate)
+    && isFreeAdmissionWithPaidConsumptionPair(a.value_text, b.value_text)) {
+    return result("ENRICHMENT", true,
+      "Both claims describe free admission while clarifying that on-site consumption is self-paid.", a, b);
+  }
   if (!sameCanonicalPredicate) {
     const bothRecommendations = a.structured.claim_kind === "SOFT_RECOMMENDATION"
       && b.structured.claim_kind === "SOFT_RECOMMENDATION";
@@ -166,6 +171,18 @@ export function classifyClaimPair(left, right) {
   }
 
   if (!sameScope) return result("COMPATIBLE", true, "The values apply under different scope, time, audience, season, or conditions.", a, b);
+
+  if (sameCanonicalPredicate && a.structured.canonical_predicate === "reservation_required"
+    && a.structured.polarity !== "negative" && b.structured.polarity !== "negative"
+    && (isPositiveBoolean(aValue) || isPositiveBoolean(bValue))) {
+    return result("ENRICHMENT", true,
+      "A positive reservation requirement and the named official booking channel are compatible details.", a, b);
+  }
+  if (sameCanonicalPredicate && a.structured.canonical_predicate === "price"
+    && isFreeAdmissionWithPaidConsumptionPair(a.value_text, b.value_text)) {
+    return result("ENRICHMENT", true,
+      "Both claims describe free admission while clarifying that on-site consumption is self-paid.", a, b);
+  }
 
   const kind = strongestKind(a.structured.claim_kind, b.structured.claim_kind);
   if (kind === "HARD_FACT" && hasSameTimeEvidence(a, b)) {
@@ -463,18 +480,32 @@ function canonicalTypedEqual(left, right) {
 function canonicalMetroExit(value) {
   let text = clean(value).normalize("NFKC").toLocaleLowerCase("en-US");
   if (!text) return null;
+  const parentheticalStation = text.match(/\(([^)]*(?:station|metro|subway)[^)]*(?:exit|entrance)[^)]*)\)/iu)?.[1];
+  if (parentheticalStation) text = parentheticalStation;
   const exitMatch = text.match(/(?:\bexit\s*(?:no\.?\s*)?([0-9]+|[一二三四五六七八九十]+)\b)|(?:([0-9]+|[一二三四五六七八九十]+)\s*号?\s*(?:出入口|出口|口))/iu);
   const exit = canonicalOrdinal(exitMatch?.[1] || exitMatch?.[2]);
   if (exitMatch) text = text.replace(exitMatch[0], " ");
   const station = normalizeText(text
     .replace(/\b(?:nearest|closest|nearby|the|to|from|at|of)\b/giu, " ")
     .replace(/\b(?:metro|subway|underground|rail transit|light rail)\s*(?:station)?\b/giu, " ")
+    .replace(/\bstation\b/giu, " ")
     .replace(/(?:最近的?|邻近的?|附近的?)(?:地铁|轨道交通|轻轨)?(?:站)?/gu, " ")
     .replace(/(?:地铁|轨道交通|轻轨)(?:车)?站/gu, " ")
     .replace(/站\s*$/u, " "))
     .replace(/\s+/gu, "");
   if (!station) return null;
   return { station, exit: exit || null };
+}
+
+function isFreeAdmissionWithPaidConsumptionPair(left, right) {
+  const combined = `${left || ""} || ${right || ""}`.toLocaleLowerCase("en-US");
+  const freeAdmission = /free(?:\s+admission|\s+entry)?|no\s+(?:admission\s+)?charge|免费|免票/iu.test(combined);
+  const paidConsumption = /self[-\s]?pay|pay(?:\s+for)?\s+(?:your\s+)?(?:drink|tea|consumption)|consumption\s+(?:is\s+)?(?:paid|extra)|喝茶自费|消费自费|自费消费/iu.test(combined);
+  return freeAdmission && paidConsumption;
+}
+
+function isPricePredicate(value) {
+  return /(?:^|_)(?:ticket_price|ticket_price_cny|admission_fee|entry_fee|fare|cost|price)(?:_|$)/iu.test(normalizePredicate(value));
 }
 
 function canonicalOrdinal(value) {

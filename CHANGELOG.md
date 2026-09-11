@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.4 - Unreleased
+
+- Preserve the writer's actual visual count, skip unsupported renderers, and require durable authorized provenance plus a real localized file before a localized source photo can pass WordPress delivery.
+- Replace heavy dashboard, Knowledge, Recommendations, Settings, and Commercial reads with indexed summaries, pagination, lazy detail endpoints, and per-view stale-while-revalidate frontend caching.
+- Keep Content strictly production-only, archive the four historical Beijing/Shanghai Trip.com seed assets and mappings, and make zero active commercial assets a valid state.
+- Move strict conflicts, Claim extraction reviews, and entity decisions into the Knowledge workspace with a real navigation badge and audited preferred-value or coexistence decisions.
+
 ## 2.0.3 - Unreleased
 
 - Reconcile internal opportunities into an actionable recommendation inbox with current-version checks, processing-versus-evidence gaps, semantic deduplication, collision handling, and safe historical-failure retries.

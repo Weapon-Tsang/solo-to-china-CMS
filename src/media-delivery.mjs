@@ -38,9 +38,28 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true } =
     if (Boolean(visual.factual_image_required) && visual.image_type === "illustration") {
       errors.push({ code: "FACTUAL_SCENE_CANNOT_USE_ILLUSTRATION", path });
     }
-    if (visual.image_type === "real_world_photo"
-      && !["use_authorized_source_image", "search_real_image"].includes(visual.acquisition_strategy)) {
-      errors.push({ code: "REAL_SCENE_REQUIRES_EVIDENCE_MEDIA", path });
+    if (visual.image_type === "real_world_photo") {
+      const strategy = String(visual.acquisition_strategy || "");
+      if (!["use_authorized_source_image", "localize_source_image"].includes(strategy)) {
+        errors.push({ code: "REAL_SCENE_REQUIRES_EVIDENCE_MEDIA", path });
+      }
+      const sourceAssetId = String(visual.source_asset_id || "").trim();
+      const provenance = metadata.source_provenance || {};
+      if (!sourceAssetId || provenance.source_asset_id !== sourceAssetId) {
+        errors.push({ code: "REAL_SCENE_SOURCE_ASSET_MISSING", path: `${path}.source_asset_id` });
+      }
+      if (!provenance.original_stored) errors.push({ code: "REAL_SCENE_ORIGINAL_NOT_STORED", path });
+      if (!provenance.source_owner_confirmed || !provenance.source_publishable
+        || !provenance.asset_owner_confirmed || !provenance.asset_publishable) {
+        errors.push({ code: "REAL_SCENE_AUTHORIZATION_INVALID", path });
+      }
+      if (strategy === "localize_source_image"
+        && (!metadata.localized_file || metadata.localized_from_source_asset_id !== sourceAssetId)) {
+        errors.push({ code: "LOCALIZED_SCENE_FILE_NOT_PROVEN", path });
+      }
+      if (!metadata.wordpress_uploaded || positiveInteger(metadata.wordpress_media_id) !== mediaId) {
+        errors.push({ code: "REAL_SCENE_WORDPRESS_UPLOAD_NOT_PROVEN", path });
+      }
     }
     if (requireMetadata) {
       if (!positiveInteger(metadata.width) || !positiveInteger(metadata.height)) errors.push({ code: "MEDIA_DIMENSIONS_MISSING", path });

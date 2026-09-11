@@ -11,13 +11,14 @@ import { RecommendationBulk, RecommendationSelect } from "@/workspaces/recommend
 import { ContentRecovery } from "@/workspaces/content-recovery";
 import { ContentQualityStatus } from "@/workspaces/content-quality-status";
 import { ConfirmAction } from "@/components/confirm-action";
+import { api } from "@/lib/api";
 
 export function ViewRenderer(props) {
   const components = {
     sources: SourcesView,
     recommendations: RecommendationsView,
     content: ContentView,
-    knowledge: KnowledgeView,
+    knowledge: KnowledgeDirectoryView,
     commercial: CommercialView,
     settings: SettingsView,
   };
@@ -52,8 +53,35 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
     <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div><div className="text-sm font-semibold text-slate-900">系统与数据存储</div><p className="mt-1 text-xs leading-relaxed text-slate-500">模型密钥只保留在服务器环境中；研究来源、信息主张、知识库和草稿使用持久化数据库保存。</p></div><span className="grid size-8 place-items-center rounded-lg bg-sky-50 text-sky-700"><Database className="size-4" /></span></div><div className="mt-4 space-y-3 text-xs text-slate-600"><div className="flex items-center justify-between gap-3"><span>当前部署</span><span className="font-medium text-slate-900">{data?.storage?.label || "正在识别"}</span></div><div className="flex items-center justify-between gap-3"><span>跨设备访问</span><span className="font-medium text-slate-900">{data?.storage?.crossDevice ? "支持：登录同一后台即可" : "当前仅本机"}</span></div><div className="flex items-center justify-between gap-3"><span>应用版本</span><span className="font-medium text-slate-900">{data?.appVersion || health?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>内容策略</span><span className="font-medium text-slate-900">v{data?.contentStrategy?.version || health?.contentStrategy?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>SEO / GEO 结构化包</span><StatusPill status="ready" /></div><div className="flex items-center justify-between gap-3"><span>云端生图服务</span><StatusPill status={health?.visualGenerationConfigured ? "ready" : "pending"} /></div></div><p className="mt-4 border-t border-slate-100 pt-3 text-[11px] leading-relaxed text-slate-400 sm:mt-5">{data?.storage?.description || "数据库状态将在服务启动后显示。"}</p></Card>
     <CredentialSettingsCard auth={auth} onAction={onAction} onAuthRefresh={onAuthRefresh} actionBusy={actionBusy} />
     <FrontendContractSettingsCard contract={data?.frontendContract} onAction={onAction} actionBusy={actionBusy} />
-    <SettingsOperations data={data} onAction={onAction} actionBusy={actionBusy} />
+    <SettingsOperationsLight data={data} onAction={onAction} actionBusy={actionBusy} />
   </div>;
+}
+
+function SettingsOperationsLight({ data, onAction, actionBusy }) {
+  const counts = data?.operations?.counts || {};
+  const [advanced, setAdvanced] = useState({});
+  const loadAdvanced = async (key, endpoint) => {
+    if (advanced[key]?.data || advanced[key]?.loading) return;
+    setAdvanced((current) => ({ ...current,[key]:{loading:true,data:null,error:""} }));
+    try {
+      const result = await api(endpoint);
+      setAdvanced((current) => ({ ...current,[key]:{loading:false,data:result,error:""} }));
+    } catch (caught) {
+      setAdvanced((current) => ({ ...current,[key]:{loading:false,data:null,error:caught.message} }));
+    }
+  };
+  const groups = [
+    { key:"health",title:"系统健康",summary:`${counts.systemHealth || 0} 项需要处理`,endpoint:"/api/settings/system-health" },
+    { key:"maintenance",title:"维护与遥测",summary:`${counts.maintenance || 0} 条运行记录`,endpoint:"/api/settings/maintenance" },
+    { key:"wordpress",title:"WordPress 内容库",summary:`${counts.wordpressInventory || 0} 篇内容`,endpoint:"/api/settings/wordpress-inventory" },
+    { key:"blueprints",title:"编辑蓝图",summary:`${counts.blueprints || 0} 个蓝图`,endpoint:"/api/settings/blueprints" },
+    { key:"experiences",title:"Experience Blocks",summary:`${counts.experiences || 0} 条`,endpoint:"/api/settings/experiences?limit=100" },
+    { key:"lessons",title:"失败经验",summary:`${counts.failureLessons || 0} 条`,endpoint:"/api/settings/failure-lessons?limit=100" },
+    { key:"golden",title:"金牌文章",summary:`${counts.goldenArticles || 0} 篇`,endpoint:"/api/settings/golden-articles?limit=100" },
+    { key:"backfills",title:"回填历史",summary:`${counts.backfills || 0} 条`,endpoint:"/api/settings/backfills" },
+  ];
+  const preview = (endpoint, labelText) => onAction(endpoint, {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({dryRun:true})}, labelText);
+  return <Card className="p-4 sm:p-5 xl:col-span-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-semibold text-slate-900">高级系统管理</div><p className="mt-1 text-xs text-slate-500">默认只读取摘要；展开分组时才加载详细记录。回填仍先预览，再根据结果执行。</p></div><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => preview("/api/backfills/media","媒体回填预览完成")}><RefreshCw />预览媒体回填</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => preview("/api/backfills/experience","Experience 回填预览完成")}>预览 Experience</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => preview("/api/backfills/recommendations","建议回填预览完成")}>预览建议回填</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => preview("/api/backfills/failed-production-cleanup","历史失败预览完成")}>预览历史失败</Button></div></div><div className="mt-4 grid gap-2 sm:grid-cols-2">{groups.map((group) => { const state=advanced[group.key] || {}; const payload=state.data || {}; const items=payload.items || payload.cards || payload.runs || payload.mediaBackfills || payload.systemBackfills || []; return <details key={group.key} onToggle={(event) => { if (event.currentTarget.open) void loadAdvanced(group.key,group.endpoint); }} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-800">{group.title}<span className="ml-2 font-normal text-slate-500">{group.summary}</span></summary><div className="mt-2 max-h-48 overflow-auto text-[10px] leading-relaxed text-slate-500">{state.loading ? <p>正在加载…</p> : state.error ? <p className="text-red-600">{state.error}</p> : items.length ? items.slice(0,20).map((item,index) => <p key={item.id || item.session_id || item.task_key || index} className="border-t border-slate-100 py-1.5 first:border-0">{item.title || item.failure_code || item.backfill_type || item.task_key || item.status || item.id || "记录"}</p>) : <p>暂无记录</p>}</div></details>; })}</div></Card>;
 }
 
 function SettingsOperations({ data, onAction, actionBusy }) {
@@ -422,6 +450,72 @@ function recommendationGuidance(item) {
   return map[type] || map.UNSURE;
 }
 
+function KnowledgeDirectoryView({ data, reviewRequest, onNavigate, onAction, actionBusy }) {
+  const [summary, setSummary] = useState(data?.summary || {});
+  const [subjects, setSubjects] = useState(data?.subjects || []);
+  const [destination, setDestination] = useState("");
+  const [activeSubject, setActiveSubject] = useState(null);
+  const [facts, setFacts] = useState([]);
+  const [reviews, setReviews] = useState([]);
+  const [mode, setMode] = useState("directory");
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [localError, setLocalError] = useState("");
+  useEffect(() => { if (!destination) { setSummary(data?.summary || {}); setSubjects(data?.subjects || []); } }, [data, destination]);
+  const loadDirectory = async (slug = "") => {
+    setLoadingDetails(true); setLocalError("");
+    try {
+      const query = slug ? `?destination=${encodeURIComponent(slug)}` : "";
+      const separator = query ? "&" : "?";
+      const [nextSummary, nextSubjects] = await Promise.all([
+        api(`/api/knowledge/summary${query}`), api(`/api/knowledge/subjects${query}${separator}limit=50`),
+      ]);
+      setDestination(slug); setSummary(nextSummary); setSubjects(nextSubjects.items || []); setActiveSubject(null); setFacts([]); setMode("directory");
+    } catch (caught) { setLocalError(caught.message); } finally { setLoadingDetails(false); }
+  };
+  const selectSubject = async (subject) => {
+    setActiveSubject(subject); setLoadingDetails(true); setLocalError("");
+    try {
+      const params = new URLSearchParams({ subject: subject.subject_key, limit: "50" });
+      if (destination) params.set("destination", destination);
+      const result = await api(`/api/knowledge?${params}`);
+      setFacts(result.items || []);
+    } catch (caught) { setLocalError(caught.message); } finally { setLoadingDetails(false); }
+  };
+  const loadReviews = async () => {
+    setMode("reviews"); setLoadingDetails(true); setLocalError("");
+    try {
+      const params = new URLSearchParams({ limit: "100" });
+      if (destination) params.set("destination", destination);
+      const result = await api(`/api/knowledge/reviews?${params}`);
+      setReviews(result.items || []);
+    } catch (caught) { setLocalError(caught.message); } finally { setLoadingDetails(false); }
+  };
+  useEffect(() => { if (reviewRequest) void loadReviews(); }, [reviewRequest]);
+  const totals = summary?.totals || {};
+  const themeLabels = { planning: "规划与开放信息", transport: "交通与路线", cost: "价格与费用", experience: "体验与画面" };
+  if (!totals.facts && !subjects.length) return <EmptyState icon="knowledge" title="知识库正在建立" description="保存的来源完成结构化提取后，事实与人工判断任务会显示在这里。" action={() => onNavigate("sources")} actionLabel="查看研究来源" />;
+  return <div className="space-y-4">
+    <SummaryBar title="知识库目录"><span>{totals.facts || 0} 条可见事实</span><span>{totals.subjects || 0} 个主体</span><span>{totals.independentSources || 0} 个独立来源</span><span className={totals.pendingManualReview ? "text-amber-700" : "text-emerald-700"}>{totals.pendingManualReview || 0} 项待人工判断</span></SummaryBar>
+    <div className="flex flex-wrap gap-2"><Button size="sm" variant={mode === "directory" ? "default" : "secondary"} onClick={() => setMode("directory")}>主体目录</Button><Button size="sm" variant={mode === "reviews" ? "default" : "secondary"} onClick={loadReviews}>待人工判断 {totals.pendingManualReview || 0}</Button><select aria-label="按目的地筛选" value={destination} onChange={(event) => void loadDirectory(event.target.value)} className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs"><option value="">全部目的地</option>{(data?.summary?.destinations || summary?.destinations || []).map((item) => <option key={item.slug} value={item.slug}>{item.name} · {item.facts}</option>)}</select></div>
+    {localError && <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{localError}</p>}
+    {mode === "directory" ? <section className="grid gap-3 xl:grid-cols-[19rem_minmax(0,1fr)]">
+      <Card className="h-max p-3"><p className="px-2 pb-2 text-xs font-semibold text-slate-800">主体 / 地点</p><div className="max-h-[34rem] space-y-1 overflow-auto">{subjects.map((subject) => <button key={`${subject.destination_slug}:${subject.subject_key}`} type="button" onClick={() => void selectSubject(subject)} className={cn("w-full rounded-lg px-2.5 py-2 text-left text-xs", activeSubject?.subject_key === subject.subject_key ? "bg-cyan-50 text-cyan-800" : "hover:bg-slate-50")}><span className="flex justify-between gap-2"><b className="truncate">{subject.subject}</b><span>{subject.fact_count}</span></span><span className="mt-1 block text-[10px] text-slate-400">{subject.destination_name}{subject.conflict_count ? ` · ${subject.conflict_count} 项冲突` : ""}</span></button>)}</div></Card>
+      <div>{!activeSubject ? <Card className="p-5"><p className="text-sm font-semibold text-slate-900">先选择一个主体</p><p className="mt-2 text-xs text-slate-500">事实与完整证据只在需要时加载，切换其他页面不会丢失已加载的目录。</p><div className="mt-4 grid gap-2 sm:grid-cols-2">{(summary?.themes || []).map((theme) => <div key={theme.theme} className="rounded-lg bg-slate-50 px-3 py-2"><span className="text-xs text-slate-600">{themeLabels[theme.theme] || theme.theme}</span><b className="float-right text-sm">{theme.count}</b></div>)}</div></Card> : <><div className="mb-3"><h2 className="text-sm font-semibold text-slate-900">{activeSubject.subject}</h2><p className="mt-1 text-[11px] text-slate-500">{facts.length} 条已加载事实；证据原文和来源保持可追溯。</p></div><div className="space-y-3">{facts.map((fact) => <Card key={fact.id} className="p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold text-slate-900">{fact.predicate}</p><p className="mt-1 text-sm leading-relaxed text-slate-800">{fact.preferred_value}</p></div><StatusPill status={fact.consensus_status} /></div><details className="mt-3 border-t border-slate-100 pt-2"><summary className="cursor-pointer text-[11px] font-medium text-slate-600">证据与来源（{fact.evidence?.length || 0}）</summary><div className="mt-2 space-y-2">{(fact.evidence || []).map((evidence, index) => <div key={`${fact.id}:${index}`} className="rounded-lg bg-slate-50 p-2 text-[10px] leading-relaxed"><b>{evidence.source_title || evidence.source_id || "来源"}</b><p className="mt-1 whitespace-pre-wrap text-slate-600">{evidence.exact_quote || evidence.source_quote || evidence.quote || evidence.value || "未记录摘录"}</p>{evidence.source_id && <Button className="mt-2" size="sm" variant="outline" disabled={actionBusy} onClick={() => onAction(`/api/sources/${encodeURIComponent(evidence.source_id)}/retry`, { method:"POST" }, "已重新提取该来源")}>重新提取 Source</Button>}</div>)}</div></details></Card>)}</div></>}</div>
+    </section> : <section className="space-y-3">{!reviews.length && !loadingDetails ? <EmptyState icon="check" healthy title="没有待人工判断项" description="严格冲突、Claim 提取复核和实体合并候选均已处理。" /> : reviews.map((item) => <KnowledgeReviewCard key={`${item.kind}:${item.id}`} item={item} onAction={onAction} actionBusy={actionBusy} onUpdated={loadReviews} />)}</section>}
+    {loadingDetails && <p className="text-center text-xs text-slate-400">正在按需加载…</p>}
+  </div>;
+}
+
+function KnowledgeReviewCard({ item, onAction, actionBusy, onUpdated }) {
+  const submit = async (url, body, message) => { const result = await onAction(url, { method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body) }, message); if (result) await onUpdated(); };
+  if (item.kind === "strict_conflict") {
+    const fact = item.knowledge;
+    return <Card className="p-4"><div className="flex justify-between gap-3"><div><p className="text-sm font-semibold">{fact.canonical_subject || fact.subject} · {fact.predicate}</p><p className="mt-1 text-[11px] text-slate-500">严格冲突：候选值不能在同一范围内同时成立。</p></div><StatusPill status="conflicted" /></div><div className="mt-3 grid gap-2 sm:grid-cols-2">{(fact.evidence || []).map((evidence,index) => <div key={index} className="rounded-lg bg-slate-50 p-3 text-[11px]"><b>{evidence.source_title || evidence.source_id || `证据 ${index + 1}`}</b><p className="mt-1 text-slate-700">{evidence.value || evidence.exact_quote || evidence.source_quote || "未记录摘录"}</p>{evidence.source_id && <Button className="mt-2" size="sm" variant="outline" disabled={actionBusy} onClick={() => submit(`/api/sources/${encodeURIComponent(evidence.source_id)}/retry`,{},"已重新提取该来源")}>重新提取 Source</Button>}</div>)}</div><KnowledgeConflictResolution item={item} onAction={onAction} actionBusy={actionBusy} /></Card>;
+  }
+  if (item.kind === "claim_review") return <Card className="p-4"><div className="flex justify-between gap-3"><div><p className="text-sm font-semibold">{item.subject} · {item.predicate}</p><p className="mt-1 text-[11px] text-amber-700">{item.review_type}：{item.reason}</p></div><StatusPill status="warning" /></div><div className="mt-3 grid gap-2 sm:grid-cols-2"><div className="rounded-lg bg-slate-50 p-3 text-[11px]"><b>{item.source_title || item.source_id}</b><p className="mt-1">{item.value_text}</p><p className="mt-1 text-slate-500">{item.source_quote}</p></div>{item.claim_b_id && <div className="rounded-lg bg-slate-50 p-3 text-[11px]"><b>{item.other_source_title || item.other_source_id}</b><p className="mt-1">{item.other_value}</p><p className="mt-1 text-slate-500">{item.other_source_quote}</p></div>}</div><div className="mt-3 flex flex-wrap gap-2">{item.source_id && <Button size="sm" variant="outline" disabled={actionBusy} onClick={() => submit(`/api/sources/${encodeURIComponent(item.source_id)}/retry`,{},"已重新提取该来源")}>重新提取 Source</Button>}{!item.review_type?.includes("EXTRACTION_ERROR") && <Button size="sm" disabled={actionBusy} onClick={() => submit(`/api/knowledge/claim-reviews/${encodeURIComponent(item.id)}/decision`,{decision:"resolved"},"已确认 Claim 复核")}>确认冲突</Button>}<Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => submit(`/api/knowledge/claim-reviews/${encodeURIComponent(item.id)}/decision`,{decision:"dismissed"},"已关闭误报")}>可并存 / 误报</Button></div></Card>;
+  return <Card className="p-4"><div className="flex justify-between gap-3"><div><p className="text-sm font-semibold">实体候选：{item.alias} → {item.proposed_canonical_subject}</p><p className="mt-1 text-[11px] text-slate-500">{item.rationale || "需要确认两个名称是否指向同一实体。"}</p></div><span className="text-xs font-semibold">{Math.round(Number(item.confidence || 0) * 100)}%</span></div><div className="mt-3 flex gap-2"><Button size="sm" disabled={actionBusy} onClick={() => submit(`/api/knowledge/entity-aliases/candidates/${encodeURIComponent(item.id)}/decision`,{decision:"same_entity"},"已合并实体")}>同一实体</Button><Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => submit(`/api/knowledge/entity-aliases/candidates/${encodeURIComponent(item.id)}/decision`,{decision:"different_entity"},"已保留为不同实体")}>不同实体</Button></div></Card>;
+}
+
 function KnowledgeView({ data, onNavigate, onAction, actionBusy }) {
   const items = data?.items || [];
   const visibleItems = items.filter((item) => item.visibility_status !== "hidden");
@@ -573,11 +667,8 @@ function BlueprintCard({ item, index }) {
 
 function ContentView({ data, onNavigate, onOpenDraft, onAction, actionBusy }) {
   const items = data?.items || [];
-  const opportunities = data?.opportunities || [];
-  const approved = opportunities.filter((item) => Boolean(item.approved_at));
-  const rows = approved.map((opportunity) => ({ ...opportunity,
-    ...(items.find((item) => item.id === opportunity.candidate_id || item.candidate_id === opportunity.candidate_id) || {}),
-    opportunity_id: opportunity.id, candidate_id: opportunity.candidate_id }));
+  const rows = items;
+  const approved = items;
   const created = rows.filter((item) => Boolean(item.draft_id || item.draft_title || item.body)).length;
   const failed = rows.filter((item) => Boolean(contentFailureReason(item))).length;
   if (!approved.length && !items.length) return <EmptyState icon="content" title="还没有开始生产的内容" description="批准后，只有真正进入生产队列的文章才会显示在这里；等待证据的批准不会占位。" action={() => onNavigate("recommendations")} actionLabel="查看建议" />;
@@ -808,14 +899,16 @@ function LegacyExceptionsWorkspace({ items, onAction, actionBusy }) {
 }
 
 function KnowledgeConflictResolution({ item, onAction, actionBusy }) {
+  // “保存判断”会保存为最终事实，或保存为带 scope 的可并存结论。
   const evidence = Array.isArray(item.knowledge?.evidence) ? item.knowledge.evidence : [];
   const choices = [...new Set([item.knowledge?.preferredValue, ...evidence.map((entry) => entry?.value)].filter(Boolean))];
   const [selected, setSelected] = useState(choices[0] || "");
   const [customValue, setCustomValue] = useState("");
   const [note, setNote] = useState("");
-  const preferredValue = customValue.trim() || selected;
-  const resolve = () => onAction(`/api/knowledge/${encodeURIComponent(item.knowledge.id)}/resolve`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ preferredValue, note }) }, "已确认知识结论，后续选题和写作将采用该值");
-  return <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3"><div className="rounded-lg border border-amber-200 bg-white/80 p-3"><p className="text-xs font-semibold text-amber-950">现在需要你决定什么？</p><p className="mt-1.5 text-[11px] leading-relaxed text-amber-900">系统确认这些值不能自动同时采用。请选择后续文章应当使用的最终事实。选择某一项表示“采用这条作为标准答案”，不会删除原始来源。</p></div>{choices.length > 0 && <div className="mt-3 space-y-2">{choices.map((value) => <label key={value} className={cn("flex cursor-pointer gap-2 rounded-lg border p-3 text-[11px] transition", selected === value && !customValue ? "border-amber-400 bg-white" : "border-amber-100 bg-white/70")}><input className="mt-0.5" type="radio" name={`resolution-${item.knowledge.id}`} checked={selected === value && !customValue} onChange={() => { setSelected(value); setCustomValue(""); }} /><span><b className="block text-slate-900">采用这条作为最终事实</b><span className="mt-1 block text-slate-700">{value}</span></span></label>)}</div>}<label className="mt-3 block text-[10px] font-medium text-slate-600">以上都不准确：输入正确事实<input value={customValue} onChange={(event) => setCustomValue(event.target.value)} placeholder="输入后将采用这里的内容，不再采用上面的候选值" className="mt-1.5 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-amber-400" /></label><label className="mt-3 block text-[10px] font-medium text-slate-600">为什么这样判断（可选）<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="例如：已对照景区官网的最新公告" className="mt-1.5 min-h-16 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-amber-400" /></label><p className="mt-3 text-[10px] leading-relaxed text-amber-900">保存后的结果：该异常会离开待处理列表，后续选题和文章将采用你选择或输入的值；所有来源证据仍会保留。</p><Button className="mt-2 w-full" size="sm" disabled={actionBusy || !preferredValue} onClick={resolve}><CheckCircle2 />保存为最终事实</Button></section>;
+  const [resolutionType, setResolutionType] = useState("preferred_value");
+  const preferredValue = resolutionType === "coexist_scope" ? choices.join(" / ") : customValue.trim() || selected;
+  const resolve = () => onAction(`/api/knowledge/${encodeURIComponent(item.knowledge.id)}/resolve`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ preferredValue, note, resolutionType }) }, resolutionType === "coexist_scope" ? "已确认两个值可在不同范围内并存" : "已确认知识结论");
+  return <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3"><div className="rounded-lg border border-amber-200 bg-white/80 p-3"><p className="text-xs font-semibold text-amber-950">现在需要你决定什么？</p><p className="mt-1.5 text-[11px] leading-relaxed text-amber-900">请选择最终事实；若两个值描述不同时间、范围或条件，也可明确保留为可并存。</p></div>{choices.length > 0 && <div className="mt-3 space-y-2">{choices.map((value) => <label key={value} className={cn("flex cursor-pointer gap-2 rounded-lg border p-3 text-[11px] transition", selected === value && !customValue && resolutionType === "preferred_value" ? "border-amber-400 bg-white" : "border-amber-100 bg-white/70")}><input className="mt-0.5" type="radio" name={`resolution-${item.knowledge.id}`} checked={selected === value && !customValue && resolutionType === "preferred_value"} onChange={() => { setSelected(value); setCustomValue(""); setResolutionType("preferred_value"); }} /><span><b className="block text-slate-900">采用这条作为最终事实</b><span className="mt-1 block text-slate-700">{value}</span></span></label>)}</div>}<label className="mt-3 flex cursor-pointer gap-2 rounded-lg border border-amber-100 bg-white/70 p-3 text-[11px]"><input type="radio" checked={resolutionType === "coexist_scope"} onChange={() => setResolutionType("coexist_scope")} /><span><b className="block text-slate-900">两者可并存 / scope 不同</b><span className="mt-1 block text-slate-600">保留全部候选值，并在备注中说明适用时间、范围或条件。</span></span></label><label className="mt-3 block text-[10px] font-medium text-slate-600">以上都不准确：输入正确事实<input value={customValue} onChange={(event) => { setCustomValue(event.target.value); setResolutionType("preferred_value"); }} placeholder="输入后将采用这里的内容" className="mt-1.5 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-amber-400" /></label><label className="mt-3 block text-[10px] font-medium text-slate-600">判断依据 / scope 说明<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="例如：两个值分别适用于工作日与周末" className="mt-1.5 min-h-16 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-amber-400" /></label><Button className="mt-3 w-full" size="sm" disabled={actionBusy || !preferredValue || (resolutionType === "coexist_scope" && !note.trim())} onClick={resolve}><CheckCircle2 />保存判断</Button></section>;
 }
 
 function MaintenanceView({ data, onAction, actionBusy }) {

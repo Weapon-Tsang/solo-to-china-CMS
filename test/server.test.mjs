@@ -54,7 +54,7 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
   assert.equal(sources.items[0].destination_name, "Chengdu");
 });
 
-test("settings payload keeps the total exception count while bounding the preview", async (t) => {
+test("settings defaults to counts and lazily bounds system-health detail", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-settings-preview-"));
   const config = loadConfig({
     HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "api.sqlite"),
@@ -71,8 +71,11 @@ test("settings payload keeps the total exception count while bounding the previe
   });
   const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
   const settings = await (await fetch(`${baseUrl}/api/settings`)).json();
-  assert.equal(settings.operations.exceptionTotal, 105);
-  assert.equal(settings.operations.exceptions.length, 100);
+  assert.equal(settings.operations.counts.systemHealth, 105);
+  assert.equal(settings.operations.exceptions, undefined);
+  const health = await (await fetch(`${baseUrl}/api/settings/system-health?limit=100`)).json();
+  assert.equal(health.totalCount, 105);
+  assert.equal(health.items.length, 100);
 });
 
 test("authenticated source evidence preview streams the stored review image", async (t) => {
@@ -278,10 +281,10 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(commercial.performance[0].impressions, 1);
   const content = await (await fetch(`${baseUrl}/api/content`)).json();
   assert.ok(Array.isArray(content.items));
-  assert.ok(Array.isArray(content.opportunities));
+  assert.equal(content.opportunities, undefined);
   const fullSettings = await (await fetch(`${baseUrl}/api/settings`)).json();
-  assert.ok(Array.isArray(fullSettings.operations.exceptions));
-  assert.equal(fullSettings.operations.exceptionTotal, 0);
+  assert.equal(fullSettings.operations.counts.systemHealth, 0);
+  assert.equal(fullSettings.operations.exceptions, undefined);
   const missing = await fetch(`${baseUrl}/api/not-found`);
   assert.equal(missing.status, 404);
   assert.deepEqual(await missing.json(), { error: "Not found." });

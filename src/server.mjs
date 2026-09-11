@@ -110,7 +110,8 @@ export function createApplication(config = loadConfig()) {
       if (!requestPath.startsWith("/api/")) return;
       logger.info("http.request_completed", {
         requestId, method: request.method, path: requestPath, status: response.statusCode,
-        durationMs: Date.now() - requestStartedAt,
+        durationMs: Date.now() - requestStartedAt,responseBytes:response.responseBytes ?? null,
+        rowCount:response.responseRowCount ?? null,cacheStatus:response.responseCacheStatus ?? null,
       });
     });
     try {
@@ -230,27 +231,52 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "GET" && url.pathname === "/api/settings") {
-        const exceptionWorkspace = repository.listSystemHealthWorkspace({ limit: 100 });
         return sendJson(response, 200, {
           configured: extractor.enabled, vertexBatchConfigured: extractor.batchEnabled,
           vertexBatchActive: repository.activeVertexBatchCount(), visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
           contentStrategy: config.contentStrategy, storage: storageInfo(config), visual: repository.getVisualSettings(config.visuals.defaultModel),
           frontendContract: frontendContracts.diagnostics(), ...repository.getAiSettings(config.ai.defaultModel),
           operations: {
-            exceptions: exceptionWorkspace.items,
-            exceptionTotal: exceptionWorkspace.totalCount,
-            maintenance: { runs:repository.listMaintenanceRuns(),telemetry:repository.jobTelemetry(config.telemetry.windowHours),
-              favoritesSyncRuns:repository.listFavoritesSyncRuns(20),...repository.maintenanceOverview() },
-            wordpressInventory: repository.listWordPressInventory(),
-            blueprints: repository.getEditorialBlueprints(),
-            experiences: repository.listExperienceBlocks().slice(0,100),
-            failureLessons: repository.listFailureLessons(100),
-            goldenArticles: repository.db.prepare(`SELECT ga.* FROM golden_articles ga
-              WHERE ga.active=1 ORDER BY ga.updated_at DESC LIMIT 100`).all(),
-            mediaBackfills: repository.db.prepare("SELECT * FROM source_media_backfill_runs ORDER BY updated_at DESC LIMIT 50").all(),
-            systemBackfills: repository.listSystemBackfillRuns(50),
+            counts: {
+              systemHealth: repository.systemHealthIssueCount(),
+              maintenance: repository.db.prepare("SELECT COUNT(*) AS count FROM maintenance_runs").get().count,
+              wordpressInventory: repository.db.prepare("SELECT COUNT(*) AS count FROM wordpress_content_inventory").get().count,
+              blueprints: repository.db.prepare("SELECT COUNT(*) AS count FROM editorial_blueprints").get().count,
+              experiences: repository.db.prepare("SELECT COUNT(*) AS count FROM experience_blocks").get().count,
+              failureLessons: repository.db.prepare("SELECT COUNT(*) AS count FROM failure_lessons").get().count,
+              goldenArticles: repository.db.prepare("SELECT COUNT(*) AS count FROM golden_articles WHERE active=1").get().count,
+              backfills: repository.db.prepare("SELECT COUNT(*) AS count FROM source_media_backfill_runs").get().count
+                + repository.db.prepare("SELECT COUNT(*) AS count FROM system_backfill_runs").get().count,
+            },
           },
         });
+      }
+      if (request.method === "GET" && url.pathname === "/api/settings/system-health") {
+        return sendJson(response, 200, repository.listSystemHealthWorkspace(workspaceQuery(url, 100)));
+      }
+      if (request.method === "GET" && url.pathname === "/api/settings/maintenance") {
+        return sendJson(response, 200, { runs:repository.listMaintenanceRuns(),telemetry:repository.jobTelemetry(config.telemetry.windowHours),
+          favoritesSyncRuns:repository.listFavoritesSyncRuns(20),...repository.maintenanceOverview() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/settings/wordpress-inventory") {
+        return sendJson(response, 200, { items:repository.listWordPressInventory() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/settings/blueprints") {
+        return sendJson(response, 200, { items:repository.getEditorialBlueprints() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/settings/experiences") {
+        return sendJson(response, 200, { items:repository.listExperienceBlocks().slice(0,limit(url.searchParams.get("limit"))) });
+      }
+      if (request.method === "GET" && url.pathname === "/api/settings/failure-lessons") {
+        return sendJson(response, 200, { items:repository.listFailureLessons(limit(url.searchParams.get("limit"))) });
+      }
+      if (request.method === "GET" && url.pathname === "/api/settings/golden-articles") {
+        return sendJson(response, 200, { items:repository.db.prepare(`SELECT ga.* FROM golden_articles ga
+          WHERE ga.active=1 ORDER BY ga.updated_at DESC LIMIT ?`).all(limit(url.searchParams.get("limit"))) });
+      }
+      if (request.method === "GET" && url.pathname === "/api/settings/backfills") {
+        return sendJson(response, 200, { mediaBackfills:repository.db.prepare("SELECT * FROM source_media_backfill_runs ORDER BY updated_at DESC LIMIT 50").all(),
+          systemBackfills:repository.listSystemBackfillRuns(50) });
       }
       if (request.method === "GET" && url.pathname === "/api/frontend-contract") {
         return sendJson(response, 200, { ...frontendContracts.diagnostics(), snapshots: repository.listFrontendContractSnapshots() });
@@ -408,6 +434,13 @@ export function createApplication(config = loadConfig()) {
           + (["major_mismatch", "invalid"].includes(contractStatus) ? 1 : 0);
         return sendJson(response, 200, dashboard);
       }
+      if (request.method === "GET" && url.pathname === "/api/dashboard/summary") {
+        const dashboard = repository.dashboardSummary();
+        const contractStatus = frontendContracts.diagnostics().status;
+        dashboard.actionCounts.settings = (extractor.enabled ? 0 : 1)
+          + (["major_mismatch", "invalid"].includes(contractStatus) ? 1 : 0);
+        return sendJson(response, 200, dashboard);
+      }
       if (request.method === "GET" && url.pathname === "/api/sources") {
         return sendJson(response, 200, { items: repository.listSources(limit(url.searchParams.get("limit"))) });
       }
@@ -488,7 +521,22 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 202, { queued: true });
       }
       if (request.method === "GET" && url.pathname === "/api/knowledge") {
-        return sendJson(response, 200, { items: repository.getKnowledge() });
+        return sendJson(response, 200, repository.listKnowledgeFacts({
+          destination:url.searchParams.get("destination") || "",subjectKey:url.searchParams.get("subject") || "",
+          theme:url.searchParams.get("theme") || "",conflictOnly:url.searchParams.get("conflicts") === "1",
+          limit:limit(url.searchParams.get("limit")),cursor:url.searchParams.get("cursor") || "",
+        }));
+      }
+      if (request.method === "GET" && url.pathname === "/api/knowledge/summary") {
+        return sendJson(response, 200, repository.knowledgeSummary({ destination:url.searchParams.get("destination") || "" }));
+      }
+      if (request.method === "GET" && url.pathname === "/api/knowledge/subjects") {
+        return sendJson(response, 200, repository.listKnowledgeSubjects({ destination:url.searchParams.get("destination") || "",
+          search:url.searchParams.get("search") || "",limit:limit(url.searchParams.get("limit")),cursor:url.searchParams.get("cursor") || "" }));
+      }
+      if (request.method === "GET" && url.pathname === "/api/knowledge/reviews") {
+        return sendJson(response, 200, repository.listKnowledgeReviews({ destination:url.searchParams.get("destination") || "",
+          limit:limit(url.searchParams.get("limit")),cursor:url.searchParams.get("cursor") || "" }));
       }
       if (request.method === "GET" && url.pathname === "/api/knowledge/entity-aliases") {
         const destination = String(url.searchParams.get("destination") || "").trim();
@@ -538,7 +586,7 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "POST" && knowledgeResolutionMatch) {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
-        const resolved = repository.resolveKnowledgeConflict(decodeURIComponent(knowledgeResolutionMatch[1]), payload.preferredValue, payload.note || "");
+        const resolved = repository.resolveKnowledgeConflict(decodeURIComponent(knowledgeResolutionMatch[1]), payload.preferredValue, payload.note || "",payload.resolutionType || "preferred_value");
         if (!resolved) return sendJson(response, 404, { error: "Knowledge conflict not found or already resolved." });
         return sendJson(response, 200, resolved);
       }
@@ -548,14 +596,16 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/content") {
         return sendJson(response, 200, {
           items: repository.listContent({ productionOnly: true }),
-          opportunities: repository.listProductionContentOpportunities(limit(url.searchParams.get("limit"))),
         });
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {
-        const reconciliation=repository.reconcileRecommendationInbox();
-        const inbox = repository.listRecommendationInbox(limit(url.searchParams.get("limit")),{reconcile:false});
-        return sendJson(response, 200, { items: inbox, diagnostics: repository.listContentRecommendations(limit(url.searchParams.get("limit"))), opportunities: inbox,
+        const pageSize=limit(url.searchParams.get("limit"));
+        const offset=Math.max(0,Number.parseInt(url.searchParams.get("cursor") || "0",10) || 0);
+        const inbox = repository.listRecommendationInbox(pageSize + 1,{reconcile:false,cursor:offset});
+        const items=inbox.slice(0,pageSize);
+        return sendJson(response, 200, { items,
           comparisonGroups: groupProposals(inbox),
+          nextCursor:inbox.length>pageSize ? String(offset+pageSize) : null,
           summary: {
             recommendations: repository.db.prepare('SELECT count(*) n FROM content_recommendations').get().n,
             pending: repository.db.prepare("SELECT count(*) n FROM content_recommendations WHERE decision='pending'").get().n,
@@ -563,12 +613,12 @@ export function createApplication(config = loadConfig()) {
               WHERE recommendation_id IS NULL OR approved_at IS NOT NULL OR candidate_id IS NOT NULL
                 OR status IN ('approved_waiting_for_evidence','approved_ready','producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft','suppressed')`).get().n,
             approved: repository.db.prepare('SELECT count(*) n FROM content_opportunities WHERE approved_at IS NOT NULL').get().n,
-            internalOpportunities: reconciliation.internalOpportunities,
-            actionableInbox: reconciliation.actionableInbox,
-            processingGap: reconciliation.processingGap,
-            evidenceGap: reconciliation.evidenceGap,
-            merged: reconciliation.merged,
-            superseded: reconciliation.superseded,
+            internalOpportunities: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='INTERNAL' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
+            actionableInbox: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='ACTIONABLE' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
+            processingGap: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE processing_state='PROCESSING_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
+            evidenceGap: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE processing_state='EVIDENCE_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
+            merged: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='MERGED' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
+            superseded: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='SUPERSEDED' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
           } });
       }
       const opportunityDecisionMatch = url.pathname.match(/^\/api\/opportunities\/([^/]+)\/decision$/);
@@ -720,10 +770,14 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/commercial") {
         return sendJson(response, 200, {
-          providers: repository.listAffiliateProviderAccounts(), items: repository.listAffiliateAssets(),
-          mappings: repository.listAffiliateAssetMappings(), opportunities: repository.listAffiliateOpportunities(),
-          queue: repository.listAffiliateQueueTasks(), performance: repository.commercialPerformance(), commissionRules: repository.listCommissionRules(),
+          providers: repository.listAffiliateProviderAccounts().filter((item) => item.status==='CONFIGURED'), items: repository.listAffiliateAssets({activeOnly:true}),
+          mappings: repository.listAffiliateAssetMappings({activeOnly:true}), opportunities: repository.listAffiliateOpportunities().filter((item) => Number(item.score)>=0.75),
+          queue: repository.listAffiliateQueueTasks({status:'ACTIVE'}), performance: repository.commercialPerformance(), commissionRules: repository.listCommissionRules(),
         });
+      }
+      if (request.method === "GET" && url.pathname === "/api/commercial/history") {
+        return sendJson(response, 200, { assets:repository.listAffiliateAssets().filter((item) => item.lifecycle_state!=='operational'),
+          queue:repository.listAffiliateQueueTasks().filter((item) => !['PENDING','READY_FOR_MANUAL','INVALID'].includes(item.status)) });
       }
       if (request.method === "GET" && url.pathname === "/api/commercial/affiliate-queue") {
         return sendJson(response, 200, { items: repository.listAffiliateQueueTasks({
@@ -1117,8 +1171,12 @@ async function readBytes(request, maxBytes) {
 }
 
 function sendJson(response, status, value) {
+  const body = JSON.stringify(value);
+  response.responseBytes = Buffer.byteLength(body);
+  response.responseRowCount = Array.isArray(value?.items) ? value.items.length
+    : Array.isArray(value) ? value.length : null;
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-  response.end(JSON.stringify(value));
+  response.end(body);
 }
 
 function sourceForApi(source) {

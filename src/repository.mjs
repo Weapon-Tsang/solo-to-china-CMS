@@ -2384,7 +2384,7 @@ export class Repository {
     };
   }
 
-  listRecommendationInbox(limit = 100,{reconcile=true}={}) {
+  listRecommendationInbox(limit = 100,{reconcile=true,cursor=0}={}) {
     if (reconcile) this.reconcileRecommendationInbox();
     return this.db.prepare(`SELECT o.*,r.classification,r.recommended_action,r.reasoning_summary,
         s.title AS source_title,ss.destination_name
@@ -2394,7 +2394,7 @@ export class Repository {
       LEFT JOIN structured_sources ss ON ss.source_id=o.source_id
       WHERE o.inbox_state='ACTIONABLE'
       ORDER BY CASE o.lifecycle_state WHEN 'recommended_again' THEN 0 WHEN 'recommended' THEN 1 ELSE 2 END,
-        o.readiness_score DESC,o.updated_at DESC LIMIT ?`).all(Math.max(1,Math.min(500,Number(limit)||100)))
+        o.readiness_score DESC,o.updated_at DESC LIMIT ? OFFSET ?`).all(Math.max(1,Math.min(500,Number(limit)||100)),Math.max(0,Number(cursor)||0))
       .map((row) => {
         const readiness=json(row.readiness_json,{}); const previousFailure=json(row.previous_failure_json,{});
         return { ...row,readiness,coverage:json(row.coverage_json,{}),publicationImpact:json(row.publication_impact_json,{}),
@@ -4408,13 +4408,22 @@ export class Repository {
   }
 
   saveGeneratedVisual(visualId, result) {
+    const current = this.db.prepare(`SELECT draft_id,acquisition_strategy,source_asset_id,media_metadata_json
+      FROM article_visuals WHERE id=?`).get(visualId);
+    const metadata = {
+      ...json(current?.media_metadata_json, {}),
+      ...(result.metadata || {}),
+      ...(current?.acquisition_strategy === "localize_source_image" ? {
+        localized_file: Boolean(result.mediaPath),
+        localized_from_source_asset_id: current.source_asset_id || null,
+      } : {}),
+    };
     this.db.prepare(`
       UPDATE article_visuals SET status='generated', media_path=?, media_url=?, provider=?, model=?,
-        last_error=NULL, retry_at=NULL, updated_at=?
+        media_metadata_json=?,last_error=NULL, retry_at=NULL, updated_at=?
       WHERE id=?
-    `).run(result.mediaPath, result.mediaUrl, result.provider, result.model, now(), visualId);
-    const visual = this.db.prepare("SELECT draft_id FROM article_visuals WHERE id=?").get(visualId);
-    if (visual) this.refreshDraftSchema(visual.draft_id);
+    `).run(result.mediaPath, result.mediaUrl, result.provider, result.model, JSON.stringify(metadata), now(), visualId);
+    if (current) this.refreshDraftSchema(current.draft_id);
   }
 
   failVisual(visualId, error) {
@@ -4429,11 +4438,13 @@ export class Repository {
 
   saveWordPressVisual(visualId, media) {
     const before = this.db.prepare(`
-      SELECT av.draft_id, av.media_url AS previous_media_url, ad.seo_json
+      SELECT av.draft_id, av.media_url AS previous_media_url,av.source_asset_id,av.media_metadata_json,ad.seo_json
       FROM article_visuals av JOIN article_drafts ad ON ad.id=av.draft_id WHERE av.id=?
     `).get(visualId);
+    const metadata = { ...json(before?.media_metadata_json, {}), ...(media.metadata || {}),
+      wordpress_uploaded: Boolean(media.id && media.url), wordpress_media_id: media.id || null };
     this.db.prepare("UPDATE article_visuals SET wordpress_media_id=?, wordpress_media_url=?, media_url=?, media_metadata_json=?, updated_at=? WHERE id=?")
-      .run(media.id, media.url, media.url, JSON.stringify(media.metadata || {}), now(), visualId);
+      .run(media.id, media.url, media.url, JSON.stringify(metadata), now(), visualId);
     if (before) {
       const seo = json(before.seo_json, {});
       if (!seo.og_image || seo.og_image === before.previous_media_url) {
@@ -4625,13 +4636,13 @@ export class Repository {
 
   getAffiliateProviderAccount(providerId) {
     return this.db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM affiliate_assets a
-      WHERE a.provider_account_id=p.id AND a.active=1) AS active_asset_count
+      WHERE a.provider_account_id=p.id AND a.active=1 AND a.lifecycle_state='operational') AS active_asset_count
       FROM affiliate_provider_accounts p WHERE p.id=?`).get(providerId) || null;
   }
 
   listAffiliateProviderAccounts() {
     return this.db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM affiliate_assets a
-      WHERE a.provider_account_id=p.id AND a.active=1) AS active_asset_count
+      WHERE a.provider_account_id=p.id AND a.active=1 AND a.lifecycle_state='operational') AS active_asset_count
       FROM affiliate_provider_accounts p ORDER BY p.display_name`).all();
   }
 
@@ -4674,16 +4685,17 @@ export class Repository {
   listAffiliateAssets({ activeOnly = false, providerAccountId = null } = {}) {
     const clauses = [];
     const values = [];
-    if (activeOnly) { clauses.push("active=1 AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)"); values.push(now(), now()); }
+    if (activeOnly) { clauses.push("active=1 AND lifecycle_state='operational' AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)"); values.push(now(), now()); }
     if (providerAccountId) { clauses.push("provider_account_id=?"); values.push(providerAccountId); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     return this.db.prepare(`SELECT * FROM affiliate_assets ${where} ORDER BY provider, active DESC, priority DESC, product_category, title`)
       .all(...values).map((row) => ({ ...row, embed_config: json(row.embed_config_json, {}) }));
   }
 
-  listAffiliateAssetMappings() {
+  listAffiliateAssetMappings({ activeOnly = false } = {}) {
     return this.db.prepare(`SELECT m.*, a.title, a.provider, a.product_category, a.asset_type
       FROM affiliate_asset_mappings m JOIN affiliate_assets a ON a.id=m.affiliate_asset_id
+      ${activeOnly ? "WHERE m.active=1 AND a.active=1 AND a.lifecycle_state='operational'" : ""}
       ORDER BY m.destination_slug, m.scope_type, m.scope_key`).all();
   }
 
@@ -5757,8 +5769,9 @@ export class Repository {
     const placeholders = sourceIds.map(() => "?").join(",");
     return this.db.prepare(`
       SELECT sa.id, sa.source_id, sa.remote_url, sa.local_path, sa.mime_type, sa.alt_text, sa.position,
-        sa.storage_status,sa.original_bytes_status,sa.language_status,sa.nearby_text,sa.caption_text,
-        s.title AS source_title,
+        sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
+        sa.authorization_status AS asset_authorization_status,sa.publishable AS asset_publishable,
+        s.title AS source_title,s.authorization_status AS source_authorization_status,s.publishable AS source_publishable,
         COALESCE((SELECT group_concat(canonical_subject || ' ' || subject || ' ' || predicate || ' ' || value_text, ' ')
           FROM claims c WHERE c.source_id=sa.source_id AND EXISTS (
             SELECT 1 FROM json_each(c.evidence_span_ids_json) ids
@@ -5769,7 +5782,7 @@ export class Repository {
         AND s.authorization_status='owner_confirmed' AND s.publishable=1
         AND sa.authorization_status='owner_confirmed' AND sa.publishable=1
         AND sa.storage_status='saved' AND sa.local_path<>''
-        AND sa.original_bytes_status IN ('saved_original','saved_unknown')
+        AND sa.original_bytes_status='saved_original' AND sa.durability_status='ORIGINAL_STORED'
         AND sa.source_id IN (${placeholders})
       ORDER BY s.captured_at DESC, sa.position ASC
       LIMIT 12
@@ -6069,7 +6082,7 @@ export class Repository {
     return false;
   }
 
-  resolveKnowledgeConflict(factId, preferredValue, note = "") {
+  resolveKnowledgeConflict(factId, preferredValue, note = "", resolutionType = "preferred_value") {
     const fact = this.db.prepare(`
       SELECT k.id, k.normalized_key, k.consensus_status, d.slug AS destination_slug
       FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id WHERE k.id=?
@@ -6077,16 +6090,17 @@ export class Repository {
     if (!fact || fact.consensus_status !== "conflicted") return null;
     const value = String(preferredValue || "").trim().slice(0, 2_000);
     if (!value) throw new Error("A confirmed knowledge value is required to resolve a conflict.");
+    if (!["preferred_value", "coexist_scope"].includes(resolutionType)) throw new Error("Unknown knowledge resolution type.");
     const timestamp = now();
     this.db.prepare(`
-      INSERT INTO knowledge_resolutions(id, destination_slug, normalized_key, status, preferred_value, note, resolved_at, created_at, updated_at)
-      VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?, ?)
+      INSERT INTO knowledge_resolutions(id, destination_slug, normalized_key, status, preferred_value, note, resolved_at, created_at, updated_at,resolution_type)
+      VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?, ?,?)
       ON CONFLICT(destination_slug, normalized_key) DO UPDATE SET status='resolved', preferred_value=excluded.preferred_value,
-        note=excluded.note, resolved_at=excluded.resolved_at, updated_at=excluded.updated_at
+        note=excluded.note, resolved_at=excluded.resolved_at, updated_at=excluded.updated_at,resolution_type=excluded.resolution_type
     `).run(`resolution_${sha256(`${fact.destination_slug}:${fact.normalized_key}`).slice(0, 24)}`,
-      fact.destination_slug, fact.normalized_key, value, String(note || "").trim().slice(0, 1_000), timestamp, timestamp, timestamp);
+      fact.destination_slug, fact.normalized_key, value, String(note || "").trim().slice(0, 1_000), timestamp, timestamp, timestamp,resolutionType);
     this.rebuildTopicCandidates(fact.destination_slug);
-    return { factId, destinationSlug: fact.destination_slug, normalizedKey: fact.normalized_key, preferredValue: value };
+    return { factId, destinationSlug: fact.destination_slug, normalizedKey: fact.normalized_key, preferredValue: value,resolutionType };
   }
 
   decideClaimReviewCase(caseId, decision, note = "") {
@@ -6104,31 +6118,135 @@ export class Repository {
     return { id: caseId, status: decision, destinationSlug: row.destination_slug };
   }
 
+  knowledgeSummary({ destination = "" } = {}) {
+    const destinationClause = destination ? " AND d.slug=?" : "";
+    const values = destination ? [destination] : [];
+    const totals = this.db.prepare(`SELECT COUNT(*) AS facts,
+      COUNT(DISTINCT CASE WHEN k.entity_key<>'' THEN 'entity:'||k.entity_key
+        ELSE 'subject:'||lower(trim(COALESCE(NULLIF(k.canonical_subject,''),k.subject))) END) AS subjects,
+      SUM(CASE WHEN k.consensus_status='corroborated' THEN 1 ELSE 0 END) AS corroborated,
+      SUM(CASE WHEN k.consensus_status='single_source' THEN 1 ELSE 0 END) AS single_source,
+      SUM(CASE WHEN k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved' THEN 1 ELSE 0 END) AS strict_conflicts,
+      SUM(CASE WHEN kr.status='resolved' THEN 1 ELSE 0 END) AS manually_resolved
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE k.visibility_status='visible'${destinationClause}`).get(...values);
+    const destinations = this.db.prepare(`SELECT d.slug,d.name,COUNT(*) AS facts,
+      COUNT(DISTINCT CASE WHEN k.entity_key<>'' THEN 'entity:'||k.entity_key
+        ELSE 'subject:'||lower(trim(COALESCE(NULLIF(k.canonical_subject,''),k.subject))) END) AS subjects
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      WHERE k.visibility_status='visible' GROUP BY d.id,d.slug,d.name ORDER BY d.name`).all();
+    const themes = this.db.prepare(`SELECT ${knowledgeThemeSql("k")} AS theme,COUNT(*) AS count
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      WHERE k.visibility_status='visible'${destinationClause} GROUP BY theme ORDER BY count DESC`).all(...values);
+    const evidence = this.db.prepare(`SELECT COUNT(DISTINCT json_extract(e.value,'$.source_id')) AS sources
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id,json_each(k.evidence_json) e
+      WHERE k.visibility_status='visible'${destinationClause}`).get(...values);
+    const claimReviews = this.db.prepare(`SELECT COUNT(*) AS count FROM claim_review_cases
+      WHERE status='pending'${destination ? " AND destination_slug=?" : ""}`).get(...values).count;
+    const entityReviews = this.listEntityMergeCandidates("pending")
+      .filter((item) => !destination || item.destination_slug === destination).length;
+    return {
+      destination: destination || null,
+      totals: {
+        facts: Number(totals.facts || 0), subjects: Number(totals.subjects || 0),
+        independentSources: Number(evidence.sources || 0), strictConflicts: Number(totals.strict_conflicts || 0),
+        pendingClaimReviews: Number(claimReviews || 0), pendingEntityReviews: Number(entityReviews || 0),
+        pendingManualReview: Number(totals.strict_conflicts || 0) + Number(claimReviews || 0) + Number(entityReviews || 0),
+      },
+      consensus: { corroborated: Number(totals.corroborated || 0), singleSource: Number(totals.single_source || 0),
+        manuallyResolved: Number(totals.manually_resolved || 0) },
+      destinations, themes,
+    };
+  }
+
+  listKnowledgeSubjects({ destination = "", search = "", limit = 50, cursor = "" } = {}) {
+    const clauses = ["k.visibility_status='visible'"];
+    const values = [];
+    if (destination) { clauses.push("d.slug=?"); values.push(destination); }
+    if (search) { clauses.push("lower(COALESCE(NULLIF(k.canonical_subject,''),k.subject)) LIKE ?"); values.push(`%${search.toLowerCase()}%`); }
+    const pageSize = Math.max(1, Math.min(100, Number(limit) || 50));
+    const offset = Math.max(0, Number.parseInt(cursor, 10) || 0);
+    const rows = this.db.prepare(`SELECT d.slug AS destination_slug,d.name AS destination_name,
+      CASE WHEN k.entity_key<>'' THEN 'entity:'||k.entity_key
+        ELSE 'subject:'||lower(trim(COALESCE(NULLIF(k.canonical_subject,''),k.subject))) END AS subject_key,
+      COALESCE(NULLIF(k.canonical_subject,''),k.subject) AS subject,k.entity_type,k.granularity,
+      COUNT(*) AS fact_count,MAX(k.updated_at) AS updated_at,
+      SUM(CASE WHEN k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved' THEN 1 ELSE 0 END) AS conflict_count,
+      SUM(CASE WHEN ${knowledgeThemeSql("k")}='planning' THEN 1 ELSE 0 END) AS planning_count,
+      SUM(CASE WHEN ${knowledgeThemeSql("k")}='transport' THEN 1 ELSE 0 END) AS transport_count,
+      SUM(CASE WHEN ${knowledgeThemeSql("k")}='cost' THEN 1 ELSE 0 END) AS cost_count,
+      SUM(CASE WHEN ${knowledgeThemeSql("k")}='experience' THEN 1 ELSE 0 END) AS experience_count
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE ${clauses.join(" AND ")}
+      GROUP BY d.id,subject_key ORDER BY conflict_count DESC,updated_at DESC,subject LIMIT ? OFFSET ?`)
+      .all(...values, pageSize + 1, offset);
+    const page = rows.slice(0, pageSize).map((row) => ({ ...row,
+      themes: ["planning", "transport", "cost", "experience"].filter((theme) => Number(row[`${theme}_count`] || 0) > 0) }));
+    return { items: page, nextCursor: rows.length > pageSize ? String(offset + pageSize) : null };
+  }
+
+  listKnowledgeFacts({ destination = "", subjectKey = "", theme = "", conflictOnly = false, limit = 50, cursor = "" } = {}) {
+    const clauses = ["k.visibility_status='visible'"];
+    const values = [];
+    if (destination) { clauses.push("d.slug=?"); values.push(destination); }
+    if (subjectKey.startsWith("entity:")) { clauses.push("k.entity_key=?"); values.push(subjectKey.slice(7)); }
+    else if (subjectKey.startsWith("subject:")) {
+      clauses.push("lower(trim(COALESCE(NULLIF(k.canonical_subject,''),k.subject)))=?"); values.push(subjectKey.slice(8));
+    }
+    if (theme) { clauses.push(`${knowledgeThemeSql("k")}=?`); values.push(theme); }
+    if (conflictOnly) clauses.push("k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved'");
+    const pageSize = Math.max(1, Math.min(100, Number(limit) || 50));
+    const offset = Math.max(0, Number.parseInt(cursor, 10) || 0);
+    const rows = this.db.prepare(`SELECT k.*,d.slug AS destination_slug,d.name AS destination_name,
+      kr.status AS resolution_status,kr.preferred_value AS resolved_value,kr.note AS resolution_note,
+      kr.resolved_at AS resolution_resolved_at,kr.resolution_type
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE ${clauses.join(" AND ")} ORDER BY k.updated_at DESC,k.id LIMIT ? OFFSET ?`)
+      .all(...values, pageSize + 1, offset);
+    return { items: rows.slice(0, pageSize).map(hydrateKnowledgeFact), nextCursor: rows.length > pageSize ? String(offset + pageSize) : null };
+  }
+
+  listKnowledgeReviews({ destination = "", limit = 50, cursor = "" } = {}) {
+    const values = destination ? [destination] : [];
+    const destinationClause = destination ? " AND d.slug=?" : "";
+    const strict = this.db.prepare(`SELECT k.*,d.slug AS destination_slug,d.name AS destination_name,
+      kr.status AS resolution_status,kr.preferred_value AS resolved_value,kr.note AS resolution_note,
+      kr.resolved_at AS resolution_resolved_at,kr.resolution_type
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE k.visibility_status='visible' AND k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved'${destinationClause}
+      ORDER BY k.updated_at DESC`).all(...values).map((row) => ({ kind: "strict_conflict", id: row.id,
+        updated_at: row.updated_at, knowledge: hydrateKnowledgeFact(row) }));
+    const claimValues = destination ? [destination] : [];
+    const claimCases = this.db.prepare(`SELECT crc.*,ca.subject,ca.predicate,ca.value_text,ca.source_quote,ca.source_id,
+      cb.value_text AS other_value,cb.source_quote AS other_source_quote,cb.source_id AS other_source_id,
+      s.title AS source_title,s2.title AS other_source_title
+      FROM claim_review_cases crc JOIN claims ca ON ca.id=crc.claim_a_id
+      LEFT JOIN claims cb ON cb.id=crc.claim_b_id LEFT JOIN sources s ON s.id=ca.source_id LEFT JOIN sources s2 ON s2.id=cb.source_id
+      WHERE crc.status='pending'${destination ? " AND crc.destination_slug=?" : ""} ORDER BY crc.updated_at DESC`).all(...claimValues)
+      .map((row) => ({ ...row, kind: "claim_review" }));
+    const entityCases = this.db.prepare(`SELECT * FROM entity_merge_candidates WHERE status='pending'${destination ? " AND destination_slug=?" : ""}
+      ORDER BY confidence DESC,updated_at DESC`).all(...values).map((row) => ({ ...row, kind: "entity_review",assessment:assessEntityIdentity(row) }))
+      .filter((row) => row.assessment.decision !== "DO_NOT_MERGE");
+    const all = [...strict, ...claimCases, ...entityCases].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+    const pageSize = Math.max(1, Math.min(100, Number(limit) || 50));
+    const offset = Math.max(0, Number.parseInt(cursor, 10) || 0);
+    return { items: all.slice(offset, offset + pageSize), nextCursor: all.length > offset + pageSize ? String(offset + pageSize) : null,
+      total: all.length };
+  }
+
   getKnowledge() {
     return this.db.prepare(`
       SELECT k.*, d.slug AS destination_slug, d.name AS destination_name,
         kr.status AS resolution_status, kr.preferred_value AS resolved_value, kr.note AS resolution_note,
-        kr.resolved_at AS resolution_resolved_at
+        kr.resolved_at AS resolution_resolved_at,kr.resolution_type
       FROM knowledge_facts k JOIN destinations d ON d.id = k.destination_id
       LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
       ORDER BY d.name, k.normalized_key
-    `).all().map((row) => ({
-      ...row,
-      raw_consensus_status: row.consensus_status,
-      consensus_status: resolvedConsensusStatus(row),
-      preferred_value: resolvedPreferredValue(row),
-      evidence: json(row.evidence_json, []),
-      entity_aliases: json(row.entity_aliases_json, []),
-      canonical_subject: row.canonical_subject || row.subject,
-      entity_resolution_status: row.entity_resolution_status || "unresolved",
-      entity_location: json(row.entity_location_json, {}),
-      claim_relations: json(row.claim_relations_json, []),
-      consensus_method: row.consensus_method || "legacy_count",
-      consensus_confidence: Number(row.consensus_confidence || 0),
-      consensus_detail: json(row.consensus_detail_json, {}),
-      manual_resolution: hydrateKnowledgeResolution(row),
-      verification_priority: resolvedVerificationPriority(row),
-    }));
+    `).all().map(hydrateKnowledgeFact);
   }
 
   getEditorialBlueprints() {
@@ -6261,6 +6379,67 @@ export class Repository {
         SUM(CASE WHEN cost_status='unknown' THEN 1 ELSE 0 END) AS unknown_cost_attempts
         FROM model_call_metrics GROUP BY stage, provider, model ORDER BY calls DESC`).all(),
     };
+  }
+
+  dashboardSummary() {
+    const sources = this.db.prepare("SELECT status,COUNT(*) AS count FROM sources GROUP BY status").all();
+    const jobs = this.db.prepare("SELECT status,COUNT(*) AS count FROM jobs GROUP BY status").all();
+    const jobCounts = Object.fromEntries(jobs.map((row) => [row.status, Number(row.count || 0)]));
+    const strictConflicts = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM knowledge_facts k
+      JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE k.visibility_status='visible' AND k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved'`).get().count || 0);
+    const claimReviews = Number(this.db.prepare("SELECT COUNT(*) AS count FROM claim_review_cases WHERE status='pending'").get().count || 0);
+    const entityReviews = this.listEntityMergeCandidates("pending").length;
+    const sourceExceptions = Number(this.db.prepare("SELECT COUNT(*) AS count FROM sources WHERE status='exception'").get().count || 0);
+    const failedJobs = this.db.prepare(`SELECT j.type,j.last_failure_code,j.last_error FROM jobs j
+      WHERE j.status='failed' AND NOT EXISTS (SELECT 1 FROM jobs recovered
+        WHERE recovered.type=j.type AND recovered.entity_id=j.entity_id
+          AND recovered.status='succeeded' AND recovered.updated_at>=j.updated_at)`)
+      .all().filter((row) => isSystemLevelFailure(row.last_failure_code,row.last_error)).length;
+    const pendingRecommendations = Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE inbox_state='ACTIONABLE' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0);
+    const contentPipelineItems = Number(this.db.prepare(`SELECT COUNT(DISTINCT candidate_id) AS count FROM content_opportunities
+      WHERE candidate_id IS NOT NULL AND lifecycle_state IN ('producing','finished')
+        AND status IN ('producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft')`).get().count || 0);
+    const commercialActions = Number(this.db.prepare(`SELECT
+      (SELECT COUNT(*) FROM affiliate_asset_queue_tasks WHERE status IN ('PENDING','READY_FOR_MANUAL','INVALID'))+
+      (SELECT COUNT(*) FROM affiliate_opportunities WHERE status='open' AND score>=0.75) AS count`).get().count || 0);
+    const queueActive = Number(jobCounts.queued || 0) + Number(jobCounts.running || 0);
+    return {
+      generatedAt: now(), sources: Object.fromEntries(sources.map((row) => [row.status, Number(row.count || 0)])), jobs,
+      queue: { active: queueActive, queued: Number(jobCounts.queued || 0), running: Number(jobCounts.running || 0) },
+      health: { ok: sourceExceptions + failedJobs === 0, issues: sourceExceptions + failedJobs },
+      actionCounts: {
+        sources: sourceExceptions, recommendations: pendingRecommendations,
+        knowledge: strictConflicts + claimReviews + entityReviews, blueprints: 0, content: 0, wordpress: 0,
+        commercial: commercialActions, exceptions: sourceExceptions + failedJobs, maintenance: queueActive, settings: 0,
+      },
+      totals: {
+        sources: Number(this.db.prepare("SELECT COUNT(*) AS count FROM sources").get().count || 0),
+        claims: Number(this.db.prepare("SELECT COUNT(*) AS count FROM claims").get().count || 0),
+        knowledgeFacts: Number(this.db.prepare("SELECT COUNT(*) AS count FROM knowledge_facts WHERE visibility_status='visible'").get().count || 0),
+        conflicts: strictConflicts, exceptions: sourceExceptions + failedJobs, exceptionRecords: sourceExceptions + failedJobs,
+        topicCandidates: Number(this.db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count || 0),
+        pendingRecommendations, internalOpportunities: Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE inbox_state='INTERNAL' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0),
+        processingGapOpportunities: Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE processing_state='PROCESSING_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0),
+        evidenceGapOpportunities: Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE processing_state='EVIDENCE_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0),
+        contentPipelineItems, contentNeedsAttention: 0,
+        draftsReady: Number(this.db.prepare("SELECT COUNT(*) AS count FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')").get().count || 0),
+        activeOffers: Number(this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_assets WHERE active=1 AND lifecycle_state='operational'").get().count || 0),
+        affiliateQueueTasks: Number(this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_asset_queue_tasks WHERE status IN ('PENDING','READY_FOR_MANUAL','INVALID')").get().count || 0),
+        wordpressInventory: Number(this.db.prepare("SELECT COUNT(*) AS count FROM wordpress_content_inventory").get().count || 0),
+      },
+    };
+  }
+
+  systemHealthIssueCount() {
+    const sourceExceptions = Number(this.db.prepare("SELECT COUNT(*) AS count FROM sources WHERE status='exception'").get().count || 0);
+    const failedJobs = this.db.prepare(`SELECT j.type,j.last_failure_code,j.last_error FROM jobs j
+      WHERE j.status='failed' AND NOT EXISTS (SELECT 1 FROM jobs recovered
+        WHERE recovered.type=j.type AND recovered.entity_id=j.entity_id
+          AND recovered.status='succeeded' AND recovered.updated_at>=j.updated_at)`)
+      .all().filter((row) => isSystemLevelFailure(row.last_failure_code,row.last_error)).length;
+    return sourceExceptions + failedJobs;
   }
 
   recordModelCall(metric) {
@@ -6783,21 +6962,17 @@ function legacyBlockRecord(block, signature) {
     mappingStatus: "legacy_unknown", blockSignature: signature };
 }
 
-function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], policy = {}) {
-  const minimum = policy.visuals?.minimum ?? 1;
+export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], policy = {}) {
   const maximum = policy.visuals?.maximum ?? 5;
-  const requestedTarget = policy.visuals?.target ?? visualCountForWords(wordCount(draft.body_markdown));
-  const target = Math.max(minimum, Math.min(maximum, Array.isArray(values) && values.length ? values.length : requestedTarget));
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
   const allowedRatios = ["16:9", "4:3", "1:1", "3:2", "9:16"];
   const supplied = Array.isArray(values) ? values : [];
-  const visuals = supplied.slice(0, target).map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
-  while (visuals.length < target) {
-    const index = visuals.length;
-    visuals.push(normalizeVisual({}, index, draft, brief, allowedPlacements, allowedRatios));
-  }
-  if (!authorizedSourceAssets.length) return visuals;
-
+  // Writer output is authoritative. The target is guidance, never a reason to
+  // synthesize filler slots. Unsupported renderer types are absent from the
+  // plan until a real renderer and validated data source are configured.
+  const visuals = supplied.slice(0, maximum)
+    .filter((item) => !["infographic", "map_or_route"].includes(item?.image_type))
+    .map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
   const unusedAssets = new Map(authorizedSourceAssets.map((asset) => [asset.id, asset]));
   return visuals.map((visual) => {
     if (visual.image_type !== "real_world_photo") return visual;
@@ -6806,7 +6981,7 @@ function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], pol
     const match = ranked[0];
     // Asset ownership is insufficient: a factual photo is reusable only when its
     // own alt/evidence metadata matches the planned subject.
-    if (!match || match.score < 0.34) return visual;
+    if (!match || match.score < 0.34) return null;
     const asset = match.asset;
     unusedAssets.delete(asset.id);
     const needsLocalization = ["chinese", "mixed"].includes(asset.language_status);
@@ -6825,9 +7000,17 @@ function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], pol
       provider: "authorized_xiaohongshu_source",
       model: "user-authorized-source-image",
       media_metadata: { source_mime_type: asset.mime_type, storage_status: asset.storage_status,
-        original_bytes_status: asset.original_bytes_status, language_status: asset.language_status },
+        original_bytes_status: asset.original_bytes_status, durability_status: asset.durability_status,
+        language_status: asset.language_status, source_provenance: {
+          source_asset_id: asset.id,
+          original_stored: asset.durability_status === "ORIGINAL_STORED" && asset.original_bytes_status === "saved_original",
+          source_owner_confirmed: asset.source_authorization_status === "owner_confirmed",
+          source_publishable: Boolean(asset.source_publishable),
+          asset_owner_confirmed: asset.asset_authorization_status === "owner_confirmed",
+          asset_publishable: Boolean(asset.asset_publishable),
+        } },
     };
-  });
+  }).filter(Boolean);
 }
 
 function visualAssetMatchScore(visual, asset) {
@@ -7416,6 +7599,41 @@ function resolvedVerificationPriority(row) {
     ? "manual_confirmed" : row.verification_priority;
 }
 
+function hydrateKnowledgeFact(row) {
+  return {
+    ...row,
+    raw_consensus_status: row.consensus_status,
+    consensus_status: resolvedConsensusStatus(row),
+    preferred_value: resolvedPreferredValue(row),
+    evidence: json(row.evidence_json, []),
+    entity_aliases: json(row.entity_aliases_json, []),
+    canonical_subject: row.canonical_subject || row.subject,
+    entity_resolution_status: row.entity_resolution_status || "unresolved",
+    entity_location: json(row.entity_location_json, {}),
+    claim_relations: json(row.claim_relations_json, []),
+    consensus_method: row.consensus_method || "legacy_count",
+    consensus_confidence: Number(row.consensus_confidence || 0),
+    consensus_detail: json(row.consensus_detail_json, {}),
+    manual_resolution: hydrateKnowledgeResolution(row),
+    verification_priority: resolvedVerificationPriority(row),
+  };
+}
+
+function knowledgeThemeSql(alias = "k") {
+  return `CASE
+    WHEN lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%metro%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%transport%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%station%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%route%' THEN 'transport'
+    WHEN lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%price%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%cost%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%ticket%' THEN 'cost'
+    WHEN lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%experience%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%view%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%photo%' THEN 'experience'
+    ELSE 'planning' END`;
+}
+
 function hydrateKnowledgeResolution(row) {
   if (row.resolution_status !== "resolved") return null;
   return {
@@ -7423,6 +7641,7 @@ function hydrateKnowledgeResolution(row) {
     preferred_value: row.resolved_value,
     note: row.resolution_note || "",
     resolved_at: row.resolution_resolved_at || null,
+    resolution_type: row.resolution_type || "preferred_value",
   };
 }
 
