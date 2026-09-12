@@ -151,6 +151,7 @@ for ((attempt=0; attempt<60; attempt++)); do
 done
 [[ "$READY" == 1 ]]
 log 'New container readiness passed on isolated network; connecting public service.'
+docker network disconnect none engine
 docker network connect solo-to-china engine
 EXPOSED=1
 docker start cloudflared >/dev/null

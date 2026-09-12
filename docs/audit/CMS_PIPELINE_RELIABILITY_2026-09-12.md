@@ -2,6 +2,8 @@
 
 本报告对应用户附件 S0–S5 / T01–T18，记录本次实际本地代码、测试及测量。主要缺陷已修复并通过离线门禁；这不是生产上线记录，也不代表真实 Chrome MV3、小红书、模型质量/账单或生产发布已经验收。
 
+后续用户明确授权提交、推送和部署，CMS 后端已上线 2.0.6 / Strategy 3.1 / schema 65。实际生产备份与迁移、部署阶段发现并修复的镜像/回退/网络交接问题、线上检查及仍存在的延迟见[独立上线记录](CMS_DEPLOYMENT_2.0.6_2026-09-12.md)。新增部署回归后本地测试为 482/482；本报告下文的 480/480 是原 S0–S5 离线验收时的真实结果。
+
 ## S0：实际基线
 
 - HEAD `2395fe4ed68f7414d777d0156770af76e858eb1b`，分支 `codex/audit-v1.3`；开始时工作区干净。没有回退到附件中的历史 main，没有覆盖用户未提交修改。
@@ -9,7 +11,7 @@
 - `npm ci --ignore-scripts` 成功。为可控 DOM 和浏览器暂存测试加入开发依赖 `linkedom`、`fake-indexeddb`，锁文件同步。
 - 原命令 `node --test` 会发现被 Git 忽略的 `output/deployment.../source/test` 历史副本，最初1231/1231的结果不能代表当前仓库测试数量。现将 `npm test` 限定为 `node --test "test/**/*.test.mjs"`，没有跳过当前仓库测试。
 - 在隔离 detached worktree 按同一测试范围重跑原 HEAD：**437/437通过、0失败、0跳过**，Node报告23588.5207 ms。复用当前依赖目录；工作树及目录连接随后移除。脚本 `scripts/check-baseline-reliability.mjs`，结果见[基线 JSON](CMS_BASELINE_TESTS_2026-09-12.json)。不同测试数的套件耗时差不作为性能收益。
-- 数据库写入、故障注入和清理演练仅针对隔离测试目录。未修改真实原始素材、另一个前端仓库、远程 main、生产数据库或 WordPress。本地实现未提交、未部署。
+- S0–S5 本地实施阶段的数据库写入、故障注入和清理演练仅针对隔离测试目录，当时尚未提交或部署。后续已按用户授权上线，详见单独记录；另一个前端仓库、远程 main、原始素材和 WordPress 文章没有被改写。
 
 ## T01–T18 实施映射
 
@@ -131,6 +133,6 @@ SQLite ExperimentalWarning为已记录运行时警告。继续实施时先复现
 | T13–T16 | 真实语义、图片本地化质量、轻量路由质量/成本、配额压力未知。 | 保持开关关闭。隔离固定样本按实际配置adapter记录模型/输入范围/tokens/账单并人工评审，再决定启用；不新增日常产品人工门槛。 |
 | T12 | 外部合法CDN/TLS恢复未运行。 | 隔离环境用用户正常获得的合法媒体链接验收；不探测真实内网。 |
 | T08、T17、T18 | 缺最终合格文章全链成本/耗时比较与生产规模；真实SQLite心跳混合负载已补测。 | 复跑现有benchmark，补单来源端到端样本与语义任务处理进度，不能用finalize或心跳代替全链完成。 |
-| T15、T18 | 真实WordPress主题/crawler可见HTML、搜索结果未验收，未部署。 | 离线gate已完成；外部演练只投递受控测试草稿且保留防覆盖。生产发布继续由用户控制。 |
+| T15、T18 | 真实WordPress主题/crawler可见HTML、搜索结果仍未验收；CMS 后端后续已部署，详见上线记录。 | 离线gate及实际镜像启动/恢复检查已完成；真实 WordPress 草稿交付仍未执行，文章发布继续由用户控制。 |
 
 可复跑命令：`npm run release:check`；`npm run benchmark:pipeline-reliability`；`node scripts/check-baseline-reliability.mjs`；`node scripts/verify-cms-ui.mjs --duration-ms=180000`（65条合成来源，自动停止并清理临时库）；`node scripts/verify-media-fixtures.mjs`后在浏览器打开打印出的本地地址，仅服务合成媒体。离线局部调度筛选可用`node --test --test-name-pattern="fragment|coverage|Batch" "test/**/*.test.mjs"`。没有伪造“一键完成真实模型人工评审”的命令，也未运行生产回填。

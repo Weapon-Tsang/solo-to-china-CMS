@@ -8,6 +8,7 @@ OPS="$NAME-ops"
 cleanup() {
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   docker volume rm "$DATA" "$OPS" >/dev/null 2>&1 || true
+  docker network rm "$NAME-net" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 docker volume create "$DATA" >/dev/null
@@ -33,6 +34,10 @@ for ((attempt=0; attempt<30; attempt++)); do
   sleep 1
 done
 [[ "$READY" == 1 ]]
+docker network create --internal "$NAME-net" >/dev/null
+docker network disconnect none "$NAME"
+docker network connect "$NAME-net" "$NAME"
+docker exec "$NAME" node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready");if(!r.ok)process.exit(1);console.log("Runtime network handoff passed")'
 docker stop --time 5 "$NAME" >/dev/null
 docker run --rm --network none "${MOUNTS[@]}" "$IMAGE" node /ops/verify-upgrade.mjs backup
 docker run --rm --network none "${MOUNTS[@]}" "$IMAGE" node -e 'const {DatabaseSync}=require("node:sqlite");const d=new DatabaseSync("/var/lib/solo-to-china/solo-to-china.sqlite");d.exec("PRAGMA user_version=99");d.close()'

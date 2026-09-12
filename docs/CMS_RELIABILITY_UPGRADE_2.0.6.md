@@ -1,13 +1,13 @@
-# 2.0.6 本地升级与交接
+# 2.0.6 升级与交接
 
-这是升级说明，不代表已部署。当前实现：App/Extension 2.0.6、Content Production Strategy 3.1、schema 65。起点是 `2395fe4ed68f7414d777d0156770af76e858eb1b`，本次开始时工作区干净。原始素材、生产数据库及 WordPress 未执行写入。
+当前实现：App/Extension 2.0.6、Content Production Strategy 3.1、schema 65。起点是 `2395fe4ed68f7414d777d0156770af76e858eb1b`，本次开始时工作区干净。用户后续明确授权提交、推送和部署；后端已于北京时间 2026-09-12 16:31:57 完成上线，运行提交 `8a6f3383176c918b3a353ddb586968219d0ffe9a`。原始素材保留，未发布 WordPress 文章或执行历史回填。实际备份、迁移耗时、部署失败与修复、线上接口结果及回退位置见[上线记录](audit/CMS_DEPLOYMENT_2.0.6_2026-09-12.md)。
 
 ## 升级顺序
 
 1. 在维护窗口暂停生产入口及 Worker，按现有 `npm run backup` / `npm run backup:verify` 流程备份数据库与内容文件，并记录旧代码、配置和镜像。不能仅复制一个正在写入的 SQLite 主文件而遗漏 WAL。备份还应保留上传临时目录，以便恢复旧分块任务；默认备份是否包含该目录需按部署配置检查。
 2. 先在备份的隔离副本上使用 Node 24+，运行 `npm ci --ignore-scripts` 和 `npm run release:check`。保留当前固定 Frontend commit `f44ce1092ced93dfb47d9b3eae83d0d5e4b97086`；不修改另一个前端仓库，不换浮动分支。真实模型和 WordPress 凭据不要注入离线验收服务器。
 3. 上线后端时首次 `openDatabase()` 自动应用迁移：60 添加 `jobs.dirty_revision/claimed_revision`；61 添加 `production_attempt_archives`；62 添加 `writing_packets.context_json`；63 添加 `narrative_plans.evidence_selections_json`；64 增加媒体/文件的采集版本并重建资产、文件、分段表的唯一约束，保留全部行、ID 和外键；65 添加 `pipeline_step_receipts`。这些迁移不排全库处理、不修改文章。迁移 64 在一个事务中复制并替换表，需要为表副本与 WAL 预留磁盘空间；升级前在生产备份副本测时间和空间，不能只按空库时间安排窗口。已验证 schema 59 升级，以及在 schema 64 提交前杀死真实进程后仍完整保留 schema 63、重新打开完成升级与外键/完整性检查。
-4. 后端先升级，确认 `/api/health` 的版本及 `captureMediaProtocol.version=2`，再更新扩展。v1 create/chunk/complete 继续可用；新扩展收到旧服务器无 v2 能力的返回时使用旧分块流程，不能得到 v2 续传保证。生产发布步骤仍需独立执行，本次未执行。
+4. 后端先升级，确认 `/api/health` 的版本及 `captureMediaProtocol.version=2`，再更新扩展。v1 create/chunk/complete 继续可用；新扩展收到旧服务器无 v2 能力的返回时使用旧分块流程，不能得到 v2 续传保证。本次后端已完成这些检查；Chrome 中应更新原已加载扩展目录并重新加载，以保留扩展 ID 与 IndexedDB，避免卸载或换目录导致暂存不可见。
 5. 真实浏览器验证一篇普通图文、一篇带视频的用户选定素材；在上传中间重启 Worker、模拟丢失 complete 响应，并检查 Source 原件、capture_versions、断点与请求字节。保持原来的站点登录/验证要求。当前自动化使用受控 DOM 和 fake-indexeddb，不能替代 Chrome 扩展存储及标签页生命周期实测。
 6. 保持 `SOURCE_COMPLEXITY_ROUTING=false`。检查旧已提交 Batch 继续以提交时的配置接收结果，交互任务进入 realtime，视觉压力不阻断文字。启用轻量来源路径、启动历史回填或任何生产重跑前，先检查精确范围及成本；本次没有运行这些生产动作。
 

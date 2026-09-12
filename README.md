@@ -1,5 +1,7 @@
 # SoloToChina Research & Content Engine
 
+当前后端已上线 **2.0.6 / Strategy 3.1 / schema 65**。本轮逐项实现与限制见 [T01–T18 验收报告](docs/audit/CMS_PIPELINE_RELIABILITY_2026-09-12.md)，真实备份、迁移、镜像验证及线上结果见 [2.0.6 上线记录](docs/audit/CMS_DEPLOYMENT_2.0.6_2026-09-12.md)。
+
 SoloToChina 的内部研究与内容生产基础设施。当前采集路径采用 **Human Discovery + Human Favorite Selection → Incremental / Repair / Full Sync → Durable Research Pipeline**：用户用收藏完成研究价值和授权确认，Chrome Extension 将正文、DOM 以及全部授权图片/视频原件校验后持久化，系统再负责 Claims、Experience、Knowledge、内容机会和人工批准后的原创写作。
 
 后台“来源”页也支持管理员主动提交公开的小红书、微信公众号、视频和普通网页链接，以及 PDF、Word、图片和视频文件。提交内容会进入同一套 Source → Claims → Knowledge → Blueprint → 内容建议流程；链接读取失败会明确区分登录墙、反爬、限流、超时、空内容和不支持格式。参见 [Manual Source Ingestion](docs/MANUAL_SOURCE_INGESTION.md)。
