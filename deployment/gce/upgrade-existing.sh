@@ -7,7 +7,9 @@ IMAGE="${STC_UPGRADE_IMAGE:?immutable image required}"
 REVISION="${STC_UPGRADE_REVISION:?revision required}"
 [[ "$IMAGE" =~ @sha256:[a-f0-9]{64}$ && "$REVISION" =~ ^[a-f0-9]{40}$ ]]
 APP=/opt/solo-to-china
-RELEASE="$APP/upgrades/$REVISION"
+ATTEMPT="${STC_UPGRADE_ATTEMPT:-}"
+[[ -z "$ATTEMPT" || "$ATTEMPT" =~ ^[0-9]+$ ]]
+RELEASE="$APP/upgrades/$REVISION${ATTEMPT:+-attempt-$ATTEMPT}"
 OLD="engine-before-${REVISION:0:7}"
 log() { printf '[stc-upgrade] %s\n' "$*"; }
 systemctl start docker
@@ -45,6 +47,11 @@ unset TOKEN
 docker pull "$IMAGE" >"$RELEASE/image-pull.log" 2>&1
 printf '%s' "$STC_UPGRADE_PROBE_BASE64" | base64 --decode >"$RELEASE/verify-upgrade.mjs"
 OLD_IMAGE="$(docker inspect --format '{{.Image}}' engine)"
+# Inspect existence inside the old container before stopping it. Docker versions
+# use different error wording for a missing docker-cp source; never parse that.
+LEGACY_PRESENT="$(docker exec engine node -e 'process.stdout.write(require("node:fs").existsSync("/app/data") ? "yes" : "no")')"
+[[ "$LEGACY_PRESENT" == yes || "$LEGACY_PRESENT" == no ]]
+log "Old container /app/data present=$LEGACY_PRESENT"
 printf '%s\n' "$OLD_IMAGE" >"$RELEASE/old-image-id"
 printf '%s\n' "$IMAGE" >"$RELEASE/new-image"
 sha256sum "$APP/.env.production" >"$RELEASE/env.sha256"
@@ -91,10 +98,11 @@ docker update --restart no engine >/dev/null
 mkdir "$RELEASE/legacy-app-data"
 # Container-layer capture chunks were not mounted by earlier releases. Preserve the
 # complete directory and mount it at its original path in the replacement engine.
-if docker cp engine:/app/data/. "$RELEASE/legacy-app-data/" >"$RELEASE/legacy-copy.log" 2>&1; then
+if [[ "$LEGACY_PRESENT" == yes ]]; then
+  docker cp engine:/app/data/. "$RELEASE/legacy-app-data/" >"$RELEASE/legacy-copy.log" 2>&1
   log 'Preserved old /app/data, including capture upload state.'
-elif ! grep -q 'Could not find the file /app/data' "$RELEASE/legacy-copy.log"; then
-  false
+else
+  log 'Old container has no /app/data; initialized an empty persistent capture-state directory.'
 fi
 # Hash all immutable uploads/visuals and copied legacy state before and after migration.
 CONTENT_ROOTS=("$RELEASE/legacy-app-data")
