@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-12T17:18:03.943Z",
+  "generatedAt": "2026-09-12T18:50:19.050Z",
   "kind": "offline_fixed_fixture_no_paid_model_calls",
   "summary": {
     "fixtures": 5,
@@ -30,7 +30,7 @@
       "batchSizes": [],
       "accountedMedia": 0,
       "expectedMedia": 0,
-      "setupAndPlanningMs": 7.537,
+      "setupAndPlanningMs": 12.588,
       "qualityGate": {
         "allMediaAccounted": true,
         "boundedBatches": true,
@@ -59,7 +59,7 @@
       "batchSizes": [],
       "accountedMedia": 0,
       "expectedMedia": 0,
-      "setupAndPlanningMs": 8.835,
+      "setupAndPlanningMs": 11.356,
       "qualityGate": {
         "allMediaAccounted": true,
         "boundedBatches": true,
@@ -93,7 +93,7 @@
       ],
       "accountedMedia": 19,
       "expectedMedia": 19,
-      "setupAndPlanningMs": 15.63,
+      "setupAndPlanningMs": 20.129,
       "qualityGate": {
         "allMediaAccounted": true,
         "boundedBatches": true,
@@ -128,7 +128,7 @@
       ],
       "accountedMedia": 27,
       "expectedMedia": 27,
-      "setupAndPlanningMs": 26.91,
+      "setupAndPlanningMs": 33.635,
       "qualityGate": {
         "allMediaAccounted": true,
         "boundedBatches": true,
@@ -157,7 +157,7 @@
       "batchSizes": [],
       "accountedMedia": 1,
       "expectedMedia": 1,
-      "setupAndPlanningMs": 5.155,
+      "setupAndPlanningMs": 6.325,
       "qualityGate": {
         "allMediaAccounted": true,
         "boundedBatches": true,

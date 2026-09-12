@@ -48,7 +48,7 @@ test("recommendation inbox separates processing gaps from approvable evidence ga
   assert.deepEqual(repository.listContent({productionOnly:true}),[]);
 });
 
-test("recommendation backfill reviews and queues stale strategy diagnostics", (t) => {
+test("recommendation backfill promotes compatible diagnostics without another model job", (t) => {
   const {db,repository}=repositoryFixture(t);
   const sourceId=saveSource(repository,{externalId:"stale-strategy-diagnostic"});
   repository.saveExperienceExtraction(sourceId,{blocks:[]},"test");
@@ -58,16 +58,40 @@ test("recommendation backfill reviews and queues stale strategy diagnostics", (t
   db.prepare("UPDATE content_opportunities SET strategy_version='3.2' WHERE source_id=?").run(sourceId);
   db.prepare("DELETE FROM jobs").run();
   const preview=repository.runRecommendationReconciliationBackfill();
-  assert.equal(preview.staleDiagnosticSources,1);
+  assert.equal(preview.reusableDiagnosticSources,1);
+  assert.equal(preview.staleDiagnosticSources,0);
+  assert.equal(preview.modelCallsAvoided,1);
   assert.equal(preview.queued,0);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,0);
   const applied=repository.runRecommendationReconciliationBackfill({dryRun:false,approvedFromRunId:preview.id});
+  assert.equal(applied.reused,1);
+  assert.equal(applied.queued,0);
+  assert.equal(applied.modelCallsAvoided,1);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,0);
+  assert.equal(db.prepare("SELECT strategy_version FROM content_intake_analyses WHERE source_id=?").get(sourceId).strategy_version,repository.strategyVersion);
+  assert.equal(db.prepare("SELECT strategy_version FROM content_recommendations WHERE source_id=?").get(sourceId).strategy_version,repository.strategyVersion);
+  assert.equal(db.prepare("SELECT strategy_version FROM content_opportunities WHERE source_id=?").get(sourceId).strategy_version,repository.strategyVersion);
+  assert.throws(()=>repository.runRecommendationReconciliationBackfill({dryRun:false,approvedFromRunId:"missing"}),/dry-run/);
+});
+
+test("recommendation backfill queues only diagnostics with an incompatible contract", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const sourceId=saveSource(repository,{externalId:"incompatible-strategy-diagnostic"});
+  repository.saveExperienceExtraction(sourceId,{blocks:[]},"test");
+  saveRecommendation(repository,sourceId);
+  db.prepare("UPDATE content_intake_analyses SET strategy_version='1.8' WHERE source_id=?").run(sourceId);
+  db.prepare("UPDATE content_recommendations SET strategy_version='1.8' WHERE source_id=?").run(sourceId);
+  db.prepare("DELETE FROM jobs").run();
+  const preview=repository.runRecommendationReconciliationBackfill();
+  assert.equal(preview.reusableDiagnosticSources,0);
+  assert.equal(preview.staleDiagnosticSources,1);
+  const applied=repository.runRecommendationReconciliationBackfill({dryRun:false,approvedFromRunId:preview.id});
+  assert.equal(applied.reused,0);
   assert.equal(applied.queued,1);
   const job=db.prepare("SELECT type,workload_class,recovery_run_id FROM jobs WHERE entity_id=?").get(sourceId);
   assert.equal(job.type,"analyze_source_diagnostic");
   assert.equal(job.workload_class,"historical_recovery");
   assert.equal(job.recovery_run_id,preview.id);
-  assert.throws(()=>repository.runRecommendationReconciliationBackfill({dryRun:false,approvedFromRunId:"missing"}),/dry-run/);
 });
 
 test("Content becomes visible only after the durable production entry job exists", (t) => {

@@ -26,6 +26,7 @@ try{
           predicate:price?"ticket_price":"opening_time",value:price?`${20+place} CNY`:`${8+place%4}:00`,
           qualifiers:[],source_quote:price?`Price ${20+place} CNY`:`Opens ${8+place%4}:00`,confidence:.9};}),
       blueprint:{format:"guide",hook:"benchmark",angle:"benchmark",sections:[],strengths:[],gaps:[]}},"benchmark","benchmark");
+    repository.saveExperienceExtraction(source.id,{blocks:[]},"benchmark");
   }
   database.prepare("DELETE FROM jobs").run();
   repository.rebuildKnowledge("benchmark");repository.rebuildTopicClusters("benchmark");repository.rebuildKnowledgeOpportunities("benchmark");

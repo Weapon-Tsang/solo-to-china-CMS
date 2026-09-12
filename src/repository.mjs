@@ -44,6 +44,16 @@ const PRODUCTION_JOB_TYPES = new Set(["assemble_editorial","plan_content","plan_
   "compose_frontend_page_plan","generate_draft","generate_visuals","compose_frontend_page","review_draft","revise_draft",
   "compose_commercial","compose_publish_page","push_wordpress_draft"]);
 const TRACKED_DELIVERY_STAGES = new Set(['compose_commercial','compose_publish_page','push_wordpress_draft']);
+// Intake schema and decision instructions have been stable since Strategy 3.0.
+// A later strategy label alone must not purchase the same diagnostic again.
+// Future strategy releases must opt in here after reviewing that contract.
+const COMPATIBLE_DIAGNOSTIC_STRATEGIES = new Map([
+  ["3.3", new Set(["3.0", "3.1", "3.2", "3.3"])],
+]);
+
+function isReusableDiagnosticStrategy(previous, current) {
+  return Boolean(String(previous || "") && COMPATIBLE_DIAGNOSTIC_STRATEGIES.get(current)?.has(String(previous)));
+}
 
 export class Repository {
   constructor(db, contentConfig = {}) {
@@ -1158,21 +1168,35 @@ export class Repository {
         AND EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
           AND er.capture_version=s.capture_version AND er.degraded=0)
       ORDER BY s.captured_at,s.id`).all();
-    const staleDiagnostics=diagnosticSources.filter((row)=>row.diagnostic_strategy!==this.strategyVersion);
+    const currentDiagnostics=diagnosticSources.filter((row)=>row.diagnostic_strategy===this.strategyVersion);
+    const reusableDiagnostics=diagnosticSources.filter((row)=>row.diagnostic_strategy!==this.strategyVersion
+      && isReusableDiagnosticStrategy(row.diagnostic_strategy,this.strategyVersion));
+    const staleDiagnostics=diagnosticSources.filter((row)=>row.diagnostic_strategy!==this.strategyVersion
+      && !isReusableDiagnosticStrategy(row.diagnostic_strategy,this.strategyVersion));
     const fingerprint=sha256(JSON.stringify({strategyVersion:this.strategyVersion,
-      sources:staleDiagnostics.map((row)=>[row.id,Number(row.capture_version||0),row.diagnostic_strategy||""])}));
+      current:currentDiagnostics.map((row)=>[row.id,Number(row.capture_version||0)]),
+      reusable:reusableDiagnostics.map((row)=>[row.id,Number(row.capture_version||0),row.diagnostic_strategy]),
+      stale:staleDiagnostics.map((row)=>[row.id,Number(row.capture_version||0),row.diagnostic_strategy||""])}));
     const before = Number(this.db.prepare("SELECT COUNT(*) n FROM content_opportunities").get().n || 0);
     const sourceTotal=Number(this.db.prepare("SELECT COUNT(*) n FROM sources").get().n||0);
     const report = {destinations,diagnostics:Number(this.db.prepare("SELECT COUNT(*) n FROM content_intake_analyses").get().n || 0),
-      currentDiagnosticSources:diagnosticSources.length-staleDiagnostics.length,staleDiagnosticSources:staleDiagnostics.length,
+      currentDiagnosticSources:currentDiagnostics.length,reusableDiagnosticSources:reusableDiagnostics.length,
+      staleDiagnosticSources:staleDiagnostics.length,modelCallsAvoided:dryRun ? reusableDiagnostics.length : 0,
       blockedDiagnosticSources:Math.max(0,sourceTotal-diagnosticSources.length),sourceIds:staleDiagnostics.map((row)=>row.id),
-      fingerprint,opportunitiesBefore:before,createdOrRefreshed:0,approvedReconciled:0,queued:0};
+      reusableSourceIds:reusableDiagnostics.map((row)=>row.id),fingerprint,opportunitiesBefore:before,
+      createdOrRefreshed:0,approvedReconciled:0,reused:0,queued:0};
     if (!dryRun) {
       const approval=this.db.prepare(`SELECT report_json FROM system_backfill_runs WHERE id=?
         AND backfill_type='recommendation_reconciliation' AND status='dry_run' AND dry_run=1`).get(approvedFromRunId);
       if (!approval) throw conflictError("Recommendation refresh requires the ID of a completed dry-run report.");
       const approved=json(approval.report_json,{});
       if (approved.fingerprint!==fingerprint) throw conflictError("Recommendation refresh inputs changed after dry-run; review a new dry-run report.");
+      for (const row of reusableDiagnostics) {
+        if (this.promoteCompatibleIntakeAnalysis(row.id,row.diagnostic_strategy)) {
+          report.reused += 1;
+          report.modelCallsAvoided += 1;
+        }
+      }
       for (const row of staleDiagnostics) {
         const jobId=this.enqueue("analyze_source_diagnostic",row.id,{
           dedupeKey:`recommendation-diagnostic:${row.id}:${row.capture_version}:${this.strategyVersion}`,
@@ -2675,7 +2699,7 @@ export class Repository {
     return {...result,input_telemetry:{projection:"compact_claim_evidence_v1",bytes:inputBytes,estimated_tokens:Math.ceil(inputBytes/3)}};
   }
 
-  saveIntakeAnalysis(sourceId, analysis, model) {
+  saveIntakeAnalysis(sourceId, analysis, model, { deferReconciliation = false } = {}) {
     const source = this.db.prepare(`
       SELECT s.id, ss.destination_slug FROM sources s JOIN structured_sources ss ON ss.source_id=s.id WHERE s.id=?
     `).get(sourceId);
@@ -2730,9 +2754,20 @@ export class Repository {
         }, { linkRecommendation: false, status: "recommended" });
       }
     }
-    this.reconcileRecommendationInbox(source.destination_slug);
-    this.refreshRecommendationBackfillRuns();
+    if (!deferReconciliation) {
+      this.reconcileRecommendationInbox(source.destination_slug);
+      this.refreshRecommendationBackfillRuns();
+    }
     return this.getSource(sourceId).analysis;
+  }
+
+  promoteCompatibleIntakeAnalysis(sourceId, expectedStrategy) {
+    const existing=this.db.prepare("SELECT strategy_version,analysis_json,model FROM content_intake_analyses WHERE source_id=?").get(sourceId);
+    if (!existing || existing.strategy_version!==expectedStrategy
+      || !isReusableDiagnosticStrategy(existing.strategy_version,this.strategyVersion)) return false;
+    this.saveIntakeAnalysis(sourceId,json(existing.analysis_json,{}),
+      existing.model || "reused-compatible-diagnostic",{deferReconciliation:true});
+    return true;
   }
 
   listContentRecommendations(limit = 100) {
@@ -3126,6 +3161,7 @@ export class Repository {
         lifecycle_action,target_post_id,publication_impact_json)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(topic_key) DO UPDATE SET recommendation_id=excluded.recommendation_id, candidate_id=excluded.candidate_id,
+        strategy_version=excluded.strategy_version,source_id=excluded.source_id,
         title=excluded.title, content_type=excluded.content_type, readiness_score=excluded.readiness_score,
         readiness_json=excluded.readiness_json,coverage_json=excluded.coverage_json,
         status=CASE WHEN content_opportunities.status IN ('approved_waiting_for_evidence','approved_ready','producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft','suppressed') THEN content_opportunities.status ELSE excluded.status END,
@@ -3180,6 +3216,17 @@ export class Repository {
     return new Set((facts || []).flatMap(independentEvidenceKeysForFact)).size;
   }
 
+  completedOpportunityFacts(facts) {
+    const completed=new Set(this.db.prepare(`SELECT s.id FROM sources s
+      WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
+        AND NOT EXISTS (SELECT 1 FROM current_source_assets a WHERE a.source_id=s.id AND a.durability_status<>'ORIGINAL_STORED')
+        AND EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version
+          AND er.status='succeeded' AND er.degraded=0)`).all().map((row)=>row.id));
+    return (facts || []).map((fact)=>({...fact,consensus_detail:{},
+      evidence:(fact.evidence || []).filter((item)=>completed.has(item.source_id))}))
+      .filter((fact)=>fact.evidence.length>0);
+  }
+
   rebuildTopicClusters(destinationSlug) {
     const facts = this.knowledgeForDestination(destinationSlug);
     const grouped = Map.groupBy(facts, (fact) => slugify(fact.subject || "general") || "general");
@@ -3197,7 +3244,8 @@ export class Repository {
   }
 
   rebuildKnowledgeOpportunities(destinationSlug) {
-    const factsByKey = new Map(this.knowledgeForDestination(destinationSlug).map((fact) => [fact.normalized_key,fact]));
+    const factsByKey = new Map(this.completedOpportunityFacts(this.knowledgeForDestination(destinationSlug))
+      .map((fact) => [fact.normalized_key,fact]));
     const clusters = this.db.prepare(`SELECT * FROM topic_clusters WHERE destination_slug=? ORDER BY topic_key`).all(destinationSlug);
     const timestamp = now();
     let created = 0;
@@ -3234,7 +3282,8 @@ export class Repository {
         source_id,source_ids_json,recommendation_id,candidate_id,title,content_type,readiness_score,readiness_json,coverage_json,status,
         approved_at,created_at,updated_at,lifecycle_action,target_post_id,publication_impact_json)
         VALUES (?,?,?,?,?,NULL,?,NULL,NULL,?,?,?,?,?,'recommended',NULL,?,?,?,?,?)
-        ON CONFLICT(topic_key) DO UPDATE SET source_ids_json=excluded.source_ids_json,title=excluded.title,content_type=excluded.content_type,
+        ON CONFLICT(topic_key) DO UPDATE SET strategy_version=excluded.strategy_version,
+          source_ids_json=excluded.source_ids_json,title=excluded.title,content_type=excluded.content_type,
           readiness_score=excluded.readiness_score,readiness_json=excluded.readiness_json,coverage_json=excluded.coverage_json,
           suppression_reason=CASE WHEN content_opportunities.suppression_reason='knowledge_cluster_no_longer_actionable' THEN NULL ELSE content_opportunities.suppression_reason END,
           status=CASE WHEN content_opportunities.status='suppressed' AND content_opportunities.suppression_reason='knowledge_cluster_no_longer_actionable'
@@ -3254,6 +3303,7 @@ export class Repository {
   rebuildCoverageMatrices(destinationSlug,{changedFactKeys=null}={}) {
     const startedAt=Date.now();
     const allFacts = this.knowledgeForDestination(destinationSlug);
+    const completedFacts = this.completedOpportunityFacts(allFacts);
     const allOpportunities = this.db.prepare("SELECT * FROM content_opportunities WHERE destination_slug=?").all(destinationSlug);
     const changed=new Set((changedFactKeys||[]).filter(Boolean));
     const changedFacts=changed.size?allFacts.filter((fact)=>changed.has(fact.normalized_key)):[];
@@ -3272,7 +3322,7 @@ export class Repository {
       if (previousCoverage.manualAssignmentId) continue; // Manual scope is rebuilt only by its own evaluator.
       const sourceFacts = factsForSource(allFacts, opportunity.source_id);
       const facts = ["source_adaptation", "topic_feature"].includes(publicationMode) && sourceFacts.length
-        ? sourceFacts : scopeFactsForOpportunity(allFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
+        ? sourceFacts : scopeFactsForOpportunity(completedFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
       const familyCount = this.independentSourceFamilyCountForFacts(facts);
       const matrix = evaluateCoverage({ topicKey: opportunity.topic_key, contentType: opportunity.content_type, facts, sourceFamilyCount: familyCount, publicationMode });
       const coverage = { ...previousCoverage, ...matrix, publicationMode, selectedFactKeys: facts.map((fact) => fact.normalized_key),
@@ -3366,7 +3416,7 @@ export class Repository {
       FROM jobs j LEFT JOIN source_segments sg ON sg.id=j.entity_id
       LEFT JOIN media_extraction_batches mb ON mb.id=j.entity_id
       WHERE j.type IN ('extract_source','preflight_source','segment_source','extract_segment_claims',
-        'extract_media_batch','audit_segment_coverage','retry_segment_extraction','finalize_source_extraction','extract_source_experience','analyze_source_blueprint','analyze_source_diagnostic','analyze_intake','analyze_source_family')
+        'extract_media_batch','audit_segment_coverage','retry_segment_extraction','finalize_source_extraction')
         AND j.status IN ('queued','running','failed')
         AND (sg.source_id IS NOT NULL OR mb.source_id IS NOT NULL OR EXISTS (SELECT 1 FROM sources direct_source WHERE direct_source.id=j.entity_id))
     `).all();
@@ -3409,8 +3459,7 @@ export class Repository {
       LEFT JOIN sources direct ON direct.id=j.entity_id
       WHERE j.status IN ('queued','running','failed')
         AND j.type IN ('extract_source','preflight_source','segment_source','extract_segment_claims','extract_media_batch',
-          'audit_segment_coverage','retry_segment_extraction','finalize_source_extraction','extract_source_experience',
-          'analyze_source_family','analyze_source_blueprint','analyze_source_diagnostic','analyze_intake') ORDER BY j.updated_at DESC`).all()
+          'audit_segment_coverage','retry_segment_extraction','finalize_source_extraction') ORDER BY j.updated_at DESC`).all()
       .filter((job)=>wanted.has(job.source_id));
     const states=sourceQueueStates(jobs);
     return rows.map((row)=>{

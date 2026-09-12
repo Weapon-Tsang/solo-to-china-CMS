@@ -54,6 +54,20 @@ test("a processed source does not project a superseded extraction failure", (t) 
   assert.equal(repository.sourceTimeline(source.id).some((event)=>event.status==="failed"),true);
 });
 
+test("downstream diagnostics do not make a completed source look queued", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const source=repository.saveCapture(normalizeXiaohongshuCapture({
+    url:"https://www.xiaohongshu.com/explore/status-projection-diagnostic",title:"Completed source",
+    text:"Complete evidence whose source extraction already finished before downstream analysis.",images:[],
+  }));
+  db.prepare("UPDATE jobs SET status='failed',attempts=max_attempts WHERE type='extract_source' AND entity_id=?").run(source.id);
+  db.prepare("UPDATE sources SET status='processed',last_error=NULL WHERE id=?").run(source.id);
+  repository.enqueue("analyze_source_diagnostic",source.id,{dedupeKey:`diagnostic-visible-state:${source.id}`});
+  assert.equal(repository.listSources(10).find((item)=>item.id===source.id).queue,null);
+  assert.equal(repository.listSourceStatusProjection({ids:[source.id]})[0].queue,null);
+  assert.equal(repository.sourceTimeline(source.id).some((event)=>event.stage==="analyze_source_diagnostic"&&event.status==="queued"),true);
+});
+
 test("successful retry clears its previous error text", (t) => {
   const {db,repository}=repositoryFixture(t);
   repository.enqueue("rebuild_editorial","global");

@@ -1,6 +1,12 @@
 # SoloToChina Content Strategy changelog
 
-## App 2.0.9 - Unreleased
+## App 2.0.10 - 2026-09-13
+
+- Completed Sources are reconsidered under Strategy 3.3 regardless of the label on a compatible historical diagnostic; the stored output is normalized and its opportunities are recalculated without another model call.
+- Multi-source opportunity coverage uses only completed Source evidence. Sources still processing stay in the Source queue and contribute after their own completion.
+- Rebuilding the same opportunity updates its active strategy and readiness, while semantic deduplication continues to merge only matching destination, content type, production mode, duration and topic intent.
+
+## App 2.0.9 - 2026-09-13
 
 - Source status polling no longer surfaces a superseded failed extraction after the current Source has completed.
 - Recommendation reconciliation uses a reviewed dry-run fingerprint to refresh diagnostics that still belong to an older strategy.

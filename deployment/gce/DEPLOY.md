@@ -2,9 +2,9 @@
 
 Use one Google Compute Engine VM, a persistent Docker volume, and one Cloudflare Tunnel. The project currently uses SQLite plus an in-process durable queue and scheduler; a stateless Cloud Run revision is not a safe replacement without a database and worker redesign.
 
-## Existing installation: 2.0.7 to 2.0.8
+## Existing installation: 2.0.9 to 2.0.10
 
-Use `upgrade-existing.sh` with `verify-upgrade.mjs` for the additive schema 66 to 67 upgrade. Supply an immutable image digest and the exact 40-character Git revision. The helper preserves the active `/app/data` mount, creates and drills a verified paired backup, rehearses schema 67 offline, and connects public traffic only after the isolated 2.0.8 readiness check passes. After deployment, run the processing-gap, Knowledge-resolution and media-storage commands in dry-run mode only; retain their report IDs without starting historical jobs or deleting Base64.
+Use `upgrade-existing.sh` with `verify-upgrade.mjs` for the schema 67 application upgrade. Supply an immutable image digest and the exact 40-character Git revision. The helper preserves the active `/app/data` mount, creates and drills a verified paired backup, rehearses schema 67 offline, and connects public traffic only after the isolated 2.0.10 readiness check passes. After deployment, review the recommendation-reconciliation dry run and execute that exact fingerprint to promote compatible completed-Source diagnostics without paid model calls. Processing-gap, Knowledge-resolution and media-storage maintenance remain dry-run-only unless a separate reviewed run is required.
 
 ## Existing installation: 2.0.5 → 2.0.6
 
@@ -20,7 +20,7 @@ Reports and phases are retained under `/opt/solo-to-china/upgrades/<revision>/`;
 
 Production verification exposed two required details now covered by the helpers: retain a failed database inside its **data mount** to avoid `EXDEV`, and explicitly propagate a failed offline Docker command even inside a Bash `||` recovery context. Before attaching a healthy container to the service network, disconnect its `none` network. `test-runtime-image.sh` now checks actual built-image startup, that network transition using an isolated internal network, and restore across separate Docker mounts; CI runs it after the source release gate.
 
-`resume-verified-upgrade.sh` is a bounded continuation for an image-only failure after migration: it requires a stopped engine, a successful fresh integrity/fingerprint report, schema 65, an unchanged DB mtime, and no unverified WAL writes. It keeps failed containers/data and does not start old code automatically. After successful online checks, `pin-runtime-image.py <release-directory> <immutable-image>` updates only `ENGINE_IMAGE`, retaining the previous private environment file and proving other configuration bytes unchanged. A whole-disk rollback also requires restoring the intended instance startup metadata; it is not included in the disk snapshot.
+`resume-verified-upgrade.sh` is a bounded continuation for an image-only failure after migration: it requires a stopped engine, a successful fresh integrity/fingerprint report, schema 67, an unchanged DB mtime, and no unverified WAL writes. It keeps failed containers/data and does not start old code automatically. After successful online checks, `pin-runtime-image.py <release-directory> <immutable-image>` updates only `ENGINE_IMAGE`, retaining the previous private environment file and proving other configuration bytes unchanged. A whole-disk rollback also requires restoring the intended instance startup metadata; it is not included in the disk snapshot.
 
 ## Layout
 
@@ -64,7 +64,7 @@ From an authenticated Google Cloud shell or workstation, substitute your own val
 $project = "YOUR_PROJECT_ID"
 $region = "us-central1"
 $repo = "solo-to-china"
-$image = "$region-docker.pkg.dev/$project/$repo/engine:2.0.8"
+$image = "$region-docker.pkg.dev/$project/$repo/engine:2.0.10"
 
 gcloud services enable compute.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com --project $project
 gcloud artifacts repositories create $repo --repository-format=docker --location=$region --project=$project

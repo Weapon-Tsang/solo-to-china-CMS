@@ -177,6 +177,32 @@ test("knowledge change creates an independent multi-source opportunity and Writi
   assert.doesNotMatch(packet.packet_text,/normalized_key|predicate|value_text/i);
 });
 
+test("knowledge opportunities use completed sources while unfinished sources remain out of the evidence set", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const readyA=saveResearchSource(repository,"68abcdef00000000000000a1",[
+    ["chengdu.metro.ready.route","Chengdu Metro","route","Line 18 reaches the airport corridor"],
+  ],"Line 2 reaches the airport corridor.");
+  const readyB=saveResearchSource(repository,"68abcdef00000000000000a2",[
+    ["chengdu.metro.ready.payment","Chengdu Metro","payment","Mobile payment is supported"],
+  ],"Mobile payment is supported.");
+  const unfinished=saveResearchSource(repository,"68abcdef00000000000000a3",[
+    ["chengdu.metro.unfinished.schedule","Chengdu Metro","schedule","A provisional schedule claim"],
+  ],"A provisional schedule claim.");
+  db.prepare("DELETE FROM experience_extraction_runs WHERE source_id=?").run(unfinished);
+  db.prepare("UPDATE sources SET status='processing' WHERE id=?").run(unfinished);
+  repository.rebuildKnowledge("chengdu");
+  const completedFacts=repository.completedOpportunityFacts(repository.knowledgeForDestination("chengdu"));
+  assert.equal(completedFacts.some((fact)=>fact.evidence.some((item)=>item.source_id===unfinished)),false);
+  assert.ok(completedFacts.length>=2,JSON.stringify({completedFacts,sources:db.prepare("SELECT id,status,capture_version FROM sources").all(),runs:db.prepare("SELECT source_id,capture_version,status,degraded FROM experience_extraction_runs").all()}));
+  repository.rebuildTopicClusters("chengdu");
+  repository.rebuildKnowledgeOpportunities("chengdu");
+  const opportunity=repository.listRecommendationInbox().find((item)=>item.coverage.knowledgeEventGenerated);
+  assert.ok(opportunity,JSON.stringify(db.prepare("SELECT id,inbox_state,processing_state,strategy_version,source_ids_json,coverage_json FROM content_opportunities").all()));
+  assert.notEqual(opportunity.processing_state,"PROCESSING_GAP");
+  assert.equal(opportunity.coverage.selectedSourceIds.includes(unfinished),false);
+  assert.deepEqual(new Set(opportunity.coverage.selectedSourceIds),new Set([readyA,readyB]));
+});
+
 test("terminal expression failure archives the attempt and retains artifacts, approval and Golden Article associations", (t) => {
   const { db,repository }=repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at,strategy_version)
