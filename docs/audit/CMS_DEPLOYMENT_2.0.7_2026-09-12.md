@@ -27,6 +27,7 @@ The user authorized implementation, commit, push and deployment. Release `2f71d4
 - Stable container samples: health 15 calls, p50 13.14 ms and p95 33.13 ms; Source status 15 calls, p50 1,236.75 ms and p95 2,137.13 ms.
 - Stable public samples: Engine readiness p50 315.39 ms / p95 320.44 ms; Capture readiness p50 310.99 ms / p95 316.51 ms. Health p50 was 331.78 ms on Engine and 338.94 ms on Capture.
 - During restart recovery, two `build_coverage_matrix` jobs used about 108% CPU and took 121.8 and 122.8 seconds. A health call exceeded 30 seconds while this synchronous work occupied the application process. This is a measured remaining bottleneck; more ordinary post-release traffic is needed before attributing provider latency changes to image batching.
+- The scheduled full application backup later occupied the same process for 185.1 seconds; two 20-second public health probes timed out during that interval. Health returned HTTP 200 in 1.03 seconds after the backup completed. Backup execution must move outside the HTTP event loop before this maintenance window can be called highly available.
 
 ## Dry-run reports
 
@@ -37,7 +38,7 @@ The user authorized implementation, commit, push and deployment. Release `2f71d4
 ## Resource capacity and cleanup
 
 
-- After backup and deployment, `/` used 38,966,185,984 of 52,589,998,080 bytes (78%) with 11,359,076,352 bytes available. Application data excluding backups was 2,893,779,004 bytes; backups used 10,949,942,751 bytes.
+- Immediately after rollout, `/` used 38,966,185,984 of 52,589,998,080 bytes (78%) with 11,359,076,352 bytes available. The next scheduled verified backup raised the final sample to 41,030,557,696 bytes used (82%), 9,294,704,640 bytes available and 13,012,317,188 backup bytes. Application data excluding backups was 2,893,779,004 bytes.
 - The e2-small had 1,402,855,424 bytes available of 2,072,461,312 bytes RAM and no swap at the idle sample. No disk, backup, Docker-image or original-media cleanup ran.
 - The production measurements justify a separate evaluation of moving synchronous coverage work out of the HTTP process or testing e2-medium. This rollout keeps the current VM size because a size change alone has not been benchmarked against the event-loop bottleneck.
 - Temporary IAP SSH rule/tag `stc-diagnose-iap-01812cf` was removed after verification. The instance is running and the rule lookup is empty.

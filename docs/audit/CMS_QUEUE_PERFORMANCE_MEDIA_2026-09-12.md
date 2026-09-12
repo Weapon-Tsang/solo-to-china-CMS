@@ -60,3 +60,5 @@ Release `2f71d45ddf80b588a58789aa94c251413fa498b7` was deployed as App 2.0.7 / S
 
 At a stable empty queue, container health p50/p95 was 13.14/33.13 ms and the Source status projection was 1,236.75/2,137.13 ms across 15 calls. During restart recovery, two synchronous coverage rebuilds each occupied roughly 108% CPU for about 122 seconds and one health request exceeded 30 seconds. The e2-small therefore remains a measured bottleneck during this CPU-bound stage. A worker-process change or e2-medium trial needs a separate benchmark; this release does not claim that local request-count improvements removed that production limit.
 
+A scheduled full backup also blocked two 20-second health probes while it ran for 185.1 seconds in the application process. This is recorded as a remaining event-loop isolation issue, not as a successful performance result. The final post-backup health probe returned HTTP 200 and the queue returned to zero.
+
