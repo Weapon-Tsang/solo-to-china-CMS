@@ -186,7 +186,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   const content = repository.listContent();
   assert.equal(content.length, 1);
   assert.equal(repository.listContent({ approvedOnly: true }).length, 1);
-  assert.equal(content[0].draft_status, "wordpress_draft", JSON.stringify(repository.listOperationalExceptions()));
+  assert.equal(content[0].draft_status, "wordpress_draft", JSON.stringify({ exceptions: repository.listOperationalExceptions(),
+    jobs: repository.db.prepare('SELECT type,last_error FROM jobs WHERE last_error IS NOT NULL').all() }));
   assert.equal(content[0].qa_passed, 1);
   assert.equal(content[0].wordpress_post_id, 42);
   assert.equal(wordpress.calls.length, 1);

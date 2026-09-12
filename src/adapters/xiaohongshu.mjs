@@ -138,7 +138,8 @@ function normalizeCompleteness(value, { rawText, rawHtml, assets }) {
   const complete = text.complete && dom.complete && images.complete && videos.complete;
   const requested = String(input.overall || "");
   const overall = complete ? "complete" : requested === "partial_needs_attention" ? requested : "partial_retryable";
-  return { text, dom, images, videos, overall };
+  return { text, dom, images, videos, overall,
+    verificationLevel: value ? (complete ? 'declared_complete' : 'incomplete') : 'legacy_unverified' };
 }
 
 function completenessPart(value, fallback) {
@@ -157,13 +158,13 @@ function mediaCompleteness(value, captured, fallbackMethod) {
   const input = value && typeof value === "object" ? value : {};
   const expected = nonNegativeInteger(input.expected);
   const traversed = input.traversed !== false;
-  const complete = input.complete !== false && traversed && (expected == null || captured >= expected);
+  const complete = input.complete !== false && traversed && (value ? expected != null && captured >= expected : true);
   return {
     expected,
     captured,
     complete,
     traversed,
-    detectionMethod: truncate(input.detectionMethod || fallbackMethod, 120),
+    detectionMethod: truncate(input.detectionMethod || (value ? fallbackMethod : 'legacy_unverified'), 120),
   };
 }
 
@@ -193,7 +194,7 @@ function safeImageDataUrl(value) {
 }
 
 function validSha256(value) { return /^[a-f0-9]{64}$/i.test(String(value || "")) ? String(value).toLowerCase() : ""; }
-function nonNegativeInteger(value) { const parsed = Number(value); return Number.isInteger(parsed) && parsed >= 0 ? parsed : null; }
+function nonNegativeInteger(value) { if (value == null || value === '') return null; const parsed = Number(value); return Number.isInteger(parsed) && parsed >= 0 ? parsed : null; }
 function finiteNumber(value) { const parsed = Number(value); return Number.isFinite(parsed) && parsed >= 0 ? parsed : null; }
 
 function safeDate(value) {

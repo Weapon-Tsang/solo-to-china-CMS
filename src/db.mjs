@@ -2,13 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 59;
+export const SCHEMA_VERSION = 65;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = new DatabaseSync(filename);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-  migrate(db);
+  try { migrate(db); } catch (error) { db.close(); throw error; }
   return db;
 }
 
@@ -80,6 +80,95 @@ function migrate(db) {
   if (current < 57) migrationFiftySeven(db);
   if (current < 58) migrationFiftyEight(db);
   if (current < 59) migrationFiftyNine(db);
+  if (current < 60) migrationSixty(db);
+  if (current < 61) migrationSixtyOne(db);
+  if (current < 62) migrationSixtyTwo(db);
+  if (current < 63) migrationSixtyThree(db);
+  if (current < 64) migrationSixtyFour(db);
+  if (current < 65) migrationSixtyFive(db);
+}
+
+function migrationSixtyFive(db) {
+  transaction(db,()=>db.exec(`
+    CREATE TABLE pipeline_step_receipts (
+      request_hash TEXT PRIMARY KEY, stage TEXT NOT NULL, entity_id TEXT NOT NULL,
+      step_key TEXT NOT NULL, input_hash TEXT NOT NULL, config_hash TEXT NOT NULL,
+      output_hash TEXT NOT NULL, result_json TEXT NOT NULL, job_id TEXT NOT NULL,
+      lease_generation INTEGER NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_pipeline_step_scope ON pipeline_step_receipts(stage,entity_id,created_at);
+    INSERT INTO schema_migrations(version,applied_at) VALUES (65,datetime('now'));
+  `));
+}
+
+function migrationSixtyFour(db) {
+  // SQLite cannot remove an inline UNIQUE constraint with ALTER TABLE. Copy
+  // each table in one transaction, keeping IDs and dependent foreign keys.
+  const rebuild = (name, constraint) => {
+    const definition=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name).sql;
+    const indexes=db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL").all(name);
+    const next=definition.replace(/^CREATE TABLE\s+(?:"[^"]+"|\w+)/i,`CREATE TABLE ${name}_v64`).replace(constraint.before,constraint.after);
+    if(next===definition||!next.includes(constraint.after))throw new Error(`Unexpected ${name} schema during migration 64`);
+    const columns=db.prepare(`PRAGMA table_info(${name})`).all().map(column=>`"${column.name}"`).join(',');
+    db.exec(`${next}; INSERT INTO ${name}_v64(${columns}) SELECT ${columns} FROM ${name}; DROP TABLE ${name}; ALTER TABLE ${name}_v64 RENAME TO ${name};`);
+    for(const index of indexes)db.exec(index.sql);
+  };
+  db.exec('PRAGMA foreign_keys=OFF');
+  try {
+    transaction(db,()=>{
+      db.exec(`ALTER TABLE source_assets ADD COLUMN capture_version INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE source_files ADD COLUMN capture_version INTEGER NOT NULL DEFAULT 1;
+        UPDATE source_assets SET capture_version=(SELECT capture_version FROM sources WHERE id=source_assets.source_id);
+        UPDATE source_files SET capture_version=(SELECT capture_version FROM sources WHERE id=source_files.source_id);`);
+      rebuild('source_assets',{before:/UNIQUE\(source_id,\s*remote_url\)/,after:'UNIQUE(source_id, capture_version, remote_url)'});
+      rebuild('source_files',{before:/UNIQUE\(source_id,\s*storage_path\)/,after:'UNIQUE(source_id, capture_version, storage_path)'});
+      rebuild('source_segments',{before:/UNIQUE\(source_id,\s*sequence\)/,after:'UNIQUE(source_id, capture_version, sequence)'});
+      db.exec(`CREATE INDEX idx_source_assets_version ON source_assets(source_id,capture_version,position);
+        CREATE INDEX idx_source_files_version ON source_files(source_id,capture_version);
+        CREATE INDEX idx_source_segments_version ON source_segments(source_id,capture_version,sequence);
+        CREATE VIEW current_source_assets AS SELECT a.* FROM source_assets a JOIN sources s ON s.id=a.source_id AND s.capture_version=a.capture_version;
+        CREATE VIEW current_source_files AS SELECT a.* FROM source_files a JOIN sources s ON s.id=a.source_id AND s.capture_version=a.capture_version;
+        CREATE VIEW current_source_segments AS SELECT a.* FROM source_segments a JOIN sources s ON s.id=a.source_id AND s.capture_version=a.capture_version;
+        CREATE VIEW current_extraction_coverage AS SELECT c.* FROM extraction_coverage c JOIN current_source_segments s ON s.id=c.segment_id;
+        CREATE VIEW current_evidence_spans AS SELECT e.* FROM evidence_spans e JOIN current_source_segments s ON s.id=e.segment_id;`);
+      if(db.prepare('PRAGMA foreign_key_check').all().length)throw new Error('Migration 64 found broken foreign keys');
+      db.exec("INSERT INTO schema_migrations(version,applied_at) VALUES (64,datetime('now'));");
+    });
+  } finally { db.exec('PRAGMA foreign_keys=ON'); }
+}
+
+function migrationSixtyThree(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE narrative_plans ADD COLUMN evidence_selections_json TEXT NOT NULL DEFAULT '[]';
+    INSERT INTO schema_migrations(version,applied_at) VALUES (63,datetime('now'));
+  `));
+}
+
+function migrationSixtyTwo(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE writing_packets ADD COLUMN context_json TEXT NOT NULL DEFAULT '{}';
+    INSERT INTO schema_migrations(version,applied_at) VALUES (62,datetime('now'));
+  `));
+}
+
+function migrationSixty(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE jobs ADD COLUMN dirty_revision INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE jobs ADD COLUMN claimed_revision INTEGER NOT NULL DEFAULT 0;
+    INSERT INTO schema_migrations(version,applied_at) VALUES (60,datetime('now'));
+  `));
+}
+
+function migrationSixtyOne(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE production_attempt_archives (
+      id TEXT PRIMARY KEY, opportunity_id TEXT NOT NULL, failing_job_id TEXT NOT NULL,
+      failing_stage TEXT NOT NULL, snapshot_json TEXT NOT NULL, failure_code TEXT NOT NULL,
+      created_at TEXT NOT NULL, UNIQUE(opportunity_id,failing_job_id)
+    );
+    CREATE INDEX idx_attempt_archive_opportunity ON production_attempt_archives(opportunity_id,created_at);
+    INSERT INTO schema_migrations(version,applied_at) VALUES (61,datetime('now'));
+  `));
 }
 
 function migrationFiftyNine(db) {

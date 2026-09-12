@@ -112,6 +112,9 @@ const NARRATIVE_SCHEMA = objectSchema(
       experience_block_id: { type: "string" }, section_id: { type: "string" }, purpose: { type: "string" },
     }) },
     supporting_fact_keys: { type: "array", maxItems: 48, items: { type: "string" } },
+    evidence_selections: { type:'array',maxItems:96,items:objectSchema(['claim_key','claim_id','source_id','role'],{
+      claim_key:{type:'string'},claim_id:{type:'string'},source_id:{type:'string'},role:{type:'string',enum:['current','historical','conditional']},
+    }) },
     conditional_branches: { type: "array", maxItems: 24, items: { type: "string" } },
     tradeoffs: { type: "array", maxItems: 24, items: { type: "string" } },
     exclusions: { type: "array", maxItems: 24, items: { type: "string" } },
@@ -313,7 +316,8 @@ export class ContentEngine {
   }
 
   async draft(contentPackage, revisionFeedback = null, options = {}) {
-    const policy = contentPackage.content_policy || {};
+    const context = contentPackage.writing_packet?.context;
+    const policy = (context?.version === 2 ? context.content_policy : contentPackage.content_policy) || {};
     const result = await this.respond({
       name: "article_draft_v2",
       schema: DRAFT_SCHEMA,
@@ -398,6 +402,25 @@ export class ContentEngine {
     return this.client.completeJson({ name, schema, instructions, content: input, signal: options.signal || null,
       telemetryContext: options.telemetryContext || null });
   }
+
+  artifactContract(stage) {
+    const contracts = {
+      analyze_intake: ['content_intake_analysis', INTAKE_SCHEMA, intakePrompt(this.contentStrategy.version)],
+      analyze_source_diagnostic: ['content_intake_analysis', INTAKE_SCHEMA, intakePrompt(this.contentStrategy.version)],
+      extract_source_experience: ['experience_extraction', EXPERIENCE_SCHEMA, EXPERIENCE_PROMPT],
+      assemble_editorial: ['editorial_assembly', ASSEMBLY_SCHEMA, ASSEMBLY_PROMPT],
+      plan_content: ['content_brief', BRIEF_SCHEMA, briefPrompt(this.contentStrategy.version)],
+      plan_narrative: ['narrative_plan', NARRATIVE_SCHEMA, NARRATIVE_PROMPT],
+      generate_draft: ['article_draft_v2', DRAFT_SCHEMA, draftPrompt.toString()],
+      revise_draft: ['bounded_draft_repair', DRAFT_REPAIR_SCHEMA, DRAFT_REPAIR_PROMPT],
+      review_draft: ['quality_review_v2', REVIEW_SCHEMA, REVIEW_PROMPT],
+      resolve_entities: ['destination_entity_resolution', ENTITY_RESOLUTION_SCHEMA, ENTITY_RESOLUTION_PROMPT],
+      compose_frontend_page_plan: ['frontend_page_plan', PAGE_PLAN_SCHEMA, pagePlanPrompt.toString()],
+      compose_frontend_page: ['frontend_page_payload', null, pagePayloadPrompt.toString()],
+    };
+    const [name, schema, prompt] = contracts[stage] || [stage, null, 'deterministic-v2'];
+    return { name, schema, prompt };
+  }
 }
 
 export function applyBoundedDraftRepair(draft, patch, issues = [], { validFactKeys = [] } = {}) {
@@ -471,24 +494,28 @@ function markdownH2Sections(body) {
 
 function draftInputDto(contentPackage) {
   const selectedKeys = new Set(contentPackage.writing_packet?.selected_fact_keys || contentPackage.brief?.evidence_ledger || []);
+  const frozenFacts = contentPackage.writing_packet?.evidence_ledger?.map(entry => entry.fact_snapshot);
+  const context = contentPackage.writing_packet?.context;
+  const hasFrozenPacket = context?.version === 2 || Boolean(frozenFacts?.length && frozenFacts.every(Boolean));
+  if (hasFrozenPacket && (!frozenFacts || !frozenFacts.every(Boolean))) throw new Error('WRITING_PACKET_INVALID: selected evidence snapshot is missing.');
   return {
     brief: contentPackage.brief,
     writing_packet: contentPackage.writing_packet ? {
       text: contentPackage.writing_packet.packet_text,
       evidence_ledger: contentPackage.writing_packet.evidence_ledger,
     } : null,
-    narrative_plan: contentPackage.narrative_plan || null,
+    narrative_plan: context?.version === 2 ? context.narrative_plan : contentPackage.narrative_plan || null,
     production_mode: contentPackage.production_mode || "multi_source_synthesis",
-    source_reference: contentPackage.source_reference || null,
-    content_policy: contentPackage.content_policy,
-    evidence_ledger_facts: (contentPackage.facts || []).filter((fact) => !selectedKeys.size || selectedKeys.has(fact.normalized_key)).map((fact) => ({
+    source_reference: hasFrozenPacket ? null : contentPackage.source_reference || null,
+    content_policy: context?.version === 2 ? context.content_policy : contentPackage.content_policy,
+    evidence_ledger_facts: (hasFrozenPacket ? frozenFacts : contentPackage.facts || []).filter((fact) => !selectedKeys.size || selectedKeys.has(fact.normalized_key)).map((fact) => ({
       normalized_key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate,
       preferred_value: fact.preferred_value, consensus_status: fact.consensus_status,
       freshness_state: fact.freshness_state, verification_priority: fact.verification_priority,
       latest_evidence_at: fact.latest_evidence_at, consensus_method: fact.consensus_method,
       consensus_confidence: fact.consensus_confidence, consensus_detail: fact.consensus_detail,
       validity_state: fact.validity_state,
-      evidence: (fact.evidence || []).map((item) => ({ source_id: item.source_id, value: item.value,
+      evidence: (fact.evidence || []).map((item) => ({ claim_id:item.claim_id || item.id, source_id: item.source_id, value: item.value, qualifiers:item.qualifiers,
         quote: item.quote, canonical_url: item.canonical_url, source_title: item.source_title,
         published_at: item.published_at, observed_at: item.observed_at, captured_at: item.captured_at,
         verified_at: item.verified_at, valid_from: item.valid_from, valid_to: item.valid_to,
@@ -497,9 +524,9 @@ function draftInputDto(contentPackage) {
         publication_usability: item.publication_usability, evidence_coverage: item.evidence_coverage,
         coverage_limitations: item.coverage_limitations || [] })),
     })),
-    reader_sources: contentPackage.reader_sources || [],
-    authorized_source_assets: contentPackage.authorized_source_assets || [],
-    internal_link_inventory: contentPackage.internal_link_inventory || [],
+    reader_sources: (context?.version === 2 ? context.reader_sources : contentPackage.reader_sources) || [],
+    authorized_source_assets: (context?.version === 2 ? context.authorized_source_assets : contentPackage.authorized_source_assets) || [],
+    internal_link_inventory: (context?.version === 2 ? context.internal_link_inventory : contentPackage.internal_link_inventory) || [],
     frontend_page_plan: contentPackage.frontend_page_plan?.plan || null,
   };
 }

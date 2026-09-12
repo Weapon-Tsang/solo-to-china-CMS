@@ -128,6 +128,7 @@ export function loadConfig(env = process.env) {
       chunkBytes: integer(env.CAPTURE_MEDIA_CHUNK_BYTES, 4 * 1024 * 1024),
     },
     extraction: {
+      sourceComplexityRouting: boolean(env.SOURCE_COMPLEXITY_ROUTING, false),
       concurrencyMode: choice(env.AI_CONCURRENCY_MODE || env.EXTRACT_CONCURRENCY_MODE, ["auto", "fixed"], "auto"),
       concurrencyInitial: integer(env.AI_CONCURRENCY_INITIAL || env.EXTRACT_CONCURRENCY_INITIAL, 2),
       concurrencyMax: integer(env.AI_CONCURRENCY_MAX || env.EXTRACT_CONCURRENCY_MAX, 4),

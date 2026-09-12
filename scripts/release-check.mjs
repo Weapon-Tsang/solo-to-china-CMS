@@ -495,8 +495,12 @@ class ReleaseReport {
 
   async command(section, name, command, args, milliseconds) {
     const result = await runProcess(command, args, milliseconds);
+    const logRoot = path.join(root, 'output', 'release-check-logs');
+    fs.mkdirSync(logRoot, {recursive:true});
+    const logFile = path.join(logRoot, `${Date.now()}-${name.replace(/[^a-z0-9]+/gi,'-')}.log`);
+    fs.writeFileSync(logFile, result.output, 'utf8');
     if (result.ok) { this.pass(section, name, `${result.durationMs} ms`); return result; }
-    this.fail(section, name, summarize(result.output));
+    this.fail(section, name, `${summarize(result.output)} Full output: ${path.relative(root,logFile)}`);
     return result;
   }
 
@@ -538,7 +542,7 @@ class ReleaseReport {
 
 function summarize(value) {
   const text = String(value || "").trim().replace(/\s+/g, " ");
-  return text.length > 700 ? `${text.slice(0, 697)}...` : text || "Process failed without output.";
+  return text.length > 700 ? `...${text.slice(-697)}` : text || "Process failed without output.";
 }
 
 report = new ReleaseReport(packageJson.version);

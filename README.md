@@ -23,7 +23,7 @@ Human Favorite Selection
   → Independent prose QA + independent media/delivery checks
   → Commercial Overlay (optional, isolated, deterministic)
   → WordPress draft-only delivery (optional)
-  → Failure Lesson + recommended_again when bounded production fails
+  → Failure Lesson + archived attempt + bounded repair (reapproval only for invalid scope)
 ```
 
 - 单进程低运维部署：Node 24、内置 SQLite，React 前端在启动前构建为静态资源并由同一服务托管。
@@ -144,9 +144,9 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 3.0
+## Content Production Strategy 3.1
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.0.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.0.md), and summarized by the Chinese [evolution log](docs/content-strategy/CHANGELOG.md). Captured sources create Claims and grounded Experience Blocks before Knowledge and opportunities. A concrete opportunity is approved independently, then receives a bounded Editorial Assembly, Narrative Plan and human-readable Writing Packet. Terminal editorial failures learn from the attempt, remove only transient production assets and require reapproval. The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.1.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.1.md), and summarized by the Chinese [evolution log](docs/content-strategy/CHANGELOG.md). Captured sources create Claims and grounded Experience Blocks before Knowledge and opportunities. A concrete opportunity is approved independently, then receives a bounded Editorial Assembly, Narrative Plan and human-readable Writing Packet. Terminal editorial failures archive the attempt and retain approval and production artifacts for bounded repair. Only explicit approved-scope invalidation requires reapproval. The live operating path is:
 
 ```text
 Capture + durable originals → Claims → Experience → Knowledge / source diagnostic

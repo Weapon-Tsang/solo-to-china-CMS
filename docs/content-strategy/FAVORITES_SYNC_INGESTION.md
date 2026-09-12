@@ -1,6 +1,10 @@
 # Favorites Sync intake interpretation
 
-This operational note applies the active Content Production Strategy 3.0 to Xiaohongshu Favorites Sync. It does not create a new strategy version or change the editorial approval gate.
+This operational note applies Content Production Strategy 3.1 to Xiaohongshu Favorites Sync. It does not change the editorial approval gate.
+
+In extension 2.0.6, a raw manifest is accepted before media processing. Acceptance is distinct from complete capture. IndexedDB stores pending binary and task manifests, with a 256 MiB budget and no eviction of unfinished originals. A full DOM snapshot can resume without reopening the note; incomplete DOM must be read again normally. Only missing media chunks are uploaded, and server finalize receipts survive lost responses. Completed captures release their staged bytes. The default 96 MiB buffering budget caps an individual video at 24 MiB (absolute maximum 32 MiB with a larger configured budget), with four media tasks per source; an oversized original is a visible gap, never a success.
+
+Old extensions remain accepted by the v1 media endpoint. Explicit unknown expected counts remain incomplete. Captures without completeness fields retain a `legacy_unverified` grade. Upload sessions expire after 30 days; completed receipts and original files remain retained. Temporary cleanup is explicit and previews statistics; it never removes receipt-bearing uploads or original storage.
 
 ## Selection and authorization
 

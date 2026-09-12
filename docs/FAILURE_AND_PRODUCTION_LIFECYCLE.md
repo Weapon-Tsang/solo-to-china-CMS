@@ -8,17 +8,17 @@ Actionable opportunities begin as `recommended` (or return as `recommended_again
 
 ## Terminal production failure
 
-A bounded, non-system production failure creates one `failure_lessons` record containing the normalized reason, failing stage, prior inputs and remediation rule. The same transaction:
+A bounded, non-system production failure under Strategy 3.1 creates a `failure_lessons` record and an idempotent `production_attempt_archives` snapshot containing the failing stage, inputs, Assembly, Brief, Narrative, Packet, Draft/revisions, reviews, visuals, page and WordPress association. It preserves approval and all production artifacts for the existing bounded stage repair workflow.
 
-- cancels other active jobs for that production attempt;
-- deletes transient Brief, Draft, Narrative, Writing Packet, page, visual and delivery descendants through foreign-key cascades;
-- preserves Sources, capture versions, media originals, Segments, Evidence Spans, Claims, Knowledge, Experience, editorial lessons and Golden Articles;
-- records the removal/preservation result in `production_rollbacks`;
-- resets the candidate and returns the opportunity to `recommended_again` with its previous failure visible.
+- Expression or local ledger problems remain `qa_failed`; other recoverable content-stage failures remain `exception` with a specific repair stage.
+- Sources, capture versions, original media, Claims, Knowledge, Experience, production artifacts, feedback and Golden Article associations remain available.
+- Only explicit `APPROVED_SCOPE_INVALID` or `EVIDENCE_SCOPE_INVALID` cancels the remaining attempt jobs and resets the candidate/opportunity to `recommended_again`. Cancellation retains job rows and artifact history, and the preservation result is recorded in `production_rollbacks`.
 
-The editor must approve the opportunity again. A generic retry endpoint cannot bypass this gate.
+The editor must approve a changed scope again. Ordinary expression, media, page, network or provider failures do not request a second approval of the same scope. Assembly receives only active, retry-safe Failure Lessons for the current opportunity; unrelated automatic failure lessons are excluded.
 
-Database corruption/unavailability, credentials, provider quota, network and lease faults remain operational exceptions. A source-media fault marks the Draft `media_pending` and queues repair without rewriting valid prose. Ordinary learned content failures do not remain in the system exception inbox.
+Database corruption/unavailability, credentials, provider quota, network and lease faults remain operational exceptions. A source-media fault marks the Draft `media_pending` and queues repair without rewriting valid prose. Automatic repair budgets remain enforced; exhausting a budget keeps a reviewable artifact and actionable diagnosis.
+
+Entity-resolution pages and targeted extraction/coverage calls retain verified `pipeline_step_receipts` across worker replacement. Input/configuration changes and damaged output hashes prevent reuse; lost ownership cannot write a receipt. Targeted extraction stays private until coverage succeeds, then extraction, audit, downstream work and job completion commit together. Page/commercial/publish saves and WordPress acknowledgement also use guarded local transactions. External delivery still follows the existing idempotency/receipt protocol; a provider call cannot participate in the SQLite transaction.
 
 ## Published content impact
 

@@ -5,8 +5,8 @@ import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
 test("multilingual place aliases retain source claims while merging into one canonical knowledge entity", (t) => {
   const { repository } = repositoryFixture(t);
-  const chinese = saveSource(repository, "zhongsi-cn", "中四路", "Walk this street after dinner.");
-  const english = saveSource(repository, "zhongshan-en", "Zhongshan 4th Road", "Walk this street after dinner.");
+  const chinese = saveSource(repository, "zhongsi-cn", "中四路", "中四路 (Zhongshan 4th Road). Walk this street after dinner.");
+  const english = saveSource(repository, "zhongshan-en", "Zhongshan 4th Road", "中四路 (Zhongshan 4th Road). Walk this street after dinner.");
   const claims = repository.db.prepare("SELECT id FROM claims ORDER BY source_id").all();
 
   repository.applyEntityResolution("chongqing", {
@@ -140,7 +140,7 @@ function saveSource(repository, externalId, subject, value) {
   const capture = repository.saveCapture(normalizeXiaohongshuCapture({
     url: `https://www.xiaohongshu.com/explore/${externalId}`,
     title: subject,
-    text: `A manually selected Chongqing travel note about ${subject}.`,
+    text: `A manually selected Chongqing travel note about ${subject}. ${value}`,
     images: [],
   }));
   repository.saveExtraction(capture.id, {

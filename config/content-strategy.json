@@ -1,13 +1,26 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "3.0",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.0.md",
+  "current_version": "3.1",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.1.md",
   "status": "active",
   "history": [
     {
+      "version": "3.1",
+      "effective_date": "2026-09-12",
+      "status": "active",
+      "summary": "可靠采集与证据快照、可恢复生产、分离实时调度及低开销状态读取。",
+      "changes": [
+        "媒体类型与全生命周期超时校验；IndexedDB 断点和幂等媒体回执。",
+        "Writing Packet 冻结证据与叙事上下文，页面按内容节点校验采用证据。",
+        "普通内容失败归档并保留批准及产物；只有明确范围失效才重新推荐。",
+        "持久化知识脏版本合并、真实阶段依赖缓存及主要阶段原子提交。",
+        "实时与历史 Batch 路由分离，视觉与文本反压隔离；复杂度分流默认关闭。"
+      ]
+    },
+    {
       "version": "3.0",
       "effective_date": "2026-09-11",
-      "status": "active",
+      "status": "superseded",
       "summary": "建立原始媒体耐久化、Experience 语义层、Writing Packet 写作输入、机会生命周期与失败学习闭环，并将后台收敛为六个业务入口。",
       "changes": [
         "小红书图片和视频原件采用校验过的分块上传与持久化状态机；原件未落盘时不允许开始来源抽取，并支持增量、修复与全量三种同步。",

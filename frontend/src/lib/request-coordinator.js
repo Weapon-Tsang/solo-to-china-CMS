@@ -57,3 +57,21 @@ export function classifyRefreshOutcome(overviewResult, viewResult) {
   if (overviewOk || viewOk) return { state: "partial", message: `部分刷新成功：${errors.join("；") || "另一个请求未完成"}` };
   return { state: "failed", message: errors.join("；") || "刷新失败" };
 }
+export function startStatusPolling({ document, active, refresh, onError = () => {}, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  let timer, stopped = false, refreshing = false;
+  const schedule = () => {
+    clearTimer(timer);
+    if (!stopped) timer = setTimer(tick, document.hidden ? 120_000 : active ? 7_500 : 60_000);
+  };
+  const tick = async () => {
+    clearTimer(timer);
+    if (stopped || refreshing) return;
+    refreshing = true;
+    try { await refresh(); } catch (error) { onError(error); }
+    finally { refreshing = false; schedule(); }
+  };
+  const visibilityChanged = () => { if (!document.hidden) void tick(); else schedule(); };
+  document.addEventListener('visibilitychange', visibilityChanged);
+  schedule();
+  return () => { stopped = true; clearTimer(timer); document.removeEventListener('visibilitychange', visibilityChanged); };
+}

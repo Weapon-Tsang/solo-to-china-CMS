@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, uploadChunk } from "@/lib/api";
-import { classifyRefreshOutcome, createInFlightRequestCoordinator, createLatestRequestCoordinator } from "@/lib/request-coordinator";
+import { classifyRefreshOutcome, createInFlightRequestCoordinator, createLatestRequestCoordinator, startStatusPolling } from "@/lib/request-coordinator";
 import { cn, friendlyError, label } from "@/lib/utils";
 import { ViewRenderer } from "@/views";
 import { ContentRecovery, QualityIssue } from "@/workspaces/content-recovery";
@@ -106,10 +106,8 @@ export default function App() {
 
   useEffect(() => {
     if (!auth?.authenticated || auth.mustChangePassword) return undefined;
-    const interval = setInterval(() => {
-      void loadStatusSummary().catch((caught) => setError(caught.message));
-    }, health?.queueActive > 0 ? 7_500 : 60_000);
-    return () => clearInterval(interval);
+    return startStatusPolling({ document, active: health?.queueActive > 0, refresh: loadStatusSummary,
+      onError: caught => setError(caught.message) });
   }, [auth, health?.queueActive, loadStatusSummary]);
 
   const refresh = useCallback(async (notify = false) => {

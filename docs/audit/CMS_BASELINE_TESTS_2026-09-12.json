@@ -1,0 +1,18 @@
+{
+  "revision": "2395fe4ed68f7414d777d0156770af76e858eb1b",
+  "node": "v24.14.0",
+  "scope": "test/**/*.test.mjs",
+  "exitCode": 0,
+  "durationMs": 23695,
+  "summary": [
+    "ℹ tests 437",
+    "ℹ suites 0",
+    "ℹ pass 437",
+    "ℹ fail 0",
+    "ℹ cancelled 0",
+    "ℹ skipped 0",
+    "ℹ todo 0",
+    "ℹ duration_ms 23588.5207"
+  ],
+  "log": "output/reliability-2026-09-12/baseline-current-test-scope.log"
+}

@@ -531,29 +531,35 @@ export function initialConcurrency(settings = {}, hardwareConcurrency = globalTh
 }
 
 export class AsyncSemaphore {
-  constructor(limit = 1) {
+  constructor(limit = 1, { maxBypasses = 0 } = {}) {
     this.limit = Math.max(1, Number(limit) || 1);
     this.active = 0;
     this.waiters = [];
+    this.maxBypasses = maxBypasses;
   }
   setLimit(limit) {
     this.limit = Math.max(1, Number(limit) || 1);
     this.#drain();
   }
-  async acquire(weight = 1) {
+  async acquire(weight = 1, signal) {
+    signal?.throwIfAborted();
     const requested = Math.max(1, Math.min(this.limit, Number(weight) || 1));
     if (!this.waiters.length && this.active + requested <= this.limit) {
       this.active += requested;
       return this.#release(requested);
     }
-    return new Promise((resolve) => {
-      this.waiters.push({ requested, resolve });
+    return new Promise((resolve, reject) => {
+      const waiter = { requested, resolve: (release) => { signal?.removeEventListener("abort", cancel); resolve(release); },
+        reject: error => { signal?.removeEventListener("abort", cancel); reject(error); } };
+      const cancel = () => { this.waiters = this.waiters.filter((item) => item !== waiter); waiter.reject(signal.reason); this.#drain(); };
+      signal?.addEventListener("abort", cancel, { once: true });
+      this.waiters.push(waiter);
       this.#drain();
     });
   }
-  async run(handler, weight = 1) {
-    const release = await this.acquire(weight);
-    try { return await handler(); }
+  async run(handler, weight = 1, signal) {
+    const release = await this.acquire(weight, signal);
+    try { signal?.throwIfAborted(); return await handler(); }
     finally { release(); }
   }
   #release(weight) {
@@ -566,8 +572,18 @@ export class AsyncSemaphore {
     };
   }
   #drain() {
-    while (this.waiters.length && this.active + this.waiters[0].requested <= this.limit) {
-      const waiter = this.waiters.shift();
+    const oversized = this.waiters.filter(waiter => waiter.requested > this.limit);
+    this.waiters = this.waiters.filter(waiter => waiter.requested <= this.limit);
+    for (const waiter of oversized) waiter.reject(Object.assign(new Error('媒体预算已变化，请按新预算重试。'), {code:'MEDIA_MEMORY_BUDGET_CHANGED',retryable:true}));
+    while (this.waiters.length) {
+      let index = 0;
+      if (this.active + this.waiters[0].requested > this.limit) {
+        if ((this.waiters[0].bypasses || 0) >= this.maxBypasses) break;
+        index = this.waiters.findIndex(waiter => this.active + waiter.requested <= this.limit);
+        if (index < 0) break;
+        this.waiters[0].bypasses = (this.waiters[0].bypasses || 0) + 1;
+      }
+      const [waiter] = this.waiters.splice(index, 1);
       this.active += waiter.requested;
       waiter.resolve(this.#release(waiter.requested));
     }

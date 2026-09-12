@@ -42,6 +42,12 @@ export class KimiExtractor {
     return this.config.provider === "vertex" && this.client.batchEnabled;
   }
 
+  artifactContract(stage) {
+    if (stage === 'analyze_source_blueprint') return { name: 'source_blueprint', schema: BLUEPRINT_SCHEMA, prompt: BLUEPRINT_PROMPT };
+    return { name: stage === 'audit_segment_coverage' ? 'segment_claim_coverage_audit' : 'source_research_extraction',
+      ...this.batchConfigSnapshot(stage) };
+  }
+
   batchConfigSnapshot(operation = "extract_segment_claims") {
     const coverage = operation === "audit_segment_coverage";
     const snapshot = {

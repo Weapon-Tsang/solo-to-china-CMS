@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.6 - Unreleased
+
+- Normalize image/video contracts before upload; enforce total and idle response deadlines, cancellation and bounded buffering. Save raw capture manifests and resumable media in IndexedDB; fix empty worker spinning during asynchronous storage.
+- Add v2 upload capabilities, missing-chunk status, conflict checks, durable idempotent receipts and verified storage references while preserving v1 requests. Stream server finalization and remote recovery; pin public DNS targets and validate redirect/socket/path boundaries.
+- Freeze selected evidence and writing context, validate facts at explicit content nodes, and preserve historical/conditional comparisons without requiring unselected historical values.
+- Hash semantic stage dependencies and effective prompt/schema configuration; commit major stage outputs and downstream jobs atomically, reconstruct downstream work on cache reuse, and coalesce Knowledge updates with dirty revisions.
+- Archive failed production attempts while retaining approval and expensive artifacts; require new approval only for explicit scope invalidation. Require positive identity evidence before entity merges.
+- Keep interactive extraction/coverage on realtime, isolate visual pressure, add visibility-aware polling and cached summaries. Optional source complexity routing remains disabled pending real quality validation.
+- App/extension 2.0.6, Content Strategy 3.1, migrations 60–65 (including ID-preserving capture table rebuilds). See the dated implementation audit and upgrade guide for measured tests, performance, compatibility and remaining limitations. No production deployment or publication performed.
+
 ## 2.0.5 - Unreleased
 
 - Give Repair, Incremental, and Full Verification distinct Popup progress labels; Repair now presents completed/total progress and counts real in-flight, queued, and retry-wait tasks separately instead of presenting the cumulative repair total as remaining work.

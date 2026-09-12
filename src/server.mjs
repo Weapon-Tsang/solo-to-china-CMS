@@ -32,6 +32,8 @@ import { VERSION } from "./version.mjs";
 import { ChunkedUploadManager } from "./chunked-upload.mjs";
 import { CaptureUploadManager } from "./capture-upload.mjs";
 import { CaptureMediaUploadManager } from "./capture-media-upload.mjs";
+import { createSummaryCache } from './services/summary-cache.mjs';
+import { prepareCaptureMedia } from './source-media-store.mjs';
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -56,6 +58,7 @@ export function createApplication(config = loadConfig()) {
   const repository = new Repository(db, {
     ...config.content, ...config.extraction, contentStrategy: config.contentStrategy,
     sourceUploadsDir: config.manualSources.uploadDir,
+    sourceComplexityRouting: config.extraction.sourceComplexityRouting === true,
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
     affiliateOpportunityThreshold: config.commercial.opportunityThreshold,
   });
@@ -66,12 +69,13 @@ export function createApplication(config = loadConfig()) {
     beforeRequest: aiRequestGate,
     onModelCall: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)) };
   const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
-  const activeVisuals = { ...config.visuals, ...selectedVisual, beforeRequest: aiRequestGate };
+  const activeVisuals = { ...config.visuals, ...selectedVisual, beforeRequest: createRequestGate(config.extraction.requestSpacingMs) };
   const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
   const manualSources = new ManualSourceIngestor(config.manualSources);
   const chunkedUploads = new ChunkedUploadManager(config.manualSources);
   const captureUploads = new CaptureUploadManager(config.captureUploads);
   const captureMediaUploads = new CaptureMediaUploadManager(config.captureMediaUploads);
+  const dashboardSummaryCache = createSummaryCache();
   const extractor = new KimiExtractor(activeAi);
   const contentEngine = new ContentEngine(activeAi);
   const visuals = new VertexImagen(activeVisuals);
@@ -169,7 +173,7 @@ export function createApplication(config = loadConfig()) {
       if (!captureOnly && isDashboardApi(url.pathname) && !hasBearerToken(request, config.adminToken)) auth.require(request);
 
       if (request.method === "GET" && url.pathname === "/api/health") {
-        const telemetry = repository.jobTelemetry(config.telemetry.windowHours);
+        const queueActive = Number(db.prepare("SELECT COUNT(*) n FROM jobs WHERE status IN ('queued','running')").get().n);
         return sendJson(response, 200, {
           ok: true,
           version: VERSION,
@@ -188,7 +192,8 @@ export function createApplication(config = loadConfig()) {
           searchConsoleConfigured: searchConsole.enabled,
           maintenanceEnabled: config.maintenance.enabled,
           notificationsConfigured: notifier.enabled,
-          queueActive: telemetry.active,
+          queueActive,
+          captureMediaProtocol: { version: 2, resume: true, uploadCapability: true, maxBytes: captureMediaUploads.maxBytes },
         });
       }
       if (request.method === "GET" && url.pathname.startsWith("/media/")) {
@@ -334,18 +339,23 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "POST" && url.pathname === "/api/capture-media-uploads") {
         authorizeCapture(request, config.captureToken);
-        return sendJson(response, 201, captureMediaUploads.create(await readJson(request, 20_000)));
+        return sendJson(response, 201, await captureMediaUploads.create(await readJson(request, 20_000)));
       }
       const captureMediaChunkMatch = url.pathname.match(/^\/api\/capture-media-uploads\/([^/]+)\/chunks\/(\d+)$/);
       if (request.method === "PUT" && captureMediaChunkMatch) {
         authorizeCapture(request, config.captureToken);
         const bytes = await readBytes(request, config.captureMediaUploads.chunkBytes + 1024);
-        return sendJson(response, 200, captureMediaUploads.writeChunk(captureMediaChunkMatch[1], Number(captureMediaChunkMatch[2]), bytes));
+        return sendJson(response, 200, await captureMediaUploads.writeChunk(captureMediaChunkMatch[1], Number(captureMediaChunkMatch[2]), bytes, request.headers['x-upload-token']));
       }
       const captureMediaCompleteMatch = url.pathname.match(/^\/api\/capture-media-uploads\/([^/]+)\/complete$/);
       if (request.method === "POST" && captureMediaCompleteMatch) {
         authorizeCapture(request, config.captureToken);
-        return sendJson(response, 200, captureMediaUploads.complete(captureMediaCompleteMatch[1]));
+        return sendJson(response, 200, await captureMediaUploads.complete(captureMediaCompleteMatch[1], request.headers['x-upload-token']));
+      }
+      const mediaStatusMatch = url.pathname.match(/^\/api\/capture-media-uploads\/([^/]+)$/);
+      if (request.method === 'GET' && mediaStatusMatch) {
+        authorizeCapture(request, config.captureToken);
+        return sendJson(response, 200, await captureMediaUploads.status(mediaStatusMatch[1], request.headers['x-upload-token']));
       }
       if (request.method === "POST" && url.pathname === "/api/favorites-sync-runs") {
         authorizeCapture(request, config.captureToken);
@@ -357,7 +367,7 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "POST" && url.pathname === "/api/captures") {
         authorizeCapture(request, config.captureToken);
-        const capture = normalizeXiaohongshuCapture(await readJson(request, 4_000_000));
+        const capture = await prepareCaptureMedia(normalizeXiaohongshuCapture(await readJson(request, 4_000_000)), config.manualSources.uploadDir);
         const saved = repository.saveCapture(capture);
         void pipeline.runOne();
         return sendJson(response, saved.duplicate ? 200 : 202, saved);
@@ -378,7 +388,7 @@ export function createApplication(config = loadConfig()) {
         await readJson(request, 20_000);
         const assembled = captureUploads.complete(captureCompleteMatch[1]);
         try {
-          const capture = normalizeXiaohongshuCapture(assembled.payload);
+          const capture = await prepareCaptureMedia(normalizeXiaohongshuCapture(assembled.payload), config.manualSources.uploadDir);
           const saved = repository.saveCapture(capture);
           void pipeline.runOne();
           return sendJson(response, saved.duplicate ? 200 : 202, saved);
@@ -435,7 +445,7 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, dashboard);
       }
       if (request.method === "GET" && url.pathname === "/api/dashboard/summary") {
-        const dashboard = repository.dashboardSummary();
+        const dashboard = dashboardSummaryCache.read(() => repository.dashboardSummary());
         const contractStatus = frontendContracts.diagnostics().status;
         dashboard.actionCounts.settings = (extractor.enabled ? 0 : 1)
           + (["major_mismatch", "invalid"].includes(contractStatus) ? 1 : 0);
@@ -467,6 +477,16 @@ export function createApplication(config = loadConfig()) {
         const asset = repository.getSourceAssetPreview(decodeURIComponent(sourceAssetPreviewMatch[1]));
         if (!asset) return sendJson(response, 404, { error: "没有找到这张来源图片。" });
         return serveSourceAssetPreview(asset, response, config.manualSources.uploadDir);
+      }
+      const sourceVersionMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/versions\/(\d+)$/);
+      if (request.method === 'GET' && sourceVersionMatch) {
+        const version=repository.getSourceCaptureVersion(decodeURIComponent(sourceVersionMatch[1]),Number(sourceVersionMatch[2]));
+        if(!version)return sendJson(response,404,{error:'Source capture version not found.'});
+        const {raw_payload_json,assets_json,assetSnapshots,...publicVersion}=version;
+        return sendJson(response,200,{...publicVersion,
+          assets:version.assets.map(({local_path,ai_derivative_data_url,...asset})=>({...asset,previewUrl:`/api/source-assets/${encodeURIComponent(asset.id)}/preview`})),
+          files:version.files.map(({storage_path,...file})=>file),
+          snapshotAssetCount:assetSnapshots.length});
       }
       const sourceMatch = url.pathname.match(/^\/api\/sources\/([^/]+)$/);
       if (request.method === "GET" && sourceMatch) {
@@ -1004,6 +1024,8 @@ export function createApplication(config = loadConfig()) {
         error: error.message || "Unexpected server error.",
         ...(error?.code ? { code: error.code, details: error.details || null } : {}),
       });
+    } finally {
+      if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) dashboardSummaryCache.invalidate();
     }
   });
   // cloudflared keeps a small pool of HTTP/1.1 connections to this private
@@ -1108,6 +1130,7 @@ function isCaptureHost(request, captureHost) {
 
 function isCaptureRoute(method, pathname) {
   return (method === "GET" && ["/api/health", "/api/ready"].includes(pathname))
+    || (method === 'GET' && /^\/api\/capture-media-uploads\/[^/]+$/.test(pathname))
     || (method === "POST" && ["/api/captures", "/api/captures/identity-check", "/api/capture-uploads", "/api/capture-media-uploads", "/api/favorites-sync-runs"].includes(pathname))
     || (method === "PUT" && /^\/api\/(?:capture-uploads|capture-media-uploads)\/[^/]+\/chunks\/\d+$/.test(pathname))
     || (method === "POST" && /^\/api\/(?:capture-uploads|capture-media-uploads)\/[^/]+\/complete$/.test(pathname))
@@ -1133,7 +1156,7 @@ function setCors(request, response) {
     response.setHeader("Access-Control-Allow-Origin", origin);
     response.setHeader("Vary", "Origin");
   }
-  response.setHeader("Access-Control-Allow-Headers", "authorization, content-type, x-request-id");
+  response.setHeader("Access-Control-Allow-Headers", "authorization, content-type, x-request-id, x-upload-token");
   response.setHeader("Access-Control-Expose-Headers", "x-request-id");
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
 }

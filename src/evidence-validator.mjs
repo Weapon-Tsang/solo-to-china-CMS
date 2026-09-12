@@ -47,14 +47,13 @@ export function validatePageEvidence(page, contentPackage) {
     if (!traces.length || JSON.stringify(traceSources) !== JSON.stringify([...(entry.sourceIds || [])].sort())) {
       errors.push({ code: "CLAIM_SOURCE_RELATION_INVALID", path: `$.blocks[${index}]` });
     }
-    const sectionIds = new Set(entry.sourceSectionIds || []);
-    const sectionBlocks = sectionIds.size ? mappedBlocks.filter((item) => item.entry
-      && (item.entry.sourceSectionIds || []).some((sectionId) => sectionIds.has(sectionId))) : [];
-    const evidenceText = sectionBlocks.length ? sectionBlocks.map((item) => item.block.text).join(" ") : block.text;
-    const evidenceLinks = sectionBlocks.length ? sectionBlocks.flatMap((item) => item.block.links) : block.links;
+    const nodeBlocks = mappedBlocks.filter((item) => item.entry?.contentNodeId === entry.contentNodeId);
+    const evidenceText = nodeBlocks.map((item) => item.block.text).join(" ");
+    const evidenceLinks = nodeBlocks.flatMap((item) => item.block.links);
     let relevant = false;
     for (const key of entry.claimKeys) {
-      const fact = facts.get(key);
+      const frozenFacts = entry.evidenceSnapshots || contentPackage?.writing_packet?.evidence_ledger?.map(item => item.fact_snapshot) || [];
+      const fact = frozenFacts.find(item => item?.normalized_key === key) || facts.get(key);
       if (!fact) {
         errors.push({ code: "UNKNOWN_BLOCK_CLAIM", path: `$.blocks[${index}]`, claimKey: key });
         continue;
@@ -63,11 +62,33 @@ export function validatePageEvidence(page, contentPackage) {
       if (traces.filter((trace) => trace.claimKey === key).some((trace) => !validSources.has(trace.sourceId))) {
         errors.push({ code: "FORGED_SOURCE_REFERENCE", path: `$.blocks[${index}]`, claimKey: key });
       }
+      const keyTraces = traces.filter((trace) => trace.claimKey === key);
+      const identified = (fact.evidence || []).filter((item) => item.claim_id || item.id);
+      for (const trace of keyTraces) {
+        if (identified.length && !identified.some((item) => (item.claim_id || item.id) === trace.claimId && item.source_id === trace.sourceId)) {
+          errors.push({ code: "FORGED_CLAIM_REFERENCE", path: `$.blocks[${index}]`, claimKey: key, contentNodeId: entry.contentNodeId,
+            message: "内容节点引用了不属于所选证据的陈述。" });
+        }
+      }
+      const selected = selectedFactEvidence(fact, keyTraces);
       const anchors = factAnchors(fact);
       if (anchors.some((anchor) => containsPhrase(evidenceText, anchor))) relevant = true;
-      for (const token of protectedFactTokens(fact)) {
+      for (const token of protectedFactTokens(fact, selected)) {
         if (!containsPhrase(evidenceText, token) && !evidenceLinks.includes(token)) {
-          errors.push({ code: "EVIDENCE_VALUE_MISMATCH", path: `$.blocks[${index}]`, claimKey: key, expected: token });
+          errors.push({ code: "EVIDENCE_VALUE_MISMATCH", path: `$.blocks[${index}]`, claimKey: key, expected: token,
+            contentNodeId: entry.contentNodeId, message: `此内容节点未保留采用证据中的“${token}”，请只修复该节点。` });
+        }
+      }
+      // Associate conditional quantities with their own clause. Merely having
+      // both numbers and both audiences somewhere in a block is insufficient.
+      if (selected.length > 1) for (const evidence of selected) {
+        const condition = (evidence.qualifiers || []).map(normalize).find((item) => /^(adult|student|child|senior|resident)$|\b(?:19|20)\d{2}\b/.test(item));
+        if (!condition) continue;
+        const clauses = evidenceText.split(/[;；。]|\.(?:\s|$)/u).filter((clause) => containsPhrase(clause, condition));
+        const quantities = protectedFactTokens({ preferred_value: evidence.value }, []);
+        if (!clauses.some((clause) => quantities.every((token) => containsPhrase(clause, token)))) {
+          errors.push({ code: "EVIDENCE_CONDITION_MISMATCH", path: `$.blocks[${index}]`, claimKey: key,
+            contentNodeId: entry.contentNodeId, message: "数值与适用人群或时间未在同一陈述中对应。" });
         }
       }
     }
@@ -96,8 +117,24 @@ function factAnchors(fact) {
   return [...new Set(values)];
 }
 
-export function protectedFactTokens(fact) {
-  const fields = [fact.preferred_value, ...(fact.evidence || []).flatMap((item) => [item.value, ...(item.qualifiers || [])])]
+export function selectedFactEvidence(fact, traces = []) {
+  const explicit = traces.filter((trace) => ["historical", "conditional", "current"].includes(trace.evidenceRole));
+  if (explicit.length) return (fact.evidence || []).filter((item) => explicit.some((trace) =>
+    trace.claimId === (item.claim_id || item.id) && trace.sourceId === item.source_id));
+  if (fact.selection_frozen) return fact.evidence || [];
+  return (fact.evidence || []).filter((item) => !item.value || normalize(item.value) === normalize(fact.preferred_value));
+}
+
+export function selectedFactSnapshot(fact) {
+  const keys = ['normalized_key','subject','canonical_subject','predicate','entity_key','entity_type','entity_location',
+    'preferred_value','structured_value','scope','unit','consensus_status','freshness_state','verification_priority',
+    'latest_evidence_at','consensus_method','consensus_confidence','validity_state','selection_frozen'];
+  return { ...Object.fromEntries(keys.filter(key => fact[key] !== undefined).map(key => [key,fact[key]])),
+    evidence: selectedFactEvidence(fact) };
+}
+
+export function protectedFactTokens(fact, selected = selectedFactEvidence(fact)) {
+  const fields = [selected.some(item => item.value) ? null : fact.preferred_value, ...selected.flatMap((item) => [item.value, ...(item.qualifiers || [])])]
     .map((value) => String(value || "").trim()).filter(Boolean);
   const text = fields.join(" ");
   const numbers = fields.flatMap((field) => field.match(/(?<![\p{L}\p{N}])(?:(?:¥|￥|CNY|RMB)\s*)?\d+(?:[.,:]\d+)?(?:[A-Z](?![\p{L}\p{N}]))?(?:\s*(?:元|%|(?:rmb|cny|am|pm|hours?|minutes?|days?)(?![\p{L}\p{N}])))?/giu) || []);
@@ -110,8 +147,9 @@ export function protectedFactTokens(fact) {
       ...field.matchAll(/\b(?:foreign visitors?|international visitors?|mainland chinese|chinese citizens?|students?|children|adults?|seniors?|residents?)\b/giu)]
       .map((match) => match[0].trim());
   });
+  const ranges = fields.flatMap(field => field.match(/\b\d+(?::\d{2})?\s*(?:-|–|—|to)\s*\d+(?::\d{2})?\b/giu) || []);
   const urls = text.match(/https?:\/\/[^\s)]+/giu) || [];
-  return [...new Set([...numbers, ...dates, ...conditions, ...urls].map((item) => item.trim()))];
+  return [...new Set([...numbers, ...dates, ...conditions, ...ranges, ...urls].map((item) => item.trim()))];
 }
 
 // Kept as descriptive metadata for diagnostics and repair selection. Dynamic
@@ -129,7 +167,18 @@ function containsPhrase(text, phrase) {
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(haystack);
 }
-function normalize(value) { return String(value || "").normalize("NFKC").toLocaleLowerCase("en-US").replace(/[^\p{L}\p{N}:/.%¥￥]+/gu, " ").trim(); }
+function normalize(value) {
+  return String(value || "").normalize("NFKC").toLocaleLowerCase("en-US")
+    .replace(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/gu, (_, h, m, period) => `${String(Number(h) % 12 + (period === 'pm' ? 12 : 0)).padStart(2,'0')}:${m || '00'}`)
+    .replace(/\b(\d):(?=\d{2}\b)/gu, '0$1:')
+    .replace(/\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/gu, (_, n) => `${Number(n) * 60} min`)
+    .replace(/\bminutes?\b/gu, 'min')
+    .replace(/(?<=\d)\s*[-–—]\s*(?=\d)/gu, ' to ')
+    .replace(/(?:cny|rmb|¥|￥)\s*(\d+(?:\.\d+)?)/gu, '$1 cny')
+    .replace(/(\d+(?:\.\d+)?)\s*(?:rmb|元)/gu, '$1 cny')
+    .replace(/\b(adult|student|senior|resident)s\b/gu, '$1').replace(/\bchildren\b/gu, 'child')
+    .replace(/[^\p{L}\p{N}:/.%¥￥]+/gu, " ").trim();
+}
 function stableObject(value) {
   if (Array.isArray(value)) return value.map(stableObject);
   if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableObject(value[key])]));

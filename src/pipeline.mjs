@@ -7,6 +7,8 @@ import { validateMediaDelivery } from "./media-delivery.mjs";
 import { isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
 import { recoverRemoteOriginal } from "./source-media-store.mjs";
+import { stageConfiguration } from './pipeline-contract.mjs';
+import { sourceProcessingProfile } from './source-processing-profile.mjs';
 
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -275,6 +277,13 @@ export class Pipeline {
     let pipelineArtifact;
     let assertLease = () => {};
     let guarded = async (operation) => operation();
+    let stageCommitted = false;
+    const commitStage = (work, { acceptResult = () => true } = {}) => {
+      if (!this.repository.commitPipelineStage) return work();
+      const result = this.repository.commitPipelineStage(job, pipelineArtifact, work, { acceptResult });
+      stageCommitted = acceptResult(result);
+      return result;
+    };
     try {
       const minimum = Math.max(1, Number(this.extractor?.config?.batchMinimumRequests || 20));
       const deferBatchExtraction = Boolean(this.extractor?.batchEnabled
@@ -292,10 +301,15 @@ export class Pipeline {
           throw Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
         }
       };
+      const assertInput = () => {
+        assertLease();
+        this.repository.assertPipelineInput?.(pipelineArtifact, job);
+      };
       guarded = async (operation) => {
         assertLease();
         const result = await operation(abortController.signal);
         assertLease();
+        this.repository.assertPipelineInput?.(pipelineArtifact, job);
         return result;
       };
       heartbeatTimer = setInterval(() => {
@@ -306,16 +320,25 @@ export class Pipeline {
       }, this.heartbeatIntervalMs || Math.max(10_000, Math.floor((this.repository.jobLeaseMs || 60_000) / 3)));
       heartbeatTimer.unref();
       const telemetryContext = { runId: job.id, entityId: job.entity_id };
-      const artifactConfigHash = crypto.createHash("sha256").update(JSON.stringify({
-        provider: this.contentEngine?.config?.provider || this.extractor?.config?.provider || null,
-        model: this.contentEngine?.config?.model || this.extractor?.config?.model || null,
-        policy: this.contentEngine?.config?.stagePolicy?.version || this.extractor?.config?.stagePolicy?.version || "legacy",
-        frontendContract: this.frontendContracts?.active?.checksum || null,
-      })).digest("hex");
+      const artifactConfigHash = stageConfiguration(this, job.type);
       pipelineArtifact = this.repository.preparePipelineArtifact?.(job, artifactConfigHash) || null;
+      const modelStep = async (key, input, operation, configurationStage = job.type) => {
+        if (!this.repository.pipelineStepIdentity) return guarded(operation);
+        assertLease();
+        this.repository.assertPipelineInput?.(pipelineArtifact, job);
+        const identity = this.repository.pipelineStepIdentity(job, pipelineArtifact, key, input, stageConfiguration(this, configurationStage));
+        const receipt = this.repository.readPipelineStep(identity);
+        if (receipt) {
+          this.logger.info('pipeline.model_step_reused', {jobId:job.id, jobType:job.type, step:key, requestHash:identity.request_hash});
+          return receipt.value;
+        }
+        const result = await guarded(operation);
+        return this.repository.savePipelineStep(job, pipelineArtifact, identity, result);
+      };
       this.logger.info("pipeline.job_started", { jobId: job.id, jobType: job.type, entityId: job.entity_id, attempt: job.attempts });
       if (pipelineArtifact?.reused) {
-        if (!this.repository.completeJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
+        commitStage(() => this.ensureReusedDownstream(job));
+        if (!stageCommitted && !this.repository.completeJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
         this.logger.info("pipeline.job_reused", { jobId: job.id, jobType: job.type, entityId: job.entity_id,
           inputHash: pipelineArtifact.input_hash, outputHash: pipelineArtifact.output_hash });
         return true;
@@ -329,7 +352,7 @@ export class Pipeline {
           try {
             const stored = await guarded((signal) => recoverRemoteOriginal(asset, this.extractor?.config?.sourceUploadsDir
               || this.repository.contentConfig?.sourceUploadsDir || "data/source-uploads", { signal }));
-            this.repository.saveRecoveredMedia(asset.id, stored);
+            commitStage(() => this.repository.saveRecoveredMedia(asset.id, stored));
           } catch (error) {
             if (isJobLeaseLost(error)) throw error;
             const browserRequired = error?.retryable === false || /(?:401|403|404|410|HASH_MISMATCH|INVALID|UNSUPPORTED)/i.test(String(error?.code || ""));
@@ -394,8 +417,11 @@ export class Pipeline {
           break;
         }
         case "segment_source": {
-          const segments = this.repository.prepareSourceSegments(job.entity_id);
-          for (const segment of segments) this.repository.enqueue("extract_segment_claims", segment.id);
+          commitStage(() => {
+            const segments = this.repository.prepareSourceSegments(job.entity_id);
+            for (const segment of segments) this.repository.enqueue("extract_segment_claims", segment.id,
+              { executionRoute: Number(job.priority || 0) >= 50 ? 'batch' : 'realtime', priority: Number(job.priority || 5) });
+          });
           break;
         }
         case "extract_segment_claims": {
@@ -404,13 +430,17 @@ export class Pipeline {
           if (pack.staleCaptureVersion) break;
           try {
             const extraction = await guarded((signal) => this.extractor.extract(pack.source, { signal, telemetryContext }));
-            if (!this.repository.saveSegmentExtraction(job.entity_id, extraction)) break;
-            this.repository.enqueue("audit_segment_coverage", job.entity_id);
+            commitStage(() => {
+              if (this.repository.saveSegmentExtraction(job.entity_id, extraction)) this.repository.enqueue("audit_segment_coverage", job.entity_id, { executionRoute: job.execution_route || 'realtime' });
+            });
           } catch (error) {
             if (!isModelOutputLimit(error)) throw error;
-            const children = this.repository.splitSourceSegmentForRetry(job.entity_id);
-            if (!children.length) throw error;
-            for (const child of children) this.repository.enqueue("extract_segment_claims", child.id);
+            const children = commitStage(() => {
+              const split = this.repository.splitSourceSegmentForRetry(job.entity_id);
+              if (!split.length) throw error;
+              for (const child of split) this.repository.enqueue("extract_segment_claims", child.id);
+              return split;
+            });
             this.logger.warn("pipeline.segment_resegmented_after_output_limit", { segmentId: job.entity_id, childCount: children.length });
           }
           break;
@@ -422,10 +452,12 @@ export class Pipeline {
           const assessment = coveragePackage.expectedModality === "text" && typeof this.extractor.auditCoverage === "function"
             ? await guarded((signal) => this.extractor.auditCoverage(coveragePackage, { signal, telemetryContext }))
             : null;
+          commitStage(() => {
           const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
-          if (audit.status === "stale") break;
+          if (audit.status === "stale") return;
           if (audit.status === "retry_required") this.repository.enqueue("retry_segment_extraction", job.entity_id);
           else if (this.repository.sourceCoverageReady(audit.sourceId)) this.repository.enqueue("finalize_source_extraction", audit.sourceId);
+          });
           break;
         }
         case "retry_segment_extraction": {
@@ -436,7 +468,8 @@ export class Pipeline {
           const targets = (previous?.coverage?.uncovered_spans || []).map((item, index) =>
             `${index + 1}. ${item.locator || item.quote || "Unlocated span"} — ${item.reason || "not covered"}`);
           pack.source.raw_text = `${pack.source.raw_text}\n\nTARGETED COVERAGE RETRY\nOnly add atomic Claims needed to cover these audited gaps. Preserve exact evidence quotes.\n${targets.join("\n")}`;
-          const retryExtraction = await guarded((signal) => this.extractor.extract(pack.source, { signal, telemetryContext }));
+          const retryExtraction = await modelStep('targeted-extraction', pack.source,
+            (signal) => this.extractor.extract(pack.source, { signal, telemetryContext }));
           const priorResult = previous?.extraction || {};
           const extraction = {
             ...retryExtraction,
@@ -447,25 +480,31 @@ export class Pipeline {
               claims: mergeExtractionClaims(priorResult.claims, retryExtraction.result?.claims),
             },
           };
-          if (!this.repository.saveSegmentExtraction(job.entity_id, extraction, { retry: true })) break;
-          const retriedPackage = this.repository.getSegmentCoveragePackage(job.entity_id);
+          // Preview the merged extraction without publishing a half-completed retry.
+          const retriedPackage = this.repository.getSegmentCoveragePackage(job.entity_id, { extraction, retry: true });
           if (!retriedPackage || retriedPackage.staleCaptureVersion) break;
           const assessment = retriedPackage.expectedModality === "text" && typeof this.extractor.auditCoverage === "function"
-            ? await guarded((signal) => this.extractor.auditCoverage(retriedPackage, { signal, telemetryContext }))
+            ? await modelStep('targeted-coverage', retriedPackage,
+              (signal) => this.extractor.auditCoverage(retriedPackage, { signal, telemetryContext }), 'audit_segment_coverage')
             : null;
-          const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
-          if (audit.status === "stale") break;
-          if (this.repository.sourceCoverageReady(audit.sourceId)) this.repository.enqueue("finalize_source_extraction", audit.sourceId);
+          commitStage(() => {
+            if (!this.repository.saveSegmentExtraction(job.entity_id, extraction, { retry: true })) return;
+            const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
+            if (audit.status !== 'stale' && this.repository.sourceCoverageReady(audit.sourceId)) this.repository.enqueue("finalize_source_extraction", audit.sourceId);
+          });
           break;
         }
         case "finalize_source_extraction": {
-          const finalized = this.repository.finalizeSegmentedExtraction(job.entity_id);
-          if (this.contentEngine?.enabled && typeof this.contentEngine.analyzeExperience === "function") {
-            this.repository.enqueue("extract_source_experience", job.entity_id);
-          } else {
-            this.repository.saveExperienceExtraction(job.entity_id, { blocks: [] }, "no_ai");
-            this.enqueueSourceSemanticDownstream(job.entity_id);
-          }
+          const finalized = commitStage(() => {
+            const result = this.repository.finalizeSegmentedExtraction(job.entity_id);
+            if (this.contentEngine?.enabled && typeof this.contentEngine.analyzeExperience === "function") {
+              this.repository.enqueue("extract_source_experience", job.entity_id);
+            } else {
+              this.repository.saveExperienceExtraction(job.entity_id, { blocks: [] }, "no_ai");
+              this.enqueueSourceSemanticDownstream(job.entity_id);
+            }
+            return result;
+          });
           this.logger.info("pipeline.source_finalized", { sourceId: job.entity_id, ...finalized });
           break;
         }
@@ -473,16 +512,20 @@ export class Pipeline {
           const experiencePackage = this.repository.getExperienceExtractionPackage(job.entity_id);
           if (!experiencePackage) throw new Error(`Source ${job.entity_id} is not ready for Experience extraction.`);
           const extracted = await guarded((signal) => this.contentEngine.analyzeExperience(experiencePackage, { signal, telemetryContext }));
-          this.repository.saveExperienceExtraction(job.entity_id, extracted.output, extracted.model, experiencePackage);
-          this.enqueueSourceSemanticDownstream(job.entity_id);
+          commitStage(() => {
+            this.repository.saveExperienceExtraction(job.entity_id, extracted.output, extracted.model, experiencePackage);
+            this.enqueueSourceSemanticDownstream(job.entity_id);
+          });
           break;
         }
         case "analyze_source_blueprint": {
           const source = this.repository.getSource(job.entity_id);
           if (!source?.structured) throw new Error(`Source ${job.entity_id} is not ready for editorial blueprint analysis.`);
           const analyzed = await guarded((signal) => this.extractor.analyzeBlueprint(source, { signal, telemetryContext }));
-          this.repository.saveSourceBlueprint(job.entity_id, analyzed.output);
-          this.repository.enqueue("rebuild_editorial", "global");
+          commitStage(() => {
+            this.repository.saveSourceBlueprint(job.entity_id, analyzed.output);
+            this.repository.enqueue("rebuild_editorial", "global");
+          });
           break;
         }
         case "analyze_source_family": {
@@ -499,33 +542,38 @@ export class Pipeline {
           const intakePackage = this.repository.getIntakePackage(job.entity_id);
           if (!intakePackage) throw new Error(`Source ${job.entity_id} is not ready for diagnostic analysis.`);
           const analyzed = await guarded((signal) => this.contentEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
-          this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model);
+          commitStage(() => this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model));
           break;
         }
         case "resolve_entities": {
           let cursor = null;
+          const resolutions = [];
           do {
             const entityPackage = this.repository.getEntityResolutionPackage(job.entity_id, 300, cursor);
             if (this.contentEngine?.enabled && typeof this.contentEngine.resolveEntities === "function" && entityPackage.claims.length) {
               try {
-                const resolved = await guarded((signal) => this.contentEngine.resolveEntities(entityPackage, { signal,
+                const resolved = await modelStep(`entities:${cursor || 'start'}`, entityPackage, (signal) => this.contentEngine.resolveEntities(entityPackage, { signal,
                   telemetryContext: { ...telemetryContext, entityId: `${job.entity_id}:${cursor || "start"}` } }));
-                this.repository.applyEntityResolution(job.entity_id, resolved.output, resolved.model);
+                // Keep every page on the same input revision. Applying page 1
+                // would otherwise mutate aliases/metadata read by page 2 and
+                // make our own output appear to be a concurrent input change.
+                resolutions.push(resolved);
               } catch (error) {
                 if (!isRecoverableStructuredOutputError(error)) throw error;
                 this.logger.warn("pipeline.entity_resolution_model_output_invalid", {
                   jobId: job.id, entityId: job.entity_id, cursor, error,
                 });
-                this.repository.resolveEntitiesDeterministically(job.entity_id);
                 cursor = null;
                 break;
               }
-            } else if (!cursor) {
-              this.repository.resolveEntitiesDeterministically(job.entity_id);
             }
             cursor = entityPackage.nextCursor;
           } while (cursor);
-          this.repository.enqueue("rebuild_knowledge", job.entity_id);
+          commitStage(() => {
+            for (const resolved of resolutions) this.repository.applyEntityResolution(job.entity_id, resolved.output, resolved.model);
+            this.repository.resolveEntitiesDeterministically(job.entity_id);
+            this.repository.enqueue("rebuild_knowledge", job.entity_id);
+          });
           break;
         }
         case "rebuild_knowledge":
@@ -565,7 +613,7 @@ export class Pipeline {
           const intakePackage = this.repository.getIntakePackage(job.entity_id);
           if (!intakePackage) throw new Error(`Source ${job.entity_id} is not ready for intake analysis.`);
           const analyzed = await guarded((signal) => this.contentEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
-          this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model);
+          commitStage(() => this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model));
           break;
         }
         case "assemble_editorial": {
@@ -577,8 +625,10 @@ export class Pipeline {
             : { output: { selected_fact_keys:(assemblyPackage.facts || []).map((item) => item.normalized_key),
               selected_experience_block_ids:(assemblyPackage.available_experiences || []).map((item) => item.id),
               selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:"Deterministic compatibility assembly." }, model:"compatibility" };
-          this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage);
-          this.repository.enqueue("plan_content", job.entity_id);
+          commitStage(() => {
+            this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage);
+            this.repository.enqueue("plan_content", job.entity_id);
+          });
           break;
         }
         case "plan_content": {
@@ -592,6 +642,9 @@ export class Pipeline {
                 selected_experience_block_ids:(assemblyPackage.available_experiences || []).map((item) => item.id),
                 selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:"Deterministic compatibility assembly." },model:"compatibility" };
             this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage);
+            // The compatibility entrypoint creates its own prerequisite. Freeze
+            // the planner against that newly persisted assembly before calling it.
+            pipelineArtifact = this.repository.preparePipelineArtifact?.(job, artifactConfigHash) || pipelineArtifact;
           }
           const contentPackage = this.repository.getTopicPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
@@ -604,8 +657,10 @@ export class Pipeline {
           const planned = await guarded((signal) => this.contentEngine.plan(contentPackage, { signal, telemetryContext }));
           const plannedEvidence = validatePlannedEvidence(planned.output, contentPackage);
           if (!plannedEvidence.valid) throw Object.assign(new Error(`PLAN_EVIDENCE_INVALID: ${plannedEvidence.errors.map(item=>`${item.section || ''} ${item.key || ''}: ${item.message}`).join('; ')}`), {retryable:false, code:'PLAN_EVIDENCE_INVALID', details:plannedEvidence});
-          const briefId = this.repository.saveBrief(job.entity_id, planned.output, planned.model, { deferDraft: true });
-          this.repository.enqueue("plan_narrative", briefId);
+          commitStage(() => {
+            const briefId = this.repository.saveBrief(job.entity_id, planned.output, planned.model, { deferDraft: true });
+            this.repository.enqueue("plan_narrative", briefId);
+          });
           break;
         }
         case "plan_narrative": {
@@ -619,14 +674,18 @@ export class Pipeline {
               route_sequence:(contentPackage.brief?.canonical?.outline || []).map((section) => section.section_id).filter(Boolean),
               experience_placements:[],supporting_fact_keys:(contentPackage.facts || []).map((fact) => fact.normalized_key),
               conditional_branches:[],tradeoffs:[],exclusions:[],closing_decision:"End with the next concrete traveler decision." } };
-          this.repository.saveNarrativePlan(job.entity_id, planned.output, planned.model);
-          this.repository.enqueue("assemble_writing_packet", job.entity_id);
+          commitStage(() => {
+            this.repository.saveNarrativePlan(job.entity_id, planned.output, planned.model);
+            this.repository.enqueue("assemble_writing_packet", job.entity_id);
+          });
           break;
         }
         case "assemble_writing_packet": {
+          commitStage(() => {
           this.repository.assembleWritingPacket(job.entity_id);
           if (this.canComposeFrontendPage) this.repository.enqueue("compose_frontend_page_plan", job.entity_id);
           else this.repository.enqueue("generate_draft", job.entity_id);
+          });
           break;
         }
         case "compose_frontend_page_plan": {
@@ -641,9 +700,14 @@ export class Pipeline {
           }
           const composed = await guarded((signal) => this.contentEngine.composePagePlan(contentPackage, capabilities, { signal, telemetryContext }));
           const validation = this.frontendContracts.validateCompositionPlan(composed.output);
-          this.repository.saveFrontendPagePlan(job.entity_id, contract, composed.output, validation, composed.model);
-          if (!validation.valid) throw new Error(`Frontend page plan is invalid: ${validation.errors.map((item) => item.code).join(", ")}`);
-          this.repository.enqueue("generate_draft", job.entity_id);
+          if (!validation.valid) {
+            this.repository.saveFrontendPagePlan(job.entity_id, contract, composed.output, validation, composed.model);
+            throw new Error(`Frontend page plan is invalid: ${validation.errors.map((item) => item.code).join(", ")}`);
+          }
+          commitStage(() => {
+            this.repository.saveFrontendPagePlan(job.entity_id, contract, composed.output, validation, composed.model);
+            this.repository.enqueue("generate_draft", job.entity_id);
+          });
           break;
         }
         case "generate_draft": {
@@ -651,10 +715,12 @@ export class Pipeline {
           const contentPackage = this.repository.getBriefPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Content brief ${job.entity_id} no longer exists.`);
           const drafted = await guarded((signal) => this.contentEngine.draft(contentPackage, null, { signal, telemetryContext }));
+          commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
           const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model);
           if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
           else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);
+          });
           break;
         }
         case "generate_visuals": {
@@ -681,7 +747,7 @@ export class Pipeline {
           const contract = this.requireFrontendContract();
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
-          await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease }));
+          await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
           const capabilities = this.frontendContracts.resolveForArticle({ canonical: contentPackage.brief?.canonical || {}, draft: contentPackage.draft || {} });
           if (!capabilities.components.length) {
@@ -691,10 +757,13 @@ export class Pipeline {
           const composed = composePageFromAst(contentPackage.draft.content_ast, capabilities, contract.pageSchema.schema)
             || await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext }));
           const validation = this.frontendContracts.validatePagePayload(composed.output);
-          const savedPage = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
-            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash }, composed.provenance);
+          const savedPage = commitStage(() => {
+            const saved = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
+              { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash }, composed.provenance);
+            if (saved.validation.valid && !job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("review_draft", job.entity_id);
+            return saved;
+          }, { acceptResult: saved => saved.validation.valid });
           if (!savedPage.validation.valid) throw new Error(`Frontend page payload is invalid: ${savedPage.validation.errors.map((item) => item.code).join(", ")}`);
-          if (!job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("review_draft", job.entity_id);
           break;
         }
         case "review_draft": {
@@ -702,6 +771,7 @@ export class Pipeline {
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           const reviewed = await guarded((signal) => this.contentEngine.review(contentPackage, { signal, telemetryContext }));
+          commitStage(() => {
           const revision = this.repository.saveReview(job.entity_id, reviewed.output, reviewed.model,
             { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash, evidenceHash:contentPackage.evidence_hash });
           const pageReady = !this.canComposeFrontendPage || Boolean(contentPackage.frontend_page?.current);
@@ -709,6 +779,7 @@ export class Pipeline {
           if (!reviewed.output.passed && !job.dedupe_key?.startsWith("manual-stage:")) {
             this.repository.automaticQualityRepairState(job.entity_id, reviewed.output.issues, { enqueue: true });
           }
+          });
           break;
         }
         case "revise_draft": {
@@ -716,6 +787,7 @@ export class Pipeline {
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           const drafted = await guarded((signal) => this.contentEngine.repairDraft(contentPackage, contentPackage.review?.issues || [], { signal, telemetryContext }));
+          commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
           const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model,
             { deferReview: job.dedupe_key?.startsWith("manual-stage:") });
@@ -723,6 +795,7 @@ export class Pipeline {
             if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
             else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);
           }
+          });
           break;
         }
         case "compose_commercial": {
@@ -739,8 +812,10 @@ export class Pipeline {
               reason: `The Commercial Composer selected '${componentId}', but the active Frontend Contract does not publish that component. Contract-aware delivery remains blocked until the capability is available.`,
             });
           }
-          this.repository.saveCommercialComposition(job.entity_id, composition);
-          if (this.wordpress?.enabled) this.repository.enqueue(this.frontendContracts?.configured ? "compose_publish_page" : "push_wordpress_draft", job.entity_id);
+          commitStage(() => {
+            this.repository.saveCommercialComposition(job.entity_id, composition);
+            if (this.wordpress?.enabled) this.repository.enqueue(this.frontendContracts?.configured ? "compose_publish_page" : "push_wordpress_draft", job.entity_id);
+          });
           break;
         }
         case "compose_publish_page": {
@@ -764,7 +839,7 @@ export class Pipeline {
           if (!finalPageValidation.valid) throw invalidPublishPage("FINAL_PAGE_INVALID", finalPageValidation);
           const finalArtifactValidation = validateFinalPageArtifact(finalPage, contentPackage);
           if (!finalArtifactValidation.valid) throw invalidPublishPage("FINAL_PAGE_QA_FAILED", finalArtifactValidation);
-          await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease }));
+          await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
           const mediaValidation = validateMediaDelivery(contentPackage.draft.visuals, { requireMetadata: true });
           if (!mediaValidation.valid) throw invalidPublishPage("MEDIA_DELIVERY_INVALID", mediaValidation);
@@ -779,9 +854,15 @@ export class Pipeline {
             media: mediaReferences(contentPackage.draft.visuals),
           });
           const validation = this.frontendContracts.validatePublishPackage(publishPackage);
-          this.repository.saveFrontendPublishComposition(job.entity_id, contract, publishPackage, validation, contentPackage.commercial_composition.strategy_version);
-          if (!validation.valid) throw invalidPublishPage("PUBLISH_PACKAGE_INVALID", validation);
-          this.repository.enqueue("push_wordpress_draft", job.entity_id);
+          const savePublish = () => this.repository.saveFrontendPublishComposition(job.entity_id, contract, publishPackage, validation, contentPackage.commercial_composition.strategy_version);
+          if (!validation.valid) {
+            savePublish(); // Preserve invalid output for diagnosis without completing the job.
+            throw invalidPublishPage("PUBLISH_PACKAGE_INVALID", validation);
+          }
+          commitStage(() => {
+            savePublish();
+            this.repository.enqueue("push_wordpress_draft", job.entity_id);
+          });
           break;
         }
         case "push_wordpress_draft": {
@@ -823,7 +904,7 @@ export class Pipeline {
               };
               result = await guarded((signal) => this.wordpress.upsertDraft(publishableDraft, publication.post_id, { signal, idempotencyKey: job.id }));
             }
-            this.repository.completeWordPressPublication(job.entity_id, result);
+            commitStage(() => this.repository.completeWordPressPublication(job.entity_id, result));
           } catch (error) {
             if (isJobLeaseLost(error)) throw error;
             this.repository.failWordPressPublication(job.entity_id, error);
@@ -839,9 +920,11 @@ export class Pipeline {
         default:
           throw new Error(`Unknown job type: ${job.type}`);
       }
-      assertLease();
-      if (!this.repository.completeJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
-      this.repository.completePipelineArtifact?.(pipelineArtifact, job);
+      if (!stageCommitted) assertLease();
+      const finished = stageCommitted || (this.repository.finishPipelineJob
+        ? this.repository.finishPipelineJob(job, pipelineArtifact)
+        : this.repository.completeJob(job.id, job.locked_by, job.lease_generation));
+      if (!finished) throw Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
       this.recordExtractionOutcome(job, { ok: true });
       this.logger.info("pipeline.job_succeeded", { jobId: job.id, jobType: job.type, durationMs: Date.now() - startedAt });
       return true;
@@ -889,8 +972,65 @@ export class Pipeline {
     if (!this.contentEngine?.enabled) throw new Error("Content production requires a configured Kimi key or Vertex AI project.");
   }
 
+  ensureReusedDownstream(job) {
+    const repository = this.repository, entity = job.entity_id;
+    const next = (type, id = entity) => repository.enqueue(type, id);
+    if (job.dedupe_key?.startsWith('manual-stage:')) return;
+    switch (job.type) {
+      case 'extract_segment_claims': next('audit_segment_coverage'); break;
+      case 'audit_segment_coverage': {
+        const pack = repository.getSegmentCoveragePackage(entity);
+        if (pack && !pack.staleCaptureVersion) {
+          if (pack.coverage?.status === 'retry_required') next('retry_segment_extraction');
+          else if (repository.sourceCoverageReady(pack.source.id)) next('finalize_source_extraction', pack.source.id);
+        }
+        break;
+      }
+      case 'retry_segment_extraction': {
+        const pack = repository.getSegmentCoveragePackage(entity);
+        if (pack && !pack.staleCaptureVersion && repository.sourceCoverageReady(pack.source.id)) next('finalize_source_extraction', pack.source.id);
+        break;
+      }
+      case 'extract_source_experience': this.enqueueSourceSemanticDownstream(entity); break;
+      case 'analyze_source_blueprint': next('rebuild_editorial', 'global'); break;
+      case 'resolve_entities': next('rebuild_knowledge'); break;
+      case 'assemble_editorial': next('plan_content'); break;
+      case 'plan_content': {
+        const brief = repository.db.prepare('SELECT id FROM content_briefs WHERE candidate_id=?').get(entity);
+        if (brief) next('plan_narrative', brief.id);
+        break;
+      }
+      case 'plan_narrative': next('assemble_writing_packet'); break;
+      case 'assemble_writing_packet': next(this.canComposeFrontendPage ? 'compose_frontend_page_plan' : 'generate_draft'); break;
+      case 'compose_frontend_page_plan': next('generate_draft'); break;
+      case 'generate_draft': {
+        const draft = repository.db.prepare('SELECT id FROM article_drafts WHERE brief_id=?').get(entity);
+        if (draft) { next('review_draft', draft.id); if (this.visuals?.enabled) next('generate_visuals', draft.id); else if (this.canComposeFrontendPage) next('compose_frontend_page', draft.id); }
+        break;
+      }
+      case 'compose_frontend_page': next('review_draft'); break;
+      case 'review_draft': {
+        const pack = repository.getDraftPackage(entity);
+        if (pack?.review?.passed && (!this.canComposeFrontendPage || pack.frontend_page?.current)) next('compose_commercial');
+        else if (pack?.review && !pack.review.passed) repository.automaticQualityRepairState(entity, pack.review.issues, { enqueue: true });
+        break;
+      }
+      case 'revise_draft': next('review_draft'); if (this.canComposeFrontendPage) next('compose_frontend_page'); break;
+    }
+  }
+
   enqueueSourceSemanticDownstream(sourceId) {
     this.repository.enqueue("analyze_source_family", sourceId);
+    if (this.repository.contentConfig?.sourceComplexityRouting === true) {
+      const profile = sourceProcessingProfile(this.repository.getSource(sourceId));
+      if (profile.route === 'fragment') {
+        // Claims, coverage, Experience and Knowledge already ran/are queued.
+        // A short fragment does not need a full-source writing blueprint or an
+        // independent article proposal. It can still support a later synthesis.
+        this.logger.info('pipeline.source_fragment_route', { sourceId, profile: profile.route, version: profile.version });
+        return;
+      }
+    }
     if (typeof this.extractor?.analyzeBlueprint === "function") this.repository.enqueue("analyze_source_blueprint", sourceId);
     else this.repository.enqueue("rebuild_editorial", "global");
     if (this.contentEngine?.enabled) this.repository.enqueue("analyze_source_diagnostic", sourceId);

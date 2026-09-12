@@ -13,7 +13,7 @@ import {
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
 import { AI_JOB_TYPES, classifyBatchFailure, isOperationalFailureRetryable, isProviderPressure } from "./job-policy.mjs";
-import { pageBlockSignature } from "./evidence-validator.mjs";
+import { pageBlockSignature, selectedFactEvidence, selectedFactSnapshot } from "./evidence-validator.mjs";
 import { estimateSourceProcessing } from "./source-preflight.mjs";
 import { summarizeModelCostLedger } from "./ai/stage-policy.mjs";
 import {
@@ -26,17 +26,20 @@ import { freezeProposal, proposalFingerprint, proposalForOpportunity } from "./s
 import { explainOperationalFailure, qualityRepairStage } from "./services/content-recovery-policy.mjs";
 import { insertCommercialEvent, listCommercialPerformance } from "./repositories/commercial-events.mjs";
 import { persistCaptureAssets } from "./source-media-store.mjs";
+import { dependencyHash, semanticMaterial, PIPELINE_CONTRACT_VERSION } from './pipeline-contract.mjs';
+import { stepIdentity, readStepReceipt, saveStepReceipt } from './repositories/pipeline-step-receipts.mjs';
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
 
 const REUSABLE_PIPELINE_STAGES = new Set([
-  "extract_segment_claims", "audit_segment_coverage", "analyze_source_blueprint", "analyze_source_diagnostic", "extract_source_experience",
+  "extract_segment_claims", "audit_segment_coverage", "retry_segment_extraction", "analyze_source_blueprint", "analyze_source_diagnostic", "extract_source_experience",
   "analyze_intake", "resolve_entities", "assemble_editorial", "plan_content", "plan_narrative", "assemble_writing_packet", "compose_frontend_page_plan", "generate_draft",
   "compose_frontend_page", "review_draft", "revise_draft",
 ]);
 const PRODUCTION_JOB_TYPES = new Set(["assemble_editorial","plan_content","plan_narrative","assemble_writing_packet",
   "compose_frontend_page_plan","generate_draft","generate_visuals","compose_frontend_page","review_draft","revise_draft",
   "compose_commercial","compose_publish_page","push_wordpress_draft"]);
+const TRACKED_DELIVERY_STAGES = new Set(['compose_commercial','compose_publish_page','push_wordpress_draft']);
 
 export class Repository {
   constructor(db, contentConfig = {}) {
@@ -64,12 +67,26 @@ export class Repository {
 
   jobLeaseExpiry() { return new Date(this.clock().getTime() + this.jobLeaseMs).toISOString(); }
 
+  pipelineStepIdentity(job, artifact, key, input, configHash) {
+    return stepIdentity(job, artifact, key, input, configHash);
+  }
+
+  readPipelineStep(identity) { return readStepReceipt(this.db, identity); }
+
+  savePipelineStep(job, artifact, identity, value) {
+    return transaction(this.db, () => {
+      if (!this.ownsJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error('JOB_LEASE_LOST'), {code:'JOB_LEASE_LOST',retryable:false});
+      this.assertPipelineInput(artifact, job);
+      return saveStepReceipt(this.db, identity, value, job, this.jobTimestamp());
+    });
+  }
+
   preparePipelineArtifact(job, configHash = "") {
-    if (!REUSABLE_PIPELINE_STAGES.has(job?.type)) return null;
-    const inputHash = sha256(JSON.stringify(this.pipelineDependencyMaterial(job)));
+    if (!REUSABLE_PIPELINE_STAGES.has(job?.type) && !TRACKED_DELIVERY_STAGES.has(job?.type)) return null;
+    const inputHash = dependencyHash({ version: PIPELINE_CONTRACT_VERSION, inputs: this.pipelineDependencyMaterial(job) });
     const existing = this.db.prepare(`SELECT * FROM pipeline_artifacts
       WHERE stage=? AND entity_id=? AND input_hash=? AND config_hash=?`).get(job.type, job.entity_id, inputHash, configHash);
-    if (existing?.status === "succeeded" && existing.output_hash
+    if (REUSABLE_PIPELINE_STAGES.has(job.type) && existing?.status === "succeeded" && existing.output_hash
       && existing.output_hash === this.pipelineOutputHash(job)) return { ...existing, reused: true };
     const timestamp = this.jobTimestamp();
     const artifactId = existing?.id || id("artifact");
@@ -88,6 +105,32 @@ export class Repository {
       .run(this.pipelineOutputHash(job), timestamp, timestamp, artifact.id);
   }
 
+  assertPipelineInput(artifact, job) {
+    if (artifact && artifact.input_hash !== dependencyHash({ version: PIPELINE_CONTRACT_VERSION, inputs: this.pipelineDependencyMaterial(job) })) {
+      throw Object.assign(new Error('阶段输入已变化，旧结果未保存。'), { code: 'STALE_PIPELINE_INPUT', retryable: true });
+    }
+  }
+
+  finishPipelineJob(job, artifact) {
+    return transaction(this.db, () => {
+      if (!this.completeJob(job.id, job.locked_by, job.lease_generation)) return false;
+      this.completePipelineArtifact(artifact, job);
+      return true;
+    });
+  }
+
+  commitPipelineStage(job, artifact, work, { acceptResult = () => true } = {}) {
+    return transaction(this.db, () => {
+      if (!this.ownsJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error('JOB_LEASE_LOST'), {code:'JOB_LEASE_LOST',retryable:false});
+      this.assertPipelineInput(artifact, job);
+      const result = work();
+      if (result?.then) throw new Error('Pipeline commit must contain only synchronous database work.');
+      if (!acceptResult(result)) return result; // Retain invalid output for diagnosis; the caller fails the job.
+      if (!this.finishPipelineJob(job, artifact)) throw Object.assign(new Error('JOB_LEASE_LOST'), {code:'JOB_LEASE_LOST',retryable:false});
+      return result;
+    });
+  }
+
   failPipelineArtifact(artifact, error) {
     if (!artifact || artifact.reused) return;
     const timestamp = this.jobTimestamp();
@@ -97,52 +140,95 @@ export class Repository {
 
   pipelineDependencyMaterial(job) {
     const entityId = job.entity_id;
-    if (["extract_segment_claims", "audit_segment_coverage"].includes(job.type)) {
+    if (["extract_segment_claims", "audit_segment_coverage", "retry_segment_extraction"].includes(job.type)) {
       return {
-        segment: this.db.prepare("SELECT id,source_id,content_hash,capture_version,segment_type FROM source_segments WHERE id=?").get(entityId),
-        extraction: job.type === "audit_segment_coverage"
+        currentCapture: this.db.prepare('SELECT s.capture_version FROM sources s JOIN source_segments ss ON ss.source_id=s.id WHERE ss.id=?').get(entityId),
+        segment: this.db.prepare(`SELECT id,source_id,content_hash,capture_version,segment_type,raw_text,asset_id,
+          title,sequence,page_start,page_end,image_index,destination_scopes_json,topic_scopes_json FROM source_segments WHERE id=?`).get(entityId),
+        media: this.db.prepare(`SELECT a.id,a.media_identity,a.original_sha256,a.stored_sha256,a.durability_status,a.ai_derivative_sha256
+          FROM source_assets a JOIN source_segments s ON s.source_id=a.source_id AND s.capture_version=a.capture_version WHERE s.id=? ORDER BY a.id`).all(entityId),
+        extraction: job.type !== "extract_segment_claims"
           ? this.db.prepare("SELECT result_json,input_manifest_json,attempt FROM segment_extractions WHERE segment_id=?").get(entityId) : null,
+        coverage: job.type === 'retry_segment_extraction' ? this.db.prepare('SELECT * FROM extraction_coverage WHERE segment_id=?').get(entityId) : null,
       };
     }
     if (["analyze_source_blueprint", "analyze_source_diagnostic", "analyze_intake", "extract_source_experience"].includes(job.type)) {
-      const source=this.db.prepare("SELECT id,content_hash,capture_version,status FROM sources WHERE id=?").get(entityId);
-      if (job.type !== "extract_source_experience") return source;
+      const source=this.db.prepare("SELECT id,content_hash,capture_version FROM sources WHERE id=?").get(entityId);
+      const claims = this.db.prepare(`SELECT *
+        FROM claims WHERE source_id=? AND lifecycle_status='active' ORDER BY id`).all(entityId);
+      if (job.type !== "extract_source_experience") return { source, claims,
+        experience: this.db.prepare('SELECT id,input_hash,status FROM experience_extraction_runs WHERE source_id=? ORDER BY id').all(entityId) };
       const media=this.db.prepare(`SELECT id,durability_status,stored_sha256,recovered_at
-        FROM source_assets WHERE source_id=? ORDER BY position,id`).all(entityId);
-      return {source,media};
+        FROM current_source_assets WHERE source_id=? ORDER BY position,id`).all(entityId);
+      return {source,media,claims};
     }
-    if (job.type === "resolve_entities") return this.db.prepare(`SELECT group_concat(id || ':' || source_key || ':' || value_text, '|') AS claims
-      FROM (SELECT c.id,COALESCE(NULLIF(c.original_normalized_key,''),c.normalized_key) AS source_key,c.value_text FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
-        WHERE ss.destination_slug=? AND c.lifecycle_status='active' ORDER BY c.id)`).get(entityId);
+    if (job.type === "resolve_entities") return {
+      claims:this.db.prepare(`SELECT c.id,COALESCE(NULLIF(c.original_normalized_key,''),c.normalized_key) AS source_key,
+        c.subject,c.value_text,c.source_quote,c.entity_type,c.granularity,c.entity_location_json
+        FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
+        WHERE ss.destination_slug=? AND c.lifecycle_status='active' ORDER BY c.id`).all(entityId),
+      aliases:this.listEntityAliases(entityId),
+    };
     if (["assemble_editorial", "plan_content"].includes(job.type)) {
       const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id=?").get(entityId);
       const facts = candidate ? this.db.prepare(`SELECT k.normalized_key,k.preferred_value,k.consensus_status,k.updated_at
         FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id WHERE d.slug=? ORDER BY k.normalized_key`).all(candidate.destination_slug) : [];
-      return { candidate, facts };
+      return { candidate, facts, assembly: job.type === 'plan_content' ? this.getEditorialAssembly(entityId) : null,
+        selection: this.getEditorialAssemblyPackage(entityId) };
     }
     if (["plan_narrative", "assemble_writing_packet", "compose_frontend_page_plan", "generate_draft"].includes(job.type)) {
       const brief = this.db.prepare(`SELECT id,plan_json,canonical_json,evidence_ledger_json,strategy_version,updated_at
         FROM content_briefs WHERE id=?`).get(entityId);
       const facts = brief ? this.getBriefPackage(entityId)?.facts || [] : [];
-      return { brief, evidenceHash: evidenceHashForFacts(facts) };
+      const pack = brief ? this.getBriefPackage(entityId) : null;
+      return { brief, facts: semanticMaterial(facts), assembly: pack?.editorial_assembly,
+        experiences: pack?.experiences, contentPolicy: pack?.content_policy,
+        narrative: job.type === 'plan_narrative' ? null : this.getNarrativePlan(entityId),
+        packet: ['generate_draft','compose_frontend_page_plan'].includes(job.type) ? this.getWritingPacket(entityId) : null };
     }
     const draft = this.db.prepare(`SELECT id,brief_id,content_hash,revision,seo_json,strategy_version,updated_at
       FROM article_drafts WHERE id=?`).get(entityId);
+    if (draft && (job.type === 'compose_frontend_page' || TRACKED_DELIVERY_STAGES.has(job.type))) {
+      // Localization writes the derived OG URL itself. Its source asset identity
+      // is tracked below; this URL must not invalidate that same upload operation.
+      const {og_image,...editorialSeo}=json(draft.seo_json,{});
+      draft.seo_json=JSON.stringify(editorialSeo);
+    }
+    if (TRACKED_DELIVERY_STAGES.has(job.type)) return {
+      draft,
+      evidence: draft ? semanticMaterial(this.getBriefPackage(draft.brief_id)?.facts || []) : [],
+      content: draft ? this.db.prepare('SELECT title,slug,meta_description,body_markdown,content_blocks_json FROM article_drafts WHERE id=?').get(entityId) : null,
+      review: this.db.prepare('SELECT passed,draft_content_hash,evidence_hash,checks_json FROM quality_reviews WHERE draft_id=? ORDER BY created_at DESC,id DESC LIMIT 1').get(entityId),
+      commercial: job.type === 'compose_commercial'
+        ? this.activeOffersForDestination(this.db.prepare('SELECT destination_slug FROM content_briefs WHERE id=?').get(draft?.brief_id || '')?.destination_slug || '')
+        : this.db.prepare('SELECT * FROM commercial_compositions WHERE draft_id=?').get(entityId),
+      page: this.db.prepare('SELECT payload_json,validation_json,contract_checksum,draft_content_hash FROM frontend_page_compositions WHERE draft_id=?').get(entityId),
+      publish: job.type === 'push_wordpress_draft' ? this.db.prepare('SELECT publish_package_json,contract_checksum FROM frontend_publish_compositions WHERE draft_id=?').get(entityId) : null,
+      media: this.db.prepare(`SELECT v.id,v.status,v.asset_fingerprint,v.source_asset_id,v.media_path,a.stored_sha256,a.authorization_status,a.publishable
+        FROM article_visuals v LEFT JOIN source_assets a ON a.id=v.source_asset_id WHERE v.draft_id=? ORDER BY v.id`).all(entityId),
+    };
     if (job.type === "revise_draft") {
       const review = this.db.prepare(`SELECT issues_json,draft_content_hash,evidence_hash FROM quality_reviews
         WHERE draft_id=? ORDER BY created_at DESC LIMIT 1`).get(entityId);
       return { draft, review };
     }
     const facts = draft ? this.getBriefPackage(draft.brief_id)?.facts || [] : [];
-    return { draft, evidenceHash: evidenceHashForFacts(facts) };
+    return { draft, facts: semanticMaterial(facts),
+      media: job.type === 'compose_frontend_page' ? this.db.prepare('SELECT id,status,source_asset_id,media_path FROM article_visuals WHERE draft_id=? ORDER BY id').all(entityId) : null };
   }
 
   pipelineOutputHash(job) {
     let value = null;
     if (job.type === "extract_segment_claims") value = this.db.prepare("SELECT result_json,input_manifest_json FROM segment_extractions WHERE segment_id=?").get(job.entity_id);
+    else if (job.type === 'retry_segment_extraction') value = {
+      extraction:this.db.prepare('SELECT result_json,input_manifest_json,attempt FROM segment_extractions WHERE segment_id=?').get(job.entity_id),
+      coverage:this.db.prepare('SELECT * FROM extraction_coverage WHERE segment_id=?').get(job.entity_id),
+    };
     else if (job.type === "audit_segment_coverage") value = this.db.prepare("SELECT * FROM extraction_coverage WHERE segment_id=?").get(job.entity_id);
     else if (job.type === "analyze_source_blueprint") value = this.db.prepare("SELECT * FROM source_blueprints WHERE source_id=?").get(job.entity_id);
-    else if (job.type === "extract_source_experience") value = this.db.prepare("SELECT id,input_hash,status,updated_at FROM experience_extraction_runs WHERE source_id=? AND status='succeeded' ORDER BY updated_at DESC LIMIT 1").get(job.entity_id);
+    else if (job.type === "extract_source_experience") value = {
+      run:this.db.prepare("SELECT id,input_hash,status FROM experience_extraction_runs WHERE source_id=? AND status='succeeded' ORDER BY updated_at DESC LIMIT 1").get(job.entity_id),
+      blocks:this.db.prepare('SELECT * FROM experience_blocks WHERE source_id=? ORDER BY id').all(job.entity_id) };
     else if (["analyze_source_diagnostic", "analyze_intake"].includes(job.type)) value = this.db.prepare("SELECT * FROM content_intake_analyses WHERE source_id=?").get(job.entity_id);
     else if (job.type === "resolve_entities") value = this.db.prepare(`SELECT group_concat(id || ':' || entity_key || ':' || entity_resolution_status, '|') AS value
       FROM (SELECT c.id,c.entity_key,c.entity_resolution_status FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
@@ -150,13 +236,16 @@ export class Repository {
     else if (job.type === "assemble_editorial") value = this.db.prepare("SELECT id,input_hash,selected_fact_keys_json,selected_experience_block_ids_json FROM editorial_assemblies WHERE candidate_id=?").get(job.entity_id);
     else if (job.type === "plan_content") value = this.db.prepare("SELECT id,plan_json,canonical_json FROM content_briefs WHERE candidate_id=?").get(job.entity_id);
     else if (job.type === "plan_narrative") value = this.db.prepare("SELECT * FROM narrative_plans WHERE brief_id=?").get(job.entity_id);
-    else if (job.type === "assemble_writing_packet") value = this.db.prepare("SELECT input_hash FROM writing_packets WHERE brief_id=?").get(job.entity_id);
+    else if (job.type === "assemble_writing_packet") value = this.db.prepare("SELECT packet_text,evidence_ledger_json,selected_fact_keys_json,selected_experience_block_ids_json,context_json FROM writing_packets WHERE brief_id=?").get(job.entity_id);
     else if (job.type === "compose_frontend_page_plan") value = this.db.prepare("SELECT plan_json,validation_json,contract_checksum FROM frontend_page_plans WHERE brief_id=?").get(job.entity_id);
     else if (job.type === "generate_draft") value = this.db.prepare("SELECT id,content_hash,revision FROM article_drafts WHERE brief_id=?").get(job.entity_id);
     else if (job.type === "compose_frontend_page") value = this.db.prepare("SELECT payload_json,validation_json,draft_content_hash FROM frontend_page_compositions WHERE draft_id=?").get(job.entity_id);
     else if (job.type === "review_draft") value = this.db.prepare("SELECT draft_content_hash,evidence_hash,passed,checks_json,issues_json FROM quality_reviews WHERE draft_id=? ORDER BY created_at DESC LIMIT 1").get(job.entity_id);
     else if (job.type === "revise_draft") value = this.db.prepare("SELECT content_hash,revision FROM article_drafts WHERE id=?").get(job.entity_id);
-    return value ? sha256(JSON.stringify(value)) : "";
+    else if (job.type === 'compose_commercial') value = this.db.prepare('SELECT * FROM commercial_compositions WHERE draft_id=?').get(job.entity_id);
+    else if (job.type === 'compose_publish_page') value = this.db.prepare('SELECT * FROM frontend_publish_compositions WHERE draft_id=?').get(job.entity_id);
+    else if (job.type === 'push_wordpress_draft') value = this.db.prepare('SELECT * FROM wordpress_publications WHERE draft_id=?').get(job.entity_id);
+    return value ? dependencyHash(value) : "";
   }
 
   recoverExpiredJobs() {
@@ -343,9 +432,14 @@ export class Repository {
       throw Object.assign(new Error("STALE_DRAFT_VERSION: page composition input changed before it could be saved."), { retryable: false });
     }
     const existing = this.db.prepare("SELECT id FROM frontend_page_compositions WHERE draft_id=?").get(draftId);
-    const draftRow = this.db.prepare(`SELECT ad.evidence_ledger_json,cb.destination_slug FROM article_drafts ad
+    const draftRow = this.db.prepare(`SELECT ad.evidence_ledger_json,ad.brief_id,cb.destination_slug FROM article_drafts ad
       JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
-    const sourceRows = this.db.prepare(`SELECT c.id,c.normalized_key,c.source_id,c.evidence_span_ids_json FROM claims c
+    const packet = this.getWritingPacket(draftRow?.brief_id);
+    const frozenFacts = packet?.evidence_ledger?.map(entry => entry.fact_snapshot);
+    const hasFrozenPacket = frozenFacts?.length > 0 && frozenFacts.every(Boolean);
+    const sourceRows = hasFrozenPacket ? frozenFacts.flatMap(fact => fact.evidence.map(evidence => ({
+      ...evidence, id:evidence.claim_id || evidence.id, normalized_key:fact.normalized_key,
+      evidence_span_ids_json:JSON.stringify(evidence.evidence_span_ids || []) }))) : this.db.prepare(`SELECT c.id,c.normalized_key,c.source_id,c.evidence_span_ids_json FROM claims c
       JOIN structured_sources ss ON ss.source_id=c.source_id
       WHERE ss.destination_slug=? AND c.lifecycle_status='active' AND c.knowledge_eligible=1`).all(draftRow?.destination_slug || "");
     const sourceIdsByClaim = new Map();
@@ -354,9 +448,11 @@ export class Repository {
       [...new Set([...(sourceIdsByClaim.get(row.normalized_key) || []), row.source_id])].sort());
     for (const row of sourceRows) claimTracesByKey.set(row.normalized_key,
       [...(claimTracesByKey.get(row.normalized_key) || []), { claimId: row.id, sourceId: row.source_id,
-        evidenceSpanIds: json(row.evidence_span_ids_json, []) }]);
+        evidenceSpanIds: json(row.evidence_span_ids_json, []), ...(hasFrozenPacket ? {
+          evidenceRole:row.evidence_role || 'current', value:row.value, qualifiers:row.qualifiers,
+          validFrom:row.valid_from,validTo:row.valid_to,revision:row.extraction_revision } : {}) }]);
     const provenance = buildBlockProvenance(payload, json(draftRow?.evidence_ledger_json, []), explicitProvenance,
-      sourceIdsByClaim, claimTracesByKey);
+      sourceIdsByClaim, claimTracesByKey, hasFrozenPacket ? new Map(frozenFacts.map(fact => [fact.normalized_key,fact])) : new Map());
     const validationRecord = { ...validation, valid: Boolean(validation.valid && provenance.valid),
       errors: [...(validation.errors || []), ...provenance.errors], blockProvenance: provenance.blocks,
       provenanceVersion: provenance.version };
@@ -511,6 +607,23 @@ export class Repository {
       let sourceId;
       let duplicate = false;
       let captureVersion = 1;
+      if (existing?.completeness_status === 'complete'
+        && !this.db.prepare("SELECT 1 FROM current_source_assets WHERE source_id=? AND durability_status<>'ORIGINAL_STORED' LIMIT 1").get(existing.id)
+        && (completenessStatus !== 'complete'
+        || (capture.adapter === 'xiaohongshu' && capture.assets.some(asset => asset.durabilityStatus !== 'ORIGINAL_STORED')))) {
+        const prior = this.db.prepare('SELECT capture_version FROM capture_versions WHERE source_id=? AND content_hash=? AND completeness_status=?')
+          .get(existing.id, contentHash, completenessStatus);
+        if (!prior) {
+          const revision = this.db.prepare('SELECT COALESCE(MAX(capture_version),0)+1 AS next FROM capture_versions WHERE source_id=?').get(existing.id).next;
+          this.db.prepare(`INSERT INTO capture_versions(id,source_id,capture_version,captured_at,raw_text,raw_html,raw_payload_json,
+            assets_json,content_hash,completeness_status,completeness_json,acquisition_origin,sync_scope_key,extension_version,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id('capture_version'), existing.id, revision, capture.capturedAt,
+              capture.rawText, capture.rawHtml, JSON.stringify(capture), JSON.stringify(capture.assets), contentHash,
+              completenessStatus, JSON.stringify(completeness), acquisitionOrigin, syncScopeKey, extensionVersion, timestamp);
+        }
+        return { id: existing.id, accepted: true, duplicate: Boolean(prior), captureVersion: existing.capture_version,
+          completenessStatus: 'partial_retryable', mediaDurabilityComplete: false, extractionQueued: false, preservedCompleteVersion: true };
+      }
       const completenessUpgrade = existing?.completeness_status !== "complete" && completenessStatus === "complete";
       if (existing && existing.content_hash === contentHash && !completenessUpgrade) {
         sourceId = existing.id;
@@ -519,7 +632,7 @@ export class Repository {
         this.db.prepare(`UPDATE sources SET captured_at=?,published_at=COALESCE(?,published_at),submission_metadata_json=?,
           raw_payload_json=?,extension_version=?,updated_at=? WHERE id=?`).run(capture.capturedAt,capture.publishedAt,
           JSON.stringify(submissionMetadata),JSON.stringify(capture),extensionVersion,timestamp,sourceId);
-        const findRefreshAsset = this.db.prepare(`SELECT id,ai_derivative_data_url FROM source_assets
+        const findRefreshAsset = this.db.prepare(`SELECT id,ai_derivative_data_url FROM current_source_assets
           WHERE source_id=? AND kind=? AND (media_identity=? OR position=?) LIMIT 1`);
         const refreshAsset = this.db.prepare(`UPDATE source_assets SET remote_url=?,local_path=CASE WHEN ?<>'' THEN ? ELSE local_path END,
           mime_type=CASE WHEN ?<>'' THEN ? ELSE mime_type END,storage_status=?,original_bytes_status=?,
@@ -529,7 +642,8 @@ export class Repository {
           ai_derivative_sha256=CASE WHEN ?<>'' THEN ? ELSE ai_derivative_sha256 END,
           durability_status=?,ai_readability_status=?,repair_status=?,storage_error='',
           recovered_at=CASE WHEN ?='ORIGINAL_STORED' THEN ? ELSE recovered_at END,
-          provenance_json=? WHERE source_id=? AND kind=? AND (media_identity=? OR position=?)`);
+          provenance_json=? WHERE source_id=? AND kind=? AND (media_identity=? OR position=?)
+          AND capture_version=(SELECT capture_version FROM sources WHERE sources.id=source_assets.source_id)`);
         for (const asset of capture.assets || []) {
           if (!asset.aiDerivativeDataUrl && !asset.originalSha256) continue;
           const storedAsset = findRefreshAsset.get(sourceId, asset.kind, asset.mediaIdentity || asset.url, asset.position);
@@ -549,12 +663,12 @@ export class Repository {
         }
       } else if (existing) {
         sourceId = existing.id;
-        captureVersion = existing.capture_version + 1;
+        captureVersion = this.db.prepare('SELECT COALESCE(MAX(capture_version),0)+1 AS next FROM capture_versions WHERE source_id=?').get(sourceId).next;
         this.db.prepare(`
           UPDATE sources SET adapter = ?, external_id = ?, canonical_url = ?, submitted_url = ?, source_kind = ?, submission_metadata_json = ?,
             title = ?, author_name = ?, author_url = ?, published_at = ?,
             captured_at = ?, raw_text = ?, raw_html = ?, raw_payload_json = ?, content_hash = ?,
-            capture_version = capture_version + 1, status = ?, last_error = NULL, acquisition_origin=?, sync_scope_key=?,
+            capture_version = ?, status = ?, last_error = NULL, acquisition_origin=?, sync_scope_key=?,
             extension_version=?, completeness_status=?, completeness_json=?, authorization_status=?, commercial_use_allowed=?,
             editing_allowed=?, redistribution_allowed=?, publishable=?, authorization_origin=?, license_scope_json=?, updated_at = ?
           WHERE id = ?
@@ -562,14 +676,14 @@ export class Repository {
           capture.adapter, capture.externalId, capture.canonicalUrl, submittedUrl, sourceKind, JSON.stringify(submissionMetadata),
           capture.title, capture.authorName, capture.authorUrl, capture.publishedAt,
           capture.capturedAt, capture.rawText, capture.rawHtml, JSON.stringify(capture), contentHash,
-          completenessStatus === "complete" ? "captured" : "partial", acquisitionOrigin, syncScopeKey, extensionVersion,
+          captureVersion, completenessStatus === "complete" ? "captured" : "partial", acquisitionOrigin, syncScopeKey, extensionVersion,
           completenessStatus, JSON.stringify(completeness), rights.authorizationStatus || "legacy",
           rights.commercialUseAllowed ? 1 : 0, rights.editingAllowed ? 1 : 0, rights.redistributionAllowed ? 1 : 0,
           rights.publishable ? 1 : 0, rights.authorizationOrigin || acquisitionOrigin, JSON.stringify(rights.licenseScope || []),
           timestamp, sourceId,
         );
-        this.db.prepare("DELETE FROM source_assets WHERE source_id = ?").run(sourceId);
-        this.db.prepare("DELETE FROM source_files WHERE source_id = ?").run(sourceId);
+        // Keep prior asset IDs, file paths and evidence relationships intact.
+        // Current readers select only sources.capture_version through views.
         this.db.prepare(`DELETE FROM jobs WHERE status IN ('queued','failed') AND (
           entity_id=? OR entity_id IN (SELECT id FROM source_segments WHERE source_id=?)
         )`).run(sourceId, sourceId);
@@ -604,8 +718,8 @@ export class Repository {
             media_identity,width,height,duration,original_sha256,ai_derivative_data_url,ai_derivative_sha256,authorization_status,
             commercial_use_allowed,editing_allowed,redistribution_allowed,publishable,authorization_origin,provenance_json,
             storage_status,original_bytes_status,stored_sha256,stored_size_bytes,language_status,nearby_text,caption_text,dom_order,
-            durability_status,ai_readability_status,repair_status,storage_error,recovered_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
+            durability_status,ai_readability_status,repair_status,storage_error,recovered_at,capture_version)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
         `);
         for (const asset of capture.assets) {
           const originalBytesStored = Boolean(asset.localPath && (asset.originalBytesStatus === "saved_original"
@@ -628,16 +742,17 @@ export class Repository {
             asset.aiReadabilityStatus || (asset.localPath || asset.aiDerivativeDataUrl ? "processable" : asset.url ? "temporarily_unavailable" : "unsupported"),
             asset.repairStatus || (originalBytesStored ? "not_needed"
               : asset.url ? "server_recovery_pending" : "unavailable"),
-            originalBytesStored ? timestamp : null,
+            originalBytesStored ? timestamp : null, captureVersion,
           );
         }
         const insertFile = this.db.prepare(`
-          INSERT INTO source_files(id, source_id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO source_files(id, source_id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at,capture_version)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const file of capture.files || []) {
-          insertFile.run(file.id || id("source_file"), sourceId, file.fileKind, file.originalFilename,
-            file.mimeType, file.storagePath, file.sizeBytes, file.sha256, timestamp);
+          const fileId=file.id && !this.db.prepare('SELECT 1 FROM source_files WHERE id=?').get(file.id) ? file.id : id('source_file');
+          insertFile.run(fileId, sourceId, file.fileKind, file.originalFilename,
+            file.mimeType, file.storagePath, file.sizeBytes, file.sha256, timestamp, captureVersion);
         }
         this.db.prepare(`INSERT INTO capture_versions(id,source_id,capture_version,captured_at,raw_text,raw_html,raw_payload_json,
           assets_json,content_hash,completeness_status,completeness_json,acquisition_origin,sync_scope_key,extension_version,created_at)
@@ -756,7 +871,7 @@ export class Repository {
       FROM sources WHERE id=?`).get(sourceId);
     if (!source) return null;
     const assets = this.db.prepare(`SELECT kind,media_identity,durability_status,repair_status,ai_readability_status
-      FROM source_assets WHERE source_id=?`).all(sourceId);
+      FROM current_source_assets WHERE source_id=?`).all(sourceId);
     const completeness = json(source.completeness_json, {});
     const summarize = (kind) => {
       const rows = assets.filter((asset) => asset.kind === kind);
@@ -796,7 +911,7 @@ export class Repository {
   }
 
   getMediaRecoveryAsset(assetId) {
-    return this.db.prepare(`SELECT sa.*,s.adapter,s.canonical_url,s.external_id FROM source_assets sa
+    return this.db.prepare(`SELECT sa.*,s.adapter,s.canonical_url,s.external_id,sa.capture_version=s.capture_version AS is_current FROM source_assets sa
       JOIN sources s ON s.id=sa.source_id WHERE sa.id=?`).get(assetId) || null;
   }
 
@@ -812,7 +927,7 @@ export class Repository {
       ai_readability_status='processable',repair_status='not_needed',storage_error='',recovered_at=? WHERE id=?`)
       .run(stored.localPath, stored.mimeType, stored.sha256, stored.sha256, stored.sizeBytes, timestamp, assetId);
     const asset = this.getMediaRecoveryAsset(assetId);
-    if (asset) this.resumeSourceAfterMediaRecovery(asset.source_id);
+    if (asset?.is_current) this.resumeSourceAfterMediaRecovery(asset.source_id);
     this.refreshMediaBackfillRuns();
     return asset;
   }
@@ -827,7 +942,7 @@ export class Repository {
   }
 
   enqueueSourceMediaRepairs(sourceId, type = "repair_media_asset") {
-    const assets = this.db.prepare(`SELECT id FROM source_assets WHERE source_id=?
+    const assets = this.db.prepare(`SELECT id FROM current_source_assets WHERE source_id=?
       AND durability_status<>'ORIGINAL_STORED' AND remote_url<>''
       AND repair_status NOT IN ('unavailable','browser_repair_required') ORDER BY position,id`).all(sourceId);
     for (const asset of assets) this.enqueue(type, asset.id, { dedupeKey: `${type}:${asset.id}`, priority: 10 });
@@ -844,7 +959,7 @@ export class Repository {
     if (["processing","processed","needs_ai"].includes(source.status)) {
       if (source.status === "processing") return false;
       const mediaRevision=this.db.prepare(`SELECT group_concat(id || ':' || durability_status || ':' || COALESCE(stored_sha256,''), '|') value
-        FROM (SELECT id,durability_status,stored_sha256 FROM source_assets WHERE source_id=? ORDER BY position,id)`).get(sourceId)?.value || "no-media";
+        FROM (SELECT id,durability_status,stored_sha256 FROM current_source_assets WHERE source_id=? ORDER BY position,id)`).get(sourceId)?.value || "no-media";
       const timestamp=now();
       transaction(this.db,() => {
         this.db.prepare(`UPDATE sources SET recommendation_reconciled_version='',recommendation_reconciled_at=NULL,updated_at=? WHERE id=?`)
@@ -893,7 +1008,7 @@ export class Repository {
   }
 
   enqueueMediaDurabilityBackfill({ dryRun = false } = {}) {
-    const rows = this.db.prepare(`SELECT id,durability_status,repair_status,remote_url FROM source_assets
+    const rows = this.db.prepare(`SELECT id,durability_status,repair_status,remote_url FROM current_source_assets
       WHERE durability_status<>'ORIGINAL_STORED' ORDER BY source_id,position,id`).all();
     const report = {
       scanned: rows.length,
@@ -922,13 +1037,13 @@ export class Repository {
   runExperienceBackfill({ dryRun = true } = {}) {
     const rows = this.db.prepare(`SELECT s.id,s.title,s.capture_version FROM sources s
       WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
-        AND NOT EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')
+        AND NOT EXISTS (SELECT 1 FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')
         AND NOT EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
           AND er.capture_version=s.capture_version AND er.degraded=0)
       ORDER BY s.captured_at,s.id`).all();
     const blockedByMedia=Number(this.db.prepare(`SELECT COUNT(*) n FROM sources s
       WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
-        AND EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')`).get()?.n || 0);
+        AND EXISTS (SELECT 1 FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')`).get()?.n || 0);
     const report = {eligible:rows.length,blockedByMedia,queued:0,sourceIds:rows.map((row) => row.id)};
     if (!dryRun) for (const row of rows) {
       // Share the canonical key with startup/source-completion scheduling so a
@@ -1069,7 +1184,7 @@ export class Repository {
         value: claim.value_text, qualifiers: claim.qualifiers, role: claim.claim_role,
         source_quote: claim.source_quote, evidence_span_ids: claim.evidence_span_ids })),
       evidence_spans: this.db.prepare(`SELECT id,segment_id,asset_id,locator_type,quote,start_offset,end_offset
-        FROM evidence_spans WHERE source_id=? ORDER BY id`).all(sourceId),
+        FROM current_evidence_spans WHERE source_id=? ORDER BY id`).all(sourceId),
       media: source.assets.map((asset) => ({ id: asset.id,kind:asset.kind,position:asset.position,
         durability_status:asset.durability_status,ai_readability_status:asset.ai_readability_status,
         alt_text:asset.alt_text,nearby_text:asset.nearby_text,caption_text:asset.caption_text })),
@@ -1175,18 +1290,24 @@ export class Repository {
       .map((row) => ({ ...row, mode:row.sync_mode_v2 || row.mode, stats: json(row.stats_json, {}), lastError: json(row.last_error_json, {}) }));
   }
 
-  enqueue(type, entityId, { dedupeKey = `${type}:${entityId}`, priority = jobPriority(type), productionAttemptId = null } = {}) {
+  enqueue(type, entityId, { dedupeKey = `${type}:${entityId}`, priority = jobPriority(type), productionAttemptId = null, executionRoute = 'auto' } = {}) {
     const timestamp = this.jobTimestamp();
     const active = this.db.prepare(`
-      SELECT id FROM jobs WHERE dedupe_key = ? AND status IN ('queued', 'running') LIMIT 1
+      SELECT id,status FROM jobs WHERE dedupe_key = ? AND status IN ('queued', 'running') LIMIT 1
     `).get(dedupeKey);
-    if (active) return active.id;
+    if (active) {
+      if (active.status === 'running' && ['resolve_entities','rebuild_knowledge','rebuild_topic_clusters','build_coverage_matrix',
+        'rebuild_content_opportunities','reconcile_approved_opportunities','rebuild_editorial'].includes(type)) {
+        this.db.prepare('UPDATE jobs SET dirty_revision=dirty_revision+1 WHERE id=?').run(active.id);
+      }
+      return active.id;
+    }
     const jobId = id("job");
     try {
       this.db.prepare(`
-        INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at, dedupe_key,priority,production_attempt_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(jobId, type, entityId, timestamp, timestamp, timestamp, dedupeKey, priority, productionAttemptId);
+        INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at, dedupe_key,priority,production_attempt_id,execution_route)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(jobId, type, entityId, timestamp, timestamp, timestamp, dedupeKey, priority, productionAttemptId, executionRoute);
       return jobId;
     } catch (error) {
       const raced = this.db.prepare("SELECT id FROM jobs WHERE dedupe_key=? AND status IN ('queued','running') LIMIT 1").get(dedupeKey);
@@ -1524,12 +1645,13 @@ export class Repository {
         SELECT * FROM jobs
         WHERE status = 'queued' AND available_at <= ? AND COALESCE(next_eligible_at,available_at)<=?
           AND (? = 0 OR type <> 'extract_segment_claims' OR execution_route='realtime')
-          AND (? = 0 OR type <> 'audit_segment_coverage')
+          AND (? = 0 OR type <> 'audit_segment_coverage' OR execution_route='realtime')
           AND NOT EXISTS (
             SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
             WHERE vbi.job_id=jobs.id AND vbr.status IN ('preparing','submitted')
           )
-          AND (? = 1 OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")}))
+          AND (? = 1 OR type='generate_visuals' OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")}))
+          AND (type<>'generate_visuals' OR ?=1)
         ORDER BY
           CASE WHEN datetime(created_at)<=datetime(?,'-15 minutes') THEN 0 ELSE 1 END,
           priority ASC,
@@ -1562,11 +1684,11 @@ export class Repository {
           created_at ASC
         LIMIT 1
       `).get(timestamp, timestamp, deferBatchExtraction ? 1 : 0, deferBatchCoverage ? 1 : 0,
-        providerReady ? 1 : 0, ...AI_JOB_TYPES, timestamp);
+        providerReady ? 1 : 0, ...AI_JOB_TYPES, this.clock().getTime() >= (this.visualBackoffUntil || 0) ? 1 : 0, timestamp);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
       const claimed = this.db.prepare(`
-        UPDATE jobs SET status = 'running', attempts = attempts + 1, lease_generation=lease_generation+1, locked_at = ?,
+        UPDATE jobs SET status = 'running', attempts = attempts + 1, lease_generation=lease_generation+1, claimed_revision=dirty_revision, locked_at = ?,
           locked_by = ?, lease_expires_at = ?, heartbeat_at = ?, started_at = COALESCE(started_at, ?),
           queue_latency_ms = COALESCE(queue_latency_ms, ?), updated_at = ?
         WHERE id = ? AND status='queued'
@@ -1599,7 +1721,8 @@ export class Repository {
     const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(jobId);
     const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
     return this.db.prepare(`
-      UPDATE jobs SET status='succeeded', completed_at=?, duration_ms=?, locked_by=NULL,
+      UPDATE jobs SET status=CASE WHEN dirty_revision>claimed_revision THEN 'queued' ELSE 'succeeded' END,
+        completed_at=CASE WHEN dirty_revision>claimed_revision THEN NULL ELSE ? END, duration_ms=?, locked_by=NULL,
         lease_expires_at=NULL, heartbeat_at=NULL, failure_class='',last_failure_code='',next_eligible_at=NULL,updated_at=?
       WHERE id=? AND status='running' AND locked_by=? AND (? IS NULL OR lease_generation=?)
     `).run(timestamp, durationMs, timestamp, jobId, ownerId, generation, generation).changes === 1;
@@ -1617,7 +1740,10 @@ export class Repository {
       : Math.min(300_000, 10_000 * 2 ** Math.max(0, job.attempts - 1));
     const delayMs = Math.max(Number(error?.retryAfterMs || 0), Math.round(baseDelayMs * (0.8 + Math.random() * 0.4)));
     const availableAt = new Date(this.clock().getTime() + delayMs).toISOString();
-    if (providerPressure) this.providerBackoffUntil = Math.max(this.providerBackoffUntil, Date.parse(availableAt));
+    if (providerPressure) {
+      if (job.type === 'generate_visuals') this.visualBackoffUntil = Math.max(this.visualBackoffUntil || 0, Date.parse(availableAt));
+      else this.providerBackoffUntil = Math.max(this.providerBackoffUntil, Date.parse(availableAt));
+    }
     const timestamp = this.jobTimestamp();
     const durationMs = job.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
     const failureClass = terminalFailureClass(error, retry, providerPressure);
@@ -1667,23 +1793,34 @@ export class Repository {
       briefId:context.brief_id,draftId:context.draft_id,opportunityStatus:context.opportunity_status };
     const remediation = failureRemediation(category);
     return transaction(this.db, () => {
+      const snapshot = this.productionAttemptSnapshot(context);
+      this.db.prepare(`INSERT OR IGNORE INTO production_attempt_archives(id,opportunity_id,failing_job_id,failing_stage,
+        snapshot_json,failure_code,created_at) VALUES (?,?,?,?,?,?,?)`).run(id('attempt_archive'),context.opportunity_id,
+          job.id || `${job.type}:${job.entity_id}`,job.type,JSON.stringify(snapshot),code,timestamp);
       this.db.prepare(`INSERT INTO failure_lessons(id,scope,failure_code,category,normalized_reason,source_id,opportunity_id,
         failing_stage,previous_input_json,remediation_rule,retry_safe,status,created_at,updated_at)
         VALUES (?,'OPPORTUNITY',?,?,?,?,?,?,?, ?,?,'active',?,?)`)
         .run(lessonId,code || "PRODUCTION_FAILED",category,normalizeFailureReason(message),context.source_id || null,
           context.opportunity_id,job.type,JSON.stringify(previousInput),remediation,productionFailureRetrySafe(category) ? 1 : 0,timestamp,timestamp);
+      const scopeInvalid = ['APPROVED_SCOPE_INVALID','EVIDENCE_SCOPE_INVALID'].includes(code);
+      if (!scopeInvalid) {
+        // Keep the approval and every successful artifact. Existing bounded
+        // recovery selects the failed body/page/delivery stage on this revision.
+        if (context.draft_id) this.db.prepare("UPDATE article_drafts SET status=?,updated_at=? WHERE id=?")
+          .run(['review_draft','revise_draft'].includes(job.type) ? 'qa_failed' : 'exception',timestamp,context.draft_id);
+        return { rolledBack:false, archived:true, lessonId, retainedApproval:true, repairStage:job.type };
+      }
       const entityIds = [context.candidate_id,context.brief_id,context.draft_id].filter(Boolean);
       let cancelledJobs = 0;
       if (entityIds.length) {
         const placeholders = entityIds.map(() => "?").join(",");
-        cancelledJobs = this.db.prepare(`DELETE FROM jobs WHERE status IN ('queued','running') AND id<>? AND entity_id IN (${placeholders})`)
-          .run(job.id,...entityIds).changes;
+        cancelledJobs = this.db.prepare(`UPDATE jobs SET status='failed',last_failure_code='ATTEMPT_SCOPE_INVALID',
+          last_error='已批准范围失效；产物与任务历史保留。',locked_by=NULL,lease_expires_at=NULL
+          WHERE status IN ('queued','running') AND id<>? AND entity_id IN (${placeholders})`).run(job.id,...entityIds).changes;
       }
       const removed = {
-        drafts:context.brief_id ? Number(this.db.prepare("SELECT COUNT(*) n FROM article_drafts WHERE brief_id=?").get(context.brief_id)?.n || 0) : 0,
-        briefs:context.brief_id ? 1 : 0,cancelledJobs,
+        drafts:0, briefs:0, cancelledJobs,
       };
-      if (context.brief_id) this.db.prepare("DELETE FROM content_briefs WHERE id=?").run(context.brief_id);
       if (context.candidate_id) this.db.prepare("UPDATE topic_candidates SET status='candidate',suppression_reason=NULL,updated_at=? WHERE id=?")
         .run(timestamp,context.candidate_id);
       this.db.prepare(`UPDATE content_opportunities SET status='recommended',lifecycle_state='recommended_again',approved_at=NULL,
@@ -1693,10 +1830,21 @@ export class Repository {
       this.db.prepare(`INSERT INTO production_rollbacks(id,opportunity_id,failure_lesson_id,failing_stage,removed_artifacts_json,
         preserved_assets_json,previous_status,result_status,created_at) VALUES (?,?,?,?,?,?,?,?,?)`)
         .run(id("rollback"),context.opportunity_id,lessonId,job.type,JSON.stringify(removed),
-          JSON.stringify({ sources:true,claims:true,knowledge:true,experiences:true,editorialLessons:true }),
+          JSON.stringify({ sources:true,claims:true,knowledge:true,experiences:true,editorialLessons:true, productionArtifacts:true, wordpressAssociations:true }),
           context.opportunity_status,"recommended_again",timestamp);
       return { rolledBack:true,lessonId,opportunityId:context.opportunity_id,removed };
     });
+  }
+
+  productionAttemptSnapshot(context) {
+    const one = (table, field, value) => value ? this.db.prepare(`SELECT * FROM ${table} WHERE ${field}=?`).all(value) : [];
+    return { version:1, context,
+      assembly:one('editorial_assemblies','candidate_id',context.candidate_id),
+      brief:one('content_briefs','id',context.brief_id), narrative:one('narrative_plans','brief_id',context.brief_id),
+      packet:one('writing_packets','brief_id',context.brief_id), draft:one('article_drafts','id',context.draft_id),
+      revisions:one('draft_revisions','draft_id',context.draft_id), reviews:one('quality_reviews','draft_id',context.draft_id),
+      visuals:one('article_visuals','draft_id',context.draft_id), page:one('frontend_page_compositions','draft_id',context.draft_id),
+      wordpress:one('wordpress_publications','draft_id',context.draft_id) };
   }
 
   productionContext(job) {
@@ -1741,8 +1889,8 @@ export class Repository {
   getSource(sourceId) {
     const source = this.db.prepare("SELECT * FROM sources WHERE id = ?").get(sourceId);
     if (!source) return null;
-    const assets = this.db.prepare("SELECT * FROM source_assets WHERE source_id = ? ORDER BY position").all(sourceId);
-    const files = this.db.prepare("SELECT id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at FROM source_files WHERE source_id = ? ORDER BY created_at, id").all(sourceId);
+    const assets = this.db.prepare("SELECT * FROM current_source_assets WHERE source_id = ? ORDER BY position").all(sourceId);
+    const files = this.db.prepare("SELECT id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at FROM current_source_files WHERE source_id = ? ORDER BY created_at, id").all(sourceId);
     const structured = this.db.prepare("SELECT * FROM structured_sources WHERE source_id = ?").get(sourceId) || null;
     const claims = this.db.prepare("SELECT * FROM claims WHERE source_id = ? ORDER BY normalized_key").all(sourceId);
     const extractionRuns = this.db.prepare("SELECT * FROM extraction_runs WHERE source_id=? ORDER BY revision DESC").all(sourceId);
@@ -1752,14 +1900,24 @@ export class Repository {
     const recommendation = this.db.prepare("SELECT * FROM content_recommendations WHERE source_id = ? ORDER BY updated_at DESC LIMIT 1").get(sourceId) || null;
     const captureVersions = this.db.prepare(`SELECT id,capture_version,captured_at,content_hash,completeness_status,
       acquisition_origin,sync_scope_key,extension_version,created_at FROM capture_versions WHERE source_id=? ORDER BY capture_version DESC`).all(sourceId);
-    const segments = this.db.prepare("SELECT * FROM source_segments WHERE source_id=? ORDER BY sequence").all(sourceId);
-    const coverage = this.db.prepare("SELECT * FROM extraction_coverage WHERE source_id=? ORDER BY segment_id").all(sourceId);
+    const segments = this.db.prepare("SELECT * FROM current_source_segments WHERE source_id=? ORDER BY sequence").all(sourceId);
+    const coverage = this.db.prepare("SELECT * FROM current_extraction_coverage WHERE source_id=? ORDER BY segment_id").all(sourceId);
     const family = this.db.prepare(`SELECT sf.*, sfm.relation_type, sfm.overlap_score, sfm.incremental_claim_count, sfm.analysis_json
       FROM source_family_memberships sfm JOIN source_families sf ON sf.id=sfm.family_id WHERE sfm.source_id=?`).get(sourceId) || null;
     const experienceBlocks = this.listExperienceBlocks(sourceId);
     const mediaManifest = this.mediaRepairManifest(sourceId);
     return hydrateSource({ source, assets, files, structured, claims, extractionRuns, claimHistory, blueprint, analysis, recommendation, segments, coverage, family, captureVersions,
       experienceBlocks, mediaManifest });
+  }
+
+  getSourceCaptureVersion(sourceId, captureVersion) {
+    const version=this.db.prepare('SELECT * FROM capture_versions WHERE source_id=? AND capture_version=?').get(sourceId,Number(captureVersion));
+    if(!version)return null;
+    const assets=this.db.prepare('SELECT * FROM source_assets WHERE source_id=? AND capture_version=? ORDER BY position,id').all(sourceId,version.capture_version);
+    return {...version,assets,assetSnapshots:json(version.assets_json,[]),
+      files:this.db.prepare('SELECT * FROM source_files WHERE source_id=? AND capture_version=? ORDER BY id').all(sourceId,version.capture_version),
+      segments:this.db.prepare('SELECT * FROM source_segments WHERE source_id=? AND capture_version=? ORDER BY sequence').all(sourceId,version.capture_version),
+      assetLinkage:assets.length?'retained':'snapshot_only'};
   }
 
   recordSourcePreflight(sourceId, result) {
@@ -1799,7 +1957,7 @@ export class Repository {
     if (!assets.length && placeholderQuote) {
       assets = this.db.prepare(`SELECT id,kind,remote_url,alt_text,position,mime_type,
         CASE WHEN ai_derivative_data_url<>'' THEN 1 ELSE 0 END AS preview_stored
-        FROM source_assets WHERE source_id=? ORDER BY position,id LIMIT 3`).all(sourceId);
+        FROM current_source_assets WHERE source_id=? ORDER BY position,id LIMIT 3`).all(sourceId);
     }
     assets = assets.map((asset) => ({ id: asset.id, kind: asset.kind, position: asset.position,
       altText: asset.alt_text, mimeType: asset.mime_type, previewUrl: `/api/source-assets/${encodeURIComponent(asset.id)}/preview`,
@@ -1826,16 +1984,16 @@ export class Repository {
     const stored = this.db.prepare("SELECT * FROM source_segments WHERE source_id=? AND capture_version=? ORDER BY sequence")
       .all(sourceId, source.capture_version);
     if (stored.length) return stored.filter((item) => !["complete", "extracted"].includes(item.status));
-    const values = segmentSource(source, { maxChars: this.contentConfig.sourceTextSegmentMaxChars });
+    const values = segmentSource(source, { maxChars: this.contentConfig.sourceTextSegmentMaxChars })
+      .map(item=>source.capture_version>1?{...item,id:`segment_${sha256(`${item.id}:v${source.capture_version}`).slice(0,24)}`}:item);
     const timestamp = now();
     transaction(this.db, () => {
-      this.db.prepare("DELETE FROM source_segments WHERE source_id=?").run(sourceId);
       const insert = this.db.prepare(`INSERT INTO source_segments(id,source_id,segment_type,sequence,title,raw_text,page_start,page_end,asset_id,image_index,destination_scopes_json,topic_scopes_json,content_hash,semantic_hash,status,created_at,updated_at,capture_version)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?,?)`);
       for (const item of values) insert.run(item.id, sourceId, item.segmentType, item.sequence, item.title, item.rawText,
         item.pageStart, item.pageEnd, item.assetId, item.imageIndex, JSON.stringify(item.destinationScopes), JSON.stringify(item.topicScopes),
         item.contentHash, item.semanticHash, timestamp, timestamp, source.capture_version);
-      this.db.prepare("UPDATE source_assets SET extraction_status='pending', extraction_error=NULL, processed_at=NULL WHERE source_id=?").run(sourceId);
+      this.db.prepare("UPDATE source_assets SET extraction_status='pending', extraction_error=NULL, processed_at=NULL WHERE source_id=? AND capture_version=?").run(sourceId,source.capture_version);
       this.db.prepare("UPDATE sources SET status='processing', diagnostic_json=?, updated_at=? WHERE id=?")
         .run(JSON.stringify({ ...json(source.diagnostic_json, {}), strategy_version: this.strategyVersion,
           stage: "segmented", segment_count: values.length, asset_count: source.assets.length }), timestamp, sourceId);
@@ -1846,6 +2004,11 @@ export class Repository {
   splitSourceSegmentForRetry(segmentId) {
     const segment = this.db.prepare("SELECT * FROM source_segments WHERE id=?").get(segmentId);
     if (!segment || segment.asset_id || String(segment.raw_text || "").length < 800) return [];
+    // Automatic output-limit splitting is for an unprocessed current segment.
+    // A forced re-extraction must never cascade-delete previously cited evidence.
+    if (segment.capture_version !== this.db.prepare('SELECT capture_version FROM sources WHERE id=?').get(segment.source_id)?.capture_version
+      || this.db.prepare('SELECT 1 FROM segment_extractions WHERE segment_id=?').get(segmentId)
+      || this.db.prepare('SELECT 1 FROM evidence_spans WHERE segment_id=? LIMIT 1').get(segmentId)) return [];
     const text = String(segment.raw_text);
     let midpoint = Math.floor(text.length / 2);
     const boundary = Math.max(text.lastIndexOf("。", midpoint), text.lastIndexOf(". ", midpoint), text.lastIndexOf("\n", midpoint));
@@ -1854,13 +2017,13 @@ export class Repository {
     if (parts.length !== 2) return [];
     const timestamp = now();
     return transaction(this.db, () => {
-      const maximum = this.db.prepare("SELECT COALESCE(MAX(sequence),-1) AS value FROM source_segments WHERE source_id=?").get(segment.source_id).value;
+      const maximum = this.db.prepare("SELECT COALESCE(MAX(sequence),-1) AS value FROM source_segments WHERE source_id=? AND capture_version=?").get(segment.source_id,segment.capture_version).value;
       this.db.prepare("DELETE FROM source_segments WHERE id=?").run(segmentId);
       const shift = maximum + 2;
-      this.db.prepare("UPDATE source_segments SET sequence=sequence+? WHERE source_id=? AND sequence>?")
-        .run(shift, segment.source_id, segment.sequence);
-      this.db.prepare("UPDATE source_segments SET sequence=sequence-?+1 WHERE source_id=? AND sequence>?")
-        .run(shift, segment.source_id, segment.sequence + shift);
+      this.db.prepare("UPDATE source_segments SET sequence=sequence+? WHERE source_id=? AND sequence>? AND capture_version=?")
+        .run(shift, segment.source_id, segment.sequence,segment.capture_version);
+      this.db.prepare("UPDATE source_segments SET sequence=sequence-?+1 WHERE source_id=? AND sequence>? AND capture_version=?")
+        .run(shift, segment.source_id, segment.sequence + shift,segment.capture_version);
       const insert = this.db.prepare(`INSERT INTO source_segments(id,source_id,segment_type,sequence,title,raw_text,page_start,page_end,
         asset_id,image_index,destination_scopes_json,topic_scopes_json,content_hash,semantic_hash,status,created_at,updated_at,capture_version)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?,?)`);
@@ -1896,22 +2059,7 @@ export class Repository {
     if (segment.capture_version !== sourceVersion) return false;
     const timestamp = now();
     const attempt = retry ? 2 : 1;
-    const suppliedManifest = normalizeExtractionInputManifest(extraction?.inputManifest);
-    // Text segments are passed to every extractor directly in `source.raw_text`, so
-    // record that known transport fact even for older/custom extractor adapters.
-    // Media must still provide a provider manifest; we never infer it from a method
-    // name because that was the lossy behavior A01 removes.
-    const inputManifest = suppliedManifest.version > 0 || segment.asset_id
-      ? suppliedManifest
-      : normalizeExtractionInputManifest({
-        version: 1,
-        expectedModality: "text",
-        receivedModality: "text",
-        provider: extraction?.provider || "adapter",
-        model: extraction?.model || "",
-        capabilities: { text: true, image: false, video: false, batch: false },
-        assets: [],
-      });
+    const inputManifest = extractionInputManifest(segment, extraction);
     const inputModality = inputManifest.receivedModality;
     const write = () => {
       this.db.prepare(`INSERT INTO segment_extractions(segment_id,source_id,result_json,method,model,attempt,created_at,updated_at,input_modality,input_manifest_json)
@@ -1932,10 +2080,15 @@ export class Repository {
     return withinTransaction ? write() : transaction(this.db, write);
   }
 
-  getSegmentCoveragePackage(segmentId) {
+  getSegmentCoveragePackage(segmentId, { extraction = null, retry = false } = {}) {
     const row = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model,se.attempt,se.input_modality,se.input_manifest_json FROM source_segments ss
       JOIN segment_extractions se ON se.segment_id=ss.id WHERE ss.id=?`).get(segmentId);
     if (!row) return null;
+    if (extraction) {
+      const manifest = extractionInputManifest(row, extraction);
+      Object.assign(row, { result_json: JSON.stringify(extraction.result), method: extraction.method, model: extraction.model,
+        attempt: retry ? 2 : 1, input_modality: manifest.receivedModality, input_manifest_json: JSON.stringify(manifest), status: 'extracted' });
+    }
     const coverage = this.db.prepare("SELECT * FROM extraction_coverage WHERE segment_id=?").get(segmentId);
     const source = this.getSource(row.source_id);
     if (row.capture_version !== source?.capture_version) return { segment: row, staleCaptureVersion: true };
@@ -2031,7 +2184,7 @@ export class Repository {
       SUM(CASE WHEN ec.publication_usability='non_material' THEN 1 ELSE 0 END) AS non_material,
       SUM(CASE WHEN ec.publication_usability='review_needed' AND ec.status='manual_review' THEN 1 ELSE 0 END) AS review_needed,
       SUM(CASE WHEN ec.publication_usability IN ('usable','partial_usable','non_material') OR ec.status='manual_review' THEN 1 ELSE 0 END) AS terminal
-      FROM source_segments ss LEFT JOIN extraction_coverage ec ON ec.segment_id=ss.id WHERE ss.source_id=?`).get(sourceId);
+      FROM current_source_segments ss LEFT JOIN extraction_coverage ec ON ec.segment_id=ss.id WHERE ss.source_id=?`).get(sourceId);
     const total = Number(counts.total || 0);
     const usable = Number(counts.usable || 0);
     const partialUsable = Number(counts.partial_usable || 0);
@@ -2059,7 +2212,7 @@ export class Repository {
   reviewSegmentCoverage(sourceId, segmentId, { decision, note = "", operator = "administrator" } = {}) {
     if (!["retry", "not_material"].includes(decision)) throw new Error("Coverage review decision must be retry or not_material.");
     const row = this.db.prepare(`SELECT ss.*,ec.id AS coverage_id,ec.status AS coverage_status,ec.audit_json
-      FROM source_segments ss JOIN extraction_coverage ec ON ec.segment_id=ss.id
+      FROM current_source_segments ss JOIN extraction_coverage ec ON ec.segment_id=ss.id
       WHERE ss.id=? AND ss.source_id=?`).get(segmentId, sourceId);
     if (!row) return null;
     if (row.coverage_status !== "manual_review") {
@@ -2096,7 +2249,7 @@ export class Repository {
   finalizeSegmentedExtraction(sourceId) {
     if (!this.sourceCoverageReady(sourceId)) throw new Error(`Source ${sourceId} still has unaudited segments.`);
     const sourceVersion = this.db.prepare("SELECT capture_version FROM sources WHERE id=?").get(sourceId)?.capture_version;
-    const rows = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model FROM source_segments ss
+    const rows = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model FROM current_source_segments ss
       JOIN segment_extractions se ON se.segment_id=ss.id WHERE ss.source_id=? ORDER BY ss.sequence`).all(sourceId);
     if (!rows.length || rows.some((row) => row.capture_version !== sourceVersion)) {
       throw Object.assign(new Error(`Source ${sourceId} extraction belongs to a stale capture version.`), { code: "STALE_CAPTURE_VERSION", retryable: false });
@@ -2128,7 +2281,7 @@ export class Repository {
     }
     this.db.prepare("UPDATE sources SET destination_scopes_json=?,diagnostic_json=?,updated_at=? WHERE id=?")
       .run(JSON.stringify([primary.destination_slug].filter(Boolean)), JSON.stringify({ strategy_version: this.strategyVersion, stage: "finalized", segment_count: rows.length, claim_count: claims.length,
-        coverage: this.db.prepare("SELECT status,COUNT(*) count FROM extraction_coverage WHERE source_id=? GROUP BY status").all(sourceId) }), now(), sourceId);
+        coverage: this.db.prepare("SELECT status,COUNT(*) count FROM current_extraction_coverage WHERE source_id=? GROUP BY status").all(sourceId) }), now(), sourceId);
     return { destinationSlug: primary.destination_slug, claimCount: claims.length };
   }
 
@@ -2288,8 +2441,8 @@ export class Repository {
   sourceProcessingState(sourceId,{requireDiagnostic=true}={}) {
     const source = this.db.prepare(`SELECT s.id,s.status,s.capture_version,s.completeness_status,
         s.recommendation_reconciled_version,s.recommendation_reconciled_at,
-        (SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id) AS media_count,
-        (SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status='ORIGINAL_STORED') AS original_count,
+        (SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id) AS media_count,
+        (SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status='ORIGINAL_STORED') AS original_count,
         (SELECT status FROM experience_extraction_runs er WHERE er.source_id=s.id ORDER BY CASE er.status WHEN 'succeeded' THEN 0 ELSE 1 END,er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_status,
         (SELECT capture_version FROM experience_extraction_runs er WHERE er.source_id=s.id ORDER BY CASE er.status WHEN 'succeeded' THEN 0 ELSE 1 END,er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_capture_version,
         (SELECT degraded FROM experience_extraction_runs er WHERE er.source_id=s.id ORDER BY CASE er.status WHEN 'succeeded' THEN 0 ELSE 1 END,er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_degraded,
@@ -2816,14 +2969,14 @@ export class Repository {
         s.completeness_status,s.completeness_json,
         ss.destination_name, ss.summary, ss.extraction_method,
         (SELECT COUNT(*) FROM claims c WHERE c.source_id = s.id) AS claim_count,
-        (SELECT COUNT(*) FROM source_files sf WHERE sf.source_id = s.id) AS file_count,
-        (SELECT COUNT(*) FROM source_segments sg WHERE sg.source_id = s.id) AS segment_count,
+        (SELECT COUNT(*) FROM current_source_files sf WHERE sf.source_id = s.id) AS file_count,
+        (SELECT COUNT(*) FROM current_source_segments sg WHERE sg.source_id = s.id) AS segment_count,
         (SELECT COUNT(*) FROM segment_extractions se WHERE se.source_id = s.id) AS extracted_segment_count,
         (SELECT COUNT(*) FROM extraction_coverage ec WHERE ec.source_id = s.id AND ec.audited_at IS NOT NULL) AS audited_segment_count
-        ,(SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id) AS discovered_media_count
-        ,(SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status='ORIGINAL_STORED') AS stored_original_count
-        ,(SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.repair_status='browser_repair_required') AS browser_repair_count
-        ,(SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.repair_status IN ('server_recovery_pending','server_recovery_running')) AS server_repair_count
+        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id) AS discovered_media_count
+        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status='ORIGINAL_STORED') AS stored_original_count
+        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.repair_status='browser_repair_required') AS browser_repair_count
+        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.repair_status IN ('server_recovery_pending','server_recovery_running')) AS server_repair_count
         ,(SELECT status FROM experience_extraction_runs er WHERE er.source_id=s.id ORDER BY CASE er.status WHEN 'succeeded' THEN 0 ELSE 1 END,er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_status
         ,(SELECT degraded FROM experience_extraction_runs er WHERE er.source_id=s.id ORDER BY CASE er.status WHEN 'succeeded' THEN 0 ELSE 1 END,er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_degraded
       FROM sources s LEFT JOIN structured_sources ss ON ss.source_id = s.id
@@ -3116,7 +3269,8 @@ export class Repository {
       });
       const identity = { entityKey, canonicalSubject, aliases, status: "resolved", ...metadata };
       entities.set(entityKey, identity);
-      for (const alias of aliases) this.upsertEntityAlias(destinationSlug, normalizeEntityAlias(alias), identity, "model", Number(item.confidence), timestamp);
+      // Model-proposed aliases are candidates until a source-grounded Claim
+      // update proves the identity. Do not populate the alias registry here.
     }
     const claims = new Map(this.db.prepare(`
       SELECT c.* FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
@@ -3135,13 +3289,16 @@ export class Repository {
           alias: row.subject, candidate_entity_key: row.entity_key, candidate_entity_type: row.entity_type,
           candidate_granularity: row.granularity, proposed_entity_key: entityKey,
           proposed_canonical_subject: canonicalSubject, proposed_entity_type: metadata.entityType,
-          proposed_granularity: metadata.granularity, location: metadata.location, confidence: item.confidence,
+          proposed_granularity: metadata.granularity, candidateLocation: json(row.entity_location_json, {}),
+          proposedLocation: metadata.location, confidence: item.confidence,
+          identityEvidence: this.hasSourceAliasEvidence(row, canonicalSubject),
         });
-        if (assessment.decision === "DO_NOT_MERGE") {
-          if (row.entity_key && assessment.suggestedRelation) this.upsertEntityRelation(destinationSlug, row.entity_key, assessment.suggestedRelation, entityKey, "model", Number(item.confidence), assessment.reasons.join("; "));
+        if (assessment.decision !== "MERGE") {
+          if (row.entity_key && row.entity_key !== entityKey) this.upsertEntityRelation(destinationSlug, row.entity_key, assessment.suggestedRelation || 'related_to', entityKey, "model", Number(item.confidence), assessment.reasons.join("; "));
           continue;
         }
         const identity = entities.get(entityKey) || { entityKey, canonicalSubject, aliases: uniqueEntityAliases([canonicalSubject, row.subject]), status: "resolved", ...metadata };
+        identity.aliases = uniqueEntityAliases([canonicalSubject, row.subject]);
         const canonicalKey = normalizeClaimKey(item?.canonical_key);
         this.db.prepare(`
           UPDATE claims SET original_normalized_key=CASE WHEN original_normalized_key='' THEN normalized_key ELSE original_normalized_key END,
@@ -3202,6 +3359,16 @@ export class Repository {
     });
     this.resolveEntitiesDeterministically(destinationSlug);
     return { resolvedEntities: entities.size, candidates: this.listEntityMergeCandidates().filter((item) => item.destination_slug === destinationSlug).length };
+  }
+
+  hasSourceAliasEvidence(claim, canonicalSubject) {
+    const existing = this.db.prepare("SELECT 1 FROM entity_aliases WHERE alias_normalized=? AND canonical_subject=? AND resolution_source='manual'")
+      .get(normalizeEntityAlias(claim.subject),canonicalSubject);
+    if (existing) return true;
+    const source = this.db.prepare('SELECT raw_text FROM sources WHERE id=?').get(claim.source_id);
+    const escape = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const alias = escape(claim.subject), canonical = escape(canonicalSubject);
+    return new RegExp(`${alias}\\s*[（(]\\s*${canonical}\\s*[）)]|${canonical}\\s*[（(]\\s*${alias}\\s*[）)]`, 'iu').test(source?.raw_text || '');
   }
 
   decideEntityMergeCandidate(candidateId, decision, options = {}) {
@@ -3557,6 +3724,11 @@ export class Repository {
             : status === "single_source" || freshness.state === "stale" ? "review" : "normal";
         const entity = aggregateEntityIdentity(rows);
         const evidence = rows.map((row) => ({
+          claim_id: row.id,
+          extraction_revision: row.extraction_revision,
+          evidence_span_ids: json(row.evidence_span_ids_json, []),
+          entity_key: row.entity_key,
+          predicate: row.predicate,
           source_id: row.source_id,
           value: row.value_text,
           quote: row.source_quote,
@@ -3887,7 +4059,8 @@ export class Repository {
       (fact.evidence || []).map((item) => item.source_id))].filter(Boolean));
     const experiences = [...sourceIds].flatMap((sourceId) => this.listExperienceBlocks(sourceId));
     const failureLessons = this.db.prepare(`SELECT scope,failure_code,category,normalized_reason,remediation_rule,failing_stage
-      FROM failure_lessons WHERE status='active' ORDER BY created_at DESC LIMIT 30`).all();
+      FROM failure_lessons WHERE status='active' AND retry_safe=1 AND opportunity_id IN
+        (SELECT id FROM content_opportunities WHERE candidate_id=?) ORDER BY created_at DESC LIMIT 30`).all(candidateId);
     const editorialLessons = this.db.prepare(`SELECT feedback,principle,created_at FROM editorial_lessons
       WHERE active=1 ORDER BY created_at DESC LIMIT 30`).all();
     const goldenArticles = this.db.prepare(`SELECT ga.id,ga.draft_id,ga.principles_json,ga.title
@@ -4059,29 +4232,36 @@ export class Repository {
     if (!contentPackage) throw new Error(`Content brief ${briefId} no longer exists.`);
     const validFacts = new Set((contentPackage.facts || []).map((item) => item.normalized_key));
     const validExperiences = new Set((contentPackage.experiences || []).map((item) => item.id));
+    const evidenceSelections = (Array.isArray(plan?.evidence_selections) ? plan.evidence_selections : []).slice(0,96);
+    for (const selection of evidenceSelections) {
+      const fact = (contentPackage.facts || []).find(fact => fact.normalized_key === selection.claim_key);
+      if (!['current','historical','conditional'].includes(selection.role) || !fact?.evidence.some(evidence => evidence.claim_id === selection.claim_id && evidence.source_id === selection.source_id)) {
+        throw Object.assign(new Error('叙事计划引用了未知或错配的证据陈述。'),{code:'NARRATIVE_EVIDENCE_INVALID',retryable:false});
+      }
+    }
     const timestamp = now();
     const narrativeId = `narrative_${sha256(briefId).slice(0, 24)}`;
     const placements = (Array.isArray(plan?.experience_placements) ? plan.experience_placements : [])
       .filter((item) => validExperiences.has(item?.experience_block_id)).slice(0, 24)
       .map((item) => ({ experience_block_id:item.experience_block_id,section_id:String(item.section_id || "").slice(0,200),purpose:String(item.purpose || "").slice(0,500) }));
     this.db.prepare(`INSERT INTO narrative_plans(id,brief_id,opening_job,throughline,route_sequence_json,experience_placements_json,
-      supporting_fact_keys_json,conditional_branches_json,tradeoffs_json,exclusions_json,closing_decision,model,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(brief_id) DO UPDATE SET opening_job=excluded.opening_job,
+      supporting_fact_keys_json,conditional_branches_json,tradeoffs_json,exclusions_json,closing_decision,model,created_at,updated_at,evidence_selections_json)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(brief_id) DO UPDATE SET opening_job=excluded.opening_job,
       throughline=excluded.throughline,route_sequence_json=excluded.route_sequence_json,experience_placements_json=excluded.experience_placements_json,
       supporting_fact_keys_json=excluded.supporting_fact_keys_json,conditional_branches_json=excluded.conditional_branches_json,
       tradeoffs_json=excluded.tradeoffs_json,exclusions_json=excluded.exclusions_json,closing_decision=excluded.closing_decision,
-      model=excluded.model,updated_at=excluded.updated_at`)
+      model=excluded.model,updated_at=excluded.updated_at,evidence_selections_json=excluded.evidence_selections_json`)
       .run(narrativeId,briefId,String(plan?.opening_job || "").slice(0,1000),String(plan?.throughline || "").slice(0,2000),
         JSON.stringify(uniqueStrings(plan?.route_sequence).slice(0,24)),JSON.stringify(placements),
         JSON.stringify(uniqueStrings(plan?.supporting_fact_keys).filter((value) => validFacts.has(value)).slice(0,48)),
         JSON.stringify(uniqueStrings(plan?.conditional_branches).slice(0,24)),JSON.stringify(uniqueStrings(plan?.tradeoffs).slice(0,24)),
-        JSON.stringify(uniqueStrings(plan?.exclusions).slice(0,24)),String(plan?.closing_decision || "").slice(0,1000),model,timestamp,timestamp);
+        JSON.stringify(uniqueStrings(plan?.exclusions).slice(0,24)),String(plan?.closing_decision || "").slice(0,1000),model,timestamp,timestamp,JSON.stringify(evidenceSelections));
     return this.getNarrativePlan(briefId);
   }
 
   getNarrativePlan(briefId) {
     const row = this.db.prepare("SELECT * FROM narrative_plans WHERE brief_id=?").get(briefId);
-    return row ? { ...row, route_sequence:json(row.route_sequence_json,[]), experience_placements:json(row.experience_placements_json,[]),
+    return row ? { ...row, evidence_selections:json(row.evidence_selections_json,[]), route_sequence:json(row.route_sequence_json,[]), experience_placements:json(row.experience_placements_json,[]),
       supporting_fact_keys:json(row.supporting_fact_keys_json,[]), conditional_branches:json(row.conditional_branches_json,[]),
       tradeoffs:json(row.tradeoffs_json,[]), exclusions:json(row.exclusions_json,[]) } : null;
   }
@@ -4091,41 +4271,73 @@ export class Repository {
     const narrative = contentPackage?.narrative_plan;
     if (!contentPackage || !narrative) throw new Error(`Content brief ${briefId} has no Narrative Plan.`);
     const factKeys = uniqueStrings([...(narrative.supporting_fact_keys || []), ...(contentPackage.brief.evidence_ledger || [])]).slice(0,48);
-    const facts = (contentPackage.facts || []).filter((fact) => factKeys.includes(fact.normalized_key));
+    const facts = (contentPackage.facts || []).filter((fact) => factKeys.includes(fact.normalized_key)).map(fact => {
+      const snapshot = selectedFactSnapshot(fact);
+      const selections = (narrative.evidence_selections || []).filter(item => item.claim_key === fact.normalized_key);
+      if (selections.length) {
+        snapshot.evidence = selectedFactEvidence(fact,selections.map(item=>({claimId:item.claim_id,sourceId:item.source_id,evidenceRole:item.role})))
+          .map(evidence=>({...evidence,evidence_role:selections.find(item=>item.claim_id===evidence.claim_id && item.source_id===evidence.source_id).role}));
+        if (snapshot.evidence.length !== selections.length) throw Object.assign(new Error('所选叙事证据已变化，请重新规划该叙事。'),{code:'NARRATIVE_EVIDENCE_STALE',retryable:false});
+        snapshot.selection_frozen = true;
+        if (snapshot.evidence.length === 1) snapshot.preferred_value = snapshot.evidence[0].value;
+      }
+      snapshot.evidence = snapshot.evidence.flatMap(evidence => {
+        if (evidence.claim_id) return [evidence];
+        const claim = this.db.prepare(`SELECT id,extraction_revision,evidence_span_ids_json FROM claims
+          WHERE source_id=? AND normalized_key=? AND value_text=? AND source_quote=? ORDER BY extraction_revision DESC LIMIT 1`)
+          .get(evidence.source_id,fact.normalized_key,evidence.value || fact.preferred_value,evidence.quote || '');
+        if (!claim) throw Object.assign(new Error('写作证据无法对应精确陈述，请重建该来源的知识后重试。'),{code:'WRITING_PACKET_EVIDENCE_UNRESOLVED',retryable:false});
+        return [{...evidence,claim_id:claim.id,extraction_revision:claim.extraction_revision,evidence_span_ids:json(claim.evidence_span_ids_json,[])}];
+      });
+      return snapshot;
+    });
     const experiences = contentPackage.experiences || [];
-    const evidenceLedger = facts.map((fact) => ({ key:fact.normalized_key,subject:fact.subject,predicate:fact.predicate,
-      value:fact.preferred_value,status:fact.consensus_status,sources:(fact.evidence || []).map((item) => ({ source_id:item.source_id,quote:item.quote,url:item.canonical_url })) }));
+    const evidenceLedger = facts.map((fact) => ({ version:2, key:fact.normalized_key,subject:fact.subject,predicate:fact.predicate,
+      value:fact.preferred_value,status:fact.consensus_status,
+      fact_snapshot:semanticMaterial(selectedFactSnapshot(fact)),
+      sources:selectedFactEvidence(fact).map((item) => ({ claim_id:item.claim_id || item.id,source_id:item.source_id,
+        quote:item.quote,url:item.canonical_url,qualifiers:item.qualifiers,valid_from:item.valid_from,valid_to:item.valid_to })) }));
     const lines = [
       "ARTICLE GOAL", contentPackage.brief.plan?.reader_promise || contentPackage.brief.topic || "", "",
       "NARRATIVE", `Opening job: ${narrative.opening_job}`, `Throughline: ${narrative.throughline}`,
       ...(narrative.route_sequence || []).map((item,index) => `${index+1}. ${item}`), "",
       "WHY THIS WORKS", contentPackage.editorial_assembly?.rationale || contentPackage.approved_proposal?.whyItWorks || "The selected material directly supports the approved reader promise.", "",
+      'SCOPE AND EXCLUSIONS', ...(narrative.exclusions || []).map(value => `- ${value}`),
+      'CONDITIONAL BRANCHES', ...(narrative.conditional_branches || []).map(value => `- ${value}`),
+      'TRADE-OFFS', ...(narrative.tradeoffs || []).map(value => `- ${value}`),
+      'MEDIA CANDIDATES', ...(contentPackage.authorized_source_assets || []).map(asset =>
+        `- ${asset.id || asset.source_asset_id}: ${asset.alt_text || asset.caption_text || 'Use only if relevant to the selected scene'}; ${asset.nearby_text || ''}`), '',
       "REAL TRAVELER EXPERIENCES", ...(experiences.length ? experiences.flatMap((item) => [
         `- ${item.title} [${item.id}]`, ...item.sequence.map((value) => `  Sequence: ${value}`),
         ...item.decision_logic.map((value) => `  Decision: ${value}`), ...item.conditions.map((value) => `  Condition: ${value}`),
         ...item.tradeoffs.map((value) => `  Trade-off: ${value}`), ...item.warnings.map((value) => `  Warning: ${value}`),
         ...item.alternatives.map((value) => `  Alternative: ${value}`),
       ]) : ["- No grounded first-hand experience block is available; do not invent one."]), "",
-      "CURRENT PRACTICAL FACTS", ...facts.map((fact) => `- ${fact.subject} — ${fact.predicate}: ${fact.preferred_value} [${fact.normalized_key}]`), "",
+      "SELECTED PRACTICAL FACTS", ...facts.flatMap(fact => fact.evidence.map(evidence =>
+        `- ${fact.subject} — ${fact.predicate}: ${evidence.value || fact.preferred_value} [${fact.normalized_key}; ${evidence.claim_id}; ${evidence.evidence_role || 'current'}]\n  Conditions: ${(evidence.qualifiers || []).join('; ') || 'No additional stated conditions'}; valid from ${evidence.valid_from || 'unspecified'} to ${evidence.valid_to || 'unspecified'}`)), "",
       "WRITING PATTERN", ...(contentPackage.editorial_patterns || []).slice(0,3).map((item) => `- ${item.format}: ${item.angle || "useful evidence-led structure"}`),
       "- Use third-person, evidence-backed traveler situations. Avoid generic introductions, database dumps, repeated section templates and filler.",
     ];
     const packetText = lines.join("\n").trim();
+    const context = semanticMaterial({ version:2, narrative_plan:narrative,
+      content_policy:contentPackage.content_policy, reader_sources:contentPackage.reader_sources,
+      authorized_source_assets:contentPackage.authorized_source_assets, internal_link_inventory:contentPackage.internal_link_inventory,
+      experiences });
     const timestamp = now();
     const packetId = `packet_${sha256(briefId).slice(0,24)}`;
     this.db.prepare(`INSERT INTO writing_packets(id,brief_id,narrative_plan_id,packet_text,evidence_ledger_json,
-      selected_fact_keys_json,selected_experience_block_ids_json,input_hash,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(brief_id) DO UPDATE SET narrative_plan_id=excluded.narrative_plan_id,
+      selected_fact_keys_json,selected_experience_block_ids_json,input_hash,created_at,updated_at,context_json)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(brief_id) DO UPDATE SET narrative_plan_id=excluded.narrative_plan_id,
       packet_text=excluded.packet_text,evidence_ledger_json=excluded.evidence_ledger_json,selected_fact_keys_json=excluded.selected_fact_keys_json,
-      selected_experience_block_ids_json=excluded.selected_experience_block_ids_json,input_hash=excluded.input_hash,updated_at=excluded.updated_at`)
+      selected_experience_block_ids_json=excluded.selected_experience_block_ids_json,input_hash=excluded.input_hash,updated_at=excluded.updated_at,context_json=excluded.context_json`)
       .run(packetId,briefId,narrative.id,packetText,JSON.stringify(evidenceLedger),JSON.stringify(factKeys),
-        JSON.stringify(experiences.map((item) => item.id)),sha256(JSON.stringify({ narrative, evidenceLedger, experiences:experiences.map((item) => item.id) })),timestamp,timestamp);
+        JSON.stringify(experiences.map((item) => item.id)),dependencyHash({ narrative, packetText, evidenceLedger, context }),timestamp,timestamp,JSON.stringify(context));
     return this.getWritingPacket(briefId);
   }
 
   getWritingPacket(briefId) {
     const row = this.db.prepare("SELECT * FROM writing_packets WHERE brief_id=?").get(briefId);
-    return row ? { ...row, evidence_ledger:json(row.evidence_ledger_json,[]),selected_fact_keys:json(row.selected_fact_keys_json,[]),
+    return row ? { ...row, context:json(row.context_json,{}), evidence_ledger:json(row.evidence_ledger_json,[]),selected_fact_keys:json(row.selected_fact_keys_json,[]),
       selected_experience_block_ids:json(row.selected_experience_block_ids_json,[]) } : null;
   }
 
@@ -4136,8 +4348,10 @@ export class Repository {
     const existing = this.db.prepare("SELECT id, revision FROM article_drafts WHERE brief_id = ?").get(briefId);
     const draftId = existing?.id || id("draft");
     const timestamp = now();
-    const authorizedSourceAssets = this.authorizedSourceAssetsForBrief(brief);
-    const policy = contentPolicyFor(brief, this.getTopicPackage(brief.candidate_id)?.facts || []);
+    const packet = this.getWritingPacket(briefId);
+    const authorizedSourceAssets = this.authorizedSourceAssetsForBrief(brief, { packet });
+    const policy = packet?.context?.version === 2 ? packet.context.content_policy
+      : contentPolicyFor(brief, this.getTopicPackage(brief.candidate_id)?.facts || []);
     const metadata = draftMetadata(draft, brief, this.contentConfig, authorizedSourceAssets, policy);
     const contentHash = draftContentHash(draft, metadata, brief);
     if (existing) {
@@ -5763,7 +5977,7 @@ export class Repository {
     return { factId, action, status: hidden ? "hidden" : "visible", destinationSlug: fact.destination_slug };
   }
 
-  authorizedSourceAssetsForBrief(brief) {
+  authorizedSourceAssetsForBrief(brief, { packet = null } = {}) {
     const claimKeys = json(brief.evidence_ledger_json, []);
     const supportingFacts = this.knowledgeForDestination(brief.destination_slug)
       .filter((fact) => !claimKeys.length || claimKeys.includes(fact.normalized_key));
@@ -5771,8 +5985,11 @@ export class Repository {
       .flatMap((fact) => fact.evidence || [])
       .map((evidence) => evidence.source_id)
       .filter(Boolean))];
-    if (!sourceIds.length) return [];
-    const placeholders = sourceIds.map(() => "?").join(",");
+    const selectedAssetIds=packet?.context?.version===2
+      ? uniqueStrings((packet.context.authorized_source_assets || []).map(asset=>asset.id || asset.source_asset_id),100) : null;
+    const scope=selectedAssetIds ?? sourceIds;
+    if (!scope.length) return [];
+    const placeholders = scope.map(() => "?").join(",");
     return this.db.prepare(`
       SELECT sa.id, sa.source_id, sa.remote_url, sa.local_path, sa.mime_type, sa.alt_text, sa.position,
         sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
@@ -5783,16 +6000,16 @@ export class Repository {
             SELECT 1 FROM json_each(c.evidence_span_ids_json) ids
             JOIN evidence_spans es ON es.id=ids.value WHERE es.asset_id=sa.id
           )), '') AS evidence_text
-      FROM source_assets sa JOIN sources s ON s.id=sa.source_id
+      FROM ${selectedAssetIds ? 'source_assets' : 'current_source_assets'} sa JOIN sources s ON s.id=sa.source_id
       WHERE sa.kind='image' AND s.adapter='xiaohongshu'
         AND s.authorization_status='owner_confirmed' AND s.publishable=1
         AND sa.authorization_status='owner_confirmed' AND sa.publishable=1
         AND sa.storage_status='saved' AND sa.local_path<>''
         AND sa.original_bytes_status='saved_original' AND sa.durability_status='ORIGINAL_STORED'
-        AND sa.source_id IN (${placeholders})
+        AND ${selectedAssetIds ? 'sa.id' : 'sa.source_id'} IN (${placeholders})
       ORDER BY s.captured_at DESC, sa.position ASC
       LIMIT 12
-    `).all(...sourceIds);
+    `).all(...scope);
   }
 
   retrySource(sourceId) {
@@ -6023,14 +6240,14 @@ export class Repository {
       SUM(durability_status='ORIGINAL_STORED') AS stored,
       SUM(repair_status IN ('server_recovery_pending','server_recovery_running')) AS server_pending,
       SUM(repair_status='browser_repair_required') AS browser_pending,
-      SUM(durability_status='UNAVAILABLE' OR repair_status='unavailable') AS unavailable FROM source_assets`).get();
+      SUM(durability_status='UNAVAILABLE' OR repair_status='unavailable') AS unavailable FROM current_source_assets`).get();
     const experience=this.db.prepare(`SELECT COUNT(*) AS eligible,
       SUM(EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
         AND er.capture_version=s.capture_version AND er.degraded=0)) AS completed,
       SUM(NOT EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
         AND er.capture_version=s.capture_version AND er.degraded=0)
-        AND NOT EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')) AS pending,
-      SUM(EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')) AS blocked
+        AND NOT EXISTS (SELECT 1 FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')) AS pending,
+      SUM(EXISTS (SELECT 1 FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')) AS blocked
       FROM sources s WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')`).get();
     const failure=this.db.prepare(`SELECT COUNT(*) AS total,
       SUM(status='active' AND retry_safe=1) AS retry_eligible FROM failure_lessons`).get();
@@ -6853,13 +7070,7 @@ function draftContentHash(draft, metadata, brief) {
 }
 
 function evidenceHashForFacts(facts) {
-  return sha256(JSON.stringify((facts || []).map((fact) => ({
-    key: fact.normalized_key,
-    value: fact.preferred_value,
-    status: fact.consensus_status,
-    freshness: fact.freshness_state,
-    updatedAt: fact.updated_at,
-  }))));
+  return dependencyHash((facts || []).map(selectedFactSnapshot).sort((a,b)=>a.normalized_key.localeCompare(b.normalized_key)));
 }
 
 function normalizeBriefPlan(plan) {
@@ -6918,7 +7129,7 @@ function validSemanticId(value) {
   return /^[a-z][a-z0-9_.:-]{2,127}$/i.test(text) ? text : "";
 }
 
-export function buildBlockProvenance(payload, ledger, explicit, sourceIdsByClaim = new Map(), claimTracesByKey = new Map()) {
+export function buildBlockProvenance(payload, ledger, explicit, sourceIdsByClaim = new Map(), claimTracesByKey = new Map(), factSnapshots = new Map()) {
   const ledgerBySection = new Map((ledger || []).map((entry) => [entry.section_id, entry]));
   const entriesBySignature = Map.groupBy(explicit?.entries || [], (entry) => entry.blockSignature);
   const errors = [...(explicit?.errors || [])];
@@ -6951,6 +7162,7 @@ export function buildBlockProvenance(payload, ledger, explicit, sourceIdsByClaim
       claimKeys,
       sourceIds,
       claimTraces,
+      evidenceSnapshots: claimKeys.map(key => factSnapshots.get(key)).filter(Boolean),
       mappingStatus: "explicit_v2",
       blockSignature: signature,
     };
@@ -7895,4 +8107,23 @@ function normalizeExtractionInputManifest(value) {
       failureReason: item?.failureReason ? String(item.failureReason).slice(0, 1_000) : null,
     })) : [],
   };
+}
+
+function extractionInputManifest(segment, extraction) {
+    const suppliedManifest = normalizeExtractionInputManifest(extraction?.inputManifest);
+    // Text segments are passed to every extractor directly in `source.raw_text`, so
+    // record that known transport fact even for older/custom extractor adapters.
+    // Media must still provide a provider manifest; we never infer it from a method
+    // name because that was the lossy behavior A01 removes.
+    return suppliedManifest.version > 0 || segment.asset_id
+      ? suppliedManifest
+      : normalizeExtractionInputManifest({
+        version: 1,
+        expectedModality: "text",
+        receivedModality: "text",
+        provider: extraction?.provider || "adapter",
+        model: extraction?.model || "",
+        capabilities: { text: true, image: false, video: false, batch: false },
+        assets: [],
+      });
 }

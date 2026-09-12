@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { indexedDB } from 'fake-indexeddb';
+import { mediaJournal } from '../extension/media-journal.js';
 import { applyIdentityBatch, createSession, transitionTask } from "../extension/sync-core.js";
 
 test("MV3 module restart automatically requeues and drives an in-flight task without popup Resume", async () => {
+  mediaJournal.factory = indexedDB;
   const storage = {};
   let createdTabs = 0;
   const listener = () => ({ addListener() {}, removeListener() {} });

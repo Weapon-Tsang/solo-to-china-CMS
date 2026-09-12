@@ -37,8 +37,9 @@ function assetsFor(repo, ctx, packageFacts = null) {
     sa.authorization_status,sa.publishable,s.authorization_status AS source_authorization,s.publishable AS source_publishable,
     s.title AS source_title,s.canonical_url,s.submitted_url,s.captured_at
     FROM source_assets sa JOIN sources s ON s.id=sa.source_id WHERE sa.kind='image'
+      AND (sa.capture_version=s.capture_version OR EXISTS (SELECT 1 FROM article_visuals av WHERE av.draft_id=? AND av.source_asset_id=sa.id))
       AND sa.source_id IN (${[...ids].map(() => '?').join(',')}) ORDER BY s.captured_at DESC,sa.position`)
-    .all(...ids).map(({ local_path, ...row }) => ({
+    .all(ctx.draft?.id || '',...ids).map(({ local_path, ...row }) => ({
       ...row,
       has_bytes: Boolean(row.has_bytes || (local_path && fs.existsSync(local_path))),
       authorized: row.authorization_status === 'owner_confirmed' && row.publishable === 1

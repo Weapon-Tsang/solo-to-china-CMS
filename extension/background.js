@@ -4,6 +4,10 @@ import {
   recoverSession, retryDelayMs, scopeFromUrl, shouldStopDiscovery, transitionTask, updateSessionConcurrency,
   prepareSessionCompletion, prepareSessionResume,
 } from "./sync-core.js";
+import { normalizeCaptureMedia, detectMediaMime } from "./media-contract.js";
+import { fetchBody } from "./transport.js";
+import { mediaJournal } from './media-journal.js';
+import { derivativeCache } from './derivative-cache.js';
 
 const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";
 const DEFAULT_CAPTURE_TOKEN = "";
@@ -26,7 +30,8 @@ const workerLoops = new Map();
 const mediaRequests = new AsyncSemaphore(12);
 const mediaUploads = new AsyncSemaphore(6);
 const largeMediaPipelines = new AsyncSemaphore(2);
-const mediaMemory = new AsyncSemaphore(96);
+const mediaMemory = new AsyncSemaphore(96, { maxBypasses: 4 });
+const taskRequests = new Map();
 
 chrome.runtime.onInstalled.addListener(() => {
   void ensureAlarms();
@@ -139,14 +144,14 @@ async function discoverWindow(session) {
   await injectExtractor(tab.id);
   const offset = Number(session.cursor?.domOffset || 0);
   let scan = await execute(tab.id, (options) => globalThis.SoloToChinaXhs.scanFavorites(options), {
-    limit: session.config.discoveryBatchSize, offset,
+    limit: session.config.discoveryBatchSize, offset: 0, seenIdentities: session.seenIdentityKeys,
   });
   // Virtualized collections remove older cards from the DOM. Reset the DOM offset
   // and rely on stable identity de-duplication when the current window is exhausted.
   if (offset && scan?.cards?.length === 0 && !scan.collectionEnd) {
     session.cursor.domOffset = 0;
     scan = await execute(tab.id, (options) => globalThis.SoloToChinaXhs.scanFavorites(options), {
-      limit: session.config.discoveryBatchSize, offset: 0,
+      limit: session.config.discoveryBatchSize, offset: 0, seenIdentities: session.seenIdentityKeys,
     });
   }
   if (scan?.blocking) throw Object.assign(new Error(scan.blocking.message), scan.blocking);
@@ -199,6 +204,7 @@ async function acquireQueue(session) {
 
 function ensureWorkerPool(session) {
   if (!session || session.status !== "running" || session.phase !== "acquisition") return;
+  if (!session.queue.some(task => task.status === 'queued' || (task.status === 'retry_wait' && Date.parse(task.retryAt || 0) <= Date.now()))) return;
   const target = Math.max(1, Math.min(16, session.concurrency || initialConcurrency(session.config)));
   for (let slot = 0; slot < target; slot += 1) {
     const key = `${session.sessionId}:${slot}`;
@@ -233,32 +239,46 @@ async function acquireTask(sessionId, taskId, slot, workerId, leaseId) {
   let session = await assertTaskLease(sessionId, taskId, leaseId);
   const task = session.queue.find((item) => item.taskId === taskId);
   const metric = { startedAt: Date.now(), result: "failed", mediaCount: 0, mediaBytes: 0 };
+  const controller = new AbortController();
+  taskRequests.set(leaseId, { sessionId, controller });
+  const captureJournalKey = `capture:${sessionId}:${taskId}`;
   try {
+    let extracted = (await mediaJournal.get(captureJournalKey))?.capture;
+    let stageStarted;
+    if (!extracted || extracted.completeness?.overall !== 'complete') {
     const tab = await workerTab(sessionId, slot, workerId, task.navigationUrl || task.canonicalUrl);
     session = await updateTask(sessionId, taskId, "loading", { tabId: tab.id }, leaseId);
     assertRunnable(session, taskId, leaseId);
-    let stageStarted = Date.now();
+    stageStarted = Date.now();
     await waitForTab(tab.id, session.config.detailLoadTimeoutMs);
     metric.noteLoadMs = Date.now() - stageStarted;
     await injectExtractor(tab.id);
     session = await updateTask(sessionId, taskId, "extracting", {}, leaseId);
     assertRunnable(session, taskId, leaseId);
     stageStarted = Date.now();
-    const extracted = await execute(tab.id, (options) => globalThis.SoloToChinaXhs.prepareAndExtract(options), {
+    const result = await execute(tab.id, (options) => globalThis.SoloToChinaXhs.prepareAndExtract(options), {
       acquisitionOrigin: "xhs_favorites_sync", syncScopeKey: session.scopeKey,
     });
     metric.extractionMs = Date.now() - stageStarted;
-    if (!extracted?.ok) throw Object.assign(new Error(extracted?.error?.message || "Note extraction failed."), extracted?.error || {});
+    if (!result?.ok) throw Object.assign(new Error(result?.error?.message || "Note extraction failed."), result?.error || {});
+    extracted = result.capture;
+    await mediaJournal.put(captureJournalKey, { capture: extracted, savedAt: new Date().toISOString() });
+    }
     const onlyMediaIdentities = task.sourceId && Array.isArray(task.repairMediaIdentities)
       ? new Set(task.repairMediaIdentities) : null;
-    const persisted = await persistCaptureMedia(extracted.capture, () => heartbeatTask(sessionId, taskId, leaseId), onlyMediaIdentities);
+    await submitCapture({ ...extracted, completeness: { ...extracted.completeness,
+      images: { ...extracted.completeness?.images, complete: false }, overall: 'partial_retryable' } }, controller.signal);
+    const persisted = await persistCaptureMedia(extracted, async () => {
+      try { await assertTaskLease(sessionId, taskId, leaseId); await heartbeatTask(sessionId, taskId, leaseId); }
+      catch (error) { controller.abort(); throw error; }
+    }, onlyMediaIdentities, controller.signal);
     const capture = persisted.capture;
     Object.assign(metric, persisted.metrics);
     metric.memoryPressure = browserMemoryPressure();
     session = await updateTask(sessionId, taskId, "submitting", {}, leaseId);
     assertRunnable(session, taskId, leaseId);
     stageStarted = Date.now();
-    const response = await submitCapture(capture);
+    const response = await submitCapture(capture, controller.signal);
     metric.submitMs = Date.now() - stageStarted;
     if (response.completenessStatus !== "complete") throw Object.assign(new Error("Capture was persisted as partial and will be retried before entering Research."), {
       code: "CONTENT_NOT_READY", retryable: true,
@@ -272,12 +292,13 @@ async function acquireTask(sessionId, taskId, slot, workerId, leaseId) {
     session = await finishTask(sessionId, taskId, leaseId, response.duplicate ? "duplicate" : "captured", {
       sourceId: response.id, captureVersion: response.captureVersion, tabId: null, error: null,
     }, metric);
+    await mediaJournal.remove(captureJournalKey);
     return response;
   } catch (caught) {
     metric.totalMs = Date.now() - metric.startedAt;
     await handleTaskError(sessionId, taskId, leaseId, caught, metric);
     return null;
-  }
+  } finally { controller.abort(); taskRequests.delete(leaseId); }
 }
 
 async function handleTaskError(sessionId, taskId, leaseId, caught, metric = {}) {
@@ -377,18 +398,32 @@ function metricFromError(metric, error) {
   };
 }
 
-async function submitCapture(capture) {
+async function submitCapture(capture, signal) {
   const settings = await loadSettings();
   const json = JSON.stringify(capture);
   const bytes = new TextEncoder().encode(json);
-  if (bytes.byteLength <= DIRECT_CAPTURE_BYTES) return apiJson(`${settings.endpoint}/api/captures`, { method: "POST", body: json }, settings.token);
+  if (bytes.byteLength <= DIRECT_CAPTURE_BYTES) {
+    const result = await apiJson(`${settings.endpoint}/api/captures`, { method: "POST", body: json, signal }, settings.token);
+    await clearAcceptedMedia(capture, result);
+    return result;
+  }
   const sha256 = await hashBytes(bytes);
-  const upload = await apiJson(`${settings.endpoint}/api/capture-uploads`, { method: "POST", body: JSON.stringify({ size: bytes.byteLength, sha256 }) }, settings.token);
+  const upload = await apiJson(`${settings.endpoint}/api/capture-uploads`, { method: "POST", body: JSON.stringify({ size: bytes.byteLength, sha256 }), signal }, settings.token);
   for (let offset = 0, index = 0; offset < bytes.length; offset += UPLOAD_CHUNK_BYTES, index += 1) {
     await apiJson(`${settings.endpoint}/api/capture-uploads/${encodeURIComponent(upload.uploadId)}/chunks/${index}`,
-      { method: "PUT", body: bytes.slice(offset, offset + UPLOAD_CHUNK_BYTES), raw: true }, settings.token);
+      { method: "PUT", body: bytes.slice(offset, offset + UPLOAD_CHUNK_BYTES), raw: true, signal }, settings.token);
   }
-  return apiJson(`${settings.endpoint}/api/capture-uploads/${encodeURIComponent(upload.uploadId)}/complete`, { method: "POST", body: "{}" }, settings.token);
+  const result = await apiJson(`${settings.endpoint}/api/capture-uploads/${encodeURIComponent(upload.uploadId)}/complete`, { method: "POST", body: "{}", signal }, settings.token);
+  await clearAcceptedMedia(capture, result);
+  return result;
+}
+
+async function clearAcceptedMedia(capture, result) {
+  if (!result.mediaDurabilityComplete || result.completenessStatus !== 'complete') return;
+  const attempt = await hashBytes(new TextEncoder().encode(JSON.stringify([capture.url, capture.text, capture.html])));
+  for (const asset of [...(capture.images || []), ...(capture.videos || [])]) {
+    if (asset.originalStorageRef) await mediaJournal.remove(`${attempt}:${asset.mediaIdentity || asset.url}`);
+  }
 }
 
 async function identityCheck(cards, configuredSettings = null) {
@@ -405,19 +440,24 @@ async function assertFavoritesSyncApi(settings = null) {
 async function apiJson(url, options, token) {
   let response;
   try {
-    response = await fetchWithTimeout(url, { method: options.method, headers: {
+    response = await fetchBody(url, { method: options.method, signal: options.signal, headers: {
       ...(options.raw ? { "content-type": "application/octet-stream" } : { "content-type": "application/json" }),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
-    }, body: options.body }, options.timeoutMs || ENGINE_REQUEST_TIMEOUT_MS);
+      ...(options.uploadToken ? { 'x-upload-token': options.uploadToken } : {}),
+    }, body: options.body }, { timeoutMs: options.timeoutMs || ENGINE_REQUEST_TIMEOUT_MS });
   } catch (cause) {
+    if (["REQUEST_CANCELLED", "RESPONSE_STALLED", "RESPONSE_TOO_LARGE"].includes(cause?.code)) throw cause;
     const timedOut = cause?.name === "AbortError" || cause?.code === "REQUEST_TIMEOUT";
     throw Object.assign(new Error(timedOut ? "The SoloToChina Engine request timed out." : "The SoloToChina Engine is unavailable."), {
       code: timedOut ? "CAPTURE_REQUEST_TIMEOUT" : "CAPTURE_SERVER_UNAVAILABLE", retryable: true, cause,
     });
   }
-  const payload = await response.json().catch(() => ({}));
+  let payload;
+  try { payload = JSON.parse(new TextDecoder().decode(response.bytes)); }
+  catch { throw syncError("CAPTURE_PROTOCOL_ERROR", "CMS 返回了无效 JSON。", false); }
   if (!response.ok) {
     const details = classifyCaptureApiError(response.status, payload);
+    if (/^MEDIA_(?:UPLOAD|CHUNK|HASH|TYPE|SIZE|PATH|FILE)_/.test(payload?.code || '')) details.code = payload.code;
     details.backpressure = response.status === 429 || response.status === 503;
     const retryAfter = retryAfterMs(response.headers.get("retry-after"));
     if (retryAfter > 0) details.retryAfterMs = retryAfter;
@@ -432,19 +472,24 @@ async function saveCurrentNote() {
   await injectExtractor(tab.id);
   const extracted = await execute(tab.id, (options) => globalThis.SoloToChinaXhs.prepareAndExtract(options), { acquisitionOrigin: "xhs_manual_extension" });
   if (!extracted?.ok) throw Object.assign(new Error(extracted?.error?.message || "Could not read this note."), extracted?.error || {});
+  await submitCapture({ ...extracted.capture, completeness: { ...extracted.capture.completeness,
+    images: { ...extracted.capture.completeness?.images, complete: false }, overall: 'partial_retryable' } });
   const persisted = await persistCaptureMedia(extracted.capture);
   const result = await submitCapture(persisted.capture);
   if (!result.mediaDurabilityComplete) throw syncError("MEDIA_ORIGINAL_NOT_STORED", "笔记正文已保存，但仍有媒体原件未持久化；请保持当前页面可访问后重试。", true);
   return { ok: true, capture: { title: extracted.capture.title }, result };
 }
 
-async function persistCaptureMedia(capture, onProgress = async () => {}, onlyMediaIdentities = null) {
+async function persistCaptureMedia(capture, onProgress = async () => {}, onlyMediaIdentities = null, signal) {
   const failures = [];
-  const discoveredMedia = [...(capture.images || []), ...(capture.videos || [])];
+  const discoveredMedia = normalizeCaptureMedia(capture);
   const media = onlyMediaIdentities instanceof Set
     ? discoveredMedia.filter((asset) => onlyMediaIdentities.has(asset.mediaIdentity || asset.url)) : discoveredMedia;
   const metrics = { mediaCount: media.length, discoveredMediaCount: discoveredMedia.length, mediaBytes: 0, mediaDownloadMs: 0, mediaUploadMs: 0 };
-  const results = await Promise.all(media.map((asset) => persistMediaAsset(asset, onProgress)));
+  const attempt = await hashBytes(new TextEncoder().encode(JSON.stringify([capture.url, capture.text, capture.html])));
+  const sourcePool = new AsyncSemaphore(4);
+  const results = await Promise.all(media.map((asset) => sourcePool.run(() => persistMediaAsset(asset, onProgress, signal, `${attempt}:${asset.mediaIdentity || asset.url}`), 1, signal)));
+  if (signal?.aborted) throw syncError("REQUEST_CANCELLED", "采集已取消。", false);
   for (const [index, result] of results.entries()) {
     const asset = media[index];
     metrics.mediaBytes += Number(result.metrics?.bytes || 0);
@@ -462,12 +507,20 @@ async function persistCaptureMedia(capture, onProgress = async () => {}, onlyMed
   return { capture, metrics };
 }
 
-async function persistMediaAsset(asset, onProgress) {
+async function persistMediaAsset(asset, onProgress, signal, journalKey) {
   const metrics = { bytes: 0, downloadMs: 0, uploadMs: 0 };
   try {
     return await mediaRequests.run(async () => {
       const downloadStarted = Date.now();
-      const response = await fetchWithTimeout(asset.url, {}, MEDIA_REQUEST_TIMEOUT_MS);
+      signal?.throwIfAborted();
+      // Reserve the full bounded buffering budget, including the joined copy.
+      const maxBytes = Math.min(asset.kind === "video" ? 32 : 20, Math.max(1, Math.floor(mediaMemory.limit / 4))) * 1024 * 1024;
+      const releaseMemory = await mediaMemory.acquire(Math.ceil(maxBytes * 2 / (1024 * 1024)), signal);
+      try {
+      const staged = await mediaJournal.get(journalKey);
+      const response = staged?.bytes ? { ok: true, bytes: staged.bytes, headers: new Headers({ 'content-type': staged.mimeType }) }
+        : await fetchBody(asset.url, { signal }, { timeoutMs: asset.kind === "video" ? 180_000 : MEDIA_REQUEST_TIMEOUT_MS,
+          idleTimeoutMs: 15_000, maxBytes });
       if (!response.ok) {
         const failure = syncError(`MEDIA_HTTP_${response.status}`, `Media download returned HTTP ${response.status}.`, response.status >= 500 || response.status === 429);
         failure.backpressure = response.status === 429 || response.status === 503;
@@ -475,29 +528,37 @@ async function persistMediaAsset(asset, onProgress) {
         if (retryAfter > 0) failure.retryAfterMs = retryAfter;
         throw failure;
       }
-      const expectedBytes = Math.max(1, Number(response.headers.get("content-length") || 8 * 1024 * 1024));
-      const memoryWeight = Math.max(1, Math.ceil(expectedBytes / (1024 * 1024)));
-      const releaseMemory = await mediaMemory.acquire(memoryWeight);
       const pipeline = async () => {
-        const blob = await response.blob();
-        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const bytes = response.bytes;
         metrics.downloadMs = Date.now() - downloadStarted;
         metrics.bytes = bytes.byteLength;
         if (!bytes.byteLength) throw syncError("MEDIA_EMPTY", "Media download returned no bytes.", true);
         asset.originalSha256 = await hashBytes(bytes);
-        asset.mimeType = mediaMime(blob.type, asset.kind, asset.url);
+        asset.mimeType = detectMediaMime(bytes.subarray(0, 32), asset.kind, response.headers.get("content-type"));
         if (!asset.mimeType) throw syncError("MEDIA_TYPE_UNSUPPORTED", "Media response is not a supported image or video type.", false);
+        await mediaJournal.put(journalKey, { ...staged, bytes, mimeType: asset.mimeType, sha256: asset.originalSha256 });
         const uploadStarted = Date.now();
-        const stored = await mediaUploads.run(() => uploadMediaOriginal(asset, bytes, onProgress));
+        const stored = await mediaUploads.run(() => uploadMediaOriginal(asset, bytes, onProgress, signal, journalKey), 1, signal);
         metrics.uploadMs = Date.now() - uploadStarted;
         asset.originalStorageRef = stored.storageRef;
         await onProgress();
         if (asset.kind === "video") return;
         if (bytes.byteLength <= DIRECT_DERIVATIVE_BYTES) {
-          asset.aiDerivativeDataUrl = `data:${asset.mimeType};base64,${bytesToBase64(bytes)}`;
-          asset.aiDerivativeSha256 = asset.originalSha256;
+          delete asset.aiDerivativeDataUrl;
+          delete asset.aiDerivativeSha256;
           return;
         }
+        const transform = {converterVersion:'browser-webp-1',maxDimension:2048,maxBytes:DIRECT_DERIVATIVE_BYTES,
+          passes:4,initialQuality:.84,qualityStep:.08,minimumQuality:.55,scaleStep:.72};
+        const derivativeKey = derivativeCache.key(asset.originalSha256,transform);
+        const cached = await derivativeCache.get(derivativeKey);
+        if (cached?.bytes?.length && cached.bytes.length <= DIRECT_DERIVATIVE_BYTES && await hashBytes(cached.bytes) === cached.sha256) {
+          asset.aiDerivativeDataUrl = `data:image/webp;base64,${bytesToBase64(cached.bytes)}`;
+          asset.aiDerivativeSha256 = cached.sha256;
+          asset.provenance = {...asset.provenance,derivative:{originalSha256:asset.originalSha256,...transform}};
+          return;
+        }
+        const blob = new Blob([bytes], { type: asset.mimeType });
         const bitmap = await createImageBitmap(blob);
         let scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
         let derivative;
@@ -514,46 +575,46 @@ async function persistMediaAsset(asset, onProgress) {
           const derivativeBytes = new Uint8Array(await derivative.arrayBuffer());
           asset.aiDerivativeDataUrl = `data:image/webp;base64,${bytesToBase64(derivativeBytes)}`;
           asset.aiDerivativeSha256 = await hashBytes(derivativeBytes);
+          asset.provenance = {...asset.provenance,derivative:{originalSha256:asset.originalSha256,...transform}};
+          await derivativeCache.save(derivativeKey,{bytes:derivativeBytes,sha256:asset.aiDerivativeSha256,originalSha256:asset.originalSha256,transform});
         }
       };
-      try {
-        if (expectedBytes >= LARGE_MEDIA_THRESHOLD_BYTES) await largeMediaPipelines.run(pipeline);
+        if (response.bytes.length >= LARGE_MEDIA_THRESHOLD_BYTES) await largeMediaPipelines.run(pipeline, 1, signal);
         else await pipeline();
       } finally { releaseMemory(); }
       return { metrics };
-    });
+    }, 1, signal);
   } catch (error) {
     return { metrics, error: serializeError(error) };
   }
 }
 
-async function uploadMediaOriginal(asset, bytes, onProgress = async () => {}) {
+async function uploadMediaOriginal(asset, bytes, onProgress = async () => {}, signal, journalKey) {
   const settings = await loadSettings();
-  const created = await apiJson(`${settings.endpoint}/api/capture-media-uploads`, { method: "POST", body: JSON.stringify({
+  const staged = await mediaJournal.get(journalKey);
+  let created = staged?.endpoint === settings.endpoint ? staged.upload : null;
+  let status = null;
+  if (created?.protocolVersion === 2) {
+    try { status = await apiJson(`${settings.endpoint}/api/capture-media-uploads/${encodeURIComponent(created.uploadId)}`,
+      { method: 'GET', signal, uploadToken: created.uploadToken }, settings.token); }
+    catch (error) { if (!['MEDIA_UPLOAD_NOT_FOUND','MEDIA_UPLOAD_EXPIRED'].includes(error.code)) throw error; created = null; }
+    if (status?.receipt) return status.receipt;
+  }
+  if (!created) created = await apiJson(`${settings.endpoint}/api/capture-media-uploads`, { method: "POST", body: JSON.stringify({
+    protocolVersion: 2,
     kind: asset.kind === "video" ? "video" : "image", mimeType: asset.mimeType, size: bytes.byteLength, sha256: asset.originalSha256,
-  }) }, settings.token);
+  }), signal }, settings.token);
+  if (created.receipt) return created.receipt;
+  await mediaJournal.put(journalKey, { ...staged, endpoint: settings.endpoint, upload: created });
+  const received = new Set(status?.receivedChunks || created.receivedChunks || []);
   for (let offset = 0, index = 0; offset < bytes.length; offset += created.chunkBytes, index += 1) {
+    if (received.has(index)) continue;
     await apiJson(`${settings.endpoint}/api/capture-media-uploads/${encodeURIComponent(created.uploadId)}/chunks/${index}`,
-      { method: "PUT", body: bytes.slice(offset, Math.min(bytes.length, offset + created.chunkBytes)), raw: true }, settings.token);
+      { method: "PUT", body: bytes.slice(offset, Math.min(bytes.length, offset + created.chunkBytes)), raw: true, signal, uploadToken: created.uploadToken }, settings.token);
     await onProgress();
   }
   return apiJson(`${settings.endpoint}/api/capture-media-uploads/${encodeURIComponent(created.uploadId)}/complete`,
-    { method: "POST", body: "{}" }, settings.token);
-}
-
-function mediaMime(value, kind, url) {
-  const supplied = String(value || "").toLowerCase().split(";")[0];
-  if (kind === "video") {
-    if (/^video\/(?:mp4|webm|quicktime)$/.test(supplied)) return supplied;
-    if (/\.webm(?:$|\?)/i.test(url)) return "video/webm";
-    if (/\.mov(?:$|\?)/i.test(url)) return "video/quicktime";
-    return "video/mp4";
-  }
-  if (/^image\/(?:jpeg|png|webp|gif)$/.test(supplied)) return supplied;
-  if (/\.png(?:$|\?)/i.test(url)) return "image/png";
-  if (/\.webp(?:$|\?)/i.test(url)) return "image/webp";
-  if (/\.gif(?:$|\?)/i.test(url)) return "image/gif";
-  return "image/jpeg";
+    { method: "POST", body: "{}", signal, uploadToken: created.uploadToken }, settings.token);
 }
 
 async function pauseSync(status) {
@@ -566,6 +627,7 @@ async function pauseSync(status) {
     return current;
   });
   if (!session || session.status !== status) return { ok: false, error: syncError("NO_ACTIVE_SESSION", "No running sync session was found.", false) };
+  for (const request of taskRequests.values()) if (request.sessionId === session.sessionId) request.controller.abort();
   await reportSession(session).catch(() => null);
   return { ok: true, session };
 }
@@ -603,6 +665,7 @@ async function cancelSync() {
     return current;
   });
   if (!session) return { ok: true };
+  for (const request of taskRequests.values()) if (request.sessionId === session.sessionId) request.controller.abort();
   await closeWorkerTabs(session); await archiveSession(session); await reportSession(session).catch(() => null);
   return { ok: true, session };
 }
@@ -634,6 +697,8 @@ async function watchdog() {
     return reconciled.session;
   });
   if (session?.status === "running") {
+    const activeLeases = new Set(session.queue.filter(task => task.leaseId).map(task => task.leaseId));
+    for (const [lease, request] of taskRequests) if (request.sessionId === session.sessionId && !activeLeases.has(lease)) request.controller.abort();
     ensureWorkerPool(session);
     void drive();
   }
@@ -802,13 +867,7 @@ function retryAfterMs(value) {
   const at = Date.parse(String(value || ""));
   return Number.isFinite(at) ? Math.max(0, at - Date.now()) : 0;
 }
-async function fetchWithTimeout(url, options = {}, timeoutMs = ENGINE_REQUEST_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(Object.assign(new Error("Request timed out."), { code: "REQUEST_TIMEOUT" })), timeoutMs);
-  try { return await fetch(url, { ...options, signal: controller.signal }); }
-  finally { clearTimeout(timer); }
-}
 async function hashBytes(bytes) { const digest = await crypto.subtle.digest("SHA-256", bytes); return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join(""); }
 function bytesToBase64(bytes) { let output = ""; const block = 0x8000; for (let index = 0; index < bytes.length; index += block) output += String.fromCharCode(...bytes.subarray(index, index + block)); return btoa(output); }
 
-export { handleMessage, restoreAfterRestart, watchdog };
+export { handleMessage, restoreAfterRestart, watchdog, persistCaptureMedia, apiJson };

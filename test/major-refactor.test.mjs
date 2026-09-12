@@ -21,7 +21,7 @@ test("current schema installs the durable editorial, failure, reconciliation, an
   }
 });
 
-test("capture media uploads durably assemble verified image and video originals", (t) => {
+test("capture media uploads durably assemble verified image and video originals", async (t) => {
   const { directory } = repositoryFixture(t);
   const manager = new CaptureMediaUploadManager({uploadDir:path.join(directory,"chunks"),storageDir:path.join(directory,"stored")});
   const fixtures = [
@@ -30,10 +30,10 @@ test("capture media uploads durably assemble verified image and video originals"
   ];
   for (const fixture of fixtures) {
     const sha256=crypto.createHash("sha256").update(fixture.bytes).digest("hex");
-    const upload=manager.create({...fixture,size:fixture.bytes.length,sha256});
-    assert.throws(() => manager.complete(upload.uploadId),/missing/i);
-    manager.writeChunk(upload.uploadId,0,fixture.bytes);
-    const completed=manager.complete(upload.uploadId);
+    const upload=await manager.create({...fixture,size:fixture.bytes.length,sha256});
+    await assert.rejects(() => manager.complete(upload.uploadId),/missing/i);
+    await manager.writeChunk(upload.uploadId,0,fixture.bytes);
+    const completed=await manager.complete(upload.uploadId);
     assert.equal(completed.sha256,sha256);
     assert.deepEqual(fs.readFileSync(path.join(directory,"stored",...completed.storageRef.split("/"))),fixture.bytes);
   }
@@ -164,16 +164,20 @@ test("knowledge change creates an independent multi-source opportunity and Writi
   const briefId=repository.saveBrief(candidateId,{title:opportunity.title,primary_keyword:"shanghai metro",search_intent:"informational",
     audience:["independent travelers"],angle:"airport route",reader_promise:"Choose a practical metro route",
     outline:[{section_id:"route",heading:"Choose the route",purpose:"Decision",claim_keys:selected}],adaptation_requirements:[],conflict_instructions:[]},"test",{deferDraft:true});
+  assert.throws(()=>repository.saveNarrativePlan(briefId,{evidence_selections:[{claim_key:selected[0],claim_id:'forged',source_id:'unrelated',role:'current'}]}),{code:'NARRATIVE_EVIDENCE_INVALID'});
   repository.saveNarrativePlan(briefId,{opening_job:"Give the route answer",throughline:"Route, payment, then fallback",
+    evidence_selections:selected.map(key=>{const evidence=facts.find(fact=>fact.normalized_key===key).evidence[0];return {claim_key:key,claim_id:evidence.claim_id,source_id:evidence.source_id,role:'current'};}),
     route_sequence:["route"],supporting_fact_keys:selected,experience_placements:[],conditional_branches:["If the last train has left, use a taxi"],
     tradeoffs:["Metro is cheaper; taxi is later"],exclusions:["Unrelated attractions"],closing_decision:"Choose by arrival time"},"test");
   const packet=repository.assembleWritingPacket(briefId);
-  assert.match(packet.packet_text,/ARTICLE GOAL[\s\S]*NARRATIVE[\s\S]*CURRENT PRACTICAL FACTS/);
+  assert.match(packet.packet_text,/ARTICLE GOAL[\s\S]*NARRATIVE[\s\S]*SELECTED PRACTICAL FACTS/);
+  assert.ok(packet.evidence_ledger.every(entry=>entry.fact_snapshot.evidence.every(evidence=>evidence.claim_id)));
+  assert.ok(packet.evidence_ledger.every(entry=>!entry.fact_snapshot.evidence_json && !entry.fact_snapshot.consensus_detail_json));
   assert.deepEqual(packet.selected_fact_keys,selected);
   assert.doesNotMatch(packet.packet_text,/normalized_key|predicate|value_text/i);
 });
 
-test("terminal production failure learns, removes transient artifacts, and requires reapproval", (t) => {
+test("terminal expression failure archives the attempt and retains artifacts, approval and Golden Article associations", (t) => {
   const { db,repository }=repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at,strategy_version)
     VALUES ('candidate-failure','xian','xian:failure','Xi''an guide','test',100,2,0,'drafted','now','now',?)`).run(repository.strategyVersion);
@@ -192,16 +196,17 @@ test("terminal production failure learns, removes transient artifacts, and requi
   db.prepare("UPDATE jobs SET max_attempts=1 WHERE id=?").run(jobId);
   const job=repository.claimJob();
   repository.failJob(job,Object.assign(new Error("DATABASE_DUMP repeated after bounded repair"),{code:"DATABASE_DUMP",retryable:false}));
-  assert.equal(db.prepare("SELECT 1 FROM content_briefs WHERE id='brief-failure'").get(),undefined);
+  assert.ok(db.prepare("SELECT 1 FROM content_briefs WHERE id='brief-failure'").get());
   const opportunity=db.prepare("SELECT * FROM content_opportunities WHERE id='opportunity-failure'").get();
-  assert.equal(opportunity.lifecycle_state,"recommended_again");
+  assert.equal(opportunity.lifecycle_state,"producing");
+  assert.equal(opportunity.approved_at,'now');
   assert.equal(db.prepare("SELECT COUNT(*) n FROM failure_lessons").get().n,1);
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM production_rollbacks").get().n,1);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM production_rollbacks").get().n,0);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM production_attempt_archives").get().n,1);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM editorial_lessons").get().n,1);
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM golden_articles WHERE draft_id IS NULL").get().n,1);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM golden_articles WHERE draft_id='draft-failure'").get().n,1);
   assert.equal(repository.listOperationalExceptions().some((item) => item.key===`job:${jobId}`),false);
-  assert.equal(repository.retryContent("candidate-failure"),null,"retry cannot bypass the new approval gate");
-  assert.equal(repository.decideOpportunity("opportunity-failure","approve").queued,true);
+  assert.equal(db.prepare("SELECT body_markdown FROM article_drafts WHERE id='draft-failure'").get().body_markdown,'Body');
 });
 
 function saveResearchSource(repository,externalId,claims,text) {

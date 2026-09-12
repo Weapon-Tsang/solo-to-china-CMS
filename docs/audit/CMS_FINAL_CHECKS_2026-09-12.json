@@ -1,0 +1,106 @@
+{
+  "head": "2395fe4ed68f7414d777d0156770af76e858eb1b",
+  "appVersion": "2.0.6",
+  "strategyVersion": "3.1",
+  "schemaVersion": 65,
+  "command": "npm run release:check",
+  "exitCode": 0,
+  "mandatoryPassed": 51,
+  "warnings": 4,
+  "notTestedOrUnconfigured": 5,
+  "failures": 0,
+  "testSummary": [
+    "ℹ tests 480",
+    "ℹ pass 480",
+    "ℹ fail 0",
+    "ℹ cancelled 0",
+    "ℹ skipped 0",
+    "ℹ todo 0",
+    "ℹ duration_ms 22306.8047"
+  ],
+  "logs": [
+    "output/release-check-logs/1789197520790-Static-checks-and-Vite-production-build.log",
+    "output/release-check-logs/1789197543432-Unit-and-integration-tests.log",
+    "output/release-check-logs/1789197544489-Fixed-SHA-Frontend-Contract-gate.log",
+    "output/release-check-logs/1789197544985-Version-alignment-and-clean-migration-chain.log"
+  ],
+  "gateLog": "output/reliability-2026-09-12/final-release-check.log",
+  "mediaDecoder": {
+    "measuredAt": "2026-09-12T06:27:01.534Z",
+    "pngBytes": 70,
+    "webmBytes": 141,
+    "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+    "png": {
+      "decoded": true,
+      "width": 1,
+      "height": 1
+    },
+    "webm": {
+      "decoded": true,
+      "width": 1,
+      "height": 1,
+      "readyState": 4
+    }
+  },
+  "verifiedAt": "2026-09-12T07:21:09.906Z",
+  "continuation": {
+    "schema64": "ID-preserving versioned assets/files/segments and current projections; real process kill before migration commit",
+    "schema65": "Durable returned model-step receipts for entity pages and targeted extraction/coverage",
+    "interruptedProcesses": [
+      "entity page 1 receipt",
+      "entity page 2 receipt",
+      "database output before enqueue",
+      "migration 64 before commit"
+    ],
+    "modelFixtureCounts": {
+      "entityPagesWithRestart": 2,
+      "claims": 305,
+      "targetedExtraction": 1,
+      "coverageAfterOneTransportFailure": 2
+    },
+    "priorFailuresResolved": [
+      "Complete recapture removed a referenced asset (foreign key error)",
+      "Same original file across capture versions violated old UNIQUE constraint",
+      "First continuation release gate saw stale schema 63 in HANDOFF"
+    ],
+    "browser": {
+      "engine": "in-app Chromium 152",
+      "fixtureSources": 65,
+      "externalProvidersStarted": false,
+      "assertions": {
+        "sourceFormPreservedOnRefresh": true,
+        "activeBusinessTabPreservedOnRefresh": true,
+        "sourceDetailRemainedOpenAcrossPolling": true,
+        "sourceTitleAndNotesRemainedUnsubmittedAcrossPolling": true
+      },
+      "limitation": "These observations cover source forms, tab state and source details; not all article editors/filter combinations or MV3.",
+      "httpRequestCount": 34,
+      "httpErrors": [],
+      "summaryRequestTimes": [
+        "2026-09-12T07:06:11.461Z",
+        "2026-09-12T07:06:26.207Z",
+        "2026-09-12T07:06:37.058Z",
+        "2026-09-12T07:06:45.762Z",
+        "2026-09-12T07:06:46.061Z",
+        "2026-09-12T07:07:11.568Z",
+        "2026-09-12T07:07:38.687Z",
+        "2026-09-12T07:08:11.584Z",
+        "2026-09-12T07:09:11.601Z",
+        "2026-09-12T07:10:11.608Z",
+        "2026-09-12T07:11:11.617Z",
+        "2026-09-12T07:12:11.624Z",
+        "2026-09-12T07:13:11.641Z",
+        "2026-09-12T07:14:11.650Z",
+        "2026-09-12T07:15:11.657Z",
+        "2026-09-12T07:16:11.668Z",
+        "2026-09-12T07:17:11.689Z",
+        "2026-09-12T07:18:11.699Z",
+        "2026-09-12T07:19:11.707Z"
+      ],
+      "httpLog": "output/reliability-2026-09-12/ui-http.json"
+    },
+    "externalProviderCalls": 0,
+    "productionDeployed": false,
+    "wordpressPublished": false
+  }
+}
