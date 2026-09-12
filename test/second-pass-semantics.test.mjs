@@ -124,6 +124,20 @@ test("semantic intent reconciliation merges title variants without deleting inte
   assert.equal(repository.listRecommendationInbox().length,1);
 });
 
+test("superseded strategy rows do not inflate current processing totals", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,
+    title,content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state)
+    VALUES ('historical-opportunity','chongqing','["chongqing"]','chongqing:historical','3.0','Historical guide',
+      'practical_guide',100,'{"ready":true}','{"publicationMode":"topic_feature"}','recommended','now','now','recommended')`).run();
+  const summary=repository.reconcileRecommendationInbox();
+  assert.equal(summary.internalOpportunities,0);
+  assert.equal(summary.processingGap,0);
+  assert.equal(summary.superseded,1);
+  assert.equal(repository.dashboardSummary().totals.processingGapOpportunities,0);
+  assert.equal(db.prepare("SELECT inbox_state FROM content_opportunities WHERE id='historical-opportunity'").get().inbox_state,"SUPERSEDED");
+});
+
 test("historical production failure re-enters the inbox only with an active safe remediation", (t) => {
   const {db,repository}=repositoryFixture(t);
   db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,

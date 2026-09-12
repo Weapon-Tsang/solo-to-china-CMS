@@ -1,11 +1,12 @@
 # Changelog
 
-## 2.0.10 - 2026-09-13
+## 2.0.10 - Unreleased
 
 - Reuse Strategy 3.0-3.2 intake diagnostics under the reviewed compatible 3.3 diagnostic contract, then recalculate their opportunities without a model request. Only incompatible diagnostics can enter the paid reconciliation queue.
 - Refresh the strategy version, coverage and readiness of an existing opportunity when the same current topic key is rebuilt, so current qualifying opportunities are no longer hidden as historical processing gaps.
 - Build multi-source opportunities from completed Sources only while unfinished Sources remain in the extraction queue and join later recalculation after completion.
 - Restrict the Source list queue projection to core capture, segmentation, extraction, coverage and finalization stages; downstream Experience and Diagnostic work remains visible in its own status/timeline without making a completed Source look queued.
+- Exclude superseded historical-strategy rows from current system-recalculation totals so the dashboard reports only unfinished current opportunities.
 
 ## 2.0.9 - 2026-09-13
 

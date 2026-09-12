@@ -690,7 +690,7 @@ export function createApplication(config = loadConfig()) {
             approved: repository.db.prepare('SELECT count(*) n FROM content_opportunities WHERE approved_at IS NOT NULL').get().n,
             internalOpportunities: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='INTERNAL' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
             actionableInbox: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='ACTIONABLE' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
-            processingGap: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE processing_state='PROCESSING_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
+            processingGap: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='INTERNAL' AND processing_state='PROCESSING_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
             evidenceGap: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE processing_state='EVIDENCE_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
             merged: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='MERGED' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,
             superseded: repository.db.prepare("SELECT COUNT(*) n FROM content_opportunities WHERE inbox_state='SUPERSEDED' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().n,

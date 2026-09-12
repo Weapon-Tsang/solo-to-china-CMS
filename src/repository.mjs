@@ -2931,9 +2931,10 @@ export class Repository {
         updateSource.run(this.strategyVersion,timestamp,sourceId);
       }
     });
-    const stateCounts=(state) => evaluated.filter((item) => item.processingState===state).length;
+    const activeEvaluated=evaluated.filter((item)=>item.versionCurrent);
+    const stateCounts=(state) => activeEvaluated.filter((item) => item.processingState===state).length;
     return {
-      internalOpportunities:rows.length,
+      internalOpportunities:activeEvaluated.length,
       actionableInbox:[...primaries.values()].length,
       processingGap:stateCounts("PROCESSING_GAP"),evidenceGap:stateCounts("EVIDENCE_GAP"),current:stateCounts("CURRENT"),
       merged:evaluated.filter((item) => item.eligible && primaries.get(item.canonicalIntentKey)!==item.row.id).length,
@@ -7253,7 +7254,7 @@ export class Repository {
         conflicts: strictConflicts, exceptions: sourceExceptions + failedJobs, exceptionRecords: sourceExceptions + failedJobs,
         topicCandidates: Number(this.db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count || 0),
         pendingRecommendations, internalOpportunities: Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE inbox_state='INTERNAL' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0),
-        processingGapOpportunities: Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE processing_state='PROCESSING_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0),
+        processingGapOpportunities: Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE inbox_state='INTERNAL' AND processing_state='PROCESSING_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0),
         evidenceGapOpportunities: Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE processing_state='EVIDENCE_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0),
         contentPipelineItems, contentNeedsAttention: 0,
         draftsReady: Number(this.db.prepare("SELECT COUNT(*) AS count FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')").get().count || 0),
