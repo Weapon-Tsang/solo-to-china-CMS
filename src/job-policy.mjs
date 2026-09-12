@@ -32,6 +32,15 @@ export const WORKLOAD_LANES = Object.freeze({
   maintenance: { rank: 5, concurrency: 1, requestSpacingMs: 5_000, backoffMultiplier: 4 },
 });
 
+// These stages hold SQLite write transactions while replacing derived indexes.
+// Run only one at a time and do not overlap them with another pipeline writer.
+export const DATABASE_HEAVY_JOB_TYPES = new Set([
+  "rebuild_knowledge",
+  "rebuild_topic_clusters",
+  "build_coverage_matrix",
+  "rebuild_content_opportunities",
+]);
+
 export function workloadClassForJob(type, requested = "") {
   if (WORKLOAD_LANES[requested]) return requested;
   if (["extract_source_experience", "resolve_entities", "rebuild_knowledge"].includes(type)) return "semantic";

@@ -185,9 +185,9 @@ test("a worker can release only its own running jobs during graceful shutdown", 
   const { db } = repositoryFixture(t);
   const owner = new Repository(db, { workerId: "worker-owner" });
   const peer = new Repository(db, { workerId: "worker-peer" });
-  const ownerJob = owner.enqueue("rebuild_editorial", "owned");
+  const ownerJob = owner.enqueue("extract_source", "owned");
   owner.claimJob();
-  const peerJob = peer.enqueue("rebuild_editorial", "peer");
+  const peerJob = peer.enqueue("extract_source", "peer");
   peer.claimJob();
 
   assert.equal(owner.releaseOwnedJobs(), 1);

@@ -14,7 +14,7 @@ import {
   normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
-import { AI_JOB_TYPES, classifyBatchFailure, isOperationalFailureRetryable, isProviderPressure,
+import { AI_JOB_TYPES, DATABASE_HEAVY_JOB_TYPES, classifyBatchFailure, isOperationalFailureRetryable, isProviderPressure,
   inheritJobContext,laneBackoffMs,workloadClassForJob } from "./job-policy.mjs";
 import { pageBlockSignature, selectedFactEvidence, selectedFactSnapshot } from "./evidence-validator.mjs";
 import { estimateSourceProcessing } from "./source-preflight.mjs";
@@ -1848,6 +1848,7 @@ export class Repository {
     return transaction(this.db, () => {
       const timestamp = this.jobTimestamp();
       const providerReady = this.clock().getTime() >= this.providerBackoffUntil;
+      const databaseHeavyTypes = [...DATABASE_HEAVY_JOB_TYPES];
       this.db.prepare(`
         UPDATE jobs SET status='queued', locked_at=NULL, locked_by=NULL, lease_expires_at=NULL,
           heartbeat_at=NULL, available_at=?, next_eligible_at=?, updated_at=?
@@ -1864,9 +1865,13 @@ export class Repository {
           )
           AND (? = 1 OR type='generate_visuals' OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")}))
           AND (type<>'generate_visuals' OR ?=1)
-          AND (jobs.workload_class NOT IN ('historical_recovery','maintenance') OR
-            (SELECT COUNT(*) FROM jobs running_lane WHERE running_lane.status='running'
-              AND running_lane.workload_class=jobs.workload_class) < 1)
+          AND NOT EXISTS (SELECT 1 FROM jobs database_writer WHERE database_writer.status='running'
+            AND database_writer.type IN (${databaseHeavyTypes.map(()=>"?").join(",")}))
+          AND (jobs.type NOT IN (${databaseHeavyTypes.map(()=>"?").join(",")})
+            OR NOT EXISTS (SELECT 1 FROM jobs active_pipeline_job WHERE active_pipeline_job.status='running'))
+          AND (SELECT COUNT(*) FROM jobs running_lane WHERE running_lane.status='running'
+            AND running_lane.workload_class=jobs.workload_class) < CASE jobs.workload_class
+              WHEN 'interactive' THEN 2 WHEN 'normal_ingest' THEN 2 ELSE 1 END
         ORDER BY
           CASE workload_class WHEN 'interactive' THEN 0 WHEN 'historical_recovery' THEN 2
             WHEN 'maintenance' THEN 3 ELSE 1 END,
@@ -1901,7 +1906,8 @@ export class Repository {
           created_at ASC
         LIMIT 1
       `).get(timestamp, timestamp, deferBatchExtraction ? 1 : 0, deferBatchCoverage ? 1 : 0,
-        providerReady ? 1 : 0, ...AI_JOB_TYPES, this.clock().getTime() >= (this.visualBackoffUntil || 0) ? 1 : 0, timestamp);
+        providerReady ? 1 : 0, ...AI_JOB_TYPES, this.clock().getTime() >= (this.visualBackoffUntil || 0) ? 1 : 0,
+        ...databaseHeavyTypes, ...databaseHeavyTypes, timestamp);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
       const claimed = this.db.prepare(`

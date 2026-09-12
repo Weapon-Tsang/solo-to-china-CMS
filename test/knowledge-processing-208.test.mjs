@@ -158,6 +158,30 @@ test("S08 recovery backoff is lane-aware and historical work cannot flood concur
   assert.equal(repository.claimJob(),null);
 });
 
+test("P01 database-heavy subprocess jobs are exclusive and lane limits are enforced",t=>{
+  const {repository,db}=repositoryFixture(t);
+  const first=repository.enqueue("rebuild_knowledge","alpha",{workloadClass:"semantic"});
+  repository.enqueue("rebuild_knowledge","beta",{workloadClass:"semantic"});
+  repository.enqueue("build_coverage_matrix","alpha",{workloadClass:"background_enrichment"});
+  assert.equal(repository.claimJob().id,first);
+  assert.equal(repository.claimJob(),null,"a database-heavy writer excludes every other pipeline writer");
+  db.prepare("UPDATE jobs SET status='succeeded' WHERE status IN ('queued','running')").run();
+  repository.enqueue("preflight_source","interactive-a",{workloadClass:"interactive"});
+  const interactive=repository.claimJob();
+  assert.equal(interactive.entity_id,"interactive-a");
+  repository.enqueue("rebuild_knowledge","gamma",{workloadClass:"semantic"});
+  assert.equal(repository.claimJob(),null,"a database-heavy job waits for an ordinary running job");
+});
+
+test("P01 a busy recovery tick is deferred without escaping the pipeline timer",()=>{
+  const events=[];const busy=Object.assign(new Error("database is locked"),{code:"ERR_SQLITE_ERROR",errcode:5});
+  const pipeline=Object.create(Pipeline.prototype);
+  Object.assign(pipeline,{nextRecoveryAt:0,recoveryIntervalMs:60_000,working:0,maxConcurrent:0,batchWorking:false,
+    repository:{recoverExpiredJobs(){throw busy;}},logger:{warn:(event)=>events.push(event),error:(event)=>events.push(event)}});
+  assert.doesNotThrow(()=>pipeline.pump());
+  assert.deepEqual(events,["pipeline.recovery_deferred_database_busy"]);
+});
+
 test("P01/P03 child CPU work keeps timers responsive and a child crash stays contained",async t=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"stc-isolation-"));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const worker=path.join(directory,"worker.mjs");fs.writeFileSync(worker,"const until=Date.now()+250; while(Date.now()<until){}; console.log(JSON.stringify({ok:true}))");

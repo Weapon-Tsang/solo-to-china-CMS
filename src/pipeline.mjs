@@ -74,10 +74,17 @@ export class Pipeline {
   pump() {
     if (Date.now() >= this.nextRecoveryAt) {
       this.nextRecoveryAt = Date.now() + this.recoveryIntervalMs;
-      const recovered = this.repository.recoverExpiredJobs?.() || 0;
-      if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
-      const recoveredBatches = this.repository.recoverPreparingVertexBatches?.() || 0;
-      if (recoveredBatches) this.logger.warn("pipeline.vertex_batch_preparation_recovered", { count: recoveredBatches });
+      try {
+        const recovered = this.repository.recoverExpiredJobs?.() || 0;
+        if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
+        const recoveredBatches = this.repository.recoverPreparingVertexBatches?.() || 0;
+        if (recoveredBatches) this.logger.warn("pipeline.vertex_batch_preparation_recovered", { count: recoveredBatches });
+      } catch (error) {
+        const event = isSqliteBusy(error)
+          ? "pipeline.recovery_deferred_database_busy"
+          : "pipeline.recovery_tick_failed";
+        this.logger.warn(event, { error });
+      }
     }
     void this.pumpVertexBatch().catch((error) => this.logger.error("pipeline.vertex_batch_tick_failed", { error }));
     const slots = Math.max(0, this.maxConcurrent - this.working);
@@ -323,9 +330,24 @@ export class Pipeline {
         return result;
       };
       heartbeatTimer = setInterval(() => {
-        if (!this.repository.heartbeatJob?.(job.id, job.locked_by, job.lease_generation)) {
-          abortController.abort(Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST" }));
-          this.logger.error("pipeline.job_lease_lost", { jobId: job.id, workerId: job.locked_by });
+        try {
+          if (!this.repository.heartbeatJob?.(job.id, job.locked_by, job.lease_generation)) {
+            abortController.abort(Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST" }));
+            this.logger.error("pipeline.job_lease_lost", { jobId: job.id, workerId: job.locked_by });
+          }
+        } catch (error) {
+          if (isSqliteBusy(error)) {
+            this.logger.warn("pipeline.heartbeat_deferred_database_busy", {
+              jobId: job.id, workerId: job.locked_by,
+            });
+          } else {
+            abortController.abort(Object.assign(new Error("JOB_HEARTBEAT_FAILED"), {
+              code: "JOB_LEASE_LOST", cause: error,
+            }));
+            this.logger.error("pipeline.job_heartbeat_failed", {
+              jobId: job.id, workerId: job.locked_by, error,
+            });
+          }
         }
       }, this.heartbeatIntervalMs || Math.max(10_000, Math.floor((this.repository.jobLeaseMs || 60_000) / 3)));
       heartbeatTimer.unref();
@@ -981,7 +1003,8 @@ export class Pipeline {
             durationMs: startedAt ? Date.now() - startedAt : null, error,
           });
         }
-      } else this.logger.error("pipeline.unhandled_error", { error });
+      } else if (isSqliteBusy(error)) this.logger.warn("pipeline.database_busy_deferred", { error });
+      else this.logger.error("pipeline.unhandled_error", { error });
       return false;
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
@@ -1119,6 +1142,11 @@ export class Pipeline {
     for (const visual of uploaded) this.repository.saveWordPressVisual(visual.visualId, visual);
     return uploaded;
   }
+}
+
+function isSqliteBusy(error) {
+  return error?.errcode === 5 || error?.code === "SQLITE_BUSY"
+    || (error?.code === "ERR_SQLITE_ERROR" && /database is locked/i.test(String(error?.message || "")));
 }
 
 function parseStoredJson(value) {

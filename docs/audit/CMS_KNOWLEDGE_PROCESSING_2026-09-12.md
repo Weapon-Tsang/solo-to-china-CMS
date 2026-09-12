@@ -19,6 +19,7 @@ The Knowledge inventory contained 230 pending review records: 213 `SOURCE_CONFLI
 - `src/claim-resolution.mjs`, `src/knowledge-resolution.mjs` and `src/evidence-consensus.mjs` implement stable typed values, expanded scope, temporal states, mismatch repair, source independence, weighted consensus and the explicit automatic/verification/repair/human state machine.
 - `src/repository.mjs` persists decision history and repair/verification jobs, exposes exact dry-run backfills, produces complete Source processing manifests, inherits historical workload context, computes compact Intake packages and records dirty Coverage scopes.
 - `src/job-policy.mjs` and `src/pipeline.mjs` add workload lanes, core/background separation, lane-aware backoff, executable guarded fragment routing and child context propagation.
+- Database-heavy derived-index jobs are exclusive across pipeline workers. Recovery, claim and heartbeat ticks defer transient SQLite locks instead of allowing a timer callback to terminate the HTTP process.
 - `src/process-runner.mjs`, `scripts/run-isolated-repository-task.mjs` and `src/maintenance.mjs` isolate repository-heavy work and scheduled backup from the HTTP event loop with bounded output, timeout and failure propagation.
 - `src/server.mjs` and `frontend/src/views.jsx` add Knowledge status/history/verification APIs and separate automatic, verification, repair and human counts.
 - Schema 67, Strategy 3.3, extension/app 2.0.8, deployment probes and regression/benchmark scripts complete the compatible rollout path.
@@ -33,6 +34,6 @@ These measurements validate local event-loop isolation and relative Coverage/inp
 
 ## Validation and production status
 
-Final local validation passed: `npm run check` completed the Vite production build, syntax checks and service-boundary checks; `npm test` passed 509 of 509 tests in 24.81 seconds; and `npm run release:check` passed all 51 mandatory checks with zero failures. The release gate recorded four expected warnings and five environment-only checks as not tested. Its isolated migration rehearsal upgraded schema 59 through 67, preserved referenced IDs, verified foreign keys and integrity, and exercised the rollback guard. Deployment revision/digest, post-deploy dry-run IDs, health results and capacity checks are added after rollout in this report and `docs/HANDOFF.md`.
+Final local validation passed: `npm run check` completed the Vite production build, syntax checks and service-boundary checks; `npm test` passed 511 of 511 tests in 26.37 seconds; and `npm run release:check` passed all 51 mandatory checks with zero failures. The release gate recorded four expected warnings and five environment-only checks as not tested. Its isolated migration rehearsal upgraded schema 59 through 67, preserved referenced IDs, verified foreign keys and integrity, and exercised the rollback guard. Deployment revision/digest, post-deploy dry-run IDs, health results and capacity checks are added after rollout in this report and `docs/HANDOFF.md`.
 
 The rollout does not execute recovery, delete source media/Base64, create a WordPress draft or publish WordPress content.
