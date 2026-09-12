@@ -34,6 +34,8 @@ These measurements validate local event-loop isolation and relative Coverage/inp
 
 ## Validation and production status
 
-Final local validation passed: `npm run check` completed the Vite production build, syntax checks and service-boundary checks; `npm test` passed 511 of 511 tests in 26.37 seconds; and `npm run release:check` passed all 51 mandatory checks with zero failures. The release gate recorded four expected warnings and five environment-only checks as not tested. Its isolated migration rehearsal upgraded schema 59 through 67, preserved referenced IDs, verified foreign keys and integrity, and exercised the rollback guard. Deployment revision/digest, post-deploy dry-run IDs, health results and capacity checks are added after rollout in this report and `docs/HANDOFF.md`.
+Final local validation passed: `npm run check` completed the Vite production build, syntax checks and service-boundary checks; `npm test` passed 511 of 511 tests in 26.37 seconds; and `npm run release:check` passed all 51 mandatory checks with zero failures. The release gate recorded four expected warnings and five environment-only checks as not tested. Its isolated migration rehearsal upgraded schema 59 through 67, preserved referenced IDs, verified foreign keys and integrity, and exercised the rollback guard.
 
-The rollout does not execute recovery, delete source media/Base64, create a WordPress draft or publish WordPress content.
+Production now runs final revision `afaf4e7678ef377ccbf3921704ba637289d3a323` at immutable digest `sha256:2ae943ff2c0c16f52b7349cf12c6705ba764eacdad314e169a178fe4c79fe58c`. Final runtime checks report App 2.0.8 / Strategy 3.3 / schema 67, integrity `ok`, zero foreign-key errors, restart count zero and no post-start database-lock/FATAL log match. Both production inventories were rerun as dry runs; historical recovery remains unexecuted. The complete backup, migration, dry-run, performance, capacity and rollback evidence is in [the 2.0.8 deployment record](CMS_DEPLOYMENT_2.0.8_2026-09-13.md).
+
+The rollout did not delete source media/Base64, create a WordPress draft or publish WordPress content.

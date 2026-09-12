@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.8 - Unreleased
+## 2.0.8 - 2026-09-13
 
 - Add typed, scope-aware and temporal Knowledge resolution with predicate/value repair, independent-source weighted consensus, targeted verification and persisted automatic-decision history. Human review remains for safety-critical or otherwise unresolved same-scope current contradictions.
 - Replace silent historical Source gaps with a complete processing-gap inventory, exact missing-stage recovery plans, idempotent legacy manifests and inherited `historical_recovery` job context. New interactive captures remain ahead of recovery work, including one-paragraph Sources with 19 or 27 images.

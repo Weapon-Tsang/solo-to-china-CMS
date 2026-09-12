@@ -2,7 +2,7 @@
 
 App/Extension 2.0.8, Content Strategy 3.3 and schema 67 add typed/scoped/temporal Knowledge resolution, targeted verification and Claim repair queues, exact Source processing-gap manifests, inherited historical workload context, core/background separation, incremental Coverage refresh, compact Intake and child-process isolation for repository-heavy and backup work.
 
-Production rollout must use the verified schema 66 to 67 path and run the processing-gap and Knowledge recomputation inventories in dry-run mode only. Historical recovery, Knowledge recomputation execution, media deletion, WordPress draft creation and publication are outside this rollout. See `audit/CMS_KNOWLEDGE_PROCESSING_2026-09-12.md` and `CMS_KNOWLEDGE_PROCESSING_UPGRADE_2.0.8.md`.
+Production runs revision `afaf4e7678ef377ccbf3921704ba637289d3a323`, immutable image digest `sha256:2ae943ff2c0c16f52b7349cf12c6705ba764eacdad314e169a178fe4c79fe58c`, App 2.0.8 / Strategy 3.3 / schema 67. The final container has restart count zero and no post-start database-lock/FATAL match. Processing Gap and Knowledge recomputation were run in dry-run mode only; `recoveryExecutionJobs=0` and no non-dry backfill was created during the deployment. Historical recovery, media deletion, WordPress draft creation and publication remain unexecuted. See `audit/CMS_KNOWLEDGE_PROCESSING_2026-09-12.md`, `audit/CMS_DEPLOYMENT_2.0.8_2026-09-13.md` and `CMS_KNOWLEDGE_PROCESSING_UPGRADE_2.0.8.md`.
 
 
 # Project handoff
