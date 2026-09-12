@@ -15,6 +15,10 @@ docker volume create "$OPS" >/dev/null
 MOUNTS=(--volume "$DATA:/var/lib/solo-to-china" --volume "$OPS:/ops"
   --volume "$PWD/deployment/gce/verify-upgrade.mjs:/ops/verify-upgrade.mjs:ro")
 docker run --detach --name "$NAME" --network none "${MOUNTS[@]}" \
+  --env CAPTURE_TOKEN=runtime-smoke-capture-token-only \
+  --env ADMIN_TOKEN=runtime-smoke-admin-token-only \
+  --env ADMIN_PASSWORD=runtime-smoke-password-only \
+  --env SESSION_SECRET=runtime-smoke-session-secret-only \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
   --env SOURCE_UPLOADS_DIR=/var/lib/solo-to-china/source-uploads \
   --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media "$IMAGE" >/dev/null
