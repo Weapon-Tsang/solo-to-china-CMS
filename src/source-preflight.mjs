@@ -5,7 +5,13 @@ const IMAGE_MIME = /^image\/(?:jpeg|jpg|png|webp|gif)$/i;
 const VIDEO_MIME = /^video\//i;
 const PDF_MIME = "application/pdf";
 
-export function estimateSourceProcessing(source, { textSegmentMaxChars = 120_000 } = {}) {
+export function estimateSourceProcessing(source, {
+  textSegmentMaxChars = 120_000,
+  imageBatchSize = 6,
+  hardMaxAssets = 200,
+  hardMaxSourceBytes = 1024 * 1024 * 1024,
+  hardMaxFileBytes = 512 * 1024 * 1024,
+} = {}) {
   const assets = Array.isArray(source?.assets) ? source.assets : [];
   const files = Array.isArray(source?.files) ? source.files : [];
   const images = assets.filter((asset) => asset?.kind !== "video").length;
@@ -15,15 +21,24 @@ export function estimateSourceProcessing(source, { textSegmentMaxChars = 120_000
   const textChars = String(source?.rawText ?? source?.raw_text ?? "").length;
   const totalFileBytes = files.reduce((total, file) => total + nonNegative(file?.sizeBytes ?? file?.size_bytes), 0);
   const textSegments = Math.max(1, Math.ceil(textChars / Math.max(2_000, Number(textSegmentMaxChars) || 120_000)));
-  const mediaCalls = images + videos;
+  const effectiveImageBatchSize = Math.min(8, Math.max(4, Number(imageBatchSize) || 6));
+  const mediaCalls = Math.ceil(images / effectiveImageBatchSize) + videos;
   const estimatedExtractionCalls = textSegments + mediaCalls;
-  const reasons = [];
-  if (estimatedExtractionCalls >= 20) reasons.push(`${estimatedExtractionCalls} estimated extraction calls`);
-  if (assets.length >= 25) reasons.push(`${assets.length} media assets`);
-  if (pdfPages >= 26) reasons.push(`${pdfPages} PDF pages`);
-  if (totalFileBytes > 128 * 1024 * 1024) reasons.push(`${totalFileBytes} source bytes`);
+  const largestFileBytes = files.reduce((largest, file) => Math.max(largest, nonNegative(file?.sizeBytes ?? file?.size_bytes)), 0);
+  const schedulingReasons = [];
+  if (estimatedExtractionCalls >= 20) schedulingReasons.push(`${estimatedExtractionCalls} estimated extraction calls`);
+  if (assets.length >= 25) schedulingReasons.push(`${assets.length} media assets`);
+  if (pdfPages >= 26) schedulingReasons.push(`${pdfPages} PDF pages`);
+  if (totalFileBytes > 128 * 1024 * 1024) schedulingReasons.push(`${totalFileBytes} source bytes`);
+  const hardLimitReasons = [];
+  if (assets.length > hardMaxAssets) hardLimitReasons.push(`${assets.length} media assets exceeds hard limit ${hardMaxAssets}`);
+  if (totalFileBytes > hardMaxSourceBytes) hardLimitReasons.push(`${totalFileBytes} source bytes exceeds hard limit ${hardMaxSourceBytes}`);
+  if (largestFileBytes > hardMaxFileBytes) hardLimitReasons.push(`${largestFileBytes} file bytes exceeds hard limit ${hardMaxFileBytes}`);
+  const processingClass = hardLimitReasons.length ? "blocked_hard_limit"
+    : assets.length >= 80 || pdfPages >= 100 || totalFileBytes > 256 * 1024 * 1024 ? "oversized"
+      : schedulingReasons.length ? "heavy" : "normal";
   return {
-    version: 1,
+    version: 2,
     basis: "technical_scope_only",
     textChars,
     textSegments,
@@ -32,13 +47,20 @@ export function estimateSourceProcessing(source, { textSegmentMaxChars = 120_000
     videoInputs: videos,
     pdfPages,
     totalFileBytes,
+    largestFileBytes,
+    imageBatchSize: effectiveImageBatchSize,
     estimatedExtractionCalls,
-    requiresManualStart: reasons.length > 0,
-    manualStartReasons: reasons,
+    processingClass,
+    blocked: processingClass === "blocked_hard_limit",
+    blockReasons: hardLimitReasons,
+    schedulingReasons,
+    // Kept for old clients. Work size never requires a manual start.
+    requiresManualStart: false,
+    manualStartReasons: [],
   };
 }
 
-export function evaluateSourcePreflight(source, { provider = "kimi", sourceUploadsDir = "data/source-uploads", imageBatchSize = 32,
+export function evaluateSourcePreflight(source, { provider = "kimi", sourceUploadsDir = "data/source-uploads", imageBatchSize = 6,
   textSegmentMaxChars = 120_000 } = {}) {
   const issues = [];
   const assets = Array.isArray(source?.assets) ? source.assets : [];
@@ -84,6 +106,7 @@ export function evaluateSourcePreflight(source, { provider = "kimi", sourceUploa
   const text = String(source?.raw_text ?? source?.rawText ?? "").trim();
   if (text.length < 20 && assets.length === 0) issues.push(issue("EMPTY_SOURCE", "No usable text or media evidence was captured."));
   const estimate = estimateSourceProcessing(source, { imageBatchSize, textSegmentMaxChars });
+  if (estimate.blocked) issues.push(issue("BLOCKED_HARD_LIMIT", estimate.blockReasons.join("; ")));
   return { version: 1, checkedAt: new Date().toISOString(), ready: issues.length === 0, provider, issues, estimate };
 }
 

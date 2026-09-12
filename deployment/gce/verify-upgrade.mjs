@@ -41,7 +41,7 @@ if (mode === 'backup') {
   const result = createBackup({ databasePath: `${root}/solo-to-china.sqlite`,
     backupDir: `${root}/backups`, sourceUploadsDir: `${root}/source-uploads`,
     generatedMediaDir: `${root}/generated-media`, retention: 999999,
-    codeRevision: process.env.OLD_IMAGE, reason: 'pre-2.0.6-verified-upgrade' });
+    codeRevision: process.env.OLD_IMAGE, reason: 'pre-2.0.7-verified-upgrade' });
   const verified = verifyBackup(result.backupPath);
   write('backup.json', result);
   console.log(JSON.stringify({ stage: 'backup', schema, ...result, verified: verified.integrity, tables: baseline }));
@@ -64,7 +64,7 @@ if (mode === 'backup') {
   const actual = fingerprint(db);
   assert.deepEqual(actual, baseline, 'Migration changed existing content, IDs or row counts');
   const schema = db.prepare('SELECT MAX(version) AS n FROM schema_migrations').get().n;
-  assert.equal(schema, 65);
+  assert.equal(schema, 66);
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   db.close();
   const result = { stage: mode, schema, integrity: 'ok', foreignKeyErrors: 0,

@@ -1,0 +1,168 @@
+{
+  "generatedAt": "2026-09-12T11:33:15.542Z",
+  "kind": "offline_fixed_fixture_no_paid_model_calls",
+  "summary": {
+    "fixtures": 5,
+    "qualityGatesPassed": true,
+    "totalLegacyRequests": 58,
+    "totalOptimizedRequests": 22
+  },
+  "results": [
+    {
+      "name": "short_text",
+      "profile": {
+        "version": "source-profile-1",
+        "route": "fragment",
+        "reasons": [
+          "short_text_without_media"
+        ],
+        "textChars": 59,
+        "mediaCount": 0,
+        "coveragePolicy": "existing_exhaustive_audit",
+        "experiencePolicy": "retain_grounded_experience"
+      },
+      "processingClass": "normal",
+      "legacyRequests": 1,
+      "optimizedRequests": 1,
+      "requestReduction": 0,
+      "segmentCount": 1,
+      "mediaBatchCount": 0,
+      "batchSizes": [],
+      "accountedMedia": 0,
+      "expectedMedia": 0,
+      "setupAndPlanningMs": 8.974,
+      "qualityGate": {
+        "allMediaAccounted": true,
+        "boundedBatches": true,
+        "manualStartRemoved": true
+      }
+    },
+    {
+      "name": "long_text",
+      "profile": {
+        "version": "source-profile-1",
+        "route": "segmented",
+        "reasons": [
+          "long_text"
+        ],
+        "textChars": 36000,
+        "mediaCount": 0,
+        "coveragePolicy": "existing_exhaustive_audit",
+        "experiencePolicy": "retain_grounded_experience"
+      },
+      "processingClass": "normal",
+      "legacyRequests": 7,
+      "optimizedRequests": 7,
+      "requestReduction": 0,
+      "segmentCount": 7,
+      "mediaBatchCount": 0,
+      "batchSizes": [],
+      "accountedMedia": 0,
+      "expectedMedia": 0,
+      "setupAndPlanningMs": 10.506,
+      "qualityGate": {
+        "allMediaAccounted": true,
+        "boundedBatches": true,
+        "manualStartRemoved": true
+      }
+    },
+    {
+      "name": "text_plus_19_images",
+      "profile": {
+        "version": "source-profile-1",
+        "route": "segmented",
+        "reasons": [
+          "dense_media"
+        ],
+        "textChars": 47,
+        "mediaCount": 19,
+        "coveragePolicy": "existing_exhaustive_audit",
+        "experiencePolicy": "retain_grounded_experience"
+      },
+      "processingClass": "normal",
+      "legacyRequests": 20,
+      "optimizedRequests": 5,
+      "requestReduction": 0.75,
+      "segmentCount": 20,
+      "mediaBatchCount": 4,
+      "batchSizes": [
+        5,
+        5,
+        5,
+        4
+      ],
+      "accountedMedia": 19,
+      "expectedMedia": 19,
+      "setupAndPlanningMs": 16.005,
+      "qualityGate": {
+        "allMediaAccounted": true,
+        "boundedBatches": true,
+        "manualStartRemoved": true
+      }
+    },
+    {
+      "name": "text_plus_27_images_and_map",
+      "profile": {
+        "version": "source-profile-1",
+        "route": "segmented",
+        "reasons": [
+          "dense_media"
+        ],
+        "textChars": 46,
+        "mediaCount": 27,
+        "coveragePolicy": "existing_exhaustive_audit",
+        "experiencePolicy": "retain_grounded_experience"
+      },
+      "processingClass": "heavy",
+      "legacyRequests": 28,
+      "optimizedRequests": 7,
+      "requestReduction": 0.75,
+      "segmentCount": 28,
+      "mediaBatchCount": 5,
+      "batchSizes": [
+        6,
+        5,
+        5,
+        5,
+        5
+      ],
+      "accountedMedia": 27,
+      "expectedMedia": 27,
+      "setupAndPlanningMs": 26.966,
+      "qualityGate": {
+        "allMediaAccounted": true,
+        "boundedBatches": true,
+        "manualStartRemoved": true
+      }
+    },
+    {
+      "name": "video_with_operator_notes",
+      "profile": {
+        "version": "source-profile-1",
+        "route": "segmented",
+        "reasons": [
+          "video"
+        ],
+        "textChars": 67,
+        "mediaCount": 1,
+        "coveragePolicy": "existing_exhaustive_audit",
+        "experiencePolicy": "retain_grounded_experience"
+      },
+      "processingClass": "normal",
+      "legacyRequests": 2,
+      "optimizedRequests": 2,
+      "requestReduction": 0,
+      "segmentCount": 2,
+      "mediaBatchCount": 0,
+      "batchSizes": [],
+      "accountedMedia": 1,
+      "expectedMedia": 1,
+      "setupAndPlanningMs": 5.225,
+      "qualityGate": {
+        "allMediaAccounted": true,
+        "boundedBatches": true,
+        "manualStartRemoved": true
+      }
+    }
+  ]
+}

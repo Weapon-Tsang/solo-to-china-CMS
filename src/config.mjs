@@ -138,6 +138,9 @@ export function loadConfig(env = process.env) {
       providerBackoffMaxMs: integer(env.AI_PROVIDER_BACKOFF_MAX_MS, 300_000),
       providerRecoverySuccesses: integer(env.AI_PROVIDER_RECOVERY_SUCCESSES, 5),
       sourceTextSegmentMaxChars: integer(env.SOURCE_TEXT_SEGMENT_MAX_CHARS, 120_000),
+      mediaImageBatchSize: Math.min(8,Math.max(4,integer(env.MEDIA_EXTRACTION_BATCH_SIZE,6))),
+      mediaBatchingEnabled: boolean(env.MEDIA_EXTRACTION_BATCHING_ENABLED,true),
+      coverageAiRoutingEnabled: boolean(env.COVERAGE_AI_ROUTING_ENABLED,false),
     },
     visuals: {
       enabled: boolean(env.IMAGE_ENABLED, false),

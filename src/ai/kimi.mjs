@@ -20,7 +20,7 @@ const EXTRACTION_SCHEMA = {
         warnings: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 },
       },
     },
-    claims: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "subject", "predicate", "value", "qualifiers", "confidence", "source_quote"], properties: { key: { type: "string" }, subject: { type: "string" }, predicate: { type: "string" }, value: { type: "string" }, qualifiers: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 }, source_quote: { type: "string" }, observed_at: { type: "string" }, valid_from: { type: "string" }, valid_to: { type: "string" }, date_confidence: { type: "string", enum: ["low", "medium", "high"] }, claim_role: { type: "string", enum: ["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"] }, knowledge_eligible: { type: "boolean" } } } },
+    claims: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "subject", "predicate", "value", "qualifiers", "confidence", "source_quote"], properties: { key: { type: "string" }, subject: { type: "string" }, predicate: { type: "string" }, value: { type: "string" }, qualifiers: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 }, source_quote: { type: "string" }, asset_id: { type: "string" }, segment_id: { type: "string" }, observed_at: { type: "string" }, valid_from: { type: "string" }, valid_to: { type: "string" }, date_confidence: { type: "string", enum: ["low", "medium", "high"] }, claim_role: { type: "string", enum: ["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"] }, knowledge_eligible: { type: "boolean" } } } },
   },
 };
 
@@ -40,6 +40,16 @@ export class KimiExtractor {
 
   get batchEnabled() {
     return this.config.provider === "vertex" && this.client.batchEnabled;
+  }
+
+  async testConnection({signal=null}={}) {
+    if(!this.enabled)throw Object.assign(new Error("AI provider is not configured."),{code:"AI_NOT_CONFIGURED",retryable:false});
+    const started=Date.now();
+    const completion=await this.client.completeJson({name:"manual_provider_connection_test",
+      schema:{type:"object",additionalProperties:false,required:["ok"],properties:{ok:{type:"boolean"}}},
+      instructions:"Return JSON with ok=true. This is an operator-requested provider connection test.",
+      content:[{type:"text",text:"connection test"}],signal,telemetryContext:{runId:`connection-test-${started}`,entityId:"manual"}});
+    return {ok:completion.output?.ok===true,model:completion.model,latencyMs:Date.now()-started,testedAt:new Date().toISOString()};
   }
 
   artifactContract(stage) {
@@ -341,7 +351,8 @@ Rules:
 - Set claim_role and knowledge_eligible for every claim. Editorial metadata and personal experience are retained as evidence but knowledge_eligible must be false; promotional observations are false unless they describe a durable, independently useful place feature.
 - Do not add affiliate products, commercial calls to action, or facts absent from the source.
 - destination_slug must be concise lowercase ASCII kebab-case. Use "unknown" if the destination cannot be inferred.
-- Treat supplied images as part of the source, but do not infer details that are not visible.`;
+- Treat supplied images as part of the source, but do not infer details that are not visible.
+- When multiple images are supplied, use the exact assetId and segmentId from the input manifest on every image-derived Claim. Never assign one image's evidence to another image.`;
 
 const BLUEPRINT_PROMPT = `Analyze only the editorial presentation pattern of this manually selected source.
 - Return format, hook, angle, section organization, strengths, and gaps.
@@ -360,7 +371,9 @@ const COVERAGE_AUDIT_PROMPT = `Independently audit whether the extracted atomic 
 - Return an empty uncovered_spans array when all material evidence is covered.`;
 
 function buildInput(source) {
-  return [`URL: ${source.submitted_url || source.canonical_url}`, `Source type: ${source.source_kind || source.adapter}`, `Title: ${source.title}`, `Author: ${source.author_name}`, `Published: ${source.published_at || "unknown"}`, "", "SOURCE TEXT:", String(source.raw_text || "")].join("\n");
+  const mediaManifest=(source.assets || []).map((asset)=>({assetId:asset.id,segmentId:asset.segment_id || source.submission_metadata?.asset_segment_ids?.[asset.id] || null,
+    kind:asset.kind,position:asset.position,altText:asset.alt_text || asset.alt || "",nearbyText:asset.nearby_text || ""}));
+  return [`URL: ${source.submitted_url || source.canonical_url}`, `Source type: ${source.source_kind || source.adapter}`, `Title: ${source.title}`, `Author: ${source.author_name}`, `Published: ${source.published_at || "unknown"}`, `MEDIA MANIFEST: ${JSON.stringify(mediaManifest)}`, "", "SOURCE TEXT:", String(source.raw_text || "")].join("\n");
 }
 
 function buildCoverageInput(segment, extraction) {

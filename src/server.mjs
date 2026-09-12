@@ -174,9 +174,16 @@ export function createApplication(config = loadConfig()) {
 
       if (request.method === "GET" && url.pathname === "/api/health") {
         const queueActive = Number(db.prepare("SELECT COUNT(*) n FROM jobs WHERE status IN ('queued','running')").get().n);
+        const providerRuntime=repository.providerRuntime({provider:activeAi.provider,model:activeAi.model,configured:extractor.enabled});
         return sendJson(response, 200, {
           ok: true,
           version: VERSION,
+          serviceHealth: { ready:true,http:"ready",database:"ready",version:VERSION },
+          aiConfiguration: { configured:extractor.enabled,provider:extractor.enabled?activeAi.provider:null,
+            model:extractor.enabled?activeAi.model:null,credentialsConfigured:extractor.enabled },
+          providerRuntime,
+          queueHealth: { active:queueActive,queued:Number(db.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued'").get().n),
+            running:Number(db.prepare("SELECT COUNT(*) n FROM jobs WHERE status='running'").get().n) },
           aiConfigured: extractor.enabled,
           aiProvider: extractor.enabled ? activeAi.provider : null,
           aiModel: extractor.enabled ? activeAi.model : null,
@@ -318,6 +325,10 @@ export function createApplication(config = loadConfig()) {
           visual: repository.getVisualSettings(config.visuals.defaultModel), ...settings,
         });
       }
+      if(request.method==="POST"&&url.pathname==="/api/settings/ai/test-connection"){
+        authorizeAdmin(request,config.adminToken,auth);
+        return sendJson(response,200,await extractor.testConnection());
+      }
       if (request.method === "GET" && url.pathname === "/api/settings/visuals") {
         const settings = repository.getVisualSettings(config.visuals.defaultModel);
         return sendJson(response, 200, { configured: visuals.enabled, ...settings });
@@ -412,7 +423,7 @@ export function createApplication(config = loadConfig()) {
           sourceKind: prepared.capture.sourceKind,
           warnings: prepared.warnings,
           message: saved.duplicate ? "该来源版本已存在，未重复排队。"
-            : saved.requiresManualStart ? "来源已安全保存。处理规模较高，请查看估算后在来源详情中手动开始提取。"
+            : saved.hardLimitBlocked ? "来源已安全保存，但超过明确的硬限制；请在来源详情中查看限制原因。"
               : "来源已安全保存并进入提取、知识整理和内容评估流程。",
         });
       }
@@ -454,6 +465,10 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && url.pathname === "/api/sources") {
         return sendJson(response, 200, { items: repository.listSources(limit(url.searchParams.get("limit"))) });
       }
+      if (request.method === "GET" && url.pathname === "/api/sources/status") {
+        const ids=String(url.searchParams.get("ids")||"").split(",").map((value)=>value.trim()).filter(Boolean);
+        return sendJson(response,200,{items:repository.listSourceStatusProjection({ids,limit:limit(url.searchParams.get("limit"))})});
+      }
       if (request.method === "POST" && url.pathname === "/api/backfills/media") {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
@@ -471,6 +486,13 @@ export function createApplication(config = loadConfig()) {
             : repository.runFailedProductionCleanupBackfill(options);
         if (!result.dryRun && result.queued) void pipeline.runOne();
         return sendJson(response,result.dryRun ? 200 : 202,result);
+      }
+      if(request.method==="POST"&&url.pathname==="/api/backfills/processing-gaps"){
+        authorizeAdmin(request,config.adminToken,auth);
+        const payload=await readJson(request,20_000);
+        const result=repository.runSourceProcessingGapRecovery({dryRun:payload.dryRun!==false,approvedFromRunId:payload.approvedFromRunId||null});
+        if(!result.dryRun&&result.queued)void pipeline.runOne();
+        return sendJson(response,result.dryRun?200:202,result);
       }
       const sourceAssetPreviewMatch = url.pathname.match(/^\/api\/source-assets\/([^/]+)\/preview$/);
       if (request.method === "GET" && sourceAssetPreviewMatch) {
@@ -492,7 +514,13 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && sourceMatch) {
         if (captureOnly) authorizeCapture(request, config.captureToken);
         const source = repository.getSource(sourceMatch[1]);
-        return source ? sendJson(response, 200, sourceForApi(source)) : sendJson(response, 404, { error: "Source not found." });
+        return source ? sendJson(response, 200, {...sourceForApi(source),
+          status_projection:repository.listSourceStatusProjection({ids:[source.id]})[0]||null,
+          timeline:repository.sourceTimeline(source.id,100)}) : sendJson(response, 404, { error: "Source not found." });
+      }
+      const sourceTimelineMatch=url.pathname.match(/^\/api\/sources\/([^/]+)\/timeline$/);
+      if(request.method==="GET"&&sourceTimelineMatch){
+        return sendJson(response,200,{items:repository.sourceTimeline(decodeURIComponent(sourceTimelineMatch[1]),limit(url.searchParams.get("limit")))});
       }
       const sourceRepairManifestMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/repair-manifest$/);
       if (request.method === "GET" && sourceRepairManifestMatch) {

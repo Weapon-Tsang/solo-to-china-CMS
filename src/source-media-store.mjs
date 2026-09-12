@@ -44,7 +44,7 @@ export function persistCaptureAssets(capture, storageRoot) {
 function persistAsset(asset, root) {
   if (asset.originalStorageRef) {
     const stored = storedOriginal(asset, root);
-    if (stored) return stored;
+    if (stored) return persistDerivativeReference(stored, root);
   }
   const hasOriginalPayload = Boolean(asset.originalDataUrl);
   const encoded = String(asset.originalDataUrl || asset.aiDerivativeDataUrl || "");
@@ -55,12 +55,16 @@ function persistAsset(asset, root) {
   const actualMime = imageMime(bytes);
   if (!actualMime) return { ...asset, storageStatus: "pending", originalBytesStatus: "invalid" };
   const hash = createHash("sha256").update(bytes).digest("hex");
-  const directory = path.join(root, hash.slice(0, 2));
-  const filename = path.join(directory, `${hash}${MIME_EXTENSIONS[actualMime]}`);
+  const originalBytes = hasOriginalPayload && Boolean(asset.originalSha256 && asset.originalSha256 === hash);
+  const reference = originalBytes
+    ? `media/${hash.slice(0, 2)}/${hash}${MIME_EXTENSIONS[actualMime]}`
+    : `.derived/${hash.slice(0, 2)}/${hash}${MIME_EXTENSIONS[actualMime]}`;
+  const filename = safeMediaPath(root, reference);
+  const directory = path.dirname(filename);
   fs.mkdirSync(directory, { recursive: true });
   if (!fs.existsSync(filename)) fs.writeFileSync(filename, bytes, { flag: "wx" });
-  const originalBytes = hasOriginalPayload && Boolean(asset.originalSha256 && asset.originalSha256 === hash);
-  return {
+  const explicitDerivativeRef = originalBytes ? derivativeReference(asset, root) : reference;
+  return withoutEmbeddedMedia({
     ...asset,
     localPath: filename,
     mimeType: actualMime,
@@ -71,7 +75,36 @@ function persistAsset(asset, root) {
     durabilityStatus: originalBytes ? "ORIGINAL_STORED" : "DERIVATIVE_ONLY",
     aiReadabilityStatus: "processable",
     repairStatus: originalBytes ? "not_needed" : "server_recovery_pending",
-  };
+    originalStorageRef: originalBytes ? reference : (asset.originalStorageRef || ""),
+    derivativeStorageRef: explicitDerivativeRef,
+    derivativePath: explicitDerivativeRef ? safeMediaPath(root, explicitDerivativeRef) : "",
+  });
+}
+
+function persistDerivativeReference(asset, root) {
+  const ref = derivativeReference(asset, root);
+  return withoutEmbeddedMedia({ ...asset, derivativeStorageRef: ref,
+    derivativePath: ref ? safeMediaPath(root, ref) : "" });
+}
+
+function derivativeReference(asset, root) {
+  const encoded = String(asset.aiDerivativeDataUrl || "");
+  const match = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)$/u.exec(encoded);
+  if (!match) return asset.derivativeStorageRef || "";
+  const bytes = Buffer.from(match[2], "base64");
+  const mime = imageMime(bytes);
+  if (!mime || !bytes.length || bytes.length > MAX_IMAGE_BYTES) return "";
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const reference = `.derived/${hash.slice(0, 2)}/${hash}${MIME_EXTENSIONS[mime]}`;
+  const filename = safeMediaPath(root, reference);
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  if (!fs.existsSync(filename)) fs.writeFileSync(filename, bytes, { flag: "wx" });
+  return reference;
+}
+
+function withoutEmbeddedMedia(asset) {
+  const { originalDataUrl: _original, aiDerivativeDataUrl: _derivative, ...stored } = asset;
+  return stored;
 }
 
 function storedOriginal(asset, root) {

@@ -60,6 +60,11 @@ export function createAiClient(config, fetchImpl = fetch) {
             configHash: identity.policy.configHash,
             runId: input.telemetryContext?.runId || null,
             entityId: input.telemetryContext?.entityId || null,
+            queueWaitMs: input.telemetryContext?.queueWaitMs ?? null,
+            providerRequestMs: 0,
+            retryWaitMs: 0,
+            totalStageMs: input.telemetryContext?.queueWaitMs || 0,
+            executionRoute: input.telemetryContext?.executionRoute || null,
           });
         } catch { /* cache telemetry must never fail production */ }
         return structuredClone(cached);

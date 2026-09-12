@@ -38,6 +38,7 @@ test("every provider attempt is metered, including structured-output repair retr
   assert.deepEqual(metrics.map((item) => item.attemptStatus), ["failed", "succeeded"]);
   assert.equal(metrics[0].retryReason, "invalid_json_or_schema");
   assert.ok(metrics.every((item) => item.runId === "job-1" && item.configHash));
+  assert.ok(metrics.every((item) => item.providerRequestMs >= 0 && item.retryWaitMs >= 0 && item.totalStageMs >= item.providerRequestMs));
 });
 
 test("cost ledger retains unknown prices and uses unique qualified drafts as denominator", () => {

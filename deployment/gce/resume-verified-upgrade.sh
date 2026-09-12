@@ -14,14 +14,14 @@ python3 - "$RELEASE" <<'PY'
 import json, pathlib, sqlite3, sys
 release=pathlib.Path(sys.argv[1]); report=release/'migrate.json'
 result=json.loads(report.read_text())
-assert result['schema']==65 and result['integrity']=='ok'
+assert result['schema']==66 and result['integrity']=='ok'
 assert result['foreignKeyErrors']==0 and result['preservedContentFingerprints'] is True
 dbpath=pathlib.Path('/var/lib/docker/volumes/solo_to_china_data/_data/solo-to-china.sqlite')
 assert dbpath.stat().st_mtime_ns <= report.stat().st_mtime_ns
 wal=pathlib.Path(str(dbpath)+'-wal')
 assert not wal.exists() or wal.stat().st_size==0, 'Unverified WAL writes exist'
 db=sqlite3.connect('file:'+str(dbpath)+'?mode=ro',uri=True)
-assert db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0]==65
+assert db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0]==66
 db.close()
 PY
 TOKEN="$(curl --fail --silent --header 'Metadata-Flavor: Google' \
@@ -43,7 +43,7 @@ docker run --detach --name engine --restart unless-stopped --network none \
   --volume solo_to_china_data:/var/lib/solo-to-china --volume "$LEGACY:/app/data" "$IMAGE" >/dev/null
 READY=0
 for ((attempt=0; attempt<60; attempt++)); do
-  if docker exec engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/health"); const h=await r.json(); if(!r.ok||h.version!=="2.0.6"||h.contentStrategy.version!=="3.1"||h.captureMediaProtocol.version!==2)process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
+  if docker exec engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/health"); const h=await r.json(); if(!r.ok||h.version!=="2.0.7"||h.contentStrategy.version!=="3.2"||h.captureMediaProtocol.version!==2)process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
     READY=1; break
   fi
   if [[ "$(docker inspect --format '{{.State.Running}}' engine)" != true ]]; then break; fi
@@ -52,7 +52,7 @@ done
 if [[ "$READY" != 1 ]]; then
   docker update --restart no engine >/dev/null
   docker stop --time 10 engine >/dev/null
-  printf 'Readiness failed; retained schema 65 and both containers for inspection.\n' >&2
+  printf 'Readiness failed; retained schema 66 and both containers for inspection.\n' >&2
   exit 1
 fi
 docker network disconnect none engine

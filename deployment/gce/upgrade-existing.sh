@@ -144,7 +144,7 @@ docker run --detach --name engine --restart unless-stopped --network none \
   --volume "$RELEASE/legacy-app-data:/app/data" "$IMAGE" >/dev/null
 READY=0
 for ((attempt=0; attempt<60; attempt++)); do
-  if docker exec engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready"); const j=await r.json(); if(!r.ok||!j.ready||j.version!=="2.0.6")process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
+  if docker exec engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready"); const j=await r.json(); if(!r.ok||!j.ready||j.version!=="2.0.7")process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
     READY=1; break
   fi
   sleep 2

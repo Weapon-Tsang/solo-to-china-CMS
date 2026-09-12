@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 65;
+export const SCHEMA_VERSION = 66;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -86,6 +86,82 @@ function migrate(db) {
   if (current < 63) migrationSixtyThree(db);
   if (current < 64) migrationSixtyFour(db);
   if (current < 65) migrationSixtyFive(db);
+  if (current < 66) migrationSixtySix(db);
+}
+
+function migrationSixtySix(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE media_extraction_batches (
+      id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      capture_version INTEGER NOT NULL,
+      sequence INTEGER NOT NULL,
+      segment_ids_json TEXT NOT NULL,
+      asset_ids_json TEXT NOT NULL,
+      classification TEXT NOT NULL DEFAULT 'ordinary_image',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','extracting','extracted','failed','complete')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(source_id,capture_version,sequence)
+    );
+    CREATE INDEX idx_media_batches_source ON media_extraction_batches(source_id,capture_version,status,sequence);
+
+    CREATE TABLE source_processing_gap_runs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK (status IN ('dry_run','queued','completed','failed')),
+      dry_run INTEGER NOT NULL DEFAULT 1 CHECK (dry_run IN (0,1)),
+      approved_from_run_id TEXT REFERENCES source_processing_gap_runs(id) ON DELETE SET NULL,
+      report_json TEXT NOT NULL DEFAULT '{}',
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_source_gap_runs_created ON source_processing_gap_runs(created_at DESC);
+
+    CREATE TABLE media_storage_migration_runs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK (status IN ('dry_run','completed','failed')),
+      dry_run INTEGER NOT NULL DEFAULT 1 CHECK (dry_run IN (0,1)),
+      approved_from_run_id TEXT REFERENCES media_storage_migration_runs(id) ON DELETE SET NULL,
+      report_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
+    CREATE TABLE provider_runtime_state (
+      provider TEXT PRIMARY KEY,
+      model TEXT NOT NULL DEFAULT '',
+      last_success_at TEXT,
+      last_failure_at TEXT,
+      last_error_code TEXT,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      backoff_until TEXT,
+      last_latency_ms INTEGER,
+      updated_at TEXT NOT NULL
+    );
+
+    ALTER TABLE model_call_metrics ADD COLUMN queue_wait_ms INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN provider_request_ms INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN retry_wait_ms INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN total_stage_ms INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN retry_after_ms INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN backoff_until TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN cache_hit INTEGER NOT NULL DEFAULT 0 CHECK (cache_hit IN (0,1));
+    ALTER TABLE model_call_metrics ADD COLUMN execution_route TEXT;
+
+    CREATE TABLE source_asset_storage_refs (
+      asset_id TEXT PRIMARY KEY REFERENCES source_assets(id) ON DELETE CASCADE,
+      original_storage_ref TEXT NOT NULL DEFAULT '',
+      derivative_storage_ref TEXT NOT NULL DEFAULT '',
+      derivative_cache_key TEXT NOT NULL DEFAULT '',
+      transform_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    INSERT INTO schema_migrations(version,applied_at) VALUES (66,datetime('now'));
+  `));
 }
 
 function migrationSixtyFive(db) {

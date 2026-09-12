@@ -121,7 +121,7 @@ test('receipt rejects changed input/configuration, corrupted output and revoked 
 });
 
 test('targeted retry retains its prior extraction during audit failure and reuses only the completed model step',async t=>{
-  const {repository,db}=repositoryFixture(t);
+  const {repository,db}=repositoryFixture(t,{coverageAiRoutingEnabled:true});
   const source=repository.saveCapture(normalizeXiaohongshuCapture({url:'https://www.xiaohongshu.com/explore/targetedreceipt',text:'Adult tickets cost 60 CNY. The museum opens at 09:00 daily.'}));
   const [segment]=repository.prepareSourceSegments(source.id);
   const claim={key:'museum.ticket',subject:'Museum',predicate:'ticket',value:'60 CNY',qualifiers:['adult'],confidence:.9,source_quote:'Adult tickets cost 60 CNY.'};

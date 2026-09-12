@@ -2,6 +2,10 @@
 
 Use one Google Compute Engine VM, a persistent Docker volume, and one Cloudflare Tunnel. The project currently uses SQLite plus an in-process durable queue and scheduler; a stateless Cloud Run revision is not a safe replacement without a database and worker redesign.
 
+## Existing installation: 2.0.6 to 2.0.7
+
+Use `upgrade-existing.sh` with `verify-upgrade.mjs` for the additive schema 65 to 66 upgrade. Supply an immutable image digest and the exact 40-character Git revision. The helper preserves the active `/app/data` mount, creates and drills a verified paired backup, rehearses schema 66 offline, and connects public traffic only after the isolated 2.0.7 readiness check passes. After deployment, run the processing-gap and media-storage commands in dry-run mode only; review and retain their report IDs without starting historical jobs or deleting Base64.
+
 ## Existing installation: 2.0.5 → 2.0.6
 
 Use `upgrade-existing.sh` with `verify-upgrade.mjs` for this schema 59→65 upgrade. `startup.sh` below remains the fresh-install provisioner; it rewrites configuration and does not perform a migration rehearsal. The actual deployment record, immutable image, disk snapshot and results are in [the 2.0.6 rollout record](../../docs/audit/CMS_DEPLOYMENT_2.0.6_2026-09-12.md).
@@ -60,7 +64,7 @@ From an authenticated Google Cloud shell or workstation, substitute your own val
 $project = "YOUR_PROJECT_ID"
 $region = "us-central1"
 $repo = "solo-to-china"
-$image = "$region-docker.pkg.dev/$project/$repo/engine:2.0.6"
+$image = "$region-docker.pkg.dev/$project/$repo/engine:2.0.7"
 
 gcloud services enable compute.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com --project $project
 gcloud artifacts repositories create $repo --repository-format=docker --location=$region --project=$project

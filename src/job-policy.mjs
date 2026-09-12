@@ -1,5 +1,6 @@
 export const AI_JOB_TYPES = new Set([
   "extract_segment_claims",
+  "extract_media_batch",
   "audit_segment_coverage",
   "retry_segment_extraction",
   "analyze_source_blueprint",

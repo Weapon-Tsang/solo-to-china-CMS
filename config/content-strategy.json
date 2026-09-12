@@ -1,13 +1,25 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "3.1",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.1.md",
+  "current_version": "3.2",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.2.md",
   "status": "active",
   "history": [
     {
-      "version": "3.1",
+      "version": "3.2",
       "effective_date": "2026-09-12",
       "status": "active",
+      "summary": "大来源自动排队、可追溯媒体批处理、独立运行状态与安全迁移预检。",
+      "changes": [
+        "取消按估算调用次数触发的人工启动；仅明确硬限制阻断。",
+        "普通图片按 4–8 张分组并保留资产与分段级来源关系；地图、表格、文字密集图和视频单独处理。",
+        "服务、AI 配置、提供商运行状态和队列健康分离，状态读取不触发付费请求。",
+        "历史处理缺口与 Base64 迁移默认仅生成 dry-run 报告，原始素材不自动删除。"
+      ]
+    },
+    {
+      "version": "3.1",
+      "effective_date": "2026-09-12",
+      "status": "superseded",
       "summary": "可靠采集与证据快照、可恢复生产、分离实时调度及低开销状态读取。",
       "changes": [
         "媒体类型与全生命周期超时校验；IndexedDB 断点和幂等媒体回执。",

@@ -319,7 +319,9 @@ export class Pipeline {
         }
       }, this.heartbeatIntervalMs || Math.max(10_000, Math.floor((this.repository.jobLeaseMs || 60_000) / 3)));
       heartbeatTimer.unref();
-      const telemetryContext = { runId: job.id, entityId: job.entity_id };
+      const telemetryContext = { runId: job.id, entityId: job.entity_id,
+        queueWaitMs:Math.max(0,startedAt-Date.parse(job.created_at||job.available_at||new Date(startedAt).toISOString())),
+        executionRoute:job.execution_route||"auto" };
       const artifactConfigHash = stageConfiguration(this, job.type);
       pipelineArtifact = this.repository.preparePipelineArtifact?.(job, artifactConfigHash) || null;
       const modelStep = async (key, input, operation, configurationStage = job.type) => {
@@ -403,7 +405,7 @@ export class Pipeline {
           const preflight = evaluateSourcePreflight(source, {
             provider: this.extractor?.config?.provider || "kimi",
             sourceUploadsDir: this.extractor?.config?.sourceUploadsDir,
-            imageBatchSize: this.extractor?.config?.imageBatchSize,
+            imageBatchSize: this.repository.contentConfig?.mediaImageBatchSize,
             textSegmentMaxChars: this.repository.contentConfig?.sourceTextSegmentMaxChars,
           });
           this.repository.recordSourcePreflight?.(source.id, preflight);
@@ -419,8 +421,26 @@ export class Pipeline {
         case "segment_source": {
           commitStage(() => {
             const segments = this.repository.prepareSourceSegments(job.entity_id);
-            for (const segment of segments) this.repository.enqueue("extract_segment_claims", segment.id,
-              { executionRoute: Number(job.priority || 0) >= 50 ? 'batch' : 'realtime', priority: Number(job.priority || 5) });
+            const mediaBatches = this.repository.prepareMediaExtractionBatches(job.entity_id);
+            const batchedSegmentIds = new Set(mediaBatches.flatMap((batch) => batch.segmentIds));
+            for (const batch of mediaBatches) this.repository.enqueue("extract_media_batch", batch.id,
+              { executionRoute: 'realtime', priority: Number(job.priority || 5) });
+            for (const segment of segments.filter((item) => !batchedSegmentIds.has(item.id))) {
+              this.repository.enqueue("extract_segment_claims", segment.id,
+                { executionRoute: Number(job.priority || 0) >= 50 ? 'batch' : 'realtime', priority: Number(job.priority || 5) });
+            }
+          });
+          break;
+        }
+        case "extract_media_batch": {
+          const pack=this.repository.getMediaBatchExtractionPackage(job.entity_id);
+          if(!pack)throw new Error(`Media batch ${job.entity_id} no longer exists.`);
+          if(pack.staleCaptureVersion)break;
+          const extraction=await guarded((signal)=>this.extractor.extract(pack.source,{signal,telemetryContext}));
+          commitStage(()=>{
+            for(const segmentId of this.repository.saveMediaBatchExtraction(job.entity_id,extraction)) {
+              this.repository.enqueue("audit_segment_coverage",segmentId,{executionRoute:'realtime'});
+            }
           });
           break;
         }
@@ -449,7 +469,7 @@ export class Pipeline {
           const coveragePackage = this.repository.getSegmentCoveragePackage(job.entity_id);
           if (!coveragePackage) throw new Error(`Source segment ${job.entity_id} has no extraction result.`);
           if (coveragePackage.staleCaptureVersion) break;
-          const assessment = coveragePackage.expectedModality === "text" && typeof this.extractor.auditCoverage === "function"
+          const assessment = coveragePackage.expectedModality === "text" && this.repository.shouldRunAiCoverage(job.entity_id) && typeof this.extractor.auditCoverage === "function"
             ? await guarded((signal) => this.extractor.auditCoverage(coveragePackage, { signal, telemetryContext }))
             : null;
           commitStage(() => {
@@ -483,7 +503,7 @@ export class Pipeline {
           // Preview the merged extraction without publishing a half-completed retry.
           const retriedPackage = this.repository.getSegmentCoveragePackage(job.entity_id, { extraction, retry: true });
           if (!retriedPackage || retriedPackage.staleCaptureVersion) break;
-          const assessment = retriedPackage.expectedModality === "text" && typeof this.extractor.auditCoverage === "function"
+          const assessment = retriedPackage.expectedModality === "text" && this.repository.shouldRunAiCoverage(job.entity_id) && typeof this.extractor.auditCoverage === "function"
             ? await modelStep('targeted-coverage', retriedPackage,
               (signal) => this.extractor.auditCoverage(retriedPackage, { signal, telemetryContext }), 'audit_segment_coverage')
             : null;

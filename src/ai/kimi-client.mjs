@@ -28,10 +28,13 @@ export class KimiClient {
       { role: "system", content: instructions },
       { role: "user", content },
     ];
+    telemetryContext = { ...(telemetryContext || {}), stageStartedAt: Date.now(), retryWaitMs: 0 };
     for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
-      const attemptStartedAt = Date.now();
-      const requestStartedAt = new Date(attemptStartedAt).toISOString();
+      const requestGateStartedAt = Date.now();
       await this.config.beforeRequest?.({ provider: "kimi", model: this.config.model, stage: name, attempt: attempt + 1 });
+      const attemptStartedAt = Date.now();
+      telemetryContext.retryWaitMs = Math.max(0, attemptStartedAt - requestGateStartedAt);
+      const requestStartedAt = new Date(attemptStartedAt).toISOString();
       let response;
       try {
         response = await this.fetch(`${this.config.baseUrl}/chat/completions`, {
@@ -164,6 +167,10 @@ function attemptMetric({ identity, policy, telemetryContext, attempt, attemptSta
     status: status === "succeeded" ? "succeeded" : "failed", attemptStatus: status, errorCode, retryReason,
     requestKind: "provider", policyVersion: policy.version, configHash: policy.configHash,
     runId: telemetryContext?.runId || null, entityId: telemetryContext?.entityId || null,
+    queueWaitMs:telemetryContext?.queueWaitMs??null,providerRequestMs:Date.now()-attemptStartedAt,
+    retryWaitMs:telemetryContext?.retryWaitMs??0,
+    totalStageMs:(telemetryContext?.queueWaitMs||0)+Math.max(0,Date.now()-(telemetryContext?.stageStartedAt||attemptStartedAt)),
+    executionRoute:telemetryContext?.executionRoute||null,
     requestStartedAt, requestCompletedAt: new Date().toISOString(), costUsd: null, costStatus: "unknown" };
 }
 

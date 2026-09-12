@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.7 - Unreleased
+
+- Remove the estimated-call manual-start gate: normal, heavy and oversized Sources enter the durable queue automatically, while only explicit technical hard limits block processing.
+- Batch ordinary images in traceable groups of four to eight, keep maps, text-dense media and videos individual, and retain exact asset/segment provenance when splitting model output.
+- Separate service readiness, AI configuration, observed provider runtime and queue health; add lightweight capture-version status and source timelines without provider calls.
+- Add stage timing, cache/route/backoff telemetry, compact downstream model inputs, safe processing-gap dry runs and a non-mutating Base64 migration estimate.
+- Store new valid media payloads as content-addressed originals or derivative cache files and omit repeated Base64 from capture snapshots. Add schema 66 and Content Strategy 3.2.
+
 ## 2.0.6 - Unreleased
 
 - Normalize image/video contracts before upload; enforce total and idle response deadlines, cancellation and bounded buffering. Save raw capture manifests and resumable media in IndexedDB; fix empty worker spinning during asynchronous storage.
