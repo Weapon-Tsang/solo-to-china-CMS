@@ -60,8 +60,10 @@ STOPPED=0
 RENAMED=0
 MIGRATED=0
 EXPOSED=0
+PHASE=legacy-copy
 offline() {
   local image="$1" mode="$2"
+  PHASE="$mode"
   docker run --rm --network none --env "OLD_IMAGE=$OLD_IMAGE" \
     --volume solo_to_china_data:/var/lib/solo-to-china \
     --volume "$RELEASE:/ops" --volume "$RELEASE/legacy-app-data:/app/data:ro" \
@@ -73,7 +75,14 @@ offline() {
 recover() {
   local code=$?
   trap - ERR
-  log "Upgrade failed exit=$code stopped=$STOPPED renamed=$RENAMED migrated=$MIGRATED exposed=$EXPOSED; details retained in $RELEASE"
+  log "Upgrade failed exit=$code phase=$PHASE stopped=$STOPPED renamed=$RENAMED migrated=$MIGRATED exposed=$EXPOSED; details retained in $RELEASE"
+  # These probe/copy logs contain no credentials or model output. Only the first
+  # error headline is emitted; full diagnostics remain private on the VM.
+  if [[ -f "$RELEASE/$PHASE.log" ]]; then
+    local headline
+    headline="$(grep -m1 -E 'Error:|AssertionError|No such|not found' "$RELEASE/$PHASE.log" | cut -c1-400 || true)"
+    if [[ -n "$headline" ]]; then log "Probe headline: $headline"; fi
+  fi
   if [[ "$EXPOSED" == 1 ]]; then
     log 'Public service already exposed; preserving current DB for inspection, no automatic data rollback.'
   elif [[ "$STOPPED" == 1 ]]; then
