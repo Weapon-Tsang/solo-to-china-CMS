@@ -1481,9 +1481,14 @@ export class Repository {
   saveExperienceExtraction(sourceId, extraction, model = null, packageValue = null) {
     const input = packageValue || this.getExperienceExtractionPackage(sourceId);
     if (!input) throw new Error(`Source ${sourceId} is not ready for Experience extraction.`);
+    const reconcileSourceOpportunities = () => {
+      const destination = this.db.prepare("SELECT destination_slug FROM structured_sources WHERE source_id=?").get(sourceId);
+      if (destination?.destination_slug) this.reconcileRecommendationInbox(destination.destination_slug);
+    };
     const existing = this.db.prepare(`SELECT * FROM experience_extraction_runs WHERE source_id=? AND input_hash=?`).get(sourceId, input.input_hash);
     if (existing?.status === "succeeded") {
       this.refreshExperienceBackfillRuns();
+      reconcileSourceOpportunities();
       return { runId: existing.id, reused: true, blocks: this.listExperienceBlocks(sourceId) };
     }
     const timestamp = now();
@@ -1520,6 +1525,10 @@ export class Repository {
         input.degraded ? "degraded" : "grounded",timestamp,timestamp);
     });
     this.refreshExperienceBackfillRuns();
+    // Experience completion is the last processing gate for a source. Reconcile
+    // immediately so an already-current diagnostic becomes visible without a
+    // manual dashboard refresh or another model call.
+    reconcileSourceOpportunities();
     return { runId, reused: false, blocks: this.listExperienceBlocks(sourceId) };
   }
 

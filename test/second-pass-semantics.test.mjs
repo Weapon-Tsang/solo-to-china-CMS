@@ -48,6 +48,21 @@ test("recommendation inbox separates processing gaps from approvable evidence ga
   assert.deepEqual(repository.listContent({productionOnly:true}),[]);
 });
 
+test("Experience completion immediately admits an already-current eligible source", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const sourceId=saveSource(repository,{externalId:"experience-admits-current-opportunity"});
+  const opportunity=saveRecommendation(repository,sourceId);
+  const waiting=db.prepare("SELECT processing_state,inbox_state FROM content_opportunities WHERE id=?").get(opportunity.id);
+  assert.equal(waiting.processing_state,"PROCESSING_GAP");
+  assert.equal(waiting.inbox_state,"INTERNAL");
+
+  repository.saveExperienceExtraction(sourceId,{blocks:[]},"test");
+
+  const admitted=db.prepare("SELECT processing_state,inbox_state FROM content_opportunities WHERE id=?").get(opportunity.id);
+  assert.equal(admitted.processing_state,"EVIDENCE_GAP");
+  assert.equal(admitted.inbox_state,"ACTIONABLE");
+});
+
 test("recommendation backfill promotes compatible diagnostics without another model job", (t) => {
   const {db,repository}=repositoryFixture(t);
   const sourceId=saveSource(repository,{externalId:"stale-strategy-diagnostic"});
