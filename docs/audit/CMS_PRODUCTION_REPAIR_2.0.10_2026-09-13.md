@@ -14,6 +14,8 @@ Thirty-three Sources were still processing current image-bearing capture version
 - Rebuilding an existing source or Knowledge opportunity updates its strategy version, coverage and readiness while retaining approved lifecycle state and immutable historical records.
 - Multi-source Knowledge opportunities and coverage use evidence only from complete, processed Sources with durable originals and a current successful Experience extraction. Processing Sources join after completion.
 - Source list queue projections include only capture, preflight, segmentation, Claim/media extraction, coverage retry/audit and finalization. Downstream work remains in Experience status and the immutable Source timeline.
+- Experience completion immediately reconciles existing current diagnostics for that destination. A Source that crosses the final processing gate therefore enters the opportunity inbox without waiting for a full-dashboard read and without repeating diagnostic inference.
+- Dashboard processing totals exclude superseded historical opportunities while retaining those rows for audit and rollback.
 
 ## Safety boundaries
 
@@ -21,7 +23,7 @@ The reconciliation does not delete Sources, original media, Claims, analyses, re
 
 ## Local validation
 
-- `npm test`: 517 passed, 0 failed.
+- `npm test`: 519 passed, 0 failed.
 - `npm run check`: passed; Vite built 1,882 modules, JavaScript 431.55 kB (134.90 kB gzip), CSS 57.45 kB (10.51 kB gzip), and all 12 dependency-boundary files passed.
 - `npm run release:check`: 51 mandatory checks passed, 0 failed, with four unconfigured-service warnings and five explicitly untested external conclusions.
 - Queue/media benchmark: all five fixtures passed; one text segment plus 19 images is normal work in four bounded media batches of 5, 5, 5 and 4, reducing 20 legacy calls to five planned calls (75%).
@@ -29,15 +31,15 @@ The reconciliation does not delete Sources, original media, Claims, analyses, re
 
 ## Production deployment and backup
 
-Cloud Build `5ffc334e-733b-4700-8f56-e09e097b9e9e` produced:
+The final Cloud Build `2ef6d4ba-c638-4e5c-a0a7-bdcfd42d6046` produced:
 
-`asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:9451b6855f92c74bac5a1f6202e14e3830ca52bfe0b612dac1957d3e72830b12`
+`asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:1efd84459eb811928144d38a3499469f97aa451c851d8b5ad2d6decf32adaf49`.
 
-Production runs code revision `bd5edd32ecfeee900c8ba1d185d653fa96d922e4`, App 2.0.10, Strategy 3.3 and schema 67. The upgrade snapshot is `solo-to-china-2026-09-12T19-03-31-467Z.snapshot`: its database is 1,979,482,112 bytes with SHA-256 `9031e5f92ae85bf27c967f372e04acf7bb869435d49c14cc823587900d300be6`, `integrity_check=ok`, and 1,009 hashed files. The isolated restore drill opened all 1,318 Source-asset references, made zero external calls and found no draft media because production has no drafts. Rehearsal and live opening both retained schema 67, zero foreign-key errors and identical fingerprints for 74 Sources, 149 capture versions, 1,318 Source assets, 2,275 segments, 6,365 Claims, 6,614 evidence spans and 1,546 coverage rows.
+Production runs code revision `908dad5005f4ac730e21ff3516fcbfea93f74803`, App 2.0.10, Strategy 3.3 and schema 67. The final upgrade snapshot is `solo-to-china-2026-09-12T20-23-39-569Z.snapshot`: its database is 1,975,627,776 bytes with SHA-256 `76728d857ec72efa5eb45563a5783c9647ebae2de48cda6bd356621ec0262fd9`, `integrity_check=ok`, and 1,009 hashed files. The isolated restore drill opened all 1,318 Source-asset references, made zero external calls and found no draft media because production has no drafts. Rehearsal and live opening both retained schema 67, zero foreign-key errors and identical fingerprints for 74 Sources, 149 capture versions, 1,318 Source assets, 2,275 segments, 6,019 Claims, 6,986 evidence spans and 1,969 coverage rows.
 
-The new container passed readiness before network attachment, remains on the exact digest with zero restarts, and has no lock, fatal, uncaught or unhandled log matches since startup. Both public hostnames returned App 2.0.10 and a ready database. Across 12 requests per endpoint, health p50/p95 was 386/1,150 ms on the Engine hostname and 380/1,037 ms on Capture; readiness p50/p95 was 340/343 ms and 336/350 ms respectively.
+The new container passed readiness before network attachment, remains on the exact digest with zero restarts, and has no fatal, uncaught, unhandled or panic log matches since startup. Both public hostnames returned App 2.0.10 and a ready database. Across 12 requests per endpoint, health p50/p95 was 392/1,143 ms on the Engine hostname and 408/1,078 ms on Capture; readiness p50/p95 was 348/780 ms and 358/830 ms respectively.
 
-The live volume retains one verified snapshot. Docker retains only the active 2.0.10 image, the stopped 2.0.9 rollback container/image and Cloudflared; rehearsal databases were deleted. Artifact Registry retains only 2.0.10 and the immediate 2.0.9 rollback digest. Root usage after deployment is 9,186,045,952 bytes (12%) with 71,554,555,904 bytes available; `/var/lib/docker` is 6,707,665,282 bytes and upgrade records are 1,766,037 bytes.
+The live volume retains one verified snapshot whose complete tree is 2,491,826,655 bytes. Docker retains only the active 2.0.10 image, the stopped immediate 2.0.10 rollback container/image and Cloudflared; rehearsal databases were deleted. Artifact Registry retains only the final digest and the immediate rollback digest. Eight unreferenced historical upgrade directories were removed; the active and rollback mount records total 484,246 bytes. Root usage after deployment is 9,189,076,992 bytes (12%) with 71,551,524,864 bytes available, and `/var/lib/docker` is 6,684,900,097 bytes.
 
 ## Production reconciliation result
 
@@ -45,12 +47,12 @@ The live volume retains one verified snapshot. Docker retains only the active 2.
 - Applied run: `backfill_c7256a3558eb47f4835eb836139461e0`, using the same fingerprint.
 - Inputs: 16 completed Sources already on 3.3, 25 compatible completed Sources promoted from 3.0-3.2, zero incompatible Sources and 33 incomplete Sources left for the pipeline.
 - Provider effect: 25 model calls avoided, 25 diagnostics reused, zero diagnostic jobs queued. The previously interrupted run is now closed as completed; its 26 uncalled jobs remain auditable as `SUPERSEDED_RECONCILIATION_REUSE`.
-- Result: all 41 qualifying completed Sources now have Strategy 3.3 diagnostics. Current 3.3 inventory contains 326 opportunities: 128 source-derived and 198 Knowledge-derived. The API returns 248 actionable opportunities, comprising 152 ready and 96 evidence-gap opportunities; eight duplicate intents are merged and 66 processing-gap rows remain internal.
-- Incomplete work: 32 Sources are still in the core media/coverage/finalization queue. One Source that completed core extraction while validation ran is queued for Experience extraction. All 33 retain their originals and will enter current diagnostic/opportunity reconciliation after completion.
-- UI acceptance: `/api/recommendations?limit=500` returned 248 items and no next cursor; all 74 Sources loaded, all 32 processing Sources exposed a core queue state, and zero processed Sources exposed a core queue state.
+- Result: all 41 qualifying completed Sources have Strategy 3.3 diagnostics. The current policy classified 33 as `ARTICLE_CANDIDATE/CREATE_CONTENT_PLAN`, and all 33 have at least one current source opportunity. The other eight are intentionally routed to Knowledge (two), clustering (one) or research first (five). Current 3.3 inventory contains 326 opportunities: 128 source-derived and 198 Knowledge-derived. The final API returned 250 actionable opportunities, including 77 current-ready and 173 evidence-gap rows; seven duplicate intents were merged. Sixty-eight current processing-gap rows remain internal, while 710 superseded historical rows remain auditable but are excluded from that UI total.
+- Incomplete work: 25 Sources remain in the core media/coverage/finalization queue and eight core-complete Sources are queued for Experience. All 33 retain their originals, have an active task, and will enter current diagnostic/opportunity reconciliation after completion.
+- UI acceptance: `/api/recommendations?limit=500` returned 250 items and no next cursor; all 74 Sources loaded, all 25 processing Sources exposed a core queue state, zero processed Sources exposed a core queue state, and the other eight unfinished processed Sources had queued Experience jobs.
 
 No opportunity was approved. Production still has zero article drafts and zero `push_wordpress_draft` jobs; no WordPress content was created or published.
 
 ## Upgrade and rollback
 
-For another installation, check out revision `bd5edd32ecfeee900c8ba1d185d653fa96d922e4`, use the immutable digest above with `deployment/gce/upgrade-existing.sh`, and require the backup, restore drill, schema/integrity/foreign-key and preserved-fingerprint gates before attaching traffic. After readiness, run `node scripts/run-backfill.mjs recommendations` first; execute only with its unchanged run ID using `--execute --approved-from <dry-run-id>`. The immediate production rollback pair is stopped container `engine-before-bd5edd3`, image digest `sha256:9251804f66aedeb7a3db465a88b6268cfd3c5da3e307fb0538afa0a2bc636bec`, and the verified pre-2.0.10 snapshot above. A rollback must restore the image and snapshot together under maintenance so post-deployment captures are not discarded.
+For another installation, check out revision `908dad5005f4ac730e21ff3516fcbfea93f74803`, use the immutable digest above with `deployment/gce/upgrade-existing.sh`, and require the backup, restore drill, schema/integrity/foreign-key and preserved-fingerprint gates before attaching traffic. If the installation has not yet run the 2.0.10 recommendation repair, run `node scripts/run-backfill.mjs recommendations` first and execute only with its unchanged run ID using `--execute --approved-from <dry-run-id>`. The immediate production rollback pair is stopped container `engine-before-908dad5`, image digest `sha256:a6cc2f090bbe1ba6fb95d5e837da444878a1399e287763ce748245ee27c3c922`, and the verified final pre-upgrade snapshot above. A rollback must restore the image and snapshot together under maintenance so post-deployment captures are not discarded.
