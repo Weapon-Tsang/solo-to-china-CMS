@@ -54,3 +54,9 @@ The compact DTO and media grouping target these two measured causes: repeated la
 - `SOURCE_COMPLEXITY_ROUTING` retains its prior default false for downstream fragment skipping.
 - Production content quality for newly grouped real images cannot be verified without running paid extraction on selected sources. Asset/segment attribution, batch bounds, retry and coverage invariants are verified offline.
 
+## Production rollout verification
+
+Release `2f71d45ddf80b588a58789aa94c251413fa498b7` was deployed as App 2.0.7 / Strategy 3.2 / schema 66. The verified backup and restore drill, immutable image, migration timings, live endpoint checks, dry-run IDs, resource measurements and rollback locations are recorded in [CMS_DEPLOYMENT_2.0.7_2026-09-12.md](CMS_DEPLOYMENT_2.0.7_2026-09-12.md).
+
+At a stable empty queue, container health p50/p95 was 13.14/33.13 ms and the Source status projection was 1,236.75/2,137.13 ms across 15 calls. During restart recovery, two synchronous coverage rebuilds each occupied roughly 108% CPU for about 122 seconds and one health request exceeded 30 seconds. The e2-small therefore remains a measured bottleneck during this CPU-bound stage. A worker-process change or e2-medium trial needs a separate benchmark; this release does not claim that local request-count improvements removed that production limit.
+
