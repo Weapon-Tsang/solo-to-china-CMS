@@ -236,7 +236,7 @@ export function loadConfig(env = process.env) {
       autoBackupHours: integer(env.AUTO_BACKUP_HOURS, 24),
       jobHistoryRetentionDays: integer(env.JOB_HISTORY_RETENTION_DAYS, 30),
       backupDir: path.resolve(root, env.BACKUP_DIR || "backups"),
-      backupRetention: integer(env.BACKUP_RETENTION, 14),
+      backupRetention: integer(env.BACKUP_RETENTION, 1),
       backupOffsiteLocation: String(env.BACKUP_OFFSITE_LOCATION || "").trim(),
       backupOffsiteRetentionDays: integer(env.BACKUP_OFFSITE_RETENTION_DAYS, 0),
       sourceUploadsDir,

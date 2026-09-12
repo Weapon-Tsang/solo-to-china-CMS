@@ -16,7 +16,7 @@ The popup may start, pause, resume, cancel, or stop after the current persisted 
 
 Daily incremental discovery starts at the top and stops only after it has matched the saved Scope checkpoint, observed the configured consecutive-known streak, and found no new note in the current window. Full historical sync streams bounded discovery and identity batches until collection end and has no fixed session-total cap. The adaptive browser pool starts at 4–8 according to the PC and can grow to 12 under healthy load; access limits, timeouts, 429/5xx responses, and slow pages reduce pressure. Login walls or verification pages pause the whole session with an actionable state. The Extension never receives account credentials, requests browser cookies, or solves verification.
 
-The CMS Sources list refreshes every five seconds while the durable queue is active. Each note shows its current or next extraction stage, active and remaining job counts, source-level waiting position, queue age, and a retry time when model pressure has placed work into cooldown. Queue order favors dependency-closing article/QA work and explicit realtime work, then gives jobs older than 15 minutes a fairness boost. Vertex Batch chooses the oldest eligible extraction or coverage class, with coverage winning ties, so sustained intake cannot indefinitely starve article completion.
+The CMS Sources list refreshes every five seconds while the durable queue is active. Each note shows its current or next extraction stage, active and remaining job counts, source-level waiting position, queue age, and a retry time when model pressure has placed work into cooldown. A completed Source never displays a superseded failed attempt as its current extraction state; the old attempt remains in the Source timeline for audit. Queue order favors dependency-closing article/QA work and explicit realtime work, then gives jobs older than 15 minutes a fairness boost. Vertex Batch chooses the oldest eligible extraction or coverage class, with coverage winning ties, so sustained intake cannot indefinitely starve article completion.
 
 CMS model work runs in the deployed engine, not in the Chrome extension. After a capture has been accepted by the CMS, the local computer and Chrome may be closed while extraction, Knowledge rebuilds, recommendations, and article work continue on GCE. Keep the local computer and signed-in Chrome open only while the extension is discovering or capturing Xiaohongshu notes, or while a Xiaohongshu verification challenge requires operator action.
 
@@ -56,7 +56,7 @@ Create a consistent SQLite snapshot while the engine is running:
 npm run backup
 ```
 
-Each backup has a JSON manifest containing its byte size, SHA-256, schema version, and integrity result. Defaults are `./backups` and 14 retained snapshots.
+Each backup has a JSON manifest containing its byte size, SHA-256, schema version, and integrity result. Defaults are `./backups` and one retained snapshot. Pruning happens only after the replacement snapshot passes full verification.
 
 Verify any snapshot before restore:
 
@@ -108,6 +108,7 @@ The minimum measurement path accepts authenticated/server-side `impression` and 
 - Knowledge freshness reconciliation: `KNOWLEDGE_RECONCILE_HOURS` (default 24).
 - Consistent database backup: `AUTO_BACKUP_HOURS` (default 24).
 - Successful Job history: `JOB_HISTORY_RETENTION_DAYS` (default 30).
+- Verified local snapshots: `BACKUP_RETENTION` (default 1).
 - WordPress inventory continues to use `WORDPRESS_INVENTORY_SYNC_HOURS`.
 - Search Console query inventory uses `SEARCH_CONSOLE_SYNC_HOURS` when its read-only service account is configured.
 

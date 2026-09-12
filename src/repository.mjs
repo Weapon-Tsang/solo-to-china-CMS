@@ -1148,12 +1148,39 @@ export class Repository {
     return runs.length;
   }
 
-  runRecommendationReconciliationBackfill({ dryRun = true } = {}) {
+  runRecommendationReconciliationBackfill({ dryRun = true, approvedFromRunId = null } = {}) {
     const destinations = this.db.prepare(`SELECT DISTINCT destination_slug FROM structured_sources
       WHERE destination_slug<>'' AND destination_slug<>'unknown' ORDER BY destination_slug`).all().map((row) => row.destination_slug);
+    const diagnosticSources=this.db.prepare(`SELECT s.id,s.capture_version,
+        (SELECT strategy_version FROM content_intake_analyses ai WHERE ai.source_id=s.id ORDER BY ai.updated_at DESC LIMIT 1) AS diagnostic_strategy
+      FROM sources s WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
+        AND NOT EXISTS (SELECT 1 FROM current_source_assets a WHERE a.source_id=s.id AND a.durability_status<>'ORIGINAL_STORED')
+        AND EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
+          AND er.capture_version=s.capture_version AND er.degraded=0)
+      ORDER BY s.captured_at,s.id`).all();
+    const staleDiagnostics=diagnosticSources.filter((row)=>row.diagnostic_strategy!==this.strategyVersion);
+    const fingerprint=sha256(JSON.stringify({strategyVersion:this.strategyVersion,
+      sources:staleDiagnostics.map((row)=>[row.id,Number(row.capture_version||0),row.diagnostic_strategy||""])}));
     const before = Number(this.db.prepare("SELECT COUNT(*) n FROM content_opportunities").get().n || 0);
+    const sourceTotal=Number(this.db.prepare("SELECT COUNT(*) n FROM sources").get().n||0);
     const report = {destinations,diagnostics:Number(this.db.prepare("SELECT COUNT(*) n FROM content_intake_analyses").get().n || 0),
-      opportunitiesBefore:before,createdOrRefreshed:0,approvedReconciled:0};
+      currentDiagnosticSources:diagnosticSources.length-staleDiagnostics.length,staleDiagnosticSources:staleDiagnostics.length,
+      blockedDiagnosticSources:Math.max(0,sourceTotal-diagnosticSources.length),sourceIds:staleDiagnostics.map((row)=>row.id),
+      fingerprint,opportunitiesBefore:before,createdOrRefreshed:0,approvedReconciled:0,queued:0};
+    if (!dryRun) {
+      const approval=this.db.prepare(`SELECT report_json FROM system_backfill_runs WHERE id=?
+        AND backfill_type='recommendation_reconciliation' AND status='dry_run' AND dry_run=1`).get(approvedFromRunId);
+      if (!approval) throw conflictError("Recommendation refresh requires the ID of a completed dry-run report.");
+      const approved=json(approval.report_json,{});
+      if (approved.fingerprint!==fingerprint) throw conflictError("Recommendation refresh inputs changed after dry-run; review a new dry-run report.");
+      for (const row of staleDiagnostics) {
+        const jobId=this.enqueue("analyze_source_diagnostic",row.id,{
+          dedupeKey:`recommendation-diagnostic:${row.id}:${row.capture_version}:${this.strategyVersion}`,
+          workloadClass:"historical_recovery",priority:70,recoveryRunId:approvedFromRunId,
+        });
+        if (jobId) report.queued += 1;
+      }
+    }
     if (!dryRun) for (const destination of destinations) {
       this.rebuildTopicClusters(destination);
       const rebuilt = this.rebuildKnowledgeOpportunities(destination);
@@ -1162,7 +1189,33 @@ export class Repository {
       report.approvedReconciled += this.reconcileApprovedOpportunities(destination).filter((item) => item.queued).length;
     }
     report.opportunitiesAfter = dryRun ? before : Number(this.db.prepare("SELECT COUNT(*) n FROM content_opportunities").get().n || 0);
-    return this.saveSystemBackfillRun("recommendation_reconciliation",dryRun,report);
+    return this.saveSystemBackfillRun("recommendation_reconciliation",dryRun,report,approvedFromRunId);
+  }
+
+  refreshRecommendationBackfillRuns() {
+    const runs=this.db.prepare(`SELECT id,report_json FROM system_backfill_runs
+      WHERE backfill_type='recommendation_reconciliation' AND status='queued'`).all();
+    const timestamp=now();
+    for (const run of runs) {
+      const report=json(run.report_json,{}); const sourceIds=uniqueStrings(report.sourceIds,100_000);
+      let current=0; let active=0; let failed=0;
+      for (let offset=0;offset<sourceIds.length;offset+=500) {
+        const page=sourceIds.slice(offset,offset+500); const placeholders=page.map(()=>"?").join(",");
+        current += Number(this.db.prepare(`SELECT COUNT(*) n FROM content_intake_analyses
+          WHERE strategy_version=? AND source_id IN (${placeholders})`).get(this.strategyVersion,...page)?.n||0);
+        active += Number(this.db.prepare(`SELECT COUNT(*) n FROM jobs WHERE type='analyze_source_diagnostic'
+          AND status IN ('queued','running') AND entity_id IN (${placeholders})`).get(...page)?.n||0);
+        failed += Number(this.db.prepare(`SELECT COUNT(*) n FROM jobs WHERE type='analyze_source_diagnostic'
+          AND status='failed' AND entity_id IN (${placeholders})`).get(...page)?.n||0);
+      }
+      const pending=Math.max(0,sourceIds.length-current);
+      const status=pending===0 ? "completed" : active===0 ? "failed" : "queued";
+      this.db.prepare(`UPDATE system_backfill_runs SET status=?,report_json=?,
+        completed_at=CASE WHEN ?<>'queued' THEN ? ELSE NULL END,updated_at=? WHERE id=?`)
+        .run(status,JSON.stringify({...report,current,pending,failed:status==="failed"?pending:0,failedJobCount:failed}),
+          status,timestamp,timestamp,run.id);
+    }
+    return runs.length;
   }
 
   runFailedProductionCleanupBackfill({ dryRun = true, approvedFromRunId = null } = {}) {
@@ -1362,7 +1415,8 @@ export class Repository {
 
   saveSystemBackfillRun(backfillType,dryRun,report,approvedFromRunId = null) {
     const timestamp=now(); const runId=id("backfill");
-    const queued=!dryRun && backfillType==="experience" && Number(report.queued || 0)>0;
+    const queued=!dryRun && ["experience","recommendation_reconciliation"].includes(backfillType)
+      && Number(report.queued || 0)>0;
     this.db.prepare(`INSERT INTO system_backfill_runs(id,backfill_type,status,dry_run,approved_from_run_id,report_json,
       started_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
       .run(runId,backfillType,dryRun ? "dry_run" : queued ? "queued" : "completed",dryRun ? 1 : 0,approvedFromRunId,
@@ -1946,7 +2000,7 @@ export class Repository {
     return this.db.prepare(`
       UPDATE jobs SET status=CASE WHEN dirty_revision>claimed_revision THEN 'queued' ELSE 'succeeded' END,
         completed_at=CASE WHEN dirty_revision>claimed_revision THEN NULL ELSE ? END, duration_ms=?, locked_by=NULL,
-        lease_expires_at=NULL, heartbeat_at=NULL, failure_class='',last_failure_code='',next_eligible_at=NULL,updated_at=?
+        lease_expires_at=NULL, heartbeat_at=NULL, failure_class='',last_failure_code='',last_error=NULL,next_eligible_at=NULL,updated_at=?
       WHERE id=? AND status='running' AND locked_by=? AND (? IS NULL OR lease_generation=?)
     `).run(timestamp, durationMs, timestamp, jobId, ownerId, generation, generation).changes === 1;
   }
@@ -2000,6 +2054,7 @@ export class Repository {
     }
     if (!retry && PRODUCTION_JOB_TYPES.has(job.type)) this.handleTerminalProductionFailure(job, error);
     if (!retry && job.type === "extract_source_experience") this.refreshExperienceBackfillRuns();
+    if (!retry && job.type === "analyze_source_diagnostic") this.refreshRecommendationBackfillRuns();
     return true;
   }
 
@@ -2676,6 +2731,7 @@ export class Repository {
       }
     }
     this.reconcileRecommendationInbox(source.destination_slug);
+    this.refreshRecommendationBackfillRuns();
     return this.getSource(sourceId).analysis;
   }
 
@@ -3357,8 +3413,12 @@ export class Repository {
           'analyze_source_family','analyze_source_blueprint','analyze_source_diagnostic','analyze_intake') ORDER BY j.updated_at DESC`).all()
       .filter((job)=>wanted.has(job.source_id));
     const states=sourceQueueStates(jobs);
-    return rows.map((row)=>({...row,experience_degraded:Boolean(row.experience_degraded),stale_experience:Boolean(row.stale_experience),
-      queue:states.get(row.id)||null,current_stage:states.get(row.id)?.stage||sourceStageFromProjection(row)}));
+    return rows.map((row)=>{
+      const queue=states.get(row.id)||null;
+      const currentQueue=row.status==="processed"&&queue?.state==="failed"?null:queue;
+      return {...row,experience_degraded:Boolean(row.experience_degraded),stale_experience:Boolean(row.stale_experience),
+        queue:currentQueue,current_stage:currentQueue?.stage||sourceStageFromProjection(row)};
+    });
   }
 
   sourceTimeline(sourceId,limit=100) {

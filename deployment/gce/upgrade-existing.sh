@@ -144,7 +144,7 @@ docker run --detach --name engine --restart unless-stopped --network none \
   --volume "$RELEASE/legacy-app-data:/app/data" "$IMAGE" >/dev/null
 READY=0
 for ((attempt=0; attempt<60; attempt++)); do
-  if docker exec engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready"); const j=await r.json(); if(!r.ok||!j.ready||j.version!=="2.0.8")process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
+  if docker exec engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready"); const j=await r.json(); if(!r.ok||!j.ready||j.version!=="2.0.9")process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
     READY=1; break
   fi
   sleep 2
@@ -156,4 +156,9 @@ docker network connect solo-to-china engine
 EXPOSED=1
 docker start cloudflared >/dev/null
 date --utc --iso-8601=seconds >"$RELEASE/complete"
+find "$APP/upgrades" -type f \( -name 'rehearsal.sqlite' -o -name 'rehearsal.sqlite-wal' -o -name 'rehearsal.sqlite-shm' \) -delete
+for stale in $(docker ps -a --format '{{.Names}}' | grep -E '^engine-(before|failed)-' || true); do
+  if [[ "$stale" != "$OLD" ]]; then docker rm --force "$stale" >/dev/null; fi
+done
+docker image prune --all --force >"$RELEASE/image-prune.log"
 log "COMPLETE revision=$REVISION image=$IMAGE rollback_container=$OLD records=$RELEASE"

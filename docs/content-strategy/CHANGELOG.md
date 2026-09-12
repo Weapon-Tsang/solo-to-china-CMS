@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.9 - Unreleased
+
+- Source status polling no longer surfaces a superseded failed extraction after the current Source has completed.
+- Recommendation reconciliation uses a reviewed dry-run fingerprint to refresh diagnostics that still belong to an older strategy.
+- Local backup retention defaults to one verified snapshot, and successful GCE upgrades prune rehearsal databases, obsolete rollback containers and unreferenced image layers.
+
 ## 3.3 - 2026-09-12
 
 - Knowledge now uses typed canonicalization before scope, validity-period and independent-source resolution. Ordinary dynamic ambiguity becomes targeted verification; human review remains for safety-critical or otherwise unresolved current, same-scope hard conflicts.

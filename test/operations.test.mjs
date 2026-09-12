@@ -40,6 +40,29 @@ test("source list exposes running, queued, and cooldown order with stable list n
   assert.match(byId.get(sources[2].id).queue.last_error, /429/);
 });
 
+test("a processed source does not project a superseded extraction failure", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const source=repository.saveCapture(normalizeXiaohongshuCapture({
+    url:"https://www.xiaohongshu.com/explore/status-projection-recovered",title:"Recovered source",
+    text:"Complete evidence for a source whose older extraction attempt failed.",images:[],
+  }));
+  const job=db.prepare("SELECT id FROM jobs WHERE type='extract_source' AND entity_id=?").get(source.id);
+  db.prepare("UPDATE jobs SET status='failed',attempts=3,max_attempts=3,last_error='old fetch failure' WHERE id=?").run(job.id);
+  db.prepare("UPDATE sources SET status='processed',last_error=NULL WHERE id=?").run(source.id);
+  const projected=repository.listSourceStatusProjection({ids:[source.id]})[0];
+  assert.equal(projected.queue,null);
+  assert.equal(repository.sourceTimeline(source.id).some((event)=>event.status==="failed"),true);
+});
+
+test("successful retry clears its previous error text", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  repository.enqueue("rebuild_editorial","global");
+  const job=repository.claimJob();
+  db.prepare("UPDATE jobs SET last_error='temporary provider failure' WHERE id=?").run(job.id);
+  assert.equal(repository.completeJob(job.id,job.locked_by,job.lease_generation),true);
+  assert.equal(db.prepare("SELECT last_error FROM jobs WHERE id=?").get(job.id).last_error,null);
+});
+
 test("job telemetry reports durable queue latency, duration, outcomes, and active work", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-telemetry-test-"));
   const database = openDatabase(path.join(directory, "telemetry.sqlite"));

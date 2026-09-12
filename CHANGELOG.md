@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.9 - Unreleased
+
+- Suppress superseded Source extraction failures from the live status projection while retaining their immutable timeline, and clear transient error text after a successful retry.
+- Add fingerprint-reviewed Content Strategy diagnostic refresh so a strategy upgrade produces current replacement recommendations instead of leaving the historical inbox hidden.
+- Default to one verified local snapshot and prune successful-upgrade rehearsal databases, obsolete rollback containers and unreferenced Docker layers without deleting production Sources, media or the live database.
+
 ## 2.0.8 - 2026-09-13
 
 - Add typed, scope-aware and temporal Knowledge resolution with predicate/value repair, independent-source weighted consensus, targeted verification and persisted automatic-decision history. Human review remains for safety-critical or otherwise unresolved same-scope current contradictions.

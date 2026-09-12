@@ -40,8 +40,8 @@ if (mode === 'backup') {
   write('baseline.json', baseline);
   const result = createBackup({ databasePath: `${root}/solo-to-china.sqlite`,
     backupDir: `${root}/backups`, sourceUploadsDir: `${root}/source-uploads`,
-    generatedMediaDir: `${root}/generated-media`, retention: 999999,
-    codeRevision: process.env.OLD_IMAGE, reason: 'pre-2.0.8-verified-upgrade' });
+    generatedMediaDir: `${root}/generated-media`, retention: 1,
+    codeRevision: process.env.OLD_IMAGE, reason: 'pre-2.0.9-verified-upgrade' });
   const verified = verifyBackup(result.backupPath);
   write('backup.json', result);
   console.log(JSON.stringify({ stage: 'backup', schema, ...result, verified: verified.integrity, tables: baseline }));
