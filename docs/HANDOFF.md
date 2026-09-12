@@ -4,7 +4,9 @@ App/Extension 2.0.10, Content Strategy 3.3 and schema 67 retain typed/scoped/tem
 
 The September 13 follow-up separates Source completion from downstream enrichment and removes a strategy-label-only model rerun. Source queue status now represents only the current capture, segmentation, evidence extraction, coverage and finalization path. A reviewed compatibility map promotes stored Strategy 3.0-3.2 diagnostics into 3.3 and recalculates their source-derived opportunities without a provider request. Existing opportunity keys receive the current strategy, coverage and readiness when rebuilt. Knowledge opportunities use completed Source evidence only; unfinished Sources stay queued and join later recalculation after completion.
 
-Production deployment evidence for 2.0.10 is recorded in `audit/CMS_PRODUCTION_REPAIR_2.0.10_2026-09-13.md`. The preceding 2.0.9 deployment and storage cleanup remain recorded in `audit/CMS_PRODUCTION_REPAIR_2.0.9_2026-09-13.md`. No Source or original media is removed by reconciliation, and it does not approve recommendations, create WordPress drafts or publish posts.
+Production runs revision `bd5edd32ecfeee900c8ba1d185d653fa96d922e4` at image digest `sha256:9451b6855f92c74bac5a1f6202e14e3830ca52bfe0b612dac1957d3e72830b12`. The fingerprint-reviewed reconciliation reused 25 compatible diagnostics with zero queued model calls. All 41 qualifying completed Sources are now on Strategy 3.3, producing 326 current opportunities and 248 actionable Inbox items (152 ready, 96 evidence gaps). Thirty-two Sources continue core extraction and one newly processed Source is queued for Experience; none are promoted early.
+
+Production deployment, backup, dry-run IDs, exact counts, performance and rollback evidence are recorded in `audit/CMS_PRODUCTION_REPAIR_2.0.10_2026-09-13.md`. The preceding 2.0.9 deployment and storage cleanup remain recorded in `audit/CMS_PRODUCTION_REPAIR_2.0.9_2026-09-13.md`. No Source or original media was removed, and no recommendation was approved or WordPress content created or published.
 
 
 # Project handoff

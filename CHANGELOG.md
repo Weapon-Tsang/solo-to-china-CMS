@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.10 - Unreleased
+## 2.0.10 - 2026-09-13
 
 - Reuse Strategy 3.0-3.2 intake diagnostics under the reviewed compatible 3.3 diagnostic contract, then recalculate their opportunities without a model request. Only incompatible diagnostics can enter the paid reconciliation queue.
 - Refresh the strategy version, coverage and readiness of an existing opportunity when the same current topic key is rebuilt, so current qualifying opportunities are no longer hidden as historical processing gaps.
