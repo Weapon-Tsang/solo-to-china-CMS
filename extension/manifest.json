@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "保存到 SoloToChina",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "description": "将小红书收藏增量同步到 SoloToChina，或手动保存当前笔记。",
   "permissions": [
     "activeTab",

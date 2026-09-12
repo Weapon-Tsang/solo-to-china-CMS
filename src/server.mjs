@@ -85,6 +85,7 @@ export function createApplication(config = loadConfig()) {
   const pipeline = new Pipeline(repository, extractor, {
     contentEngine, visuals, wordpress, searchConsole, commercialComposer, frontendContracts, contentConfig: config.content,
     extractionConfig: config.extraction,
+    databasePath:config.databasePath,processIsolationEnabled:config.extraction.processIsolationEnabled,
     logger: logger.child({ component: "pipeline" }),
   });
   const notifier = new ExceptionNotifier(repository, config.notifications);
@@ -102,6 +103,9 @@ export function createApplication(config = loadConfig()) {
     repository.enqueueSearchConsoleSync(searchConsole.config.siteUrl, searchConsole.config.syncHours);
   }
   repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled, contractAware: frontendContracts.configured });
+  // Legacy heavy-source gates are converted into a deterministic recovery manifest.
+  // Execution remains opt-in; startup never enqueues historical work by itself.
+  repository.createLegacySourceRecoveryManifest({execute:false});
   if (frontendContracts.configured) repository.enqueue("sync_frontend_contract", "default");
   const publicDir = path.join(config.root, "dist");
 
@@ -476,14 +480,15 @@ export function createApplication(config = loadConfig()) {
         if (!result.dryRun && result.queued) void pipeline.runOne();
         return sendJson(response, result.dryRun ? 200 : 202, result);
       }
-      const systemBackfillMatch = url.pathname.match(/^\/api\/backfills\/(experience|recommendations|failed-production-cleanup)$/);
+      const systemBackfillMatch = url.pathname.match(/^\/api\/backfills\/(experience|recommendations|failed-production-cleanup|knowledge-resolution)$/);
       if (request.method === "POST" && systemBackfillMatch) {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
         const options = {dryRun:payload.dryRun !== false,approvedFromRunId:payload.approvedFromRunId || null};
         const result = systemBackfillMatch[1] === "experience" ? repository.runExperienceBackfill(options)
           : systemBackfillMatch[1] === "recommendations" ? repository.runRecommendationReconciliationBackfill(options)
-            : repository.runFailedProductionCleanupBackfill(options);
+            : systemBackfillMatch[1] === "knowledge-resolution" ? repository.runKnowledgeResolutionBackfill(options)
+              : repository.runFailedProductionCleanupBackfill(options);
         if (!result.dryRun && result.queued) void pipeline.runOne();
         return sendJson(response,result.dryRun ? 200 : 202,result);
       }
@@ -493,6 +498,28 @@ export function createApplication(config = loadConfig()) {
         const result=repository.runSourceProcessingGapRecovery({dryRun:payload.dryRun!==false,approvedFromRunId:payload.approvedFromRunId||null});
         if(!result.dryRun&&result.queued)void pipeline.runOne();
         return sendJson(response,result.dryRun?200:202,result);
+      }
+      if(request.method==="GET"&&url.pathname==="/api/knowledge/resolution-status"){
+        authorizeAdmin(request,config.adminToken,auth);
+        return sendJson(response,200,repository.getKnowledgeResolutionStatus(url.searchParams.get("destination")||null));
+      }
+      if(request.method==="GET"&&url.pathname==="/api/knowledge/resolution-history"){
+        authorizeAdmin(request,config.adminToken,auth);
+        return sendJson(response,200,{items:repository.listKnowledgeResolutionHistory({
+          destinationSlug:url.searchParams.get("destination")||null,limit:limit(url.searchParams.get("limit"))})});
+      }
+      if(request.method==="GET"&&url.pathname==="/api/knowledge/verification-jobs"){
+        authorizeAdmin(request,config.adminToken,auth);
+        return sendJson(response,200,{items:repository.listKnowledgeVerificationJobs({destinationSlug:url.searchParams.get("destination")||null,
+          status:url.searchParams.get("status")||"",limit:limit(url.searchParams.get("limit"))})});
+      }
+      const verificationActionMatch=url.pathname.match(/^\/api\/knowledge\/verification-jobs\/([^/]+)\/(retry|complete)$/);
+      if(request.method==="POST"&&verificationActionMatch){
+        authorizeAdmin(request,config.adminToken,auth);
+        const payload=await readJson(request,20_000);
+        const result=repository.updateKnowledgeVerificationJob(decodeURIComponent(verificationActionMatch[1]),{
+          action:verificationActionMatch[2],result:payload.result||{}});
+        return result?sendJson(response,200,result):sendJson(response,404,{error:"Verification job not found."});
       }
       const sourceAssetPreviewMatch = url.pathname.match(/^\/api\/source-assets\/([^/]+)\/preview$/);
       if (request.method === "GET" && sourceAssetPreviewMatch) {

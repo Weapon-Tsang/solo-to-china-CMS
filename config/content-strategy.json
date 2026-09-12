@@ -1,13 +1,25 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "3.2",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.2.md",
+  "current_version": "3.3",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.3.md",
   "status": "active",
   "history": [
     {
-      "version": "3.2",
+      "version": "3.3",
       "effective_date": "2026-09-12",
       "status": "active",
+      "summary": "Typed Knowledge resolution, staged source recovery, workload lanes, incremental coverage, and isolated heavy work.",
+      "changes": [
+        "Canonical typed facts and scoped/temporal resolution reduce manual review to high-risk or unresolved contradictions.",
+        "Predicate mismatch repair, targeted verification jobs, and auditable resolution history are persisted.",
+        "Historical source recovery uses dry-run manifests and inherited low-priority job context while interactive intake stays ahead.",
+        "Knowledge and coverage work plus scheduled backups run outside the HTTP process; coverage rebuilds from dirty fact scopes."
+      ]
+    },
+    {
+      "version": "3.2",
+      "effective_date": "2026-09-12",
+      "status": "superseded",
       "summary": "大来源自动排队、可追溯媒体批处理、独立运行状态与安全迁移预检。",
       "changes": [
         "取消按估算调用次数触发的人工启动；仅明确硬限制阻断。",

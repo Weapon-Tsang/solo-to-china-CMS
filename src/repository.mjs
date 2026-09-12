@@ -3,8 +3,10 @@ import { transaction } from "./db.mjs";
 import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 import { buildContentAst, contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
-import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "./claim-resolution.mjs";
+import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue, repairClaimLocally,
+  stableCanonicalSerialize, structureClaim } from "./claim-resolution.mjs";
 import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
+import { KNOWLEDGE_RESOLUTION_VERSION, decideKnowledgeResolution, summarizeResolutionDecisions } from "./knowledge-resolution.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
 import { legacyOfferToAsset } from "./commercial.mjs";
 import {
@@ -12,7 +14,8 @@ import {
   normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
-import { AI_JOB_TYPES, classifyBatchFailure, isOperationalFailureRetryable, isProviderPressure } from "./job-policy.mjs";
+import { AI_JOB_TYPES, classifyBatchFailure, isOperationalFailureRetryable, isProviderPressure,
+  inheritJobContext,laneBackoffMs,workloadClassForJob } from "./job-policy.mjs";
 import { pageBlockSignature, selectedFactEvidence, selectedFactSnapshot } from "./evidence-validator.mjs";
 import { estimateSourceProcessing } from "./source-preflight.mjs";
 import { sourceProcessingProfile } from "./source-processing-profile.mjs";
@@ -807,7 +810,8 @@ export class Repository {
         if (mediaDurability.mediaDurability.complete) {
           if (duplicate) extractionQueued = this.resumeSourceAfterMediaRecovery(sourceId);
           else {
-            this.enqueue("extract_source", sourceId, { dedupeKey: `extract_source:${sourceId}:${captureVersion}` });
+            this.enqueue("extract_source", sourceId, { dedupeKey: `extract_source:${sourceId}:${captureVersion}`,
+              workloadClass:"interactive",interactive:true,priority:10 });
             extractionQueued = true;
           }
         } else {
@@ -1187,13 +1191,71 @@ export class Repository {
     return this.saveSystemBackfillRun("failed_production_cleanup",dryRun,report,approvedFromRunId);
   }
 
+  runKnowledgeResolutionBackfill({dryRun=true,approvedFromRunId=null}={}) {
+    if(!dryRun){
+      const approval=this.db.prepare(`SELECT report_json FROM system_backfill_runs
+        WHERE id=? AND backfill_type='knowledge_resolution' AND status='dry_run' AND dry_run=1`).get(approvedFromRunId);
+      if(!approval)throw conflictError("Knowledge resolution recompute requires the ID of a completed dry-run report.");
+    }
+    const reviewCases=this.db.prepare(`SELECT * FROM claim_review_cases WHERE status='pending' ORDER BY created_at,id`).all();
+    const claimQuery=this.db.prepare(`SELECT c.*,s.authority_level AS source_authority_level,s.adapter AS source_adapter,
+        s.source_identity,s.source_publisher,s.author_name AS source_author_name,s.captured_at,s.published_at,
+        s.observed_at AS source_observed_at,s.verified_at AS source_verified_at,
+        s.valid_from AS source_valid_from,s.valid_to AS source_valid_to,s.date_kind AS source_date_kind,
+        s.date_confidence AS source_date_confidence,s.completeness_status AS source_completeness_status,
+        ss.destination_slug
+      FROM claims c JOIN sources s ON s.id=c.source_id LEFT JOIN structured_sources ss ON ss.source_id=c.source_id
+      WHERE c.id=?`);
+    const decisions=[];
+    for(const review of reviewCases){
+      const left=claimQuery.get(review.claim_a_id);
+      const right=review.claim_b_id?claimQuery.get(review.claim_b_id):null;
+      if(!left)continue;
+      left.structured_value=structureClaim({predicate:left.predicate,value:left.value_text,
+        qualifiers:json(left.qualifiers_json,[]),sourceQuote:left.source_quote});
+      let resolution;
+      if(!right){
+        resolution={state:"REPAIR_REQUIRED",autoResolved:true,humanRequired:false,verificationRequired:false,repairRequired:true,
+          reason:"The extraction issue is routed to a bounded Claim repair job instead of human conflict review."};
+      }else{
+        right.structured_value=structureClaim({predicate:right.predicate,value:right.value_text,
+          qualifiers:json(right.qualifiers_json,[]),sourceQuote:right.source_quote});
+        const comparison=classifyClaimPair(left,right);
+        const consensus=resolveEvidenceConsensus([left,right],{variantKey:(row)=>canonicalKnowledgeVariant(row),
+          nowMs:this.clock().getTime(),staleAfterDays:this.contentConfig.volatileStaleAfterDays});
+        resolution=decideKnowledgeResolution({comparison,left,right,consensus,nowMs:this.clock().getTime()});
+      }
+      decisions.push({reviewId:review.id,destinationSlug:review.destination_slug,normalizedKey:left.normalized_key,
+        claimAId:left.id,claimBId:right?.id||null,previousReviewType:review.review_type,...resolution});
+    }
+    const summary=summarizeResolutionDecisions(decisions);
+    const report={engineVersion:KNOWLEDGE_RESOLUTION_VERSION,beforeManualReviewCount:reviewCases.length,
+      evaluatedCount:decisions.length,...summary,
+      autoEquivalent:summary.counts.AUTO_EQUIVALENT+summary.counts.AUTO_CONSENSUS,
+      autoScopeSplit:summary.counts.AUTO_SCOPE_SPLIT,autoTemporal:summary.counts.AUTO_TEMPORAL,
+      extractionRepair:summary.counts.AUTO_REPAIRED+summary.counts.REPAIR_REQUIRED,
+      verificationNeeded:summary.counts.VERIFICATION_REQUIRED,humanRequired:summary.counts.HUMAN_REQUIRED,
+      projectedManualReviewCount:summary.counts.HUMAN_REQUIRED,items:decisions};
+    if(!dryRun){
+      const destinations=[...new Set(reviewCases.map((row)=>row.destination_slug).filter(Boolean))];
+      for(const destination of destinations)this.rebuildKnowledge(destination);
+      report.recomputedDestinations=destinations.length;
+    }
+    return this.saveSystemBackfillRun("knowledge_resolution",dryRun,report,approvedFromRunId);
+  }
+
   runSourceProcessingGapRecovery({dryRun=true,approvedFromRunId=null}={}) {
-    const sources=this.db.prepare(`SELECT s.id,s.status,s.capture_version,s.title,
+    const sources=this.db.prepare(`SELECT s.id,s.status,s.capture_version,s.title,s.completeness_status,
         json_extract(s.submission_metadata_json,'$.processingEstimate.requiresManualStart') AS legacy_manual_start,
+        json_extract(s.submission_metadata_json,'$.processingEstimate.processingClass') AS processing_class,
+        json_extract(s.submission_metadata_json,'$.processingEstimate.blockReasons') AS hard_limit_reasons,
+        (SELECT COUNT(*) FROM current_source_assets a WHERE a.source_id=s.id) AS media_count,
+        (SELECT COUNT(*) FROM current_source_assets a WHERE a.source_id=s.id AND a.durability_status='ORIGINAL_STORED') AS stored_media_count,
+        (SELECT COUNT(*) FROM current_source_segments sg WHERE sg.source_id=s.id) AS segment_count,
+        (SELECT COUNT(*) FROM segment_extractions se JOIN current_source_segments sg ON sg.id=se.segment_id WHERE sg.source_id=s.id) AS extraction_count,
+        (SELECT COUNT(*) FROM current_extraction_coverage ec WHERE ec.source_id=s.id AND ec.audited_at IS NOT NULL) AS coverage_count,
         EXISTS(SELECT 1 FROM structured_sources ss WHERE ss.source_id=s.id) AS has_structured
       FROM sources s
-      WHERE s.completeness_status='complete'
-        AND NOT EXISTS(SELECT 1 FROM current_source_assets a WHERE a.source_id=s.id AND a.durability_status<>'ORIGINAL_STORED')
       ORDER BY s.captured_at,s.id`).all();
     const items=[];
     for(const source of sources){
@@ -1204,32 +1266,74 @@ export class Repository {
       const currentExperience=this.db.prepare("SELECT 1 FROM experience_extraction_runs WHERE source_id=? AND capture_version=? AND status='succeeded'")
         .get(source.id,source.capture_version);
       const actions=[];
-      if(!segments.length)actions.push({stage:"preflight_source",entityId:source.id});
+      let category="COMPLETE";
+      const hardBlocked=source.processing_class==="blocked_hard_limit";
+      const activeJobs=this.db.prepare(`SELECT j.id,j.type,j.status,j.workload_class FROM jobs j
+        LEFT JOIN current_source_segments sg ON sg.id=j.entity_id LEFT JOIN media_extraction_batches mb ON mb.id=j.entity_id
+        WHERE (j.entity_id=? OR sg.source_id=? OR mb.source_id=?) AND j.status IN ('queued','running') ORDER BY j.created_at`).all(source.id,source.id,source.id);
+      if(source.completeness_status!=="complete")category="CAPTURE_INCOMPLETE";
+      else if(hardBlocked)category="BLOCKED_HARD_LIMIT";
+      else if(Number(source.stored_media_count)<Number(source.media_count))category="MEDIA_NOT_DURABLE";
+      else if(activeJobs.length)category="ACTIVE_PIPELINE";
+      else if(!segments.length){actions.push({stage:"preflight_source",entityId:source.id});category=source.legacy_manual_start?"NO_JOB_LEGACY_GATE":"MISSING_SEGMENTS";}
       else if(missingExtractions.length)actions.push(...missingExtractions.map((segment)=>({stage:"extract_segment_claims",entityId:segment.id})));
       else if(missingCoverage.length)actions.push(...missingCoverage.map((segment)=>({stage:"audit_segment_coverage",entityId:segment.id})));
       else if(source.status==="processing")actions.push({stage:"finalize_source_extraction",entityId:source.id});
       else if(!currentExperience&&source.has_structured)actions.push({stage:"extract_source_experience",entityId:source.id});
-      if(!actions.length)continue;
-      const active=actions.some((action)=>this.db.prepare("SELECT 1 FROM jobs WHERE type=? AND entity_id=? AND status IN ('queued','running')").get(action.stage,action.entityId));
-      if(!active)items.push({sourceId:source.id,captureVersion:source.capture_version,title:source.title,
-        legacyManualStart:Boolean(source.legacy_manual_start),actions});
+      if(category==="COMPLETE"&&actions.length)category=missingExtractions.length?"MISSING_EXTRACTION"
+        :missingCoverage.length?"MISSING_COVERAGE":source.status==="processing"?"MISSING_FINALIZATION":"MISSING_EXPERIENCE";
+      if(category!=="COMPLETE")items.push({sourceId:source.id,captureVersion:source.capture_version,title:source.title,category,
+        legacyManualStart:Boolean(source.legacy_manual_start),processingClass:source.processing_class||"legacy_unknown",
+        hardLimitReasons:json(source.hard_limit_reasons,[]),media:{discovered:Number(source.media_count),stored:Number(source.stored_media_count)},
+        segments:{total:Number(source.segment_count),extracted:Number(source.extraction_count),audited:Number(source.coverage_count)},
+        experienceCurrent:Boolean(currentExperience),activeJobs,actions});
     }
     const fingerprint=sha256(JSON.stringify(items.map((item)=>({sourceId:item.sourceId,captureVersion:item.captureVersion,actions:item.actions}))));
+    const timestamp=now(),runId=id("processing_gap_run");
+    const actionableCount=items.reduce((sum,item)=>sum+item.actions.length,0);
     if(!dryRun){
       const approval=this.db.prepare("SELECT report_json FROM source_processing_gap_runs WHERE id=? AND status='dry_run' AND dry_run=1").get(approvedFromRunId);
       if(!approval)throw conflictError("Processing-gap recovery requires the ID of a completed dry-run report.");
       if(json(approval.report_json,{}).fingerprint!==fingerprint)throw conflictError("Processing-gap candidates changed after the dry run; generate and review a new report.");
       for(const item of items)for(const action of item.actions)this.enqueue(action.stage,action.entityId,{
         dedupeKey:`processing-gap:${item.captureVersion}:${action.stage}:${action.entityId}`,
-        priority:70,executionRoute:action.stage==="extract_segment_claims"?"batch":"auto"});
+        priority:70,executionRoute:action.stage==="extract_segment_claims"?"batch":"auto",
+        workloadClass:"historical_recovery",recoveryRunId:runId});
     }
-    const report={fingerprint,sourceCount:items.length,actionCount:items.reduce((sum,item)=>sum+item.actions.length,0),
-      legacyManualStartCount:items.filter((item)=>item.legacyManualStart).length,items};
-    const timestamp=now(),runId=id("processing_gap_run");
+    const report={fingerprint,scannedSourceCount:sources.length,sourceCount:items.filter((item)=>item.actions.length).length,
+      gapCount:items.length,actionCount:actionableCount,
+      legacyManualStartCount:items.filter((item)=>item.category==="NO_JOB_LEGACY_GATE").length,
+      noActiveJobCount:items.filter((item)=>!item.activeJobs.length&&item.actions.length).length,
+      hardLimitBlockedCount:items.filter((item)=>item.category==="BLOCKED_HARD_LIMIT").length,
+      categoryCounts:Object.fromEntries([...Map.groupBy(items,(item)=>item.category)].map(([category,rows])=>[category,rows.length])),items};
     this.db.prepare(`INSERT INTO source_processing_gap_runs(id,status,dry_run,approved_from_run_id,report_json,started_at,completed_at,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?)`).run(runId,dryRun?"dry_run":items.length?"queued":"completed",dryRun?1:0,approvedFromRunId,
-        JSON.stringify(report),timestamp,dryRun||!items.length?timestamp:null,timestamp,timestamp);
-    return {id:runId,dryRun,queued:!dryRun&&items.length>0,...report};
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(runId,dryRun?"dry_run":actionableCount?"queued":"completed",dryRun?1:0,approvedFromRunId,
+        JSON.stringify(report),timestamp,dryRun||!actionableCount?timestamp:null,timestamp,timestamp);
+    return {id:runId,dryRun,queued:!dryRun&&actionableCount>0,...report};
+  }
+
+  createLegacySourceRecoveryManifest({execute=false}={}){
+    const existing=this.db.prepare(`SELECT * FROM source_recovery_manifests
+      WHERE reason='legacy_manual_start_gate' ORDER BY created_at ASC LIMIT 1`).get();
+    if(existing){
+      const stored=json(existing.report_json,{});
+      if(!execute||existing.status!=="dry_run")return {id:existing.id,dryRun:existing.status==="dry_run",
+        sourceCount:Number(stored.sourceCount||0),fingerprint:stored.fingerprint||null,processingGapRunId:stored.processingGapRunId||null};
+      const recovery=this.runSourceProcessingGapRecovery({dryRun:false,approvedFromRunId:stored.processingGapRunId});
+      this.db.prepare("UPDATE source_recovery_manifests SET status=?,executed_at=? WHERE id=?")
+        .run(recovery.queued?"queued":"completed",now(),existing.id);
+      return {id:existing.id,dryRun:false,sourceCount:Number(stored.sourceCount||0),fingerprint:stored.fingerprint||null,
+        processingGapRunId:stored.processingGapRunId||null,recoveryRunId:recovery.id};
+    }
+    const report=this.runSourceProcessingGapRecovery({dryRun:true});
+    const legacyItems=report.items.filter((item)=>item.category==="NO_JOB_LEGACY_GATE");
+    const manifestId=`source_recovery_manifest_${sha256(`v1:${report.fingerprint}`).slice(0,24)}`;
+    const timestamp=now();
+    this.db.prepare(`INSERT OR IGNORE INTO source_recovery_manifests(id,reason,status,report_json,created_at,executed_at)
+      VALUES (?,'legacy_manual_start_gate',?,?,?,?)`).run(manifestId,execute?'queued':'dry_run',JSON.stringify({
+        processingGapRunId:report.id,fingerprint:report.fingerprint,sourceCount:legacyItems.length,items:legacyItems}),timestamp,execute?timestamp:null);
+    if(execute&&legacyItems.length)this.runSourceProcessingGapRecovery({dryRun:false,approvedFromRunId:report.id});
+    return {id:manifestId,dryRun:!execute,sourceCount:legacyItems.length,fingerprint:report.fingerprint};
   }
 
   runMediaStorageMigrationEstimate({dryRun=true}={}) {
@@ -1392,8 +1496,10 @@ export class Repository {
       .map((row) => ({ ...row, mode:row.sync_mode_v2 || row.mode, stats: json(row.stats_json, {}), lastError: json(row.last_error_json, {}) }));
   }
 
-  enqueue(type, entityId, { dedupeKey = `${type}:${entityId}`, priority = jobPriority(type), productionAttemptId = null, executionRoute = 'auto' } = {}) {
+  enqueue(type, entityId, { dedupeKey = `${type}:${entityId}`, priority = jobPriority(type), productionAttemptId = null,
+    executionRoute = 'auto', workloadClass = "", parentJobId = null, recoveryRunId = null, interactive = false } = {}) {
     const timestamp = this.jobTimestamp();
+    const resolvedWorkloadClass = workloadClassForJob(type, workloadClass);
     const active = this.db.prepare(`
       SELECT id,status FROM jobs WHERE dedupe_key = ? AND status IN ('queued', 'running') LIMIT 1
     `).get(dedupeKey);
@@ -1407,9 +1513,11 @@ export class Repository {
     const jobId = id("job");
     try {
       this.db.prepare(`
-        INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at, dedupe_key,priority,production_attempt_id,execution_route)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(jobId, type, entityId, timestamp, timestamp, timestamp, dedupeKey, priority, productionAttemptId, executionRoute);
+        INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at, dedupe_key,priority,production_attempt_id,execution_route,
+          workload_class,parent_job_id,recovery_run_id,interactive)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(jobId, type, entityId, timestamp, timestamp, timestamp, dedupeKey, priority, productionAttemptId, executionRoute,
+        resolvedWorkloadClass,parentJobId,recoveryRunId,interactive ? 1 : 0);
       return jobId;
     } catch (error) {
       const raced = this.db.prepare("SELECT id FROM jobs WHERE dedupe_key=? AND status IN ('queued','running') LIMIT 1").get(dedupeKey);
@@ -1607,8 +1715,8 @@ export class Repository {
     transaction(this.db, () => {
       saved = this.saveSegmentExtraction(item.segment_id, extraction, { withinTransaction: true });
       if (!saved) return;
-      this.enqueue("audit_segment_coverage", item.segment_id);
-      const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(item.job_id);
+      const job = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(item.job_id);
+      this.enqueue("audit_segment_coverage", item.segment_id, inheritJobContext(job,{type:"audit_segment_coverage"}));
       const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
       this.db.prepare(`UPDATE vertex_batch_items SET status='succeeded',last_error='',completed_at=?,ingested_at=?,
         output_object=?,output_line=?,output_checksum=? WHERE run_id=? AND job_id=? AND status='submitted'`)
@@ -1627,11 +1735,12 @@ export class Repository {
     let audit;
     transaction(this.db, () => {
       audit = this.auditSegmentCoverage(item.segment_id, assessment?.output || assessment);
-      if (audit.status === "retry_required") this.enqueue("retry_segment_extraction", item.segment_id);
+      const job = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(item.job_id);
+      if (audit.status === "retry_required") this.enqueue("retry_segment_extraction", item.segment_id,
+        inheritJobContext(job,{type:"retry_segment_extraction"}));
       else if (audit.status !== "stale" && this.sourceCoverageReady(audit.sourceId)) {
-        this.enqueue("finalize_source_extraction", audit.sourceId);
+        this.enqueue("finalize_source_extraction", audit.sourceId,inheritJobContext(job,{type:"finalize_source_extraction"}));
       }
-      const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(item.job_id);
       const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
       this.db.prepare(`UPDATE vertex_batch_items SET status='succeeded',last_error='',completed_at=?,ingested_at=?,
         output_object=?,output_line=?,output_checksum=? WHERE run_id=? AND job_id=? AND status='submitted'`)
@@ -1755,7 +1864,12 @@ export class Repository {
           )
           AND (? = 1 OR type='generate_visuals' OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")}))
           AND (type<>'generate_visuals' OR ?=1)
+          AND (jobs.workload_class NOT IN ('historical_recovery','maintenance') OR
+            (SELECT COUNT(*) FROM jobs running_lane WHERE running_lane.status='running'
+              AND running_lane.workload_class=jobs.workload_class) < 1)
         ORDER BY
+          CASE workload_class WHEN 'interactive' THEN 0 WHEN 'historical_recovery' THEN 2
+            WHEN 'maintenance' THEN 3 ELSE 1 END,
           CASE WHEN datetime(created_at)<=datetime(?,'-15 minutes') THEN 0 ELSE 1 END,
           priority ASC,
           CASE execution_route WHEN 'realtime' THEN 0 WHEN 'auto' THEN 1 ELSE 2 END,
@@ -1841,7 +1955,8 @@ export class Repository {
     const baseDelayMs = providerPressure
       ? Math.min(this.providerBackoffMaxMs, this.providerBackoffInitialMs * 2 ** Math.min(10, Math.max(0, this.providerPressureStreak - 1)))
       : Math.min(300_000, 10_000 * 2 ** Math.max(0, job.attempts - 1));
-    const delayMs = Math.max(Number(error?.retryAfterMs || 0), Math.round(baseDelayMs * (0.8 + Math.random() * 0.4)));
+    const delayMs = Math.max(Number(error?.retryAfterMs || 0),laneBackoffMs(job.workload_class,
+      Math.round(baseDelayMs * (0.8 + Math.random() * 0.4))));
     const availableAt = new Date(this.clock().getTime() + delayMs).toISOString();
     if (providerPressure) {
       if (job.type === 'generate_visuals') this.visualBackoffUntil = Math.max(this.visualBackoffUntil || 0, Date.parse(availableAt));
@@ -2466,7 +2581,13 @@ export class Repository {
   getIntakePackage(sourceId) {
     const source = this.getSource(sourceId);
     if (!source?.structured) return null;
-    return {
+    const existingKnowledge=this.knowledgeForDestination(source.structured.destination_slug).slice(0,80).map((fact)=>({
+      key:fact.normalized_key,subject:fact.subject,predicate:fact.predicate,preferred_value:fact.preferred_value,
+      consensus_status:fact.consensus_status,confidence:fact.consensus_confidence,freshness:fact.freshness_state,
+      evidence:(fact.evidence||[]).slice(0,2).map((item)=>({source_id:item.source_id,quote:String(item.quote||"").slice(0,200),
+        confidence:item.confidence,observed_at:item.observed_at||item.published_at||null})),
+    }));
+    const result={
       strategy_version: this.strategyVersion,
       source: {
         id: source.id, title: source.title, captured_at: source.captured_at,
@@ -2487,8 +2608,10 @@ export class Repository {
         value: claim.value_text, qualifiers: claim.qualifiers, confidence: claim.confidence,
         source_quote: String(claim.source_quote || "").slice(0, 300),
       })),
-      existing_knowledge: this.knowledgeForDestination(source.structured.destination_slug).slice(0, 80),
+      existing_knowledge:existingKnowledge,
     };
+    const inputBytes=Buffer.byteLength(JSON.stringify(result));
+    return {...result,input_telemetry:{projection:"compact_claim_evidence_v1",bytes:inputBytes,estimated_tokens:Math.ceil(inputBytes/3)}};
   }
 
   saveIntakeAnalysis(sourceId, analysis, model) {
@@ -3066,9 +3189,21 @@ export class Repository {
     return {clusters:clusters.length,created,refreshed,retired};
   }
 
-  rebuildCoverageMatrices(destinationSlug) {
+  rebuildCoverageMatrices(destinationSlug,{changedFactKeys=null}={}) {
+    const startedAt=Date.now();
     const allFacts = this.knowledgeForDestination(destinationSlug);
-    const opportunities = this.db.prepare("SELECT * FROM content_opportunities WHERE destination_slug=?").all(destinationSlug);
+    const allOpportunities = this.db.prepare("SELECT * FROM content_opportunities WHERE destination_slug=?").all(destinationSlug);
+    const changed=new Set((changedFactKeys||[]).filter(Boolean));
+    const changedFacts=changed.size?allFacts.filter((fact)=>changed.has(fact.normalized_key)):[];
+    const opportunities=!changed.size?allOpportunities:allOpportunities.filter((opportunity)=>{
+      if(String(opportunity.topic_key||"").includes(":knowledge:"))return changedFacts.some((fact)=>{
+        const subject=slugify(fact.subject||fact.canonical_subject||"");
+        return subject&&(`${opportunity.topic_key} ${opportunity.title||""}`.toLowerCase().replace(/_/gu,"-").includes(subject));
+      });
+      const previous=json(opportunity.coverage_json,{});
+      if((previous.selectedFactKeys||[]).some((key)=>changed.has(key)))return true;
+      return changedFacts.some((fact)=>factCouldAffectOpportunity(fact,opportunity,destinationSlug));
+    });
     for (const opportunity of opportunities) {
       const previousCoverage = json(opportunity.coverage_json, {});
       const publicationMode = normalizePublicationMode(previousCoverage.publicationMode);
@@ -3087,6 +3222,8 @@ export class Repository {
         .run(matrix.readiness.score, JSON.stringify(matrix.readiness), JSON.stringify(coverage), next, now(), opportunity.id);
     }
     this.reconcileRecommendationInbox(destinationSlug);
+    this.lastCoverageRebuildTelemetry={destinationSlug,mode:changed.size?'incremental':'full',changedFactCount:changed.size,
+      scannedOpportunityCount:allOpportunities.length,updatedOpportunityCount:opportunities.length,durationMs:Date.now()-startedAt};
     return opportunities.length;
   }
 
@@ -3203,7 +3340,7 @@ export class Repository {
     if(!rows.length)return [];
     const wanted=new Set(rows.map((row)=>row.id));
     const jobs=this.db.prepare(`SELECT j.id,j.type,j.status,j.attempts,j.max_attempts,j.available_at,j.started_at,j.updated_at,j.last_error,
-        j.execution_route,j.last_failure_code,COALESCE(sg.source_id,mb.source_id,direct.id) AS source_id
+        j.execution_route,j.workload_class,j.recovery_run_id,j.last_failure_code,COALESCE(sg.source_id,mb.source_id,direct.id) AS source_id
       FROM jobs j
       LEFT JOIN source_segments sg ON sg.id=j.entity_id
       LEFT JOIN media_extraction_batches mb ON mb.id=j.entity_id
@@ -3211,7 +3348,7 @@ export class Repository {
       WHERE j.status IN ('queued','running','failed')
         AND j.type IN ('extract_source','preflight_source','segment_source','extract_segment_claims','extract_media_batch',
           'audit_segment_coverage','retry_segment_extraction','finalize_source_extraction','extract_source_experience',
-          'analyze_source_blueprint','analyze_source_diagnostic','analyze_intake') ORDER BY j.updated_at DESC`).all()
+          'analyze_source_family','analyze_source_blueprint','analyze_source_diagnostic','analyze_intake') ORDER BY j.updated_at DESC`).all()
       .filter((job)=>wanted.has(job.source_id));
     const states=sourceQueueStates(jobs);
     return rows.map((row)=>({...row,experience_degraded:Boolean(row.experience_degraded),stale_experience:Boolean(row.stale_experience),
@@ -3797,6 +3934,20 @@ export class Repository {
       const insertClaimRelation = this.db.prepare(`INSERT OR IGNORE INTO claim_relations(id, destination_slug, claim_a_id, claim_b_id,
         relation_type, can_coexist, reason, scope_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const insertResolutionEvent = this.db.prepare(`INSERT OR IGNORE INTO knowledge_resolution_events(id,destination_slug,
+        normalized_key,claim_a_id,claim_b_id,resolution_state,reason,detail_json,engine_version,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`);
+      const upsertVerificationJob = this.db.prepare(`INSERT INTO knowledge_verification_jobs(id,destination_slug,normalized_key,status,
+        source_priority_json,evidence_json,result_json,created_at,updated_at)
+        VALUES (?,?,?,'queued',?,?,'{}',?,?) ON CONFLICT(destination_slug,normalized_key) DO UPDATE SET
+          status=CASE WHEN knowledge_verification_jobs.status='completed' THEN 'completed' ELSE 'queued' END,
+          source_priority_json=excluded.source_priority_json,evidence_json=excluded.evidence_json,updated_at=excluded.updated_at`);
+      const completeVerificationJob=this.db.prepare(`UPDATE knowledge_verification_jobs SET status='completed',result_json=?,
+        completed_at=?,updated_at=? WHERE destination_slug=? AND normalized_key=? AND status<>'completed'`);
+      const upsertRepairJob = this.db.prepare(`INSERT INTO claim_repair_jobs(id,claim_id,status,repair_type,input_json,result_json,created_at,updated_at)
+        VALUES (?,?,'queued',?,?,'{}',?,?) ON CONFLICT(claim_id,repair_type) DO UPDATE SET
+          status=CASE WHEN claim_repair_jobs.status='completed' THEN 'completed' ELSE 'queued' END,
+          input_json=excluded.input_json,updated_at=excluded.updated_at`);
       const selectVisibility = this.db.prepare(
         "SELECT * FROM knowledge_visibility_overrides WHERE destination_slug=? AND normalized_key=?",
       );
@@ -3843,13 +3994,24 @@ export class Repository {
           const quoteKey = `${row.source_id}:${sha256(row.source_quote)}:${extractionIssue}`;
           if (reviewedExtractionQuotes.has(quoteKey)) continue;
           reviewedExtractionQuotes.add(quoteKey);
-          const reviewId = `claim_review_${sha256(`${row.id}:${extractionIssue}`).slice(0, 24)}`;
-          const previous = previousReviewDecisions.get(reviewId);
-          // A legacy "resolved" extraction review only acknowledged the issue; it did not
-          // correct the Claim. Re-open genuine issues, while preserving explicit false-positive dismissals.
-          const status = previous?.status === "dismissed" ? "dismissed" : "pending";
-          insertClaimReview.run(reviewId, destinationSlug, row.id, null, extractionIssue,
-              "The original source contains negation or a limiting qualifier that is absent from the normalized Claim.", status, timestamp, timestamp);
+          const repairId=`claim_repair_${sha256(`${row.id}:${extractionIssue}`).slice(0,24)}`;
+          upsertRepairJob.run(repairId,row.id,extractionIssue,JSON.stringify({claimId:row.id,predicate:row.predicate,
+            value:row.value_text,sourceQuote:row.source_quote,qualifiers:json(row.qualifiers_json,[])}),timestamp,timestamp);
+          insertResolutionEvent.run(`knowledge_resolution_${sha256(`${row.id}:${extractionIssue}:${KNOWLEDGE_RESOLUTION_VERSION}`).slice(0,24)}`,
+            destinationSlug,row.normalized_key,row.id,null,"REPAIR_REQUIRED",
+            "The extraction issue is queued for bounded Claim repair rather than human conflict review.",
+            JSON.stringify({repairType:extractionIssue}),KNOWLEDGE_RESOLUTION_VERSION,timestamp);
+        }
+        const mismatch=row.structured_value.compatibility;
+        if(mismatch?.code==="PREDICATE_VALUE_MISMATCH"){
+          const state=mismatch.repairedPredicate?"AUTO_REPAIRED":"REPAIR_REQUIRED";
+          if(!mismatch.repairedPredicate)upsertRepairJob.run(
+            `claim_repair_${sha256(`${row.id}:${mismatch.code}`).slice(0,24)}`,row.id,mismatch.code,
+            JSON.stringify({claimId:row.id,predicate:row.predicate,value:row.value_text,sourceQuote:row.source_quote,
+              proposedPredicate:mismatch.repairedPredicate||null}),timestamp,timestamp);
+          insertResolutionEvent.run(`knowledge_resolution_${sha256(`${row.id}:${state}:${KNOWLEDGE_RESOLUTION_VERSION}`).slice(0,24)}`,
+            destinationSlug,row.normalized_key,row.id,null,state,mismatch.repair||"Predicate/value compatibility was evaluated locally.",
+            JSON.stringify(mismatch),KNOWLEDGE_RESOLUTION_VERSION,timestamp);
         }
       }
       // A broad Claim can generalize a specific Claim only when they express
@@ -3860,7 +4022,7 @@ export class Repository {
       const generalizationGroups = Map.groupBy(sourceRows, (row) => {
         const predicate = row.structured_value.canonical_predicate || normalizeValue(row.predicate);
         const value = row.structured_value.typed_value != null
-          ? JSON.stringify(row.structured_value.typed_value)
+          ? stableCanonicalSerialize(row.structured_value.typed_value)
           : normalizeValue(row.value_text);
         return `${predicate}:${value}`;
       });
@@ -3884,9 +4046,7 @@ export class Repository {
         const canonicalPredicates = new Set(rows.map((row) => row.structured_value.canonical_predicate).filter(Boolean));
         const typedFact = canonicalPredicates.size === 1 && rows.every((row) => row.structured_value.typed_value != null);
         const canonicalPredicate = typedFact ? [...canonicalPredicates][0] : null;
-        const variantKey = (row) => typedFact
-          ? `${canonicalPredicate}:${JSON.stringify(row.structured_value.typed_value)}`
-          : normalizeValue(row.value_text);
+        const variantKey = (row) => typedFact ? canonicalKnowledgeVariant(row) : normalizeValue(row.value_text);
         const applicableRows = rows.filter((row) => ["current", "unknown"].includes(evidenceTemporalState(row, Date.parse(timestamp)).validityState));
         const variants = Map.groupBy(applicableRows, variantKey);
         const resolutionMode = evidenceResolutionMode(rows);
@@ -3898,21 +4058,45 @@ export class Repository {
         const ranked = [...variants.entries()].sort((a, b) => b[1].length - a[1].length
           || knowledgeValueSpecificity(b[1][0].value_text) - knowledgeValueSpecificity(a[1][0].value_text));
         const relations = [];
+        const resolutionStates=[];
+        for(const row of rows){
+          const issue=detectClaimExtractionIssue(row,claimsBySource.get(row.source_id)||[]);
+          const mismatch=row.structured_value.compatibility;
+          if(issue||mismatch?.code==="PREDICATE_VALUE_MISMATCH"&&!mismatch.repairedPredicate)resolutionStates.push("REPAIR_REQUIRED");
+          else if(mismatch?.repairedPredicate)resolutionStates.push("AUTO_REPAIRED");
+        }
         for (let left = 0; left < rows.length; left += 1) {
           for (let right = left + 1; right < rows.length; right += 1) {
             const comparison = classifyClaimPair(rows[left], rows[right]);
-            const automaticallyResolved = false;
-            const reviewId = !automaticallyResolved && comparison.reviewType && !comparison.reviewType.includes("EXTRACTION_ERROR")
+            const resolution=decideKnowledgeResolution({comparison,left:rows[left],right:rows[right],
+              consensus:evidenceConsensus,nowMs:Date.parse(timestamp)});
+            resolutionStates.push(resolution.state);
+            const reviewId = resolution.humanRequired
               ? `claim_review_${sha256(`${rows[left].id}:${rows[right].id}:${comparison.reviewType}`).slice(0, 24)}`
               : null;
             const reviewStatus = reviewId ? previousReviewDecisions.get(reviewId)?.status || "pending" : null;
             if (reviewId) {
               insertClaimReview.run(reviewId, destinationSlug, rows[left].id, rows[right].id,
-                comparison.reviewType, comparison.reason, reviewStatus, timestamp, timestamp);
+                comparison.reviewType||"HARD_FACT_CONFLICT", resolution.reason, reviewStatus, timestamp, timestamp);
             }
-            const effectiveComparison = automaticallyResolved
+            if(resolution.verificationRequired)upsertVerificationJob.run(
+              `knowledge_verification_${sha256(`${destinationSlug}:${key}`).slice(0,24)}`,destinationSlug,key,
+              JSON.stringify(verificationSourcePriority(rows)),JSON.stringify(rows.map((row)=>({claimId:row.id,sourceId:row.source_id,
+                value:row.value_text,quote:row.source_quote}))),timestamp,timestamp);
+            if(resolution.repairRequired){
+              for(const row of [rows[left],rows[right]].filter((item)=>item.structured_value.compatibility?.code==="PREDICATE_VALUE_MISMATCH")){
+                const repair=row.structured_value.compatibility;
+                upsertRepairJob.run(`claim_repair_${sha256(`${row.id}:${repair.code}`).slice(0,24)}`,row.id,repair.code,
+                  JSON.stringify({claimId:row.id,predicate:row.predicate,value:row.value_text,sourceQuote:row.source_quote}),timestamp,timestamp);
+              }
+            }
+            insertResolutionEvent.run(`knowledge_resolution_${sha256(`${rows[left].id}:${rows[right].id}:${resolution.state}:${KNOWLEDGE_RESOLUTION_VERSION}`).slice(0,24)}`,
+              destinationSlug,key,rows[left].id,rows[right].id,resolution.state,resolution.reason,
+              JSON.stringify({comparison,consensusMethod:evidenceConsensus.method}),KNOWLEDGE_RESOLUTION_VERSION,timestamp);
+            const automaticallyResolved = resolution.autoResolved || resolution.verificationRequired || resolution.repairRequired;
+            const effectiveComparison = automaticallyResolved && !comparison.canCoexist
               ? { ...comparison, relation: "COMPATIBLE", canCoexist: true, reviewType: null,
-                reason: `${comparison.reason} Values are retained as dated observations and resolved by independent-source, quality, and recency weighting.` }
+                reason: `${comparison.reason} Resolution: ${resolution.state}. ${resolution.reason}` }
               : reviewStatus === "dismissed"
                 ? { ...comparison, relation: "COMPATIBLE", canCoexist: true,
                   reason: `${comparison.reason} Operator dismissed this comparison as a false positive.` }
@@ -3924,8 +4108,10 @@ export class Repository {
           }
         }
         const conflicts = relations.filter((relation) => !relation.canCoexist);
-        const status = conflicts.length ? "conflicted"
-          : evidenceConsensus.autoResolved
+        if(!resolutionStates.includes("VERIFICATION_REQUIRED"))completeVerificationJob.run(
+          JSON.stringify({resolution:"evidence_recomputed",states:resolutionStates}),timestamp,timestamp,destinationSlug,key);
+        const status = resolutionStates.includes("HUMAN_REQUIRED") ? "conflicted"
+          : resolutionStates.includes("VERIFICATION_REQUIRED")
             ? evidenceConsensus.supportCount > 1 ? "corroborated" : "single_source"
             : rows.length > 1 ? "corroborated" : "single_source";
         const consensusWinner = applicableRows.find((row) => variantKey(row) === evidenceConsensus.preferredVariantKey)
@@ -3940,7 +4126,9 @@ export class Repository {
           : evidenceConsensus.autoResolved
           ? { state: evidenceConsensus.freshnessState, latestEvidenceAt: evidenceConsensus.latestEvidenceAt, volatile: true }
           : legacyFreshness;
-        const verificationPriority = trustedDailyFact
+        const verificationPriority = resolutionStates.includes("HUMAN_REQUIRED") ? "review"
+          : resolutionStates.includes("VERIFICATION_REQUIRED") || resolutionStates.includes("REPAIR_REQUIRED") ? "review"
+          : trustedDailyFact
           ? status === "conflicted" ? "review" : "normal"
           : evidenceConsensus.autoResolved
           ? freshness.state === "stale" || evidenceConsensus.method === "LATEST_WEIGHTED_PROVISIONAL"
@@ -4001,7 +4189,8 @@ export class Repository {
           preferred_value: preferredValue,
           support_count: evidenceConsensus.autoResolved ? evidenceConsensus.supportCount
             : status === "conflicted" ? ranked[0][1].length : rows.length,
-          contradiction_count: evidenceConsensus.autoResolved ? evidenceConsensus.contradictionCount : conflicts.length,
+          contradiction_count: resolutionStates.includes("VERIFICATION_REQUIRED") || evidenceConsensus.autoResolved
+            ? evidenceConsensus.contradictionCount : conflicts.length,
           evidence_json: JSON.stringify(evidence),
           freshness_state: freshness.state,
           latest_evidence_at: freshness.latestEvidenceAt,
@@ -4047,7 +4236,78 @@ export class Repository {
       if (!previous || knowledgeDependencyHash(previous) !== knowledgeDependencyHash(row)) changedKeys.add(row.normalized_key);
     }
     for (const [factId, row] of existingFactsById) if (!latestFacts.has(factId)) changedKeys.add(row.normalized_key);
-    if (changedKeys.size) this.invalidateFactDependents(destinationSlug, [...changedKeys], timestamp);
+    if (changedKeys.size) {
+      this.invalidateFactDependents(destinationSlug, [...changedKeys], timestamp);
+      this.markCoverageDirty(destinationSlug,[...changedKeys],timestamp);
+    }
+    return {destinationSlug,changedKeys:[...changedKeys],knowledgeResolutionVersion:KNOWLEDGE_RESOLUTION_VERSION};
+  }
+
+  markCoverageDirty(destinationSlug,changedFactKeys,timestamp=now()){
+    const current=this.db.prepare("SELECT changed_fact_keys_json FROM coverage_dirty_scopes WHERE destination_slug=? AND topic_key=''").get(destinationSlug);
+    const keys=[...new Set([...json(current?.changed_fact_keys_json,[]),...(changedFactKeys||[])].filter(Boolean))].sort();
+    this.db.prepare(`INSERT INTO coverage_dirty_scopes(destination_slug,topic_key,changed_fact_keys_json,status,created_at,updated_at)
+      VALUES (?,'',?,'dirty',?,?) ON CONFLICT(destination_slug,topic_key) DO UPDATE SET
+        changed_fact_keys_json=excluded.changed_fact_keys_json,status='dirty',updated_at=excluded.updated_at`)
+      .run(destinationSlug,JSON.stringify(keys),timestamp,timestamp);
+    return keys;
+  }
+
+  takeCoverageDirty(destinationSlug){
+    const row=this.db.prepare("SELECT * FROM coverage_dirty_scopes WHERE destination_slug=? AND topic_key='' AND status='dirty'").get(destinationSlug);
+    if(!row)return null;
+    this.db.prepare("UPDATE coverage_dirty_scopes SET status='processing',updated_at=? WHERE destination_slug=? AND topic_key='' AND status='dirty'")
+      .run(now(),destinationSlug);
+    return {destinationSlug,changedFactKeys:json(row.changed_fact_keys_json,[])};
+  }
+
+  completeCoverageDirty(destinationSlug,{failed=false}={}){
+    this.db.prepare("UPDATE coverage_dirty_scopes SET status=?,updated_at=? WHERE destination_slug=? AND topic_key=''")
+      .run(failed?'dirty':'complete',now(),destinationSlug);
+  }
+
+  getKnowledgeResolutionStatus(destinationSlug=null){
+    const args=destinationSlug?[destinationSlug]:[];
+    const where=destinationSlug?' WHERE destination_slug=?':'';
+    const count=(table)=>this.db.prepare(`SELECT status,COUNT(*) AS count FROM ${table}${where} GROUP BY status`).all(...args);
+    const human=this.db.prepare(`SELECT status,COUNT(*) AS count FROM claim_review_cases${where} GROUP BY status`).all(...args);
+    const events=this.db.prepare(`SELECT resolution_state AS status,COUNT(*) AS count FROM knowledge_resolution_events${where} GROUP BY resolution_state`).all(...args);
+    const repairs=destinationSlug
+      ? this.db.prepare(`SELECT cr.status,COUNT(*) AS count FROM claim_repair_jobs cr JOIN claims c ON c.id=cr.claim_id
+          JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=? GROUP BY cr.status`).all(destinationSlug)
+      : this.db.prepare("SELECT status,COUNT(*) AS count FROM claim_repair_jobs GROUP BY status").all();
+    return {engineVersion:KNOWLEDGE_RESOLUTION_VERSION,automatic:events,verification:count('knowledge_verification_jobs'),
+      repairs,humanReview:human};
+  }
+
+  listKnowledgeResolutionHistory({destinationSlug=null,limit=100}={}){
+    const bounded=Math.max(1,Math.min(500,Number(limit)||100));
+    const rows=destinationSlug
+      ? this.db.prepare("SELECT * FROM knowledge_resolution_events WHERE destination_slug=? ORDER BY created_at DESC LIMIT ?").all(destinationSlug,bounded)
+      : this.db.prepare("SELECT * FROM knowledge_resolution_events ORDER BY created_at DESC LIMIT ?").all(bounded);
+    return rows.map((row)=>({...row,detail:json(row.detail_json,{})}));
+  }
+
+  listKnowledgeVerificationJobs({destinationSlug=null,status="",limit=100}={}){
+    const clauses=[],values=[];
+    if(destinationSlug){clauses.push("destination_slug=?");values.push(destinationSlug);}
+    if(status){clauses.push("status=?");values.push(status);}
+    values.push(Math.max(1,Math.min(500,Number(limit)||100)));
+    return this.db.prepare(`SELECT * FROM knowledge_verification_jobs${clauses.length?` WHERE ${clauses.join(" AND ")}`:""}
+      ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END,updated_at DESC LIMIT ?`).all(...values)
+      .map((row)=>({...row,sourcePriorities:json(row.source_priority_json,[]),evidence:json(row.evidence_json,[]),result:json(row.result_json,{})}));
+  }
+
+  updateKnowledgeVerificationJob(jobId,{action,result={}}={}){
+    const row=this.db.prepare("SELECT * FROM knowledge_verification_jobs WHERE id=?").get(jobId);
+    if(!row)return null;
+    const timestamp=now();
+    if(action==="retry")this.db.prepare("UPDATE knowledge_verification_jobs SET status='queued',last_error=NULL,completed_at=NULL,updated_at=? WHERE id=?")
+      .run(timestamp,jobId);
+    else if(action==="complete")this.db.prepare("UPDATE knowledge_verification_jobs SET status='completed',result_json=?,last_error=NULL,completed_at=?,updated_at=? WHERE id=?")
+      .run(JSON.stringify(result&&typeof result==='object'?result:{}),timestamp,timestamp,jobId);
+    else throw conflictError("Verification action must be retry or complete.");
+    return this.listKnowledgeVerificationJobs({destinationSlug:row.destination_slug,limit:500}).find((item)=>item.id===jobId)||null;
   }
 
   invalidateFactDependents(destinationSlug, normalizedKeys, timestamp = now()) {
@@ -6592,6 +6852,14 @@ export class Repository {
       WHERE k.visibility_status='visible'${destinationClause}`).get(...values);
     const claimReviews = this.db.prepare(`SELECT COUNT(*) AS count FROM claim_review_cases
       WHERE status='pending'${destination ? " AND destination_slug=?" : ""}`).get(...values).count;
+    const verificationJobs=this.db.prepare(`SELECT COUNT(*) AS count FROM knowledge_verification_jobs
+      WHERE status<>'completed'${destination?" AND destination_slug=?":""}`).get(...values).count;
+    const repairJobs=destination
+      ? this.db.prepare(`SELECT COUNT(*) AS count FROM claim_repair_jobs cr JOIN claims c ON c.id=cr.claim_id
+          JOIN structured_sources ss ON ss.source_id=c.source_id WHERE cr.status<>'completed' AND ss.destination_slug=?`).get(destination).count
+      : this.db.prepare("SELECT COUNT(*) AS count FROM claim_repair_jobs WHERE status<>'completed'").get().count;
+    const automatic=this.db.prepare(`SELECT COUNT(*) AS count FROM knowledge_resolution_events
+      WHERE resolution_state LIKE 'AUTO_%'${destination?" AND destination_slug=?":""}`).get(...values).count;
     const entityReviews = this.listEntityMergeCandidates("pending")
       .filter((item) => !destination || item.destination_slug === destination).length;
     return {
@@ -6600,7 +6868,8 @@ export class Repository {
         facts: Number(totals.facts || 0), subjects: Number(totals.subjects || 0),
         independentSources: Number(evidence.sources || 0), strictConflicts: Number(totals.strict_conflicts || 0),
         pendingClaimReviews: Number(claimReviews || 0), pendingEntityReviews: Number(entityReviews || 0),
-        pendingManualReview: Number(totals.strict_conflicts || 0) + Number(claimReviews || 0) + Number(entityReviews || 0),
+        pendingManualReview:Number(claimReviews||0)+Number(entityReviews||0),
+        automaticResolutions:Number(automatic||0),verificationNeeded:Number(verificationJobs||0),repairNeeded:Number(repairJobs||0),
       },
       consensus: { corroborated: Number(totals.corroborated || 0), singleSource: Number(totals.single_source || 0),
         manuallyResolved: Number(totals.manually_resolved || 0) },
@@ -7938,11 +8207,11 @@ function extractionJobPriority(type) {
 function sourceStageFromProjection(row){
   if(row.status==="exception")return "exception";
   if(row.media_ready_count<row.media_count)return "persisting_media";
-  if(!row.segment_count)return "captured";
+  if(!row.segment_count)return "processing_gap";
   if(row.extracted_segment_count<row.segment_count)return "extracting_evidence";
   if(row.audited_segment_count<row.segment_count)return "auditing_coverage";
   if(row.experience_status!=="succeeded")return "extracting_experience";
-  return row.status==="processed"?"complete":row.status;
+  return row.status==="processed"?"core_complete":row.status;
 }
 
 function compareEligibleJobs(a, b) {
@@ -7964,6 +8233,20 @@ function knowledgeValueSpecificity(value) {
   const normalized = normalizeValue(value);
   if (/^(?:true|false|yes|no|present|absent|available|unavailable|有|无|是|否)$/.test(normalized)) return 0;
   return normalized.length;
+}
+
+function canonicalKnowledgeVariant(row){
+  const structured=row?.structured_value||{};
+  return `${structured.canonical_predicate||normalizeValue(row?.predicate)}:${structured.typed_value==null
+    ? normalizeValue(row?.value_text):stableCanonicalSerialize(structured.typed_value)}`;
+}
+
+function verificationSourcePriority(rows=[]){
+  const predicates=[...new Set(rows.map((row)=>row?.structured_value?.canonical_predicate||normalizeValue(row?.predicate)).filter(Boolean))];
+  const official=predicates.some((value)=>/opening|price|reservation|schedule|address|transport|access/.test(value));
+  return official
+    ? ["official operator or venue","current on-site observation","independent recent source"]
+    : ["independent recent source","primary source","current observation"];
 }
 
 function displayTypedKnowledgeValue(value) {
@@ -8269,6 +8552,14 @@ export function scopeFactsForOpportunity(facts, { destinationSlug, topic, topic_
     return [...terms].some((term) => factTerms.has(term));
   });
   return withScopedCoverageLimitations(selected, terms);
+}
+
+function factCouldAffectOpportunity(fact,opportunity,destinationSlug){
+  const terms=topicTokens(`${opportunity.topic_key||""} ${opportunity.title||""}`);
+  for(const term of topicTokens(destinationSlug))terms.delete(term);
+  if(!terms.size)return true;
+  const factTerms=topicTokens(`${fact.normalized_key||""} ${fact.subject||""} ${fact.predicate||""}`);
+  return [...terms].some((term)=>factTerms.has(term));
 }
 
 function withScopedCoverageLimitations(facts, terms) {

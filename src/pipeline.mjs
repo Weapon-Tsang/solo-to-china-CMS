@@ -1,19 +1,26 @@
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { validatePlannedEvidence } from "./services/editorial-proposal.mjs";
 import { composePageFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
 import { validatePlanningDestination } from "./destination-consistency.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
 import { validateMediaDelivery } from "./media-delivery.mjs";
-import { isAiJobType, isProviderPressure } from "./job-policy.mjs";
+import { inheritJobContext, isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
 import { recoverRemoteOriginal } from "./source-media-store.mjs";
 import { stageConfiguration } from './pipeline-contract.mjs';
 import { sourceProcessingProfile } from './source-processing-profile.mjs';
+import { runNodeJsonProcess } from './process-runner.mjs';
+
+const ISOLATED_REPOSITORY_TASK=fileURLToPath(new URL('../scripts/run-isolated-repository-task.mjs',import.meta.url));
 
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class Pipeline {
-  constructor(repository, extractor, { pollMs = 750, maxConcurrent = null, heartbeatIntervalMs = null, recoveryIntervalMs = 60_000, extractionConfig = {}, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null, frontendContracts = null, contentConfig = {}, logger = silentLogger } = {}) {
+  constructor(repository, extractor, { pollMs = 750, maxConcurrent = null, heartbeatIntervalMs = null, recoveryIntervalMs = 60_000,
+    extractionConfig = {}, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null,
+    frontendContracts = null, contentConfig = {}, logger = silentLogger,databasePath=null,processIsolationEnabled=false,
+    isolatedTaskRunner=runNodeJsonProcess } = {}) {
     this.repository = repository;
     this.extractor = extractor;
     this.pollMs = pollMs;
@@ -25,6 +32,9 @@ export class Pipeline {
     this.frontendContracts = frontendContracts;
     this.contentConfig = { minFacts: 5, maxPerDestination: 1, ...contentConfig };
     this.logger = logger;
+    this.databasePath=databasePath;
+    this.processIsolationEnabled=Boolean(processIsolationEnabled&&databasePath);
+    this.isolatedTaskRunner=isolatedTaskRunner;
     this.timer = null;
     this.working = 0;
     this.concurrencyMode = extractionConfig.concurrencyMode || (maxConcurrent ? "fixed" : "auto");
@@ -396,7 +406,7 @@ export class Pipeline {
         case "extract_source": {
           // Backward-compatible queue alias. Strategy 1.4 always expands a Source
           // evidence container into auditable segment jobs before extraction.
-          this.repository.enqueue("preflight_source", job.entity_id);
+          this.enqueueChild(job,"preflight_source",job.entity_id);
           break;
         }
         case "preflight_source": {
@@ -415,7 +425,7 @@ export class Pipeline {
             error.retryable = false;
             throw error;
           }
-          this.repository.enqueue("segment_source", source.id);
+          this.enqueueChild(job,"segment_source",source.id);
           break;
         }
         case "segment_source": {
@@ -423,10 +433,10 @@ export class Pipeline {
             const segments = this.repository.prepareSourceSegments(job.entity_id);
             const mediaBatches = this.repository.prepareMediaExtractionBatches(job.entity_id);
             const batchedSegmentIds = new Set(mediaBatches.flatMap((batch) => batch.segmentIds));
-            for (const batch of mediaBatches) this.repository.enqueue("extract_media_batch", batch.id,
+            for (const batch of mediaBatches) this.enqueueChild(job,"extract_media_batch", batch.id,
               { executionRoute: 'realtime', priority: Number(job.priority || 5) });
             for (const segment of segments.filter((item) => !batchedSegmentIds.has(item.id))) {
-              this.repository.enqueue("extract_segment_claims", segment.id,
+              this.enqueueChild(job,"extract_segment_claims", segment.id,
                 { executionRoute: Number(job.priority || 0) >= 50 ? 'batch' : 'realtime', priority: Number(job.priority || 5) });
             }
           });
@@ -439,7 +449,7 @@ export class Pipeline {
           const extraction=await guarded((signal)=>this.extractor.extract(pack.source,{signal,telemetryContext}));
           commitStage(()=>{
             for(const segmentId of this.repository.saveMediaBatchExtraction(job.entity_id,extraction)) {
-              this.repository.enqueue("audit_segment_coverage",segmentId,{executionRoute:'realtime'});
+              this.enqueueChild(job,"audit_segment_coverage",segmentId,{executionRoute:'realtime'});
             }
           });
           break;
@@ -451,14 +461,14 @@ export class Pipeline {
           try {
             const extraction = await guarded((signal) => this.extractor.extract(pack.source, { signal, telemetryContext }));
             commitStage(() => {
-              if (this.repository.saveSegmentExtraction(job.entity_id, extraction)) this.repository.enqueue("audit_segment_coverage", job.entity_id, { executionRoute: job.execution_route || 'realtime' });
+              if (this.repository.saveSegmentExtraction(job.entity_id, extraction)) this.enqueueChild(job,"audit_segment_coverage", job.entity_id, { executionRoute: job.execution_route || 'realtime' });
             });
           } catch (error) {
             if (!isModelOutputLimit(error)) throw error;
             const children = commitStage(() => {
               const split = this.repository.splitSourceSegmentForRetry(job.entity_id);
               if (!split.length) throw error;
-              for (const child of split) this.repository.enqueue("extract_segment_claims", child.id);
+              for (const child of split) this.enqueueChild(job,"extract_segment_claims", child.id);
               return split;
             });
             this.logger.warn("pipeline.segment_resegmented_after_output_limit", { segmentId: job.entity_id, childCount: children.length });
@@ -475,8 +485,8 @@ export class Pipeline {
           commitStage(() => {
           const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
           if (audit.status === "stale") return;
-          if (audit.status === "retry_required") this.repository.enqueue("retry_segment_extraction", job.entity_id);
-          else if (this.repository.sourceCoverageReady(audit.sourceId)) this.repository.enqueue("finalize_source_extraction", audit.sourceId);
+          if (audit.status === "retry_required") this.enqueueChild(job,"retry_segment_extraction",job.entity_id);
+          else if (this.repository.sourceCoverageReady(audit.sourceId)) this.enqueueChild(job,"finalize_source_extraction",audit.sourceId);
           });
           break;
         }
@@ -510,7 +520,7 @@ export class Pipeline {
           commitStage(() => {
             if (!this.repository.saveSegmentExtraction(job.entity_id, extraction, { retry: true })) return;
             const audit = this.repository.auditSegmentCoverage(job.entity_id, assessment?.output || assessment);
-            if (audit.status !== 'stale' && this.repository.sourceCoverageReady(audit.sourceId)) this.repository.enqueue("finalize_source_extraction", audit.sourceId);
+            if (audit.status !== 'stale' && this.repository.sourceCoverageReady(audit.sourceId)) this.enqueueChild(job,"finalize_source_extraction",audit.sourceId);
           });
           break;
         }
@@ -518,10 +528,10 @@ export class Pipeline {
           const finalized = commitStage(() => {
             const result = this.repository.finalizeSegmentedExtraction(job.entity_id);
             if (this.contentEngine?.enabled && typeof this.contentEngine.analyzeExperience === "function") {
-              this.repository.enqueue("extract_source_experience", job.entity_id);
+              this.enqueueChild(job,"extract_source_experience",job.entity_id);
             } else {
               this.repository.saveExperienceExtraction(job.entity_id, { blocks: [] }, "no_ai");
-              this.enqueueSourceSemanticDownstream(job.entity_id);
+              this.enqueueSourceSemanticDownstream(job.entity_id,job);
             }
             return result;
           });
@@ -534,7 +544,7 @@ export class Pipeline {
           const extracted = await guarded((signal) => this.contentEngine.analyzeExperience(experiencePackage, { signal, telemetryContext }));
           commitStage(() => {
             this.repository.saveExperienceExtraction(job.entity_id, extracted.output, extracted.model, experiencePackage);
-            this.enqueueSourceSemanticDownstream(job.entity_id);
+            this.enqueueSourceSemanticDownstream(job.entity_id,job);
           });
           break;
         }
@@ -544,14 +554,14 @@ export class Pipeline {
           const analyzed = await guarded((signal) => this.extractor.analyzeBlueprint(source, { signal, telemetryContext }));
           commitStage(() => {
             this.repository.saveSourceBlueprint(job.entity_id, analyzed.output);
-            this.repository.enqueue("rebuild_editorial", "global");
+            this.enqueueChild(job,"rebuild_editorial","global",{workloadClass:"background_enrichment"});
           });
           break;
         }
         case "analyze_source_family": {
           const family = this.repository.analyzeSourceFamily(job.entity_id);
           const source = this.repository.getSource(job.entity_id);
-          if (source?.structured?.destination_slug) this.repository.enqueue("resolve_entities", source.structured.destination_slug);
+          if (source?.structured?.destination_slug) this.enqueueChild(job,"resolve_entities",source.structured.destination_slug,{workloadClass:"semantic"});
           this.logger.info("pipeline.source_family_analyzed", { sourceId: job.entity_id, family });
           break;
         }
@@ -592,13 +602,13 @@ export class Pipeline {
           commitStage(() => {
             for (const resolved of resolutions) this.repository.applyEntityResolution(job.entity_id, resolved.output, resolved.model);
             this.repository.resolveEntitiesDeterministically(job.entity_id);
-            this.repository.enqueue("rebuild_knowledge", job.entity_id);
+            this.enqueueChild(job,"rebuild_knowledge",job.entity_id,{workloadClass:"semantic"});
           });
           break;
         }
         case "rebuild_knowledge":
-          this.repository.rebuildKnowledge(job.entity_id);
-          this.repository.enqueue("rebuild_topic_clusters", job.entity_id);
+          await this.runRepositoryTask("rebuild_knowledge",job.entity_id);
+          this.enqueueChild(job,"rebuild_topic_clusters",job.entity_id,{workloadClass:"background_enrichment"});
           break;
         case "rebuild_editorial":
           this.repository.rebuildEditorialLibrary();
@@ -606,22 +616,32 @@ export class Pipeline {
         case "rebuild_topics": {
           // Legacy job name retained for old durable queues. Strategy 1.4
           // rebuilds topic clusters and coverage before reconciling approvals.
-          this.repository.enqueue("rebuild_topic_clusters", job.entity_id);
+          this.enqueueChild(job,"rebuild_topic_clusters",job.entity_id,{workloadClass:"background_enrichment"});
           break;
         }
         case "rebuild_topic_clusters": {
-          this.repository.rebuildTopicClusters(job.entity_id);
-          this.repository.enqueue("build_coverage_matrix", job.entity_id);
+          await this.runRepositoryTask("rebuild_topic_clusters",job.entity_id);
+          this.enqueueChild(job,"build_coverage_matrix",job.entity_id,{workloadClass:"background_enrichment"});
           break;
         }
         case "build_coverage_matrix": {
-          this.repository.rebuildCoverageMatrices(job.entity_id);
-          this.repository.enqueue("rebuild_content_opportunities", job.entity_id);
+          if(this.processIsolationEnabled)await this.runRepositoryTask("build_coverage_matrix",job.entity_id);
+          else{
+            const dirty=this.repository.takeCoverageDirty?.(job.entity_id)||null;
+            try{
+              this.repository.rebuildCoverageMatrices(job.entity_id,{changedFactKeys:dirty?.changedFactKeys||null});
+              if(dirty)this.repository.completeCoverageDirty?.(job.entity_id);
+            }catch(error){
+              if(dirty)this.repository.completeCoverageDirty?.(job.entity_id,{failed:true});
+              throw error;
+            }
+          }
+          this.enqueueChild(job,"rebuild_content_opportunities",job.entity_id,{workloadClass:"background_enrichment"});
           break;
         }
         case "rebuild_content_opportunities": {
-          this.repository.rebuildKnowledgeOpportunities(job.entity_id);
-          this.repository.enqueue("reconcile_approved_opportunities", job.entity_id);
+          await this.runRepositoryTask("rebuild_content_opportunities",job.entity_id);
+          this.enqueueChild(job,"reconcile_approved_opportunities",job.entity_id,{workloadClass:"background_enrichment"});
           break;
         }
         case "reconcile_approved_opportunities": {
@@ -994,7 +1014,7 @@ export class Pipeline {
 
   ensureReusedDownstream(job) {
     const repository = this.repository, entity = job.entity_id;
-    const next = (type, id = entity) => repository.enqueue(type, id);
+    const next = (type, id = entity,options={}) => this.enqueueChild(job,type,id,options);
     if (job.dedupe_key?.startsWith('manual-stage:')) return;
     switch (job.type) {
       case 'extract_segment_claims': next('audit_segment_coverage'); break;
@@ -1011,7 +1031,7 @@ export class Pipeline {
         if (pack && !pack.staleCaptureVersion && repository.sourceCoverageReady(pack.source.id)) next('finalize_source_extraction', pack.source.id);
         break;
       }
-      case 'extract_source_experience': this.enqueueSourceSemanticDownstream(entity); break;
+      case 'extract_source_experience': this.enqueueSourceSemanticDownstream(entity,job); break;
       case 'analyze_source_blueprint': next('rebuild_editorial', 'global'); break;
       case 'resolve_entities': next('rebuild_knowledge'); break;
       case 'assemble_editorial': next('plan_content'); break;
@@ -1039,8 +1059,29 @@ export class Pipeline {
     }
   }
 
-  enqueueSourceSemanticDownstream(sourceId) {
-    this.repository.enqueue("analyze_source_family", sourceId);
+  enqueueChild(parentJob,type,entityId,options={}){
+    return this.repository.enqueue(type,entityId,{...options,...inheritJobContext(parentJob,{type,
+      workloadClass:options.workloadClass,priority:options.priority,executionRoute:options.executionRoute,
+      recoveryRunId:options.recoveryRunId,interactive:options.interactive})});
+  }
+
+  async runRepositoryTask(task,entityId){
+    if(!this.processIsolationEnabled){
+      if(task==="rebuild_knowledge")return this.repository.rebuildKnowledge(entityId);
+      if(task==="rebuild_topic_clusters")return this.repository.rebuildTopicClusters(entityId);
+      if(task==="rebuild_content_opportunities")return this.repository.rebuildKnowledgeOpportunities(entityId);
+      throw new Error(`Unsupported local repository task: ${task}`);
+    }
+    const result=await this.isolatedTaskRunner(ISOLATED_REPOSITORY_TASK,[task,this.databasePath,entityId],{timeoutMs:45*60_000});
+    this.logger.info("pipeline.isolated_task_completed",{task,entityId,result:result?.result});
+    return result?.result;
+  }
+
+  enqueueSourceSemanticDownstream(sourceId,parentJob=null) {
+    const source=this.repository.getSource(sourceId);
+    const destination=source?.structured?.destination_slug;
+    if(destination)this.enqueueChild(parentJob||{},"resolve_entities",destination,{workloadClass:"semantic"});
+    this.enqueueChild(parentJob||{},"analyze_source_family",sourceId,{workloadClass:"background_enrichment",priority:40});
     if (this.repository.contentConfig?.sourceComplexityRouting === true) {
       const profile = sourceProcessingProfile(this.repository.getSource(sourceId));
       if (profile.route === 'fragment') {
@@ -1051,9 +1092,9 @@ export class Pipeline {
         return;
       }
     }
-    if (typeof this.extractor?.analyzeBlueprint === "function") this.repository.enqueue("analyze_source_blueprint", sourceId);
-    else this.repository.enqueue("rebuild_editorial", "global");
-    if (this.contentEngine?.enabled) this.repository.enqueue("analyze_source_diagnostic", sourceId);
+    if (typeof this.extractor?.analyzeBlueprint === "function") this.enqueueChild(parentJob||{},"analyze_source_blueprint",sourceId,{workloadClass:"background_enrichment",priority:40});
+    else this.enqueueChild(parentJob||{},"rebuild_editorial","global",{workloadClass:"background_enrichment",priority:40});
+    if (this.contentEngine?.enabled) this.enqueueChild(parentJob||{},"analyze_source_diagnostic",sourceId,{workloadClass:"background_enrichment",priority:40});
   }
 
   get canComposeFrontendPage() {

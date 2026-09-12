@@ -1,4 +1,4 @@
-export const EVIDENCE_CONSENSUS_VERSION = "2026-09-11.1";
+export const EVIDENCE_CONSENSUS_VERSION = "2026-09-12.1";
 
 // The operator explicitly chooses every source that enters this system. Daily
 // travel details from those sources are usable by default; dates and a second
@@ -85,6 +85,12 @@ export function resolveEvidenceConsensus(rows = [], {
     0.2,
     0.98,
   );
+  const autoResolved = mode !== "STRICT_SAFETY_REVIEW"
+    && (!currentVotes.length || singleVariant || hasWeightedAgreement);
+  const resolutionState = !currentVotes.length
+    ? excludedState === "scheduled" || excludedState === "historical" ? "AUTO_TEMPORAL" : "PROVISIONAL_CURRENT"
+    : singleVariant ? "AUTO_EQUIVALENT"
+      : hasWeightedAgreement ? "AUTO_CONSENSUS" : mode === "TRUSTED_SOURCE_POLICY" ? "VERIFICATION_REQUIRED" : "PROVISIONAL_CURRENT";
 
   return {
     mode,
@@ -106,7 +112,8 @@ export function resolveEvidenceConsensus(rows = [], {
     scheduledEvidenceCount: excludedVotes.filter((vote) => vote.validityState === "scheduled").length,
     historicalEvidenceCount: excludedVotes.filter((vote) => vote.validityState === "historical").length,
     freshnessState: mode === "TRUSTED_SOURCE_POLICY" ? "current" : ageDays > staleAfterDays ? "stale" : "current",
-    autoResolved: false,
+    autoResolved,
+    resolutionState,
     independenceGroups: independence.groups.map((group) => ({
       key: group.key,
       sourceIds: group.sourceIds,

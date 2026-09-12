@@ -6,10 +6,10 @@ const type = String(process.argv[2] || "");
 const execute = process.argv.includes("--execute");
 const approvalIndex = process.argv.indexOf("--approved-from");
 const approvedFromRunId = approvalIndex >= 0 ? process.argv[approvalIndex + 1] : null;
-const supported = new Set(["media","experience","recommendations","failed-production-cleanup","processing-gaps","media-storage"]);
+const supported = new Set(["media","experience","recommendations","failed-production-cleanup","processing-gaps","media-storage","knowledge-resolution"]);
 
 if (!supported.has(type)) {
-  process.stderr.write("Usage: node scripts/run-backfill.mjs <media|experience|recommendations|failed-production-cleanup|processing-gaps|media-storage> [--execute] [--approved-from <dry-run-id>]\n");
+  process.stderr.write("Usage: node scripts/run-backfill.mjs <media|experience|recommendations|failed-production-cleanup|processing-gaps|media-storage|knowledge-resolution> [--execute] [--approved-from <dry-run-id>]\n");
   process.exitCode = 2;
 } else {
   const config = loadConfig();
@@ -22,7 +22,8 @@ if (!supported.has(type)) {
         : type === "recommendations" ? repository.runRecommendationReconciliationBackfill(options)
           : type === "failed-production-cleanup" ? repository.runFailedProductionCleanupBackfill(options)
             : type === "processing-gaps" ? repository.runSourceProcessingGapRecovery(options)
-              : repository.runMediaStorageMigrationEstimate(options);
+              : type === "knowledge-resolution" ? repository.runKnowledgeResolutionBackfill(options)
+                : repository.runMediaStorageMigrationEstimate(options);
     process.stdout.write(`${JSON.stringify(result,null,2)}\n`);
   } finally { database.close(); }
 }

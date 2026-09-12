@@ -110,10 +110,15 @@ test('short fragments have an opt-in executable route while full sources keep ex
   assert.equal(sourceProcessingProfile({raw_text:'A video observation',assets:[{kind:'video'}]}).route,'segmented');
   const enqueued=[];
   const pipeline = Object.create(Pipeline.prototype);
-  pipeline.repository={contentConfig:{sourceComplexityRouting:true},getSource:()=>({raw_text:'A short complete travel observation without media.'}),enqueue:(...args)=>enqueued.push(args)};
+  pipeline.repository={contentConfig:{sourceComplexityRouting:true},getSource:()=>({structured:{destination_slug:'test'},raw_text:'A short complete travel observation without media.'}),enqueue:(...args)=>enqueued.push(args)};
   pipeline.logger={info(){}};
   pipeline.enqueueSourceSemanticDownstream('fragment');
-  assert.deepEqual(enqueued,[['analyze_source_family','fragment']]);
+  assert.equal(enqueued.length,2);
+  assert.deepEqual(enqueued.map((entry)=>entry.slice(0,2)),[
+    ['resolve_entities','test'],['analyze_source_family','fragment'],
+  ]);
+  assert.equal(enqueued[0][2].workloadClass,'semantic');
+  assert.equal(enqueued[1][2].workloadClass,'background_enrichment');
 });
 
 test('compatible geography and high model confidence cannot prove an entity identity', () => {

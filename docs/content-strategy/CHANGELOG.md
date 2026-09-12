@@ -1,4 +1,12 @@
-# 内容生产策略演化日志
+# SoloToChina Content Strategy changelog
+
+## 3.3 - 2026-09-12
+
+- Knowledge now uses typed canonicalization before scope, validity-period and independent-source resolution. Ordinary dynamic ambiguity becomes targeted verification; human review remains for safety-critical or otherwise unresolved current, same-scope hard conflicts.
+- Predicate/value mismatches create deterministic local repairs or Claim repair jobs. Equivalent, repaired, scoped, temporal, consensus, verification and human outcomes have durable history.
+- Historical Source recovery starts from an exact dry-run fingerprint and queues the first missing stage. Every child retains the `historical_recovery` priority, execution route and recovery ID, while new interactive captures stay ahead.
+- Experience opens the Entity and Knowledge core path immediately. Family, Blueprint, Diagnostic, Coverage and Opportunity enrichment run in the background; heavy repository work and scheduled backup use child processes.
+- Dirty fact keys drive incremental Coverage Matrix refresh, and Intake uses a compact Claim/Knowledge projection. This strategy maps to App/Extension 2.0.8 and schema 67.
 
 ## 3.1 — 2026-09-12（本地未发布实现）
 

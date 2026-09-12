@@ -6,7 +6,7 @@ const HARD_FACT_PREDICATES = new Set([
 // Startup reconciliation uses it to rebuild destinations with pending reviews,
 // so a deploy can remove newly-recognized false positives without an operator
 // clicking through every old review card.
-export const CLAIM_RESOLUTION_VERSION = "2026-09-12.1";
+export const CLAIM_RESOLUTION_VERSION = "2026-09-12.2";
 
 const SOFT_PREDICATES = new Set([
   "recommended_visit_time", "best_time_to_visit", "good_for", "photography_spot",
@@ -58,7 +58,8 @@ export function structureClaim({ predicate, value, qualifiers = [], sourceQuote 
     ...qualifierValues,
     ...(parenthetical ? parenthetical[2].split(/[,;；，]/u) : []),
   ]);
-  const canonical = canonicalFactSemantics(predicate, rawValue, qualifierValues);
+  const compatibility = predicateValueCompatibility({ predicate, value: rawValue, qualifiers: qualifierValues, sourceQuote });
+  const canonical = canonicalFactSemantics(compatibility.repairedPredicate || predicate, rawValue, qualifierValues);
   const canonicalPredicate = normalizePredicate(canonical.predicate);
   const claimKind = SOFT_PREDICATES.has(normalizedPredicate)
     ? "SOFT_RECOMMENDATION"
@@ -75,10 +76,47 @@ export function structureClaim({ predicate, value, qualifiers = [], sourceQuote 
     polarity: canonical.polarity,
     qualifiers: rationale,
     rationale,
-    scope: inferScope([...qualifierValues, sourceQuote]),
+    scope: inferScope([predicate, rawValue, ...qualifierValues, sourceQuote], normalizedPredicate),
     claim_kind: claimKind,
     cardinality,
+    compatibility,
   };
+}
+
+export function predicateValueCompatibility({ predicate, value, qualifiers = [], sourceQuote = "" } = {}) {
+  const normalizedPredicate = normalizePredicate(predicate);
+  const text = normalizeText([value, ...(qualifiers || []), sourceQuote].join(" "));
+  if (/(?:^|_)(?:opening_hours?|opening_time|operating_hours?)(?:_|$)/iu.test(normalizedPredicate)) {
+    if (canonicalOpeningHours(value, qualifiers)) return { compatible: true, code: null, repairedPredicate: null };
+    if (/^(?:open access|public access|open to (?:the )?public|publicly accessible|开放参观|公众开放)$/iu.test(text)) {
+      return { compatible: false, code: "PREDICATE_VALUE_MISMATCH", repairedPredicate: "access_policy",
+        repair: "opening_hours was reclassified as access_policy from the local Claim evidence." };
+    }
+    return { compatible: false, code: "PREDICATE_VALUE_MISMATCH", repairedPredicate: null,
+      repair: "A local Claim repair is required because the value is not an opening-hours schedule." };
+  }
+  if (/(?:^|_)(?:ticket_price|ticket_price_cny|admission_fee|entry_fee|fare|cost|price)(?:_|$)/iu.test(normalizedPredicate)
+    && !canonicalMoney(value)) {
+    return { compatible: false, code: "PREDICATE_VALUE_MISMATCH", repairedPredicate: null,
+      repair: "A local Claim repair is required because the value is not money, a range, or free admission." };
+  }
+  if (/(?:^|_)(?:reservation_required|booking_required|appointment_required)(?:_|$)/iu.test(normalizedPredicate)) {
+    const parsed = canonicalReservation(predicate, value);
+    if (parsed.value == null) return { compatible: false, code: "PREDICATE_VALUE_MISMATCH", repairedPredicate: null,
+      repair: "A local Claim repair is required because the reservation value is not true, false, or conditional." };
+  }
+  return { compatible: true, code: null, repairedPredicate: null };
+}
+
+export function repairClaimLocally(claim = {}) {
+  const structured = structureClaim({ predicate: claim.predicate, value: claim.value_text ?? claim.value,
+    qualifiers: claim.qualifiers || [], sourceQuote: claim.source_quote || claim.sourceQuote || "" });
+  if (structured.compatibility?.repairedPredicate) return {
+    ...claim, predicate: structured.compatibility.repairedPredicate, original_predicate: claim.predicate,
+    structured_value: structured, repair_code: structured.compatibility.code, repair_scope: structured.scope,
+  };
+  return { ...claim, structured_value: structured, repair_code: structured.compatibility?.code || null,
+    repair_scope: structured.scope };
 }
 
 export function classifyClaimPair(left, right) {
@@ -102,6 +140,10 @@ export function classifyClaimPair(left, right) {
   const typedB = b.structured.typed_value;
   if (sameCanonicalPredicate && typedA != null && typedB != null) {
     if (canonicalTypedEqual(typedA, typedB)) {
+      if (!sameScope) {
+        return result("COMPATIBLE", true,
+          "The canonical values match but apply to distinct scopes, so both scoped observations are retained.", a, b);
+      }
       return result("PARAPHRASE", true,
         "The claims use different wording for the same canonical typed fact.", a, b);
     }
@@ -260,19 +302,33 @@ function inferClaimKind(predicate, value) {
   return "CONTEXT_DEPENDENT";
 }
 
-function inferScope(values) {
-  const text = values.join(" ");
+function inferScope(values, predicate = "") {
+  const text = values.join(" ").replace(/[_-]+/gu," ");
+  const routeScoped = /(?:^|_)(?:route|transport|transit|metro|subway|rail|bus|ferry|train|taxi|directions?|access_route|travel_between)(?:_|$)/iu.test(predicate);
   return {
     time: matching(text, /\b(?:morning|afternoon|evening|night|weekday|weekend|\d{1,2}:\d{2})\b|上午|下午|傍晚|夜间|工作日|周末/giu),
     season: matching(text, /\b(?:spring|summer|autumn|fall|winter)\b|春季|夏季|秋季|冬季/giu),
     visitor_type: matching(text, /\b(?:solo|family|families|children|senior|first.time|photographer)\b|独自|亲子|儿童|老人|首次|摄影/giu),
     ticket_type: matching(text, /\b(?:adult|child|student|senior|standard|discount)\s+(?:ticket|fare)\b|成人票|儿童票|学生票|优惠票/giu),
+    product_or_service: matching(text, /\b(?:attraction|admission|entry|metro|subway|rail transit|bus|ferry|hotel|room|meal|tour)\b|景点|门票|入场|地铁|轨道交通|公交|轮渡|酒店|房间|餐食|旅游团/giu),
+    price_type: matching(text, /\b(?:admission|entry|ticket|transit|metro|subway|fare|service fee|deposit)\b|门票|入场费|交通票价|地铁票价|服务费|押金/giu),
+    admission_scope: matching(text, /\b(?:attraction admission|venue entry|observation deck|exhibition)\b|景点门票|场馆入场|观景台|展览/giu),
+    transport_mode: matching(text, /\b(?:metro|subway|rail transit|light rail|bus|train|ferry|taxi)\b|地铁|轨道交通|轻轨|公交|火车|轮渡|出租车/giu),
+    direction: matching(text, /\b(?:inbound|outbound|northbound|southbound|eastbound|westbound|uphill|downhill)\b|进站|出站|上行|下行|上山|下山/giu),
+    origin: routeScoped ? matching(text, /\bfrom\s+[^,;]+|从[^，；]+/giu) : [],
+    destination: routeScoped ? matching(text, /\bto\s+[^,;]+|到[^，；]+/giu) : [],
+    venue_area: matching(text, /\b(?:main hall|east gate|west gate|north gate|south gate|observation deck|platform)\b|主馆|东门|西门|北门|南门|观景台|站台/giu),
+    access_type: matching(text, /\b(?:public access|open access|ticketed access|staff only|reservation access)\b|公众开放|开放参观|购票入场|仅限员工|预约入场/giu),
+    booking_channel: matching(text, /\b(?:wechat|official account|official site|meituan|ctrip|trip\.com|on[- ]site)\b|微信|公众号|官网|美团|携程|现场/giu),
+    effective_period: matching(text, /\b(?:20\d{2}(?:[-/]\d{1,2}(?:[-/]\d{1,2})?)?|seasonal|summer season|winter season)\b|20\d{2}年(?:\d{1,2}月)?|季节性|暑期|冬季/giu),
     conditions: cleanList(values.filter((item) => /\b(?:if|when|unless|except|during|because)\b|如果|当|除非|期间|因为/iu.test(item))),
   };
 }
 
 function scopesCompatible(a = {}, b = {}) {
-  for (const key of ["time", "season", "visitor_type", "ticket_type"]) {
+  for (const key of ["time", "season", "visitor_type", "ticket_type", "product_or_service", "price_type",
+    "admission_scope", "transport_mode", "direction", "origin", "destination", "venue_area", "access_type",
+    "booking_channel", "effective_period"]) {
     const left = new Set(a[key] || []);
     const right = new Set(b[key] || []);
     if (left.size && right.size && ![...left].some((item) => right.has(item))) return false;
@@ -281,7 +337,9 @@ function scopesCompatible(a = {}, b = {}) {
 }
 
 function mergeScope(a = {}, b = {}) {
-  return Object.fromEntries(["time", "season", "visitor_type", "ticket_type", "conditions"]
+  return Object.fromEntries(["time", "season", "visitor_type", "ticket_type", "product_or_service", "price_type",
+    "admission_scope", "transport_mode", "direction", "origin", "destination", "venue_area", "access_type",
+    "booking_channel", "effective_period", "conditions"]
     .map((key) => [key, cleanList([...(a[key] || []), ...(b[key] || [])])]));
 }
 
@@ -353,7 +411,7 @@ function canonicalPrimaryValue(value, predicate) {
   return value;
 }
 
-function canonicalFactSemantics(predicate, value, qualifiers = []) {
+export function canonicalFactSemantics(predicate, value, qualifiers = []) {
   const normalizedPredicate = normalizeText(predicate);
   const normalizedValue = normalizeText(value);
   const text = `${normalizedPredicate} ${normalizedValue} ${qualifiers.map(normalizeText).join(" ")}`;
@@ -362,26 +420,25 @@ function canonicalFactSemantics(predicate, value, qualifiers = []) {
     if (location) return { predicate: "nearest_metro_exit", value: location, polarity: "positive" };
   }
   if (/\b(?:reservation|booking|appointment)\b|预约/iu.test(text)) {
-    // An explicit negative value wins over an awkward positive predicate such as
-    // “requires reservation = no reservation required”. This keeps model wording
-    // out of the knowledge identity and compares the actual boolean assertion.
-    const explicitlyFalse = /\b(?:false|optional|not required|no reservation required|without reservation)\b|(?:无需预约|无须预约|不需要预约|不用预约|免预约)/iu.test(normalizedValue)
-      || /\b(?:does not require|doesn['’]?t require|not require)\b|(?:无需|无须|不需要|不用|免)/iu.test(normalizedPredicate);
-    const explicitlyTrue = /^(?:true|yes|required|reservation required|advance reservation required|需要预约|须预约|必须预约)$/iu.test(normalizedValue)
-      || /\b(?:requires reservation|reservation is required|advance reservation required)\b|(?:需要预约|须预约|必须预约)/iu.test(normalizedPredicate);
-    return {
-      predicate: "reservation_required",
-      value: explicitlyFalse ? false : explicitlyTrue ? true : null,
-      polarity: explicitlyFalse ? "negative" : explicitlyTrue ? "positive" : "unknown",
-    };
+    const reservation = canonicalReservation(predicate, value);
+    return { predicate: "reservation_required", ...reservation };
   }
-  if (/(?:^|_)(?:ticket_price|ticket_price_cny|admission_fee|entry_fee|fare|cost)(?:_|$)/iu.test(normalizePredicate(predicate))) {
+  if (/(?:^|_)(?:ticket_price|ticket_price_cny|admission_fee|entry_fee|fare|cost|price)(?:_|$)/iu.test(normalizePredicate(predicate))) {
     const money = canonicalMoney(value);
     if (money) return { predicate: "price", value: money, polarity: "positive" };
   }
   if (/(?:^|_)(?:opening_hours?|opening_time|operating_hours?)(?:_|$)/iu.test(normalizePredicate(predicate))) {
+    if (/\b(?:last entry|last admission|final entry)\b|最后入场|停止入场/iu.test(text)) {
+      const time = canonicalClock(value);
+      if (time) return { predicate: "last_entry_time", value: time, polarity: "positive" };
+    }
     const hours = canonicalOpeningHours(value, qualifiers);
     if (hours) return { predicate: "opening_hours", value: hours, polarity: "positive" };
+  }
+  if (normalizePredicate(predicate) === "access_policy") {
+    const access = /\b(?:open access|public access|open to (?:the )?public|publicly accessible)\b|开放参观|公众开放/iu.test(text)
+      ? "public_access" : null;
+    return { predicate: "access_policy", value: access, polarity: "positive" };
   }
   return {
     predicate: normalizePredicate(predicate), value: null,
@@ -394,6 +451,8 @@ function canonicalMoney(value) {
   if (/^(?:free|free admission|no charge|0(?:\s*(?:rmb|cny|yuan))?|免费|免票|零元)$/iu.test(text)) {
     return { amount: 0, currency: "CNY" };
   }
+  const range = /(?:rmb|cny|yuan|元|￥|¥)?\s*(\d+(?:\.\d+)?)\s*(?:-|–|—|to|至)\s*(\d+(?:\.\d+)?)\s*(?:rmb|cny|yuan|元)?/iu.exec(text);
+  if (range) return { minimum: Number(range[1]), maximum: Number(range[2]), currency: "CNY" };
   const amount = /(?:rmb|cny|yuan|元|￥|¥)?\s*(\d+(?:\.\d+)?)\s*(?:rmb|cny|yuan|元)?/iu.exec(text)?.[1];
   return amount == null ? null : { amount: Number(amount), currency: "CNY" };
 }
@@ -403,7 +462,39 @@ function canonicalOpeningHours(value, qualifiers = []) {
   if (/\b(?:24\s*7|24\s*hours?|open\s*24\s*hours?|all\s*day)\b|全天|二十四小时/iu.test(text)) return "24/7";
   const times = [...String(value || "").matchAll(/\b(\d{1,2}):(\d{2})\b/gu)]
     .map((match) => `${String(Number(match[1])).padStart(2, "0")}:${match[2]}`);
-  return times.length ? times.join("-") : null;
+  const days = /\bweekdays?\b|周一至周五|工作日/iu.test(text) ? ["mon", "tue", "wed", "thu", "fri"]
+    : /\bweekends?\b|周末/iu.test(text) ? ["sat", "sun"] : [];
+  const closedDays = [];
+  const dayNames = [[/\bmonday\b|周一/iu,"mon"],[/\btuesday\b|周二/iu,"tue"],[/\bwednesday\b|周三/iu,"wed"],
+    [/\bthursday\b|周四/iu,"thu"],[/\bfriday\b|周五/iu,"fri"],[/\bsaturday\b|周六/iu,"sat"],[/\bsunday\b|周日|周天/iu,"sun"]];
+  if (/\bclosed\b|闭馆|休息/iu.test(text)) for (const [pattern, day] of dayNames) if (pattern.test(text)) closedDays.push(day);
+  if (times.length === 1 && !days.length && !closedDays.length) return times[0];
+  if (!times.length && !closedDays.length && !days.length) return null;
+  return { mode: "schedule", intervals: times.length >= 2 ? [{ days, open: times[0], close: times[1] }] : [],
+    closedDays, lastEntry: null, validFrom: extractIsoDate(text, /(?:from|effective from|自)\s*/iu),
+    validTo: extractIsoDate(text, /(?:until|through|to|至)\s*/iu), seasonal: /\bseasonal\b|季节性|暑期|冬季/iu.test(text) };
+}
+
+function canonicalClock(value) {
+  const match = /\b(\d{1,2}):(\d{2})\b/u.exec(String(value || ""));
+  return match ? `${String(Number(match[1])).padStart(2, "0")}:${match[2]}` : null;
+}
+
+function extractIsoDate(text, prefix) {
+  const match = new RegExp(`${prefix.source}(20\\d{2})[\\s/-]*(\\d{1,2})[\\s/-]*(\\d{1,2})`, "iu").exec(text);
+  return match ? `${match[1]}-${String(Number(match[2])).padStart(2,"0")}-${String(Number(match[3])).padStart(2,"0")}` : null;
+}
+
+function canonicalReservation(predicate, value) {
+  const normalizedPredicate = normalizeText(predicate);
+  const normalizedValue = normalizeText(value);
+  const explicitlyFalse = /\b(?:false|optional|not required|no reservation required|without reservation)\b|(?:无需预约|无须预约|不需要预约|不用预约|免预约)/iu.test(normalizedValue)
+    || /\b(?:does not require|doesn['’]?t require|not require)\b|(?:无需|无须|不需要|不用|免)/iu.test(normalizedPredicate);
+  const explicitlyTrue = /^(?:true|yes|required|reservation required|advance reservation required|需要预约|须预约|必须预约)$/iu.test(normalizedValue)
+    || /\b(?:requires reservation|reservation is required|advance reservation required)\b|(?:需要预约|须预约|必须预约)/iu.test(normalizedPredicate);
+  const conditional = /\b(?:conditional|weekends? only|peak days? only|if|when)\b|视情况|周末|高峰期|如遇/iu.test(normalizedValue);
+  return { value: explicitlyFalse ? false : explicitlyTrue ? true : conditional ? "conditional" : null,
+    polarity: explicitlyFalse ? "negative" : explicitlyTrue || conditional ? "positive" : "unknown" };
 }
 
 function normalizeText(value) {
@@ -473,8 +564,14 @@ function semanticNegationCovered(source, normalizedClaim, claim) {
   return false;
 }
 
+export function stableCanonicalSerialize(value) {
+  if (Array.isArray(value)) return `[${value.map(stableCanonicalSerialize).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableCanonicalSerialize(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
 function canonicalTypedEqual(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return stableCanonicalSerialize(left) === stableCanonicalSerialize(right);
 }
 
 function canonicalMetroExit(value) {
@@ -529,6 +626,10 @@ function hasNegation(value) {
   const text = String(value || "").replace(/\bno\s*[.．#]?\s*\d+/giu, "numbered-place");
   return NEGATION_PATTERN.test(text);
 }
-function matching(text, pattern) { return cleanList(String(text || "").match(pattern) || []).map(normalizeText); }
+function matching(text, pattern) {
+  return cleanList(String(text || "").match(pattern) || []).map(normalizeText).map((value) => ({
+    subway: "metro", "rail transit": "metro", "light rail": "metro", 地铁: "metro", 轨道交通: "metro", 轻轨: "metro",
+  })[value] || value);
+}
 function clean(value) { return String(value || "").replace(/\s+/g, " ").trim(); }
 function cleanList(values) { return [...new Set((values || []).map(clean).filter(Boolean))].slice(0, 24); }

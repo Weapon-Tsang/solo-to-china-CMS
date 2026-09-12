@@ -23,6 +23,44 @@ export function isAiJobType(type) {
   return AI_JOB_TYPES.has(String(type || ""));
 }
 
+export const WORKLOAD_LANES = Object.freeze({
+  interactive: { rank: 0, concurrency: 2, requestSpacingMs: 1_000, backoffMultiplier: 1 },
+  normal_ingest: { rank: 1, concurrency: 2, requestSpacingMs: 1_000, backoffMultiplier: 1 },
+  semantic: { rank: 2, concurrency: 1, requestSpacingMs: 1_500, backoffMultiplier: 1.5 },
+  background_enrichment: { rank: 3, concurrency: 1, requestSpacingMs: 2_000, backoffMultiplier: 2 },
+  historical_recovery: { rank: 4, concurrency: 1, requestSpacingMs: 3_000, backoffMultiplier: 3 },
+  maintenance: { rank: 5, concurrency: 1, requestSpacingMs: 5_000, backoffMultiplier: 4 },
+});
+
+export function workloadClassForJob(type, requested = "") {
+  if (WORKLOAD_LANES[requested]) return requested;
+  if (["extract_source_experience", "resolve_entities", "rebuild_knowledge"].includes(type)) return "semantic";
+  if (["analyze_source_family", "analyze_source_blueprint", "analyze_source_diagnostic", "analyze_intake",
+    "rebuild_editorial", "rebuild_topic_clusters", "build_coverage_matrix", "rebuild_content_opportunities",
+    "reconcile_approved_opportunities"].includes(type)) return "background_enrichment";
+  if (["database_backup", "job_history_cleanup"].includes(type)) return "maintenance";
+  return "normal_ingest";
+}
+
+export function inheritJobContext(parent = {}, overrides = {}) {
+  const historical = parent.workload_class === "historical_recovery";
+  const workloadClass = historical ? "historical_recovery"
+    : workloadClassForJob(overrides.type || "", overrides.workloadClass || parent.workload_class);
+  return {
+    priority: Number(historical ? parent.priority ?? 70 : overrides.priority ?? parent.priority ?? 50),
+    executionRoute: historical ? parent.execution_route || "auto" : overrides.executionRoute || parent.execution_route || "auto",
+    workloadClass,
+    recoveryRunId: overrides.recoveryRunId ?? parent.recovery_run_id ?? null,
+    interactive: Boolean(overrides.interactive ?? parent.interactive ?? workloadClass === "interactive"),
+    parentJobId: overrides.parentJobId ?? parent.id ?? null,
+  };
+}
+
+export function laneBackoffMs(workloadClass, baseMs) {
+  const lane = WORKLOAD_LANES[workloadClass] || WORKLOAD_LANES.normal_ingest;
+  return Math.max(0, Math.round(Number(baseMs || 0) * lane.backoffMultiplier));
+}
+
 export function isProviderPressure(error) {
   const status = Number(error?.status || 0);
   const message = String(error?.message || "");

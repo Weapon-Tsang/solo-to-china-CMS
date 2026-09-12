@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.8 - Unreleased
+
+- Add typed, scope-aware and temporal Knowledge resolution with predicate/value repair, independent-source weighted consensus, targeted verification and persisted automatic-decision history. Human review remains for safety-critical or otherwise unresolved same-scope current contradictions.
+- Replace silent historical Source gaps with a complete processing-gap inventory, exact missing-stage recovery plans, idempotent legacy manifests and inherited `historical_recovery` job context. New interactive captures remain ahead of recovery work, including one-paragraph Sources with 19 or 27 images.
+- Split core semantic processing from background enrichment, add guarded fragment routing, compact intake projections, incremental Coverage Matrix refresh and child-process isolation for Knowledge, coverage and scheduled backup work.
+- Add schema 67, Content Strategy 3.3, Knowledge status/history/verification APIs, admin summary counters, dry-run-only Knowledge recomputation, deployment rehearsal and performance benchmarks.
+
 ## 2.0.7 - Unreleased
 
 - Remove the estimated-call manual-start gate: normal, heavy and oversized Sources enter the durable queue automatically, while only explicit technical hard limits block processing.

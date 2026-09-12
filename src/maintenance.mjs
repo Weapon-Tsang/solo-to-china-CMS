@@ -1,4 +1,8 @@
 import { createBackup } from "./backup.mjs";
+import { fileURLToPath } from "node:url";
+import { runNodeJsonProcess } from "./process-runner.mjs";
+
+const BACKUP_SCRIPT=fileURLToPath(new URL('./backup.mjs',import.meta.url));
 
 const TASKS = {
   knowledge: "knowledge_reconciliation",
@@ -12,7 +16,8 @@ const TASKS = {
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class MaintenanceScheduler {
-  constructor(repository, pipeline, config, wordpressConfig = {}, { notifier = null, logger = silentLogger, searchConsoleConfig = {} } = {}) {
+  constructor(repository, pipeline, config, wordpressConfig = {}, { notifier = null, logger = silentLogger, searchConsoleConfig = {},
+    processRunner=runNodeJsonProcess } = {}) {
     this.repository = repository;
     this.pipeline = pipeline;
     this.config = config;
@@ -22,6 +27,7 @@ export class MaintenanceScheduler {
     this.searchConsoleEnabled = Boolean(searchConsoleConfig.siteUrl && searchConsoleConfig.clientEmail && searchConsoleConfig.privateKey);
     this.notifier = notifier;
     this.logger = logger;
+    this.processRunner=processRunner;
     this.timer = null;
     this.working = false;
   }
@@ -72,18 +78,18 @@ export class MaintenanceScheduler {
       await this.runTask(results, TASKS.knowledge, this.config.knowledgeReconcileHours, force, () => ({
         itemCount: this.repository.enqueueKnowledgeReconciliation(),
       }));
-      await this.runTask(results, TASKS.backup, this.config.autoBackupHours, force, () => {
-        const backup = createBackup({
-          databasePath: this.config.databasePath,
-          backupDir: this.config.backupDir,
-          sourceUploadsDir: this.config.sourceUploadsDir,
-          generatedMediaDir: this.config.generatedMediaDir,
-          retention: this.config.backupRetention,
-          offsiteLocation: this.config.backupOffsiteLocation,
-          offsiteRetentionDays: this.config.backupOffsiteRetentionDays,
-          codeRevision: this.config.codeRevision,
-          reason: "scheduled",
-        });
+      await this.runTask(results, TASKS.backup, this.config.autoBackupHours, force, async () => {
+        const backup=this.config.processIsolationEnabled
+          ? await this.processRunner(BACKUP_SCRIPT,[this.config.databasePath,this.config.backupDir],{timeoutMs:6*60*60_000,env:{
+              SOURCE_UPLOADS_DIR:this.config.sourceUploadsDir,GENERATED_MEDIA_DIR:this.config.generatedMediaDir,
+              BACKUP_RETENTION:String(this.config.backupRetention),BACKUP_OFFSITE_LOCATION:this.config.backupOffsiteLocation||"",
+              BACKUP_OFFSITE_RETENTION_DAYS:String(this.config.backupOffsiteRetentionDays||0),
+              APP_REVISION:this.config.codeRevision||"",BACKUP_REASON:"scheduled",
+            }})
+          : createBackup({databasePath:this.config.databasePath,backupDir:this.config.backupDir,
+              sourceUploadsDir:this.config.sourceUploadsDir,generatedMediaDir:this.config.generatedMediaDir,
+              retention:this.config.backupRetention,offsiteLocation:this.config.backupOffsiteLocation,
+              offsiteRetentionDays:this.config.backupOffsiteRetentionDays,codeRevision:this.config.codeRevision,reason:"scheduled"});
         return { itemCount: 1, metadata: { backup: backup.backup, bytes: backup.bytes, sha256: backup.sha256,
           schemaVersion: backup.schemaVersion, fileCount: backup.fileCount } };
       });

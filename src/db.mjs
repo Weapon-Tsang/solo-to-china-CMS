@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 66;
+export const SCHEMA_VERSION = 67;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -87,6 +87,101 @@ function migrate(db) {
   if (current < 64) migrationSixtyFour(db);
   if (current < 65) migrationSixtyFive(db);
   if (current < 66) migrationSixtySix(db);
+  if (current < 67) migrationSixtySeven(db);
+}
+
+function migrationSixtySeven(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE jobs ADD COLUMN workload_class TEXT NOT NULL DEFAULT 'normal_ingest';
+    ALTER TABLE jobs ADD COLUMN parent_job_id TEXT;
+    ALTER TABLE jobs ADD COLUMN recovery_run_id TEXT;
+    ALTER TABLE jobs ADD COLUMN interactive INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX idx_jobs_lane_ready ON jobs(status,workload_class,priority,available_at,created_at);
+
+    CREATE TABLE knowledge_resolution_events (
+      id TEXT PRIMARY KEY,
+      destination_slug TEXT NOT NULL,
+      normalized_key TEXT NOT NULL,
+      claim_a_id TEXT REFERENCES claims(id) ON DELETE SET NULL,
+      claim_b_id TEXT REFERENCES claims(id) ON DELETE SET NULL,
+      resolution_state TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      engine_version TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(destination_slug,normalized_key,claim_a_id,claim_b_id,resolution_state,engine_version)
+    );
+    CREATE INDEX idx_knowledge_resolution_history ON knowledge_resolution_events(destination_slug,created_at DESC);
+
+    CREATE TABLE knowledge_verification_jobs (
+      id TEXT PRIMARY KEY,
+      destination_slug TEXT NOT NULL,
+      normalized_key TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      source_priority_json TEXT NOT NULL DEFAULT '[]',
+      evidence_json TEXT NOT NULL DEFAULT '[]',
+      result_json TEXT NOT NULL DEFAULT '{}',
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      UNIQUE(destination_slug,normalized_key)
+    );
+    CREATE INDEX idx_knowledge_verification_status ON knowledge_verification_jobs(status,updated_at DESC);
+
+    CREATE TABLE claim_repair_jobs (
+      id TEXT PRIMARY KEY,
+      claim_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'queued',
+      repair_type TEXT NOT NULL,
+      input_json TEXT NOT NULL,
+      result_json TEXT NOT NULL DEFAULT '{}',
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      UNIQUE(claim_id,repair_type)
+    );
+    CREATE INDEX idx_claim_repair_status ON claim_repair_jobs(status,updated_at DESC);
+
+    CREATE TABLE coverage_dirty_scopes (
+      destination_slug TEXT NOT NULL,
+      topic_key TEXT NOT NULL DEFAULT '',
+      changed_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'dirty',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(destination_slug,topic_key)
+    );
+
+    CREATE TABLE source_recovery_manifests (
+      id TEXT PRIMARY KEY,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL,
+      report_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      executed_at TEXT
+    );
+
+    ALTER TABLE system_backfill_runs RENAME TO system_backfill_runs_v66;
+    CREATE TABLE system_backfill_runs (
+      id TEXT PRIMARY KEY,
+      backfill_type TEXT NOT NULL CHECK (backfill_type IN ('experience','recommendation_reconciliation','failed_production_cleanup','knowledge_resolution')),
+      status TEXT NOT NULL CHECK (status IN ('dry_run','queued','completed','failed')),
+      dry_run INTEGER NOT NULL DEFAULT 1 CHECK (dry_run IN (0,1)),
+      approved_from_run_id TEXT REFERENCES system_backfill_runs(id) ON DELETE SET NULL,
+      report_json TEXT NOT NULL DEFAULT '{}',
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO system_backfill_runs SELECT * FROM system_backfill_runs_v66;
+    DROP TABLE system_backfill_runs_v66;
+    CREATE INDEX idx_system_backfill_runs_type ON system_backfill_runs(backfill_type,created_at DESC);
+
+    INSERT INTO schema_migrations(version,applied_at) VALUES (67,datetime('now'));
+  `));
 }
 
 function migrationSixtySix(db) {

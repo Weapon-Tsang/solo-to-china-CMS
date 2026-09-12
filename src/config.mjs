@@ -128,6 +128,7 @@ export function loadConfig(env = process.env) {
       chunkBytes: integer(env.CAPTURE_MEDIA_CHUNK_BYTES, 4 * 1024 * 1024),
     },
     extraction: {
+      processIsolationEnabled: boolean(env.PROCESS_ISOLATION_ENABLED,!(env.NODE_TEST_CONTEXT||process.env.NODE_TEST_CONTEXT)),
       sourceComplexityRouting: boolean(env.SOURCE_COMPLEXITY_ROUTING, false),
       concurrencyMode: choice(env.AI_CONCURRENCY_MODE || env.EXTRACT_CONCURRENCY_MODE, ["auto", "fixed"], "auto"),
       concurrencyInitial: integer(env.AI_CONCURRENCY_INITIAL || env.EXTRACT_CONCURRENCY_INITIAL, 2),
@@ -227,6 +228,7 @@ export function loadConfig(env = process.env) {
       timeoutMs: integer(env.EXCEPTION_WEBHOOK_TIMEOUT_MS, 10_000),
     },
     maintenance: {
+      processIsolationEnabled: boolean(env.PROCESS_ISOLATION_ENABLED,!(env.NODE_TEST_CONTEXT||process.env.NODE_TEST_CONTEXT)),
       enabled: boolean(env.MAINTENANCE_ENABLED, true),
       intervalMinutes: integer(env.MAINTENANCE_INTERVAL_MINUTES, 15),
       knowledgeReconcileHours: integer(env.KNOWLEDGE_RECONCILE_HOURS, 24),
