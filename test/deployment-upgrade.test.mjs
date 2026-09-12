@@ -48,7 +48,7 @@ test('deployment probe rehearses schema 59 to 65, preserves cited IDs and rolls 
   assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 59);
   assert.equal(db.prepare('SELECT asset_id FROM evidence_spans').get().asset_id, 'asset'); db.close();
   assert.equal(fs.readFileSync(f.original, 'utf8'), 'original bytes');
-  assert.ok(fs.readdirSync(f.work).some(name => name.startsWith('failed-database-')));
+  assert.ok(fs.readdirSync(f.root).some(name => name.startsWith('failed-database-')));
 });
 test('deployment probe blocks changed content and refuses to restore a corrupted snapshot', async t => {
   const f = await fixture(t);

@@ -45,3 +45,9 @@ jobs:
         env:
           FRONTEND_REPOSITORY_PATH: ${{ github.workspace }}/frontend
         run: npm run release:check
+
+      - name: Build and test the actual runtime image
+        working-directory: cms
+        run: |
+          docker build -t stc-release-smoke .
+          bash deployment/gce/test-runtime-image.sh stc-release-smoke

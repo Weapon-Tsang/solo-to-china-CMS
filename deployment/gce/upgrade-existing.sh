@@ -64,10 +64,12 @@ PHASE=legacy-copy
 offline() {
   local image="$1" mode="$2"
   PHASE="$mode"
-  docker run --rm --network none --env "OLD_IMAGE=$OLD_IMAGE" \
+  if ! docker run --rm --network none --env "OLD_IMAGE=$OLD_IMAGE" \
     --volume solo_to_china_data:/var/lib/solo-to-china \
     --volume "$RELEASE:/ops" --volume "$RELEASE/legacy-app-data:/app/data:ro" \
-    "$image" node /ops/verify-upgrade.mjs "$mode" >"$RELEASE/$mode.log" 2>&1
+    "$image" node /ops/verify-upgrade.mjs "$mode" >"$RELEASE/$mode.log" 2>&1; then
+    return 1
+  fi
   # Only aggregate probe records enter serial logs. No source content or secrets.
   while IFS= read -r line; do if [[ "$line" == '{"stage":'* ]]; then log "$line"; fi; done <"$RELEASE/$mode.log"
   return 0

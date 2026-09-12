@@ -76,7 +76,8 @@ if (mode === 'backup') {
   const backup = JSON.parse(fs.readFileSync(`${work}/backup.json`, 'utf8'));
   verifyBackup(backup.backupPath);
   // Preserve the failed attempt, including its journal, before restoring the paired old DB.
-  const retained = `${work}/failed-database-${Date.now()}`;
+  // Keep the rename inside the data mount: /ops may be a different Docker mount.
+  const retained = `${root}/failed-database-${Date.now()}`;
   fs.mkdirSync(retained);
   for (const suffix of ['', '-wal', '-shm']) {
     const filename = `${root}/solo-to-china.sqlite${suffix}`;

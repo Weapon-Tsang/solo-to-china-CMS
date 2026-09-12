@@ -14,6 +14,8 @@ WORKDIR /app
 
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/src ./src
+# Server media validation and upload scheduling share these browser-safe modules.
+COPY --from=build /app/extension ./extension
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/config ./config
 COPY --from=build /app/docs ./docs
