@@ -3415,8 +3415,18 @@ export class Repository {
           ? sourceFacts : scopeFactsForOpportunity(completedFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
       const familyCount = this.independentSourceFamilyCountForFacts(facts);
       const matrix = evaluateCoverage({ topicKey: opportunity.topic_key, contentType: opportunity.content_type, facts, sourceFamilyCount: familyCount, publicationMode });
+      const previousProposal = previousCoverage.proposal && typeof previousCoverage.proposal === "object"
+        ? previousCoverage.proposal : {};
+      const approvedProposal = previousCoverage.approval?.proposal && typeof previousCoverage.approval.proposal === "object"
+        ? previousCoverage.approval.proposal : {};
+      const proposal = {
+        ...previousProposal,
+        readerPromise: String(previousProposal.readerPromise || approvedProposal.readerPromise
+          || previousCoverage.editorialBrief || opportunity.title || "").trim(),
+      };
       const coverage = { ...previousCoverage, ...matrix, publicationMode, selectedFactKeys: facts.map((fact) => fact.normalized_key),
-        selectedSourceIds: [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))] };
+        selectedSourceIds: [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))],
+        proposal };
       this.saveCoverageMatrix(matrix, destinationSlug);
       const current = opportunity.status;
       const next = current === "approved_waiting_for_evidence" && matrix.readiness.ready ? "approved_ready" : current;

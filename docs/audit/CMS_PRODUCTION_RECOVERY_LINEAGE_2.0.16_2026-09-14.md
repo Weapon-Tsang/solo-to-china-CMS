@@ -28,6 +28,7 @@ The release has no database migration. Deployment and startup must not enqueue t
 - A persisted Brief proves `plan_content` completed. A completed QA report proves `review_draft` ran, whether it passed or failed. Blocking content issues recover through `revise_draft`; page-only issues recover through `compose_frontend_page`; media-only blockers remain manual.
 - The current running review Job is excluded from only its own automatic-repair guard. Unrelated active Jobs still prevent duplicate repair enqueue.
 - Failures for disabled or removed legacy stages move to history. Recovery begins at the first missing stage in the current registry.
+- Deterministic Coverage Matrix reconciliation restores a missing top-level `proposal.readerPromise` from the frozen approved proposal, falling back to the existing title only for an unfrozen recommendation. This satisfies the enforced opportunity audit without calling a model or changing an approved scope.
 - `production_state` is version 1.4. The UI renders the backend action and corrected-scope state; it does not infer this condition from legacy status fields.
 
 ## Production-copy replay
@@ -53,3 +54,5 @@ Targeted production-state and recovery tests cover canonical owner resolution, d
 The complete local suite passed 556/556 tests. `npm run check` passed the Vite production build, syntax checks and all seven service-boundary checks. The consolidated `npm run release:check` gate passed 50 mandatory checks with zero failures, five explicit warnings and five external/not-tested checks. It covered the full suite, clean schema 1→69 migration, production build, fixed-SHA Frontend Contract, backup/restore drill and isolated API/UI smoke. Real provider generation is intentionally not part of this release verification because the repair changes recovery lineage and state projection, not the 2.0.15 provider transport implementation.
 
 Production rollout evidence is appended after execution.
+
+The first authorized rollout attempt stopped before new-code exposure because the enforced Opportunity audit found eight legacy actionable rows with no top-level `proposal.readerPromise`. The helper automatically restored the verified 2.0.15 database and restarted the previous container. This was a safe deployment-gate rejection, not an application or migration failure. The deterministic invariant repair above was added and must pass the same gate before a new immutable revision is attempted; the failed database copy remains temporary rollback evidence until the successful rollout cleanup.

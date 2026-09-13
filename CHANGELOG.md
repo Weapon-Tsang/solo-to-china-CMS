@@ -7,6 +7,7 @@
 - Treat a completed failing QA report as a completed `review_draft` stage and recover content blockers through `revise_draft`. The running review Job is excluded from its own active-job guard so bounded automatic repair can actually enqueue.
 - Make destination correction a production-scope revision. Jobs and Editorial Assembly artifacts from the old scope become non-blocking history; the corrected row waits for explicit “确认更正范围并继续”, then enqueues a new Opportunity-owned `assemble_editorial` Job without deleting evidence or automatically retrying other records.
 - Upgrade `production_state` to 1.4, expose the existing `suppression_reason` to the state builder, and translate persisted quality issue codes into their specific Chinese cause rather than the generic “无法确定原因”.
+- Make deterministic Coverage Matrix reconciliation restore an explicitly stored `proposal.readerPromise` from the frozen approval or title when legacy rows omit it. This closes the existing enforced deployment-audit violation without a model call or scope invention.
 - Keep the Frontend Contract and schema migration at their existing versions. This release introduces no migration-time enqueue, model request, production-record deletion or bulk retry.
 
 ## 2.0.15 - 2026-09-14
