@@ -353,7 +353,11 @@ export class Pipeline {
       heartbeatTimer.unref();
       const telemetryContext = { runId: job.id, entityId: job.entity_id,
         queueWaitMs:Math.max(0,startedAt-Date.parse(job.created_at||job.available_at||new Date(startedAt).toISOString())),
-        executionRoute:job.execution_route||"auto" };
+        executionRoute:job.execution_route||"auto",
+        // Model-call receipts survive durable Job reclaims. Resume the last
+        // accepted Vertex structured-output transport instead of repeating a
+        // known-invalid native Schema request on every worker attempt.
+        structuredSchemaMode:this.repository.structuredSchemaModeForJob?.(job.id) || null };
       const artifactConfigHash = stageConfiguration(this, job.type);
       pipelineArtifact = this.repository.preparePipelineArtifact?.(job, artifactConfigHash) || null;
       const modelStep = async (key, input, operation, configurationStage = job.type) => {

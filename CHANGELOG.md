@@ -1,6 +1,15 @@
 # Changelog
 
-## 2.0.14 - Unreleased
+## 2.0.15 - Unreleased
+
+- Bound the first model-backed `assemble_editorial` input independently of planning: at most 48 ranked facts, 96 evidence snippets, 16 Experience blocks and 128 KiB/~32k estimated tokens are sent to Vertex. The complete Source, Claim, Knowledge, Evidence and Experience stores remain unchanged.
+- Persist Vertex structured-output transport fallback in existing model-call receipts. A durable Job reclaimed after JSON Schema/OpenAPI rejection resumes the next compatible transport instead of restarting the known-invalid request sequence; local JSON Schema validation remains authoritative.
+- Make provider quota/backoff retries respect each Job's `max_attempts`. Transactionally finalize legacy exhausted cooldown rows as failed before claiming work, while preserving the Job and its error for audited stage-targeted recovery.
+- Upgrade `production_state` to 1.3 with explicit provider cooldown/retry metadata, remaining automatic attempts and a distinct exhausted state. Operator messages now distinguish input overflow, structured-interface rejection and Vertex quota exhaustion.
+- Add production-sized input, cross-attempt Schema fallback, 429 retry-budget and cooldown/exhaustion state regression tests. Schema remains 69; no migration, automatic production enqueue or model call is introduced.
+- This release is implemented and verified locally only. Production remains on 2.0.14 until separately authorized deployment.
+
+## 2.0.14 - 2026-09-13
 
 - Recover legacy/downstream failures from the first missing prerequisite under the current pipeline contract. `production_state` 1.2 separates the non-blocking historical failure from the active interrupted state, and both UI and recovery execution use the same server-resolved target.
 - Add a third, prompt-enforced JSON transport when Vertex rejects both native JSON Schema and OpenAPI Schema requests with HTTP 400. Provider transport fallbacks no longer consume structured-output repair attempts; every returned payload still passes the original local JSON Schema validator.

@@ -1,4 +1,12 @@
-# 2.0.14 production error repair handoff
+# 2.0.15 Vertex production recovery handoff (local, unreleased)
+
+App/Extension version `2.0.15`, schema migration `69`, and Content Strategy `3.3` are implemented in source with `production_state` `1.3`. Production remains on the deployed 2.0.14 revision and image below; this repair has not been committed, pushed or deployed. The implementation and verification record is `audit/CMS_VERTEX_PRODUCTION_RECOVERY_2.0.15_2026-09-14.md`.
+
+The repair closes four coupled production gaps: Editorial Assembly is bounded before its first model request; Vertex schema-transport fallback resumes from durable model-call receipts; provider/quota failures cannot exceed the Job retry budget; and `production_state.retry_state` distinguishes cooldown from exhausted automatic retry. Existing over-budget queued cooldowns are deterministically marked failed by `claimJob` without a model call, then remain available for explicit stage-targeted recovery. No migration or production-data reconciliation is required.
+
+Local verification passes all 551 tests, `npm run check`, the production build, service-boundary checks and the consolidated offline release gate (50 mandatory checks, zero failures, five warnings and five explicitly external/not-tested checks). The gate made no paid model, production WordPress, Search Console or production-database request. A first gate run caught an unrelated Favorites worker ordering flake; its isolated rerun and the complete clean gate rerun passed.
+
+## 2.0.14 deployed baseline
 
 App/Extension version `2.0.14`, schema migration `69`, and Content Strategy `3.3` are deployed in production; `production_state` is version `1.2`. The runtime revision is `9341a30ea07ac16fa2803a8aed5f27c776106c17` at immutable image digest `sha256:05db2059e2212bc75ffec8806b3dc651c98d20c53ae598b5ce7ecb50969b2c9c`. The read-only follow-up audit, implementation and production rollout evidence are in `audit/CMS_PRODUCTION_ERROR_REPAIR_2.0.14_2026-09-13.md`.
 

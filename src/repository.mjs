@@ -1955,6 +1955,18 @@ export class Repository {
           heartbeat_at=NULL, available_at=?, next_eligible_at=?, updated_at=?
         WHERE status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
       `).run(timestamp, timestamp, timestamp, timestamp);
+      // A provider backoff is still an attempt. Older behavior allowed 429s to
+      // bypass max_attempts indefinitely, leaving production rows oscillating
+      // between queued/running forever. Finalize already-exhausted cooldowns
+      // transactionally before selecting more work; the failed Job remains an
+      // auditable, manually recoverable production attempt.
+      this.db.prepare(`
+        UPDATE jobs SET status='failed', completed_at=COALESCE(completed_at,?), duration_ms=CASE
+            WHEN started_at IS NULL THEN duration_ms
+            ELSE MAX(0,CAST((julianday(?) - julianday(started_at))*86400000 AS INTEGER)) END,
+          next_eligible_at=NULL, locked_at=NULL, locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
+        WHERE status='queued' AND next_eligible_at IS NOT NULL AND attempts>=max_attempts
+      `).run(timestamp, timestamp, timestamp);
       const job = this.db.prepare(`
         SELECT * FROM jobs
         WHERE status = 'queued' AND available_at <= ? AND COALESCE(next_eligible_at,available_at)<=?
@@ -2054,7 +2066,7 @@ export class Repository {
 
   failJob(job, error) {
     const providerPressure = isProviderPressure(error);
-    const retry = error?.retryable !== false && (providerPressure || job.attempts < job.max_attempts);
+    const retry = error?.retryable !== false && job.attempts < job.max_attempts;
     if (providerPressure) {
       this.providerPressureStreak += 1;
       this.providerSuccessStreak = 0;
@@ -4750,16 +4762,17 @@ export class Repository {
     const goldenArticles = this.db.prepare(`SELECT ga.id,ga.draft_id,ga.principles_json,ga.title
       FROM golden_articles ga WHERE ga.active=1 ORDER BY ga.created_at DESC LIMIT 10`).all()
       .map((row) => ({ ...row, principles: json(row.principles_json, []) }));
-    return {
+    return boundedEditorialAssemblyPackage({
       ...topic,
       available_experiences: experiences,
       source_families: this.db.prepare(`SELECT sfm.source_id,sfm.family_id,sfm.relation_type,sfm.overlap_score
-        FROM source_family_memberships sfm WHERE sfm.source_id IN (${[...sourceIds].map(() => "?").join(",") || "NULL"})`)
+        FROM source_family_memberships sfm WHERE sfm.source_id IN (${[...sourceIds].map(() => "?").join(",") || "NULL"})
+        ORDER BY sfm.source_id,sfm.family_id,sfm.relation_type`)
         .all(...sourceIds),
       failure_lessons: failureLessons,
       editorial_lessons: editorialLessons,
       golden_articles: goldenArticles,
-    };
+    });
   }
 
   saveEditorialAssembly(candidateId, output, model = null, packageValue = null, { opportunityId = null } = {}) {
@@ -7429,6 +7442,21 @@ export class Repository {
       }));
   }
 
+  structuredSchemaModeForJob(jobId) {
+    if (!jobId) return null;
+    const rows = this.db.prepare(`SELECT attempt_number,retry_reason FROM model_call_metrics
+      WHERE run_id=? AND provider='vertex' AND error_code='SCHEMA_MODE_UNSUPPORTED'
+      ORDER BY created_at,id`).all(jobId);
+    let mode = null;
+    for (const row of rows) {
+      const transition = String(row.retry_reason || "").match(/->(json_schema|openapi|prompt_only)$/);
+      if (transition) mode = transition[1];
+      else if (Number(row.attempt_number || 0) >= 2) mode = "prompt_only";
+      else if (!mode) mode = "openapi";
+    }
+    return mode;
+  }
+
   modelRuntimeReport({ runId = null, since = null, until = null } = {}) {
     const clauses = [];
     const values = [];
@@ -9291,6 +9319,104 @@ function extractionInputManifest(segment, extraction) {
         capabilities: { text: true, image: false, video: false, batch: false },
         assets: [],
       });
+}
+
+export const EDITORIAL_ASSEMBLY_INPUT_BUDGET = Object.freeze({
+  maxFacts: 48,
+  maxEvidenceSnippets: 96,
+  maxExperiences: 16,
+  maxSourceFamilies: 48,
+  maxFailureLessons: 12,
+  maxEditorialLessons: 12,
+  maxGoldenArticles: 6,
+  maxInputBytes: 128 * 1024,
+  maxEstimatedTokens: 32_000,
+});
+
+// Editorial Assembly is the first model-backed production stage. It must be
+// bounded independently of plan_content because no frozen assembly exists yet.
+// The selection is deterministic and keeps high-materiality facts plus their
+// dates, exceptions, conflicts and strongest evidence; it never mutates Source,
+// Knowledge, Claims, Evidence or Experience records.
+export function boundedEditorialAssemblyPackage(input, budget = EDITORIAL_ASSEMBLY_INPUT_BUDGET) {
+  if (!input) return null;
+  const allFacts = uniqueByKey(input.facts || [], (fact) => fact.normalized_key || sha256(JSON.stringify(fact)));
+  const promiseTokens = topicTokens(JSON.stringify(input.approved_proposal || {}));
+  const ranked = allFacts.map((fact) => ({ fact, score: planningFactScore(fact, promiseTokens) }))
+    .sort((left,right) => right.score-left.score || String(left.fact.normalized_key || "").localeCompare(String(right.fact.normalized_key || "")));
+  let snippetCount = 0;
+  const facts = ranked.slice(0,Math.max(1,Number(budget.maxFacts || 48))).map(({fact}) => {
+    const allowed = Math.max(0,Math.min(3,Number(budget.maxEvidenceSnippets || 96)-snippetCount));
+    const evidence = (fact.evidence || []).slice().sort((a,b) => Number(b.confidence || 0)-Number(a.confidence || 0)
+      || String(a.source_id || "").localeCompare(String(b.source_id || ""))).slice(0,allowed).map(compactPlanningEvidence);
+    snippetCount += evidence.length;
+    return compactPlanningFact(fact,evidence);
+  });
+  const counts = {
+    destination_fact_count:allFacts.length,
+    available_experience_count:(input.available_experiences || []).length,
+    source_family_count:(input.source_families || []).length,
+    failure_lesson_count:(input.failure_lessons || []).length,
+    editorial_lesson_count:(input.editorial_lessons || []).length,
+    golden_article_count:(input.golden_articles || []).length,
+  };
+  const compact = {
+    candidate:compactObject(input.candidate,1_200),
+    approved_proposal:compactObject(input.approved_proposal,6_000),
+    facts,
+    production_mode:input.production_mode,
+    source_reference:compactObject(input.source_reference,4_000),
+    editorial_assembly:input.editorial_assembly ? compactObject(input.editorial_assembly,4_000) : null,
+    experiences:(input.experiences || []).slice(0,12).map((item)=>compactObject(item,2_500)),
+    editorial_patterns:(input.editorial_patterns || []).slice(0,4).map((item)=>compactObject(item,2_000)),
+    constraints:compactObject(input.constraints,2_000),
+    available_experiences:(input.available_experiences || []).slice(0,Math.max(0,Number(budget.maxExperiences || 16)))
+      .map((item)=>compactObject(item,2_500)),
+    source_families:(input.source_families || []).slice(0,Math.max(0,Number(budget.maxSourceFamilies || 48)))
+      .map((item)=>compactObject(item,800)),
+    failure_lessons:(input.failure_lessons || []).slice(0,Math.max(0,Number(budget.maxFailureLessons || 12)))
+      .map((item)=>compactObject(item,1_500)),
+    editorial_lessons:(input.editorial_lessons || []).slice(0,Math.max(0,Number(budget.maxEditorialLessons || 12)))
+      .map((item)=>compactObject(item,1_500)),
+    golden_articles:(input.golden_articles || []).slice(0,Math.max(0,Number(budget.maxGoldenArticles || 6)))
+      .map((item)=>compactObject(item,2_000)),
+  };
+  const manifest = {
+    version:1, selected_by:"approved_scope_materiality", ...counts,
+    fact_count:0,evidence_snippet_count:0,input_bytes:0,estimated_tokens:0,
+    budget:{...budget},deterministic_compression:false,
+  };
+  compact.editorial_assembly_input_manifest = manifest;
+  const inputSize = () => Buffer.byteLength(JSON.stringify(compact));
+  const exceedsBudget = () => inputSize() > Number(budget.maxInputBytes || 128*1024)
+    || Math.ceil(inputSize()/4) > Number(budget.maxEstimatedTokens || 32_000);
+  const optionalLists = ["golden_articles","editorial_lessons","failure_lessons","source_families","available_experiences","editorial_patterns"];
+  while (exceedsBudget()) {
+    const key = optionalLists.find((name) => compact[name].length > 0);
+    if (key) compact[key].pop();
+    else if (facts.length > 1) facts.pop();
+    else break;
+  }
+  manifest.fact_count=facts.length;
+  manifest.evidence_snippet_count=facts.reduce((sum,fact)=>sum+(fact.evidence?.length || 0),0);
+  manifest.deterministic_compression = counts.destination_fact_count!==facts.length
+    || counts.available_experience_count!==compact.available_experiences.length
+    || counts.source_family_count!==compact.source_families.length
+    || counts.failure_lesson_count!==compact.failure_lessons.length
+    || counts.editorial_lesson_count!==compact.editorial_lessons.length
+    || counts.golden_article_count!==compact.golden_articles.length;
+  // Stabilize the self-reported size after digit counts in the manifest change.
+  for (let pass=0;pass<3;pass+=1) {
+    manifest.input_bytes=inputSize();
+    manifest.estimated_tokens=Math.ceil(manifest.input_bytes/4);
+  }
+  if (manifest.input_bytes > Number(budget.maxInputBytes || 128*1024)
+    || manifest.estimated_tokens > Number(budget.maxEstimatedTokens || 32_000)) {
+    throw Object.assign(new Error("EDITORIAL_ASSEMBLY_INPUT_BUDGET_EXCEEDED: bounded Editorial Assembly input exceeds the configured token budget."), {
+      code:"EDITORIAL_ASSEMBLY_INPUT_BUDGET_EXCEEDED",retryable:false,details:manifest,
+    });
+  }
+  return compact;
 }
 
 export const PLANNING_INPUT_BUDGET = Object.freeze({

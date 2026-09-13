@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
-import { boundedPlanningPackage, PLANNING_INPUT_BUDGET } from "../src/repository.mjs";
+import { boundedEditorialAssemblyPackage, EDITORIAL_ASSEMBLY_INPUT_BUDGET,
+  boundedPlanningPackage, PLANNING_INPUT_BUDGET } from "../src/repository.mjs";
 import { executeContentRecovery } from "../src/services/content-recovery.mjs";
 
 function candidate(db,id="shared-candidate") {
@@ -108,7 +109,7 @@ test("a downstream historical failure with missing prerequisites recovers the fi
     last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.2");
+  assert.equal(state.version,"1.3");
   assert.equal(state.stage_status,"interrupted");
   assert.equal(state.recovery_target,"plan_narrative");
   assert.equal(state.latest_error,null);
@@ -199,6 +200,71 @@ test("plan_content output-limit fixture uses the Editorial Assembly subset, stay
   assert.equal(result.planning_input_manifest.source_fact_count,3);
 });
 
+test("Editorial Assembly bounds a production-sized evidence package before the first model stage",()=>{
+  const facts=Array.from({length:180},(_,index)=>({
+    normalized_key:`chongqing.fact.${index}`,subject:"Chongqing",predicate:`route rule ${index}`,
+    preferred_value:`Value ${index} ${"v".repeat(12_000)}`,
+    qualifiers:index===5 ? ["not valid after 19:00","holiday exception","verified 2026-09-01"] : ["ordinary"],
+    consensus_status:index===5 ? "conflicted" : "supported",support_count:index===5 ? 5 : 1,confidence:0.9,
+    evidence:Array.from({length:10},(__,evidenceIndex)=>({source_id:`source-${evidenceIndex}`,
+      quote:`Quote ${index}.${evidenceIndex} ${"q".repeat(20_000)}`,confidence:1-evidenceIndex/20})),
+  }));
+  const input={candidate:{id:"large",proposed_title:"Chongqing route rules"},
+    approved_proposal:{readerPromise:"Explain Chongqing route rules"},facts,production_mode:"research",
+    available_experiences:Array.from({length:80},(_,index)=>({id:`experience-${index}`,body:"e".repeat(40_000)})),
+    source_families:Array.from({length:100},(_,index)=>({source_id:`source-${index}`,family_id:`family-${index}`})),
+    failure_lessons:Array.from({length:30},(_,index)=>({failure_code:`failure-${index}`,remediation_rule:"r".repeat(8_000)})),
+    editorial_lessons:Array.from({length:30},(_,index)=>({feedback:"f".repeat(8_000)})),
+    golden_articles:Array.from({length:20},(_,index)=>({id:`gold-${index}`,principles:["p".repeat(8_000)]})),
+    editorial_patterns:[],experiences:[],constraints:{research_only:true}};
+  const result=boundedEditorialAssemblyPackage(input);
+  const repeated=boundedEditorialAssemblyPackage(input);
+  assert.deepEqual(result,repeated);
+  assert.ok(Buffer.byteLength(JSON.stringify(result))<=EDITORIAL_ASSEMBLY_INPUT_BUDGET.maxInputBytes);
+  assert.ok(result.editorial_assembly_input_manifest.estimated_tokens<=EDITORIAL_ASSEMBLY_INPUT_BUDGET.maxEstimatedTokens);
+  assert.equal(result.editorial_assembly_input_manifest.destination_fact_count,180);
+  assert.equal(result.editorial_assembly_input_manifest.deterministic_compression,true);
+  assert.match(JSON.stringify(result.facts),/holiday exception/);
+});
+
+test("durable model receipts preserve the Vertex schema fallback position",(t)=>{
+  const {repository}=repositoryFixture(t);
+  const jobId=repository.enqueue("assemble_editorial","schema-candidate");
+  repository.recordModelCall({stage:"editorial_assembly",provider:"vertex",model:"gemini-3.8-flash",
+    promptHash:"p",schemaHash:"s",inputHash:"i",latencyMs:1,attempts:1,status:"failed",
+    errorCode:"SCHEMA_MODE_UNSUPPORTED",runId:jobId,attemptNumber:1,
+    retryReason:"schema_transport_fallback:json_schema->openapi"});
+  assert.equal(repository.structuredSchemaModeForJob(jobId),"openapi");
+  repository.recordModelCall({stage:"editorial_assembly",provider:"vertex",model:"gemini-3.8-flash",
+    promptHash:"p",schemaHash:"s",inputHash:"i",latencyMs:1,attempts:2,status:"failed",
+    errorCode:"SCHEMA_MODE_UNSUPPORTED",runId:jobId,attemptNumber:2,
+    retryReason:"schema_transport_fallback:openapi->prompt_only"});
+  assert.equal(repository.structuredSchemaModeForJob(jobId),"prompt_only");
+});
+
+test("production_state distinguishes provider cooldown from exhausted automatic retries",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"quota-owner",{approved:true});
+  const jobId=repository.enqueue("assemble_editorial","shared-candidate",{
+    dedupeKey:"quota-assembly",productionOwnerOpportunityId:"quota-owner",
+  });
+  db.prepare(`UPDATE jobs SET attempts=1,max_attempts=3,failure_class='retryable_provider',
+    last_failure_code='PROVIDER_REQUEST_FAILED',last_error='Vertex Gemini request failed (429): Resource has been exhausted.',
+    available_at='2099-01-01T00:00:00.000Z',next_eligible_at='2099-01-01T00:00:00.000Z' WHERE id=?`).run(jobId);
+  let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,"queued");
+  assert.equal(state.auto_continue,true);
+  assert.match(state.headline,/等待模型配额恢复/);
+  assert.deepEqual(state.retry_state,{reason:"provider_backoff",attempt:1,max_attempts:3,remaining_auto_attempts:2,resume_at:"2099-01-01T00:00:00.000Z"});
+
+  db.prepare("UPDATE jobs SET attempts=3 WHERE id=?").run(jobId);
+  state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,"failed");
+  assert.equal(state.auto_continue,false);
+  assert.equal(state.needs_human,true);
+  assert.match(state.headline,/自动重试次数已用完/);
+  assert.equal(state.retry_state.remaining_auto_attempts,0);
+});
+
 test("mobile Content Workbench uses cards, 2x3 stats, scrolling filters and secondary delete",()=>{
   const source=fs.readFileSync(new URL("../frontend/src/views.jsx",import.meta.url),"utf8");
   assert.match(source,/data-testid="content-mobile-cards"[^>]*md:hidden/);
@@ -209,5 +275,6 @@ test("mobile Content Workbench uses cards, 2x3 stats, scrolling filters and seco
   assert.match(source,/data-testid="content-filters"[^>]*flex-nowrap[^>]*overflow-x-auto/);
   assert.match(source,/const secondary=visible\.filter\(\(key\)=>key!==primary\)/);
   assert.match(source,/data-testid="content-mobile-more"[\s\S]*?bottom-full[\s\S]*?z-50/);
+  assert.match(source,/state\.retry_state[\s\S]*?剩余自动尝试/);
   assert.doesNotMatch(source,/primary=visible\.find\(\(key\)=>\[[^\]]*delete_production_record/);
 });

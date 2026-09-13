@@ -130,6 +130,12 @@ export function explainOperationalFailure(job) {
     action: { id: 'recapture_media', label: '打开原文并重新采集图片', why: '新版采集器会保留已授权原图；重新采集后系统可继续页面编排。' },
     technicalDetail: details,
   };
+  if (status === 429 || /resource (?:has been )?exhausted|quota|rate.?limit/i.test(message)) return {
+    category: 'capacity', headline: '模型配额暂时不足',
+    reason: 'Vertex 当前返回限流或配额不足。系统会按有限次数退避重试；次数用完后会停止，避免任务无限排队或重复调用。已有素材和成功步骤不会丢失。',
+    action: { id: type || null, label: '配额恢复后重试当前步骤', why: '只恢复当前失败步骤，不会删除记录或重跑已经成功的前置步骤。' },
+    technicalDetail: details,
+  };
   if (status === 403 && /wordpress/i.test(type)) return {
     category: 'configuration', headline: 'WordPress 拒绝了草稿写入',
     reason: '当前 WordPress 账号或应用密码没有草稿写入权限，文章内容仍保留在系统中。',
@@ -160,10 +166,17 @@ export function explainOperationalFailure(job) {
     action: { id: 'revise_draft', label: '只修订未通过的内容', why: '保留已经通过的正文、证据和图片。' },
     technicalDetail: details,
   };
-  if (status === 400 && code === 'PROVIDER_REQUEST_FAILED' && ['plan_content', 'plan_narrative'].includes(type)) return {
+  if (status === 400 && code === 'PROVIDER_REQUEST_FAILED' && /input token count exceeds|maximum number of tokens|too many input tokens/i.test(message)) return {
+    category: 'input', headline: type === 'assemble_editorial' ? '素材组装输入超过模型上限' : '生产输入超过模型上限',
+    reason: '旧流程在这一阶段一次提交了过多事实、证据或经验文本。新版会在调用模型前按批准范围确定性裁剪，不删除底层素材。',
+    action: { id: type || null, label: `重新执行${type === 'assemble_editorial' ? '素材组装' : '当前步骤'}`, why: '仅重新运行失败阶段，Source、Claims、Knowledge、Evidence 和 Experience 仍完整保留。' },
+    technicalDetail: details,
+  };
+  if (status === 400 && code === 'PROVIDER_REQUEST_FAILED'
+    && ['assemble_editorial', 'plan_content', 'plan_narrative'].includes(type)) return {
     category: 'configuration', headline: '模型接口拒绝了结构化输出格式',
-    reason: 'Vertex 在开始生成前拒绝了当前结构化请求格式；这是模型接口兼容问题，不代表来源、证据或文章事实有错。已有素材组装和写作计划仍然保留。',
-    action: { id: type, label: `重新执行${type === 'plan_content' ? '写作准备' : '叙事规划'}`, why: '兼容层会依次降级原生 Schema 传输，并继续使用本地 Schema 做严格校验；无需重跑前置步骤。' },
+    reason: 'Vertex 在开始生成前拒绝了当前结构化请求格式；这是模型接口兼容问题，不代表来源、证据或文章事实有错。已有成功产物仍然保留。',
+    action: { id: type, label: `重新执行${type === 'assemble_editorial' ? '素材组装' : type === 'plan_content' ? '写作准备' : '叙事规划'}`, why: '兼容层会记住已拒绝的 Schema 传输并从下一种格式继续，最终仍使用本地 Schema 严格校验；无需重跑前置步骤。' },
     technicalDetail: details,
   };
   if (type === 'compose_frontend_page' && /400|invalid argument/i.test(message)) return {

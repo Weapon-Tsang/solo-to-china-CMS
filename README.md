@@ -1,6 +1,6 @@
 # SoloToChina Research & Content Engine
 
-Current source and production: **2.0.14 / Strategy 3.3 / schema 69**, revision `9341a30ea07ac16fa2803a8aed5f27c776106c17`, immutable image digest `sha256:05db2059e2212bc75ffec8806b3dc651c98d20c53ae598b5ce7ecb50969b2c9c`. The production-error repair, mobile menu correction, verification and rollout are documented in [the 2.0.14 audit record](docs/audit/CMS_PRODUCTION_ERROR_REPAIR_2.0.14_2026-09-13.md).
+Current source: **2.0.15 / Strategy 3.3 / schema 69** (unreleased). Production remains **2.0.14** at revision `9341a30ea07ac16fa2803a8aed5f27c776106c17`, immutable image digest `sha256:05db2059e2212bc75ffec8806b3dc651c98d20c53ae598b5ce7ecb50969b2c9c`. The deployed baseline is documented in [the 2.0.14 audit record](docs/audit/CMS_PRODUCTION_ERROR_REPAIR_2.0.14_2026-09-13.md); the local Vertex/input/retry correction is documented in [the 2.0.15 repair record](docs/audit/CMS_VERTEX_PRODUCTION_RECOVERY_2.0.15_2026-09-14.md).
 
 SoloToChina 的内部研究与内容生产基础设施。当前采集路径采用 **Human Discovery + Human Favorite Selection → Incremental / Repair / Full Sync → Durable Research Pipeline**：用户用收藏完成研究价值和授权确认，Chrome Extension 将正文、DOM 以及全部授权图片/视频原件校验后持久化，系统再负责 Claims、Experience、Knowledge、内容机会和人工批准后的原创写作。
 

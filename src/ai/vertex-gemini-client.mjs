@@ -39,7 +39,9 @@ export class VertexGeminiClient {
     const policy = resolveStagePolicy(name, this.config);
     const effectiveTimeoutMs = timeoutMs || policy.timeoutMs;
     const identity = modelCallIdentity(name, schema, instructions, content);
-    let schemaMode = this.config.structuredSchemaMode || "json_schema";
+    const resumedSchemaMode = telemetryContext?.structuredSchemaMode;
+    let schemaMode = ["json_schema","openapi","prompt_only"].includes(resumedSchemaMode)
+      ? resumedSchemaMode : this.config.structuredSchemaMode || "json_schema";
     const requestBody = {
       systemInstruction: { parts: [{ text: instructions }] },
       contents: [{ role: "user", parts }],
@@ -85,7 +87,8 @@ export class VertexGeminiClient {
         const fallbackMode = response.status === 400 ? nextVertexSchemaMode(schemaMode) : null;
         if (fallbackMode) {
           this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
-            status: "failed", errorCode: "SCHEMA_MODE_UNSUPPORTED", retryReason: "schema_transport_fallback", usage: payload?.usageMetadata }));
+            status: "failed", errorCode: "SCHEMA_MODE_UNSUPPORTED",
+            retryReason: `schema_transport_fallback:${schemaMode}->${fallbackMode}`, usage: payload?.usageMetadata }));
           schemaMode = fallbackMode;
           applyVertexSchemaTransport(requestBody, schema, schemaMode, instructions);
           continue;

@@ -376,7 +376,7 @@ test("provider quota exhaustion pauses AI claiming without rewriting the whole v
   const repository = new Repository(database, { providerBackoffInitialMs: 5_000, providerBackoffMaxMs: 300_000, clock: () => current });
   try {
     const limitedId = repository.enqueue("extract_segment_claims", "segment-limited");
-    database.prepare("UPDATE jobs SET max_attempts=1 WHERE id=?").run(limitedId);
+    database.prepare("UPDATE jobs SET max_attempts=2 WHERE id=?").run(limitedId);
     const limited = repository.claimJob();
     const waitingId = repository.enqueue("audit_segment_coverage", "segment-waiting");
     const contentId = repository.enqueue("generate_draft", "brief-waiting");
@@ -424,6 +424,51 @@ test("provider quota exhaustion pauses AI claiming without rewriting the whole v
   } finally {
     database.close();
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("provider pressure respects max attempts and exhausted cooldowns cannot be reclaimed", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-provider-retry-bound-test-"));
+  const database = openDatabase(path.join(directory, "retry-bound.sqlite"));
+  let current = new Date("2026-09-09T00:00:00.000Z");
+  const repository = new Repository(database, { providerBackoffInitialMs: 100, providerBackoffMaxMs: 1_000, clock: () => current });
+  try {
+    const jobId = repository.enqueue("assemble_editorial", "candidate-limited");
+    database.prepare("UPDATE jobs SET max_attempts=2 WHERE id=?").run(jobId);
+    const error = Object.assign(new Error("Vertex Gemini request failed (429): Resource has been exhausted."), {
+      status:429,code:"PROVIDER_REQUEST_FAILED",retryable:true,provider:"vertex",
+    });
+    const first = repository.claimJob();
+    repository.failJob(first,error);
+    let stored = database.prepare("SELECT status,attempts,next_eligible_at FROM jobs WHERE id=?").get(jobId);
+    assert.equal(stored.status,"queued");
+    assert.equal(stored.attempts,1);
+
+    current = new Date(Math.max(repository.providerBackoffUntil,Date.parse(stored.next_eligible_at))+1);
+    const second = repository.claimJob();
+    assert.equal(second.id,jobId);
+    repository.failJob(second,error);
+    stored = database.prepare("SELECT status,attempts,next_eligible_at,failure_class FROM jobs WHERE id=?").get(jobId);
+    assert.equal(stored.status,"failed");
+    assert.equal(stored.attempts,2);
+    assert.equal(stored.next_eligible_at,null);
+    assert.equal(stored.failure_class,"retryable_provider");
+
+    current = new Date(repository.providerBackoffUntil+1);
+    assert.equal(repository.claimJob(),null);
+
+    const legacyId = repository.enqueue("assemble_editorial","candidate-legacy");
+    database.prepare(`UPDATE jobs SET attempts=11,max_attempts=3,next_eligible_at=?,available_at=?,failure_class='retryable_provider',
+      last_failure_code='PROVIDER_REQUEST_FAILED',last_error='Vertex Gemini request failed (429): Resource exhausted.' WHERE id=?`)
+      .run(current.toISOString(),current.toISOString(),legacyId);
+    assert.equal(repository.claimJob(),null);
+    stored = database.prepare("SELECT status,attempts,next_eligible_at FROM jobs WHERE id=?").get(legacyId);
+    assert.equal(stored.status,"failed");
+    assert.equal(stored.attempts,11);
+    assert.equal(stored.next_eligible_at,null);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive:true,force:true });
   }
 });
 

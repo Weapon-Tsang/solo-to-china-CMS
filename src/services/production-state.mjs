@@ -2,7 +2,7 @@ import { json, sha256 } from "../utils.mjs";
 import { validatePlanningDestination } from "../destination-consistency.mjs";
 import { explainOperationalFailure } from "./content-recovery-policy.mjs";
 
-export const PRODUCTION_STATE_VERSION = "1.2";
+export const PRODUCTION_STATE_VERSION = "1.3";
 
 export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
   stage("assemble_editorial", "素材组装", 10, [], "editorial", "always"),
@@ -104,6 +104,15 @@ export function buildProductionState(db, row, options = {}) {
   ]);
   const ageBase = Date.parse(lastAttemptAt || row.approved_at || row.opportunity_updated_at || 0);
   const nowMs = options.now instanceof Date ? options.now.getTime() : Date.parse(options.now || "") || Date.now();
+  const retryJob = active?.failure_class === "retryable_provider" ? active
+    : failed?.failure_class === "retryable_provider" ? failed : null;
+  const retryState = retryJob ? {
+    reason:"provider_backoff",
+    attempt:Number(retryJob.attempts || 0),
+    max_attempts:Number(retryJob.max_attempts || 0),
+    remaining_auto_attempts:Math.max(0,Number(retryJob.max_attempts || 0)-Number(retryJob.attempts || 0)),
+    resume_at:retryJob.status === "queued" ? retryJob.next_eligible_at || retryJob.available_at || null : null,
+  } : null;
   const graceMs = Math.max(60_000, Number(options.continuityGraceMs || 15 * 60_000));
   const beyondGrace = Number.isFinite(ageBase) && ageBase > 0 && nowMs - ageBase >= graceMs;
   const hasLineage = Boolean(row.approved_at || row.editorial_assembly_id || row.brief_id || row.narrative_plan_id
@@ -152,13 +161,28 @@ export function buildProductionState(db, row, options = {}) {
     autoContinue = false;
     needsHuman = true;
     recoverable = true;
+  } else if (active?.retry_exhausted) {
+    const explained = explainOperationalFailure(active);
+    lifecycle = "needs_attention";
+    stageStatus = "failed";
+    currentStage = active.type;
+    currentStageLabel = productionStageLabel(active.type);
+    headline = `${currentStageLabel}失败：自动重试次数已用完`;
+    explanation = explained?.reason || "模型服务多次拒绝或限流，系统已停止自动重试；已有成功产物仍然保留。";
+    autoContinue = false;
+    needsHuman = true;
+    recoverable = true;
+    latestError = failureAttribution(active, modelCalls, { explanation:explained });
   } else if (active) {
     lifecycle = "in_progress";
     stageStatus = active.status;
     currentStage = active.type;
     currentStageLabel = productionStageLabel(active.type);
-    headline = productionStageActivityLabel(active.type, active.status);
-    explanation = active.status === "running" ? "系统正在执行当前步骤，完成后会按流水线依赖自动继续。" : "任务已进入 durable queue，将自动继续。";
+    const providerCooling = active.status === "queued" && retryState?.remaining_auto_attempts > 0;
+    headline = providerCooling ? `${currentStageLabel} · 等待模型配额恢复` : productionStageActivityLabel(active.type, active.status);
+    explanation = providerCooling
+      ? `Vertex 返回限流或配额不足，任务正在退避；系统还会自动尝试 ${retryState.remaining_auto_attempts} 次，不会重跑已完成步骤。`
+      : active.status === "running" ? "系统正在执行当前步骤，完成后会按流水线依赖自动继续。" : "任务已进入 durable queue，将自动继续。";
     autoContinue = true;
   } else if (dependencyBrokenFailure && firstPending) {
     const firstPendingIndex = entries.findIndex((entry) => entry.key === firstPending.key);
@@ -182,7 +206,8 @@ export function buildProductionState(db, row, options = {}) {
     explanation = explained?.reason || "这一步没有完成；已有成功产物仍然保留。";
     autoContinue = false;
     needsHuman = true;
-    recoverable = !["APPROVED_SCOPE_INVALID", "EVIDENCE_SCOPE_INVALID", "DESTINATION_TOPIC_MISMATCH", "PLAN_INPUT_BUDGET_EXCEEDED"]
+    recoverable = !["APPROVED_SCOPE_INVALID", "EVIDENCE_SCOPE_INVALID", "DESTINATION_TOPIC_MISMATCH",
+      "EDITORIAL_ASSEMBLY_INPUT_BUDGET_EXCEEDED", "PLAN_INPUT_BUDGET_EXCEEDED"]
       .includes(String(failed.last_failure_code || ""));
     latestError = failureAttribution(failed, modelCalls, { explanation:explained });
   } else if (row.wordpress_status === "synced") {
@@ -262,6 +287,7 @@ export function buildProductionState(db, row, options = {}) {
     auto_continue: autoContinue,
     needs_human: needsHuman,
     recoverable,
+    retry_state: retryState,
     latest_error: latestError,
     latest_historical_error: latestHistoricalError,
     last_attempt_at: lastAttemptAt,
@@ -391,7 +417,11 @@ function latestActiveJob(jobs, nowValue) {
   const nowMs = nowValue instanceof Date ? nowValue.getTime() : Date.parse(nowValue || "") || Date.now();
   const active = [...jobs].reverse().find((item) => ACTIVE_STATUSES.has(item.status));
   if (!active) return null;
-  return { ...active, expired: active.status === "running" && active.lease_expires_at && Date.parse(active.lease_expires_at) <= nowMs };
+  return { ...active,
+    expired: active.status === "running" && active.lease_expires_at && Date.parse(active.lease_expires_at) <= nowMs,
+    retry_exhausted: active.status === "queued" && active.next_eligible_at != null
+      && Number(active.attempts || 0) >= Number(active.max_attempts || 0),
+  };
 }
 
 function latestUnresolvedFailure(jobs) {

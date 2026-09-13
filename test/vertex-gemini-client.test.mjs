@@ -129,6 +129,28 @@ test("Vertex Gemini falls back to prompt-enforced JSON when both native schema t
   assert.match(requests[2].systemInstruction.parts[0].text, /local validation remains authoritative/);
   assert.deepEqual(metrics.map((metric) => metric.errorCode), ["SCHEMA_MODE_UNSUPPORTED", "SCHEMA_MODE_UNSUPPORTED", null]);
   assert.deepEqual(metrics.map((metric) => metric.attemptNumber), [1, 2, 3]);
+  assert.deepEqual(metrics.slice(0,2).map((metric)=>metric.retryReason),[
+    "schema_transport_fallback:json_schema->openapi",
+    "schema_transport_fallback:openapi->prompt_only",
+  ]);
+});
+
+test("Vertex Gemini resumes the persisted structured transport after a durable Job retry", async () => {
+  const requests=[];
+  const client=new VertexGeminiClient({
+    projectId:"test-project",location:"global",model:"gemini-3.8-flash",accessToken:"test-token",
+  },async (_url,options)=>{
+    requests.push(JSON.parse(options.body));
+    return Response.json({ error:{ code:429,message:"Resource has been exhausted." } },{ status:429 });
+  });
+  await assert.rejects(()=>client.completeJson({
+    name:"editorial_assembly",schema:{type:"object"},instructions:"Assemble.",content:"bounded evidence",
+    telemetryContext:{runId:"durable-job",entityId:"candidate",structuredSchemaMode:"prompt_only"},
+  }),/429/);
+  assert.equal(requests.length,1);
+  assert.equal(requests[0].generationConfig.responseJsonSchema,undefined);
+  assert.equal(requests[0].generationConfig.responseSchema,undefined);
+  assert.match(requests[0].systemInstruction.parts[0].text,/local validation remains authoritative/);
 });
 
 test("Vertex content planning output limits require input correction instead of repeating a no-op retry", async () => {
