@@ -9,7 +9,7 @@
 - Upgrade `production_state` to 1.4, expose the existing `suppression_reason` to the state builder, and translate persisted quality issue codes into their specific Chinese cause rather than the generic “无法确定原因”.
 - Make deterministic Coverage Matrix reconciliation restore an explicitly stored `proposal.readerPromise` from the frozen approval or title when legacy rows omit it. This closes the existing enforced deployment-audit violation without a model call or scope invention.
 - Keep the Frontend Contract and schema migration at their existing versions. This release introduces no migration-time enqueue, model request, production-record deletion or bulk retry.
-- Deploy revision `119604f29dedcb4658fec83022d31faa41b2ac7e` to production at immutable image digest `sha256:af7892df209b995173e743bbd23097f8a6b5a775ecde8363fc881d3f7caf8b13`. The authenticated post-rollout projection contains one corrected-scope confirmation and six exact recovery targets, with zero active production Jobs and the model-call counter unchanged at 5,748.
+- Deploy final revision `4333c7ba559139f42da43e78b3b696978fa1ef69` to production at immutable image digest `sha256:caa42bc384e5295534321a49c194dac97658eb127d287510c7b15618a9965cb4`. The authenticated post-rollout projection contains one corrected-scope confirmation and six exact recovery targets, with mutually exclusive 1/0/6 waiting/running/attention counters, zero active production Jobs and the model-call counter unchanged at 5,748.
 
 ## 2.0.15 - 2026-09-14
 

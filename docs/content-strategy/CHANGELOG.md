@@ -6,7 +6,7 @@
 - A destination correction now creates a scope boundary: older failures/artifacts remain auditable history and the corrected scope requires explicit confirmation before a new Editorial Assembly is queued.
 - Failed QA with content blockers targets bounded `revise_draft`; media-only and page-only failures retain their existing specialized recovery rules.
 - No schema migration, bulk retry, model call, evidence deletion or Frontend Contract change is introduced.
-- Production was upgraded to revision `119604f29dedcb4658fec83022d31faa41b2ac7e`; the post-rollout seven-record projection has zero active production Jobs and preserves the 5,748-call model ledger.
+- Production was upgraded to final revision `4333c7ba559139f42da43e78b3b696978fa1ef69`; the post-rollout seven-record projection has mutually exclusive lifecycle counters, zero active production Jobs and preserves the 5,748-call model ledger.
 
 ## App 2.0.15 / schema 69 - 2026-09-14
 
