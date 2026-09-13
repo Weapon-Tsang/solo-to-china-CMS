@@ -1,6 +1,6 @@
 # SoloToChina Content Production Strategy 3.3
 
-Status: active. Effective date: 2026-09-12. Current application and extension target 2.0.13, schema 69; production remains on 2.0.12/schema 68 pending an authorized patch deployment.
+Status: active. Effective date: 2026-09-12. Current production application and extension are 2.0.13, schema 69, revision `8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303`.
 
 Strategy 3.3 keeps the source authorization, evidence, editorial approval, WordPress draft, and publication boundaries from 3.2. It changes how Claims become Knowledge, how interrupted historical Sources recover, and where expensive maintenance runs.
 

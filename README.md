@@ -1,6 +1,6 @@
 # SoloToChina Research & Content Engine
 
-Target implementation: **2.0.13 / Strategy 3.3 / schema 69**. The production-owner/state hotfix is documented in [the 2.0.13 audit record](docs/audit/CMS_PRODUCTION_STATE_HOTFIX_2.0.13_2026-09-13.md). Production remains on 2.0.12 until a separately authorized deployment.
+Production implementation: **2.0.13 / Strategy 3.3 / schema 69**, revision `8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303`. The audited production-owner/state hotfix and rollout are documented in [the 2.0.13 audit record](docs/audit/CMS_PRODUCTION_STATE_HOTFIX_2.0.13_2026-09-13.md).
 
 SoloToChina 的内部研究与内容生产基础设施。当前采集路径采用 **Human Discovery + Human Favorite Selection → Incremental / Repair / Full Sync → Durable Research Pipeline**：用户用收藏完成研究价值和授权确认，Chrome Extension 将正文、DOM 以及全部授权图片/视频原件校验后持久化，系统再负责 Claims、Experience、Knowledge、内容机会和人工批准后的原创写作。
 

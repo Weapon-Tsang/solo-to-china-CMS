@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.13 - Unreleased
+## 2.0.13 - 2026-09-13
 
 - Restrict the Content Workbench to approved Opportunity production instances and make each production Job carry one explicit `production_owner_opportunity_id`; Candidate identity alone is no longer production lineage.
 - Correct `needs_attention`, failed/interrupted/current/recovery/next-stage semantics and keep an older failed attempt from overriding its newer queued, running or successful retry.
@@ -8,7 +8,8 @@
 - Bound `plan_content` to the approved Opportunity and Editorial Assembly fact subset (32 facts, 64 evidence snippets, 96 KiB and approximately 24k input tokens), with deterministic materiality selection and compact structured output limits.
 - Replace the compressed mobile four-column Content table with cards, scrollable single-line filters, 2-by-3 statistics and secondary archive/delete actions; production detail now wraps and collapses internal stage/error keys.
 - Add schema 69 deterministic owner/audit backfill, dry-run projection tooling and regression coverage. Migration 69 does not enqueue work, call a model, alter approvals or delete retained research/evidence records.
-- Complete a read-only audit of the deployed 2.0.12 database before implementation. No production data reconciliation, model-triggering retry, WordPress action or deployment was performed for this unreleased patch.
+- Complete a read-only audit of the deployed 2.0.12 database before implementation, then deploy revision `8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303` at immutable image digest `sha256:b47514ea2b058ab9f743208e5be24d843def5c5a0543375db67adbf7f5e7cd47` after explicit authorization.
+- Verify the schema 68→69 rehearsal and production migration, paired backup/restore drill, network-isolated deterministic reconciliation, exact seven-row authenticated Content projection, public health, preserved model-call count and zero production/WordPress Jobs before retaining the immediate rollback set and removing superseded storage.
 
 ## 2.0.12 - 2026-09-13
 
