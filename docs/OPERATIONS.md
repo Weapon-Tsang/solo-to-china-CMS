@@ -181,3 +181,10 @@ Run only the isolated HTTP/API/static smoke phase after an existing build with:
 ```powershell
 npm run test:smoke
 ```
+# Content production workbench operations (2.0.12)
+
+The active Content workspace API is `GET /api/content`; it returns `{ items, sections }`, and every item includes the backend-owned `production_state`. `GET /api/content/:opportunityId/production-state` returns the pre-Draft-or-later detail, timeline, structural page preview, WordPress preview/edit links and combined audit/failure history. `GET /api/content/:opportunityId/history` returns the history alone.
+
+Authenticated mutations are `POST /api/content/:opportunityId/recover`, `POST /api/content/:opportunityId/archive`, `POST /api/content/:opportunityId/restore`, and `DELETE /api/content/:opportunityId/production-record`. Recovery accepts `retry_failed_stage` or `recover_next_stage`; the server chooses the exact stage. Disposition mutations accept `Idempotency-Key` and a JSON `reason`. Do not use the deletion endpoint to remove a remote WordPress Draft; it returns `REMOTE_WORDPRESS_DRAFT_EXISTS`.
+
+Schema 68 adds only `production_record_controls` and `production_record_audit` plus indexes. Opening a schema 67 database applies DDL transactionally. The migration does not enumerate old content, enqueue Jobs, execute recovery, contact a model, synchronize the Frontend Contract or call WordPress. Startup reconciliation also skips archived/deleted production controls.

@@ -691,37 +691,53 @@ function BlueprintCard({ item, index }) {
   return <Card className="overflow-hidden p-4 shadow-sm sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-600">写作模式 {String(index + 1).padStart(2, "0")}</p><h2 className="mt-1 text-sm font-semibold leading-relaxed text-slate-900">{item.format || "待归纳的写作形式"}</h2></div><span className="shrink-0 rounded-full border border-violet-100 bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700">{item.sample_count || 0} 个样本</span></div><section className="mt-4 rounded-xl border border-slate-100 bg-slate-50/80 p-3"><p className="text-[10px] font-semibold text-slate-500">可复用角度</p><p className="mt-1.5 text-xs leading-relaxed text-slate-800">{item.angle || "暂无角度说明"}</p></section><section className="mt-4"><div className="flex items-center justify-between gap-3"><h3 className="text-[11px] font-semibold text-slate-700">推荐章节顺序</h3><span className="text-[10px] text-slate-400">仅供写作参考</span></div>{sections.length ? <ol className="mt-2.5 space-y-2">{sections.slice(0, 6).map((section, sectionIndex) => <li key={`${item.id}-${sectionIndex}`} className="flex gap-2 rounded-lg border border-slate-100 px-2.5 py-2"><span className="grid size-4 shrink-0 place-items-center rounded-full bg-slate-100 text-[9px] font-semibold text-slate-500">{sectionIndex + 1}</span><span className="text-[11px] leading-relaxed text-slate-600">{section}</span></li>)}</ol> : <p className="mt-2.5 text-[11px] text-slate-400">系统尚未归纳出稳定的章节结构。</p>}</section><details className="mt-4 border-t border-slate-100 pt-3 text-[11px] text-slate-500"><summary className="cursor-pointer select-none font-medium text-slate-600">蓝图使用边界</summary><p className="mt-2 leading-relaxed">蓝图只影响文章的组织方式；不会把小红书表达翻译、复制到文章，也不会覆盖知识库中的证据与冲突规则。</p></details></Card>;
 }
 
-function ContentView({ data, onNavigate, onOpenDraft, onAction, actionBusy }) {
+function ContentView({ data, onNavigate, onOpenProduction, onAction, actionBusy }) {
   const items = data?.items || [];
-  const rows = items;
-  const approved = items;
-  const created = rows.filter((item) => Boolean(item.draft_id || item.draft_title || item.body)).length;
-  const failed = rows.filter((item) => Boolean(contentFailureReason(item))).length;
-  if (!approved.length && !items.length) return <EmptyState icon="content" title="还没有开始生产的内容" description="批准后，只有真正进入生产队列的文章才会显示在这里；等待证据的批准不会占位。" action={() => onNavigate("recommendations")} actionLabel="查看建议" />;
+  const sections = data?.sections || {};
+  const [section, setSection] = useState("active");
+  const sectionItems = section === "active" ? items.filter((item) => item.production_state?.lifecycle !== "history")
+    : items.filter((item) => item.production_state?.lifecycle === section);
+  if (!items.length) return <EmptyState icon="content" title="还没有已批准的生产内容" description="批准文章后，等待证据、排队、运行、异常和完成状态都会在这里显示。" action={() => onNavigate("recommendations")} actionLabel="查看建议" />;
   return <div className="space-y-3">
-    <Card className="p-4 sm:p-5"><div className="grid gap-3 sm:grid-cols-3"><ContentCount label="正在生产或已完成" value={approved.length} tone="blue" /><ContentCount label="已生成正文" value={created} tone="green" /><ContentCount label="需要处理" value={failed} tone={failed ? "red" : "slate"} /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">这里只显示已启动的生产记录。等待证据、仍在修复或仅存在于内部推荐池的项目不会显示。</p></Card>
-    <TableShell><Table><TableHeader><TableRow><TableHead>生产内容</TableHead><TableHead>当前阶段</TableHead><TableHead>结果与处理</TableHead></TableRow></TableHeader><TableBody>{rows.map((item) => {
-      const state = item.workflow_status || item.draft_status || item.brief_status || item.status;
-      const reason = contentFailureReason(item);
-      return <TableRow key={item.opportunity_id} tabIndex={item.draft_id ? 0 : undefined} role={item.draft_id ? "button" : undefined} className={cn(item.draft_id && "cursor-pointer")} onClick={() => item.draft_id && onOpenDraft(item.draft_id)} onKeyDown={(event) => event.key === "Enter" && item.draft_id && onOpenDraft(item.draft_id)}><TableCell><div className="max-w-xl font-medium text-slate-900">{item.draft_title || item.proposed_title || item.title || "未命名文章"}</div></TableCell><TableCell><StatusPill status={state} /></TableCell><TableCell><p className={cn("max-w-xl text-[11px] leading-relaxed", reason ? "text-red-700" : "text-slate-500")}>{reason || (item.draft_id ? "内容已创建，可点击本行查看。" : "生产任务已进入队列，当前无需人工处理。")}</p>{reason && item.candidate_id && <ContentRecovery candidateId={item.candidate_id} onAction={onAction} actionBusy={actionBusy} />}</TableCell></TableRow>;
-    })}{rows.length === 0 && <TableRow><TableCell colSpan={3} className="py-8 text-center text-xs text-slate-500">还没有开始生产的内容。</TableCell></TableRow>}</TableBody></Table></TableShell>
+    <Card className="p-4 sm:p-5"><div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6"><ContentCount label="等待开始" value={sections.pending_start || 0} tone="slate" /><ContentCount label="生产中" value={sections.in_progress || 0} tone="blue" /><ContentCount label="需要处理" value={sections.needs_attention || 0} tone={sections.needs_attention ? "red" : "slate"} /><ContentCount label="已完成" value={sections.completed || 0} tone="green" /><ContentCount label="历史记录" value={sections.history || 0} tone="slate" /><ContentCount label="已生成正文" value={sections.generated_body || 0} tone="green" /></div><p className="mt-3 text-[11px] leading-relaxed text-slate-500">计数、行内提示和操作入口均来自同一个后端 production_state；等待证据不是失败，历史记录不计入当前生产。</p></Card>
+    <div className="flex flex-wrap gap-2">{[["active","当前生产"],["pending_start","等待开始"],["in_progress","生产中"],["needs_attention","需要处理"],["completed","已完成"],["history","历史"]].map(([key,text]) => <Button key={key} size="sm" variant={section === key ? "default" : "outline"} onClick={() => setSection(key)}>{text}</Button>)}</div>
+    <TableShell><Table><TableHeader><TableRow><TableHead>生产内容</TableHead><TableHead>当前阶段</TableHead><TableHead>进度与下一步</TableHead><TableHead>操作</TableHead></TableRow></TableHeader><TableBody>{sectionItems.map((item) => {
+      const state = item.production_state;
+      const nextStageLabel = state?.next_stage === state?.current_stage
+        ? state?.current_stage_label
+        : state?.stage_registry?.find((step) => step.key === state?.next_stage)?.label || state?.next_stage;
+      return <TableRow key={item.opportunity_id} tabIndex={0} role="button" className="cursor-pointer" onClick={() => onOpenProduction(item.opportunity_id)} onKeyDown={(event) => event.key === "Enter" && onOpenProduction(item.opportunity_id)}><TableCell><div className="max-w-xl font-medium text-slate-900">{item.draft_title || item.proposed_title || item.title || "未命名文章"}</div><p className="mt-1 text-[10px] text-slate-400">{item.draft_id ? `Draft ${item.draft_id}` : "Draft 生成前即可查看生产详情"}</p></TableCell><TableCell><StatusPill status={state?.stage_status || "waiting"} /><p className="mt-1 max-w-xs text-[11px] font-medium text-slate-700">{state?.headline}</p><p className={cn("mt-1 max-w-sm text-[10px] leading-relaxed", state?.needs_human ? "text-red-700" : "text-slate-500")}>{state?.explanation}</p>{state?.latest_error && <p className="mt-1 text-[10px] text-red-700">失败阶段：{state.current_stage_label} · {state.latest_error.reason}</p>}</TableCell><TableCell><p className="text-[11px] text-slate-700">已完成 {state?.progress?.completed || 0}/{state?.progress?.total || 0}（{state?.progress?.percent || 0}%）</p><p className="mt-1 text-[10px] text-slate-500">当前：{state?.current_stage_label || "—"}</p><p className="text-[10px] text-slate-500">下一步：{nextStageLabel || "无"}</p><p className="mt-1 text-[10px] text-slate-500">{state?.auto_continue ? "系统会自动继续" : state?.needs_human ? "等待人工处理" : "不会自动继续"}</p></TableCell><TableCell><ProductionRecordActions item={item} onAction={onAction} actionBusy={actionBusy} /></TableCell></TableRow>;
+    })}{sectionItems.length === 0 && <TableRow><TableCell colSpan={4} className="py-8 text-center text-xs text-slate-500">此分类暂无内容。</TableCell></TableRow>}</TableBody></Table></TableShell>
+  </div>;
+}
+
+function ProductionRecordActions({ item, onAction, actionBusy }) {
+  const [pending, setPending] = useState(null);
+  const actions = item.production_state?.available_actions || [];
+  const submit = async () => {
+    if (!pending) return;
+    const base = `/api/content/${encodeURIComponent(item.opportunity_id)}`;
+    const idempotencyKey = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${item.opportunity_id}`;
+    const request = pending === "delete_production_record"
+      ? { url:`${base}/production-record`, options:{ method:"DELETE",headers:{"content-type":"application/json","idempotency-key":idempotencyKey},body:JSON.stringify({ reason:"内容生产工作台人工删除" }) }, message:"生产记录已删除，来源、证据、知识、审批和审计均已保留。" }
+      : pending === "archive" ? { url:`${base}/archive`,options:{method:"POST",headers:{"content-type":"application/json","idempotency-key":idempotencyKey},body:JSON.stringify({reason:"内容生产工作台人工归档"})},message:"生产记录已归档。" }
+        : pending === "restore_archive" ? { url:`${base}/restore`,options:{method:"POST",headers:{"content-type":"application/json","idempotency-key":idempotencyKey},body:JSON.stringify({reason:"从历史记录恢复"})},message:"生产记录已恢复到当前工作台。" }
+          : { url:`${base}/recover`,options:{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:pending,revision:item.revision,idempotency_key:idempotencyKey})},message:pending === "retry_failed_stage" ? "已从准确失败步骤重试，已完成前置步骤不会重跑。" : "已从断链后的下一步骤继续。" };
+    await onAction(request.url,request.options,request.message);
+    setPending(null);
+  };
+  const labels = { retry_failed_stage:"重试失败步骤",recover_next_stage:"从断点继续",archive:"归档",delete_production_record:"删除生产记录",restore_archive:"恢复到当前生产" };
+  return <div className="flex max-w-xs flex-wrap gap-1.5" onClick={(event) => event.stopPropagation()}>{Object.keys(labels).filter((key) => actions.includes(key)).map((key) => <Button key={key} size="sm" variant={key === "delete_production_record" ? "destructive" : "outline"} disabled={actionBusy} onClick={() => setPending(key)}>{labels[key]}</Button>)}
+    <ConfirmAction open={Boolean(pending)} onOpenChange={(open) => !open && setPending(null)} busy={actionBusy} destructive={pending === "delete_production_record"} onConfirm={submit}
+      title={pending === "delete_production_record" ? "删除这次生产记录？" : pending === "archive" ? "确认归档这次生产？" : pending === "retry_failed_stage" ? "从失败步骤重新执行？" : "恢复内容生产？"}
+      description={pending === "delete_production_record" ? "这会清理本次生产产生的写作计划、草稿、页面编排、质检和相关任务记录。原始来源、图片原件、Claims、知识库事实、证据和你的批准决定都会保留。如果证据仍满足条件，之后可重新开始生产，无需重新采集或批准。已有远端 WordPress 草稿时禁止删除。" : pending === "archive" ? "归档会停止本次活跃任务并移入历史，不删除任何生产产物。" : pending === "retry_failed_stage" ? `系统只会重新执行“${item.production_state?.current_stage_label || "失败步骤"}”及其必要后续步骤。已经完成且仍有效的证据、写作计划和其它产物不会重新生成。` : `系统检测到上一阶段已经完成，将从“${item.production_state?.stage_registry?.find((step) => step.key === item.production_state?.next_stage)?.label || "下一步骤"}”继续，不会重跑已经完成的步骤。`}
+      confirmLabel={pending === "delete_production_record" ? "删除生产记录" : pending === "archive" ? "确认归档" : pending === "retry_failed_stage" ? "重新执行" : "继续生产"} />
   </div>;
 }
 
 function ContentCount({ label: title, value, tone }) {
   const tones = { blue: "bg-blue-50 text-blue-800", green: "bg-emerald-50 text-emerald-800", red: "bg-red-50 text-red-800", slate: "bg-slate-50 text-slate-700" };
   return <div className={cn("rounded-xl p-3", tones[tone] || tones.slate)}><strong className="text-2xl tabular-nums">{value}</strong><span className="ml-2 text-xs font-medium">篇</span><p className="mt-1 text-[11px]">{title}</p></div>;
-}
-
-function contentFailureReason(item) {
-  const state = item.workflow_status || item.draft_status || item.brief_status || item.status;
-  const requirements = item.readiness?.blockingRequirements || item.coverage?.readiness?.blockingRequirements || [];
-  if (item.status === "approved_waiting_for_evidence") return `素材尚未满足创建条件：${requirements.map((value) => friendlyError(value, "素材条件")).join("；") || "缺少完成本文承诺所需的证据。"}`;
-  if (item.suppression_reason) return `检测到重复内容：${item.suppression_reason}`;
-  const blocker = item.operation?.blockers?.[0];
-  if (blocker?.reason) return blocker.reason;
-  if (["failed", "qa_failed", "suppressed"].includes(state) || item.operation?.status === "failed") return item.operation?.nextAction?.reason || "生产在当前阶段停止；请打开处理入口查看原因并按建议继续。";
-  return "";
 }
 
 function WordPressView({ data, onGuide }) {

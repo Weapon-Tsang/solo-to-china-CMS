@@ -45,7 +45,10 @@ test("recommendation inbox separates processing gaps from approvable evidence ga
   const approved=repository.decideOpportunity(inbox[0].id,"approve");
   assert.equal(approved.needsEvidence,true);
   assert.deepEqual(repository.listProductionContentOpportunities(),[]);
-  assert.deepEqual(repository.listContent({productionOnly:true}),[]);
+  const workbench=repository.listContent({productionOnly:true});
+  assert.equal(workbench.length,1);
+  assert.equal(workbench[0].production_state.readiness,"waiting_for_evidence");
+  assert.equal(workbench[0].production_state.needs_human,false);
 });
 
 test("Experience completion immediately admits an already-current eligible source", (t) => {

@@ -81,6 +81,17 @@ export function explainOperationalFailure(job) {
   const code = String(job.last_failure_code || job.code || '').toUpperCase();
   const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
   const details = operatorSafeDetails(message);
+  const normalizedIssueCode = code.toLowerCase();
+  if (DELIVERY_ISSUE_CODES.has(normalizedIssueCode)) {
+    const issue = explainQualityIssue({ code: normalizedIssueCode, message, severity: 'blocker' });
+    return {
+      category: 'page',
+      headline: issue.title,
+      reason: issue.reason,
+      action: { id: type || null, label: issue.action, why: '已有正文和证据保持不变，只恢复失败的交付步骤。' },
+      technicalDetail: details,
+    };
+  }
   if (/requires a configured Kimi key or Vertex AI project/i.test(message)) return {
     category: 'configuration', headline: '生产模型尚未配置',
     reason: '系统没有可用的 Kimi 密钥或 Vertex AI 项目，因此生产阶段无法执行；这不是文章内容错误。',

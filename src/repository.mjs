@@ -28,6 +28,7 @@ export { pageBlockSignature } from "./evidence-validator.mjs";
 import { buildContentTaskCard, normalizeWorkspaceQuery, paginateWorkspace } from "./services/operations-workspace.mjs";
 import { freezeProposal, proposalFingerprint, proposalForOpportunity } from "./services/editorial-proposal.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./services/content-recovery-policy.mjs";
+import { buildPageCompositionPreview, buildProductionState, summarizeProductionSections } from "./services/production-state.mjs";
 import { insertCommercialEvent, listCommercialPerformance } from "./repositories/commercial-events.mjs";
 import { persistCaptureAssets } from "./source-media-store.mjs";
 import { dependencyHash, semanticMaterial, PIPELINE_CONTRACT_VERSION } from './pipeline-contract.mjs';
@@ -76,6 +77,11 @@ export class Repository {
     this.batchBackoffInitialMs = Math.max(1_000, Number(contentConfig.batchBackoffInitialMs || 5_000));
     this.batchBackoffMaxMs = Math.max(this.batchBackoffInitialMs, Number(contentConfig.batchBackoffMaxMs || 300_000));
     this.random = contentConfig.random || Math.random;
+    this.productionCapabilities = { frontendContract: false, visuals: false, wordpress: false };
+  }
+
+  configureProductionCapabilities(capabilities = {}) {
+    this.productionCapabilities = { ...this.productionCapabilities, ...capabilities };
   }
 
   jobTimestamp() { return this.clock().toISOString(); }
@@ -3400,6 +3406,8 @@ export class Repository {
   reconcileApprovedOpportunity(opportunityId) {
     const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(opportunityId);
     if (!opportunity || !["approved_ready", "producing"].includes(opportunity.status)) return { candidateId: opportunity?.candidate_id || null, queued: false };
+    const disposition = this.db.prepare("SELECT disposition FROM production_record_controls WHERE opportunity_id=?").get(opportunityId)?.disposition;
+    if (["archived", "deleted"].includes(disposition)) return { candidateId: opportunity.candidate_id || null, queued: false, disposition };
     const readiness = json(opportunity.readiness_json, {});
     if (!readiness.ready) {
       this.db.prepare("UPDATE content_opportunities SET status='approved_waiting_for_evidence',updated_at=? WHERE id=?").run(now(), opportunityId);
@@ -5404,34 +5412,95 @@ export class Repository {
   }
 
   listContent({ candidateId = null, approvedOnly = false, productionOnly = false, evidenceHashes = new Map() } = {}) {
-    const rows = this.db.prepare(`
-      SELECT tc.*, cb.id AS brief_id, cb.status AS brief_status, ad.id AS draft_id, ad.status AS draft_status,
-        ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score,
-        wp.post_id AS wordpress_post_id, wp.post_url AS wordpress_post_url, wp.status AS wordpress_status,
+    const rows = productionOnly ? this.db.prepare(`
+      SELECT COALESCE(tc.id,co.id) AS id, co.id AS opportunity_id, co.destination_slug, co.topic_key,
+        co.title, co.content_type, co.readiness_score, co.readiness_json, co.coverage_json,
+        co.status, co.status AS opportunity_status, co.approved_at, co.lifecycle_state,
+        co.processing_state, co.processing_detail_json, co.created_at AS opportunity_created_at,
+        co.updated_at AS opportunity_updated_at,
+        tc.id AS candidate_id, tc.proposed_title, tc.coverage_score, tc.evidence_count, tc.conflict_count,
+        tc.status AS candidate_status, tc.created_at AS candidate_created_at, tc.updated_at AS candidate_updated_at,
+        cb.id AS brief_id, cb.status AS brief_status, cb.last_error AS brief_last_error,
+        cb.created_at AS brief_created_at, cb.updated_at AS brief_updated_at,
+        ad.id AS draft_id, ad.status AS draft_status, ad.title AS draft_title, ad.revision,
+        ad.content_hash AS draft_content_hash, ad.quality_report_json AS draft_quality_report_json,
+        ad.created_at AS draft_created_at, ad.updated_at AS draft_updated_at,
+        qr.passed AS qa_passed, qr.score AS qa_score,
+        ea.id AS editorial_assembly_id,
+        np.id AS narrative_plan_id, wpkt.id AS writing_packet_id,
+        fpp.status AS frontend_plan_status, fpp.plan_json AS frontend_page_plan_json,
+        fpp.validation_json AS frontend_plan_validation_json, fpp.contract_version AS frontend_plan_contract_version,
+        fpp.schema_version AS frontend_plan_schema_version, fpp.contract_checksum AS frontend_plan_contract_checksum,
+        fpc.status AS frontend_page_status, fpc.payload_json AS frontend_page_payload_json,
+        fpc.validation_json AS frontend_page_validation_json, fpc.contract_version AS frontend_contract_version,
+        fpc.schema_version AS frontend_schema_version, fpc.contract_checksum AS frontend_contract_checksum,
+        CASE WHEN fpc.draft_revision=ad.revision AND fpc.draft_content_hash=ad.content_hash THEN 1 ELSE 0 END AS frontend_page_current,
+        pub.status AS publish_composition_status, pub.publish_package_json AS publish_package_json,
+        pub.validation_json AS publish_validation_json, pub.contract_version AS publish_contract_version,
+        pub.page_schema_version AS publish_schema_version, pub.contract_checksum AS publish_contract_checksum,
+        pub.page_content_hash, pub.seo_artifact_hash,
+        CASE WHEN pub.draft_revision=ad.revision AND pub.draft_content_hash=ad.content_hash THEN 1 ELSE 0 END AS publish_composition_current,
+        wpub.post_id AS wordpress_post_id, wpub.post_url AS wordpress_post_url,
+        wpub.preview_url AS wordpress_preview_url, wpub.edit_url AS wordpress_edit_url,
+        wpub.status AS wordpress_status, wpub.updated_at AS wordpress_updated_at,
         cc.status AS commercial_status, json_array_length(COALESCE(cc.offer_ids_json, '[]')) AS commercial_offer_count,
-        pc.status AS publish_composition_status
-      FROM topic_candidates tc
-      LEFT JOIN content_briefs cb ON cb.candidate_id = tc.id
-      LEFT JOIN article_drafts ad ON ad.brief_id = cb.id
+        COALESCE(vs.visual_total,0) AS visual_total, COALESCE(vs.visual_pending,0) AS visual_pending,
+        COALESCE(vs.visual_failed,0) AS visual_failed,
+        prc.disposition AS production_disposition
+      FROM content_opportunities co
+      LEFT JOIN topic_candidates tc ON tc.id=co.candidate_id
+      LEFT JOIN content_briefs cb ON cb.id=(SELECT latest_brief.id FROM content_briefs latest_brief
+        WHERE latest_brief.candidate_id=tc.id ORDER BY latest_brief.updated_at DESC,latest_brief.id DESC LIMIT 1)
+      LEFT JOIN article_drafts ad ON ad.id=(SELECT latest_draft.id FROM article_drafts latest_draft
+        WHERE latest_draft.brief_id=cb.id ORDER BY latest_draft.updated_at DESC,latest_draft.id DESC LIMIT 1)
       LEFT JOIN quality_reviews qr ON qr.id = (
         SELECT id FROM quality_reviews WHERE draft_id = ad.id AND draft_revision=ad.revision
           AND draft_content_hash=ad.content_hash ORDER BY created_at DESC LIMIT 1
       )
+      LEFT JOIN editorial_assemblies ea ON ea.id=(SELECT latest_ea.id FROM editorial_assemblies latest_ea
+        WHERE latest_ea.opportunity_id=co.id OR latest_ea.candidate_id=tc.id ORDER BY latest_ea.updated_at DESC LIMIT 1)
+      LEFT JOIN narrative_plans np ON np.id=(SELECT latest_np.id FROM narrative_plans latest_np WHERE latest_np.brief_id=cb.id ORDER BY latest_np.updated_at DESC LIMIT 1)
+      LEFT JOIN writing_packets wpkt ON wpkt.id=(SELECT latest_wpkt.id FROM writing_packets latest_wpkt WHERE latest_wpkt.brief_id=cb.id ORDER BY latest_wpkt.updated_at DESC LIMIT 1)
+      LEFT JOIN frontend_page_plans fpp ON fpp.id=(SELECT latest_fpp.id FROM frontend_page_plans latest_fpp WHERE latest_fpp.brief_id=cb.id ORDER BY latest_fpp.updated_at DESC LIMIT 1)
+      LEFT JOIN frontend_page_compositions fpc ON fpc.id=(SELECT latest_fpc.id FROM frontend_page_compositions latest_fpc WHERE latest_fpc.draft_id=ad.id ORDER BY latest_fpc.updated_at DESC LIMIT 1)
+      LEFT JOIN frontend_publish_compositions pub ON pub.id=(SELECT latest_pub.id FROM frontend_publish_compositions latest_pub WHERE latest_pub.draft_id=ad.id ORDER BY latest_pub.updated_at DESC LIMIT 1)
+      LEFT JOIN wordpress_publications wpub ON wpub.draft_id = ad.id
+      LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
+      LEFT JOIN (SELECT draft_id,COUNT(*) AS visual_total,
+        SUM(CASE WHEN status IN ('queued','generating') THEN 1 ELSE 0 END) AS visual_pending,
+        SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS visual_failed
+        FROM article_visuals GROUP BY draft_id) vs ON vs.draft_id=ad.id
+      LEFT JOIN production_record_controls prc ON prc.opportunity_id=co.id
+      WHERE (? IS NULL OR tc.id=? OR co.id=?)
+        AND (?=0 OR co.approved_at IS NOT NULL)
+        AND (?=0 OR co.approved_at IS NOT NULL OR tc.id IS NOT NULL OR prc.disposition IN ('archived','deleted'))
+      ORDER BY CASE COALESCE(prc.disposition,'active') WHEN 'active' THEN 0 ELSE 1 END,
+        co.updated_at DESC, co.readiness_score DESC
+    `).all(candidateId, candidateId, candidateId, approvedOnly ? 1 : 0, productionOnly ? 1 : 0) : this.db.prepare(`
+      SELECT tc.*, cb.id AS brief_id, cb.status AS brief_status, ad.id AS draft_id, ad.status AS draft_status,
+        ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score,
+        wp.post_id AS wordpress_post_id, wp.post_url AS wordpress_post_url, wp.preview_url AS wordpress_preview_url,
+        wp.edit_url AS wordpress_edit_url, wp.status AS wordpress_status,
+        cc.status AS commercial_status, json_array_length(COALESCE(cc.offer_ids_json, '[]')) AS commercial_offer_count,
+        pc.status AS publish_composition_status, co.id AS opportunity_id, co.approved_at,
+        co.readiness_json, co.updated_at AS opportunity_updated_at
+      FROM topic_candidates tc
+      LEFT JOIN content_opportunities co ON co.candidate_id=tc.id
+      LEFT JOIN content_briefs cb ON cb.candidate_id = tc.id
+      LEFT JOIN article_drafts ad ON ad.brief_id = cb.id
+      LEFT JOIN quality_reviews qr ON qr.id = (
+        SELECT id FROM quality_reviews WHERE draft_id = ad.id AND draft_revision=ad.revision
+          AND draft_content_hash=ad.content_hash ORDER BY created_at DESC LIMIT 1)
       LEFT JOIN wordpress_publications wp ON wp.draft_id = ad.id
       LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
       LEFT JOIN frontend_publish_compositions pc ON pc.draft_id = ad.id
       WHERE (? IS NULL OR tc.id=?)
-        AND (?=0 OR EXISTS (SELECT 1 FROM content_opportunities approved
-          WHERE approved.candidate_id=tc.id AND approved.approved_at IS NOT NULL))
-        AND (?=0 OR EXISTS (SELECT 1 FROM content_opportunities production
-          WHERE production.candidate_id=tc.id AND production.lifecycle_state IN ('producing','finished')
-            AND (EXISTS (SELECT 1 FROM jobs entry_job WHERE entry_job.entity_id=tc.id AND entry_job.type='plan_content')
-              OR EXISTS (SELECT 1 FROM content_briefs entry_brief WHERE entry_brief.candidate_id=tc.id)
-              OR tc.status='brief_queued')))
+        AND (?=0 OR co.approved_at IS NOT NULL)
       ORDER BY tc.coverage_score DESC, tc.updated_at DESC
-    `).all(candidateId, candidateId, approvedOnly ? 1 : 0, productionOnly ? 1 : 0);
+    `).all(candidateId, candidateId, approvedOnly ? 1 : 0);
     const draftIds = rows.map((row) => row.draft_id).filter(Boolean);
-    if (!draftIds.length) return rows;
+    if (!draftIds.length) return rows.map((row) => ({ ...row, workflow_status: row.candidate_status || row.opportunity_status,
+      production_state: buildProductionState(this.db, row, { capabilities:this.productionCapabilities }) }));
     const placeholders = draftIds.map(() => "?").join(",");
     const operationRows = this.db.prepare(`SELECT ad.id AS draft_id, tc.id, cb.id AS brief_id,
       CASE WHEN qr.id IS NOT NULL THEN ad.quality_report_json ELSE '{}' END AS quality_report_json,
@@ -5480,12 +5549,167 @@ export class Repository {
     }));
     const active = this.db.prepare("SELECT entity_id,type,status FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").all();
     return rows.map((row) => {
-      const job = active.find((j) => [row.id,row.brief_id,row.draft_id].includes(j.entity_id));
+      const job = active.find((j) => [row.candidate_id || row.id,row.brief_id,row.draft_id].includes(j.entity_id));
       if (staleReviews.has(row.draft_id)) { row.qa_score=null;row.qa_passed=null; }
       return { ...row, workflow_status: job ? `${job.type}_${job.status}`
-        : row.draft_status === "qa_queued" ? "awaiting_review" : row.draft_status || row.brief_status || row.status,
+        : row.draft_status === "qa_queued" ? "awaiting_review" : row.draft_status || row.brief_status || row.candidate_status || row.opportunity_status,
+        production_state: buildProductionState(this.db, row, { capabilities:this.productionCapabilities }),
         ...(row.draft_id ? { operation: operations.get(row.draft_id) || null } : {}) };
     });
+  }
+
+  listContentWorkspace(options = {}) {
+    const items = this.listContent(options);
+    return { items, sections: summarizeProductionSections(items) };
+  }
+
+  getContentProductionDetail(opportunityOrCandidateId) {
+    const item = this.listContent({ candidateId: opportunityOrCandidateId, productionOnly: true })[0];
+    if (!item) return null;
+    const history = this.listProductionRecordHistory(item.opportunity_id);
+    return {
+      ...item,
+      production_state: buildProductionState(this.db, item, { capabilities:this.productionCapabilities }),
+      page_preview: buildPageCompositionPreview(item),
+      publication: item.wordpress_status ? {
+        status: item.wordpress_status,
+        post_id: item.wordpress_post_id,
+        post_url: item.wordpress_post_url,
+        preview_url: item.wordpress_preview_url,
+        edit_url: item.wordpress_edit_url,
+      } : null,
+      draft: item.draft_id ? this.getDraftPackage(item.draft_id) : null,
+      history,
+    };
+  }
+
+  listProductionRecordHistory(opportunityId) {
+    const opportunity = this.db.prepare("SELECT id,candidate_id FROM content_opportunities WHERE id=?").get(opportunityId);
+    if (!opportunity) return null;
+    const audit = this.db.prepare("SELECT * FROM production_record_audit WHERE opportunity_id=? ORDER BY created_at DESC,id DESC").all(opportunityId)
+      .map((row) => ({ ...row, kind: "record_operation", detail: json(row.detail_json, {}) }));
+    const operations = opportunity.candidate_id ? this.db.prepare("SELECT * FROM content_operation_history WHERE candidate_id=? ORDER BY created_at DESC,id DESC").all(opportunity.candidate_id)
+      .map((row) => ({ ...row, kind: "content_operation", detail: { preview: json(row.preview_json, {}), result: json(row.result_json, {}) } })) : [];
+    const attempts = this.db.prepare("SELECT * FROM production_attempt_archives WHERE opportunity_id=? ORDER BY created_at DESC,id DESC").all(opportunityId)
+      .map((row) => ({ ...row, kind: "failed_attempt", detail: json(row.snapshot_json, {}) }));
+    const lessons = this.db.prepare("SELECT * FROM failure_lessons WHERE opportunity_id=? ORDER BY created_at DESC,id DESC").all(opportunityId)
+      .map((row) => ({ ...row, kind: "failure_lesson", detail: json(row.lesson_json, {}) }));
+    return [...audit, ...operations, ...attempts, ...lessons]
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+  }
+
+  archiveProductionRecord(opportunityId, { actor = "admin", reason = "", idempotencyKey = null } = {}) {
+    return this.#changeProductionDisposition(opportunityId, "archived", { actor, reason, idempotencyKey });
+  }
+
+  restoreProductionRecord(opportunityId, { actor = "admin", reason = "", idempotencyKey = null } = {}) {
+    return this.#changeProductionDisposition(opportunityId, "active", { actor, reason, idempotencyKey });
+  }
+
+  #changeProductionDisposition(opportunityId, disposition, { actor, reason, idempotencyKey }) {
+    const operationKey = idempotencyKey || sha256(`${disposition}:${opportunityId}:${actor}:${reason}`);
+    return transaction(this.db, () => {
+      const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(opportunityId);
+      if (!opportunity) return null;
+      const prior = this.db.prepare("SELECT * FROM production_record_audit WHERE idempotency_key=?").get(operationKey);
+      if (prior) return this.getContentProductionDetail(opportunityId);
+      const timestamp = now();
+      if (disposition === "archived") {
+        const entityIds = this.#productionEntityIds(opportunity);
+        if (entityIds.length) this.db.prepare(`UPDATE jobs SET status='failed',last_error='Production attempt archived by user',
+          failure_class='permanent_input',last_failure_code='PRODUCTION_ARCHIVED',locked_at=NULL,locked_by=NULL,
+          lease_expires_at=NULL,heartbeat_at=NULL,completed_at=?,updated_at=?
+          WHERE status IN ('queued','running') AND type IN (${[...PRODUCTION_JOB_TYPES].map(() => "?").join(",")})
+            AND entity_id IN (${entityIds.map(() => "?").join(",")})`).run(timestamp, timestamp, ...PRODUCTION_JOB_TYPES, ...entityIds);
+      }
+      this.db.prepare(`INSERT INTO production_record_controls(opportunity_id,disposition,archived_at,deleted_at,reason,actor,idempotency_key,tombstone_json,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,'{}',?,?) ON CONFLICT(opportunity_id) DO UPDATE SET disposition=excluded.disposition,
+        archived_at=excluded.archived_at,deleted_at=excluded.deleted_at,reason=excluded.reason,actor=excluded.actor,
+        idempotency_key=excluded.idempotency_key,updated_at=excluded.updated_at`)
+        .run(opportunityId, disposition, disposition === "archived" ? timestamp : null, null, reason, actor, operationKey, timestamp, timestamp);
+      this.#auditProductionRecord(opportunityId, disposition === "active" ? "restore_archive" : "archive", actor, operationKey,
+        { reason, cancelled_active_jobs: disposition === "archived" });
+      return this.getContentProductionDetail(opportunityId);
+    });
+  }
+
+  deleteProductionRecord(opportunityId, { actor = "admin", reason = "", idempotencyKey = null } = {}) {
+    const operationKey = idempotencyKey || sha256(`delete:${opportunityId}:${actor}:${reason}`);
+    return transaction(this.db, () => {
+      const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(opportunityId);
+      if (!opportunity) return null;
+      const prior = this.db.prepare("SELECT * FROM production_record_audit WHERE idempotency_key=?").get(operationKey);
+      if (prior) return this.getContentProductionDetail(opportunityId);
+      const item = this.listContent({ candidateId: opportunityId, productionOnly:true })[0];
+      if (item?.wordpress_post_id || item?.wordpress_status === "synced") {
+        const error = conflictError("This production record has a remote WordPress draft and cannot be deleted locally. Archive it instead.");
+        error.code = "REMOTE_WORDPRESS_DRAFT_EXISTS";
+        throw error;
+      }
+      if (item?.draft_id && this.db.prepare("SELECT 1 FROM published_content_impacts WHERE draft_id=? LIMIT 1").get(item.draft_id)) {
+        const error = conflictError("This production record has published-content impact history and cannot be deleted locally. Archive it instead.");
+        error.code = "PUBLISHED_CONTENT_HISTORY_EXISTS";
+        throw error;
+      }
+      const entityIds = this.#productionEntityIds(opportunity);
+      const tombstone = {
+        opportunity_id: opportunityId,
+        candidate_id: opportunity.candidate_id || null,
+        brief_ids: opportunity.candidate_id ? this.db.prepare("SELECT id FROM content_briefs WHERE candidate_id=?").all(opportunity.candidate_id).map((row) => row.id) : [],
+        draft_ids: opportunity.candidate_id ? this.db.prepare("SELECT ad.id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE cb.candidate_id=?").all(opportunity.candidate_id).map((row) => row.id) : [],
+        removed: {},
+        retained: ["sources", "source_assets", "capture_versions", "claims", "knowledge", "evidence", "experiences",
+          "content_recommendations", "content_opportunities", "approval", "failure_lessons", "production_attempt_archives", "operation_audit"],
+      };
+      const productionStages = [...PRODUCTION_JOB_TYPES];
+      if (entityIds.length) {
+        const entitiesSql = entityIds.map(() => "?").join(",");
+        const stagesSql = productionStages.map(() => "?").join(",");
+        tombstone.removed.jobs = this.db.prepare(`SELECT COUNT(*) AS count FROM jobs WHERE entity_id IN (${entitiesSql}) AND type IN (${stagesSql})`).get(...entityIds, ...productionStages).count;
+        tombstone.removed.pipeline_artifacts = this.db.prepare(`SELECT COUNT(*) AS count FROM pipeline_artifacts WHERE entity_id IN (${entitiesSql}) AND stage IN (${stagesSql})`).get(...entityIds, ...productionStages).count;
+        tombstone.removed.step_receipts = this.db.prepare(`SELECT COUNT(*) AS count FROM pipeline_step_receipts WHERE entity_id IN (${entitiesSql}) AND stage IN (${stagesSql})`).get(...entityIds, ...productionStages).count;
+        this.db.prepare(`DELETE FROM pipeline_step_receipts WHERE entity_id IN (${entitiesSql}) AND stage IN (${stagesSql})`).run(...entityIds, ...productionStages);
+        this.db.prepare(`DELETE FROM pipeline_artifacts WHERE entity_id IN (${entitiesSql}) AND stage IN (${stagesSql})`).run(...entityIds, ...productionStages);
+        this.db.prepare(`DELETE FROM jobs WHERE entity_id IN (${entitiesSql}) AND type IN (${stagesSql})`).run(...entityIds, ...productionStages);
+      }
+      if (tombstone.brief_ids.length) {
+        const briefSql = tombstone.brief_ids.map(() => "?").join(",");
+        if (tombstone.draft_ids.length) {
+          const draftSql = tombstone.draft_ids.map(() => "?").join(",");
+          this.db.prepare(`DELETE FROM frontend_capability_requests WHERE brief_id IN (${briefSql}) OR draft_id IN (${draftSql})`)
+            .run(...tombstone.brief_ids, ...tombstone.draft_ids);
+        } else this.db.prepare(`DELETE FROM frontend_capability_requests WHERE brief_id IN (${briefSql})`).run(...tombstone.brief_ids);
+      }
+      if (opportunity.candidate_id) {
+        this.db.prepare("DELETE FROM editorial_assemblies WHERE candidate_id=? OR opportunity_id=?").run(opportunity.candidate_id, opportunityId);
+        this.db.prepare("DELETE FROM content_briefs WHERE candidate_id=?").run(opportunity.candidate_id);
+        this.db.prepare("UPDATE topic_candidates SET status='candidate',updated_at=? WHERE id=?").run(now(), opportunity.candidate_id);
+      }
+      const timestamp = now();
+      const nextOpportunityStatus = json(opportunity.readiness_json, {}).ready ? "approved_ready" : "approved_waiting_for_evidence";
+      this.db.prepare("UPDATE content_opportunities SET status=?,lifecycle_state='approved',processing_state='CURRENT',processing_detail_json='{}',updated_at=? WHERE id=?")
+        .run(nextOpportunityStatus, timestamp, opportunityId);
+      this.db.prepare(`INSERT INTO production_record_controls(opportunity_id,disposition,archived_at,deleted_at,reason,actor,idempotency_key,tombstone_json,created_at,updated_at)
+        VALUES (?,'deleted',NULL,?,?,?,?,?,?,?) ON CONFLICT(opportunity_id) DO UPDATE SET disposition='deleted',archived_at=NULL,
+        deleted_at=excluded.deleted_at,reason=excluded.reason,actor=excluded.actor,idempotency_key=excluded.idempotency_key,
+        tombstone_json=excluded.tombstone_json,updated_at=excluded.updated_at`)
+        .run(opportunityId, timestamp, reason, actor, operationKey, JSON.stringify(tombstone), timestamp, timestamp);
+      this.#auditProductionRecord(opportunityId, "delete_production_record", actor, operationKey, { reason, tombstone });
+      return this.getContentProductionDetail(opportunityId);
+    });
+  }
+
+  #productionEntityIds(opportunity) {
+    const candidateId = opportunity.candidate_id;
+    if (!candidateId) return [];
+    const briefIds = this.db.prepare("SELECT id FROM content_briefs WHERE candidate_id=?").all(candidateId).map((row) => row.id);
+    const draftIds = briefIds.length ? this.db.prepare(`SELECT id FROM article_drafts WHERE brief_id IN (${briefIds.map(() => "?").join(",")})`).all(...briefIds).map((row) => row.id) : [];
+    return [candidateId, ...briefIds, ...draftIds];
+  }
+
+  #auditProductionRecord(opportunityId, action, actor, idempotencyKey, detail) {
+    this.db.prepare(`INSERT INTO production_record_audit(id,opportunity_id,action,status,actor,idempotency_key,detail_json,created_at)
+      VALUES (?,?,?,'completed',?,?,?,?)`).run(id("prod_audit"), opportunityId, action, actor, idempotencyKey, JSON.stringify(detail || {}), now());
   }
 
   upsertAffiliateProviderAccount(account) {

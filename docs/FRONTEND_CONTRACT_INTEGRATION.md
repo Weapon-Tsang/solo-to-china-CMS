@@ -6,6 +6,10 @@ SoloToChina uses two repositories. The Frontend owns components, variants, schem
 
 The CMS never scans JSX/CSS or maintains a handwritten production component list. It may emit only components and variants published by the active Frontend Contract.
 
+The CMS workbench's Page Composition Preview is a structural inspection of already persisted `frontend_page_plans.plan_json`, `frontend_page_compositions.payload_json`, or `frontend_publish_compositions.publish_package_json`. It may show block order, published component/variant identifiers, headings, content-node/evidence references, media, commercial markers, internal links, validation, schema/Contract versions and hashes. It never imports, duplicates, approximates or renders Frontend JSX/CSS and must state that WordPress theme visuals may differ. Only the Frontend/WordPress implementation can provide a final visual preview.
+
+After a successful WordPress Draft acknowledgement, the CMS exposes the adapter's persisted `wordpress_publications.preview_url` as the final-page preview and `edit_url` as the editing entry. It does not synthesize either URL from a post ID.
+
 Three artifacts remain distinct:
 
 - Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.

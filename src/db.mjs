@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 67;
+export const SCHEMA_VERSION = 68;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -88,6 +88,41 @@ function migrate(db) {
   if (current < 65) migrationSixtyFive(db);
   if (current < 66) migrationSixtySix(db);
   if (current < 67) migrationSixtySeven(db);
+  if (current < 68) migrationSixtyEight(db);
+}
+
+function migrationSixtyEight(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE production_record_controls (
+      opportunity_id TEXT PRIMARY KEY REFERENCES content_opportunities(id) ON DELETE CASCADE,
+      disposition TEXT NOT NULL DEFAULT 'active' CHECK (disposition IN ('active','archived','deleted')),
+      archived_at TEXT,
+      deleted_at TEXT,
+      reason TEXT NOT NULL DEFAULT '',
+      actor TEXT NOT NULL DEFAULT 'system',
+      idempotency_key TEXT,
+      tombstone_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_production_record_controls_disposition
+      ON production_record_controls(disposition,updated_at DESC);
+    CREATE UNIQUE INDEX idx_production_record_controls_idempotency
+      ON production_record_controls(idempotency_key) WHERE idempotency_key IS NOT NULL;
+    CREATE TABLE production_record_audit (
+      id TEXT PRIMARY KEY,
+      opportunity_id TEXT NOT NULL REFERENCES content_opportunities(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('completed','rejected')),
+      actor TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_production_record_audit_history
+      ON production_record_audit(opportunity_id,created_at DESC);
+    INSERT INTO schema_migrations(version, applied_at) VALUES (68, datetime('now'));
+  `));
 }
 
 function migrationSixtySeven(db) {

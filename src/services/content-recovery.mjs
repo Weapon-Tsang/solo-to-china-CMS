@@ -6,22 +6,26 @@ import { applyDeterministicGates } from '../ai/content-engine.mjs';
 import { validatePageEvidence } from '../evidence-validator.mjs';
 import { evaluateCoverage } from '../research-strategy.mjs';
 import { recoveryDiagnosis } from './content-recovery-policy.mjs';
+import { PRODUCTION_STAGE_REGISTRY } from './production-state.mjs';
 
 function conflict(message) { throw Object.assign(new Error(message), { statusCode: 409 }); }
 
-function context(repo, candidateId) {
+function context(repo, candidateOrOpportunityId) {
+  const opportunity = repo.db.prepare('SELECT * FROM content_opportunities WHERE id=? OR candidate_id=? ORDER BY id=? DESC LIMIT 1')
+    .get(candidateOrOpportunityId, candidateOrOpportunityId, candidateOrOpportunityId);
+  const candidateId = opportunity?.candidate_id || candidateOrOpportunityId;
   const candidate = repo.db.prepare('SELECT * FROM topic_candidates WHERE id=?').get(candidateId);
   if (!candidate) return null;
   const brief = repo.db.prepare('SELECT * FROM content_briefs WHERE candidate_id=?').get(candidateId);
   const draft = brief && repo.db.prepare('SELECT id,revision,content_hash FROM article_drafts WHERE brief_id=?').get(brief.id);
   const activeJobs = repo.db.prepare("SELECT id,type,status FROM jobs WHERE entity_id IN (?,?,?) AND status IN ('queued','running')")
     .all(candidateId, brief?.id || '', draft?.id || '');
-  const failedJob = repo.db.prepare(`SELECT id,type,status,last_error,entity_id,updated_at FROM jobs
+  const failedJob = repo.db.prepare(`SELECT id,type,status,last_error,entity_id,updated_at,failure_class,last_failure_code FROM jobs
     WHERE entity_id IN (?,?,?) AND status='failed'
       AND NOT EXISTS (SELECT 1 FROM jobs ok WHERE ok.entity_id=jobs.entity_id AND ok.type=jobs.type
         AND ok.status='succeeded' AND ok.updated_at>=jobs.updated_at)
     ORDER BY updated_at DESC LIMIT 1`).get(candidateId, brief?.id || '', draft?.id || '');
-  return { candidate, brief, draft, activeJobs, failedJob };
+  return { candidate, opportunity: opportunity || repo.db.prepare('SELECT * FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1').get(candidateId), brief, draft, activeJobs, failedJob };
 }
 
 function assetsFor(repo, ctx, packageFacts = null) {
@@ -68,8 +72,9 @@ export function contentRecoveryReport(repo, candidateId) {
     ? repo.automaticQualityRepairState(ctx.draft.id, (localCheck || pkg.review).issues, { enqueue: false })
     : { eligible:false,queued:false,stage:null,attempts:0,maxAttempts:2,reason:'review_not_available' };
   const diagnosis = recoveryDiagnosis({ review:localCheck || pkg.review, failedJob:ctx.failedJob, automaticRepair });
+  const detail = ctx.opportunity ? repo.getContentProductionDetail(ctx.opportunity.id) : null;
   return {
-    candidateId, title:ctx.candidate.proposed_title, destination:ctx.candidate.destination_slug,
+    candidateId:ctx.candidate.id, opportunityId:ctx.opportunity?.id || null, title:ctx.candidate.proposed_title, destination:ctx.candidate.destination_slug,
     destinationCheck:validatePlanningDestination(pkg), canCorrectDestination:!ctx.brief,
     destinations:repo.db.prepare('SELECT slug,name FROM destinations ORDER BY name').all(),
     draftId:ctx.draft?.id || null, revision:ctx.draft?.revision || null, activeJobs:ctx.activeJobs,
@@ -86,6 +91,7 @@ export function contentRecoveryReport(repo, candidateId) {
     editorial:ctx.draft ? { body:pkg.draft.body_markdown, evidenceLedger:pkg.draft.evidence_ledger, verificationNotes:pkg.draft.verification_notes } : null,
     localCheck,
     pageEvidenceErrors:ctx.draft && pkg.frontend_page?.payload ? validatePageEvidence(pkg.frontend_page.payload,pkg).errors : [],
+    productionState:detail?.production_state || null,
     recaptureMessage:'打开下方对应原文，用新版采集扩展重新采集并确认真实授权。即使正文没有变化，新版也会补回原图文件；系统检测到该草稿已引用这张图后，会只从页面编排自动续跑并重新质检。若尚未选择图片槽位，再回到此处绑定对应图片。',
   };
 }
@@ -95,7 +101,7 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
     const ctx = context(repo, candidateId);
     if (!ctx) return null;
     if (ctx.activeJobs.length) conflict('该选题已经有排队或运行中的任务，请等待完成，避免重复执行。');
-    if (ctx.draft && input.revision !== ctx.draft.revision) conflict('草稿已被其他任务更新，请刷新后再操作。');
+    if (ctx.draft && input.revision != null && input.revision !== ctx.draft.revision) conflict('草稿已被其他任务更新，请刷新后再操作。');
     if (ctx.candidate.status === 'dismissed') conflict('已移除的选题不能从恢复入口绕过确认。');
     let result;
     if (input.action === 'correct_destination') {
@@ -159,30 +165,55 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       const jobId = repo.enqueue(nextStage,ctx.draft.id,{ dedupeKey:`recovery-stage:${nextStage}:${ctx.draft.id}:r${ctx.draft.revision + 1}` });
       result = { action:input.action,visualId:visual.id,previousAssetId:visual.source_asset_id,assetId:asset.id,jobId,queued:Boolean(jobId) };
     } else {
-      const stage = String(input.action || '');
-      if (!['compose_frontend_page','review_draft','revise_draft','plan_content'].includes(stage)) conflict('不支持的恢复操作。');
+      const stateRow = ctx.opportunity ? repo.listContent({ candidateId:ctx.opportunity.id,productionOnly:true })[0] : null;
+      const productionState = stateRow?.production_state || null;
+      const requestedAction = String(input.action || '');
+      const stage = requestedAction === 'retry_failed_stage' ? productionState?.latest_error?.stage
+        : requestedAction === 'recover_next_stage' ? productionState?.next_stage : requestedAction;
+      const definition = PRODUCTION_STAGE_REGISTRY.find((item) => item.key === stage);
+      if (!definition) conflict('没有可恢复的准确生产步骤。');
+      if (requestedAction === 'retry_failed_stage' && productionState?.stage_status !== 'failed') conflict('当前没有失败步骤可重试。');
+      if (requestedAction === 'recover_next_stage' && productionState?.stage_status !== 'interrupted') conflict('当前流程没有断链。');
+      const completed = new Set(productionState?.completed_stages || []);
+      const missingDependency = ['retry_failed_stage','recover_next_stage'].includes(requestedAction)
+        ? definition.dependencies.find((dependency) => !completed.has(dependency)) : null;
+      if (missingDependency) conflict(`前置步骤 ${missingDependency} 尚未完成，不能跳过它恢复 ${stage}。`);
       if (stage === 'plan_content') {
         if (ctx.brief) conflict('已有写作准备记录，不会被重新覆盖。');
         const check = validatePlanningDestination(repo.getTopicPackage(candidateId));
         if (!check.valid) conflict(check.message);
         const approved = repo.db.prepare(`SELECT id,readiness_json FROM content_opportunities WHERE candidate_id=? AND
-          (status IN ('approved_ready','producing') OR (status='suppressed' AND suppression_reason='destination_recovery_requires_confirmation' AND approved_at IS NOT NULL))`).get(candidateId);
+          (status IN ('approved_ready','producing') OR (status='suppressed' AND suppression_reason='destination_recovery_requires_confirmation' AND approved_at IS NOT NULL))`).get(ctx.candidate.id);
         if (!approved) conflict('请先在内容建议中确认文章方案。');
         if (!json(approved.readiness_json,{}).ready) conflict('更正目的地后素材仍未准备好，请先补充证据。');
         repo.db.prepare("UPDATE content_opportunities SET status='producing',suppression_reason=NULL,updated_at=? WHERE id=?")
           .run(now(),approved.id);
-      } else if (!ctx.draft) conflict('请先完成写作准备并生成草稿。');
+      } else if (['plan_narrative','assemble_writing_packet','compose_frontend_page_plan','generate_draft'].includes(stage) && !ctx.brief) {
+        conflict('写作准备记录不存在，无法从这个步骤继续。');
+      } else if (!['assemble_editorial','plan_content','plan_narrative','assemble_writing_packet','compose_frontend_page_plan','generate_draft'].includes(stage) && !ctx.draft) {
+        conflict('草稿尚不存在，无法从草稿后的步骤继续。');
+      }
       if (stage === 'compose_frontend_page') {
         const report = contentRecoveryReport(repo,candidateId);
         if (report.visuals.some((visual) => visual.assetId && !visual.delivered
           && !report.assets.find((asset) => asset.id === visual.assetId)?.has_bytes)) conflict('所选图片只有失效远程链接，请从下方原文重新采集并绑定。');
       }
-      const entityId = stage === 'plan_content' ? candidateId : ctx.draft.id;
-      const jobId = repo.enqueue(stage,entityId,{ dedupeKey:`recovery-stage:${stage}:${entityId}` });
-      result = { action:stage,jobId,queued:Boolean(jobId),stageOnly:false };
+      if (ctx.opportunity) {
+        const disposition = repo.db.prepare('SELECT disposition FROM production_record_controls WHERE opportunity_id=?').get(ctx.opportunity.id)?.disposition;
+        if (['archived','deleted'].includes(disposition)) repo.restoreProductionRecord(ctx.opportunity.id,{ actor, reason:'Explicit production recovery',
+          idempotencyKey:String(input.idempotencyKey || input.idempotency_key || id('restore')) + ':restore' });
+      }
+      const entityId = ['assemble_editorial','plan_content'].includes(stage) ? ctx.candidate.id
+        : ['plan_narrative','assemble_writing_packet','compose_frontend_page_plan','generate_draft'].includes(stage) ? ctx.brief.id : ctx.draft.id;
+      const recoveryRunId = id('recovery_run');
+      const identity = ctx.draft ? `r${ctx.draft.revision}:${ctx.draft.content_hash}` : ctx.brief ? ctx.brief.id : ctx.candidate.id;
+      const jobId = repo.enqueue(stage,entityId,{ dedupeKey:`recovery-stage:${stage}:${entityId}:${identity}`,
+        recoveryRunId, interactive:true });
+      result = { action:requestedAction,resolvedStage:stage,jobId,recoveryRunId,queued:Boolean(jobId),stageOnly:['retry_failed_stage','recover_next_stage'].includes(requestedAction),
+        preservedStages:[...(productionState?.completed_stages || [])] };
     }
     repo.db.prepare(`INSERT INTO content_operation_history(id,candidate_id,action,status,preview_json,result_json,actor,created_at)
-      VALUES (?,?,?,'completed',?,?,?,?)`).run(id('recovery'),candidateId,input.action,
+      VALUES (?,?,?,'completed',?,?,?,?)`).run(id('recovery'),ctx.candidate.id,input.action,
         JSON.stringify({revision:ctx.draft?.revision}),JSON.stringify(result),String(actor).slice(0,200),now());
     return { ...result,previousOpportunities:undefined };
   });

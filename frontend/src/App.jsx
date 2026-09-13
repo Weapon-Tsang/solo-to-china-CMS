@@ -211,7 +211,9 @@ export default function App() {
     const request = detailRequests.current.begin();
     setDetail({ open: true, type, data: null, loading: true });
     try {
-      const data = await api(type === "source" ? `/api/sources/${id}` : `/api/drafts/${id}`, { signal: request.signal });
+      const endpoint = type === "source" ? `/api/sources/${id}` : type === "production"
+        ? `/api/content/${encodeURIComponent(id)}/production-state` : `/api/drafts/${id}`;
+      const data = await api(endpoint, { signal: request.signal });
       if (!request.isCurrent()) return;
       setDetail({ open: true, type, data, loading: false });
     } catch (caught) {
@@ -259,7 +261,7 @@ export default function App() {
         </Tabs>
         {health && !health.aiConfigured && <AiAlert onConfigure={() => openGuide("ai")} />}
         <section aria-live="polite">
-          {loading && !viewData ? <LoadingView /> : error && !viewData ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} reviewRequest={pendingActionView?.view === "knowledge" ? pendingActionView.requestedAt : null} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} onSubmitManualSource={submitManualSource} actionBusy={actionBusy} />}
+          {loading && !viewData ? <LoadingView /> : error && !viewData ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} reviewRequest={pendingActionView?.view === "knowledge" ? pendingActionView.requestedAt : null} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onOpenProduction={(id) => openPackage("production", id)} onAction={runAction} onSubmitManualSource={submitManualSource} actionBusy={actionBusy} />}
         </section>
         <footer className="flex flex-col gap-1 border-t border-slate-200/70 pt-4 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:pt-5"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
       </main>
@@ -329,10 +331,27 @@ function DetailDialog({ detail, health, actionBusy, onOpenChange, onAction, onCl
           : detail.type === "guide" ? <GuideContent guide={detail.data.guide} />
             : detail.type === "strategy" ? <ContentStrategyDetail strategy={detail.data} />
             : detail.type === "source" ? <SourceDetail source={detail.data} actionBusy={actionBusy} onAction={onAction} onClose={onClose} />
-              : detail.type === "draft" ? <DraftDetail item={detail.data} health={health} actionBusy={actionBusy} onAction={onAction} onClose={onClose} /> : null}
+              : detail.type === "draft" ? <DraftDetail item={detail.data} health={health} actionBusy={actionBusy} onAction={onAction} onClose={onClose} />
+                : detail.type === "production" ? <ProductionDetail item={detail.data} health={health} actionBusy={actionBusy} onAction={onAction} onClose={onClose} /> : null}
       </DialogContent>
     </Dialog>
   );
+}
+
+function ProductionDetail({ item, health, actionBusy, onAction, onClose }) {
+  const state = item.production_state || {};
+  const preview = item.page_preview || {};
+  const publication = item.publication;
+  return <>
+    <DialogHeader><Badge variant={state.needs_human ? "warning" : "info"} className="w-max"><Layers3 className="size-3" /> 内容生产详情</Badge><DialogTitle>{item.draft_title || item.proposed_title || item.title || "未命名文章"}</DialogTitle><DialogDescription>{state.headline}。{state.explanation}</DialogDescription></DialogHeader>
+    <div className="mb-4 flex flex-wrap items-center gap-2"><StatusPill status={state.stage_status || "waiting"} /><Badge>完成 {state.progress?.completed || 0}/{state.progress?.total || 0}</Badge><Badge variant={state.auto_continue ? "success" : state.needs_human ? "warning" : "secondary"}>{state.auto_continue ? "会自动继续" : state.needs_human ? "等待人工" : "不会自动继续"}</Badge>{publication?.preview_url && <Button size="sm" asChild><a href={publication.preview_url} target="_blank" rel="noreferrer"><ExternalLink />预览最终页面</a></Button>}{publication?.edit_url && <Button size="sm" variant="outline" asChild><a href={publication.edit_url} target="_blank" rel="noreferrer"><ExternalLink />在 WordPress 编辑</a></Button>}</div>
+    {state.latest_error && <DetailCard title="准确失败原因" className="mb-3 border-rose-200 bg-rose-50/40"><p><strong>失败阶段：</strong>{state.current_stage_label}</p><p><strong>错误代码：</strong>{state.latest_error.code}</p><p>{state.latest_error.reason}</p></DetailCard>}
+    {publication?.post_id && <DetailCard title="远端 WordPress 草稿保护" className="mb-3 border-amber-200 bg-amber-50/40"><p>这篇内容已经创建 WordPress 草稿。删除本地生产记录不会删除 WordPress 中的草稿。为避免记录失配，本次只能归档本地生产记录。</p></DetailCard>}
+    <DetailCard title="生产时间线" className="mb-3"><ol className="space-y-2">{(state.timeline || []).map((step) => <li key={step.key} className="flex items-start justify-between gap-3 rounded-lg border border-slate-100 px-3 py-2"><div><strong>{step.label}</strong><small>{step.dependencies?.length ? `前置：${step.dependencies.join("、")}` : "生产入口"}{step.reused ? " · 已复用持久化产物" : ""}</small></div><StatusPill status={step.status} /></li>)}</ol><p className="mt-3">下一步骤：{state.next_stage ? state.next_stage === state.current_stage ? state.current_stage_label : state.stage_registry?.find((step) => step.key === state.next_stage)?.label || state.next_stage : "无"}</p></DetailCard>
+    <DetailCard title="页面编排预览" className="mb-3"><p>{preview.notice}</p>{preview.kind === "unavailable" ? <small>页面规划尚未生成；生产详情仍可正常查看。</small> : <><p className="mt-2">来源：{label(preview.kind)} · Contract {preview.contract_version || "—"} · Schema {preview.schema_version || "—"}</p><ol className="mt-3 space-y-2">{(preview.blocks || []).map((block) => <li key={`${block.order}:${block.component}`} className="rounded-lg border border-slate-100 px-3 py-2"><strong>{block.order}. {block.component}{block.variant ? ` · ${block.variant}` : ""}</strong><small>{block.heading || "无标题"} · Claims {block.claim_keys?.length || 0} · 来源章节 {block.source_section_ids?.length || 0}{block.commercial ? " · 商业模块" : ""}</small></li>)}</ol><small>Payload hash：{preview.payload_hash || "—"} · Contract checksum：{preview.contract_checksum || "—"}</small></>}</DetailCard>
+    {item.draft ? <details className="rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-800">展开 Draft 正文、质量与商业层详情</summary><div className="mt-4"><DraftDetail item={item.draft} health={health} actionBusy={actionBusy} onAction={onAction} onClose={onClose} /></div></details> : <DetailCard title="Draft 尚未生成"><p>这不是详情缺失。你仍可查看已完成步骤、当前步骤、下一步骤、自动继续状态及历史记录。</p></DetailCard>}
+    {(item.history || []).length > 0 && <DetailCard title={`生产与审计历史（${item.history.length}）`} className="mt-3"><ul className="max-h-48 space-y-2 overflow-auto">{item.history.map((event, index) => <li key={`${event.kind}:${event.id}:${index}`}><strong>{label(event.action || event.failing_stage || event.kind)}</strong><small>{event.created_at} · {label(event.status || event.failure_code || event.kind)}</small></li>)}</ul></DetailCard>}
+  </>;
 }
 
 function SourceDetail({ source, actionBusy, onAction, onClose }) {
@@ -357,7 +376,7 @@ function SourceDetail({ source, actionBusy, onAction, onClose }) {
 }
 
 function DraftDetail({ item, health, actionBusy, onAction, onClose }) {
-  const { draft, review, commercial_composition: composition } = item;
+  const { draft, review, commercial_composition: composition, publication } = item;
   const [seoTitle, setSeoTitle] = useState(draft.seo?.meta_title || draft.title || "");
   const [seoDescription, setSeoDescription] = useState(draft.meta_description || "");
   const titleLength = [...seoTitle].length;
@@ -371,7 +390,7 @@ function DraftDetail({ item, health, actionBusy, onAction, onClose }) {
   };
   return <>
     <DialogHeader><Badge variant="info" className="w-max"><Layers3 className="size-3" /> 文章草稿 · 修订版 {draft.revision}</Badge><DialogTitle>{draft.title}</DialogTitle><DialogDescription>面向读者的正文与内部证据台账、商业内容层保持分离。</DialogDescription></DialogHeader>
-    <div className="mb-4 flex flex-wrap items-center gap-2"><StatusPill status={draft.status} /><Badge>质量审核 {review ? `${Math.round(review.score)} / 100` : "待处理"}</Badge>{review?.passed && health?.wordpressConfigured && draft.status === "ready_for_wordpress" && <Button size="sm" disabled={actionBusy} onClick={push}><Send /> 发送到 WordPress 草稿箱</Button>}</div>
+    <div className="mb-4 flex flex-wrap items-center gap-2"><StatusPill status={draft.status} /><Badge>质量审核 {review ? `${Math.round(review.score)} / 100` : "待处理"}</Badge>{review?.passed && health?.wordpressConfigured && draft.status === "ready_for_wordpress" && <Button size="sm" disabled={actionBusy} onClick={push}><Send /> 发送到 WordPress 草稿箱</Button>}{publication?.preview_url && <Button size="sm" asChild><a href={publication.preview_url} target="_blank" rel="noreferrer"><ExternalLink />预览最终页面</a></Button>}{publication?.edit_url && <Button size="sm" variant="outline" asChild><a href={publication.edit_url} target="_blank" rel="noreferrer"><ExternalLink />在 WordPress 编辑</a></Button>}</div>
     <ContentRecovery candidateId={item.candidate?.id} onAction={onAction} actionBusy={actionBusy} />
     <ContentQualityStatus operation={item.operation} actionBusy={actionBusy} onRetry={retryFailedStage} onAction={onAction} />
     <DetailCard title="编辑反馈与金标" className="mb-3"><div className="flex flex-wrap gap-2">{["满意","AI味重","太啰嗦","信息太平","像数据库","结构不好","很好"].map((feedback)=><Button key={feedback} size="sm" variant="outline" disabled={actionBusy} onClick={()=>onAction(`/api/drafts/${draft.id}/editorial-feedback`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({feedback})},`已记录“${feedback}”，后续组装与叙事规划会参考。`)}>{feedback}</Button>)}<Button size="sm" disabled={actionBusy} onClick={()=>onAction(`/api/drafts/${draft.id}/golden`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({principles:["evidence-led","concise","traveler-decision-focused"]})},"已标记为金标文章。")}>标记金标</Button></div></DetailCard>

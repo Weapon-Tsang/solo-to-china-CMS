@@ -80,6 +80,11 @@ export function createApplication(config = loadConfig()) {
   const contentEngine = new ContentEngine(activeAi);
   const visuals = new VertexImagen(activeVisuals);
   const wordpress = new WordPressDraftAdapter(config.wordpress);
+  repository.configureProductionCapabilities({
+    frontendContract: frontendContracts.configured,
+    visuals: visuals.enabled,
+    wordpress: wordpress.enabled,
+  });
   const searchConsole = new SearchConsoleAdapter(config.searchConsole);
   const commercialComposer = new CommercialComposer(config.commercial);
   const pipeline = new Pipeline(repository, extractor, {
@@ -669,9 +674,58 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, { items: repository.getEditorialBlueprints() });
       }
       if (request.method === "GET" && url.pathname === "/api/content") {
-        return sendJson(response, 200, {
-          items: repository.listContent({ productionOnly: true }),
+        return sendJson(response, 200, repository.listContentWorkspace({ productionOnly: true }));
+      }
+      const productionDetailMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/production-state$/);
+      if (request.method === "GET" && productionDetailMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const detail = repository.getContentProductionDetail(decodeURIComponent(productionDetailMatch[1]));
+        return detail ? sendJson(response, 200, detail) : sendJson(response, 404, { error: "Content production record not found." });
+      }
+      const productionHistoryMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/history$/);
+      if (request.method === "GET" && productionHistoryMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const items = repository.listProductionRecordHistory(decodeURIComponent(productionHistoryMatch[1]));
+        return items ? sendJson(response, 200, { items }) : sendJson(response, 404, { error: "Content production record not found." });
+      }
+      const productionRecoverMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/recover$/);
+      if (request.method === "POST" && productionRecoverMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 50_000);
+        const result = executeContentRecovery(repository, decodeURIComponent(productionRecoverMatch[1]), payload,
+          auth.status(request).username || "administrator");
+        if (result?.queued) void pipeline.runOne();
+        return result ? sendJson(response, result.queued ? 202 : 200, result) : sendJson(response, 404, { error: "Content production record not found." });
+      }
+      const productionArchiveMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/archive$/);
+      if (request.method === "POST" && productionArchiveMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.archiveProductionRecord(decodeURIComponent(productionArchiveMatch[1]), {
+          actor: auth.status(request).username || "administrator", reason: String(payload.reason || ""),
+          idempotencyKey: request.headers["idempotency-key"] || payload.idempotency_key || null,
         });
+        return result ? sendJson(response, 200, result) : sendJson(response, 404, { error: "Content production record not found." });
+      }
+      const productionRestoreMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/restore$/);
+      if (request.method === "POST" && productionRestoreMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.restoreProductionRecord(decodeURIComponent(productionRestoreMatch[1]), {
+          actor: auth.status(request).username || "administrator", reason: String(payload.reason || ""),
+          idempotencyKey: request.headers["idempotency-key"] || payload.idempotency_key || null,
+        });
+        return result ? sendJson(response, 200, result) : sendJson(response, 404, { error: "Content production record not found." });
+      }
+      const productionDeleteMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/production-record$/);
+      if (request.method === "DELETE" && productionDeleteMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const result = repository.deleteProductionRecord(decodeURIComponent(productionDeleteMatch[1]), {
+          actor: auth.status(request).username || "administrator", reason: String(payload.reason || ""),
+          idempotencyKey: request.headers["idempotency-key"] || payload.idempotency_key || null,
+        });
+        return result ? sendJson(response, 200, result) : sendJson(response, 404, { error: "Content production record not found." });
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {
         const pageSize=limit(url.searchParams.get("limit"));
@@ -1211,9 +1265,9 @@ function setCors(request, response) {
     response.setHeader("Access-Control-Allow-Origin", origin);
     response.setHeader("Vary", "Origin");
   }
-  response.setHeader("Access-Control-Allow-Headers", "authorization, content-type, x-request-id, x-upload-token");
+  response.setHeader("Access-Control-Allow-Headers", "authorization, content-type, x-request-id, x-upload-token, idempotency-key");
   response.setHeader("Access-Control-Expose-Headers", "x-request-id");
-  response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS");
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 }
 
 async function readJson(request, maxBytes) {

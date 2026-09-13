@@ -1,5 +1,10 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.12 / schema 68 - 2026-09-13
+
+- Content Strategy remains 3.3; unified production state, targeted recovery, archive/delete controls and structural page preview are application-layer changes.
+- Schema 68 introduces no migration-time production replay or model invocation.
+
 ## App 2.0.11 - 2026-09-13
 
 - Opportunity reconciliation derives Knowledge identity from the resolved topic entity and reconciles a primary city together with its nested destination scopes, so bilingual titles and parent/child destination aliases cannot create parallel Knowledge opportunities.

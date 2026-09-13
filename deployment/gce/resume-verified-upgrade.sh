@@ -56,7 +56,7 @@ done
 if [[ "$READY" != 1 ]]; then
   docker update --restart no engine >/dev/null
   docker stop --time 10 engine >/dev/null
-  printf 'Readiness failed; retained schema 67 and both containers for inspection.\n' >&2
+  printf 'Readiness failed; retained schema 68 and both containers for inspection.\n' >&2
   exit 1
 fi
 docker network disconnect none engine
