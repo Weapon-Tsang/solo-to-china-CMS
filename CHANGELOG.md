@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.16 - 2026-09-14
+## 2.0.16 - Unreleased
 
 - Resolve Opportunity-owned recovery IDs to the canonical Candidate before loading topic/planning packages. Clicking “重试失败步骤” no longer crashes before enqueueing the exact stage, and repeated idempotency keys still reuse one recovery run.
 - Treat a persisted Brief as proof that `plan_content` completed even when a historical downstream failure wrote `content_briefs.status=exception`; interrupted legacy rows now resume at `plan_narrative` instead of trying to overwrite the Brief.

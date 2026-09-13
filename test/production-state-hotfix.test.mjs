@@ -152,6 +152,9 @@ test("a corrected destination invalidates old-scope failures and waits for expli
   assert.equal(state.latest_historical_error.code,"DESTINATION_TOPIC_MISMATCH");
   assert.deepEqual(state.completed_stages,[]);
   assert.equal(state.available_actions.includes("confirm_destination_scope"),true);
+  const sections=repository.listContentWorkspace({productionOnly:true}).sections;
+  assert.equal(sections.pending_start,1);
+  assert.equal(sections.needs_attention,0);
   const detail=repository.getContentProductionDetail("corrected-owner");
   assert.equal(detail.production_state.latest_error,null);
   const report=contentRecoveryReport(repository,"corrected-owner");
@@ -345,6 +348,12 @@ test("production_state distinguishes provider cooldown from exhausted automatic 
   assert.equal(state.auto_continue,false);
   assert.equal(state.needs_human,true);
   assert.match(state.headline,/自动重试次数已用完/);
+  assert.equal(state.retry_state.remaining_auto_attempts,0);
+
+  db.prepare("UPDATE jobs SET attempts=29 WHERE id=?").run(jobId);
+  state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.retry_state.attempt,3);
+  assert.equal(state.retry_state.attempts_total,29);
   assert.equal(state.retry_state.remaining_auto_attempts,0);
 });
 

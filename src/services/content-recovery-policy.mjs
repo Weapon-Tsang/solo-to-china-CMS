@@ -192,7 +192,7 @@ export function explainOperationalFailure(job) {
   if (status === 400 && code === 'PROVIDER_REQUEST_FAILED'
     && ['assemble_editorial', 'plan_content', 'plan_narrative'].includes(type)) return {
     category: 'configuration', headline: '模型接口拒绝了结构化输出格式',
-    reason: 'Vertex 在开始生成前拒绝了当前结构化请求格式；这是模型接口兼容问题，不代表来源、证据或文章事实有错。已有成功产物仍然保留。',
+    reason: '这里记录的是上一次 Vertex 在开始生成前拒绝结构化请求的历史结果，不代表兼容补丁没有部署，也不代表来源、证据或文章事实有错。部署不会擅自重试；点击“重试失败步骤”后会从本步骤使用新版兼容链路继续，已有成功产物仍然保留。',
     action: { id: type, label: `重新执行${type === 'assemble_editorial' ? '素材组装' : type === 'plan_content' ? '写作准备' : '叙事规划'}`, why: '兼容层会记住已拒绝的 Schema 传输并从下一种格式继续，最终仍使用本地 Schema 严格校验；无需重跑前置步骤。' },
     technicalDetail: details,
   };

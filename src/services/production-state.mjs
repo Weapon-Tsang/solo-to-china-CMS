@@ -116,11 +116,14 @@ export function buildProductionState(db, row, options = {}) {
   const nowMs = options.now instanceof Date ? options.now.getTime() : Date.parse(options.now || "") || Date.now();
   const retryJob = active?.failure_class === "retryable_provider" ? active
     : failed?.failure_class === "retryable_provider" ? failed : null;
+  const retryAttempts=Number(retryJob?.attempts || 0);
+  const retryMaximum=Number(retryJob?.max_attempts || 0);
   const retryState = retryJob ? {
     reason:"provider_backoff",
-    attempt:Number(retryJob.attempts || 0),
-    max_attempts:Number(retryJob.max_attempts || 0),
-    remaining_auto_attempts:Math.max(0,Number(retryJob.max_attempts || 0)-Number(retryJob.attempts || 0)),
+    attempt:Math.min(retryAttempts,retryMaximum),
+    max_attempts:retryMaximum,
+    ...(retryAttempts>retryMaximum ? { attempts_total:retryAttempts } : {}),
+    remaining_auto_attempts:Math.max(0,retryMaximum-retryAttempts),
     resume_at:retryJob.status === "queued" ? retryJob.next_eligible_at || retryJob.available_at || null : null,
   } : null;
   const graceMs = Math.max(60_000, Number(options.continuityGraceMs || 15 * 60_000));
@@ -328,8 +331,7 @@ export function summarizeProductionSections(items = []) {
   const counts = { pending_start: 0, in_progress: 0, needs_attention: 0, completed: 0, history: 0, generated_body: 0 };
   for (const item of items) {
     const lifecycle = item.production_state?.lifecycle;
-    if (lifecycle !== "needs_attention" && Object.hasOwn(counts, lifecycle)) counts[lifecycle] += 1;
-    if (item.production_state?.needs_human) counts.needs_attention += 1;
+    if (Object.hasOwn(counts, lifecycle)) counts[lifecycle] += 1;
     if (item.draft_id) counts.generated_body += 1;
   }
   return counts;
