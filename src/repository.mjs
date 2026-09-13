@@ -2903,11 +2903,7 @@ export class Repository {
       return {row,sourceIds,sourceStates,processingState,processingGaps,versionCurrent,retryEligible,eligible,
         canonicalIntentKey:canonicalIntentKeyForOpportunity(row),lesson};
     });
-    const groups=new Map();
-    for (const item of evaluated.filter((entry) => entry.eligible)) {
-      const list=groups.get(item.canonicalIntentKey) || [];
-      list.push(item); groups.set(item.canonicalIntentKey,list);
-    }
+    const groups=groupRecommendationIntents(evaluated.filter((entry) => entry.eligible));
     const primaries=new Map();
     for (const [key,items] of groups) {
       items.sort((a,b) => recommendationInboxRank(b)-recommendationInboxRank(a)
@@ -3232,24 +3228,39 @@ export class Repository {
         AND NOT EXISTS (SELECT 1 FROM current_source_assets a WHERE a.source_id=s.id AND a.durability_status<>'ORIGINAL_STORED')
         AND EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version
           AND er.status='succeeded' AND er.degraded=0)`).all().map((row)=>row.id));
-    return (facts || []).map((fact)=>({...fact,consensus_detail:{},
-      evidence:(fact.evidence || []).filter((item)=>completed.has(item.source_id))}))
-      .filter((fact)=>fact.evidence.length>0);
+    const familyBySource=new Map(this.db.prepare("SELECT source_id,family_id FROM source_family_memberships").all()
+      .map((row)=>[row.source_id,row.family_id]));
+    return (facts || []).map((fact)=>{
+      const evidence=(fact.evidence || []).filter((item)=>completed.has(item.source_id));
+      const independenceKeys=uniqueStrings(evidence.map((item)=>familyBySource.get(item.source_id)
+        ? `family:${familyBySource.get(item.source_id)}` : item.source_id ? `source:${item.source_id}` : null),10_000);
+      return {...fact,evidence,consensus_detail:{variants:[{independenceKeys}]}};
+    }).filter((fact)=>fact.evidence.length>0);
   }
 
   rebuildTopicClusters(destinationSlug) {
     const facts = this.knowledgeForDestination(destinationSlug);
-    const grouped = Map.groupBy(facts, (fact) => slugify(fact.subject || "general") || "general");
+    const grouped = groupKnowledgeFacts(facts,destinationSlug);
     const timestamp = now();
-    for (const [subject, values] of grouped) {
-      const topicKey = `${destinationSlug}:cluster:${subject}`;
+    const activeTopicKeys=[];
+    transaction(this.db,()=>{
+    for (const [identity, values] of grouped) {
+      const topicKey = `${destinationSlug}:cluster:${slugify(identity)}`;
+      const title=(countStrings(values.map((item)=>item.canonical_subject || item.subject))[0]?.value
+        || values[0]?.canonical_subject || values[0]?.subject || identity).replaceAll("_"," ");
+      activeTopicKeys.push(topicKey);
       this.db.prepare(`INSERT INTO topic_clusters(id,destination_slug,topic_key,title,claim_keys_json,source_family_ids_json,updated_at)
         VALUES (?,?,?,?,?,?,?) ON CONFLICT(topic_key) DO UPDATE SET title=excluded.title,claim_keys_json=excluded.claim_keys_json,
         source_family_ids_json=excluded.source_family_ids_json,updated_at=excluded.updated_at`)
-        .run(`cluster_${sha256(topicKey).slice(0, 24)}`, destinationSlug, topicKey, values[0]?.subject || subject,
+        .run(`cluster_${sha256(topicKey).slice(0, 24)}`, destinationSlug, topicKey, title,
           JSON.stringify(values.map((item) => item.normalized_key)),
           JSON.stringify([...new Set(values.flatMap(independentEvidenceKeysForFact))]), timestamp);
     }
+    const existing=this.db.prepare("SELECT id,topic_key FROM topic_clusters WHERE destination_slug=?").all(destinationSlug);
+    const active=new Set(activeTopicKeys);
+    const remove=this.db.prepare("DELETE FROM topic_clusters WHERE id=?");
+    for(const row of existing)if(!active.has(row.topic_key))remove.run(row.id);
+    });
     return grouped.size;
   }
 
@@ -3261,14 +3272,18 @@ export class Repository {
     let created = 0;
     let refreshed = 0;
     let retired = 0;
+    const activeTopicKeys=new Set();
     for (const cluster of clusters) {
       const facts = json(cluster.claim_keys_json,[]).map((key) => factsByKey.get(key)).filter(Boolean);
       const sourceFamilyIds = [...new Set(facts.flatMap(independentEvidenceKeysForFact))];
       const sourceIds = [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))];
       const usableFacts = facts.filter((fact) => fact.consensus_status !== "conflicted"
         && ["current","unknown"].includes(fact.validity_state || "unknown"));
-      const actionability = usableFacts.length >= 2 && sourceFamilyIds.length >= 2;
-      const topicKey = `${destinationSlug}:knowledge:${slugify(cluster.title || cluster.topic_key) || sha256(cluster.topic_key).slice(0,12)}`;
+      const actionability = usableFacts.length >= 2 && sourceFamilyIds.length >= 2
+        && knowledgeClusterIsArticleWorthy(cluster.title,usableFacts,destinationSlug);
+      const titleIdentity=slugify(cluster.title) || "topic";
+      const topicKey = `${destinationSlug}:knowledge:${titleIdentity}:${sha256(cluster.topic_key).slice(0,12)}`;
+      activeTopicKeys.add(topicKey);
       const opportunityId = `opportunity_${sha256(topicKey).slice(0,24)}`;
       const existing = this.db.prepare("SELECT id,lifecycle_state,status FROM content_opportunities WHERE topic_key=?").get(topicKey);
       if (!actionability) {
@@ -3279,7 +3294,7 @@ export class Repository {
         }
         continue;
       }
-      const contentType = inferKnowledgeOpportunityType(cluster.title,facts);
+      const contentType = inferKnowledgeOpportunityType(cluster.title,facts,destinationSlug);
       const title = `${cluster.title}: a practical guide for independent travelers`;
       const matrix = evaluateCoverage({topicKey,contentType,facts:usableFacts,sourceFamilyCount:sourceFamilyIds.length,
         publicationMode:"multi_source_synthesis"});
@@ -3306,6 +3321,14 @@ export class Repository {
       this.saveCoverageMatrix(matrix,destinationSlug);
       if (existing) refreshed += 1; else created += 1;
     }
+    const obsolete=this.db.prepare(`SELECT id,topic_key FROM content_opportunities
+      WHERE destination_slug=? AND json_extract(coverage_json,'$.knowledgeEventGenerated')=1
+        AND lifecycle_state IN ('recommended','deferred')`).all(destinationSlug);
+    const retireObsolete=this.db.prepare(`UPDATE content_opportunities SET status='suppressed',inbox_state='INTERNAL',
+      primary_opportunity_id=NULL,suppression_reason='knowledge_cluster_replaced',updated_at=? WHERE id=?`);
+    for(const row of obsolete)if(!activeTopicKeys.has(row.topic_key)){
+      retireObsolete.run(timestamp,row.id); retired += 1;
+    }
     this.reconcileRecommendationInbox(destinationSlug);
     return {clusters:clusters.length,created,refreshed,retired};
   }
@@ -3314,15 +3337,19 @@ export class Repository {
     const startedAt=Date.now();
     const allFacts = this.knowledgeForDestination(destinationSlug);
     const completedFacts = this.completedOpportunityFacts(allFacts);
+    const completedFactsByKey=new Map(completedFacts.map((fact)=>[fact.normalized_key,fact]));
     const allOpportunities = this.db.prepare("SELECT * FROM content_opportunities WHERE destination_slug=?").all(destinationSlug);
     const changed=new Set((changedFactKeys||[]).filter(Boolean));
     const changedFacts=changed.size?allFacts.filter((fact)=>changed.has(fact.normalized_key)):[];
     const opportunities=!changed.size?allOpportunities:allOpportunities.filter((opportunity)=>{
-      if(String(opportunity.topic_key||"").includes(":knowledge:"))return changedFacts.some((fact)=>{
-        const subject=slugify(fact.subject||fact.canonical_subject||"");
-        return subject&&(`${opportunity.topic_key} ${opportunity.title||""}`.toLowerCase().replace(/_/gu,"-").includes(subject));
-      });
       const previous=json(opportunity.coverage_json,{});
+      if(String(opportunity.topic_key||"").includes(":knowledge:")){
+        if((previous.selectedFactKeys||[]).some((key)=>changed.has(key)))return true;
+        return changedFacts.some((fact)=>{
+          const subject=slugify(fact.subject||fact.canonical_subject||"");
+          return subject&&(`${opportunity.topic_key} ${opportunity.title||""}`.toLowerCase().replace(/_/gu,"-").includes(subject));
+        });
+      }
       if((previous.selectedFactKeys||[]).some((key)=>changed.has(key)))return true;
       return changedFacts.some((fact)=>factCouldAffectOpportunity(fact,opportunity,destinationSlug));
     });
@@ -3331,8 +3358,10 @@ export class Repository {
       const publicationMode = normalizePublicationMode(previousCoverage.publicationMode);
       if (previousCoverage.manualAssignmentId) continue; // Manual scope is rebuilt only by its own evaluator.
       const sourceFacts = factsForSource(allFacts, opportunity.source_id);
-      const facts = ["source_adaptation", "topic_feature"].includes(publicationMode) && sourceFacts.length
-        ? sourceFacts : scopeFactsForOpportunity(completedFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
+      const facts = previousCoverage.knowledgeEventGenerated
+        ? (previousCoverage.selectedFactKeys || []).map((key)=>completedFactsByKey.get(key)).filter(Boolean)
+        : ["source_adaptation", "topic_feature"].includes(publicationMode) && sourceFacts.length
+          ? sourceFacts : scopeFactsForOpportunity(completedFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
       const familyCount = this.independentSourceFamilyCountForFacts(facts);
       const matrix = evaluateCoverage({ topicKey: opportunity.topic_key, contentType: opportunity.content_type, facts, sourceFamilyCount: familyCount, publicationMode });
       const coverage = { ...previousCoverage, ...matrix, publicationMode, selectedFactKeys: facts.map((fact) => fact.normalized_key),
@@ -7444,15 +7473,76 @@ function normalizeExperienceType(value) {
   return allowed.has(normalized) ? normalized : "experience_sequence";
 }
 
-function inferKnowledgeOpportunityType(title, facts) {
-  const text = `${title || ""} ${(facts || []).map((fact) => `${fact.subject || ""} ${fact.predicate || ""}`).join(" ")}`.toLowerCase();
-  if (/(?:food|restaurant|dish|eat|餐|菜|美食|小吃)/u.test(text)) return "food_guide";
-  if (/(?:transport|metro|rail|bus|station|route|交通|地铁|车站|路线)/u.test(text)) return "transport_guide";
-  if (/(?:itinerary|day trip|行程|一日游)/u.test(text)) return "itinerary";
-  if (/(?:hotel|stay|neighbou?rhood|住宿|酒店|区域)/u.test(text)) return "hotel_area_guide";
-  if (/(?:attraction|ticket|reservation|visit|景点|门票|预约)/u.test(text)) return "attraction_guide";
-  if (/(?:compare|versus|difference|比较|区别)/u.test(text)) return "comparison";
+function inferKnowledgeOpportunityType(title, facts, destinationSlug) {
+  const titleText=String(title || "").toLowerCase();
+  const normalizedTitle=normalizeKnowledgeIdentityAlias(title,destinationSlug);
+  if(normalizedTitle===`destination:${normalizeTitle(destinationSlug)}`)return "city_guide";
+  const entityType=countStrings((facts || []).map((fact)=>fact.entity_type).filter(Boolean))[0]?.value || "other";
+  if (entityType==="route" || /\b(?:itinerary|day trip)\b/u.test(titleText)) return "itinerary";
+  if (/\b(?:compare|versus|difference)\b/u.test(titleText)) return "comparison";
+  if (/(?:\b(?:transport|metro|rail(?:way)?|bus|station|airport|taxi|navigation)\b|交通|地铁|车站|机场|出租车|导航)/u.test(titleText)) return "transport_guide";
+  if (/(?:\b(?:hotel|stay|accommodation|lodging|neighbou?rhood)\b|住宿|酒店|民宿)/u.test(titleText)) return "hotel_area_guide";
+  if (/(?:\b(?:food|restaurant|dish|eat|dining|cuisine|hotpot|snack)\b|餐|菜|美食|小吃|火锅)/u.test(titleText)) return "food_guide";
+  if (/(?:\b(?:attraction|ticket|reservation|visit|museum|park|viewpoint|skyline|old street)\b|景点|门票|预约|博物馆|公园|观景|老街)/u.test(titleText)) return "attraction_guide";
+  const entityKeys=(facts || []).map((fact)=>String(fact.entity_key || "").toLowerCase());
+  if (entityType==="transport_hub" || entityKeys.some((key)=>key.startsWith("transport_hub."))) return "transport_guide";
+  if (entityType==="hotel" || entityKeys.some((key)=>key.startsWith("hotel."))) return "hotel_area_guide";
+  if (entityType==="restaurant" || entityKeys.some((key)=>key.startsWith("restaurant."))) return "food_guide";
+  if (entityType==="attraction" || entityKeys.some((key)=>key.startsWith("attraction."))) return "attraction_guide";
+  if (entityType==="collection") return "listicle";
   return "practical_guide";
+}
+
+function groupKnowledgeFacts(facts,destinationSlug) {
+  const values=Array.isArray(facts) ? facts : [];
+  const parent=values.map((_,index)=>index);
+  const find=(index)=>parent[index]===index ? index : (parent[index]=find(parent[index]));
+  const join=(left,right)=>{ left=find(left); right=find(right); if(left!==right)parent[right]=left; };
+  const identities=new Map();
+  for(let index=0;index<values.length;index+=1){
+    const fact=values[index];
+    const keys=uniqueStrings([
+      fact.entity_key ? `entity:${fact.entity_key}` : null,
+      normalizeKnowledgeIdentityAlias(fact.canonical_subject || fact.subject,destinationSlug)
+        ? `name:${normalizeKnowledgeIdentityAlias(fact.canonical_subject || fact.subject,destinationSlug)}` : null,
+    ]);
+    for(const key of keys){
+      if(identities.has(key))join(index,identities.get(key)); else identities.set(key,index);
+    }
+  }
+  const components=Map.groupBy(values.map((fact,index)=>({fact,index})),({index})=>find(index));
+  const grouped=new Map();
+  for(const component of components.values()){
+    const rows=component.map(({fact})=>fact);
+    const entityKey=countStrings(rows.map((fact)=>fact.entity_key).filter(Boolean))[0]?.value;
+    const name=countStrings(rows.map((fact)=>fact.canonical_subject || fact.subject).filter(Boolean))[0]?.value || "general";
+    grouped.set(entityKey ? `entity:${entityKey}` : `subject:${slugify(name)}`,rows);
+  }
+  return grouped;
+}
+
+function normalizeKnowledgeIdentityAlias(value,destinationSlug) {
+  const normalized=normalizeEntityAlias(value);
+  const destination=normalizeTitle(destinationSlug);
+  const known={
+    beijing:["beijing","北京"],shanghai:["shanghai","上海"],xian:["xian","xi an","西安"],
+    chengdu:["chengdu","成都"],chongqing:["chongqing","重庆"],hangzhou:["hangzhou","杭州"],
+    suzhou:["suzhou","苏州"],guilin:["guilin","桂林"],guangzhou:["guangzhou","广州"],
+    shenzhen:["shenzhen","深圳"],yunnan:["yunnan","云南"],zhangjiajie:["zhangjiajie","张家界"],
+  };
+  if((known[destination] || [destination]).some((alias)=>normalizeEntityAlias(alias)===normalized))return `destination:${destination}`;
+  return normalized;
+}
+
+function knowledgeClusterIsArticleWorthy(title,facts,destinationSlug) {
+  const normalized=normalizeTitle(String(title || "").replaceAll("_"," "));
+  if(!normalized || /\b(?:unnamed|unknown|unspecified)\b/u.test(normalized))return false;
+  const destination=normalizeTitle(destinationSlug).replaceAll(" ","");
+  const withoutDestination=normalized.split(" ").filter((token)=>token!==destination).join(" ");
+  const generic=new Set(["restaurant","featured restaurant","hotpot restaurant","hotel room","pathway","trail","route","viewpoint","venue",
+    "accommodation","hotel","food","attraction","transport","public transport","metro station","railway station"]);
+  if(generic.has(normalized) || generic.has(withoutDestination) || /^day \d+ itinerary$/u.test(withoutDestination))return false;
+  return (facts || []).some((fact)=>String(fact.preferred_value || "").trim());
 }
 
 function jobPriority(type) {
@@ -7523,6 +7613,51 @@ function canonicalIntentKeyForOpportunity(row) {
     .toLowerCase().replace(/\b(?:72\s*[- ]?hours?|3\s*[- ]?days?)\b/gu," ");
   const tokens=[...topicTokens(text)].filter((token) => !generic.has(token) && token!==destination && !/^\d+$/u.test(token)).sort();
   return [destination,normalizeContentType(row.content_type),mode,duration,tokens.slice(0,12).join("-") || "destination-core"].join(":");
+}
+
+function groupRecommendationIntents(items) {
+  const parent=items.map((_,index)=>index);
+  const find=(index)=>parent[index]===index ? index : (parent[index]=find(parent[index]));
+  const join=(left,right)=>{ left=find(left); right=find(right); if(left!==right)parent[right]=left; };
+  for(let left=0;left<items.length;left+=1)for(let right=left+1;right<items.length;right+=1){
+    if(items[left].canonicalIntentKey===items[right].canonicalIntentKey
+      || sourceProposalIntentsOverlap(items[left].row,items[right].row))join(left,right);
+  }
+  const components=Map.groupBy(items.map((item,index)=>({item,index})),({index})=>find(index));
+  const groups=new Map();
+  for(const component of components.values()){
+    const key=component.map(({item})=>item.canonicalIntentKey).sort()[0];
+    const values=component.map(({item})=>{ item.canonicalIntentKey=key; return item; });
+    groups.set(key,values);
+  }
+  return groups;
+}
+
+function sourceProposalIntentsOverlap(left,right) {
+  if(!left.source_id || !right.source_id)return false;
+  const leftCoverage=json(left.coverage_json,{}); const rightCoverage=json(right.coverage_json,{});
+  if(left.destination_slug!==right.destination_slug || normalizeContentType(left.content_type)!==normalizeContentType(right.content_type)
+    || normalizePublicationMode(leftCoverage.publicationMode)!==normalizePublicationMode(rightCoverage.publicationMode))return false;
+  const leftDuration=canonicalDuration(left.title); const rightDuration=canonicalDuration(right.title);
+  if(leftDuration!==rightDuration && !([leftDuration,rightDuration].includes("flex") && [leftDuration,rightDuration].includes("1d")))return false;
+  const generic=new Set(["a","an","and","for","in","of","the","to","travel","guide","how","visit","independently","independent",
+    "traveler","travelers","first","time","solo","practical","walking","walk","city","route","routes","itinerary","itineraries",
+    "day","days","hour","hours","hourly"]);
+  const destination=slugify(left.destination_slug);
+  const tokensFor=(row)=>new Set([...topicTokens(row.title)].filter((token)=>!generic.has(token)&&token!==destination&&!/^\d+$/u.test(token)));
+  const leftTokens=tokensFor(left); const rightTokens=tokensFor(right);
+  const tokenScore=tokenOverlap(leftTokens,rightTokens);
+  const bigramsFor=(value)=>{
+    const normalized=normalizeTitle(value).replaceAll(" ",""); const result=new Set();
+    for(let index=0;index<normalized.length-1;index+=1)result.add(normalized.slice(index,index+2));
+    return result;
+  };
+  const leftBigrams=bigramsFor(left.title); const rightBigrams=bigramsFor(right.title);
+  const intersection=[...leftBigrams].filter((token)=>rightBigrams.has(token)).length;
+  const titleScore=leftBigrams.size || rightBigrams.size ? 2*intersection/(leftBigrams.size+rightBigrams.size) : 0;
+  const sameSource=left.source_id===right.source_id;
+  return sameSource ? (titleScore>=0.72 && tokenScore>=0.35) || tokenScore>=0.62
+    : (titleScore>=0.84 && tokenScore>=0.45) || tokenScore>=0.78;
 }
 
 function canonicalDuration(value) {

@@ -1,6 +1,6 @@
 # SoloToChina Content Production Strategy 3.3
 
-Status: active. Effective date: 2026-09-12. Application and extension 2.0.8, schema 67.
+Status: active. Effective date: 2026-09-12. Application and extension 2.0.11, schema 67.
 
 Strategy 3.3 keeps the source authorization, evidence, editorial approval, WordPress draft, and publication boundaries from 3.2. It changes how Claims become Knowledge, how interrupted historical Sources recover, and where expensive maintenance runs.
 
@@ -15,6 +15,14 @@ Ordinary dynamic disagreement uses independent-source, authority, completeness a
 ## Source recovery and workload lanes
 
 All complete Sources enter processing automatically, including one paragraph with 19 or 27 images. Work size selects batching and a workload lane; only an explicit technical hard limit blocks processing. Ordinary images use traceable groups of four to eight, while maps, text-dense images, tables, screenshots and videos retain individual handling.
+
+## Opportunity reconciliation clarification
+
+Every completed current Source that satisfies the active intake policy contributes all of its distinct production paths. Same-mode paths are merged only when their destination, content type, duration and semantic intent overlap; different publication modes and materially different reader promises remain separate.
+
+Knowledge opportunities require at least two usable current facts from at least two independent Source families. Canonical entity identity and known bilingual destination aliases define the cluster. Context-free labels such as `venue`, `restaurant`, `pathway` or `Day 3 itinerary` do not create an article opportunity by themselves. Content type follows the cluster entity and complete title tokens; incidental words in supporting predicates cannot reclassify the topic.
+
+An evidence-gap opportunity remains visible for editorial consideration but cannot enter production until its required coverage is ready. Coverage refresh uses only the opportunity's selected fact keys. Replaced, duplicate and older-strategy records remain auditable internally and do not inflate the actionable Inbox.
 
 The processing-gap diagnostic reports capture completeness, media durability, segments, extraction, coverage, Experience, active jobs, legacy gates, hard limits, the first missing stage and the proposed action. Historical recovery begins from a stored dry-run fingerprint and queues only the missing stage. Child jobs inherit the recovery run, parent job, route, priority and `historical_recovery` class. New interactive intake runs ahead of historical work. Completed stages and model receipts remain reusable across restarts.
 

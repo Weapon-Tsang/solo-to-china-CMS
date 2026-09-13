@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.11 - Unreleased
+
+- Rebuild Knowledge opportunities from canonical entity groups, including known bilingual destination aliases, while retaining replaced rows as internal audit history.
+- Count only independent Source families after filtering evidence to completed current Sources, and keep coverage refresh scoped to each opportunity's selected facts.
+- Merge semantically equivalent same-mode Source proposals without collapsing different production modes, durations or reader promises.
+- Reject context-free generic Knowledge subjects and infer content type from the topic entity and whole title tokens instead of incidental words in supporting facts.
+
 ## 2.0.10 - 2026-09-13
 
 - Reuse Strategy 3.0-3.2 intake diagnostics under the reviewed compatible 3.3 diagnostic contract, then recalculate their opportunities without a model request. Only incompatible diagnostics can enter the paid reconciliation queue.

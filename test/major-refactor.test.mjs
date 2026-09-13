@@ -203,6 +203,141 @@ test("knowledge opportunities use completed sources while unfinished sources rem
   assert.deepEqual(new Set(opportunity.coverage.selectedSourceIds),new Set([readyA,readyB]));
 });
 
+test("knowledge opportunities collapse resolved aliases, count source families once, and infer type from the entity", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const sourceA=saveResearchSource(repository,"68abcdef00000000000000b1",[
+    ["chengdu.dujiangyan.entry","Dujiangyan","entry","Use the signed visitor entrance"],
+  ],"Use the signed visitor entrance.");
+  const sourceB=saveResearchSource(repository,"68abcdef00000000000000b2",[
+    ["chengdu.dujiangyan.transport","都江堰","transport","Take the intercity rail connection"],
+  ],"Take the intercity rail connection.");
+  const sourceC=saveResearchSource(repository,"68abcdef00000000000000b3",[
+    ["chengdu.dujiangyan.timing","Dujiangyan Scenic Area","opening_time","Arrive before the busiest period"],
+  ],"Arrive before the busiest period.");
+  const timestamp=new Date().toISOString();
+  db.prepare("DELETE FROM source_family_memberships WHERE source_id IN (?,?,?)").run(sourceA,sourceB,sourceC);
+  db.prepare("INSERT INTO source_families(id,family_key,canonical_source_id,created_at,updated_at) VALUES ('family-a','family-a',?,?,?),('family-c','family-c',?,?,?)")
+    .run(sourceA,timestamp,timestamp,sourceC,timestamp,timestamp);
+  const membership=db.prepare(`INSERT INTO source_family_memberships(family_id,source_id,relation_type,created_at,updated_at)
+    VALUES (?,?,?, ?,?)`);
+  membership.run("family-a",sourceA,"INDEPENDENT",timestamp,timestamp);
+  membership.run("family-a",sourceB,"NEAR_DUPLICATE",timestamp,timestamp);
+  membership.run("family-c",sourceC,"INDEPENDENT",timestamp,timestamp);
+  repository.rebuildKnowledge("chengdu");
+  db.prepare(`UPDATE knowledge_facts SET entity_key='attraction.dujiangyan',canonical_subject='Dujiangyan Scenic Area',
+    entity_resolution_status='resolved',entity_type='attraction',granularity='specific_entity'
+    WHERE destination_id=(SELECT id FROM destinations WHERE slug='chengdu')`).run();
+  assert.equal(repository.rebuildTopicClusters("chengdu"),1,JSON.stringify(repository.knowledgeForDestination("chengdu")
+    .map((fact)=>({key:fact.normalized_key,entityKey:fact.entity_key,canonical:fact.canonical_subject,status:fact.entity_resolution_status}))));
+  const rebuilt=repository.rebuildKnowledgeOpportunities("chengdu");
+  assert.equal(rebuilt.created,1);
+  const opportunities=repository.listRecommendationInbox().filter((item)=>item.coverage.knowledgeEventGenerated);
+  assert.equal(opportunities.length,1);
+  assert.equal(opportunities[0].content_type,"attraction_guide");
+  assert.equal(opportunities[0].readiness.sourceFamilyCount,2);
+  assert.equal(opportunities[0].readiness.factCount,3);
+  assert.deepEqual(new Set(opportunities[0].coverage.selectedSourceIds),new Set([sourceA,sourceB,sourceC]));
+  repository.rebuildCoverageMatrices("chengdu");
+  const refreshed=repository.listRecommendationInbox().find((item)=>item.id===opportunities[0].id);
+  assert.equal(refreshed.readiness.factCount,3);
+  assert.deepEqual(new Set(refreshed.coverage.selectedFactKeys),new Set(opportunities[0].coverage.selectedFactKeys));
+});
+
+test("knowledge rebuild suppresses replaced alias opportunities and rejects context-free generic subjects", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  saveResearchSource(repository,"68abcdef00000000000000c1",[
+    ["chengdu.pathway.surface","pathway","surface","The pathway is paved"],
+  ],"The pathway is paved.");
+  saveResearchSource(repository,"68abcdef00000000000000c2",[
+    ["chengdu.pathway.width","pathway","accessibility","The pathway has narrow sections"],
+  ],"The pathway has narrow sections.");
+  for(const [suffix,subject,predicate,value] of [
+    ["c3","venue","seating","The venue has reserved seating"],
+    ["c4","venue","entry","The venue uses timed entry"],
+    ["c5","hotpot restaurant","payment","The restaurant accepts mobile payment"],
+    ["c6","hotpot restaurant","queue","The restaurant uses a queue system"],
+    ["c7","Day 3 itinerary","route","The itinerary crosses the central district"],
+    ["c8","Day 3 itinerary","timing","The itinerary starts before noon"],
+  ])saveResearchSource(repository,`68abcdef00000000000000${suffix}`,[
+    [`chengdu.${suffix}.${predicate}`,subject,predicate,value],
+  ],value);
+  repository.rebuildKnowledge("chengdu");
+  repository.rebuildTopicClusters("chengdu");
+  const timestamp=new Date().toISOString();
+  db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,
+    source_ids_json,title,content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state)
+    VALUES ('legacy-alias','chengdu','["chengdu"]','chengdu:knowledge:legacy-alias',?,'[]','Legacy alias','practical_guide',0,
+      '{"ready":false}','{"knowledgeEventGenerated":true}','recommended',?,?,'recommended')`)
+    .run(repository.strategyVersion,timestamp,timestamp);
+  const rebuilt=repository.rebuildKnowledgeOpportunities("chengdu");
+  assert.equal(rebuilt.created,0);
+  assert.ok(rebuilt.retired>=1);
+  const legacy=db.prepare("SELECT status,inbox_state,suppression_reason FROM content_opportunities WHERE id='legacy-alias'").get();
+  assert.equal(legacy.status,"suppressed");
+  assert.equal(legacy.inbox_state,"INTERNAL");
+  assert.equal(legacy.suppression_reason,"knowledge_cluster_replaced");
+  assert.equal(repository.listRecommendationInbox().some((item)=>item.coverage.knowledgeEventGenerated),false);
+});
+
+test("knowledge opportunity types follow the topic entity and bilingual destination names collapse", (t) => {
+  const {repository}=repositoryFixture(t);
+  saveResearchSource(repository,"68abcdef00000000000000e1",[
+    ["chengdu.taxi.food_nearby","Chengdu Taxi","food_nearby","Restaurants are available near taxi ranks"],
+  ],"Restaurants are available near taxi ranks.");
+  saveResearchSource(repository,"68abcdef00000000000000e2",[
+    ["chengdu.taxi.restaurant_access","Chengdu Taxi","restaurant_access","Taxi ranks serve restaurant districts"],
+  ],"Taxi ranks serve restaurant districts.");
+  saveResearchSource(repository,"68abcdef00000000000000e3",[
+    ["chengdu.city.food_options","Chengdu","food_options","The city has several dining districts"],
+  ],"The city has several dining districts.");
+  saveResearchSource(repository,"68abcdef00000000000000e4",[
+    ["chengdu.city.transport_options","成都","transport_options","The city has metro and bus connections"],
+  ],"The city has metro and bus connections.");
+  saveResearchSource(repository,"68abcdef00000000000000e5",[
+    ["chengdu.creative_park.food_nearby","Beicang Creative Park","food_nearby","Restaurants operate near the park"],
+  ],"Restaurants operate near the park.");
+  saveResearchSource(repository,"68abcdef00000000000000e6",[
+    ["chengdu.creative_park.dining_access","Beicang Creative Park","dining_access","The park is walkable from a dining street"],
+  ],"The park is walkable from a dining street.");
+  saveResearchSource(repository,"68abcdef00000000000000e7",[
+    ["chengdu.summer_weather.food","Chengdu summer weather","food_storage","Keep snacks out of direct heat"],
+  ],"Keep snacks out of direct heat.");
+  saveResearchSource(repository,"68abcdef00000000000000e8",[
+    ["chengdu.summer_weather.water","Chengdu summer weather","water","Carry water in hot weather"],
+  ],"Carry water in hot weather.");
+  repository.rebuildKnowledge("chengdu");
+  repository.rebuildTopicClusters("chengdu");
+  repository.rebuildKnowledgeOpportunities("chengdu");
+  const opportunities=repository.listRecommendationInbox().filter((item)=>item.coverage.knowledgeEventGenerated);
+  const taxi=opportunities.find((item)=>item.title.startsWith("Chengdu Taxi:"));
+  assert.equal(taxi?.content_type,"transport_guide");
+  const city=opportunities.filter((item)=>item.content_type==="city_guide");
+  assert.equal(city.length,1,JSON.stringify(opportunities.map((item)=>({title:item.title,type:item.content_type}))));
+  assert.equal(city[0].readiness.factCount,2);
+  assert.equal(opportunities.find((item)=>item.title.startsWith("Beicang Creative Park:"))?.content_type,"attraction_guide");
+  assert.equal(opportunities.find((item)=>item.title.startsWith("Chengdu summer weather:"))?.content_type,"practical_guide");
+});
+
+test("recommendation reconciliation merges near-identical production paths from the same source", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const sourceId=saveResearchSource(repository,"68abcdef00000000000000d1",[
+    ["chengdu.metro.route","Chengdu Metro","route","Use Line 2 for the central corridor"],
+  ],"Use Line 2 for the central corridor.");
+  repository.saveIntakeAnalysis(sourceId,{classification:"ARTICLE_CANDIDATE",recommended_action:"CREATE_CONTENT_PLAN",
+    production_mode:"SOURCE_ADAPTATION",primary_topic:"Chengdu metro",suggested_content_type:"practical_guide",
+    suggested_article_title:"Chengdu Metro Line-by-Line Guide: Attractions, Base Areas, and Practical Transit Tips",
+    confidence:.9,article_potential:80,information_density:80,topic_completeness:70,reasoning_summary:"Bounded source guide.",
+    production_paths:[{mode:"SOURCE_ADAPTATION",content_type:"practical_guide",
+      title:"Chengdu Metro Line-by-Line Guide: Attractions, Stays, and Transit Tips",
+      reader_promise:"Use the metro by area.",why_it_works:"The source supplies the route.",evidence_boundary:"This source only."}]},"test");
+  const stored=db.prepare("SELECT id,inbox_state,primary_opportunity_id,canonical_intent_key FROM content_opportunities WHERE source_id=?").all(sourceId);
+  assert.equal(stored.length,2);
+  assert.equal(stored.filter((item)=>item.inbox_state==="ACTIONABLE").length,1);
+  assert.equal(stored.filter((item)=>item.inbox_state==="MERGED").length,1);
+  assert.equal(new Set(stored.map((item)=>item.canonical_intent_key)).size,1);
+  assert.equal(repository.listRecommendationInbox().filter((item)=>item.source_id===sourceId).length,1);
+});
+
 test("terminal expression failure archives the attempt and retains artifacts, approval and Golden Article associations", (t) => {
   const { db,repository }=repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at,strategy_version)
