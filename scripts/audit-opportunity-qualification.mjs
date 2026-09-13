@@ -21,6 +21,11 @@ const normalizeTitle = (value) => String(value || "").toLowerCase().replace(/[^\
 const contentTypes = new Set(["city_guide","itinerary","attraction_guide","food_guide","transport_guide","neighborhood_guide",
   "hotel_area_guide","shopping_guide","practical_guide","first_time_guide","comparison","listicle","how_to"]);
 const publicationModes = new Set(["source_adaptation", "topic_feature", "multi_source_synthesis"]);
+const decisionLifecycles = new Set(["recommended", "recommended_again", "deferred"]);
+const productionLifecycles = new Set(["approved", "producing", "finished"]);
+const validActionableLifecycle = (opportunity) => opportunity.approved_at
+  ? productionLifecycles.has(opportunity.lifecycle_state)
+  : decisionLifecycles.has(opportunity.lifecycle_state);
 const primaryDestinationScopes = new Set(["beijing","shanghai","xian","chengdu","chongqing","hangzhou","suzhou","guilin",
   "guangzhou","shenzhen","yunnan","zhangjiajie"]);
 const primaryDestinationScope = (value) => {
@@ -84,12 +89,12 @@ for (const opportunity of opportunities) {
   opportunity.sourceIds = uniq([opportunity.source_id, ...parse(opportunity.source_ids_json, []), ...(opportunity.coverage.selectedSourceIds || [])]);
 }
 const actionable = opportunities.filter((item) => item.inbox_state === "ACTIONABLE");
-const activeLifecycle = opportunities.filter((item) => ["recommended", "recommended_again", "deferred"].includes(item.lifecycle_state));
+const activeLifecycle = opportunities.filter(validActionableLifecycle);
 
 const actionableViolations = {
   oldOpportunityStrategy: actionable.filter((o) => o.strategy_version !== currentStrategy),
   oldRecommendationStrategy: actionable.filter((o) => o.recommendation_id && o.recommendation_strategy !== currentStrategy),
-  wrongLifecycle: actionable.filter((o) => !["recommended", "recommended_again", "deferred"].includes(o.lifecycle_state)),
+  wrongLifecycle: actionable.filter((o) => !validActionableLifecycle(o)),
   processingGap: actionable.filter((o) => o.processing_state === "PROCESSING_GAP"),
   forbiddenStatus: actionable.filter((o) => ["knowledge_only","cluster","research_required","ignored","suppressed"].includes(o.status)),
   seoSkip: actionable.filter((o) => o.seo_action === "SKIP"),
@@ -129,7 +134,7 @@ for (const source of sourceRows.filter((s) => fullyCurrent(s) && s.classificatio
       modeFromAnalysis(path.mode, analysis.classification)));
   }
   const stored = opportunities.filter((o) => o.source_id === source.id && o.recommendation_id === source.recommendation_id
-    && o.strategy_version === currentStrategy && ["recommended", "recommended_again", "deferred"].includes(o.lifecycle_state));
+    && o.strategy_version === currentStrategy && validActionableLifecycle(o));
   const storedSignatures = new Set(stored.map((o) => signature(o.title, o.content_type, o.coverage.publicationMode)));
   expectedSource.push({ sourceId: source.id, expected: expected.size, stored: stored.length,
     actionable: stored.filter((o) => o.inbox_state === "ACTIONABLE").length,

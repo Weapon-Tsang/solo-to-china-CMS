@@ -77,6 +77,16 @@ test('deployment opportunity gate reconciles deterministically and rejects an ac
   assert.equal(cleanAudit.status, 0, cleanAudit.stderr);
   assert.equal(JSON.parse(cleanAudit.stdout).enforcement.hardViolationCount, 0);
   const db = new DatabaseSync(f.filename);
+  db.prepare("INSERT INTO destinations(id,slug,name,created_at,updated_at) VALUES ('production-destination','production-destination','Production','now','now')").run();
+  db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,title,
+    content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state,processing_state,
+    canonical_intent_key,inbox_state,seo_action,approved_at)
+    VALUES ('production-opportunity','production-destination','["production-destination"]','production:topic','3.3','Approved production opportunity',
+      'practical_guide',0,'{"ready":false,"score":0}','{"publicationMode":"multi_source_synthesis","proposal":{"readerPromise":"Explain the approved topic."}}',
+      'producing','now','now','producing','EVIDENCE_GAP','production:key','ACTIONABLE','NEW','now')`).run();
+  const productionAudit = run('scripts/audit-opportunity-qualification.mjs', ['--enforce']);
+  assert.equal(productionAudit.status, 0, productionAudit.stderr);
+  assert.equal(JSON.parse(productionAudit.stdout).qualification.wrongLifecycle.count, 0);
   db.prepare("INSERT INTO destinations(id,slug,name,created_at,updated_at) VALUES ('bad-destination','bad-destination','Bad','now','now')").run();
   db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,title,
     content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state,processing_state,
