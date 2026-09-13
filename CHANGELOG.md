@@ -1,13 +1,22 @@
 # Changelog
 
-## 2.0.15 - Unreleased
+## 2.0.16 - Unreleased
+
+- Resolve Opportunity-owned recovery IDs to the canonical Candidate before loading topic/planning packages. Clicking “重试失败步骤” no longer crashes before enqueueing the exact stage, and repeated idempotency keys still reuse one recovery run.
+- Treat a persisted Brief as proof that `plan_content` completed even when a historical downstream failure wrote `content_briefs.status=exception`; interrupted legacy rows now resume at `plan_narrative` instead of trying to overwrite the Brief.
+- Treat a completed failing QA report as a completed `review_draft` stage and recover content blockers through `revise_draft`. The running review Job is excluded from its own active-job guard so bounded automatic repair can actually enqueue.
+- Make destination correction a production-scope revision. Jobs and Editorial Assembly artifacts from the old scope become non-blocking history; the corrected row waits for explicit “确认更正范围并继续”, then enqueues a new Opportunity-owned `assemble_editorial` Job without deleting evidence or automatically retrying other records.
+- Upgrade `production_state` to 1.4, expose the existing `suppression_reason` to the state builder, and translate persisted quality issue codes into their specific Chinese cause rather than the generic “无法确定原因”.
+- Keep the Frontend Contract and schema migration at their existing versions. This release introduces no migration-time enqueue, model request, production-record deletion or bulk retry.
+
+## 2.0.15 - 2026-09-14
 
 - Bound the first model-backed `assemble_editorial` input independently of planning: at most 48 ranked facts, 96 evidence snippets, 16 Experience blocks and 128 KiB/~32k estimated tokens are sent to Vertex. The complete Source, Claim, Knowledge, Evidence and Experience stores remain unchanged.
 - Persist Vertex structured-output transport fallback in existing model-call receipts. A durable Job reclaimed after JSON Schema/OpenAPI rejection resumes the next compatible transport instead of restarting the known-invalid request sequence; local JSON Schema validation remains authoritative.
 - Make provider quota/backoff retries respect each Job's `max_attempts`. Transactionally finalize legacy exhausted cooldown rows as failed before claiming work, while preserving the Job and its error for audited stage-targeted recovery.
 - Upgrade `production_state` to 1.3 with explicit provider cooldown/retry metadata, remaining automatic attempts and a distinct exhausted state. Operator messages now distinguish input overflow, structured-interface rejection and Vertex quota exhaustion.
 - Add production-sized input, cross-attempt Schema fallback, 429 retry-budget and cooldown/exhaustion state regression tests. Schema remains 69; no migration, automatic production enqueue or model call is introduced.
-- This release is implemented and verified locally only. Production remains on 2.0.14 until separately authorized deployment.
+- Deploy revision `a587653` to production; schema remains 69 and no production record was automatically retried during rollout.
 
 ## 2.0.14 - 2026-09-13
 

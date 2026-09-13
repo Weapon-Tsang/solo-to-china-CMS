@@ -847,7 +847,7 @@ export class Pipeline {
           if (reviewed.output.passed && pageReady && !job.dedupe_key?.startsWith("manual-stage:")) this.enqueueChild(job,"compose_commercial",job.entity_id);
           if (!reviewed.output.passed && !job.dedupe_key?.startsWith("manual-stage:")) {
             this.repository.automaticQualityRepairState(job.entity_id, reviewed.output.issues, { enqueue: true,
-              productionOwnerOpportunityId:job.production_owner_opportunity_id || null });
+              productionOwnerOpportunityId:job.production_owner_opportunity_id || null,ignoreActiveJobId:job.id });
           }
           });
           break;
@@ -1084,7 +1084,7 @@ export class Pipeline {
         const pack = repository.getDraftPackage(entity);
         if (pack?.review?.passed && (!this.canComposeFrontendPage || pack.frontend_page?.current)) next('compose_commercial');
         else if (pack?.review && !pack.review.passed) repository.automaticQualityRepairState(entity, pack.review.issues, { enqueue: true,
-          productionOwnerOpportunityId:job.production_owner_opportunity_id || null });
+          productionOwnerOpportunityId:job.production_owner_opportunity_id || null,ignoreActiveJobId:job.id });
         break;
       }
       case 'revise_draft': next('review_draft'); if (this.canComposeFrontendPage) next('compose_frontend_page'); break;

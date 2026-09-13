@@ -181,7 +181,7 @@ Run only the isolated HTTP/API/static smoke phase after an existing build with:
 ```powershell
 npm run test:smoke
 ```
-# Content production workbench operations (2.0.15 source; 2.0.14 production)
+# Content production workbench operations (2.0.16)
 
 The active Content workspace API is `GET /api/content`; it returns `{ items, sections }`, and every item includes the backend-owned `production_state`. `GET /api/content/:opportunityId/production-state` returns the pre-Draft-or-later detail, timeline, structural page preview, WordPress preview/edit links and combined audit/failure history. `GET /api/content/:opportunityId/history` returns the history alone.
 
@@ -190,6 +190,10 @@ Authenticated mutations are `POST /api/content/:opportunityId/recover`, `POST /a
 In `production_state` 1.2, a failed downstream Job whose current prerequisites are absent is retained as `latest_historical_error`; it does not remain the live retry target. The record becomes `interrupted` and `recovery_target` points to the first missing stage. Never bypass this by manually posting the historical stage. For planning/narrative `PROVIDER_REQUEST_FAILED` HTTP 400 records, verify `provider_request_sent` and `model_execution`: `rejected_before_generation` means Vertex rejected the request contract before confirmed generation. Version 2.0.14 negotiates JSON Schema → OpenAPI Schema → prompt-enforced JSON and still validates the output locally.
 
 Source 2.0.15 extends this to `production_state` 1.3. `retry_state` distinguishes a queued Vertex cooldown from an exhausted retry budget and reports remaining automatic attempts. Schema fallback position is recovered from the current durable Job's model-call receipts, so a 429 between transport attempts cannot reset the next claim to a known-rejected Schema. `assemble_editorial` now builds a deterministic bounded request before calling Vertex; its manifest records original/selected counts, bytes, estimated tokens and budget. A queued cooldown already at `max_attempts` is finalized as failed inside the next claim transaction without another provider request. Wait for quota health, then use the normal “重试失败步骤” action once; do not delete the production record and do not manually enqueue a downstream stage.
+
+Version 2.0.16 extends this to `production_state` 1.4. Recovery endpoints accept the production Opportunity ID but always resolve planning packages through its canonical Candidate; a retry therefore creates the intended owned Job instead of failing before enqueue. A persisted Brief remains proof that planning completed even if a later legacy failure marked the Brief `exception`, and a failed QA report targets `revise_draft` rather than rerunning review.
+
+Changing a destination creates a new production-scope boundary. Pre-correction Jobs and Editorial Assembly results remain visible as non-blocking history and are not silently reused. The row remains in “等待开始” until an operator explicitly confirms the corrected scope; only then is a new `assemble_editorial` Job queued. Deployments, migrations and dashboard refreshes never perform that confirmation or enqueue any of the affected records.
 
 Schema 69 adds `jobs.production_owner_opportunity_id` and Opportunity/idempotency ownership on `content_operation_history`. Its transactional migration assigns historical Job/Assembly/operation ownership only where exactly one approved Opportunity proves the owner; ambiguous Candidate history stays unowned for diagnostics. It does not enqueue Jobs, run recovery, contact a model, alter approval decisions, synchronize the Frontend Contract or call WordPress. Startup still resumes already queued durable work, but historical production retry synthesis is disabled unless a controlled maintenance invocation explicitly enables `productionStartupResumeEnabled`.
 

@@ -124,6 +124,17 @@ test('automatic quality repair is deduplicated per revision and stops after two 
   db.prepare("UPDATE article_drafts SET revision=3,content_hash='hash-3'").run();
   assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:true}).reason,'attempt_limit_reached');
 });
+test('the running review job does not block its own targeted repair enqueue',t=>{
+  const {db,repository}=fixture(t);
+  const reviewJob=repository.enqueue('review_draft','draft-r',{dedupeKey:'running-review',productionOwnerOpportunityId:'opportunity-r'});
+  db.prepare("UPDATE jobs SET status='running' WHERE id=?").run(reviewJob);
+  const result=repository.automaticQualityRepairState('draft-r',
+    [{code:'protected_evidence_mismatch',severity:'blocker',message:'mismatch'}],
+    {enqueue:true,productionOwnerOpportunityId:'opportunity-r',ignoreActiveJobId:reviewJob});
+  assert.equal(result.queued,true);
+  assert.equal(result.stage,'revise_draft');
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='revise_draft'").get().count,1);
+});
 test('strategy startup rechecks a historical failure only once per draft revision',t=>{
   const {db,repository}=fixture(t,{productionStartupResumeEnabled:true});
   repository.saveReview('draft-r',{passed:false,score:40,issues:[{code:'protected_evidence_mismatch',severity:'blocker',message:'mismatch'}],checks:[],unsupported_claims:[]},'fixture');

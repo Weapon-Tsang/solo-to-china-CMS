@@ -98,6 +98,23 @@ export function explainOperationalFailure(job) {
       technicalDetail: details,
     };
   }
+  const knownIssueCode = Object.keys(ISSUE_GUIDANCE)
+    .find((issueCode) => issueCode.toLowerCase() === normalizedIssueCode);
+  if (knownIssueCode) {
+    const issue = explainQualityIssue({ code: knownIssueCode, message, severity: 'blocker' });
+    const repairStage = qualityRepairStage([{ code: knownIssueCode, severity: 'blocker' }]);
+    return {
+      category: DELIVERY_ISSUE_CODES.has(normalizedIssueCode) ? 'page' : 'content',
+      headline: issue.title,
+      reason: issue.reason,
+      action: repairStage ? {
+        id: repairStage,
+        label: repairStage === 'compose_frontend_page' ? '仅重新编排页面' : '仅修订失败内容',
+        why: '只恢复质量检查指向的最小阶段，保留已经成功的正文、证据和图片产物。',
+      } : { id: null, label: issue.action, why: issue.reason },
+      technicalDetail: details,
+    };
+  }
   if (/requires a configured Kimi key or Vertex AI project/i.test(message)) return {
     category: 'configuration', headline: '生产模型尚未配置',
     reason: '系统没有可用的 Kimi 密钥或 Vertex AI 项目，因此生产阶段无法执行；这不是文章内容错误。',

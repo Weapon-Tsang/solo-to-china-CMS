@@ -1,8 +1,8 @@
 import { json, sha256 } from "../utils.mjs";
 import { validatePlanningDestination } from "../destination-consistency.mjs";
-import { explainOperationalFailure } from "./content-recovery-policy.mjs";
+import { explainOperationalFailure, qualityRepairStage } from "./content-recovery-policy.mjs";
 
-export const PRODUCTION_STATE_VERSION = "1.3";
+export const PRODUCTION_STATE_VERSION = "1.4";
 
 export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
   stage("assemble_editorial", "素材组装", 10, [], "editorial", "always"),
@@ -57,19 +57,25 @@ export function buildProductionState(db, row, options = {}) {
     AND type IN (${placeholders(PRODUCTION_JOB_TYPES)})
     AND (production_owner_opportunity_id=? OR (production_owner_opportunity_id IS NULL AND ?=1))
     ORDER BY updated_at,created_at,id`).all(...entityIds, ...PRODUCTION_JOB_TYPES, row.opportunity_id, legacyOwnerIsUnique ? 1 : 0) : [];
-  const jobIds=jobs.map((item)=>item.id);
+  const scopeResetAt=db.prepare(`SELECT created_at FROM content_operation_history WHERE opportunity_id=?
+    AND action='correct_destination' AND status='completed' ORDER BY created_at DESC,id DESC LIMIT 1`).get(row.opportunity_id)?.created_at || null;
+  const currentJobs=scopeResetAt ? jobs.filter((item)=>String(item.updated_at)>String(scopeResetAt)) : jobs;
+  const jobIds=currentJobs.map((item)=>item.id);
   const receipts = jobIds.length ? db.prepare(`SELECT stage,entity_id,job_id,created_at FROM pipeline_step_receipts
     WHERE job_id IN (${placeholders(jobIds)}) AND stage IN (${placeholders(PRODUCTION_JOB_TYPES)})
     ORDER BY created_at`).all(...jobIds,...PRODUCTION_JOB_TYPES) : [];
-  const artifacts = entityIds.length && jobs.length ? db.prepare(`SELECT * FROM pipeline_artifacts
+  const artifacts = entityIds.length && currentJobs.length ? db.prepare(`SELECT * FROM pipeline_artifacts
     WHERE entity_id IN (${placeholders(entityIds)}) AND stage IN (${placeholders(PRODUCTION_JOB_TYPES)})
     ORDER BY updated_at,created_at,id`).all(...entityIds,...PRODUCTION_JOB_TYPES)
-    .filter((artifact)=>jobs.some((job)=>job.type===artifact.stage && job.entity_id===artifact.entity_id)) : [];
-  const modelCalls = jobIds.length ? db.prepare(`SELECT id,stage,entity_id,run_id,model,provider,request_kind,cache_hit,status,
+    .filter((artifact)=>currentJobs.some((job)=>job.type===artifact.stage && job.entity_id===artifact.entity_id)) : [];
+  const allJobIds=jobs.map((item)=>item.id);
+  const allModelCalls = allJobIds.length ? db.prepare(`SELECT id,stage,entity_id,run_id,model,provider,request_kind,cache_hit,status,
     attempt_number,error_code,input_tokens,output_tokens,request_started_at,request_completed_at,created_at
-    FROM model_call_metrics WHERE run_id IN (${placeholders(jobIds)}) ORDER BY created_at,id`).all(...jobIds) : [];
-  const evidence = persistedStageEvidence(db, row);
-  const initialEntries = registry.map((definition) => buildStageEntry(definition, jobs, artifacts, receipts, modelCalls, evidence));
+    FROM model_call_metrics WHERE run_id IN (${placeholders(allJobIds)}) ORDER BY created_at,id`).all(...allJobIds) : [];
+  const currentJobIds=new Set(jobIds);
+  const modelCalls=allModelCalls.filter((item)=>currentJobIds.has(item.run_id));
+  const evidence = persistedStageEvidence(db, row, { scopeResetAt });
+  const initialEntries = registry.map((definition) => buildStageEntry(definition, currentJobs, artifacts, receipts, modelCalls, evidence));
   const destinationCheck = validatePlanningDestination({ candidate:{
     destination_slug:row.destination_slug,
     proposed_title:row.title || row.proposed_title,
@@ -79,17 +85,21 @@ export function buildProductionState(db, row, options = {}) {
     last_failure_code:"DESTINATION_TOPIC_MISMATCH", failure_class:"permanent_input",
     updated_at:row.opportunity_updated_at, id:null,
   } : null;
-  const unresolvedFailure = scopeFailure || latestUnresolvedFailure(jobs) || inferredPersistedFailure(row);
+  const currentJobFailure=latestUnresolvedFailure(currentJobs);
+  const resolvedDestinationFailure=!scopeFailure && destinationCheck.valid
+    && String(currentJobFailure?.last_failure_code || '').toUpperCase()==='DESTINATION_TOPIC_MISMATCH' ? currentJobFailure : null;
+  const unresolvedFailure = scopeFailure || (resolvedDestinationFailure ? null : currentJobFailure) || inferredPersistedFailure(row);
   const unresolvedDefinition = registry.find((item) => item.key === unresolvedFailure?.type) || null;
   const initiallyCompleted = new Set(initialEntries.filter((item) => item.status === "succeeded").map((item) => item.key));
   const missingFailureDependencies = unresolvedDefinition?.dependencies.filter((dependency) => !initiallyCompleted.has(dependency)) || [];
-  const dependencyBrokenFailure = !scopeFailure && unresolvedFailure && missingFailureDependencies.length ? unresolvedFailure : null;
+  const dependencyBrokenFailure = !scopeFailure && unresolvedFailure
+    && (!unresolvedDefinition || missingFailureDependencies.length) ? unresolvedFailure : null;
   const entries = dependencyBrokenFailure ? initialEntries.map((entry) => entry.key === dependencyBrokenFailure.type
     ? { ...entry, status:"waiting", historical_failure:entry.error, error:null, blocks_current_flow:false }
     : entry) : initialEntries;
   const completedStages = entries.filter((item) => item.status === "succeeded").map((item) => item.key);
   const pendingStages = entries.filter((item) => item.status !== "succeeded").map((item) => item.key);
-  const active = latestActiveJob(jobs, options.now);
+  const active = latestActiveJob(currentJobs, options.now);
   const failed = dependencyBrokenFailure ? null : unresolvedFailure;
   const firstPending = entries.find((item) => item.status !== "succeeded" && item.key !== "revise_draft") || null;
   const completed = completedStages.length;
@@ -122,6 +132,7 @@ export function buildProductionState(db, row, options = {}) {
   const hasExecutionEvidence=Boolean(row.editorial_assembly_id || row.brief_id || row.narrative_plan_id
     || row.writing_packet_id || row.frontend_plan_status || row.draft_id || row.wordpress_status || jobs.length || artifacts.length
     || db.prepare("SELECT 1 FROM production_attempt_archives WHERE opportunity_id=? LIMIT 1").get(row.opportunity_id));
+  const scopeConfirmationRequired=row.suppression_reason === "destination_recovery_requires_confirmation" && currentJobs.length === 0;
 
   let lifecycle = "pending_start";
   let stageStatus = "waiting";
@@ -135,8 +146,10 @@ export function buildProductionState(db, row, options = {}) {
   let needsHuman = false;
   let recoverable = false;
   let latestError = null;
+  const scopeHistoricalFailure=scopeResetAt ? latestUnresolvedFailure(jobs.filter((item)=>String(item.updated_at)<=String(scopeResetAt))) : resolvedDestinationFailure;
   const latestHistoricalError = dependencyBrokenFailure
-    ? failureAttribution(dependencyBrokenFailure, modelCalls, { blocksCurrentFlow:false }) : null;
+    ? failureAttribution(dependencyBrokenFailure, modelCalls, { blocksCurrentFlow:false })
+    : scopeHistoricalFailure ? failureAttribution(scopeHistoricalFailure, allModelCalls, { blocksCurrentFlow:false }) : null;
 
   if (control?.disposition === "archived" || control?.disposition === "deleted") {
     lifecycle = "history";
@@ -148,6 +161,16 @@ export function buildProductionState(db, row, options = {}) {
       ? "本次派生生产数据已清理；原始来源、证据、知识、审批和审计记录仍然保留。"
       : "这次生产尝试已归档，不再计入活跃工作台。";
     autoContinue = false;
+  } else if (scopeConfirmationRequired) {
+    lifecycle = "pending_start";
+    stageStatus = "waiting";
+    currentStage = null;
+    currentStageLabel = "等待确认更正后的生产范围";
+    headline = "目的地已更正 · 等待重新确认生产范围";
+    explanation = "旧目的地下的失败和素材组装已移入历史；确认后会按重庆范围重新组装素材并自动继续。";
+    autoContinue = false;
+    needsHuman = true;
+    recoverable = false;
   } else if (readiness === "waiting_for_evidence" && !hasExecutionEvidence) {
     currentStage = null;
     currentStageLabel = "等待补充证据";
@@ -192,7 +215,9 @@ export function buildProductionState(db, row, options = {}) {
     currentStage = lastComplete?.key || null;
     currentStageLabel = lastComplete ? `${lastComplete.label}后` : "尚未开始";
     headline = `流程断链：${firstPending.label}尚未完成`;
-    explanation = `历史的“${productionStageLabel(dependencyBrokenFailure.type)}”失败记录缺少当前流水线要求的前置步骤（${missingFailureDependencies.map(productionStageLabel).join("、")}）。恢复会先执行“${firstPending.label}”，不会跳过依赖或重跑已完成阶段。`;
+    explanation = unresolvedDefinition
+      ? `历史的“${productionStageLabel(dependencyBrokenFailure.type)}”失败记录缺少当前流水线要求的前置步骤（${missingFailureDependencies.map(productionStageLabel).join("、")}）。恢复会先执行“${firstPending.label}”，不会跳过依赖或重跑已完成阶段。`
+      : `历史的“${productionStageLabel(dependencyBrokenFailure.type)}”已不属于当前启用的生产路径。恢复会执行当前路径的第一个缺失步骤“${firstPending.label}”，不会重跑已完成阶段。`;
     autoContinue = false;
     needsHuman = true;
     recoverable = true;
@@ -257,13 +282,13 @@ export function buildProductionState(db, row, options = {}) {
     recoverable = true;
   }
 
-  const recoveryTarget = stageStatus === "failed" ? currentStage
+  const recoveryTarget = stageStatus === "failed" ? failed?.recovery_type || currentStage
     : stageStatus === "interrupted" ? firstPending?.key || (active?.expired ? active.type : null) : null;
   const nextStage = lifecycle === "completed" || lifecycle === "history" ? null
     : stageStatus === "interrupted" ? recoveryTarget
       : ["queued","running","failed"].includes(stageStatus) ? followingStage(registry,currentStage)?.key || null
         : firstPending?.key || null;
-  const availableActions = actionsFor({ lifecycle, stageStatus, recoverable, hasLineage, row, control });
+  const availableActions = actionsFor({ lifecycle, stageStatus, recoverable, hasLineage, row, control, scopeConfirmationRequired });
   return {
     version: PRODUCTION_STATE_VERSION,
     lifecycle,
@@ -341,11 +366,11 @@ export function buildPageCompositionPreview(row) {
   };
 }
 
-function persistedStageEvidence(db, row) {
-  const briefReady = Boolean(row.brief_id && !["queued", "exception"].includes(row.brief_status));
-  const reviewPassed = row.qa_passed === 1 || row.qa_passed === true;
+function persistedStageEvidence(db, row, { scopeResetAt = null } = {}) {
+  const briefReady = Boolean(row.brief_id);
+  const reviewCompleted = row.qa_passed != null;
   return {
-    assemble_editorial: Boolean(row.editorial_assembly_id || row.brief_id),
+    assemble_editorial: scopeResetAt && !row.brief_id ? false : Boolean(row.editorial_assembly_id || row.brief_id),
     plan_content: briefReady,
     plan_narrative: Boolean(row.narrative_plan_id || row.writing_packet_id || row.draft_id),
     assemble_writing_packet: Boolean(row.writing_packet_id || row.draft_id),
@@ -353,7 +378,7 @@ function persistedStageEvidence(db, row) {
     generate_draft: Boolean(row.draft_id),
     generate_visuals: Number(row.visual_total || 0) === 0 ? null : Number(row.visual_pending || 0) === 0 && Number(row.visual_failed || 0) === 0,
     compose_frontend_page: row.frontend_page_status === "valid" && Boolean(row.frontend_page_current),
-    review_draft: reviewPassed,
+    review_draft: reviewCompleted,
     revise_draft: null,
     compose_commercial: Boolean(row.commercial_status),
     compose_publish_page: ["valid", "delivered", "delivery_failed"].includes(row.publish_composition_status) && Boolean(row.publish_composition_current),
@@ -441,8 +466,10 @@ function inferredPersistedFailure(row) {
   if (["exception", "qa_failed"].includes(row.draft_status)) {
     const report = parse(row.draft_quality_report_json, {});
     const issue = Array.isArray(report.issues) ? report.issues[0] : null;
+    const repairStage = row.draft_status === "qa_failed" ? qualityRepairStage(Array.isArray(report.issues) ? report.issues : []) : null;
     return {
       type: row.draft_status === "qa_failed" ? "review_draft" : "generate_draft",
+      recovery_type: repairStage,
       last_error: issue?.message || issue?.reason || "草稿生产状态显示失败，但没有关联的失败 Job；原始状态已保留。",
       last_failure_code: issue?.code || (row.draft_status === "qa_failed" ? "QUALITY_REVIEW_FAILED" : "DRAFT_EXCEPTION_WITHOUT_JOB"),
       failure_class: "permanent_input",
@@ -484,13 +511,14 @@ function controlState(db, opportunityId) {
   return db.prepare("SELECT * FROM production_record_controls WHERE opportunity_id=?").get(opportunityId) || null;
 }
 
-function actionsFor({ lifecycle, stageStatus, recoverable, hasLineage, row, control }) {
+function actionsFor({ lifecycle, stageStatus, recoverable, hasLineage, row, control, scopeConfirmationRequired }) {
   const actions = ["view_details"];
   if (lifecycle === "history") {
     actions.push("view_history");
     if (control?.disposition === "archived" && !row.wordpress_post_id) actions.push("restore_archive");
     return actions;
   }
+  if (scopeConfirmationRequired) actions.push("confirm_destination_scope");
   if (stageStatus === "failed" && recoverable) actions.push("retry_failed_stage");
   if (stageStatus === "interrupted" && recoverable) actions.push("recover_next_stage");
   if (hasLineage) actions.push("archive");

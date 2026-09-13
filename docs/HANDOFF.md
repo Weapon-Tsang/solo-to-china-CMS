@@ -1,10 +1,16 @@
-# 2.0.15 Vertex production recovery handoff (local, unreleased)
+# 2.0.16 production recovery lineage handoff
 
-App/Extension version `2.0.15`, schema migration `69`, and Content Strategy `3.3` are implemented in source with `production_state` `1.3`. Production remains on the deployed 2.0.14 revision and image below; this repair has not been committed, pushed or deployed. The implementation and verification record is `audit/CMS_VERTEX_PRODUCTION_RECOVERY_2.0.15_2026-09-14.md`.
+App/Extension version `2.0.16`, schema migration `69`, and Content Strategy `3.3` are implemented with `production_state` `1.4` to repair the production recovery paths exposed by the seven approved production records. The release resolves Opportunity IDs to their Candidate before loading planning input, recognizes a persisted Brief as completed planning, routes failed QA to targeted revision, and treats an approved destination correction as a new production-scope boundary. No schema migration or bulk reconciliation is required.
 
-The repair closes four coupled production gaps: Editorial Assembly is bounded before its first model request; Vertex schema-transport fallback resumes from durable model-call receipts; provider/quota failures cannot exceed the Job retry budget; and `production_state.retry_state` distinguishes cooldown from exhausted automatic retry. Existing over-budget queued cooldowns are deterministically marked failed by `claimJob` without a model call, then remain available for explicit stage-targeted recovery. No migration or production-data reconciliation is required.
+The corrected Chongqing food-guide record keeps its old `DESTINATION_TOPIC_MISMATCH` Job and Editorial Assembly as non-blocking audit history. It now waits for the operator to click “确认更正范围并继续”; that explicit action queues a fresh Opportunity-owned `assemble_editorial` Job under the corrected scope. Merely deploying or opening the workbench does not enqueue it. The three old Vertex-format failures similarly remain unchanged until their individual “重试失败步骤” action is clicked; the fixed route then enqueues only `plan_content` and preserves all prior material.
 
-Local verification passes all 551 tests, `npm run check`, the production build, service-boundary checks and the consolidated offline release gate (50 mandatory checks, zero failures, five warnings and five explicitly external/not-tested checks). The gate made no paid model, production WordPress, Search Console or production-database request. A first gate run caught an unrelated Favorites worker ordering flake; its isolated rerun and the complete clean gate rerun passed.
+Failed `review_draft` reports with content blockers expose `recovery_target=revise_draft`; page-only blockers remain `compose_frontend_page`, and media-only blockers stay manual. The running review Job is ignored only by its own bounded repair-enqueue guard, so it cannot block its child repair while unrelated active Jobs still do. The historical downstream page-plan failure with a persisted Brief resumes at `plan_narrative` rather than overwriting planning.
+
+Production baseline before this rollout is deployed 2.0.15 revision `a587653` at immutable image digest `sha256:d1ee31e2ec3b791957314f2e44d255ef93e416bea09674f35b6fe5a8980eff0a`. The release record for this repair is `audit/CMS_PRODUCTION_RECOVERY_LINEAGE_2.0.16_2026-09-14.md`.
+
+## 2.0.15 deployed baseline
+
+App/Extension version `2.0.15`, schema migration `69`, Content Strategy `3.3`, and `production_state` `1.3` are deployed at revision `a587653` and immutable image digest `sha256:d1ee31e2ec3b791957314f2e44d255ef93e416bea09674f35b6fe5a8980eff0a`. This baseline bounds Editorial Assembly input, persists Vertex structured-output fallback across durable attempts, caps provider retry budgets, and distinguishes cooldown from exhausted automatic retry. Its implementation record is `audit/CMS_VERTEX_PRODUCTION_RECOVERY_2.0.15_2026-09-14.md`.
 
 ## 2.0.14 deployed baseline
 

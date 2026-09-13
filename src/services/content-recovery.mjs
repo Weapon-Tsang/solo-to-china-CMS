@@ -17,21 +17,30 @@ function context(repo, candidateOrOpportunityId) {
   const candidateId = opportunity?.candidate_id || candidateOrOpportunityId;
   const candidate = repo.db.prepare('SELECT * FROM topic_candidates WHERE id=?').get(candidateId);
   if (!candidate) return null;
+  const scopeResetAt = opportunity ? repo.db.prepare(`SELECT created_at FROM content_operation_history
+    WHERE opportunity_id=? AND action='correct_destination' AND status='completed'
+    ORDER BY created_at DESC,id DESC LIMIT 1`).get(opportunity.id)?.created_at || null : null;
   const brief = repo.db.prepare('SELECT * FROM content_briefs WHERE candidate_id=?').get(candidateId);
   const draft = brief && repo.db.prepare('SELECT id,revision,content_hash FROM article_drafts WHERE brief_id=?').get(brief.id);
   const approvedOwnerCount=Number(repo.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL").get(candidateId)?.count || 0);
   const legacyOwnerAllowed=Boolean(opportunity?.approved_at && approvedOwnerCount===1);
   const ownerClause="(production_owner_opportunity_id=? OR (production_owner_opportunity_id IS NULL AND ?=1))";
   const activeJobs = repo.db.prepare(`SELECT id,type,status,recovery_run_id,production_owner_opportunity_id FROM jobs
-    WHERE entity_id IN (?,?,?) AND status IN ('queued','running') AND ${ownerClause}`)
-    .all(candidateId, brief?.id || '', draft?.id || '',opportunity?.id || '',legacyOwnerAllowed ? 1 : 0);
+    WHERE entity_id IN (?,?,?) AND status IN ('queued','running') AND ${ownerClause}
+      AND (? IS NULL OR updated_at>?)`)
+    .all(candidateId, brief?.id || '', draft?.id || '',opportunity?.id || '',legacyOwnerAllowed ? 1 : 0,scopeResetAt,scopeResetAt);
   const failedJob = repo.db.prepare(`SELECT id,type,status,last_error,entity_id,updated_at,failure_class,last_failure_code,attempts,recovery_run_id FROM jobs
     WHERE entity_id IN (?,?,?) AND status='failed' AND ${ownerClause}
+      AND (? IS NULL OR updated_at>?)
       AND NOT EXISTS (SELECT 1 FROM jobs ok WHERE ok.entity_id=jobs.entity_id AND ok.type=jobs.type
         AND ok.status='succeeded' AND ok.updated_at>=jobs.updated_at AND ${ownerClause.replaceAll('production_owner_opportunity_id','ok.production_owner_opportunity_id')})
     ORDER BY updated_at DESC,id DESC LIMIT 1`).get(candidateId, brief?.id || '', draft?.id || '',opportunity?.id || '',legacyOwnerAllowed ? 1 : 0,
+      scopeResetAt,scopeResetAt,
       opportunity?.id || '',legacyOwnerAllowed ? 1 : 0);
-  return { candidate, opportunity: opportunity || repo.db.prepare('SELECT * FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1').get(candidateId), brief, draft, activeJobs, failedJob };
+  const scopeResumed=Boolean(scopeResetAt && repo.db.prepare(`SELECT 1 FROM jobs WHERE entity_id IN (?,?,?) AND ${ownerClause}
+    AND updated_at>? LIMIT 1`).get(candidateId,brief?.id || '',draft?.id || '',opportunity?.id || '',legacyOwnerAllowed ? 1 : 0,scopeResetAt));
+  return { candidate, opportunity: opportunity || repo.db.prepare('SELECT * FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1').get(candidateId),
+    brief, draft, activeJobs, failedJob, scopeResetAt, scopeResumed };
 }
 
 function assetsFor(repo, ctx, packageFacts = null) {
@@ -60,7 +69,9 @@ function assetsFor(repo, ctx, packageFacts = null) {
 export function contentRecoveryReport(repo, candidateId) {
   const ctx = context(repo, candidateId);
   if (!ctx) return null;
-  const pkg = ctx.draft ? repo.getDraftPackage(ctx.draft.id) : repo.getTopicPackage(candidateId);
+  const pkg = ctx.draft ? repo.getDraftPackage(ctx.draft.id)
+    : repo.getTopicPackage(ctx.candidate.id, { opportunityId:ctx.opportunity?.id || null });
+  if (!pkg) return null;
   const assets = assetsFor(repo, ctx, pkg.facts || []);
   const sources = new Map();
   for (const fact of pkg.facts || []) {
@@ -98,6 +109,7 @@ export function contentRecoveryReport(repo, candidateId) {
     localCheck,
     pageEvidenceErrors:ctx.draft && pkg.frontend_page?.payload ? validatePageEvidence(pkg.frontend_page.payload,pkg).errors : [],
     productionState:detail?.production_state || null,
+    destinationScopeConfirmationRequired:ctx.opportunity?.suppression_reason === 'destination_recovery_requires_confirmation' && !ctx.scopeResumed,
     recaptureMessage:'打开下方对应原文，用新版采集扩展重新采集并确认真实授权。即使正文没有变化，新版也会补回原图文件；系统检测到该草稿已引用这张图后，会只从页面编排自动续跑并重新质检。若尚未选择图片槽位，再回到此处绑定对应图片。',
   };
 }
@@ -118,16 +130,17 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       if (ctx.brief) conflict('已有写作准备记录或草稿时不能直接改归属；请保留原稿并从内容建议创建正确版本。');
       const destination = repo.db.prepare('SELECT slug FROM destinations WHERE slug=?').get(String(input.destination || ''));
       if (!destination) conflict('请选择有效目的地。');
-      const topic = repo.getTopicPackage(candidateId);
+      const topic = repo.getTopicPackage(ctx.candidate.id, { opportunityId:ctx.opportunity?.id || null });
+      if (!topic) conflict('无法读取当前批准记录对应的选题证据。');
       const check = validatePlanningDestination({ ...topic,candidate:{ ...ctx.candidate,destination_slug:destination.slug } });
       if (!check.valid) conflict(check.message);
-      const opportunities = repo.db.prepare('SELECT * FROM content_opportunities WHERE candidate_id=?').all(candidateId);
+      const opportunities = repo.db.prepare('SELECT * FROM content_opportunities WHERE candidate_id=?').all(ctx.candidate.id);
       repo.db.prepare("UPDATE topic_candidates SET destination_slug=?,coverage_score=0,status='candidate',updated_at=? WHERE id=?")
-        .run(destination.slug, now(), candidateId);
+        .run(destination.slug, now(), ctx.candidate.id);
       for (const opportunity of opportunities) {
         repo.db.prepare("UPDATE content_opportunities SET destination_slug=?,coverage_json=?,updated_at=? WHERE id=?")
           .run(destination.slug, JSON.stringify({ ...json(opportunity.coverage_json,{}),selectedFactKeys:[] }), now(), opportunity.id);
-        const facts = repo.getTopicPackage(candidateId).facts;
+        const facts = repo.getTopicPackage(ctx.candidate.id, { opportunityId:opportunity.id })?.facts || [];
         const mode = json(opportunity.coverage_json,{}).publicationMode;
         const matrix = evaluateCoverage({ topicKey:opportunity.topic_key,contentType:opportunity.content_type,facts,
           sourceFamilyCount:repo.independentSourceFamilyCountForFacts(facts),publicationMode:mode });
@@ -137,9 +150,26 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
             JSON.stringify(readiness),readiness.score,opportunity.approved_at ? 'suppressed' : opportunity.status,
             opportunity.approved_at ? 'destination_recovery_requires_confirmation' : opportunity.suppression_reason,now(),opportunity.id);
         repo.db.prepare('UPDATE topic_candidates SET coverage_score=?,evidence_count=?,conflict_count=? WHERE id=?')
-          .run(readiness.score,readiness.sourceFamilyCount || 0,readiness.conflictedCount || 0,candidateId);
+          .run(readiness.score,readiness.sourceFamilyCount || 0,readiness.conflictedCount || 0,ctx.candidate.id);
       }
       result = { action:input.action,previousDestination:ctx.candidate.destination_slug,destination:destination.slug,previousOpportunities:opportunities,queued:false };
+    } else if (input.action === 'confirm_destination_scope') {
+      if (!ctx.opportunity || ctx.opportunity.suppression_reason !== 'destination_recovery_requires_confirmation') {
+        conflict('当前没有等待确认的目的地生产范围。');
+      }
+      const topic = repo.getTopicPackage(ctx.candidate.id, { opportunityId:ctx.opportunity.id });
+      if (!topic) conflict('无法读取更正后的选题证据，请刷新后重试。');
+      const check = validatePlanningDestination(topic);
+      if (!check.valid) conflict(check.message);
+      const readiness = json(ctx.opportunity.readiness_json,{});
+      if (!readiness.ready) conflict('更正后的证据范围尚未满足生产条件，请先补充证据。');
+      repo.db.prepare("UPDATE content_opportunities SET status='producing',lifecycle_state='producing',suppression_reason=NULL,updated_at=? WHERE id=?")
+        .run(now(),ctx.opportunity.id);
+      const recoveryRunId=id('recovery_run');
+      const jobId=repo.enqueue('assemble_editorial',ctx.candidate.id,{
+        dedupeKey:`confirmed-destination-scope:${ctx.opportunity.id}:${ctx.scopeResetAt || ctx.opportunity.updated_at}`,
+        recoveryRunId,interactive:true,productionOwnerOpportunityId:ctx.opportunity.id });
+      result={action:input.action,jobId,recoveryRunId,queued:Boolean(jobId),resolvedStage:'assemble_editorial',stageOnly:true,preservedStages:[]};
     } else if (input.action === 'save_editorial_correction') {
       if (!ctx.draft) conflict('没有可编辑的草稿。');
       const pkg = repo.getDraftPackage(ctx.draft.id);
@@ -198,7 +228,9 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       if (missingDependency) conflict(`前置步骤“${productionStageLabel(missingDependency)}”尚未完成，不能跳过它恢复“${productionStageLabel(stage)}”。请刷新页面，系统会提供正确的断点恢复入口。`);
       if (stage === 'plan_content') {
         if (ctx.brief) conflict('已有写作准备记录，不会被重新覆盖。');
-        const check = validatePlanningDestination(repo.getPlanningPackage(candidateId,{opportunityId:ctx.opportunity?.id}));
+        const planningPackage = repo.getPlanningPackage(ctx.candidate.id,{opportunityId:ctx.opportunity?.id || null});
+        if (!planningPackage) conflict('无法读取当前批准记录对应的写作准备输入，请刷新后重试。');
+        const check = validatePlanningDestination(planningPackage);
         if (!check.valid) conflict(check.message);
         const approved = repo.db.prepare(`SELECT id,readiness_json FROM content_opportunities WHERE id=? AND candidate_id=? AND approved_at IS NOT NULL AND
           (status IN ('approved_ready','producing') OR (status='suppressed' AND suppression_reason='destination_recovery_requires_confirmation'))`).get(ctx.opportunity?.id || '',ctx.candidate.id);
@@ -212,9 +244,13 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
         conflict('草稿尚不存在，无法从草稿后的步骤继续。');
       }
       if (stage === 'compose_frontend_page') {
-        const report = contentRecoveryReport(repo,candidateId);
+        const report = contentRecoveryReport(repo,ctx.opportunity?.id || ctx.candidate.id);
         if (report.visuals.some((visual) => visual.assetId && !visual.delivered
           && !report.assets.find((asset) => asset.id === visual.assetId)?.has_bytes)) conflict('所选图片只有失效远程链接，请从下方原文重新采集并绑定。');
+      }
+      if (ctx.opportunity?.suppression_reason === 'destination_recovery_requires_confirmation') {
+        repo.db.prepare("UPDATE content_opportunities SET status='producing',lifecycle_state='producing',suppression_reason=NULL,updated_at=? WHERE id=?")
+          .run(now(),ctx.opportunity.id);
       }
       if (ctx.opportunity) {
         const disposition = repo.db.prepare('SELECT disposition FROM production_record_controls WHERE opportunity_id=?').get(ctx.opportunity.id)?.disposition;

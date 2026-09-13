@@ -4,7 +4,8 @@ import test from "node:test";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 import { boundedEditorialAssemblyPackage, EDITORIAL_ASSEMBLY_INPUT_BUDGET,
   boundedPlanningPackage, PLANNING_INPUT_BUDGET } from "../src/repository.mjs";
-import { executeContentRecovery } from "../src/services/content-recovery.mjs";
+import { contentRecoveryReport, executeContentRecovery } from "../src/services/content-recovery.mjs";
+import { validatePlanningDestination } from "../src/destination-consistency.mjs";
 
 function candidate(db,id="shared-candidate") {
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
@@ -75,10 +76,12 @@ test("retry is idempotent, becomes authoritative, and success supersedes the old
   db.prepare("UPDATE jobs SET status='succeeded',attempts=1,completed_at='2026-09-13',updated_at='2026-09-13' WHERE id=?").run(done);
   const failed=repository.enqueue("plan_content","shared-candidate",{dedupeKey:"retry-failed",productionOwnerOpportunityId:"retry-owner"});
   db.prepare("UPDATE jobs SET status='failed',attempts=1,failure_class='retryable_provider',last_failure_code='PROVIDER_BUSY',last_error='busy',updated_at='2026-09-13T01:00:00Z' WHERE id=?").run(failed);
-  repository.getPlanningPackage=()=>({candidate:{id:"shared-candidate",destination_slug:"beijing",proposed_title:"Beijing guide"},facts:[]});
+  let planningLookup=null;
+  repository.getPlanningPackage=(id,options)=>{ planningLookup={id,options}; return {candidate:{id:"shared-candidate",destination_slug:"beijing",proposed_title:"Beijing guide"},facts:[]}; };
   const first=executeContentRecovery(repository,"retry-owner",{action:"retry_failed_stage",idempotency_key:"retry-once"},"tester");
   const second=executeContentRecovery(repository,"retry-owner",{action:"retry_failed_stage",idempotency_key:"retry-once"},"tester");
   assert.equal(first.jobId,second.jobId);
+  assert.deepEqual(planningLookup,{id:"shared-candidate",options:{opportunityId:"retry-owner"}});
   assert.equal(second.idempotent,true);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='plan_content'").get().count,2);
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
@@ -97,11 +100,10 @@ test("retry is idempotent, becomes authoritative, and success supersedes the old
 
 test("a downstream historical failure with missing prerequisites recovers the first broken link",(t)=>{
   const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"broken-owner",{approved:true});
-  repository.configureProductionCapabilities({frontendContract:true});
   db.prepare(`INSERT INTO editorial_assemblies(id,candidate_id,opportunity_id,input_hash,created_at,updated_at)
     VALUES ('broken-assembly','shared-candidate','broken-owner','hash','2026-09-13','2026-09-13')`).run();
   db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
-    VALUES ('broken-brief','beijing','Beijing guide','[]','informational','ready','2026-09-13','2026-09-13','shared-candidate')`).run();
+    VALUES ('broken-brief','beijing','Beijing guide','[]','informational','exception','2026-09-13','2026-09-13','shared-candidate')`).run();
   const failed=repository.enqueue("compose_frontend_page_plan","broken-brief",{
     dedupeKey:"legacy-page-plan-failure",productionOwnerOpportunityId:"broken-owner",
   });
@@ -109,13 +111,13 @@ test("a downstream historical failure with missing prerequisites recovers the fi
     last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.3");
+  assert.equal(state.version,"1.4");
   assert.equal(state.stage_status,"interrupted");
   assert.equal(state.recovery_target,"plan_narrative");
   assert.equal(state.latest_error,null);
   assert.equal(state.latest_historical_error.stage,"compose_frontend_page_plan");
   assert.equal(state.latest_historical_error.blocks_current_flow,false);
-  assert.equal(state.timeline.find((step)=>step.key==="compose_frontend_page_plan").status,"waiting");
+  assert.equal(state.timeline.some((step)=>step.key==="compose_frontend_page_plan"),false);
   assert.equal(state.available_actions.includes("recover_next_stage"),true);
   assert.equal(state.available_actions.includes("retry_failed_stage"),false);
 
@@ -127,6 +129,87 @@ test("a downstream historical failure with missing prerequisites recovers the fi
   state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
   assert.equal(state.stage_status,"queued");
   assert.equal(state.current_stage,"plan_narrative");
+});
+
+test("a corrected destination invalidates old-scope failures and waits for explicit scope confirmation",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"corrected-owner",{approved:true});
+  db.prepare("UPDATE topic_candidates SET destination_slug='chongqing',proposed_title='Chongqing food guide' WHERE id='shared-candidate'").run();
+  db.prepare(`UPDATE content_opportunities SET destination_slug='chongqing',title='Chongqing food guide',
+    status='suppressed',suppression_reason='destination_recovery_requires_confirmation' WHERE id='corrected-owner'`).run();
+  db.prepare(`INSERT INTO editorial_assemblies(id,candidate_id,opportunity_id,input_hash,created_at,updated_at)
+    VALUES ('old-scope-assembly','shared-candidate','corrected-owner','hash','2026-09-13T01:00:00Z','2026-09-13T01:00:00Z')`).run();
+  const old=repository.enqueue("plan_content","shared-candidate",{dedupeKey:"old-scope-failure",productionOwnerOpportunityId:"corrected-owner"});
+  db.prepare(`UPDATE jobs SET status='failed',last_failure_code='DESTINATION_TOPIC_MISMATCH',
+    last_error='DESTINATION_TOPIC_MISMATCH: old destination',updated_at='2026-09-13T01:01:00Z' WHERE id=?`).run(old);
+  db.prepare(`INSERT INTO content_operation_history(id,candidate_id,action,status,preview_json,result_json,actor,created_at,opportunity_id,idempotency_key)
+    VALUES ('scope-reset','shared-candidate','correct_destination','completed','{}','{}','tester','2026-09-13T02:00:00Z','corrected-owner','scope-reset-key')`).run();
+
+  let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.version,"1.4");
+  assert.equal(state.lifecycle,"pending_start");
+  assert.equal(state.stage_status,"waiting");
+  assert.equal(state.latest_error,null);
+  assert.equal(state.latest_historical_error.code,"DESTINATION_TOPIC_MISMATCH");
+  assert.deepEqual(state.completed_stages,[]);
+  assert.equal(state.available_actions.includes("confirm_destination_scope"),true);
+  const detail=repository.getContentProductionDetail("corrected-owner");
+  assert.equal(detail.production_state.latest_error,null);
+  const report=contentRecoveryReport(repository,"corrected-owner");
+  assert.equal(report.destinationScopeConfirmationRequired,true);
+  assert.equal(report.failedJob,null);
+
+  const result=executeContentRecovery(repository,"corrected-owner",{action:"confirm_destination_scope",idempotency_key:"confirm-scope"},"tester");
+  assert.equal(result.resolvedStage,"assemble_editorial");
+  assert.equal(result.queued,true);
+  assert.equal(db.prepare("SELECT status FROM content_opportunities WHERE id='corrected-owner'").get().status,"producing");
+  assert.equal(db.prepare("SELECT suppression_reason FROM content_opportunities WHERE id='corrected-owner'").get().suppression_reason,null);
+  assert.equal(db.prepare("SELECT production_owner_opportunity_id FROM jobs WHERE id=?").get(result.jobId).production_owner_opportunity_id,"corrected-owner");
+  state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.current_stage,"assemble_editorial");
+  assert.equal(state.stage_status,"queued");
+});
+
+test("destination validation handles a missing package without throwing",()=>{
+  assert.deepEqual(validatePlanningDestination(null),{valid:true,code:null,assignedDestination:"",explicitDestinations:[]});
+});
+
+test("a post-correction retry is itself explicit scope confirmation and clears stale suppression",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"resumed-scope-owner",{approved:true});
+  db.prepare("UPDATE topic_candidates SET destination_slug='chongqing',proposed_title='Chongqing route' WHERE id='shared-candidate'").run();
+  db.prepare(`UPDATE content_opportunities SET destination_slug='chongqing',title='Chongqing route',status='suppressed',
+    suppression_reason='destination_recovery_requires_confirmation' WHERE id='resumed-scope-owner'`).run();
+  db.prepare(`INSERT INTO content_operation_history(id,candidate_id,action,status,preview_json,result_json,actor,created_at,opportunity_id,idempotency_key)
+    VALUES ('resumed-reset','shared-candidate','correct_destination','completed','{}','{}','tester','2026-09-13T02:00:00Z','resumed-scope-owner','resumed-reset-key')`).run();
+  const failed=repository.enqueue('assemble_editorial','shared-candidate',{dedupeKey:'post-scope-failure',productionOwnerOpportunityId:'resumed-scope-owner'});
+  db.prepare(`UPDATE jobs SET status='failed',failure_class='retryable_provider',last_failure_code='PROVIDER_REQUEST_FAILED',
+    last_error='Vertex Gemini request failed (429): Resource exhausted',updated_at='2026-09-13T03:00:00Z' WHERE id=?`).run(failed);
+  let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,'failed');
+  assert.equal(state.recovery_target,'assemble_editorial');
+  assert.equal(state.available_actions.includes('confirm_destination_scope'),false);
+  executeContentRecovery(repository,'resumed-scope-owner',{action:'retry_failed_stage',idempotency_key:'retry-resumed-scope'},'tester');
+  assert.equal(db.prepare("SELECT suppression_reason FROM content_opportunities WHERE id='resumed-scope-owner'").get().suppression_reason,null);
+});
+
+test("failed QA reports recover through targeted revision instead of repeating review",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"qa-owner",{approved:true});
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('qa-brief','beijing','Beijing guide','[]','informational','ready','2026-09-13','2026-09-13','shared-candidate')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('qa-draft','qa-brief','Beijing guide','beijing-guide','Body','{}','qa_failed','2026-09-13','2026-09-13',1,'qa-hash')`).run();
+  repository.saveReview('qa-draft',{passed:false,score:75,issues:[{code:'protected_evidence_mismatch',severity:'blocker',message:'Changed protected facts'}],checks:[],unsupported_claims:[]},'fixture',{revision:1,contentHash:'qa-hash',productionOwnerOpportunityId:'qa-owner'});
+
+  let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,"failed");
+  assert.equal(state.current_stage,"review_draft");
+  assert.equal(state.recovery_target,"revise_draft");
+  assert.equal(state.completed_stages.includes("review_draft"),true);
+  assert.match(state.headline,/关键事实/);
+  assert.match(state.latest_error.reason,/金额、日期/);
+  const result=executeContentRecovery(repository,"qa-owner",{action:"retry_failed_stage",idempotency_key:"repair-qa"},"tester");
+  assert.equal(result.resolvedStage,"revise_draft");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='review_draft'").get().count,0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='revise_draft'").get().count,1);
 });
 
 test("a planning failure without Editorial Assembly resumes assembly instead of skipping it",(t)=>{

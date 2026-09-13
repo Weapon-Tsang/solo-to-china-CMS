@@ -1,10 +1,17 @@
 # SoloToChina Content Strategy changelog
 
-## App 2.0.15 / schema 69 - 2026-09-14 (source only)
+## App 2.0.16 / schema 69 - 2026-09-14
+
+- Production recovery resolves the approved Opportunity to its Candidate before loading bounded planning input, without changing the Content Strategy 3.3 selection policy.
+- A destination correction now creates a scope boundary: older failures/artifacts remain auditable history and the corrected scope requires explicit confirmation before a new Editorial Assembly is queued.
+- Failed QA with content blockers targets bounded `revise_draft`; media-only and page-only failures retain their existing specialized recovery rules.
+- No schema migration, bulk retry, model call, evidence deletion or Frontend Contract change is introduced.
+
+## App 2.0.15 / schema 69 - 2026-09-14
 
 - Keep Strategy 3.3 selection semantics unchanged while bounding the first Editorial Assembly model projection by materiality, evidence and byte/token budgets. Full research and approval records remain retained.
 - Reuse durable model-call receipts to resume Vertex structured-output transport and enforce finite provider retry budgets. No recommendation, approval, scope, migration or automatic production-enqueue behavior changes.
-- Production remains on 2.0.14 pending separate deployment authorization.
+- Production was upgraded to 2.0.15 after its offline release gate and production-copy checks passed.
 
 ## App 2.0.14 / schema 69 - 2026-09-13
 

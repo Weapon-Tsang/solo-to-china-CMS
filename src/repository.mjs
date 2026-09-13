@@ -5472,7 +5472,7 @@ export class Repository {
     const rows = productionOnly ? this.db.prepare(`
       SELECT co.id AS id, co.id AS production_instance_id, co.id AS opportunity_id, co.destination_slug, co.topic_key,
         co.title, co.content_type, co.readiness_score, co.readiness_json, co.coverage_json,
-        co.status, co.status AS opportunity_status, co.approved_at, co.lifecycle_state,
+        co.status, co.status AS opportunity_status, co.suppression_reason, co.approved_at, co.lifecycle_state,
         co.processing_state, co.processing_detail_json, co.created_at AS opportunity_created_at,
         co.updated_at AS opportunity_updated_at,
         tc.id AS candidate_id, tc.proposed_title, tc.coverage_score, tc.evidence_count, tc.conflict_count,
@@ -6284,7 +6284,8 @@ export class Repository {
     return null;
   }
 
-  automaticQualityRepairState(draftId, issues = [], { enqueue = false, maxAttempts = 2, productionOwnerOpportunityId = null } = {}) {
+  automaticQualityRepairState(draftId, issues = [], { enqueue = false, maxAttempts = 2, productionOwnerOpportunityId = null,
+    ignoreActiveJobId = null } = {}) {
     const draft = this.db.prepare("SELECT id,revision FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) return { eligible: false, queued: false, stage: null, attempts: 0, maxAttempts, reason: "draft_missing" };
     const stage = qualityRepairStage(issues);
@@ -6292,7 +6293,8 @@ export class Repository {
       WHERE entity_id=? AND dedupe_key LIKE 'auto-quality-repair:%'`).get(draftId)?.count || 0);
     if (!stage) return { eligible: false, queued: false, stage: null, attempts, maxAttempts, reason: "manual_media_or_no_blocker" };
     if (attempts >= maxAttempts) return { eligible: false, queued: false, stage, attempts, maxAttempts, reason: "attempt_limit_reached" };
-    const active = this.db.prepare("SELECT id,type,status FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1").get(draftId);
+    const active = this.db.prepare(`SELECT id,type,status FROM jobs WHERE entity_id=? AND status IN ('queued','running')
+      AND (? IS NULL OR id<>?) LIMIT 1`).get(draftId,ignoreActiveJobId,ignoreActiveJobId);
     if (active) return { eligible: true, queued: false, stage, attempts, maxAttempts, reason: "job_already_active", activeJob: active };
     const dedupeKey = `auto-quality-repair:${stage}:${draftId}:r${draft.revision}`;
     const attempted = this.db.prepare("SELECT id,status FROM jobs WHERE dedupe_key=? LIMIT 1").get(dedupeKey);
