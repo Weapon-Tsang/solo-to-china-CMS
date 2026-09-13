@@ -1,12 +1,14 @@
 # 2.0.12 Content production workbench handoff
 
-App/Extension version `2.0.12`, schema migration `68`, and Content Strategy `3.3` are the expected local implementation baseline. This release is implemented and tested in the repository only; it has not been deployed to production.
+App/Extension version `2.0.12`, schema migration `68`, and Content Strategy `3.3` are the production baseline. Production runs revision `a592b720edb311f10d88bcfa01e98ab7a945f6cd` at immutable image digest `sha256:6b8ed193ff0e67b871b4252ae03f0aea7b0f16f768f8250f9c32ba657ed8ef97`. Verified backup/restore, schema rehearsal and migration, the 413-row Opportunity admission audit, isolated readiness and repeated public engine/capture checks passed. See `audit/CMS_CONTENT_PRODUCTION_WORKBENCH_2.0.12_2026-09-13.md` for exact deployment, rollback and cleanup evidence.
 
 The Content workbench now receives one backend-owned `production_state`. It shows approved work waiting for evidence, ready work, queued/running jobs, exact failed stages, interrupted stage transitions, completed production and archived/deleted history without reconstructing state from unrelated status columns. Every record can open production details before a Draft exists. The timeline identifies completed/current/next stages, dependency and parallel-group metadata, reuse, progress, automatic continuation, human action and the latest safe error.
 
 Recovery resolves `retry_failed_stage` and `recover_next_stage` to one exact stage and queues that stage on the existing durable pipeline with recovery identity and idempotent dedupe. Existing pipeline artifacts and step receipts still enforce input/config hashes and lease fencing. Archive/restore/delete are SQLite transactions recorded in `production_record_audit`; deletion retains Sources, capture versions, original media, Claims, Knowledge, Evidence, Experience, recommendation decisions, opportunities, approvals, failure lessons, failed-attempt archives and operation audit. A synced remote WordPress Draft blocks local deletion.
 
 Page preview is explicitly structural: it reads persisted Frontend Page Plan, Page Payload or Publish Package blocks and displays order, component/variant, evidence/media/commercial/link mapping, validation and Contract hashes. It does not render, copy or fabricate Frontend JSX/CSS. Successful WordPress delivery exposes the stored `preview_url` as “预览最终页面” and `edit_url` as the editing entry.
+
+The retained rollback set is the stopped `engine-before-a592b72` container/image (2.0.11), READY disk snapshot `stc-pre-2-0-12-a592b72`, and verified application snapshot `solo-to-china-2026-09-13T10-18-13-263Z.snapshot`. The failed first-attempt database/release, superseded disk snapshot and untagged registry images were removed only after 2.0.12 passed repeat public checks. Do not remove the retained rollback set until a later release has its own verified replacement. GCE Guest Agent Cloud Logging writes currently lack IAM permission; deployment evidence is available through the serial console.
 
 ## 2.0.11 qualification-audit handoff (historical)
 

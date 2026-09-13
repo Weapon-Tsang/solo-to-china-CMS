@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.12 - Unreleased
+## 2.0.12 - 2026-09-13
 
 - Add the backend-owned `production_state` projection with explicit evidence-waiting, ready, queued, running, failed, interrupted, completed and historical states, accurate stages, progress, next action, automatic-continuation and human-action flags.
 - Rebuild the Content workbench around lifecycle sections and pre-Draft production details; remove frontend inference across opportunity, candidate, Brief, Draft and Job status fields.
@@ -8,6 +8,7 @@
 - Add transactional, audited and idempotent production-record archive, restore and deletion. Deletion removes only derived production records and refuses local deletion after a remote WordPress Draft exists.
 - Add structural Page Composition preview from persisted Contract payloads and direct final-preview/edit links from WordPress `preview_url` and `edit_url`, without copying Frontend JSX/CSS.
 - Add schema 68 production record controls/audit plus migration, state, recovery, archive, deletion, WordPress guard and preview tests. Migration 68 performs no historical scan, queue insertion or model call.
+- Deploy revision `a592b720edb311f10d88bcfa01e98ab7a945f6cd` at immutable image digest `sha256:6b8ed193ff0e67b871b4252ae03f0aea7b0f16f768f8250f9c32ba657ed8ef97`; verified backup/restore, schema 68 rehearsal and migration, opportunity admission audit, isolated readiness and public health all passed before cleanup of superseded deployment artifacts.
 
 ## 2.0.11 - 2026-09-13
 
