@@ -6,7 +6,7 @@ import { applyDeterministicGates } from '../ai/content-engine.mjs';
 import { validatePageEvidence } from '../evidence-validator.mjs';
 import { evaluateCoverage } from '../research-strategy.mjs';
 import { recoveryDiagnosis } from './content-recovery-policy.mjs';
-import { PRODUCTION_STAGE_REGISTRY } from './production-state.mjs';
+import { PRODUCTION_STAGE_REGISTRY, productionStageLabel } from './production-state.mjs';
 
 function conflict(message) { throw Object.assign(new Error(message), { statusCode: 409 }); }
 
@@ -182,18 +182,20 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       const stateRow = ctx.opportunity ? repo.listContent({ candidateId:ctx.opportunity.id,productionOnly:true })[0] : null;
       const productionState = stateRow?.production_state || null;
       const requestedAction = String(input.action || '');
-      const stage = requestedAction === 'retry_failed_stage' ? productionState?.latest_error?.stage || ctx.activeJobs[0]?.type
+      const stage = requestedAction === 'retry_failed_stage' ? productionState?.recovery_target || productionState?.latest_error?.stage || ctx.activeJobs[0]?.type
         : requestedAction === 'recover_next_stage' ? productionState?.recovery_target || productionState?.next_stage || ctx.activeJobs[0]?.type : requestedAction;
       const definition = PRODUCTION_STAGE_REGISTRY.find((item) => item.key === stage);
       if (!definition) conflict('没有可恢复的准确生产步骤。');
       if (requestedAction === 'retry_failed_stage' && productionState?.stage_status !== 'failed'
-        && !ctx.activeJobs.some((job)=>job.type===stage)) conflict('当前没有失败步骤可重试。');
+        && !ctx.activeJobs.some((job)=>job.type===stage)) conflict(productionState?.stage_status === 'interrupted'
+          ? `生产状态已经更新：请刷新后从“${productionState?.recovery_target_label || productionStageLabel(stage)}”继续。`
+          : '当前没有失败步骤可重试。');
       if (requestedAction === 'recover_next_stage' && productionState?.stage_status !== 'interrupted'
         && !ctx.activeJobs.some((job)=>job.type===stage)) conflict('当前流程没有断链。');
       const completed = new Set(productionState?.completed_stages || []);
       const missingDependency = ['retry_failed_stage','recover_next_stage'].includes(requestedAction)
         ? definition.dependencies.find((dependency) => !completed.has(dependency)) : null;
-      if (missingDependency) conflict(`前置步骤 ${missingDependency} 尚未完成，不能跳过它恢复 ${stage}。`);
+      if (missingDependency) conflict(`前置步骤“${productionStageLabel(missingDependency)}”尚未完成，不能跳过它恢复“${productionStageLabel(stage)}”。请刷新页面，系统会提供正确的断点恢复入口。`);
       if (stage === 'plan_content') {
         if (ctx.brief) conflict('已有写作准备记录，不会被重新覆盖。');
         const check = validatePlanningDestination(repo.getPlanningPackage(candidateId,{opportunityId:ctx.opportunity?.id}));

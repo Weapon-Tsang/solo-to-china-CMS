@@ -106,6 +106,31 @@ test("Vertex Gemini retries a generic JSON Schema 400 once with the OpenAPI tran
   assert.equal(requests[1].generationConfig.responseJsonSchema, undefined);
 });
 
+test("Vertex Gemini falls back to prompt-enforced JSON when both native schema transports are rejected", async () => {
+  const requests = [];
+  const metrics = [];
+  const client = new VertexGeminiClient({
+    projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
+    onModelCall: (metric) => metrics.push(metric),
+  }, async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    if (requests.length < 3) return Response.json({ error: { code: 400, message: "Request contains an invalid argument." } }, { status: 400 });
+    return Response.json({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }], usageMetadata: { promptTokenCount: 9, candidatesTokenCount: 2 } });
+  });
+  const result = await client.completeJson({ name: "content_brief", schema: {
+    type: "object", required: ["ok"], properties: { ok: { type: "boolean" } },
+  }, instructions: "Plan.", content: "evidence" });
+  assert.deepEqual(result.output, { ok: true });
+  assert.equal(requests.length, 3);
+  assert.ok(requests[0].generationConfig.responseJsonSchema);
+  assert.ok(requests[1].generationConfig.responseSchema);
+  assert.equal(requests[2].generationConfig.responseJsonSchema, undefined);
+  assert.equal(requests[2].generationConfig.responseSchema, undefined);
+  assert.match(requests[2].systemInstruction.parts[0].text, /local validation remains authoritative/);
+  assert.deepEqual(metrics.map((metric) => metric.errorCode), ["SCHEMA_MODE_UNSUPPORTED", "SCHEMA_MODE_UNSUPPORTED", null]);
+  assert.deepEqual(metrics.map((metric) => metric.attemptNumber), [1, 2, 3]);
+});
+
 test("Vertex content planning output limits require input correction instead of repeating a no-op retry", async () => {
   const client = new VertexGeminiClient({
     projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",

@@ -1,7 +1,8 @@
 import { json, sha256 } from "../utils.mjs";
+import { validatePlanningDestination } from "../destination-consistency.mjs";
 import { explainOperationalFailure } from "./content-recovery-policy.mjs";
 
-export const PRODUCTION_STATE_VERSION = "1.1";
+export const PRODUCTION_STATE_VERSION = "1.2";
 
 export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
   stage("assemble_editorial", "素材组装", 10, [], "editorial", "always"),
@@ -65,14 +66,31 @@ export function buildProductionState(db, row, options = {}) {
     ORDER BY updated_at,created_at,id`).all(...entityIds,...PRODUCTION_JOB_TYPES)
     .filter((artifact)=>jobs.some((job)=>job.type===artifact.stage && job.entity_id===artifact.entity_id)) : [];
   const modelCalls = jobIds.length ? db.prepare(`SELECT id,stage,entity_id,run_id,model,provider,request_kind,cache_hit,status,
-    attempt_number,error_code,request_started_at,request_completed_at,created_at
+    attempt_number,error_code,input_tokens,output_tokens,request_started_at,request_completed_at,created_at
     FROM model_call_metrics WHERE run_id IN (${placeholders(jobIds)}) ORDER BY created_at,id`).all(...jobIds) : [];
   const evidence = persistedStageEvidence(db, row);
-  const entries = registry.map((definition) => buildStageEntry(definition, jobs, artifacts, receipts, modelCalls, evidence));
+  const initialEntries = registry.map((definition) => buildStageEntry(definition, jobs, artifacts, receipts, modelCalls, evidence));
+  const destinationCheck = validatePlanningDestination({ candidate:{
+    destination_slug:row.destination_slug,
+    proposed_title:row.title || row.proposed_title,
+  } });
+  const scopeFailure = !row.brief_id && !destinationCheck.valid ? {
+    type:"plan_content", last_error:`DESTINATION_TOPIC_MISMATCH: ${destinationCheck.message}`,
+    last_failure_code:"DESTINATION_TOPIC_MISMATCH", failure_class:"permanent_input",
+    updated_at:row.opportunity_updated_at, id:null,
+  } : null;
+  const unresolvedFailure = scopeFailure || latestUnresolvedFailure(jobs) || inferredPersistedFailure(row);
+  const unresolvedDefinition = registry.find((item) => item.key === unresolvedFailure?.type) || null;
+  const initiallyCompleted = new Set(initialEntries.filter((item) => item.status === "succeeded").map((item) => item.key));
+  const missingFailureDependencies = unresolvedDefinition?.dependencies.filter((dependency) => !initiallyCompleted.has(dependency)) || [];
+  const dependencyBrokenFailure = !scopeFailure && unresolvedFailure && missingFailureDependencies.length ? unresolvedFailure : null;
+  const entries = dependencyBrokenFailure ? initialEntries.map((entry) => entry.key === dependencyBrokenFailure.type
+    ? { ...entry, status:"waiting", historical_failure:entry.error, error:null, blocks_current_flow:false }
+    : entry) : initialEntries;
   const completedStages = entries.filter((item) => item.status === "succeeded").map((item) => item.key);
   const pendingStages = entries.filter((item) => item.status !== "succeeded").map((item) => item.key);
   const active = latestActiveJob(jobs, options.now);
-  const failed = latestUnresolvedFailure(jobs) || inferredPersistedFailure(row);
+  const failed = dependencyBrokenFailure ? null : unresolvedFailure;
   const firstPending = entries.find((item) => item.status !== "succeeded" && item.key !== "revise_draft") || null;
   const completed = completedStages.length;
   const total = registry.filter((item) => item.key !== "revise_draft" || stageEnabled(item, capabilities, db, row)).length;
@@ -108,6 +126,8 @@ export function buildProductionState(db, row, options = {}) {
   let needsHuman = false;
   let recoverable = false;
   let latestError = null;
+  const latestHistoricalError = dependencyBrokenFailure
+    ? failureAttribution(dependencyBrokenFailure, modelCalls, { blocksCurrentFlow:false }) : null;
 
   if (control?.disposition === "archived" || control?.disposition === "deleted") {
     lifecycle = "history";
@@ -140,32 +160,31 @@ export function buildProductionState(db, row, options = {}) {
     headline = productionStageActivityLabel(active.type, active.status);
     explanation = active.status === "running" ? "系统正在执行当前步骤，完成后会按流水线依赖自动继续。" : "任务已进入 durable queue，将自动继续。";
     autoContinue = true;
+  } else if (dependencyBrokenFailure && firstPending) {
+    const firstPendingIndex = entries.findIndex((entry) => entry.key === firstPending.key);
+    const lastComplete = entries.slice(0, Math.max(0, firstPendingIndex)).reverse().find((item) => item.status === "succeeded");
+    lifecycle = "needs_attention";
+    stageStatus = "interrupted";
+    currentStage = lastComplete?.key || null;
+    currentStageLabel = lastComplete ? `${lastComplete.label}后` : "尚未开始";
+    headline = `流程断链：${firstPending.label}尚未完成`;
+    explanation = `历史的“${productionStageLabel(dependencyBrokenFailure.type)}”失败记录缺少当前流水线要求的前置步骤（${missingFailureDependencies.map(productionStageLabel).join("、")}）。恢复会先执行“${firstPending.label}”，不会跳过依赖或重跑已完成阶段。`;
+    autoContinue = false;
+    needsHuman = true;
+    recoverable = true;
   } else if (failed) {
     const explained = explainOperationalFailure(failed);
-    const failedCall=[...modelCalls].reverse().find((item)=>item.run_id===failed.id) || null;
     lifecycle = "needs_attention";
     stageStatus = "failed";
     currentStage = failed.type;
     currentStageLabel = productionStageLabel(failed.type);
-    headline = `${currentStageLabel}失败，需要处理`;
+    headline = explained?.headline ? `${currentStageLabel}失败：${explained.headline}` : `${currentStageLabel}失败，需要处理`;
     explanation = explained?.reason || "这一步没有完成；已有成功产物仍然保留。";
     autoContinue = false;
     needsHuman = true;
     recoverable = !["APPROVED_SCOPE_INVALID", "EVIDENCE_SCOPE_INVALID", "DESTINATION_TOPIC_MISMATCH", "PLAN_INPUT_BUDGET_EXCEEDED"]
       .includes(String(failed.last_failure_code || ""));
-    latestError = {
-      code: failed.last_failure_code || failed.failure_class || "PRODUCTION_FAILED",
-      reason: explained?.reason || String(failed.last_error || "这一步没有完成。"),
-      stage: failed.type,
-      occurred_at: failed.updated_at || failed.completed_at || null,
-      job_id: failed.id,
-      request_id: failedCall?.id || null,
-      attempt: Number(failed.attempts || failedCall?.attempt_number || 0),
-      failure_class: failed.failure_class || null,
-      provider: failedCall?.provider || null,
-      model: failedCall?.model || null,
-      model_called: Boolean(failedCall && failedCall.request_kind !== "cache_hit"),
-    };
+    latestError = failureAttribution(failed, modelCalls, { explanation:explained });
   } else if (row.wordpress_status === "synced") {
     lifecycle = "completed";
     stageStatus = "succeeded";
@@ -244,6 +263,7 @@ export function buildProductionState(db, row, options = {}) {
     needs_human: needsHuman,
     recoverable,
     latest_error: latestError,
+    latest_historical_error: latestHistoricalError,
     last_attempt_at: lastAttemptAt,
     available_actions: availableActions,
     stage_registry: registry,
@@ -400,6 +420,34 @@ function inferredPersistedFailure(row) {
     };
   }
   return null;
+}
+
+function failureAttribution(failed, modelCalls, { explanation = null, blocksCurrentFlow = true } = {}) {
+  const explained = explanation || explainOperationalFailure(failed);
+  const failedCall = [...modelCalls].reverse().find((item) => item.run_id === failed.id) || null;
+  const providerRequestSent = Boolean(failedCall && failedCall.request_kind !== "cache_hit");
+  const hasUsage = failedCall?.input_tokens != null || failedCall?.output_tokens != null;
+  const modelExecution = !providerRequestSent ? "not_requested"
+    : failedCall.status === "succeeded" || hasUsage ? "confirmed"
+      : ["SCHEMA_MODE_UNSUPPORTED", "400", "INVALID_ARGUMENT"].includes(String(failedCall.error_code || "").toUpperCase())
+        ? "rejected_before_generation" : "unknown";
+  return {
+    code: failed.last_failure_code || failed.failure_class || "PRODUCTION_FAILED",
+    reason: explained?.reason || String(failed.last_error || "这一步没有完成。"),
+    stage: failed.type,
+    stage_label: productionStageLabel(failed.type),
+    occurred_at: failed.updated_at || failed.completed_at || null,
+    job_id: failed.id || null,
+    request_id: failedCall?.id || null,
+    attempt: Number(failedCall?.attempt_number || failed.attempts || 0),
+    failure_class: failed.failure_class || null,
+    provider: failedCall?.provider || null,
+    model: failedCall?.model || null,
+    provider_request_sent: providerRequestSent,
+    model_execution: modelExecution,
+    model_called: modelExecution === "confirmed",
+    blocks_current_flow: blocksCurrentFlow,
+  };
 }
 
 function controlState(db, opportunityId) {

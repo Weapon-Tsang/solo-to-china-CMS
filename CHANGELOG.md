@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.14 - Unreleased
+
+- Recover legacy/downstream failures from the first missing prerequisite under the current pipeline contract. `production_state` 1.2 separates the non-blocking historical failure from the active interrupted state, and both UI and recovery execution use the same server-resolved target.
+- Add a third, prompt-enforced JSON transport when Vertex rejects both native JSON Schema and OpenAPI Schema requests with HTTP 400. Provider transport fallbacks no longer consume structured-output repair attempts; every returned payload still passes the original local JSON Schema validator.
+- Report provider-request submission separately from confirmed model execution, and explain planning/narrative HTTP 400 failures as structured-interface compatibility failures rather than possible article-fact errors.
+- Open the mobile secondary-action menu upward inside the card with an explicit stacking layer, preventing following cards and the card clipping boundary from hiding archive/delete actions.
+- Expose the existing audited destination-correction workflow from production details for `DESTINATION_TOPIC_MISMATCH`; it recalculates evidence and requires scope reconfirmation instead of blind retry.
+- No database migration and no automatic content retry are introduced by this release.
+
 ## 2.0.13 - 2026-09-13
 
 - Restrict the Content Workbench to approved Opportunity production instances and make each production Job carry one explicit `production_owner_opportunity_id`; Candidate identity alone is no longer production lineage.

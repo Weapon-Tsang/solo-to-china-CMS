@@ -160,6 +160,12 @@ export function explainOperationalFailure(job) {
     action: { id: 'revise_draft', label: '只修订未通过的内容', why: '保留已经通过的正文、证据和图片。' },
     technicalDetail: details,
   };
+  if (status === 400 && code === 'PROVIDER_REQUEST_FAILED' && ['plan_content', 'plan_narrative'].includes(type)) return {
+    category: 'configuration', headline: '模型接口拒绝了结构化输出格式',
+    reason: 'Vertex 在开始生成前拒绝了当前结构化请求格式；这是模型接口兼容问题，不代表来源、证据或文章事实有错。已有素材组装和写作计划仍然保留。',
+    action: { id: type, label: `重新执行${type === 'plan_content' ? '写作准备' : '叙事规划'}`, why: '兼容层会依次降级原生 Schema 传输，并继续使用本地 Schema 做严格校验；无需重跑前置步骤。' },
+    technicalDetail: details,
+  };
   if (type === 'compose_frontend_page' && /400|invalid argument/i.test(message)) return {
     category: 'page', headline: '页面编排提交的数据不符合模型接口要求',
     reason: '页面编排输入过大或结构与外部模型接口不兼容，因此正文虽然还在，页面没有成功生成。',

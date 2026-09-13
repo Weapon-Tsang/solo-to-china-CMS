@@ -44,19 +44,24 @@ export class VertexGeminiClient {
       systemInstruction: { parts: [{ text: instructions }] },
       contents: [{ role: "user", parts }],
       generationConfig: {
-        responseMimeType: "application/json", ...vertexStructuredOutput(schema, schemaMode),
+        responseMimeType: "application/json",
         maxOutputTokens: policy.maxOutputTokens,
         ...(String(this.config.model).startsWith("gemini-3")
           ? { thinkingConfig: { thinkingLevel: policy.thinking } }
           : { temperature: 0.1 }),
       },
     };
+    applyVertexSchemaTransport(requestBody, schema, schemaMode, instructions);
     let correction = "";
+    let validationAttempt = 0;
+    let requestAttempt = 0;
     telemetryContext = { ...(telemetryContext || {}), stageStartedAt: Date.now(), retryWaitMs: 0 };
-    for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
+    while (validationAttempt < policy.maxAttempts) {
+      const attempt = requestAttempt;
+      requestAttempt += 1;
       requestBody.contents[0].parts = correction ? [...parts, { text: correction }] : parts;
       const requestGateStartedAt = Date.now();
-      await this.config.beforeRequest?.({ provider: "vertex", model: this.config.model, stage: name, attempt: attempt + 1 });
+      await this.config.beforeRequest?.({ provider: "vertex", model: this.config.model, stage: name, attempt: requestAttempt, schemaMode });
       const attemptStartedAt = Date.now();
       telemetryContext.retryWaitMs = Math.max(0, attemptStartedAt - requestGateStartedAt);
       const requestStartedAt = new Date(attemptStartedAt).toISOString();
@@ -77,12 +82,12 @@ export class VertexGeminiClient {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         const message = payload?.error?.message || response.statusText;
-        if (response.status === 400 && schemaMode === "json_schema") {
+        const fallbackMode = response.status === 400 ? nextVertexSchemaMode(schemaMode) : null;
+        if (fallbackMode) {
           this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
             status: "failed", errorCode: "SCHEMA_MODE_UNSUPPORTED", retryReason: "schema_transport_fallback", usage: payload?.usageMetadata }));
-          schemaMode = "openapi";
-          delete requestBody.generationConfig.responseJsonSchema;
-          Object.assign(requestBody.generationConfig, vertexStructuredOutput(schema, schemaMode));
+          schemaMode = fallbackMode;
+          applyVertexSchemaTransport(requestBody, schema, schemaMode, instructions);
           continue;
         }
         this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
@@ -107,13 +112,14 @@ export class VertexGeminiClient {
       const errors = parsed.ok ? validateJsonSchema(parsed.value, schema) : [{ path: "$", message: "invalid JSON" }];
       if (parsed.ok && errors.length === 0) {
         this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
-          status: "succeeded", retryReason: attempt ? "structured_repair" : null, usage: payload?.usageMetadata }));
+          status: "succeeded", retryReason: correction ? "structured_repair" : attempt ? "schema_transport_fallback" : null, usage: payload?.usageMetadata }));
         return { output: parsed.value, model: this.config.model,
           ...(payload.usageMetadata ? { usage: payload.usageMetadata } : {}) };
       }
       this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
-        status: "failed", errorCode: "INVALID_MODEL_OUTPUT", retryReason: attempt ? "structured_repair" : "invalid_json_or_schema",
+        status: "failed", errorCode: "INVALID_MODEL_OUTPUT", retryReason: validationAttempt ? "structured_repair" : "invalid_json_or_schema",
         usage: payload?.usageMetadata }));
+      validationAttempt += 1;
       correction = `The previous structured output was invalid. Return the complete corrected JSON only. Errors: ${JSON.stringify(errors.slice(0, 20))}`;
     }
     throw Object.assign(new Error("Vertex Gemini returned invalid structured output after repair attempts."), { code: "INVALID_MODEL_OUTPUT", retryable: true });
@@ -460,6 +466,21 @@ function vertexRequestBody({ name, schema, instructions, content, config }) {
         : { temperature: 0.1 }),
     },
   };
+}
+
+function nextVertexSchemaMode(mode) {
+  if (mode === "json_schema") return "openapi";
+  if (mode === "openapi") return "prompt_only";
+  return null;
+}
+
+function applyVertexSchemaTransport(requestBody, schema, mode, instructions) {
+  delete requestBody.generationConfig.responseJsonSchema;
+  delete requestBody.generationConfig.responseSchema;
+  Object.assign(requestBody.generationConfig, vertexStructuredOutput(schema, mode));
+  requestBody.systemInstruction.parts[0].text = mode === "prompt_only"
+    ? `${instructions}\n\nThe provider rejected both native schema transports. Return JSON that matches this contract exactly; local validation remains authoritative:\n${JSON.stringify(schema)}`
+    : instructions;
 }
 
 function parseGcsUri(value) {

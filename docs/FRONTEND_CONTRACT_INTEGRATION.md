@@ -12,6 +12,8 @@ After a successful WordPress Draft acknowledgement, the CMS exposes the adapter'
 
 The 2.0.13 production-state hotfix changes only CMS ownership/projection and responsive operator presentation. Mobile cards and the production-detail sheet consume the same persisted structural preview; they do not introduce a renderer, copied component implementation, invented variant, JSX or CSS from the Frontend repository.
 
+The 2.0.14 operator UI correction is also CMS-only. It opens the card's secondary-action menu upward within the mobile card so the clipping boundary and following card cannot cover it, and it labels historical pipeline failures separately from the current recovery target. Neither change renders or copies Frontend components. Page Composition Preview and WordPress final preview continue to use only persisted Contract payloads and the adapter-provided `preview_url`/`edit_url`.
+
 Three artifacts remain distinct:
 
 - Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.

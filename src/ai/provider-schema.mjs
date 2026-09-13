@@ -25,6 +25,7 @@ function parseRetryAfter(value) {
 }
 
 export function vertexStructuredOutput(schema, mode = "json_schema") {
+  if (mode === "prompt_only") return {};
   if (mode === "openapi") return { responseSchema: adaptOpenApiSchema(schema) };
   return { responseJsonSchema: schema };
 }

@@ -1,4 +1,16 @@
-# 2.0.13 production-state hotfix handoff
+# 2.0.14 production error repair handoff
+
+App/Extension version `2.0.14`, schema migration `69`, and Content Strategy `3.3` are implemented locally; `production_state` is version `1.2`. Production is intentionally still on 2.0.13 at revision `8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303`; no 2.0.14 deployment, content retry, archive, deletion, WordPress call or data reconciliation has been run. The read-only follow-up audit and implementation evidence are in `audit/CMS_PRODUCTION_ERROR_REPAIR_2.0.14_2026-09-13.md`.
+
+The production audit after the operator's screenshot interactions found seven approved workbench records, all needing attention, zero queued/running Jobs and 5,677 model-attempt metrics. Three newly started writing-preparation records and one narrative retry show the same Vertex sequence: native JSON Schema HTTP 400 followed by OpenAPI Schema HTTP 400, with no usage tokens confirming generation. Two records are deterministic destination/topic mismatches. Two old downstream failures lack prerequisites required by the current registry; 1.2 reports those failures as history and recovers the first missing dependency instead of allowing the invalid page-plan/content-plan retry.
+
+Vertex now falls back to prompt-enforced JSON if both provider schema dialects reject the request. This transport fallback does not consume the two bounded semantic output-repair attempts, and every response remains subject to the original local JSON Schema validator. Failure attribution separates `provider_request_sent` from `model_execution`, so a rejected request is no longer displayed as a confirmed model call. `DESTINATION_TOPIC_MISMATCH` details expose the existing audited destination correction/reconfirmation workflow; no destination was changed in production.
+
+The mobile “更多” menu opens above its trigger with explicit stacking and was exercised at a 393×852 viewport: its rendered top/bottom stayed within the card clipping rectangle and both secondary actions remained visible. Production detail reports the actual failure stage, separates non-blocking historical failures and uses operator-facing stage labels.
+
+Local verification passes all 546 tests, `npm run check`, the production build, service-boundary checks and the consolidated offline release gate (50 mandatory checks, zero failures, five warnings and five explicitly external/not-tested checks). The release gate made no paid model, production WordPress, Search Console or production-database request.
+
+## 2.0.13 deployed baseline
 
 App/Extension version `2.0.13`, schema migration `69`, and Content Strategy `3.3` are deployed in production at revision `8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303` and immutable image digest `sha256:b47514ea2b058ab9f743208e5be24d843def5c5a0543375db67adbf7f5e7cd47`. The read-only audit, implementation and rollout evidence are in `audit/CMS_PRODUCTION_STATE_HOTFIX_2.0.13_2026-09-13.md`; the prior 2.0.12 record remains in `audit/CMS_CONTENT_PRODUCTION_WORKBENCH_2.0.12_2026-09-13.md`.
 

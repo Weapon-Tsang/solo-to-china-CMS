@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.14 / schema 69 - 2026-09-13
+
+- Keep Content Production Strategy 3.3 unchanged. Vertex structured-output transport now negotiates JSON Schema, OpenAPI Schema and prompt-enforced JSON while retaining the same authoritative local schema validation.
+- Treat destination/title conflicts as deterministic production-scope failures before any model request, and distinguish non-blocking historical failures from the first missing prerequisite in the current production pipeline.
+- This application-only repair adds no migration, automatic retry, reconciliation or production deployment.
+
 ## App 2.0.13 / schema 69 - 2026-09-13
 
 - Keep Content Production Strategy 3.3 unchanged; this patch corrects execution ownership, status projection, bounded planning input, retry idempotency and responsive operator UI.

@@ -54,6 +54,8 @@ test("an approved ready instance without a Job is the only interrupted sibling a
 test("one Candidate-level failure has one canonical approved production owner",(t)=>{
   const {db,repository}=repositoryFixture(t); candidate(db);
   opportunity(db,"owner-approved",{approved:true}); opportunity(db,"sibling-a"); opportunity(db,"sibling-b");
+  db.prepare(`INSERT INTO editorial_assemblies(id,candidate_id,opportunity_id,input_hash,created_at,updated_at)
+    VALUES ('owner-assembly','shared-candidate','owner-approved','hash','2026-09-13','2026-09-13')`).run();
   const jobId=repository.enqueue("plan_content","shared-candidate",{dedupeKey:"owned-failure",productionOwnerOpportunityId:"owner-approved"});
   db.prepare(`UPDATE jobs SET status='failed',attempts=1,failure_class='permanent_input',last_failure_code='MODEL_OUTPUT_LIMIT',
     last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(jobId);
@@ -92,6 +94,92 @@ test("retry is idempotent, becomes authoritative, and success supersedes the old
   assert.equal(state.needs_human,false);
 });
 
+test("a downstream historical failure with missing prerequisites recovers the first broken link",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"broken-owner",{approved:true});
+  repository.configureProductionCapabilities({frontendContract:true});
+  db.prepare(`INSERT INTO editorial_assemblies(id,candidate_id,opportunity_id,input_hash,created_at,updated_at)
+    VALUES ('broken-assembly','shared-candidate','broken-owner','hash','2026-09-13','2026-09-13')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('broken-brief','beijing','Beijing guide','[]','informational','ready','2026-09-13','2026-09-13','shared-candidate')`).run();
+  const failed=repository.enqueue("compose_frontend_page_plan","broken-brief",{
+    dedupeKey:"legacy-page-plan-failure",productionOwnerOpportunityId:"broken-owner",
+  });
+  db.prepare(`UPDATE jobs SET status='failed',attempts=1,failure_class='permanent_input',last_failure_code='MODEL_OUTPUT_LIMIT',
+    last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
+
+  let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.version,"1.2");
+  assert.equal(state.stage_status,"interrupted");
+  assert.equal(state.recovery_target,"plan_narrative");
+  assert.equal(state.latest_error,null);
+  assert.equal(state.latest_historical_error.stage,"compose_frontend_page_plan");
+  assert.equal(state.latest_historical_error.blocks_current_flow,false);
+  assert.equal(state.timeline.find((step)=>step.key==="compose_frontend_page_plan").status,"waiting");
+  assert.equal(state.available_actions.includes("recover_next_stage"),true);
+  assert.equal(state.available_actions.includes("retry_failed_stage"),false);
+
+  const recovered=executeContentRecovery(repository,"broken-owner",{action:"recover_next_stage",idempotency_key:"repair-link"},"tester");
+  assert.equal(recovered.resolvedStage,"plan_narrative");
+  assert.equal(recovered.preservedStages.includes("plan_content"),true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='compose_frontend_page_plan'").get().count,1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='plan_narrative'").get().count,1);
+  state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,"queued");
+  assert.equal(state.current_stage,"plan_narrative");
+});
+
+test("a planning failure without Editorial Assembly resumes assembly instead of skipping it",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"legacy-owner",{approved:true});
+  const failed=repository.enqueue("plan_content","shared-candidate",{
+    dedupeKey:"legacy-plan-failure",productionOwnerOpportunityId:"legacy-owner",
+  });
+  db.prepare(`UPDATE jobs SET status='failed',attempts=1,failure_class='permanent_input',last_failure_code='MODEL_OUTPUT_LIMIT',
+    last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,"interrupted");
+  assert.equal(state.recovery_target,"assemble_editorial");
+  const recovered=executeContentRecovery(repository,"legacy-owner",{action:"recover_next_stage",idempotency_key:"repair-entry"},"tester");
+  assert.equal(recovered.resolvedStage,"assemble_editorial");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='plan_content'").get().count,1);
+});
+
+test("a current destination mismatch blocks recovery before a legacy failure can trigger another model stage",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"scope-owner",{approved:true});
+  db.prepare("UPDATE content_opportunities SET title='Chongqing three day route' WHERE id='scope-owner'").run();
+  const oldFailure=repository.enqueue("plan_content","shared-candidate",{
+    dedupeKey:"old-output-limit",productionOwnerOpportunityId:"scope-owner",
+  });
+  db.prepare(`UPDATE jobs SET status='failed',attempts=1,last_failure_code='MODEL_OUTPUT_LIMIT',
+    last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(oldFailure);
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,"failed");
+  assert.equal(state.latest_error.code,"DESTINATION_TOPIC_MISMATCH");
+  assert.equal(state.latest_error.model_execution,"not_requested");
+  assert.equal(state.recoverable,false);
+  assert.equal(state.available_actions.includes("retry_failed_stage"),false);
+});
+
+test("a Vertex schema rejection records a provider request without claiming model generation",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"schema-owner",{approved:true});
+  db.prepare(`INSERT INTO editorial_assemblies(id,candidate_id,opportunity_id,input_hash,created_at,updated_at)
+    VALUES ('schema-assembly','shared-candidate','schema-owner','hash','2026-09-13','2026-09-13')`).run();
+  const failed=repository.enqueue("plan_content","shared-candidate",{
+    dedupeKey:"schema-rejected",productionOwnerOpportunityId:"schema-owner",
+  });
+  db.prepare(`UPDATE jobs SET status='failed',attempts=1,failure_class='permanent_input',last_failure_code='PROVIDER_REQUEST_FAILED',
+    last_error='Vertex Gemini request failed (400): Request contains an invalid argument.',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
+  repository.recordModelCall({ stage:"content_brief",provider:"vertex",model:"gemini-3.8-flash",promptHash:"p",schemaHash:"s",inputHash:"i",
+    latencyMs:12,attempts:2,status:"failed",errorCode:"400",runId:failed,entityId:"shared-candidate",attemptNumber:2,
+    requestKind:"provider",attemptStatus:"failed",retryReason:"provider_retry" });
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,"failed");
+  assert.match(state.headline,/结构化输出格式/);
+  assert.match(state.latest_error.reason,/开始生成前拒绝/);
+  assert.equal(state.latest_error.provider_request_sent,true);
+  assert.equal(state.latest_error.model_execution,"rejected_before_generation");
+  assert.equal(state.latest_error.model_called,false);
+});
+
 test("plan_content output-limit fixture uses the Editorial Assembly subset, stays bounded and preserves qualifiers",()=>{
   const facts=Array.from({length:120},(_,index)=>({
     normalized_key:`beijing.fact.${index}`,subject:"Beijing",predicate:`rule ${index}`,
@@ -120,5 +208,6 @@ test("mobile Content Workbench uses cards, 2x3 stats, scrolling filters and seco
   assert.match(source,/data-testid="content-stats"[^>]*grid grid-cols-2[^>]*sm:grid-cols-3[^>]*lg:grid-cols-6/);
   assert.match(source,/data-testid="content-filters"[^>]*flex-nowrap[^>]*overflow-x-auto/);
   assert.match(source,/const secondary=visible\.filter\(\(key\)=>key!==primary\)/);
+  assert.match(source,/data-testid="content-mobile-more"[\s\S]*?bottom-full[\s\S]*?z-50/);
   assert.doesNotMatch(source,/primary=visible\.find\(\(key\)=>\[[^\]]*delete_production_record/);
 });
