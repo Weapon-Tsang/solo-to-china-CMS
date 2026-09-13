@@ -28,7 +28,7 @@ async function fixture(t) {
   db.close();
   const run = mode => spawnSync(process.execPath, ['deployment/gce/verify-upgrade.mjs', mode], {
     cwd: app, encoding: 'utf8', windowsHide: true,
-    env: { ...process.env, STC_PROBE_ROOT: root, STC_PROBE_WORK: work, STC_PROBE_APP: app, OLD_IMAGE: 'fixture-old-image' },
+    env: { ...process.env, STC_PROBE_ROOT: root, STC_PROBE_WORK: work, STC_PROBE_APP: app, OLD_IMAGE: 'fixture-old-image', NEW_VERSION: '9.8.7' },
   });
   return { root, work, filename, original, run };
 }
@@ -63,4 +63,17 @@ test('deployment probe blocks changed content and refuses to restore a corrupted
   const db = new DatabaseSync(f.filename);
   assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 59); db.close();
   assert.equal(fs.readFileSync(f.original, 'utf8'), 'original bytes');
+});
+test('deployment helpers validate the supplied release version instead of a hard-coded app version', async t => {
+  const f = await fixture(t);
+  assert.equal(f.run('backup').status, 0);
+  const backup = JSON.parse(fs.readFileSync(path.join(f.work, 'backup.json')));
+  const manifest = JSON.parse(fs.readFileSync(backup.manifestPath));
+  assert.equal(manifest.reason, 'pre-9.8.7-verified-upgrade');
+  for (const filename of ['upgrade-existing.sh', 'resume-verified-upgrade.sh']) {
+    const script = fs.readFileSync(path.join(app, 'deployment/gce', filename), 'utf8');
+    assert.match(script, /EXPECTED_VERSION/);
+    assert.match(script, /process\.env\.EXPECTED_VERSION/);
+    assert.doesNotMatch(script, /version!==["']\d+\.\d+\.\d+/);
+  }
 });

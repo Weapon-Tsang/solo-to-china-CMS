@@ -41,7 +41,9 @@ if (mode === 'backup') {
   const result = createBackup({ databasePath: `${root}/solo-to-china.sqlite`,
     backupDir: `${root}/backups`, sourceUploadsDir: `${root}/source-uploads`,
     generatedMediaDir: `${root}/generated-media`, retention: 1,
-    codeRevision: process.env.OLD_IMAGE, reason: 'pre-2.0.10-verified-upgrade' });
+    codeRevision: process.env.OLD_IMAGE,
+    reason: `pre-${process.env.NEW_VERSION || 'unknown'}-verified-upgrade`
+  });
   const verified = verifyBackup(result.backupPath);
   write('backup.json', result);
   console.log(JSON.stringify({ stage: 'backup', schema, ...result, verified: verified.integrity, tables: baseline }));

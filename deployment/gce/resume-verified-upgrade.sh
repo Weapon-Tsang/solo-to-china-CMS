@@ -4,8 +4,10 @@
 set -Eeuo pipefail
 IMAGE="${1:?immutable image required}"
 REVISION="${2:?revision required}"
-LEGACY="${3:?preserved app-data directory required}"
+VERSION="${3:?application version required}"
+LEGACY="${4:?preserved app-data directory required}"
 [[ "$IMAGE" =~ @sha256:[a-f0-9]{64}$ && "$REVISION" =~ ^[a-f0-9]{40}$ ]]
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 RELEASE="/opt/solo-to-china/upgrades/$REVISION"
 [[ "$LEGACY" == /opt/solo-to-china/upgrades/*/legacy-app-data && -d "$LEGACY" ]]
 [[ ! -f "$RELEASE/complete" ]]
@@ -43,7 +45,7 @@ docker run --detach --name engine --restart unless-stopped --network none \
   --volume solo_to_china_data:/var/lib/solo-to-china --volume "$LEGACY:/app/data" "$IMAGE" >/dev/null
 READY=0
 for ((attempt=0; attempt<60; attempt++)); do
-  if docker exec engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/health"); const h=await r.json(); if(!r.ok||h.version!=="2.0.10"||h.contentStrategy.version!=="3.3"||h.captureMediaProtocol.version!==2)process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
+  if docker exec --env "EXPECTED_VERSION=$VERSION" engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/health"); const h=await r.json(); if(!r.ok||h.version!==process.env.EXPECTED_VERSION||h.contentStrategy.version!=="3.3"||h.captureMediaProtocol.version!==2)process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
     READY=1; break
   fi
   if [[ "$(docker inspect --format '{{.State.Running}}' engine)" != true ]]; then break; fi

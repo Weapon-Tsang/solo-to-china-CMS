@@ -5,7 +5,9 @@ set -Eeuo pipefail
 umask 077
 IMAGE="${STC_UPGRADE_IMAGE:?immutable image required}"
 REVISION="${STC_UPGRADE_REVISION:?revision required}"
+VERSION="${STC_UPGRADE_VERSION:?application version required}"
 [[ "$IMAGE" =~ @sha256:[a-f0-9]{64}$ && "$REVISION" =~ ^[a-f0-9]{40}$ ]]
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 APP=/opt/solo-to-china
 ATTEMPT="${STC_UPGRADE_ATTEMPT:-}"
 [[ -z "$ATTEMPT" || "$ATTEMPT" =~ ^[0-9]+$ ]]
@@ -64,7 +66,7 @@ PHASE=legacy-copy
 offline() {
   local image="$1" mode="$2"
   PHASE="$mode"
-  if ! docker run --rm --network none --env "OLD_IMAGE=$OLD_IMAGE" \
+  if ! docker run --rm --network none --env "OLD_IMAGE=$OLD_IMAGE" --env "NEW_VERSION=$VERSION" \
     --volume solo_to_china_data:/var/lib/solo-to-china \
     --volume "$RELEASE:/ops" --volume "$RELEASE/legacy-app-data:/app/data:ro" \
     "$image" node /ops/verify-upgrade.mjs "$mode" >"$RELEASE/$mode.log" 2>&1; then
@@ -144,7 +146,7 @@ docker run --detach --name engine --restart unless-stopped --network none \
   --volume "$RELEASE/legacy-app-data:/app/data" "$IMAGE" >/dev/null
 READY=0
 for ((attempt=0; attempt<60; attempt++)); do
-  if docker exec engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready"); const j=await r.json(); if(!r.ok||!j.ready||j.version!=="2.0.10")process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
+  if docker exec --env "EXPECTED_VERSION=$VERSION" engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready"); const j=await r.json(); if(!r.ok||!j.ready||j.version!==process.env.EXPECTED_VERSION)process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
     READY=1; break
   fi
   sleep 2
