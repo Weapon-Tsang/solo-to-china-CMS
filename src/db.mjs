@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 68;
+export const SCHEMA_VERSION = 69;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -89,6 +89,62 @@ function migrate(db) {
   if (current < 66) migrationSixtySix(db);
   if (current < 67) migrationSixtySeven(db);
   if (current < 68) migrationSixtyEight(db);
+  if (current < 69) migrationSixtyNine(db);
+}
+
+function migrationSixtyNine(db) {
+  // Production ownership is deliberately attached to the durable Job. The
+  // backfill is deterministic and offline: it neither enqueues work nor calls
+  // an external service. Ambiguous legacy Jobs remain ownerless diagnostics.
+  transaction(db, () => db.exec(`
+    ALTER TABLE jobs ADD COLUMN production_owner_opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL;
+    CREATE INDEX idx_jobs_production_owner
+      ON jobs(production_owner_opportunity_id,status,type,updated_at DESC);
+    ALTER TABLE content_operation_history ADD COLUMN opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL;
+    ALTER TABLE content_operation_history ADD COLUMN idempotency_key TEXT;
+    CREATE INDEX idx_content_operation_history_owner
+      ON content_operation_history(opportunity_id,created_at DESC);
+    CREATE UNIQUE INDEX idx_content_operation_history_idempotency
+      ON content_operation_history(idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+    UPDATE jobs
+    SET production_owner_opportunity_id=(
+      SELECT MIN(co.id)
+      FROM content_opportunities co
+      WHERE co.approved_at IS NOT NULL
+        AND co.candidate_id=CASE
+          WHEN jobs.type IN ('assemble_editorial','plan_content') THEN jobs.entity_id
+          WHEN jobs.type IN ('plan_narrative','assemble_writing_packet','compose_frontend_page_plan','generate_draft')
+            THEN (SELECT cb.candidate_id FROM content_briefs cb WHERE cb.id=jobs.entity_id)
+          WHEN jobs.type IN ('generate_visuals','compose_frontend_page','review_draft','revise_draft','compose_commercial','compose_publish_page','push_wordpress_draft')
+            THEN (SELECT cb.candidate_id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=jobs.entity_id)
+          ELSE NULL END
+      HAVING COUNT(*)=1
+    )
+    WHERE jobs.type IN ('assemble_editorial','plan_content','plan_narrative','assemble_writing_packet','compose_frontend_page_plan',
+      'generate_draft','generate_visuals','compose_frontend_page','review_draft','revise_draft','compose_commercial',
+      'compose_publish_page','push_wordpress_draft');
+
+    UPDATE editorial_assemblies
+    SET opportunity_id=(
+      SELECT MIN(co.id) FROM content_opportunities co
+      WHERE co.candidate_id=editorial_assemblies.candidate_id AND co.approved_at IS NOT NULL
+      HAVING COUNT(*)=1
+    )
+    WHERE EXISTS (
+      SELECT COUNT(*) FROM content_opportunities co
+      WHERE co.candidate_id=editorial_assemblies.candidate_id AND co.approved_at IS NOT NULL
+      HAVING COUNT(*)=1
+    );
+
+    UPDATE content_operation_history
+    SET opportunity_id=(
+      SELECT MIN(co.id) FROM content_opportunities co
+      WHERE co.candidate_id=content_operation_history.candidate_id AND co.approved_at IS NOT NULL
+      HAVING COUNT(*)=1
+    );
+    INSERT INTO schema_migrations(version, applied_at) VALUES (69, datetime('now'));
+  `));
 }
 
 function migrationSixtyEight(db) {

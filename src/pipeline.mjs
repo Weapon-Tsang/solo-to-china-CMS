@@ -680,7 +680,8 @@ export class Pipeline {
         }
         case "assemble_editorial": {
           this.requireContentEngine();
-          const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id);
+          const ownerId = job.production_owner_opportunity_id || null;
+          const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id, { opportunityId:ownerId });
           if (!assemblyPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
           const assembled = typeof this.contentEngine.assembleEditorial === "function"
             ? await guarded((signal) => this.contentEngine.assembleEditorial(assemblyPackage, { signal, telemetryContext }))
@@ -688,27 +689,28 @@ export class Pipeline {
               selected_experience_block_ids:(assemblyPackage.available_experiences || []).map((item) => item.id),
               selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:"Deterministic compatibility assembly." }, model:"compatibility" };
           commitStage(() => {
-            this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage);
-            this.repository.enqueue("plan_content", job.entity_id);
+            this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage, { opportunityId:ownerId });
+            this.enqueueChild(job,"plan_content",job.entity_id);
           });
           break;
         }
         case "plan_content": {
           this.requireContentEngine();
+          const ownerId = job.production_owner_opportunity_id || null;
           if (!this.repository.getEditorialAssembly(job.entity_id)) {
-            const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id);
+            const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id, { opportunityId:ownerId });
             if (!assemblyPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
             const assembled = typeof this.contentEngine.assembleEditorial === "function"
               ? await guarded((signal) => this.contentEngine.assembleEditorial(assemblyPackage, { signal, telemetryContext }))
               : { output:{ selected_fact_keys:(assemblyPackage.facts || []).map((item) => item.normalized_key),
                 selected_experience_block_ids:(assemblyPackage.available_experiences || []).map((item) => item.id),
                 selected_source_ids:[],selected_blueprint_source_ids:[],exclusions:[],rationale:"Deterministic compatibility assembly." },model:"compatibility" };
-            this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage);
+            this.repository.saveEditorialAssembly(job.entity_id, assembled.output, assembled.model, assemblyPackage, { opportunityId:ownerId });
             // The compatibility entrypoint creates its own prerequisite. Freeze
             // the planner against that newly persisted assembly before calling it.
             pipelineArtifact = this.repository.preparePipelineArtifact?.(job, artifactConfigHash) || pipelineArtifact;
           }
-          const contentPackage = this.repository.getTopicPackage(job.entity_id);
+          const contentPackage = this.repository.getPlanningPackage(job.entity_id, { opportunityId:ownerId });
           if (!contentPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
           const destinationValidation = validatePlanningDestination(contentPackage);
           if (!destinationValidation.valid) {
@@ -720,8 +722,8 @@ export class Pipeline {
           const plannedEvidence = validatePlannedEvidence(planned.output, contentPackage);
           if (!plannedEvidence.valid) throw Object.assign(new Error(`PLAN_EVIDENCE_INVALID: ${plannedEvidence.errors.map(item=>`${item.section || ''} ${item.key || ''}: ${item.message}`).join('; ')}`), {retryable:false, code:'PLAN_EVIDENCE_INVALID', details:plannedEvidence});
           commitStage(() => {
-            const briefId = this.repository.saveBrief(job.entity_id, planned.output, planned.model, { deferDraft: true });
-            this.repository.enqueue("plan_narrative", briefId);
+            const briefId = this.repository.saveBrief(job.entity_id, planned.output, planned.model, { deferDraft: true, opportunityId:ownerId });
+            this.enqueueChild(job,"plan_narrative",briefId);
           });
           break;
         }
@@ -738,15 +740,15 @@ export class Pipeline {
               conditional_branches:[],tradeoffs:[],exclusions:[],closing_decision:"End with the next concrete traveler decision." } };
           commitStage(() => {
             this.repository.saveNarrativePlan(job.entity_id, planned.output, planned.model);
-            this.repository.enqueue("assemble_writing_packet", job.entity_id);
+            this.enqueueChild(job,"assemble_writing_packet",job.entity_id);
           });
           break;
         }
         case "assemble_writing_packet": {
           commitStage(() => {
           this.repository.assembleWritingPacket(job.entity_id);
-          if (this.canComposeFrontendPage) this.repository.enqueue("compose_frontend_page_plan", job.entity_id);
-          else this.repository.enqueue("generate_draft", job.entity_id);
+          if (this.canComposeFrontendPage) this.enqueueChild(job,"compose_frontend_page_plan",job.entity_id);
+          else this.enqueueChild(job,"generate_draft",job.entity_id);
           });
           break;
         }
@@ -768,7 +770,7 @@ export class Pipeline {
           }
           commitStage(() => {
             this.repository.saveFrontendPagePlan(job.entity_id, contract, composed.output, validation, composed.model);
-            this.repository.enqueue("generate_draft", job.entity_id);
+            this.enqueueChild(job,"generate_draft",job.entity_id);
           });
           break;
         }
@@ -779,9 +781,9 @@ export class Pipeline {
           const drafted = await guarded((signal) => this.contentEngine.draft(contentPackage, null, { signal, telemetryContext }));
           commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
-          const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model);
-          if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
-          else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);
+          const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model,{opportunityId:job.production_owner_opportunity_id || null});
+          if (this.visuals?.enabled) this.enqueueChild(job,"generate_visuals",draftId);
+          else if (contractAware) this.enqueueChild(job,"compose_frontend_page",draftId);
           });
           break;
         }
@@ -801,7 +803,7 @@ export class Pipeline {
               this.logger.warn("pipeline.optional_visual_skipped", { visualId: visual.id, draftId: job.entity_id, error });
             }
           }
-          if (this.canComposeFrontendPage) this.repository.enqueue("compose_frontend_page", job.entity_id);
+          if (this.canComposeFrontendPage) this.enqueueChild(job,"compose_frontend_page",job.entity_id);
           break;
         }
         case "compose_frontend_page": {
@@ -822,7 +824,7 @@ export class Pipeline {
           const savedPage = commitStage(() => {
             const saved = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
               { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash }, composed.provenance);
-            if (saved.validation.valid && !job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("review_draft", job.entity_id);
+            if (saved.validation.valid && !job.dedupe_key?.startsWith("manual-stage:")) this.enqueueChild(job,"review_draft",job.entity_id);
             return saved;
           }, { acceptResult: saved => saved.validation.valid });
           if (!savedPage.validation.valid) throw new Error(`Frontend page payload is invalid: ${savedPage.validation.errors.map((item) => item.code).join(", ")}`);
@@ -835,11 +837,13 @@ export class Pipeline {
           const reviewed = await guarded((signal) => this.contentEngine.review(contentPackage, { signal, telemetryContext }));
           commitStage(() => {
           const revision = this.repository.saveReview(job.entity_id, reviewed.output, reviewed.model,
-            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash, evidenceHash:contentPackage.evidence_hash });
+            { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash, evidenceHash:contentPackage.evidence_hash,
+              productionOwnerOpportunityId:job.production_owner_opportunity_id || null });
           const pageReady = !this.canComposeFrontendPage || Boolean(contentPackage.frontend_page?.current);
-          if (reviewed.output.passed && pageReady && !job.dedupe_key?.startsWith("manual-stage:")) this.repository.enqueue("compose_commercial", job.entity_id);
+          if (reviewed.output.passed && pageReady && !job.dedupe_key?.startsWith("manual-stage:")) this.enqueueChild(job,"compose_commercial",job.entity_id);
           if (!reviewed.output.passed && !job.dedupe_key?.startsWith("manual-stage:")) {
-            this.repository.automaticQualityRepairState(job.entity_id, reviewed.output.issues, { enqueue: true });
+            this.repository.automaticQualityRepairState(job.entity_id, reviewed.output.issues, { enqueue: true,
+              productionOwnerOpportunityId:job.production_owner_opportunity_id || null });
           }
           });
           break;
@@ -852,10 +856,10 @@ export class Pipeline {
           commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
           const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model,
-            { deferReview: job.dedupe_key?.startsWith("manual-stage:") });
+            { deferReview: job.dedupe_key?.startsWith("manual-stage:"),opportunityId:job.production_owner_opportunity_id || null });
           if (!job.dedupe_key?.startsWith("manual-stage:")) {
-            if (this.visuals?.enabled) this.repository.enqueue("generate_visuals", draftId);
-            else if (contractAware) this.repository.enqueue("compose_frontend_page", draftId);
+            if (this.visuals?.enabled) this.enqueueChild(job,"generate_visuals",draftId);
+            else if (contractAware) this.enqueueChild(job,"compose_frontend_page",draftId);
           }
           });
           break;
@@ -876,7 +880,7 @@ export class Pipeline {
           }
           commitStage(() => {
             this.repository.saveCommercialComposition(job.entity_id, composition);
-            if (this.wordpress?.enabled) this.repository.enqueue(this.frontendContracts?.configured ? "compose_publish_page" : "push_wordpress_draft", job.entity_id);
+            if (this.wordpress?.enabled) this.enqueueChild(job,this.frontendContracts?.configured ? "compose_publish_page" : "push_wordpress_draft",job.entity_id);
           });
           break;
         }
@@ -923,7 +927,7 @@ export class Pipeline {
           }
           commitStage(() => {
             savePublish();
-            this.repository.enqueue("push_wordpress_draft", job.entity_id);
+            this.enqueueChild(job,"push_wordpress_draft",job.entity_id);
           });
           break;
         }
@@ -966,10 +970,10 @@ export class Pipeline {
               };
               result = await guarded((signal) => this.wordpress.upsertDraft(publishableDraft, publication.post_id, { signal, idempotencyKey: job.id }));
             }
-            commitStage(() => this.repository.completeWordPressPublication(job.entity_id, result));
+            commitStage(() => this.repository.completeWordPressPublication(job.entity_id, result,{opportunityId:job.production_owner_opportunity_id || null}));
           } catch (error) {
             if (isJobLeaseLost(error)) throw error;
-            this.repository.failWordPressPublication(job.entity_id, error);
+            this.repository.failWordPressPublication(job.entity_id, error,{opportunityId:job.production_owner_opportunity_id || null});
             if (["CONTRACT_MISMATCH", "CONTRACT_VERSION_MISMATCH"].includes(error?.code)) {
               this.repository.markFrontendPublishComposition(job.entity_id, "stale_contract");
               this.repository.markFrontendPageCompositionStale(job.entity_id);
@@ -1075,7 +1079,8 @@ export class Pipeline {
       case 'review_draft': {
         const pack = repository.getDraftPackage(entity);
         if (pack?.review?.passed && (!this.canComposeFrontendPage || pack.frontend_page?.current)) next('compose_commercial');
-        else if (pack?.review && !pack.review.passed) repository.automaticQualityRepairState(entity, pack.review.issues, { enqueue: true });
+        else if (pack?.review && !pack.review.passed) repository.automaticQualityRepairState(entity, pack.review.issues, { enqueue: true,
+          productionOwnerOpportunityId:job.production_owner_opportunity_id || null });
         break;
       }
       case 'revise_draft': next('review_draft'); if (this.canComposeFrontendPage) next('compose_frontend_page'); break;

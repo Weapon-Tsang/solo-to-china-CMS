@@ -11,35 +11,35 @@ const BRIEF_SCHEMA = objectSchema(
     title: { type: "string" },
     primary_keyword: { type: "string" },
     search_intent: { type: "string" },
-    audience: { type: "array", items: { type: "string" } },
+    audience: { type: "array", maxItems: 4, items: { type: "string" } },
     angle: { type: "string" },
     reader_promise: { type: "string" },
     outline: {
-      type: "array",
+      type: "array", minItems: 1, maxItems: 10,
       items: objectSchema(["section_id", "heading", "purpose", "claim_keys"], {
         section_id: { type: "string" },
         heading: { type: "string" }, purpose: { type: "string" },
-        claim_keys: { type: "array", items: { type: "string" } },
+        claim_keys: { type: "array", maxItems: 12, items: { type: "string" } },
       }),
     },
-    adaptation_requirements: { type: "array", items: { type: "string" } },
-    conflict_instructions: { type: "array", items: { type: "string" } },
-    verification_instructions: { type: "array", items: { type: "string" } },
+    adaptation_requirements: { type: "array", maxItems: 12, items: { type: "string" } },
+    conflict_instructions: { type: "array", maxItems: 12, items: { type: "string" } },
+    verification_instructions: { type: "array", maxItems: 12, items: { type: "string" } },
     canonical: objectSchema(["content_type", "summary", "quick_answer", "entities", "secondary_queries", "highlights", "practical_tips", "warnings", "faq", "answer_blocks", "image_plan", "seo"], {
       content_type: { type: "string", enum: ["city_guide", "itinerary", "attraction_guide", "food_guide", "transport_guide", "neighborhood_guide", "hotel_area_guide", "shopping_guide", "practical_guide", "first_time_guide", "comparison", "listicle", "how_to"] },
       summary: { type: "string" }, quick_answer: { type: "string" },
-      entities: { type: "array", items: { type: "string" } }, secondary_queries: { type: "array", items: { type: "string" } },
-      highlights: { type: "array", items: { type: "string" } }, practical_tips: { type: "array", items: { type: "string" } }, warnings: { type: "array", items: { type: "string" } },
-      faq: { type: "array", items: objectSchema(["question", "answer"], { question: { type: "string" }, answer: { type: "string" } }) },
-      answer_blocks: { type: "array", items: objectSchema(["question", "direct_answer", "supporting_points", "entity"], {
-        question: { type: "string" }, direct_answer: { type: "string" }, supporting_points: { type: "array", items: { type: "string" } }, entity: { type: "string" },
+      entities: { type: "array", maxItems: 16, items: { type: "string" } }, secondary_queries: { type: "array", maxItems: 12, items: { type: "string" } },
+      highlights: { type: "array", maxItems: 12, items: { type: "string" } }, practical_tips: { type: "array", maxItems: 16, items: { type: "string" } }, warnings: { type: "array", maxItems: 12, items: { type: "string" } },
+      faq: { type: "array", maxItems: 8, items: objectSchema(["question", "answer"], { question: { type: "string" }, answer: { type: "string" } }) },
+      answer_blocks: { type: "array", maxItems: 8, items: objectSchema(["question", "direct_answer", "supporting_points", "entity"], {
+        question: { type: "string" }, direct_answer: { type: "string" }, supporting_points: { type: "array", maxItems: 6, items: { type: "string" } }, entity: { type: "string" },
       }) },
-      image_plan: { type: "array", items: objectSchema(["type", "role", "subject", "placement", "strategy", "factual_image_required"], {
+      image_plan: { type: "array", maxItems: 8, items: objectSchema(["type", "role", "subject", "placement", "strategy", "factual_image_required"], {
         type: { type: "string", enum: ["real_world_photo", "infographic", "map_or_route", "illustration"] },
         role: { type: "string" }, subject: { type: "string" }, placement: { type: "string" }, strategy: { type: "string" }, factual_image_required: { type: "boolean" },
       }) },
       seo: objectSchema(["primary_keyword", "secondary_keywords", "search_intent"], {
-        primary_keyword: { type: "string" }, secondary_keywords: { type: "array", items: { type: "string" } }, search_intent: { type: "string" },
+        primary_keyword: { type: "string" }, secondary_keywords: { type: "array", maxItems: 12, items: { type: "string" } }, search_intent: { type: "string" },
       }),
     }),
   },
@@ -639,6 +639,7 @@ const briefPrompt = (strategyVersion) => `Create an evidence-backed English cont
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
 - Select only the evidence needed to fulfill the approved reader promise: at most 48 unique claim keys for the whole plan and at most 12 per section. The remaining destination knowledge stays available for other articles; it is not mandatory coverage for this draft.
+- Keep the response compact: at most 10 outline sections, 8 answer blocks, 8 FAQs and 8 image-plan entries. Refer to claim keys; never repeat evidence quotes or reproduce the input fact objects.
 - Evidence marked partial_usable is valid only for the supplied Claim. Treat its coverage_limitations as explicit boundaries: narrow the reader promise, omit unsupported details, and never describe the source or topic as complete. Unrelated source gaps are already removed from this topic package.
 - Unresolved strict safety/semantic conflicts require explicit handling instructions; never silently choose a side.
 - The operator explicitly selected these sources. Prices, hours, reservations, schedules and access details are usable as supplied and do not require another official-page check or a fabricated publication-date gate. Preserve genuine mutually-exclusive conflicts for one grouped human decision; do not invent a conflict merely because dates are missing.

@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { id, json, now } from '../utils.mjs';
+import { id, json, now, sha256 } from '../utils.mjs';
 import { transaction } from '../db.mjs';
 import { validatePlanningDestination } from '../destination-consistency.mjs';
 import { applyDeterministicGates } from '../ai/content-engine.mjs';
@@ -11,20 +11,26 @@ import { PRODUCTION_STAGE_REGISTRY } from './production-state.mjs';
 function conflict(message) { throw Object.assign(new Error(message), { statusCode: 409 }); }
 
 function context(repo, candidateOrOpportunityId) {
-  const opportunity = repo.db.prepare('SELECT * FROM content_opportunities WHERE id=? OR candidate_id=? ORDER BY id=? DESC LIMIT 1')
-    .get(candidateOrOpportunityId, candidateOrOpportunityId, candidateOrOpportunityId);
+  const exactOpportunity=repo.db.prepare('SELECT * FROM content_opportunities WHERE id=?').get(candidateOrOpportunityId);
+  const opportunity = exactOpportunity || repo.db.prepare(`SELECT * FROM content_opportunities WHERE candidate_id=?
+    ORDER BY (approved_at IS NOT NULL) DESC,(status='producing') DESC,updated_at DESC,id DESC LIMIT 1`).get(candidateOrOpportunityId);
   const candidateId = opportunity?.candidate_id || candidateOrOpportunityId;
   const candidate = repo.db.prepare('SELECT * FROM topic_candidates WHERE id=?').get(candidateId);
   if (!candidate) return null;
   const brief = repo.db.prepare('SELECT * FROM content_briefs WHERE candidate_id=?').get(candidateId);
   const draft = brief && repo.db.prepare('SELECT id,revision,content_hash FROM article_drafts WHERE brief_id=?').get(brief.id);
-  const activeJobs = repo.db.prepare("SELECT id,type,status FROM jobs WHERE entity_id IN (?,?,?) AND status IN ('queued','running')")
-    .all(candidateId, brief?.id || '', draft?.id || '');
-  const failedJob = repo.db.prepare(`SELECT id,type,status,last_error,entity_id,updated_at,failure_class,last_failure_code FROM jobs
-    WHERE entity_id IN (?,?,?) AND status='failed'
+  const approvedOwnerCount=Number(repo.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL").get(candidateId)?.count || 0);
+  const legacyOwnerAllowed=Boolean(opportunity?.approved_at && approvedOwnerCount===1);
+  const ownerClause="(production_owner_opportunity_id=? OR (production_owner_opportunity_id IS NULL AND ?=1))";
+  const activeJobs = repo.db.prepare(`SELECT id,type,status,recovery_run_id,production_owner_opportunity_id FROM jobs
+    WHERE entity_id IN (?,?,?) AND status IN ('queued','running') AND ${ownerClause}`)
+    .all(candidateId, brief?.id || '', draft?.id || '',opportunity?.id || '',legacyOwnerAllowed ? 1 : 0);
+  const failedJob = repo.db.prepare(`SELECT id,type,status,last_error,entity_id,updated_at,failure_class,last_failure_code,attempts,recovery_run_id FROM jobs
+    WHERE entity_id IN (?,?,?) AND status='failed' AND ${ownerClause}
       AND NOT EXISTS (SELECT 1 FROM jobs ok WHERE ok.entity_id=jobs.entity_id AND ok.type=jobs.type
-        AND ok.status='succeeded' AND ok.updated_at>=jobs.updated_at)
-    ORDER BY updated_at DESC LIMIT 1`).get(candidateId, brief?.id || '', draft?.id || '');
+        AND ok.status='succeeded' AND ok.updated_at>=jobs.updated_at AND ${ownerClause.replaceAll('production_owner_opportunity_id','ok.production_owner_opportunity_id')})
+    ORDER BY updated_at DESC,id DESC LIMIT 1`).get(candidateId, brief?.id || '', draft?.id || '',opportunity?.id || '',legacyOwnerAllowed ? 1 : 0,
+      opportunity?.id || '',legacyOwnerAllowed ? 1 : 0);
   return { candidate, opportunity: opportunity || repo.db.prepare('SELECT * FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1').get(candidateId), brief, draft, activeJobs, failedJob };
 }
 
@@ -100,7 +106,11 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
   return transaction(repo.db, () => {
     const ctx = context(repo, candidateId);
     if (!ctx) return null;
-    if (ctx.activeJobs.length) conflict('该选题已经有排队或运行中的任务，请等待完成，避免重复执行。');
+    const operationKey=String(input.idempotencyKey || input.idempotency_key || id('recovery_operation'));
+    const prior=repo.db.prepare("SELECT result_json FROM content_operation_history WHERE idempotency_key=?").get(operationKey);
+    if (prior) return { ...json(prior.result_json,{}),queued:false,idempotent:true,already_recovering:true };
+    const productionAction=['retry_failed_stage','recover_next_stage'].includes(String(input.action || ''));
+    if (ctx.activeJobs.length && !productionAction) conflict('该选题已经有排队或运行中的任务，请等待完成，避免重复执行。');
     if (ctx.draft && input.revision != null && input.revision !== ctx.draft.revision) conflict('草稿已被其他任务更新，请刷新后再操作。');
     if (ctx.candidate.status === 'dismissed') conflict('已移除的选题不能从恢复入口绕过确认。');
     let result;
@@ -141,9 +151,11 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
         || entry.claim_keys.some((key) => !keys.has(key)))) conflict('台账必须包含 section 和 claim_keys，且只能引用本篇已有证据编号。');
       repo.recordDraftRevision(ctx.draft.id, actor);
       repo.saveDraft(ctx.brief.id, { ...pkg.draft,body_markdown:input.body,evidence_ledger:input.evidenceLedger,
-        verification_notes:input.verificationNotes }, 'human-correction');
+        verification_notes:input.verificationNotes }, 'human-correction',{opportunityId:ctx.opportunity?.id || null});
       repo.db.prepare("UPDATE article_drafts SET status='drafted' WHERE id=?").run(ctx.draft.id);
-      const jobId = repo.enqueue('compose_frontend_page', ctx.draft.id, { dedupeKey:`recovery-stage:compose_frontend_page:${ctx.draft.id}:r${ctx.draft.revision + 1}` });
+      const jobId = repo.enqueue('compose_frontend_page', ctx.draft.id, {
+        dedupeKey:`recovery-stage:${ctx.opportunity?.id}:compose_frontend_page:${ctx.draft.id}:r${ctx.draft.revision + 1}`,
+        productionOwnerOpportunityId:ctx.opportunity?.id || null });
       result = { action:input.action,jobId,queued:Boolean(jobId),requiresRecomposition:true };
     } else if (input.action === 'bind_asset') {
       if (!ctx.draft) conflict('没有可绑定图片的草稿。');
@@ -162,28 +174,32 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       repo.invalidateDraftDependents(ctx.draft.id);
       repo.recordDraftRevision(ctx.draft.id,actor);
       const nextStage = localize ? 'generate_visuals' : 'compose_frontend_page';
-      const jobId = repo.enqueue(nextStage,ctx.draft.id,{ dedupeKey:`recovery-stage:${nextStage}:${ctx.draft.id}:r${ctx.draft.revision + 1}` });
+      const jobId = repo.enqueue(nextStage,ctx.draft.id,{
+        dedupeKey:`recovery-stage:${ctx.opportunity?.id}:${nextStage}:${ctx.draft.id}:r${ctx.draft.revision + 1}`,
+        productionOwnerOpportunityId:ctx.opportunity?.id || null });
       result = { action:input.action,visualId:visual.id,previousAssetId:visual.source_asset_id,assetId:asset.id,jobId,queued:Boolean(jobId) };
     } else {
       const stateRow = ctx.opportunity ? repo.listContent({ candidateId:ctx.opportunity.id,productionOnly:true })[0] : null;
       const productionState = stateRow?.production_state || null;
       const requestedAction = String(input.action || '');
-      const stage = requestedAction === 'retry_failed_stage' ? productionState?.latest_error?.stage
-        : requestedAction === 'recover_next_stage' ? productionState?.next_stage : requestedAction;
+      const stage = requestedAction === 'retry_failed_stage' ? productionState?.latest_error?.stage || ctx.activeJobs[0]?.type
+        : requestedAction === 'recover_next_stage' ? productionState?.recovery_target || productionState?.next_stage || ctx.activeJobs[0]?.type : requestedAction;
       const definition = PRODUCTION_STAGE_REGISTRY.find((item) => item.key === stage);
       if (!definition) conflict('没有可恢复的准确生产步骤。');
-      if (requestedAction === 'retry_failed_stage' && productionState?.stage_status !== 'failed') conflict('当前没有失败步骤可重试。');
-      if (requestedAction === 'recover_next_stage' && productionState?.stage_status !== 'interrupted') conflict('当前流程没有断链。');
+      if (requestedAction === 'retry_failed_stage' && productionState?.stage_status !== 'failed'
+        && !ctx.activeJobs.some((job)=>job.type===stage)) conflict('当前没有失败步骤可重试。');
+      if (requestedAction === 'recover_next_stage' && productionState?.stage_status !== 'interrupted'
+        && !ctx.activeJobs.some((job)=>job.type===stage)) conflict('当前流程没有断链。');
       const completed = new Set(productionState?.completed_stages || []);
       const missingDependency = ['retry_failed_stage','recover_next_stage'].includes(requestedAction)
         ? definition.dependencies.find((dependency) => !completed.has(dependency)) : null;
       if (missingDependency) conflict(`前置步骤 ${missingDependency} 尚未完成，不能跳过它恢复 ${stage}。`);
       if (stage === 'plan_content') {
         if (ctx.brief) conflict('已有写作准备记录，不会被重新覆盖。');
-        const check = validatePlanningDestination(repo.getTopicPackage(candidateId));
+        const check = validatePlanningDestination(repo.getPlanningPackage(candidateId,{opportunityId:ctx.opportunity?.id}));
         if (!check.valid) conflict(check.message);
-        const approved = repo.db.prepare(`SELECT id,readiness_json FROM content_opportunities WHERE candidate_id=? AND
-          (status IN ('approved_ready','producing') OR (status='suppressed' AND suppression_reason='destination_recovery_requires_confirmation' AND approved_at IS NOT NULL))`).get(ctx.candidate.id);
+        const approved = repo.db.prepare(`SELECT id,readiness_json FROM content_opportunities WHERE id=? AND candidate_id=? AND approved_at IS NOT NULL AND
+          (status IN ('approved_ready','producing') OR (status='suppressed' AND suppression_reason='destination_recovery_requires_confirmation'))`).get(ctx.opportunity?.id || '',ctx.candidate.id);
         if (!approved) conflict('请先在内容建议中确认文章方案。');
         if (!json(approved.readiness_json,{}).ready) conflict('更正目的地后素材仍未准备好，请先补充证据。');
         repo.db.prepare("UPDATE content_opportunities SET status='producing',suppression_reason=NULL,updated_at=? WHERE id=?")
@@ -205,16 +221,23 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       }
       const entityId = ['assemble_editorial','plan_content'].includes(stage) ? ctx.candidate.id
         : ['plan_narrative','assemble_writing_packet','compose_frontend_page_plan','generate_draft'].includes(stage) ? ctx.brief.id : ctx.draft.id;
-      const recoveryRunId = id('recovery_run');
       const identity = ctx.draft ? `r${ctx.draft.revision}:${ctx.draft.content_hash}` : ctx.brief ? ctx.brief.id : ctx.candidate.id;
-      const jobId = repo.enqueue(stage,entityId,{ dedupeKey:`recovery-stage:${stage}:${entityId}:${identity}`,
-        recoveryRunId, interactive:true });
-      result = { action:requestedAction,resolvedStage:stage,jobId,recoveryRunId,queued:Boolean(jobId),stageOnly:['retry_failed_stage','recover_next_stage'].includes(requestedAction),
+      const activeRecovery=ctx.activeJobs.find((job)=>job.type===stage);
+      const existingAttemptCount=Number(repo.db.prepare(`SELECT COUNT(*) AS count FROM jobs WHERE production_owner_opportunity_id=? AND type=?`).get(ctx.opportunity?.id || '',stage)?.count || 0);
+      const generation=activeRecovery ? Math.max(1,existingAttemptCount) : existingAttemptCount+1;
+      const inputIdentity=sha256(`${identity}:${ctx.failedJob?.id || productionState?.last_attempt_at || 'start'}`);
+      const recoveryRunId = activeRecovery?.recovery_run_id || id('recovery_run');
+      const jobId = activeRecovery?.id || repo.enqueue(stage,entityId,{
+        dedupeKey:`recovery-stage:${ctx.opportunity.id}:${stage}:${entityId}:${inputIdentity}:g${generation}`,
+        recoveryRunId,interactive:true,productionOwnerOpportunityId:ctx.opportunity.id });
+      result = { action:requestedAction,resolvedStage:stage,jobId,recoveryRunId,queued:!activeRecovery && Boolean(jobId),
+        already_recovering:Boolean(activeRecovery),reused_active_recovery:Boolean(activeRecovery),retry_generation:generation,
+        stageOnly:['retry_failed_stage','recover_next_stage'].includes(requestedAction),
         preservedStages:[...(productionState?.completed_stages || [])] };
     }
-    repo.db.prepare(`INSERT INTO content_operation_history(id,candidate_id,action,status,preview_json,result_json,actor,created_at)
-      VALUES (?,?,?,'completed',?,?,?,?)`).run(id('recovery'),ctx.candidate.id,input.action,
-        JSON.stringify({revision:ctx.draft?.revision}),JSON.stringify(result),String(actor).slice(0,200),now());
+    repo.db.prepare(`INSERT INTO content_operation_history(id,candidate_id,action,status,preview_json,result_json,actor,created_at,opportunity_id,idempotency_key)
+      VALUES (?,?,?,'completed',?,?,?,?,?,?)`).run(id('recovery'),ctx.candidate.id,input.action,
+        JSON.stringify({revision:ctx.draft?.revision}),JSON.stringify(result),String(actor).slice(0,200),now(),ctx.opportunity?.id || null,operationKey);
     return { ...result,previousOpportunities:undefined };
   });
 }

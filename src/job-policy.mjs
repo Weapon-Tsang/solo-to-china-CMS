@@ -60,6 +60,8 @@ export function inheritJobContext(parent = {}, overrides = {}) {
     executionRoute: historical ? parent.execution_route || "auto" : overrides.executionRoute || parent.execution_route || "auto",
     workloadClass,
     recoveryRunId: overrides.recoveryRunId ?? parent.recovery_run_id ?? null,
+    productionOwnerOpportunityId: overrides.productionOwnerOpportunityId
+      ?? parent.production_owner_opportunity_id ?? null,
     interactive: Boolean(overrides.interactive ?? parent.interactive ?? workloadClass === "interactive"),
     parentJobId: overrides.parentJobId ?? parent.id ?? null,
   };

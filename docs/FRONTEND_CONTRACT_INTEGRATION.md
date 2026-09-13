@@ -10,6 +10,8 @@ The CMS workbench's Page Composition Preview is a structural inspection of alrea
 
 After a successful WordPress Draft acknowledgement, the CMS exposes the adapter's persisted `wordpress_publications.preview_url` as the final-page preview and `edit_url` as the editing entry. It does not synthesize either URL from a post ID.
 
+The 2.0.13 production-state hotfix changes only CMS ownership/projection and responsive operator presentation. Mobile cards and the production-detail sheet consume the same persisted structural preview; they do not introduce a renderer, copied component implementation, invented variant, JSX or CSS from the Frontend repository.
+
 Three artifacts remain distinct:
 
 - Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.

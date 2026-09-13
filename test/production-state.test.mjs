@@ -63,8 +63,9 @@ test("candidate and missing downstream jobs expose the real interrupted stage", 
   seedOpportunity(db);
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
   assert.equal(state.stage_status,"interrupted");
-  assert.equal(state.current_stage,"assemble_editorial");
-  assert.match(state.headline,/生产中断/);
+  assert.equal(state.current_stage,null);
+  assert.equal(state.recovery_target,"assemble_editorial");
+  assert.match(state.headline,/流程中断/);
 
   const assemble=repository.enqueue("assemble_editorial","candidate-state",{dedupeKey:"done:assemble"});
   db.prepare("UPDATE jobs SET status='succeeded',completed_at='2026-09-01',updated_at='2026-09-01' WHERE id=?").run(assemble);
@@ -72,6 +73,7 @@ test("candidate and missing downstream jobs expose the real interrupted stage", 
   db.prepare("UPDATE topic_candidates SET status='brief_ready' WHERE id='candidate-state'").run();
   state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
   assert.equal(state.stage_status,"interrupted");
+  assert.equal(state.current_stage,"assemble_editorial");
   assert.equal(state.next_stage,"plan_content");
   assert.equal(state.recoverable,true);
 });

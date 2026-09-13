@@ -1,7 +1,7 @@
 import { json, sha256 } from "../utils.mjs";
 import { explainOperationalFailure } from "./content-recovery-policy.mjs";
 
-export const PRODUCTION_STATE_VERSION = "1.0";
+export const PRODUCTION_STATE_VERSION = "1.1";
 
 export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
   stage("assemble_editorial", "素材组装", 10, [], "editorial", "always"),
@@ -51,15 +51,22 @@ export function buildProductionState(db, row, options = {}) {
   const capabilities = resolveCapabilities(db, row, options);
   const registry = PRODUCTION_STAGE_REGISTRY.filter((item) => stageEnabled(item, capabilities, db, row));
   const entityIds = [row.candidate_id, row.brief_id, row.draft_id].filter(Boolean);
+  const legacyOwnerIsUnique = Boolean(row.approved_at && Number(row.approved_owner_count || 0) === 1);
   const jobs = entityIds.length ? db.prepare(`SELECT * FROM jobs WHERE entity_id IN (${placeholders(entityIds)})
-    AND type IN (${placeholders(PRODUCTION_JOB_TYPES)}) ORDER BY updated_at,created_at,id`).all(...entityIds, ...PRODUCTION_JOB_TYPES) : [];
-  const artifacts = entityIds.length ? db.prepare(`SELECT * FROM pipeline_artifacts WHERE entity_id IN (${placeholders(entityIds)})
-    AND stage IN (${placeholders(PRODUCTION_JOB_TYPES)}) ORDER BY updated_at,created_at,id`).all(...entityIds, ...PRODUCTION_JOB_TYPES) : [];
-  const receipts = entityIds.length ? db.prepare(`SELECT stage,entity_id,job_id,created_at FROM pipeline_step_receipts
+    AND type IN (${placeholders(PRODUCTION_JOB_TYPES)})
+    AND (production_owner_opportunity_id=? OR (production_owner_opportunity_id IS NULL AND ?=1))
+    ORDER BY updated_at,created_at,id`).all(...entityIds, ...PRODUCTION_JOB_TYPES, row.opportunity_id, legacyOwnerIsUnique ? 1 : 0) : [];
+  const jobIds=jobs.map((item)=>item.id);
+  const receipts = jobIds.length ? db.prepare(`SELECT stage,entity_id,job_id,created_at FROM pipeline_step_receipts
+    WHERE job_id IN (${placeholders(jobIds)}) AND stage IN (${placeholders(PRODUCTION_JOB_TYPES)})
+    ORDER BY created_at`).all(...jobIds,...PRODUCTION_JOB_TYPES) : [];
+  const artifacts = entityIds.length && jobs.length ? db.prepare(`SELECT * FROM pipeline_artifacts
     WHERE entity_id IN (${placeholders(entityIds)}) AND stage IN (${placeholders(PRODUCTION_JOB_TYPES)})
-    ORDER BY created_at`).all(...entityIds, ...PRODUCTION_JOB_TYPES) : [];
-  const modelCalls = entityIds.length ? db.prepare(`SELECT stage,entity_id,model,provider,request_kind,cache_hit,status,created_at
-    FROM model_call_metrics WHERE entity_id IN (${placeholders(entityIds)}) ORDER BY created_at`).all(...entityIds) : [];
+    ORDER BY updated_at,created_at,id`).all(...entityIds,...PRODUCTION_JOB_TYPES)
+    .filter((artifact)=>jobs.some((job)=>job.type===artifact.stage && job.entity_id===artifact.entity_id)) : [];
+  const modelCalls = jobIds.length ? db.prepare(`SELECT id,stage,entity_id,run_id,model,provider,request_kind,cache_hit,status,
+    attempt_number,error_code,request_started_at,request_completed_at,created_at
+    FROM model_call_metrics WHERE run_id IN (${placeholders(jobIds)}) ORDER BY created_at,id`).all(...jobIds) : [];
   const evidence = persistedStageEvidence(db, row);
   const entries = registry.map((definition) => buildStageEntry(definition, jobs, artifacts, receipts, modelCalls, evidence));
   const completedStages = entries.filter((item) => item.status === "succeeded").map((item) => item.key);
@@ -74,14 +81,19 @@ export function buildProductionState(db, row, options = {}) {
   const readiness = row.approved_at ? (readinessValue.ready ? "ready" : "waiting_for_evidence") : "not_applicable";
   const control = controlState(db, row.opportunity_id);
   const lastAttemptAt = newestTimestamp([
-    row.opportunity_updated_at, row.candidate_updated_at, row.brief_updated_at, row.draft_updated_at,
+    row.opportunity_updated_at, row.brief_updated_at, row.draft_updated_at,
     ...jobs.map((item) => item.updated_at), ...artifacts.map((item) => item.updated_at), control?.updated_at,
   ]);
   const ageBase = Date.parse(lastAttemptAt || row.approved_at || row.opportunity_updated_at || 0);
   const nowMs = options.now instanceof Date ? options.now.getTime() : Date.parse(options.now || "") || Date.now();
   const graceMs = Math.max(60_000, Number(options.continuityGraceMs || 15 * 60_000));
   const beyondGrace = Number.isFinite(ageBase) && ageBase > 0 && nowMs - ageBase >= graceMs;
-  const hasLineage = Boolean(row.candidate_id || row.brief_id || row.draft_id || jobs.length || artifacts.length
+  const hasLineage = Boolean(row.approved_at || row.editorial_assembly_id || row.brief_id || row.narrative_plan_id
+    || row.writing_packet_id || row.frontend_plan_status || row.draft_id || row.wordpress_status || jobs.length || artifacts.length
+    || control || db.prepare("SELECT 1 FROM production_attempt_archives WHERE opportunity_id=? LIMIT 1").get(row.opportunity_id)
+    || db.prepare("SELECT 1 FROM production_record_audit WHERE opportunity_id=? LIMIT 1").get(row.opportunity_id));
+  const hasExecutionEvidence=Boolean(row.editorial_assembly_id || row.brief_id || row.narrative_plan_id
+    || row.writing_packet_id || row.frontend_plan_status || row.draft_id || row.wordpress_status || jobs.length || artifacts.length
     || db.prepare("SELECT 1 FROM production_attempt_archives WHERE opportunity_id=? LIMIT 1").get(row.opportunity_id));
 
   let lifecycle = "pending_start";
@@ -107,7 +119,7 @@ export function buildProductionState(db, row, options = {}) {
       ? "本次派生生产数据已清理；原始来源、证据、知识、审批和审计记录仍然保留。"
       : "这次生产尝试已归档，不再计入活跃工作台。";
     autoContinue = false;
-  } else if (readiness === "waiting_for_evidence" && !hasLineage) {
+  } else if (readiness === "waiting_for_evidence" && !hasExecutionEvidence) {
     currentStage = null;
     currentStageLabel = "等待补充证据";
   } else if (active?.expired) {
@@ -130,6 +142,7 @@ export function buildProductionState(db, row, options = {}) {
     autoContinue = true;
   } else if (failed) {
     const explained = explainOperationalFailure(failed);
+    const failedCall=[...modelCalls].reverse().find((item)=>item.run_id===failed.id) || null;
     lifecycle = "needs_attention";
     stageStatus = "failed";
     currentStage = failed.type;
@@ -138,12 +151,20 @@ export function buildProductionState(db, row, options = {}) {
     explanation = explained?.reason || "这一步没有完成；已有成功产物仍然保留。";
     autoContinue = false;
     needsHuman = true;
-    recoverable = !["APPROVED_SCOPE_INVALID", "EVIDENCE_SCOPE_INVALID"].includes(String(failed.last_failure_code || ""));
+    recoverable = !["APPROVED_SCOPE_INVALID", "EVIDENCE_SCOPE_INVALID", "DESTINATION_TOPIC_MISMATCH", "PLAN_INPUT_BUDGET_EXCEEDED"]
+      .includes(String(failed.last_failure_code || ""));
     latestError = {
       code: failed.last_failure_code || failed.failure_class || "PRODUCTION_FAILED",
       reason: explained?.reason || String(failed.last_error || "这一步没有完成。"),
       stage: failed.type,
       occurred_at: failed.updated_at || failed.completed_at || null,
+      job_id: failed.id,
+      request_id: failedCall?.id || null,
+      attempt: Number(failed.attempts || failedCall?.attempt_number || 0),
+      failure_class: failed.failure_class || null,
+      provider: failedCall?.provider || null,
+      model: failedCall?.model || null,
+      model_called: Boolean(failedCall && failedCall.request_kind !== "cache_hit"),
     };
   } else if (row.wordpress_status === "synced") {
     lifecycle = "completed";
@@ -160,16 +181,15 @@ export function buildProductionState(db, row, options = {}) {
       recoverable = false;
       latestError = { code: "WORDPRESS_PREVIEW_URL_MISSING", reason: "WordPress 草稿已创建，但预览地址没有保存。", stage: "push_wordpress_draft", occurred_at: row.wordpress_updated_at || lastAttemptAt };
     }
-  } else if (firstPending && hasLineage && (beyondGrace || row.candidate_status === "candidate" || ["exception", "qa_failed"].includes(row.brief_status) || ["exception", "qa_failed"].includes(row.draft_status))) {
+  } else if (firstPending && hasLineage && (beyondGrace || ["exception", "qa_failed"].includes(row.brief_status) || ["exception", "qa_failed"].includes(row.draft_status))) {
     lifecycle = "needs_attention";
     stageStatus = "interrupted";
-    currentStage = firstPending.key;
-    currentStageLabel = firstPending.label;
     const lastComplete = [...entries].reverse().find((item) => item.status === "succeeded");
-    headline = row.candidate_status === "candidate"
-      ? `生产中断：${currentStageLabel}未完成`
-      : `流程中断：${lastComplete?.label || "上一阶段"}已完成，但下一步骤未入队`;
-    explanation = `下一步应为“${currentStageLabel}”。恢复只会补这个缺失步骤，不会重跑已完成阶段。`;
+    currentStage = lastComplete?.key || null;
+    currentStageLabel = lastComplete ? `${lastComplete.label}后` : "尚未开始";
+    headline = lastComplete ? `流程中断：${lastComplete.label}后停止，${firstPending.label}未入队`
+      : `流程中断：生产尚未开始，${firstPending.label}未入队`;
+    explanation = `下一步应为“${firstPending.label}”。恢复只会补这个缺失步骤，不会重跑已完成阶段。`;
     autoContinue = false;
     needsHuman = true;
     recoverable = true;
@@ -193,6 +213,12 @@ export function buildProductionState(db, row, options = {}) {
     recoverable = true;
   }
 
+  const recoveryTarget = stageStatus === "failed" ? currentStage
+    : stageStatus === "interrupted" ? firstPending?.key || (active?.expired ? active.type : null) : null;
+  const nextStage = lifecycle === "completed" || lifecycle === "history" ? null
+    : stageStatus === "interrupted" ? recoveryTarget
+      : ["queued","running","failed"].includes(stageStatus) ? followingStage(registry,currentStage)?.key || null
+        : firstPending?.key || null;
   const availableActions = actionsFor({ lifecycle, stageStatus, recoverable, hasLineage, row, control });
   return {
     version: PRODUCTION_STATE_VERSION,
@@ -206,11 +232,13 @@ export function buildProductionState(db, row, options = {}) {
     stage_status: stageStatus,
     completed_stages: completedStages,
     pending_stages: pendingStages,
-    next_stage: lifecycle === "completed" || lifecycle === "history"
-      ? null
-      : stageStatus === "failed"
-        ? currentStage
-        : firstPending?.key || currentStage,
+    production_instance_id: row.opportunity_id,
+    production_owner_opportunity_id: row.opportunity_id,
+    owner_resolution: Number(row.approved_owner_count || 0) > 1 ? "explicit_job_owner_required" : "canonical",
+    recovery_target: recoveryTarget,
+    recovery_target_label: recoveryTarget ? productionStageLabel(recoveryTarget) : null,
+    next_stage: nextStage,
+    next_stage_label: nextStage ? productionStageLabel(nextStage) : null,
     progress,
     auto_continue: autoContinue,
     needs_human: needsHuman,
@@ -300,7 +328,8 @@ function buildStageEntry(definition, jobs, artifacts, receipts, modelCalls, evid
   else if (succeeded || stageArtifacts.some((item) => item.status === "succeeded") || receipts.some((item) => item.stage === definition.key)) status = persisted === false ? "waiting" : "succeeded";
   const latestJob = stageJobs.at(-1) || null;
   const latestArtifact = stageArtifacts.at(-1) || null;
-  const call = [...modelCalls].reverse().find((item) => item.stage === definition.key) || null;
+  const call = [...modelCalls].reverse().find((item) => item.run_id === latestJob?.id)
+    || [...modelCalls].reverse().find((item) => item.stage === definition.key) || null;
   return {
     ...definition,
     status,
@@ -317,7 +346,8 @@ function buildStageEntry(definition, jobs, artifacts, receipts, modelCalls, evid
 
 function resolveCapabilities(db, row, options) {
   const configured = options.capabilities || {};
-  const hasVisualWork = Boolean(Number(row.visual_total || 0) || (row.draft_id && db.prepare("SELECT 1 FROM jobs WHERE entity_id=? AND type='generate_visuals' LIMIT 1").get(row.draft_id)));
+  const hasVisualWork = Boolean(Number(row.visual_total || 0) || (row.draft_id && db.prepare(`SELECT 1 FROM jobs
+    WHERE entity_id=? AND type='generate_visuals' AND production_owner_opportunity_id=? LIMIT 1`).get(row.draft_id,row.opportunity_id)));
   return {
     frontendContract: configured.frontendContract ?? Boolean(row.frontend_plan_status || row.frontend_page_status || row.publish_composition_status
       || db.prepare("SELECT 1 FROM frontend_contract_state WHERE singleton=1 AND active_snapshot_id IS NOT NULL").get()),
@@ -332,7 +362,8 @@ function stageEnabled(definition, capabilities, db, row) {
   if (definition.required === "visuals") return capabilities.visuals;
   if (definition.required === "wordpress") return capabilities.wordpress;
   if (definition.required === "frontendAndWordpress") return capabilities.frontendContract && capabilities.wordpress;
-  if (definition.required === "whenPresent") return Boolean(row.draft_id && db.prepare("SELECT 1 FROM jobs WHERE entity_id=? AND type='revise_draft' LIMIT 1").get(row.draft_id));
+  if (definition.required === "whenPresent") return Boolean(row.draft_id && db.prepare(`SELECT 1 FROM jobs
+    WHERE entity_id=? AND type='revise_draft' AND production_owner_opportunity_id=? LIMIT 1`).get(row.draft_id,row.opportunity_id));
   return false;
 }
 
@@ -399,6 +430,11 @@ function collectLinks(data) {
 }
 
 function newestTimestamp(values) { return values.filter(Boolean).sort((a, b) => String(b).localeCompare(String(a)))[0] || null; }
+function followingStage(registry,current) {
+  if (!current) return registry[0] || null;
+  const index=registry.findIndex((item)=>item.key===current);
+  return index>=0 ? registry[index+1] || null : null;
+}
 function placeholders(values) { return values.map(() => "?").join(","); }
 function parse(value, fallback) { return value && typeof value === "object" ? value : json(value, fallback); }
 function stage(key, label, order, dependencies, parallelGroup, required) { return Object.freeze({ key, label, order, dependencies, parallel_group: parallelGroup, required }); }

@@ -8,14 +8,20 @@ import { contentRecoveryReport, executeContentRecovery } from '../src/services/c
 import { normalizeXiaohongshuCapture } from '../src/adapters/xiaohongshu.mjs';
 import { transaction } from '../src/db.mjs';
 
-function fixture(t) {
-  const {db,repository}=repositoryFixture(t);
+function fixture(t, contentConfig = {}) {
+  const {db,repository}=repositoryFixture(t, contentConfig);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
     VALUES ('topic-r','chongqing','r','Chongqing guide','fixture',80,0,0,'drafted','now','now')`).run();
   db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
     VALUES ('brief-r','chongqing','Guide','[]','informational','drafted','now','now','topic-r')`).run();
   db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
     VALUES ('draft-r','brief-r','Guide','guide','Intro.\n\n## Visit\n\nBody.','{}','qa_failed','now','now',1,'hash-1')`).run();
+  db.prepare(`INSERT INTO content_opportunities(id,destination_slug,topic_key,strategy_version,candidate_id,title,content_type,
+    readiness_score,readiness_json,coverage_json,status,approved_at,created_at,updated_at,lifecycle_state,processing_state,
+    canonical_intent_key,inbox_state,seo_action)
+    VALUES ('opportunity-r','chongqing','r:approved','3.3','topic-r','Chongqing guide','practical_guide',100,
+      '{"ready":true,"score":100}','{"publicationMode":"multi_source_synthesis","proposal":{"readerPromise":"Guide the reader."}}',
+      'producing','now','now','now','producing','CURRENT','r:approved','ACTIONABLE','NEW')`).run();
   return {db,repository};
 }
 
@@ -119,14 +125,14 @@ test('automatic quality repair is deduplicated per revision and stops after two 
   assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:true}).reason,'attempt_limit_reached');
 });
 test('strategy startup rechecks a historical failure only once per draft revision',t=>{
-  const {db,repository}=fixture(t);
+  const {db,repository}=fixture(t,{productionStartupResumeEnabled:true});
   repository.saveReview('draft-r',{passed:false,score:40,issues:[{code:'protected_evidence_mismatch',severity:'blocker',message:'mismatch'}],checks:[],unsupported_claims:[]},'fixture');
   repository.enqueueStartupReconciliation();
   repository.enqueueStartupReconciliation();
   assert.equal(db.prepare("SELECT count(*) n FROM jobs WHERE dedupe_key LIKE 'strategy-quality-recheck:%'").get().n,1);
 });
 test('strategy startup does not retry a media-only failure before retained bytes are restored',t=>{
-  const {db,repository}=fixture(t);
+  const {db,repository}=fixture(t,{productionStartupResumeEnabled:true});
   repository.saveReview('draft-r',{passed:false,score:40,issues:[{code:'required_visual_missing',severity:'blocker',message:'missing'}],checks:[],unsupported_claims:[]},'fixture');
   repository.enqueueStartupReconciliation();
   assert.equal(db.prepare("SELECT count(*) n FROM jobs WHERE dedupe_key LIKE 'strategy-quality-recheck:%'").get().n,0);

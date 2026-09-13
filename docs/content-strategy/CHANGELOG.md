@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.13 / schema 69 - Unreleased
+
+- Keep Content Production Strategy 3.3 unchanged; this patch corrects execution ownership, status projection, bounded planning input, retry idempotency and responsive operator UI.
+- Define the approved Opportunity as the production owner. Candidate IDs remain research/topic identity and cannot by themselves admit a row to production or propagate a Job across sibling Opportunities.
+- Migration 69 deterministically assigns only uniquely provable historical owners and leaves ambiguous history unowned for audit. It performs no model request, enqueue, approval change or destructive reconciliation.
+
 ## App 2.0.12 / schema 68 - 2026-09-13
 
 - Content Strategy remains 3.3; unified production state, targeted recovery, archive/delete controls and structural page preview are application-layer changes.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.13 - Unreleased
+
+- Restrict the Content Workbench to approved Opportunity production instances and make each production Job carry one explicit `production_owner_opportunity_id`; Candidate identity alone is no longer production lineage.
+- Correct `needs_attention`, failed/interrupted/current/recovery/next-stage semantics and keep an older failed attempt from overriding its newer queued, running or successful retry.
+- Make stage recovery Opportunity-owned and idempotent, reuse existing durable Jobs, Artifacts and Step Receipts, and stop startup from synthesizing historical production retries unless an operator explicitly enables the maintenance-only opt-in.
+- Bound `plan_content` to the approved Opportunity and Editorial Assembly fact subset (32 facts, 64 evidence snippets, 96 KiB and approximately 24k input tokens), with deterministic materiality selection and compact structured output limits.
+- Replace the compressed mobile four-column Content table with cards, scrollable single-line filters, 2-by-3 statistics and secondary archive/delete actions; production detail now wraps and collapses internal stage/error keys.
+- Add schema 69 deterministic owner/audit backfill, dry-run projection tooling and regression coverage. Migration 69 does not enqueue work, call a model, alter approvals or delete retained research/evidence records.
+- Complete a read-only audit of the deployed 2.0.12 database before implementation. No production data reconciliation, model-triggering retry, WordPress action or deployment was performed for this unreleased patch.
+
 ## 2.0.12 - 2026-09-13
 
 - Add the backend-owned `production_state` projection with explicit evidence-waiting, ready, queued, running, failed, interrupted, completed and historical states, accurate stages, progress, next action, automatic-continuation and human-action flags.

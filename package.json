@@ -1,6 +1,6 @@
 {
   "name": "solo-to-china-research-engine",
-  "version": "2.0.12",
+  "version": "2.0.13",
   "private": true,
   "description": "Human-selected research capture and content intelligence engine for SoloToChina.",
   "type": "module",
@@ -8,6 +8,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
+    "precheck": "node --check src/services/production-state.mjs && node --check src/services/content-recovery.mjs && node --check src/services/content-recovery-policy.mjs && node --check scripts/project-production-state-hotfix.mjs",
     "prestart": "npm run build",
     "start": "node --env-file-if-exists=.env src/server.mjs",
     "build": "vite build",

@@ -82,6 +82,12 @@ export function explainOperationalFailure(job) {
   const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
   const details = operatorSafeDetails(message);
   const normalizedIssueCode = code.toLowerCase();
+  if (code === 'DESTINATION_TOPIC_MISMATCH') return {
+    category:'scope',headline:'文章主题与目的地归属不一致',
+    reason:'标题明确承诺的城市或区域与当前批准记录的目的地不一致。规划在调用模型前已停止，避免用错误范围生成文章。',
+    action:{id:'correct_destination',label:'更正目的地并重新确认范围',why:'先修正批准范围和证据归属，再从写作准备继续；重复重试同一输入不会解决问题。'},
+    technicalDetail:details,
+  };
   if (DELIVERY_ISSUE_CODES.has(normalizedIssueCode)) {
     const issue = explainQualityIssue({ code: normalizedIssueCode, message, severity: 'blocker' });
     return {

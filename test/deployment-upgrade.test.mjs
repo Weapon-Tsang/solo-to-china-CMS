@@ -32,7 +32,7 @@ async function fixture(t) {
   });
   return { root, work, filename, original, run };
 }
-test('deployment probe rehearses schema 59 to 68, preserves cited IDs and rolls back paired DB without deleting originals', async t => {
+test('deployment probe rehearses schema 59 to 69, preserves cited IDs and rolls back paired DB without deleting originals', async t => {
   const f = await fixture(t);
   for (const mode of ['backup', 'rehearse', 'migrate']) {
     const result = f.run(mode);
@@ -40,7 +40,7 @@ test('deployment probe rehearses schema 59 to 68, preserves cited IDs and rolls 
     assert.doesNotMatch(result.stdout, /PRIVATE original evidence|original bytes/);
   }
   let db = new DatabaseSync(f.filename);
-  assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 68);
+  assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 69);
   assert.equal(db.prepare('SELECT capture_version FROM source_assets').get().capture_version, 3);
   db.close();
   const restored = f.run('restore'); assert.equal(restored.status, 0, restored.stderr);
@@ -113,4 +113,7 @@ test('deployment helpers validate the supplied release version instead of a hard
     assert.match(script, /process\.env\.EXPECTED_VERSION/);
     assert.doesNotMatch(script, /version!==["']\d+\.\d+\.\d+/);
   }
+  const resume = fs.readFileSync(path.join(app, 'deployment/gce', 'resume-verified-upgrade.sh'), 'utf8');
+  assert.match(resume, /result\['schema'\]==69/);
+  assert.match(resume, /MAX\(version\).*==69/);
 });
