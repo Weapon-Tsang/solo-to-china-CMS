@@ -1,6 +1,6 @@
 # CMS production error repair 2.0.14 audit and implementation record
 
-Date: 2026-09-13 (Asia/Shanghai). Source branch: `codex/audit-v1.3`. Production remained on application/extension 2.0.13, schema 69, Content Strategy 3.3 and revision `8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303` throughout this work.
+Date: 2026-09-13 (Asia/Shanghai). Source branch: `codex/audit-v1.3`. The implementation was audited against production application/extension 2.0.13 before the separately authorized rollout of 2.0.14 revision `9341a30ea07ac16fa2803a8aed5f27c776106c17`; schema remains 69 and Content Strategy remains 3.3.
 
 ## Read-only production evidence
 
@@ -41,8 +41,20 @@ The mobile secondary menu now opens upward inside the existing card and uses exp
 - `npm run release:check`: 50 mandatory checks passed, zero failed, five warnings and five explicitly external/not-tested checks. The warnings are the 30-second unit-test advisory, unavailable external credentials and the known experimental SQLite warning; correctness gates passed.
 - Mobile UI: the in-app browser fixture verified the menu geometry at 393×852 and verified the production-detail wording for request submission versus pre-generation rejection.
 
-## Migration, safety and rollout
+## Migration and safety
 
-Application/extension source version is 2.0.14. Schema remains 69; there is no migration. Startup behavior is unchanged and creates no historical production retry. All changes are code/UI/contract documentation only.
+Application/extension version is 2.0.14. Schema remains 69; there is no migration. Startup behavior is unchanged and creates no historical production retry. All implementation changes are code/UI/contract documentation only.
 
-Temporary IAP firewall/tag access and remote `/tmp` audit files were removed after the evidence was copied. No production record was retried, archived, deleted or reconciled by this work; no Source, original media, Claim, Knowledge, Evidence, Experience, approval, Failure Lesson or audit record was changed. Production deployment was not executed.
+No production record was retried, archived, deleted or scope-corrected by the implementation or rollout; no Source, original media, Claim, Knowledge, Evidence, Experience, approval, Failure Lesson or audit record was deleted.
+
+## Authorized production rollout
+
+After explicit deployment authorization, commit `9341a30ea07ac16fa2803a8aed5f27c776106c17` was pushed to `origin/codex/audit-v1.3`. Cloud Build `32a28924-4fd6-4f84-b021-d5dadcfb5ed9` built `asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine:2.0.14`; production runs its immutable digest `sha256:05db2059e2212bc75ffec8806b3dc651c98d20c53ae598b5ce7ecb50969b2c9c`, and `.env.production` is pinned to that digest with all other runtime configuration bytes preserved.
+
+Before replacement, the query-only audit reported SQLite integrity `ok`, zero foreign-key errors, schema 69, seven approvals, zero active Jobs, zero active production Jobs, 10,847 total Jobs, 5,677 model-call metrics and zero WordPress Jobs. GCE snapshot `stc-pre-2-0-14-9341a30` reached READY. The upgrade then created application snapshot `solo-to-china-2026-09-13T14-57-27-804Z.snapshot` (2,219,425,792 bytes, SHA-256 `e0982717bf57e962b2975899e7560ef8c477e72f8112671dfbd979e7e5b09faa`, 1,009 files), verified it, and completed a network-isolated restore drill with external side effects disabled. Schema 69 rehearsal and production open both returned integrity `ok`, zero foreign-key errors and unchanged fingerprints for 74 Sources, 149 capture versions, 1,318 assets, 2,275 segments, 5,147 Claims, 8,292 evidence rows, zero Drafts and zero visuals. The deterministic offline qualification gate retained 413 actionable opportunities: 257 ready, 156 evidence gaps and zero hard violations.
+
+The replacement passed isolated readiness before network attachment. Public `/api/health` and `/api/ready` then returned version 2.0.14 and ready state; Frontend Contract 1.4.0 remained healthy. The authenticated Content smoke returned exactly seven approved rows, all with backend-owned `production_state` 1.2 and explicit current/recovery semantics. The stable post-rollout query-only audit reported integrity `ok`, zero foreign-key errors, zero active Jobs, zero active production Jobs, unchanged 5,677 model-call metrics and zero WordPress Jobs. The 52 new completed Jobs were deterministic, unowned startup maintenance for topic/Contract/coverage/opportunity projection and reconciliation; they neither called a model nor retried a production owner.
+
+The retained rollback set is stopped container `engine-before-9341a30`, READY disk snapshot `stc-pre-2-0-14-9341a30`, and the verified application snapshot above. Successful-upgrade cleanup removed rehearsal databases, obsolete containers and unused Docker layers, retained only one application snapshot, and deleted superseded GCE snapshot `stc-pre-2-0-13-8e3b9a4`. Final VM disk use is 9,343,717,376 of 84,293,791,744 bytes (12%). Temporary IAP access and remote `/tmp` artifacts were removed after evidence capture.
+
+Ignored local evidence: pre-deploy audit SHA-256 `77B0182C098889892D45ECA4BAC6E0423778F6F04088401C49DEED0526C22675`; post-deploy audit `CEF7E1DF204A2A931A67DCD46FE14FFF2072B6B5560A46B3C058D92B033D0F08`; authenticated API smoke `E48F0F14C0A04A787A031CFAAF3F52FB9EB14A97C199F855E95E7C57BE4BA374`; deployment evidence archive `F23976B5264876F2E8850C169577CA060594FF9F8AC924B05E4A3E823C1D2A94`.

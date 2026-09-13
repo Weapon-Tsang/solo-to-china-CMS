@@ -8,6 +8,7 @@
 - Open the mobile secondary-action menu upward inside the card with an explicit stacking layer, preventing following cards and the card clipping boundary from hiding archive/delete actions.
 - Expose the existing audited destination-correction workflow from production details for `DESTINATION_TOPIC_MISMATCH`; it recalculates evidence and requires scope reconfirmation instead of blind retry.
 - No database migration and no automatic content retry are introduced by this release.
+- Deploy revision `9341a30ea07ac16fa2803a8aed5f27c776106c17` at immutable image digest `sha256:05db2059e2212bc75ffec8806b3dc651c98d20c53ae598b5ce7ecb50969b2c9c` after a verified backup/restore drill and read-only before/after audit. Production remained at seven approved rows, zero active production Jobs, 5,677 model-call metrics and zero WordPress Jobs; no affected record was retried.
 
 ## 2.0.13 - 2026-09-13
 

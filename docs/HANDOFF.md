@@ -1,6 +1,6 @@
 # 2.0.14 production error repair handoff
 
-App/Extension version `2.0.14`, schema migration `69`, and Content Strategy `3.3` are implemented locally; `production_state` is version `1.2`. Production is intentionally still on 2.0.13 at revision `8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303`; no 2.0.14 deployment, content retry, archive, deletion, WordPress call or data reconciliation has been run. The read-only follow-up audit and implementation evidence are in `audit/CMS_PRODUCTION_ERROR_REPAIR_2.0.14_2026-09-13.md`.
+App/Extension version `2.0.14`, schema migration `69`, and Content Strategy `3.3` are deployed in production; `production_state` is version `1.2`. The runtime revision is `9341a30ea07ac16fa2803a8aed5f27c776106c17` at immutable image digest `sha256:05db2059e2212bc75ffec8806b3dc651c98d20c53ae598b5ce7ecb50969b2c9c`. The read-only follow-up audit, implementation and production rollout evidence are in `audit/CMS_PRODUCTION_ERROR_REPAIR_2.0.14_2026-09-13.md`.
 
 The production audit after the operator's screenshot interactions found seven approved workbench records, all needing attention, zero queued/running Jobs and 5,677 model-attempt metrics. Three newly started writing-preparation records and one narrative retry show the same Vertex sequence: native JSON Schema HTTP 400 followed by OpenAPI Schema HTTP 400, with no usage tokens confirming generation. Two records are deterministic destination/topic mismatches. Two old downstream failures lack prerequisites required by the current registry; 1.2 reports those failures as history and recovers the first missing dependency instead of allowing the invalid page-plan/content-plan retry.
 
@@ -9,6 +9,12 @@ Vertex now falls back to prompt-enforced JSON if both provider schema dialects r
 The mobile “更多” menu opens above its trigger with explicit stacking and was exercised at a 393×852 viewport: its rendered top/bottom stayed within the card clipping rectangle and both secondary actions remained visible. Production detail reports the actual failure stage, separates non-blocking historical failures and uses operator-facing stage labels.
 
 Local verification passes all 546 tests, `npm run check`, the production build, service-boundary checks and the consolidated offline release gate (50 mandatory checks, zero failures, five warnings and five explicitly external/not-tested checks). The release gate made no paid model, production WordPress, Search Console or production-database request.
+
+The authorized production rollout used Cloud Build `32a28924-4fd6-4f84-b021-d5dadcfb5ed9`, created READY disk snapshot `stc-pre-2-0-14-9341a30`, and created/drilled application snapshot `solo-to-china-2026-09-13T14-57-27-804Z.snapshot` (`e0982717bf57e962b2975899e7560ef8c477e72f8112671dfbd979e7e5b09faa`). Schema 69 rehearsal and production open both returned integrity `ok`, zero foreign-key errors and identical Source/capture/media/Claim/Evidence/Draft/visual fingerprints. Public health/readiness and the authenticated Content API passed.
+
+The post-rollout read-only audit found the same seven approved Content rows, zero active Jobs, zero active production Jobs, 5,677 model-call metrics and zero WordPress Jobs. Startup completed 52 deterministic non-production-owner maintenance jobs (topic, Contract, coverage and opportunity projection/reconciliation); none called a model or retried an approved production record. No production record was archived, deleted, scope-corrected or automatically retried. Runtime configuration is pinned to the immutable digest; the stopped `engine-before-9341a30` container, READY 2.0.14 disk snapshot and latest verified application snapshot form the immediate rollback set.
+
+Storage cleanup retained only the active engine image, the immediate rollback engine image and pinned Cloudflared image on the VM, retained one application snapshot, and deleted superseded disk snapshot `stc-pre-2-0-13-8e3b9a4`. VM disk use after cleanup is 9,343,717,376 of 84,293,791,744 bytes (12%). Temporary IAP access and remote audit files are removed at the end of rollout.
 
 ## 2.0.13 deployed baseline
 

@@ -181,7 +181,7 @@ Run only the isolated HTTP/API/static smoke phase after an existing build with:
 ```powershell
 npm run test:smoke
 ```
-# Content production workbench operations (2.0.14 source; production remains 2.0.13 until authorized)
+# Content production workbench operations (2.0.14 source and production)
 
 The active Content workspace API is `GET /api/content`; it returns `{ items, sections }`, and every item includes the backend-owned `production_state`. `GET /api/content/:opportunityId/production-state` returns the pre-Draft-or-later detail, timeline, structural page preview, WordPress preview/edit links and combined audit/failure history. `GET /api/content/:opportunityId/history` returns the history alone.
 
@@ -191,4 +191,4 @@ In `production_state` 1.2, a failed downstream Job whose current prerequisites a
 
 Schema 69 adds `jobs.production_owner_opportunity_id` and Opportunity/idempotency ownership on `content_operation_history`. Its transactional migration assigns historical Job/Assembly/operation ownership only where exactly one approved Opportunity proves the owner; ambiguous Candidate history stays unowned for diagnostics. It does not enqueue Jobs, run recovery, contact a model, alter approval decisions, synchronize the Frontend Contract or call WordPress. Startup still resumes already queued durable work, but historical production retry synthesis is disabled unless a controlled maintenance invocation explicitly enables `productionStartupResumeEnabled`.
 
-Before any 2.0.14 deployment, capture a new verified backup and read-only production classification/model-call/active-job baseline. Schema remains 69, so no migration or reconciliation is required; do not enqueue the seven affected rows as part of rollout. The historical 2.0.13 projection helper remains read-only and must not be used to mutate production.
+The 2.0.14 rollout captured a verified paired backup and read-only production classification/model-call/active-job baseline before replacement. Schema remained 69, so no migration was required and the seven affected rows were not enqueued. After isolated readiness and public attachment, repeat the authenticated Content projection and read-only baseline: all seven rows must still be approved, production/model/WordPress counters must not show rollout-triggered work, and the runtime must be pinned to the immutable image digest. The historical 2.0.13 projection helper remains read-only and must not be used to mutate production.
