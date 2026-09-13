@@ -2873,7 +2873,16 @@ export class Repository {
   reconcileRecommendationInbox(destinationSlug = null) {
     const clauses=["o.lifecycle_state IN ('recommended','recommended_again','deferred')"];
     const values=[];
-    if (destinationSlug) { clauses.push("o.destination_slug=?"); values.push(destinationSlug); }
+    if (destinationSlug) {
+      const normalizedDestination=slugify(destinationSlug);
+      const region=primaryDestinationScope(normalizedDestination);
+      if (region!==normalizedDestination || PRIMARY_DESTINATION_SCOPES.has(region)) {
+        clauses.push("(o.destination_slug=? OR o.destination_slug LIKE ?)");
+        values.push(region,`${region}-%`);
+      } else {
+        clauses.push("o.destination_slug=?"); values.push(destinationSlug);
+      }
+    }
     const rows=this.db.prepare(`SELECT o.*,r.reasoning_summary,r.strategy_version AS recommendation_strategy_version
       FROM content_opportunities o LEFT JOIN content_recommendations r ON r.id=o.recommendation_id
       WHERE ${clauses.join(" AND ")} ORDER BY o.updated_at DESC,o.id`).all(...values);
@@ -7602,7 +7611,8 @@ function recommendationInboxRank(item) {
 function canonicalIntentKeyForOpportunity(row) {
   const coverage=json(row.coverage_json,{});
   const duration=canonicalDuration(`${row.title || ""} ${row.topic_key || ""} ${coverage.proposal?.readerPromise || ""}`);
-  const destination=slugify(row.destination_slug || "unknown") || "unknown";
+  const exactDestination=slugify(row.destination_slug || "unknown") || "unknown";
+  const destination=coverage.knowledgeEventGenerated===true ? primaryDestinationScope(exactDestination) : exactDestination;
   const mode=normalizePublicationMode(coverage.publicationMode);
   const generic=new Set([
     "a","an","and","for","in","of","the","to","travel","guide","how","visit","independently","independent",
@@ -7613,6 +7623,15 @@ function canonicalIntentKeyForOpportunity(row) {
     .toLowerCase().replace(/\b(?:72\s*[- ]?hours?|3\s*[- ]?days?)\b/gu," ");
   const tokens=[...topicTokens(text)].filter((token) => !generic.has(token) && token!==destination && !/^\d+$/u.test(token)).sort();
   return [destination,normalizeContentType(row.content_type),mode,duration,tokens.slice(0,12).join("-") || "destination-core"].join(":");
+}
+
+const PRIMARY_DESTINATION_SCOPES=new Set([
+  "beijing","shanghai","xian","chengdu","chongqing","hangzhou","suzhou","guilin","guangzhou","shenzhen","yunnan","zhangjiajie",
+]);
+
+function primaryDestinationScope(value) {
+  const destination=slugify(value || "unknown") || "unknown";
+  return [...PRIMARY_DESTINATION_SCOPES].find((scope)=>destination===scope || destination.startsWith(`${scope}-`)) || destination;
 }
 
 function groupRecommendationIntents(items) {

@@ -338,6 +338,42 @@ test("recommendation reconciliation merges near-identical production paths from 
   assert.equal(repository.listRecommendationInbox().filter((item)=>item.source_id===sourceId).length,1);
 });
 
+test("knowledge reconciliation merges the same intent across a city and its nested destination scope", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const sourceIds=new Map();
+  for(const [externalId,destination,key,predicate,value] of [
+    ["68abcdef00000000000000f1",["Chongqing","chongqing"],"chongqing.hongyadong.entry","entry","Use the signed visitor entrance"],
+    ["68abcdef00000000000000f2",["Chongqing","chongqing"],"chongqing.hongyadong.timing","timing","Arrive before the evening peak"],
+    ["68abcdef00000000000000f3",["Chongqing Jiefangbei","chongqing-jiefangbei"],"jiefangbei.hongyadong.entry","entry","Use the signed visitor entrance"],
+    ["68abcdef00000000000000f4",["Chongqing Jiefangbei","chongqing-jiefangbei"],"jiefangbei.hongyadong.timing","timing","Arrive before the evening peak"],
+  ]) sourceIds.set(externalId,saveResearchSource(repository,externalId,[[key,"Hongyadong",predicate,value]],value,destination));
+  for(const destination of ["chongqing","chongqing-jiefangbei"]){
+    repository.rebuildKnowledge(destination);
+    repository.rebuildTopicClusters(destination);
+    repository.rebuildKnowledgeOpportunities(destination);
+    repository.rebuildCoverageMatrices(destination);
+  }
+  const rows=db.prepare(`SELECT id,destination_slug,inbox_state,primary_opportunity_id,canonical_intent_key
+    FROM content_opportunities WHERE json_extract(coverage_json,'$.knowledgeEventGenerated')=1 ORDER BY destination_slug`).all();
+  assert.equal(rows.length,2,JSON.stringify({destinations:db.prepare("SELECT * FROM destinations").all(),
+    facts:db.prepare("SELECT destination_id,normalized_key,subject,evidence_json FROM knowledge_facts").all(),
+    clusters:db.prepare("SELECT destination_slug,title,claim_keys_json FROM topic_clusters").all(),
+    opportunities:db.prepare("SELECT id,destination_slug,title,inbox_state,coverage_json FROM content_opportunities").all()}));
+  assert.equal(rows.filter((row)=>row.inbox_state==="ACTIONABLE").length,1);
+  assert.equal(rows.filter((row)=>row.inbox_state==="MERGED").length,1);
+  assert.equal(new Set(rows.map((row)=>row.canonical_intent_key)).size,1);
+  assert.equal(repository.listRecommendationInbox().filter((item)=>item.coverage.knowledgeEventGenerated).length,1);
+  for(const externalId of ["68abcdef00000000000000f1","68abcdef00000000000000f3"]){
+    repository.saveIntakeAnalysis(sourceIds.get(externalId),{classification:"ARTICLE_CANDIDATE",recommended_action:"CREATE_CONTENT_PLAN",
+      production_mode:"SOURCE_ADAPTATION",primary_topic:"Hongyadong field note",suggested_content_type:"attraction_guide",
+      suggested_article_title:"Hongyadong field note",confidence:.9,article_potential:80,information_density:80,topic_completeness:70,
+      reasoning_summary:"Keep separately authorized source adaptations within their explicit destination scope."},"test");
+  }
+  const adaptations=repository.listRecommendationInbox().filter((item)=>item.source_id && item.title==="Hongyadong field note");
+  assert.equal(adaptations.length,2);
+  assert.equal(new Set(adaptations.map((item)=>item.canonical_intent_key)).size,2);
+});
+
 test("terminal expression failure archives the attempt and retains artifacts, approval and Golden Article associations", (t) => {
   const { db,repository }=repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at,strategy_version)
@@ -370,10 +406,10 @@ test("terminal expression failure archives the attempt and retains artifacts, ap
   assert.equal(db.prepare("SELECT body_markdown FROM article_drafts WHERE id='draft-failure'").get().body_markdown,'Body');
 });
 
-function saveResearchSource(repository,externalId,claims,text) {
+function saveResearchSource(repository,externalId,claims,text,destinationOverride=null) {
   const saved=repository.saveCapture(normalizeXiaohongshuCapture({url:`https://www.xiaohongshu.com/explore/${externalId}`,
     title:externalId,text,images:[]}));
-  const destination=externalId.startsWith("metro") ? ["Shanghai","shanghai"] : ["Chengdu","chengdu"];
+  const destination=destinationOverride || (externalId.startsWith("metro") ? ["Shanghai","shanghai"] : ["Chengdu","chengdu"]);
   repository.saveExtraction(saved.id,{source:{language:"en",summary:text,destination_name:destination[0],destination_slug:destination[1],
     traveler_fit:["solo"],practical_tips:[],warnings:[],confidence:.9},claims:claims.map(([key,subject,predicate,value]) =>
       ({key,subject,predicate,value,qualifiers:[],source_quote:value,confidence:.9})),
