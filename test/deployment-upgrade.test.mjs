@@ -64,6 +64,33 @@ test('deployment probe blocks changed content and refuses to restore a corrupted
   assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 59); db.close();
   assert.equal(fs.readFileSync(f.original, 'utf8'), 'original bytes');
 });
+test('deployment opportunity gate reconciles deterministically and rejects an actionable row below admission quality', async t => {
+  const f = await fixture(t);
+  assert.equal(f.run('backup').status, 0);
+  assert.equal(f.run('migrate').status, 0);
+  const run = (script, args = []) => spawnSync(process.execPath, [script, f.filename, ...args], {
+    cwd: app, encoding: 'utf8', windowsHide: true,
+  });
+  const reconciled = run('scripts/reconcile-opportunity-qualification.mjs');
+  assert.equal(reconciled.status, 0, reconciled.stderr);
+  const cleanAudit = run('scripts/audit-opportunity-qualification.mjs', ['--enforce']);
+  assert.equal(cleanAudit.status, 0, cleanAudit.stderr);
+  assert.equal(JSON.parse(cleanAudit.stdout).enforcement.hardViolationCount, 0);
+  const db = new DatabaseSync(f.filename);
+  db.prepare("INSERT INTO destinations(id,slug,name,created_at,updated_at) VALUES ('bad-destination','bad-destination','Bad','now','now')").run();
+  db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,title,
+    content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state,processing_state,
+    canonical_intent_key,inbox_state,seo_action)
+    VALUES ('bad-opportunity','bad-destination','["bad-destination"]','bad:topic','3.3','Unsupported opportunity',
+      'unsupported_type',100,'{"ready":true,"score":100}','{"publicationMode":"unsupported_mode"}','recommended','now','now',
+      'recommended','CURRENT','bad:key','ACTIONABLE','NEW')`).run();
+  db.close();
+  const rejected = run('scripts/audit-opportunity-qualification.mjs', ['--enforce']);
+  assert.notEqual(rejected.status, 0);
+  const report = JSON.parse(rejected.stdout);
+  assert.equal(report.enforcement.passed, false);
+  assert.ok(report.enforcement.hardViolationCount >= 2);
+});
 test('deployment helpers validate the supplied release version instead of a hard-coded app version', async t => {
   const f = await fixture(t);
   assert.equal(f.run('backup').status, 0);

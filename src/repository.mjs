@@ -3308,6 +3308,7 @@ export class Repository {
       const matrix = evaluateCoverage({topicKey,contentType,facts:usableFacts,sourceFamilyCount:sourceFamilyIds.length,
         publicationMode:"multi_source_synthesis"});
       const coverage = { ...matrix,publicationMode:"multi_source_synthesis",knowledgeEventGenerated:true,
+        knowledgeIntentIdentity:String(cluster.topic_key || "").split(":cluster:").at(-1) || titleIdentity,
         proposal:{readerPromise:`Help an independent traveler make a confident decision about ${cluster.title}.`,
           evidenceBoundary:`Use only the ${usableFacts.length} current, traceable facts in this knowledge cluster.`,targetEntities:[cluster.title]},
         selectedFactKeys:usableFacts.map((fact) => fact.normalized_key),selectedSourceIds:sourceIds };
@@ -7614,6 +7615,7 @@ function canonicalIntentKeyForOpportunity(row) {
   const exactDestination=slugify(row.destination_slug || "unknown") || "unknown";
   const destination=coverage.knowledgeEventGenerated===true ? primaryDestinationScope(exactDestination) : exactDestination;
   const mode=normalizePublicationMode(coverage.publicationMode);
+  const knowledgeIdentity=coverage.knowledgeEventGenerated===true ? slugify(coverage.knowledgeIntentIdentity || "") : "";
   const generic=new Set([
     "a","an","and","for","in","of","the","to","travel","guide","how","visit","independently","independent",
     "traveler","travelers","first","time","solo","practical","help","make","confident","decision","about",
@@ -7622,7 +7624,8 @@ function canonicalIntentKeyForOpportunity(row) {
   const text=`${row.title || ""} ${coverage.proposal?.readerPromise || ""}`
     .toLowerCase().replace(/\b(?:72\s*[- ]?hours?|3\s*[- ]?days?)\b/gu," ");
   const tokens=[...topicTokens(text)].filter((token) => !generic.has(token) && token!==destination && !/^\d+$/u.test(token)).sort();
-  return [destination,normalizeContentType(row.content_type),mode,duration,tokens.slice(0,12).join("-") || "destination-core"].join(":");
+  return [destination,normalizeContentType(row.content_type),mode,duration,
+    knowledgeIdentity ? `knowledge-${knowledgeIdentity}` : tokens.slice(0,12).join("-") || "destination-core"].join(":");
 }
 
 const PRIMARY_DESTINATION_SCOPES=new Set([

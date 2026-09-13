@@ -1,5 +1,12 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.11 - 2026-09-13
+
+- Opportunity reconciliation derives Knowledge identity from the resolved topic entity and reconciles a primary city together with its nested destination scopes, so bilingual titles and parent/child destination aliases cannot create parallel Knowledge opportunities.
+- Source-backed adaptations retain their exact destination and declared production path; conservative same-intent matching merges only redundant paths and preserves distinct modes, durations and reader promises.
+- Every existing-installation upgrade now runs a deterministic offline opportunity reconciliation and an enforced admission audit before traffic is exposed. The gate verifies current Source evidence and strategy, declared paths, usable Knowledge facts, independent Source families, readiness consistency, lifecycle/type/mode/title/promise fields, generic-topic exclusion, canonical and semantic duplicates, migration references, SQLite integrity and foreign keys.
+- Evidence-gap opportunities remain visible for editorial consideration but stay outside content production until coverage is ready; the gate reports this hold separately from admission failures.
+
 ## App 2.0.10 - 2026-09-13
 
 - Completed Sources are reconsidered under Strategy 3.3 regardless of the label on a compatible historical diagnostic; the stored output is normalized and its opportunities are recalculated without another model call.

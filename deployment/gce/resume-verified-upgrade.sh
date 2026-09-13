@@ -14,12 +14,14 @@ RELEASE="/opt/solo-to-china/upgrades/$REVISION"
 [[ "$(docker inspect --format '{{.State.Running}}' engine)" == false ]]
 python3 - "$RELEASE" <<'PY'
 import json, pathlib, sqlite3, sys
-release=pathlib.Path(sys.argv[1]); report=release/'migrate.json'
+release=pathlib.Path(sys.argv[1]); report=release/'migrate.json'; gate=release/'opportunity-audit.json'
 result=json.loads(report.read_text())
 assert result['schema']==67 and result['integrity']=='ok'
 assert result['foreignKeyErrors']==0 and result['preservedContentFingerprints'] is True
+audit=json.loads(gate.read_text())
+assert audit['enforcement']['passed'] is True and audit['enforcement']['hardViolationCount']==0
 dbpath=pathlib.Path('/var/lib/docker/volumes/solo_to_china_data/_data/solo-to-china.sqlite')
-assert dbpath.stat().st_mtime_ns <= report.stat().st_mtime_ns
+assert dbpath.stat().st_mtime_ns <= gate.stat().st_mtime_ns
 wal=pathlib.Path(str(dbpath)+'-wal')
 assert not wal.exists() or wal.stat().st_size==0, 'Unverified WAL writes exist'
 db=sqlite3.connect('file:'+str(dbpath)+'?mode=ro',uri=True)

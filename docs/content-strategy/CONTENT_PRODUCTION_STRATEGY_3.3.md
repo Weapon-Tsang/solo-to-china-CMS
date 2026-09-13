@@ -22,7 +22,11 @@ Every completed current Source that satisfies the active intake policy contribut
 
 Knowledge opportunities require at least two usable current facts from at least two independent Source families. Canonical entity identity and known bilingual destination aliases define the cluster. Context-free labels such as `venue`, `restaurant`, `pathway` or `Day 3 itinerary` do not create an article opportunity by themselves. Content type follows the cluster entity and complete title tokens; incidental words in supporting predicates cannot reclassify the topic.
 
+Knowledge opportunity identity uses the resolved cluster entity across a primary city and its nested destination scopes. A bilingual or parent/child destination title for the same entity, content type and publication mode remains one actionable opportunity. Source-backed adaptations retain the exact declared destination because their source path and reader promise may be independently useful.
+
 An evidence-gap opportunity remains visible for editorial consideration but cannot enter production until its required coverage is ready. Coverage refresh uses only the opportunity's selected fact keys. Replaced, duplicate and older-strategy records remain auditable internally and do not inflate the actionable Inbox.
+
+An existing-installation upgrade deterministically rebuilds and reconciles opportunities offline, then enforces admission quality before public traffic is connected. The gate checks current completed evidence, current strategy, declared Source paths, usable selected facts, independent Source families, readiness consistency, valid lifecycle/type/mode/title/reader promise, generic-topic exclusion, duplicate identity, migration references, database integrity and foreign keys. It performs no model request, editorial approval, draft creation or WordPress action.
 
 The processing-gap diagnostic reports capture completeness, media durability, segments, extraction, coverage, Experience, active jobs, legacy gates, hard limits, the first missing stage and the proposed action. Historical recovery begins from a stored dry-run fingerprint and queues only the missing stage. Child jobs inherit the recovery run, parent job, route, priority and `historical_recovery` class. New interactive intake runs ahead of historical work. Completed stages and model receipts remain reusable across restarts.
 

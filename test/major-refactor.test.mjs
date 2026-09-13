@@ -347,13 +347,16 @@ test("knowledge reconciliation merges the same intent across a city and its nest
     ["68abcdef00000000000000f3",["Chongqing Jiefangbei","chongqing-jiefangbei"],"jiefangbei.hongyadong.entry","entry","Use the signed visitor entrance"],
     ["68abcdef00000000000000f4",["Chongqing Jiefangbei","chongqing-jiefangbei"],"jiefangbei.hongyadong.timing","timing","Arrive before the evening peak"],
   ]) sourceIds.set(externalId,saveResearchSource(repository,externalId,[[key,"Hongyadong",predicate,value]],value,destination));
+  for(const destination of ["chongqing","chongqing-jiefangbei"]) repository.rebuildKnowledge(destination);
+  db.prepare(`UPDATE knowledge_facts SET entity_key='attraction.hongyadong',entity_resolution_status='resolved',
+    entity_type='attraction',granularity='specific_entity',canonical_subject=CASE
+      WHEN destination_id=(SELECT id FROM destinations WHERE slug='chongqing') THEN 'Hongyadong' ELSE '洪崖洞' END`).run();
   for(const destination of ["chongqing","chongqing-jiefangbei"]){
-    repository.rebuildKnowledge(destination);
     repository.rebuildTopicClusters(destination);
     repository.rebuildKnowledgeOpportunities(destination);
     repository.rebuildCoverageMatrices(destination);
   }
-  const rows=db.prepare(`SELECT id,destination_slug,inbox_state,primary_opportunity_id,canonical_intent_key
+  const rows=db.prepare(`SELECT id,destination_slug,title,inbox_state,primary_opportunity_id,canonical_intent_key
     FROM content_opportunities WHERE json_extract(coverage_json,'$.knowledgeEventGenerated')=1 ORDER BY destination_slug`).all();
   assert.equal(rows.length,2,JSON.stringify({destinations:db.prepare("SELECT * FROM destinations").all(),
     facts:db.prepare("SELECT destination_id,normalized_key,subject,evidence_json FROM knowledge_facts").all(),
@@ -362,6 +365,7 @@ test("knowledge reconciliation merges the same intent across a city and its nest
   assert.equal(rows.filter((row)=>row.inbox_state==="ACTIONABLE").length,1);
   assert.equal(rows.filter((row)=>row.inbox_state==="MERGED").length,1);
   assert.equal(new Set(rows.map((row)=>row.canonical_intent_key)).size,1);
+  assert.equal(new Set(rows.map((row)=>row.title)).size,2);
   assert.equal(repository.listRecommendationInbox().filter((item)=>item.coverage.knowledgeEventGenerated).length,1);
   for(const externalId of ["68abcdef00000000000000f1","68abcdef00000000000000f3"]){
     repository.saveIntakeAnalysis(sourceIds.get(externalId),{classification:"ARTICLE_CANDIDATE",recommended_action:"CREATE_CONTENT_PLAN",

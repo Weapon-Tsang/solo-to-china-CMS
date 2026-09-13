@@ -128,6 +128,25 @@ offline "$OLD_IMAGE" backup
 offline "$IMAGE" rehearse
 MIGRATED=1
 offline "$IMAGE" migrate
+PHASE=opportunity-reconcile
+docker run --rm --network none --volume solo_to_china_data:/var/lib/solo-to-china \
+  "$IMAGE" node /app/scripts/reconcile-opportunity-qualification.mjs \
+  /var/lib/solo-to-china/solo-to-china.sqlite >"$RELEASE/opportunity-reconcile.json" 2>"$RELEASE/opportunity-reconcile.log"
+PHASE=opportunity-audit
+docker run --rm --network none --volume solo_to_china_data:/var/lib/solo-to-china \
+  "$IMAGE" node /app/scripts/audit-opportunity-qualification.mjs \
+  /var/lib/solo-to-china/solo-to-china.sqlite --enforce >"$RELEASE/opportunity-audit.json" 2>"$RELEASE/opportunity-audit.log"
+OPPORTUNITY_SUMMARY="$(python3 - "$RELEASE/opportunity-reconcile.json" "$RELEASE/opportunity-audit.json" <<'PY'
+import json,sys
+reconcile=json.load(open(sys.argv[1])); audit=json.load(open(sys.argv[2]))
+print(json.dumps({'stage':'opportunity-gate','durationMs':reconcile['durationMs'],
+  'before':reconcile['before']['actionable'],'after':reconcile['after']['actionable'],
+  'ready':audit['counts']['actionableReadiness']['ready'],
+  'evidenceGap':audit['counts']['actionableReadiness']['evidenceGap'],
+  'hardViolations':audit['enforcement']['hardViolationCount']}))
+PY
+)"
+log "$OPPORTUNITY_SUMMARY"
 sha256sum --check --status "$RELEASE/originals.sha256"
 sha256sum --check --status "$RELEASE/env.sha256"
 log 'Original media hashes and existing environment preserved.'
