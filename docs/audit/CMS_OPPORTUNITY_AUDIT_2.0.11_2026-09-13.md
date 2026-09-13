@@ -1,53 +1,70 @@
-# CMS 2.0.11 Opportunity qualification audit — 2026-09-13
+# CMS 2.0.11 Opportunity qualification audit - 2026-09-13
 
 ## Scope and production baseline
 
-This audit started from repository revision `f3c06052c21dacf1a414f14d839797655c073347` and the production App 2.0.10 database at schema 67 and Content Strategy 3.3. The production Inbox contained 484 actionable opportunities: 243 Source-backed paths and 241 Knowledge-derived opportunities. All 74 Sources were complete and current, and the active job queue was empty.
+The audit began from the production App 2.0.10/2.0.11 database at schema 67 and Content Strategy 3.3. The original actionable Inbox contained 484 records: 243 Source-backed production paths and 241 Knowledge-derived opportunities. All 74 Sources were complete and current; no processing-gap Source was allowed to support an opportunity.
 
-The audit was read-only against production. Every candidate correction was first applied to a SQLite `VACUUM INTO` copy. It checked Source completion and current capture versions, strategy versions, lifecycle and recommendation class, selected evidence, Source-family independence, coverage/readiness consistency, SEO action, canonical intent keys, same-Source and entity duplicates, topic keys, and migration references.
+Production data was first audited read-only. Candidate corrections ran against a SQLite copy before deployment. The checks cover Source completion and capture version, current strategy, recommendation class, lifecycle and SEO state, declared Source paths, selected Knowledge facts, visibility/currentness/value/conflict state, independent Source families, readiness consistency, title/content type/publication mode/reader promise, generic topics, canonical intent, same-Source semantics, primary-city and nested-destination entity identity, topic keys, migration references, SQLite integrity and foreign keys.
 
 ## Findings
 
-The original 484 were not all correctly represented as distinct, correctly typed opportunities.
+The 484 records were not all valid representations of distinct content opportunities.
 
-- No actionable row used an old strategy, unfinished Source evidence, a processing-gap state, a forbidden lifecycle/status, a skipped SEO action or an invalid recommendation class. Readiness values stayed in 0-100 and matched their JSON. Database integrity was `ok`, with zero foreign-key or migration-reference violations.
-- Exact title/type/mode duplicates, duplicate topic keys and identical canonical keys were zero. The absence of exact duplicates masked semantic duplicates.
-- Eight of the 243 Source-backed paths described the same intent as another path from the same Source, with the same destination, content type, publication mode and compatible duration. Different modes and materially different promises remained distinct.
-- Knowledge clustering split bilingual aliases and alternate canonical subjects. The production baseline contained 38 same-destination duplicate dominant-entity groups covering 69 redundant Knowledge rows.
-- Nine Knowledge rows over-counted independent support because completed-Source filtering discarded stored Source-family membership and rebuilt independence from Source IDs. All nine still met the two-family threshold after correction, but their stored readiness was wrong.
-- Content type inference scanned all supporting predicates with substring patterns. This allowed incidental text to override the topic; the substring `eat` also matched `creative`, `great` and `weather`. A baseline dominant-entity audit flagged 149 of 241 Knowledge rows for type review.
-- Context-free subjects such as `venue`, `hotpot restaurant`, `pathway`, `featured restaurant` and `Day 3 itinerary` could pass solely by having two facts from two families. English and Chinese destination names could also split into parallel city clusters.
-- Coverage refresh could widen a Knowledge opportunity by matching title tokens across the whole destination rather than preserving its selected cluster facts.
+- No original actionable record used unfinished Source evidence, a processing-gap Source, an invalid recommendation class, a skipped SEO action or a broken migration reference. The database passed integrity and foreign-key checks.
+- Exact title/type/mode and exact canonical-key checks were insufficient: semantic duplicates remained behind bilingual titles, alternate canonical subjects and nested destination slugs.
+- Eight Source-backed rows repeated another declared path from the same Source with the same destination, type, mode and compatible duration. Distinct reader promises, modes and material durations remained separate.
+- Knowledge clustering split bilingual aliases and dominant entities. The first correction removed same-destination duplicates; a deeper audit then found seven additional redundant actionable rows spanning `chongqing` and `chongqing-jiefangbei`, including bilingual entity titles.
+- Nine Knowledge rows over-counted independent support because completed-evidence filtering rebuilt independence from raw Source IDs instead of retained Source-family membership.
+- Content-type inference could scan incidental supporting predicates, and the substring `eat` matched words such as `creative`, `great` and `weather`.
+- Context-free subjects such as `venue`, `hotpot restaurant`, `pathway`, `featured restaurant` and `Day 3 itinerary` could create an opportunity solely from fact count.
+- Coverage refresh could widen a Knowledge opportunity to destination-wide facts instead of retaining its selected cluster facts.
 
-## Correction
+## Correction and recurring prevention
 
-Knowledge clusters now union facts by canonical entity identity or normalized canonical subject, including known bilingual destination aliases. Replaced cluster opportunities are marked internal with `knowledge_cluster_replaced`; historical rows and decisions remain stored. Article eligibility requires two usable current facts, two independent Source families and a non-generic topic. Content type is derived from the destination/topic entity and complete title tokens before any fallback.
+Knowledge clusters now union facts by resolved entity identity or normalized canonical subject, including known bilingual destination aliases. A Knowledge canonical intent uses that entity identity across a primary city and nested scopes. Source-backed adaptations keep their exact destination and declared path. Generic topics are rejected, and content type inference reads the resolved topic and complete tokens rather than incidental substrings.
 
-Completed-evidence filtering reconstructs independence keys from `source_family_memberships`. Coverage refresh intersects each Knowledge opportunity's stored `selectedFactKeys` with current completed facts, preventing destination-wide expansion.
+Completed-evidence filtering restores `source_family_memberships`. Knowledge admission requires at least two usable facts and two independent Source families. A selected fact must exist, remain visible, be current or unknown-validity, be non-conflicted or resolved, contain a usable value and come from completed evidence. Coverage refresh remains restricted to stored `selectedFactKeys`.
 
-Source-path reconciliation uses a conservative semantic comparison only for Source-backed rows with the same destination, content type and publication mode, plus compatible duration. It keeps a primary row and links redundant variants as `MERGED`; different modes and reader promises remain actionable.
+Source-path reconciliation compares only rows with the same destination, content type and publication mode plus compatible duration. It preserves materially different reader promises. Replaced, duplicate and old-strategy records remain in the historical database with `INTERNAL`, `MERGED` or `SUPERSEDED` state; none are deleted.
 
-## Reviewed production-copy projection
+Every existing-installation deployment now runs two network-isolated scripts before traffic is exposed:
 
-The final isolated projection contains 420 actionable opportunities: 235 Source-backed paths and 185 Knowledge opportunities. Of these, 257 are `CURRENT` and evidence-ready; 163 are intentionally visible `EVIDENCE_GAP` opportunities that may be approved but cannot enter production until coverage is ready. Thirty-six have readiness score 0 for the same explicit evidence-gap reason; they are not reported as production-ready.
+1. `scripts/reconcile-opportunity-qualification.mjs` deterministically rebuilds topic clusters, Knowledge opportunities and coverage, and asserts that model-call, active-job, WordPress-job and draft counts do not change.
+2. `scripts/audit-opportunity-qualification.mjs --enforce` blocks deployment on any current-strategy, Source completion, declared-path, fact usability, family independence, readiness, lifecycle, field-quality, generic-topic, duplicate, migration, database-integrity or foreign-key violation.
 
-All 65 current `ARTICLE_CANDIDATE` Sources contribute their complete 243 expected stored paths: 235 remain actionable and eight are linked as merged. No Source has a missing or unexpected stored path. All 185 Knowledge opportunities use completed current evidence and satisfy the two-fact/two-family admission rule. The final checks report:
+An evidence-gap opportunity remains qualified at the editorial-topic admission level but is not production-ready. It is labelled separately and cannot enter content production until its Coverage Matrix becomes ready. This is distinct from a processing gap, which remains system-owned and outside the actionable Inbox.
 
-- zero old-strategy, lifecycle, recommendation, processing-gap, SEO, readiness or unfinished-evidence violations;
-- zero exact, canonical, same-Source-signature, topic-key or same-destination dominant-entity duplicate groups;
-- zero Source-family eligibility failures or stored family over-counts;
+## Final production result
+
+The final production database retains all 1,394 historical opportunity records. The actionable Inbox contains 413 qualified distinct opportunities: 235 Source-backed paths and 178 Knowledge opportunities. Compared with the original 484, 71 records no longer inflate the actionable total. Current historical states are 684 `SUPERSEDED`, 281 `INTERNAL`, 16 `MERGED` and 413 `ACTIONABLE`.
+
+All 65 current `ARTICLE_CANDIDATE` Sources contribute the exact 243 declared stored paths: 235 actionable and eight linked as merged. No Source has a missing or unexpected production path. All 178 actionable Knowledge opportunities pass the two-usable-fact/two-independent-family rule. The enforced production report records:
+
+- zero old-strategy, lifecycle, recommendation, processing-gap, SEO, invalid field, readiness-consistency or unfinished-evidence violations;
+- zero missing or unusable selected Knowledge facts, fact-count mismatches, Source-family mismatches or Knowledge admission failures;
+- zero exact, canonical, same-Source-signature, topic-key or cross-scope Knowledge duplicate groups;
+- zero context-free generic Knowledge topics;
 - zero missing Source/recommendation references, broken merged-primary links or canonical-key mismatches;
-- zero clear title/entity content-type mismatches and zero context-free generic titles.
+- SQLite integrity `ok`, schema 67 and zero foreign-key violations;
+- enforced hard violation count: zero.
 
-The projection preserved all historical opportunities. Its 684 `SUPERSEDED`, 281 `INTERNAL` and nine `MERGED` rows are excluded from the actionable total.
+Of the 413 qualified topics, 257 are `CURRENT` and production-ready. The other 156 are explicit `EVIDENCE_GAP` holds; 35 currently score zero and one Source-backed topic has no selected Knowledge fact. These records satisfy opportunity admission through their current Source diagnostic or Knowledge cluster, but they cannot begin production and are not represented as ready. They remain visible because Strategy 3.3 explicitly allows an editor to approve a topic while evidence is still being completed.
 
-## Local validation
+## Validation
 
-- `npm test`: 523 passed, 0 failed.
-- `npm run check`: passed; Vite built 1,882 modules, JavaScript 431.55 kB (134.90 kB gzip), CSS 57.45 kB (10.51 kB gzip), and all 12 service-boundary files passed.
-- `test/major-refactor.test.mjs`: 13 passed, covering completed-Source admission, Source-family counting, alias collapse, topic scoping, generic rejection, type inference, historical retirement and conservative Source-path merging.
-- The full 2.1 GB production-copy projection rebuilt all destination clusters, Knowledge opportunities and coverage without a model provider call. Production rollout timing and online checks are recorded below after deployment.
+- `npm test`: 526 passed, 0 failed.
+- `npm run check`: passed. Vite built 1,882 modules; JavaScript is 431.55 kB (134.90 kB gzip), CSS is 57.45 kB (10.51 kB gzip), and all 12 service-boundary files passed.
+- Deployment regression tests cover deterministic reconciliation, rejection of a below-admission actionable row, dynamic application-version validation and backup/migration rollback safety.
+- The final network-isolated production reconciliation processed 14 destination scopes in 368,866 ms. It changed actionable counts from 420 to 413, retained active jobs at five during the offline window, retained model-call count at 5,661, and retained zero WordPress jobs and zero article drafts. After startup, the inherited five jobs completed and the active queue returned to zero.
+- Both public hosts returned 12/12 HTTP 200 responses for `/api/health` and `/api/ready`. Observed p50/p95 were 1,258.2/3,149.3 ms and 1,018.0/1,255.6 ms on `engine.solotochina.com`; 1,351.5/1,603.8 ms and 992.9/1,235.6 ms on `capture.solotochina.com`.
+- The production container has zero restarts and zero fatal/uncaught/unhandled/panic log matches after deployment.
 
-## Production rollout and rollback
+## Production rollout and storage
 
-Deployment evidence, immutable image digest, verified snapshot, live reconciliation duration, post-reconciliation counts, public probes and rollback pair are appended here after rollout. The reconciliation invokes only deterministic repository methods and does not approve an opportunity, call a model, create a WordPress draft or publish an article.
+Code revisions `5163c40`, `85673a8`, `3cec22c` and final `c99c40094f8488187193451a07a7d2496f374cc1` were pushed to `codex/audit-v1.3`. Cloud Build `8294d361-9b30-4304-bde3-929c2bf1d4bf` produced immutable image `sha256:725c05425220e344a989d1028a9c0306848970dabeae5b7244ce415af82ee1b4`. Production runs that exact digest and revision as App 2.0.11; the runtime image was pinned while every other private configuration byte was preserved.
+
+Verified snapshot `solo-to-china-2026-09-13T05-37-32-154Z.snapshot` contains a 2,218,086,400-byte database with SHA-256 `dbfa8431233d7236122b22f24591812a03c58f2b0546870cdd407a3f91b40987`, schema 67, integrity `ok` and 1,009 retained files. The offline restore drill passed, opened 1,318 evidence previews and made no external side effect.
+
+The failed pre-exposure database copy from the earlier readiness-version rollback was verified obsolete and removed, freeing 2,340,270,080 bytes. Rehearsal databases were removed automatically. Artifact Registry was reduced to the active digest and the immediate rollback digest; obsolete 2.0.10 and undeployed/intermediate digests were deleted. The VM root fell from 11,641,450,496 bytes used (15%) to 9,298,579,456 bytes (12%); `/var/lib/docker` fell to 6,805,665,143 bytes. One verified data snapshot remains because GitHub restores code only, not the SQLite database or authorized uploads. One stopped immediate rollback container/image also remains; all older rollback containers and image layers are gone.
+
+No Source, original media, historical opportunity or editorial decision was deleted. No opportunity was approved, no WordPress draft was created and no article was published. Temporary IAP SSH access was removed after verification.
