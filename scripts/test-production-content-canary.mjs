@@ -2,6 +2,7 @@ import path from "node:path";
 import { createApplication } from "../src/server.mjs";
 import { loadConfig } from "../src/config.mjs";
 import { executeContentRecovery } from "../src/services/content-recovery.mjs";
+import { contentCanaryProviderCapacityOutcome } from "./lib/content-canary-policy.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 if (process.env.ALLOW_REAL_PROVIDER_CANARY !== "1") {
@@ -86,6 +87,12 @@ try {
       flow.recoveryStage ||= operation.resolvedStage;
       flow.recoveryStages.push(operation.resolvedStage);
       await drainOpportunity(repository, pipeline, row.opportunity_id, callsBefore, args.maxCalls, args.timeoutMs);
+      const stateAfterDrain = repository.getContentProductionDetail(row.opportunity_id)?.production_state || {};
+      const providerBlocker = providerCapacityBlocker(repository, row.opportunity_id, stateAfterDrain);
+      if (providerBlocker) {
+        flow.inconclusive = providerBlocker;
+        break;
+      }
     }
     const detail = repository.getContentProductionDetail(row.opportunity_id);
     const finalState = detail?.production_state || {};
@@ -135,6 +142,17 @@ const result = {
 repository.db.close();
 console.log(JSON.stringify(result, null, 2));
 if (!result.protectedDataPreserved || activeJobs.length || flows.some((flow) => ["failed", "interrupted"].includes(flow.finalStatus))) process.exitCode = 1;
+
+// A provider-capacity terminal is an inconclusive environment result, not a
+// content-repair signal. The worker already exhausts the bounded attempts for
+// one durable Job; the canary must not manufacture another recovery Job in the
+// same run and make an external 429 look like an editorial repair loop.
+function providerCapacityBlocker(repo, opportunityId, state) {
+  const job = repo.db.prepare(`SELECT id,type,failure_class,last_failure_code,last_error,attempts,max_attempts
+    FROM jobs WHERE production_owner_opportunity_id=? AND status='failed'
+    ORDER BY updated_at DESC,id DESC LIMIT 1`).get(opportunityId);
+  return contentCanaryProviderCapacityOutcome(state, job);
+}
 
 async function drainOpportunity(repo, worker, opportunityId, callsAtStart, maximumCalls, timeoutMs) {
   const deadline = Date.now() + timeoutMs;

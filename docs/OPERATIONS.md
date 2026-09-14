@@ -8,6 +8,8 @@ For real-provider acceptance, retain single concurrency, disable unrelated Batch
 
 The canary must quarantine every queued Job not owned by its current target before calling the worker. Its Frontend Contract sources remain blank so the persisted accepted snapshot is used without a test-only sync Job. For a long-Draft QA request, assert LOW thinking, bounded result cardinality and absence of `MODEL_OUTPUT_LIMIT`; a transient 429 may cool down and retry, but it is reported separately from content quality and structured-schema compatibility.
 
+If one durable canary Job exhausts its bounded `retryable_provider`/`capacity` attempts, stop that selected flow and report `provider_capacity` as an inconclusive environment result. The canary must not manufacture a second recovery Job, teach an editorial Failure Lesson, or describe the article as defective. Resume from a fresh disposable baseline after provider capacity returns.
+
 ## 2.0.23 production-copy recovery replay
 
 For a deterministic recovery audit, first create a disposable online backup of production, then run `npm run audit:prod-replay -- --database <name-containing-replay-or-work> --replay-id <unique-id>`. The command refuses filenames that do not explicitly identify a disposable copy, requires a quiescent work database, invokes no worker/model/WordPress client, and verifies one active Opportunity-owned recovery Job plus idempotent replay for each failed/interrupted record. Discard the work database after the report is retained.
