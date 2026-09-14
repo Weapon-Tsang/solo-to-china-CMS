@@ -1,5 +1,9 @@
 # Frontend Capability Contract Integration
 
+## 2.0.24 planned-section and review boundary
+
+Exact planned section labels emitted without Markdown heading markers are normalized into semantic H2 nodes before Content AST construction. Evidence-bearing planned sections that remain absent are rejected before page composition, preventing a visually plausible page from losing its ledger scope. Independent QA receives the reader-facing Draft, compact traceability and page-validation status rather than the complete internal Frontend payload; Frontend JSX/CSS, component rendering and responsive presentation remain exclusively owned by the pinned Frontend Contract and WordPress theme.
+
 ## 2.0.23 semantic presentation boundary
 
 The CMS continues to emit semantic Page Payloads only. It does not copy or synthesize Frontend JSX/CSS. Reader-visible Markdown tables retained by historical Drafts are parsed into semantic table AST nodes and projected as readable Contract-native list items when the active Registry exposes no table renderer. Model output is instructed to use prose/lists, and final validation rejects leaked Markdown decorators or table syntax before WordPress delivery.

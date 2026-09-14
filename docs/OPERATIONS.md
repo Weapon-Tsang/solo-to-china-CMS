@@ -1,5 +1,11 @@
 # V1 Operations
 
+## 2.0.24 real-provider recovery acceptance
+
+Use `scripts/inspect-production-content-canary.mjs <database-containing-canary|replay|work> [since]` to inspect Jobs, reviews, Drafts and model metrics from a disposable production-copy canary. The script opens SQLite read-only with `query_only=ON` and refuses a filename that could be mistaken for the live database. It performs no recovery, model call or WordPress write.
+
+For real-provider acceptance, retain single concurrency, disable unrelated Batch/image work, recover one approved Opportunity-owned flow at a time, and verify that a failed QA report changes the next `generate_draft` artifact input instead of producing `pipeline.job_reused`. WordPress acceptance remains `draft` only and must store both `preview_url` and `edit_url`; publication is a separate human action.
+
 ## 2.0.23 production-copy recovery replay
 
 For a deterministic recovery audit, first create a disposable online backup of production, then run `npm run audit:prod-replay -- --database <name-containing-replay-or-work> --replay-id <unique-id>`. The command refuses filenames that do not explicitly identify a disposable copy, requires a quiescent work database, invokes no worker/model/WordPress client, and verifies one active Opportunity-owned recovery Job plus idempotent replay for each failed/interrupted record. Discard the work database after the report is retained.

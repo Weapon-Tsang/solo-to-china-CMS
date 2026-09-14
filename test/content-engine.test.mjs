@@ -19,11 +19,14 @@ test("Kimi-backed independent QA cannot approve deterministic evidence or commer
       { normalized_key: "timed.fact", consensus_status: "corroborated", freshness_state: "time_sensitive", verification_priority: "normal", consensus_method: "RECENCY_WEIGHTED_CONSENSUS" },
     ],
     draft: {
+      id: "draft-internal-id",
       body_markdown: "Book this affiliate deal on Trip.com.",
       evidence_ledger: [{ section: "Test", claim_keys: ["missing.fact", "valid.fact", "timed.fact"], source_ids: [] }],
       unresolved_conflicts: [],
       verification_notes: [],
     },
+    frontend_page: { payload:{metadata:{title:"Large internal payload"},blocks:Array(20).fill({type:"paragraph",data:{content:"internal"}})},
+      validation:{valid:true,internal_diagnostics:Array(20).fill("not for the editor")},current:true,status:"valid" },
   });
   assert.equal(reviewed.output.passed, false);
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "commercial_contamination"));
@@ -33,6 +36,9 @@ test("Kimi-backed independent QA cannot approve deterministic evidence or commer
   assert.equal(reviewed.output.issues.some((issue) => issue.code === "missing_temporal_disclosure"), false);
   assert.equal(request.url, "https://api.example.test/v1/chat/completions");
   assert.equal(request.body.response_format.type, "json_schema");
+  const reviewInput=JSON.parse(request.body.messages[1].content);
+  assert.equal("id" in reviewInput.draft,false);
+  assert.deepEqual(reviewInput.frontend_page,{current:true,status:"valid",valid:true});
 });
 
 test("page composition extracts CMS node references before Frontend validation", async () => {

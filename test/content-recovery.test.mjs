@@ -155,12 +155,12 @@ test('quality regeneration feedback makes the failed review part of the reusable
   assert.equal(feedback.quality_score,38);
   assert.deepEqual(feedback.blockers.map((item)=>item.code),['DATABASE_DUMP']);
   const repairJob={type:'generate_draft',entity_id:'brief-r',production_owner_opportunity_id:'opportunity-r',
-    dedupe_key:'auto-quality-repair:generate_draft:draft-r:r1'};
+    dedupe_key:'recovery-stage:opportunity-r:generate_draft:brief-r:manual:g2'};
   const before=dependencyHash(repository.pipelineDependencyMaterial(repairJob));
   db.prepare("UPDATE article_drafts SET revision=2,content_hash='hash-2'").run();
   repository.saveReview('draft-r',{passed:false,score:50,issues:[{code:'NO_CAUSAL_FLOW',severity:'blocker',message:'No trade-offs.'}],checks:[],unsupported_claims:[]},'fixture',
     {revision:2,contentHash:'hash-2',productionOwnerOpportunityId:'opportunity-r'});
-  assert.notEqual(dependencyHash(repository.pipelineDependencyMaterial({...repairJob,dedupe_key:'auto-quality-repair:generate_draft:draft-r:r2'})),before);
+  assert.notEqual(dependencyHash(repository.pipelineDependencyMaterial({...repairJob,dedupe_key:'recovery-stage:opportunity-r:generate_draft:brief-r:manual:g3'})),before);
 });
 test('legacy plan and frozen packet scope mismatch recovers from editorial assembly instead of rewriting the draft',t=>{
   const {db,repository}=fixture(t);

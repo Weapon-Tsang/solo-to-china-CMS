@@ -1,5 +1,11 @@
 # Failure and production lifecycle
 
+## 2.0.24 genuine Draft regeneration
+
+Every `generate_draft` Job includes the current owner-matched failed QA review in its dependency hash, whether it was created by automatic repair, the workbench, a canary or another explicit recovery caller. A newly queued recovery therefore cannot reuse the prose that triggered the current blocker. The writer still reuses the approved Brief, Narrative Plan, frozen Writing Packet, authorized Source media and evidence facts; successful upstream research is not rerun.
+
+The generated Draft must contain every evidence-bearing planned section. Exact planned labels output as plain standalone lines are promoted to H2 before validation; after one structured correction request, any still-missing section fails closed as `DRAFT_STRUCTURE_INVALID` and remains auditable instead of silently clearing its evidence scope.
+
 ## 2.0.23 recovery depth and authorized source media
 
 `production_state` 1.9 chooses recovery depth from the authoritative failure, not from the button that happens to be visible. `INVALID_DRAFT_REPAIR_SCOPE`, `MODEL_OUTPUT_LIMIT`, a database-dump-style Draft, missing planned sections, evidence-ledger evasion, or multiple global structure blockers target `generate_draft`. This preserves Editorial Assembly, Narrative Plan, Writing Packet and Frontend Page Plan while rebuilding only the failed prose. A frozen Writing Packet/page-plan scope mismatch targets `assemble_editorial`; a page/Contract-only failure targets `compose_frontend_page`.

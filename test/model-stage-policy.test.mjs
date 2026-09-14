@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAiClient } from "../src/ai/client.mjs";
-import { applyBoundedDraftRepair, applyDeterministicGates, ContentEngine } from "../src/ai/content-engine.mjs";
+import { applyBoundedDraftRepair, applyDeterministicGates, ContentEngine, normalizeDraftHeadingHierarchy } from "../src/ai/content-engine.mjs";
 import { priceModelAttempt, resolveStagePolicy, summarizeModelCostLedger } from "../src/ai/stage-policy.mjs";
 import stagePolicy from "../config/model-stage-policy.json" with { type: "json" };
 
@@ -156,6 +156,52 @@ test("repair request enumerates only headings present in the current draft", asy
   const input=JSON.parse(requestBody.messages[1].content);
   assert.deepEqual(input.allowed_replacement_headings,["Actual route"]);
   assert.deepEqual(requestBody.response_format.json_schema.schema.properties.replacement_sections.items.properties.heading.enum,["Actual route"]);
+});
+
+test("draft normalization promotes exact planned labels and removes duplicate article titles", () => {
+  const normalized=normalizeDraftHeadingHierarchy([
+    "## Chongqing Metro Guide",
+    "",
+    "Arriving by Rail",
+    "",
+    "Use Line 10, then transfer.",
+    "",
+    "## Existing Heading",
+    "",
+    "Keep this section.",
+  ].join("\n"),"Chongqing Metro Guide",["Arriving by Rail","Existing Heading"]);
+  assert.doesNotMatch(normalized,/^#{1,6}\s+Chongqing Metro Guide$/m);
+  assert.match(normalized,/^## Arriving by Rail$/m);
+  assert.match(normalized,/^## Existing Heading$/m);
+});
+
+test("draft request sends each frozen fact once with bounded evidence while retaining its authorized scope", async () => {
+  let requestBody;
+  const fact={normalized_key:"place.hours",subject:"Place",predicate:"opening_hours",preferred_value:"09:00-17:00",
+    consensus_status:"corroborated",freshness_state:"current",evidence:Array.from({length:8},(_,index)=>({
+      claim_id:`claim-${index}`,source_id:`source-${index}`,value:"09:00-17:00",quote:"Detailed authorized evidence ".repeat(100),
+      qualifiers:Array(20).fill("daily"),coverage_limitations:Array(20).fill("seasonal exception"),source_title:"Official source",
+    }))};
+  const output={title:"Chongqing Metro Guide",slug:"chongqing-metro-guide",meta_description:"A practical metro guide.",
+    body_markdown:"Chongqing Metro Guide\n\nArriving by Rail\n\nPlace opens from 09:00 to 17:00.",
+    evidence_ledger:[{section_id:"arrival",section:"Arriving by Rail",content_node_ids:["arrival_body"],claim_keys:["place.hours"],source_ids:["source-0"]}],
+    unresolved_conflicts:[],verification_notes:[],seo:{meta_title:"Chongqing Metro Guide",focus_keyword:"Chongqing metro guide",secondary_keywords:[],search_intent:"informational",key_takeaways:[]},faqs:[],visuals:[]};
+  const engine=new ContentEngine({apiKey:"key",model:"model",baseUrl:"https://api.example.test/v1"},async(_url,options)=>{
+    requestBody=JSON.parse(options.body);
+    return Response.json({model:"model",choices:[{finish_reason:"stop",message:{content:JSON.stringify(output)}}]});
+  });
+  const result=await engine.draft({
+    brief:{plan:{title:"Chongqing Metro Guide",outline:[{section_id:"arrival",heading:"Arriving by Rail",claim_keys:["place.hours"]}]}},
+    writing_packet:{selected_fact_keys:["place.hours"],evidence_ledger:[{fact_snapshot:fact}],context:{version:2,
+      content_policy:{maximum_words:1000,faq:{maximum:0},visuals:{maximum:0}},experiences:[],reader_sources:[],authorized_source_assets:[]}},
+  });
+  const input=JSON.parse(requestBody.messages[1].content);
+  assert.equal("evidence_ledger" in input.writing_packet,false);
+  assert.deepEqual(input.writing_packet.evidence_scope,[{normalized_key:"place.hours",source_ids:["source-0","source-1","source-2"]}]);
+  assert.equal(input.evidence_ledger_facts[0].evidence.length,3);
+  assert.ok(input.evidence_ledger_facts[0].evidence.every((item)=>item.quote.length<=900 && item.qualifiers.length===8));
+  assert.doesNotMatch(result.output.body_markdown,/Chongqing Metro Guide/);
+  assert.match(result.output.body_markdown,/^## Arriving by Rail$/m);
 });
 
 test("evidence repair may update only bounded known claim keys", () => {

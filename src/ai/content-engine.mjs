@@ -341,19 +341,24 @@ export class ContentEngine {
       instructions: draftPrompt(policy),
       input: JSON.stringify({ ...input, revision_feedback: extraFeedback }), options,
     });
+    const prepareAndValidate = (output) => {
+      output.body_markdown = normalizeDraftHeadingHierarchy(output.body_markdown, output.title,
+        outline.map((section)=>section.heading).filter(Boolean));
+      validateGeneratedDraftEvidence(output, allowedFactKeys, allowedSectionIds, requiredSectionIds, sectionFactKeys);
+      validateGeneratedDraftStructure(output, outline);
+    };
     let result = await request();
     try {
-      validateGeneratedDraftEvidence(result.output, allowedFactKeys, allowedSectionIds, requiredSectionIds, sectionFactKeys);
+      prepareAndValidate(result.output);
     } catch (error) {
-      if (error?.code !== "DRAFT_EVIDENCE_SCOPE_INVALID") throw error;
-      result = await request({ previous: revisionFeedback, evidence_contract_error: error.message,
+      if (!["DRAFT_EVIDENCE_SCOPE_INVALID", "DRAFT_STRUCTURE_INVALID"].includes(error?.code)) throw error;
+      result = await request({ previous: revisionFeedback, draft_contract_error: error.message,
         rejected_claim_keys: error.invalidClaimKeys || [], rejected_section_ids: error.invalidSectionIds || [],
-        missing_evidence_section_ids: error.missingSectionIds || [], invalid_section_claim_mappings:error.invalidSectionClaims || [] });
-      validateGeneratedDraftEvidence(result.output, allowedFactKeys, allowedSectionIds, requiredSectionIds, sectionFactKeys);
+        missing_evidence_section_ids: error.missingSectionIds || [], missing_body_section_ids:error.missingBodySectionIds || [],
+        invalid_section_claim_mappings:error.invalidSectionClaims || [] });
+      prepareAndValidate(result.output);
     }
     result.output.slug = slugify(result.output.slug || result.output.title);
-    result.output.body_markdown = normalizeDraftHeadingHierarchy(result.output.body_markdown,result.output.title,
-      outline.map((section)=>section.heading).filter(Boolean));
     result.output.seo ||= {};
     result.output.meta_description = truncate(result.output.meta_description, 500);
     result.output.seo.meta_title = truncate(result.output.seo.meta_title || result.output.title, 200);
@@ -552,7 +557,7 @@ export function applyBoundedDraftRepair(draft, patch, issues = [], { validFactKe
   };
 }
 
-function normalizeDraftHeadingHierarchy(markdown, title = "", sectionHeadings = []) {
+export function normalizeDraftHeadingHierarchy(markdown, title = "", sectionHeadings = []) {
   const titleKey = normalizeComparable(title);
   const sectionKeys = new Set(sectionHeadings.map(normalizeComparable).filter(Boolean));
   let previousLevel = 0;
@@ -562,10 +567,12 @@ function normalizeDraftHeadingHierarchy(markdown, title = "", sectionHeadings = 
   for (const line of String(markdown || "").split(/\r?\n/u)) {
     if (/^\s*```/.test(line)) { inFence = !inFence;output.push(line);continue; }
     if (inFence) { output.push(line);continue; }
-    const match = line.match(/^(#{1,6})\s+(.+?)\s*$/u);
+    let match = line.match(/^(#{1,6})\s+(.+?)\s*$/u);
+    const plainKey = normalizeComparable(line);
+    if (!match && (sectionKeys.has(plainKey) || plainKey === titleKey)) match = [line, "##", line.trim()];
     if (!match) { output.push(line);continue; }
     const heading = match[2].trim();
-    if (match[1].length === 1 && normalizeComparable(heading) === titleKey) continue;
+    if (normalizeComparable(heading) === titleKey) continue;
     const originalLevel=match[1].length;
     baselineOriginalLevel ||= originalLevel;
     let level = sectionKeys.has(normalizeComparable(heading)) ? 2
@@ -639,6 +646,19 @@ function validateGeneratedDraftEvidence(output, factKeys, sectionIds, requiredSe
   }
 }
 
+function validateGeneratedDraftStructure(output, outline = []) {
+  const headings = new Set([...String(output?.body_markdown || "").matchAll(/^#{2,4}\s+(.+?)\s*$/gmu)]
+    .map((match) => normalizeComparable(match[1])));
+  const required = outline.filter((section) => (section?.claim_keys || []).length && String(section?.heading || "").trim());
+  const missing = required.filter((section) => !headings.has(normalizeComparable(section.heading)));
+  if (!missing.length) return;
+  throw Object.assign(new Error(`Draft body is missing ${missing.length} evidence-bearing planned section heading(s): ${missing.map((section) => section.heading).join(", ")}.`), {
+    code: "DRAFT_STRUCTURE_INVALID",
+    retryable: false,
+    missingBodySectionIds: missing.map((section) => section.section_id).filter(Boolean),
+  });
+}
+
 function draftInputDto(contentPackage) {
   const selectedKeys = new Set(contentPackage.writing_packet?.selected_fact_keys || contentPackage.brief?.evidence_ledger || []);
   const frozenFacts = contentPackage.writing_packet?.evidence_ledger?.map(entry => entry.fact_snapshot);
@@ -653,11 +673,17 @@ function draftInputDto(contentPackage) {
     brief: safeDraftBrief(contentPackage.brief, validFactKeys),
     writing_packet: contentPackage.writing_packet ? {
       text: safeWritingDirective(contentPackage.brief, outline),
-      evidence_ledger: contentPackage.writing_packet.evidence_ledger,
+      // Frozen fact snapshots are supplied once in evidence_ledger_facts.
+      // Repeating their complete evidence here previously doubled large
+      // prompts and produced six-figure-token requests in real Vertex runs.
+      evidence_scope: (contentPackage.writing_packet.evidence_ledger || []).map((entry) => ({
+        normalized_key: entry?.fact_snapshot?.normalized_key || entry?.normalized_key || null,
+        source_ids: [...new Set((entry?.fact_snapshot?.evidence || []).map((item) => item?.source_id).filter(Boolean))].slice(0, 3),
+      })).filter((entry) => entry.normalized_key),
     } : null,
     narrative_plan: safeNarrativePlan(context?.version === 2 ? context.narrative_plan : contentPackage.narrative_plan,
       outline, validFactKeys, new Set(experiences.map((item) => item.id))),
-    grounded_experiences: experiences,
+    grounded_experiences: compactGroundedExperiences(experiences),
     production_mode: contentPackage.production_mode || "multi_source_synthesis",
     source_reference: hasFrozenPacket ? null : contentPackage.source_reference || null,
     content_policy: context?.version === 2 ? context.content_policy : contentPackage.content_policy,
@@ -668,20 +694,46 @@ function draftInputDto(contentPackage) {
       latest_evidence_at: fact.latest_evidence_at, consensus_method: fact.consensus_method,
       consensus_confidence: fact.consensus_confidence, consensus_detail: fact.consensus_detail,
       validity_state: fact.validity_state,
-      evidence: (fact.evidence || []).map((item) => ({ claim_id:item.claim_id || item.id, source_id: item.source_id, value: item.value, qualifiers:item.qualifiers,
-        quote: item.quote, canonical_url: item.canonical_url, source_title: item.source_title,
+      evidence: compactFactEvidence(fact.evidence).map((item) => ({ claim_id:item.claim_id || item.id, source_id: item.source_id,
+        value: truncate(item.value, 500), qualifiers:(item.qualifiers || []).slice(0, 8).map((value) => truncate(value, 240)),
+        quote: truncate(item.quote, 900), canonical_url: item.canonical_url, source_title: truncate(item.source_title, 180),
         published_at: item.published_at, observed_at: item.observed_at, captured_at: item.captured_at,
         verified_at: item.verified_at, valid_from: item.valid_from, valid_to: item.valid_to,
         date_kind: item.date_kind, date_confidence: item.date_confidence,
         timestamp_basis: item.timestamp_basis, authority_level: item.authority_level,
         publication_usability: item.publication_usability, evidence_coverage: item.evidence_coverage,
-        coverage_limitations: item.coverage_limitations || [] })),
+        coverage_limitations: (item.coverage_limitations || []).slice(0, 8).map((value) => truncate(value, 240)) })),
     })),
     reader_sources: (context?.version === 2 ? context.reader_sources : contentPackage.reader_sources) || [],
     authorized_source_assets: (context?.version === 2 ? context.authorized_source_assets : contentPackage.authorized_source_assets) || [],
     internal_link_inventory: (context?.version === 2 ? context.internal_link_inventory : contentPackage.internal_link_inventory) || [],
     frontend_page_plan: safeFrontendPlan(contentPackage.frontend_page_plan?.plan, validFactKeys),
   };
+}
+
+function compactFactEvidence(evidence = []) {
+  const seen = new Set();
+  return (evidence || []).filter((item) => {
+    const key = `${item?.source_id || ""}\u0000${item?.value || ""}\u0000${item?.quote || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 3);
+}
+
+function compactGroundedExperiences(experiences = []) {
+  return (experiences || []).slice(0, 24).map((item) => ({
+    id:item.id, type:item.type, title:truncate(item.title, 180), traveler_goal:truncate(item.traveler_goal, 300),
+    sequence:(item.sequence || []).slice(0, 12).map((value) => truncate(value, 400)),
+    decision_logic:(item.decision_logic || []).slice(0, 12).map((value) => truncate(value, 400)),
+    conditions:(item.conditions || []).slice(0, 8).map((value) => truncate(value, 300)),
+    tradeoffs:(item.tradeoffs || []).slice(0, 8).map((value) => truncate(value, 300)),
+    warnings:(item.warnings || []).slice(0, 8).map((value) => truncate(value, 300)),
+    alternatives:(item.alternatives || []).slice(0, 8).map((value) => truncate(value, 300)),
+    supporting_claim_ids:(item.supporting_claim_ids || []).slice(0, 24),
+    evidence_span_ids:(item.evidence_span_ids || []).slice(0, 24),
+    confidence:item.confidence,
+  }));
 }
 
 function safeDraftBrief(brief = {}, validFactKeys = new Set()) {
@@ -795,17 +847,28 @@ function actionableDraftRepairIssues(issues = []) {
 }
 
 function reviewInputDto(contentPackage) {
+  const draft=contentPackage.draft || {};
   return {
     brief: { plan: contentPackage.brief?.plan, canonical: contentPackage.brief?.canonical, strategy_version: contentPackage.brief?.strategy_version },
     content_policy: contentPackage.content_policy,
     facts: factDtos(contentPackage),
-    reader_sources: contentPackage.reader_sources || [],
-    draft: contentPackage.draft,
+    reader_sources: (contentPackage.reader_sources || []).slice(0, 24).map((source)=>({
+      label:truncate(source.label,180),url:source.url,published_at:source.published_at,verified_at:source.verified_at,
+      authority_level:source.authority_level,
+    })),
+    // Independent editorial QA needs the frozen reader-facing artifact and its
+    // traceability, not every internal row attached to the hydrated Draft.
+    draft: {
+      title:draft.title,slug:draft.slug,meta_description:draft.meta_description,body_markdown:draft.body_markdown,
+      evidence_ledger:draft.evidence_ledger,unresolved_conflicts:draft.unresolved_conflicts,
+      verification_notes:draft.verification_notes,seo:draft.seo,faqs:draft.faqs || draft.seo?.faqs || [],
+      visuals:(draft.visuals || []).map((visual)=>({placement:visual.placement,purpose:visual.purpose,
+        alt_text:visual.alt_text,image_type:visual.image_type,image_role:visual.image_role,factual_image_required:visual.factual_image_required})),
+    },
     frontend_page: contentPackage.frontend_page ? {
-      payload: contentPackage.frontend_page.payload,
-      validation: contentPackage.frontend_page.validation,
       current: contentPackage.frontend_page.current,
       status: contentPackage.frontend_page.status,
+      valid: contentPackage.frontend_page.validation?.valid,
     } : null,
   };
 }

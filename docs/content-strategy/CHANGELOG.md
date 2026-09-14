@@ -1,5 +1,12 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.24 / schema 69 - 2026-09-14
+
+- Ensure every explicit or automatic Draft regeneration consumes the current QA blockers and cannot reuse the failed writer artifact under a different recovery dedupe namespace.
+- Preserve the frozen evidence scope while sending each fact once with bounded evidence excerpts and compact grounded experiences; independent review consumes only reader-visible content and traceability required for editorial judgment.
+- Promote exact planned labels to semantic H2 sections and fail closed when an evidence-bearing planned section is still absent after one structured correction, keeping visible prose and evidence ownership synchronized.
+- Keep all imported Source media authorized for editorial use under `AGENTS.md`, while preserving attribution, durable bytes, relevance, alt text and Frontend Contract validation. Schema, strategy and approval semantics are unchanged.
+
 ## App 2.0.23 / schema 69 - 2026-09-14
 
 - Keep the approved scope, complete frozen evidence set and Strategy 3.3 selection semantics while changing recovery depth according to the real failure: global quality or invalid bounded-repair failures regenerate only the Draft; page-only failures recompose the Frontend Page; stale Writing Packet scope resumes at Editorial Assembly.

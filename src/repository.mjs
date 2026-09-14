@@ -217,7 +217,11 @@ export class Repository {
         experiences: pack?.experiences, contentPolicy: pack?.content_policy,
         narrative: job.type === 'plan_narrative' ? null : this.getNarrativePlan(entityId),
         packet: ['generate_draft','compose_frontend_page_plan'].includes(job.type) ? this.getWritingPacket(entityId) : null,
-        qualityRegeneration: job.type === 'generate_draft' && job.dedupe_key?.startsWith('auto-quality-repair:generate_draft:')
+        // Any generate_draft job may be a manual, canary, or automatic recovery.
+        // The current failed-review fingerprint must therefore participate in
+        // the artifact hash regardless of the caller's dedupe-key namespace;
+        // otherwise a recovery can incorrectly reuse the prose that just failed.
+        qualityRegeneration: job.type === 'generate_draft'
           ? this.qualityRegenerationFeedback(entityId) : null };
     }
     const draft = this.db.prepare(`SELECT id,brief_id,content_hash,revision,seo_json,strategy_version,updated_at
