@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { contentCanaryProviderCapacityOutcome } from "../scripts/lib/content-canary-policy.mjs";
+import { contentCanaryProviderCapacityOutcome, resolveContentCanaryModel } from "../scripts/lib/content-canary-policy.mjs";
 
 test("provider capacity stops a canary flow instead of opening another recovery cycle", () => {
   const outcome = contentCanaryProviderCapacityOutcome({ stage_status: "failed" }, {
@@ -17,4 +17,11 @@ test("provider capacity stops a canary flow instead of opening another recovery 
   assert.equal(contentCanaryProviderCapacityOutcome({ stage_status: "running" }, {
     failure_class: "retryable_provider",
   }), null);
+});
+
+test("a canary may select an explicit audited fallback model without changing production defaults", () => {
+  const models = [{ id: "vertex-gemini-3.8-flash" }, { id: "kimi-k3" }];
+  assert.equal(resolveContentCanaryModel("kimi-k3", models, "vertex-gemini-3.8-flash"), "kimi-k3");
+  assert.equal(resolveContentCanaryModel("", models, "vertex-gemini-3.8-flash"), "vertex-gemini-3.8-flash");
+  assert.throws(() => resolveContentCanaryModel("unknown", models, "vertex-gemini-3.8-flash"), /Unsupported/);
 });

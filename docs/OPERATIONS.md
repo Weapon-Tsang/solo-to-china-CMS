@@ -10,6 +10,8 @@ The canary must quarantine every queued Job not owned by its current target befo
 
 If one durable canary Job exhausts its bounded `retryable_provider`/`capacity` attempts, stop that selected flow and report `provider_capacity` as an inconclusive environment result. The canary must not manufacture a second recovery Job, teach an editorial Failure Lesson, or describe the article as defective. Resume from a fresh disposable baseline after provider capacity returns.
 
+When continued downstream acceptance is required while Vertex text capacity remains unavailable, create a fresh disposable production-copy database and run the same selected Opportunity with `--model kimi-k3 --images`. This is an audited canary-only text-provider fallback: it changes only that disposable database's runtime setting, recalculates model/config artifact identity, and reports Kimi metrics separately. Visual planning and processing remain enabled through the independently configured Vertex Gemini 3.1 Flash Image provider, with generated files isolated under a canary-only media directory. The fallback must not silently modify production model selection or weaken image/alt-text/page/mobile validation.
+
 ## 2.0.23 production-copy recovery replay
 
 For a deterministic recovery audit, first create a disposable online backup of production, then run `npm run audit:prod-replay -- --database <name-containing-replay-or-work> --replay-id <unique-id>`. The command refuses filenames that do not explicitly identify a disposable copy, requires a quiescent work database, invokes no worker/model/WordPress client, and verifies one active Opportunity-owned recovery Job plus idempotent replay for each failed/interrupted record. Discard the work database after the report is retained.

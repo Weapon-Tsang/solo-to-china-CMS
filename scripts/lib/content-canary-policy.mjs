@@ -11,3 +11,12 @@ export function contentCanaryProviderCapacityOutcome(state, job) {
     reason: String(job.last_error || "Provider capacity was unavailable.").slice(0, 1_000),
   };
 }
+
+export function resolveContentCanaryModel(requestedModel, models, defaultModel) {
+  const requested = String(requestedModel || "").trim();
+  const selected = requested || defaultModel;
+  if (!(models || []).some((item) => item.id === selected)) {
+    throw new Error(`Unsupported content canary model: ${selected || "empty"}.`);
+  }
+  return selected;
+}
