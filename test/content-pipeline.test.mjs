@@ -206,6 +206,21 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(generatedPackage.draft.visuals[0].status, "generated");
   assert.ok(generatedPackage.draft.visuals[0].source_asset_id);
   assert.match(generatedPackage.draft.visuals[0].source_remote_url, /xhscdn\.com/);
+  db.exec("SAVEPOINT legacy_visual_metadata");
+  try {
+    db.prepare("UPDATE article_visuals SET media_metadata_json='{}' WHERE id=?").run(generatedPackage.draft.visuals[0].id);
+    const [legacyDeliveryVisual] = repository.listDraftVisualsForDelivery(generatedPackage.draft.id);
+    assert.equal(legacyDeliveryVisual.media_metadata.authorization_policy, "project_source_media_full_authorization");
+    assert.equal(legacyDeliveryVisual.media_metadata.source_provenance.source_asset_id, legacyDeliveryVisual.source_asset_id);
+    assert.equal(legacyDeliveryVisual.media_metadata.source_provenance.original_stored, true);
+    assert.equal(legacyDeliveryVisual.media_metadata.source_provenance.project_owner_confirmed, true);
+    db.prepare("UPDATE source_assets SET local_path=? WHERE id=?").run("missing-authorized-original.png", legacyDeliveryVisual.source_asset_id);
+    const [missingOriginalVisual] = repository.listDraftVisualsForDelivery(generatedPackage.draft.id);
+    assert.equal(missingOriginalVisual.media_metadata.source_provenance.original_stored, false,
+      "project authorization must not fabricate a missing original file");
+  } finally {
+    db.exec("ROLLBACK TO legacy_visual_metadata; RELEASE legacy_visual_metadata");
+  }
   assert.equal(generatedPackage.draft.schema_jsonld["@context"], "https://schema.org");
   assert.equal(generatedPackage.draft.strategy_version, CONTENT_STRATEGY.version);
   assert.equal(generatedPackage.frontend_page_plan.plan.blocks[0].type, "articleSection");

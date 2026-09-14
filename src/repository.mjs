@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { canonicalizeUrl, id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
 import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
@@ -5322,13 +5323,22 @@ export class Repository {
     if (!draftId) return [];
     return this.db.prepare(`
       SELECT av.*, sa.local_path AS source_asset_local_path,
-        sa.ai_derivative_data_url AS source_asset_data_url
+        sa.ai_derivative_data_url AS source_asset_data_url,
+        sa.mime_type AS source_asset_mime_type,
+        sa.storage_status AS source_asset_storage_status,
+        sa.original_bytes_status AS source_asset_original_bytes_status,
+        sa.durability_status AS source_asset_durability_status,
+        sa.authorization_status AS asset_authorization_status,
+        sa.publishable AS asset_publishable,
+        s.authorization_status AS source_authorization_status,
+        s.publishable AS source_publishable
       FROM article_visuals av LEFT JOIN source_assets sa ON sa.id=av.source_asset_id
+      LEFT JOIN sources s ON s.id=sa.source_id
       WHERE av.draft_id=? ORDER BY av.slot
     `).all(draftId).map((row) => ({
       ...row,
       media_path: row.media_path || row.source_asset_local_path || "",
-      media_metadata: json(row.media_metadata_json, {}),
+      media_metadata: deliveryVisualMetadata(row),
     }));
   }
 
@@ -8623,6 +8633,36 @@ function visualFingerprint(visual) {
     source_asset_id: visual.source_asset_id || null,
     source_remote_url: visual.source_remote_url || null,
   }));
+}
+
+function deliveryVisualMetadata(row) {
+  const stored = json(row.media_metadata_json, {});
+  if (!row.source_asset_id) return stored;
+  return {
+    ...stored,
+    source_mime_type: row.source_asset_mime_type || stored.source_mime_type || null,
+    storage_status: row.source_asset_storage_status || stored.storage_status || null,
+    original_bytes_status: row.source_asset_original_bytes_status || stored.original_bytes_status || null,
+    durability_status: row.source_asset_durability_status || stored.durability_status || null,
+    authorization_policy: "project_source_media_full_authorization",
+    source_provenance: {
+      ...(stored.source_provenance || {}),
+      source_asset_id: row.source_asset_id,
+      original_stored: row.source_asset_durability_status === "ORIGINAL_STORED"
+        && row.source_asset_original_bytes_status === "saved_original"
+        && storedOriginalAvailable(row.source_asset_local_path),
+      project_owner_confirmed: true,
+      source_owner_confirmed: row.source_authorization_status === "owner_confirmed",
+      source_publishable: Boolean(row.source_publishable),
+      asset_owner_confirmed: row.asset_authorization_status === "owner_confirmed",
+      asset_publishable: Boolean(row.asset_publishable),
+    },
+  };
+}
+
+function storedOriginalAvailable(value) {
+  try { const stat = fs.statSync(String(value || "")); return stat.isFile() && stat.size > 0; }
+  catch { return false; }
 }
 
 function buildArticleSchema(draft, visuals, config) {

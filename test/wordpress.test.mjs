@@ -60,6 +60,21 @@ test("media progress is persisted per image and retry skips an already uploaded 
   assert.equal(mediaCalls, 3, "retry uploads only the previously failed image");
 });
 
+test("WordPress media upload preserves CMS Source provenance metadata", async () => {
+  const adapter = new WordPressDraftAdapter({ siteUrl: "https://site.test", username: "editor", applicationPassword: "password" },
+    async () => Response.json({ id: 121, source_url: "https://site.test/uploads/localized.png", mime_type: "image/png",
+      media_details: { width: 1600, height: 900 } }, { status: 201 }));
+  const sourceProvenance = { source_asset_id: "asset-121", original_stored: true, project_owner_confirmed: true };
+  const [uploaded] = await adapter.resolveVisualMedia([{ id: "visual-121", status: "generated", media_path: process.argv[1],
+    source_asset_id: "asset-121", alt_text: "Authorized Chongqing street scene", image_type: "real_world_photo",
+    acquisition_strategy: "localize_source_image", media_metadata: { authorization_policy: "project_source_media_full_authorization",
+      localized_file: true, localized_from_source_asset_id: "asset-121", source_provenance: sourceProvenance } }]);
+  assert.deepEqual(uploaded.metadata.source_provenance, sourceProvenance);
+  assert.equal(uploaded.metadata.authorization_policy, "project_source_media_full_authorization");
+  assert.equal(uploaded.metadata.localized_from_source_asset_id, "asset-121");
+  assert.match(uploaded.metadata.sha256, /^[a-f0-9]{64}$/);
+});
+
 test("WordPress adapter refuses to overwrite a post after a human publishes it", async () => {
   const fetchStub = async () => new Response(JSON.stringify({ id: 7, status: "publish" }), { status: 200, headers: { "content-type": "application/json" } });
   const adapter = new WordPressDraftAdapter({

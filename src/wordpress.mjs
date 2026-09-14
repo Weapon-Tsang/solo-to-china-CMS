@@ -203,7 +203,13 @@ export class WordPressDraftAdapter {
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || !body.id) throw new Error(`WordPress media upload failed (${response.status}): ${body?.message || response.statusText}`);
-    const metadata = wordpressMediaMetadata(body, asset);
+    // WordPress owns the public derivative metadata, but it does not know the
+    // CMS Source lineage. Preserve the authoritative input metadata so a media
+    // upload cannot erase authorization, original-byte, or localization proof.
+    const metadata = {
+      ...parseMediaMetadata(visual.media_metadata || visual.media_metadata_json),
+      ...wordpressMediaMetadata(body, asset),
+    };
     return { id: body.id, url: metadata.url || "", metadata };
   }
 

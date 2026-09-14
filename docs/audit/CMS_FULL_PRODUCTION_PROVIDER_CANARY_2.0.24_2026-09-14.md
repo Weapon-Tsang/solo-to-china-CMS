@@ -15,6 +15,7 @@ The selected production text provider is `vertex / gemini-3.8-flash`. Kimi is no
 - The production visual report follows Opportunity → Candidate → Brief → Draft ownership; it no longer joins through a nonexistent Opportunity `draft_id`.
 - The WordPress draft-only mock accepts real binary media uploads separately from the bounded JSON Publish Package and records both transport classes.
 - Full Draft generation and bounded repair share one pre-downstream protected-value invariant. Each gets at most one exact corrective completion inside the current Job; a still-invalid repair fails closed and targets full Draft regeneration rather than scheduling images or pages from incomplete prose.
+- WordPress upload metadata is additive to CMS Source provenance. Legacy visual rows are rehydrated from authoritative Source/Source Asset state before upload, so public URL/dimension/hash fields cannot erase original-byte, project-authorization or localization proof.
 
 ## Real provider evidence before the final immutable build
 
@@ -25,6 +26,8 @@ Flash Image then produced two real localized PNG files while one relevant author
 After the wait interval, the immutable canary retried only `generate_visuals`; Vertex capacity was available, the stage completed in 14.7 seconds, and the required Flash Image file was 1,722,954 bytes with SHA-256 `f4724964cec8c6150370b6458daaced3e8397ce36be4b61d86aa03c201d9f8c7`. Page composition then completed. QA correctly rejected the prose because the protected `3 minutes` duration was still absent. The automatic full-Draft regeneration again omitted that duration, and the next state projection surfaced an old `INVALID_DRAFT_REPAIR_SCOPE` instead of the current QA blocker. This adjacent production-like finding is now a permanent pre-downstream Draft/repair invariant and a cross-revision failure-supersession regression.
 
 This 429 is a capacity result, not an article-quality or schema result. Vertex AI PayGo Gemini uses Dynamic Shared Quota, so there is no documented fixed local reset timestamp to poll. The bounded real canary is the acceptance probe; it must be retried later from the exact failed visual stage and must preserve the already generated Draft and first image.
+
+A bounded retry after the cooldown resumed only `generate_visuals`, produced the remaining 1,584,523-byte Flash Image with SHA-256 `8e8e25dbb17b70780998144039c2542d22767952ca70587be4b348f86a1641448`, and then completed page composition, independent QA and commercial composition. The first WordPress draft-only replay uploaded all three PNG files but stopped before the article request because historical empty visual metadata lacked Source provenance. That adjacent boundary defect is now repaired and awaits the final immutable replay.
 
 ## Verification status
 
