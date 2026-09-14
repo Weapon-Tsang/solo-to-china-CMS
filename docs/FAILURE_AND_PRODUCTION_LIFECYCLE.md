@@ -1,5 +1,11 @@
 # Failure and production lifecycle
 
+## 2.0.25 surplus evidence reconciliation
+
+`DRAFT_EVIDENCE_VALUE_INVALID` distinguishes an actually used fact whose protected value was changed or omitted from a model's surplus internal citation. Before a generated Draft is persisted, known section-allowed claims are compared with its reader-visible body. If a protected value is absent but another honest claim still supports that planned section, the unused citation is removed and its Source IDs are rebuilt from the frozen evidence. The prose, frozen fact and upstream artifacts are not changed.
+
+The final supporting claim for an evidence-bearing section cannot be removed. That case still triggers one exact provider correction and then fails closed at `generate_draft` if unresolved. This prevents both false permanent failures and evidence-free sections.
+
 ## 2.0.24 genuine Draft regeneration
 
 `production_state` 2.0 separates cross-stage quality-repair history from the current revision.

@@ -1,5 +1,11 @@
 # V1 Operations
 
+## 2.0.25 evidence-ledger recovery acceptance
+
+For a generated Draft, the reader-visible body is authoritative about which optional selected facts were actually used. A surplus evidence-ledger key whose protected value is absent may be deterministically removed only when the same planned section retains another honestly expressed approved fact. The last usable claim for a required section is never pruned: it must pass the existing exact correction request or the Job fails closed. Rebuilt Source IDs always come from the frozen Writing Packet evidence, not model output.
+
+Production rollout never retries the six historical rows automatically. Recover one Opportunity at a time, confirm the new Job and model metrics belong to that owner, and wait through QA, media, page composition, final artifact validation and WordPress `draft` acknowledgement before selecting the next row.
+
 ## 2.0.24 real-provider recovery acceptance
 
 Use `scripts/inspect-production-content-canary.mjs <database-containing-canary|replay|work> [since]` to inspect Jobs, reviews, Drafts and model metrics from a disposable production-copy canary. The script opens SQLite read-only with `query_only=ON` and refuses a filename that could be mistaken for the live database. It performs no recovery, model call or WordPress write.

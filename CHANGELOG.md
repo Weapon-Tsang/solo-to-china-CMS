@@ -1,6 +1,13 @@
 # Changelog
 
-## 2.0.24 - Unreleased
+## 2.0.25 - Unreleased
+
+- Reconcile a generated Draft's evidence ledger with the reader-visible prose before persistence. When a section already retains another honestly expressed approved fact, a model's surplus citation to an unused amount, duration, floor, date, condition or exception is removed instead of forcing that unrelated background detail into the article or failing the entire production flow.
+- Keep fail-closed coverage semantics: the reconciler never removes the only usable evidence from a planned evidence-bearing section. Such a section still receives one exact structured correction request and remains failed if the protected value is not restored.
+- Rebuild ledger Source IDs from the frozen evidence snapshots and restore canonical planned section labels after validation, so a model cannot invent Source ownership while its reader-facing Draft stays unchanged.
+- Add the production-derived `1F` / `10 hours` regression alongside the existing mandatory-duration correction regression. The release remains schema 69, Content Strategy 3.3, `production_state` 2.0 and Frontend Contract 1.4.0; it performs no migration, bulk retry, deletion or automatic publication.
+
+## 2.0.24 - 2026-09-15
 
 - Convert the seven production incidents into reusable production invariants rather than record-specific exceptions: exact Opportunity ownership, bounded stage DTOs, immutable durable inputs, current-attempt precedence, QA supersession and draft-only delivery now apply to every future approval.
 - Bound Narrative Planning to the approved outline, at most 48 selected facts with two compact evidence excerpts each and selected Experience Blocks. The real production replay that previously sent about 177k input tokens now fails locally above a 32k-token/128 KiB budget instead of flooding Vertex with the complete destination package.

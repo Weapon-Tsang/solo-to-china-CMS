@@ -297,6 +297,37 @@ test("draft generation repairs a missing protected duration before saving downst
   assert.match(result.output.body_markdown,/3 minutes/);
 });
 
+test("draft generation prunes unused protected background facts while keeping honest section evidence", async () => {
+  let calls=0;
+  const facts=[
+    {normalized_key:"route.hongyadong.name",subject:"Hongyadong",predicate:"name",preferred_value:"Hongyadong",
+      evidence:[{claim_id:"claim-name",source_id:"source-name",value:"Hongyadong",quote:"Visit Hongyadong.",qualifiers:[]}]},
+    {normalized_key:"route.chaotianmen_to_hongyadong.pedestrian_path",subject:"Pedestrian route",predicate:"floor",
+      preferred_value:"1F",evidence:[{claim_id:"claim-floor",source_id:"source-floor",value:"1F",quote:"Use 1F.",qualifiers:[]}]},
+    {normalized_key:"itinerary.nanan.duration",subject:"Nan'an itinerary",predicate:"duration",preferred_value:"10 hours",
+      evidence:[{claim_id:"claim-duration",source_id:"source-duration",value:"10 hours",quote:"Allow 10 hours.",qualifiers:[]}]},
+  ];
+  const output={title:"Chongqing walking guide",slug:"chongqing-walking-guide",meta_description:"A practical route.",
+    body_markdown:"## Walking route\n\nVisit Hongyadong and choose the next stop based on your pace.",
+    evidence_ledger:[{section_id:"route",section:"Wrong model label",content_node_ids:["route-body"],
+      claim_keys:facts.map((fact)=>fact.normalized_key),source_ids:["hallucinated-source"]}],
+    unresolved_conflicts:[],verification_notes:[],seo:{meta_title:"Chongqing walking guide",focus_keyword:"Chongqing walking guide",
+      secondary_keywords:[],search_intent:"informational",key_takeaways:[]},faqs:[],visuals:[]};
+  const engine=new ContentEngine({apiKey:"key",model:"model",baseUrl:"https://api.example.test/v1"},async()=>{
+    calls+=1;
+    return Response.json({model:"model",choices:[{finish_reason:"stop",message:{content:JSON.stringify(output)}}]});
+  });
+  const result=await engine.draft({brief:{plan:{title:"Chongqing walking guide",outline:[{
+    section_id:"route",heading:"Walking route",claim_keys:facts.map((fact)=>fact.normalized_key),
+  }]}},writing_packet:{selected_fact_keys:facts.map((fact)=>fact.normalized_key),
+    evidence_ledger:facts.map((fact)=>({fact_snapshot:fact})),context:{version:2,
+      content_policy:{maximum_words:1000,faq:{maximum:0},visuals:{maximum:0}},experiences:[],reader_sources:[],authorized_source_assets:[]}}});
+  assert.equal(calls,1);
+  assert.deepEqual(result.output.evidence_ledger,[{section_id:"route",section:"Walking route",content_node_ids:["route-body"],
+    claim_keys:["route.hongyadong.name"],source_ids:["source-name"]}]);
+  assert.doesNotMatch(JSON.stringify(result.output.evidence_ledger),/1F|10 hours|hallucinated-source/);
+});
+
 test("draft request preserves mandatory adaptations, conflicts, and verification notes from the approved brief", async () => {
   let requestBody;
   const output={title:"Chongqing guide",slug:"chongqing-guide",meta_description:"A practical guide.",body_markdown:"A grounded introduction.",

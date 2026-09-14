@@ -1,5 +1,9 @@
 # Frontend Capability Contract Integration
 
+## 2.0.25 evidence ownership before composition
+
+Draft evidence reconciliation occurs before Content AST and Frontend Page composition. Optional ledger citations absent from reader-visible prose are removed only when the planned section retains other approved evidence; Source IDs are derived from frozen fact snapshots. This changes no component, schema, JSX or CSS and keeps Frontend Contract 1.4.0 as the sole public rendering boundary.
+
 ## 2.0.24 planned-section and review boundary
 
 Exact planned section labels emitted without Markdown heading markers are normalized into semantic H2 nodes before Content AST construction. Evidence-bearing planned sections that remain absent are rejected before page composition, preventing a visually plausible page from losing its ledger scope. Independent QA receives the reader-facing Draft, compact traceability and page-validation status rather than the complete internal Frontend payload; Frontend JSX/CSS, component rendering and responsive presentation remain exclusively owned by the pinned Frontend Contract and WordPress theme.

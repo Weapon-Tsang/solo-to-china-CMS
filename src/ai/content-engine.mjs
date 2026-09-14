@@ -338,8 +338,10 @@ export class ContentEngine {
     const prepareAndValidate = (output) => {
       output.body_markdown = normalizeDraftHeadingHierarchy(output.body_markdown, output.title,
         outline.map((section)=>section.heading).filter(Boolean));
+      pruneUnusedProtectedEvidenceClaims(output, input.evidence_ledger_facts, sectionFactKeys);
       validateGeneratedDraftEvidence(output, allowedFactKeys, allowedSectionIds, requiredSectionIds, sectionFactKeys);
       validateGeneratedDraftProtectedValues(output, input.evidence_ledger_facts);
+      normalizeGeneratedDraftEvidenceSources(output, input.evidence_ledger_facts, outline);
       validateGeneratedDraftStructure(output, outline);
     };
     const request = (extraFeedback = revisionFeedback) => this.respond({
@@ -661,6 +663,45 @@ function validateGeneratedDraftProtectedValues(output, facts = []) {
   throw Object.assign(new Error(`Draft omitted or changed ${missingProtectedValues.length} protected evidence value(s): ${missingProtectedValues
     .map((item) => `${item.claim_key}=${item.required_value}`).join(", ")}.`), {
     code:"DRAFT_EVIDENCE_VALUE_INVALID",retryable:false,missingProtectedValues,
+  });
+}
+
+function pruneUnusedProtectedEvidenceClaims(output, facts = [], sectionFactKeys = {}) {
+  if (!Array.isArray(output?.evidence_ledger)) return;
+  const factsByKey = new Map((facts || []).map((fact) => [fact.normalized_key, fact]));
+  const body = output?.body_markdown;
+  const entries = output.evidence_ledger.map((entry) => ({ ...entry, claim_keys:[...new Set(entry?.claim_keys || [])] }));
+  const usableBySection = new Map();
+  for (const entry of entries) {
+    const allowed = new Set(sectionFactKeys[entry?.section_id] || []);
+    const usable = entry.claim_keys.filter((key) => {
+      const fact = factsByKey.get(key);
+      return fact && allowed.has(key) && protectedFactTokens(fact).every((token) => containsProtectedToken(body, token));
+    });
+    if (usable.length) usableBySection.set(entry.section_id, true);
+  }
+  output.evidence_ledger = entries.map((entry) => {
+    if (!usableBySection.get(entry?.section_id)) return entry;
+    const allowed = new Set(sectionFactKeys[entry.section_id] || []);
+    return { ...entry, claim_keys:entry.claim_keys.filter((key) => {
+      const fact = factsByKey.get(key);
+      if (!fact || !allowed.has(key)) return true;
+      return protectedFactTokens(fact).every((token) => containsProtectedToken(body, token));
+    }) };
+  }).filter((entry) => entry.claim_keys.length);
+}
+
+function normalizeGeneratedDraftEvidenceSources(output, facts = [], outline = []) {
+  const factsByKey = new Map((facts || []).map((fact) => [fact.normalized_key, fact]));
+  const headingsBySection = new Map((outline || []).map((section) => [section.section_id, section.heading]));
+  output.evidence_ledger = (output.evidence_ledger || []).map((entry) => {
+    const sourceIds = [...new Set((entry.claim_keys || []).flatMap((key) =>
+      (factsByKey.get(key)?.evidence || []).map((item) => item?.source_id).filter(Boolean)))];
+    return {
+      ...entry,
+      section:headingsBySection.get(entry.section_id) || entry.section,
+      source_ids:sourceIds.length ? sourceIds : [...new Set(entry.source_ids || [])],
+    };
   });
 }
 
