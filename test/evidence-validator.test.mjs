@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { factRelevant, pageBlockSignature, protectedFactTokens, validatePageEvidence } from "../src/evidence-validator.mjs";
+import { factRelevant, pageBlockSignature, protectedFactTokens, remapBlockProvenanceForDelivery,
+  validatePageEvidence } from "../src/evidence-validator.mjs";
 import { validateFinalPageArtifact } from "../src/publish-page.mjs";
 
 const goodBlock = { type: "articleSection", variant: "answer-first", data: {
@@ -183,6 +184,17 @@ test("the final artifact gate consumes the semantic evidence validator", () => {
   assert.equal(validateFinalPageArtifact(page, contentPackage).valid, true);
   page.blocks[0] = { ...goodBlock, data: { ...goodBlock.data, body: goodBlock.data.body.replace("CNY 50", "CNY 500") } };
   assert.ok(codes(validateFinalPageArtifact(page, contentPackage)).includes("BLOCK_PROVENANCE_MISSING"));
+});
+
+test("delivery-only entity canonicalization remaps verified block provenance without trusting changed content", () => {
+  const source = { blocks:[{ type:"paragraph", data:{ content:"Traveler&#39;s route" } }] };
+  const delivery = { blocks:[{ type:"paragraph", data:{ content:"Traveler&#039;s route" } }] };
+  const validation = { blockProvenance:[{ blockId:"stable", blockSignature:pageBlockSignature(source.blocks[0]) }] };
+  const remapped = remapBlockProvenanceForDelivery(source, delivery, validation);
+  assert.equal(remapped.blockProvenance[0].blockId, "stable");
+  assert.equal(remapped.blockProvenance[0].blockSignature, pageBlockSignature(delivery.blocks[0]));
+  const changedSource = { blocks:[{ type:"paragraph", data:{ content:"unverified change" } }] };
+  assert.equal(remapBlockProvenanceForDelivery(changedSource, delivery, validation), validation);
 });
 
 function validate(block) {

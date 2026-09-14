@@ -18,6 +18,8 @@ When an old downstream failure lacks a prerequisite required by the current regi
 
 `production_state` 1.8 applies the same targeted recovery to a WordPress `INVALID_COMPONENT_DATA` response caused by sanitizer-stable inline encoding. The Publish Package is rebuilt with canonical safe entities and revalidated locally; recovery neither reuses the rejected package nor restarts article production.
 
+In 2.0.22 the final-page evidence gate also recognizes this delivery-only normalization by re-signing already verified block provenance in memory. The operation is fail-closed: any missing, reordered or changed original signature disables remapping and produces the existing QA failure.
+
 Failed state separates `current_stage` (the failed step), `recovery_target` (repeat that exact step) and `next_stage` (the following pipeline step). Interrupted state reports the last completed position as current and the first missing dependency-safe step as both recovery target and next step. Queued/running state reports its active step and the following step. Only succeeded evidence increments `progress.completed`.
 
 ## Recovery and record disposition

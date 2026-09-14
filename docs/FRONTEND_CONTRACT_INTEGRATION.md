@@ -26,6 +26,8 @@ The 2.0.20 delivery adapter records an additional business invariant discovered 
 
 The 2.0.21 adapter also canonicalizes safe apostrophe entities to `&#039;`, the exact form preserved by the deployed WordPress sanitizer. This is transport normalization, not presentation logic: the rendered text is identical, no HTML capability is added, and all typography, spacing, responsive layout and components remain Frontend-owned.
 
+Version 2.0.22 keeps CMS evidence provenance consistent with that delivery-only spelling. It remaps a block signature only after the complete stored provenance sequence exactly matches the original page; component selection, layout, JSX and CSS remain governed by the fixed Frontend Contract.
+
 Three artifacts remain distinct:
 
 - Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.

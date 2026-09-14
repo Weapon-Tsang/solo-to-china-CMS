@@ -1,6 +1,11 @@
 # Changelog
 
-## 2.0.21 - Unreleased
+## 2.0.22 - Unreleased
+
+- Keep verified block provenance aligned when delivery-only normalization changes the byte representation of safe inline entities. Remapping occurs only when every stored provenance signature still matches its original block by position, so genuine content changes continue to fail closed.
+- Generate model-page provenance after delivery normalization so new compositions are born consistent. Retained Draft, writing, QA, commercial, Claims, Sources and Evidence artifacts remain unchanged; schema stays 69 and no migration or automatic retry is introduced.
+
+## 2.0.21 - 2026-09-14
 
 - Canonicalize apostrophe entities in inline HTML to the exact safe form preserved by WordPress `wp_kses`. The CMS now rebuilds retained Publish Packages from `&#39;`/`&apos;` to `&#039;`, preventing safe prose from failing the remote strict-equality check without changing rendered text.
 - Extend local Frontend Contract validation with this real WordPress invariant and update deterministic page composition to emit the canonical entity directly. `production_state` 1.8 routes matching remote `INVALID_COMPONENT_DATA` failures to `compose_publish_page`, preserving all writing and research stages.

@@ -1,3 +1,9 @@
+# 2.0.22 delivery-provenance compatibility handoff
+
+App/Extension version `2.0.22`, schema migration `69`, and Content Strategy `3.3` are on the release line; `production_state` is `1.8` and Frontend Contract is `1.4.0`. A real 2.0.21 production canary correctly normalized WordPress-safe apostrophe entities, then the final artifact gate exposed that four retained block provenance signatures still represented the pre-normalized bytes.
+
+Delivery now remaps only signatures whose original page blocks still exactly match every stored provenance entry in order. Stable block IDs, Claim traces, Sources, Evidence snapshots and visible prose are preserved; a changed or unverified block is never trusted. New model pages calculate provenance after normalization. The required acceptance target is a real WordPress Draft plus desktop/mobile preview, never publication.
+
 # 2.0.21 WordPress inline-content compatibility handoff
 
 App/Extension version `2.0.21`, schema migration `69`, and Content Strategy `3.3` are on the release line; `production_state` is `1.8` and Frontend Contract is `1.4.0`, with the active strategy manifest in `config/content-strategy.json`. After 2.0.20 correctly translated `itinerary` to `travel-guide`, the same real canary reached the next WordPress invariant: the theme sanitizer canonicalizes an apostrophe entity from `&#39;` to `&#039;` and rejects the non-canonical input before creating a Draft.

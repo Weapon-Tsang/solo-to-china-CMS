@@ -441,11 +441,12 @@ export class ContentEngine {
         visuals: contentPackage.draft?.visuals || [],
       }), options,
     });
-    const separated = separateCmsProvenance(result.output, contentPackage.frontend_page_plan?.plan);
     const supportsContentType = Boolean(pageSchema?.properties?.metadata?.properties?.contentType);
+    const normalized = normalizeFrontendPageForDelivery(result.output,
+      supportsContentType ? contentPackage.brief?.canonical?.content_type : null);
+    const separated = separateCmsProvenance(normalized, contentPackage.frontend_page_plan?.plan);
     return { ...result,
-      output: normalizeFrontendPageForDelivery(separated.payload,
-        supportsContentType ? contentPackage.brief?.canonical?.content_type : null),
+      output: separated.payload,
       provenance: separated.provenance };
   }
 

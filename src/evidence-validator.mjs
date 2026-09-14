@@ -4,6 +4,18 @@ export function pageBlockSignature(block) {
   return sha256(JSON.stringify(stableObject({ type: block?.type || "unknown", data: block?.data || {} })));
 }
 
+export function remapBlockProvenanceForDelivery(sourcePage, deliveryPage, validation = {}) {
+  const sourceBlocks = Array.isArray(sourcePage?.blocks) ? sourcePage.blocks : [];
+  const deliveryBlocks = Array.isArray(deliveryPage?.blocks) ? deliveryPage.blocks : [];
+  const provenance = Array.isArray(validation?.blockProvenance) ? validation.blockProvenance : [];
+  if (sourceBlocks.length !== deliveryBlocks.length || provenance.length !== sourceBlocks.length) return validation;
+  if (!provenance.every((entry, index) => entry?.blockSignature === pageBlockSignature(sourceBlocks[index]))) return validation;
+  return { ...validation, blockProvenance:provenance.map((entry, index) => ({
+    ...entry,
+    blockSignature:pageBlockSignature(deliveryBlocks[index]),
+  })) };
+}
+
 export function extractVisiblePageContent(page) {
   const blocks = (page?.blocks || []).map((block) => ({
     signature: pageBlockSignature(block),

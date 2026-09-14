@@ -1,5 +1,10 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.22 / schema 69 - 2026-09-14
+
+- Align retained page-block provenance signatures with delivery-only entity normalization only after exact original-signature verification; stable evidence identities remain unchanged and tampered content continues to fail closed.
+- Calculate provenance for newly generated Frontend pages after delivery normalization, preventing transport spelling from creating a false final-page QA break.
+
 ## App 2.0.21 / schema 69 - 2026-09-14
 
 - Preserve Strategy 3.3 and all current Draft facts while canonicalizing safe inline HTML entities at the WordPress delivery boundary.

@@ -12,6 +12,7 @@ import { stageConfiguration } from './pipeline-contract.mjs';
 import { sourceProcessingProfile } from './source-processing-profile.mjs';
 import { runNodeJsonProcess } from './process-runner.mjs';
 import { normalizeFrontendPageForDelivery } from "./content-taxonomy.mjs";
+import { remapBlockProvenanceForDelivery } from "./evidence-validator.mjs";
 
 const ISOLATED_REPOSITORY_TASK=fileURLToPath(new URL('../scripts/run-isolated-repository-task.mjs',import.meta.url));
 
@@ -917,7 +918,9 @@ export class Pipeline {
           const finalPage = mergeCommercialOverlay(editorialPage, contentPackage.commercial_composition);
           const finalPageValidation = this.frontendContracts.validatePagePayload(finalPage);
           if (!finalPageValidation.valid) throw invalidPublishPage("FINAL_PAGE_INVALID", finalPageValidation);
-          const finalArtifactValidation = validateFinalPageArtifact(finalPage, contentPackage);
+          const deliveryContentPackage = { ...contentPackage, frontend_page:{ ...contentPackage.frontend_page,
+            validation:remapBlockProvenanceForDelivery(storedEditorialPage, editorialPage, contentPackage.frontend_page?.validation) } };
+          const finalArtifactValidation = validateFinalPageArtifact(finalPage, deliveryContentPackage);
           if (!finalArtifactValidation.valid) throw invalidPublishPage("FINAL_PAGE_QA_FAILED", finalArtifactValidation);
           await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
