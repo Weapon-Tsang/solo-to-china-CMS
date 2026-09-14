@@ -29,17 +29,19 @@ This 429 is a capacity result, not an article-quality or schema result. Vertex A
 
 A bounded retry after the cooldown resumed only `generate_visuals`, produced the remaining 1,584,523-byte Flash Image with SHA-256 `8e8e25dbb17b70780998144039c2542d22767952ca70587be4b348f86a1641448`, and then completed page composition, independent QA and commercial composition. The first WordPress draft-only replay uploaded all three PNG files but stopped before the article request because historical empty visual metadata lacked Source provenance. That adjacent boundary defect is now repaired and awaits the final immutable replay.
 
+The corrected immutable WordPress replay uploaded the three PNGs (1,722,954, 1,933,414 and 1,584,523 bytes), built a 15,666-byte Publish Package with 26 Frontend Contract 1.4.0 blocks, passed Contract and final-page validation without errors, and stored both preview and edit URLs for mock post 92024. A transient first article connection failed before reaching the local mock; the same durable Job retried once and completed idempotently. The mock accepted only `draft`, no real WordPress endpoint was called, no publication occurred, and all protected counts were unchanged.
+
 ## Verification status
 
-- L1 targeted provider, durable Job, visual, alt-text and canary tests: PASS (84/84)
-- L2 complete unit/integration regression: PASS (628/628)
+- L1 targeted provider, durable Job, visual, alt-text and canary tests: PASS
+- L2 complete unit/integration regression: PASS (632/632)
 - `npm run check`: PASS (production build, syntax and seven service boundaries)
 - `npm run release:check`: PASS (50 mandatory checks, zero failures, five warnings, five explicitly external/not-tested conclusions)
 - L3 production database replay: PASS for isolation, ownership, protected-data counts and targeted recovery
 - L4 Browser E2E: pending immutable deployment
-- L5 real provider canary: text PASS; Flash Image capacity-inconclusive after a stored real image and bounded 429
-- L6 final page plus WordPress draft-only replay: pending the failed visual stage and final immutable image
-- Post-fix exploratory audit: in progress; no production database mutation has been made by these pre-release canaries
+- L5 real provider canary: PASS; Gemini 3.8 Flash writing/QA and three real Gemini 3.1 Flash Image files verified, including bounded 429 recovery from the exact failed visual stage
+- L6 final page plus WordPress draft-only replay: PASS on the isolated production copy and local WordPress Contract server; real production WordPress remains pending deployment acceptance
+- Post-fix exploratory audit: PASS for the isolated record; no production database mutation has been made by these pre-release canaries
 
 ## Release rule
 

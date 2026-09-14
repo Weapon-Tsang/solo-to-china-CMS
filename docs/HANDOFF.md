@@ -24,6 +24,8 @@ The immutable-provider canary then recovered the exact failed visual stage after
 
 The final Gemini/Flash replay then completed the bounded repair, three real localized images, page composition, independent QA and commercial composition. The first draft-only WordPress contract replay uploaded all three image files but exposed legacy empty visual metadata: the WordPress response replaced delivery metadata without restoring Source lineage, so the final gate reported missing Source assets, originals and authorization. Delivery now rehydrates those fields from authoritative Source/Source Asset rows and merges the WordPress URL, dimensions and hash without erasing provenance; both the legacy-row and adapter merge paths have permanent regressions.
 
+The final immutable draft-only replay then uploaded all three PNGs, built a 15,666-byte Publish Package with 26 Contract 1.4.0 blocks, passed both Contract and final-artifact validation, and stored preview/edit URLs for mock post 92024. The first local mock article connection failed transiently before reaching the server; the same durable `push_wordpress_draft` Job retried once and completed idempotently. No real WordPress post was created or published, and every protected production count remained unchanged.
+
 This is a code-only release. Startup performs no schema migration, historical enqueue, automatic recovery, production-record deletion or publication. Production acceptance must recover the six records one at a time through the existing Opportunity-owned durable Jobs, reach final page preview and WordPress `draft`, and preserve the existing seventh Draft without changing any WordPress record to `publish`.
 
 # 2.0.23 full production recovery and final-preview handoff
