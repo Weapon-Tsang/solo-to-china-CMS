@@ -84,3 +84,31 @@ test("Chinese source-image localization sends the retained original and forbids 
   assert.match(body.contents.parts[0].text, /do not alter the scene/i);
   assert.equal(fs.readFileSync(output.mediaPath).toString(), "localized-image-bytes");
 });
+
+test("Chinese source-image localization accepts a retained WebP original without conversion", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-localize-webp-test-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const sourcePath = path.join(directory, "authorized.webp");
+  const sourceBytes = Buffer.concat([
+    Buffer.from("RIFF", "ascii"), Buffer.from([0x10, 0x00, 0x00, 0x00]), Buffer.from("WEBP", "ascii"), Buffer.from("VP8 authorized-scene", "ascii"),
+  ]);
+  fs.writeFileSync(sourcePath, sourceBytes);
+  let request;
+  const client = new VertexImagen({ enabled: true, provider: "vertex_gemini", projectId: "project", location: "global",
+    model: "gemini-3.1-flash-image", accessToken: "token", mediaDir: directory,
+    publicBaseUrl: "https://engine.example.com", requestTimeoutMs: 5_000 }, async (url, options) => {
+      request = { url: String(url), options };
+      return Response.json({ candidates: [{ content: { parts: [{ inlineData: {
+        data: Buffer.from("localized-webp-source").toString("base64"), mimeType: "image/png",
+      } }] } }] });
+    });
+
+  await client.localizeSourceImage({ id: "visual_webp", slot: 1, image_type: "real_world_photo",
+    acquisition_strategy: "localize_source_image", factual_image_required: true, source_asset_id: "asset-webp",
+    source_asset_local_path: sourcePath, source_asset_mime_type: "image/webp", image_role: "hero", aspect_ratio: "16:9",
+    generation_prompt: "" }, { id: "draft-webp" });
+
+  const body = JSON.parse(request.options.body);
+  assert.equal(body.contents.parts[1].inlineData.mimeType, "image/webp");
+  assert.equal(body.contents.parts[1].inlineData.data, sourceBytes.toString("base64"));
+});

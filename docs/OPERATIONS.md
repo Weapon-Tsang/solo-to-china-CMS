@@ -181,7 +181,7 @@ Run only the isolated HTTP/API/static smoke phase after an existing build with:
 ```powershell
 npm run test:smoke
 ```
-# Content production workbench operations (2.0.17)
+# Content production workbench operations (2.0.18)
 
 The active Content workspace API is `GET /api/content`; it returns `{ items, sections }`, and every item includes the backend-owned `production_state`. `GET /api/content/:opportunityId/production-state` returns the pre-Draft-or-later detail, timeline, structural page preview, WordPress preview/edit links and combined audit/failure history. `GET /api/content/:opportunityId/history` returns the history alone.
 
@@ -194,6 +194,8 @@ Source 2.0.15 extends this to `production_state` 1.3. `retry_state` distinguishe
 Version 2.0.16 extends this to `production_state` 1.4. Recovery endpoints accept the production Opportunity ID but always resolve planning packages through its canonical Candidate; a retry therefore creates the intended owned Job instead of failing before enqueue. A persisted Brief remains proof that planning completed even if a later legacy failure marked the Brief `exception`, and a failed QA report targets `revise_draft` rather than rerunning review.
 
 Version 2.0.17 keeps that recovery contract and fixes the Vertex wire format used by `revise_draft`. The canonical JSON Schema retains array bounds for local validation, while the OpenAPI provider projection omits the `minItems`/`maxItems` fields rejected by the configured global endpoint. Bounded repair uses LOW thinking with a 12,000-token output budget and compact evidence. Deployment never retries failed Drafts automatically; an operator retries each record explicitly after confirming the new runtime is healthy.
+
+Version 2.0.18 upgrades `production_state` to 1.5. If a quality review fails while image or page work is still active, that content gate remains authoritative even if the sibling branch fails later. The terminal sibling releases the deferred `revise_draft` Job through the existing revision-scoped dedupe key; restarts still do not scan or retry historical production rows. Explicit image-stage recovery includes failed slots, and retained WebP source originals are submitted to Vertex Gemini as `image/webp` without replacing or re-encoding the original.
 
 Changing a destination creates a new production-scope boundary. Pre-correction Jobs and Editorial Assembly results remain visible as non-blocking history and are not silently reused. The row remains in “等待开始” until an operator explicitly confirms the corrected scope; only then is a new `assemble_editorial` Job queued. Deployments, migrations and dashboard refreshes never perform that confirmation or enqueue any of the affected records.
 

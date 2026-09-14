@@ -137,7 +137,7 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
 
   storeImage({ base64, mimeType: suppliedMimeType, visual, draft, provider, model }) {
     const mimeType = normalizeMime(suppliedMimeType);
-    const extension = mimeType === "image/jpeg" ? "jpg" : "png";
+    const extension = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/webp" ? "webp" : "png";
     const checksum = crypto.createHash("sha256").update(`${draft.id}:${visual.id}:${visual.generation_prompt}`).digest("hex").slice(0, 18);
     const filename = `${draft.id}-${String(visual.slot).padStart(2, "0")}-${checksum}.${extension}`;
     fs.mkdirSync(this.config.mediaDir, { recursive: true });
@@ -173,7 +173,7 @@ function combinedSignal(signal, timeoutMs) {
 }
 
 function normalizeMime(value) {
-  return ["image/png", "image/jpeg"].includes(value) ? value : "image/png";
+  return ["image/png", "image/jpeg", "image/webp"].includes(value) ? value : "image/png";
 }
 
 function readSourceImage(visual) {
@@ -182,14 +182,18 @@ function readSourceImage(visual) {
     if (!bytes.length) throw Object.assign(new Error("已保存的原图为空，无法翻译。"), { retryable: false });
     return { base64: bytes.toString("base64"), mimeType: normalizeSourceMime(visual.source_asset_mime_type, bytes) };
   }
-  const match = String(visual.source_asset_data_url || "").match(/^data:(image\/(?:png|jpeg));base64,(.+)$/is);
-  if (match) return { mimeType: match[1].toLowerCase(), base64: match[2] };
+  const match = String(visual.source_asset_data_url || "").match(/^data:(image\/(?:png|jpe?g|webp));base64,(.+)$/is);
+  if (match) {
+    const bytes = Buffer.from(match[2], "base64");
+    return { mimeType: normalizeSourceMime(match[1].toLowerCase(), bytes), base64: match[2] };
+  }
   throw Object.assign(new Error("没有找到已保存的原图文件，无法翻译。"), { retryable: false, code: "SOURCE_IMAGE_BYTES_MISSING" });
 }
 
 function normalizeSourceMime(supplied, bytes) {
   if (bytes.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))) return "image/png";
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-  if (["image/png", "image/jpeg"].includes(supplied)) return supplied;
+  if (bytes.subarray(0,4).toString("ascii") === "RIFF" && bytes.subarray(8,12).toString("ascii") === "WEBP") return "image/webp";
+  if (["image/png", "image/jpeg", "image/jpg", "image/webp"].includes(supplied)) return supplied === "image/jpg" ? "image/jpeg" : supplied;
   throw Object.assign(new Error("原图格式不受图片翻译模型支持。"), { retryable: false, code: "SOURCE_IMAGE_FORMAT_UNSUPPORTED" });
 }

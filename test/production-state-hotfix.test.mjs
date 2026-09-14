@@ -112,7 +112,7 @@ test("a downstream historical failure with missing prerequisites recovers the fi
     last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.4");
+  assert.equal(state.version,"1.5");
   assert.equal(state.stage_status,"interrupted");
   assert.equal(state.recovery_target,"plan_narrative");
   assert.equal(state.latest_error,null);
@@ -146,7 +146,7 @@ test("a corrected destination invalidates old-scope failures and waits for expli
     VALUES ('scope-reset','shared-candidate','correct_destination','completed','{}','{}','tester','2026-09-13T02:00:00Z','corrected-owner','scope-reset-key')`).run();
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.4");
+  assert.equal(state.version,"1.5");
   assert.equal(state.lifecycle,"pending_start");
   assert.equal(state.stage_status,"waiting");
   assert.equal(state.latest_error,null);

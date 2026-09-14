@@ -84,18 +84,23 @@ export function contentRecoveryReport(repo, candidateId) {
   for (const asset of assets) sources.set(asset.source_id, {
     id: asset.source_id, title: asset.source_title, url: asset.submitted_url || asset.canonical_url,
   });
+  const detail = ctx.opportunity ? repo.getContentProductionDetail(ctx.opportunity.id) : null;
+  const blockingJobId = detail?.production_state?.latest_error?.job_id || null;
+  const blockingFailedJob = blockingJobId
+    ? repo.db.prepare(`SELECT id,type,status,last_error,entity_id,updated_at,failure_class,last_failure_code,attempts,recovery_run_id
+        FROM jobs WHERE id=?`).get(blockingJobId) || null
+    : detail?.production_state ? null : ctx.failedJob;
   const localCheck = ctx.draft ? { ...applyDeterministicGates({ passed:true,score:100,issues:[],checks:[] },pkg), diagnosticOnly:true } : null;
   const automaticRepair = ctx.draft && (localCheck || pkg.review)
     ? repo.automaticQualityRepairState(ctx.draft.id, (localCheck || pkg.review).issues, { enqueue: false })
     : { eligible:false,queued:false,stage:null,attempts:0,maxAttempts:2,reason:'review_not_available' };
-  const diagnosis = recoveryDiagnosis({ review:localCheck || pkg.review, failedJob:ctx.failedJob, automaticRepair });
-  const detail = ctx.opportunity ? repo.getContentProductionDetail(ctx.opportunity.id) : null;
+  const diagnosis = recoveryDiagnosis({ review:localCheck || pkg.review, failedJob:blockingFailedJob, automaticRepair });
   return {
     candidateId:ctx.candidate.id, opportunityId:ctx.opportunity?.id || null, title:ctx.candidate.proposed_title, destination:ctx.candidate.destination_slug,
     destinationCheck:validatePlanningDestination(pkg), canCorrectDestination:!ctx.brief,
     destinations:repo.db.prepare('SELECT slug,name FROM destinations ORDER BY name').all(),
     draftId:ctx.draft?.id || null, revision:ctx.draft?.revision || null, activeJobs:ctx.activeJobs,
-    failedJob:ctx.failedJob || null, diagnosis,
+    failedJob:blockingFailedJob, nonBlockingFailedJob:blockingFailedJob?.id === ctx.failedJob?.id ? null : ctx.failedJob || null, diagnosis,
     coverage:{ score:ctx.candidate.coverage_score, explanation:'选题所需素材的准备度，不是文章质量、事实准确率或完成进度。' },
     sources:[...sources.values()], assets,
     visuals:(pkg.draft?.visuals || []).map((visual) => ({

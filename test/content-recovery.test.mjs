@@ -135,6 +135,86 @@ test('the running review job does not block its own targeted repair enqueue',t=>
   assert.equal(result.stage,'revise_draft');
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='revise_draft'").get().count,1);
 });
+test('a parallel page failure cannot overwrite failed QA and terminal reconciliation queues one repair',t=>{
+  const {db,repository}=fixture(t);
+  repository.configureProductionCapabilities({frontendContract:true,visuals:true,wordpress:false});
+  const issues=[{code:'protected_evidence_mismatch',severity:'blocker',message:'Changed protected facts'}];
+  repository.saveReview('draft-r',{passed:false,score:70,issues,checks:[],unsupported_claims:[]},'fixture',
+    {revision:1,contentHash:'hash-1',productionOwnerOpportunityId:'opportunity-r'});
+  const pageJobId=repository.enqueue('compose_frontend_page','draft-r',{
+    dedupeKey:'parallel-page',productionOwnerOpportunityId:'opportunity-r',
+  });
+  const pageJob=repository.claimJob();
+  assert.equal(pageJob.id,pageJobId);
+  assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:true,
+    productionOwnerOpportunityId:'opportunity-r'}).reason,'job_already_active');
+  db.prepare(`UPDATE jobs SET status='failed',last_error='Frontend page payload is invalid: UNTRACEABLE_FACTUAL_BLOCK',
+    last_failure_code='FINAL_PAGE_INVALID',failure_class='permanent_input',updated_at='now' WHERE id=?`).run(pageJobId);
+  db.prepare("UPDATE article_drafts SET status='exception' WHERE id='draft-r'").run();
+
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.version,'1.5');
+  assert.equal(state.stage_status,'failed');
+  assert.equal(state.current_stage,'review_draft');
+  assert.equal(state.recovery_target,'revise_draft');
+  assert.equal(state.next_stage,'revise_draft');
+  assert.equal(state.completed_stages.includes('review_draft'),true);
+  assert.equal(state.pending_stages.includes('revise_draft'),true);
+  const reconciled=repository.reconcileDeferredQualityRepair(pageJob);
+  assert.equal(reconciled.queued,true);
+  const repairs=db.prepare("SELECT * FROM jobs WHERE type='revise_draft'").all();
+  assert.equal(repairs.length,1);
+  assert.equal(repairs[0].status,'queued');
+  assert.equal(repository.reconcileDeferredQualityRepair(pageJob).reason,'job_already_active');
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='revise_draft'").get().count,1);
+
+  const report=contentRecoveryReport(repository,'opportunity-r');
+  assert.equal(report.failedJob,null);
+  assert.equal(report.nonBlockingFailedJob.id,pageJobId);
+  assert.equal(report.diagnosis.category,'content');
+  assert.equal(report.diagnosis.recommendedAction.id,'revise_draft');
+});
+test('a parallel branch that finishes after failed QA releases the deferred repair join',t=>{
+  const {db,repository}=fixture(t);
+  const issues=[{code:'confirmed_topic_coverage_missing',severity:'blocker',message:'missing'}];
+  repository.saveReview('draft-r',{passed:false,score:55,issues,checks:[],unsupported_claims:[]},'fixture',
+    {revision:1,contentHash:'hash-1',productionOwnerOpportunityId:'opportunity-r'});
+  const visualJobId=repository.enqueue('generate_visuals','draft-r',{
+    dedupeKey:'parallel-visual',productionOwnerOpportunityId:'opportunity-r',
+  });
+  const visualJob=repository.claimJob();
+  assert.equal(visualJob.id,visualJobId);
+  assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:true,
+    productionOwnerOpportunityId:'opportunity-r'}).reason,'job_already_active');
+  assert.equal(repository.finishPipelineJob(visualJob,null),true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='revise_draft' AND status='queued'").get().count,1);
+});
+test('a terminal parallel-branch failure also releases the deferred repair join',t=>{
+  const {db,repository}=fixture(t);
+  const issues=[{code:'protected_evidence_mismatch',severity:'blocker',message:'mismatch'}];
+  repository.saveReview('draft-r',{passed:false,score:60,issues,checks:[],unsupported_claims:[]},'fixture',
+    {revision:1,contentHash:'hash-1',productionOwnerOpportunityId:'opportunity-r'});
+  const visualJobId=repository.enqueue('generate_visuals','draft-r',{
+    dedupeKey:'parallel-visual-failure',productionOwnerOpportunityId:'opportunity-r',
+  });
+  const visualJob=repository.claimJob();
+  assert.equal(visualJob.id,visualJobId);
+  assert.equal(repository.failJob(visualJob,Object.assign(new Error('legacy WebP rejection'),{
+    retryable:false,code:'SOURCE_IMAGE_FORMAT_UNSUPPORTED',
+  })),true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='revise_draft' AND status='queued'").get().count,1);
+});
+test('an explicit visual-stage retry includes a previously failed visual slot',t=>{
+  const {db,repository}=fixture(t);
+  repository.replaceDraftVisuals('draft-r',[{
+    placement:'hero',purpose:'Show the retained source',alt_text:'Chongqing source photo',caption:'',generation_prompt:'',
+    aspect_ratio:'16:9',image_type:'real_world_photo',image_role:'hero',image_subject:'Chongqing',
+    acquisition_strategy:'localize_source_image',factual_image_required:true,source_asset_id:null,status:'planned',
+  }],'3.3');
+  db.prepare("UPDATE article_visuals SET status='failed',last_error='legacy WebP rejection'").run();
+  assert.equal(repository.plannedVisuals('draft-r').length,1);
+  assert.equal(repository.plannedVisuals('draft-r')[0].status,'failed');
+});
 test('strategy startup rechecks a historical failure only once per draft revision',t=>{
   const {db,repository}=fixture(t,{productionStartupResumeEnabled:true});
   repository.saveReview('draft-r',{passed:false,score:40,issues:[{code:'protected_evidence_mismatch',severity:'blocker',message:'mismatch'}],checks:[],unsupported_claims:[]},'fixture');
@@ -169,6 +249,10 @@ test('operator diagnosis is concise Chinese and hides long code lists behind tec
   const media503=recoveryDiagnosis({failedJob:{type:'backfill_media_asset',last_failure_code:'REMOTE_MEDIA_503',last_error:'Remote media returned HTTP 503.'}});
   assert.match(media503.headline,/自动保存没有完成/);
   assert.doesNotMatch(media503.recommendedAction.label,/浏览器/);
+  const webp=recoveryDiagnosis({failedJob:{type:'generate_visuals',last_failure_code:'SOURCE_IMAGE_FORMAT_UNSUPPORTED',last_error:'原图格式不受图片翻译模型支持。'}});
+  assert.match(webp.headline,/WebP/);
+  assert.match(webp.reason,/已经留存/);
+  assert.equal(webp.recommendedAction.id,'generate_visuals');
 });
 test('single-source stable photo descriptions do not require a fabricated as-of date', () => {
   assert.equal(isDynamicFact({normalized_key:'attraction.station.photo_spot_metro',consensus_method:'SINGLE_SOURCE_LATEST',freshness_state:'current'}), false);

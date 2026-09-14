@@ -136,6 +136,7 @@ export class Repository {
     return transaction(this.db, () => {
       if (!this.completeJob(job.id, job.locked_by, job.lease_generation)) return false;
       this.completePipelineArtifact(artifact, job);
+      this.reconcileDeferredQualityRepair(job);
       return true;
     });
   }
@@ -2112,6 +2113,7 @@ export class Repository {
       this.db.prepare("UPDATE article_drafts SET status='exception', updated_at=? WHERE id=?").run(now(), job.entity_id);
     }
     if (!retry && PRODUCTION_JOB_TYPES.has(job.type)) this.handleTerminalProductionFailure(job, error);
+    if (!retry && ["generate_visuals", "compose_frontend_page"].includes(job.type)) this.reconcileDeferredQualityRepair(job);
     if (!retry && job.type === "extract_source_experience") this.refreshExperienceBackfillRuns();
     if (!retry && job.type === "analyze_source_diagnostic") this.refreshRecommendationBackfillRuns();
     return true;
@@ -5341,7 +5343,7 @@ export class Repository {
       SELECT av.*,sa.local_path AS source_asset_local_path,sa.ai_derivative_data_url AS source_asset_data_url,
         sa.mime_type AS source_asset_mime_type,sa.language_status AS source_asset_language_status
       FROM article_visuals av LEFT JOIN source_assets sa ON sa.id=av.source_asset_id
-      WHERE av.draft_id=? AND av.status='planned'
+      WHERE av.draft_id=? AND av.status IN ('planned','failed')
         AND av.acquisition_strategy IN ('generate_illustration','localize_source_image')
         AND (retry_at IS NULL OR retry_at<=?)
       ORDER BY av.slot
@@ -6313,6 +6315,16 @@ export class Repository {
     const jobId = this.enqueue(stage, draftId, { dedupeKey, productionOwnerOpportunityId });
     return { eligible: true, queued: Boolean(jobId), stage, jobId, attempts: attempts + (jobId ? 1 : 0), maxAttempts,
       reason: jobId ? "queued" : "queue_rejected" };
+  }
+
+  reconcileDeferredQualityRepair(job) {
+    if (!job || !["generate_visuals", "compose_frontend_page", "review_draft"].includes(job.type)) return null;
+    const pkg = this.getDraftPackage(job.entity_id);
+    if (!pkg?.review || pkg.review.passed) return null;
+    return this.automaticQualityRepairState(job.entity_id, pkg.review.issues || [], {
+      enqueue: true,
+      productionOwnerOpportunityId: job.production_owner_opportunity_id || null,
+    });
   }
 
   enqueueStartupReconciliation({ wordpressEnabled = false, contractAware = false } = {}) {

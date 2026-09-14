@@ -18,6 +18,8 @@ The 2.0.16 repair adds CMS-only production recovery state and operator controls 
 
 The 2.0.17 Vertex repair changes only the CMS model transport and bounded Draft-revision input/output policy. It does not modify Frontend schemas, components, JSX, CSS, page payload ownership or WordPress rendering. Existing structural Page Composition previews and adapter-provided final preview/edit URLs retain the same contract boundary.
 
+The 2.0.18 post-Draft join keeps the same boundary. A failed Frontend Page Payload remains an auditable parallel-branch result, but it cannot override a failing content-quality review or send recovery directly to the Commercial Layer. After targeted Draft repair, the CMS reuses the Contract schema to compose and validate a new payload; renderer JSX, CSS and final WordPress theme output remain Frontend-owned.
+
 Three artifacts remain distinct:
 
 - Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.

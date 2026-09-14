@@ -1,5 +1,12 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.18 / schema 69 - 2026-09-14
+
+- Upgrade `production_state` to 1.5 so a failing quality review remains the authoritative content gate when parallel image/page work fails later; `revise_draft` is included as the exact next stage before a repair Job exists.
+- Add a durable, idempotent terminal join for post-Draft branches. Deferred content repair is released after the sibling image/page Job settles, using the existing bounded automatic-repair counter and dedupe key.
+- Retry previously failed visual slots on an explicit visual-stage recovery and pass retained WebP originals to Vertex Gemini with their real MIME type. This changes neither source authorization nor the Frontend Contract boundary.
+- Keep schema 69 and Strategy 3.3. The upgrade performs no migration, startup retry, bulk reconciliation, model call or production-record deletion.
+
 ## App 2.0.17 / schema 69 - 2026-09-14
 
 - Keep Content Strategy 3.3, the approved scope and the frozen evidence package unchanged while repairing the Vertex transport used by bounded Draft revision.

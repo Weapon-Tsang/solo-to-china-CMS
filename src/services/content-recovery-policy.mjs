@@ -139,6 +139,12 @@ export function explainOperationalFailure(job) {
       technicalDetail: details,
     };
   }
+  if (code === 'SOURCE_IMAGE_FORMAT_UNSUPPORTED') return {
+    category: 'media', headline: '旧版本没有识别已保存的 WebP 原图',
+    reason: '授权原图已经留存在系统中；旧版本的图片本地化入口只识别 PNG/JPEG，因而在调用图片模型前错误停止。新版会直接按 WebP MIME 类型提交，不需要重新采集来源。',
+    action: { id: 'generate_visuals', label: '重新执行图片处理', why: '只重试失败的图片槽位，已完成的正文、证据和其他图片不会重新生成。' },
+    technicalDetail: details,
+  };
   const sourceMediaFailure = code.startsWith('AUTHORIZED_SOURCE') || code.startsWith('SOURCE_IMAGE')
     || (/authorized source image download failed/i.test(message) && ['generate_visuals', 'compose_frontend_page'].includes(type));
   if (sourceMediaFailure) return {

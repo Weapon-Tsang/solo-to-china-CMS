@@ -1,3 +1,11 @@
+# 2.0.18 post-Draft recovery join handoff
+
+App/Extension version `2.0.18`, schema migration `69`, and Content Strategy `3.3` are the current release line, with `production_state` `1.5`. The release keeps a failed quality review authoritative when a parallel image or page Job fails later, releases a deferred bounded repair exactly once when the sibling branch settles, retries failed visual slots on explicit stage recovery, and accepts retained WebP originals for Vertex Gemini localization.
+
+The seven existing production records are not retried, archived or deleted by startup or deployment. Five retain their explicit `revise_draft` failure from the old output budget; the two rows previously misreported as interrupted now resolve to their failed quality review and targeted `revise_draft`. Successful Draft, media and evidence artifacts remain reusable. Schema 69 requires no migration for this code-only release.
+
+The implementation and rollout evidence is recorded in `audit/CMS_POST_DRAFT_RECOVERY_2.0.18_2026-09-14.md`. Frontend page rendering remains owned by the existing Frontend Contract and WordPress theme; the CMS stores and validates payloads but does not copy JSX or CSS.
+
 # 2.0.17 Vertex bounded Draft repair handoff
 
 App/Extension version `2.0.17`, schema migration `69`, and Content Strategy `3.3` keep `production_state` `1.4` and the existing Frontend Contract boundary described by `config/content-strategy.json`. The release fixes the provider wire schema and output budget for `revise_draft`: Vertex starts with OpenAPI `responseSchema`, provider-rejected array bounds remain enforced only by authoritative local validation, and bounded repair uses LOW thinking with a 12,000-token JSON budget.

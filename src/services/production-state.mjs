@@ -2,7 +2,7 @@ import { json, sha256 } from "../utils.mjs";
 import { validatePlanningDestination } from "../destination-consistency.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./content-recovery-policy.mjs";
 
-export const PRODUCTION_STATE_VERSION = "1.4";
+export const PRODUCTION_STATE_VERSION = "1.5";
 
 export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
   stage("assemble_editorial", "素材组装", 10, [], "editorial", "always"),
@@ -86,9 +86,17 @@ export function buildProductionState(db, row, options = {}) {
     updated_at:row.opportunity_updated_at, id:null,
   } : null;
   const currentJobFailure=latestUnresolvedFailure(currentJobs);
+  const persistedFailure=inferredPersistedFailure(row);
   const resolvedDestinationFailure=!scopeFailure && destinationCheck.valid
     && String(currentJobFailure?.last_failure_code || '').toUpperCase()==='DESTINATION_TOPIC_MISMATCH' ? currentJobFailure : null;
-  const unresolvedFailure = scopeFailure || (resolvedDestinationFailure ? null : currentJobFailure) || inferredPersistedFailure(row);
+  // A completed failing review is the authoritative content gate even when a
+  // parallel image/page branch fails a few seconds later and marks the Draft
+  // as exception.  A failed revise_draft attempt remains more specific than
+  // that persisted review and therefore stays the active recovery target.
+  const currentRepairFailure=currentJobFailure?.type === "revise_draft" ? currentJobFailure : null;
+  const persistedQualityFailure=persistedFailure?.type === "review_draft" ? persistedFailure : null;
+  const unresolvedFailure = scopeFailure || (resolvedDestinationFailure ? null
+    : currentRepairFailure || persistedQualityFailure || currentJobFailure || persistedFailure);
   const unresolvedDefinition = registry.find((item) => item.key === unresolvedFailure?.type) || null;
   const initiallyCompleted = new Set(initialEntries.filter((item) => item.status === "succeeded").map((item) => item.key));
   const missingFailureDependencies = unresolvedDefinition?.dependencies.filter((dependency) => !initiallyCompleted.has(dependency)) || [];
@@ -435,8 +443,13 @@ function stageEnabled(definition, capabilities, db, row) {
   if (definition.required === "visuals") return capabilities.visuals;
   if (definition.required === "wordpress") return capabilities.wordpress;
   if (definition.required === "frontendAndWordpress") return capabilities.frontendContract && capabilities.wordpress;
-  if (definition.required === "whenPresent") return Boolean(row.draft_id && db.prepare(`SELECT 1 FROM jobs
-    WHERE entity_id=? AND type='revise_draft' AND production_owner_opportunity_id=? LIMIT 1`).get(row.draft_id,row.opportunity_id));
+  if (definition.required === "whenPresent") {
+    const report = parse(row.draft_quality_report_json, {});
+    const qualityRepair = row.qa_passed != null && !Boolean(row.qa_passed)
+      ? qualityRepairStage(Array.isArray(report.issues) ? report.issues : []) : null;
+    return qualityRepair === "revise_draft" || Boolean(row.draft_id && db.prepare(`SELECT 1 FROM jobs
+      WHERE entity_id=? AND type='revise_draft' AND production_owner_opportunity_id=? LIMIT 1`).get(row.draft_id,row.opportunity_id));
+  }
   return false;
 }
 
@@ -465,19 +478,26 @@ function inferredPersistedFailure(row) {
     failure_class: "permanent_input",
     updated_at: row.brief_updated_at,
   };
-  if (["exception", "qa_failed"].includes(row.draft_status)) {
+  if (row.qa_passed != null && !Boolean(row.qa_passed)) {
     const report = parse(row.draft_quality_report_json, {});
-    const issue = Array.isArray(report.issues) ? report.issues[0] : null;
-    const repairStage = row.draft_status === "qa_failed" ? qualityRepairStage(Array.isArray(report.issues) ? report.issues : []) : null;
+    const issues = Array.isArray(report.issues) ? report.issues : [];
+    const issue = issues.find((item) => item?.severity !== "warning") || issues[0] || null;
     return {
-      type: row.draft_status === "qa_failed" ? "review_draft" : "generate_draft",
-      recovery_type: repairStage,
-      last_error: issue?.message || issue?.reason || "草稿生产状态显示失败，但没有关联的失败 Job；原始状态已保留。",
-      last_failure_code: issue?.code || (row.draft_status === "qa_failed" ? "QUALITY_REVIEW_FAILED" : "DRAFT_EXCEPTION_WITHOUT_JOB"),
+      type: "review_draft",
+      recovery_type: qualityRepairStage(issues),
+      last_error: issue?.message || issue?.reason || "当前版本的质量审核未通过；审核结果和原始草稿均已保留。",
+      last_failure_code: issue?.code || "QUALITY_REVIEW_FAILED",
       failure_class: "permanent_input",
       updated_at: row.draft_updated_at,
     };
   }
+  if (row.draft_status === "exception") return {
+    type: "generate_draft",
+    last_error: "草稿生产状态显示失败，但没有关联的失败 Job；原始状态已保留。",
+    last_failure_code: "DRAFT_EXCEPTION_WITHOUT_JOB",
+    failure_class: "permanent_input",
+    updated_at: row.draft_updated_at,
+  };
   return null;
 }
 
