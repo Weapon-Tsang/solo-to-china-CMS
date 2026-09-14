@@ -272,6 +272,31 @@ test("draft request sends each frozen fact once with bounded evidence while reta
   assert.match(result.output.body_markdown,/^## Arriving by Rail$/m);
 });
 
+test("draft generation repairs a missing protected duration before saving downstream work", async () => {
+  const requests=[];
+  const fact={normalized_key:"route.station.to_food_street",subject:"Station Exit 7 to food street",predicate:"walking_time",
+    preferred_value:"3 minutes",consensus_status:"corroborated",freshness_state:"current",
+    evidence:[{claim_id:"claim-duration",source_id:"source-duration",value:"3 minutes",quote:"Walk about three minutes.",qualifiers:[]}]};
+  const base={title:"Chongqing route",slug:"chongqing-route",meta_description:"A practical route.",
+    evidence_ledger:[{section_id:"route",section:"Route",content_node_ids:["route-body"],
+      claim_keys:[fact.normalized_key],source_ids:["source-duration"]}],unresolved_conflicts:[],verification_notes:[],
+    seo:{meta_title:"Chongqing route",focus_keyword:"Chongqing route",secondary_keywords:[],search_intent:"informational",key_takeaways:[]},faqs:[],visuals:[]};
+  let attempt=0;
+  const engine=new ContentEngine({apiKey:"key",model:"model",baseUrl:"https://api.example.test/v1"},async(_url,options)=>{
+    requests.push(JSON.parse(options.body));
+    attempt+=1;
+    const body=attempt===1 ? "## Route\n\nLeave Exit 7 and walk to the food street." : "## Route\n\nLeave Exit 7 and walk 3 minutes to the food street.";
+    return Response.json({model:"model",choices:[{finish_reason:"stop",message:{content:JSON.stringify({...base,body_markdown:body})}}]});
+  });
+  const result=await engine.draft({brief:{plan:{title:"Chongqing route",outline:[{section_id:"route",heading:"Route",claim_keys:[fact.normalized_key]}]}},
+    writing_packet:{selected_fact_keys:[fact.normalized_key],evidence_ledger:[{fact_snapshot:fact}],context:{version:2,
+      content_policy:{maximum_words:1000,faq:{maximum:0},visuals:{maximum:0}},experiences:[],reader_sources:[],authorized_source_assets:[]}}});
+  assert.equal(requests.length,2);
+  const correction=JSON.parse(requests[1].messages[1].content).revision_feedback;
+  assert.deepEqual(correction.missing_protected_values,[{claim_key:fact.normalized_key,required_value:"3 minutes"}]);
+  assert.match(result.output.body_markdown,/3 minutes/);
+});
+
 test("draft request preserves mandatory adaptations, conflicts, and verification notes from the approved brief", async () => {
   let requestBody;
   const output={title:"Chongqing guide",slug:"chongqing-guide",meta_description:"A practical guide.",body_markdown:"A grounded introduction.",

@@ -21,6 +21,8 @@ On the production-copy record “Chongqing 3-Day Walking Itinerary”, Gemini 3.
 
 Flash Image then produced two real localized PNG files while one relevant authorized Source photo was reused. The generated PNGs were 1,845,183 and 1,648,048 bytes. A fresh post-fix replay later proved partial service availability again: Draft generation succeeded, the first visual was stored, an empty-image response was classified, and the second visual received HTTP 429 until the single Job's 3/3 attempt budget was exhausted. The canary stopped without creating another recovery loop.
 
+After the wait interval, the immutable canary retried only `generate_visuals`; Vertex capacity was available, the stage completed in 14.7 seconds, and the required Flash Image file was 1,722,954 bytes with SHA-256 `f4724964cec8c6150370b6458daaced3e8397ce36be4b61d86aa03c201d9f8c7`. Page composition then completed. QA correctly rejected the prose because the protected `3 minutes` duration was still absent. The automatic full-Draft regeneration again omitted that duration, and the next state projection surfaced an old `INVALID_DRAFT_REPAIR_SCOPE` instead of the current QA blocker. This adjacent production-like finding is now a permanent pre-downstream Draft invariant and a cross-revision failure-supersession regression.
+
 This 429 is a capacity result, not an article-quality or schema result. Vertex AI PayGo Gemini uses Dynamic Shared Quota, so there is no documented fixed local reset timestamp to poll. The bounded real canary is the acceptance probe; it must be retried later from the exact failed visual stage and must preserve the already generated Draft and first image.
 
 ## Verification status

@@ -339,6 +339,7 @@ export class ContentEngine {
       output.body_markdown = normalizeDraftHeadingHierarchy(output.body_markdown, output.title,
         outline.map((section)=>section.heading).filter(Boolean));
       validateGeneratedDraftEvidence(output, allowedFactKeys, allowedSectionIds, requiredSectionIds, sectionFactKeys);
+      validateGeneratedDraftProtectedValues(output, input.evidence_ledger_facts);
       validateGeneratedDraftStructure(output, outline);
     };
     const request = (extraFeedback = revisionFeedback) => this.respond({
@@ -352,11 +353,11 @@ export class ContentEngine {
     try {
       result = await request();
     } catch (error) {
-      if (!["DRAFT_EVIDENCE_SCOPE_INVALID", "DRAFT_STRUCTURE_INVALID"].includes(error?.code)) throw error;
+      if (!["DRAFT_EVIDENCE_SCOPE_INVALID", "DRAFT_EVIDENCE_VALUE_INVALID", "DRAFT_STRUCTURE_INVALID"].includes(error?.code)) throw error;
       result = await request({ previous: revisionFeedback, draft_contract_error: error.message,
         rejected_claim_keys: error.invalidClaimKeys || [], rejected_section_ids: error.invalidSectionIds || [],
         missing_evidence_section_ids: error.missingSectionIds || [], missing_body_section_ids:error.missingBodySectionIds || [],
-        invalid_section_claim_mappings:error.invalidSectionClaims || [] });
+        invalid_section_claim_mappings:error.invalidSectionClaims || [], missing_protected_values:error.missingProtectedValues || [] });
     }
     result.output.slug = slugify(result.output.slug || result.output.title);
     result.output.seo ||= {};
@@ -644,6 +645,21 @@ function validateGeneratedDraftEvidence(output, factKeys, sectionIds, requiredSe
     });
     throw error;
   }
+}
+
+function validateGeneratedDraftProtectedValues(output, facts = []) {
+  const factsByKey = new Map((facts || []).map((fact) => [fact.normalized_key, fact]));
+  const usedKeys = [...new Set((output?.evidence_ledger || []).flatMap((entry) => entry?.claim_keys || []))];
+  const missingProtectedValues = usedKeys.flatMap((key) => {
+    const fact = factsByKey.get(key);
+    return fact ? protectedFactTokens(fact).filter((token) => !containsProtectedToken(output?.body_markdown, token))
+      .map((token) => ({ claim_key:key, required_value:token })) : [];
+  });
+  if (!missingProtectedValues.length) return;
+  throw Object.assign(new Error(`Draft omitted or changed ${missingProtectedValues.length} protected evidence value(s): ${missingProtectedValues
+    .map((item) => `${item.claim_key}=${item.required_value}`).join(", ")}.`), {
+    code:"DRAFT_EVIDENCE_VALUE_INVALID",retryable:false,missingProtectedValues,
+  });
 }
 
 function validateGeneratedDraftStructure(output, outline = []) {
@@ -1024,6 +1040,7 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - Select real-world photo subjects from authorized_source_assets before writing when a saved asset actually matches the subject. These entries describe local retained files; do not copy or expose preview URLs in body_markdown.
 - Use a concise, practical guide voice. Prefer direct instructions and short useful paragraphs; avoid literary scene-setting, generic enthusiasm, and padding.
 - If revision_feedback exists, rebuild from the frozen Writing Packet and fix every blocker. Never reuse failed prose, and do not add unsupported facts.
+- For every fact you cite in evidence_ledger, preserve its supplied amounts, durations, dates, negations, audiences, conditions and exceptions in the reader-visible section. Treat revision_feedback.missing_protected_values as an exact must-include list; verify each value is visible before returning.
 - Every planned section that declares claim_keys must use at least one of those exact approved keys in evidence_ledger. A factual sentence without an honest ledger mapping is forbidden.
 - Turn supported facts into a traveler decision: state the condition, practical consequence, and best next action. Do not stack isolated facts merely to maximize coverage.
 - Vary section rhythm according to its practical job. Use route sequence for movement, condition/consequence/action for decisions, and a short comparison only for genuine trade-offs. Never repeat one mechanical template across every section.`;
@@ -1306,6 +1323,12 @@ function containsProtectedToken(text, token) {
   if (!needle) return true;
   const normalizedCurrency = needle.replace(/^(?:cny|rmb|[¥￥])\s*(\d+(?:\.\d+)?)$/u, "$1 cny");
   if (normalizedCurrency === "0 cny" && /\b(?:free|no admission fee|no entry fee)\b/iu.test(haystack)) return true;
+  const range = needle.match(/^(\d{1,2}(?::\d{2})?)\s*(?:[-\u2012-\u2015\u2212]|to)\s*(\d{1,2}(?::\d{2})?)$/iu);
+  if (range) {
+    const start = escapeRegex(range[1]);
+    const end = escapeRegex(range[2]);
+    if (new RegExp(`(?<![\\p{L}\\p{N}])${start}\\s*(?:[-\\u2012-\\u2015\\u2212]|to)\\s*${end}(?![\\p{L}\\p{N}])`, "iu").test(haystack)) return true;
+  }
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(haystack);
 }

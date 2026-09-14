@@ -262,6 +262,37 @@ test("a current passing QA review moves an older bounded-repair failure to histo
   assert.equal(newerState.latest_error.job_id,newerFailure);
 });
 
+test("a regenerated Draft makes an older bounded-repair failure historical even when current QA still fails",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"regen-failed-owner",{approved:true});
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('regen-failed-brief','beijing','Beijing guide','[]','informational','ready','2026-09-13','2026-09-13','shared-candidate')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('regen-failed-draft','regen-failed-brief','Beijing guide','beijing-guide','## Route\n\nOld copy.','{}','qa_failed','2026-09-13','2026-09-13',1,'old-hash')`).run();
+  const failed=repository.enqueue('revise_draft','regen-failed-draft',{
+    dedupeKey:'failed-old-repair-before-regeneration',productionOwnerOpportunityId:'regen-failed-owner'});
+  db.prepare(`UPDATE jobs SET status='failed',attempts=1,failure_class='permanent_input',
+    last_failure_code='INVALID_DRAFT_REPAIR_SCOPE',last_error='old repair scope',
+    updated_at='2026-09-13T03:00:00Z' WHERE id=?`).run(failed);
+  repository.saveDraft('regen-failed-brief',{title:'Beijing guide',slug:'beijing-guide',meta_description:'A practical guide.',
+    body_markdown:'## Route\n\nNew copy still omits a protected value.',evidence_ledger:[],unresolved_conflicts:[],
+    verification_notes:[],seo:{},faqs:[],visuals:[]},'fixture',{deferReview:true,opportunityId:'regen-failed-owner'});
+  const regeneratedJob=repository.enqueue('generate_draft','regen-failed-brief',{
+    dedupeKey:'successful-regeneration',productionOwnerOpportunityId:'regen-failed-owner'});
+  db.prepare(`UPDATE jobs SET status='succeeded',attempts=1,completed_at='2026-09-14T01:00:00Z',
+    updated_at='2026-09-14T01:00:00Z' WHERE id=?`).run(regeneratedJob);
+  const current=db.prepare("SELECT revision,content_hash FROM article_drafts WHERE id='regen-failed-draft'").get();
+  repository.saveReview('regen-failed-draft',{passed:false,score:70,issues:[
+    {code:'protected_evidence_mismatch',severity:'blocker',message:'Current Draft omitted 3 minutes.'},
+  ],checks:[],unsupported_claims:[]},'fixture',{revision:current.revision,contentHash:current.content_hash,
+    productionOwnerOpportunityId:'regen-failed-owner'});
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.current_stage,'review_draft');
+  assert.equal(state.recovery_target,'revise_draft');
+  assert.equal(state.latest_error.code,'protected_evidence_mismatch');
+  assert.match(state.latest_error.reason,/金额|日期/);
+  assert.equal(state.latest_historical_error.job_id,failed);
+});
+
 test("a historically truncated draft regenerates from its preserved Writing Packet instead of patching one section",(t)=>{
   const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"truncated-owner",{approved:true});
   db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,plan_json,status,created_at,updated_at,candidate_id)

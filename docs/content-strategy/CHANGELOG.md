@@ -17,6 +17,8 @@
 - Attribute Vertex, Kimi and Flash Image network/time-limit failures to the actual provider and retain `retryable_provider` after the durable attempt budget is exhausted. Kimi's optional canary transport consumes long structured output as SSE instead of depending on a five-minute non-streaming response.
 - Reject internal Claim-key dumps as reader alt text. Deterministic authorized-photo fallback now uses a clean stored description or evidence-linked subject, while preserving the exact Source asset and media provenance.
 - Exercise binary WordPress media uploads separately from the bounded JSON Publish Package in the draft-only canary, and join visual evidence through Brief/Candidate ownership instead of a nonexistent Opportunity draft column.
+- Reject a generated Draft before downstream image/page work when any evidence-ledger fact omits or changes a protected amount, duration, date, negation, audience, condition or exception. The same bounded generation receives an exact correction list; natural time ranges such as `09:00-17:00` and `09:00 to 17:00` remain semantically equivalent.
+- Treat an older failed bounded repair as history after a newer full Draft generation succeeds, even when current QA finds another blocker. Current status and recovery now describe the latest revision instead of reviving `INVALID_DRAFT_REPAIR_SCOPE` from superseded prose.
 - Keep all imported Source media authorized for editorial use under `AGENTS.md`, while preserving attribution, durable bytes, relevance, alt text and Frontend Contract validation. Schema, strategy and approval semantics are unchanged.
 
 ## App 2.0.23 / schema 69 - 2026-09-14

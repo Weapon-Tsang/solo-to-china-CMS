@@ -60,6 +60,8 @@ Text-provider availability never weakens visual acceptance. Production writing r
 
 Recovery resumes at the first missing or currently failed stage and reuses valid prior artifacts. A current QA pass proves that older writing, planning and page-composition failures for the superseded revision are historical, while required visual or delivery failures remain current until resolved. Recovery, automatic continuation and operator retry share the same dependency hashes and idempotency keys. Every terminal failure remains auditable as a Failure Lesson; no repair deletes Source, original media, Claims, Knowledge, Evidence, Experience, approvals or prior attempts.
 
+Draft acceptance checks deterministically protected amounts, durations, dates, negations, audiences, conditions and exceptions before any image or page Job is scheduled. A missing value is returned to the same bounded structured generation as an exact correction list. If a full Draft regeneration supersedes an older bounded-repair failure, that old `revise_draft` attempt becomes history even when the new QA finds a different current blocker; state and recovery always describe the current revision.
+
 ## Safety and migration
 
 ## 不变的安全边界

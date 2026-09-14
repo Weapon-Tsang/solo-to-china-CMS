@@ -97,6 +97,7 @@ export function buildProductionState(db, row, options = {}) {
   } : null;
   const frozenScopeFailure = frozenProductionScopeFailure(db,row);
   const truncatedDraftFailure = historicalDraftStructureFailure(db,row,currentJobs);
+  const supersededRegenerationFailure = latestRegenerationSupersededRepair(currentJobs);
   const latestJobFailure=decorateDeliveryFailure(latestUnresolvedFailure(currentJobs));
   // A current passing review proves that its exact Draft revision, content hash,
   // evidence hash and Frontend Page made it through the quality gate. Older
@@ -182,7 +183,8 @@ export function buildProductionState(db, row, options = {}) {
   const latestHistoricalError = dependencyBrokenFailure
     ? failureAttribution(dependencyBrokenFailure, modelCalls, { blocksCurrentFlow:false })
     : scopeHistoricalFailure ? failureAttribution(scopeHistoricalFailure, allModelCalls, { blocksCurrentFlow:false })
-      : supersededQualityFailure ? failureAttribution(supersededQualityFailure, allModelCalls, { blocksCurrentFlow:false }) : null;
+      : supersededQualityFailure ? failureAttribution(supersededQualityFailure, allModelCalls, { blocksCurrentFlow:false })
+        : supersededRegenerationFailure ? failureAttribution(supersededRegenerationFailure, allModelCalls, { blocksCurrentFlow:false }) : null;
 
   if (control?.disposition === "archived" || control?.disposition === "deleted") {
     lifecycle = "history";
@@ -489,7 +491,15 @@ function latestActiveJob(jobs, nowValue) {
 function latestUnresolvedFailure(jobs) {
   const failures = jobs.filter((item) => item.status === "failed").reverse();
   return failures.find((failure) => !jobs.some((item) => item.type === failure.type && item.status === "succeeded"
-    && String(item.updated_at) >= String(failure.updated_at))) || null;
+    && String(item.updated_at) >= String(failure.updated_at))
+    && !(failure.type === "revise_draft" && jobs.some((item) => item.type === "generate_draft" && item.status === "succeeded"
+      && String(item.updated_at) >= String(failure.updated_at)))) || null;
+}
+
+function latestRegenerationSupersededRepair(jobs) {
+  return jobs.filter((item) => item.type === "revise_draft" && item.status === "failed").reverse()
+    .find((failure) => jobs.some((item) => item.type === "generate_draft" && item.status === "succeeded"
+      && String(item.updated_at) >= String(failure.updated_at))) || null;
 }
 
 function decorateDeliveryFailure(failure) {

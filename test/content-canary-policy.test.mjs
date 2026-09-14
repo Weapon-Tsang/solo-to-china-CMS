@@ -17,6 +17,9 @@ test("provider capacity stops a canary flow instead of opening another recovery 
   assert.equal(contentCanaryProviderCapacityOutcome({ stage_status: "running" }, {
     failure_class: "retryable_provider",
   }), null);
+  assert.equal(contentCanaryProviderCapacityOutcome({ stage_status:"failed",current_stage:"revise_draft" }, {
+    type:"generate_visuals",failure_class:"retryable_provider",
+  }),null);
 });
 
 test("a canary may select an explicit audited fallback model without changing production defaults", () => {

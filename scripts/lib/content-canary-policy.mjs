@@ -1,6 +1,7 @@
 export function contentCanaryProviderCapacityOutcome(state, job) {
   if (!["failed", "interrupted"].includes(state?.stage_status)) return null;
   if (!job || !["retryable_provider", "capacity"].includes(job.failure_class)) return null;
+  if (state?.current_stage && state.current_stage !== job.type) return null;
   return {
     classification: "provider_capacity",
     jobId: job.id,
