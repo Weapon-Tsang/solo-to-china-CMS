@@ -1,6 +1,6 @@
 import { validatePageEvidence } from "./evidence-validator.mjs";
 import { synchronizeSeoMetadata, validateSeoGeoArtifact } from "./seo-geo.mjs";
-import { normalizeFrontendPageTaxonomy } from "./content-taxonomy.mjs";
+import { normalizeFrontendPageForDelivery } from "./content-taxonomy.mjs";
 
 const COMMERCIAL_VARIANTS = {
   affiliate_booking_card: () => "default",
@@ -58,7 +58,7 @@ export function buildPublishPackage({ pagePayload, draft, contract, publication 
   const metadataProperties = contract?.pageSchema?.schema?.properties?.metadata?.properties;
   const supportedMetadataFields = metadataProperties && typeof metadataProperties === "object"
     ? new Set(Object.keys(metadataProperties)) : null;
-  const page = synchronizeSeoMetadata(normalizeFrontendPageTaxonomy(pagePayload), draft, { supportedMetadataFields });
+  const page = synchronizeSeoMetadata(normalizeFrontendPageForDelivery(pagePayload), draft, { supportedMetadataFields });
   const manifest = buildMediaManifest(media);
   const featured = manifest.find((item) => item.role === "featured");
   if (featured && page.metadata && page.metadata.featuredMediaId == null) page.metadata.featuredMediaId = featured.media_id;

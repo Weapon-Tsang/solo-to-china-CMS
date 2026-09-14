@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sha256 } from "./utils.mjs";
-import { isFrontendGuideType } from "./content-taxonomy.mjs";
+import { isFrontendGuideType, normalizeWordPressInlineHtml } from "./content-taxonomy.mjs";
 
 const MAX_CONTRACT_BYTES = 2 * 1024 * 1024;
 const COMPONENT_STATUSES = new Set(["stable", "deprecated", "experimental", "beta"]);
@@ -507,6 +507,7 @@ function validateComponentInvariants(block, index) {
 }
 
 function isSafeInlineHtml(value) {
+  if (normalizeWordPressInlineHtml(value) !== String(value)) return false;
   const allowed = new Set(["a", "br", "strong", "b", "em", "i", "code", "s", "sup", "sub"]);
   let unsafe = false;
   const stripped = String(value).replace(/<\/?([a-z0-9]+)\b([^>]*)>/gi, (tag, name, attributes) => {

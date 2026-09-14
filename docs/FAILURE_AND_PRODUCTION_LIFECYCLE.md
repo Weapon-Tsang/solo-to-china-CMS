@@ -16,6 +16,8 @@ When an old downstream failure lacks a prerequisite required by the current regi
 
 `production_state` 1.7 treats a WordPress `INVALID_PAGE_SCHEMA` rejection as a delivery-boundary failure whose exact recovery target is `compose_publish_page`. The failed remote write created no WordPress Draft. Recovery reuses the current QA-passed Draft, Frontend page, media and commercial composition, remaps the public guide taxonomy, validates a new Publish Package and then resumes draft-only delivery. It never returns to writing or evidence stages.
 
+`production_state` 1.8 applies the same targeted recovery to a WordPress `INVALID_COMPONENT_DATA` response caused by sanitizer-stable inline encoding. The Publish Package is rebuilt with canonical safe entities and revalidated locally; recovery neither reuses the rejected package nor restarts article production.
+
 Failed state separates `current_stage` (the failed step), `recovery_target` (repeat that exact step) and `next_stage` (the following pipeline step). Interrupted state reports the last completed position as current and the first missing dependency-safe step as both recovery target and next step. Queued/running state reports its active step and the following step. Only succeeded evidence increments `progress.completed`.
 
 ## Recovery and record disposition

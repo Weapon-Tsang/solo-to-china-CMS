@@ -24,6 +24,8 @@ The 2.0.19 composition repair keeps Frontend Contract 1.4.0 unchanged. The CMS n
 
 The 2.0.20 delivery adapter records an additional business invariant discovered by a real WordPress canary. Internal CMS taxonomy is deliberately richer than public renderer taxonomy, so `city_guide`, `first_time_guide`, `food_guide`, `neighborhood_guide`, `hotel_area_guide` and `shopping_guide` deliver as `city-guide`; `attraction_guide` as `attraction-guide`; `practical_guide`, `transport_guide` and `how_to` as `survival-kit`; and `itinerary`, `comparison` and `listicle` as `travel-guide`. This changes semantic delivery metadata only. It does not copy, emulate or modify Frontend JSX/CSS, and unknown values are blocked locally.
 
+The 2.0.21 adapter also canonicalizes safe apostrophe entities to `&#039;`, the exact form preserved by the deployed WordPress sanitizer. This is transport normalization, not presentation logic: the rendered text is identical, no HTML capability is added, and all typography, spacing, responsive layout and components remain Frontend-owned.
+
 Three artifacts remain distinct:
 
 - Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.

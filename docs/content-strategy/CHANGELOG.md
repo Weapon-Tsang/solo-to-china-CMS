@@ -1,5 +1,12 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.21 / schema 69 - 2026-09-14
+
+- Preserve Strategy 3.3 and all current Draft facts while canonicalizing safe inline HTML entities at the WordPress delivery boundary.
+- Keep the exact public text unchanged; only its entity spelling is normalized to the form retained by the deployed theme sanitizer.
+- Upgrade `production_state` to 1.8 so a matching remote component-data rejection rebuilds the Publish Package instead of retrying writing or a known-invalid request.
+- Keep schema 69. No migration, startup retry, new approval, production publish or evidence rewrite is introduced.
+
 ## App 2.0.20 / schema 69 - 2026-09-14
 
 - Keep Strategy 3.3 content selection, evidence, Draft, QA and commercial semantics unchanged while translating the internal article taxonomy at the delivery boundary.

@@ -84,10 +84,10 @@ export function explainOperationalFailure(job) {
   const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
   const details = operatorSafeDetails(message);
   const normalizedIssueCode = code.toLowerCase();
-  if (type === 'push_wordpress_draft' && code === 'INVALID_PAGE_SCHEMA') return {
-    category:'page',headline:'发布包与 WordPress 内容类型契约不兼容',
-    reason:'WordPress 在创建草稿前拒绝了发布包的内容类型；来源、证据、正文和已完成产物仍然保留，站点没有产生残缺草稿。',
-    action:{id:'compose_publish_page',label:'重新生成发布页面组合',why:'从发布页面组合重新映射公开内容类型，再投递草稿；不会重新写作或重跑前置步骤。'},
+  if (type === 'push_wordpress_draft' && ['INVALID_PAGE_SCHEMA','INVALID_COMPONENT_DATA'].includes(code)) return {
+    category:'page',headline:'发布包与 WordPress 内容契约不兼容',
+    reason:'WordPress 在创建草稿前拒绝了发布包的类型或内联内容编码；来源、证据、正文和已完成产物仍然保留，站点没有产生残缺草稿。',
+    action:{id:'compose_publish_page',label:'重新生成发布页面组合',why:'从发布页面组合规范化公开类型和安全内容编码，再投递草稿；不会重新写作或重跑前置步骤。'},
     technicalDetail:details,
   };
   if (code === 'FROZEN_WRITING_SCOPE_INVALID') return {

@@ -112,7 +112,7 @@ test("a downstream historical failure with missing prerequisites recovers the fi
     last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.7");
+  assert.equal(state.version,"1.8");
   assert.equal(state.stage_status,"interrupted");
   assert.equal(state.recovery_target,"plan_narrative");
   assert.equal(state.latest_error,null);
@@ -146,7 +146,7 @@ test("a corrected destination invalidates old-scope failures and waits for expli
     VALUES ('scope-reset','shared-candidate','correct_destination','completed','{}','{}','tester','2026-09-13T02:00:00Z','corrected-owner','scope-reset-key')`).run();
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.7");
+  assert.equal(state.version,"1.8");
   assert.equal(state.lifecycle,"pending_start");
   assert.equal(state.stage_status,"waiting");
   assert.equal(state.latest_error,null);
@@ -317,6 +317,15 @@ test("a WordPress taxonomy rejection recovers by rebuilding the publish package"
   assert.equal(explanation.action.id,"compose_publish_page");
   assert.match(explanation.reason,/创建草稿前拒绝/);
   assert.match(explanation.action.why,/不会重新写作或重跑前置步骤/);
+});
+
+test("a WordPress inline-content rejection also rebuilds only the publish package",()=>{
+  const explanation=explainOperationalFailure({
+    type:"push_wordpress_draft",last_failure_code:"INVALID_COMPONENT_DATA",
+    last_error:"INVALID_COMPONENT_DATA: Executable or unsupported HTML is not allowed.",
+  });
+  assert.equal(explanation.category,"page");
+  assert.equal(explanation.action.id,"compose_publish_page");
 });
 
 test("plan_content output-limit fixture uses the Editorial Assembly subset, stays bounded and preserves qualifiers",()=>{

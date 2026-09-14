@@ -4,7 +4,7 @@ import { createAiClient } from "./client.mjs";
 import { pageBlockSignature, protectedFactTokens, validatePageEvidence } from "../evidence-validator.mjs";
 import { titlePromiseRisks } from "../seo-geo.mjs";
 import { separateQualityResults } from "../services/content-recovery-policy.mjs";
-import { normalizeFrontendPageTaxonomy } from "../content-taxonomy.mjs";
+import { normalizeFrontendPageForDelivery } from "../content-taxonomy.mjs";
 
 const BRIEF_SCHEMA = objectSchema(
   ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions", "canonical"],
@@ -444,7 +444,7 @@ export class ContentEngine {
     const separated = separateCmsProvenance(result.output, contentPackage.frontend_page_plan?.plan);
     const supportsContentType = Boolean(pageSchema?.properties?.metadata?.properties?.contentType);
     return { ...result,
-      output: normalizeFrontendPageTaxonomy(separated.payload,
+      output: normalizeFrontendPageForDelivery(separated.payload,
         supportsContentType ? contentPackage.brief?.canonical?.content_type : null),
       provenance: separated.provenance };
   }

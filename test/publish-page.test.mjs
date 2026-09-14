@@ -94,9 +94,10 @@ test("Publish Package carries presentation, semantic SEO/GEO, JSON-LD, and WordP
 
 test("Publish Package translates internal CMS taxonomy before WordPress delivery", () => {
   const pkg = buildPublishPackage({
-    pagePayload:{ metadata:{ title:"Route", contentType:"itinerary" }, blocks:[{ type:"paragraph", data:{ content:"Answer" } }] },
+    pagePayload:{ metadata:{ title:"Route", contentType:"itinerary" }, blocks:[{ type:"paragraph", data:{ content:"Traveler&#39;s answer" } }] },
     draft:{ id:"draft-route", title:"Route", meta_description:"A practical route." },
     contract:{ contractVersion:"1.4.0", pageSchemaContractVersion:"1.4.0", checksum:"b".repeat(64) },
   });
   assert.equal(pkg.page.metadata.contentType, "travel-guide");
+  assert.equal(pkg.page.blocks[0].data.content, "Traveler&#039;s answer");
 });

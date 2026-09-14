@@ -371,7 +371,7 @@ function preferredVariant(component, preferred) {
 
 function inlineHtml(value) {
   return String(value || "").replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
   })[character])
     .replace(/\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g, '<a href="$2" rel="noopener" target="_blank">$1</a>')
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")

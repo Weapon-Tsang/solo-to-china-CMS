@@ -1,6 +1,12 @@
 # Changelog
 
-## 2.0.20 - Unreleased
+## 2.0.21 - Unreleased
+
+- Canonicalize apostrophe entities in inline HTML to the exact safe form preserved by WordPress `wp_kses`. The CMS now rebuilds retained Publish Packages from `&#39;`/`&apos;` to `&#039;`, preventing safe prose from failing the remote strict-equality check without changing rendered text.
+- Extend local Frontend Contract validation with this real WordPress invariant and update deterministic page composition to emit the canonical entity directly. `production_state` 1.8 routes matching remote `INVALID_COMPONENT_DATA` failures to `compose_publish_page`, preserving all writing and research stages.
+- Add regressions for old retained pages, local strict validation, Publish Package normalization and operator recovery. Schema remains 69; no migration or automatic production retry is introduced.
+
+## 2.0.20 - 2026-09-14
 
 - Translate all 13 internal CMS article types into the four public guide types accepted by the deployed WordPress Content Contract. Existing page artifacts are normalized while rebuilding the Publish Package, so successful Draft, evidence, QA, media and commercial stages remain reusable.
 - Enforce the WordPress guide taxonomy in local Frontend Contract validation even though the generic Page JSON Schema exposes `contentType` as a string. Unknown types now fail before delivery rather than passing mock validation and being rejected by WordPress.

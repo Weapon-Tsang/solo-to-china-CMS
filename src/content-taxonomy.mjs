@@ -46,3 +46,21 @@ export function normalizeFrontendPageTaxonomy(pagePayload, fallbackContentType =
   if (contentType) page.metadata.contentType = contentType;
   return page;
 }
+
+export function normalizeFrontendPageForDelivery(pagePayload, fallbackContentType = null) {
+  const page = normalizeFrontendPageTaxonomy(pagePayload, fallbackContentType);
+  if (!page || typeof page !== "object") return page;
+  return normalizeInlineHtmlEntities(page);
+}
+
+export function normalizeWordPressInlineHtml(value) {
+  return String(value || "")
+    .replace(/&(?:apos|#(?:0*39|x0*27));/gi, "&#039;");
+}
+
+function normalizeInlineHtmlEntities(value) {
+  if (typeof value === "string") return normalizeWordPressInlineHtml(value);
+  if (Array.isArray(value)) return value.map(normalizeInlineHtmlEntities);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, normalizeInlineHtmlEntities(item)]));
+}

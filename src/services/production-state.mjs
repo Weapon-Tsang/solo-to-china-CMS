@@ -2,7 +2,7 @@ import { json, sha256 } from "../utils.mjs";
 import { validatePlanningDestination } from "../destination-consistency.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./content-recovery-policy.mjs";
 
-export const PRODUCTION_STATE_VERSION = "1.7";
+export const PRODUCTION_STATE_VERSION = "1.8";
 
 export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
   stage("assemble_editorial", "素材组装", 10, [], "editorial", "always"),
@@ -475,7 +475,7 @@ function latestUnresolvedFailure(jobs) {
 function decorateDeliveryFailure(failure) {
   if (!failure) return null;
   const code = String(failure.last_failure_code || failure.code || "").toUpperCase();
-  if (failure.type === "push_wordpress_draft" && code === "INVALID_PAGE_SCHEMA") {
+  if (failure.type === "push_wordpress_draft" && ["INVALID_PAGE_SCHEMA", "INVALID_COMPONENT_DATA"].includes(code)) {
     return { ...failure, recovery_type:"compose_publish_page" };
   }
   return failure;

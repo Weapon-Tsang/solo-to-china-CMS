@@ -1,3 +1,9 @@
+# 2.0.21 WordPress inline-content compatibility handoff
+
+App/Extension version `2.0.21`, schema migration `69`, and Content Strategy `3.3` are on the release line; `production_state` is `1.8` and Frontend Contract is `1.4.0`, with the active strategy manifest in `config/content-strategy.json`. After 2.0.20 correctly translated `itinerary` to `travel-guide`, the same real canary reached the next WordPress invariant: the theme sanitizer canonicalizes an apostrophe entity from `&#39;` to `&#039;` and rejects the non-canonical input before creating a Draft.
+
+The delivery normalizer now emits the exact sanitizer-stable entity form for new pages and repairs retained page payloads only while composing their Publish Package. The visible prose is unchanged. Local Contract validation rejects the old form, and `production_state` targets `compose_publish_page` for matching remote component-data failures. No Source, Claim, Evidence, Knowledge, Experience, approval, Draft, QA, media or commercial artifact is rerun or deleted.
+
 # 2.0.20 WordPress Content Contract taxonomy handoff
 
 App/Extension version `2.0.20`, schema migration `69`, and Content Strategy `3.3` are on the release line; `production_state` is `1.7` and Frontend Contract is `1.4.0`, with the active strategy manifest in `config/content-strategy.json`. A real production canary reached `push_wordpress_draft` and exposed a boundary not declared by the generic Page JSON Schema: the deployed WordPress theme accepts only `survival-kit`, `city-guide`, `attraction-guide` and `travel-guide`, while the CMS had emitted the internal value `itinerary`.
