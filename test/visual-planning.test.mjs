@@ -33,6 +33,20 @@ test("a missing writer visual plan deterministically uses relevant project-autho
   assert.equal(output[0].media_metadata.authorization_policy,"project_source_media_full_authorization");
 });
 
+test("authorized fallback photos never expose raw Claim keys as reader alt text", () => {
+  const assets = [{ id:"asset-claim-dump",remote_url:"https://media.example/chongqing.jpg",mime_type:"image/jpeg",
+    alt_text:"",caption_text:"",nearby_text:"",evidence_subject:"Guotai Arts Center",
+    evidence_text:"Guotai Arts Center admission_fee free Guotai Arts Center opening_hours 09:00-17:00",
+    language_status:"no_text",width:1600,height:900,storage_status:"saved",
+    original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED" }];
+  const output = normalizeVisuals([], {
+    title:"Chongqing Landmarks",body_markdown:"Visit Guotai Arts Center on a Chongqing landmarks route.",
+  }, { destination_slug:"chongqing" }, assets, policy);
+  assert.equal(output.length,1);
+  assert.equal(output[0].alt_text,"Photo of Guotai Arts Center in Chongqing.");
+  assert.doesNotMatch(output[0].alt_text,/admission_fee|opening_hours/);
+});
+
 test("unsupported map and infographic renderers create no fake visual plan", () => {
   const output = normalizeVisuals([
     { image_type:"map_or_route",image_subject:"Subway route" },

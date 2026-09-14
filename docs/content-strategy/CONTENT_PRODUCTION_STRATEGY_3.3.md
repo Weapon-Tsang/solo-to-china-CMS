@@ -56,6 +56,8 @@ Page Composition starts from the current reader-visible Draft and active Fronten
 
 Deterministic authorized-source visual selection runs before the durable stage input is frozen. All retained Source assets are authorized for editorial and production use under `AGENTS.md`; missing legacy per-item licence flags are not a veto. Selection still requires durable bytes, destination and factual relevance, source attribution, accurate alt text and Contract-safe placement. Broken or unrelated media fail closed and no factual scene is fabricated.
 
+Text-provider availability never weakens visual acceptance. Production writing remains on the configured text model; any explicitly audited fallback affects text only. Generated illustrations and localized authorized photos continue through the configured Gemini 3.1 Flash Image path and must produce real image bytes, hashes and media records. Reader alt text must describe the selected visual and may not expose Claim keys, database identifiers or a serialized evidence ledger. WordPress receives binary media through its media endpoint and only stable media references in the bounded Publish Package.
+
 Recovery resumes at the first missing or currently failed stage and reuses valid prior artifacts. A current QA pass proves that older writing, planning and page-composition failures for the superseded revision are historical, while required visual or delivery failures remain current until resolved. Recovery, automatic continuation and operator retry share the same dependency hashes and idempotency keys. Every terminal failure remains auditable as a Failure Lesson; no repair deletes Source, original media, Claims, Knowledge, Evidence, Experience, approvals or prior attempts.
 
 ## Safety and migration

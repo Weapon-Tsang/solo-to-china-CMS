@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { ProviderRequestError } from "../ai/provider-schema.mjs";
+import { ProviderRequestError, providerTransportError } from "../ai/provider-schema.mjs";
 
 const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 
@@ -43,7 +43,7 @@ export class VertexImagen {
     const prompt = `Translate only clearly readable Chinese text in this authorized source photo into concise English for international travelers.
 Preserve the photographed reality exactly: do not alter the scene, people, objects, buildings, food, route geometry, crop, perspective, lighting, colors, logos, or non-Chinese labels. Do not invent, remove, beautify, or reconstruct any object. Keep uncertain or unreadable text unchanged. Return the edited image.`;
     await this.config.beforeRequest?.({ provider: "vertex_gemini", model: this.config.model, stage: "localize_source_image", attempt: 1 });
-    const response = await this.fetch(endpoint, {
+    const response = await providerFetch(this.fetch, endpoint, {
       method: "POST",
       headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
       body: JSON.stringify({
@@ -51,12 +51,12 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
         generationConfig: { responseModalities: ["TEXT", "IMAGE"], imageConfig: { aspectRatio: visual.aspect_ratio } },
       }),
       signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
-    });
+    }, "vertex_gemini", options.signal);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new ProviderRequestError("Vertex Gemini 图片翻译", response.status, payload?.error?.message || response.statusText,
       { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
     const part = payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
-    if (!part) throw new Error("图片模型没有返回可用的翻译图片。");
+    if (!part) throw imageOutputError("Image localization model", payload);
     return this.storeImage({ base64: part.inlineData.data, mimeType: part.inlineData.mimeType, visual, draft,
       provider: "vertex_gemini", model: this.config.model });
   }
@@ -65,7 +65,7 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
     const accessToken = await this.accessToken();
     const endpoint = `https://${this.config.location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(this.config.location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:predict`;
     await this.config.beforeRequest?.({ provider: "vertex_imagen", model: this.config.model, stage: "generate_visual", attempt: 1 });
-    const response = await this.fetch(endpoint, {
+    const response = await providerFetch(this.fetch, endpoint, {
       method: "POST",
       headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
       body: JSON.stringify({
@@ -80,7 +80,7 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
         },
       }),
       signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
-    });
+    }, "vertex_imagen", options.signal);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new ProviderRequestError("Vertex Imagen", response.status, payload?.error?.message || response.statusText,
       { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
@@ -103,7 +103,7 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
     const endpoint = `${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const prompt = `${visual.generation_prompt}\n\nCreate an original editorial illustration only. Do not depict people, logos, watermarks, readable text, or a documentary-style real place.`;
     await this.config.beforeRequest?.({ provider: "vertex_gemini", model: this.config.model, stage: "generate_visual", attempt: 1 });
-    const response = await this.fetch(endpoint, {
+    const response = await providerFetch(this.fetch, endpoint, {
       method: "POST",
       headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
       body: JSON.stringify({
@@ -119,12 +119,12 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
         }],
       }),
       signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
-    });
+    }, "vertex_gemini", options.signal);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new ProviderRequestError("Gemini 3.1 Flash Image", response.status, payload?.error?.message || response.statusText,
       { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
     const part = payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
-    if (!part) throw new Error("Gemini 3.1 Flash Image returned no renderable image bytes.");
+    if (!part) throw imageOutputError("Gemini 3.1 Flash Image", payload);
     return this.storeImage({
       base64: part.inlineData.data,
       mimeType: part.inlineData.mimeType,
@@ -155,16 +155,40 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
   async accessToken() {
     if (this.config.accessToken) return this.config.accessToken;
     if (this.token && Date.now() < this.tokenExpiresAt) return this.token;
-    const response = await this.fetch(METADATA_TOKEN_URL, {
+    const response = await providerFetch(this.fetch, METADATA_TOKEN_URL, {
       headers: { "Metadata-Flavor": "Google" },
       signal: AbortSignal.timeout(5_000),
-    });
+    }, "vertex_gemini");
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.access_token) throw new Error("Vertex Imagen could not obtain a Google Compute Engine service-account token.");
     this.token = payload.access_token;
     this.tokenExpiresAt = Date.now() + Math.max(60, Number(payload.expires_in || 300) - 60) * 1_000;
     return this.token;
   }
+}
+
+async function providerFetch(fetchImpl, url, init, provider, externalSignal = null) {
+  try {
+    return await fetchImpl(url, init);
+  } catch (error) {
+    if (externalSignal?.aborted) throw error;
+    throw providerTransportError(provider, error);
+  }
+}
+
+function imageOutputError(label, payload = {}) {
+  const candidate = payload?.candidates?.[0] || {};
+  const reason = String(payload?.promptFeedback?.blockReason || candidate?.finishReason || "NO_IMAGE_BYTES").slice(0,120);
+  const responseText = (candidate?.content?.parts || []).map((part) => part?.text).filter(Boolean).join(" ")
+    .replace(/\s+/g," ").trim().slice(0,300);
+  const safetyBlocked = /SAFETY|BLOCKLIST|PROHIBITED|RECITATION/i.test(reason);
+  const detail = responseText ? ` Provider text: ${responseText}` : "";
+  return Object.assign(new Error(`${label} returned no renderable image bytes (${reason}).${detail}`), {
+    name:"ProviderImageOutputError",
+    code:safetyBlocked ? "IMAGE_SAFETY_BLOCKED" : "EMPTY_IMAGE_OUTPUT",
+    provider:"vertex_gemini",
+    retryable:!safetyBlocked,
+  });
 }
 
 function combinedSignal(signal, timeoutMs) {

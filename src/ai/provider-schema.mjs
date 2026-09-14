@@ -21,6 +21,18 @@ export class ProviderRequestError extends Error {
   }
 }
 
+export function providerTransportError(provider, error) {
+  if (error?.provider && error?.code) return error;
+  const timedOut = ["AbortError", "TimeoutError"].includes(String(error?.name || ""));
+  const wrapped = new Error(`${provider} ${timedOut ? "request timed out" : "transport failed"}: ${String(error?.message || error || "network request failed")}`,
+    { cause: error });
+  wrapped.name = "ProviderTransportError";
+  wrapped.code = timedOut ? "PROVIDER_TIMEOUT" : "PROVIDER_TRANSPORT_FAILED";
+  wrapped.provider = provider;
+  wrapped.retryable = true;
+  return wrapped;
+}
+
 function parseRetryAfter(value) {
   if (!value) return null;
   const seconds = Number(value);

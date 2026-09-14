@@ -7070,6 +7070,11 @@ export class Repository {
         sa.width,sa.height,sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
         sa.authorization_status AS asset_authorization_status,sa.publishable AS asset_publishable,
         s.title AS source_title,s.authorization_status AS source_authorization_status,s.publishable AS source_publishable,
+        COALESCE((SELECT COALESCE(NULLIF(c.canonical_subject,''),c.subject)
+          FROM claims c WHERE c.source_id=sa.source_id AND EXISTS (
+            SELECT 1 FROM json_each(c.evidence_span_ids_json) ids
+            JOIN evidence_spans es ON es.id=ids.value WHERE es.asset_id=sa.id
+          ) ORDER BY c.created_at ASC,c.id ASC LIMIT 1), '') AS evidence_subject,
         COALESCE((SELECT group_concat(canonical_subject || ' ' || subject || ' ' || predicate || ' ' || value_text, ' ')
           FROM claims c WHERE c.source_id=sa.source_id AND EXISTS (
             SELECT 1 FROM json_each(c.evidence_span_ids_json) ids
@@ -8474,7 +8479,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     return {
       ...visual,
       purpose: truncateText(visual.purpose || `Evidence-linked view for ${draft.title}`, 300),
-      alt_text: truncateText(asset.alt_text || visual.alt_text || visual.image_subject, 220),
+      alt_text: readerVisualAlt(asset, visual.alt_text || visual.image_subject, brief.destination_slug),
       caption: truncateText(asset.caption_text || visual.caption || "Photo retained from an authorized research source.", 300),
       generation_prompt: "",
       acquisition_strategy: needsLocalization ? "localize_source_image" : "use_authorized_source_image",
@@ -8508,10 +8513,11 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       - Number(left.asset.width || 0) * Number(left.asset.height || 0));
   for (const { asset } of fallbackAssets.slice(0, target - normalized.length)) {
     const index = normalized.length;
-    const subject = truncateText(asset.alt_text || asset.caption_text || asset.evidence_text || draft.title, 240);
+    const subject = readerVisualAlt(asset, "", brief.destination_slug);
+    if (!subject) continue;
     normalized.push({
       placement: defaultPlacement(index), purpose:truncateText(`Evidence-linked view supporting ${draft.title}`,300),
-      alt_text:truncateText(asset.alt_text || subject,220),
+      alt_text:subject,
       caption:truncateText(asset.caption_text || "Photo from an authorized source used in this guide.",300),
       generation_prompt:"",aspect_ratio:sourceAssetAspectRatio(asset),image_type:"real_world_photo",
       image_role:index===0 ? "hero" : "support",image_subject:subject,
@@ -8527,6 +8533,21 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     unusedAssets.delete(asset.id);
   }
   return normalized;
+}
+
+function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
+  const clean = (value) => String(value || "").replace(/\s+/g," ").trim();
+  const isEditorial = (value) => value && !/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/i.test(value)
+    && !/\b(?:claim|source|asset|fact|draft)_[a-f0-9]{8,}\b/i.test(value);
+  for (const value of [asset?.alt_text, asset?.caption_text, fallback].map(clean)) {
+    if (isEditorial(value)) return truncateText(value,220);
+  }
+  const subject = clean(asset?.evidence_subject);
+  if (!isEditorial(subject)) return "";
+  const destination = clean(String(destinationSlug || "").replace(/[-_]+/g," "))
+    .replace(/\b[a-z]/g,(character)=>character.toUpperCase());
+  const suffix = destination && !subject.toLowerCase().includes(destination.toLowerCase()) ? ` in ${destination}` : "";
+  return truncateText(`Photo of ${subject}${suffix}.`,220);
 }
 
 function articleAssetMatchScore(draft, brief, asset) {

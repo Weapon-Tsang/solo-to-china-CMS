@@ -13,6 +13,10 @@
 - Reserve the QA stage's output budget for its compact audit instead of hidden MEDIUM reasoning. The review DTO now removes duplicated Brief/Canonical data and repeated evidence metadata, bounds issues/checks/unsupported claims, and a reasoning-stage `MAX_TOKENS` gets one explicit LOW-thinking retry with complete attempt telemetry.
 - Escalate a content blocker repeated across consecutive revisions from bounded repair to Draft regeneration while preserving the frozen Writing Packet and all successful upstream artifacts. Repeated page/media blockers remain page/media recovery and never trigger writing.
 - Isolate real-provider production-copy canaries from unrelated durable queue rows and disable fake Contract sync sources, preventing test-only background Jobs from consuming provider capacity or polluting acceptance results.
+- Keep Gemini 3.8 Flash as the production text path and Gemini 3.1 Flash Image as the independent visual path. A canary-only text fallback can never disable, replace or simulate real image generation/localization acceptance.
+- Attribute Vertex, Kimi and Flash Image network/time-limit failures to the actual provider and retain `retryable_provider` after the durable attempt budget is exhausted. Kimi's optional canary transport consumes long structured output as SSE instead of depending on a five-minute non-streaming response.
+- Reject internal Claim-key dumps as reader alt text. Deterministic authorized-photo fallback now uses a clean stored description or evidence-linked subject, while preserving the exact Source asset and media provenance.
+- Exercise binary WordPress media uploads separately from the bounded JSON Publish Package in the draft-only canary, and join visual evidence through Brief/Candidate ownership instead of a nonexistent Opportunity draft column.
 - Keep all imported Source media authorized for editorial use under `AGENTS.md`, while preserving attribution, durable bytes, relevance, alt text and Frontend Contract validation. Schema, strategy and approval semantics are unchanged.
 
 ## App 2.0.23 / schema 69 - 2026-09-14

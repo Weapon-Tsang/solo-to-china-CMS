@@ -472,6 +472,52 @@ test("provider pressure respects max attempts and exhausted cooldowns cannot be 
   }
 });
 
+test("provider transport failures stay retryable and provider-attributed after durable exhaustion", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-provider-transport-test-"));
+  const database = openDatabase(path.join(directory, "transport.sqlite"));
+  let current = new Date("2026-09-14T00:00:00.000Z");
+  const repository = new Repository(database, {
+    providerBackoffInitialMs: 100,
+    providerBackoffMaxMs: 1_000,
+    clock: () => current,
+  });
+  try {
+    const jobId = repository.enqueue("generate_draft", "draft-transport-failure");
+    database.prepare("UPDATE jobs SET max_attempts=2 WHERE id=?").run(jobId);
+    const error = Object.assign(new TypeError("fetch failed"), {
+      name: "ProviderTransportError",
+      code: "PROVIDER_TRANSPORT_FAILED",
+      provider: "kimi",
+      retryable: true,
+    });
+
+    const first = repository.claimJob();
+    repository.failJob(first, error);
+    let stored = database.prepare("SELECT status,attempts,last_failure_code,failure_class FROM jobs WHERE id=?").get(jobId);
+    assert.deepEqual({ ...stored }, {
+      status: "queued",
+      attempts: 1,
+      last_failure_code: "PROVIDER_TRANSPORT_FAILED",
+      failure_class: "retryable_provider",
+    });
+
+    current = new Date(repository.providerBackoffUntil + 1);
+    const second = repository.claimJob();
+    repository.failJob(second, error);
+    stored = database.prepare("SELECT status,attempts,last_failure_code,failure_class,next_eligible_at FROM jobs WHERE id=?").get(jobId);
+    assert.deepEqual({ ...stored }, {
+      status: "failed",
+      attempts: 2,
+      last_failure_code: "PROVIDER_TRANSPORT_FAILED",
+      failure_class: "retryable_provider",
+      next_eligible_at: null,
+    });
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("completion-stage jobs bypass an older extraction backlog without bypassing availability", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-job-priority-test-"));
   const database = openDatabase(path.join(directory, "priority.sqlite"));

@@ -13,10 +13,22 @@ if (!/(?:canary|replay|work)/i.test(path.basename(databasePath))) throw new Erro
 
 const requests = [];
 const mock = http.createServer(async (request, response) => {
+  const origin=`http://127.0.0.1:${mock.address().port}`;
+  if (request.method === "POST" && request.url === "/wp-json/wp/v2/media") {
+    const body = await readBytes(request,12*1024*1024);
+    const id=args.postId+requests.filter((item)=>item.kind==="media").length+1;
+    const mime=String(request.headers["content-type"] || "image/png");
+    const mediaUrl=`${origin}/wp-content/uploads/canary-${id}.png`;
+    requests.push({kind:"media",method:request.method,url:request.url,authorization:request.headers.authorization || null,
+      idempotencyKey:request.headers["idempotency-key"] || null,bytes:body.length,contentType:mime});
+    response.writeHead(201,{"content-type":"application/json"});
+    return response.end(JSON.stringify({id,source_url:mediaUrl,mime_type:mime,media_details:{width:1600,height:900,
+      sizes:{large:{source_url:mediaUrl,width:1024,height:576,mime_type:mime}}}}));
+  }
   const body = await readBody(request);
   const parsed = body ? JSON.parse(body) : null;
-  requests.push({ method:request.method,url:request.url,authorization:request.headers.authorization || null,
-    idempotencyKey:request.headers["idempotency-key"] || null,bytes:Buffer.byteLength(body,"utf8"),body:parsed });
+  requests.push({kind:"article",method:request.method,url:request.url,authorization:request.headers.authorization || null,
+    idempotencyKey:request.headers["idempotency-key"] || null,bytes:Buffer.byteLength(body,"utf8"),body:parsed});
   if (request.method !== "POST" || request.url !== "/wp-json/stc/v1/cms-articles") {
     response.writeHead(404,{"content-type":"application/json"});return response.end(JSON.stringify({code:"not_found"}));
   }
@@ -24,7 +36,6 @@ const mock = http.createServer(async (request, response) => {
     response.writeHead(409,{"content-type":"application/json"});
     return response.end(JSON.stringify({code:"publish_forbidden",message:"The canary accepts draft delivery only."}));
   }
-  const origin=`http://127.0.0.1:${mock.address().port}`;
   response.writeHead(200,{"content-type":"application/json"});
   response.end(JSON.stringify({status:"draft",post_id:args.postId,slug:parsed.page?.metadata?.slug || "canary-draft",
     preview_url:`${origin}/?p=${args.postId}&preview=true`,edit_url:`${origin}/wp-admin/post.php?post=${args.postId}&action=edit`,
@@ -63,7 +74,9 @@ const consumer=new FrontendContractConsumer(repository,config.frontendContract);
 const publishPackage=contentPackage?.publish_composition?.publish_package;
 const contractValidation=consumer.validatePublishPackage(publishPackage);
 const finalValidation=validateFinalPageArtifact(publishPackage?.page,contentPackage);
-const request=requests[0] || null;const payloadText=JSON.stringify(publishPackage || {});
+const articleRequests=requests.filter((item)=>item.kind==="article");
+const mediaRequests=requests.filter((item)=>item.kind==="media");
+const request=articleRequests[0] || null;const payloadText=JSON.stringify(publishPackage || {});
 const boundaryViolations=[/(?:^|["'])className(?:["']|\s*:)/i,/dangerouslySetInnerHTML/i,/<style\b/i,
   /(?:^|["'])jsx(?:["']|\s*:)/i,/(?:^|["'])css(?:["']|\s*:)/i].filter((pattern)=>pattern.test(payloadText)).map(String);
 const protectedAfter=protectedCounts(repository);
@@ -73,7 +86,8 @@ const protectedDataPreserved=immutableProtected.every((key)=>protectedAfter[key]
 const publication=contentPackage?.publication;
 const finalState=repository.getContentProductionDetail(row.opportunity_id)?.production_state || null;
 const assertions={
-  oneDraftRequest:requests.length===1 && request?.method==="POST",
+  oneDraftRequest:articleRequests.length===1 && request?.method==="POST",
+  mediaUploadsCompleted:mediaRequests.every((item)=>item.bytes>0 && item.bytes<=12*1024*1024),
   authenticated:Boolean(request?.authorization?.startsWith("Basic ")),idempotent:Boolean(request?.idempotencyKey),
   boundedPayload:Number(request?.bytes || 0)>0 && Number(request?.bytes || 0)<=1024*1024,
   draftOnly:request?.body?.publication?.status==="draft" && publication?.status==="synced" && contentPackage?.draft?.status==="wordpress_draft",
@@ -87,6 +101,7 @@ const result={version:"production-wordpress-canary-1",database:path.basename(dat
   isolation:{productionDatabase:false,realWordPress:false,modelCalls:false,published:false},startupJobsCancelledInCopy:startupJobs.length,
   opportunityId:row.opportunity_id,draftId:row.draft_id,title:contentPackage.draft.title,postId:publication?.post_id || null,
   previewUrl:publication?.preview_url || null,editUrl:publication?.edit_url || null,publishPackageBytes:request?.bytes || 0,
+  mediaUploads:mediaRequests.map(({bytes,contentType})=>({bytes,contentType})),
   pageBlocks:publishPackage?.page?.blocks?.length || 0,contractVersion:publishPackage?.contract?.componentContractVersion || null,
   boundaryViolations,contractErrors:contractValidation.errors,finalArtifactErrors:finalValidation.errors,protectedBefore,protectedAfter,
   finalProductionState:finalState ? {version:finalState.version,stageStatus:finalState.stage_status,
@@ -105,6 +120,8 @@ function protectedCounts(repo){return Object.fromEntries([["sources","sources"],
   .map(([key,from])=>[key,Number(repo.db.prepare(`SELECT COUNT(*) AS count FROM ${from}`).get().count || 0)]));}
 async function readBody(request){const chunks=[];let bytes=0;for await(const chunk of request){bytes+=chunk.length;
   if(bytes>1024*1024)throw new Error("Mock WordPress request exceeded 1 MiB.");chunks.push(chunk);}return Buffer.concat(chunks).toString("utf8");}
+async function readBytes(request,limit){const chunks=[];let bytes=0;for await(const chunk of request){bytes+=chunk.length;
+  if(bytes>limit)throw new Error("Mock WordPress media request exceeded its bounded upload limit.");chunks.push(chunk);}return Buffer.concat(chunks);}
 async function close(){repository.db.close();await new Promise((resolve)=>mock.close(resolve));}
 function parseArgs(values){const output={database:"",opportunity:"",postId:92019,timeoutMs:120000};for(let index=0;index<values.length;index+=1){
   const value=values[index];if(value==="--database")output.database=values[++index] || "";else if(value==="--opportunity")output.opportunity=values[++index] || "";

@@ -74,8 +74,10 @@ export function laneBackoffMs(workloadClass, baseMs) {
 
 export function isProviderPressure(error) {
   const status = Number(error?.status || 0);
+  const code = String(error?.code || "").toUpperCase();
   const message = String(error?.message || "");
   return status === 429 || (Boolean(error?.provider) && [500, 503].includes(status))
+    || (Boolean(error?.provider) && ["PROVIDER_TRANSPORT_FAILED", "PROVIDER_TIMEOUT"].includes(code))
     || /resource exhausted|quota|rate.?limit|temporarily overloaded/i.test(message);
 }
 

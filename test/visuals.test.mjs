@@ -59,6 +59,31 @@ test("visual generation participates in the shared request gate and preserves pr
   assert.equal(gated, 1);
 });
 
+test("Flash Image transport failures retain their provider and retry classification", async () => {
+  const client = new VertexImagen({
+    enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",model:"gemini-3.1-flash-image",
+    accessToken:"token",publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
+  }, async()=>{throw new TypeError("fetch failed",{cause:{code:"UND_ERR_SOCKET"}});});
+  await assert.rejects(client.generate({id:"visual-network",slot:1,image_type:"illustration",
+    acquisition_strategy:"generate_illustration",factual_image_required:false,image_role:"hero",aspect_ratio:"16:9",
+    generation_prompt:"A quiet travel scene"},{id:"draft-network"}),
+  (error)=>error.code==="PROVIDER_TRANSPORT_FAILED"&&error.provider==="vertex_gemini"&&error.retryable===true);
+});
+
+test("Flash Image empty responses remain provider failures while explicit safety blocks stop", async () => {
+  const config={enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",model:"gemini-3.1-flash-image",
+    accessToken:"token",publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000};
+  const visual={id:"visual-empty",slot:1,image_type:"illustration",acquisition_strategy:"generate_illustration",
+    factual_image_required:false,image_role:"hero",aspect_ratio:"16:9",generation_prompt:"A quiet travel scene"};
+  const transient=new VertexImagen(config,async()=>Response.json({candidates:[{finishReason:"STOP",content:{parts:[{text:"Unable to return an image this time."}]}}]}));
+  await assert.rejects(transient.generate(visual,{id:"draft-empty"}),
+    (error)=>error.code==="EMPTY_IMAGE_OUTPUT"&&error.provider==="vertex_gemini"&&error.retryable===true
+      && /Unable to return an image/.test(error.message));
+  const blocked=new VertexImagen(config,async()=>Response.json({promptFeedback:{blockReason:"SAFETY"}}));
+  await assert.rejects(blocked.generate(visual,{id:"draft-blocked"}),
+    (error)=>error.code==="IMAGE_SAFETY_BLOCKED"&&error.provider==="vertex_gemini"&&error.retryable===false);
+});
+
 test("Chinese source-image localization sends the retained original and forbids scene changes", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-localize-visual-test-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

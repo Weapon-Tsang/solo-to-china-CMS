@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { KimiClient } from "./kimi-client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
-import { ProviderRequestError, vertexStructuredOutput } from "./provider-schema.mjs";
+import { ProviderRequestError, providerTransportError, vertexStructuredOutput } from "./provider-schema.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
 
 const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
@@ -77,10 +77,11 @@ export class VertexGeminiClient {
         signal: combinedSignal(signal, effectiveTimeoutMs),
         });
       } catch (error) {
+        const requestError = signal?.aborted ? error : providerTransportError("vertex", error);
         this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
-          status: error?.name === "AbortError" || error?.name === "TimeoutError" ? "cancelled" : "failed",
-          errorCode: error?.name || "REQUEST_FAILED", retryReason: attempt ? "request_retry" : null }));
-        throw error;
+          status: signal?.aborted ? "cancelled" : "failed",
+          errorCode: requestError?.code || requestError?.name || "REQUEST_FAILED", retryReason: attempt ? "request_retry" : null }));
+        throw requestError;
       }
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {

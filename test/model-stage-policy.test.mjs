@@ -58,6 +58,40 @@ test("every provider attempt is metered, including structured-output repair retr
   assert.ok(metrics.every((item) => item.providerRequestMs >= 0 && item.retryWaitMs >= 0 && item.totalStageMs >= item.providerRequestMs));
 });
 
+test("Kimi transport failures remain provider-attributed and retryable", async () => {
+  const metrics=[];
+  const client=createAiClient({provider:"kimi",apiKey:"test",model:"kimi-k3",baseUrl:"https://example.test/v1",
+    stagePolicy:{version:"policy-test",stages:{test_stage:{maxAttempts:1,maxOutputTokens:1000,timeoutMs:5000}}},
+    onModelCall:(metric)=>metrics.push(metric)},async()=>{throw new TypeError("fetch failed",{cause:{code:"UND_ERR_SOCKET"}});});
+  await assert.rejects(client.completeJson({name:"test_stage",schema,instructions:"Return JSON",content:"input"}),
+    (error)=>error.code==="PROVIDER_TRANSPORT_FAILED"&&error.provider==="kimi"&&error.retryable===true);
+  assert.equal(metrics[0].errorCode,"PROVIDER_TRANSPORT_FAILED");
+});
+
+test("Kimi streams a long structured completion and retains final usage", async () => {
+  let request;
+  const metrics=[];
+  const client=createAiClient({provider:"kimi",apiKey:"test",model:"kimi-k3",baseUrl:"https://example.test/v1",
+    stagePolicy:{version:"policy-test",stages:{test_stage:{maxAttempts:1,maxOutputTokens:1000,timeoutMs:5000}}},
+    onModelCall:(metric)=>metrics.push(metric)},async(_url,options)=>{
+      request=JSON.parse(options.body);
+      const frames=[
+        {model:"kimi-k3",choices:[{delta:{reasoning_content:"private reasoning"},finish_reason:null}]},
+        {model:"kimi-k3",choices:[{delta:{content:'{"answer":'},finish_reason:null}]},
+        {model:"kimi-k3",choices:[{delta:{content:'"ok"}'},finish_reason:"stop"}]},
+        {model:"kimi-k3",choices:[],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}},
+      ].map((item)=>`data: ${JSON.stringify(item)}\n\n`).join("")+"data: [DONE]\n\n";
+      return new Response(frames,{status:200,headers:{"content-type":"text/event-stream"}});
+    });
+  const result=await client.completeJson({name:"test_stage",schema,instructions:"Return JSON",content:"input"});
+  assert.equal(request.stream,true);
+  assert.deepEqual(request.stream_options,{include_usage:true});
+  assert.deepEqual(result.output,{answer:"ok"});
+  assert.equal(result.usage.total_tokens,15);
+  assert.equal(metrics[0].inputTokens,10);
+  assert.equal(metrics[0].outputTokens,5);
+});
+
 test("a locally rejected structured completion is never retained in the response cache", async () => {
   const metrics = [];
   let requestCount = 0;

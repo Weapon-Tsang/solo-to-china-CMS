@@ -20,3 +20,20 @@ export function resolveContentCanaryModel(requestedModel, models, defaultModel) 
   }
   return selected;
 }
+
+export function flashImageCanaryEvidence(visuals = [], inspectFile = () => null) {
+  return visuals.filter((visual) => visual?.status === "generated"
+    && visual?.provider === "vertex_gemini"
+    && visual?.model === "gemini-3.1-flash-image")
+    .map((visual) => {
+      const file = visual.media_path ? inspectFile(visual.media_path) : null;
+      return {
+        visualId: visual.id,
+        slot: Number(visual.slot || 0),
+        mediaPath: visual.media_path || null,
+        bytes: Number(file?.bytes || 0),
+        sha256: file?.sha256 || null,
+        valid: Number(file?.bytes || 0) > 0 && /^[a-f0-9]{64}$/i.test(String(file?.sha256 || "")),
+      };
+    });
+}

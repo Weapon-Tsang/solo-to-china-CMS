@@ -1,9 +1,11 @@
+import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { createApplication } from "../src/server.mjs";
 import { AI_MODELS, loadConfig } from "../src/config.mjs";
 import { executeContentRecovery } from "../src/services/content-recovery.mjs";
-import { contentCanaryProviderCapacityOutcome, resolveContentCanaryModel } from "./lib/content-canary-policy.mjs";
+import { contentCanaryProviderCapacityOutcome, flashImageCanaryEvidence, resolveContentCanaryModel } from "./lib/content-canary-policy.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 if (process.env.ALLOW_REAL_PROVIDER_CANARY !== "1") {
@@ -131,11 +133,13 @@ const metrics = repository.db.prepare(`SELECT stage,status,error_code,COUNT(*) A
   MAX(latency_ms) AS max_latency_ms FROM model_call_metrics WHERE created_at>=?
   GROUP BY stage,status,error_code ORDER BY stage,status,error_code`).all(startedAt);
 const visuals = repository.db.prepare(`SELECT av.id,av.draft_id,av.slot,av.image_type,av.acquisition_strategy,av.status,
-  av.provider,av.model,av.media_path,av.media_url,av.last_error,av.updated_at
+  av.provider,av.model,av.media_path,av.media_url,av.alt_text,av.source_asset_id,av.last_error,av.updated_at
   FROM article_visuals av JOIN article_drafts ad ON ad.id=av.draft_id
-  JOIN content_opportunities co ON co.draft_id=ad.id
+  JOIN content_briefs cb ON cb.id=ad.brief_id
+  JOIN content_opportunities co ON co.candidate_id=cb.candidate_id
   WHERE co.id IN (${candidates.map(() => "?").join(",")}) AND av.updated_at>=?
   ORDER BY co.id,av.slot`).all(...candidates.map((row) => row.opportunity_id),startedAt);
+const flashImageEvidence = flashImageCanaryEvidence(visuals, inspectGeneratedFile);
 const protectedAfter = protectedCounts(repository);
 const immutableProtected = ["sources", "source_assets", "claims", "evidence_spans", "knowledge_facts", "experience_blocks", "approved_opportunities"];
 const protectedDataPreserved = immutableProtected.every((key) => protectedAfter[key] === protectedBefore[key])
@@ -159,11 +163,13 @@ const result = {
   activeJobs,
   metrics,
   visuals,
+  flashImageEvidence,
   flows,
 };
 repository.db.close();
 console.log(JSON.stringify(result, null, 2));
-if (!result.protectedDataPreserved || activeJobs.length || flows.some((flow) => ["failed", "interrupted"].includes(flow.finalStatus))) process.exitCode = 1;
+if (!result.protectedDataPreserved || activeJobs.length || flows.some((flow) => ["failed", "interrupted"].includes(flow.finalStatus))
+  || (args.requireFlashImage && !flashImageEvidence.some((item) => item.valid))) process.exitCode = 1;
 
 // A provider-capacity terminal is an inconclusive environment result, not a
 // content-repair signal. The worker already exhausts the bounded attempts for
@@ -204,9 +210,18 @@ function protectedCounts(repo) {
   ].map(([key, from]) => [key, Number(repo.db.prepare(`SELECT COUNT(*) AS count FROM ${from}`).get().count || 0)]));
 }
 
+function inspectGeneratedFile(filename) {
+  try {
+    const bytes = fs.readFileSync(filename);
+    return { bytes: bytes.length, sha256: crypto.createHash("sha256").update(bytes).digest("hex") };
+  } catch {
+    return null;
+  }
+}
+
 function parseArgs(values) {
   const output = { database: "", limit: 5, maxCalls: 40, timeoutMs: 45 * 60 * 1_000, spacingMs: 1_000,
-    recoveryCycles: 1, opportunities: [], model: "", images: false };
+    recoveryCycles: 1, opportunities: [], model: "", images: false, requireFlashImage: false };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--database") output.database = values[++index] || "";
@@ -217,6 +232,7 @@ function parseArgs(values) {
     else if (value === "--recovery-cycles") output.recoveryCycles = bounded(values[++index], 1, 4, "recovery-cycles");
     else if (value === "--model") output.model = values[++index] || "";
     else if (value === "--images") output.images = true;
+    else if (value === "--require-flash-image") { output.images = true; output.requireFlashImage = true; }
     else if (value === "--opportunity") output.opportunities.push(values[++index] || "");
     else throw new Error(`Unknown argument: ${value}`);
   }

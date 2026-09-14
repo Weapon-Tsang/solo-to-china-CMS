@@ -25,6 +25,15 @@ test("Vertex Gemini uses the configured model and structured JSON response", asy
   assert.equal(body.systemInstruction.parts[0].text, "Be precise.");
 });
 
+test("Vertex transport failures remain provider-attributed and retryable", async () => {
+  const metrics=[];
+  const client=new VertexGeminiClient({projectId:"test-project",location:"global",model:"gemini-3.8-flash",
+    accessToken:"test-token",onModelCall:(metric)=>metrics.push(metric)},async()=>{throw new TypeError("fetch failed");});
+  await assert.rejects(client.completeJson({name:"test",schema:{type:"object"},instructions:"Be precise.",content:"source"}),
+    (error)=>error.code==="PROVIDER_TRANSPORT_FAILED"&&error.provider==="vertex"&&error.retryable===true);
+  assert.equal(metrics[0].errorCode,"PROVIDER_TRANSPORT_FAILED");
+});
+
 test("AI client dispatches an old Batch poll through its stored Vertex adapter after a Kimi switch", async () => {
   let requestUrl = "";
   const config = {
