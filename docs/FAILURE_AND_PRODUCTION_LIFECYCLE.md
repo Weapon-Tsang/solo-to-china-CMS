@@ -1,5 +1,11 @@
 # Failure and production lifecycle
 
+## 2.0.27 quality-repair convergence
+
+The two-attempt automatic quality-repair ceiling is a per-recovery-run circuit breaker. Historical automatic repair Jobs remain audit history but do not consume a new explicit recovery's budget. `recovery_run_id` is inherited by revision repair, page composition, QA and any automatic escalation; dedupe still prevents the same stage and revision from running twice inside that recovery.
+
+A provider issue that cites a specific mandatory Brief id cannot be surfaced under a semantically unrelated editorial code. It is canonicalized to a single `mandatory_brief_requirement_missing` blocker, and its repair remains bounded to the smallest affected Draft section unless the same blocker repeats and triggers the existing full-Draft escalation from the preserved Writing Packet.
+
 ## 2.0.26 atomic unsupported-assertion recovery
 
 A current persisted Quality Review is authoritative for its immutable Draft revision. Content Recovery must not recompute a review from empty model checks, because that would label mandatory Brief requirements “not audited” and suppress the actual reviewer blocker. Deterministic-only diagnostics are used only when the current revision has no persisted review.

@@ -1,5 +1,10 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.27 / schema 69 - 2026-09-15
+
+- Treat automatic QA convergence as a bounded recovery-run concern rather than a lifetime Draft counter; historical repair attempts remain auditable but cannot strand a current approved production flow.
+- Canonicalize a reviewer alias that cites a mandatory Brief id to one mandatory-requirement blocker and restore fact-bearing requirements only from the frozen fact/ledger scope.
+
 ## App 2.0.26 / schema 69 - 2026-09-15
 
 - Preserve the current independent quality review as the recovery authority for its immutable Draft revision; never replace its mandatory checks or explicit blockers with an empty diagnostic review.

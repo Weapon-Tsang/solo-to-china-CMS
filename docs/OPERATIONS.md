@@ -1,5 +1,11 @@
 # V1 Operations
 
+## 2.0.27 recovery-run repair budget
+
+Automatic Draft/QA repair is capped at two attempts per explicit `recovery_run_id`, not two attempts for the Draft's full lifetime. A manual recovery and every child Job must retain the same run id. The dedupe identity includes that run id plus stage, Draft and revision. This allows a newly diagnosed revision to converge while preventing repeated work inside one recovery. Operator diagnosis must report the active run's attempts and must not inherit an exhausted counter from an older deployment.
+
+If QA describes `brief-adaptation-N` or `brief-conflict-N` with a general editorial code, the deterministic quality gate canonicalizes it to one mandatory-Brief blocker. Recovery must restore the requirement from the frozen fact set and ledger; it must never import global Knowledge or invent a replacement value.
+
 ## 2.0.26 unsupported-assertion recovery acceptance
 
 When QA reports `UNSUPPORTED_ASSERTION`, inspect the atomic `unsupported_claims` against the frozen repair `facts` and the current Draft ledger. A value available elsewhere in destination Knowledge is not part of this article unless its selected key is present in that frozen set. Recover only `revise_draft`; verify the new revision removes or corrects every listed value, reruns independent QA, and preserves unrelated Source, Evidence, media and upstream planning artifacts.

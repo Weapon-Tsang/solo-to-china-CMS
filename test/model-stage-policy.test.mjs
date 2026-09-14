@@ -510,6 +510,24 @@ test("mandatory brief requirements are audited explicitly and cannot be downgrad
   assert.equal(result.issues.some((issue)=>issue.code==="mandatory_brief_requirement_missing"),true);
 });
 
+test("a provider cannot disguise a missing Brief requirement as an unrelated editorial blocker", () => {
+  const result=applyDeterministicGates({passed:false,score:72,issues:[{
+    code:"NO_TRAVELER_DECISION",severity:"blocker",
+    message:"Section Line 2 missed mandatory conflict instruction brief-conflict-1 by omitting the supported hours.",
+  }],checks:[{name:"brief-conflict-1",passed:false,detail:"The supported opening hours are absent."}],unsupported_claims:[]},{
+    draft:{title:"Route guide",body_markdown:"## Line 2\n\nChoose the zoo after the museum.",
+      meta_description:"A practical Line 2 route.",seo:{meta_title:"Route guide",focus_keyword:"route guide",secondary_keywords:[],search_intent:"informational",key_takeaways:[],faqs:[]},
+      evidence_ledger:[],unresolved_conflicts:[],verification_notes:[],visuals:[],faqs:[],strategy_version:"3.3",schema_jsonld:{"@graph":[{"@type":"Article"}]}},
+    facts:[],brief:{strategy_version:"3.3",canonical:{quick_answer:"Use Line 2.",answer_blocks:[]},plan:{outline:[],adaptation_requirements:[],
+      conflict_instructions:["State the supported opening hours and advise a mid-morning arrival."]}},
+    content_policy:{minimum_words:0,faq:{allowed:false},visuals:{minimum:0,maximum:0}},reader_sources:[],
+  });
+  assert.equal(result.issues.some((issue)=>issue.code==="NO_TRAVELER_DECISION"),false);
+  const missing=result.issues.filter((issue)=>issue.code==="mandatory_brief_requirement_missing");
+  assert.equal(missing.length,1);
+  assert.equal(missing[0].severity,"blocker");
+});
+
 test("quality review input keeps promised evidence once and bounds the provider response", async () => {
   let requestBody;
   const facts=Array.from({length:60},(_,index)=>({

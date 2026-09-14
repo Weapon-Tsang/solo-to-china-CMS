@@ -1,6 +1,13 @@
 # Changelog
 
-## 2.0.26 - Unreleased
+## 2.0.27 - Unreleased
+
+- Scope automatic Draft/QA repair limits to the active explicit recovery run, so historical attempts from older deployments cannot strand a newly diagnosed revision at `attempt_limit_reached`.
+- Preserve `recovery_run_id` across every automatic quality-repair child and include it in the idempotency key while retaining the two-attempt anti-loop limit inside that run.
+- Normalize provider issue-code aliases that describe a missing mandatory Brief requirement, preventing one omission from appearing as both `NO_TRAVELER_DECISION` and `mandatory_brief_requirement_missing`.
+- Instruct bounded repair to restore mandatory fact-bearing requirements only from the matching frozen fact and ledger key.
+
+## 2.0.26 - 2026-09-15
 
 - Preserve the authoritative current quality review in Content Recovery details. A diagnostic recomputation can no longer discard the independent reviewer checks, invent “mandatory requirements not audited”, or hide an explicit unsupported assertion behind a generic unknown-error message.
 - Treat `UNSUPPORTED_ASSERTION` and its legacy plural form as first-class recoverable quality failures with an exact Chinese cause and action. The workbench continues to target bounded Draft revision rather than research, evidence or media regeneration.

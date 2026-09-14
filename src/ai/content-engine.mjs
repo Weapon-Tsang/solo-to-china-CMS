@@ -1095,6 +1095,7 @@ const DRAFT_REPAIR_PROMPT = `Repair only the failed fields or existing draft sec
 - brief.adaptation_requirements and brief.conflict_instructions are mandatory reader-facing constraints, not optional suggestions. Satisfy every applicable item in the replacement sections.
 - regression_guardrails are blockers found in earlier revisions. Do not reintroduce them while fixing the current issues.
 - unsupported_claims are atomic reader-facing assertions that the latest audit could not map to this article's frozen evidence. Remove or correct every listed assertion in the smallest affected section. Keep one only when its exact value is present in facts and its normalized_key remains honestly mapped in that section's evidence_ledger.
+- A missing mandatory Brief requirement must be restored in the smallest affected section. When it contains a time, price, route, reservation rule, or other factual value, copy only the matching preferred_value from facts and keep that normalized_key in the section ledger; never satisfy it with an unsupported substitute or by deleting the requirement.
 - Return the exact base_content_hash supplied by the caller.
 - replacement_sections may contain at most three headings copied exactly from allowed_replacement_headings. Some legacy drafts use H3 as their primary section level. Supply body content only; do not add or rename peer headings.
 - Change metadata only when a QA issue explicitly identifies title, meta, keyword, slug or SEO metadata.
@@ -1151,7 +1152,7 @@ export function applyDeterministicGates(review, contentPackage) {
   const facts = contentPackage.facts || [];
   const validKeys = new Set(facts.map((fact) => fact.normalized_key));
   const ledgerKeys = new Set((draft.evidence_ledger || []).flatMap((entry) => entry.claim_keys));
-  const issues = (review.issues || []).map(enforceMandatoryIssueSeverity);
+  const issues = (review.issues || []).map(normalizeReviewIssue).map(enforceMandatoryIssueSeverity);
   const checks = [...(review.checks || [])];
   const addGate = (name, passed, detail, code, metadata = {}) => {
     checks.push({ name, passed, detail });
@@ -1351,7 +1352,12 @@ export function applyDeterministicGates(review, contentPackage) {
   addWarning("english-readability", readability.length === 0,
     readability.length ? readability.join(" ") : "English sentence and paragraph rhythm is within the configured editorial guidance.",
     "readability_suggestion");
-  const finalIssues = uniqueBy(issues, (item) => `${item.code}:${item.message}`);
+  // Provider reviewers occasionally describe a missing Brief requirement with
+  // a general editorial code (for example NO_TRAVELER_DECISION). Normalize
+  // those aliases and keep one blocker per missing-requirement class so the
+  // operator sees the real repair target instead of two contradictory causes.
+  const finalIssues = uniqueBy(issues, (item) => String(item.code || "") === "mandatory_brief_requirement_missing"
+    ? "mandatory_brief_requirement_missing" : `${item.code}:${item.message}`);
   const hasBlocker=finalIssues.some((item)=>item.severity==="blocker");
   return {
     ...review,
@@ -1363,6 +1369,18 @@ export function applyDeterministicGates(review, contentPackage) {
     deterministic_summary: { hardFailures: finalIssues.filter((item) => item.severity === "blocker").length,
       warnings: finalIssues.filter((item) => item.severity === "warning").length, semanticUnverified },
   };
+}
+
+function normalizeReviewIssue(issue = {}) {
+  const code = String(issue.code || "");
+  const message = String(issue.message || "");
+  const requirementReference = /\bbrief-(?:adaptation|conflict)-\d+\b|\bmandatory brief requirement\b|\bbrief(?:'s)? (?:adaptation|conflict)\b/iu.test(message);
+  if (requirementReference && ["NO_TRAVELER_DECISION", "NO_CAUSAL_FLOW", "MISLEADING_CERTAINTY",
+    "EXCESSIVE_HEDGING", "GENERIC_AI_TRANSITIONS"].includes(code.toUpperCase())) {
+    return { ...issue, code:"mandatory_brief_requirement_missing", severity:"blocker",
+      affected_count:Number(issue.affected_count || 0) || 1 };
+  }
+  return issue;
 }
 
 function containsProtectedToken(text, token) {

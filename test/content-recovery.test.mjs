@@ -221,6 +221,52 @@ test('automatic quality repair is deduplicated per revision and stops after two 
   db.prepare("UPDATE article_drafts SET revision=3,content_hash='hash-3'").run();
   assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:true}).reason,'attempt_limit_reached');
 });
+test('a new explicit recovery run receives a fresh bounded quality-repair budget',t=>{
+  const {db,repository}=fixture(t);
+  const issues=[{code:'mandatory_brief_requirement_missing',severity:'blocker',message:'brief-conflict-2 is missing',affected_count:1}];
+  repository.saveReview('draft-r',{passed:false,score:62,issues,checks:[],unsupported_claims:[]},'fixture');
+  for (let revision=1; revision<=2; revision+=1) {
+    const old=repository.automaticQualityRepairState('draft-r',issues,{enqueue:true});
+    assert.equal(old.queued,true);
+    db.prepare("UPDATE jobs SET status='failed'").run();
+    db.prepare("UPDATE article_drafts SET revision=revision+1,content_hash=? WHERE id='draft-r'").run(`old-${revision}`);
+  }
+  assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:false}).reason,'attempt_limit_reached');
+
+  const recoveryRunId='recovery_run_current';
+  const current=repository.automaticQualityRepairState('draft-r',issues,{enqueue:true,recoveryRunId,
+    productionOwnerOpportunityId:'opportunity-r'});
+  assert.equal(current.queued,true);
+  assert.equal(current.attempts,1);
+  assert.equal(db.prepare("SELECT recovery_run_id FROM jobs WHERE id=?").get(current.jobId).recovery_run_id,recoveryRunId);
+  assert.match(db.prepare("SELECT dedupe_key FROM jobs WHERE id=?").get(current.jobId).dedupe_key,/recovery_run_current/);
+  db.prepare("UPDATE jobs SET status='failed' WHERE id=?").run(current.jobId);
+  db.prepare("UPDATE article_drafts SET revision=revision+1,content_hash='current-2' WHERE id='draft-r'").run();
+  const second=repository.automaticQualityRepairState('draft-r',issues,{enqueue:true,recoveryRunId,
+    productionOwnerOpportunityId:'opportunity-r'});
+  assert.equal(second.queued,true);
+  assert.equal(second.attempts,2);
+  db.prepare("UPDATE jobs SET status='failed' WHERE id=?").run(second.jobId);
+  db.prepare("UPDATE article_drafts SET revision=revision+1,content_hash='current-3' WHERE id='draft-r'").run();
+  assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:false,recoveryRunId}).reason,'attempt_limit_reached');
+});
+test('recovery diagnosis reports the current recovery run budget instead of historical attempts',t=>{
+  const {db,repository}=fixture(t);
+  const issues=[{code:'mandatory_brief_requirement_missing',severity:'blocker',message:'brief-conflict-2 is missing',affected_count:1}];
+  repository.saveReview('draft-r',{passed:false,score:62,issues,checks:[],unsupported_claims:[]},'fixture',
+    {revision:1,contentHash:'hash-1',productionOwnerOpportunityId:'opportunity-r'});
+  for (let revision=1;revision<=2;revision+=1) {
+    repository.automaticQualityRepairState('draft-r',issues,{enqueue:true,productionOwnerOpportunityId:'opportunity-r'});
+    db.prepare("UPDATE jobs SET status='failed'").run();
+    db.prepare("UPDATE article_drafts SET revision=revision+1,content_hash=? WHERE id='draft-r'").run(`old-${revision}`);
+  }
+  repository.enqueue('revise_draft','draft-r',{dedupeKey:'recovery-stage:current',recoveryRunId:'recovery_run_current',
+    interactive:true,productionOwnerOpportunityId:'opportunity-r'});
+  db.prepare("UPDATE jobs SET status='succeeded' WHERE recovery_run_id='recovery_run_current'").run();
+  const report=contentRecoveryReport(repository,'opportunity-r');
+  assert.equal(report.diagnosis.automatic.attempts,0);
+  assert.equal(report.diagnosis.automatic.reason,'ready_to_queue');
+});
 test('a blocker repeated after one bounded repair escalates to full Draft regeneration',t=>{
   const {db,repository}=fixture(t);
   const issues=[{code:'confirmed_topic_coverage_missing',severity:'blocker',message:'Orientation remains ungrounded.',affected_count:1}];

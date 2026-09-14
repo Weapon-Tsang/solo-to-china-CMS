@@ -39,8 +39,12 @@ function context(repo, candidateOrOpportunityId) {
       opportunity?.id || '',legacyOwnerAllowed ? 1 : 0);
   const scopeResumed=Boolean(scopeResetAt && repo.db.prepare(`SELECT 1 FROM jobs WHERE entity_id IN (?,?,?) AND ${ownerClause}
     AND updated_at>? LIMIT 1`).get(candidateId,brief?.id || '',draft?.id || '',opportunity?.id || '',legacyOwnerAllowed ? 1 : 0,scopeResetAt));
+  const latestRecoveryRunId=repo.db.prepare(`SELECT recovery_run_id FROM jobs
+    WHERE entity_id IN (?,?,?) AND recovery_run_id IS NOT NULL AND ${ownerClause}
+      AND (? IS NULL OR updated_at>?) ORDER BY updated_at DESC,id DESC LIMIT 1`)
+    .get(candidateId,brief?.id || '',draft?.id || '',opportunity?.id || '',legacyOwnerAllowed ? 1 : 0,scopeResetAt,scopeResetAt)?.recovery_run_id || null;
   return { candidate, opportunity: opportunity || repo.db.prepare('SELECT * FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1').get(candidateId),
-    brief, draft, activeJobs, failedJob, scopeResetAt, scopeResumed };
+    brief, draft, activeJobs, failedJob, scopeResetAt, scopeResumed, latestRecoveryRunId };
 }
 
 function assetsFor(repo, ctx, packageFacts = null) {
@@ -100,7 +104,8 @@ export function contentRecoveryReport(repo, candidateId) {
     : { ...applyDeterministicGates({ passed:true,score:100,issues:[],checks:[] },pkg), diagnosticOnly:true,
       source:'deterministic_without_current_review' }) : null;
   const automaticRepair = ctx.draft && localCheck
-    ? repo.automaticQualityRepairState(ctx.draft.id, localCheck.issues, { enqueue: false })
+    ? repo.automaticQualityRepairState(ctx.draft.id, localCheck.issues, { enqueue: false,
+      productionOwnerOpportunityId:ctx.opportunity?.id || null,recoveryRunId:ctx.latestRecoveryRunId })
     : { eligible:false,queued:false,stage:null,attempts:0,maxAttempts:2,reason:'review_not_available' };
   const diagnosis = recoveryDiagnosis({ review:localCheck, failedJob:blockingFailedJob, automaticRepair });
   return {

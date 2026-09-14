@@ -1,5 +1,9 @@
 # Frontend Capability Contract Integration
 
+## 2.0.27 recovery lineage boundary
+
+The Frontend Contract remains unchanged at 1.4.0. Recovery lineage now continues through quality-repair child Jobs with one `recovery_run_id`; this changes orchestration and operator diagnosis only. CMS still emits semantic payloads and does not duplicate or fabricate Frontend JSX/CSS.
+
 ## 2.0.26 quality-repair boundary
 
 Atomic unsupported-assertion repair occurs entirely in the CMS Draft and evidence-ledger layer before a new Page Payload is composed. It changes no Frontend component, schema, JSX or CSS. After the repaired Draft passes current QA, the existing Frontend Contract 1.4.0 composition and WordPress preview remain the only visual acceptance boundary.

@@ -6357,7 +6357,7 @@ export class Repository {
   }
 
   automaticQualityRepairState(draftId, issues = [], { enqueue = false, maxAttempts = 2, productionOwnerOpportunityId = null,
-    ignoreActiveJobId = null } = {}) {
+    ignoreActiveJobId = null, recoveryRunId = null } = {}) {
     const draft = this.db.prepare("SELECT id,brief_id,revision FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) return { eligible: false, queued: false, stage: null, attempts: 0, maxAttempts, reason: "draft_missing" };
     const recentFailedReviews=this.db.prepare(`SELECT issues_json FROM quality_reviews
@@ -6369,18 +6369,26 @@ export class Repository {
     const repeatedBlockerCodes=[...currentCodes].filter((code)=>previousCodes.has(code));
     const stage = qualityRepairStage(issues,{repeatedBlockerCodes});
     const entityId = stage === "generate_draft" ? draft.brief_id : draftId;
-    const attempts = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs
-      WHERE entity_id IN (?,?) AND dedupe_key LIKE 'auto-quality-repair:%'`).get(draftId,draft.brief_id)?.count || 0);
+    // The safety budget belongs to one explicit recovery run. Historical
+    // attempts from an earlier deployment or operator recovery must not make a
+    // newly diagnosed, current revision permanently unrecoverable.
+    const attempts = recoveryRunId
+      ? Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs
+          WHERE entity_id IN (?,?) AND dedupe_key LIKE 'auto-quality-repair:%' AND recovery_run_id=?`)
+        .get(draftId,draft.brief_id,recoveryRunId)?.count || 0)
+      : Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs
+          WHERE entity_id IN (?,?) AND dedupe_key LIKE 'auto-quality-repair:%' AND recovery_run_id IS NULL`)
+        .get(draftId,draft.brief_id)?.count || 0);
     if (!stage) return { eligible: false, queued: false, stage: null, attempts, maxAttempts, reason: "manual_media_or_no_blocker" };
     if (attempts >= maxAttempts) return { eligible: false, queued: false, stage, attempts, maxAttempts, reason: "attempt_limit_reached" };
     const active = this.db.prepare(`SELECT id,type,status FROM jobs WHERE entity_id IN (?,?) AND status IN ('queued','running')
       AND (? IS NULL OR id<>?) LIMIT 1`).get(draftId,draft.brief_id,ignoreActiveJobId,ignoreActiveJobId);
     if (active) return { eligible: true, queued: false, stage, attempts, maxAttempts, reason: "job_already_active", activeJob: active };
-    const dedupeKey = `auto-quality-repair:${stage}:${draftId}:r${draft.revision}`;
+    const dedupeKey = `auto-quality-repair:${recoveryRunId ? `${recoveryRunId}:` : ""}${stage}:${draftId}:r${draft.revision}`;
     const attempted = this.db.prepare("SELECT id,status FROM jobs WHERE dedupe_key=? LIMIT 1").get(dedupeKey);
     if (attempted) return { eligible: false, queued: false, stage, attempts, maxAttempts, reason: "revision_already_attempted" };
     if (!enqueue) return { eligible: true, queued: false, stage, attempts, maxAttempts, reason: "ready_to_queue" };
-    const jobId = this.enqueue(stage, entityId, { dedupeKey, productionOwnerOpportunityId });
+    const jobId = this.enqueue(stage, entityId, { dedupeKey, productionOwnerOpportunityId, recoveryRunId });
     return { eligible: true, queued: Boolean(jobId), stage, jobId, attempts: attempts + (jobId ? 1 : 0), maxAttempts,
       reason: jobId ? "queued" : "queue_rejected" };
   }
