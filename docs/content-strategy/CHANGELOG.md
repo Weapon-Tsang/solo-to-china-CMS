@@ -9,6 +9,7 @@
 - Treat the seven approved records as a permanent production regression corpus: current Opportunity ownership, exact-stage recovery, durable input immutability, QA supersession and WordPress draft-only delivery are system invariants for every later approval.
 - Seed relevant authorized visuals before freezing the visual/page dependency snapshot, preventing deterministic source selection from invalidating its own Job and requiring a duplicate retry.
 - Admit a provider response to the local completion cache only after the stage's semantic validator accepts it. Rejected Draft structure cannot be replayed as a fake retry, and every evidence-bearing approved heading is now an explicit writer contract.
+- Preserve Brief adaptation, conflict and verification requirements in both full-Draft and bounded-repair DTOs. QA explicitly audits every mandatory requirement, cannot downgrade its omission to a warning, and recent blockers remain revision guardrails instead of being forgotten after the next rewrite.
 - Keep all imported Source media authorized for editorial use under `AGENTS.md`, while preserving attribution, durable bytes, relevance, alt text and Frontend Contract validation. Schema, strategy and approval semantics are unchanged.
 
 ## App 2.0.23 / schema 69 - 2026-09-14

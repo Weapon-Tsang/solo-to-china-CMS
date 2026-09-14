@@ -132,6 +132,8 @@ test('media/page blockers do not automatically rewrite otherwise valid text', ()
   assert.equal(qualityRepairStage([{code:'NO_CAUSAL_FLOW',severity:'blocker'},
     {code:'UNIFORM_SECTION_RHYTHM',severity:'blocker'}]), 'generate_draft');
   assert.equal(qualityRepairStage([{code:'INVALID_DRAFT_REPAIR_SCOPE',severity:'blocker'}]), 'generate_draft');
+  assert.equal(qualityRepairStage([{code:'mandatory_brief_requirement_missing',severity:'blocker',affected_count:4}]), 'generate_draft');
+  assert.equal(qualityRepairStage([{code:'mandatory_brief_requirement_missing',severity:'blocker',affected_count:2}]), 'revise_draft');
 });
 
 test('global evidence-ledger evasion regenerates only the draft from its existing writing packet',t=>{
@@ -161,6 +163,8 @@ test('quality regeneration feedback makes the failed review part of the reusable
   repository.saveReview('draft-r',{passed:false,score:50,issues:[{code:'NO_CAUSAL_FLOW',severity:'blocker',message:'No trade-offs.'}],checks:[],unsupported_claims:[]},'fixture',
     {revision:2,contentHash:'hash-2',productionOwnerOpportunityId:'opportunity-r'});
   assert.notEqual(dependencyHash(repository.pipelineDependencyMaterial({...repairJob,dedupe_key:'recovery-stage:opportunity-r:generate_draft:brief-r:manual:g3'})),before);
+  const accumulated=repository.qualityRegenerationFeedback('brief-r');
+  assert.deepEqual(accumulated.blockers.map((item)=>item.code),['NO_CAUSAL_FLOW','DATABASE_DUMP']);
 });
 test('legacy plan and frozen packet scope mismatch recovers from editorial assembly instead of rewriting the draft',t=>{
   const {db,repository}=fixture(t);

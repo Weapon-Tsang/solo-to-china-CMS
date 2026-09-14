@@ -747,6 +747,9 @@ function safeDraftBrief(brief = {}, validFactKeys = new Set()) {
     angle:plan.angle,
     reader_promise:plan.reader_promise || brief.canonical?.reader_promise,
     content_type:plan.canonical?.content_type || brief.canonical?.content_type,
+    adaptation_requirements:boundedRequirements(plan.adaptation_requirements),
+    conflict_instructions:boundedRequirements(plan.conflict_instructions),
+    verification_instructions:boundedRequirements(plan.verification_instructions),
     outline:(plan.outline || []).map((section) => ({ section_id:section.section_id,heading:section.heading,purpose:section.purpose,
       claim_keys:(section.claim_keys || []).filter((key) => validFactKeys.has(key)) })),
   };
@@ -756,7 +759,31 @@ function safeWritingDirective(brief = {}, outline = []) {
   const plan = brief.plan || brief;
   return ["ARTICLE GOAL",plan.reader_promise || plan.title || brief.topic || "Answer the approved reader need.","",
     "EVIDENCE-BOUND SECTION ORDER",...outline.map((section,index) => `${index + 1}. ${section.heading || section.section_id}`),"",
+    "MANDATORY TRAVELER ADAPTATIONS",...numberedRequirements(plan.adaptation_requirements),"",
+    "MANDATORY CONFLICT HANDLING",...numberedRequirements(plan.conflict_instructions),"",
+    "VERIFICATION AND QUALIFIER NOTES",...numberedRequirements(plan.verification_instructions),"",
     "Use only evidence_ledger_facts and grounded_experiences. Narrative labels and page-plan order are structure, never factual evidence."].join("\n");
+}
+
+function boundedRequirements(values = []) {
+  return (Array.isArray(values) ? values : []).filter(Boolean).slice(0, 12).map((value) => truncate(value, 800));
+}
+
+function numberedRequirements(values = []) {
+  const bounded = boundedRequirements(values);
+  return bounded.length ? bounded.map((value, index) => `${index + 1}. ${value}`) : ["None supplied."];
+}
+
+function mandatoryBriefRequirements(brief = {}) {
+  const plan = brief.plan || brief;
+  return [
+    ...boundedRequirements(plan.adaptation_requirements).map((requirement, index) => ({
+      id:`brief-adaptation-${index + 1}`,kind:"adaptation",requirement,
+    })),
+    ...boundedRequirements(plan.conflict_instructions).map((requirement, index) => ({
+      id:`brief-conflict-${index + 1}`,kind:"conflict",requirement,
+    })),
+  ];
 }
 
 function safeNarrativePlan(narrative = {}, outline = [], validFactKeys = new Set(), validExperienceIds = new Set()) {
@@ -810,10 +837,16 @@ function compactDraftRepairInput(contentPackage, issues = []) {
     code: issue.code, severity: issue.severity,
     message: String(issue.message || '').split(',').slice(0, 8).join(',').slice(0, 1_200),
   }));
+  const currentIssueFingerprints = new Set(compactIssues.map((issue) => `${issue.code}:${issue.message}`));
+  const regressionGuardrails = (contentPackage.review_history || []).flatMap((review) => review?.issues || [])
+    .filter((issue) => issue?.severity !== "warning")
+    .map((issue) => ({ code:String(issue.code || "QUALITY_BLOCKER"), message:truncate(issue.message, 800) }))
+    .filter((issue) => !currentIssueFingerprints.has(`${issue.code}:${issue.message}`));
   return {
     base_content_hash: draft.content_hash,
     allowed_replacement_headings: repairableMarkdownSections(normalizedBody).map((section) => section.heading),
     issues: compactIssues,
+    regression_guardrails: uniqueBy(regressionGuardrails, (issue) => `${issue.code}:${issue.message}`).slice(0, 12),
     allowed_changes: {
       evidence_ledger: [...issueCodes].some((code) => /evidence|coverage|temporal|conflict|factual/.test(code)),
       metadata: [...issueCodes].some((code) => /seo|title|meta|keyword|slug/.test(code)),
@@ -822,6 +855,9 @@ function compactDraftRepairInput(contentPackage, issues = []) {
     brief: {
       title: brief.plan?.title || brief.title,
       reader_promise: brief.plan?.reader_promise || brief.canonical?.reader_promise,
+      adaptation_requirements: boundedRequirements(brief.plan?.adaptation_requirements || brief.adaptation_requirements),
+      conflict_instructions: boundedRequirements(brief.plan?.conflict_instructions || brief.conflict_instructions),
+      verification_instructions: boundedRequirements(brief.plan?.verification_instructions || brief.verification_instructions),
       outline: (brief.plan?.outline || brief.outline || []).map((section) => ({
         section_id: section.section_id, heading: section.heading,
         claim_keys: (section.claim_keys || []).filter((key) => fallbackFacts.some((fact) => fact.normalized_key === key)).slice(0, 12),
@@ -850,6 +886,7 @@ function reviewInputDto(contentPackage) {
   const draft=contentPackage.draft || {};
   return {
     brief: { plan: contentPackage.brief?.plan, canonical: contentPackage.brief?.canonical, strategy_version: contentPackage.brief?.strategy_version },
+    mandatory_requirements: mandatoryBriefRequirements(contentPackage.brief),
     content_policy: contentPackage.content_policy,
     facts: factDtos(contentPackage),
     reader_sources: (contentPackage.reader_sources || []).slice(0, 24).map((source)=>({
@@ -955,6 +992,8 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 
 const DRAFT_REPAIR_PROMPT = `Repair only the failed fields or existing draft sections named by the supplied QA issues.
 - The confirmed topic, brief, evidence set, claim keys and unaffected prose are immutable.
+- brief.adaptation_requirements and brief.conflict_instructions are mandatory reader-facing constraints, not optional suggestions. Satisfy every applicable item in the replacement sections.
+- regression_guardrails are blockers found in earlier revisions. Do not reintroduce them while fixing the current issues.
 - Return the exact base_content_hash supplied by the caller.
 - replacement_sections may contain at most three headings copied exactly from allowed_replacement_headings. Some legacy drafts use H3 as their primary section level. Supply body content only; do not add or rename peer headings.
 - Change metadata only when a QA issue explicitly identifies title, meta, keyword, slug or SEO metadata.
@@ -999,6 +1038,7 @@ const REVIEW_PROMPT = `Act as an independent senior editor. Audit the English dr
 Grade reader-facing prose and factual support only. Missing image downloads, renderers, page composition or provider errors are separate deterministic delivery checks, not reasons to lower this editorial score. Never relax factual support or evidence scope.
 Fail the draft for any unsupported factual assertion, hidden conflict, misleading certainty, source-key leakage, affiliate contamination, or unsafe advice.
 Also check originality, usefulness for solo/first-time/non-Chinese-speaking visitors, SEO/GEO structure, clarity, and whether the evidence ledger honestly covers factual sections.
+For every item in mandatory_requirements, emit exactly one checks entry whose name is the supplied requirement id. Mark it passed only when the reader-facing draft actually satisfies the complete requirement. Missing a mandatory adaptation or conflict-handling requirement is a blocker, never a warning.
 Use these editorial issue codes when applicable: DATABASE_DUMP, GENERIC_AI_TRANSITIONS, REPETITIVE_EXPLANATION, UNIFORM_SECTION_RHYTHM, EXCESSIVE_HEDGING, NO_TRAVELER_DECISION, NO_CAUSAL_FLOW, FAKE_FIRST_PERSON.
 Set passed=false only when at least one issue has severity=blocker; warning-only reviews must set passed=true. Do not hide a failure reason outside issues.
 Do not rewrite the article. Return actionable blockers and warnings.`;
@@ -1008,8 +1048,8 @@ export function applyDeterministicGates(review, contentPackage) {
   const facts = contentPackage.facts || [];
   const validKeys = new Set(facts.map((fact) => fact.normalized_key));
   const ledgerKeys = new Set((draft.evidence_ledger || []).flatMap((entry) => entry.claim_keys));
-  const issues = [...review.issues];
-  const checks = [...review.checks];
+  const issues = (review.issues || []).map(enforceMandatoryIssueSeverity);
+  const checks = [...(review.checks || [])];
   const addGate = (name, passed, detail, code, metadata = {}) => {
     checks.push({ name, passed, detail });
     if (!passed) issues.push({ code, severity: "blocker", message: detail, ...metadata });
@@ -1018,6 +1058,15 @@ export function applyDeterministicGates(review, contentPackage) {
     checks.push({ name, passed, detail });
     if (!passed) issues.push({ code, severity: "warning", message: detail });
   };
+
+  const mandatoryRequirements = mandatoryBriefRequirements(contentPackage.brief);
+  const requirementChecks = new Map(checks.map((check) => [String(check?.name || ""), check]));
+  const failedRequirements = mandatoryRequirements.filter((requirement) => requirementChecks.get(requirement.id)?.passed !== true);
+  addGate("mandatory-brief-requirements", failedRequirements.length === 0,
+    failedRequirements.length
+      ? `Mandatory brief requirements missing or not audited: ${failedRequirements.map((item) => `${item.id}: ${item.requirement}`).join(" | ")}`
+      : "Every mandatory adaptation and conflict-handling requirement was explicitly audited and satisfied.",
+    "mandatory_brief_requirement_missing", { affected_count:failedRequirements.length });
 
   const invalidKeys = [...ledgerKeys].filter((key) => !validKeys.has(key));
   addGate("evidence-key-integrity", invalidKeys.length === 0, invalidKeys.length ? `Unknown claim keys: ${invalidKeys.join(", ")}` : "All ledger keys exist in the research package.", "invalid_evidence_key");
@@ -1221,6 +1270,23 @@ function containsProtectedToken(text, token) {
   if (normalizedCurrency === "0 cny" && /\b(?:free|no admission fee|no entry fee)\b/iu.test(haystack)) return true;
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(haystack);
+}
+
+function enforceMandatoryIssueSeverity(issue = {}) {
+  if (issue?.severity !== "warning") return issue;
+  const code = String(issue.code || "").toUpperCase();
+  const alwaysBlocking = new Set([
+    "MISSING_MANDATORY_ADAPTATION", "MISSING_CHINESE_SCRIPT", "CONFLICT_HANDLING_OMISSION",
+    "UNRESOLVED_HOURS_CONFLICT", "HIDDEN_CONFLICT", "UNRESOLVED_CONFLICT",
+  ]);
+  const requirementRelated = new Set([
+    "MISLEADING_CERTAINTY", "EXCESSIVE_HEDGING", "NO_TRAVELER_DECISION", "DATABASE_DUMP",
+  ]);
+  const message = String(issue.message || "");
+  const explicitRequirement = /\b(?:mandatory|mandated|required by|explicit(?:ly)? (?:required|directed|instructed)|failed to (?:follow|provide)|brief(?:'s)? (?:adaptation|conflict)|adaptation requirement|conflict (?:resolution )?instruction)\b/iu.test(message);
+  return alwaysBlocking.has(code) || (requirementRelated.has(code) && explicitRequirement)
+    ? { ...issue, severity:"blocker" }
+    : issue;
 }
 
 function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }

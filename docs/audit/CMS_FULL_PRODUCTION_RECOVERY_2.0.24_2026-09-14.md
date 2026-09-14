@@ -22,6 +22,7 @@ All retained Source assets are authorized for editorial and production use under
 5. A current QA pass proves that older planning/writing/page failures belong to a superseded revision. They remain audit history but cannot become the current recovery target; required-media and newer post-QA failures are not hidden.
 6. Facts must form traveler decisions, not a database dump. Strategy 3.3 now explicitly requires condition/consequence/action logic, varied section rhythm, transparent uncertainty, natural SEO intent, self-contained GEO answers and visible/page/schema consistency.
 7. Provider-valid JSON is not necessarily a valid production artifact. The first final-candidate replay rejected a Draft missing one required H2, then exposed three two-second recoveries that reused that rejected completion from the local response cache. Cache admission is now gated by the caller's semantic validator, rejected outputs are evicted, and the writer must emit every approved evidence-bearing heading exactly once in order.
+8. A persisted Brief requirement is useless if a compressed downstream DTO drops it. The extended replay showed QA repeatedly enforcing bilingual navigation, seasonal-hour, booking and conflict instructions that neither full Draft regeneration nor bounded repair had received. Both writer paths now retain the bounded requirements, prior blockers become regression guardrails, and independent QA must explicitly pass every mandatory adaptation/conflict requirement before delivery.
 
 ## Verification record
 

@@ -5258,6 +5258,8 @@ export class Repository {
     const review = this.db.prepare(`SELECT * FROM quality_reviews
       WHERE draft_id=? AND draft_revision=? AND draft_content_hash=? AND evidence_hash=? ORDER BY created_at DESC LIMIT 1`)
       .get(draftId, draft.revision, draft.content_hash, currentEvidenceHash) || null;
+    const reviewHistory = this.db.prepare(`SELECT * FROM quality_reviews
+      WHERE draft_id=? ORDER BY created_at DESC,id DESC LIMIT 6`).all(draftId).map(hydrateReview);
     const publication = this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id = ?").get(draftId) || null;
     const compositionRow = this.db.prepare(`SELECT * FROM commercial_compositions
       WHERE draft_id=? AND draft_revision=? AND draft_content_hash=?`).get(draftId, draft.revision, draft.content_hash) || null;
@@ -5289,6 +5291,7 @@ export class Repository {
       frontend_page: this.getFrontendPageComposition(draftId),
       publish_composition: this.getFrontendPublishComposition(draftId),
       review: review ? hydrateReview(review) : null,
+      review_history: reviewHistory,
       publication,
       commercial_composition: compositionRow ? {
         ...compositionRow,
@@ -6373,9 +6376,14 @@ export class Repository {
         ORDER BY current_review.created_at DESC,current_review.id DESC LIMIT 1)
       WHERE ad.brief_id=?`).get(briefId);
     if (!current?.content_hash || current.score == null) return null;
-    const issues = json(current.issues_json, []).filter((issue) => issue?.severity !== 'warning').slice(0, 8)
+    const reviewRows = this.db.prepare(`SELECT issues_json FROM quality_reviews
+      WHERE draft_id=? AND passed=0 ORDER BY created_at DESC,id DESC LIMIT 6`).all(current.id);
+    const currentIssues = json(current.issues_json, []);
+    const issues = uniqueByKey([...currentIssues, ...reviewRows.flatMap((row) => json(row.issues_json, []))]
+      .filter((issue) => issue?.severity !== 'warning')
       .map((issue) => ({ code:String(issue.code || 'QUALITY_BLOCKER'), message:String(issue.message || '').slice(0, 1_500),
-        affected_count:Number(issue.affected_count || 0) || undefined }));
+        affected_count:Number(issue.affected_count || 0) || undefined })),
+      (issue) => `${issue.code}:${issue.message}`).slice(0, 16);
     if (!issues.length) return null;
     return {
       base_draft_id: current.id,

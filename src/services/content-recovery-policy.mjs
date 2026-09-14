@@ -5,6 +5,11 @@ export const DELIVERY_ISSUE_CODES = new Set([
 ]);
 
 const ISSUE_GUIDANCE = {
+  mandatory_brief_requirement_missing: ['强制编辑要求尚未完成', '写作 Brief 要求的语言适配或冲突说明没有在正文中完成，或者质量审核没有逐项确认。', '把缺失要求作为不可回退约束修订；涉及范围过大时仅重写正文，不重跑研究步骤。'],
+  MISSING_MANDATORY_ADAPTATION: ['强制读者适配缺失', '面向国际独行游客的明确语言、导航、支付或操作适配没有完整写入正文。', '补齐 Brief 指定的适配内容并重新审核。'],
+  MISSING_CHINESE_SCRIPT: ['中文导航名称缺失', '正文缺少 Brief 要求的简体中文地点或交通名称，读者无法在本地地图、站牌或出租车场景中直接核对。', '在对应英文名称旁补充有证据支持的中文名称。'],
+  CONFLICT_HANDLING_OMISSION: ['证据冲突说明缺失', '正文选择了一个值，却遗漏 Brief 要求公开说明的差异、条件或变化范围。', '保留不确定性并写清条件、影响和读者下一步。'],
+  UNRESOLVED_HOURS_CONFLICT: ['营业时间范围说明缺失', '正文把有场景或季节差异的时间写成了单一绝对值。', '按 Brief 给出的范围和适用条件修订。'],
   INVALID_DRAFT_REPAIR_SCOPE: ['自动修订没有命中当前草稿章节', '旧修订请求使用了写作提纲标题或旧版章节层级，和当前草稿可替换章节不一致；系统已停止，未覆盖现有正文。', '按当前草稿列出的真实章节重新执行定向修订。'],
   DATABASE_DUMP: ['正文像数据库导出', '事实被逐条堆放，没有形成可读的旅行决策逻辑。', '重新组织叙事与因果关系，不新增事实。'],
   GENERIC_AI_TRANSITIONS: ['正文存在通用 AI 过渡语', '泛化过渡语取代了具体的路线、条件或因果连接。', '删除套话，直接连接读者问题和下一步。'],
@@ -273,6 +278,7 @@ export function qualityRepairStage(issues = []) {
   if (blockers.some((issue) => String(issue.code || '').toUpperCase() === 'EVIDENCE_LEDGER_EVASION'
     || String(issue.code || '').toUpperCase() === 'PLANNED_BODY_SECTIONS_MISSING'
     || String(issue.code || '').toUpperCase() === 'INVALID_DRAFT_REPAIR_SCOPE'
+    || (String(issue.code || '').toUpperCase() === 'MANDATORY_BRIEF_REQUIREMENT_MISSING' && Number(issue.affected_count || 0) > 3)
     || (String(issue.code || '').toLowerCase() === 'confirmed_topic_coverage_missing' && Number(issue.affected_count || 0) > 3))
     || blockers.some((issue) => String(issue.code || '').toUpperCase() === 'DATABASE_DUMP')
     || globalStructureCount >= 2) return 'generate_draft';

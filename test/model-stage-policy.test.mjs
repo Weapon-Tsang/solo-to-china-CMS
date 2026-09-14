@@ -230,6 +230,27 @@ test("draft request sends each frozen fact once with bounded evidence while reta
   assert.match(result.output.body_markdown,/^## Arriving by Rail$/m);
 });
 
+test("draft request preserves mandatory adaptations, conflicts, and verification notes from the approved brief", async () => {
+  let requestBody;
+  const output={title:"Chongqing guide",slug:"chongqing-guide",meta_description:"A practical guide.",body_markdown:"A grounded introduction.",
+    evidence_ledger:[],unresolved_conflicts:[],verification_notes:[],seo:{meta_title:"Chongqing guide",focus_keyword:"Chongqing guide",secondary_keywords:[],search_intent:"informational",key_takeaways:[]},faqs:[],visuals:[]};
+  const engine=new ContentEngine({apiKey:"key",model:"model",baseUrl:"https://api.example.test/v1"},async(_url,options)=>{
+    requestBody=JSON.parse(options.body);
+    return Response.json({model:"model",choices:[{finish_reason:"stop",message:{content:JSON.stringify(output)}}]});
+  });
+  await engine.draft({brief:{strategy_version:"3.3",plan:{outline:[],
+    adaptation_requirements:["Show Hongyadong (洪崖洞) for navigation."],
+    conflict_instructions:["Explain that lighting time varies by season."],
+    verification_instructions:["Confirm current opening hours."]}},
+    writing_packet:{selected_fact_keys:[],evidence_ledger:[],context:{version:2,content_policy:{faq:{maximum:0},visuals:{maximum:0}},
+      experiences:[],reader_sources:[],authorized_source_assets:[],internal_link_inventory:[]}}});
+  const input=JSON.parse(requestBody.messages[1].content);
+  assert.deepEqual(input.brief.adaptation_requirements,["Show Hongyadong (洪崖洞) for navigation."]);
+  assert.deepEqual(input.brief.conflict_instructions,["Explain that lighting time varies by season."]);
+  assert.deepEqual(input.brief.verification_instructions,["Confirm current opening hours."]);
+  assert.match(input.writing_packet.text,/MANDATORY TRAVELER ADAPTATIONS[\s\S]*洪崖洞/);
+});
+
 test("evidence repair may update only bounded known claim keys", () => {
   const draft = { content_hash:"current",title:"Guide",meta_description:"Desc",seo:{meta_title:"Guide"},
     body_markdown:"Intro.\n\n## Visit\n\nSupported body.",evidence_ledger:[],verification_notes:[],visuals:[] };
@@ -279,6 +300,29 @@ test("repair requests omit warnings and page-only issues, cap evidence payloads,
   assert.deepEqual(result.output.evidence_ledger,draft.evidence_ledger);
 });
 
+test("bounded repair retains mandatory brief constraints and prior blockers as regression guardrails", async () => {
+  let requestBody;
+  const draft={content_hash:"constraints",title:"Hongyadong guide",meta_description:"Practical guide",seo:{meta_title:"Hongyadong guide"},
+    body_markdown:"## Visit\n\nOld copy.",evidence_ledger:[],verification_notes:[],visuals:[]};
+  const engine=new ContentEngine({apiKey:"key",model:"model",baseUrl:"https://api.example.test/v1"},async(_url,options)=>{
+    requestBody=JSON.parse(options.body);
+    return Response.json({model:"model",choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+      base_content_hash:"constraints",replacement_sections:[{heading:"Visit",body_markdown:"Use Hongyadong (洪崖洞) and confirm seasonal lighting times."}],
+    })}}]});
+  });
+  await engine.repairDraft({draft,facts:[],brief:{plan:{outline:[{section_id:"visit",heading:"Visit",claim_keys:[]}],
+    adaptation_requirements:["Show simplified Chinese beside navigation names."],
+    conflict_instructions:["Explain that lighting time varies by season."],verification_instructions:["Confirm current hours."]}},
+    review_history:[{issues:[{code:"MISLEADING_CERTAINTY",severity:"blocker",message:"Do not state one fixed lighting time."}]}]},[
+    {code:"MISSING_CHINESE_SCRIPT",severity:"blocker",message:"Add Chinese navigation names."},
+  ]);
+  const input=JSON.parse(requestBody.messages[1].content);
+  assert.deepEqual(input.brief.adaptation_requirements,["Show simplified Chinese beside navigation names."]);
+  assert.deepEqual(input.brief.conflict_instructions,["Explain that lighting time varies by season."]);
+  assert.deepEqual(input.brief.verification_instructions,["Confirm current hours."]);
+  assert.deepEqual(input.regression_guardrails,[{code:"MISLEADING_CERTAINTY",message:"Do not state one fixed lighting time."}]);
+});
+
 test("quality coverage checks each promised section instead of exhausting every available fact", () => {
   const facts=Array.from({length:100},(_,index)=>({normalized_key:`place.fact_${index}`,preferred_value:`description ${index}`,evidence:[]}));
   const result=applyDeterministicGates({passed:true,score:90,issues:[],checks:[],unsupported_claims:[]},{
@@ -293,6 +337,22 @@ test("quality coverage checks each promised section instead of exhausting every 
   });
   assert.equal(result.checks.find(check=>check.name==='confirmed-topic-coverage').passed,true);
   assert.equal(result.issues.some(issue=>issue.code==='confirmed_topic_coverage_missing'),false);
+});
+
+test("mandatory brief requirements are audited explicitly and cannot be downgraded to warnings", () => {
+  const result=applyDeterministicGates({passed:true,score:90,issues:[
+    {code:"MISSING_MANDATORY_ADAPTATION",severity:"warning",message:"The brief requires Chinese navigation labels."}],
+  checks:[{name:"brief-adaptation-1",passed:false,detail:"Chinese labels are absent."}],unsupported_claims:[]},{
+    draft:{title:"Route guide",body_markdown:"## Route\n\nChoose the signed route because it avoids backtracking.",
+      meta_description:"A practical signed route.",seo:{meta_title:"Route guide",focus_keyword:"route guide",secondary_keywords:[],search_intent:"informational",key_takeaways:[],faqs:[]},
+      evidence_ledger:[],unresolved_conflicts:[],verification_notes:[],visuals:[],faqs:[],strategy_version:"3.3",schema_jsonld:{"@graph":[{"@type":"Article"}] }},
+    facts:[],brief:{strategy_version:"3.3",canonical:{quick_answer:"Use the signed route.",answer_blocks:[]},plan:{outline:[],
+      adaptation_requirements:["Show simplified Chinese beside navigation names."],conflict_instructions:[]}},
+    content_policy:{minimum_words:0,faq:{allowed:false},visuals:{minimum:0,maximum:0}},reader_sources:[],
+  });
+  assert.equal(result.passed,false);
+  assert.equal(result.issues.find((issue)=>issue.code==="MISSING_MANDATORY_ADAPTATION").severity,"blocker");
+  assert.equal(result.issues.some((issue)=>issue.code==="mandatory_brief_requirement_missing"),true);
 });
 
 test("a warning-only provider review cannot leave production failed without a blocker", () => {
