@@ -1,6 +1,13 @@
 # Changelog
 
-## 2.0.19 - Unreleased
+## 2.0.20 - Unreleased
+
+- Translate all 13 internal CMS article types into the four public guide types accepted by the deployed WordPress Content Contract. Existing page artifacts are normalized while rebuilding the Publish Package, so successful Draft, evidence, QA, media and commercial stages remain reusable.
+- Enforce the WordPress guide taxonomy in local Frontend Contract validation even though the generic Page JSON Schema exposes `contentType` as a string. Unknown types now fail before delivery rather than passing mock validation and being rejected by WordPress.
+- Upgrade `production_state` to 1.7. A WordPress `INVALID_PAGE_SCHEMA` rejection targets `compose_publish_page`, explains that no remote Draft was created, and cannot send the operator back through writing or other successful upstream stages.
+- Add permanent taxonomy, Page Payload, Publish Package and recovery regressions for the real production-only failure. Schema remains 69, Content Strategy remains 3.3 and the Frontend/WordPress theme retains sole ownership of JSX, CSS and visual rendering.
+
+## 2.0.19 - 2026-09-14
 
 - Rebuild each final Frontend Page Payload from the current Draft, Brief, selected facts and visual state. A stale page can no longer let an earlier quality review masquerade as current, and a changed page now invalidates the reusable `review_draft` artifact input.
 - Scope atomic evidence to the block that actually expresses a fact instead of attaching every section claim to every paragraph. Brief outline identifiers are reconciled only to matching headings, unmatched legacy ledger nodes are removed, and generic workflow qualifiers cannot manufacture evidence bindings.

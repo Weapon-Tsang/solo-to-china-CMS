@@ -1,5 +1,12 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.20 / schema 69 - 2026-09-14
+
+- Keep Strategy 3.3 content selection, evidence, Draft, QA and commercial semantics unchanged while translating the internal article taxonomy at the delivery boundary.
+- Map every supported CMS content type to one of the four guide types accepted by the deployed WordPress Content Contract; unknown types fail locally before any WordPress request.
+- Rebuild only the Publish Package for retained legacy page payloads and preserve current writing, evidence, media, QA and approval artifacts.
+- Keep schema 69. No migration, startup retry, approval change, automatic production recovery or automatic WordPress publish is introduced.
+
 ## App 2.0.19 / schema 69 - 2026-09-14
 
 - Keep Strategy 3.3 selection and approval semantics unchanged while tightening the production writing contract around the frozen Writing Packet, exact planned sections and selected facts.

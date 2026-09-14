@@ -1,3 +1,11 @@
+# 2.0.20 WordPress Content Contract taxonomy handoff
+
+App/Extension version `2.0.20`, schema migration `69`, and Content Strategy `3.3` are on the release line; `production_state` is `1.7` and Frontend Contract is `1.4.0`, with the active strategy manifest in `config/content-strategy.json`. A real production canary reached `push_wordpress_draft` and exposed a boundary not declared by the generic Page JSON Schema: the deployed WordPress theme accepts only `survival-kit`, `city-guide`, `attraction-guide` and `travel-guide`, while the CMS had emitted the internal value `itinerary`.
+
+The CMS now owns one explicit internal-to-public taxonomy adapter and checks that invariant before delivery. Existing page payloads are normalized when their Publish Package is rebuilt, so recovery starts at `compose_publish_page`; it neither regenerates the Draft nor reruns evidence, QA, media or commercial work. Unknown values remain invalid instead of being silently converted. WordPress still owns the renderer, JSX, CSS, Gutenberg serialization and final visual output.
+
+This is a code-only release with schema 69. It introduces no startup retry, data reconciliation or automatic publication. The bounded production acceptance creates or updates WordPress records only as `draft` and verifies the adapter-provided preview/edit URLs without publishing them.
+
 # 2.0.19 final-page evidence and repair handoff
 
 App/Extension version `2.0.19`, schema migration `69`, and Content Strategy `3.3` are on the current release line; `production_state` is `1.6` and Frontend Contract is `1.4.0`. The change corrects stale QA reuse, page/review ordering, atomic evidence ownership, legacy ledger reconciliation, heading hierarchy and bounded repair scope without introducing another pipeline or changing the Frontend JSX/CSS boundary.

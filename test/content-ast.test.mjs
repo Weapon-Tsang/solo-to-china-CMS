@@ -105,7 +105,7 @@ test("production atomic components compose every content type without a model or
   assert.equal(page.model, "deterministic-content-ast-compat-2");
   assert.deepEqual([...new Set(page.output.blocks.map((block) => block.type))], ["heading", "paragraph", "list", "faq"]);
   assert.equal(page.output.blocks.some((block) => block.type === "articleSection"), false);
-  assert.equal(page.output.metadata.contentType, "itinerary");
+  assert.equal(page.output.metadata.contentType, "travel-guide");
   assert.equal(page.provenance.entries.length, page.output.blocks.length);
   assert.deepEqual(validateJsonSchema(page.output, productionPageSchema), []);
 });

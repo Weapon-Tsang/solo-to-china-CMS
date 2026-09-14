@@ -91,3 +91,12 @@ test("Publish Package carries presentation, semantic SEO/GEO, JSON-LD, and WordP
   });
   assert.deepEqual(pkg.publication, { status: "draft", existing_post_id: null, cms_draft_id: "draft-7" });
 });
+
+test("Publish Package translates internal CMS taxonomy before WordPress delivery", () => {
+  const pkg = buildPublishPackage({
+    pagePayload:{ metadata:{ title:"Route", contentType:"itinerary" }, blocks:[{ type:"paragraph", data:{ content:"Answer" } }] },
+    draft:{ id:"draft-route", title:"Route", meta_description:"A practical route." },
+    contract:{ contractVersion:"1.4.0", pageSchemaContractVersion:"1.4.0", checksum:"b".repeat(64) },
+  });
+  assert.equal(pkg.page.metadata.contentType, "travel-guide");
+});

@@ -55,7 +55,7 @@ database = openDatabase(path.join(temporary, "contract.sqlite"));
   if (active.contractVersion !== releaseGate.frontend.contractVersion) throw new Error(`Expected Frontend Contract ${releaseGate.frontend.contractVersion}, received ${active.contractVersion}.`);
   const paragraph = active.componentsById.get("paragraph");
   const payload = {
-    metadata: { pageId: "cross-repo-gate", title: "Cross repository gate", slug: "cross-repository-gate", contentType: "practical_guide" },
+    metadata: { pageId: "cross-repo-gate", title: "Cross repository gate", slug: "cross-repository-gate", contentType: "survival-kit" },
     blocks: [{ type: "paragraph", variant: paragraph.variants[0], data: { content: "Visible evidence-backed content." } }],
   };
   const validation = consumer.validatePagePayload(payload);

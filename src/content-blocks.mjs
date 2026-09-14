@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { evidenceTextContains, pageBlockSignature, protectedFactTokens } from "./evidence-validator.mjs";
+import { toFrontendGuideType } from "./content-taxonomy.mjs";
 
 export function markdownToContentBlocks(markdown) {
   const lines = String(markdown || "").replace(/\r/g, "").split("\n");
@@ -357,7 +358,7 @@ function pageMetadata(ast, pageSchema) {
   put("pageId", ast.content_hash);
   put("title", ast.title);
   put("slug", ast.slug);
-  put("contentType", ast.content_type);
+  put("contentType", toFrontendGuideType(ast.content_type));
   put("excerpt", ast.summary);
   metadata.title ||= ast.title;
   return metadata;

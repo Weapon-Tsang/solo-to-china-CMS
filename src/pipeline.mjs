@@ -11,6 +11,7 @@ import { recoverRemoteOriginal } from "./source-media-store.mjs";
 import { stageConfiguration } from './pipeline-contract.mjs';
 import { sourceProcessingProfile } from './source-processing-profile.mjs';
 import { runNodeJsonProcess } from './process-runner.mjs';
+import { normalizeFrontendPageTaxonomy } from "./content-taxonomy.mjs";
 
 const ISOLATED_REPOSITORY_TASK=fileURLToPath(new URL('../scripts/run-isolated-repository-task.mjs',import.meta.url));
 
@@ -900,7 +901,10 @@ export class Pipeline {
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage?.review?.passed) throw new PublishCompositionError("QA_NOT_PASSED", "Only a QA-passed Research Draft can enter Publish Composition.");
           if (!contentPackage.commercial_composition) throw new PublishCompositionError("COMMERCIAL_NOT_COMPLETE", "Commercial composition must complete before Publish Composition.");
-          const editorialPage = contentPackage.frontend_page?.payload;
+          const storedEditorialPage = contentPackage.frontend_page?.payload;
+          const supportsContentType = Boolean(contract.pageSchema?.schema?.properties?.metadata?.properties?.contentType);
+          const editorialPage = normalizeFrontendPageTaxonomy(storedEditorialPage,
+            supportsContentType ? contentPackage.brief?.canonical?.content_type : null);
           if (!editorialPage) throw new PublishCompositionError("NO_VALID_FRONTEND_PAGE_PAYLOAD", "The validated editorial Frontend Page Payload is missing.");
           if (contentPackage.frontend_page.snapshot_id !== contract.id || contentPackage.frontend_page.contract_checksum !== contract.checksum) {
             this.repository.markFrontendPublishComposition(job.entity_id, "stale_contract");

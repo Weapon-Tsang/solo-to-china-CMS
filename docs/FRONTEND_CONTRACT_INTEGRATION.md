@@ -22,6 +22,8 @@ The 2.0.18 post-Draft join keeps the same boundary. A failed Frontend Page Paylo
 
 The 2.0.19 composition repair keeps Frontend Contract 1.4.0 unchanged. The CMS normalizes semantic article hierarchy, assigns evidence only to the atomic block that expresses it, and rebuilds Content AST/Page Payload/Publish Package from the current Draft. It validates mobile-readable heading order, answer-first content, SEO/GEO metadata, JSON-LD, media and link semantics, but visual typography, spacing, responsive CSS and renderer implementation remain owned by the Frontend/WordPress theme. Visual acceptance therefore uses the persisted `preview_url`; CMS structural preview is not presented as a screenshot of the final theme.
 
+The 2.0.20 delivery adapter records an additional business invariant discovered by a real WordPress canary. Internal CMS taxonomy is deliberately richer than public renderer taxonomy, so `city_guide`, `first_time_guide`, `food_guide`, `neighborhood_guide`, `hotel_area_guide` and `shopping_guide` deliver as `city-guide`; `attraction_guide` as `attraction-guide`; `practical_guide`, `transport_guide` and `how_to` as `survival-kit`; and `itinerary`, `comparison` and `listicle` as `travel-guide`. This changes semantic delivery metadata only. It does not copy, emulate or modify Frontend JSX/CSS, and unknown values are blocked locally.
+
 Three artifacts remain distinct:
 
 - Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.

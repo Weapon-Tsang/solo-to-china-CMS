@@ -2,7 +2,7 @@ import { json, sha256 } from "../utils.mjs";
 import { validatePlanningDestination } from "../destination-consistency.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./content-recovery-policy.mjs";
 
-export const PRODUCTION_STATE_VERSION = "1.6";
+export const PRODUCTION_STATE_VERSION = "1.7";
 
 export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
   stage("assemble_editorial", "素材组装", 10, [], "editorial", "always"),
@@ -87,7 +87,7 @@ export function buildProductionState(db, row, options = {}) {
   } : null;
   const frozenScopeFailure = frozenProductionScopeFailure(db,row);
   const truncatedDraftFailure = historicalDraftStructureFailure(db,row,currentJobs);
-  const currentJobFailure=latestUnresolvedFailure(currentJobs);
+  const currentJobFailure=decorateDeliveryFailure(latestUnresolvedFailure(currentJobs));
   const persistedFailure=inferredPersistedFailure(row);
   const resolvedDestinationFailure=!scopeFailure && destinationCheck.valid
     && String(currentJobFailure?.last_failure_code || '').toUpperCase()==='DESTINATION_TOPIC_MISMATCH' ? currentJobFailure : null;
@@ -470,6 +470,15 @@ function latestUnresolvedFailure(jobs) {
   const failures = jobs.filter((item) => item.status === "failed").reverse();
   return failures.find((failure) => !jobs.some((item) => item.type === failure.type && item.status === "succeeded"
     && String(item.updated_at) >= String(failure.updated_at))) || null;
+}
+
+function decorateDeliveryFailure(failure) {
+  if (!failure) return null;
+  const code = String(failure.last_failure_code || failure.code || "").toUpperCase();
+  if (failure.type === "push_wordpress_draft" && code === "INVALID_PAGE_SCHEMA") {
+    return { ...failure, recovery_type:"compose_publish_page" };
+  }
+  return failure;
 }
 
 function inferredPersistedFailure(row) {
