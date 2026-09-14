@@ -329,6 +329,30 @@ test("evidence repair may update only bounded known claim keys", () => {
     [{code:"confirmed_topic_coverage_missing"}],{validFactKeys:["place.hours"]}),/unknown fact/i);
 });
 
+test("bounded repair corrects a missing protected duration before downstream work", async () => {
+  const requests=[];
+  const fact={normalized_key:"route.station.to_food_street",subject:"Station Exit 7 to food street",predicate:"walking_time",
+    preferred_value:"3 minutes",evidence:[{claim_id:"claim-duration",source_id:"source-duration",value:"3 minutes",qualifiers:[]}]};
+  const draft={content_hash:"duration-hash",title:"Guide",meta_description:"A practical guide.",seo:{meta_title:"Guide"},
+    body_markdown:"## Route\n\nExit 7 leads to the food street.",evidence_ledger:[{section_id:"route",section:"Route",
+      content_node_ids:["route-body"],claim_keys:[fact.normalized_key],source_ids:["source-duration"]}],verification_notes:[],visuals:[]};
+  let attempt=0;
+  const engine=new ContentEngine({apiKey:"key",model:"model",baseUrl:"https://api.example.test/v1"},async(_url,options)=>{
+    requests.push(JSON.parse(options.body)); attempt+=1;
+    const body=attempt===1 ? "Exit 7 leads to the food street." : "Walk 3 minutes from Exit 7 to the food street.";
+    return Response.json({model:"model",choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+      base_content_hash:"duration-hash",replacement_sections:[{heading:"Route",body_markdown:body}],
+    })}}]});
+  });
+  const result=await engine.repairDraft({draft,facts:[fact],brief:{plan:{outline:[{section_id:"route",heading:"Route",claim_keys:[fact.normalized_key]}]}}},[
+    {code:"protected_evidence_mismatch",severity:"blocker",message:"Preserve 3 minutes."},
+  ]);
+  assert.equal(requests.length,2);
+  const correction=JSON.parse(requests[1].messages[1].content);
+  assert.deepEqual(correction.missing_protected_values,[{claim_key:fact.normalized_key,required_value:"3 minutes"}]);
+  assert.match(result.output.body_markdown,/3 minutes/);
+});
+
 test("non-evidence repair may echo an unchanged ledger but cannot alter it", () => {
   const draft = { content_hash:"current",title:"Guide",meta_description:"Desc",seo:{meta_title:"Guide"},
     body_markdown:"Intro.\n\n## Visit\n\nSupported body.",evidence_ledger:[{section_id:"visit",claim_keys:["place.hours"]}],

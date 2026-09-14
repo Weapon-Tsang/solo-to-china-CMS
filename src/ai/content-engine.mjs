@@ -390,22 +390,24 @@ export class ContentEngine {
       result.output = applyBoundedDraftRepair(existing, result.output, repairIssues,
         { validFactKeys: factDtos(contentPackage).map((fact) => fact.normalized_key),
           sectionHeadings:(contentPackage.brief?.plan?.outline || contentPackage.brief?.outline || []).map((section)=>section.heading).filter(Boolean) });
+      validateGeneratedDraftProtectedValues(result.output, factDtos(contentPackage));
       return result;
     };
     const first = await request(repairInput);
     try {
       return apply(first);
     } catch (error) {
-      if (error?.code !== "INVALID_DRAFT_REPAIR_SCOPE") throw error;
+      if (!["INVALID_DRAFT_REPAIR_SCOPE", "DRAFT_EVIDENCE_VALUE_INVALID"].includes(error?.code)) throw error;
       const corrected = await request({
         ...repairInput,
         rejected_patch: { replacement_headings: (first.output?.replacement_sections || []).map((item) => item.heading) },
         repair_validation_error: String(error.message || error),
+        missing_protected_values:error.missingProtectedValues || [],
       });
       try {
         return apply(corrected);
       } catch (correctionError) {
-        if (correctionError?.code === "INVALID_DRAFT_REPAIR_SCOPE") {
+        if (["INVALID_DRAFT_REPAIR_SCOPE", "DRAFT_EVIDENCE_VALUE_INVALID"].includes(correctionError?.code)) {
           correctionError.retryable = false;
           correctionError.failureClass = "permanent_input";
         }

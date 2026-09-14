@@ -511,7 +511,7 @@ function decorateDeliveryFailure(failure) {
   // A bounded repair that cannot express the required change must not be
   // retried indefinitely. Preserve the frozen Writing Packet and promote the
   // recovery target to a full draft regeneration only.
-  if (failure.type === "revise_draft" && ["INVALID_DRAFT_REPAIR_SCOPE", "MODEL_OUTPUT_LIMIT"].includes(code)) {
+  if (failure.type === "revise_draft" && ["INVALID_DRAFT_REPAIR_SCOPE", "DRAFT_EVIDENCE_VALUE_INVALID", "MODEL_OUTPUT_LIMIT"].includes(code)) {
     return { ...failure, recovery_type:"generate_draft" };
   }
   return failure;
