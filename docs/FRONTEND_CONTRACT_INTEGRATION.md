@@ -1,5 +1,11 @@
 # Frontend Capability Contract Integration
 
+## 2.0.23 semantic presentation boundary
+
+The CMS continues to emit semantic Page Payloads only. It does not copy or synthesize Frontend JSX/CSS. Reader-visible Markdown tables retained by historical Drafts are parsed into semantic table AST nodes and projected as readable Contract-native list items when the active Registry exposes no table renderer. Model output is instructed to use prose/lists, and final validation rejects leaked Markdown decorators or table syntax before WordPress delivery.
+
+Authorized Source images are attached as media references with Source asset provenance, alt text and placement metadata. Selection is deterministic and relevance-scored; rendering, responsive styles and final visual treatment remain owned by the deployed WordPress theme and Frontend Contract.
+
 ## Ownership boundary
 
 SoloToChina uses two repositories. The Frontend owns components, variants, schemas, Gutenberg serialization, presentation, and rendering. The CMS owns research, evidence, editorial composition, commercial selection, validation, and delivery.

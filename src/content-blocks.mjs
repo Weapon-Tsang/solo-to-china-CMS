@@ -12,9 +12,27 @@ export function markdownToContentBlocks(markdown) {
     blocks.push({ type: "list", items: list, ordered: listOrdered });
     list = [];
   };
-  for (const rawLine of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex];
     const line = rawLine.trim();
     if (!line) { flushList(); continue; }
+    const tableHeader = markdownTableCells(line);
+    const tableDivider = markdownTableCells(lines[lineIndex + 1] || "");
+    if (tableHeader?.length > 1 && tableDivider?.length === tableHeader.length
+        && tableDivider.every((cell) => /^:?(?:-{3,}|[\u2013\u2014]+):?$/.test(cell))) {
+      flushList();
+      const rows = [];
+      lineIndex += 2;
+      while (lineIndex < lines.length) {
+        const cells = markdownTableCells(lines[lineIndex]);
+        if (!cells || cells.length !== tableHeader.length) break;
+        rows.push(cells.map(plainInlineText));
+        lineIndex += 1;
+      }
+      lineIndex -= 1;
+      if (rows.length) blocks.push({ type:"table", headers:tableHeader.map(plainInlineText), rows });
+      continue;
+    }
     const heading = line.match(/^(#{2,4})\s+(.+)$/);
     if (heading) {
       flushList();
@@ -27,6 +45,9 @@ export function markdownToContentBlocks(markdown) {
       const nextOrdered = Boolean(ordered);
       if (list.length && nextOrdered !== listOrdered) flushList();
       listOrdered = nextOrdered;
+      // Preserve safe inline Markdown for the legacy WordPress renderer. The
+      // Contract-native composer removes decorators from its plain list data
+      // below, so no raw Markdown crosses the final Page Payload boundary.
       list.push((ordered || bullet)[1]);
       continue;
     }
@@ -73,9 +94,11 @@ export function buildContentAst({ draft = {}, brief = {}, visuals = [], facts = 
       id: preferred || `node_${crypto.createHash("sha256").update(`${brief.id || "brief"}:${signature}:${count}`).digest("hex").slice(0, 20)}`,
       type: block.type,
       semantic_role: block.type === "heading" ? "section_heading" : "editorial",
-      visible_text: block.type === "list" ? block.items.join("\n") : block.text,
+      visible_text: block.type === "list" ? block.items.join("\n")
+        : block.type === "table" ? [block.headers, ...block.rows].flat().join("\n") : block.text,
       ...(block.level ? { level: block.level } : {}),
       ...(block.type === "list" ? { items: [...block.items], ordered: Boolean(block.ordered) } : {}),
+      ...(block.type === "table" ? { headers:[...block.headers], rows:block.rows.map((row) => [...row]) } : {}),
       fact_refs: [],
       source_section_ids: activeLedger?.section_id ? [activeLedger.section_id] : [],
       source_ids: [],
@@ -219,6 +242,11 @@ export function renderContentAstMarkdown(ast) {
   return (ast?.nodes || []).filter((node) => node.type !== "media").map((node) => {
     if (node.type === "heading") return `${"#".repeat(Math.min(4, Math.max(2, Number(node.level) || 2)))} ${node.visible_text}`;
     if (node.type === "list") return (node.items || []).map((item, index) => node.ordered ? `${index + 1}. ${item}` : `- ${item}`).join("\n");
+    if (node.type === "table") return [
+      `| ${node.headers.join(" | ")} |`,
+      `| ${node.headers.map(() => "---").join(" | ")} |`,
+      ...node.rows.map((row) => `| ${row.join(" | ")} |`),
+    ].join("\n");
     return node.visible_text;
   }).join("\n\n");
 }
@@ -289,7 +317,13 @@ function composeAtomicPageFromAst(ast, capabilities, pageSchema) {
       continue;
     }
     if (node.type === "list" && node.items?.length) {
-      append({ type: list.id, variant: preferredVariant(list, node.ordered ? "ordered" : "unordered"), data: { items: [...node.items] } }, [node]);
+      append({ type: list.id, variant: preferredVariant(list, node.ordered ? "ordered" : "unordered"),
+        data: { items: node.items.map(plainInlineText) } }, [node]);
+      continue;
+    }
+    if (node.type === "table" && node.rows?.length) {
+      append({ type: list.id, variant: preferredVariant(list, "unordered"),
+        data:{ items:node.rows.map((row) => tableRowSummary(node.headers, row)) } }, [node]);
       continue;
     }
     if (node.type === "media") {
@@ -376,6 +410,33 @@ function inlineHtml(value) {
     .replace(/\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g, '<a href="$2" rel="noopener" target="_blank">$1</a>')
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>");
+}
+
+function markdownTableCells(value) {
+  const text = String(value || "").trim();
+  if (!text.startsWith("|") || !text.endsWith("|")) return null;
+  return text.slice(1, -1).split("|").map((cell) => cell.trim());
+}
+
+function plainInlineText(value) {
+  return String(value || "")
+    .replace(/\[([^\]]+)\]\(https?:\/\/[^)\s]+\)/g, "$1")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/_(.+?)_/g, "$1")
+    .replace(/`(.+?)`/g, "$1")
+    .trim();
+}
+
+function tableRowSummary(headers, row) {
+  const primary = plainInlineText(row[0]);
+  const details = row.slice(1).map((value, index) => {
+    const label = plainInlineText(headers[index + 1]);
+    const text = plainInlineText(value);
+    return label && text ? `${label}: ${text}` : text;
+  }).filter(Boolean);
+  return [primary, details.join("; ")].filter(Boolean).join(" \u2014 ");
 }
 
 function placeMediaNodes(nodes, media, briefId) {

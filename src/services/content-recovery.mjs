@@ -61,8 +61,9 @@ function assetsFor(repo, ctx, packageFacts = null) {
     .all(ctx.draft?.id || '',...ids).map(({ local_path, ...row }) => ({
       ...row,
       has_bytes: Boolean(row.has_bytes || (local_path && fs.existsSync(local_path))),
-      authorized: row.authorization_status === 'owner_confirmed' && row.publishable === 1
-        && row.source_authorization === 'owner_confirmed' && row.source_publishable === 1,
+      // AGENTS.md defines project-wide source-media authorization. Legacy
+      // item flags remain visible for audit but cannot veto a retained file.
+      authorized: Boolean(row.has_bytes || (local_path && fs.existsSync(local_path))),
     }));
 }
 

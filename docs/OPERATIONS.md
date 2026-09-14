@@ -1,5 +1,11 @@
 # V1 Operations
 
+## 2.0.23 production-copy recovery replay
+
+For a deterministic recovery audit, first create a disposable online backup of production, then run `npm run audit:prod-replay -- --database <name-containing-replay-or-work> --replay-id <unique-id>`. The command refuses filenames that do not explicitly identify a disposable copy, requires a quiescent work database, invokes no worker/model/WordPress client, and verifies one active Opportunity-owned recovery Job plus idempotent replay for each failed/interrupted record. Discard the work database after the report is retained.
+
+Do not point this command at the live database. A successful offline replay authorizes no production retry; production recovery remains an explicit per-record operation after the corrected immutable runtime is healthy.
+
 ## Daily workflow
 
 1. Select useful Xiaohongshu posts on mobile or desktop by adding them to the target Favorites collection.

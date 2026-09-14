@@ -186,6 +186,20 @@ test("the final artifact gate consumes the semantic evidence validator", () => {
   assert.ok(codes(validateFinalPageArtifact(page, contentPackage)).includes("BLOCK_PROVENANCE_MISSING"));
 });
 
+test("the final artifact gate rejects reader-visible raw Markdown formatting", () => {
+  const page = { metadata: { title: "Guide" }, blocks: [goodBlock] };
+  const contentPackage = packageFor(goodBlock);
+  contentPackage.draft.title = "Guide";
+  page.blocks.push({ type: "list", variant: "unordered", data: { items: ["**Jiefangbei:** Start here"] } });
+  page.blocks.push({ type: "paragraph", variant: "default", data: { content: "| Mode | Cost |" } });
+  const result = validateFinalPageArtifact(page, contentPackage);
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.errors.filter((item) => item.code === "RAW_MARKDOWN_PRESENTATION").map((item) => item.path), [
+    "$.blocks[1].data.items[0]",
+    "$.blocks[2].data.content",
+  ]);
+});
+
 test("delivery-only entity canonicalization remaps verified block provenance without trusting changed content", () => {
   const source = { blocks:[{ type:"paragraph", data:{ content:"Traveler&#39;s route" } }] };
   const delivery = { blocks:[{ type:"paragraph", data:{ content:"Traveler&#039;s route" } }] };

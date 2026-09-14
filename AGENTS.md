@@ -163,6 +163,12 @@ Cloud Build、磁盘 snapshot、完整 production backup、正式镜像发布不
 
 # Risk-Based Testing and Real-World Verification
 
+## Source Media Authorization
+
+For this project, every source asset and image imported into the CMS has full authorization for editorial and production use. Writing, visual planning, and page-composition stages may freely select and use those authorized source assets.
+
+Authorization must not be re-inferred or rejected from missing per-item licensing metadata. The pipeline must still preserve source attribution and provenance, require factual and destination relevance, generate accurate alt text, respect the Frontend Contract, and reject broken or inaccessible media. It must never fabricate source media or silently substitute unrelated assets.
+
 ## 核心原则
 
 “测试数量很多”不等于“已经覆盖真实生产行为”。

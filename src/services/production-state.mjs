@@ -2,7 +2,7 @@ import { json, sha256 } from "../utils.mjs";
 import { validatePlanningDestination } from "../destination-consistency.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./content-recovery-policy.mjs";
 
-export const PRODUCTION_STATE_VERSION = "1.8";
+export const PRODUCTION_STATE_VERSION = "1.9";
 
 export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
   stage("assemble_editorial", "素材组装", 10, [], "editorial", "always"),
@@ -477,6 +477,12 @@ function decorateDeliveryFailure(failure) {
   const code = String(failure.last_failure_code || failure.code || "").toUpperCase();
   if (failure.type === "push_wordpress_draft" && ["INVALID_PAGE_SCHEMA", "INVALID_COMPONENT_DATA"].includes(code)) {
     return { ...failure, recovery_type:"compose_publish_page" };
+  }
+  // A bounded repair that cannot express the required change must not be
+  // retried indefinitely. Preserve the frozen Writing Packet and promote the
+  // recovery target to a full draft regeneration only.
+  if (failure.type === "revise_draft" && ["INVALID_DRAFT_REPAIR_SCOPE", "MODEL_OUTPUT_LIMIT"].includes(code)) {
+    return { ...failure, recovery_type:"generate_draft" };
   }
   return failure;
 }

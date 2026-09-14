@@ -227,7 +227,11 @@ export function explainOperationalFailure(job) {
     reason: type === 'revise_draft'
       ? '模型的思考过程和修订 JSON 共用输出预算，旧配置在完整结果返回前耗尽了额度；已有草稿和证据没有丢失。'
       : '模型未能在本阶段输出预算内返回完整的结构化结果；已有素材和已完成步骤没有丢失。',
-    action: { id: type === 'plan_content' ? 'plan_content' : 'revise_draft', label: type === 'plan_content' ? '用精简证据重新准备' : '仅修订失败内容', why: '新版会压缩事实范围和错误明细，并限制修订次数。' },
+    action: { id: type === 'plan_content' ? 'plan_content' : type === 'revise_draft' ? 'generate_draft' : type,
+      label: type === 'plan_content' ? '用精简证据重新准备' : type === 'revise_draft' ? '从 Writing Packet 重建正文' : '重新执行当前步骤',
+      why: type === 'revise_draft'
+        ? '局部修订结果已经超出安全边界，改为保留素材、证据、写作准备和页面规划，只重新生成正文。'
+        : '新版会压缩事实范围和错误明细，并限制修订次数。' },
     technicalDetail: details,
   };
   return {
@@ -258,12 +262,20 @@ export function qualityRepairStage(issues = []) {
   if (!blockers.length) return null;
   const media = new Set(['required_visual_missing', 'visual_renderer_incomplete']);
   const page = new Set(['final_page_invalid', 'final_page_content_missing', 'final_page_evidence_invalid']);
+  const globalStructure = new Set(['DATABASE_DUMP', 'NO_CAUSAL_FLOW', 'NO_TRAVELER_DECISION',
+    'UNIFORM_SECTION_RHYTHM', 'REPETITIVE_EXPLANATION', 'GENERIC_AI_TRANSITIONS']);
+  const globalStructureCount = new Set(blockers.map((issue) => String(issue.code || '').toUpperCase())
+    .filter((code) => globalStructure.has(code))).size;
   // A ledger-evasion blocker means the current prose is globally outside the
   // frozen Writing Packet. A three-section patch cannot make that draft
   // trustworthy; regenerate only the draft from the preserved upstream
   // artifacts instead of repeatedly rewriting arbitrary fragments.
-  if (blockers.some((issue) => issue.code === 'EVIDENCE_LEDGER_EVASION' || issue.code === 'planned_body_sections_missing'
-    || (issue.code === 'confirmed_topic_coverage_missing' && Number(issue.affected_count || 0) > 3))) return 'generate_draft';
+  if (blockers.some((issue) => String(issue.code || '').toUpperCase() === 'EVIDENCE_LEDGER_EVASION'
+    || String(issue.code || '').toUpperCase() === 'PLANNED_BODY_SECTIONS_MISSING'
+    || String(issue.code || '').toUpperCase() === 'INVALID_DRAFT_REPAIR_SCOPE'
+    || (String(issue.code || '').toLowerCase() === 'confirmed_topic_coverage_missing' && Number(issue.affected_count || 0) > 3))
+    || blockers.some((issue) => String(issue.code || '').toUpperCase() === 'DATABASE_DUMP')
+    || globalStructureCount >= 2) return 'generate_draft';
   if (blockers.some((issue) => !media.has(issue.code) && !page.has(issue.code))) return 'revise_draft';
   if (blockers.some((issue) => media.has(issue.code))) return null;
   return 'compose_frontend_page';

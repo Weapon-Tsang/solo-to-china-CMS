@@ -1,5 +1,13 @@
 # Failure and production lifecycle
 
+## 2.0.23 recovery depth and authorized source media
+
+`production_state` 1.9 chooses recovery depth from the authoritative failure, not from the button that happens to be visible. `INVALID_DRAFT_REPAIR_SCOPE`, `MODEL_OUTPUT_LIMIT`, a database-dump-style Draft, missing planned sections, evidence-ledger evasion, or multiple global structure blockers target `generate_draft`. This preserves Editorial Assembly, Narrative Plan, Writing Packet and Frontend Page Plan while rebuilding only the failed prose. A frozen Writing Packet/page-plan scope mismatch targets `assemble_editorial`; a page/Contract-only failure targets `compose_frontend_page`.
+
+Manual recovery uses the same current failed-QA feedback as automatic recovery. The operation is transactional, Opportunity-owned and idempotent; replaying one idempotency key cannot create another Job. Startup, migration and list projection never enqueue these recoveries.
+
+Every imported Source asset is project-authorized for editorial and production use. Legacy item-level authorization fields remain audit data but cannot veto a retained original. Recovery and delivery still require stored bytes, exact Source provenance, destination/factual relevance, useful alt text and a valid Frontend Contract payload; inaccessible or unrelated media remains blocked.
+
 ## Unified production state
 
 `production_state` is the only workbench lifecycle contract. It is calculated server-side from approved Opportunity readiness, Candidate/Brief/Draft lineage, durable Jobs and leases, Pipeline Artifacts, Step Receipts, current revision/hash-bound outputs, Frontend compositions, Quality Reviews, WordPress publications and record disposition. Clients must not combine `status`, `brief_status`, `draft_status` or `workflow_status` to infer production state.

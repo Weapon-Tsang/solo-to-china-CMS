@@ -163,7 +163,7 @@ function parseArgs(values) {
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--database") output.database = values[++index] || "";
-    else if (value === "--limit") output.limit = bounded(values[++index], 1, 5, "limit");
+    else if (value === "--limit") output.limit = bounded(values[++index], 1, 7, "limit");
     else if (value === "--max-calls") output.maxCalls = bounded(values[++index], 1, 50, "max-calls");
     else if (value === "--timeout-minutes") output.timeoutMs = bounded(values[++index], 1, 120, "timeout-minutes") * 60 * 1_000;
     else if (value === "--spacing-ms") output.spacingMs = bounded(values[++index], 0, 60_000, "spacing-ms");

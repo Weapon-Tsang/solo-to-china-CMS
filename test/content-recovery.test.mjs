@@ -128,6 +128,10 @@ test('media/page blockers do not automatically rewrite otherwise valid text', ()
   assert.equal(qualityRepairStage([{code:'confirmed_topic_coverage_missing',severity:'blocker',affected_count:4}]), 'generate_draft');
   assert.equal(qualityRepairStage([{code:'confirmed_topic_coverage_missing',severity:'blocker',affected_count:2}]), 'revise_draft');
   assert.equal(qualityRepairStage([{code:'planned_body_sections_missing',severity:'blocker',affected_count:1}]), 'generate_draft');
+  assert.equal(qualityRepairStage([{code:'DATABASE_DUMP',severity:'blocker'}]), 'generate_draft');
+  assert.equal(qualityRepairStage([{code:'NO_CAUSAL_FLOW',severity:'blocker'},
+    {code:'UNIFORM_SECTION_RHYTHM',severity:'blocker'}]), 'generate_draft');
+  assert.equal(qualityRepairStage([{code:'INVALID_DRAFT_REPAIR_SCOPE',severity:'blocker'}]), 'generate_draft');
 });
 
 test('global evidence-ledger evasion regenerates only the draft from its existing writing packet',t=>{
@@ -169,7 +173,7 @@ test('legacy plan and frozen packet scope mismatch recovers from editorial assem
   db.prepare(`INSERT INTO writing_packets(id,brief_id,narrative_plan_id,packet_text,selected_fact_keys_json,input_hash,created_at,updated_at)
     VALUES ('packet-r','brief-r','narrative-r','legacy','["fact.one"]','hash','now','now')`).run();
   const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,'1.8');
+  assert.equal(state.version,'1.9');
   assert.equal(state.stage_status,'failed');
   assert.equal(state.recovery_target,'assemble_editorial');
   assert.equal(state.latest_error.code,'FROZEN_WRITING_SCOPE_INVALID');
@@ -225,7 +229,7 @@ test('a parallel page failure cannot overwrite failed QA and terminal reconcilia
   db.prepare("UPDATE article_drafts SET status='exception' WHERE id='draft-r'").run();
 
   const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,'1.8');
+  assert.equal(state.version,'1.9');
   assert.equal(state.stage_status,'failed');
   assert.equal(state.current_stage,'review_draft');
   assert.equal(state.recovery_target,'revise_draft');
@@ -311,7 +315,7 @@ test('operator diagnosis is concise Chinese and hides long code lists behind tec
   const repairScope=recoveryDiagnosis({failedJob:{type:'revise_draft',last_failure_code:'INVALID_DRAFT_REPAIR_SCOPE',
     last_error:'Draft repair cannot replace unknown section.'}});
   assert.match(repairScope.headline,/没有命中/);
-  assert.equal(repairScope.recommendedAction.id,'revise_draft');
+  assert.equal(repairScope.recommendedAction.id,'generate_draft');
   const model403=recoveryDiagnosis({failedJob:{type:'compose_frontend_page',last_error:'Vertex Gemini request failed (403): permission denied'}});
   assert.match(model403.headline,/模型服务/);
   assert.doesNotMatch(model403.headline,/图片/);

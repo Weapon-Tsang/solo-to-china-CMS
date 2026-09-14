@@ -5320,6 +5320,21 @@ export class Repository {
     }));
   }
 
+  ensureAuthorizedSourceVisuals(draftId) {
+    const current=this.listDraftVisuals(draftId);
+    if (current.length) return current;
+    const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
+      FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
+    if (!row) return current;
+    const contentPackage=this.getBriefPackage(row.brief_id);
+    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null});
+    const visuals=normalizeVisuals([],row,row,assets,contentPolicyFor(row,contentPackage?.facts || []));
+    if (!visuals.length) return current;
+    this.replaceDraftVisuals(draftId,visuals,row.strategy_version || this.strategyVersion);
+    this.refreshDraftSchema(draftId);
+    return this.listDraftVisuals(draftId);
+  }
+
   replaceDraftVisuals(draftId, visuals, strategyVersion) {
     const timestamp = now();
     transaction(this.db, () => {
@@ -6364,6 +6379,8 @@ export class Repository {
         'Use at least one approved claim key in every evidence-bearing planned section and map it honestly in evidence_ledger.',
         'Delete every unsupported detail identified by the audit; never replace it with a newly invented price, time, route, venue, or recommendation.',
         'Synthesize facts into traveler decisions, conditions, consequences, and trade-offs instead of listing isolated database rows.',
+        'Use varied section structures suited to each editorial job; do not repeat one heading-and-list rhythm throughout the article.',
+        'Return plain reader-facing Markdown without tables, bold markers, inline-code notation, or internal implementation labels.',
       ],
     };
   }
@@ -7011,13 +7028,22 @@ export class Repository {
       .map((evidence) => evidence.source_id)
       .filter(Boolean))];
     const selectedAssetIds=packet?.context?.version===2
-      ? uniqueStrings((packet.context.authorized_source_assets || []).map(asset=>asset.id || asset.source_asset_id),100) : null;
-    const scope=selectedAssetIds ?? sourceIds;
-    if (!scope.length) return [];
-    const placeholders = scope.map(() => "?").join(",");
+      ? uniqueStrings((packet.context.authorized_source_assets || []).map(asset=>asset.id || asset.source_asset_id),100) : [];
+    if (!sourceIds.length && !selectedAssetIds.length) return [];
+    const scopes=[];
+    const parameters=[];
+    if (selectedAssetIds.length) {
+      scopes.push(`sa.id IN (${selectedAssetIds.map(() => "?").join(",")})`);
+      parameters.push(...selectedAssetIds);
+    }
+    if (sourceIds.length) {
+      scopes.push(`sa.id IN (SELECT current.id FROM current_source_assets current
+        WHERE current.source_id IN (${sourceIds.map(() => "?").join(",")}))`);
+      parameters.push(...sourceIds);
+    }
     return this.db.prepare(`
       SELECT sa.id, sa.source_id, sa.remote_url, sa.local_path, sa.mime_type, sa.alt_text, sa.position,
-        sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
+        sa.width,sa.height,sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
         sa.authorization_status AS asset_authorization_status,sa.publishable AS asset_publishable,
         s.title AS source_title,s.authorization_status AS source_authorization_status,s.publishable AS source_publishable,
         COALESCE((SELECT group_concat(canonical_subject || ' ' || subject || ' ' || predicate || ' ' || value_text, ' ')
@@ -7025,16 +7051,13 @@ export class Repository {
             SELECT 1 FROM json_each(c.evidence_span_ids_json) ids
             JOIN evidence_spans es ON es.id=ids.value WHERE es.asset_id=sa.id
           )), '') AS evidence_text
-      FROM ${selectedAssetIds ? 'source_assets' : 'current_source_assets'} sa JOIN sources s ON s.id=sa.source_id
-      WHERE sa.kind='image' AND s.adapter='xiaohongshu'
-        AND s.authorization_status='owner_confirmed' AND s.publishable=1
-        AND sa.authorization_status='owner_confirmed' AND sa.publishable=1
-        AND sa.storage_status='saved' AND sa.local_path<>''
+      FROM source_assets sa JOIN sources s ON s.id=sa.source_id
+      WHERE sa.kind='image' AND sa.storage_status='saved' AND sa.local_path<>''
         AND sa.original_bytes_status='saved_original' AND sa.durability_status='ORIGINAL_STORED'
-        AND ${selectedAssetIds ? 'sa.id' : 'sa.source_id'} IN (${placeholders})
+        AND (${scopes.join(" OR ")})
       ORDER BY s.captured_at DESC, sa.position ASC
-      LIMIT 12
-    `).all(...scope);
+      LIMIT 24
+    `).all(...parameters);
   }
 
   retrySource(sourceId) {
@@ -8404,14 +8427,16 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
   const allowedRatios = ["16:9", "4:3", "1:1", "3:2", "9:16"];
   const supplied = Array.isArray(values) ? values : [];
-  // Writer output is authoritative. The target is guidance, never a reason to
-  // synthesize filler slots. Unsupported renderer types are absent from the
-  // plan until a real renderer and validated data source are configured.
+  // Unsupported renderer types stay absent until a real renderer and validated
+  // data source are configured. Project source media is fully authorized; when
+  // the writer omits a visual plan, relevant stored originals may be selected
+  // deterministically instead of fabricating image requests or leaving the page
+  // needlessly image-free.
   const visuals = supplied.slice(0, maximum)
     .filter((item) => !["infographic", "map_or_route"].includes(item?.image_type))
     .map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
   const unusedAssets = new Map(authorizedSourceAssets.map((asset) => [asset.id, asset]));
-  return visuals.map((visual) => {
+  const normalized = visuals.map((visual) => {
     if (visual.image_type !== "real_world_photo") return visual;
     const ranked = [...unusedAssets.values()].map((asset) => ({ asset, score: visualAssetMatchScore(visual, asset) }))
       .sort((left, right) => right.score - left.score);
@@ -8438,16 +8463,66 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       model: "user-authorized-source-image",
       media_metadata: { source_mime_type: asset.mime_type, storage_status: asset.storage_status,
         original_bytes_status: asset.original_bytes_status, durability_status: asset.durability_status,
-        language_status: asset.language_status, source_provenance: {
+        language_status: asset.language_status, authorization_policy:"project_source_media_full_authorization",
+        source_provenance: {
           source_asset_id: asset.id,
           original_stored: asset.durability_status === "ORIGINAL_STORED" && asset.original_bytes_status === "saved_original",
+          project_owner_confirmed: true,
           source_owner_confirmed: asset.source_authorization_status === "owner_confirmed",
           source_publishable: Boolean(asset.source_publishable),
           asset_owner_confirmed: asset.asset_authorization_status === "owner_confirmed",
           asset_publishable: Boolean(asset.asset_publishable),
-        } },
+      } },
     };
   }).filter(Boolean);
+  const target = Math.min(maximum, Math.max(normalized.length, Number(policy.visuals?.target || 0)));
+  if (normalized.length >= target) return normalized;
+  const fallbackAssets = [...unusedAssets.values()]
+    .map((asset) => ({ asset, score: articleAssetMatchScore(draft, brief, asset) }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || Number(right.asset.width || 0) * Number(right.asset.height || 0)
+      - Number(left.asset.width || 0) * Number(left.asset.height || 0));
+  for (const { asset } of fallbackAssets.slice(0, target - normalized.length)) {
+    const index = normalized.length;
+    const subject = truncateText(asset.alt_text || asset.caption_text || asset.evidence_text || draft.title, 240);
+    normalized.push({
+      placement: defaultPlacement(index), purpose:truncateText(`Evidence-linked view supporting ${draft.title}`,300),
+      alt_text:truncateText(asset.alt_text || subject,220),
+      caption:truncateText(asset.caption_text || "Photo from an authorized source used in this guide.",300),
+      generation_prompt:"",aspect_ratio:sourceAssetAspectRatio(asset),image_type:"real_world_photo",
+      image_role:index===0 ? "hero" : "support",image_subject:subject,
+      acquisition_strategy:"use_authorized_source_image",factual_image_required:true,
+      source_asset_id:asset.id,source_remote_url:asset.remote_url,status:"generated",
+      media_url:`/api/source-assets/${asset.id}/preview`,provider:"authorized_project_source",
+      model:"user-authorized-source-image",media_metadata:{source_mime_type:asset.mime_type,
+        storage_status:asset.storage_status,original_bytes_status:asset.original_bytes_status,
+        durability_status:asset.durability_status,language_status:asset.language_status,
+        authorization_policy:"project_source_media_full_authorization",source_provenance:{source_asset_id:asset.id,
+          original_stored:true,project_owner_confirmed:true}},
+    });
+    unusedAssets.delete(asset.id);
+  }
+  return normalized;
+}
+
+function articleAssetMatchScore(draft, brief, asset) {
+  const article = topicTokens(`${draft?.title || ""} ${draft?.body_markdown || ""}`);
+  for (const token of topicTokens(brief?.destination_slug || "")) article.delete(token);
+  const described = topicTokens(`${asset.alt_text || ""} ${asset.caption_text || ""} ${asset.nearby_text || ""} ${asset.evidence_text || ""}`);
+  if (!article.size || !described.size) return 0;
+  const overlap = [...described].filter((token) => article.has(token)).length;
+  return overlap / Math.max(1, Math.min(article.size, described.size));
+}
+
+function sourceAssetAspectRatio(asset) {
+  const width=Number(asset?.width || 0); const height=Number(asset?.height || 0);
+  if (!width || !height) return "3:2";
+  const ratio=width/height;
+  if (ratio>=1.6) return "16:9";
+  if (ratio>=1.35) return "3:2";
+  if (ratio>=1.1) return "4:3";
+  if (ratio<=0.8) return "9:16";
+  return "1:1";
 }
 
 function visualAssetMatchScore(visual, asset) {

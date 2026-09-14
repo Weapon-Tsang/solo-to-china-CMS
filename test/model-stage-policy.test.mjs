@@ -81,6 +81,17 @@ test("bounded repair rejects stale revisions and preserves every untouched secti
   assert.equal(repaired.title, "Guide");
 });
 
+test("bounded repair accepts punctuation-equivalent headings without renaming the persisted section", () => {
+  const draft = { content_hash:"punctuation",title:"Guide",meta_description:"Desc",seo:{meta_title:"Guide"},
+    body_markdown:"## Day 1 Evening: Raffles City, Hongyadong, and River Views\n\nOld route.",
+    evidence_ledger:[],unresolved_conflicts:[],verification_notes:[],visuals:[] };
+  const repaired=applyBoundedDraftRepair(draft,{base_content_hash:"punctuation",replacement_sections:[{
+    heading:"Day 1 Evening — Raffles City, Hongyadong & River Views",body_markdown:"A clearer route decision.",
+  }],metadata:{}},[{code:"NO_CAUSAL_FLOW"}]);
+  assert.match(repaired.body_markdown,/^## Day 1 Evening: Raffles City, Hongyadong, and River Views$/m);
+  assert.match(repaired.body_markdown,/A clearer route decision/);
+});
+
 test("bounded repair normalizes a legacy H3-only document to an accessible H2 section hierarchy", () => {
   const draft = { content_hash: "legacy", title: "Guide", meta_description: "Desc", seo: { meta_title: "Guide" },
     body_markdown: "Intro.\n\n### Day 1\n\nOld route.\n\n### Day 2\n\nKeep this route.",

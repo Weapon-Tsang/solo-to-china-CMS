@@ -45,12 +45,14 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true } =
       }
       const sourceAssetId = String(visual.source_asset_id || "").trim();
       const provenance = metadata.source_provenance || {};
+      const projectAuthorized = metadata.authorization_policy === "project_source_media_full_authorization"
+        && provenance.project_owner_confirmed === true;
       if (!sourceAssetId || provenance.source_asset_id !== sourceAssetId) {
         errors.push({ code: "REAL_SCENE_SOURCE_ASSET_MISSING", path: `${path}.source_asset_id` });
       }
       if (!provenance.original_stored) errors.push({ code: "REAL_SCENE_ORIGINAL_NOT_STORED", path });
-      if (!provenance.source_owner_confirmed || !provenance.source_publishable
-        || !provenance.asset_owner_confirmed || !provenance.asset_publishable) {
+      if (!projectAuthorized && (!provenance.source_owner_confirmed || !provenance.source_publishable
+        || !provenance.asset_owner_confirmed || !provenance.asset_publishable)) {
         errors.push({ code: "REAL_SCENE_AUTHORIZATION_INVALID", path });
       }
       if (strategy === "localize_source_image"

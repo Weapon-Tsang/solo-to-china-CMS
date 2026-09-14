@@ -784,8 +784,10 @@ export class Pipeline {
           this.requireContentEngine();
           const contentPackage = this.repository.getBriefPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Content brief ${job.entity_id} no longer exists.`);
-          const qualityFeedback = job.dedupe_key?.startsWith("auto-quality-repair:generate_draft:")
-            ? this.repository.qualityRegenerationFeedback(job.entity_id) : null;
+          // Manual recovery from a failed quality repair consumes the same
+          // frozen-review feedback as automatic regeneration. First drafts
+          // have no failed current review, so this remains null initially.
+          const qualityFeedback = this.repository.qualityRegenerationFeedback(job.entity_id);
           const drafted = await guarded((signal) => this.contentEngine.draft(contentPackage, qualityFeedback, { signal, telemetryContext }));
           commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
@@ -798,6 +800,7 @@ export class Pipeline {
         }
         case "generate_visuals": {
           if (!this.visuals?.enabled) throw new Error("Visual generation is not configured.");
+          this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           for (const visual of this.repository.plannedVisuals(job.entity_id)) {
@@ -818,6 +821,7 @@ export class Pipeline {
         case "compose_frontend_page": {
           this.requireContentEngine();
           const contract = this.requireFrontendContract();
+          this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput }));

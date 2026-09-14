@@ -56,6 +56,18 @@ test("localized real photos require an original, authorization, a real localized
   assert.ok(invalid.errors.some((error) => error.code === "LOCALIZED_SCENE_FILE_NOT_PROVEN"));
 });
 
+test("project-wide source authorization supersedes missing legacy per-item flags", () => {
+  const source_asset_id = "source-asset-project-authorized";
+  const metadata = { ...wordpressMediaMetadata(wpBody, { bytes, contentType: "image/jpeg" }),
+    wordpress_uploaded:true,wordpress_media_id:71,authorization_policy:"project_source_media_full_authorization",
+    source_provenance:{source_asset_id,original_stored:true,project_owner_confirmed:true,
+      source_owner_confirmed:false,source_publishable:false,asset_owner_confirmed:false,asset_publishable:false} };
+  const result=validateMediaDelivery([{wordpress_media_id:71,wordpress_media_url:wpBody.source_url,source_asset_id,
+    alt_text:"Authorized Chongqing source photo",image_role:"featured",image_type:"real_world_photo",
+    acquisition_strategy:"use_authorized_source_image",factual_image_required:1,media_metadata:metadata}]);
+  assert.equal(result.valid,true,JSON.stringify(result.errors));
+});
+
 test("responsive HTML gives only the first image high priority and later images lazy loading", () => {
   const metadata = wordpressMediaMetadata(wpBody, { bytes, contentType: "image/jpeg" });
   const attributes = responsiveImageAttributes(metadata, { featured: true });

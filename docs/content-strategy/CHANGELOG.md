@@ -1,5 +1,12 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.23 / schema 69 - 2026-09-14
+
+- Keep the approved scope, complete frozen evidence set and Strategy 3.3 selection semantics while changing recovery depth according to the real failure: global quality or invalid bounded-repair failures regenerate only the Draft; page-only failures recompose the Frontend Page; stale Writing Packet scope resumes at Editorial Assembly.
+- Feed the authoritative failed QA report into manual Draft regeneration. The writer must produce traveler decision logic with varied section rhythm and plain reader-facing Markdown; legacy table syntax is deterministically translated into Contract-native content and raw presentation markers fail the final artifact gate.
+- Apply the project-wide authorization that all imported source media is cleared for editorial and production use. Missing historical per-item authorization flags cannot suppress a retained original, while factual/destination relevance, provenance, alt text, durable bytes and the Frontend Contract remain enforced.
+- Keep schema 69 and Content Strategy 3.3. No migration, automatic enqueue, model call, approval change, production deletion or WordPress publication is introduced by startup.
+
 ## App 2.0.22 / schema 69 - 2026-09-14
 
 - Align retained page-block provenance signatures with delivery-only entity normalization only after exact original-signature verification; stable evidence identities remain unchanged and tampered content continues to fail closed.

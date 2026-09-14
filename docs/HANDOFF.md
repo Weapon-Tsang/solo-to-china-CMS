@@ -1,3 +1,13 @@
+# 2.0.23 full production recovery and final-preview handoff
+
+App/Extension version `2.0.23`, schema migration `69`, and Content Strategy `3.3` form this release line, with Content Production Strategy 3.3 defined by `config/content-strategy.json`, `production_state` 1.9, and Frontend Contract 1.4.0. The exact 2.0.22 production database was backed up online and replayed through the current code without a model or WordPress call: one of seven approved records was already a WordPress Draft, while six failures divided into four Draft regenerations from preserved Writing Packets, one deterministic Frontend Page recomposition, and one Editorial Assembly restart caused by a stale frozen packet/page-plan fact scope.
+
+The project owner confirms that every imported Source asset/image has full editorial and production authorization. `AGENTS.md` is authoritative for this project: retained originals may be used without legacy per-item flag approval, but source identity, durable bytes, destination/factual relevance, alt text, and Frontend Contract validation remain mandatory. The CMS never fabricates media or copies Frontend JSX/CSS.
+
+The recovery policy no longer sends global structural QA, truncated Drafts, invalid three-section repair scopes or revision output-limit failures back into bounded repair. Manual and automatic Draft regeneration both consume the authoritative frozen QA blockers; legacy Markdown tables become semantic Contract lists and raw Markdown presentation is rejected at final delivery. The offline recovery-action replay created exactly one Opportunity-owned Job per failed record, reused it for the same idempotency key, made zero model/WordPress calls, and preserved all Source, Source asset, Claim, Evidence, Knowledge, Experience, approval and Failure Lesson counts.
+
+The companion WordPress parent theme `0.33.1` carries CMS-declared English document language, English dates, SEO/social metadata, canonical mapping and draft-safe `noindex,nofollow`; explicit WordPress publication switches the managed post to `index,follow`. WordPress Playground PHP/runtime and desktop/mobile browser acceptance must pass before production rollout. Production remains draft-only: this release may create/update WordPress Drafts and preview/edit URLs, but must not publish them.
+
 # 2.0.22 delivery-provenance compatibility handoff
 
 App/Extension version `2.0.22`, schema migration `69`, and Content Strategy `3.3` are on the release line; `production_state` is `1.8` and Frontend Contract is `1.4.0`. A real 2.0.21 production canary correctly normalized WordPress-safe apostrophe entities, then the final artifact gate exposed that four retained block provenance signatures still represented the pre-normalized bytes.

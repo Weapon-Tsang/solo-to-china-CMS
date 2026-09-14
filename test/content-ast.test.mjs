@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildContentAst, composeFirstTimeGuideFromAst, composePageFromAst, reconcileContentAstLedger, renderContentAstMarkdown } from "../src/content-blocks.mjs";
+import { buildContentAst, composeFirstTimeGuideFromAst, composePageFromAst, markdownToContentBlocks,
+  reconcileContentAstLedger, renderContentAstMarkdown } from "../src/content-blocks.mjs";
 import { validateJsonSchema } from "../src/frontend-contract.mjs";
 import { synchronizeSchemaWithPage } from "../src/publish-page.mjs";
 import { synchronizeSeoMetadata, validateSeoGeoArtifact } from "../src/seo-geo.mjs";
@@ -121,6 +122,25 @@ test("an unlisted section does not inherit the previous section evidence and ord
   assert.deepEqual(editorialList.fact_refs, []);
   assert.deepEqual(editorialList.source_section_ids, []);
   assert.match(renderContentAstMarkdown(ast), /1\. First\n2\. Second/);
+});
+
+test("Markdown tables and decorated list labels become readable Contract-native lists", () => {
+  const body = "## Transit\n\n| Mode | Typical Cost | Best use |\n| :— | :— | :— |\n| Taxi | 20–30 RMB | **Steep climbs** |\n| Metro | 2–7 RMB | Long crossings |\n\n- **Jiefangbei:** Start here";
+  const parsed = markdownToContentBlocks(body);
+  assert.deepEqual(parsed.map((block) => block.type), ["heading", "table", "list"]);
+  assert.deepEqual(parsed[2].items, ["**Jiefangbei:** Start here"]);
+  const ast = buildContentAst({ draft:{ title:"Transit", slug:"transit", body_markdown:body },
+    brief:{ id:"brief-table", content_type:"itinerary" } });
+  const components = [
+    { id:"heading", status:"stable", variants:["section"], schema:{ properties:{ text:{}, level:{} } } },
+    { id:"paragraph", status:"stable", variants:["default"], schema:{ properties:{ content:{} } } },
+    { id:"list", status:"stable", variants:["unordered","ordered"], schema:{ properties:{ items:{} } } },
+  ];
+  const page = composePageFromAst(ast, { components }, pageSchema);
+  const lists = page.output.blocks.filter((block) => block.type === "list");
+  assert.equal(lists[0].data.items[0], "Taxi — Typical Cost: 20–30 RMB; Best use: Steep climbs");
+  assert.equal(lists[1].data.items[0], "Jiefangbei: Start here");
+  assert.doesNotMatch(JSON.stringify(page.output.blocks), /\*\*|\| :?—/);
 });
 
 test("media placements become stable AST nodes with retained source references", () => {

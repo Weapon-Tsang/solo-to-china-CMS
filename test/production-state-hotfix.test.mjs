@@ -112,7 +112,7 @@ test("a downstream historical failure with missing prerequisites recovers the fi
     last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.8");
+  assert.equal(state.version,"1.9");
   assert.equal(state.stage_status,"interrupted");
   assert.equal(state.recovery_target,"plan_narrative");
   assert.equal(state.latest_error,null);
@@ -146,7 +146,7 @@ test("a corrected destination invalidates old-scope failures and waits for expli
     VALUES ('scope-reset','shared-candidate','correct_destination','completed','{}','{}','tester','2026-09-13T02:00:00Z','corrected-owner','scope-reset-key')`).run();
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.8");
+  assert.equal(state.version,"1.9");
   assert.equal(state.lifecycle,"pending_start");
   assert.equal(state.stage_status,"waiting");
   assert.equal(state.latest_error,null);
@@ -306,6 +306,38 @@ test("a revise_draft output limit is described as a truncated result, not oversi
   assert.equal(explanation.headline,"自动修订结果被模型截断");
   assert.match(explanation.reason,/思考过程和修订 JSON 共用输出预算/);
   assert.doesNotMatch(`${explanation.headline}${explanation.reason}`,/输入过大/);
+  assert.equal(explanation.action.id,"generate_draft");
+});
+
+test("failed bounded repairs recover by regenerating only the draft from the preserved Writing Packet",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"repair-escalation-owner",{approved:true});
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('repair-escalation-brief','beijing','Beijing route','[]','informational','ready','2026-09-13','2026-09-13','shared-candidate')`).run();
+  db.prepare(`INSERT INTO narrative_plans(id,brief_id,throughline,created_at,updated_at) VALUES
+    ('repair-escalation-plan','repair-escalation-brief','Route','2026-09-13','2026-09-13')`).run();
+  db.prepare(`INSERT INTO writing_packets(id,brief_id,narrative_plan_id,packet_text,input_hash,context_json,evidence_ledger_json,
+    selected_fact_keys_json,selected_experience_block_ids_json,created_at,updated_at) VALUES
+    ('repair-escalation-packet','repair-escalation-brief','repair-escalation-plan','frozen packet','packet-hash','{}','[]','[]','[]','2026-09-13','2026-09-13')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('repair-escalation-draft','repair-escalation-brief','Beijing route','beijing-route','## Route\n\nOld copy.','{}','qa_failed','2026-09-13','2026-09-13',3,'repair-hash')`).run();
+  repository.saveReview('repair-escalation-draft',{passed:false,score:20,issues:[
+    {code:'NO_CAUSAL_FLOW',severity:'blocker',message:'No decision sequence.'},
+  ],checks:[],unsupported_claims:[]},'fixture',{revision:3,contentHash:'repair-hash',productionOwnerOpportunityId:'repair-escalation-owner'});
+  const failed=repository.enqueue('revise_draft','repair-escalation-draft',{
+    dedupeKey:'failed-bounded-repair',productionOwnerOpportunityId:'repair-escalation-owner'});
+  db.prepare(`UPDATE jobs SET status='failed',attempts=1,failure_class='permanent_input',
+    last_failure_code='INVALID_DRAFT_REPAIR_SCOPE',last_error='unknown replacement heading',
+    updated_at='2026-09-13T03:00:00Z' WHERE id=?`).run(failed);
+
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,'failed');
+  assert.equal(state.current_stage,'revise_draft');
+  assert.equal(state.recovery_target,'generate_draft');
+  const recovered=executeContentRecovery(repository,'repair-escalation-owner',{
+    action:'retry_failed_stage',idempotency_key:'escalate-bounded-repair'},'tester');
+  assert.equal(recovered.resolvedStage,'generate_draft');
+  assert.equal(db.prepare("SELECT entity_id FROM jobs WHERE type='generate_draft' ORDER BY created_at DESC LIMIT 1").get().entity_id,
+    'repair-escalation-brief');
 });
 
 test("a WordPress taxonomy rejection recovers by rebuilding the publish package",()=>{

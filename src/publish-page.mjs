@@ -104,12 +104,23 @@ export function validateFinalPageArtifact(page, contentPackage) {
   errors.push(...seoGeoValidation.errors);
   const allowedAssets = new Set(contentPackage?.commercial_composition?.asset_ids || []);
   blocks.forEach((block, index) => {
+    errors.push(...rawPresentationErrors(block?.data, `$.blocks[${index}].data`));
     if (!String(block?.type || "").startsWith("affiliate_")) return;
     if (!allowedAssets.has(block.data?.affiliate_asset_id)) {
       errors.push({ code: "UNVERIFIED_COMMERCIAL_ASSET", path: `$.blocks[${index}].data.affiliate_asset_id` });
     }
   });
   return { valid: errors.length === 0, errors, evidence: evidenceValidation, seoGeo: seoGeoValidation };
+}
+
+function rawPresentationErrors(value, path) {
+  if (typeof value === "string") {
+    const rawMarkdown = /\*\*[^*\n]+\*\*|__[^_\n]+__|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|(?:^|\n)\s*\|[^|\n]+\|[^|\n]+\|\s*(?:\n|$)/m;
+    return rawMarkdown.test(value) ? [{ code: "RAW_MARKDOWN_PRESENTATION", path }] : [];
+  }
+  if (Array.isArray(value)) return value.flatMap((entry, index) => rawPresentationErrors(entry, `${path}[${index}]`));
+  if (!isObject(value)) return [];
+  return Object.entries(value).flatMap(([key, entry]) => rawPresentationErrors(entry, `${path}.${key}`));
 }
 
 export function synchronizeSchemaWithPage(sourceSchema, page, draft = {}) {

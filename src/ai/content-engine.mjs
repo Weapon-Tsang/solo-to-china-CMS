@@ -497,10 +497,10 @@ export function applyBoundedDraftRepair(draft, patch, issues = [], { validFactKe
   const resolvedReplacements = [];
   for (const replacement of replacements) {
     const heading = String(replacement.heading || "").trim().replace(/^#{2,3}\s+/, "");
-    const key = heading.toLowerCase();
+    const key = normalizeComparable(heading);
     if (!heading || seen.has(key)) throw new Error("Draft repair headings must be unique and non-empty.");
     seen.add(key);
-    const section = repairable.find((item) => item.heading.toLowerCase() === key);
+    const section = repairable.find((item) => normalizeComparable(item.heading) === key);
     if (!section) throw Object.assign(new Error(`Draft repair cannot replace unknown section: ${heading}`), { code: "INVALID_DRAFT_REPAIR_SCOPE" });
     const replacementBody = String(replacement.body_markdown || "").trim();
     if (!replacementBody || new RegExp(`^#{${section.level}}\\s+`, "m").test(replacementBody)) {
@@ -874,6 +874,8 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - The article should be useful even with no commercial module. Follow this evidence-scaled content policy: ${JSON.stringify(policy)}. Never pad thin evidence to reach a word target.
 - Keep body_markdown at or below content_policy.maximum_words when configured. Prefer two to four concise paragraphs or a short decision list per section; structured JSON and internal ledgers are not a reason to overrun the reader-facing word budget.
 - Make the body easy to understand: answer the confirmed reader promise directly, then use descriptive headings or concise lists only where the material benefits from them. No fixed heading or summary module is mandatory. Do not make unsupported claims just for SEO.
+- Do not emit Markdown tables, bold markers, inline-code markers, or reader-visible implementation notation. Convert comparisons into concise prose or ordinary lists; the Frontend Contract owns final presentation.
+- Every source asset supplied in authorized_source_assets is fully authorized for this project's editorial and production use. Freely select relevant originals for useful page visuals; missing legacy per-item licensing flags are not a veto. Keep source provenance, never use an unrelated image, and never fabricate an asset.
 - FAQ is optional. Include it only when content_policy.faq.allowed is true and the supplied evidence answers real reader questions. When present, include the exact same questions and answers in a visible "Frequently asked questions" section of body_markdown; otherwise return an empty faqs array and omit that section.
 - Return SEO metadata integrated with this draft: a natural meta title, one focus phrase, and only useful reader-facing takeaways. The configured title/description lengths are editing hints, not ranking thresholds; preserve names, amounts and qualifiers when shortening. The meta description remains the top-level meta_description field.
 - Return SEO metadata with secondary keywords and search intent. Use internal links only from internal_link_inventory and preserve their exact URL. Do not invent canonical URLs.
@@ -884,7 +886,8 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - Use a concise, practical guide voice. Prefer direct instructions and short useful paragraphs; avoid literary scene-setting, generic enthusiasm, and padding.
 - If revision_feedback exists, rebuild from the frozen Writing Packet and fix every blocker. Never reuse failed prose, and do not add unsupported facts.
 - Every planned section that declares claim_keys must use at least one of those exact approved keys in evidence_ledger. A factual sentence without an honest ledger mapping is forbidden.
-- Turn supported facts into a traveler decision: state the condition, practical consequence, and best next action. Do not stack isolated facts merely to maximize coverage.`;
+- Turn supported facts into a traveler decision: state the condition, practical consequence, and best next action. Do not stack isolated facts merely to maximize coverage.
+- Vary section rhythm according to its practical job. Use route sequence for movement, condition/consequence/action for decisions, and a short comparison only for genuine trade-offs. Never repeat one mechanical template across every section.`;
 
 const DRAFT_REPAIR_PROMPT = `Repair only the failed fields or existing draft sections named by the supplied QA issues.
 - The confirmed topic, brief, evidence set, claim keys and unaffected prose are immutable.
@@ -1192,7 +1195,7 @@ function visiblePageText(payload) {
 }
 
 function normalizeComparable(value) {
-  return String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return String(value || "").toLowerCase().replace(/&/g, " and ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 function objectSchema(required, properties) {

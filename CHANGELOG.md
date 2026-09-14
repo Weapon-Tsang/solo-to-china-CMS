@@ -1,6 +1,15 @@
 # Changelog
 
-## 2.0.22 - Unreleased
+## 2.0.23 - Unreleased
+
+- Treat the six remaining production failures as three distinct recovery classes instead of repeatedly patching symptoms: global or truncated quality failures rebuild only the Draft from the frozen Writing Packet, a stale Writing Packet/page-plan mismatch resumes at Editorial Assembly, and page-only Contract failures recompose only the Frontend Page.
+- Carry the current failed quality report into manual `generate_draft` recovery, vary section rhythm by editorial purpose, require condition/consequence/action decision logic, and prohibit reader-visible Markdown tables/decorators in model output. Markdown tables retained by legacy Drafts are deterministically converted into Contract-native readable lists, while the final artifact gate rejects any remaining raw presentation syntax.
+- Adopt the project-wide source-media authorization declared in `AGENTS.md`: every retained imported source image is available for editorial use regardless of missing legacy per-item flags. Relevant stored originals are selected deterministically when the writer omits a visual plan, with provenance, destination relevance, alt text, Frontend Contract validation and durable media checks still mandatory.
+- Upgrade `production_state` to 1.9 so failed bounded repair/output-limit attempts recover through `generate_draft` rather than another impossible `revise_draft`. Recovery remains transactional, Opportunity-owned and idempotent; the production-copy replay queues exactly one Job for each of six records with zero model or WordPress calls and no protected-record count changes.
+- Extend the frontend delivery contract/runtime acceptance for English document language, English article dates, CMS SEO metadata and draft-safe robots behavior. WordPress delivery remains draft-only; publishing still requires an explicit later WordPress action.
+- Keep schema 69 and Content Strategy 3.3. The release introduces no migration, startup retry, bulk recovery, automatic approval, production-record deletion or Frontend JSX/CSS duplication.
+
+## 2.0.22 - 2026-09-14
 
 - Keep verified block provenance aligned when delivery-only normalization changes the byte representation of safe inline entities. Remapping occurs only when every stored provenance signature still matches its original block by position, so genuine content changes continue to fail closed.
 - Generate model-page provenance after delivery normalization so new compositions are born consistent. Retained Draft, writing, QA, commercial, Claims, Sources and Evidence artifacts remain unchanged; schema stays 69 and no migration or automatic retry is introduced.
