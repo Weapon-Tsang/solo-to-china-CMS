@@ -16,6 +16,8 @@ The 2.0.14 operator UI correction is also CMS-only. It opens the card's secondar
 
 The 2.0.16 repair adds CMS-only production recovery state and operator controls for corrected destination scope, exact stage retry and targeted QA revision. It does not change the Frontend Contract, page payload Schema, component registry, public JSX or public CSS. The CMS still renders only its operator workbench; public page composition remains owned by the Frontend repository and persisted Contract artifacts.
 
+The 2.0.17 Vertex repair changes only the CMS model transport and bounded Draft-revision input/output policy. It does not modify Frontend schemas, components, JSX, CSS, page payload ownership or WordPress rendering. Existing structural Page Composition previews and adapter-provided final preview/edit URLs retain the same contract boundary.
+
 Three artifacts remain distinct:
 
 - Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.

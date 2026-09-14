@@ -154,7 +154,7 @@ const DRAFT_SCHEMA = objectSchema(
 );
 
 const DRAFT_REPAIR_SCHEMA = objectSchema(
-  ["base_content_hash", "replacement_sections", "metadata", "evidence_ledger", "verification_notes"],
+  ["base_content_hash", "replacement_sections"],
   {
     base_content_hash: { type: "string" },
     replacement_sections: {
@@ -340,14 +340,17 @@ export class ContentEngine {
   async repairDraft(contentPackage, issues = [], options = {}) {
     const existing = contentPackage?.draft;
     if (!existing?.content_hash) throw new Error("Bounded repair requires a persisted draft content hash.");
-    const repairInput = compactDraftRepairInput(contentPackage, issues);
+    const repairIssues = actionableDraftRepairIssues(issues);
+    if (!repairIssues.length) throw new Error("Bounded repair requires at least one reader-facing content blocker.");
+    const repairInput = compactDraftRepairInput(contentPackage, repairIssues);
     const result = await this.respond({
       name: "bounded_draft_repair",
       schema: DRAFT_REPAIR_SCHEMA,
       instructions: DRAFT_REPAIR_PROMPT,
       input: JSON.stringify(repairInput), options,
     });
-    result.output = applyBoundedDraftRepair(existing, result.output, issues, { validFactKeys: repairInput.facts.map((fact) => fact.normalized_key) });
+    result.output = applyBoundedDraftRepair(existing, result.output, repairIssues,
+      { validFactKeys: factDtos(contentPackage).map((fact) => fact.normalized_key) });
     return result;
   }
 
@@ -549,9 +552,11 @@ function compactDraftRepairInput(contentPackage, issues = []) {
   for (const section of affectedSections) for (const key of section.claim_keys || []) mentioned.add(key);
   if (!mentioned.size) for (const entry of draft.evidence_ledger || []) for (const key of entry.claim_keys || []) mentioned.add(key);
   const allFacts = factDtos(contentPackage);
-  const facts = allFacts.filter((fact) => mentioned.has(fact.normalized_key));
-  const fallbackFacts = facts.length ? facts : allFacts;
-  const compactIssues = (issues || []).slice(0, 12).map((issue) => ({
+  const draftLedgerKeys = new Set((draft.evidence_ledger || []).flatMap((entry) => entry.claim_keys || []));
+  const priorityFacts = allFacts.filter((fact) => mentioned.has(fact.normalized_key));
+  const ledgerFacts = allFacts.filter((fact) => draftLedgerKeys.has(fact.normalized_key));
+  const fallbackFacts = uniqueBy([...(priorityFacts.length ? priorityFacts : ledgerFacts), ...ledgerFacts], (fact) => fact.normalized_key).slice(0, 36);
+  const compactIssues = (issues || []).slice(0, 8).map((issue) => ({
     code: issue.code, severity: issue.severity,
     message: String(issue.message || '').split(',').slice(0, 8).join(',').slice(0, 1_200),
   }));
@@ -575,13 +580,19 @@ function compactDraftRepairInput(contentPackage, issues = []) {
       normalized_key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate,
       preferred_value: fact.preferred_value, consensus_status: fact.consensus_status,
       freshness_state: fact.freshness_state, latest_evidence_at: fact.latest_evidence_at,
-      evidence: (fact.evidence || []).map((item) => ({ source_id: item.source_id, value: item.value,
-        quote: item.quote, qualifiers: item.qualifiers || [], coverage_limitations: item.coverage_limitations || [],
+      evidence: (fact.evidence || []).slice(0, 2).map((item) => ({ source_id: item.source_id, value: truncate(item.value, 500),
+        quote: truncate(item.quote, 700), qualifiers: (item.qualifiers || []).slice(0, 8), coverage_limitations: (item.coverage_limitations || []).slice(0, 8),
         published_at: item.published_at, observed_at: item.observed_at, captured_at: item.captured_at })),
     })),
     draft: { title:draft.title, body_markdown:draft.body_markdown, meta_description:draft.meta_description,
       seo:draft.seo, evidence_ledger:draft.evidence_ledger, verification_notes:draft.verification_notes },
   };
+}
+
+function actionableDraftRepairIssues(issues = []) {
+  const deliveryOnly = new Set(["required_visual_missing", "visual_renderer_incomplete", "final_page_invalid",
+    "final_page_content_missing", "final_page_evidence_invalid"]);
+  return (issues || []).filter((issue) => issue?.severity !== "warning" && !deliveryOnly.has(String(issue?.code || "")));
 }
 
 function reviewInputDto(contentPackage) {

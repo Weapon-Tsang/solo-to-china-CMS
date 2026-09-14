@@ -1,7 +1,12 @@
 const OPENAPI_SCHEMA_FIELDS = new Set([
   "type", "nullable", "required", "format", "description", "properties", "items", "enum", "anyOf", "$ref", "$defs",
-  "title", "default", "minimum", "maximum", "minItems", "maxItems", "propertyOrdering",
+  "title", "default", "minimum", "maximum", "propertyOrdering",
 ]);
+
+// The current Vertex Gemini global endpoint rejects responseSchema requests that
+// contain minItems/maxItems even though those bounds remain useful to our local
+// JSON Schema validator. Keep them in the canonical contract and omit them only
+// from the provider transport; post-response validation still enforces them.
 
 export class ProviderRequestError extends Error {
   constructor(provider, status, message, details = {}) {

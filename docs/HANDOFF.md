@@ -1,4 +1,12 @@
-# 2.0.16 production recovery lineage handoff
+# 2.0.17 Vertex bounded Draft repair handoff
+
+App/Extension version `2.0.17`, schema migration `69`, and Content Strategy `3.3` keep `production_state` `1.4` and the existing Frontend Contract boundary described by `config/content-strategy.json`. The release fixes the provider wire schema and output budget for `revise_draft`: Vertex starts with OpenAPI `responseSchema`, provider-rejected array bounds remain enforced only by authoritative local validation, and bounded repair uses LOW thinking with a 12,000-token JSON budget.
+
+The production before-audit found four records already progressing through their durable Jobs and three records failed at `revise_draft`. It performed no writes, model calls or recovery actions. Deployment must not manufacture retries for the three failures; after rollout, the operator may use each row's existing “重试失败步骤” action to enqueue only a new Opportunity-owned `revise_draft` attempt. Drafts, evidence, prior Job attempts and successful upstream artifacts remain retained.
+
+The implementation and rollout evidence is recorded in `audit/CMS_VERTEX_DRAFT_REPAIR_2.0.17_2026-09-14.md`.
+
+## 2.0.16 production recovery lineage handoff
 
 App/Extension version `2.0.16`, schema migration `69`, and Content Strategy `3.3` are deployed with `production_state` `1.4` at revision `4333c7ba559139f42da43e78b3b696978fa1ef69` and immutable image digest `sha256:caa42bc384e5295534321a49c194dac97658eb127d287510c7b15618a9965cb4`. The release resolves Opportunity IDs to their Candidate before loading planning input, recognizes a persisted Brief as completed planning, routes failed QA to targeted revision, and treats an approved destination correction as a new production-scope boundary. No schema migration or bulk reconciliation was required.
 

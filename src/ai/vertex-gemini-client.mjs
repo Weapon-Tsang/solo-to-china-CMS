@@ -41,7 +41,7 @@ export class VertexGeminiClient {
     const identity = modelCallIdentity(name, schema, instructions, content);
     const resumedSchemaMode = telemetryContext?.structuredSchemaMode;
     let schemaMode = ["json_schema","openapi","prompt_only"].includes(resumedSchemaMode)
-      ? resumedSchemaMode : this.config.structuredSchemaMode || "json_schema";
+      ? resumedSchemaMode : this.config.structuredSchemaMode || "openapi";
     const requestBody = {
       systemInstruction: { parts: [{ text: instructions }] },
       contents: [{ role: "user", parts }],
@@ -461,7 +461,7 @@ function vertexRequestBody({ name, schema, instructions, content, config }) {
     contents: [{ role: "user", parts: normalizeVertexParts(content) }],
     generationConfig: {
       responseMimeType: "application/json",
-      ...vertexStructuredOutput(schema, config.structuredSchemaMode || "json_schema"),
+      ...vertexStructuredOutput(schema, config.structuredSchemaMode || "openapi"),
       maxOutputTokens: config.maxCompletionTokens || 16_000,
       ...(String(config.model).startsWith("gemini-3")
         ? { thinkingConfig: { thinkingLevel: REASONING_STAGES.has(name)

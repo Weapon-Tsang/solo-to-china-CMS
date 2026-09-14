@@ -5,6 +5,7 @@ import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 import { boundedEditorialAssemblyPackage, EDITORIAL_ASSEMBLY_INPUT_BUDGET,
   boundedPlanningPackage, PLANNING_INPUT_BUDGET } from "../src/repository.mjs";
 import { contentRecoveryReport, executeContentRecovery } from "../src/services/content-recovery.mjs";
+import { explainOperationalFailure } from "../src/services/content-recovery-policy.mjs";
 import { validatePlanningDestination } from "../src/destination-consistency.mjs";
 
 function candidate(db,id="shared-candidate") {
@@ -265,6 +266,16 @@ test("a Vertex schema rejection records a provider request without claiming mode
   assert.equal(state.latest_error.provider_request_sent,true);
   assert.equal(state.latest_error.model_execution,"rejected_before_generation");
   assert.equal(state.latest_error.model_called,false);
+});
+
+test("a revise_draft output limit is described as a truncated result, not oversized input",()=>{
+  const explanation=explainOperationalFailure({
+    type:"revise_draft",last_failure_code:"MODEL_OUTPUT_LIMIT",
+    last_error:"Vertex structured output reached its token limit.",
+  });
+  assert.equal(explanation.headline,"自动修订结果被模型截断");
+  assert.match(explanation.reason,/思考过程和修订 JSON 共用输出预算/);
+  assert.doesNotMatch(`${explanation.headline}${explanation.reason}`,/输入过大/);
 });
 
 test("plan_content output-limit fixture uses the Editorial Assembly subset, stays bounded and preserves qualifiers",()=>{

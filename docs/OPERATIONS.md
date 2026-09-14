@@ -181,7 +181,7 @@ Run only the isolated HTTP/API/static smoke phase after an existing build with:
 ```powershell
 npm run test:smoke
 ```
-# Content production workbench operations (2.0.16)
+# Content production workbench operations (2.0.17)
 
 The active Content workspace API is `GET /api/content`; it returns `{ items, sections }`, and every item includes the backend-owned `production_state`. `GET /api/content/:opportunityId/production-state` returns the pre-Draft-or-later detail, timeline, structural page preview, WordPress preview/edit links and combined audit/failure history. `GET /api/content/:opportunityId/history` returns the history alone.
 
@@ -192,6 +192,8 @@ In `production_state` 1.2, a failed downstream Job whose current prerequisites a
 Source 2.0.15 extends this to `production_state` 1.3. `retry_state` distinguishes a queued Vertex cooldown from an exhausted retry budget and reports remaining automatic attempts. Schema fallback position is recovered from the current durable Job's model-call receipts, so a 429 between transport attempts cannot reset the next claim to a known-rejected Schema. `assemble_editorial` now builds a deterministic bounded request before calling Vertex; its manifest records original/selected counts, bytes, estimated tokens and budget. A queued cooldown already at `max_attempts` is finalized as failed inside the next claim transaction without another provider request. Wait for quota health, then use the normal “重试失败步骤” action once; do not delete the production record and do not manually enqueue a downstream stage.
 
 Version 2.0.16 extends this to `production_state` 1.4. Recovery endpoints accept the production Opportunity ID but always resolve planning packages through its canonical Candidate; a retry therefore creates the intended owned Job instead of failing before enqueue. A persisted Brief remains proof that planning completed even if a later legacy failure marked the Brief `exception`, and a failed QA report targets `revise_draft` rather than rerunning review.
+
+Version 2.0.17 keeps that recovery contract and fixes the Vertex wire format used by `revise_draft`. The canonical JSON Schema retains array bounds for local validation, while the OpenAPI provider projection omits the `minItems`/`maxItems` fields rejected by the configured global endpoint. Bounded repair uses LOW thinking with a 12,000-token output budget and compact evidence. Deployment never retries failed Drafts automatically; an operator retries each record explicitly after confirming the new runtime is healthy.
 
 Changing a destination creates a new production-scope boundary. Pre-correction Jobs and Editorial Assembly results remain visible as non-blocking history and are not silently reused. The row remains in “等待开始” until an operator explicitly confirms the corrected scope; only then is a new `assemble_editorial` Job queued. Deployments, migrations and dashboard refreshes never perform that confirmation or enqueue any of the affected records.
 

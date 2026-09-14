@@ -203,8 +203,10 @@ export function explainOperationalFailure(job) {
     technicalDetail: details,
   };
   if (/token limit|MODEL_OUTPUT_LIMIT|structured output reached/i.test(message)) return {
-    category: 'content', headline: type === 'plan_content' ? '写作准备输入过大' : '自动修订输出超过上限',
-    reason: '旧流程把过多事实编号和重复错误明细一次性交给模型，超出了结构化输出限制。',
+    category: 'content', headline: type === 'plan_content' ? '写作准备结果超过模型预算' : '自动修订结果被模型截断',
+    reason: type === 'revise_draft'
+      ? '模型的思考过程和修订 JSON 共用输出预算，旧配置在完整结果返回前耗尽了额度；已有草稿和证据没有丢失。'
+      : '模型未能在本阶段输出预算内返回完整的结构化结果；已有素材和已完成步骤没有丢失。',
     action: { id: type === 'plan_content' ? 'plan_content' : 'revise_draft', label: type === 'plan_content' ? '用精简证据重新准备' : '仅修订失败内容', why: '新版会压缩事实范围和错误明细，并限制修订次数。' },
     technicalDetail: details,
   };

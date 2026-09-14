@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAiClient } from "../src/ai/client.mjs";
-import { applyBoundedDraftRepair, applyDeterministicGates } from "../src/ai/content-engine.mjs";
+import { applyBoundedDraftRepair, applyDeterministicGates, ContentEngine } from "../src/ai/content-engine.mjs";
 import { priceModelAttempt, resolveStagePolicy, summarizeModelCostLedger } from "../src/ai/stage-policy.mjs";
+import stagePolicy from "../config/model-stage-policy.json" with { type: "json" };
 
 const schema = { type: "object", additionalProperties: false, required: ["answer"], properties: { answer: { type: "string" } } };
 
@@ -17,6 +18,14 @@ test("stage policy freezes capability and retry limits into a stable configurati
   assert.deepEqual(first.requires, ["structured_output", "independent_review"]);
   assert.equal(first.maxOutputTokens, 4_000);
   assert.equal(first.configHash, second.configHash);
+});
+
+test("bounded draft repair reserves JSON output budget instead of medium reasoning", () => {
+  const policy = resolveStagePolicy("bounded_draft_repair", { provider: "vertex", model: "gemini-3.8-flash",
+    maxCompletionTokens: 16_000, stagePolicy });
+  assert.equal(policy.thinking, "LOW");
+  assert.equal(policy.maxOutputTokens, 12_000);
+  assert.equal(policy.version, "model-stage-policy-1.0.1");
 });
 
 test("every provider attempt is metered, including structured-output repair retries", async () => {
@@ -91,6 +100,34 @@ test("non-evidence repair may echo an unchanged ledger but cannot alter it", () 
     evidence_ledger:draft.evidence_ledger,verification_notes:draft.verification_notes };
   assert.equal(applyBoundedDraftRepair(draft,patch,[{code:"seo_description_missing"}]).meta_description,"A clearer summary.");
   assert.throws(()=>applyBoundedDraftRepair(draft,{...patch,evidence_ledger:[]},[{code:"seo_description_missing"}]),/not authorized/i);
+});
+
+test("repair requests omit warnings and page-only issues, cap evidence payloads, and allow the saved ledger to remain unchanged", async () => {
+  let requestBody;
+  const draft = { content_hash:"current",title:"Guide",meta_description:"Desc",seo:{meta_title:"Guide"},
+    body_markdown:"Intro.\n\n## Visit\n\nOld prose.",evidence_ledger:[{section_id:"visit",section:"Visit",content_node_ids:[],claim_keys:["place.fact_49"],source_ids:[]}],
+    verification_notes:[],visuals:[] };
+  const facts = Array.from({length:50},(_,index)=>({normalized_key:`place.fact_${index}`,subject:`Place ${index}`,predicate:"detail",
+    preferred_value:`Value ${index}`,consensus_status:"corroborated",freshness_state:"current",evidence:Array.from({length:5},(_item,evidenceIndex)=>({
+      source_id:`source-${evidenceIndex}`,value:`Value ${index}`,quote:"Grounded evidence ".repeat(100),qualifiers:[],coverage_limitations:[],captured_at:"2026-09-14",
+    }))}));
+  const namedFacts = facts.slice(0,40).map((fact)=>fact.normalized_key).join(", ");
+  const output = {base_content_hash:"current",replacement_sections:[{heading:"Visit",body_markdown:"Clear traveler decision."}]};
+  const engine = new ContentEngine({apiKey:"key",model:"model",baseUrl:"https://api.example.test/v1"},async(_url,options)=>{
+    requestBody=JSON.parse(options.body);
+    return Response.json({model:"model",choices:[{finish_reason:"stop",message:{content:JSON.stringify(output)}}]});
+  });
+  const result=await engine.repairDraft({draft,facts,brief:{plan:{outline:[{section_id:"visit",heading:"Visit",claim_keys:["place.fact_49"]}]}}},[
+    {code:"protected_evidence_mismatch",severity:"blocker",message:`Affected: ${namedFacts}`},
+    {code:"readability_suggestion",severity:"warning",message:"Long sentence"},
+    {code:"final_page_invalid",severity:"blocker",message:"Page contract"},
+  ]);
+  const input=JSON.parse(requestBody.messages[1].content);
+  assert.deepEqual(input.issues.map((issue)=>issue.code),["protected_evidence_mismatch"]);
+  assert.equal(input.facts.length,36);
+  assert.ok(input.facts.every((fact)=>fact.evidence.length===2 && fact.evidence.every((entry)=>entry.quote.length<=700)));
+  assert.deepEqual(requestBody.response_format.json_schema.schema.required,["base_content_hash","replacement_sections"]);
+  assert.deepEqual(result.output.evidence_ledger,draft.evidence_ledger);
 });
 
 test("quality coverage checks each promised section instead of exhausting every available fact", () => {

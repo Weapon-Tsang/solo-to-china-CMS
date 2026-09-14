@@ -1,6 +1,14 @@
 # Changelog
 
-## 2.0.16 - Unreleased
+## 2.0.17 - Unreleased
+
+- Start Vertex structured generation with the provider-compatible OpenAPI `responseSchema` transport instead of spending one rejected JSON-Schema request on every Job. Omit `minItems`/`maxItems` only from the Vertex wire schema because the current `gemini-3.8-flash` global endpoint rejects those fields; the canonical JSON Schema and authoritative local validation retain all bounds.
+- Reserve enough output capacity for bounded Draft repair: use LOW thinking with 12,000 output tokens, make unchanged metadata/evidence fields optional, exclude warnings and page-only failures, cap repair evidence to 36 facts and two compact evidence samples per fact, and validate any retained ledger key against the complete frozen evidence package.
+- Explain `MODEL_OUTPUT_LIMIT` as a shared thinking/JSON budget exhaustion instead of claiming the input facts were necessarily too large. Existing Drafts, Sources, Claims, Knowledge, Evidence, Experience and successful pipeline artifacts remain unchanged.
+- Add live-compatible Schema probes plus regression tests for transport selection, provider-only bound removal, repair budget, issue filtering, evidence compaction and retained-ledger validation. Schema remains 69, Content Strategy remains 3.3 and Frontend Contract ownership is unchanged.
+- Deployment does not retry, archive or delete the three failed Drafts. Their exact `revise_draft` recovery remains an explicit per-record operator action after the compatible runtime is live; already queued durable Jobs resume normally after restart.
+
+## 2.0.16 - 2026-09-14
 
 - Resolve Opportunity-owned recovery IDs to the canonical Candidate before loading topic/planning packages. Clicking “重试失败步骤” no longer crashes before enqueueing the exact stage, and repeated idempotency keys still reuse one recovery run.
 - Treat a persisted Brief as proof that `plan_content` completed even when a historical downstream failure wrote `content_briefs.status=exception`; interrupted legacy rows now resume at `plan_narrative` instead of trying to overwrite the Brief.

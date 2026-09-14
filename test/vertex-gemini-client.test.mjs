@@ -91,6 +91,7 @@ test("Vertex Gemini retries a generic JSON Schema 400 once with the OpenAPI tran
   const requests = [];
   const client = new VertexGeminiClient({
     projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
+    structuredSchemaMode: "json_schema",
   }, async (_url, options) => {
     requests.push(JSON.parse(options.body));
     if (requests.length === 1) return Response.json({ error: { code: 400, message: "Request contains an invalid argument." } }, { status: 400 });
@@ -106,7 +107,7 @@ test("Vertex Gemini retries a generic JSON Schema 400 once with the OpenAPI tran
   assert.equal(requests[1].generationConfig.responseJsonSchema, undefined);
 });
 
-test("Vertex Gemini falls back to prompt-enforced JSON when both native schema transports are rejected", async () => {
+test("Vertex Gemini starts with the compatible OpenAPI transport and falls back once to prompt-enforced JSON", async () => {
   const requests = [];
   const metrics = [];
   const client = new VertexGeminiClient({
@@ -114,25 +115,22 @@ test("Vertex Gemini falls back to prompt-enforced JSON when both native schema t
     onModelCall: (metric) => metrics.push(metric),
   }, async (_url, options) => {
     requests.push(JSON.parse(options.body));
-    if (requests.length < 3) return Response.json({ error: { code: 400, message: "Request contains an invalid argument." } }, { status: 400 });
+    if (requests.length < 2) return Response.json({ error: { code: 400, message: "Request contains an invalid argument." } }, { status: 400 });
     return Response.json({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }], usageMetadata: { promptTokenCount: 9, candidatesTokenCount: 2 } });
   });
   const result = await client.completeJson({ name: "content_brief", schema: {
     type: "object", required: ["ok"], properties: { ok: { type: "boolean" } },
   }, instructions: "Plan.", content: "evidence" });
   assert.deepEqual(result.output, { ok: true });
-  assert.equal(requests.length, 3);
-  assert.ok(requests[0].generationConfig.responseJsonSchema);
-  assert.ok(requests[1].generationConfig.responseSchema);
-  assert.equal(requests[2].generationConfig.responseJsonSchema, undefined);
-  assert.equal(requests[2].generationConfig.responseSchema, undefined);
-  assert.match(requests[2].systemInstruction.parts[0].text, /local validation remains authoritative/);
-  assert.deepEqual(metrics.map((metric) => metric.errorCode), ["SCHEMA_MODE_UNSUPPORTED", "SCHEMA_MODE_UNSUPPORTED", null]);
-  assert.deepEqual(metrics.map((metric) => metric.attemptNumber), [1, 2, 3]);
-  assert.deepEqual(metrics.slice(0,2).map((metric)=>metric.retryReason),[
-    "schema_transport_fallback:json_schema->openapi",
-    "schema_transport_fallback:openapi->prompt_only",
-  ]);
+  assert.equal(requests.length, 2);
+  assert.ok(requests[0].generationConfig.responseSchema);
+  assert.equal(requests[0].generationConfig.responseJsonSchema, undefined);
+  assert.equal(requests[1].generationConfig.responseJsonSchema, undefined);
+  assert.equal(requests[1].generationConfig.responseSchema, undefined);
+  assert.match(requests[1].systemInstruction.parts[0].text, /local validation remains authoritative/);
+  assert.deepEqual(metrics.map((metric) => metric.errorCode), ["SCHEMA_MODE_UNSUPPORTED", null]);
+  assert.deepEqual(metrics.map((metric) => metric.attemptNumber), [1, 2]);
+  assert.equal(metrics[0].retryReason,"schema_transport_fallback:openapi->prompt_only");
 });
 
 test("Vertex Gemini resumes the persisted structured transport after a durable Job retry", async () => {

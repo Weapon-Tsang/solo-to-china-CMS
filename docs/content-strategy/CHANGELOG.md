@@ -1,5 +1,12 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.17 / schema 69 - 2026-09-14
+
+- Keep Content Strategy 3.3, the approved scope and the frozen evidence package unchanged while repairing the Vertex transport used by bounded Draft revision.
+- Vertex receives a compatible OpenAPI response schema without provider-rejected array-bound keywords; the unchanged canonical schema is still enforced locally after every response.
+- Draft repair now uses LOW thinking and a larger JSON budget, filters non-blocking/page-only issues, and sends a deterministic compact evidence projection. It neither expands the approved topic nor deletes retained research artifacts.
+- No migration, bulk retry, approval change, model call at startup, WordPress action or Frontend Contract change is introduced.
+
 ## App 2.0.16 / schema 69 - 2026-09-14
 
 - Production recovery resolves the approved Opportunity to its Candidate before loading bounded planning input, without changing the Content Strategy 3.3 selection policy.
