@@ -21,12 +21,13 @@ All retained Source assets are authorized for editorial and production use under
 4. A deterministic stage must not change its own durable input. Authorized visual seeding now occurs before artifact preparation, eliminating the first-attempt `STALE_PIPELINE_INPUT` created by page/visual composition itself.
 5. A current QA pass proves that older planning/writing/page failures belong to a superseded revision. They remain audit history but cannot become the current recovery target; required-media and newer post-QA failures are not hidden.
 6. Facts must form traveler decisions, not a database dump. Strategy 3.3 now explicitly requires condition/consequence/action logic, varied section rhythm, transparent uncertainty, natural SEO intent, self-contained GEO answers and visible/page/schema consistency.
+7. Provider-valid JSON is not necessarily a valid production artifact. The first final-candidate replay rejected a Draft missing one required H2, then exposed three two-second recoveries that reused that rejected completion from the local response cache. Cache admission is now gated by the caller's semantic validator, rejected outputs are evicted, and the writer must emit every approved evidence-bearing heading exactly once in order.
 
 ## Verification record
 
 Targeted production-derived regressions: PASS.  
 Static/build/boundary checks: PASS.  
-Full local test suite: 611 passed, 0 failed.  
+Final full local test suite: 612 passed, 0 failed.
 Production database replay: PASS on an isolated copy; no production write or model/WordPress call.  
 Real Vertex provider replay: in progress on an isolated production work database.  
 WordPress Draft canary and desktop/mobile final preview: pending final immutable candidate.  

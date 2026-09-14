@@ -335,28 +335,28 @@ export class ContentEngine {
     });
     const requiredSectionIds = Object.entries(sectionFactKeys).filter(([,keys]) => keys.length).map(([sectionId]) => sectionId);
     const schema = draftResponseSchema(allowedFactKeys, allowedSectionIds);
-    const request = (extraFeedback = revisionFeedback) => this.respond({
-      name: "article_draft_v2",
-      schema,
-      instructions: draftPrompt(policy),
-      input: JSON.stringify({ ...input, revision_feedback: extraFeedback }), options,
-    });
     const prepareAndValidate = (output) => {
       output.body_markdown = normalizeDraftHeadingHierarchy(output.body_markdown, output.title,
         outline.map((section)=>section.heading).filter(Boolean));
       validateGeneratedDraftEvidence(output, allowedFactKeys, allowedSectionIds, requiredSectionIds, sectionFactKeys);
       validateGeneratedDraftStructure(output, outline);
     };
-    let result = await request();
+    const request = (extraFeedback = revisionFeedback) => this.respond({
+      name: "article_draft_v2",
+      schema,
+      instructions: draftPrompt(policy),
+      input: JSON.stringify({ ...input, revision_feedback: extraFeedback }),
+      options: { ...options, validateOutput: prepareAndValidate },
+    });
+    let result;
     try {
-      prepareAndValidate(result.output);
+      result = await request();
     } catch (error) {
       if (!["DRAFT_EVIDENCE_SCOPE_INVALID", "DRAFT_STRUCTURE_INVALID"].includes(error?.code)) throw error;
       result = await request({ previous: revisionFeedback, draft_contract_error: error.message,
         rejected_claim_keys: error.invalidClaimKeys || [], rejected_section_ids: error.invalidSectionIds || [],
         missing_evidence_section_ids: error.missingSectionIds || [], missing_body_section_ids:error.missingBodySectionIds || [],
         invalid_section_claim_mappings:error.invalidSectionClaims || [] });
-      prepareAndValidate(result.output);
     }
     result.output.slug = slugify(result.output.slug || result.output.title);
     result.output.seo ||= {};
@@ -467,7 +467,7 @@ export class ContentEngine {
 
   async respond({ name, schema, instructions, input, options = {} }) {
     return this.client.completeJson({ name, schema, instructions, content: input, signal: options.signal || null,
-      telemetryContext: options.telemetryContext || null });
+      telemetryContext: options.telemetryContext || null, validateOutput: options.validateOutput });
   }
 
   artifactContract(stage) {
@@ -937,6 +937,7 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - The article should be useful even with no commercial module. Follow this evidence-scaled content policy: ${JSON.stringify(policy)}. Never pad thin evidence to reach a word target.
 - Keep body_markdown at or below content_policy.maximum_words when configured. Prefer two to four concise paragraphs or a short decision list per section; structured JSON and internal ledgers are not a reason to overrun the reader-facing word budget.
 - Make the body easy to understand: answer the confirmed reader promise directly, then use descriptive headings or concise lists only where the material benefits from them. No fixed heading or summary module is mandatory. Do not make unsupported claims just for SEO.
+- Emit every evidence-bearing heading in brief.outline exactly once as \`## <heading>\`, in the supplied order, including the first section. Introductory prose may precede the first H2 but cannot replace it. Each evidence_ledger section_id must therefore have a matching reader-visible H2.
 - Do not emit Markdown tables, bold markers, inline-code markers, or reader-visible implementation notation. Convert comparisons into concise prose or ordinary lists; the Frontend Contract owns final presentation.
 - Every source asset supplied in authorized_source_assets is fully authorized for this project's editorial and production use. Freely select relevant originals for useful page visuals; missing legacy per-item licensing flags are not a veto. Keep source provenance, never use an unrelated image, and never fabricate an asset.
 - FAQ is optional. Include it only when content_policy.faq.allowed is true and the supplied evidence answers real reader questions. When present, include the exact same questions and answers in a visible "Frequently asked questions" section of body_markdown; otherwise return an empty faqs array and omit that section.

@@ -8,6 +8,7 @@
 - Promote exact planned labels to semantic H2 sections and fail closed when an evidence-bearing planned section is still absent after one structured correction, keeping visible prose and evidence ownership synchronized.
 - Treat the seven approved records as a permanent production regression corpus: current Opportunity ownership, exact-stage recovery, durable input immutability, QA supersession and WordPress draft-only delivery are system invariants for every later approval.
 - Seed relevant authorized visuals before freezing the visual/page dependency snapshot, preventing deterministic source selection from invalidating its own Job and requiring a duplicate retry.
+- Admit a provider response to the local completion cache only after the stage's semantic validator accepts it. Rejected Draft structure cannot be replayed as a fake retry, and every evidence-bearing approved heading is now an explicit writer contract.
 - Keep all imported Source media authorized for editorial use under `AGENTS.md`, while preserving attribution, durable bytes, relevance, alt text and Frontend Contract validation. Schema, strategy and approval semantics are unchanged.
 
 ## App 2.0.23 / schema 69 - 2026-09-14

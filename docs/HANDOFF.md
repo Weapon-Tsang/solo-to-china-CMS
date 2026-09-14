@@ -10,6 +10,8 @@ The extended replay reached later stages and exposed two additional systemic def
 
 These repairs are part of Strategy 3.3 production doctrine, not special cases for the current records. Each incident must leave a code invariant, a regression and an auditable Failure Lesson. Writing must convert facts into condition/consequence/action decisions, use varied section rhythm and preserve uncertainty; page composition must preserve visible evidence-bearing sections, answer-first mobile scanning and semantic SEO/GEO while continuing to emit only Frontend Contract components and data.
 
+The first final-candidate replay then revealed that provider-valid JSON had been admitted to the in-process completion cache before the CMS checked its editorial structure. When a Draft omitted a required evidence-bearing H2, the initial Job failed correctly, but three recovery Jobs replayed the same rejected completion in about two seconds each. Completion caching is now validation-aware: rejected outputs are evicted, accepted outputs retain the existing cost-saving reuse, and every approved evidence-bearing heading is an explicit writer requirement.
+
 This is a code-only release. Startup performs no schema migration, historical enqueue, automatic recovery, production-record deletion or publication. Production acceptance must recover the six records one at a time through the existing Opportunity-owned durable Jobs, reach final page preview and WordPress `draft`, and preserve the existing seventh Draft without changing any WordPress record to `publish`.
 
 # 2.0.23 full production recovery and final-preview handoff

@@ -50,6 +50,32 @@ test("every provider attempt is metered, including structured-output repair retr
   assert.ok(metrics.every((item) => item.providerRequestMs >= 0 && item.retryWaitMs >= 0 && item.totalStageMs >= item.providerRequestMs));
 });
 
+test("a locally rejected structured completion is never retained in the response cache", async () => {
+  const metrics = [];
+  let requestCount = 0;
+  const client = createAiClient({ provider: "kimi", apiKey: "test", model: "fixed-model", baseUrl: "https://example.test/v1",
+    stagePolicy: { version: "policy-test", stages: { test_stage: { maxAttempts: 1, maxOutputTokens: 1000, timeoutMs: 5000 } } },
+    onModelCall: (metric) => metrics.push(metric),
+  }, async () => {
+    requestCount += 1;
+    const answer = requestCount === 1 ? "missing-required-section" : "accepted";
+    return new Response(JSON.stringify({ model: "fixed-model", choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ answer }) } }],
+      usage: { prompt_tokens: 5, completion_tokens: 2 } }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const request = { name: "test_stage", schema, instructions: "Return JSON", content: "same input",
+    validateOutput: (output) => {
+      if (output.answer !== "accepted") throw Object.assign(new Error("Local content contract rejected output."), { code:"LOCAL_OUTPUT_INVALID" });
+    } };
+  await assert.rejects(client.completeJson(request), (error) => error.code === "LOCAL_OUTPUT_INVALID"
+    && error.rejectedCompletion?.output?.answer === "missing-required-section");
+  const accepted = await client.completeJson(request);
+  const reused = await client.completeJson(request);
+  assert.equal(accepted.output.answer, "accepted");
+  assert.equal(reused.output.answer, "accepted");
+  assert.equal(requestCount, 2);
+  assert.equal(metrics.filter((item) => item.requestKind === "cache_hit").length, 1);
+});
+
 test("cost ledger retains unknown prices and uses unique qualified drafts as denominator", () => {
   const unknown = priceModelAttempt({ provider: "vertex", model: "unlisted", inputTokens: 10, outputTokens: 5,
     requestCompletedAt: "2026-09-10T00:00:00.000Z" }, { version: "prices-1", asOf: "2026-09-10", entries: [] });
