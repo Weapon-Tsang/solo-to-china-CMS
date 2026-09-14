@@ -22,4 +22,4 @@ Before Draft persistence, known section-allowed claims with absent protected val
 - L6 WordPress draft delivery: NOT REQUIRED for this Draft-admission change; 2.0.24 already passed isolated Contract/draft-only delivery, and production acceptance will validate each recovered record through the real `preview_url` and `edit_url`
 - Post-fix exploratory audit: PASS for the selected production-copy flow; no active Job or current failure remained
 
-The immutable image candidate is `sha256:29a6bbdc8d5b470ff4e3e3d0435b79433177c557ae37ae218051736a94abccca`. This is a schema-69 code-only release: no migration, reconciliation, production-record deletion, bulk retry or automatic WordPress publication is permitted.
+The canary image was `sha256:29a6bbdc8d5b470ff4e3e3d0435b79433177c557ae37ae218051736a94abccca`; the final immutable image, rebuilt from the same code plus this audit record, is `sha256:9a3086d97b08ab7501468d28e89ab2bbce3926d8eaee798d1cb7dbf9cd95d74a`. This is a schema-69 code-only release: no migration, reconciliation, production-record deletion, bulk retry or automatic WordPress publication is permitted.
