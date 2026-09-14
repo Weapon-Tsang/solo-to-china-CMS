@@ -2,7 +2,7 @@ import { json, sha256 } from "../utils.mjs";
 import { validatePlanningDestination } from "../destination-consistency.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./content-recovery-policy.mjs";
 
-export const PRODUCTION_STATE_VERSION = "1.5";
+export const PRODUCTION_STATE_VERSION = "1.6";
 
 export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
   stage("assemble_editorial", "素材组装", 10, [], "editorial", "always"),
@@ -85,6 +85,8 @@ export function buildProductionState(db, row, options = {}) {
     last_failure_code:"DESTINATION_TOPIC_MISMATCH", failure_class:"permanent_input",
     updated_at:row.opportunity_updated_at, id:null,
   } : null;
+  const frozenScopeFailure = frozenProductionScopeFailure(db,row);
+  const truncatedDraftFailure = historicalDraftStructureFailure(db,row,currentJobs);
   const currentJobFailure=latestUnresolvedFailure(currentJobs);
   const persistedFailure=inferredPersistedFailure(row);
   const resolvedDestinationFailure=!scopeFailure && destinationCheck.valid
@@ -95,7 +97,7 @@ export function buildProductionState(db, row, options = {}) {
   // that persisted review and therefore stays the active recovery target.
   const currentRepairFailure=currentJobFailure?.type === "revise_draft" ? currentJobFailure : null;
   const persistedQualityFailure=persistedFailure?.type === "review_draft" ? persistedFailure : null;
-  const unresolvedFailure = scopeFailure || (resolvedDestinationFailure ? null
+  const unresolvedFailure = scopeFailure || frozenScopeFailure || truncatedDraftFailure || (resolvedDestinationFailure ? null
     : currentRepairFailure || persistedQualityFailure || currentJobFailure || persistedFailure);
   const unresolvedDefinition = registry.find((item) => item.key === unresolvedFailure?.type) || null;
   const initiallyCompleted = new Set(initialEntries.filter((item) => item.status === "succeeded").map((item) => item.key));
@@ -499,6 +501,59 @@ function inferredPersistedFailure(row) {
     updated_at: row.draft_updated_at,
   };
   return null;
+}
+
+function frozenProductionScopeFailure(db,row) {
+  if (!row.brief_id || !row.writing_packet_id) return null;
+  const chain=db.prepare(`SELECT cb.plan_json,wp.selected_fact_keys_json,wp.updated_at AS packet_updated_at,
+    ea.updated_at AS assembly_updated_at,cb.updated_at AS brief_updated_at,np.updated_at AS narrative_updated_at
+    FROM content_briefs cb JOIN writing_packets wp ON wp.brief_id=cb.id
+    LEFT JOIN editorial_assemblies ea ON ea.candidate_id=cb.candidate_id
+    LEFT JOIN narrative_plans np ON np.brief_id=cb.id WHERE cb.id=?`).get(row.brief_id);
+  if (!chain) return null;
+  const selected=new Set(parse(chain.selected_fact_keys_json,[]));
+  const outline=parse(chain.plan_json,{}).outline || [];
+  const unavailable=[...new Set(outline.flatMap((section)=>section.claim_keys || []))].filter((key)=>!selected.has(key));
+  const uncovered=outline.filter((section)=>(section.claim_keys || []).length
+    && !(section.claim_keys || []).some((key)=>selected.has(key))).map((section)=>section.section_id || section.heading);
+  if (!unavailable.length && !uncovered.length) return null;
+  return {
+    type:"assemble_editorial",recovery_type:"assemble_editorial",last_failure_code:"FROZEN_WRITING_SCOPE_INVALID",
+    failure_class:"permanent_input",updated_at:chain.packet_updated_at || chain.brief_updated_at,
+    last_error:`Frozen Writing Packet 与页面计划不一致：${unavailable.length} 个计划事实未冻结，${uncovered.length} 个章节没有可用证据。`,
+  };
+}
+
+function historicalDraftStructureFailure(db,row,currentJobs) {
+  if (!row.brief_id || !row.draft_id || currentJobs.some((job)=>ACTIVE_STATUSES.has(job.status))) return null;
+  if (Boolean(row.qa_passed) || !["qa_failed","exception"].includes(String(row.draft_status || ""))) return null;
+  const record=db.prepare(`SELECT cb.plan_json,ad.body_markdown,ad.updated_at
+    FROM content_briefs cb JOIN article_drafts ad ON ad.brief_id=cb.id
+    WHERE cb.id=? AND ad.id=?`).get(row.brief_id,row.draft_id);
+  if (!record?.body_markdown) return null;
+  const outline=parse(record.plan_json,{}).outline || [];
+  const planned=outline.map((section)=>String(section.heading || "").trim()).filter(Boolean);
+  if (planned.length < 2) return null;
+  const actual=String(record.body_markdown).split(/\r?\n/)
+    .map((line)=>line.match(/^#{2,6}\s+(.+?)\s*$/)?.[1] || "")
+    .map(normalizeHeadingIdentity).filter(Boolean);
+  const missing=planned.filter((heading)=>{
+    const expected=normalizeHeadingIdentity(heading);
+    return expected && !actual.some((value)=>value === expected || value.includes(expected) || expected.includes(value));
+  });
+  if (!missing.length) return null;
+  const present=planned.length-missing.length;
+  if (present / planned.length >= 0.75) return null;
+  return {
+    type:"review_draft",recovery_type:"generate_draft",last_failure_code:"PLANNED_BODY_SECTIONS_MISSING",
+    failure_class:"permanent_input",updated_at:record.updated_at,
+    last_error:`当前草稿缺少 ${missing.length}/${planned.length} 个页面计划章节，不能继续做局部修订；系统将从已保留的 Writing Packet 重新生成正文。`,
+  };
+}
+
+function normalizeHeadingIdentity(value) {
+  return String(value || "").normalize("NFKC").toLowerCase()
+    .replace(/[*_`~]/g,"").replace(/[^\p{L}\p{N}]+/gu," ").trim();
 }
 
 function failureAttribution(failed, modelCalls, { explanation = null, blocksCurrentFlow = true } = {}) {

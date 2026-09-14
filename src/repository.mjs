@@ -2,7 +2,7 @@ import { canonicalizeUrl, id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
 import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
-import { buildContentAst, contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
+import { buildContentAst, contentBlockSummary, markdownToContentBlocks, reconcileContentAstLedger } from "./content-blocks.mjs";
 import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue, repairClaimLocally,
   stableCanonicalSerialize, structureClaim } from "./claim-resolution.mjs";
 import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
@@ -216,7 +216,9 @@ export class Repository {
         brief, facts: semanticMaterial(facts), assembly: pack?.editorial_assembly,
         experiences: pack?.experiences, contentPolicy: pack?.content_policy,
         narrative: job.type === 'plan_narrative' ? null : this.getNarrativePlan(entityId),
-        packet: ['generate_draft','compose_frontend_page_plan'].includes(job.type) ? this.getWritingPacket(entityId) : null };
+        packet: ['generate_draft','compose_frontend_page_plan'].includes(job.type) ? this.getWritingPacket(entityId) : null,
+        qualityRegeneration: job.type === 'generate_draft' && job.dedupe_key?.startsWith('auto-quality-repair:generate_draft:')
+          ? this.qualityRegenerationFeedback(entityId) : null };
     }
     const draft = this.db.prepare(`SELECT id,brief_id,content_hash,revision,seo_json,strategy_version,updated_at
       FROM article_drafts WHERE id=?`).get(entityId);
@@ -226,6 +228,17 @@ export class Repository {
       const {og_image,...editorialSeo}=json(draft.seo_json,{});
       draft.seo_json=JSON.stringify(editorialSeo);
     }
+    if (job.type === "review_draft") return {
+      productionOwnerOpportunityId:job.production_owner_opportunity_id || null,
+      draft,
+      evidence:draft ? semanticMaterial(this.getBriefPackage(draft.brief_id)?.facts || []) : [],
+      content:draft ? this.db.prepare(`SELECT title,slug,meta_description,body_markdown,evidence_ledger_json,
+        unresolved_conflicts_json,verification_notes_json,content_ast_json FROM article_drafts WHERE id=?`).get(entityId) : null,
+      page:this.db.prepare(`SELECT payload_json,validation_json,status,contract_checksum,draft_revision,draft_content_hash
+        FROM frontend_page_compositions WHERE draft_id=?`).get(entityId),
+      media:this.db.prepare(`SELECT id,status,asset_fingerprint,source_asset_id,media_path,wordpress_media_id
+        FROM article_visuals WHERE draft_id=? ORDER BY id`).all(entityId),
+    };
     if (TRACKED_DELIVERY_STAGES.has(job.type)) return {
       productionOwnerOpportunityId:job.production_owner_opportunity_id || null,
       draft,
@@ -243,7 +256,9 @@ export class Repository {
     if (job.type === "revise_draft") {
       const review = this.db.prepare(`SELECT issues_json,draft_content_hash,evidence_hash FROM quality_reviews
         WHERE draft_id=? ORDER BY created_at DESC LIMIT 1`).get(entityId);
-      return { draft, review };
+      return { draft, review,
+        evidence:draft ? semanticMaterial(this.getBriefPackage(draft.brief_id)?.facts || []) : [],
+        brief:draft ? this.db.prepare("SELECT plan_json,canonical_json,evidence_ledger_json,strategy_version FROM content_briefs WHERE id=?").get(draft.brief_id) : null };
     }
     const facts = draft ? this.getBriefPackage(draft.brief_id)?.facts || [] : [];
     return { productionOwnerOpportunityId:job.production_owner_opportunity_id || null,draft, facts: semanticMaterial(facts),
@@ -5070,10 +5085,13 @@ export class Repository {
     const draftId = existing?.id || id("draft");
     const timestamp = now();
     const packet = this.getWritingPacket(briefId);
+    const briefPackage = this.getBriefPackage(briefId);
+    const facts = briefPackage?.facts || [];
     const authorizedSourceAssets = this.authorizedSourceAssetsForBrief(brief, { packet });
     const policy = packet?.context?.version === 2 ? packet.context.content_policy
-      : contentPolicyFor(brief, this.getTopicPackage(brief.candidate_id)?.facts || []);
-    const metadata = draftMetadata(draft, brief, this.contentConfig, authorizedSourceAssets, policy);
+      : contentPolicyFor(brief, facts);
+    const metadata = draftMetadata(draft, brief, this.contentConfig, authorizedSourceAssets, policy, facts);
+    draft.evidence_ledger = metadata.evidenceLedger;
     const contentHash = draftContentHash(draft, metadata, brief);
     if (existing) {
       this.db.prepare(`
@@ -5238,22 +5256,27 @@ export class Repository {
       candidateId: briefPackage.candidate.id,
       evidenceHashes: new Map([[draftId, currentEvidenceHash]]),
     }).find((item) => item.draft_id === draftId)?.operation || null;
+    const visuals = this.listDraftVisuals(draftId);
+    const hydratedDraft = {
+      ...draft,
+      evidence_ledger: json(draft.evidence_ledger_json, []),
+      unresolved_conflicts: json(draft.unresolved_conflicts_json, []),
+      verification_notes: json(draft.verification_notes_json, []),
+      seo: json(draft.seo_json, {}),
+      schema_jsonld: json(draft.schema_jsonld, {}),
+      content_blocks: json(draft.content_blocks_json, []),
+      visuals,
+      seo_preview: buildSeoPreview({ ...draft, seo: json(draft.seo_json, {}) }),
+    };
+    const currentAst = buildContentAst({ draft: hydratedDraft, brief: briefPackage.brief,
+      visuals, facts: briefPackage.facts || [] });
+    hydratedDraft.evidence_ledger = reconcileContentAstLedger(currentAst, hydratedDraft.evidence_ledger);
+    hydratedDraft.content_ast = currentAst;
     return {
       ...briefPackage,
       evidence_hash: currentEvidenceHash,
       operation,
-      draft: {
-        ...draft,
-        evidence_ledger: json(draft.evidence_ledger_json, []),
-        unresolved_conflicts: json(draft.unresolved_conflicts_json, []),
-        verification_notes: json(draft.verification_notes_json, []),
-        seo: json(draft.seo_json, {}),
-        schema_jsonld: json(draft.schema_jsonld, {}),
-        content_blocks: json(draft.content_blocks_json, []),
-        content_ast: json(draft.content_ast_json, {}),
-        visuals: this.listDraftVisuals(draftId),
-        seo_preview: buildSeoPreview({ ...draft, seo: json(draft.seo_json, {}) }),
-      },
+      draft: hydratedDraft,
       frontend_page: this.getFrontendPageComposition(draftId),
       publish_composition: this.getFrontendPublishComposition(draftId),
       review: review ? hydrateReview(review) : null,
@@ -6298,23 +6321,51 @@ export class Repository {
 
   automaticQualityRepairState(draftId, issues = [], { enqueue = false, maxAttempts = 2, productionOwnerOpportunityId = null,
     ignoreActiveJobId = null } = {}) {
-    const draft = this.db.prepare("SELECT id,revision FROM article_drafts WHERE id=?").get(draftId);
+    const draft = this.db.prepare("SELECT id,brief_id,revision FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) return { eligible: false, queued: false, stage: null, attempts: 0, maxAttempts, reason: "draft_missing" };
     const stage = qualityRepairStage(issues);
+    const entityId = stage === "generate_draft" ? draft.brief_id : draftId;
     const attempts = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs
-      WHERE entity_id=? AND dedupe_key LIKE 'auto-quality-repair:%'`).get(draftId)?.count || 0);
+      WHERE entity_id IN (?,?) AND dedupe_key LIKE 'auto-quality-repair:%'`).get(draftId,draft.brief_id)?.count || 0);
     if (!stage) return { eligible: false, queued: false, stage: null, attempts, maxAttempts, reason: "manual_media_or_no_blocker" };
     if (attempts >= maxAttempts) return { eligible: false, queued: false, stage, attempts, maxAttempts, reason: "attempt_limit_reached" };
-    const active = this.db.prepare(`SELECT id,type,status FROM jobs WHERE entity_id=? AND status IN ('queued','running')
-      AND (? IS NULL OR id<>?) LIMIT 1`).get(draftId,ignoreActiveJobId,ignoreActiveJobId);
+    const active = this.db.prepare(`SELECT id,type,status FROM jobs WHERE entity_id IN (?,?) AND status IN ('queued','running')
+      AND (? IS NULL OR id<>?) LIMIT 1`).get(draftId,draft.brief_id,ignoreActiveJobId,ignoreActiveJobId);
     if (active) return { eligible: true, queued: false, stage, attempts, maxAttempts, reason: "job_already_active", activeJob: active };
     const dedupeKey = `auto-quality-repair:${stage}:${draftId}:r${draft.revision}`;
     const attempted = this.db.prepare("SELECT id,status FROM jobs WHERE dedupe_key=? LIMIT 1").get(dedupeKey);
     if (attempted) return { eligible: false, queued: false, stage, attempts, maxAttempts, reason: "revision_already_attempted" };
     if (!enqueue) return { eligible: true, queued: false, stage, attempts, maxAttempts, reason: "ready_to_queue" };
-    const jobId = this.enqueue(stage, draftId, { dedupeKey, productionOwnerOpportunityId });
+    const jobId = this.enqueue(stage, entityId, { dedupeKey, productionOwnerOpportunityId });
     return { eligible: true, queued: Boolean(jobId), stage, jobId, attempts: attempts + (jobId ? 1 : 0), maxAttempts,
       reason: jobId ? "queued" : "queue_rejected" };
+  }
+
+  qualityRegenerationFeedback(briefId) {
+    const current = this.db.prepare(`SELECT ad.id,ad.revision,ad.content_hash,qr.score,qr.issues_json,qr.checks_json
+      FROM article_drafts ad
+      LEFT JOIN quality_reviews qr ON qr.id=(SELECT id FROM quality_reviews current_review
+        WHERE current_review.draft_id=ad.id AND current_review.draft_content_hash=ad.content_hash
+        ORDER BY current_review.created_at DESC,current_review.id DESC LIMIT 1)
+      WHERE ad.brief_id=?`).get(briefId);
+    if (!current?.content_hash || current.score == null) return null;
+    const issues = json(current.issues_json, []).filter((issue) => issue?.severity !== 'warning').slice(0, 8)
+      .map((issue) => ({ code:String(issue.code || 'QUALITY_BLOCKER'), message:String(issue.message || '').slice(0, 1_500),
+        affected_count:Number(issue.affected_count || 0) || undefined }));
+    if (!issues.length) return null;
+    return {
+      base_draft_id: current.id,
+      base_draft_revision: current.revision,
+      base_content_hash: current.content_hash,
+      quality_score: current.score,
+      blockers: issues,
+      rewrite_strategy: [
+        'Rebuild the complete draft from the frozen Writing Packet; do not reuse failed prose.',
+        'Use at least one approved claim key in every evidence-bearing planned section and map it honestly in evidence_ledger.',
+        'Delete every unsupported detail identified by the audit; never replace it with a newly invented price, time, route, venue, or recommendation.',
+        'Synthesize facts into traveler decisions, conditions, consequences, and trade-offs instead of listing isolated database rows.',
+      ],
+    };
   }
 
   reconcileDeferredQualityRepair(job) {
@@ -8117,7 +8168,7 @@ function safeIsoDate(value) {
   return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
 }
 
-function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy = contentPolicyFor(brief)) {
+function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy = contentPolicyFor(brief), facts = []) {
   const canonical = json(brief.canonical_json, {});
   const canonicalResolution = resolveCanonicalUrl({ siteUrl: config.publicSiteUrl, slug: draft.slug });
   const canonicalUrl = canonicalResolution.url;
@@ -8145,12 +8196,13 @@ function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy
   const visuals = normalizeVisuals(draft.visuals, draft, brief, authorizedSourceAssets, policy);
   const firstGenerated = visuals.find((visual) => visual.status === "generated" && visual.media_url);
   if (firstGenerated) seo.og_image = firstGenerated.media_url;
-  const contentAst = buildContentAst({ draft: { ...draft, seo }, brief: { ...brief, canonical }, visuals });
+  const contentAst = buildContentAst({ draft: { ...draft, seo }, brief: { ...brief, canonical }, visuals, facts });
+  const evidenceLedger = reconcileContentAstLedger(contentAst, draft.evidence_ledger || []);
   const blocks = contentAst.nodes.filter((node) => node.type !== "media").map((node) => node.type === "list"
     ? { type: "list", items: node.items } : node.type === "heading"
       ? { type: "heading", level: node.level, text: node.visible_text } : { type: "paragraph", text: node.visible_text });
   return {
-    seo, visuals, blocks, contentAst,
+    seo, visuals, blocks, contentAst, evidenceLedger,
     schema: buildArticleSchema({ ...draft, seo, content_ast: contentAst, destination_slug: brief.destination_slug, canonical }, visuals, config),
   };
 }

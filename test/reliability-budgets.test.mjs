@@ -56,6 +56,79 @@ test('an empty v2 Writing Packet cannot leak unselected live facts, sources, med
   });
   await engine.draft({brief:{strategy_version:'3.1'},writing_packet:{packet_text:'Selected grounded observations only.',selected_fact_keys:[],evidence_ledger:[],context:{version:2,narrative_plan:{throughline:'frozen route'},reader_sources:[],authorized_source_assets:[],internal_link_inventory:[]}},
     facts:[{normalized_key:'unselected',preferred_value:'LIVE_PRIVATE_FACT'}],source_reference:{raw_text:'LIVE_SOURCE'},authorized_source_assets:[{alt_text:'LIVE_MEDIA'}],narrative_plan:{throughline:'LIVE_NARRATIVE'}});
-  assert.doesNotMatch(JSON.stringify(request),/LIVE_PRIVATE_FACT|LIVE_SOURCE|LIVE_MEDIA|LIVE_NARRATIVE/);
-  assert.match(JSON.stringify(request),/frozen route/);
+  assert.doesNotMatch(JSON.stringify(request),/LIVE_PRIVATE_FACT|LIVE_SOURCE|LIVE_MEDIA|LIVE_NARRATIVE|frozen route/);
+  assert.match(JSON.stringify(request),/structure, never factual evidence/);
+});
+
+test('draft structured output is constrained to frozen fact keys and planned section ids',async()=>{
+  let request;
+  const output={title:'Museum guide',slug:'museum-guide',body_markdown:'## Visit\n\nAdmission costs CNY 20.',meta_description:'Visit guide',
+    evidence_ledger:[{section_id:'visit',section:'Visit',content_node_ids:[],claim_keys:['museum.fee'],source_ids:['source-1']}],
+    unresolved_conflicts:[],verification_notes:[],visuals:[],faqs:[],seo:{meta_title:'Museum guide',focus_keyword:'museum guide',secondary_keywords:[],search_intent:'informational',key_takeaways:[]}};
+  const engine=new ContentEngine({apiKey:'test',model:'test',baseUrl:'https://api.example.test/v1'},async(_url,options)=>{
+    request=JSON.parse(options.body);return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(output)}}]}),{headers:{'content-type':'application/json'}});
+  });
+  await engine.draft({brief:{strategy_version:'3.3',plan:{outline:[{section_id:'visit',heading:'Visit',claim_keys:['museum.fee']}]}},
+    writing_packet:{packet_text:'Use only the fee.',selected_fact_keys:['museum.fee'],evidence_ledger:[{fact_snapshot:{
+      normalized_key:'museum.fee',subject:'Museum',predicate:'admission_fee',preferred_value:'CNY 20',evidence:[{source_id:'source-1',value:'CNY 20'}]}}],
+    context:{version:2,content_policy:{faq:{maximum:0},visuals:{maximum:0}},narrative_plan:{},reader_sources:[],authorized_source_assets:[],internal_link_inventory:[]}}});
+  const ledgerSchema=request.response_format.json_schema.schema.properties.evidence_ledger;
+  assert.deepEqual(ledgerSchema.items.properties.claim_keys.items.enum,['museum.fee']);
+  assert.deepEqual(ledgerSchema.items.properties.section_id.enum,['visit']);
+  assert.equal(ledgerSchema.maxItems,24);
+  assert.equal(ledgerSchema.items.properties.claim_keys.maxItems,12);
+});
+
+test('draft retries once when an evidence-bearing planned section is missing from the ledger',async()=>{
+  let calls=0;const inputs=[];
+  const base={title:'Route guide',slug:'route-guide',body_markdown:'## Start\n\nUse the metro.\n\n## Finish\n\nWalk to the river.',meta_description:'Route guide',
+    unresolved_conflicts:[],verification_notes:[],visuals:[],faqs:[],seo:{meta_title:'Route guide',focus_keyword:'route guide',secondary_keywords:[],search_intent:'informational',key_takeaways:[]}};
+  const engine=new ContentEngine({apiKey:'test',model:'test',baseUrl:'https://api.example.test/v1'},async(_url,options)=>{
+    const request=JSON.parse(options.body);inputs.push(JSON.parse(request.messages.at(-1).content));calls++;
+    const evidence_ledger=calls===1
+      ? [{section_id:'start',section:'Start',content_node_ids:[],claim_keys:['route.start'],source_ids:['source-1']}]
+      : [{section_id:'start',section:'Start',content_node_ids:[],claim_keys:['route.start'],source_ids:['source-1']},
+        {section_id:'finish',section:'Finish',content_node_ids:[],claim_keys:['route.finish'],source_ids:['source-1']}];
+    return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify({...base,evidence_ledger})}}]}),{headers:{'content-type':'application/json'}});
+  });
+  const fact=(normalized_key)=>({fact_snapshot:{normalized_key,subject:'Route',predicate:'step',preferred_value:normalized_key,evidence:[{source_id:'source-1',value:normalized_key}]}});
+  await engine.draft({brief:{strategy_version:'3.3',plan:{outline:[
+    {section_id:'start',heading:'Start',claim_keys:['route.start']},{section_id:'finish',heading:'Finish',claim_keys:['route.finish']},
+  ]}},writing_packet:{packet_text:'Use only the route facts.',selected_fact_keys:['route.start','route.finish'],evidence_ledger:[fact('route.start'),fact('route.finish')],
+    context:{version:2,content_policy:{faq:{maximum:0},visuals:{maximum:0}},narrative_plan:{},reader_sources:[],authorized_source_assets:[],internal_link_inventory:[]}}});
+  assert.equal(calls,2);
+  assert.deepEqual(inputs[1].revision_feedback.missing_evidence_section_ids,['finish']);
+});
+
+test('draft rejects a factual claim mapped into a planned non-factual section even when that section has no allowed keys',async()=>{
+  let calls=0;const inputs=[];
+  const base={title:'Museum guide',slug:'museum-guide',body_markdown:'## Visit\n\nAdmission costs CNY 20.\n\n## Closing\n\nChoose the timing that works for you.',meta_description:'Museum guide',
+    unresolved_conflicts:[],verification_notes:[],visuals:[],faqs:[],seo:{meta_title:'Museum guide',focus_keyword:'museum guide',secondary_keywords:[],search_intent:'informational',key_takeaways:[]}};
+  const engine=new ContentEngine({apiKey:'test',model:'test',baseUrl:'https://api.example.test/v1'},async(_url,options)=>{
+    const request=JSON.parse(options.body);inputs.push(JSON.parse(request.messages.at(-1).content));calls++;
+    const evidence_ledger=calls===1
+      ? [{section_id:'closing',section:'Closing',content_node_ids:[],claim_keys:['museum.fee'],source_ids:['source-1']}]
+      : [{section_id:'visit',section:'Visit',content_node_ids:[],claim_keys:['museum.fee'],source_ids:['source-1']}];
+    return new Response(JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify({...base,evidence_ledger})}}]}),{headers:{'content-type':'application/json'}});
+  });
+  await engine.draft({brief:{strategy_version:'3.3',plan:{outline:[
+    {section_id:'visit',heading:'Visit',claim_keys:['museum.fee']},{section_id:'closing',heading:'Closing',claim_keys:[]},
+  ]}},writing_packet:{packet_text:'Use only the fee.',selected_fact_keys:['museum.fee'],evidence_ledger:[{fact_snapshot:{
+    normalized_key:'museum.fee',subject:'Museum',predicate:'admission_fee',preferred_value:'CNY 20',evidence:[{source_id:'source-1',value:'CNY 20'}]}}],
+    context:{version:2,content_policy:{faq:{maximum:0},visuals:{maximum:0}},narrative_plan:{},reader_sources:[],authorized_source_assets:[],internal_link_inventory:[]}}});
+  assert.equal(calls,2);
+  assert.deepEqual(inputs[1].revision_feedback.invalid_section_claim_mappings,[{section_id:'closing',claim_key:'museum.fee'}]);
+});
+
+test('draft refuses a legacy page plan that exceeds its frozen Writing Packet before calling the provider',async()=>{
+  let calls=0;
+  const engine=new ContentEngine({apiKey:'test',model:'test',baseUrl:'https://api.example.test/v1'},async()=>{calls++;return new Response();});
+  await assert.rejects(engine.draft({brief:{strategy_version:'3.3',plan:{outline:[
+    {section_id:'covered',heading:'Covered',claim_keys:['fact.covered']},
+    {section_id:'missing',heading:'Missing',claim_keys:['fact.not_frozen']},
+  ]}},writing_packet:{packet_text:'Legacy unsafe route.',selected_fact_keys:['fact.covered'],evidence_ledger:[{fact_snapshot:{
+    normalized_key:'fact.covered',subject:'Place',predicate:'name',preferred_value:'Place',evidence:[{source_id:'source-1',value:'Place'}]}}],
+    context:{version:2,content_policy:{faq:{maximum:0},visuals:{maximum:0}},narrative_plan:{conditional_branches:['Unsupported fare CNY 99']},reader_sources:[],authorized_source_assets:[],internal_link_inventory:[]}}}),
+  {code:'FROZEN_WRITING_SCOPE_INVALID'});
+  assert.equal(calls,0);
 });

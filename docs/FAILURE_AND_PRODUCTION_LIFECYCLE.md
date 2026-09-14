@@ -12,6 +12,8 @@ An unresolved owner-matched failed Job wins over legacy Brief/Draft labels only 
 
 When an old downstream failure lacks a prerequisite required by the current registry, it is not allowed to override the live recovery target. `production_state` 1.2 and later move its attribution to `latest_historical_error`, annotate the timeline step as non-blocking history, report the live state as `interrupted`, and choose the first missing prerequisite-safe step. This is how an old Page Plan failure now resumes Narrative/Packet assembly rather than attempting to skip directly to Page Plan.
 
+`production_state` 1.6 also recognizes an old failed Draft whose visible headings retain fewer than 75% of the named evidence-bearing Brief sections. That record remains a QA failure for attribution, but its exact `recovery_target` becomes `generate_draft`; the preserved Brief, Narrative Plan and Writing Packet are reused, and only the damaged Draft plus its current dependent page/review artifacts are rebuilt. Active Jobs and a current passing review always take precedence, preventing compatibility detection from interrupting live or completed work.
+
 Failed state separates `current_stage` (the failed step), `recovery_target` (repeat that exact step) and `next_stage` (the following pipeline step). Interrupted state reports the last completed position as current and the first missing dependency-safe step as both recovery target and next step. Queued/running state reports its active step and the following step. Only succeeded evidence increments `progress.completed`.
 
 ## Recovery and record disposition

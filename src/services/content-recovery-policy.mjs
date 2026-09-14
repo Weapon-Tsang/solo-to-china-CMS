@@ -5,6 +5,7 @@ export const DELIVERY_ISSUE_CODES = new Set([
 ]);
 
 const ISSUE_GUIDANCE = {
+  INVALID_DRAFT_REPAIR_SCOPE: ['自动修订没有命中当前草稿章节', '旧修订请求使用了写作提纲标题或旧版章节层级，和当前草稿可替换章节不一致；系统已停止，未覆盖现有正文。', '按当前草稿列出的真实章节重新执行定向修订。'],
   DATABASE_DUMP: ['正文像数据库导出', '事实被逐条堆放，没有形成可读的旅行决策逻辑。', '重新组织叙事与因果关系，不新增事实。'],
   GENERIC_AI_TRANSITIONS: ['正文存在通用 AI 过渡语', '泛化过渡语取代了具体的路线、条件或因果连接。', '删除套话，直接连接读者问题和下一步。'],
   REPETITIVE_EXPLANATION: ['正文重复解释', '相同观点被多次换句表达，却没有增加条件、取舍或行动信息。', '合并重复段落，保留最清楚的一处。'],
@@ -15,6 +16,7 @@ const ISSUE_GUIDANCE = {
   FAKE_FIRST_PERSON: ['出现虚构第一人称经验', '正文把未被来源支持的经历写成作者亲历。', '删除虚构亲历，改为有出处的旅行者经验或客观说明。'],
   invalid_evidence_key: ['证据编号无效', '草稿台账引用了本篇证据包里不存在的编号。', '修正证据台账后重新质检。'],
   confirmed_topic_coverage_missing: ['文章结构与证据范围不一致', '至少一个计划章节没有引用任何可用证据；不再要求把素材库里的每条事实都写进文章。', '让自动修订补齐缺证据的章节，或删去没有证据支撑的承诺。'],
+  PLANNED_BODY_SECTIONS_MISSING: ['正文缺少计划章节', '当前草稿只保留了部分页面计划章节，继续局部修订会放大内容断裂；已保留的 Writing Packet 不受影响。', '从已保留的 Writing Packet 重新生成正文，再继续质量审核。'],
   protected_evidence_mismatch: ['关键事实被改写错了', '正文中的金额、日期、否定条件、适用人群或例外，与证据台账不一致。', '只修订涉及这些事实的段落并重新质检。'],
   missing_temporal_disclosure: ['时效信息缺少日期说明', '正文使用了票价、营业时间、预约或交通等会变化的信息，却没有说明证据截至什么时候。', '补充“截至某日”和可能变化的提示，再重新质检。'],
   hidden_conflict: ['证据冲突没有说明', '正文使用了存在冲突的事实，却没有向读者说明不确定性。', '补充冲突说明或删除该事实。'],
@@ -82,6 +84,12 @@ export function explainOperationalFailure(job) {
   const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
   const details = operatorSafeDetails(message);
   const normalizedIssueCode = code.toLowerCase();
+  if (code === 'FROZEN_WRITING_SCOPE_INVALID') return {
+    category:'scope',headline:'旧写作包与页面计划的证据范围不一致',
+    reason:'旧流程的页面计划引用了未冻结事实，部分章节没有可用证据；继续重写正文只会重复失败。来源、Claims、Knowledge、Evidence 和既有草稿都仍保留。',
+    action:{id:'assemble_editorial',label:'重新组装素材并生成写作计划',why:'只从素材组装开始重建后续生产产物，不重跑来源提取、Claims、Knowledge 或审批。'},
+    technicalDetail:details,
+  };
   if (code === 'DESTINATION_TOPIC_MISMATCH') return {
     category:'scope',headline:'文章主题与目的地归属不一致',
     reason:'标题明确承诺的城市或区域与当前批准记录的目的地不一致。规划在调用模型前已停止，避免用错误范围生成文章。',
@@ -234,7 +242,7 @@ export function separateQualityResults(review, issues = review.issues || []) {
   const contentIssues = issues.filter(issue=>!DELIVERY_ISSUE_CODES.has(issue.code));
   const deliveryIssues = issues.filter(issue=>DELIVERY_ISSUE_CODES.has(issue.code));
   const contentBlockers = contentIssues.filter(issue=>issue.severity==='blocker');
-  return {content_quality:{passed:review.passed && !contentBlockers.length,
+  return {content_quality:{passed:!contentBlockers.length,
     score:Math.max(0,Number(review.score || 0)-contentBlockers.length*10),issues:contentIssues},
     delivery_quality:{passed:!deliveryIssues.some(issue=>issue.severity==='blocker'),issues:deliveryIssues}};
 }
@@ -244,6 +252,12 @@ export function qualityRepairStage(issues = []) {
   if (!blockers.length) return null;
   const media = new Set(['required_visual_missing', 'visual_renderer_incomplete']);
   const page = new Set(['final_page_invalid', 'final_page_content_missing', 'final_page_evidence_invalid']);
+  // A ledger-evasion blocker means the current prose is globally outside the
+  // frozen Writing Packet. A three-section patch cannot make that draft
+  // trustworthy; regenerate only the draft from the preserved upstream
+  // artifacts instead of repeatedly rewriting arbitrary fragments.
+  if (blockers.some((issue) => issue.code === 'EVIDENCE_LEDGER_EVASION' || issue.code === 'planned_body_sections_missing'
+    || (issue.code === 'confirmed_topic_coverage_missing' && Number(issue.affected_count || 0) > 3))) return 'generate_draft';
   if (blockers.some((issue) => !media.has(issue.code) && !page.has(issue.code))) return 'revise_draft';
   if (blockers.some((issue) => media.has(issue.code))) return null;
   return 'compose_frontend_page';

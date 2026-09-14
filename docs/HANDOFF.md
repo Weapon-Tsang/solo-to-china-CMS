@@ -1,3 +1,13 @@
+# 2.0.19 final-page evidence and repair handoff
+
+App/Extension version `2.0.19`, schema migration `69`, and Content Strategy `3.3` are on the current release line; `production_state` is `1.6` and Frontend Contract is `1.4.0`. The change corrects stale QA reuse, page/review ordering, atomic evidence ownership, legacy ledger reconciliation, heading hierarchy and bounded repair scope without introducing another pipeline or changing the Frontend JSX/CSS boundary.
+
+The seven existing production failures were audited read-only and replayed from a complete production database copy. Deterministic page reconstruction produced 7/7 valid Contract payloads, provenance and final evidence with zero model calls. Five representative records then completed bounded real-Vertex recovery through current QA and Commercial Composition; the last two exposed and permanently regressed warning-only QA and legacy section-truncation defects. A complete draft-only WordPress canary produced a 45-block, 15,451-byte Publish Package with valid Contract/evidence/SEO-GEO checks and stored preview/edit URLs. Deployment remains code-only: startup does not retry, archive, delete or migrate production records.
+
+Semantic content/value failures recover through `revise_draft`; Contract, provenance and schema failures recover through `compose_frontend_page`. A structurally truncated historical Draft recovers through `generate_draft` from its preserved Writing Packet. A page change is part of the QA dependency, so an old successful or failed review cannot be reused for different visible content. Sources, original media, Claims, Knowledge, Evidence, Experience, approvals, failure lessons and prior attempts remain untouched.
+
+The implementation, production-copy replay, real-provider canary, release verification and rollout evidence are recorded in `audit/CMS_FINAL_PAGE_EVIDENCE_RECOVERY_2.0.19_2026-09-14.md`.
+
 # 2.0.18 post-Draft recovery join handoff
 
 App/Extension version `2.0.18`, schema migration `69`, and Content Strategy `3.3` are the current release line, with `production_state` `1.5`. The release keeps a failed quality review authoritative when a parallel image or page Job fails later, releases a deferred bounded repair exactly once when the sibling branch settles, retries failed visual slots on explicit stage recovery, and accepts retained WebP originals for Vertex Gemini localization.

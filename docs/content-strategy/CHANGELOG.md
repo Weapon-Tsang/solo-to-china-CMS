@@ -1,5 +1,13 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.19 / schema 69 - 2026-09-14
+
+- Keep Strategy 3.3 selection and approval semantics unchanged while tightening the production writing contract around the frozen Writing Packet, exact planned sections and selected facts.
+- Normalize planned article sections to an accessible H2 hierarchy, remove duplicate title H1s, and regenerate a structurally truncated Draft instead of allowing a bounded patch to consume its later sections.
+- Treat warning-only model review output as editorial guidance; only explicit blockers can fail the quality gate. Deterministic evidence, safety, SEO/GEO and Frontend Contract checks remain mandatory.
+- Rebuild Content AST, Page Payload and Publish Package from the current Draft and active Frontend Contract, preserving semantic evidence provenance without copying JSX/CSS.
+- Keep schema 69. No migration, startup retry, bulk reconciliation, automatic model call, approval change or automatic WordPress write is introduced.
+
 ## App 2.0.18 / schema 69 - 2026-09-14
 
 - Upgrade `production_state` to 1.5 so a failing quality review remains the authoritative content gate when parallel image/page work fails later; `revise_draft` is included as the exact next stage before a repair Job exists.

@@ -20,6 +20,8 @@ The 2.0.17 Vertex repair changes only the CMS model transport and bounded Draft-
 
 The 2.0.18 post-Draft join keeps the same boundary. A failed Frontend Page Payload remains an auditable parallel-branch result, but it cannot override a failing content-quality review or send recovery directly to the Commercial Layer. After targeted Draft repair, the CMS reuses the Contract schema to compose and validate a new payload; renderer JSX, CSS and final WordPress theme output remain Frontend-owned.
 
+The 2.0.19 composition repair keeps Frontend Contract 1.4.0 unchanged. The CMS normalizes semantic article hierarchy, assigns evidence only to the atomic block that expresses it, and rebuilds Content AST/Page Payload/Publish Package from the current Draft. It validates mobile-readable heading order, answer-first content, SEO/GEO metadata, JSON-LD, media and link semantics, but visual typography, spacing, responsive CSS and renderer implementation remain owned by the Frontend/WordPress theme. Visual acceptance therefore uses the persisted `preview_url`; CMS structural preview is not presented as a screenshot of the final theme.
+
 Three artifacts remain distinct:
 
 - Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.

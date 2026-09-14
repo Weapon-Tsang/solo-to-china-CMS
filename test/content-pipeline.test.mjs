@@ -59,6 +59,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       };
     },
   };
+  const stageCalls = [];
   const contentEngine = {
     enabled: true,
     async analyzeIntake() {
@@ -86,6 +87,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       } };
     },
     async draft(contentPackage) {
+      stageCalls.push("generate_draft");
       assert.ok(contentPackage.authorized_source_assets?.some((asset) => asset.mime_type === "image/png" && asset.preview_url),
         "saved authorized source images must be selected before writing starts");
       const sourceIds = [...new Set(contentPackage.facts
@@ -108,6 +110,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       } };
     },
     async composeFrontendPage() {
+      stageCalls.push("compose_frontend_page");
       const block = { type: "articleSection", variant: "answer-first", data: { heading: "Plan", body: "Central Beijing is the orientation point. Use the metro; this transport evidence was checked on September 7, 2026." } };
       return { model: "payload-composer-model", output: {
         metadata: { title: "First-Time Beijing Solo Travel Guide" },
@@ -117,6 +120,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
         claimKeys: ["beijing.orientation.location", "beijing.transport.metro"], factuality: "factual" }] } };
     },
     async review() {
+      stageCalls.push("review_draft");
       return { model: "reviewer-model", output: { passed: true, score: 92, checks: [], issues: [], unsupported_claims: [] } };
     },
   };
@@ -218,6 +222,8 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(db.prepare("SELECT strategy_version FROM wordpress_publications WHERE draft_id=?").get(content[0].draft_id).strategy_version, CONTENT_STRATEGY.version);
   assert.equal(JSON.stringify(repository.getTopicPackage(content[0].id)).includes("Trip.com"), false);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status='failed'").get().count, 0);
+  assert.ok(stageCalls.indexOf("compose_frontend_page") < stageCalls.indexOf("review_draft"),
+    `page composition must precede QA: ${stageCalls.join(" -> ")}`);
 
   const mismatched = structuredClone(generatedPackage.publish_composition.publish_package);
   mismatched.contract.contractChecksum = "f".repeat(64);

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { validatePlannedEvidence } from "./services/editorial-proposal.mjs";
-import { composePageFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
+import { buildContentAst, composePageFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
 import { validatePlanningDestination } from "./destination-consistency.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
 import { validateMediaDelivery } from "./media-delivery.mjs";
@@ -782,10 +782,13 @@ export class Pipeline {
           this.requireContentEngine();
           const contentPackage = this.repository.getBriefPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Content brief ${job.entity_id} no longer exists.`);
-          const drafted = await guarded((signal) => this.contentEngine.draft(contentPackage, null, { signal, telemetryContext }));
+          const qualityFeedback = job.dedupe_key?.startsWith("auto-quality-repair:generate_draft:")
+            ? this.repository.qualityRegenerationFeedback(job.entity_id) : null;
+          const drafted = await guarded((signal) => this.contentEngine.draft(contentPackage, qualityFeedback, { signal, telemetryContext }));
           commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
-          const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model,{opportunityId:job.production_owner_opportunity_id || null});
+          const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model,
+            {deferReview:contractAware,opportunityId:job.production_owner_opportunity_id || null});
           if (this.visuals?.enabled) this.enqueueChild(job,"generate_visuals",draftId);
           else if (contractAware) this.enqueueChild(job,"compose_frontend_page",draftId);
           });
@@ -822,7 +825,9 @@ export class Pipeline {
             this.repository.createFrontendCapabilityRequest({ draftId: job.entity_id, briefId: contentPackage.brief?.id || null, semanticNeed: "article-page-payload", useCase: contentPackage.draft?.title || "Article draft", reason: "The active Frontend Contract exposes no stable components for the final page payload." });
             throw new Error("MISSING_FRONTEND_CAPABILITY: no stable Frontend component can express this page.");
           }
-          const composed = composePageFromAst(contentPackage.draft.content_ast, capabilities, contract.pageSchema.schema)
+          const currentAst = buildContentAst({ draft: contentPackage.draft, brief: contentPackage.brief,
+            visuals: contentPackage.draft.visuals || [], facts: contentPackage.facts || [] });
+          const composed = composePageFromAst(currentAst, capabilities, contract.pageSchema.schema)
             || await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext }));
           const validation = this.frontendContracts.validatePagePayload(composed.output);
           const savedPage = commitStage(() => {
@@ -860,7 +865,8 @@ export class Pipeline {
           commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
           const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model,
-            { deferReview: job.dedupe_key?.startsWith("manual-stage:"),opportunityId:job.production_owner_opportunity_id || null });
+            { deferReview: job.dedupe_key?.startsWith("manual-stage:") || contractAware,
+              opportunityId:job.production_owner_opportunity_id || null });
           if (!job.dedupe_key?.startsWith("manual-stage:")) {
             if (this.visuals?.enabled) this.enqueueChild(job,"generate_visuals",draftId);
             else if (contractAware) this.enqueueChild(job,"compose_frontend_page",draftId);

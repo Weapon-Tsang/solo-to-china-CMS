@@ -81,6 +81,72 @@ test("bounded repair rejects stale revisions and preserves every untouched secti
   assert.equal(repaired.title, "Guide");
 });
 
+test("bounded repair normalizes a legacy H3-only document to an accessible H2 section hierarchy", () => {
+  const draft = { content_hash: "legacy", title: "Guide", meta_description: "Desc", seo: { meta_title: "Guide" },
+    body_markdown: "Intro.\n\n### Day 1\n\nOld route.\n\n### Day 2\n\nKeep this route.",
+    evidence_ledger: [], unresolved_conflicts: [], verification_notes: [], visuals: [] };
+  const repaired = applyBoundedDraftRepair(draft, { base_content_hash: "legacy",
+    replacement_sections: [{ heading: "Day 1", body_markdown: "Corrected route." }], metadata: {} },
+  [{ code: "NO_TRAVELER_DECISION" }]);
+  assert.match(repaired.body_markdown, /## Day 1\n+Corrected route\./);
+  assert.match(repaired.body_markdown, /## Day 2\n\nKeep this route\./);
+});
+
+test("bounded repair removes a duplicated title H1 and normalizes skipped heading levels", () => {
+  const draft = { content_hash:"heading",title:"Chongqing Guide",meta_description:"Desc",seo:{meta_title:"Chongqing Guide"},
+    body_markdown:"# Chongqing Guide\n\n### Route\n\nGrounded route.\n\n##### Details\n\nGrounded details.",
+    evidence_ledger:[],unresolved_conflicts:[],verification_notes:[],visuals:[] };
+  const repaired=applyBoundedDraftRepair(draft,{base_content_hash:"heading",replacement_sections:[],metadata:{}},
+    [{code:"heading_hierarchy_invalid"}]);
+  assert.doesNotMatch(repaired.body_markdown,/^#\s/m);
+  assert.match(repaired.body_markdown,/^## Route$/m);
+  assert.match(repaired.body_markdown,/^### Details$/m);
+});
+
+test("bounded repair promotes every planned article section to H2 before calculating replacement boundaries", () => {
+  const draft={content_hash:"sections",title:"Route",meta_description:"Desc",seo:{meta_title:"Route"},
+    body_markdown:"## Orientation\n\nIntro.\n\n### Day 1\n\nKeep day one.\n\n### Day 2\n\nKeep day two.",
+    evidence_ledger:[],unresolved_conflicts:[],verification_notes:[],visuals:[]};
+  const repaired=applyBoundedDraftRepair(draft,{base_content_hash:"sections",replacement_sections:[
+    {heading:"Orientation",body_markdown:"Short orientation."}],metadata:{}},[{code:"NO_TRAVELER_DECISION"}],
+  {sectionHeadings:["Orientation","Day 1","Day 2"]});
+  assert.match(repaired.body_markdown,/^## Orientation$/m);
+  assert.match(repaired.body_markdown,/^## Day 1\n\nKeep day one\.$/m);
+  assert.match(repaired.body_markdown,/^## Day 2\n\nKeep day two\.$/m);
+});
+
+test("bounded repair applies different-length multi-section edits without shifting later section offsets", () => {
+  const draft = { content_hash: "base", title: "Guide", meta_description: "Desc", seo: { meta_title: "Guide" },
+    body_markdown: "Intro.\n\n## First\n\nOriginal first paragraph.\n\n## Second\n\nOriginal second paragraph.\n\n## Third\n\nOriginal third paragraph.",
+    evidence_ledger: [], unresolved_conflicts: [], verification_notes: [], visuals: [] };
+  const repaired = applyBoundedDraftRepair(draft, { base_content_hash: "base", replacement_sections: [
+    { heading: "First", body_markdown: "A much longer replacement for the first section that deliberately changes every later character offset." },
+    { heading: "Third", body_markdown: "Short third." },
+  ], metadata: {} }, [{ code: "NO_CAUSAL_FLOW" }]);
+  assert.match(repaired.body_markdown, /## First\n+A much longer replacement/);
+  assert.match(repaired.body_markdown, /## Second\n\nOriginal second paragraph\./);
+  assert.match(repaired.body_markdown, /## Third\n+Short third\./);
+  assert.doesNotMatch(repaired.body_markdown, /Original first paragraph|Original third paragraph/);
+});
+
+test("repair request enumerates only headings present in the current draft", async () => {
+  let requestBody;
+  const draft = { content_hash:"current",title:"Guide",meta_description:"Desc",seo:{meta_title:"Guide"},
+    body_markdown:"Intro.\n\n### Actual route\n\nOld prose.",evidence_ledger:[],verification_notes:[],visuals:[] };
+  const engine = new ContentEngine({apiKey:"key",model:"model",baseUrl:"https://api.example.test/v1"},async(_url,options)=>{
+    requestBody=JSON.parse(options.body);
+    return Response.json({model:"model",choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+      base_content_hash:"current",replacement_sections:[{heading:"Actual route",body_markdown:"Useful route."}],
+    })}}]});
+  });
+  await engine.repairDraft({draft,facts:[],brief:{plan:{outline:[]}}},[
+    {code:"NO_TRAVELER_DECISION",severity:"blocker",message:"Add a decision."},
+  ]);
+  const input=JSON.parse(requestBody.messages[1].content);
+  assert.deepEqual(input.allowed_replacement_headings,["Actual route"]);
+  assert.deepEqual(requestBody.response_format.json_schema.schema.properties.replacement_sections.items.properties.heading.enum,["Actual route"]);
+});
+
 test("evidence repair may update only bounded known claim keys", () => {
   const draft = { content_hash:"current",title:"Guide",meta_description:"Desc",seo:{meta_title:"Guide"},
     body_markdown:"Intro.\n\n## Visit\n\nSupported body.",evidence_ledger:[],verification_notes:[],visuals:[] };
@@ -144,4 +210,29 @@ test("quality coverage checks each promised section instead of exhausting every 
   });
   assert.equal(result.checks.find(check=>check.name==='confirmed-topic-coverage').passed,true);
   assert.equal(result.issues.some(issue=>issue.code==='confirmed_topic_coverage_missing'),false);
+});
+
+test("a warning-only provider review cannot leave production failed without a blocker", () => {
+  const result=applyDeterministicGates({passed:false,score:74,issues:[
+    {code:"UNIFORM_SECTION_RHYTHM",severity:"warning",message:"Vary section rhythm."}],checks:[],unsupported_claims:[]},{
+    draft:{title:"Route guide",body_markdown:"## Route\n\nChoose the signed route because it avoids backtracking.",
+      meta_description:"A practical signed route.",seo:{meta_title:"Route guide",focus_keyword:"route guide",secondary_keywords:[],search_intent:"informational",key_takeaways:[],faqs:[]},
+      evidence_ledger:[],unresolved_conflicts:[],verification_notes:[],visuals:[],faqs:[],strategy_version:"3.3",schema_jsonld:{"@graph":[{"@type":"Article"}] }},
+    facts:[],brief:{strategy_version:"3.3",canonical:{quick_answer:"Use the signed route.",answer_blocks:[]},plan:{outline:[]}},
+    content_policy:{minimum_words:0,faq:{allowed:false},visuals:{minimum:0,maximum:0}},reader_sources:[],
+  });
+  assert.equal(result.issues.some((issue)=>issue.severity==="blocker"),false);
+  assert.equal(result.passed,true);
+  assert.equal(result.content_quality.passed,true);
+});
+
+test("an Affiliated Hospital name is not mistaken for affiliate commerce", () => {
+  const result = applyDeterministicGates({ passed: true, score: 100, issues: [], checks: [], unsupported_claims: [] }, {
+    draft: { title: "Route guide", body_markdown: "Take the exit beside the Second Affiliated Hospital.",
+      evidence_ledger: [], unresolved_conflicts: [], seo: { meta_title: "Route guide", focus_keyword: "route guide" },
+      meta_description: "A practical route guide.", visuals: [], strategy_version: "3.3", schema_jsonld: { "@graph": [{ "@type": "Article" }] } },
+    facts: [], brief: { strategy_version: "3.3", canonical: { quick_answer: "Use the signed exit.", answer_blocks: [] }, plan: { outline: [] } },
+    content_policy: { minimum_words: 0, faq: { allowed: false }, visuals: { minimum: 0, maximum: 5 } }, reader_sources: [],
+  });
+  assert.equal(result.issues.some((issue) => issue.code === "commercial_contamination"), false);
 });

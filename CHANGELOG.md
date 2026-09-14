@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.19 - Unreleased
+
+- Rebuild each final Frontend Page Payload from the current Draft, Brief, selected facts and visual state. A stale page can no longer let an earlier quality review masquerade as current, and a changed page now invalidates the reusable `review_draft` artifact input.
+- Scope atomic evidence to the block that actually expresses a fact instead of attaching every section claim to every paragraph. Brief outline identifiers are reconciled only to matching headings, unmatched legacy ledger nodes are removed, and generic workflow qualifiers cannot manufacture evidence bindings.
+- Treat equivalent current evidence values as alternatives and protect only meaningful published quantities, policies, dates and qualifiers. Internal snake-case metadata, source-specific surface variants and unrelated section facts no longer create false final-page failures.
+- Route semantic/value evidence failures to bounded `revise_draft`, while retaining `compose_frontend_page` for Contract/provenance/schema failures. This prevents page-only retry loops from attempting to repair article wording and preserves every successful upstream artifact.
+- Make bounded Draft repair normalize legacy heading hierarchies before selecting replacement boundaries, promote planned article sections to H2, remove duplicate title H1s, and refuse to replace a parent section in a way that consumes later planned sections.
+- Treat provider quality warnings as editorial guidance rather than blockers. A review can fail only with an explicit blocker; missing planned body sections force a fresh Draft from the preserved Writing Packet instead of repeatedly patching a truncated article.
+- Upgrade `production_state` to 1.6 so historical truncated Drafts are detected deterministically and expose `generate_draft` as the exact recovery target. Active work, current QA, successful artifacts and protected research records remain authoritative.
+- Rebuild the final Content AST/Page Payload from visible article facts, deterministic SEO/GEO metadata and the active Frontend Contract. The CMS emits semantic components and provenance only; it neither copies nor invents Frontend JSX/CSS.
+- Add bounded production-copy Vertex and WordPress-draft canaries. Five distinct production flows reached current QA/commercial state, and a complete canary reached final Publish Package plus draft-only WordPress acknowledgement with stored `preview_url` and `edit_url`.
+- Add regressions for atomic claim placement, compact values, qualifier filtering, current-source alternatives, H3 repair, dynamic repair enums, page-before-review ordering, page-driven QA invalidation, warning-only QA and historical truncation. Schema remains 69, Content Strategy remains 3.3 and Frontend Contract 1.4.0 rendering ownership is unchanged.
+
 ## 2.0.18 - Unreleased
 
 - Make a current failed quality review authoritative over later failures in the parallel image/page branch. `production_state` 1.5 now keeps `review_draft` as the failed stage, exposes `revise_draft` as both the recovery target and immediate next step, and includes the conditional repair stage in progress even before its first Job exists.

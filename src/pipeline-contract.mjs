@@ -1,7 +1,7 @@
 import { sha256 } from './utils.mjs';
 import { resolveStagePolicy } from './ai/stage-policy.mjs';
 
-export const PIPELINE_CONTRACT_VERSION = 'pipeline-dependencies-2';
+export const PIPELINE_CONTRACT_VERSION = 'pipeline-dependencies-3';
 export function semanticMaterial(value) {
   if (Array.isArray(value)) return value.map(semanticMaterial);
   if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort()

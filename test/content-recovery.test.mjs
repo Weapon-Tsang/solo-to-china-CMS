@@ -7,6 +7,7 @@ import { repositoryFixture } from '../test-support/repository-fixture.mjs';
 import { contentRecoveryReport, executeContentRecovery } from '../src/services/content-recovery.mjs';
 import { normalizeXiaohongshuCapture } from '../src/adapters/xiaohongshu.mjs';
 import { transaction } from '../src/db.mjs';
+import { dependencyHash } from '../src/pipeline-contract.mjs';
 
 function fixture(t, contentConfig = {}) {
   const {db,repository}=repositoryFixture(t, contentConfig);
@@ -76,6 +77,24 @@ test('old revision QA cannot masquerade as current QA on content list',t=>{
   assert.equal(row.operation.dimensions.content_quality.status,'not_tested');
   assert.equal(row.workflow_status,'awaiting_review');
 });
+
+test('a changed frontend page invalidates the reusable review artifact input',t=>{
+  const {db,repository}=fixture(t);
+  const job={type:'review_draft',entity_id:'draft-r',production_owner_opportunity_id:'opportunity-r'};
+  const before=dependencyHash(repository.pipelineDependencyMaterial(job));
+  db.prepare(`INSERT INTO frontend_contract_snapshots(id,source_repository,registry_source,page_schema_source,
+    contract_version,schema_version,checksum,registry_json,page_schema_json,diff_json,status,synced_at,
+    publish_package_schema_source,publish_package_version,publish_package_schema_json,artifact_checksum)
+    VALUES ('snapshot-r','repo','registry','schema','1.4.0','1.0.0','checksum-r','{}','{}','{}','active','now','','','{}','')`).run();
+  db.prepare(`INSERT INTO frontend_page_compositions(id,draft_id,snapshot_id,contract_version,schema_version,
+    contract_checksum,payload_json,validation_json,status,model,generated_at,updated_at,draft_revision,draft_content_hash)
+    VALUES ('page-r','draft-r','snapshot-r','1.4.0','1.0.0','checksum-r','{"metadata":{"title":"Guide"},"blocks":[]}',
+      '{"valid":true,"blockProvenance":[]}','valid','deterministic','now','now',1,'hash-1')`).run();
+  const after=dependencyHash(repository.pipelineDependencyMaterial(job));
+  assert.notEqual(after,before);
+  db.prepare("UPDATE frontend_page_compositions SET payload_json='{" + '"metadata":{"title":"Changed"},"blocks":[]}' + "' WHERE id='page-r'").run();
+  assert.notEqual(dependencyHash(repository.pipelineDependencyMaterial(job)),after);
+});
 test('image recovery returns its exact source link and binds only retained authorized data',t=>{
   const {db,repository}=fixture(t);
   const saved=repository.saveCapture(normalizeXiaohongshuCapture({url:'https://www.xiaohongshu.com/explore/recoverysource',title:'Exact original note',text:'A captured source containing specific evidence about this scene.',images:[{url:'https://example.test/photo.jpg'}]}));
@@ -104,6 +123,59 @@ test('media/page blockers do not automatically rewrite otherwise valid text', ()
   assert.equal(qualityRepairStage([{code:'final_page_invalid',severity:'blocker'}]), 'compose_frontend_page');
   assert.equal(qualityRepairStage([{code:'WORD_COUNT_BELOW_TARGET',severity:'warning'}]), null);
   assert.equal(qualityRepairStage([{code:'UNSUPPORTED_FACTUAL_CLAIMS',severity:'blocker'}]), 'revise_draft');
+  assert.equal(qualityRepairStage([{code:'UNSUPPORTED_FACTUAL_CLAIMS',severity:'blocker'},
+    {code:'EVIDENCE_LEDGER_EVASION',severity:'blocker'}]), 'generate_draft');
+  assert.equal(qualityRepairStage([{code:'confirmed_topic_coverage_missing',severity:'blocker',affected_count:4}]), 'generate_draft');
+  assert.equal(qualityRepairStage([{code:'confirmed_topic_coverage_missing',severity:'blocker',affected_count:2}]), 'revise_draft');
+  assert.equal(qualityRepairStage([{code:'planned_body_sections_missing',severity:'blocker',affected_count:1}]), 'generate_draft');
+});
+
+test('global evidence-ledger evasion regenerates only the draft from its existing writing packet',t=>{
+  const {db,repository}=fixture(t);
+  const issues=[{code:'EVIDENCE_LEDGER_EVASION',severity:'blocker',message:'widespread unsupported prose'}];
+  const result=repository.automaticQualityRepairState('draft-r',issues,{enqueue:true,productionOwnerOpportunityId:'opportunity-r'});
+  assert.equal(result.queued,true);
+  assert.equal(result.stage,'generate_draft');
+  const job=db.prepare("SELECT type,entity_id,production_owner_opportunity_id FROM jobs WHERE type='generate_draft'").get();
+  assert.equal(job.entity_id,'brief-r');
+  assert.equal(job.production_owner_opportunity_id,'opportunity-r');
+});
+test('quality regeneration feedback makes the failed review part of the reusable stage identity',t=>{
+  const {db,repository}=fixture(t);
+  const issues=[{code:'DATABASE_DUMP',severity:'blocker',message:'Unsupported fare and disconnected facts.'},
+    {code:'readability_suggestion',severity:'warning',message:'One long sentence.'}];
+  repository.saveReview('draft-r',{passed:false,score:38,issues,checks:[],unsupported_claims:[]},'fixture',
+    {revision:1,contentHash:'hash-1',productionOwnerOpportunityId:'opportunity-r'});
+  const feedback=repository.qualityRegenerationFeedback('brief-r');
+  assert.equal(feedback.base_content_hash,'hash-1');
+  assert.equal(feedback.quality_score,38);
+  assert.deepEqual(feedback.blockers.map((item)=>item.code),['DATABASE_DUMP']);
+  const repairJob={type:'generate_draft',entity_id:'brief-r',production_owner_opportunity_id:'opportunity-r',
+    dedupe_key:'auto-quality-repair:generate_draft:draft-r:r1'};
+  const before=dependencyHash(repository.pipelineDependencyMaterial(repairJob));
+  db.prepare("UPDATE article_drafts SET revision=2,content_hash='hash-2'").run();
+  repository.saveReview('draft-r',{passed:false,score:50,issues:[{code:'NO_CAUSAL_FLOW',severity:'blocker',message:'No trade-offs.'}],checks:[],unsupported_claims:[]},'fixture',
+    {revision:2,contentHash:'hash-2',productionOwnerOpportunityId:'opportunity-r'});
+  assert.notEqual(dependencyHash(repository.pipelineDependencyMaterial({...repairJob,dedupe_key:'auto-quality-repair:generate_draft:draft-r:r2'})),before);
+});
+test('legacy plan and frozen packet scope mismatch recovers from editorial assembly instead of rewriting the draft',t=>{
+  const {db,repository}=fixture(t);
+  db.prepare(`UPDATE content_briefs SET plan_json=? WHERE id='brief-r'`).run(JSON.stringify({outline:[
+    {section_id:'one',heading:'One',claim_keys:['fact.one']},{section_id:'two',heading:'Two',claim_keys:['fact.two']},
+  ]}));
+  db.prepare(`INSERT INTO editorial_assemblies(id,candidate_id,opportunity_id,input_hash,selected_fact_keys_json,created_at,updated_at)
+    VALUES ('assembly-r','topic-r','opportunity-r','hash','["fact.one"]','now','now')`).run();
+  db.prepare(`INSERT INTO narrative_plans(id,brief_id,created_at,updated_at) VALUES ('narrative-r','brief-r','now','now')`).run();
+  db.prepare(`INSERT INTO writing_packets(id,brief_id,narrative_plan_id,packet_text,selected_fact_keys_json,input_hash,created_at,updated_at)
+    VALUES ('packet-r','brief-r','narrative-r','legacy','["fact.one"]','hash','now','now')`).run();
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.version,'1.6');
+  assert.equal(state.stage_status,'failed');
+  assert.equal(state.recovery_target,'assemble_editorial');
+  assert.equal(state.latest_error.code,'FROZEN_WRITING_SCOPE_INVALID');
+  const result=executeContentRecovery(repository,'opportunity-r',{action:'retry_failed_stage',revision:1,idempotencyKey:'scope-recovery'});
+  assert.equal(result.resolvedStage,'assemble_editorial');
+  assert.equal(db.prepare("SELECT type FROM jobs WHERE id=?").get(result.jobId).type,'assemble_editorial');
 });
 test('automatic quality repair is deduplicated per revision and stops after two attempts',t=>{
   const {db,repository}=fixture(t);
@@ -153,7 +225,7 @@ test('a parallel page failure cannot overwrite failed QA and terminal reconcilia
   db.prepare("UPDATE article_drafts SET status='exception' WHERE id='draft-r'").run();
 
   const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,'1.5');
+  assert.equal(state.version,'1.6');
   assert.equal(state.stage_status,'failed');
   assert.equal(state.current_stage,'review_draft');
   assert.equal(state.recovery_target,'revise_draft');
@@ -236,6 +308,10 @@ test('operator diagnosis is concise Chinese and hides long code lists behind tec
   const configuration=recoveryDiagnosis({failedJob:{type:'compose_frontend_page',last_error:'Content production requires a configured Kimi key or Vertex AI project.'}});
   assert.match(configuration.headline,/模型尚未配置/);assert.equal(configuration.automatic.reason,'operation_must_be_resolved_first');
   assert.match(configuration.recommendedAction.why,/重复点击仍会失败/);
+  const repairScope=recoveryDiagnosis({failedJob:{type:'revise_draft',last_failure_code:'INVALID_DRAFT_REPAIR_SCOPE',
+    last_error:'Draft repair cannot replace unknown section.'}});
+  assert.match(repairScope.headline,/没有命中/);
+  assert.equal(repairScope.recommendedAction.id,'revise_draft');
   const model403=recoveryDiagnosis({failedJob:{type:'compose_frontend_page',last_error:'Vertex Gemini request failed (403): permission denied'}});
   assert.match(model403.headline,/模型服务/);
   assert.doesNotMatch(model403.headline,/图片/);

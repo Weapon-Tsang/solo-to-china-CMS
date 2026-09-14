@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildContentAst, composeFirstTimeGuideFromAst, composePageFromAst, renderContentAstMarkdown } from "../src/content-blocks.mjs";
+import { buildContentAst, composeFirstTimeGuideFromAst, composePageFromAst, reconcileContentAstLedger, renderContentAstMarkdown } from "../src/content-blocks.mjs";
 import { validateJsonSchema } from "../src/frontend-contract.mjs";
 import { synchronizeSchemaWithPage } from "../src/publish-page.mjs";
 import { synchronizeSeoMetadata, validateSeoGeoArtifact } from "../src/seo-geo.mjs";
@@ -153,4 +153,90 @@ test("a stable image component consumes AST media without flattening the surroun
   assert.equal(imageBlock.data.media_id, 88);
   assert.equal(imageBlock.data.alt, "Museum entrance");
   assert.ok(page.output.blocks.some((block) => block.type === "paragraph"));
+});
+
+test("atomic AST assigns a claim only to the block that carries its fact and reconciles ledger node ids", () => {
+  const scopedDraft = { ...draft,
+    body_markdown: "### Tickets\n\nBuy online before arrival.\n\nAdmission costs CNY 50 on weekdays.\n\nUse the east entrance.",
+    evidence_ledger: [{ section_id: "section_ticket", section: "Tickets",
+      content_node_ids: ["node_old_one", "node_old_two", "node_unused"],
+      claim_keys: ["museum.ticket.price"], source_ids: ["source-1"] }],
+  };
+  const facts = [{ normalized_key: "museum.ticket.price", subject: "Museum admission",
+    preferred_value: "CNY 50", evidence: [{ source_id: "source-1", value: "CNY 50", qualifiers: ["weekdays"] }] }];
+  const ast = buildContentAst({ draft: scopedDraft, brief: { id: "brief-scoped" }, facts });
+  const prose = ast.nodes.filter((node) => node.type === "paragraph");
+  assert.deepEqual(prose.map((node) => node.fact_refs.length), [0, 1, 0]);
+  assert.equal(prose[1].fact_refs[0], "museum.ticket.price");
+  const reconciled = reconcileContentAstLedger(ast, scopedDraft.evidence_ledger);
+  assert.deepEqual(reconciled[0].content_node_ids, [prose[1].id]);
+  assert.ok(reconciled[0].content_node_ids.every((id) => ast.nodes.some((node) => node.id === id)));
+});
+
+test("compact values and meaningful predicate phrases select the factual paragraph instead of a nearby subject mention", () => {
+  const scopedDraft = { ...draft,
+    body_markdown: "## Line 1\n\nLine 1 connects Hongyadong with downtown.\n\nHongyadong is open 24/7. Take Metro Line 1 to Xiaoshizi Station.",
+    evidence_ledger: [{ section_id:"line-one", section:"Line 1", claim_keys:["hongyadong.hours", "hongyadong.metro"], source_ids:["source-1"] }],
+  };
+  const facts = [
+    { normalized_key:"hongyadong.hours", subject:"Hongyadong", predicate:"opening_hours", preferred_value:"24/7",
+      evidence:[{ source_id:"source-1", value:"24/7", qualifiers:[] }] },
+    { normalized_key:"hongyadong.metro", subject:"Hongyadong", predicate:"nearest_metro_station", preferred_value:"小什字站 (Line 1)",
+      evidence:[{ source_id:"source-1", value:"小什字站", qualifiers:["Line 1"] }] },
+  ];
+  const ast = buildContentAst({ draft:scopedDraft, brief:{ id:"brief-compact" }, facts });
+  const prose = ast.nodes.filter((node) => node.type === "paragraph");
+  assert.deepEqual(prose[0].fact_refs, []);
+  assert.deepEqual(new Set(prose[1].fact_refs), new Set(["hongyadong.hours", "hongyadong.metro"]));
+});
+
+test("generic workflow qualifiers never project an unmatched claim onto an arbitrary paragraph", () => {
+  const scopedDraft = { ...draft, body_markdown:"## Day 1\n\nDay 1 stays inside Yuzhong District.",
+    evidence_ledger:[{ section_id:"day-one", section:"Day 1", claim_keys:["route.walk.duration"], source_ids:["source-1"] }] };
+  const facts = [{ normalized_key:"route.walk.duration", subject:"山城步道到解放碑路线", predicate:"typical_duration_minutes",
+    preferred_value:"< 120", evidence:[{ source_id:"source-1", value:"< 120", qualifiers:["walking", "community_estimate"] }] }];
+  const ast = buildContentAst({ draft:scopedDraft, brief:{ id:"brief-unmatched" }, facts });
+  assert.deepEqual(ast.nodes.find((node) => node.type === "paragraph").fact_refs, []);
+  assert.deepEqual(reconcileContentAstLedger(ast, scopedDraft.evidence_ledger)[0].content_node_ids, []);
+});
+
+test("draft ledger reconciliation drops planned facts that visible prose never asserts", () => {
+  const scopedDraft = { ...draft, body_markdown: "## Tickets\n\nAdmission is free.", evidence_ledger: [{
+    section_id: "tickets", section: "Tickets", content_node_ids: [],
+    claim_keys: ["museum.fee", "museum.hours"], source_ids: ["fee-source", "hours-source"],
+  }] };
+  const facts = [
+    { normalized_key: "museum.fee", subject: "Museum", predicate: "admission_fee", preferred_value: "CNY 0",
+      evidence: [{ source_id: "fee-source", value: "CNY 0" }] },
+    { normalized_key: "museum.hours", subject: "Museum", predicate: "opening_hours", preferred_value: "09:00-17:00",
+      evidence: [{ source_id: "hours-source", value: "09:00-17:00" }] },
+  ];
+  const ast = buildContentAst({ draft: scopedDraft, brief: { id: "brief-ledger" }, facts });
+  const [entry] = reconcileContentAstLedger(ast, scopedDraft.evidence_ledger);
+  assert.deepEqual(entry.claim_keys, ["museum.fee"]);
+  assert.deepEqual(entry.source_ids, ["fee-source"]);
+  assert.equal(entry.content_node_ids.length, 1);
+});
+
+test("answer-first prose before the first H2 belongs to the first planned evidence section", () => {
+  const scopedDraft = { ...draft, body_markdown: "Admission is free.\n\n## Route\n\nTake the signed exit.", evidence_ledger: [
+    { section_id: "answer", section: "Quick answer", content_node_ids: [], claim_keys: ["museum.fee"], source_ids: ["fee-source"] },
+    { section_id: "route", section: "Route", content_node_ids: [], claim_keys: [], source_ids: [] },
+  ] };
+  const facts = [{ normalized_key: "museum.fee", subject: "Museum", predicate: "admission_fee", preferred_value: "CNY 0",
+    evidence: [{ source_id: "fee-source", value: "CNY 0" }] }];
+  const ast = buildContentAst({ draft: scopedDraft, brief: { id: "brief-intro" }, facts });
+  const [entry] = reconcileContentAstLedger(ast, scopedDraft.evidence_ledger);
+  assert.deepEqual(entry.claim_keys, ["museum.fee"]);
+  assert.equal(ast.nodes.find((node) => node.type === "paragraph").source_section_ids[0], "answer");
+});
+
+test("a subject mention without its protected numeric value does not assert the fee fact", () => {
+  const scopedDraft = { ...draft, body_markdown: "## Buses\n\nPublic buses run on surface roads.", evidence_ledger: [{
+    section_id: "buses", section: "Buses", content_node_ids: [], claim_keys: ["bus.fare"], source_ids: ["fare-source"],
+  }] };
+  const facts = [{ normalized_key: "bus.fare", subject: "Public buses", predicate: "fare", preferred_value: "CNY 2",
+    evidence: [{ source_id: "fare-source", value: "CNY 2" }] }];
+  const ast = buildContentAst({ draft: scopedDraft, brief: { id: "brief-fee" }, facts });
+  assert.deepEqual(reconcileContentAstLedger(ast, scopedDraft.evidence_ledger)[0].claim_keys, []);
 });

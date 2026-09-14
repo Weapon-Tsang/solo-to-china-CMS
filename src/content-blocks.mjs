@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { pageBlockSignature } from "./evidence-validator.mjs";
+import { evidenceTextContains, pageBlockSignature, protectedFactTokens } from "./evidence-validator.mjs";
 
 export function markdownToContentBlocks(markdown) {
   const lines = String(markdown || "").replace(/\r/g, "").split("\n");
@@ -36,33 +36,52 @@ export function markdownToContentBlocks(markdown) {
   return blocks;
 }
 
-export function buildContentAst({ draft = {}, brief = {}, visuals = [] } = {}) {
+export function buildContentAst({ draft = {}, brief = {}, visuals = [], facts = [] } = {}) {
   const blocks = markdownToContentBlocks(draft.body_markdown);
   const ledger = draft.evidence_ledger || [];
-  let activeLedger = null;
+  const ledgerByHeading = ledgerHeadingIndex(ledger, brief);
+  // The first planned section is commonly rendered as an answer-first intro
+  // without a visible H2. Treat pre-heading prose as that first section until
+  // the first actual heading establishes another scope.
+  let activeLedger = ledger[0] || null;
+  let activeLedgerLevel = activeLedger ? 2 : null;
   const occurrence = new Map();
   const usedPreferredIds = new Set();
+  const preferredIndex = new Map();
   const nodes = blocks.map((block) => {
-    if (block.type === "heading") activeLedger = ledger.find((entry) => normalize(entry.section) === normalize(block.text)) || null;
+    if (block.type === "heading") {
+      const matched = ledgerByHeading.get(normalize(block.text)) || null;
+      if (matched) {
+        activeLedger = matched;
+        activeLedgerLevel = Number(block.level || 2);
+      } else if (activeLedgerLevel == null || Number(block.level || 2) <= activeLedgerLevel) {
+        activeLedger = null;
+        activeLedgerLevel = null;
+      }
+    }
     const signature = JSON.stringify(block);
     const count = (occurrence.get(signature) || 0) + 1;
     occurrence.set(signature, count);
-    const candidate = block.type !== "heading" ? activeLedger?.content_node_ids?.[0] : null;
+    const ledgerIndex = activeLedger ? ledger.indexOf(activeLedger) : -1;
+    const nextPreferred = ledgerIndex < 0 ? 0 : preferredIndex.get(ledgerIndex) || 0;
+    const candidate = block.type !== "heading" ? activeLedger?.content_node_ids?.[nextPreferred] : null;
+    if (block.type !== "heading" && ledgerIndex >= 0) preferredIndex.set(ledgerIndex, nextPreferred + 1);
     const preferred = candidate && !usedPreferredIds.has(candidate) ? candidate : null;
     if (preferred) usedPreferredIds.add(preferred);
     return {
       id: preferred || `node_${crypto.createHash("sha256").update(`${brief.id || "brief"}:${signature}:${count}`).digest("hex").slice(0, 20)}`,
       type: block.type,
-      semantic_role: block.type === "heading" ? "section_heading" : activeLedger?.claim_keys?.length ? "factual" : "editorial",
+      semantic_role: block.type === "heading" ? "section_heading" : "editorial",
       visible_text: block.type === "list" ? block.items.join("\n") : block.text,
       ...(block.level ? { level: block.level } : {}),
       ...(block.type === "list" ? { items: [...block.items], ordered: Boolean(block.ordered) } : {}),
-      fact_refs: [...new Set(activeLedger?.claim_keys || [])],
+      fact_refs: [],
       source_section_ids: activeLedger?.section_id ? [activeLedger.section_id] : [],
-      source_ids: [...new Set(activeLedger?.source_ids || [])],
+      source_ids: [],
       media_refs: [],
     };
   });
+  assignFactsToNodes(nodes, ledger, facts);
   const media = visuals.map((visual, index) => ({ id: visual.id || `visual_${index + 1}`, role: visual.image_role || "context",
     placement: visual.placement || "content", alt: visual.alt_text || "", caption: visual.caption || "",
     media_id: visual.wordpress_media_id || null, source_asset_id: visual.source_asset_id || null,
@@ -78,6 +97,121 @@ export function buildContentAst({ draft = {}, brief = {}, visuals = [] } = {}) {
   };
   ast.content_hash = crypto.createHash("sha256").update(JSON.stringify(ast)).digest("hex");
   return ast;
+}
+
+export function reconcileContentAstLedger(ast, ledger = []) {
+  const nodes = (ast?.nodes || []).filter((node) => node.type !== "heading" && node.type !== "media");
+  return (ledger || []).map((entry) => {
+    const claims = new Set(entry.claim_keys || []);
+    const sectionNodes = nodes.filter((node) => (node.source_section_ids || []).includes(entry.section_id));
+    const factualNodes = sectionNodes.filter((node) => (node.fact_refs || []).some((key) => claims.has(key)));
+    // A plan ledger describes the facts available to a section, while the
+    // persisted draft ledger must describe only facts the visible prose
+    // actually asserts. Keeping unused planned keys here makes QA demand that
+    // every available price/hour appears in the article and produces false
+    // evidence mismatches on otherwise honest, concise copy.
+    const assertedClaims = [...new Set(factualNodes.flatMap((node) => node.fact_refs || []))]
+      .filter((key) => claims.has(key));
+    const assertedSources = [...new Set(factualNodes.flatMap((node) => node.source_ids || []))].sort();
+    return { ...entry, content_node_ids: [...new Set(factualNodes.map((node) => node.id))],
+      claim_keys: assertedClaims, source_ids: assertedSources };
+  });
+}
+
+function assignFactsToNodes(nodes, ledger, facts) {
+  const factsByKey = new Map((facts || []).map((fact) => [fact.normalized_key, fact]));
+  for (const entry of ledger || []) {
+    const candidates = nodes.filter((node) => node.type !== "heading" && node.type !== "media"
+      && (node.source_section_ids || []).includes(entry.section_id));
+    if (!candidates.length) continue;
+    (entry.claim_keys || []).forEach((key, claimIndex) => {
+      const fact = factsByKey.get(key);
+      const signals = factSearchSignals(fact);
+      const ranked = candidates.map((node, index) => {
+        const matched = signals.filter((signal) => normalize(node.visible_text).includes(signal.term));
+        const protectedTokens = fact ? protectedFactTokens(fact) : [];
+        const protectedValuePresent = !protectedTokens.length
+          || protectedTokens.some((token) => evidenceTextContains(node.visible_text, token));
+        return { node, index, score: protectedValuePresent ? matched.reduce((score, signal) => score + signal.weight, 0) : 0,
+          strongest: Math.max(0, ...matched.map((signal) => signal.weight)) };
+      })
+        .sort((left, right) => right.score - left.score || left.index - right.index);
+      // A ledger states which facts belong to a section, not that every fact is
+      // asserted by every block in that section.  Old drafts often carry broad
+      // section ledgers, so an unmatched fact must remain unassigned instead of
+      // contaminating an arbitrary paragraph and failing final-page QA forever.
+      // Keep the legacy fallback only when the caller genuinely has no fact
+      // material (the pre-Content-AST compatibility path).
+      const target = ranked[0]?.score >= 4 && ranked[0]?.strongest >= 4
+        ? ranked[0].node : !fact ? candidates[claimIndex % candidates.length] : null;
+      if (!target) return;
+      target.fact_refs = [...new Set([...(target.fact_refs || []), key])];
+      target.semantic_role = "factual";
+      const evidenceSources = (fact?.evidence || []).map((item) => item.source_id).filter(Boolean);
+      target.source_ids = [...new Set([...(target.source_ids || []), ...(evidenceSources.length ? evidenceSources : entry.source_ids || [])])].sort();
+    });
+  }
+}
+
+function factSearchSignals(fact) {
+  if (!fact) return [];
+  const weighted = [
+    ...[fact.subject, fact.canonical_subject].flatMap((value) => searchParts(value).map((part) => [part, 4])),
+    ...predicateSearchParts(fact.predicate).flatMap((item) => [[item.value, item.weight]]),
+    ...searchParts(fact.preferred_value).map((value) => [value, 12]),
+    ...(isZeroFeeValue(fact.preferred_value) ? [["free", 12]] : []),
+    ...(fact.evidence || []).flatMap((item) => [
+      ...searchParts(item.value).map((value) => [value, 10]),
+      ...(item.qualifiers || []).filter(isUsefulSearchQualifier).flatMap((value) => searchParts(value).map((part) => [part, 5])),
+    ]),
+  ];
+  const signals = new Map();
+  for (const [value, weight] of weighted) {
+    const term = normalize(value);
+    if (term.length >= 3 || /^\d+(?:\s+\d+)+$/.test(term)) signals.set(term, Math.max(weight, signals.get(term) || 0));
+  }
+  return [...signals].map(([term, weight]) => ({ term, weight }));
+}
+
+function isZeroFeeValue(value) {
+  return /^(?:(?:CNY|RMB|[¥￥])\s*0|0\s*(?:CNY|RMB|元))$/iu.test(String(value || "").trim());
+}
+
+function searchParts(value) {
+  const text = String(value || "").trim();
+  if (!text) return [];
+  // Preserve compact values such as 24/7 as one high-confidence signal while
+  // still exposing individual stops from long route/list values.
+  const parenthetical = [...text.matchAll(/\(([^)]+)\)/g)].map((match) => match[1]).filter(Boolean);
+  return [...new Set([text, ...parenthetical, ...text.split(/\s*(?:\||,|;|->|→|—>)\s*/u).filter(Boolean)])];
+}
+
+function predicateSearchParts(value) {
+  const parts = String(value || "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((part) => part.length >= 4);
+  const weighted = [...parts.map((part) => ({ value:part, weight:3 })),
+    ...parts.slice(0, -1).map((part, index) => ({ value:`${part} ${parts[index + 1]}`, weight:6 }))];
+  return [...new Map(weighted.map((item) => [item.value, item])).values()];
+}
+
+function isUsefulSearchQualifier(value) {
+  const text = String(value || "").trim();
+  if (!text || /^[a-z0-9]+(?:_[a-z0-9]+)+$/i.test(text)) return false;
+  return !/^(?:(?:day|line|route|itinerary)\s*\d*|current|ordinary|common occurrence|walking|on foot|metro route)$/i.test(text);
+}
+
+function ledgerHeadingIndex(ledger, brief) {
+  const output = new Map();
+  for (const entry of ledger || []) if (normalize(entry.section)) output.set(normalize(entry.section), entry);
+  let plan = brief?.plan || brief?.outline ? brief : null;
+  if (!plan && brief?.plan_json) {
+    try { plan = JSON.parse(brief.plan_json); } catch { plan = null; }
+  }
+  const outline = plan?.plan?.outline || plan?.outline || [];
+  for (const section of outline) {
+    const entry = (ledger || []).find((item) => item.section_id === section.section_id);
+    if (entry && normalize(section.heading)) output.set(normalize(section.heading), entry);
+  }
+  return output;
 }
 
 export function renderContentAstMarkdown(ast) {

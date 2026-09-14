@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pageBlockSignature, validatePageEvidence } from "../src/evidence-validator.mjs";
+import { factRelevant, pageBlockSignature, protectedFactTokens, validatePageEvidence } from "../src/evidence-validator.mjs";
 import { validateFinalPageArtifact } from "../src/publish-page.mjs";
 
 const goodBlock = { type: "articleSection", variant: "answer-first", data: {
@@ -90,6 +90,60 @@ test('explicit historical and conditional claims retain their own values and qua
   assert.equal(validatePageEvidence({ blocks: [swapped] }, pkg).valid, false);
   entry.claimTraces[1].claimId = 'forged';
   assert.ok(codes(validatePageEvidence({ blocks: [swapped] }, pkg)).includes('FORGED_CLAIM_REFERENCE'));
+});
+
+test('equivalent current currency surfaces require one canonical value instead of every spelling', () => {
+  const block = { ...goodBlock, data: { body: 'The Test Museum ticket costs CNY 0 on weekdays.' } };
+  const pkg = packageFor(block);
+  const fact = pkg.facts[0];
+  fact.preferred_value = 'CNY 0';
+  fact.evidence = [
+    { claim_id: 'zero-cny', source_id: 'source-real', value: '0 CNY', qualifiers: ['weekdays'] },
+    { claim_id: 'zero-rmb', source_id: 'source-real', value: '0 RMB', qualifiers: ['weekdays'] },
+  ];
+  const entry = pkg.frontend_page.validation.blockProvenance[0];
+  entry.blockSignature = pageBlockSignature(block);
+  entry.claimTraces = fact.evidence.map((item) => ({ claimKey: fact.normalized_key, claimId: item.claim_id,
+    sourceId: item.source_id, evidenceRole: 'current' }));
+  assert.equal(validatePageEvidence({ blocks: [block] }, pkg).valid, true);
+});
+
+test('zero-fee evidence accepts reader-friendly free admission wording', () => {
+  const block = { ...goodBlock, data: { body: 'Admission to the Test Museum is free on weekdays.' } };
+  const pkg = packageFor(block);
+  pkg.facts[0].preferred_value = 'CNY 0';
+  pkg.facts[0].evidence = [{ claim_id: 'zero-cny', source_id: 'source-real', value: '0 CNY', qualifiers: ['weekdays'] }];
+  const entry = pkg.frontend_page.validation.blockProvenance[0];
+  entry.blockSignature = pageBlockSignature(block);
+  entry.claimTraces = [{ claimKey: pkg.facts[0].normalized_key, claimId: 'zero-cny', sourceId: 'source-real', evidenceRole: 'current' }];
+  assert.equal(validatePageEvidence({ blocks: [block] }, pkg).valid, true);
+});
+
+test('divergent current-source details are alternatives rather than conjunctive literal requirements', () => {
+  const block = { ...goodBlock, data: { body: 'The Test Museum requires online booking; reserve 2 days in advance.' } };
+  const pkg = packageFor(block);
+  const fact = pkg.facts[0];
+  fact.predicate = 'reservation_required';
+  fact.preferred_value = 'true';
+  fact.evidence = [
+    { claim_id:'two-days', source_id:'source-real', value:'true', qualifiers:['2 days in advance'] },
+    { claim_id:'one-day', source_id:'source-other', value:'true', qualifiers:['advance: 1 day'] },
+    { claim_id:'unspecified', source_id:'source-third', value:'true', qualifiers:['book in advance'] },
+  ];
+  const entry = pkg.frontend_page.validation.blockProvenance[0];
+  entry.sourceIds = ['source-other', 'source-real', 'source-third'];
+  entry.blockSignature = pageBlockSignature(block);
+  entry.claimTraces = fact.evidence.map((item) => ({ claimKey:fact.normalized_key, claimId:item.claim_id,
+    sourceId:item.source_id, evidenceRole:'current' }));
+  assert.equal(validatePageEvidence({ blocks:[block] }, pkg).valid, true);
+});
+
+test('production vocabulary variants remain relevant without protecting internal workflow qualifiers', () => {
+  const nightView = { normalized_key:'attraction.hongyadong.night_view', subject:'Hongyadong and Qiansimen Bridge',
+    predicate:'night_lighting', preferred_value:'brightly illuminated multi-level stilt-house complex framed beneath the red Qiansimen cable-stayed bridge' };
+  assert.equal(factRelevant('The multi-level stilt-house complex uses warm lighting beside the red Qiansimen cable-stayed bridge at night.', nightView), true);
+  assert.deepEqual(protectedFactTokens({ predicate:'terrain_feature', preferred_value:'全是梯坎',
+    evidence:[{ value:'全是梯坎', qualifiers:['stairs_common', 'not_mobility_friendly'] }] }), []);
 });
 
 test("an empty ledger cannot support a factual page", () => {

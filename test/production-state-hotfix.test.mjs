@@ -112,7 +112,7 @@ test("a downstream historical failure with missing prerequisites recovers the fi
     last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.5");
+  assert.equal(state.version,"1.6");
   assert.equal(state.stage_status,"interrupted");
   assert.equal(state.recovery_target,"plan_narrative");
   assert.equal(state.latest_error,null);
@@ -146,7 +146,7 @@ test("a corrected destination invalidates old-scope failures and waits for expli
     VALUES ('scope-reset','shared-candidate','correct_destination','completed','{}','{}','tester','2026-09-13T02:00:00Z','corrected-owner','scope-reset-key')`).run();
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.5");
+  assert.equal(state.version,"1.6");
   assert.equal(state.lifecycle,"pending_start");
   assert.equal(state.stage_status,"waiting");
   assert.equal(state.latest_error,null);
@@ -214,6 +214,36 @@ test("failed QA reports recover through targeted revision instead of repeating r
   assert.equal(result.resolvedStage,"revise_draft");
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='review_draft'").get().count,0);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='revise_draft'").get().count,1);
+});
+
+test("a historically truncated draft regenerates from its preserved Writing Packet instead of patching one section",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"truncated-owner",{approved:true});
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,plan_json,status,created_at,updated_at,candidate_id)
+    VALUES ('truncated-brief','beijing','Beijing itinerary','[]','informational',?,'ready','2026-09-13','2026-09-13','shared-candidate')`)
+    .run(JSON.stringify({outline:[
+      {section_id:'arrival',heading:'Arrival plan',claim_keys:['arrival.fact']},
+      {section_id:'day-one',heading:'Day one route',claim_keys:['day1.fact']},
+      {section_id:'day-two',heading:'Day two route',claim_keys:['day2.fact']},
+      {section_id:'departure',heading:'Departure plan',claim_keys:['departure.fact']},
+    ]}));
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('truncated-draft','truncated-brief','Beijing itinerary','beijing-itinerary','## Arrival plan\n\nOnly the first section survived.','{}','qa_failed','2026-09-13','2026-09-13',2,'truncated-hash')`).run();
+  repository.saveReview('truncated-draft',{passed:false,score:48,issues:[
+    {code:'NO_TRAVELER_DECISION',severity:'blocker',message:'The route is incomplete.'},
+  ],checks:[],unsupported_claims:[]},'fixture',{revision:2,contentHash:'truncated-hash',productionOwnerOpportunityId:'truncated-owner'});
+
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,'failed');
+  assert.equal(state.current_stage,'review_draft');
+  assert.equal(state.recovery_target,'generate_draft');
+  assert.equal(state.latest_error.code,'PLANNED_BODY_SECTIONS_MISSING');
+  assert.match(state.latest_error.reason,/Writing Packet/);
+  const recovered=executeContentRecovery(repository,'truncated-owner',{
+    action:'retry_failed_stage',idempotency_key:'regenerate-truncated-draft',
+  },'tester');
+  assert.equal(recovered.resolvedStage,'generate_draft');
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='revise_draft'").get().count,0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='generate_draft'").get().count,1);
 });
 
 test("a planning failure without Editorial Assembly resumes assembly instead of skipping it",(t)=>{
