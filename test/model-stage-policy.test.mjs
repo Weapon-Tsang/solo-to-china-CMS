@@ -422,6 +422,39 @@ test("repair requests omit warnings and page-only issues, cap evidence payloads,
   assert.deepEqual(result.output.evidence_ledger,draft.evidence_ledger);
 });
 
+test("unsupported-assertion repair receives the exact audit claims and cannot import an unselected global fact", async () => {
+  let requestBody;
+  const cableway={normalized_key:"attraction.yangtze_river_cableway.opening_hours",subject:"Yangtze River Cableway",
+    predicate:"opening_hours",preferred_value:"08:00-22:00",evidence:[{source_id:"source-cableway",value:"08:00-22:00",
+      quote:"The cableway operates from 08:00 to 22:00.",qualifiers:[],coverage_limitations:[]}]};
+  const globallyKnownButUnselected={normalized_key:"attraction.great_hall.opening_hours",subject:"Great Hall",
+    predicate:"opening_hours",preferred_value:"09:00-18:00",evidence:[{source_id:"source-hall",value:"09:00-18:00",
+      quote:"The Great Hall operates from 09:00 to 18:00.",qualifiers:[],coverage_limitations:[]}]};
+  const draft={content_hash:"hours",title:"Metro guide",meta_description:"Practical route",seo:{meta_title:"Metro guide"},
+    body_markdown:"## Cableway and Great Hall\n\nUse the cableway from 08:00 to 22:00. The Great Hall is open 09:00 to 18:00.",
+    evidence_ledger:[{section_id:"route",section:"Cableway and Great Hall",content_node_ids:[],
+      claim_keys:[cableway.normalized_key],source_ids:["source-cableway"]}],verification_notes:[],visuals:[]};
+  const unsupported=["The Great Hall is open 09:00 to 18:00 without a selected supporting fact."];
+  const engine=new ContentEngine({apiKey:"key",model:"model",baseUrl:"https://api.example.test/v1"},async(_url,options)=>{
+    requestBody=JSON.parse(options.body);
+    return Response.json({model:"model",choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+      base_content_hash:"hours",replacement_sections:[{heading:"Cableway and Great Hall",
+        body_markdown:"Use the cableway from 08:00 to 22:00; verify same-day operating conditions before travel."}],
+    })}}]});
+  });
+  await engine.repairDraft({draft,facts:[cableway,globallyKnownButUnselected],
+    writing_packet:{selected_fact_keys:[cableway.normalized_key],evidence_ledger:[{fact_snapshot:cableway}],context:{version:2}},
+    brief:{plan:{outline:[{section_id:"route",heading:"Cableway and Great Hall",claim_keys:[cableway.normalized_key]}]}},
+    review:{unsupported_claims:unsupported}},[
+      {code:"UNSUPPORTED_ASSERTION",severity:"blocker",message:"Great Hall hours are outside the frozen evidence scope."},
+    ]);
+  const input=JSON.parse(requestBody.messages[1].content);
+  assert.deepEqual(input.unsupported_claims,unsupported);
+  assert.equal(input.allowed_changes.evidence_ledger,true);
+  assert.deepEqual(input.facts.map((fact)=>fact.normalized_key),[cableway.normalized_key]);
+  assert.doesNotMatch(JSON.stringify(input.facts),/great_hall/);
+});
+
 test("bounded repair retains mandatory brief constraints and prior blockers as regression guardrails", async () => {
   let requestBody;
   const draft={content_hash:"constraints",title:"Hongyadong guide",meta_description:"Practical guide",seo:{meta_title:"Hongyadong guide"},

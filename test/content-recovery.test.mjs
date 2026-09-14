@@ -52,6 +52,19 @@ test('recovery report is read-only and targeted compose continues from the selec
   assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'revise_draft',revision:1}),/已经有排队/);
   assert.equal(repository.listContent()[0].workflow_status,'compose_frontend_page_queued');
 });
+test('recovery detail preserves the current independent review instead of inventing unaudited brief failures',t=>{
+  const {repository}=fixture(t);
+  repository.saveReview('draft-r',{passed:false,score:72,
+    checks:[{name:'brief-adaptation-1',passed:true,detail:'The required adaptation is present.'}],
+    issues:[{code:'UNSUPPORTED_ASSERTION',severity:'blocker',message:'Great Hall opening hours are outside this article evidence scope.'}],
+    unsupported_claims:['The Great Hall is open 09:00 to 18:00.']},'fixture');
+  const report=contentRecoveryReport(repository,'opportunity-r');
+  assert.equal(report.localCheck.diagnosticOnly,false);
+  assert.equal(report.localCheck.source,'persisted_current_review');
+  assert.equal(report.localCheck.issues.some((issue)=>issue.code==='mandatory_brief_requirement_missing'),false);
+  assert.equal(report.diagnosis.headline,'正文包含当前证据范围外的事实');
+  assert.equal(report.diagnosis.recommendedAction.id,'revise_draft');
+});
 test('recovery refuses stale revisions, unknown images and existing-brief destination mutation while allowing independent QA',t=>{
   const {db,repository}=fixture(t);
   assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'compose_frontend_page',revision:0}),/其他任务更新/);

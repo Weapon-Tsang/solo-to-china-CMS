@@ -1,6 +1,13 @@
 # Changelog
 
-## 2.0.25 - Unreleased
+## 2.0.26 - Unreleased
+
+- Preserve the authoritative current quality review in Content Recovery details. A diagnostic recomputation can no longer discard the independent reviewer checks, invent “mandatory requirements not audited”, or hide an explicit unsupported assertion behind a generic unknown-error message.
+- Treat `UNSUPPORTED_ASSERTION` and its legacy plural form as first-class recoverable quality failures with an exact Chinese cause and action. The workbench continues to target bounded Draft revision rather than research, evidence or media regeneration.
+- Pass the reviewer's atomic `unsupported_claims` into bounded repair, treat the frozen repair facts as a complete allow-list, and permit the repair to remove invalid ledger mappings. A fact that exists elsewhere in Knowledge but was not selected for this article cannot be silently imported to preserve unsupported prose.
+- Require QA to separate supported and unsupported values instead of grouping all facts that share a predicate. This release remains schema 69, Content Strategy 3.3, `production_state` 2.0 and Frontend Contract 1.4.0; it performs no migration, bulk retry, deletion or automatic WordPress publication.
+
+## 2.0.25 - 2026-09-15
 
 - Reconcile a generated Draft's evidence ledger with the reader-visible prose before persistence. When a section already retains another honestly expressed approved fact, a model's surplus citation to an unused amount, duration, floor, date, condition or exception is removed instead of forcing that unrelated background detail into the article or failing the entire production flow.
 - Keep fail-closed coverage semantics: the reconciler never removes the only usable evidence from a planned evidence-bearing section. Such a section still receives one exact structured correction request and remains failed if the protected value is not restored.

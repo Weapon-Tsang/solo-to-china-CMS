@@ -1,5 +1,9 @@
 # Frontend Capability Contract Integration
 
+## 2.0.26 quality-repair boundary
+
+Atomic unsupported-assertion repair occurs entirely in the CMS Draft and evidence-ledger layer before a new Page Payload is composed. It changes no Frontend component, schema, JSX or CSS. After the repaired Draft passes current QA, the existing Frontend Contract 1.4.0 composition and WordPress preview remain the only visual acceptance boundary.
+
 ## 2.0.25 evidence ownership before composition
 
 Draft evidence reconciliation occurs before Content AST and Frontend Page composition. Optional ledger citations absent from reader-visible prose are removed only when the planned section retains other approved evidence; Source IDs are derived from frozen fact snapshots. This changes no component, schema, JSX or CSS and keeps Frontend Contract 1.4.0 as the sole public rendering boundary.

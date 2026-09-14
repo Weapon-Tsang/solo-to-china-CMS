@@ -533,7 +533,7 @@ export function applyBoundedDraftRepair(draft, patch, issues = [], { validFactKe
   const seo = { ...(draft.seo || {}) };
   if (metadata.meta_title != null) seo.meta_title = truncate(metadata.meta_title, 70);
   if (metadata.focus_keyword != null) seo.focus_keyword = truncate(metadata.focus_keyword, 160);
-  const evidenceAllowed = issueCodes.some((code) => /evidence|coverage|temporal|conflict|factual/.test(code));
+  const evidenceAllowed = issueCodes.some((code) => /evidence|coverage|temporal|conflict|factual|unsupported|assertion/.test(code));
   const nextLedger = patch.evidence_ledger || draft.evidence_ledger || [];
   const nextNotes = patch.verification_notes || draft.verification_notes || [];
   const ledgerChanged = JSON.stringify(nextLedger) !== JSON.stringify(draft.evidence_ledger || []);
@@ -905,9 +905,11 @@ function compactDraftRepairInput(contentPackage, issues = []) {
     base_content_hash: draft.content_hash,
     allowed_replacement_headings: repairableMarkdownSections(normalizedBody).map((section) => section.heading),
     issues: compactIssues,
+    unsupported_claims: (contentPackage.review?.unsupported_claims || []).slice(0, 12)
+      .map((claim) => truncate(claim, 800)),
     regression_guardrails: uniqueBy(regressionGuardrails, (issue) => `${issue.code}:${issue.message}`).slice(0, 12),
     allowed_changes: {
-      evidence_ledger: [...issueCodes].some((code) => /evidence|coverage|temporal|conflict|factual/.test(code)),
+      evidence_ledger: [...issueCodes].some((code) => /evidence|coverage|temporal|conflict|factual|unsupported|assertion/i.test(code)),
       metadata: [...issueCodes].some((code) => /seo|title|meta|keyword|slug/.test(code)),
       maximum_replacement_sections: 3,
     },
@@ -1092,10 +1094,12 @@ const DRAFT_REPAIR_PROMPT = `Repair only the failed fields or existing draft sec
 - The confirmed topic, brief, evidence set, claim keys and unaffected prose are immutable.
 - brief.adaptation_requirements and brief.conflict_instructions are mandatory reader-facing constraints, not optional suggestions. Satisfy every applicable item in the replacement sections.
 - regression_guardrails are blockers found in earlier revisions. Do not reintroduce them while fixing the current issues.
+- unsupported_claims are atomic reader-facing assertions that the latest audit could not map to this article's frozen evidence. Remove or correct every listed assertion in the smallest affected section. Keep one only when its exact value is present in facts and its normalized_key remains honestly mapped in that section's evidence_ledger.
 - Return the exact base_content_hash supplied by the caller.
 - replacement_sections may contain at most three headings copied exactly from allowed_replacement_headings. Some legacy drafts use H3 as their primary section level. Supply body content only; do not add or rename peer headings.
 - Change metadata only when a QA issue explicitly identifies title, meta, keyword, slug or SEO metadata.
-- Change evidence_ledger or verification_notes only for evidence, coverage, conflict or temporal-disclosure failures. Remove invalid or unused keys instead of forcing every available fact into the prose; keep at most 12 claim keys per section and 48 total.
+- Change evidence_ledger or verification_notes only for evidence, coverage, unsupported-assertion, conflict or temporal-disclosure failures. Remove invalid or unused keys instead of forcing every available fact into the prose; keep at most 12 claim keys per section and 48 total.
+- facts is the complete fact allow-list for this bounded repair. A fact that may exist elsewhere in the knowledge base but is absent from facts is out of scope and must be removed from the prose, never silently imported.
 - Preserve specific names, amounts, dates, conditions, exceptions and audience qualifiers. Do not add facts or experiences.
 - Keep replacement text concise and do not expand the article merely to reach a word target.
 - Return JSON only. The caller will reject stale hashes and out-of-scope patches, re-hash the assembled draft and run QA again.`;
@@ -1135,6 +1139,7 @@ Current capability candidates (machine-derived):\n${JSON.stringify(promptCapabil
 const REVIEW_PROMPT = `Act as an independent senior editor. Audit the English draft against its evidence package and brief.
 Grade reader-facing prose and factual support only. Missing image downloads, renderers, page composition or provider errors are separate deterministic delivery checks, not reasons to lower this editorial score. Never relax factual support or evidence scope.
 Fail the draft for any unsupported factual assertion, hidden conflict, misleading certainty, source-key leakage, affiliate contamination, or unsafe advice.
+For an unsupported factual assertion, report each atomic unsupported value separately in unsupported_claims and identify the smallest affected reader-facing section. Do not group a supported fact with an unsupported fact merely because they share a predicate such as opening hours. A value present in facts and honestly mapped by the current draft evidence ledger is supported; do not describe that evidence object as empty.
 Also check originality, usefulness for solo/first-time/non-Chinese-speaking visitors, SEO/GEO structure, clarity, and whether the evidence ledger honestly covers factual sections.
 For every item in mandatory_requirements, emit exactly one checks entry whose name is the supplied requirement id. Mark it passed only when the reader-facing draft actually satisfies the complete requirement. Missing a mandatory adaptation or conflict-handling requirement is a blocker, never a warning.
 Use these editorial issue codes when applicable: DATABASE_DUMP, GENERIC_AI_TRANSITIONS, REPETITIVE_EXPLANATION, UNIFORM_SECTION_RHYTHM, EXCESSIVE_HEDGING, NO_TRAVELER_DECISION, NO_CAUSAL_FLOW, FAKE_FIRST_PERSON.

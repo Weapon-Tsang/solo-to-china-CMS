@@ -1,5 +1,12 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.26 / schema 69 - 2026-09-15
+
+- Preserve the current independent quality review as the recovery authority for its immutable Draft revision; never replace its mandatory checks or explicit blockers with an empty diagnostic review.
+- Treat unsupported assertions as atomic value-level failures. QA must distinguish a selected, ledger-backed fact from another same-predicate fact outside the frozen article scope.
+- Give bounded repair the exact unsupported assertions and only the article's frozen fact allow-list. Repair may remove invalid factual mappings but may not import global Knowledge that was not selected for this production instance.
+- Keep Strategy 3.3, `production_state` 2.0 and Frontend Contract 1.4.0 unchanged. No Source, Claim, Evidence, Experience, approval, Draft history or Failure Lesson is deleted, and delivery remains WordPress draft-only.
+
 ## App 2.0.24 / schema 69 - 2026-09-14
 
 - Ensure every explicit or automatic Draft regeneration consumes the current QA blockers and cannot reuse the failed writer artifact under a different recovery dedupe namespace.

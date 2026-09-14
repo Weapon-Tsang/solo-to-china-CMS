@@ -91,11 +91,18 @@ export function contentRecoveryReport(repo, candidateId) {
     ? repo.db.prepare(`SELECT id,type,status,last_error,entity_id,updated_at,failure_class,last_failure_code,attempts,recovery_run_id
         FROM jobs WHERE id=?`).get(blockingJobId) || null
     : detail?.production_state ? null : ctx.failedJob;
-  const localCheck = ctx.draft ? { ...applyDeterministicGates({ passed:true,score:100,issues:[],checks:[] },pkg), diagnosticOnly:true } : null;
-  const automaticRepair = ctx.draft && (localCheck || pkg.review)
-    ? repo.automaticQualityRepairState(ctx.draft.id, (localCheck || pkg.review).issues, { enqueue: false })
+  // A persisted review already contains the independent model checks plus the
+  // deterministic gates for this immutable draft revision. Re-running the
+  // gates from an empty review would falsely report every mandatory Brief
+  // requirement as "not audited" and hide the actual model blocker.
+  const localCheck = ctx.draft ? (pkg.review
+    ? { ...pkg.review, diagnosticOnly:false, source:'persisted_current_review' }
+    : { ...applyDeterministicGates({ passed:true,score:100,issues:[],checks:[] },pkg), diagnosticOnly:true,
+      source:'deterministic_without_current_review' }) : null;
+  const automaticRepair = ctx.draft && localCheck
+    ? repo.automaticQualityRepairState(ctx.draft.id, localCheck.issues, { enqueue: false })
     : { eligible:false,queued:false,stage:null,attempts:0,maxAttempts:2,reason:'review_not_available' };
-  const diagnosis = recoveryDiagnosis({ review:localCheck || pkg.review, failedJob:blockingFailedJob, automaticRepair });
+  const diagnosis = recoveryDiagnosis({ review:localCheck, failedJob:blockingFailedJob, automaticRepair });
   return {
     candidateId:ctx.candidate.id, opportunityId:ctx.opportunity?.id || null, title:ctx.candidate.proposed_title, destination:ctx.candidate.destination_slug,
     destinationCheck:validatePlanningDestination(pkg), canCorrectDestination:!ctx.brief,

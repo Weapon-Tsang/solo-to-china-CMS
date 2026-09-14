@@ -1,5 +1,11 @@
 # Failure and production lifecycle
 
+## 2.0.26 atomic unsupported-assertion recovery
+
+A current persisted Quality Review is authoritative for its immutable Draft revision. Content Recovery must not recompute a review from empty model checks, because that would label mandatory Brief requirements “not audited” and suppress the actual reviewer blocker. Deterministic-only diagnostics are used only when the current revision has no persisted review.
+
+`UNSUPPORTED_ASSERTION` identifies an atomic reader-visible value that is not supported by both the article's frozen fact allow-list and its current evidence ledger. Bounded repair receives the exact `unsupported_claims`, may remove invalid ledger mappings, and must remove rather than import any fact that exists only in global Knowledge. QA separates supported and unsupported values even when they share a predicate such as opening hours. The recovery target remains `revise_draft` for the first bounded incident and escalates through the existing repeated-blocker policy if it survives another current review.
+
 ## 2.0.25 surplus evidence reconciliation
 
 `DRAFT_EVIDENCE_VALUE_INVALID` distinguishes an actually used fact whose protected value was changed or omitted from a model's surplus internal citation. Before a generated Draft is persisted, known section-allowed claims are compared with its reader-visible body. If a protected value is absent but another honest claim still supports that planned section, the unused citation is removed and its Source IDs are rebuilt from the frozen evidence. The prose, frozen fact and upstream artifacts are not changed.

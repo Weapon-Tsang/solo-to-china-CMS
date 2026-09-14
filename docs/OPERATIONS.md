@@ -1,5 +1,11 @@
 # V1 Operations
 
+## 2.0.26 unsupported-assertion recovery acceptance
+
+When QA reports `UNSUPPORTED_ASSERTION`, inspect the atomic `unsupported_claims` against the frozen repair `facts` and the current Draft ledger. A value available elsewhere in destination Knowledge is not part of this article unless its selected key is present in that frozen set. Recover only `revise_draft`; verify the new revision removes or corrects every listed value, reruns independent QA, and preserves unrelated Source, Evidence, media and upstream planning artifacts.
+
+The recovery detail must show the persisted review's exact blocker and checks. “Cause unknown” or newly invented “mandatory requirements not audited” messages are a diagnostic defect when the current review already contains a concrete issue. Continue production serially and draft-only; never delete the row or bulk-retry other Opportunities to clear this condition.
+
 ## 2.0.25 evidence-ledger recovery acceptance
 
 For a generated Draft, the reader-visible body is authoritative about which optional selected facts were actually used. A surplus evidence-ledger key whose protected value is absent may be deterministically removed only when the same planned section retains another honestly expressed approved fact. The last usable claim for a required section is never pruned: it must pass the existing exact correction request or the Job fails closed. Rebuilt Source IDs always come from the frozen Writing Packet evidence, not model output.
