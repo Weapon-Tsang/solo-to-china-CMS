@@ -2,7 +2,7 @@ import { json, sha256 } from "../utils.mjs";
 import { validatePlanningDestination } from "../destination-consistency.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./content-recovery-policy.mjs";
 
-export const PRODUCTION_STATE_VERSION = "1.9";
+export const PRODUCTION_STATE_VERSION = "2.0";
 
 export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
   stage("assemble_editorial", "素材组装", 10, [], "editorial", "always"),
@@ -23,6 +23,7 @@ export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
 export const PRODUCTION_JOB_TYPES = Object.freeze(PRODUCTION_STAGE_REGISTRY.map((item) => item.key));
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
+const QA_SUPERSEDED_FAILURE_STAGES = new Set(["generate_draft", "compose_frontend_page", "review_draft", "revise_draft"]);
 
 export function productionStageLabel(value) {
   return PRODUCTION_STAGE_REGISTRY.find((item) => item.key === value)?.label || String(value || "未知阶段");
@@ -87,7 +88,16 @@ export function buildProductionState(db, row, options = {}) {
   } : null;
   const frozenScopeFailure = frozenProductionScopeFailure(db,row);
   const truncatedDraftFailure = historicalDraftStructureFailure(db,row,currentJobs);
-  const currentJobFailure=decorateDeliveryFailure(latestUnresolvedFailure(currentJobs));
+  const latestJobFailure=decorateDeliveryFailure(latestUnresolvedFailure(currentJobs));
+  // A current passing review proves that its exact Draft revision, content hash,
+  // evidence hash and Frontend Page made it through the quality gate. Older
+  // failures in that same quality chain are audit history, even when no later
+  // Job of the *same* type exists (for example, a full regeneration supersedes
+  // an earlier bounded revise_draft failure).
+  const supersededQualityFailure=Boolean(row.qa_passed) && QA_SUPERSEDED_FAILURE_STAGES.has(latestJobFailure?.type)
+    && String(row.qa_created_at || "") >= String(latestJobFailure?.updated_at || "")
+    ? latestJobFailure : null;
+  const currentJobFailure=supersededQualityFailure ? null : latestJobFailure;
   const persistedFailure=inferredPersistedFailure(row);
   const resolvedDestinationFailure=!scopeFailure && destinationCheck.valid
     && String(currentJobFailure?.last_failure_code || '').toUpperCase()==='DESTINATION_TOPIC_MISMATCH' ? currentJobFailure : null;
@@ -162,7 +172,8 @@ export function buildProductionState(db, row, options = {}) {
   const scopeHistoricalFailure=scopeResetAt ? latestUnresolvedFailure(jobs.filter((item)=>String(item.updated_at)<=String(scopeResetAt))) : resolvedDestinationFailure;
   const latestHistoricalError = dependencyBrokenFailure
     ? failureAttribution(dependencyBrokenFailure, modelCalls, { blocksCurrentFlow:false })
-    : scopeHistoricalFailure ? failureAttribution(scopeHistoricalFailure, allModelCalls, { blocksCurrentFlow:false }) : null;
+    : scopeHistoricalFailure ? failureAttribution(scopeHistoricalFailure, allModelCalls, { blocksCurrentFlow:false })
+      : supersededQualityFailure ? failureAttribution(supersededQualityFailure, allModelCalls, { blocksCurrentFlow:false }) : null;
 
   if (control?.disposition === "archived" || control?.disposition === "deleted") {
     lifecycle = "history";

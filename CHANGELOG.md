@@ -3,10 +3,11 @@
 ## 2.0.24 - Unreleased
 
 - Make every Draft-regeneration entry point include the authoritative current QA failure in its dependency hash. Manual, canary and automatic recovery can no longer report a retry while reusing the exact prose that failed.
+- Treat an older writer/page/review/bounded-repair failure as non-blocking history after the exact current Draft revision and Frontend Page pass QA. A successful full regeneration no longer needs an artificial same-type `revise_draft` success to clear the workbench state.
 - Normalize exact planned section labels emitted as plain lines into semantic H2 sections, remove duplicate article-title headings at every level, and reject a generated Draft that still omits an evidence-bearing planned section after one structured retry. This keeps visible sections and the frozen evidence ledger aligned.
 - Send each frozen fact to Vertex once, bound duplicate evidence excerpts and grounded experiences, and give independent QA only the reader-facing Draft plus traceability fields. Real production-copy diagnostics had exposed 75k-130k-token requests caused by repeated internal snapshots.
 - Add permanent regressions for recovery hashing, planned-heading promotion, bounded Draft inputs and compact QA inputs, plus a read-only canary inspector that refuses a live-looking database filename.
-- Keep schema 69, Content Strategy 3.3, `production_state` 1.9 and Frontend Contract 1.4.0. This remains a code-only release with no startup migration, bulk retry or automatic WordPress publication.
+- Upgrade `production_state` to 2.0 for cross-stage quality-failure supersession while keeping schema 69, Content Strategy 3.3 and Frontend Contract 1.4.0. This remains a code-only release with no startup migration, bulk retry or automatic WordPress publication.
 
 ## 2.0.23 - 2026-09-14
 

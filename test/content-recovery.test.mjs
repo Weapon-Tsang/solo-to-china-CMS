@@ -173,7 +173,7 @@ test('legacy plan and frozen packet scope mismatch recovers from editorial assem
   db.prepare(`INSERT INTO writing_packets(id,brief_id,narrative_plan_id,packet_text,selected_fact_keys_json,input_hash,created_at,updated_at)
     VALUES ('packet-r','brief-r','narrative-r','legacy','["fact.one"]','hash','now','now')`).run();
   const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,'1.9');
+  assert.equal(state.version,'2.0');
   assert.equal(state.stage_status,'failed');
   assert.equal(state.recovery_target,'assemble_editorial');
   assert.equal(state.latest_error.code,'FROZEN_WRITING_SCOPE_INVALID');
@@ -229,7 +229,7 @@ test('a parallel page failure cannot overwrite failed QA and terminal reconcilia
   db.prepare("UPDATE article_drafts SET status='exception' WHERE id='draft-r'").run();
 
   const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,'1.9');
+  assert.equal(state.version,'2.0');
   assert.equal(state.stage_status,'failed');
   assert.equal(state.current_stage,'review_draft');
   assert.equal(state.recovery_target,'revise_draft');

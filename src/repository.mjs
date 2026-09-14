@@ -5536,7 +5536,7 @@ export class Repository {
         ad.id AS draft_id, ad.status AS draft_status, ad.title AS draft_title, ad.revision,
         ad.content_hash AS draft_content_hash, ad.quality_report_json AS draft_quality_report_json,
         ad.created_at AS draft_created_at, ad.updated_at AS draft_updated_at,
-        qr.passed AS qa_passed, qr.score AS qa_score,
+        qr.passed AS qa_passed, qr.score AS qa_score, qr.created_at AS qa_created_at,
         ea.id AS editorial_assembly_id,
         np.id AS narrative_plan_id, wpkt.id AS writing_packet_id,
         fpp.status AS frontend_plan_status, fpp.plan_json AS frontend_page_plan_json,
@@ -5591,7 +5591,7 @@ export class Repository {
         co.updated_at DESC, co.readiness_score DESC
     `).all(candidateId, candidateId, candidateId, approvedOnly ? 1 : 0, productionOnly ? 1 : 0) : this.db.prepare(`
       SELECT tc.*, cb.id AS brief_id, cb.status AS brief_status, ad.id AS draft_id, ad.status AS draft_status,
-        ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score,
+        ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score, qr.created_at AS qa_created_at,
         wp.post_id AS wordpress_post_id, wp.post_url AS wordpress_post_url, wp.preview_url AS wordpress_preview_url,
         wp.edit_url AS wordpress_edit_url, wp.status AS wordpress_status,
         cc.status AS commercial_status, json_array_length(COALESCE(cc.offer_ids_json, '[]')) AS commercial_offer_count,

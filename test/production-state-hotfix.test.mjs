@@ -112,7 +112,7 @@ test("a downstream historical failure with missing prerequisites recovers the fi
     last_error='structured output reached its token limit',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.9");
+  assert.equal(state.version,"2.0");
   assert.equal(state.stage_status,"interrupted");
   assert.equal(state.recovery_target,"plan_narrative");
   assert.equal(state.latest_error,null);
@@ -146,7 +146,7 @@ test("a corrected destination invalidates old-scope failures and waits for expli
     VALUES ('scope-reset','shared-candidate','correct_destination','completed','{}','{}','tester','2026-09-13T02:00:00Z','corrected-owner','scope-reset-key')`).run();
 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
-  assert.equal(state.version,"1.9");
+  assert.equal(state.version,"2.0");
   assert.equal(state.lifecycle,"pending_start");
   assert.equal(state.stage_status,"waiting");
   assert.equal(state.latest_error,null);
@@ -214,6 +214,45 @@ test("failed QA reports recover through targeted revision instead of repeating r
   assert.equal(result.resolvedStage,"revise_draft");
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='review_draft'").get().count,0);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='revise_draft'").get().count,1);
+});
+
+test("a current passing QA review moves an older bounded-repair failure to history",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"passed-owner",{approved:true});
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('passed-brief','beijing','Beijing guide','[]','informational','ready','2026-09-13','2026-09-13','shared-candidate')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('passed-draft','passed-brief','Beijing guide','beijing-guide','## Route\n\nOld copy.','{}','qa_failed','2026-09-13','2026-09-13',1,'old-hash')`).run();
+  repository.saveReview('passed-draft',{passed:false,score:30,issues:[
+    {code:'NO_CAUSAL_FLOW',severity:'blocker',message:'No decision sequence.'},
+  ],checks:[],unsupported_claims:[]},'fixture',{revision:1,contentHash:'old-hash',productionOwnerOpportunityId:'passed-owner'});
+  const failed=repository.enqueue('revise_draft','passed-draft',{
+    dedupeKey:'failed-old-repair',productionOwnerOpportunityId:'passed-owner'});
+  db.prepare(`UPDATE jobs SET status='failed',attempts=1,failure_class='permanent_input',
+    last_failure_code='INVALID_DRAFT_REPAIR_SCOPE',last_error='old repair could not replace the section',
+    updated_at='2026-09-13T03:00:00Z' WHERE id=?`).run(failed);
+
+  const regenerated={title:'Beijing guide',slug:'beijing-guide',meta_description:'A practical guide.',
+    body_markdown:'## Route\n\nUse this sequence and adjust when the station is busy.',evidence_ledger:[],
+    unresolved_conflicts:[],verification_notes:[],seo:{},faqs:[],visuals:[]};
+  repository.saveDraft('passed-brief',regenerated,'fixture',{deferReview:true,opportunityId:'passed-owner'});
+  const current=db.prepare("SELECT revision,content_hash FROM article_drafts WHERE id='passed-draft'").get();
+  repository.saveReview('passed-draft',{passed:true,score:94,issues:[],checks:[],unsupported_claims:[]},'fixture',{
+    revision:current.revision,contentHash:current.content_hash,productionOwnerOpportunityId:'passed-owner'});
+
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.notEqual(state.stage_status,'failed');
+  assert.equal(state.latest_error,null);
+  assert.equal(state.latest_historical_error.stage,'revise_draft');
+  assert.equal(state.latest_historical_error.blocks_current_flow,false);
+
+  const newerFailure=repository.enqueue('revise_draft','passed-draft',{
+    dedupeKey:'failed-after-current-review',productionOwnerOpportunityId:'passed-owner'});
+  db.prepare(`UPDATE jobs SET status='failed',attempts=1,failure_class='permanent_input',
+    last_failure_code='INVALID_DRAFT_REPAIR_SCOPE',last_error='newer explicit repair failed',
+    updated_at='9999-12-31T23:59:59.999Z' WHERE id=?`).run(newerFailure);
+  const newerState=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(newerState.stage_status,'failed');
+  assert.equal(newerState.latest_error.job_id,newerFailure);
 });
 
 test("a historically truncated draft regenerates from its preserved Writing Packet instead of patching one section",(t)=>{

@@ -2,9 +2,13 @@
 
 ## 2.0.24 genuine Draft regeneration
 
+`production_state` 2.0 separates cross-stage quality-repair history from the current revision.
+
 Every `generate_draft` Job includes the current owner-matched failed QA review in its dependency hash, whether it was created by automatic repair, the workbench, a canary or another explicit recovery caller. A newly queued recovery therefore cannot reuse the prose that triggered the current blocker. The writer still reuses the approved Brief, Narrative Plan, frozen Writing Packet, authorized Source media and evidence facts; successful upstream research is not rerun.
 
 The generated Draft must contain every evidence-bearing planned section. Exact planned labels output as plain standalone lines are promoted to H2 before validation; after one structured correction request, any still-missing section fails closed as `DRAFT_STRUCTURE_INVALID` and remains auditable instead of silently clearing its evidence scope.
+
+A current passing QA record is revision-, content-, evidence- and page-bound. Once it exists, earlier failures in `generate_draft`, `compose_frontend_page`, `review_draft` or `revise_draft` remain visible only as `latest_historical_error`; they cannot keep the current workbench row failed merely because the successful replacement used a different stage type.
 
 ## 2.0.23 recovery depth and authorized source media
 
