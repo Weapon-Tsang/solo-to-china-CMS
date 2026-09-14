@@ -23,7 +23,16 @@ export const PRODUCTION_STAGE_REGISTRY = Object.freeze([
 export const PRODUCTION_JOB_TYPES = Object.freeze(PRODUCTION_STAGE_REGISTRY.map((item) => item.key));
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
-const QA_SUPERSEDED_FAILURE_STAGES = new Set(["generate_draft", "compose_frontend_page", "review_draft", "revise_draft"]);
+// A passing QA receipt is bound to the current Draft revision/content/evidence
+// and current Frontend Page.  It therefore proves that failures from an older
+// prerequisite attempt are audit history, even when recovery used a previously
+// persisted prerequisite to continue.  Media processing is deliberately not
+// included: a parallel required-visual failure can still block final delivery.
+const QA_SUPERSEDED_FAILURE_STAGES = new Set([
+  "assemble_editorial", "plan_content", "plan_narrative", "assemble_writing_packet",
+  "compose_frontend_page_plan", "generate_draft", "compose_frontend_page",
+  "review_draft", "revise_draft",
+]);
 
 export function productionStageLabel(value) {
   return PRODUCTION_STAGE_REGISTRY.find((item) => item.key === value)?.label || String(value || "未知阶段");

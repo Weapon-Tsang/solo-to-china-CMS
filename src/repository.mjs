@@ -210,8 +210,9 @@ export class Repository {
     if (["plan_narrative", "assemble_writing_packet", "compose_frontend_page_plan", "generate_draft"].includes(job.type)) {
       const brief = this.db.prepare(`SELECT id,plan_json,canonical_json,evidence_ledger_json,strategy_version,updated_at
         FROM content_briefs WHERE id=?`).get(entityId);
-      const facts = brief ? this.getBriefPackage(entityId)?.facts || [] : [];
-      const pack = brief ? this.getBriefPackage(entityId) : null;
+      const pack = brief ? (job.type === 'plan_narrative'
+        ? this.getNarrativePlanningPackage(entityId) : this.getBriefPackage(entityId)) : null;
+      const facts = pack?.facts || [];
       return { productionOwnerOpportunityId:job.production_owner_opportunity_id || null,
         brief, facts: semanticMaterial(facts), assembly: pack?.editorial_assembly,
         experiences: pack?.experiences, contentPolicy: pack?.content_policy,
@@ -4967,6 +4968,10 @@ export class Repository {
     };
   }
 
+  getNarrativePlanningPackage(briefId) {
+    return boundedNarrativePackage(this.getBriefPackage(briefId));
+  }
+
   saveNarrativePlan(briefId, plan, model = null) {
     const contentPackage = this.getBriefPackage(briefId);
     if (!contentPackage) throw new Error(`Content brief ${briefId} no longer exists.`);
@@ -9572,6 +9577,115 @@ export function boundedEditorialAssemblyPackage(input, budget = EDITORIAL_ASSEMB
     });
   }
   return compact;
+}
+
+export const NARRATIVE_INPUT_BUDGET = Object.freeze({
+  maxFacts: 48,
+  maxEvidenceSnippetsPerFact: 2,
+  maxExperiences: 16,
+  maxInputBytes: 128 * 1024,
+  maxEstimatedTokens: 32_000,
+});
+
+// Narrative planning consumes the already approved outline and frozen
+// Editorial Assembly scope. Sending getBriefPackage() directly also sent the
+// complete destination Topic package (sources, assets, lessons and repeated
+// evidence), which produced six-figure-token requests in real production data.
+// This DTO keeps every planned fact key and enough exact Claim provenance for
+// evidence selection while deterministically discarding unrelated history.
+export function boundedNarrativePackage(input, budget = NARRATIVE_INPUT_BUDGET) {
+  if (!input) return null;
+  const outline=input.brief?.plan?.outline || input.brief?.outline || [];
+  const requestedKeys=[...new Set([
+    ...(input.brief?.evidence_ledger || []),
+    ...outline.flatMap((section)=>section?.claim_keys || []),
+  ].filter(Boolean))].slice(0,Math.max(1,Number(budget.maxFacts || 48)));
+  const factsByKey=new Map((input.facts || []).map((fact)=>[fact.normalized_key,fact]));
+  const facts=requestedKeys.map((key)=>factsByKey.get(key)).filter(Boolean).map((fact)=>compactNarrativeFact(fact,
+    (fact.evidence || []).slice().sort((a,b)=>Number(b.confidence || 0)-Number(a.confidence || 0)
+      || String(a.source_id || '').localeCompare(String(b.source_id || '')))
+      .slice(0,Math.max(1,Number(budget.maxEvidenceSnippetsPerFact || 2))).map(compactNarrativeEvidence)));
+  const selectedExperienceIds=new Set(input.editorial_assembly?.selected_experience_block_ids || []);
+  const sourceExperiences=selectedExperienceIds.size
+    ? (input.experiences || []).filter((item)=>selectedExperienceIds.has(item.id))
+    : input.experiences || [];
+  const compact={
+    brief:{
+      id:input.brief?.id,destination_slug:input.brief?.destination_slug,topic:input.brief?.topic,
+      strategy_version:input.brief?.strategy_version,
+      plan:{
+        title:input.brief?.plan?.title || input.brief?.topic,
+        primary_keyword:input.brief?.plan?.primary_keyword,
+        search_intent:input.brief?.plan?.search_intent || input.brief?.search_intent,
+        audience:input.brief?.plan?.audience || input.brief?.audience,
+        angle:input.brief?.plan?.angle,reader_promise:input.brief?.plan?.reader_promise,
+        outline:outline.map((section)=>({section_id:section.section_id,heading:boundPlanningText(section.heading,300),
+          purpose:boundPlanningText(section.purpose,600),claim_keys:(section.claim_keys || []).filter((key)=>factsByKey.has(key)).slice(0,12)})),
+      },
+      canonical:compactObject(input.brief?.canonical,6_000),
+      evidence_ledger:requestedKeys,
+    },
+    approved_proposal:compactObject(input.approved_proposal,6_000),
+    production_mode:input.production_mode,
+    editorial_assembly:input.editorial_assembly ? {
+      id:input.editorial_assembly.id,opportunity_id:input.editorial_assembly.opportunity_id,
+      selected_fact_keys:(input.editorial_assembly.selected_fact_keys || []).filter((key)=>factsByKey.has(key)).slice(0,48),
+      selected_experience_block_ids:[...selectedExperienceIds].slice(0,24),
+      exclusions:(input.editorial_assembly.exclusions || []).slice(0,24).map((value)=>boundPlanningText(value,500)),
+      rationale:boundPlanningText(input.editorial_assembly.rationale,1_500),
+    } : null,
+    facts,
+    experiences:sourceExperiences.slice(0,Math.max(0,Number(budget.maxExperiences || 16)))
+      .map((item)=>compactObject(item,2_500)),
+    content_policy:compactObject(input.content_policy,2_000),
+    constraints:compactObject(input.constraints,2_000),
+  };
+  const inputSize=()=>Buffer.byteLength(JSON.stringify(compact));
+  const effectiveMaxBytes=Math.min(Number(budget.maxInputBytes || 128*1024),
+    Number(budget.maxEstimatedTokens || 32_000)*4-2_048);
+  while(inputSize()>effectiveMaxBytes && facts.some((fact)=>(fact.evidence || []).length>1)){
+    const fact=[...facts].reverse().find((item)=>(item.evidence || []).length>1);
+    fact.evidence.pop();
+  }
+  while(inputSize()>effectiveMaxBytes && compact.experiences.length) compact.experiences.pop();
+  const manifest={
+    version:1,selected_by:'approved_outline_and_editorial_assembly',
+    requested_fact_count:requestedKeys.length,fact_count:facts.length,
+    evidence_snippet_count:facts.reduce((sum,fact)=>sum+(fact.evidence?.length || 0),0),
+    experience_count:compact.experiences.length,input_bytes:0,estimated_tokens:0,budget:{...budget},
+    deterministic_compression:true,
+  };
+  compact.narrative_input_manifest=manifest;
+  for(let pass=0;pass<3;pass+=1){manifest.input_bytes=inputSize();manifest.estimated_tokens=Math.ceil(manifest.input_bytes/4);}
+  if(manifest.input_bytes>Number(budget.maxInputBytes || 128*1024)
+    || manifest.estimated_tokens>Number(budget.maxEstimatedTokens || 32_000)){
+    throw Object.assign(new Error('NARRATIVE_INPUT_BUDGET_EXCEEDED: bounded narrative input exceeds the configured token budget.'),{
+      code:'NARRATIVE_INPUT_BUDGET_EXCEEDED',retryable:false,details:manifest,
+    });
+  }
+  return compact;
+}
+
+function compactNarrativeFact(fact,evidence){
+  return {
+    normalized_key:fact.normalized_key,subject:boundPlanningText(fact.subject,300),
+    predicate:boundPlanningText(fact.predicate,300),
+    preferred_value:boundPlanningText(fact.preferred_value ?? fact.value,800),
+    qualifiers:compactObject(fact.qualifiers || fact.qualifiers_json,1_000),
+    consensus_status:fact.consensus_status,consensus_method:fact.consensus_method,
+    freshness_state:fact.freshness_state,valid_from:fact.valid_from,valid_until:fact.valid_until,
+    coverage_limitations:compactObject(fact.coverage_limitations,800),evidence,
+  };
+}
+
+function compactNarrativeEvidence(item){
+  return {
+    source_id:item.source_id,source_title:boundPlanningText(item.source_title || item.title,200),
+    claim_id:item.claim_id,quote:boundPlanningText(item.quote || item.source_quote,450),
+    value:boundPlanningText(item.value || item.value_text,450),confidence:item.confidence,
+    captured_at:item.captured_at,verified_at:item.verified_at,valid_from:item.valid_from,valid_to:item.valid_to,
+    final_url:item.final_url || item.canonical_url || item.original_url,
+  };
 }
 
 export const PLANNING_INPUT_BUDGET = Object.freeze({

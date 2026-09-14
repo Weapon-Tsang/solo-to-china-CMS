@@ -1,6 +1,6 @@
 # SoloToChina Content Production Strategy 3.3
 
-Status: active. Effective date: 2026-09-12. Current production application and extension are 2.0.14, schema 69, revision `9341a30ea07ac16fa2803a8aed5f27c776106c17`.
+Status: active. Effective date: 2026-09-12. Current release candidate application and extension are 2.0.24 with schema 69. The deployed revision and immutable image are recorded in the release audit rather than pinned in this strategy document.
 
 Strategy 3.3 keeps the source authorization, evidence, editorial approval, WordPress draft, and publication boundaries from 3.2. It changes how Claims become Knowledge, how interrupted historical Sources recover, and where expensive maintenance runs.
 
@@ -39,6 +39,20 @@ Knowledge aggregation, topic clustering, coverage matrices and opportunity regen
 Knowledge writes record changed fact keys in `coverage_dirty_scopes`. Coverage refresh selects opportunities already using those keys or newly matching their topic scope. An explicit rebuild without a dirty scope remains a full rebuild. Runtime telemetry records full or incremental mode, scanned opportunities, updated opportunities and duration.
 
 Intake analysis receives a compact Claim and Knowledge projection with bounded excerpts. It excludes raw HTML, full Source text, complete media payloads and unrelated fact evidence. Input byte and estimated-token telemetry accompany the package.
+
+## Production writing and recovery doctrine
+
+The seven approved production records are a permanent regression corpus, not a one-off queue to force through. A fix is acceptable only when it converts the exposed failure into a reusable invariant for later approvals. Current production ownership is the approved Opportunity; a Candidate ID, an older Job, or a historical failure may never create another production owner or override the newest current-scope attempt.
+
+Every model stage receives the smallest complete projection for its job. Editorial Assembly selects the approved facts, Narrative Planning receives only the approved outline, selected fact provenance and selected Experience Blocks, and the writer receives one frozen Writing Packet in which each fact is represented once. A stage must fail locally before a provider request when its bounded input exceeds the declared byte/token budget. This prevents complete destination history, media inventories, failure logs or repeated evidence snapshots from becoming writing input.
+
+The narrative and Draft must turn evidence into traveler decisions rather than enumerate facts. Each evidence-bearing section has a distinct practical job and should connect the relevant condition to its consequence, trade-off or next action. Section depth and presentation vary with that job; repetitive templates, disconnected fact rows, generic transitions, fabricated first-person experience and artificial completeness are rejected or returned as explicit editorial guidance. SEO uses natural search intent and clear entity naming; GEO uses direct, self-contained answers and visible evidence-consistent structure. Neither relies on keyword repetition, forced FAQ/schema or unsupported claims.
+
+Page Composition starts from the current reader-visible Draft and active Frontend Contract. It preserves all evidence-bearing H2 sections, selects only published components and variants, emits semantic SEO/GEO and JSON-LD fields that agree with visible content, and orders content for answer-first scanning on small screens. The CMS stores component choices, data and provenance; Frontend/WordPress exclusively owns JSX, CSS, typography, spacing and responsive rendering. The final visual acceptance is the returned WordPress preview URL at desktop and mobile widths.
+
+Deterministic authorized-source visual selection runs before the durable stage input is frozen. All retained Source assets are authorized for editorial and production use under `AGENTS.md`; missing legacy per-item licence flags are not a veto. Selection still requires durable bytes, destination and factual relevance, source attribution, accurate alt text and Contract-safe placement. Broken or unrelated media fail closed and no factual scene is fabricated.
+
+Recovery resumes at the first missing or currently failed stage and reuses valid prior artifacts. A current QA pass proves that older writing, planning and page-composition failures for the superseded revision are historical, while required visual or delivery failures remain current until resolved. Recovery, automatic continuation and operator retry share the same dependency hashes and idempotency keys. Every terminal failure remains auditable as a Failure Lesson; no repair deletes Source, original media, Claims, Knowledge, Evidence, Experience, approvals or prior attempts.
 
 ## Safety and migration
 

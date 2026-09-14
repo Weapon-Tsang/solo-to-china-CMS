@@ -38,6 +38,8 @@ The 2.0.21 adapter also canonicalizes safe apostrophe entities to `&#039;`, the 
 
 Version 2.0.22 keeps CMS evidence provenance consistent with that delivery-only spelling. It remaps a block signature only after the complete stored provenance sequence exactly matches the original page; component selection, layout, JSX and CSS remain governed by the fixed Frontend Contract.
 
+Version 2.0.24 makes page and visual dependency capture immutable. Authorized-source visual selection completes before the durable input artifact is frozen, so deterministic seeding cannot invalidate its own page-composition Job. Narrative Planning is separately bounded to the approved outline and selected evidence; it cannot use complete destination history to expand or reorder the approved page scope. CMS checks answer-first ordering, evidence-bearing section preservation, semantic SEO/GEO and mobile-readable structure, while the real WordPress preview remains the only visual authority for typography, spacing, responsive CSS and component rendering.
+
 Three artifacts remain distinct:
 
 - Research Draft (`body_markdown`): editorial, QA, evidence-review, and debug artifact.

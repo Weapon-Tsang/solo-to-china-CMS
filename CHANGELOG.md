@@ -2,6 +2,10 @@
 
 ## 2.0.24 - Unreleased
 
+- Convert the seven production incidents into reusable production invariants rather than record-specific exceptions: exact Opportunity ownership, bounded stage DTOs, immutable durable inputs, current-attempt precedence, QA supersession and draft-only delivery now apply to every future approval.
+- Bound Narrative Planning to the approved outline, at most 48 selected facts with two compact evidence excerpts each and selected Experience Blocks. The real production replay that previously sent about 177k input tokens now fails locally above a 32k-token/128 KiB budget instead of flooding Vertex with the complete destination package.
+- Seed deterministic authorized-source visuals before the page/visual dependency artifact is frozen, eliminating the self-created `STALE_PIPELINE_INPUT` retry. Missing legacy licence flags remain non-blocking under `AGENTS.md`; relevance, provenance, durable bytes, alt text and Contract safety remain mandatory.
+- Let a current QA pass supersede older prerequisite failures from Editorial Assembly through page composition, while retaining required-media and post-QA failures as current. Historical attempts remain visible and auditable but cannot send a valid current Draft backwards.
 - Make every Draft-regeneration entry point include the authoritative current QA failure in its dependency hash. Manual, canary and automatic recovery can no longer report a retry while reusing the exact prose that failed.
 - Treat an older writer/page/review/bounded-repair failure as non-blocking history after the exact current Draft revision and Frontend Page pass QA. A successful full regeneration no longer needs an artificial same-type `revise_draft` success to clear the workbench state.
 - Normalize exact planned section labels emitted as plain lines into semantic H2 sections, remove duplicate article-title headings at every level, and reject a generated Draft that still omits an evidence-bearing planned section after one structured retry. This keeps visible sections and the frozen evidence ledger aligned.

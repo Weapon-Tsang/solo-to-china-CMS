@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { AsyncSemaphore } from '../extension/sync-core.js';
 import { CaptureMediaUploadManager } from '../src/capture-media-upload.mjs';
 import { ContentEngine } from '../src/ai/content-engine.mjs';
+import { boundedNarrativePackage, NARRATIVE_INPUT_BUDGET } from '../src/repository.mjs';
 import { png } from '../test-support/media-fixtures.mjs';
 import { DerivativeCache } from '../extension/derivative-cache.js';
 import { indexedDB } from 'fake-indexeddb';
@@ -47,6 +48,35 @@ test('temporary cleanup previews expired fragments, skips active sessions and re
   const complete=await manager.create(input);await manager.writeChunk(complete.uploadId,0,png,complete.uploadToken);const receipt=await manager.complete(complete.uploadId,complete.uploadToken);
   assert.equal((await manager.cleanupExpired({dryRun:false})).removedUploads,1);
   assert.deepEqual(await manager.complete(complete.uploadId,complete.uploadToken),receipt);assert.equal(fs.existsSync(path.join(manager.storageRoot,receipt.storageRef)),true);
+});
+
+test('narrative planning keeps the approved scope but never sends the complete destination evidence history',()=>{
+  const facts=Array.from({length:48},(_,index)=>({
+    normalized_key:`route.fact_${index}`,subject:`Landmark ${index}`,predicate:'route_step',
+    preferred_value:`Use landmark ${index} in the route. `.repeat(80),consensus_status:'corroborated',
+    evidence:Array.from({length:8},(_item,evidenceIndex)=>({claim_id:`claim-${index}-${evidenceIndex}`,
+      source_id:`source-${evidenceIndex}`,value:`Step ${index}`.repeat(100),quote:'Authorized grounded route evidence. '.repeat(100),
+      confidence:1-evidenceIndex/100,qualifiers:Array(20).fill('condition')})),
+  }));
+  const input=boundedNarrativePackage({
+    brief:{id:'brief',destination_slug:'chongqing',topic:'Route',strategy_version:'3.3',
+      evidence_ledger:facts.map((fact)=>fact.normalized_key),plan:{title:'Route',reader_promise:'Plan the route',
+        outline:Array.from({length:8},(_,index)=>({section_id:`day-${index}`,heading:`Day ${index}`,purpose:'Choose the next stop',
+          claim_keys:facts.slice(index*6,index*6+6).map((fact)=>fact.normalized_key)}))}},
+    editorial_assembly:{id:'assembly',selected_fact_keys:facts.map((fact)=>fact.normalized_key),
+      selected_experience_block_ids:['experience-1'],exclusions:[],rationale:'Use the approved route.'},
+    approved_proposal:{readerPromise:'Plan the route'},production_mode:'source_adaptation',facts,
+    experiences:[{id:'experience-1',title:'Grounded route',sequence:Array(30).fill('Long step '.repeat(100))}],
+    sources:Array(100).fill({raw_text:'This unrelated source history must not enter narrative planning.'}),
+    authorized_source_assets:Array(100).fill({preview_url:'data:image/png;base64,not-for-this-stage'}),
+  });
+  assert.equal(input.facts.length,48);
+  assert.ok(input.facts.every((fact)=>fact.evidence.length>=1 && fact.evidence.length<=2));
+  assert.equal(input.narrative_input_manifest.requested_fact_count,48);
+  assert.ok(input.narrative_input_manifest.input_bytes<=NARRATIVE_INPUT_BUDGET.maxInputBytes);
+  assert.ok(input.narrative_input_manifest.estimated_tokens<=NARRATIVE_INPUT_BUDGET.maxEstimatedTokens);
+  assert.doesNotMatch(JSON.stringify(input),/unrelated source history|data:image/);
+  assert.match(JSON.stringify(input),/claim-0-0/);
 });
 
 test('an empty v2 Writing Packet cannot leak unselected live facts, sources, media or narrative into the writer',async()=>{

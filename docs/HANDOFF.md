@@ -6,6 +6,10 @@ The same replay exposed two downstream defects hidden by the earlier failures: m
 
 The replay also proved that a historical bounded-repair failure could remain current after a later full regeneration and current QA pass because failure resolution previously required a success of the same Job type. Current QA success now supersedes old writer/page/review/repair failures across that quality chain and preserves them as non-blocking audit history.
 
+The extended replay reached later stages and exposed two additional systemic defects. Narrative Planning had received the complete destination package and produced an approximately 177k-token input; it now consumes a deterministic 32k-token/128 KiB maximum projection selected by the approved outline and Editorial Assembly. Deterministic authorized-visual seeding also used to occur after a durable dependency snapshot was frozen, causing the stage to invalidate its own input and require an identical retry; seeding now completes before the snapshot. Both defects have production-derived regressions and apply to all future approvals.
+
+These repairs are part of Strategy 3.3 production doctrine, not special cases for the current records. Each incident must leave a code invariant, a regression and an auditable Failure Lesson. Writing must convert facts into condition/consequence/action decisions, use varied section rhythm and preserve uncertainty; page composition must preserve visible evidence-bearing sections, answer-first mobile scanning and semantic SEO/GEO while continuing to emit only Frontend Contract components and data.
+
 This is a code-only release. Startup performs no schema migration, historical enqueue, automatic recovery, production-record deletion or publication. Production acceptance must recover the six records one at a time through the existing Opportunity-owned durable Jobs, reach final page preview and WordPress `draft`, and preserve the existing seventh Draft without changing any WordPress record to `publish`.
 
 # 2.0.23 full production recovery and final-preview handoff

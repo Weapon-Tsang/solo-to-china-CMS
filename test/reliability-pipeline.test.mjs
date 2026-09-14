@@ -90,6 +90,39 @@ test('cache reuse reconstructs the next durable task without a model call', t =>
   assert.equal(repository.db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='audit_segment_coverage'").get().n,1);
 });
 
+test('authorized visual seeding is frozen before the page artifact input snapshot', async t => {
+  const {repository,db}=repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('topic-visual-seed','chongqing','visual-seed','Visual seed','fixture',80,0,0,'drafted','now','now')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('brief-visual-seed','chongqing','Visual seed','[]','informational','drafted','now','now','topic-visual-seed')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-visual-seed','brief-visual-seed','Visual seed','visual-seed','## Plan\n\nSupported body.','{}','drafted','now','now',1,'visual-seed-hash')`).run();
+  const ensure=repository.ensureAuthorizedSourceVisuals.bind(repository);
+  repository.ensureAuthorizedSourceVisuals=(draftId)=>{
+    if (!repository.plannedVisuals(draftId).length) repository.replaceDraftVisuals(draftId,[{
+      placement:'hero',purpose:'Retain an authorized source scene',alt_text:'Authorized Chongqing scene',caption:'',generation_prompt:'',
+      aspect_ratio:'16:9',image_type:'real_world_photo',image_role:'hero',image_subject:'Chongqing',
+      acquisition_strategy:'use_authorized_source_image',factual_image_required:true,status:'planned',
+    }],'3.3');
+    return ensure(draftId);
+  };
+  const frontendContracts={configured:true,active:{id:'contract',checksum:'checksum',pageSchema:{schema:{}}},
+    diagnostics:()=>({canCompose:true}),resolveForArticle:()=>({components:[]})};
+  const pipeline=new Pipeline(repository,{enabled:false,config:{}},{
+    contentEngine:{enabled:true,config:{provider:'fixture',model:'fixture'}},frontendContracts,
+  });
+  const jobId=repository.enqueue('compose_frontend_page','draft-visual-seed');
+  assert.equal(await pipeline.runOne(),false,'the fixture intentionally stops at missing page capabilities');
+  const job=db.prepare('SELECT * FROM jobs WHERE id=?').get(jobId);
+  const artifact=db.prepare(`SELECT * FROM pipeline_artifacts
+    WHERE stage='compose_frontend_page' AND entity_id='draft-visual-seed' ORDER BY created_at DESC LIMIT 1`).get();
+  assert.ok(artifact);
+  assert.doesNotThrow(()=>repository.assertPipelineInput(artifact,job),
+    'deterministic visual seeding must not invalidate the stage input it just prepared');
+  assert.notEqual(job.last_failure_code,'STALE_PIPELINE_INPUT');
+});
+
 test('interactive coverage is not deferred by a Batch threshold; visual pressure does not block text', t => {
   const {repository,db} = repositoryFixture(t);
   repository.enqueue('audit_segment_coverage','interactive',{executionRoute:'realtime'});

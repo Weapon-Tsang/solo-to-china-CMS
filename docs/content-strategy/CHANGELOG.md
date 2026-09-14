@@ -4,7 +4,10 @@
 
 - Ensure every explicit or automatic Draft regeneration consumes the current QA blockers and cannot reuse the failed writer artifact under a different recovery dedupe namespace.
 - Preserve the frozen evidence scope while sending each fact once with bounded evidence excerpts and compact grounded experiences; independent review consumes only reader-visible content and traceability required for editorial judgment.
+- Bound Narrative Planning independently to the approved outline, selected fact provenance and selected Experience Blocks. Complete destination Sources, media inventories, historical attempts and lessons can no longer expand a single planning request to six-figure token counts.
 - Promote exact planned labels to semantic H2 sections and fail closed when an evidence-bearing planned section is still absent after one structured correction, keeping visible prose and evidence ownership synchronized.
+- Treat the seven approved records as a permanent production regression corpus: current Opportunity ownership, exact-stage recovery, durable input immutability, QA supersession and WordPress draft-only delivery are system invariants for every later approval.
+- Seed relevant authorized visuals before freezing the visual/page dependency snapshot, preventing deterministic source selection from invalidating its own Job and requiring a duplicate retry.
 - Keep all imported Source media authorized for editorial use under `AGENTS.md`, while preserving attribution, durable bytes, relevance, alt text and Frontend Contract validation. Schema, strategy and approval semantics are unchanged.
 
 ## App 2.0.23 / schema 69 - 2026-09-14

@@ -360,6 +360,14 @@ export class Pipeline {
         // accepted Vertex structured-output transport instead of repeating a
         // known-invalid native Schema request on every worker attempt.
         structuredSchemaMode:this.repository.structuredSchemaModeForJob?.(job.id) || null };
+      // Authorized-source visual seeding is deterministic prerequisite work for
+      // both visual processing and page composition.  It must finish before the
+      // durable input snapshot is frozen; doing it inside either stage made the
+      // stage mutate its own dependency material and fail once with
+      // STALE_PIPELINE_INPUT before an identical retry could succeed.
+      if (["generate_visuals", "compose_frontend_page"].includes(job.type)) {
+        this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
+      }
       const artifactConfigHash = stageConfiguration(this, job.type);
       pipelineArtifact = this.repository.preparePipelineArtifact?.(job, artifactConfigHash) || null;
       const modelStep = async (key, input, operation, configurationStage = job.type) => {
@@ -735,7 +743,8 @@ export class Pipeline {
         }
         case "plan_narrative": {
           this.requireContentEngine();
-          const contentPackage = this.repository.getBriefPackage(job.entity_id);
+          const contentPackage = this.repository.getNarrativePlanningPackage?.(job.entity_id)
+            || this.repository.getBriefPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Content brief ${job.entity_id} no longer exists.`);
           const planned = typeof this.contentEngine.planNarrative === "function"
             ? await guarded((signal) => this.contentEngine.planNarrative(contentPackage, { signal, telemetryContext }))
@@ -800,7 +809,6 @@ export class Pipeline {
         }
         case "generate_visuals": {
           if (!this.visuals?.enabled) throw new Error("Visual generation is not configured.");
-          this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           for (const visual of this.repository.plannedVisuals(job.entity_id)) {
@@ -821,7 +829,6 @@ export class Pipeline {
         case "compose_frontend_page": {
           this.requireContentEngine();
           const contract = this.requireFrontendContract();
-          this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput }));

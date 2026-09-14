@@ -239,10 +239,17 @@ test("a current passing QA review moves an older bounded-repair failure to histo
   repository.saveReview('passed-draft',{passed:true,score:94,issues:[],checks:[],unsupported_claims:[]},'fixture',{
     revision:current.revision,contentHash:current.content_hash,productionOwnerOpportunityId:'passed-owner'});
 
+  const pagePlanFailure=repository.enqueue('compose_frontend_page_plan','passed-brief',{
+    dedupeKey:'older-page-plan-provider-pressure',productionOwnerOpportunityId:'passed-owner'});
+  db.prepare(`UPDATE jobs SET status='failed',attempts=3,failure_class='retryable_provider',
+    last_failure_code='PROVIDER_REQUEST_FAILED',last_error='Vertex capacity exhausted before generation',
+    updated_at='2026-09-13T04:00:00Z' WHERE id=?`).run(pagePlanFailure);
+
   const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
   assert.notEqual(state.stage_status,'failed');
   assert.equal(state.latest_error,null);
-  assert.equal(state.latest_historical_error.stage,'revise_draft');
+  assert.equal(state.latest_historical_error.stage,'compose_frontend_page_plan');
+  assert.equal(state.latest_historical_error.job_id,pagePlanFailure);
   assert.equal(state.latest_historical_error.blocks_current_flow,false);
 
   const newerFailure=repository.enqueue('revise_draft','passed-draft',{
