@@ -262,11 +262,13 @@ export function separateQualityResults(review, issues = review.issues || []) {
     delivery_quality:{passed:!deliveryIssues.some(issue=>issue.severity==='blocker'),issues:deliveryIssues}};
 }
 
-export function qualityRepairStage(issues = []) {
+export function qualityRepairStage(issues = [], { repeatedBlockerCodes = [] } = {}) {
   const blockers = issues.filter((issue) => issue.severity !== 'warning');
   if (!blockers.length) return null;
+  const repeated=new Set((repeatedBlockerCodes || []).map((code)=>String(code || '').toUpperCase()));
   const media = new Set(['required_visual_missing', 'visual_renderer_incomplete']);
   const page = new Set(['final_page_invalid', 'final_page_content_missing', 'final_page_evidence_invalid']);
+  const deliveryCodes=new Set([...media,...page].map((code)=>code.toUpperCase()));
   const globalStructure = new Set(['DATABASE_DUMP', 'NO_CAUSAL_FLOW', 'NO_TRAVELER_DECISION',
     'UNIFORM_SECTION_RHYTHM', 'REPETITIVE_EXPLANATION', 'GENERIC_AI_TRANSITIONS']);
   const globalStructureCount = new Set(blockers.map((issue) => String(issue.code || '').toUpperCase())
@@ -275,7 +277,11 @@ export function qualityRepairStage(issues = []) {
   // frozen Writing Packet. A three-section patch cannot make that draft
   // trustworthy; regenerate only the draft from the preserved upstream
   // artifacts instead of repeatedly rewriting arbitrary fragments.
-  if (blockers.some((issue) => String(issue.code || '').toUpperCase() === 'EVIDENCE_LEDGER_EVASION'
+  if (blockers.some((issue) => {
+      const code=String(issue.code || '').toUpperCase();
+      return repeated.has(code) && !deliveryCodes.has(code);
+    })
+    || blockers.some((issue) => String(issue.code || '').toUpperCase() === 'EVIDENCE_LEDGER_EVASION'
     || String(issue.code || '').toUpperCase() === 'PLANNED_BODY_SECTIONS_MISSING'
     || String(issue.code || '').toUpperCase() === 'INVALID_DRAFT_REPAIR_SCOPE'
     || (String(issue.code || '').toUpperCase() === 'MANDATORY_BRIEF_REQUIREMENT_MISSING' && Number(issue.affected_count || 0) > 3)

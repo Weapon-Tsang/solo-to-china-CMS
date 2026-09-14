@@ -6,6 +6,8 @@ Use `scripts/inspect-production-content-canary.mjs <database-containing-canary|r
 
 For real-provider acceptance, retain single concurrency, disable unrelated Batch/image work, recover one approved Opportunity-owned flow at a time, and verify that a failed QA report changes the next `generate_draft` artifact input instead of producing `pipeline.job_reused`. WordPress acceptance remains `draft` only and must store both `preview_url` and `edit_url`; publication is a separate human action.
 
+The canary must quarantine every queued Job not owned by its current target before calling the worker. Its Frontend Contract sources remain blank so the persisted accepted snapshot is used without a test-only sync Job. For a long-Draft QA request, assert LOW thinking, bounded result cardinality and absence of `MODEL_OUTPUT_LIMIT`; a transient 429 may cool down and retry, but it is reported separately from content quality and structured-schema compatibility.
+
 ## 2.0.23 production-copy recovery replay
 
 For a deterministic recovery audit, first create a disposable online backup of production, then run `npm run audit:prod-replay -- --database <name-containing-replay-or-work> --replay-id <unique-id>`. The command refuses filenames that do not explicitly identify a disposable copy, requires a quiescent work database, invokes no worker/model/WordPress client, and verifies one active Opportunity-owned recovery Job plus idempotent replay for each failed/interrupted record. Discard the work database after the report is retained.

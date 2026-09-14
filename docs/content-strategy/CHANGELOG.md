@@ -10,6 +10,9 @@
 - Seed relevant authorized visuals before freezing the visual/page dependency snapshot, preventing deterministic source selection from invalidating its own Job and requiring a duplicate retry.
 - Admit a provider response to the local completion cache only after the stage's semantic validator accepts it. Rejected Draft structure cannot be replayed as a fake retry, and every evidence-bearing approved heading is now an explicit writer contract.
 - Preserve Brief adaptation, conflict and verification requirements in both full-Draft and bounded-repair DTOs. QA explicitly audits every mandatory requirement, cannot downgrade its omission to a warning, and recent blockers remain revision guardrails instead of being forgotten after the next rewrite.
+- Reserve the QA stage's output budget for its compact audit instead of hidden MEDIUM reasoning. The review DTO now removes duplicated Brief/Canonical data and repeated evidence metadata, bounds issues/checks/unsupported claims, and a reasoning-stage `MAX_TOKENS` gets one explicit LOW-thinking retry with complete attempt telemetry.
+- Escalate a content blocker repeated across consecutive revisions from bounded repair to Draft regeneration while preserving the frozen Writing Packet and all successful upstream artifacts. Repeated page/media blockers remain page/media recovery and never trigger writing.
+- Isolate real-provider production-copy canaries from unrelated durable queue rows and disable fake Contract sync sources, preventing test-only background Jobs from consuming provider capacity or polluting acceptance results.
 - Keep all imported Source media authorized for editorial use under `AGENTS.md`, while preserving attribution, durable bytes, relevance, alt text and Frontend Contract validation. Schema, strategy and approval semantics are unchanged.
 
 ## App 2.0.23 / schema 69 - 2026-09-14

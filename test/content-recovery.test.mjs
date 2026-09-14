@@ -134,6 +134,10 @@ test('media/page blockers do not automatically rewrite otherwise valid text', ()
   assert.equal(qualityRepairStage([{code:'INVALID_DRAFT_REPAIR_SCOPE',severity:'blocker'}]), 'generate_draft');
   assert.equal(qualityRepairStage([{code:'mandatory_brief_requirement_missing',severity:'blocker',affected_count:4}]), 'generate_draft');
   assert.equal(qualityRepairStage([{code:'mandatory_brief_requirement_missing',severity:'blocker',affected_count:2}]), 'revise_draft');
+  assert.equal(qualityRepairStage([{code:'confirmed_topic_coverage_missing',severity:'blocker',affected_count:1}],
+    {repeatedBlockerCodes:['CONFIRMED_TOPIC_COVERAGE_MISSING']}), 'generate_draft');
+  assert.equal(qualityRepairStage([{code:'final_page_invalid',severity:'blocker'}],
+    {repeatedBlockerCodes:['FINAL_PAGE_INVALID']}), 'compose_frontend_page');
 });
 
 test('global evidence-ledger evasion regenerates only the draft from its existing writing packet',t=>{
@@ -203,6 +207,22 @@ test('automatic quality repair is deduplicated per revision and stops after two 
   db.prepare("UPDATE jobs SET status='failed'").run();
   db.prepare("UPDATE article_drafts SET revision=3,content_hash='hash-3'").run();
   assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:true}).reason,'attempt_limit_reached');
+});
+test('a blocker repeated after one bounded repair escalates to full Draft regeneration',t=>{
+  const {db,repository}=fixture(t);
+  const issues=[{code:'confirmed_topic_coverage_missing',severity:'blocker',message:'Orientation remains ungrounded.',affected_count:1}];
+  repository.saveReview('draft-r',{passed:false,score:70,issues,checks:[],unsupported_claims:[]},'fixture',
+    {revision:1,contentHash:'hash-1',productionOwnerOpportunityId:'opportunity-r'});
+  assert.equal(repository.automaticQualityRepairState('draft-r',issues,{enqueue:true,
+    productionOwnerOpportunityId:'opportunity-r'}).stage,'revise_draft');
+  db.prepare("UPDATE jobs SET status='succeeded'").run();
+  db.prepare("UPDATE article_drafts SET revision=2,content_hash='hash-2'").run();
+  repository.saveReview('draft-r',{passed:false,score:72,issues,checks:[],unsupported_claims:[]},'fixture',
+    {revision:2,contentHash:'hash-2',productionOwnerOpportunityId:'opportunity-r'});
+  const escalated=repository.automaticQualityRepairState('draft-r',issues,{enqueue:true,
+    productionOwnerOpportunityId:'opportunity-r'});
+  assert.equal(escalated.stage,'generate_draft');
+  assert.equal(db.prepare("SELECT entity_id FROM jobs WHERE type='generate_draft'").get().entity_id,'brief-r');
 });
 test('the running review job does not block its own targeted repair enqueue',t=>{
   const {db,repository}=fixture(t);

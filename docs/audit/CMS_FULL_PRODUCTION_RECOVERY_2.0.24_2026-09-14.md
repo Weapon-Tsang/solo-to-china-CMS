@@ -23,14 +23,16 @@ All retained Source assets are authorized for editorial and production use under
 6. Facts must form traveler decisions, not a database dump. Strategy 3.3 now explicitly requires condition/consequence/action logic, varied section rhythm, transparent uncertainty, natural SEO intent, self-contained GEO answers and visible/page/schema consistency.
 7. Provider-valid JSON is not necessarily a valid production artifact. The first final-candidate replay rejected a Draft missing one required H2, then exposed three two-second recoveries that reused that rejected completion from the local response cache. Cache admission is now gated by the caller's semantic validator, rejected outputs are evicted, and the writer must emit every approved evidence-bearing heading exactly once in order.
 8. A persisted Brief requirement is useless if a compressed downstream DTO drops it. The extended replay showed QA repeatedly enforcing bilingual navigation, seasonal-hour, booking and conflict instructions that neither full Draft regeneration nor bounded repair had received. Both writer paths now retain the bounded requirements, prior blockers become regression guardrails, and independent QA must explicitly pass every mandatory adaptation/conflict requirement before delivery.
+9. A nominal 12k structured-output budget is not a 12k JSON budget on Gemini reasoning models. A real long-Draft review used 11,519 thinking tokens and only 464 visible output tokens before `MAX_TOKENS`. QA now uses LOW thinking, receives one compact non-duplicated evidence projection, and has explicit bounded result cardinality. Any MEDIUM-thinking structured stage gets one measured LOW-thinking fallback before becoming an auditable terminal output-limit failure.
+10. Repeating the same content blocker after a bounded repair is evidence that the repair boundary is wrong, not permission for another oscillation. Consecutive blocker codes now escalate only the Draft to regeneration from its frozen Writing Packet; page/media-only blockers remain on their specialized stages. The provider canary also quarantines non-target copied-queue work before each Job claim, so a single-flow test cannot spend calls or create misleading failures on unrelated background maintenance.
 
 ## Verification record
 
 Targeted production-derived regressions: PASS.  
 Static/build/boundary checks: PASS.  
-Final full local test suite: 612 passed, 0 failed.
+Final full local test suite: pending rerun after the provider-output budget repair.
 Production database replay: PASS on an isolated copy; no production write or model/WordPress call.  
-Real Vertex provider replay: in progress on an isolated production work database.  
+Real Vertex provider replay: the first three records reached current QA and Commercial successfully; the second group exposed and preserved a real QA thinking-budget exhaustion before the defective canary was stopped. A corrected immutable image must rerun the unfinished group.
 WordPress Draft canary and desktop/mobile final preview: pending final immutable candidate.  
 Production rollout and seven-record recovery: pending final acceptance.
 

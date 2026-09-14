@@ -25,7 +25,15 @@ test("bounded draft repair reserves JSON output budget instead of medium reasoni
     maxCompletionTokens: 16_000, stagePolicy });
   assert.equal(policy.thinking, "LOW");
   assert.equal(policy.maxOutputTokens, 12_000);
-  assert.equal(policy.version, "model-stage-policy-1.0.1");
+  assert.equal(policy.version, "model-stage-policy-1.0.2");
+});
+
+test("quality review reserves its structured output budget with low thinking", () => {
+  const policy = resolveStagePolicy("quality_review_v2", { provider: "vertex", model: "gemini-3.8-flash",
+    maxCompletionTokens: 16_000, stagePolicy });
+  assert.equal(policy.thinking, "LOW");
+  assert.equal(policy.maxOutputTokens, 12_000);
+  assert.equal(policy.version, "model-stage-policy-1.0.2");
 });
 
 test("every provider attempt is metered, including structured-output repair retries", async () => {
@@ -353,6 +361,40 @@ test("mandatory brief requirements are audited explicitly and cannot be downgrad
   assert.equal(result.passed,false);
   assert.equal(result.issues.find((issue)=>issue.code==="MISSING_MANDATORY_ADAPTATION").severity,"blocker");
   assert.equal(result.issues.some((issue)=>issue.code==="mandatory_brief_requirement_missing"),true);
+});
+
+test("quality review input keeps promised evidence once and bounds the provider response", async () => {
+  let requestBody;
+  const facts=Array.from({length:60},(_,index)=>({
+    normalized_key:`place.fact_${index}`,subject:`Place ${index}`,predicate:"visitor_detail",preferred_value:`Value ${index}`,
+    consensus_status:"corroborated",freshness_state:"current",validity_state:"current",
+    evidence:Array.from({length:3},(__,evidenceIndex)=>({source_id:`source-${evidenceIndex}`,value:`Value ${index}`,
+      quote:"Authorized evidence ".repeat(100),qualifiers:["visitor context"],coverage_limitations:[],canonical_url:"https://example.test/source"})),
+  }));
+  const output={passed:true,score:95,checks:[],issues:[],unsupported_claims:[]};
+  const engine=new ContentEngine({apiKey:"key",model:"model",baseUrl:"https://api.example.test/v1"},async(_url,options)=>{
+    requestBody=JSON.parse(options.body);
+    return Response.json({model:"model",choices:[{finish_reason:"stop",message:{content:JSON.stringify(output)}}]});
+  });
+  await engine.review({
+    brief:{strategy_version:"3.3",plan:{title:"Guide",outline:[
+      {section_id:"one",heading:"One",claim_keys:["place.fact_0","place.fact_1"]},
+      {section_id:"two",heading:"Two",claim_keys:["place.fact_2"]},
+    ],canonical:{quick_answer:"Duplicated canonical content must not be repeated in QA input."}}},
+    facts,content_policy:{minimum_words:0,faq:{allowed:false},visuals:{minimum:0,maximum:0}},reader_sources:[],
+    draft:{title:"Guide",slug:"guide",meta_description:"Useful guide",body_markdown:"## One\n\nValue 0.\n\n## Two\n\nValue 2.",
+      evidence_ledger:[{section_id:"one",claim_keys:["place.fact_0"]},{section_id:"two",claim_keys:["place.fact_2"]}],
+      unresolved_conflicts:[],verification_notes:[],seo:{meta_title:"Guide",focus_keyword:"guide",secondary_keywords:[],search_intent:"informational",key_takeaways:[]},faqs:[],visuals:[]},
+  });
+  const input=JSON.parse(requestBody.messages[1].content);
+  assert.deepEqual(input.facts.map((fact)=>fact.normalized_key),["place.fact_0","place.fact_1","place.fact_2"]);
+  assert.ok(input.facts.every((fact)=>fact.evidence.length===2
+    && fact.evidence.every((entry)=>entry.quote.length<=500 && !("canonical_url" in entry))));
+  assert.equal("plan" in input.brief,false);
+  const reviewSchema=requestBody.response_format.json_schema.schema;
+  assert.equal(reviewSchema.properties.checks.maxItems,24);
+  assert.equal(reviewSchema.properties.issues.maxItems,16);
+  assert.equal(reviewSchema.properties.unsupported_claims.maxItems,12);
 });
 
 test("a warning-only provider review cannot leave production failed without a blocker", () => {

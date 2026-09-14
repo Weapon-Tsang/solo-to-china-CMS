@@ -30,9 +30,12 @@ const config = loadConfig({
   WORDPRESS_SITE_URL: "",
   WORDPRESS_USERNAME: "",
   WORDPRESS_APPLICATION_PASSWORD: "",
-  FRONTEND_COMPONENT_REGISTRY_SOURCE: "canary://persisted-registry",
-  FRONTEND_PAGE_SCHEMA_SOURCE: "canary://persisted-page-schema",
-  FRONTEND_PUBLISH_PACKAGE_SCHEMA_SOURCE: "canary://persisted-publish-schema",
+  // The copied database already contains the accepted immutable Frontend
+  // Contract snapshot. Blank sources prevent a canary-only sync Job from
+  // trying to interpret a fake URI as a local path.
+  FRONTEND_COMPONENT_REGISTRY_SOURCE: "",
+  FRONTEND_PAGE_SCHEMA_SOURCE: "",
+  FRONTEND_PUBLISH_PACKAGE_SCHEMA_SOURCE: "",
   MAINTENANCE_ENABLED: "false",
 });
 
@@ -139,6 +142,10 @@ async function drainOpportunity(repo, worker, opportunityId, callsAtStart, maxim
     if (modelCallCount(repo) - callsAtStart >= maximumCalls) throw new Error(`Real-provider canary reached its ${maximumCalls}-call safety cap.`);
     const active = repo.db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE production_owner_opportunity_id=? AND status IN ('queued','running')").get(opportunityId).count;
     if (!Number(active)) return;
+    repo.db.prepare(`UPDATE jobs SET status='failed',failure_class='permanent_input',last_failure_code='CANARY_BACKGROUND_SKIPPED',
+      last_error='Non-target work was suppressed inside the disposable provider canary database.',
+      locked_by=NULL,locked_at=NULL,lease_expires_at=NULL,updated_at=datetime('now'),completed_at=datetime('now')
+      WHERE status='queued' AND COALESCE(production_owner_opportunity_id,'')<>?`).run(opportunityId);
     const ran = await worker.runOne();
     if (!ran) await new Promise((resolve) => setTimeout(resolve, 500));
   }

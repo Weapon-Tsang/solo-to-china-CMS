@@ -57,6 +57,7 @@ export class VertexGeminiClient {
     let correction = "";
     let validationAttempt = 0;
     let requestAttempt = 0;
+    let thinkingFallbackUsed = false;
     telemetryContext = { ...(telemetryContext || {}), stageStartedAt: Date.now(), retryWaitMs: 0 };
     while (validationAttempt < policy.maxAttempts) {
       const attempt = requestAttempt;
@@ -102,6 +103,14 @@ export class VertexGeminiClient {
       const candidate = payload?.candidates?.[0];
       const output = candidate?.content?.parts?.map((part) => part.text || "").join("");
       if (candidate?.finishReason === "MAX_TOKENS") {
+        const configuredThinking = String(requestBody.generationConfig.thinkingConfig?.thinkingLevel || "").toUpperCase();
+        if (!thinkingFallbackUsed && configuredThinking && configuredThinking !== "LOW") {
+          thinkingFallbackUsed = true;
+          this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+            status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: `thinking_budget_fallback:${configuredThinking}->LOW`, usage: payload?.usageMetadata }));
+          requestBody.generationConfig.thinkingConfig = { thinkingLevel: "LOW" };
+          continue;
+        }
         this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: attempt ? "structured_repair" : null, usage: payload?.usageMetadata }));
         throw outputLimitError(name);

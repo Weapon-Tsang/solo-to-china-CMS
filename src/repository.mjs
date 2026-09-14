@@ -6350,7 +6350,14 @@ export class Repository {
     ignoreActiveJobId = null } = {}) {
     const draft = this.db.prepare("SELECT id,brief_id,revision FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) return { eligible: false, queued: false, stage: null, attempts: 0, maxAttempts, reason: "draft_missing" };
-    const stage = qualityRepairStage(issues);
+    const recentFailedReviews=this.db.prepare(`SELECT issues_json FROM quality_reviews
+      WHERE draft_id=? AND passed=0 ORDER BY created_at DESC,id DESC LIMIT 2`).all(draftId)
+      .map((row)=>json(row.issues_json,[]));
+    const currentCodes=new Set(issues.filter((issue)=>issue?.severity!=='warning').map((issue)=>String(issue?.code || '').toUpperCase()));
+    const previousCodes=new Set((recentFailedReviews[1] || []).filter((issue)=>issue?.severity!=='warning')
+      .map((issue)=>String(issue?.code || '').toUpperCase()));
+    const repeatedBlockerCodes=[...currentCodes].filter((code)=>previousCodes.has(code));
+    const stage = qualityRepairStage(issues,{repeatedBlockerCodes});
     const entityId = stage === "generate_draft" ? draft.brief_id : draftId;
     const attempts = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs
       WHERE entity_id IN (?,?) AND dedupe_key LIKE 'auto-quality-repair:%'`).get(draftId,draft.brief_id)?.count || 0);

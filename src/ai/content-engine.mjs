@@ -186,18 +186,18 @@ const REVIEW_SCHEMA = objectSchema(
   {
     passed: { type: "boolean" }, score: { type: "number", minimum: 0, maximum: 100 },
     checks: {
-      type: "array",
+      type: "array", maxItems: 24,
       items: objectSchema(["name", "passed", "detail"], {
-        name: { type: "string" }, passed: { type: "boolean" }, detail: { type: "string" },
+        name: { type: "string", maxLength: 160 }, passed: { type: "boolean" }, detail: { type: "string", maxLength: 600 },
       }),
     },
     issues: {
-      type: "array",
+      type: "array", maxItems: 16,
       items: objectSchema(["code", "severity", "message"], {
-        code: { type: "string" }, severity: { type: "string", enum: ["blocker", "warning"] }, message: { type: "string" },
+        code: { type: "string", maxLength: 120 }, severity: { type: "string", enum: ["blocker", "warning"] }, message: { type: "string", maxLength: 1_000 },
       }),
     },
-    unsupported_claims: { type: "array", items: { type: "string" } },
+    unsupported_claims: { type: "array", maxItems: 12, items: { type: "string", maxLength: 800 } },
   },
 );
 
@@ -884,11 +884,23 @@ function actionableDraftRepairIssues(issues = []) {
 
 function reviewInputDto(contentPackage) {
   const draft=contentPackage.draft || {};
+  const facts=qualityReviewFactDtos(contentPackage,draft);
+  const factKeys=new Set(facts.map((fact)=>fact.normalized_key));
+  const plan=contentPackage.brief?.plan || contentPackage.brief || {};
+  const canonical=contentPackage.brief?.canonical || plan.canonical || {};
   return {
-    brief: { plan: contentPackage.brief?.plan, canonical: contentPackage.brief?.canonical, strategy_version: contentPackage.brief?.strategy_version },
+    brief: safeDraftBrief(contentPackage.brief,factKeys),
+    canonical: {
+      content_type:canonical.content_type,
+      quick_answer:truncate(canonical.quick_answer,800),
+      secondary_queries:(canonical.secondary_queries || []).slice(0,12).map((value)=>truncate(value,240)),
+      warnings:(canonical.warnings || []).slice(0,12).map((value)=>truncate(value,400)),
+      faq:(canonical.faq || []).slice(0,8).map((item)=>({question:truncate(item?.question,300),answer:truncate(item?.answer,600)})),
+      seo:canonical.seo || null,
+    },
     mandatory_requirements: mandatoryBriefRequirements(contentPackage.brief),
     content_policy: contentPackage.content_policy,
-    facts: factDtos(contentPackage),
+    facts,
     reader_sources: (contentPackage.reader_sources || []).slice(0, 24).map((source)=>({
       label:truncate(source.label,180),url:source.url,published_at:source.published_at,verified_at:source.verified_at,
       authority_level:source.authority_level,
@@ -908,6 +920,32 @@ function reviewInputDto(contentPackage) {
       valid: contentPackage.frontend_page.validation?.valid,
     } : null,
   };
+}
+
+// QA needs the facts asserted by the current Draft plus facts promised by its
+// approved outline. It does not need the Writer's repeated source titles,
+// canonical URLs, or three long evidence quotations per fact. Keeping this DTO
+// semantically complete but compact reduces both provider pressure and Gemini
+// thinking spent re-deduplicating the same evidence.
+function qualityReviewFactDtos(contentPackage,draft) {
+  const allFacts=factDtos(contentPackage);
+  const requested=new Set([
+    ...(draft.evidence_ledger || []).flatMap((entry)=>entry?.claim_keys || []),
+    ...((contentPackage.brief?.plan || contentPackage.brief)?.outline || []).flatMap((section)=>section?.claim_keys || []),
+  ].filter(Boolean));
+  const selected=(requested.size ? allFacts.filter((fact)=>requested.has(fact.normalized_key)) : allFacts).slice(0,48);
+  return selected.map((fact)=>({
+    normalized_key:fact.normalized_key,subject:truncate(fact.subject,240),predicate:truncate(fact.predicate,200),
+    preferred_value:truncate(fact.preferred_value,800),consensus_status:fact.consensus_status,
+    freshness_state:fact.freshness_state,validity_state:fact.validity_state,
+    evidence:(fact.evidence || []).slice(0,2).map((item)=>({
+      source_id:item.source_id,value:truncate(item.value,500),quote:truncate(item.quote,500),
+      qualifiers:(item.qualifiers || []).slice(0,8).map((value)=>truncate(value,240)),
+      coverage_limitations:(item.coverage_limitations || []).slice(0,8).map((value)=>truncate(value,240)),
+      published_at:item.published_at,observed_at:item.observed_at,verified_at:item.verified_at,
+      valid_from:item.valid_from,valid_to:item.valid_to,publication_usability:item.publication_usability,
+    })),
+  }));
 }
 const intakePrompt = (strategyVersion) => `Analyze one already-captured human-selected China travel source for SoloToChina Content Production Strategy ${strategyVersion}.
 - This is decision support, not article generation. Do not write an article and do not reveal private reasoning.
@@ -1041,7 +1079,7 @@ Also check originality, usefulness for solo/first-time/non-Chinese-speaking visi
 For every item in mandatory_requirements, emit exactly one checks entry whose name is the supplied requirement id. Mark it passed only when the reader-facing draft actually satisfies the complete requirement. Missing a mandatory adaptation or conflict-handling requirement is a blocker, never a warning.
 Use these editorial issue codes when applicable: DATABASE_DUMP, GENERIC_AI_TRANSITIONS, REPETITIVE_EXPLANATION, UNIFORM_SECTION_RHYTHM, EXCESSIVE_HEDGING, NO_TRAVELER_DECISION, NO_CAUSAL_FLOW, FAKE_FIRST_PERSON.
 Set passed=false only when at least one issue has severity=blocker; warning-only reviews must set passed=true. Do not hide a failure reason outside issues.
-Do not rewrite the article. Return actionable blockers and warnings.`;
+Do not rewrite the article. Keep the audit compact: no more than 24 checks, 16 distinct issues, or 12 unsupported claims; merge duplicates, keep each check detail under 60 words and each issue message under 100 words. Return only actionable blockers and warnings.`;
 
 export function applyDeterministicGates(review, contentPackage) {
   const draft = contentPackage.draft;

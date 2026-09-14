@@ -44,7 +44,7 @@ test("AI client dispatches an old Batch poll through its stored Vertex adapter a
   assert.match(requestUrl, /aiplatform\.googleapis\.com\/v1\/projects\/project-old\/locations\/global\/batchPredictionJobs\/job-1$/);
 });
 
-test("Vertex Gemini reserves medium thinking for writing and review stages", async () => {
+test("Vertex Gemini reserves medium thinking for planning and writing stages", async () => {
   let body;
   const client = new VertexGeminiClient({
     projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
@@ -151,14 +151,29 @@ test("Vertex Gemini resumes the persisted structured transport after a durable J
   assert.match(requests[0].systemInstruction.parts[0].text,/local validation remains authoritative/);
 });
 
-test("Vertex content planning output limits require input correction instead of repeating a no-op retry", async () => {
+test("Vertex content planning retries a thinking-exhausted response once at low thinking", async () => {
+  const requests=[];
+  const metrics=[];
   const client = new VertexGeminiClient({
     projectId: "test-project", location: "global", model: "gemini-3.8-flash", accessToken: "test-token",
-  }, async () => Response.json({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: '{"partial":' }] } }] }));
-  await assert.rejects(() => client.completeJson({
+    onModelCall:(metric)=>metrics.push(metric),
+  }, async (_url,options) => {
+    requests.push(JSON.parse(options.body));
+    if(requests.length===1)return Response.json({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: '{"partial":' }] } }],
+      usageMetadata:{promptTokenCount:100,candidatesTokenCount:50,thoughtsTokenCount:11900} });
+    return Response.json({ candidates:[{finishReason:"STOP",content:{parts:[{text:'{"ok":true}'}]}}],
+      usageMetadata:{promptTokenCount:100,candidatesTokenCount:2,thoughtsTokenCount:200} });
+  });
+  const result=await client.completeJson({
     name: "content_brief", schema: { type: "object" }, instructions: "Plan.", content: "mixed evidence",
-  }), (error) => error.code === "MODEL_OUTPUT_LIMIT" && error.retryable === false
-    && /content planning/i.test(error.message) && !/Source segment/i.test(error.message));
+  });
+  assert.deepEqual(result.output,{ok:true});
+  assert.equal(requests.length,2);
+  assert.equal(requests[0].generationConfig.thinkingConfig.thinkingLevel,"MEDIUM");
+  assert.equal(requests[1].generationConfig.thinkingConfig.thinkingLevel,"LOW");
+  assert.equal(metrics[0].retryReason,"thinking_budget_fallback:MEDIUM->LOW");
+  assert.equal(metrics[0].errorCode,"MODEL_OUTPUT_LIMIT");
+  assert.equal(metrics[1].attemptStatus,"succeeded");
 });
 
 test("Vertex Gemini uses the global API host for Gemini 3.8 Flash", async () => {
