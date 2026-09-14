@@ -4,6 +4,8 @@ App/Extension version `2.0.18`, schema migration `69`, and Content Strategy `3.3
 
 The seven existing production records are not retried, archived or deleted by startup or deployment. Five retain their explicit `revise_draft` failure from the old output budget; the two rows previously misreported as interrupted now resolve to their failed quality review and targeted `revise_draft`. Successful Draft, media and evidence artifacts remain reusable. Schema 69 requires no migration for this code-only release.
 
+Production runs revision `39562f57375f798921f4b3f356c3cff8f0a6d1a2` at immutable image digest `sha256:b121ebbed24eee2075971b921f659987449f722a4ec405191f33bde3bea14052`; Cloud Build was `7c570917-6ee1-4be1-80ed-d37322ac1223`. Post-rollout health/readiness, authenticated UI acceptance and production-volume read-only replay passed. Model-call metrics remained 5,828, all production and WordPress queues were empty, and the seven rows were unchanged. The stopped `engine-before-39562f5` container is the immediate 2.0.17 rollback. Cleanup reclaimed 487.7 MB while retaining that rollback and all persistent data.
+
 The implementation and rollout evidence is recorded in `audit/CMS_POST_DRAFT_RECOVERY_2.0.18_2026-09-14.md`. Frontend page rendering remains owned by the existing Frontend Contract and WordPress theme; the CMS stores and validates payloads but does not copy JSX or CSS.
 
 # 2.0.17 Vertex bounded Draft repair handoff

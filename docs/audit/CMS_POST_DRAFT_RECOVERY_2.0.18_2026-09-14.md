@@ -30,4 +30,19 @@ This is a code-only release. Schema 69 needs no migration. Startup reconciliatio
 
 ## Verification
 
-Pending final automated test, provider canary, production-like read-only replay, immutable-image deployment and post-rollout audit.
+- L1 targeted recovery/production-state/visual regressions: 43 passed, 0 failed.
+- L2 full test suite: 565 passed, 0 failed. `npm run check` also passed.
+- Consolidated offline release gate: 50 mandatory checks passed, 0 failed, with five warnings and five explicitly external/not-tested checks. The fixed Frontend commit `f44ce1092ced93dfb47d9b3eae83d0d5e4b97086` passed its Contract gate.
+- L3/L6 production-data replay ran App 2.0.18 against the production volume mounted read-only with SQLite `query_only=1`. It projected all seven rows to `revise_draft`: five exact `MODEL_OUTPUT_LIMIT` failures and two authoritative failed reviews (`DATABASE_DUMP` and `invalid_evidence_key`). Before/after projections were identical and each audit transaction reported `total_changes=0`.
+- L4 authenticated production UI acceptance showed App 2.0.18, seven current-production rows and the same recovery target/error semantics. No recovery action was clicked.
+- L5 made one bounded real-provider request with a synthetic WebP containing no production material. `gemini-3.1-flash-image` accepted `image/webp` and returned a renderable `image/png`; no 400, 429 or output-limit error occurred.
+
+## Production rollout
+
+Commit `39562f57375f798921f4b3f356c3cff8f0a6d1a2` was pushed to `codex/audit-v1.3`. Cloud Build `7c570917-6ee1-4be1-80ed-d37322ac1223` produced immutable image digest `sha256:b121ebbed24eee2075971b921f659987449f722a4ec405191f33bde3bea14052`.
+
+The code-only rollout performed no migration. Isolated readiness passed before the new container joined the production network. Public `/api/health` and `/api/ready` report App 2.0.18, ready database, schema 69, Strategy 3.3, Frontend Contract 1.4.0 and queue active/queued/running 0. Startup completed 26 unowned deterministic topic, coverage, Opportunity reconciliation and Frontend Contract sync Jobs; every one succeeded, none carried a production owner, and no model-backed production Job was created.
+
+The stable post-rollout read-only audit reported model-call metrics unchanged at 5,828, zero active production Jobs, zero active WordPress Jobs, Sources 74, Claims 5,147, Evidence 8,292 and Knowledge 4,270. SQLite integrity is `ok` with zero foreign-key violations. No production record was retried, archived or deleted.
+
+Disk cleanup removed two superseded rollback containers, their unused images and temporary audit files, reclaiming 487.7 MB. The active 2.0.18 container, stopped `engine-before-39562f5` 2.0.17 rollback container, Cloudflared image, persistent data volume and the active legacy `/app/data` bind remain. VM disk usage is 12% with 67 GiB available.
