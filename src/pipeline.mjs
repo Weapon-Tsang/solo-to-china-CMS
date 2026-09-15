@@ -840,8 +840,10 @@ export class Pipeline {
           }
           const currentAst = buildContentAst({ draft: contentPackage.draft, brief: contentPackage.brief,
             visuals: contentPackage.draft.visuals || [], facts: contentPackage.facts || [] });
-          const composed = composePageFromAst(currentAst, capabilities, contract.pageSchema.schema, contentPackage.frontend_page_plan?.plan)
+          const existingPageId = contentPackage.frontend_page?.payload?.metadata?.pageId || null;
+          const composed = composePageFromAst(currentAst, capabilities, contract.pageSchema.schema, contentPackage.frontend_page_plan?.plan, existingPageId)
             || await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext }));
+          if (existingPageId && composed.output?.metadata) composed.output.metadata.pageId = existingPageId;
           const validation = this.frontendContracts.validatePagePayload(composed.output);
           const savedPage = commitStage(() => {
             const saved = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,

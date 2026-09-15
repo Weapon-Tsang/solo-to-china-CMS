@@ -1,5 +1,9 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.30 / schema 70 - 2026-09-16
+
+- Preserve the stable page identity during delivery-only recomposition so a refreshed layout cannot detach an existing WordPress draft.
+
 ## App 2.0.29 / schema 70 - 2026-09-15
 
 - Activate Content Production Strategy 3.4 for reader-task page composition, shared visual classification/pixel qualification, scoped final preview, and versioned commercial overlays.

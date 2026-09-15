@@ -109,6 +109,10 @@ test("production atomic components compose every content type without a model or
   assert.equal(page.output.metadata.contentType, "travel-guide");
   assert.equal(page.provenance.entries.length, page.output.blocks.length);
   assert.deepEqual(validateJsonSchema(page.output, productionPageSchema), []);
+
+  const refreshed = composePageFromAst(ast, { components }, productionPageSchema, null, "stable-page-identity");
+  assert.equal(refreshed.output.metadata.pageId, "stable-page-identity",
+    "incremental page recomposition must preserve the existing WordPress-bound page identity");
 });
 
 test("an unlisted section does not inherit the previous section evidence and ordered lists stay ordered", () => {

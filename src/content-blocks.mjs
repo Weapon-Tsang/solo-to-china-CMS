@@ -252,16 +252,16 @@ export function renderContentAstMarkdown(ast) {
   }).join("\n\n");
 }
 
-export function composePageFromAst(ast, capabilities = {}, pageSchema = {}, pagePlan = null) {
-  const atomic = composeAtomicPageFromAst(ast, capabilities, pageSchema, pagePlan);
-  return atomic || composeLegacyFirstTimeGuideFromAst(ast, capabilities, pageSchema);
+export function composePageFromAst(ast, capabilities = {}, pageSchema = {}, pagePlan = null, pageIdentity = null) {
+  const atomic = composeAtomicPageFromAst(ast, capabilities, pageSchema, pagePlan, pageIdentity);
+  return atomic || composeLegacyFirstTimeGuideFromAst(ast, capabilities, pageSchema, pageIdentity);
 }
 
 export function composeFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema = {}) {
   return composePageFromAst(ast, capabilities, pageSchema);
 }
 
-function composeAtomicPageFromAst(ast, capabilities, pageSchema, pagePlan = null) {
+function composeAtomicPageFromAst(ast, capabilities, pageSchema, pagePlan = null, pageIdentity = null) {
   if (!Array.isArray(ast?.nodes) || !ast.nodes.length) return null;
   const available = new Map((capabilities.components || [])
     .filter((item) => item?.id && item.status !== "deprecated")
@@ -354,7 +354,7 @@ function composeAtomicPageFromAst(ast, capabilities, pageSchema, pagePlan = null
     return null;
   }
   if (!blocks.length || blocks.some((block) => !block.variant)) return null;
-  const metadata = pageMetadata(ast, pageSchema);
+  const metadata = pageMetadata(ast, pageSchema, pageIdentity);
   addReadingPresentation(metadata, ast, pageSchema);
   const realizedNodes = provenance.map((entry) => entry.contentNodeId).filter((value) => planByNode.has(value));
   const realizedOrder = realizedNodes.map((value) => planByNode.get(value).planIndex);
@@ -410,7 +410,7 @@ function addReadingPresentation(metadata, ast, pageSchema) {
   };
 }
 
-function composeLegacyFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema = {}) {
+function composeLegacyFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema = {}, pageIdentity = null) {
   if (ast?.content_type !== "first_time_guide") return null;
   const component = (capabilities.components || []).find((item) => item.id === "articleSection" && item.status !== "deprecated");
   if (!component || !component.schema?.properties?.heading || !component.schema?.properties?.body) return null;
@@ -435,7 +435,7 @@ function composeLegacyFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema =
       ? (node.items || []).map((item) => `- ${item}`).join("\n") : node.visible_text).join("\n\n");
     return { type: component.id, ...(variant ? { variant } : {}), data: { heading: section.heading.visible_text, body } };
   });
-  const metadata = pageMetadata(ast, pageSchema);
+  const metadata = pageMetadata(ast, pageSchema, pageIdentity);
   const provenance = blocks.map((block, index) => {
     const section = sections[index];
     const nodes = [section.heading, ...section.content];
@@ -448,11 +448,11 @@ function composeLegacyFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema =
   } };
 }
 
-function pageMetadata(ast, pageSchema) {
+function pageMetadata(ast, pageSchema, pageIdentity = null) {
   const metadataProperties = pageSchema?.properties?.metadata?.properties || {};
   const metadata = {};
   const put = (key, value) => { if (metadataProperties[key]) metadata[key] = value; };
-  put("pageId", ast.content_hash);
+  put("pageId", pageIdentity || ast.content_hash);
   put("title", ast.title);
   put("slug", ast.slug);
   put("contentType", toFrontendGuideType(ast.content_type));

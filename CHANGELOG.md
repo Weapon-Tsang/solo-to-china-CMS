@@ -1,6 +1,11 @@
 # Changelog
 
-## 2.0.29 - Unreleased
+## 2.0.30 - Unreleased
+
+- Preserve the existing page identity during bounded presentation refreshes, including deterministic and provider fallback composition paths.
+- Keep WordPress identity fail-closed while allowing a page fingerprint to rotate only when the existing post and exact stable CMS draft identity both match.
+
+## 2.0.29 - 2026-09-15
 
 - Consume the frozen Frontend Page Plan during deterministic AST composition, record per-block adoption/substitution reasons, and prefer the simplest Registry component for each reader task.
 - Unify source-image classification across planned and fallback paths, fill relevant visual gaps, preserve source crop during localization, add pixel/aspect QA, and key WordPress media reuse by derivative identity.

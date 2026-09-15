@@ -5,9 +5,10 @@ import { applyDeliveryRefresh, planDeliveryRefresh } from "../src/services/deliv
 function fixture({ modifiedAt="2026-09-15T06:36:52Z", status="draft" } = {}) {
   const commands=[];
   const jobs=[];
+  const syncedAt=new Date().toISOString();
   const repository={
     listWordPressInventory:()=>[{site_url:"https://site.test",post_id:96,status,modified_at:modifiedAt,title:"Guide"}],
-    getWordPressSyncState:()=>({last_succeeded_at:new Date().toISOString()}),
+    getWordPressSyncState:()=>({last_succeeded_at:syncedAt}),
     getDraftPackage:()=>({
       draft:{id:"draft-1",title:"Guide",revision:4,content_hash:"content-hash",body_markdown:"Frozen body",visuals:[{id:"visual-1",asset_fingerprint:"visual-hash"}]},
       review:{passed:1},frontend_page:{id:"page-1",current:true,draft_content_hash:"content-hash"},
