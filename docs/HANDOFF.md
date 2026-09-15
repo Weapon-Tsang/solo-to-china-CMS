@@ -1,3 +1,7 @@
+# 2.0.28 production database mount guard handoff
+
+App/Extension version `2.0.28`, schema migration `69`, and Content Strategy `3.3` form this code-only deployment repair, with Content Production Strategy 3.3 defined by `config/content-strategy.json`, `production_state` 2.0 and Frontend Contract 1.4.0. A 2.0.27 container replacement retained the persistent volume mount but dropped the explicit `DATABASE_PATH`, so the process opened the image-local default database and returned an empty Content workspace while the real 2.24 GB database remained intact. Production startup now fails closed when the path is omitted or missing. Rollout must use the existing Compose contract, confirm the seven approved Opportunities from the mounted database, and perform no automatic recovery, reconciliation, deletion, archive or WordPress publication.
+
 # 2.0.27 recovery-run quality convergence handoff
 
 App/Extension version `2.0.27`, schema migration `69`, and Content Strategy `3.3` form this code-only repair, with `production_state` 2.0 and Frontend Contract 1.4.0. A real v2.0.26 production recovery proved the unsupported-assertion fix by advancing the Metro article to a new QA result. That result exposed two adjacent defects: the reviewer labeled one missing mandatory Brief item as `NO_TRAVELER_DECISION`, and the automatic two-attempt repair budget was counted across the Draft's entire history rather than the current explicit recovery run.

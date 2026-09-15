@@ -1,5 +1,9 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.28 / schema 69 - 2026-09-15
+
+- Fail closed when a production runtime omits `DATABASE_PATH` or would create a missing database implicitly. This deployment guard does not change Strategy 3.3 editorial behavior or enqueue production work.
+
 ## App 2.0.27 / schema 69 - 2026-09-15
 
 - Treat automatic QA convergence as a bounded recovery-run concern rather than a lifetime Draft counter; historical repair attempts remain auditable but cannot strand a current approved production flow.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.28 - Unreleased
+
+- Refuse production startup when `DATABASE_PATH` is omitted, preventing an ad-hoc container replacement from silently opening the image-local empty database instead of the mounted persistent database.
+- Refuse implicit creation of a missing production database unless an operator explicitly sets `ALLOW_PRODUCTION_DATABASE_BOOTSTRAP=true` for an intentional first deployment.
+- This is a code-only deployment guard. It performs no migration, recovery enqueue, reconciliation, deletion, archive or WordPress publication.
+
 ## 2.0.27 - Unreleased
 
 - Scope automatic Draft/QA repair limits to the active explicit recovery run, so historical attempts from older deployments cannot strand a newly diagnosed revision at `attempt_limit_reached`.

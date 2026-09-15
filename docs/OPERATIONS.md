@@ -1,5 +1,9 @@
 # V1 Operations
 
+## 2.0.28 production database startup guard
+
+Production must set an explicit `DATABASE_PATH` that already exists. The engine refuses to start against the image-local default or to create a missing production database. `ALLOW_PRODUCTION_DATABASE_BOOTSTRAP=true` is reserved for a deliberate first deployment and must not be used during an upgrade or recovery. Deployment readiness must verify the expected production Content projection, not only HTTP health, before the new container replaces the prior runtime.
+
 ## 2.0.27 recovery-run repair budget
 
 Automatic Draft/QA repair is capped at two attempts per explicit `recovery_run_id`, not two attempts for the Draft's full lifetime. A manual recovery and every child Job must retain the same run id. The dedupe identity includes that run id plus stage, Draft and revision. This allows a newly diagnosed revision to converge while preventing repeated work inside one recovery. Operator diagnosis must report the active run's attempts and must not inherit an exhausted counter from an older deployment.

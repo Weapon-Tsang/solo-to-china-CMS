@@ -51,6 +51,7 @@ export function createApplication(config = loadConfig()) {
   if (!isLoopbackHost(config.host) && (!config.captureToken || !config.adminToken || !config.auth.password || !config.auth.sessionSecret)) {
     throw new Error("Non-loopback HOST requires CAPTURE_TOKEN, ADMIN_TOKEN, ADMIN_PASSWORD, and SESSION_SECRET.");
   }
+  assertProductionDatabaseConfiguration(config);
   const logger = createLogger(config.logging);
   const db = openDatabase(config.databasePath);
   const auth = createAuth(db, config.auth);
@@ -1172,6 +1173,16 @@ export function createApplication(config = loadConfig()) {
       logger.info("server.stopped", { version: VERSION });
     },
   };
+}
+
+export function assertProductionDatabaseConfiguration(config) {
+  if (config.deployment?.environment !== "production") return;
+  if (!config.deployment.databasePathConfigured) {
+    throw new Error("Production startup requires an explicit DATABASE_PATH; refusing to open the image-local default database.");
+  }
+  if (!fs.existsSync(config.databasePath) && !config.deployment.allowProductionDatabaseBootstrap) {
+    throw new Error("Production DATABASE_PATH does not exist; set ALLOW_PRODUCTION_DATABASE_BOOTSTRAP=true only for an intentional first deployment.");
+  }
 }
 
 function createRequestGate(spacingMs = 0) {

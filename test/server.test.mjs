@@ -423,6 +423,28 @@ test("non-loopback binding refuses to start without both operational tokens", ()
   assert.throws(() => createApplication(config), /requires CAPTURE_TOKEN, ADMIN_TOKEN, ADMIN_PASSWORD, and SESSION_SECRET/);
 });
 
+test("production refuses the image-local default database when DATABASE_PATH is omitted", () => {
+  const config = loadConfig({
+    NODE_ENV: "production", HOST: "0.0.0.0",
+    CAPTURE_TOKEN: "capture-secret", ADMIN_TOKEN: "admin-secret",
+    ADMIN_PASSWORD: "private-password", SESSION_SECRET: "private-session-secret",
+  });
+  assert.throws(() => createApplication(config), /requires an explicit DATABASE_PATH/);
+});
+
+test("production refuses to create a missing database without an explicit bootstrap opt-in", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-production-db-guard-test-"));
+  const databasePath = path.join(directory, "missing.sqlite");
+  const config = loadConfig({
+    NODE_ENV: "production", HOST: "0.0.0.0", DATABASE_PATH: databasePath,
+    CAPTURE_TOKEN: "capture-secret", ADMIN_TOKEN: "admin-secret",
+    ADMIN_PASSWORD: "private-password", SESSION_SECRET: "private-session-secret",
+  });
+  assert.throws(() => createApplication(config), /DATABASE_PATH does not exist/);
+  assert.equal(fs.existsSync(databasePath), false);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
 test("dashboard password login creates a secure session and requires an initial password change", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-password-auth-test-"));
   const config = loadConfig({

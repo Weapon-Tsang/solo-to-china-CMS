@@ -37,6 +37,8 @@ export const VISUAL_MODELS = [
 ];
 
 export function loadConfig(env = process.env) {
+  const runtimeEnvironment = String(env.NODE_ENV || "development").trim().toLowerCase();
+  const databasePathConfigured = Boolean(String(env.DATABASE_PATH || "").trim());
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
   const sourceUploadsDir = path.resolve(root, env.SOURCE_UPLOADS_DIR || "data/source-uploads");
   const captureUploadsDir = path.resolve(root, env.CAPTURE_UPLOADS_DIR || "data/capture-uploads");
@@ -45,6 +47,11 @@ export function loadConfig(env = process.env) {
   const imageProvider = env.IMAGE_PROVIDER || env.VISUAL_PROVIDER || "none";
   return {
     root,
+    deployment: {
+      environment: runtimeEnvironment,
+      databasePathConfigured,
+      allowProductionDatabaseBootstrap: boolean(env.ALLOW_PRODUCTION_DATABASE_BOOTSTRAP, false),
+    },
     contentStrategy: CONTENT_STRATEGY,
     host: env.HOST || "127.0.0.1",
     port: integer(env.PORT, 4310),
