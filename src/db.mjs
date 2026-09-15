@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 69;
+export const SCHEMA_VERSION = 70;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -90,6 +90,43 @@ function migrate(db) {
   if (current < 67) migrationSixtySeven(db);
   if (current < 68) migrationSixtyEight(db);
   if (current < 69) migrationSixtyNine(db);
+  if (current < 70) migrationSeventy(db);
+}
+
+function migrationSeventy(db) {
+  // Commercial overlays are independently refreshable delivery artifacts.
+  // The stored manifest makes an empty composition explainable and lets the
+  // publish/WordPress layers prove every selected slot survived end to end.
+  transaction(db, () => db.exec(`
+    ALTER TABLE affiliate_assets ADD COLUMN country_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE affiliate_asset_mappings ADD COLUMN updated_at TEXT;
+    UPDATE affiliate_asset_mappings SET updated_at=created_at WHERE updated_at IS NULL;
+
+    ALTER TABLE commercial_compositions ADD COLUMN outcome TEXT NOT NULL DEFAULT 'intentional_noop';
+    ALTER TABLE commercial_compositions ADD COLUMN reason_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_compositions ADD COLUMN diagnostics_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE commercial_compositions ADD COLUMN manifest_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE commercial_compositions ADD COLUMN editorial_page_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_compositions ADD COLUMN asset_inventory_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_compositions ADD COLUMN reading_layout_version TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_compositions ADD COLUMN contract_checksum TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_compositions ADD COLUMN refresh_required INTEGER NOT NULL DEFAULT 0 CHECK (refresh_required IN (0,1));
+    ALTER TABLE commercial_compositions ADD COLUMN refresh_reason TEXT NOT NULL DEFAULT '';
+
+    CREATE TABLE commercial_overlay_history (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+      overlay_version TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(draft_id,overlay_version)
+    );
+    CREATE INDEX idx_commercial_overlay_history_draft
+      ON commercial_overlay_history(draft_id,created_at DESC);
+
+    ALTER TABLE wordpress_publications ADD COLUMN delivery_manifest_json TEXT NOT NULL DEFAULT '{}';
+    INSERT INTO schema_migrations(version, applied_at) VALUES (70, datetime('now'));
+  `));
 }
 
 function migrationSixtyNine(db) {

@@ -109,7 +109,8 @@ export function buildContentAst({ draft = {}, brief = {}, visuals = [], facts = 
   const media = visuals.map((visual, index) => ({ id: visual.id || `visual_${index + 1}`, role: visual.image_role || "context",
     placement: visual.placement || "content", alt: visual.alt_text || "", caption: visual.caption || "",
     media_id: visual.wordpress_media_id || null, source_asset_id: visual.source_asset_id || null,
-    media_url: visual.wordpress_media_url || visual.media_url || "", factual: Boolean(visual.factual_image_required) }));
+    media_url: visual.wordpress_media_url || visual.media_url || "", factual: Boolean(visual.factual_image_required),
+    subject:visual.image_subject || "", anchor_node_id:visual.media_metadata?.anchor_content_node_id || null }));
   const ast = {
     version: "content-ast-compat-1",
     content_type: brief.content_type || brief.canonical?.content_type || "first_time_guide",
@@ -251,8 +252,8 @@ export function renderContentAstMarkdown(ast) {
   }).join("\n\n");
 }
 
-export function composePageFromAst(ast, capabilities = {}, pageSchema = {}) {
-  const atomic = composeAtomicPageFromAst(ast, capabilities, pageSchema);
+export function composePageFromAst(ast, capabilities = {}, pageSchema = {}, pagePlan = null) {
+  const atomic = composeAtomicPageFromAst(ast, capabilities, pageSchema, pagePlan);
   return atomic || composeLegacyFirstTimeGuideFromAst(ast, capabilities, pageSchema);
 }
 
@@ -260,7 +261,7 @@ export function composeFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema 
   return composePageFromAst(ast, capabilities, pageSchema);
 }
 
-function composeAtomicPageFromAst(ast, capabilities, pageSchema) {
+function composeAtomicPageFromAst(ast, capabilities, pageSchema, pagePlan = null) {
   if (!Array.isArray(ast?.nodes) || !ast.nodes.length) return null;
   const available = new Map((capabilities.components || [])
     .filter((item) => item?.id && item.status !== "deprecated")
@@ -273,9 +274,12 @@ function composeAtomicPageFromAst(ast, capabilities, pageSchema) {
   if (!heading?.schema?.properties?.text || !heading.schema.properties.level
       || !paragraph?.schema?.properties?.content || !list?.schema?.properties?.items) return null;
   const faq = available.get("faq") || available.get("faqList");
+  const planBlocks = Array.isArray(pagePlan?.blocks) ? pagePlan.blocks : [];
+  const planByNode = new Map(planBlocks.filter((item) => item?.content_node_id).map((item, index) => [item.content_node_id, { ...item, planIndex:index }]));
   const blocks = [];
   const provenance = [];
-  const append = (block, nodes, { factuality = null } = {}) => {
+  const decisions = [];
+  const append = (block, nodes, { factuality = null, decision = null } = {}) => {
     const sourceNodes = nodes.filter(Boolean);
     const index = blocks.length;
     const resolvedFactuality = factuality || (sourceNodes.some((node) => node.fact_refs?.length) ? "factual" : "non_factual");
@@ -288,6 +292,8 @@ function composeAtomicPageFromAst(ast, capabilities, pageSchema) {
       claimKeys: resolvedFactuality === "factual" ? [...new Set(sourceNodes.flatMap((node) => node.fact_refs || []))] : [],
       factuality: resolvedFactuality,
     });
+    if (decision) decisions.push({ blockIndex:index, contentNodeId:sourceNodes.find((node) => node.type !== "heading")?.id || sourceNodes[0]?.id || null,
+      ...decision });
   };
   for (let index = 0; index < ast.nodes.length; index += 1) {
     const node = ast.nodes[index];
@@ -312,18 +318,26 @@ function composeAtomicPageFromAst(ast, capabilities, pageSchema) {
       continue;
     }
     if (node.type === "paragraph") {
-      append({ type: paragraph.id, variant: preferredVariant(paragraph, "default"),
-        data: { content: inlineHtml(node.visible_text) } }, [node]);
+      const selected = plannedSemanticBlock(node, planByNode.get(node.id), available);
+      append(selected?.block || { type: paragraph.id, variant: preferredVariant(paragraph, "default"),
+        data: { content: inlineHtml(node.visible_text) } }, [node], { decision:selected?.decision || fallbackPlanDecision(planByNode.get(node.id), paragraph.id) });
       continue;
     }
     if (node.type === "list" && node.items?.length) {
-      append({ type: list.id, variant: preferredVariant(list, node.ordered ? "ordered" : "unordered"),
-        data: { items: node.items.map(plainInlineText) } }, [node]);
+      const selected = plannedSemanticBlock(node, planByNode.get(node.id), available);
+      append(selected?.block || { type: list.id, variant: preferredVariant(list, node.ordered ? "ordered" : "unordered"),
+        data: { items: node.items.map(plainInlineText) } }, [node], { decision:selected?.decision || fallbackPlanDecision(planByNode.get(node.id), list.id) });
       continue;
     }
     if (node.type === "table" && node.rows?.length) {
-      append({ type: list.id, variant: preferredVariant(list, "unordered"),
-        data:{ items:node.rows.map((row) => tableRowSummary(node.headers, row)) } }, [node]);
+      const comparison = available.get("comparison_table");
+      if (comparison) append({ type:comparison.id, variant:preferredVariant(comparison, "default"),
+        data:{ columns:node.headers.map(plainInlineText), rows:node.rows.map((row) => row.map(plainInlineText)) } }, [node],
+      { decision:{ requested:planByNode.get(node.id)?.type || "comparison_table", realized:comparison.id,
+        status:"adopted", reason:"A real comparison table is the simplest readable representation for tabular source content." } });
+      else append({ type: list.id, variant: preferredVariant(list, "unordered"),
+        data:{ items:node.rows.map((row) => tableRowSummary(node.headers, row)) } }, [node],
+      { decision:fallbackPlanDecision(planByNode.get(node.id), list.id, "comparison_table is unavailable in the active Registry") });
       continue;
     }
     if (node.type === "media") {
@@ -340,10 +354,59 @@ function composeAtomicPageFromAst(ast, capabilities, pageSchema) {
     return null;
   }
   if (!blocks.length || blocks.some((block) => !block.variant)) return null;
+  const metadata = pageMetadata(ast, pageSchema);
+  addReadingPresentation(metadata, ast, pageSchema);
+  const realizedNodes = provenance.map((entry) => entry.contentNodeId).filter((value) => planByNode.has(value));
+  const realizedOrder = realizedNodes.map((value) => planByNode.get(value).planIndex);
+  const omitted = planBlocks.filter((item) => item.content_node_id && !realizedNodes.includes(item.content_node_id))
+    .map((item) => item.content_node_id);
   return {
-    output: { metadata: pageMetadata(ast, pageSchema), blocks },
-    model: "deterministic-content-ast-compat-2",
-    provenance: { version: "content-ast-compat-2", valid: true, errors: [], entries: provenance },
+    output: { metadata, blocks },
+    model: planBlocks.length ? "deterministic-content-ast-reading-3" : "deterministic-content-ast-compat-2",
+    provenance: { version: planBlocks.length ? "content-ast-reading-3" : "content-ast-compat-2", readingLayoutVersion:"1.0", valid: true, errors: [], entries: provenance,
+      decisions, planReconciliation:{ planned:planBlocks.length, realized:realizedNodes.length, omitted,
+        outOfOrder:realizedOrder.some((value, index) => index > 0 && value < realizedOrder[index - 1]) } },
+  };
+}
+
+function plannedSemanticBlock(node, plan, available) {
+  if (!plan?.type) return null;
+  const component = available.get(plan.type);
+  if (!component) return null;
+  const items = (node.items || []).map(plainInlineText);
+  const text = inlineHtml(node.visible_text);
+  let data = null;
+  if (node.type === "paragraph" && plan.type === "quick_answer") data = { answer:text };
+  else if (node.type === "paragraph" && ["tip", "warning"].includes(plan.type)) data = { content:text };
+  else if (node.type === "list" && ["key_takeaways", "steps", "checklist"].includes(plan.type)) data = { items };
+  else if (node.type === "list" && plan.type === "route_timeline") data = { items:items.map((item, index) => {
+    const parts = item.split(/:\s*/, 2); return parts.length > 1 ? { title:parts[0], detail:parts[1] } : { title:`Step ${index + 1}`, detail:item };
+  }) };
+  else if (node.type === "list" && plan.type === "quick_facts") data = { items:items.map((item) => {
+    const parts = item.split(/:\s*/, 2); return { label:parts.length > 1 ? parts[0] : "Key fact", value:parts.length > 1 ? parts[1] : item };
+  }) };
+  if (!data) return null;
+  const schema = component.schema || {};
+  if (schema.properties?.anchor) data.anchor = node.id;
+  return { block:{ type:component.id, variant:preferredVariant(component, plan.variant || "default"), data },
+    decision:{ requested:plan.type, realized:component.id, status:"adopted",
+      readerJob:String(plan.semantic_role || plan.writer_guidance || "").slice(0,300),
+      reason:"The planned semantic component directly matches this reader-facing node." } };
+}
+
+function fallbackPlanDecision(plan, realized, reason = "The planned component does not fit this node's safe data shape") {
+  return plan ? { requested:plan.type, realized, status:"substituted", readerJob:String(plan.semantic_role || plan.writer_guidance || "").slice(0,300), reason } : null;
+}
+
+function addReadingPresentation(metadata, ast, pageSchema) {
+  const presentation = pageSchema?.properties?.metadata?.properties?.presentation;
+  if (!presentation) return;
+  const h2Count = (ast.nodes || []).filter((node) => node.type === "heading" && Number(node.level || 2) === 2).length;
+  const type = String(ast.content_type || "");
+  metadata.presentation = {
+    article_hero:{ variant:type === "attraction_guide" ? "attraction" : type === "city_guide" ? "city" : "compact" },
+    share_this_page:true,
+    table_of_contents:h2Count >= 3,
   };
 }
 
@@ -449,15 +512,35 @@ function placeMediaNodes(nodes, media, briefId) {
       fact_refs: [], source_section_ids: [], source_ids: [], media_refs: [item.id] };
     let index = output.length;
     if (item.placement === "hero") index = 0;
-    else if (item.placement === "after_intro") index = Math.max(0, output.findIndex((entry) => entry.type === "paragraph") + 1);
-    else if (item.placement === "mid_article") index = Math.ceil(output.length / 2);
-    else if (item.placement === "before_faq") {
+    else if (item.anchor_node_id && output.some((entry)=>entry.id === item.anchor_node_id)) {
+      index=output.findIndex((entry)=>entry.id === item.anchor_node_id) + 1;
+    } else {
+      const anchor=bestMediaAnchor(output,item);
+      if (anchor >= 0) index=anchor + 1;
+      else if (item.placement === "after_intro") index = Math.max(0, output.findIndex((entry) => entry.type === "paragraph") + 1);
+      else if (item.placement === "mid_article") index = Math.ceil(output.length / 2);
+      else if (item.placement === "before_faq") {
       const faqIndex = output.findIndex((entry) => entry.type === "heading" && /frequently asked questions|^faq$/i.test(entry.visible_text));
       index = faqIndex < 0 ? output.length : faqIndex;
+      }
     }
     output.splice(index, 0, node);
   }
   return output;
+}
+
+function bestMediaAnchor(nodes,item) {
+  const wanted=new Set(normalize(`${item.subject || ""} ${item.alt || ""} ${item.caption || ""}`).split(" ").filter((token)=>token.length > 3));
+  if (!wanted.size) return -1;
+  let best={index:-1,score:0};
+  nodes.forEach((node,index)=>{
+    if (node.type === "media") return;
+    const words=new Set(normalize(node.visible_text).split(" "));
+    const overlap=[...wanted].filter((token)=>words.has(token)).length;
+    const score=overlap / wanted.size;
+    if (score > best.score) best={index,score};
+  });
+  return best.score >= 0.2 ? best.index : -1;
 }
 
 export function contentBlockSummary(blocks) {

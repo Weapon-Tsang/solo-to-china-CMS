@@ -68,6 +68,13 @@ test("project-wide source authorization supersedes missing legacy per-item flags
   assert.equal(result.valid,true,JSON.stringify(result.errors));
 });
 
+test("a planned required visual cannot disappear from the delivery manifest", () => {
+  const result = validateMediaDelivery([{ id:"visual-required", status:"planned", factual_image_required:1,
+    image_type:"real_world_photo", alt_text:"Station entrance" }]);
+  assert.equal(result.valid, false);
+  assert.equal(result.errors[0].code, "MEDIA_REQUIRED_MANIFEST_MISSING");
+});
+
 test("responsive HTML gives only the first image high priority and later images lazy loading", () => {
   const metadata = wordpressMediaMetadata(wpBody, { bytes, contentType: "image/jpeg" });
   const attributes = responsiveImageAttributes(metadata, { featured: true });
@@ -101,4 +108,18 @@ test("two placements of the same source asset reuse one WordPress media upload",
   assert.deepEqual(output.map((item) => item.id), [71, 71]);
   assert.equal(sourceFetches, 1);
   assert.equal(uploads, 1);
+});
+
+test("different derivatives of one source asset keep independent WordPress identities", async () => {
+  let uploads=0;
+  const adapter=new WordPressDraftAdapter({siteUrl:"https://site.test",username:"editor",applicationPassword:"password"},async()=>{
+    uploads += 1;
+    return Response.json({...wpBody,id:80 + uploads,source_url:`https://site.test/uploads/${80 + uploads}.jpg`},{status:201});
+  });
+  const output=await adapter.resolveVisualMedia([
+    {id:"localized-a",status:"generated",source_asset_id:"same",asset_fingerprint:"crop-a",media_path:process.argv[1],alt_text:"A"},
+    {id:"localized-b",status:"generated",source_asset_id:"same",asset_fingerprint:"crop-b",media_path:process.argv[1],alt_text:"B"},
+  ]);
+  assert.equal(uploads,2);
+  assert.deepEqual(output.map((item)=>item.id),[81,82]);
 });

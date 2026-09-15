@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { id, now, slugify, truncate } from "./utils.mjs";
 import { markdownToContentBlocks } from "./content-blocks.mjs";
 
@@ -6,6 +7,8 @@ export const PRODUCT_CATEGORIES = new Set(["HOTEL", "FLIGHT", "TRAIN", "ATTRACTI
 export const SCOPE_TYPES = new Set(["ENTITY", "ROUTE", "AREA", "DESTINATION", "COUNTRY", "CATEGORY", "GLOBAL"]);
 export const CONNECTION_MODES = new Set(["MANUAL", "OFFICIAL_API", "FEED"]);
 export const OFFER_CATEGORIES = new Set(["hotels", "attraction_tickets", "trains", "flights", "tours_activities", "airport_transfer", "planner"]);
+export const COMMERCIAL_STRATEGY_VERSION = "2.0";
+export const READING_LAYOUT_VERSION = "1.0";
 
 const CATEGORY_COMPATIBILITY = new Map([
   ["hotels", "HOTEL"], ["attraction_tickets", "ATTRACTION"], ["trains", "TRAIN"],
@@ -46,11 +49,20 @@ export function normalizeAffiliateAsset(input, providerAccount = null) {
   if (["DEEP_LINK", "CATEGORY_LINK", "STATIC_BANNER", "PROMOTION"].includes(assetType) && !targetUrl) throw new CommercialValidationError(`${assetType} requires an official HTTPS targetUrl.`);
   if (assetType === "STATIC_BANNER" && (!imageUrl || !altText)) throw new CommercialValidationError("STATIC_BANNER requires a safe imageUrl and altText.");
   if (["SEARCH_BOX", "DYNAMIC_BANNER"].includes(assetType) && !targetUrl && !Object.keys(embedConfig).length) throw new CommercialValidationError(`${assetType} requires a safe official URL or embed configuration.`);
+  const rawScopeKey = singleLine(truncate(input.scopeKey || input.scope_key, 300));
+  const destinationSlug = optionalSlug(input.destinationSlug || input.destination_slug
+    || (scopeType === "DESTINATION" ? rawScopeKey : ""));
+  const countryCode = normalizeCountryCode(input.countryCode || input.country_code
+    || (scopeType === "COUNTRY" ? input.scopeKey || input.scope_key : ""));
+  const scopeKey = normalizedAssetScopeKey(scopeType, {
+    rawScopeKey, destinationSlug, countryCode,
+    areaKey: input.areaKey || input.area_key, routeKey: input.routeKey || input.route_key,
+    entityKey: input.entityKey || input.entity_key, productCategory,
+  });
   return {
     id: input.id || id("asset"), providerAccountId: requiredSingleLine(input.providerAccountId || input.provider_account_id || providerAccount?.id, "providerAccountId", 200),
     provider, assetType, productCategory, scopeType,
-    scopeKey: singleLine(truncate(input.scopeKey || input.scope_key, 300)),
-    destinationSlug: slugify(input.destinationSlug || input.destination_slug || ""), areaKey: singleLine(truncate(input.areaKey || input.area_key, 300)),
+    scopeKey, countryCode, destinationSlug, areaKey: singleLine(truncate(input.areaKey || input.area_key, 300)),
     routeKey: singleLine(truncate(input.routeKey || input.route_key, 300)), entityKey: singleLine(truncate(input.entityKey || input.entity_key, 300)),
     entityName: singleLine(truncate(input.entityName || input.entity_name, 300)), providerEntityId: singleLine(truncate(input.providerEntityId || input.provider_entity_id, 300)),
     title: requiredSingleLine(input.title, "title", 500), description: truncate(input.description, 1_000),
@@ -111,16 +123,24 @@ export class CommercialComposer {
     const allResolutions = intents.map((intent) => resolveAffiliateAsset(intent, assets));
     const selected = applyDensityGuard(allResolutions.filter((item) => item.asset), placementBlocks.length, this.config);
     const opportunities = dedupeOpportunities(intents.map((intent, index) => buildOpportunity(intent, allResolutions[index], this.config.opportunityThreshold)).filter(Boolean));
-    if (!selected.length) return {
+    if (!selected.length) {
+      const outcome = intents.length ? "asset_gap" : "intentional_noop";
+      const reasonCode = intents.length ? "NO_ELIGIBLE_ASSET" : "NO_RELEVANT_COMMERCIAL_DEMAND";
+      return {
       publishableBodyMarkdown: researchBody, contentBlocks: researchBlocks, commercialBlocks: [], intents, slots: [], offerIds: [], assetIds: [],
-      disclosureText: "", requiredComponents: [], opportunities, status: "no_offers",
-    };
+      disclosureText: "", requiredComponents: [], opportunities, status: "no_offers", outcome, reasonCode,
+      diagnostics: commercialDiagnostics(intents, allResolutions, [], outcome, reasonCode),
+      manifest: commercialManifest([], contentPackage, outcome, reasonCode),
+      strategyVersion: COMMERCIAL_STRATEGY_VERSION, readingLayoutVersion: READING_LAYOUT_VERSION,
+      };
+    }
     const commercialBlocks = selected.map(({ intent, asset, placement }, index) => commercialBlock(intent, asset, placement, index, this.config.disclosure));
     const contentBlocks = insertCommercialBlocks(researchBlocks, commercialBlocks);
     const slots = commercialBlocks.map((block) => ({
       slot_key: block.slot_key, category: LEGACY_CATEGORY.get(block.data.product_category) || block.data.product_category.toLowerCase(),
       product_category: block.data.product_category, affiliate_asset_id: block.data.affiliate_asset_id, offer_id: block.data.legacy_offer_id || null,
       provider: block.data.provider, component_type: block.component, placement: block.placement, block_index: block.after_block_index,
+      after_block_key: block.after_block_key,
     }));
     const endBlocks = commercialBlocks.filter((block) => block.placement === "end_resource");
     const publishableBodyMarkdown = endBlocks.length
@@ -129,6 +149,10 @@ export class CommercialComposer {
       publishableBodyMarkdown, contentBlocks, commercialBlocks, intents, slots,
       offerIds: selected.map(({ asset }) => asset.legacy_offer_id || (asset.category ? asset.id : null)).filter(Boolean), assetIds: selected.map(({ asset }) => asset.id),
       disclosureText: this.config.disclosure, requiredComponents: [...new Set(commercialBlocks.map((block) => block.component))], opportunities, status: "composed",
+      outcome: "inserted", reasonCode: "ELIGIBLE_ASSET_INSERTED",
+      diagnostics: commercialDiagnostics(intents, allResolutions, selected, "inserted", "ELIGIBLE_ASSET_INSERTED"),
+      manifest: commercialManifest(slots, contentPackage, "inserted", "ELIGIBLE_ASSET_INSERTED"),
+      strategyVersion: COMMERCIAL_STRATEGY_VERSION, readingLayoutVersion: READING_LAYOUT_VERSION,
     };
   }
 }
@@ -138,18 +162,24 @@ export function detectCommercialIntents(contentPackage, blocks) {
     || String(contentPackage.candidate?.topic_key || "").split(":", 1)[0] || "";
   const canonical = contentPackage.brief?.canonical || {};
   const output = [];
+  const countryCode = inferArticleCountryCode(contentPackage);
+  const provenance = contentPackage.frontend_page?.provenance?.entries || [];
   blocks.forEach((block, blockIndex) => {
-    const text = blockText(block);
-    const context = `${blockIndex ? blockText(blocks[blockIndex - 1]) : ""} ${text}`.toLowerCase();
+    const text = projectVisibleBlockText(block);
+    const context = `${blockIndex ? projectVisibleBlockText(blocks[blockIndex - 1]) : ""} ${text}`.toLowerCase();
     for (const [productCategory, pattern] of Object.entries(INTENT_PATTERNS)) {
       if (!pattern.test(context)) continue;
+      if (negativeCommercialContext(productCategory, context)) continue;
+      if (productCategory === "TRAIN" && !intercityTrainContext(context)) continue;
       const veryHigh = /how to (?:book|buy|visit)|tickets?|booking|reserve|train from|train to/i.test(context);
       const high = veryHigh || /where to stay|compare|search|schedule|airport transfer/i.test(context);
       const scope = inferIntentScope(productCategory, context, destination, canonical);
+      const contentNodeId = provenance[blockIndex]?.contentNodeId || block?.data?.anchor || block?.anchor || "";
+      const blockKey = stableBlockKey(block, contentNodeId);
       output.push({
-        id: id("intent"), blockIndex, blockKey: `block-${blockIndex}`, intentType: scope.intentType,
+        id: stableIntentId(contentPackage.draft?.id, blockKey, productCategory), blockIndex, blockKey, contentNodeId, intentType: scope.intentType,
         productCategory, destinationSlug: destination, areaKey: scope.areaKey, routeKey: scope.routeKey, entityKey: scope.entityKey,
-        scopeType: scope.scopeType, scopeKey: scope.scopeKey, intentStrength: veryHigh ? "VERY_HIGH" : high ? "HIGH" : "MEDIUM",
+        countryCode, scopeType: scope.scopeType, scopeKey: scope.scopeKey, intentStrength: veryHigh ? "VERY_HIGH" : high ? "HIGH" : "MEDIUM",
         decisionStage: veryHigh ? "TRANSACTION" : high ? "COMPARISON" : "DISCOVERY",
         recommendedComponent: recommendedComponent(productCategory, veryHigh, context), reason: `Block ${blockIndex + 1} contains ${productCategory.toLowerCase()} decision language.`,
       });
@@ -161,8 +191,9 @@ export function detectCommercialIntents(contentPackage, blocks) {
     for (const [productCategory, pattern] of Object.entries(INTENT_PATTERNS)) {
       if (detectedCategories.has(productCategory) || !pattern.test(articleContext)) continue;
       output.push({
-        id: id("intent"), blockIndex: Math.max(0, blocks.length - 1), blockKey: "article-fallback", intentType: "DESTINATION_GUIDE",
+        id: stableIntentId(contentPackage.draft?.id, "article-fallback", productCategory), blockIndex: Math.max(0, blocks.length - 1), blockKey: "article-fallback", intentType: "DESTINATION_GUIDE",
         productCategory, destinationSlug: destination, areaKey: "", routeKey: "", entityKey: "", scopeType: "DESTINATION", scopeKey: destination,
+        countryCode,
         intentStrength: "MEDIUM", decisionStage: "DISCOVERY", recommendedComponent: "affiliate_banner", reason: "Article-level context supports only a final utility fallback.",
       });
     }
@@ -171,7 +202,18 @@ export function detectCommercialIntents(contentPackage, blocks) {
 }
 
 export function resolveAffiliateAsset(intent, assets, clock = new Date()) {
-  const active = (assets || []).filter((asset) => isAssetActive(asset, clock) && canonicalCategory(asset) === intent.productCategory);
+  const diagnostics = { candidateCount: 0, eligibleCount: 0, exclusions: {} };
+  const active = (assets || []).filter((asset) => {
+    if (canonicalCategory(asset) !== intent.productCategory) return false;
+    diagnostics.candidateCount += 1;
+    const reason = assetEligibilityReason(asset, intent, clock);
+    if (reason) {
+      diagnostics.exclusions[reason] = (diagnostics.exclusions[reason] || 0) + 1;
+      return false;
+    }
+    diagnostics.eligibleCount += 1;
+    return true;
+  });
   const preference = scopePreference(intent);
   let best = null;
   for (const asset of active) {
@@ -181,7 +223,7 @@ export function resolveAffiliateAsset(intent, assets, clock = new Date()) {
     const score = (preference.length - index) * 100 + Number(asset.priority || 0) + landingSpecificity(asset);
     if (!best || score > best.score) best = { asset, score, matchedScope: scopeType, exact: index === 0 };
   }
-  return { intent, asset: best?.asset || null, matchedScope: best?.matchedScope || null, exact: best?.exact || false, score: best?.score || 0 };
+  return { intent, asset: best?.asset || null, matchedScope: best?.matchedScope || null, exact: best?.exact || false, score: best?.score || 0, diagnostics };
 }
 
 export function normalizeCommercialEvent(input, strategyVersion) {
@@ -226,15 +268,16 @@ export function normalizeCommissionRule(input) {
 
 function applyDensityGuard(resolutions, blockCount, config) {
   const selected = [];
-  const categories = new Set();
+  const actions = new Set();
   for (const resolution of resolutions.sort((a, b) => intentRank(b.intent) - intentRank(a.intent) || b.score - a.score)) {
     if (selected.length >= Math.min(config.maxOffersPerDraft, config.maxContextualUnits + config.maxEndResourceUnits)) break;
-    if (categories.has(resolution.intent.productCategory)) continue;
+    const actionKey = `${resolution.intent.productCategory}:${resolution.intent.entityKey || resolution.intent.routeKey || resolution.intent.areaKey || resolution.intent.scopeKey}`;
+    if (actions.has(actionKey) || selected.some((item) => item.asset.id === resolution.asset.id)) continue;
     const contextual = blockCount >= config.minimumContentBlocks && resolution.intent.intentStrength !== "MEDIUM";
     const placement = contextual && selected.filter((item) => item.placement === "contextual").length < config.maxContextualUnits ? "contextual" : "end_resource";
     if (placement === "end_resource" && selected.some((item) => item.placement === "end_resource")) continue;
     if (placement === "contextual" && selected.some((item) => Math.abs(item.intent.blockIndex - resolution.intent.blockIndex) < config.minBlockDistance)) continue;
-    selected.push({ ...resolution, placement }); categories.add(resolution.intent.productCategory);
+    selected.push({ ...resolution, placement }); actions.add(actionKey);
   }
   return selected;
 }
@@ -257,9 +300,13 @@ function buildOpportunity(intent, resolution, threshold) {
 }
 
 function commercialBlock(intent, asset, placement, index, disclosure) {
-  const component = COMPONENT_BY_ASSET[asset.asset_type || asset.assetType] || intent.recommendedComponent;
+  const assetType = asset.asset_type || asset.assetType;
+  const resolvedPlacement = ["STATIC_BANNER", "DYNAMIC_BANNER", "PROMOTION"].includes(assetType) ? "end_resource" : placement;
+  const component = COMPONENT_BY_ASSET[assetType] || intent.recommendedComponent;
+  const slotKey = stableSlotKey(intent, asset, resolvedPlacement);
   return {
-    type: "commercial", component, placement, after_block_index: intent.blockIndex, slot_key: `${placement}:${intent.productCategory.toLowerCase()}:${index + 1}`,
+    type: "commercial", component, placement: resolvedPlacement, after_block_index: intent.blockIndex,
+    after_block_key: intent.blockKey, slot_key: slotKey,
     data: {
       affiliate_asset_id: asset.id, legacy_offer_id: asset.legacy_offer_id || (asset.category ? asset.id : null), provider: asset.provider,
       asset_type: asset.asset_type || asset.assetType, product_category: canonicalCategory(asset), title: asset.title, description: asset.description || "",
@@ -269,6 +316,7 @@ function commercialBlock(intent, asset, placement, index, disclosure) {
       valid_until: asset.valid_until || asset.validUntil || "", image_url: asset.image_url || asset.imageUrl || "",
       alt_text: asset.alt_text || asset.altText || "", entity: asset.entity_key || asset.entityKey || "",
       route: asset.route_key || asset.routeKey || "", destination: asset.destination_slug || asset.destinationSlug || "",
+      country_code: asset.country_code || asset.countryCode || "",
     },
   };
 }
@@ -304,10 +352,16 @@ function scopePreference(intent) {
 }
 
 function scopeMatches(intent, asset, scopeType) {
-  const key = asset.scope_key || asset.scopeKey || asset.entity_key || asset.route_key || asset.area_key || asset.destination_slug || "";
+  const key = asset.scope_key || asset.scopeKey || asset.entity_key || asset.entityKey || asset.route_key || asset.routeKey
+    || asset.area_key || asset.areaKey || asset.destination_slug || asset.destinationSlug || "";
   if (scopeType === "GLOBAL") return true;
   if (scopeType === "CATEGORY") return canonicalCategory(asset) === intent.productCategory;
-  if (scopeType === "DESTINATION") return !key || key === intent.destinationSlug || asset.destination_slug === intent.destinationSlug;
+  if (scopeType === "DESTINATION") return !key || key === intent.destinationSlug
+    || asset.destination_slug === intent.destinationSlug || asset.destinationSlug === intent.destinationSlug;
+  if (scopeType === "COUNTRY") {
+    const assetCountry = normalizeCountryCode(asset.country_code || asset.countryCode || key);
+    return Boolean(assetCountry && assetCountry === normalizeCountryCode(intent.countryCode));
+  }
   const intended = scopeType === "ENTITY" ? intent.entityKey : scopeType === "ROUTE" ? intent.routeKey : scopeType === "AREA" ? intent.areaKey : intent.scopeKey;
   return Boolean(intended && key === intended);
 }
@@ -318,21 +372,127 @@ function isAssetActive(asset, clock) {
   return (!Number.isFinite(starts) || starts <= nowValue) && (!Number.isFinite(ends) || ends > nowValue);
 }
 
+function assetEligibilityReason(asset, intent, clock) {
+  if (String(asset.provider_status || asset.providerStatus || "CONFIGURED").toUpperCase() !== "CONFIGURED") return "provider_not_configured";
+  if (String(asset.lifecycle_state || asset.lifecycleState || "operational").toLowerCase() !== "operational") return "asset_not_operational";
+  if (!isAssetActive(asset, clock)) return "asset_inactive_or_outside_validity";
+  const language = String(asset.language || "").trim().toLowerCase();
+  const locale = String(intent.locale || "en").trim().toLowerCase();
+  if (language && language !== "all" && language !== "*" && !locale.startsWith(language.split("-")[0])) return "language_mismatch";
+  if (!scopeMatches(intent, asset, String(asset.scope_type || asset.scopeType || (asset.category ? "DESTINATION" : "")).toUpperCase())) return "scope_mismatch";
+  const type = String(asset.asset_type || asset.assetType || "").toUpperCase();
+  if (!["SEARCH_BOX", "DYNAMIC_BANNER"].includes(type) && !(asset.target_url || asset.targetUrl)) return "delivery_url_missing";
+  if (["SEARCH_BOX", "DYNAMIC_BANNER"].includes(type) && !(asset.target_url || asset.targetUrl)
+      && !Object.keys(parseEmbed(asset.embed_config_json || asset.embedConfig)).length) return "delivery_url_missing";
+  return "";
+}
+
 function canonicalCategory(asset) { return String(asset.product_category || asset.productCategory || CATEGORY_COMPATIBILITY.get(asset.category) || "").toUpperCase(); }
 function landingSpecificity(asset) { return ({ ENTITY: 30, ROUTE: 28, AREA: 20, DESTINATION: 15, COUNTRY: 10, CATEGORY: 5, GLOBAL: 0 })[asset.scope_type || asset.scopeType] || 0; }
 function intentRank(intent) { return ({ VERY_HIGH: 4, HIGH: 3, MEDIUM: 2, LOW: 1 })[intent.intentStrength] || 0; }
 function recommendedComponent(productCategory, veryHigh, context) { if (veryHigh) return "affiliate_booking_card"; if (productCategory === "HOTEL" || /compare|search/i.test(context)) return "affiliate_search_card"; return "affiliate_banner"; }
-function blockText(block) {
-  if (block?.type === "list") return (block.items || []).join(" ");
-  if (block?.text) return block.text;
-  return stringsIn(block?.data).join(" ");
+export function projectVisibleBlockText(block) {
+  if (!block || typeof block !== "object") return "";
+  const data = block.data && typeof block.data === "object" ? block.data : {};
+  const values = [];
+  const add = (value) => {
+    if (typeof value === "string") values.push(stripVisibleMarkup(value));
+    else if (Array.isArray(value)) value.forEach((item) => {
+      if (typeof item === "string") add(item);
+      else if (item && typeof item === "object") ["title", "label", "value", "detail", "question", "answer", "content", "description", "text"].forEach((key) => add(item[key]));
+    });
+  };
+  if (block.type === "list") add(block.items || data.items);
+  else if (block.type === "table") { add(block.headers); add(block.rows); }
+  else if (["heading", "paragraph"].includes(block.type)) add(block.text || data.text || data.content);
+  else {
+    ["title", "answer", "content", "description", "caption", "text", "items", "columns", "rows", "pros", "cons"].forEach((key) => add(data[key]));
+  }
+  return values.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
 }
-function stringsIn(value) {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.flatMap(stringsIn);
-  if (value && typeof value === "object") return Object.values(value).flatMap(stringsIn);
-  return [];
+
+function stripVisibleMarkup(value) {
+  return String(value || "").replace(/<script\b[\s\S]*?<\/script>/gi, " ").replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ").replace(/&(?:nbsp|amp|quot|#0*39);/gi, " ").replace(/\s+/g, " ").trim();
 }
+
+function stableBlockKey(block, contentNodeId) {
+  if (contentNodeId) return `node:${contentNodeId}`;
+  const text = projectVisibleBlockText(block).normalize("NFKC").toLowerCase();
+  return `visible:${crypto.createHash("sha256").update(`${block?.type || "block"}:${text}`).digest("hex").slice(0, 20)}`;
+}
+
+function stableIntentId(draftId, blockKey, productCategory) {
+  return `intent_${crypto.createHash("sha256").update(`${draftId || "draft"}:${blockKey}:${productCategory}`).digest("hex").slice(0, 24)}`;
+}
+
+function stableSlotKey(intent, asset, placement) {
+  const anchor = intent.blockKey || intent.contentNodeId || "article";
+  const digest = crypto.createHash("sha256").update(`${anchor}:${intent.productCategory}:${asset.id}`).digest("hex").slice(0, 12);
+  return `${placement}:${intent.productCategory.toLowerCase()}:${digest}`;
+}
+
+function commercialDiagnostics(intents, resolutions, selected, outcome, reasonCode) {
+  return {
+    outcome, reason_code: reasonCode, intent_count: intents.length, selected_count: selected.length,
+    intents: resolutions.map((item) => ({ intent_id: item.intent.id, block_key: item.intent.blockKey,
+      product_category: item.intent.productCategory, scope_type: item.intent.scopeType, scope_key: item.intent.scopeKey,
+      country_code: item.intent.countryCode || "", matched_scope: item.matchedScope,
+      selected_asset_id: item.asset?.id || null, ...item.diagnostics })),
+  };
+}
+
+function commercialManifest(slots, contentPackage, outcome, reasonCode) {
+  return { version: "commercial-manifest-1", outcome, reason_code: reasonCode,
+    draft_id: contentPackage.draft?.id || null, draft_revision: contentPackage.draft?.revision || null,
+    page_hash: contentPackage.frontend_page?.content_hash || contentPackage.frontend_page?.page_content_hash || null,
+    slots: slots.map((slot) => ({ slot_key: slot.slot_key, affiliate_asset_id: slot.affiliate_asset_id,
+      component_type: slot.component_type, placement: slot.placement, after_block_key: slot.after_block_key || null })) };
+}
+
+function negativeCommercialContext(category, context) {
+  if (!/(?:\bfree\b|no (?:ticket|booking|reservation) (?:is )?(?:needed|required)|do not (?:book|buy)|not recommended|无需(?:购票|预约)|免费)/i.test(context)) return false;
+  return ["ATTRACTION", "TOUR_ACTIVITY", "PLANNER"].includes(category);
+}
+
+function intercityTrainContext(context) {
+  return /\b(?:train|railway|intercity|high.speed rail|bullet train)\b|火车|高铁|铁路/i.test(context)
+    && !/\b(?:metro|subway) station\b/i.test(context.replace(/\b(?:train|railway) station\b/gi, ""));
+}
+
+function inferArticleCountryCode(contentPackage) {
+  const canonical = contentPackage.brief?.canonical || {};
+  const explicit = canonical.country_code || canonical.countryCode || canonical.country || contentPackage.brief?.country_code;
+  if (explicit) return normalizeCountryCode(explicit);
+  const destination = String(contentPackage.brief?.destination_slug || contentPackage.candidate?.destination_slug || "").toLowerCase();
+  return CHINA_DESTINATIONS.has(destination) ? "CN" : "";
+}
+
+export function normalizeCountryCode(value) {
+  const normalized = String(value || "").normalize("NFKC").trim().toLowerCase().replace(/[._\s-]+/g, "");
+  if (!normalized) return "";
+  const aliases = { cn: "CN", chn: "CN", china: "CN", mainlandchina: "CN", prc: "CN", 中国: "CN", 中国大陆: "CN" };
+  if (aliases[normalized]) return aliases[normalized];
+  return /^[a-z]{2}$/.test(normalized) ? normalized.toUpperCase() : "";
+}
+
+function optionalSlug(value) {
+  const text = String(value || "").trim();
+  return text ? slugify(text) : "";
+}
+
+function normalizedAssetScopeKey(scopeType, input) {
+  const byType = {
+    DESTINATION: input.destinationSlug || optionalSlug(input.rawScopeKey), COUNTRY: input.countryCode,
+    AREA: singleLine(truncate(input.areaKey || input.rawScopeKey, 300)), ROUTE: singleLine(truncate(input.routeKey || input.rawScopeKey, 300)),
+    ENTITY: singleLine(truncate(input.entityKey || input.rawScopeKey, 300)), CATEGORY: input.productCategory, GLOBAL: "global",
+  };
+  const key = byType[scopeType] || "";
+  if (!key) throw new CommercialValidationError(`${scopeType} scope requires an explicit canonical scope key.`);
+  return key;
+}
+
+const CHINA_DESTINATIONS = new Set(["beijing", "shanghai", "chongqing", "guangzhou", "shenzhen", "chengdu", "xian", "xi-an", "hangzhou", "suzhou", "nanjing", "wuhan", "kunming", "guilin", "lijiang", "zhangjiajie", "harbin", "qingdao"]);
 function dedupeIntents(items) { const seen = new Set(); return items.filter((item) => { const key = `${item.blockKey}:${item.productCategory}`; if (seen.has(key)) return false; seen.add(key); return true; }); }
 function dedupeOpportunities(items) { const best = new Map(); for (const item of items) { const key = `${item.productCategory}:${item.scopeType}:${item.scopeKey}`; if (!best.has(key) || best.get(key).score < item.score) best.set(key, item); } return [...best.values()]; }
 function parseEmbed(value) { if (!value) return {}; if (typeof value === "object") return value; try { return JSON.parse(value); } catch { return {}; } }

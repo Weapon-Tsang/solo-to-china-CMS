@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPublishPackage, mediaReferences, mergeCommercialOverlay } from "../src/publish-page.mjs";
+import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, reconcileCommercialDelivery } from "../src/publish-page.mjs";
 
 function commercial(component, placement, afterBlockIndex, assetType = "DEEP_LINK") {
   return {
@@ -100,4 +100,20 @@ test("Publish Package translates internal CMS taxonomy before WordPress delivery
   });
   assert.equal(pkg.page.metadata.contentType, "travel-guide");
   assert.equal(pkg.page.blocks[0].data.content, "Traveler&#039;s answer");
+});
+
+test("commercial reconciliation proves each selected slot across payload, WordPress storage and visible DOM", () => {
+  const selected = commercial("affiliate_booking_card", "contextual", 0);
+  const composition = { strategy_version:"2.0", slots:[{ slot_key:selected.slot_key }], commercial_blocks:[selected] };
+  const editorial = { metadata:{ title:"Guide" }, blocks:[{ type:"paragraph", data:{ content:"Answer" } }] };
+  const finalPage = mergeCommercialOverlay(editorial, composition);
+  assert.equal(reconcileCommercialDelivery(composition, { finalPage }).valid, true,
+    "a staged reconciliation must check only the layers supplied at that boundary");
+  const valid = reconcileCommercialDelivery(composition, { finalPage, publishPackage:{ page:finalPage },
+    wordpressPackage:{ page:finalPage }, visibleHtml:`<aside data-stc-slot-key="${selected.slot_key}"></aside>` });
+  assert.equal(valid.valid, true);
+  const missing = reconcileCommercialDelivery(composition, { finalPage:editorial, publishPackage:{ page:editorial } });
+  assert.equal(missing.valid, false);
+  assert.equal(missing.errors[0].code, "COMMERCIAL_SLOT_DELIVERY_MISMATCH");
+  assert.equal(missing.errors[0].slot_key, selected.slot_key);
 });

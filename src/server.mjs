@@ -34,6 +34,7 @@ import { CaptureUploadManager } from "./capture-upload.mjs";
 import { CaptureMediaUploadManager } from "./capture-media-upload.mjs";
 import { createSummaryCache } from './services/summary-cache.mjs';
 import { prepareCaptureMedia } from './source-media-store.mjs';
+import { applyDeliveryRefresh, planDeliveryRefresh } from './services/delivery-refresh.mjs';
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -1117,6 +1118,48 @@ export function createApplication(config = loadConfig()) {
         void pipeline.runOne();
         return sendJson(response, 202, { queued: true });
       }
+      if (request.method === "POST" && url.pathname === "/api/delivery-refresh") {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 100_000);
+        const result = payload.apply
+          ? applyDeliveryRefresh(repository,payload,auth.status(request).username || "administrator")
+          : planDeliveryRefresh(repository,payload);
+        if (payload.apply && result.queued.length) void pipeline.runOne();
+        return sendJson(response,payload.apply ? 202 : 200,result);
+      }
+      const finalPreviewMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/final-preview$/);
+      if (request.method === "POST" && finalPreviewMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const content = repository.getDraftPackage(decodeURIComponent(finalPreviewMatch[1]));
+        if (!content?.publication?.post_id || !content.publication.preview_url) {
+          return sendJson(response, 409, { error:"This draft has not been delivered to WordPress, so no final preview exists.", code:"FINAL_PREVIEW_UNAVAILABLE" });
+        }
+        if (!content.commercial_composition?.current || content.publish_composition?.status !== "delivered") {
+          return sendJson(response,409,{error:"The stored WordPress preview is not the current complete commercial delivery. Refresh only the required delivery layers before calling it final.",
+            code:"FINAL_PREVIEW_STALE",draftId:content.draft.id,revision:content.draft.revision});
+        }
+        const preview = safeWordPressPreviewUrl(content.publication.preview_url, config.wordpress.siteUrl);
+        if (!preview) return sendJson(response, 409, { error:"The stored preview URL is not bound to the configured WordPress site.", code:"FINAL_PREVIEW_IDENTITY_MISMATCH" });
+        const deliveryManifest=safeJsonObject(content.publication.delivery_manifest_json);
+        try {
+          const ticket=await wordpress.createScopedPreviewTicket({postId:content.publication.post_id,draftId:content.draft.id,
+            revision:content.draft.revision,pagePayloadHash:deliveryManifest.page_payload_hash || ""});
+          response.setHeader("cache-control", "no-store, private");
+          response.setHeader("referrer-policy", "no-referrer");
+          response.setHeader("x-robots-tag", "noindex, nofollow, noarchive");
+          return sendJson(response,200,ticket);
+        } catch (error) {
+          if (![404,501].includes(error?.statusCode)) throw error;
+        }
+        const login = new URL("/wp-login.php", config.wordpress.siteUrl);
+        login.searchParams.set("redirect_to", preview);
+        response.setHeader("cache-control", "no-store, private");
+        response.setHeader("referrer-policy", "no-referrer");
+        response.setHeader("x-robots-tag", "noindex, nofollow, noarchive");
+        return sendJson(response, 200, { mode:"wordpress_login_required", url:login.toString(), postId:content.publication.post_id,
+          draftId:content.draft.id, revision:content.draft.revision,
+          message:"WordPress login is required because no scoped final-preview capability is configured." });
+      }
       if (request.method === "POST" && url.pathname === "/api/pipeline/run-one") {
         authorizeAdmin(request, config.adminToken, auth);
         const worked = await pipeline.runOne();
@@ -1173,6 +1216,20 @@ export function createApplication(config = loadConfig()) {
       logger.info("server.stopped", { version: VERSION });
     },
   };
+}
+
+function safeWordPressPreviewUrl(value, siteUrl) {
+  try {
+    const preview = new URL(String(value || ""));
+    const site = new URL(String(siteUrl || ""));
+    return preview.origin === site.origin && /^https?:$/.test(preview.protocol) && !preview.username && !preview.password
+      ? preview.toString() : "";
+  } catch { return ""; }
+}
+
+function safeJsonObject(value) {
+  try { const parsed=JSON.parse(String(value || "{}")); return parsed && typeof parsed === "object" ? parsed : {}; }
+  catch { return {}; }
 }
 
 export function assertProductionDatabaseConfiguration(config) {

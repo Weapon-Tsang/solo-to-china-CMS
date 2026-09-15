@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 
 export function validateRenderedHtmlArtifact({
   html = "", status = "", url = "", httpStatus = 0, headers = {}, robotsTxt = "", sitemapXml = "",
-  expectedTitle = "", expectedDescription = "", authenticated = false, fixture = {}, productionCost = null,
+  expectedTitle = "", expectedDescription = "", expectedCommercialSlots = [], expectedMediaIds = [],
+  authenticated = false, fixture = {}, productionCost = null,
 } = {}) {
   const errors = [];
   const pageUrl = publicUrl(url);
@@ -29,15 +30,25 @@ export function validateRenderedHtmlArtifact({
     if (sitemapIncluded) errors.push({ code: "DRAFT_PAGE_IN_SITEMAP", path: "$.crawler_configuration.sitemap" });
   } else errors.push({ code: "PUBLICATION_STATUS_UNKNOWN", path: "$.status" });
 
+  if (h1s.length !== 1) errors.push({ code: "H1_COUNT_INVALID", path: "$.rendered_html.h1", count: h1s.length });
+  if (!title || (expectedTitle && title !== expectedTitle) || (expectedTitle && h1s[0] !== expectedTitle)) {
+    errors.push({ code: "HTML_TITLE_MISMATCH", path: "$.seo_artifact.title" });
+  }
+  if (initialBody.length < 80 || /^(?:read|show|view) more\.?$/i.test(initialBody)
+      || /(?:wp-login\.php|user_login|lost your password|nothing found|page not found)/i.test(`${url} ${html}`)) {
+    errors.push({ code: "INITIAL_HTML_BODY_MISSING", path: "$.rendered_html.body" });
+  }
+  if (/data-(?:lazy|deferred)-content|<template\b[^>]*data-(?:article|content)/i.test(html)) {
+    errors.push({ code: "CRITICAL_BODY_DEFERRED", path: "$.rendered_html.body" });
+  }
+  errors.push(...validateHtmlLinks(html, pageUrl));
+  errors.push(...validateHtmlImages(html, pageUrl));
+  errors.push(...validateExpectedMedia(html, expectedMediaIds));
+  errors.push(...validateCommercialSlots(html, expectedCommercialSlots));
+
   if (status === "publish") {
-    if (h1s.length !== 1) errors.push({ code: "H1_COUNT_INVALID", path: "$.rendered_html.h1", count: h1s.length });
-    if (!title || (expectedTitle && title !== expectedTitle)) errors.push({ code: "HTML_TITLE_MISMATCH", path: "$.seo_artifact.title" });
     if (!description || (expectedDescription && description !== expectedDescription)) errors.push({ code: "HTML_DESCRIPTION_MISMATCH", path: "$.seo_artifact.description" });
     if (!pageUrl || canonicalPageUrl(canonical) !== canonicalPageUrl(pageUrl)) errors.push({ code: "HTML_CANONICAL_MISMATCH", path: "$.seo_artifact.canonical" });
-    if (initialBody.length < 120 || /^(?:read|show|view) more\.?$/i.test(initialBody)) errors.push({ code: "INITIAL_HTML_BODY_MISSING", path: "$.rendered_html.body" });
-    if (/data-(?:lazy|deferred)-content|<template\b[^>]*data-(?:article|content)/i.test(html)) errors.push({ code: "CRITICAL_BODY_DEFERRED", path: "$.rendered_html.body" });
-    errors.push(...validateHtmlLinks(html, pageUrl));
-    errors.push(...validateHtmlImages(html, pageUrl));
     errors.push(...validateHtmlSchema(html, pageUrl, h1s[0] || expectedTitle));
   }
 
@@ -54,6 +65,32 @@ export function validateRenderedHtmlArtifact({
   };
   return { valid: errors.length === 0, errors, dimensions,
     conclusions: { ranking: "not_tested", indexing: "not_tested", aiCitation: "not_tested" } };
+}
+
+function validateExpectedMedia(html, expectedMediaIds) {
+  const expected=[...new Set((expectedMediaIds || []).map(String).filter(Boolean))];
+  return expected.filter((mediaId) => !new RegExp(`(?:wp-image-${escapeRegex(mediaId)}\\b|data-(?:media|attachment)-id=["']${escapeRegex(mediaId)}["'])`, "i").test(String(html)))
+    .map((mediaId) => ({ code:"EXPECTED_MEDIA_MISSING", path:"$.rendered_html.images", media_id:mediaId }));
+}
+
+function validateCommercialSlots(html, expectedCommercialSlots) {
+  const expected=(expectedCommercialSlots || []).map((item) => typeof item === "string" ? { slot_key:item } : item).filter((item) => item?.slot_key);
+  const actual=[...String(html).matchAll(/<[^>]+(?:data-stc-slot-key|data-affiliate-slot)=["']([^"']+)["'][^>]*>/gi)]
+    .map((match) => ({ slot_key:match[1], asset_id:attributes(match[0])["data-affiliate-asset"] || "" }));
+  const errors=[];
+  for (const slot of expected) {
+    const matches=actual.filter((item) => item.slot_key === slot.slot_key);
+    if (matches.length !== 1) errors.push({ code:"COMMERCIAL_SLOT_VISIBLE_COUNT_MISMATCH", path:"$.rendered_html.commercial_slots",
+      slot_key:slot.slot_key, expected:1, actual:matches.length });
+    else if (slot.affiliate_asset_id && matches[0].asset_id !== slot.affiliate_asset_id) errors.push({
+      code:"COMMERCIAL_SLOT_ASSET_MISMATCH", path:"$.rendered_html.commercial_slots", slot_key:slot.slot_key,
+      expected_asset_id:slot.affiliate_asset_id, actual_asset_id:matches[0].asset_id,
+    });
+  }
+  for (const slot of actual) if (!expected.some((item) => item.slot_key === slot.slot_key)) errors.push({
+    code:"UNPLANNED_COMMERCIAL_SLOT_VISIBLE", path:"$.rendered_html.commercial_slots", slot_key:slot.slot_key,
+  });
+  return errors;
 }
 
 export function compareRenderedVariants(variants = {}) {
@@ -128,3 +165,4 @@ function normalizeXml(value) { return String(value || "").replace(/&amp;/g, "&")
 function robotsAllows(value, pathname) { const lines = String(value || "").split(/\r?\n/).map((line) => line.replace(/#.*/, "").trim()); const disallowed = lines.filter((line) => /^disallow\s*:/i.test(line)).map((line) => line.split(":").slice(1).join(":").trim()).filter(Boolean); return !disallowed.some((route) => route === "/" || pathname.startsWith(route)); }
 function hasSignedQuery(url) { return [...url.searchParams.keys()].some((key) => /^(?:token|signature|x-amz-|x-goog-)/i.test(key)); }
 function dimension(passed, detail) { return { status: passed ? "passed" : "failed", detail }; }
+function escapeRegex(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }

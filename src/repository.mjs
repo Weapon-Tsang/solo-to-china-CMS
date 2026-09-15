@@ -9,7 +9,7 @@ import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue
 import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
 import { KNOWLEDGE_RESOLUTION_VERSION, decideKnowledgeResolution, summarizeResolutionDecisions } from "./knowledge-resolution.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
-import { legacyOfferToAsset } from "./commercial.mjs";
+import { detectCommercialIntents, legacyOfferToAsset, normalizeCountryCode } from "./commercial.mjs";
 import {
   affiliateAssetFromQueueTask, exportAffiliateQueue, loadAffiliateQueueSeeds,
   normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
@@ -51,6 +51,7 @@ const TRACKED_DELIVERY_STAGES = new Set(['compose_commercial','compose_publish_p
 // Future strategy releases must opt in here after reviewing that contract.
 const COMPATIBLE_DIAGNOSTIC_STRATEGIES = new Map([
   ["3.3", new Set(["3.0", "3.1", "3.2", "3.3"])],
+  ["3.4", new Set(["3.0", "3.1", "3.2", "3.3", "3.4"])],
 ]);
 
 function isReusableDiagnosticStrategy(previous, current) {
@@ -532,6 +533,9 @@ export class Repository {
     `).run(compositionId, draftId, planId || null, snapshot.id, snapshot.contractVersion, snapshot.schemaVersion,
       snapshot.checksum, JSON.stringify(payload), JSON.stringify(validationRecord), validationRecord.valid ? "valid" : "invalid", model, timestamp, timestamp,
       draft.revision, draft.content_hash);
+    const pageHash = sha256(JSON.stringify(payload));
+    this.db.prepare(`UPDATE commercial_compositions SET refresh_required=1,refresh_reason='editorial_page_recomposed',updated_at=?
+      WHERE draft_id=? AND editorial_page_hash<>?`).run(timestamp,draftId,pageHash);
     return this.getFrontendPageComposition(draftId);
   }
 
@@ -5219,7 +5223,7 @@ export class Repository {
     if (pkg.frontend_page_plan && !pkg.frontend_page?.current) return "compose_frontend_page";
     if (!pkg.review) return "review_draft";
     if (!pkg.review.passed) return qualityRepairStage(pkg.review.issues);
-    if (!pkg.commercial_composition) return "compose_commercial";
+    if (!pkg.commercial_composition || !pkg.commercial_composition.current || pkg.commercial_composition.refresh_required) return "compose_commercial";
     if (pkg.frontend_page && !this.db.prepare("SELECT id FROM frontend_publish_compositions WHERE draft_id=?").get(draft.id)) return "compose_publish_page";
     return null;
   }
@@ -5282,6 +5286,8 @@ export class Repository {
     };
     const currentAst = buildContentAst({ draft: hydratedDraft, brief: briefPackage.brief,
       visuals, facts: briefPackage.facts || [] });
+    const frontendPage = this.getFrontendPageComposition(draftId);
+    const currentEditorialPageHash = sha256(JSON.stringify(frontendPage?.payload || {}));
     hydratedDraft.evidence_ledger = reconcileContentAstLedger(currentAst, hydratedDraft.evidence_ledger);
     hydratedDraft.content_ast = currentAst;
     return {
@@ -5289,7 +5295,7 @@ export class Repository {
       evidence_hash: currentEvidenceHash,
       operation,
       draft: hydratedDraft,
-      frontend_page: this.getFrontendPageComposition(draftId),
+      frontend_page: frontendPage,
       publish_composition: this.getFrontendPublishComposition(draftId),
       review: review ? hydrateReview(review) : null,
       review_history: reviewHistory,
@@ -5301,6 +5307,10 @@ export class Repository {
         asset_ids: json(compositionRow.asset_ids_json, []),
         commercial_blocks: json(compositionRow.commercial_blocks_json, []),
         content_blocks: json(compositionRow.content_blocks_json, []),
+        diagnostics: json(compositionRow.diagnostics_json, {}),
+        manifest: json(compositionRow.manifest_json, {}),
+        current: Boolean(frontendPage?.current && !compositionRow.refresh_required
+          && compositionRow.editorial_page_hash === currentEditorialPageHash),
       } : null,
     };
   }
@@ -5344,14 +5354,15 @@ export class Repository {
 
   ensureAuthorizedSourceVisuals(draftId) {
     const current=this.listDraftVisuals(draftId);
-    if (current.length) return current;
     const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
     if (!row) return current;
     const contentPackage=this.getBriefPackage(row.brief_id);
     const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null});
-    const visuals=normalizeVisuals([],row,row,assets,contentPolicyFor(row,contentPackage?.facts || []));
-    if (!visuals.length) return current;
+    const policy=contentPolicyFor(row,contentPackage?.facts || []);
+    if (current.length >= Number(policy.visuals?.target || 0)) return current;
+    const visuals=normalizeVisuals(current,row,row,assets,policy);
+    if (visuals.length <= current.length) return current;
     this.replaceDraftVisuals(draftId,visuals,row.strategy_version || this.strategyVersion);
     this.refreshDraftSchema(draftId);
     return this.listDraftVisuals(draftId);
@@ -5518,10 +5529,10 @@ export class Repository {
 
   completeWordPressPublication(draftId, result, { opportunityId = null } = {}) {
     this.db.prepare(`
-      UPDATE wordpress_publications SET post_id=?, post_url=?, preview_url=?, edit_url=?, response_json=?, status='synced',
+      UPDATE wordpress_publications SET post_id=?, post_url=?, preview_url=?, edit_url=?, response_json=?, delivery_manifest_json=?, status='synced',
         last_error=NULL, error_code=NULL, updated_at=? WHERE draft_id=?
     `).run(result.postId, result.postUrl, result.previewUrl || result.postUrl || null, result.editUrl || null,
-      JSON.stringify(result), now(), draftId);
+      JSON.stringify(result), JSON.stringify(result.deliveryManifest || {}), now(), draftId);
     for (const visual of result.visuals || []) this.saveWordPressVisual(visual.visualId, visual);
     this.markFrontendPublishComposition(draftId, "delivered", result.postId);
     this.db.prepare("UPDATE article_drafts SET status='wordpress_draft', updated_at=? WHERE id=?").run(now(), draftId);
@@ -5572,7 +5583,8 @@ export class Repository {
         wpub.post_id AS wordpress_post_id, wpub.post_url AS wordpress_post_url,
         wpub.preview_url AS wordpress_preview_url, wpub.edit_url AS wordpress_edit_url,
         wpub.status AS wordpress_status, wpub.updated_at AS wordpress_updated_at,
-        cc.status AS commercial_status, json_array_length(COALESCE(cc.offer_ids_json, '[]')) AS commercial_offer_count,
+        cc.status AS commercial_status, cc.outcome AS commercial_outcome, cc.reason_code AS commercial_reason_code,
+        json_array_length(COALESCE(cc.asset_ids_json, '[]')) AS commercial_offer_count,
         COALESCE(vs.visual_total,0) AS visual_total, COALESCE(vs.visual_pending,0) AS visual_pending,
         COALESCE(vs.visual_failed,0) AS visual_failed,
         prc.disposition AS production_disposition,
@@ -5612,7 +5624,8 @@ export class Repository {
         ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score, qr.created_at AS qa_created_at,
         wp.post_id AS wordpress_post_id, wp.post_url AS wordpress_post_url, wp.preview_url AS wordpress_preview_url,
         wp.edit_url AS wordpress_edit_url, wp.status AS wordpress_status,
-        cc.status AS commercial_status, json_array_length(COALESCE(cc.offer_ids_json, '[]')) AS commercial_offer_count,
+        cc.status AS commercial_status, cc.outcome AS commercial_outcome, cc.reason_code AS commercial_reason_code,
+        json_array_length(COALESCE(cc.asset_ids_json, '[]')) AS commercial_offer_count,
         pc.status AS publish_composition_status, co.id AS opportunity_id, co.approved_at,
         co.readiness_json, co.updated_at AS opportunity_updated_at
       FROM topic_candidates tc
@@ -5890,8 +5903,8 @@ export class Repository {
     this.db.prepare(`INSERT INTO affiliate_assets(id, provider_account_id, provider, asset_type, product_category,
       scope_type, scope_key, destination_slug, area_key, route_key, entity_key, entity_name, provider_entity_id,
       title, description, cta_label, target_url, embed_config_json, language, priority, active, valid_from,
-      valid_until, source_updated_at, legacy_offer_id, created_at, updated_at, image_url, alt_text, price_text)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      valid_until, source_updated_at, legacy_offer_id, created_at, updated_at, image_url, alt_text, price_text, country_code)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET provider_account_id=excluded.provider_account_id, provider=excluded.provider,
         asset_type=excluded.asset_type, product_category=excluded.product_category, scope_type=excluded.scope_type,
         scope_key=excluded.scope_key, destination_slug=excluded.destination_slug, area_key=excluded.area_key,
@@ -5900,18 +5913,48 @@ export class Repository {
         cta_label=excluded.cta_label, target_url=excluded.target_url, embed_config_json=excluded.embed_config_json,
         image_url=excluded.image_url, alt_text=excluded.alt_text, price_text=excluded.price_text,
         language=excluded.language, priority=excluded.priority, active=excluded.active, valid_from=excluded.valid_from,
-        valid_until=excluded.valid_until, source_updated_at=excluded.source_updated_at, updated_at=excluded.updated_at`)
+        valid_until=excluded.valid_until, source_updated_at=excluded.source_updated_at, country_code=excluded.country_code,
+        updated_at=excluded.updated_at`)
       .run(asset.id, asset.providerAccountId, asset.provider, asset.assetType, asset.productCategory, asset.scopeType,
         asset.scopeKey, asset.destinationSlug, asset.areaKey, asset.routeKey, asset.entityKey, asset.entityName,
         asset.providerEntityId, asset.title, asset.description, asset.ctaLabel, asset.targetUrl,
         JSON.stringify(asset.embedConfig || {}), asset.language, asset.priority, asset.active ? 1 : 0, asset.validFrom,
         asset.validUntil, asset.sourceUpdatedAt, asset.legacyOfferId, timestamp, timestamp,
-        asset.imageUrl || "", asset.altText || "", asset.priceText || "");
-    this.db.prepare(`INSERT OR IGNORE INTO affiliate_asset_mappings(id, affiliate_asset_id, scope_type, scope_key, destination_slug, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)`)
+        asset.imageUrl || "", asset.altText || "", asset.priceText || "", asset.countryCode || "");
+    this.db.prepare("UPDATE affiliate_asset_mappings SET active=0,updated_at=? WHERE affiliate_asset_id=?").run(timestamp, asset.id);
+    this.db.prepare(`INSERT INTO affiliate_asset_mappings(id, affiliate_asset_id, scope_type, scope_key, destination_slug, created_at, active, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+      ON CONFLICT(affiliate_asset_id,scope_type,scope_key) DO UPDATE SET
+        destination_slug=excluded.destination_slug,active=1,updated_at=excluded.updated_at`)
       .run(`asset_mapping_${sha256(`${asset.id}:${asset.scopeType}:${asset.scopeKey}`).slice(0, 24)}`,
-        asset.id, asset.scopeType, asset.scopeKey || asset.destinationSlug || asset.productCategory, asset.destinationSlug, timestamp);
+        asset.id, asset.scopeType, asset.scopeKey || asset.destinationSlug || asset.productCategory, asset.destinationSlug, timestamp, timestamp);
+    this.markCommercialRefreshForAsset(asset, timestamp);
     return this.getAffiliateAsset(asset.id);
+  }
+
+  markCommercialRefreshForAsset(asset, timestamp = now()) {
+    const scopeType=asset.scopeType || asset.scope_type;
+    const destination = asset.destinationSlug || asset.destination_slug || "";
+    const country=normalizeCountryCode(asset.countryCode || asset.country_code || (scopeType === "COUNTRY" ? asset.scopeKey || asset.scope_key : ""));
+    const category=asset.productCategory || asset.product_category;
+    const rows=this.db.prepare(`SELECT cc.draft_id,cb.destination_slug,cb.canonical_json
+      FROM commercial_compositions cc JOIN article_drafts ad ON ad.id=cc.draft_id
+      JOIN content_briefs cb ON cb.id=ad.brief_id`).all();
+    const affected=[];
+    for (const row of rows) {
+      const canonical=json(row.canonical_json,{});
+      if (destination && !["COUNTRY","CATEGORY","GLOBAL"].includes(scopeType) && row.destination_slug !== destination) continue;
+      if (scopeType === "COUNTRY" && normalizeCountryCode(canonical.country_code || "CN") !== country) continue;
+      const pack=this.getDraftPackage(row.draft_id);
+      const blocks=pack?.frontend_page?.payload?.blocks || pack?.draft?.content_blocks || [];
+      const intents=pack ? detectCommercialIntents(pack,blocks) : [];
+      if (category && !intents.some((intent)=>intent.productCategory === category)) continue;
+      affected.push(row.draft_id);
+    }
+    const update=this.db.prepare(`UPDATE commercial_compositions SET refresh_required=1,
+      refresh_reason='affiliate_asset_inventory_changed',updated_at=? WHERE draft_id=?`);
+    for (const draftId of affected) update.run(timestamp,draftId);
+    return affected.length;
   }
 
   getAffiliateAsset(assetId) {
@@ -6212,10 +6255,26 @@ export class Repository {
   }
 
   activeOffersForDestination(destinationSlug) {
-    return this.db.prepare(`SELECT * FROM affiliate_assets
-      WHERE active=1 AND (destination_slug=? OR scope_type IN ('COUNTRY','CATEGORY','GLOBAL'))
-        AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)
-      ORDER BY priority DESC, product_category, title`).all(destinationSlug, now(), now());
+    // Preserve relevant ineligible rows so the composer can distinguish an
+    // asset gap from a disabled provider, stale campaign, or scope mismatch.
+    return this.db.prepare(`SELECT a.*,p.status AS provider_status,
+        COALESCE(m.scope_type,a.scope_type) AS effective_scope_type,
+        COALESCE(m.scope_key,a.scope_key) AS effective_scope_key,
+        COALESCE(m.destination_slug,a.destination_slug) AS effective_destination_slug,
+        m.id AS mapping_id
+      FROM affiliate_assets a
+      JOIN affiliate_provider_accounts p ON p.id=a.provider_account_id
+      LEFT JOIN affiliate_asset_mappings m ON m.affiliate_asset_id=a.id AND m.active=1
+      WHERE a.destination_slug=? OR m.destination_slug=?
+        OR (a.scope_type='DESTINATION' AND a.scope_key=?)
+        OR (m.scope_type='DESTINATION' AND m.scope_key=?)
+        OR a.scope_type IN ('COUNTRY','CATEGORY','GLOBAL')
+        OR m.scope_type IN ('COUNTRY','CATEGORY','GLOBAL')
+      ORDER BY a.priority DESC,a.product_category,a.title,m.scope_type,m.scope_key`)
+      .all(destinationSlug, destinationSlug, destinationSlug, destinationSlug)
+      .map((row) => ({ ...row, scope_type: row.effective_scope_type || row.scope_type,
+        scope_key: row.effective_scope_key || row.scope_key,
+        destination_slug: row.effective_destination_slug || row.destination_slug }));
   }
 
   saveCommercialComposition(draftId, composition) {
@@ -6223,8 +6282,20 @@ export class Repository {
     const compositionId = `composition_${sha256(draftId).slice(0, 24)}`;
     const draft = this.db.prepare("SELECT revision, content_hash FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) throw new Error(`Article draft ${draftId} not found.`);
-    const overlayVersion = `overlay_${sha256(`${draftId}:${draft.revision}:${draft.content_hash}:${this.strategyVersion}`).slice(0, 24)}`;
+    const page = this.db.prepare("SELECT payload_json,contract_checksum FROM frontend_page_compositions WHERE draft_id=?").get(draftId) || {};
+    const editorialPageHash = sha256(page.payload_json || "{}");
+    const assetInventoryHash = sha256(JSON.stringify((composition.diagnostics?.intents || []).map((item) => ({
+      intent_id:item.intent_id,selected_asset_id:item.selected_asset_id,candidate_count:item.candidateCount,
+      eligible_count:item.eligibleCount,exclusions:item.exclusions,
+    }))));
+    const commercialStrategyVersion = composition.strategyVersion || this.strategyVersion;
+    const readingLayoutVersion = composition.readingLayoutVersion || "";
+    const overlayVersion = `overlay_${sha256(`${draftId}:${draft.revision}:${draft.content_hash}:${editorialPageHash}:${assetInventoryHash}:${commercialStrategyVersion}:${readingLayoutVersion}:${page.contract_checksum || ""}`).slice(0, 24)}`;
     transaction(this.db, () => {
+      const prior = this.db.prepare("SELECT * FROM commercial_compositions WHERE draft_id=?").get(draftId);
+      if (prior?.overlay_version) this.db.prepare(`INSERT OR IGNORE INTO commercial_overlay_history(id,draft_id,overlay_version,snapshot_json,created_at)
+        VALUES (?,?,?,?,?)`).run(`overlay_history_${sha256(`${draftId}:${prior.overlay_version}`).slice(0,24)}`,
+          draftId,prior.overlay_version,JSON.stringify(prior),timestamp);
       this.db.prepare("DELETE FROM commercial_slots WHERE draft_id=?").run(draftId);
       this.db.prepare("DELETE FROM affiliate_opportunities WHERE draft_id=?").run(draftId);
       this.db.prepare("DELETE FROM commercial_intents WHERE draft_id=?").run(draftId);
@@ -6251,19 +6322,29 @@ export class Repository {
           opportunity.scopeType, opportunity.scopeKey, opportunity.score, JSON.stringify(opportunity.factors), opportunity.reason, timestamp, timestamp);
       this.db.prepare(`INSERT INTO commercial_compositions(id, draft_id, publishable_body_markdown, slots_json, offer_ids_json,
         disclosure_text, status, created_at, updated_at, asset_ids_json, commercial_blocks_json,
-        content_blocks_json, strategy_version, draft_revision, draft_content_hash, overlay_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        content_blocks_json, strategy_version, draft_revision, draft_content_hash, overlay_version,
+        outcome,reason_code,diagnostics_json,manifest_json,editorial_page_hash,asset_inventory_hash,
+        reading_layout_version,contract_checksum,refresh_required,refresh_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')
         ON CONFLICT(draft_id) DO UPDATE SET publishable_body_markdown=excluded.publishable_body_markdown,
           slots_json=excluded.slots_json, offer_ids_json=excluded.offer_ids_json, disclosure_text=excluded.disclosure_text,
           status=excluded.status, updated_at=excluded.updated_at, asset_ids_json=excluded.asset_ids_json,
           commercial_blocks_json=excluded.commercial_blocks_json, content_blocks_json=excluded.content_blocks_json,
           strategy_version=excluded.strategy_version, draft_revision=excluded.draft_revision,
-          draft_content_hash=excluded.draft_content_hash, overlay_version=excluded.overlay_version`)
+          draft_content_hash=excluded.draft_content_hash, overlay_version=excluded.overlay_version,
+          outcome=excluded.outcome,reason_code=excluded.reason_code,diagnostics_json=excluded.diagnostics_json,
+          manifest_json=excluded.manifest_json,editorial_page_hash=excluded.editorial_page_hash,
+          asset_inventory_hash=excluded.asset_inventory_hash,reading_layout_version=excluded.reading_layout_version,
+          contract_checksum=excluded.contract_checksum,refresh_required=0,refresh_reason=''`)
         .run(compositionId, draftId, composition.publishableBodyMarkdown, JSON.stringify(composition.slots),
           JSON.stringify(composition.offerIds), composition.disclosureText, composition.status, timestamp, timestamp,
           JSON.stringify(composition.assetIds || []), JSON.stringify(composition.commercialBlocks || []),
-          JSON.stringify(composition.contentBlocks || []), this.strategyVersion, draft.revision, draft.content_hash, overlayVersion);
-      this.db.prepare("UPDATE article_drafts SET status='commercial_ready', updated_at=? WHERE id=?").run(timestamp, draftId);
+          JSON.stringify(composition.contentBlocks || []), commercialStrategyVersion, draft.revision, draft.content_hash, overlayVersion,
+          composition.outcome || (composition.status === "composed" ? "inserted" : "intentional_noop"), composition.reasonCode || "",
+          JSON.stringify(composition.diagnostics || {}), JSON.stringify(composition.manifest || {}), editorialPageHash,
+          assetInventoryHash, readingLayoutVersion, page.contract_checksum || "");
+      this.db.prepare(`UPDATE article_drafts SET status=CASE WHEN status='wordpress_draft' THEN status ELSE 'commercial_ready' END,
+        updated_at=? WHERE id=?`).run(timestamp, draftId);
     });
     this.enqueueAffiliateQueueFromComposition(composition);
   }
@@ -6997,7 +7078,7 @@ export class Repository {
   enqueueCommercialForDestination(destinationSlug) {
     const rows = this.db.prepare(`
       SELECT ad.id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id
-      WHERE cb.destination_slug=? AND ad.status IN ('ready_for_wordpress','commercial_ready')
+      WHERE cb.destination_slug=? AND ad.status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')
     `).all(destinationSlug);
     for (const row of rows) this.enqueue("compose_commercial", row.id);
     return rows.length;
@@ -8286,7 +8367,7 @@ export function contentPolicyFor(brief, facts = []) {
   const multiDay = /\b(?:[2-9]|two|three|four|five|six|seven)[ -]?day\b/i.test(topic);
   const profiles = {
     city_guide: [900, 1400, 3], first_time_guide: [900, 1400, 3], itinerary: multiDay ? [900, 1400, 3] : [600, 1000, 2],
-    comparison: [600, 1000, 2], listicle: [600, 1000, 2], food_guide: [600, 1000, 2],
+    comparison: [600, 1000, 2], listicle: [600, 1000, 2], food_guide: [600, 1200, 6],
     neighborhood_guide: [600, 1000, 2], hotel_area_guide: [600, 1000, 2], shopping_guide: [600, 1000, 2],
     attraction_guide: [350, 700, 2], transport_guide: [350, 700, 2], practical_guide: shortTips ? [200, 400, 1] : [350, 700, 2],
     how_to: shortTips ? [200, 400, 1] : [350, 700, 2],
@@ -8306,8 +8387,9 @@ export function contentPolicyFor(brief, facts = []) {
     required_visible_sections: [],
     seo: { title_suggested_max: 60, description_suggested_max: 160, length_mode: "soft_editorial_guidance" },
     faq: { required: false, allowed: faqSupported, minimum: 0, maximum: faqSupported ? 4 : 0 },
-    visuals: { minimum: 0, target: substantialEvidence ? Math.min(baseVisuals, Math.max(1, Math.ceil(substantialEvidence / 4))) : 0,
-      maximum: baseVisuals + 1, count_mode: "soft_editorial_guidance" },
+    visuals: { minimum: 0,
+      target: substantialEvidence ? Math.min(baseVisuals, Math.max(type === "food_guide" ? 5 : 1, Math.ceil(substantialEvidence / 4))) : 0,
+      maximum: type === "food_guide" ? 8 : baseVisuals + 1, count_mode: "soft_editorial_guidance" },
   };
 }
 
@@ -8493,12 +8575,14 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     if (!match || match.score < 0.34) return null;
     const asset = match.asset;
     unusedAssets.delete(asset.id);
-    const needsLocalization = ["chinese", "mixed"].includes(asset.language_status);
+    const decision = decideVisualAsset(asset, visual);
+    if (decision.action === "reject") return null;
+    const needsLocalization = decision.action === "localize";
     return {
       ...visual,
       purpose: truncateText(visual.purpose || `Evidence-linked view for ${draft.title}`, 300),
       alt_text: readerVisualAlt(asset, visual.alt_text || visual.image_subject, brief.destination_slug),
-      caption: truncateText(asset.caption_text || visual.caption || "Photo retained from an authorized research source.", 300),
+      caption: truncateText(asset.caption_text || visual.caption || readerVisualAlt(asset, visual.image_subject, brief.destination_slug), 300),
       generation_prompt: "",
       acquisition_strategy: needsLocalization ? "localize_source_image" : "use_authorized_source_image",
       factual_image_required: true,
@@ -8510,7 +8594,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       model: "user-authorized-source-image",
       media_metadata: { source_mime_type: asset.mime_type, storage_status: asset.storage_status,
         original_bytes_status: asset.original_bytes_status, durability_status: asset.durability_status,
-        language_status: asset.language_status, authorization_policy:"project_source_media_full_authorization",
+        language_status: asset.language_status, visual_decision:decision,
+        authorization_policy:"project_source_media_full_authorization",
         source_provenance: {
           source_asset_id: asset.id,
           original_stored: asset.durability_status === "ORIGINAL_STORED" && asset.original_bytes_status === "saved_original",
@@ -8533,24 +8618,51 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const index = normalized.length;
     const subject = readerVisualAlt(asset, "", brief.destination_slug);
     if (!subject) continue;
+    const decision = decideVisualAsset(asset, { image_subject:subject, purpose:`Evidence-linked view supporting ${draft.title}` });
+    if (decision.action === "reject") continue;
+    const localize = decision.action === "localize";
     normalized.push({
       placement: defaultPlacement(index), purpose:truncateText(`Evidence-linked view supporting ${draft.title}`,300),
       alt_text:subject,
-      caption:truncateText(asset.caption_text || "Photo from an authorized source used in this guide.",300),
+      caption:truncateText(asset.caption_text || subject,300),
       generation_prompt:"",aspect_ratio:sourceAssetAspectRatio(asset),image_type:"real_world_photo",
       image_role:index===0 ? "hero" : "support",image_subject:subject,
-      acquisition_strategy:"use_authorized_source_image",factual_image_required:true,
-      source_asset_id:asset.id,source_remote_url:asset.remote_url,status:"generated",
-      media_url:`/api/source-assets/${asset.id}/preview`,provider:"authorized_project_source",
+      acquisition_strategy:localize ? "localize_source_image" : "use_authorized_source_image",factual_image_required:true,
+      source_asset_id:asset.id,source_remote_url:asset.remote_url,status:localize ? "planned" : "generated",
+      media_url:localize ? "" : `/api/source-assets/${asset.id}/preview`,provider:"authorized_project_source",
       model:"user-authorized-source-image",media_metadata:{source_mime_type:asset.mime_type,
         storage_status:asset.storage_status,original_bytes_status:asset.original_bytes_status,
-        durability_status:asset.durability_status,language_status:asset.language_status,
+        durability_status:asset.durability_status,language_status:asset.language_status,visual_decision:decision,
         authorization_policy:"project_source_media_full_authorization",source_provenance:{source_asset_id:asset.id,
           original_stored:true,project_owner_confirmed:true}},
     });
     unusedAssets.delete(asset.id);
   }
   return normalized;
+}
+
+export function decideVisualAsset(asset = {}, request = {}) {
+  const explicit = String(asset.visual_class || asset.visualClass || "").toLowerCase();
+  const width = Number(asset.width || 0); const height = Number(asset.height || 0);
+  const language = String(asset.language_status || asset.languageStatus || "unknown").toLowerCase();
+  const searchable = `${asset.alt_text || ""} ${asset.caption_text || ""} ${asset.evidence_text || ""} ${request.image_subject || ""}`.toLowerCase();
+  const authenticityCritical = Boolean(asset.authenticity_critical) || /sign|signage|plaque|storefront|entrance|station name|招牌|牌匾|站名/i.test(searchable);
+  const visualClass = explicit || (Number(asset.handwriting_score || 0) >= 0.5 ? "handwritten"
+    : Number(asset.collage_count || 0) > 1 ? "collage"
+      : Number(asset.text_density || 0) >= 0.35 ? "text_overlay"
+        : width && height && Math.min(width, height) < 480 ? "low_quality" : "real_world_photo");
+  if (["low_quality","editor_ui","editor_interface","unreadable"].includes(visualClass)) return {
+    visualClass, language, authenticityCritical, action:"reject", reason:"insufficient_delivery_quality",
+  };
+  if (authenticityCritical) return { visualClass, language, authenticityCritical, action:"retain", reason:"authentic_signage_is_reader_evidence" };
+  if (language === "unknown" && ["handwritten","pure_text","text_overlay","infographic","collage"].includes(visualClass)) {
+    return { visualClass, language, authenticityCritical, action:"reject", reason:"language_analysis_required" };
+  }
+  if (["chinese", "mixed"].includes(language) && ["handwritten","pure_text","text_overlay", "infographic", "collage"].includes(visualClass)) {
+    return { visualClass, language, authenticityCritical, action:"localize", reason:"reader_comprehension_requires_text_localization" };
+  }
+  return { visualClass, language, authenticityCritical, action:"retain",
+    reason:language === "unknown" ? "unknown_language_photo_has_no_detected_reader_text" : "authentic_visual_is_readable_as_is" };
 }
 
 function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
@@ -8628,6 +8740,9 @@ function normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRa
     image_subject: truncateText(item?.image_subject || draft.title, 240),
     acquisition_strategy: strategy,
     factual_image_required: factualRequired,
+    media_metadata: { ...(item?.media_metadata || {}),
+      style_version:strategy === "generate_illustration" ? "stc-light-editorial-v1" : null,
+      qa_version:"visual-qa-2" },
   };
 }
 
@@ -8640,6 +8755,14 @@ function visualFingerprint(visual) {
     aspect_ratio: visual.aspect_ratio,
     source_asset_id: visual.source_asset_id || null,
     source_remote_url: visual.source_remote_url || null,
+    source_sha256: visual.source_sha256 || visual.media_metadata?.source_sha256 || null,
+    capture_version: visual.capture_version || visual.media_metadata?.capture_version || null,
+    crop: visual.crop || visual.media_metadata?.crop || null,
+    locale: visual.locale || visual.media_metadata?.locale || "en",
+    transform_version: visual.transform_version || visual.media_metadata?.transform_version || "visual-transform-1",
+    model: visual.model || null,
+    style_version: visual.style_version || visual.media_metadata?.style_version || "stc-light-editorial-v1",
+    qa_version: visual.qa_version || visual.media_metadata?.qa_version || "visual-qa-2",
   }));
 }
 
@@ -8951,7 +9074,7 @@ function defaultPlacement(index) {
 }
 
 function defaultVisualPrompt(title, destination, index) {
-  return `Original editorial illustration for \"${title}\" in ${destination || "China"}, scene ${index + 1}; calm editorial travel artwork, simplified authentic atmosphere, no realistic documentary claim, no readable text, no logos, no watermark, no copied social-media imagery.`;
+  return `Original editorial illustration for \"${title}\" in ${destination || "China"}, scene ${index + 1}; SoloToChina light editorial style stc-light-editorial-v1: warm white or pale background, clear deep-blue structure, generous whitespace, restrained accent colors, red only for a small warning detail; calm useful travel artwork, never a dark red-black split poster or dense headline graphic; simplified authentic atmosphere, no realistic documentary claim, no readable text, no logos, no watermark, no copied social-media imagery.`;
 }
 
 function visualCountForWords(words) {

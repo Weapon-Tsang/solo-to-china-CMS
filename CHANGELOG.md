@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.29 - Unreleased
+
+- Consume the frozen Frontend Page Plan during deterministic AST composition, record per-block adoption/substitution reasons, and prefer the simplest Registry component for each reader task.
+- Unify source-image classification across planned and fallback paths, fill relevant visual gaps, preserve source crop during localization, add pixel/aspect QA, and key WordPress media reuse by derivative identity.
+- Add schema 70 for country-aware affiliate assets, versioned commercial overlay dependencies/history, refresh reasons, diagnostics/manifests, and WordPress delivery receipts.
+- Repair Contract `list.data.items` intent projection, COUNTRY/destination/mapping recall, provider/asset eligibility diagnostics, stable anchors, no-op versus asset-gap outcomes, and selected-to-DOM slot reconciliation.
+- Add a scoped short-lived WordPress draft-preview ticket with an explicit login-bound fallback, plus a read-only-by-default commercial/presentation/media repair tool that preserves prose and media.
+- This development change performs no production migration, enqueue, WordPress write, commit, push or deployment. Frontend Contract 1.4.0 remains compatible; Strategy 3.4 is defined in `config/content-strategy.json`.
+
 ## 2.0.28 - Unreleased
 
 - Normalize quality-review aliases when historical reviews are read, so an already-persisted `NO_TRAVELER_DECISION` message that actually cites a mandatory Brief item is projected as one `mandatory_brief_requirement_missing` blocker in both Content Workbench and Recovery without rewriting audit history.

@@ -21,13 +21,19 @@ export function parseMediaMetadata(value) {
   try { return JSON.parse(value || "{}"); } catch { return {}; }
 }
 
-export function validateMediaDelivery(visuals = [], { requireMetadata = true } = {}) {
+export function validateMediaDelivery(visuals = [], { requireMetadata = true, pagePayload = null } = {}) {
   const errors = [];
   const hashes = new Map();
+  const deliveredIds = new Set();
   for (const [index, visual] of visuals.entries()) {
     const mediaId = positiveInteger(visual.wordpress_media_id || visual.media_id || visual.id);
-    if (!mediaId) continue;
     const path = `$.media[${index}]`;
+    if (!mediaId) {
+      const optionalFailure = visual.status === "failed" && !Boolean(visual.factual_image_required);
+      if (!optionalFailure) errors.push({ code:"MEDIA_REQUIRED_MANIFEST_MISSING", path, visual_id:visual.id || null });
+      continue;
+    }
+    deliveredIds.add(mediaId);
     const url = publicMediaUrl(visual.wordpress_media_url || visual.url || visual.media_url);
     const metadata = parseMediaMetadata(visual.media_metadata || visual.media_metadata_json || visual.metadata);
     const role = String(visual.image_role || visual.role || "context").toLowerCase();
@@ -79,6 +85,12 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true } =
       if (prior && prior !== mediaId) errors.push({ code: "MEDIA_DUPLICATE_UPLOAD", path, mediaIds: [prior, mediaId] });
       else hashes.set(metadata.sha256, mediaId);
     }
+  }
+  if (pagePayload) {
+    const pageIds = new Set((pagePayload.blocks || []).filter((block) => ["image", "annotated_image", "place_info_card"].includes(block?.type))
+      .map((block) => positiveInteger(block?.data?.media_id)).filter(Boolean));
+    for (const mediaId of deliveredIds) if (!pageIds.has(mediaId)) errors.push({ code:"MEDIA_MISSING_FROM_FINAL_PAGE", path:"$.page.blocks", media_id:mediaId });
+    for (const mediaId of pageIds) if (!deliveredIds.has(mediaId)) errors.push({ code:"PAGE_REFERENCES_UNDELIVERED_MEDIA", path:"$.page.blocks", media_id:mediaId });
   }
   return { valid: errors.length === 0, errors, checked: visuals.length };
 }

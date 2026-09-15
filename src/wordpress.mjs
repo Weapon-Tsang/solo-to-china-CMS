@@ -39,7 +39,7 @@ export class WordPressDraftAdapter {
         status: "publish,draft,pending,private,future",
         per_page: "100",
         page: String(page),
-        _fields: "id,slug,status,link,modified,title",
+        _fields: "id,slug,status,link,modified,modified_gmt,title",
       });
       const { body, response } = await this.requestWithResponse(`/wp-json/wp/v2/posts?${params}`, { method: "GET", signal: options.signal });
       if (!Array.isArray(body)) throw new Error("WordPress inventory response must be an array.");
@@ -49,7 +49,7 @@ export class WordPressDraftAdapter {
         title: plainText(post.title?.raw || post.title?.rendered || ""),
         status: String(post.status || ""),
         postUrl: post.link || null,
-        modifiedAt: post.modified || null,
+        modifiedAt: post.modified_gmt ? `${String(post.modified_gmt).replace(/Z$/i, "")}Z` : post.modified || null,
       })));
       totalPages = Math.max(1, Number.parseInt(response.headers.get("x-wp-totalpages") || "1", 10) || 1);
       page += 1;
@@ -140,6 +140,27 @@ export class WordPressDraftAdapter {
     if (body?.status !== "draft" || !Number.isInteger(body?.post_id)) {
       throw new WordPressApiError("INVALID_WORDPRESS_RESPONSE", "WordPress did not confirm a draft post and post_id.", { status: 502, details: body });
     }
+    const expectedSlots = (publishPackage?.page?.blocks || []).filter((block) => String(block?.type || "").startsWith("affiliate_"))
+      .map((block) => ({ slot_key:block.data?.slot_key, affiliate_asset_id:block.data?.affiliate_asset_id,
+        component_type:block.type, placement:block.data?.placement })).filter((item) => item.slot_key);
+    const deliveredSlots = Array.isArray(body.commercial_slots) ? body.commercial_slots : null;
+    if (expectedSlots.length && !deliveredSlots) {
+      throw new WordPressApiError("COMMERCIAL_DELIVERY_RECEIPT_MISSING",
+        "WordPress did not return the commercial slot delivery receipt.", { status: 502, details: { expectedSlots } });
+    }
+    if (deliveredSlots) {
+      const delivered = new Map(deliveredSlots.map((item) => [item.slot_key, item]));
+      const mismatches = expectedSlots.filter((item) => {
+        const actual = delivered.get(item.slot_key);
+        return !actual || actual.affiliate_asset_id !== item.affiliate_asset_id
+          || actual.component_type !== item.component_type || actual.placement !== item.placement;
+      });
+      if (mismatches.length || delivered.size !== expectedSlots.length) {
+        throw new WordPressApiError("COMMERCIAL_DELIVERY_MISMATCH",
+          "WordPress stored a commercial slot manifest that differs from the selected Publish Package.",
+          { status: 502, details: { expectedSlots, deliveredSlots, mismatches } });
+      }
+    }
     return {
       postId: body.post_id,
       postUrl: body.preview_url || null,
@@ -149,8 +170,31 @@ export class WordPressDraftAdapter {
       status: body.status,
       contractVersion: body.contract_version || null,
       updated: Boolean(body.updated),
+      deliveryManifest: { commercial_slots: deliveredSlots || [], page_payload_hash: body.page_payload_hash || "" },
       visuals: [],
     };
+  }
+
+  async createScopedPreviewTicket({ postId, draftId, revision, pagePayloadHash }, options = {}) {
+    if (!this.enabled) throw new Error("WordPress draft preview is not configured.");
+    assertSafeSiteUrl(this.config.siteUrl);
+    const endpoint=new URL(`/wp-json/stc/v1/cms-articles/${Number(postId)}/preview-ticket`,`${this.config.siteUrl}/`);
+    const response=await this.fetch(endpoint,{
+      method:"POST",headers:{authorization:`Basic ${Buffer.from(`${this.config.username}:${this.config.applicationPassword}`).toString("base64")}`,
+        "content-type":"application/json",accept:"application/json"},
+      body:JSON.stringify({cms_draft_id:String(draftId || ""),cms_revision:Number(revision || 0),page_payload_hash:String(pagePayloadHash || "")}),
+      signal:combinedSignal(options.signal,30_000),
+    });
+    const body=await response.json().catch(()=>({}));
+    if (!response.ok) throw new WordPressApiError(String(body?.code || "PREVIEW_TICKET_FAILED"),
+      body?.message || "WordPress could not create a scoped preview ticket.",{status:response.status,details:body?.data || null});
+    let preview;
+    try { preview=new URL(String(body?.preview_url || "")); } catch { preview=null; }
+    const site=new URL(this.config.siteUrl);
+    if (!preview || preview.origin !== site.origin || !body?.expires_at) throw new WordPressApiError("INVALID_PREVIEW_TICKET_RESPONSE",
+      "WordPress returned an invalid scoped preview URL.",{status:502,details:body});
+    return { mode:"scoped_preview_ticket",url:preview.toString(),postId:Number(postId),draftId:String(draftId),
+      revision:Number(revision || 0),expiresAt:String(body.expires_at) };
   }
 
   async resolveVisualMedia(visuals, onUploaded = null, options = {}) {
@@ -160,7 +204,10 @@ export class WordPressDraftAdapter {
       item.status === "generated" && (item.media_path
         || (item.source_asset_id && (item.source_asset_data_url || item.source_remote_url)))
     ))) {
-      const assetKey = visual.source_asset_id ? `source:${visual.source_asset_id}` : visual.media_path ? `file:${path.resolve(visual.media_path)}` : null;
+      const assetKey = visual.asset_fingerprint
+        ? `derivative:${visual.asset_fingerprint}`
+        : visual.source_asset_id ? `source:${visual.source_asset_id}`
+          : visual.media_path ? `file:${path.resolve(visual.media_path)}` : null;
       if (assetKey && reusable.has(assetKey)) {
         const resolved = { visualId: visual.id, ...reusable.get(assetKey), alt: visual.alt_text, caption: visual.caption,
           role: visual.image_role, imageType: visual.image_type, acquisitionStrategy: visual.acquisition_strategy };

@@ -260,3 +260,41 @@ test("a subject mention without its protected numeric value does not assert the 
   const ast = buildContentAst({ draft: scopedDraft, brief: { id: "brief-fee" }, facts });
   assert.deepEqual(reconcileContentAstLedger(ast, scopedDraft.evidence_ledger)[0].claim_keys, []);
 });
+
+test("deterministic composition consumes the page plan and records readable substitutions", () => {
+  const plannedDraft = { title:"Two-day route", slug:"two-day-route", meta_description:"A compact route.",
+    body_markdown:"## Quick answer\n\nStay in one area on day one.\n\n## Route\n\n1. Morning: Start at the old city\n2. Evening: Finish near the metro",
+    evidence_ledger:[
+      { section_id:"answer", section:"Quick answer", content_node_ids:["node-answer"], claim_keys:[], source_ids:[] },
+      { section_id:"route", section:"Route", content_node_ids:["node-route"], claim_keys:[], source_ids:[] },
+    ] };
+  const ast = buildContentAst({ draft:plannedDraft, brief:{ id:"brief-planned", content_type:"itinerary" } });
+  const components = [
+    { id:"heading", status:"stable", variants:["section"], schema:{ properties:{ text:{},level:{} } } },
+    { id:"paragraph", status:"stable", variants:["default"], schema:{ properties:{ content:{} } } },
+    { id:"list", status:"stable", variants:["unordered","ordered"], schema:{ properties:{ items:{} } } },
+    { id:"quick_answer", status:"stable", variants:["default"], schema:{ properties:{ answer:{},anchor:{} } } },
+    { id:"route_timeline", status:"stable", variants:["default"], schema:{ properties:{ items:{},anchor:{} } } },
+  ];
+  const plan = { blocks:[
+    { content_node_id:"node-answer", type:"quick_answer", semantic_role:"answer the route choice" },
+    { content_node_id:"node-route", type:"route_timeline", semantic_role:"show sequence" },
+  ] };
+  const page = composePageFromAst(ast, { components }, pageSchema, plan);
+  assert.deepEqual(page.output.blocks.filter((block) => !["heading"].includes(block.type)).map((block) => block.type),
+    ["quick_answer", "route_timeline"]);
+  assert.equal(page.provenance.planReconciliation.omitted.length, 0);
+  assert.equal(page.provenance.decisions.every((item) => item.status === "adopted"), true);
+  assert.equal(page.model, "deterministic-content-ast-reading-3");
+});
+
+test("supporting media follows its semantic section when earlier paragraphs change", () => {
+  const visual={id:"food-photo",image_role:"support",placement:"mid_article",image_subject:"spicy Chongqing noodles",
+    alt_text:"Bowl of spicy Chongqing noodles",caption:"Spicy Chongqing noodles",factual_image_required:true};
+  const make=(intro)=>buildContentAst({draft:{title:"Food guide",slug:"food-guide",body_markdown:`${intro}\n\n## Transport\n\nTake the metro.\n\n## Noodles\n\nOrder spicy Chongqing noodles at a suitable restaurant.`,evidence_ledger:[]},
+    brief:{id:"brief-food",content_type:"food_guide"},visuals:[visual]});
+  for (const ast of [make("Direct answer."),make("Direct answer.\n\nExtra context.\n\nAnother useful note.")]) {
+    const mediaIndex=ast.nodes.findIndex((node)=>node.type==="media");
+    assert.match(ast.nodes[mediaIndex - 1].visible_text,/spicy Chongqing noodles/i);
+  }
+});

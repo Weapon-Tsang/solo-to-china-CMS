@@ -4,6 +4,7 @@ import {
   CommercialComposer, CommercialValidationError, normalizeAffiliateAsset,
   normalizeAffiliateProviderAccount, normalizeCommercialEvent, normalizeCommercialOffer,
   normalizeCommissionRule, resolveAffiliateAsset,
+  detectCommercialIntents, normalizeCountryCode, projectVisibleBlockText,
 } from "../src/commercial.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
@@ -39,6 +40,43 @@ test("commercial composer is a no-op when no relevant active offer exists", () =
   const composition = new CommercialComposer({ maxOffersPerDraft: 3, disclosure: "Disclosure" }).compose(contentPackage, []);
   assert.equal(composition.status, "no_offers");
   assert.equal(composition.publishableBodyMarkdown, "Research body");
+  assert.equal(composition.outcome, "intentional_noop");
+});
+
+test("visible-text projection reads Contract list.data.items without scanning URLs or metadata", () => {
+  const block = { type:"list", variant:"unordered", data:{ items:["Book a train from Chongqing to Chengdu"],
+    target_url:"https://example.test/hotel", internal_id:"attraction-ticket" } };
+  assert.equal(projectVisibleBlockText(block), "Book a train from Chongqing to Chengdu");
+  const intents = detectCommercialIntents({ candidate:{ destination_slug:"chongqing" }, brief:{ canonical:{ country_code:"CN" } },
+    draft:{ id:"draft-list", title:"Rail guide" }, frontend_page:{ provenance:{ entries:[{ contentNodeId:"node-rail" }] } } }, [block]);
+  assert.deepEqual(intents.map((item) => item.productCategory), ["TRAIN"]);
+  assert.equal(intents[0].blockKey, "node:node-rail");
+});
+
+test("COUNTRY fallback compares normalized country codes rather than a city scope key", () => {
+  assert.equal(normalizeCountryCode("Mainland China"), "CN");
+  const intent = { intentType:"DESTINATION_GUIDE", productCategory:"HOTEL", destinationSlug:"chongqing",
+    countryCode:"CN", scopeType:"DESTINATION", scopeKey:"chongqing" };
+  const china = { id:"china", product_category:"HOTEL", scope_type:"COUNTRY", scope_key:"China", country_code:"CN",
+    provider_status:"CONFIGURED", lifecycle_state:"operational", active:1, target_url:"https://www.trip.com/hotels/" };
+  const us = { ...china, id:"us", scope_key:"US", country_code:"US" };
+  assert.equal(resolveAffiliateAsset(intent, [us, china]).asset.id, "china");
+});
+
+test("a real commercial demand with no eligible asset is an asset gap, not a successful insertion", () => {
+  const composition = new CommercialComposer().compose({ candidate:{ destination_slug:"chongqing" },
+    brief:{ destination_slug:"chongqing", canonical:{ country_code:"CN" } },
+    draft:{ id:"draft-gap", title:"Where to stay", body_markdown:"## Where to stay\n\nCompare hotel areas before booking." } }, []);
+  assert.equal(composition.status, "no_offers");
+  assert.equal(composition.outcome, "asset_gap");
+  assert.equal(composition.reasonCode, "NO_ELIGIBLE_ASSET");
+  assert.equal(composition.manifest.slots.length, 0);
+});
+
+test("metro station wording alone does not create an intercity train intent", () => {
+  const intents = detectCommercialIntents({ candidate:{ destination_slug:"chongqing" }, brief:{},
+    draft:{ id:"draft-metro", title:"Metro exits" } }, [{ type:"paragraph", data:{ content:"Use Xiaoshizi metro station Exit 9." } }]);
+  assert.equal(intents.some((item) => item.productCategory === "TRAIN"), false);
 });
 
 test("typed offer validation rejects unsafe links and unsupported categories", () => {
@@ -66,6 +104,34 @@ test("manual provider and asset registry keep display type separate from product
   assert.equal(asset.asset_type, "SEARCH_BOX");
   assert.equal(asset.product_category, "HOTEL");
   assert.equal(repository.listAffiliateProviderAccounts()[0].active_asset_count, 1);
+});
+
+test("destination inventory recalls an operational asset through active mappings and provider state", (t) => {
+  const { repository, db } = repositoryFixture(t);
+  const provider = repository.upsertAffiliateProviderAccount(normalizeAffiliateProviderAccount({
+    providerKey:"trip-com", displayName:"Trip.com", status:"CONFIGURED",
+  }));
+  const asset = repository.upsertAffiliateAsset(normalizeAffiliateAsset({ providerAccountId:provider.id, provider:"Trip.com",
+    assetType:"CATEGORY_LINK", productCategory:"HOTEL", scopeType:"COUNTRY", scopeKey:"China", countryCode:"CN",
+    title:"China hotels", targetUrl:"https://www.trip.com/hotels/" }));
+  db.prepare("UPDATE affiliate_asset_mappings SET destination_slug='chongqing' WHERE affiliate_asset_id=?").run(asset.id);
+  const inventory = repository.activeOffersForDestination("chongqing");
+  assert.equal(inventory.length, 1);
+  assert.equal(inventory[0].scope_key, "CN");
+  assert.equal(inventory[0].provider_status, "CONFIGURED");
+});
+
+test("destination scope_key without destinationSlug is normalized and recalled", (t) => {
+  const { repository } = repositoryFixture(t);
+  const provider = repository.upsertAffiliateProviderAccount(normalizeAffiliateProviderAccount({
+    providerKey:"trip-destination", displayName:"Trip.com", status:"CONFIGURED",
+  }));
+  const normalized=normalizeAffiliateAsset({ providerAccountId:provider.id,provider:"Trip.com",assetType:"CATEGORY_LINK",
+    productCategory:"HOTEL",scopeType:"DESTINATION",scopeKey:"Chongqing",title:"Chongqing hotels",
+    targetUrl:"https://www.trip.com/hotels/chongqing" });
+  assert.equal(normalized.destinationSlug,"chongqing");
+  const asset=repository.upsertAffiliateAsset(normalized);
+  assert.deepEqual(repository.activeOffersForDestination("chongqing").map((item)=>item.id),[asset.id]);
 });
 
 test("affiliate asset validation rejects unsafe URLs and arbitrary embed HTML", () => {

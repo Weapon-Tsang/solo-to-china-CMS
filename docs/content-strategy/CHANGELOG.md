@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.29 / schema 70 - 2026-09-15
+
+- Activate Content Production Strategy 3.4 for reader-task page composition, shared visual classification/pixel qualification, scoped final preview, and versioned commercial overlays.
+- Preserve approved scope, frozen prose/evidence, QA, media successes, production ownership, leases, finite retries, `recovery_run_id`, and draft-only WordPress delivery.
+- Add a read-only-by-default delivery repair/audit path. This development entry does not authorize production migration, enqueue, WordPress mutation, commit, push, or deployment.
+
 ## App 2.0.28 / schema 69 - 2026-09-15
 
 - Apply the current Quality Review issue taxonomy to historical review projections without altering the preserved provider/audit response, keeping Workbench and Recovery aligned on the actual mandatory Brief repair target.

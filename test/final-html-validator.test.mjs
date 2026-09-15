@@ -30,6 +30,23 @@ test("draft preview requires noindex and exclusion from the public sitemap", () 
   assert.ok(leaked.errors.some((item) => item.code === "DRAFT_PAGE_IN_SITEMAP"));
 });
 
+test("draft preview validates article identity, body, media and commercial slots instead of accepting any HTTP 200", () => {
+  const html = `<!doctype html><html><head><title>Exact draft</title><meta name="robots" content="noindex"></head><body><main><article>
+    <h1>Exact draft</h1><p>${"Reader-visible draft content. ".repeat(8)}</p>
+    <img class="wp-image-91" src="https://solotochina.com/media/91.webp" width="1200" height="800" alt="Route" fetchpriority="high">
+    <aside data-stc-slot-key="contextual:hotel:one" data-affiliate-asset="asset-hotel">Hotel option</aside>
+  </article></main></body></html>`;
+  const result=validateRenderedHtmlArtifact({ html,status:"preview",url:"https://solotochina.com/?p=71&preview=true",httpStatus:200,
+    expectedTitle:"Exact draft",expectedMediaIds:[91],expectedCommercialSlots:[{slot_key:"contextual:hotel:one",affiliate_asset_id:"asset-hotel"}] });
+  assert.equal(result.valid,true,JSON.stringify(result.errors));
+  const wrong=validateRenderedHtmlArtifact({ html:html.replaceAll("Exact draft","Home").replace("data-stc-slot-key","data-missing-slot"),
+    status:"preview",url:"https://solotochina.com/?p=71&preview=true",httpStatus:200,expectedTitle:"Exact draft",
+    expectedMediaIds:[91,92],expectedCommercialSlots:[{slot_key:"contextual:hotel:one",affiliate_asset_id:"asset-hotel"}] });
+  assert.ok(wrong.errors.some((item)=>item.code==="HTML_TITLE_MISMATCH"));
+  assert.ok(wrong.errors.some((item)=>item.code==="EXPECTED_MEDIA_MISSING"));
+  assert.ok(wrong.errors.some((item)=>item.code==="COMMERCIAL_SLOT_VISIBLE_COUNT_MISMATCH"));
+});
+
 test("published HTML fails for inherited noindex, hidden body, broken headings, media or schema", () => {
   const broken = publishedHtml
     .replace("<title>", '<meta name="robots" content="noindex"><title>')

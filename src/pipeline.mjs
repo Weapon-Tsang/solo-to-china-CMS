@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { validatePlannedEvidence } from "./services/editorial-proposal.mjs";
 import { buildContentAst, composePageFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
 import { validatePlanningDestination } from "./destination-consistency.mjs";
-import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, validateFinalPageArtifact } from "./publish-page.mjs";
+import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, reconcileCommercialDelivery, validateFinalPageArtifact } from "./publish-page.mjs";
 import { validateMediaDelivery } from "./media-delivery.mjs";
 import { inheritJobContext, isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
@@ -840,7 +840,7 @@ export class Pipeline {
           }
           const currentAst = buildContentAst({ draft: contentPackage.draft, brief: contentPackage.brief,
             visuals: contentPackage.draft.visuals || [], facts: contentPackage.facts || [] });
-          const composed = composePageFromAst(currentAst, capabilities, contract.pageSchema.schema)
+          const composed = composePageFromAst(currentAst, capabilities, contract.pageSchema.schema, contentPackage.frontend_page_plan?.plan)
             || await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext }));
           const validation = this.frontendContracts.validatePagePayload(composed.output);
           const savedPage = commitStage(() => {
@@ -894,13 +894,25 @@ export class Pipeline {
           if (!contentPackage?.review?.passed) throw new Error("Only a QA-passed Research Draft can enter the Commercial Layer.");
           const offers = this.repository.activeOffersForDestination(contentPackage.brief.destination_slug);
           const composition = this.commercialComposer.compose(contentPackage, offers);
+          let missingComponents = [];
           if (this.frontendContracts?.configured) {
             const capabilities = this.frontendContracts.commercialCapabilities(composition.requiredComponents);
+            missingComponents = capabilities.missing;
             for (const componentId of capabilities.missing) this.repository.createFrontendCapabilityRequest({
               draftId: job.entity_id, briefId: contentPackage.brief?.id || null,
               semanticNeed: componentId, useCase: `Commercial overlay for ${contentPackage.draft?.title || job.entity_id}`,
               reason: `The Commercial Composer selected '${componentId}', but the active Frontend Contract does not publish that component. Contract-aware delivery remains blocked until the capability is available.`,
             });
+          }
+          if (missingComponents.length) {
+            composition.outcome = "blocked";
+            composition.reasonCode = "SELECTED_COMPONENT_UNAVAILABLE";
+            composition.diagnostics = { ...(composition.diagnostics || {}), outcome:"blocked",
+              reason_code:composition.reasonCode, missing_components:missingComponents };
+            this.repository.saveCommercialComposition(job.entity_id, composition);
+            throw new PublishCompositionError("SELECTED_COMPONENT_UNAVAILABLE",
+              `Selected commercial components are unavailable in the active Frontend Contract: ${missingComponents.join(", ")}.`,
+              { missingComponents });
           }
           commitStage(() => {
             this.repository.saveCommercialComposition(job.entity_id, composition);
@@ -914,6 +926,9 @@ export class Pipeline {
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage?.review?.passed) throw new PublishCompositionError("QA_NOT_PASSED", "Only a QA-passed Research Draft can enter Publish Composition.");
           if (!contentPackage.commercial_composition) throw new PublishCompositionError("COMMERCIAL_NOT_COMPLETE", "Commercial composition must complete before Publish Composition.");
+          if (!contentPackage.commercial_composition.current) throw new PublishCompositionError("COMMERCIAL_OVERLAY_STALE",
+            "The commercial overlay no longer matches the current editorial page, asset inventory, layout strategy, or Frontend Contract.",
+            { refreshReason:contentPackage.commercial_composition.refresh_reason || "dependency_changed" });
           const storedEditorialPage = contentPackage.frontend_page?.payload;
           const supportsContentType = Boolean(contract.pageSchema?.schema?.properties?.metadata?.properties?.contentType);
           const editorialPage = normalizeFrontendPageForDelivery(storedEditorialPage,
@@ -928,6 +943,9 @@ export class Pipeline {
           const editorialValidation = this.frontendContracts.validatePagePayload(editorialPage);
           if (!editorialValidation.valid) throw invalidPublishPage("EDITORIAL_PAGE_INVALID", editorialValidation);
           const finalPage = mergeCommercialOverlay(editorialPage, contentPackage.commercial_composition);
+          const commercialReconciliation = reconcileCommercialDelivery(contentPackage.commercial_composition, { finalPage });
+          if (!commercialReconciliation.valid) throw new PublishCompositionError("COMMERCIAL_DELIVERY_MISMATCH",
+            `${commercialReconciliation.errors[0]?.message || "A selected commercial slot was lost while merging the Final Page Payload."} Slot receipt: ${JSON.stringify({slots:commercialReconciliation.slots,block_types:commercialReconciliation.block_types})}.`, commercialReconciliation);
           const finalPageValidation = this.frontendContracts.validatePagePayload(finalPage);
           if (!finalPageValidation.valid) throw invalidPublishPage("FINAL_PAGE_INVALID", finalPageValidation);
           const deliveryContentPackage = { ...contentPackage, frontend_page:{ ...contentPackage.frontend_page,
@@ -936,7 +954,7 @@ export class Pipeline {
           if (!finalArtifactValidation.valid) throw invalidPublishPage("FINAL_PAGE_QA_FAILED", finalArtifactValidation);
           await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
-          const mediaValidation = validateMediaDelivery(contentPackage.draft.visuals, { requireMetadata: true });
+          const mediaValidation = validateMediaDelivery(contentPackage.draft.visuals, { requireMetadata: true, pagePayload:finalPage });
           if (!mediaValidation.valid) throw invalidPublishPage("MEDIA_DELIVERY_INVALID", mediaValidation);
           if (!contentPackage.draft?.seo?.meta_title || !contentPackage.draft?.meta_description) {
             throw new PublishCompositionError("SEO_PACKAGE_MISSING", "A generated SEO title and meta description are required before delivery.");
@@ -948,6 +966,9 @@ export class Pipeline {
             publication: contentPackage.publication,
             media: mediaReferences(contentPackage.draft.visuals),
           });
+          const packageReconciliation = reconcileCommercialDelivery(contentPackage.commercial_composition, { finalPage, publishPackage });
+          if (!packageReconciliation.valid) throw new PublishCompositionError("COMMERCIAL_DELIVERY_MISMATCH",
+            `${packageReconciliation.errors[0]?.message || "A selected commercial slot was lost while building the Publish Package."} Slot receipt: ${JSON.stringify({slots:packageReconciliation.slots,block_types:packageReconciliation.block_types})}.`, packageReconciliation);
           const validation = this.frontendContracts.validatePublishPackage(publishPackage);
           const savePublish = () => this.repository.saveFrontendPublishComposition(job.entity_id, contract, publishPackage, validation, contentPackage.commercial_composition.strategy_version);
           if (!validation.valid) {

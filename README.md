@@ -1,6 +1,6 @@
 # SoloToChina Research & Content Engine
 
-Current source: **2.0.15 / Strategy 3.3 / schema 69** (unreleased). Production remains **2.0.14** at revision `9341a30ea07ac16fa2803a8aed5f27c776106c17`, immutable image digest `sha256:05db2059e2212bc75ffec8806b3dc651c98d20c53ae598b5ce7ecb50969b2c9c`. The deployed baseline is documented in [the 2.0.14 audit record](docs/audit/CMS_PRODUCTION_ERROR_REPAIR_2.0.14_2026-09-13.md); the local Vertex/input/retry correction is documented in [the 2.0.15 repair record](docs/audit/CMS_VERTEX_PRODUCTION_RECOVERY_2.0.15_2026-09-14.md).
+Current development source: **2.0.29 / Strategy 3.4 / schema 70** (unreleased). This label is not a production-deployment claim; see [the 2.0.29 repair handoff](docs/qa/SOLOTOCHINA_2.0.29_REPAIR_VALIDATION.md) for tested and untested boundaries.
 
 SoloToChina 的内部研究与内容生产基础设施。当前采集路径采用 **Human Discovery + Human Favorite Selection → Incremental / Repair / Full Sync → Durable Research Pipeline**：用户用收藏完成研究价值和授权确认，Chrome Extension 将正文、DOM 以及全部授权图片/视频原件校验后持久化，系统再负责 Claims、Experience、Knowledge、内容机会和人工批准后的原创写作。
 
@@ -146,9 +146,9 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 3.3
+## Content Production Strategy 3.4
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.3.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.3.md), and summarized by the [evolution log](docs/content-strategy/CHANGELOG.md). Captured sources create Claims and grounded Experience Blocks before typed, scoped and temporal Knowledge resolution. Core Knowledge work starts as soon as Experience is ready; diagnostics and opportunity enrichment continue in the background. Historical recovery uses explicit dry-run manifests and a low-priority workload lane. A concrete opportunity is approved independently, then receives a bounded Editorial Assembly, Narrative Plan and human-readable Writing Packet. Terminal editorial failures archive the attempt and retain approval and production artifacts for bounded repair. Only explicit approved-scope invalidation requires reapproval. The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.4.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.4.md), and summarized by the [evolution log](docs/content-strategy/CHANGELOG.md). It preserves the Strategy 3.3 evidence/approval pipeline and adds reader-task page composition, provenance-safe visual delivery, scoped final preview, and versioned commercial overlays with exact delivery reconciliation. The live operating path is:
 
 ```text
 Capture + durable originals → Claims → Experience → Knowledge / source diagnostic

@@ -18,7 +18,13 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       required: ["affiliate_asset_id", "provider", "asset_type", "product_category", "title", "description", "cta_label", "target_url", "disclosure", "scope_type", "scope_key", "slot_key", "placement", "strategy_version"],
       properties: Object.fromEntries(["affiliate_asset_id", "provider", "asset_type", "product_category", "title", "description", "cta_label", "target_url", "disclosure", "scope_type", "scope_key", "slot_key", "placement", "strategy_version", "price_text", "entity", "route", "destination", "anchor"].map((key) => [key, { type: "string" }])) },
   };
-  const contractFixture = frontendContractFixture(t, { components: [...defaultComponents(), commercialComponent] });
+  const imageComponent = {
+    id:"image", category:"media", purpose:"Delivered article image.", status:"stable", variants:["featured","context"],
+    schema:{ type:"object", additionalProperties:false, required:["media_id","alt","role"], properties:{
+      media_id:{type:"integer"}, alt:{type:"string"}, caption:{type:"string"}, role:{type:"string"},
+    } },
+  };
+  const contractFixture = frontendContractFixture(t, { components: [...defaultComponents(), imageComponent, commercialComponent] });
   const frontendContracts = new FrontendContractConsumer(repository, {
     sourceRepository: "https://github.com/example/solo-to-china",
     registrySource: contractFixture.registryPath,
@@ -109,15 +115,19 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
         blocks: [{ content_node_id: "node_plan", source_section_ids: ["section_plan"], claim_keys: ["beijing.orientation.location", "beijing.transport.metro"], factuality: "factual", type: "articleSection", variant: "answer-first", semantic_role: "answer", writer_guidance: "Start with the practical evidence-backed answer." }],
       } };
     },
-    async composeFrontendPage() {
+    async composeFrontendPage(contentPackage) {
       stageCalls.push("compose_frontend_page");
       const block = { type: "articleSection", variant: "answer-first", data: { heading: "Plan", body: "Central Beijing is the orientation point. Use the metro; this transport evidence was checked on September 7, 2026." } };
+      const imageBlocks=(contentPackage.draft.visuals || []).map((visual,index)=>({ type:"image", variant:index === 0 ? "featured" : "context",
+        data:{ media_id:visual.wordpress_media_id, alt:visual.alt_text, caption:visual.caption, role:index === 0 ? "featured" : "context" } }));
       return { model: "payload-composer-model", output: {
         metadata: { title: "First-Time Beijing Solo Travel Guide" },
-        blocks: [block],
+        blocks: [block,...imageBlocks],
       }, provenance: { version: "2", valid: true, errors: [], entries: [{ contentNodeId: "node_plan",
         blockSignature: pageBlockSignature(block), sourceSectionIds: ["section_plan"],
-        claimKeys: ["beijing.orientation.location", "beijing.transport.metro"], factuality: "factual" }] } };
+        claimKeys: ["beijing.orientation.location", "beijing.transport.metro"], factuality: "factual" },
+        ...imageBlocks.map((image,index)=>({ contentNodeId:`node_media_${index}`, blockSignature:pageBlockSignature(image),
+          sourceSectionIds:[], claimKeys:[], factuality:"non_factual" }))] } };
     },
     async review() {
       stageCalls.push("review_draft");
@@ -128,6 +138,18 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
     enabled: true,
     config: { siteUrl: "https://example.test" },
     calls: [],
+    async resolveVisualMedia(visuals, onProgress) {
+      const uploaded = visuals.map((visual, index) => ({ visualId:visual.id, id:100 + index,
+        url:`https://example.test/uploads/${visual.id}.png`, metadata:{
+          url:`https://example.test/uploads/${visual.id}.png`, width:1200, height:800, mime:"image/png", bytes:1024 + index,
+          sha256:createHash("sha256").update(visual.id).digest("hex"), derivatives:[],
+          source_provenance:visual.source_asset_id ? { source_asset_id:visual.source_asset_id, original_stored:true,
+            project_owner_confirmed:true } : undefined,
+          authorization_policy:visual.source_asset_id ? "project_source_media_full_authorization" : undefined,
+        } }));
+      for (const item of uploaded) onProgress?.(item);
+      return uploaded;
+    },
     async upsertContractDraft(publishPackage) {
       this.calls.push({ publishPackage });
       return { postId: 42, postUrl: "https://example.test/?p=42", previewUrl: "https://example.test/?p=42&preview=true", status: "draft" };
@@ -196,8 +218,9 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(content[0].wordpress_post_id, 42);
   assert.equal(wordpress.calls.length, 1);
   assert.equal(wordpress.calls[0].publishPackage.page.blocks[0].type, "articleSection");
-  assert.equal(wordpress.calls[0].publishPackage.page.blocks[1].type, "affiliate_booking_card");
-  assert.equal(wordpress.calls[0].publishPackage.page.blocks[1].data.disclosure, "Affiliate disclosure.");
+  const deliveredCommercial = wordpress.calls[0].publishPackage.page.blocks.find((block)=>block.type === "affiliate_booking_card");
+  assert.equal(deliveredCommercial.type, "affiliate_booking_card");
+  assert.equal(deliveredCommercial.data.disclosure, "Affiliate disclosure.");
   const generatedPackage = repository.getDraftPackage(content[0].draft_id);
   const researchDraft = generatedPackage.draft.body_markdown;
   assert.doesNotMatch(researchDraft, /Trip\.com|Optional booking resources/);

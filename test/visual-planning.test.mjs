@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeVisuals } from "../src/repository.mjs";
+import { decideVisualAsset, normalizeVisuals } from "../src/repository.mjs";
 
 const draft = { title: "A Practical Beijing Guide", body_markdown: "Useful body text." };
 const brief = { destination_slug: "beijing" };
@@ -64,8 +64,30 @@ test("a real-world photo is retained only when an original authorized source ass
     source_authorization_status:"legacy",source_publishable:0,asset_authorization_status:"legacy",asset_publishable:0 };
   const output = normalizeVisuals(requested,draft,brief,[asset],policy);
   assert.equal(output.length,1);
-  assert.equal(output[0].acquisition_strategy,"localize_source_image");
+  assert.equal(output[0].acquisition_strategy,"use_authorized_source_image");
   assert.equal(output[0].source_asset_id,"asset-1");
   assert.equal(output[0].media_metadata.source_provenance.original_stored,true);
   assert.equal(output[0].media_metadata.source_provenance.project_owner_confirmed,true);
+});
+
+test("the shared visual decision blocks unclassified text while preserving authentic signs", () => {
+  assert.deepEqual(decideVisualAsset({ language_status:"unknown", visual_class:"text_overlay", width:1200, height:800 }), {
+    visualClass:"text_overlay", language:"unknown", authenticityCritical:false, action:"reject",
+    reason:"language_analysis_required",
+  });
+  assert.equal(decideVisualAsset({ language_status:"chinese", visual_class:"text_overlay", width:1200, height:800 }).action, "localize");
+  assert.equal(decideVisualAsset({ language_status:"chinese", visual_class:"handwritten", width:1200, height:800 }).action, "localize");
+  assert.equal(decideVisualAsset({ language_status:"chinese", visual_class:"text_overlay", alt_text:"Historic station name sign", width:1200, height:800 }).action, "retain");
+});
+
+test("an existing visual plan can be topped up with additional relevant source photos", () => {
+  const assets=["one","two","three"].map((name,index)=>({id:`asset-${name}`,remote_url:`https://media.example/${name}.jpg`,mime_type:"image/jpeg",
+    alt_text:`Beijing hutong route view ${name}`,caption_text:`Beijing hutong detail ${name}`,nearby_text:"Beijing hutong walking route",
+    evidence_text:"Beijing hutong route",language_status:"no_text",width:1600-index*100,height:900,storage_status:"saved",
+    original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"}));
+  const existing=[{image_type:"illustration",image_subject:"Beijing route orientation",placement:"hero"}];
+  const output=normalizeVisuals(existing,{...draft,body_markdown:"A Beijing hutong walking route with several useful stops."},brief,assets,
+    {visuals:{target:3,maximum:5}});
+  assert.equal(output.length,3);
+  assert.equal(output.filter((item)=>item.source_asset_id).length,2);
 });
