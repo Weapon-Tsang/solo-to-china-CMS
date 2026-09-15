@@ -1152,7 +1152,7 @@ export function applyDeterministicGates(review, contentPackage) {
   const facts = contentPackage.facts || [];
   const validKeys = new Set(facts.map((fact) => fact.normalized_key));
   const ledgerKeys = new Set((draft.evidence_ledger || []).flatMap((entry) => entry.claim_keys));
-  const issues = (review.issues || []).map(normalizeReviewIssue).map(enforceMandatoryIssueSeverity);
+  const issues = normalizeQualityReviewIssues(review.issues);
   const checks = [...(review.checks || [])];
   const addGate = (name, passed, detail, code, metadata = {}) => {
     checks.push({ name, passed, detail });
@@ -1356,8 +1356,7 @@ export function applyDeterministicGates(review, contentPackage) {
   // a general editorial code (for example NO_TRAVELER_DECISION). Normalize
   // those aliases and keep one blocker per missing-requirement class so the
   // operator sees the real repair target instead of two contradictory causes.
-  const finalIssues = uniqueBy(issues, (item) => String(item.code || "") === "mandatory_brief_requirement_missing"
-    ? "mandatory_brief_requirement_missing" : `${item.code}:${item.message}`);
+  const finalIssues = normalizeQualityReviewIssues(issues);
   const hasBlocker=finalIssues.some((item)=>item.severity==="blocker");
   return {
     ...review,
@@ -1381,6 +1380,16 @@ function normalizeReviewIssue(issue = {}) {
       affected_count:Number(issue.affected_count || 0) || 1 };
   }
   return issue;
+}
+
+// Persisted reviews can outlive the release that produced them. Keep the
+// operator-facing classification compatible at read time without rewriting
+// audit history or pretending that an old provider response was re-run.
+export function normalizeQualityReviewIssues(issues = []) {
+  return uniqueBy((Array.isArray(issues) ? issues : [])
+    .map(normalizeReviewIssue)
+    .map(enforceMandatoryIssueSeverity), (item) => String(item.code || "") === "mandatory_brief_requirement_missing"
+      ? "mandatory_brief_requirement_missing" : `${item.code}:${item.message}`);
 }
 
 function containsProtectedToken(text, token) {

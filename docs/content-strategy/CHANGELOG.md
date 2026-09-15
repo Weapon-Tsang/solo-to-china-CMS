@@ -2,6 +2,7 @@
 
 ## App 2.0.28 / schema 69 - 2026-09-15
 
+- Apply the current Quality Review issue taxonomy to historical review projections without altering the preserved provider/audit response, keeping Workbench and Recovery aligned on the actual mandatory Brief repair target.
 - Fail closed when a production runtime omits `DATABASE_PATH` or would create a missing database implicitly. This deployment guard does not change Strategy 3.3 editorial behavior or enqueue production work.
 
 ## App 2.0.27 / schema 69 - 2026-09-15

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { id, json, now, sha256 } from '../utils.mjs';
 import { transaction } from '../db.mjs';
 import { validatePlanningDestination } from '../destination-consistency.mjs';
-import { applyDeterministicGates } from '../ai/content-engine.mjs';
+import { applyDeterministicGates, normalizeQualityReviewIssues } from '../ai/content-engine.mjs';
 import { validatePageEvidence } from '../evidence-validator.mjs';
 import { evaluateCoverage } from '../research-strategy.mjs';
 import { recoveryDiagnosis } from './content-recovery-policy.mjs';
@@ -99,8 +99,11 @@ export function contentRecoveryReport(repo, candidateId) {
   // deterministic gates for this immutable draft revision. Re-running the
   // gates from an empty review would falsely report every mandatory Brief
   // requirement as "not audited" and hide the actual model blocker.
-  const localCheck = ctx.draft ? (pkg.review
-    ? { ...pkg.review, diagnosticOnly:false, source:'persisted_current_review' }
+  const normalizedReview = pkg.review
+    ? { ...pkg.review, issues:normalizeQualityReviewIssues(pkg.review.issues) }
+    : null;
+  const localCheck = ctx.draft ? (normalizedReview
+    ? { ...normalizedReview, diagnosticOnly:false, source:'persisted_current_review' }
     : { ...applyDeterministicGates({ passed:true,score:100,issues:[],checks:[] },pkg), diagnosticOnly:true,
       source:'deterministic_without_current_review' }) : null;
   const automaticRepair = ctx.draft && localCheck
@@ -122,7 +125,8 @@ export function contentRecoveryReport(repo, candidateId) {
       acquisition:visual.acquisition_strategy,
       delivered:Boolean(visual.wordpress_media_id && visual.wordpress_media_url),
     })),
-    latestReview:pkg.review ? { score:pkg.review.score, passed:pkg.review.passed, issues:pkg.review.issues } : null,
+    latestReview:normalizedReview ? { score:normalizedReview.score, passed:normalizedReview.passed,
+      issues:normalizedReview.issues } : null,
     editorial:ctx.draft ? { body:pkg.draft.body_markdown, evidenceLedger:pkg.draft.evidence_ledger, verificationNotes:pkg.draft.verification_notes } : null,
     localCheck,
     pageEvidenceErrors:ctx.draft && pkg.frontend_page?.payload ? validatePageEvidence(pkg.frontend_page.payload,pkg).errors : [],

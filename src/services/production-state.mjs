@@ -1,5 +1,6 @@
 import { json, sha256 } from "../utils.mjs";
 import { validatePlanningDestination } from "../destination-consistency.mjs";
+import { normalizeQualityReviewIssues } from "../ai/content-engine.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./content-recovery-policy.mjs";
 
 export const PRODUCTION_STATE_VERSION = "2.0";
@@ -470,7 +471,7 @@ function stageEnabled(definition, capabilities, db, row) {
   if (definition.required === "whenPresent") {
     const report = parse(row.draft_quality_report_json, {});
     const qualityRepair = row.qa_passed != null && !Boolean(row.qa_passed)
-      ? qualityRepairStage(Array.isArray(report.issues) ? report.issues : []) : null;
+      ? qualityRepairStage(normalizeQualityReviewIssues(report.issues)) : null;
     return qualityRepair === "revise_draft" || Boolean(row.draft_id && db.prepare(`SELECT 1 FROM jobs
       WHERE entity_id=? AND type='revise_draft' AND production_owner_opportunity_id=? LIMIT 1`).get(row.draft_id,row.opportunity_id));
   }
@@ -527,7 +528,7 @@ function inferredPersistedFailure(row) {
   };
   if (row.qa_passed != null && !Boolean(row.qa_passed)) {
     const report = parse(row.draft_quality_report_json, {});
-    const issues = Array.isArray(report.issues) ? report.issues : [];
+    const issues = normalizeQualityReviewIssues(report.issues);
     const issue = issues.find((item) => item?.severity !== "warning") || issues[0] || null;
     return {
       type: "review_draft",

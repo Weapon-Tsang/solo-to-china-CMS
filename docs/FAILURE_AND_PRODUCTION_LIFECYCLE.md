@@ -1,5 +1,9 @@
 # Failure and production lifecycle
 
+## 2.0.28 historical review projection
+
+Quality Review audit records are immutable evidence, but their operational projection uses the current issue normalizer. Content Workbench and Content Recovery therefore agree on one current failure cause even when an older provider response used a generic editorial alias for a named mandatory Brief requirement. This compatibility layer performs no model call and no data rewrite.
+
 ## 2.0.27 quality-repair convergence
 
 The two-attempt automatic quality-repair ceiling is a per-recovery-run circuit breaker. Historical automatic repair Jobs remain audit history but do not consume a new explicit recovery's budget. `recovery_run_id` is inherited by revision repair, page composition, QA and any automatic escalation; dedupe still prevents the same stage and revision from running twice inside that recovery.

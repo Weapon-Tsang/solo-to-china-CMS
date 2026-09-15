@@ -2,6 +2,7 @@
 
 ## 2.0.28 - Unreleased
 
+- Normalize quality-review aliases when historical reviews are read, so an already-persisted `NO_TRAVELER_DECISION` message that actually cites a mandatory Brief item is projected as one `mandatory_brief_requirement_missing` blocker in both Content Workbench and Recovery without rewriting audit history.
 - Refuse production startup when `DATABASE_PATH` is omitted, preventing an ad-hoc container replacement from silently opening the image-local empty database instead of the mounted persistent database.
 - Refuse implicit creation of a missing production database unless an operator explicitly sets `ALLOW_PRODUCTION_DATABASE_BOOTSTRAP=true` for an intentional first deployment.
 - This is a code-only deployment guard. It performs no migration, recovery enqueue, reconciliation, deletion, archive or WordPress publication.

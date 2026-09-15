@@ -65,6 +65,32 @@ test('recovery detail preserves the current independent review instead of invent
   assert.equal(report.diagnosis.headline,'正文包含当前证据范围外的事实');
   assert.equal(report.diagnosis.recommendedAction.id,'revise_draft');
 });
+test('legacy provider aliases are normalized consistently in recovery detail and production state',t=>{
+  const {repository}=fixture(t);
+  repository.saveReview('draft-r',{passed:false,score:62,
+    checks:[{name:'brief-conflict-2',passed:false,detail:'The required hours are missing.'}],
+    issues:[
+      {code:'NO_TRAVELER_DECISION',severity:'blocker',message:'The draft does not satisfy brief-conflict-2.'},
+      {code:'mandatory_brief_requirement_missing',severity:'blocker',message:'brief-conflict-2 is missing.'},
+    ],unsupported_claims:[]},'legacy-provider');
+  const report=contentRecoveryReport(repository,'opportunity-r');
+  assert.deepEqual(report.localCheck.issues.map((issue)=>issue.code),['mandatory_brief_requirement_missing']);
+  assert.deepEqual(report.latestReview.issues.map((issue)=>issue.code),['mandatory_brief_requirement_missing']);
+  assert.equal(report.diagnosis.recommendedAction.id,'revise_draft');
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.latest_error.code,'mandatory_brief_requirement_missing');
+  assert.equal(state.recovery_target,'revise_draft');
+});
+test('a genuine traveler-decision issue remains distinct when it does not reference a Brief requirement',t=>{
+  const {repository}=fixture(t);
+  repository.saveReview('draft-r',{passed:false,score:62,checks:[],issues:[
+    {code:'NO_TRAVELER_DECISION',severity:'blocker',message:'The route gives facts but no choice or next step.'},
+  ],unsupported_claims:[]},'provider');
+  const report=contentRecoveryReport(repository,'opportunity-r');
+  assert.equal(report.localCheck.issues[0].code,'NO_TRAVELER_DECISION');
+  assert.equal(repository.listContentWorkspace({productionOnly:true}).items[0].production_state.latest_error.code,
+    'NO_TRAVELER_DECISION');
+});
 test('recovery refuses stale revisions, unknown images and existing-brief destination mutation while allowing independent QA',t=>{
   const {db,repository}=fixture(t);
   assert.throws(()=>executeContentRecovery(repository,'topic-r',{action:'compose_frontend_page',revision:0}),/其他任务更新/);
