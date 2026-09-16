@@ -230,6 +230,23 @@ test("only high-value precision gaps create opportunities and density remains bo
   assert.equal(lowValue.opportunities.length, 0);
 });
 
+test("cold-start destination gaps use observed intent signals and keep 70 as only the link-task threshold", () => {
+  const pack={candidate:{topic_key:"chongqing:where-to-stay"},
+    brief:{destination_slug:"chongqing",topic:"Where to stay in Chongqing"},
+    draft:{id:"draft-cold-start",title:"Where to stay in Chongqing",body_markdown:"## Where to stay\n\nCompare hotel areas before booking."}};
+  const composition=new CommercialComposer({linkTaskThreshold:70}).compose(pack,[]);
+  assert.equal(composition.opportunities.length,1);
+  assert.ok(composition.opportunities[0].score>=70);
+  assert.equal(composition.opportunities[0].queueEligible,true);
+  assert.equal(composition.opportunities[0].factors.trafficPotential,null);
+  assert.equal(composition.opportunities[0].factors.expectedRevenueUplift,null);
+
+  const visibleBelowTaskThreshold=new CommercialComposer({linkTaskThreshold:100}).compose(pack,[]);
+  assert.equal(visibleBelowTaskThreshold.opportunities.length,1,
+    "an asset gap remains visible even when it does not qualify for an automatic link task");
+  assert.equal(visibleBelowTaskThreshold.opportunities[0].queueEligible,false);
+});
+
 test("commercial event schema supports impression and click attribution", () => {
   for (const eventType of ["impression", "click"]) {
     const event = normalizeCommercialEvent({ eventType, provider: "Trip.com", category: "HOTEL", slotKey: "contextual:hotel:1", affiliateAssetId: "asset-1", destination: "chongqing", device: "mobile", locale: "en" }, "1.3");

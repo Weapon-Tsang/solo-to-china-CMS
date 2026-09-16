@@ -314,18 +314,20 @@ function normalizedPlacement(resolution,blockCount,config) {
 
 function buildOpportunity(intent, resolution, threshold) {
   if (resolution.exact || !["HIGH", "VERY_HIGH"].includes(intent.intentStrength)) return null;
+  // Cold-start link work must be driven by evidence that exists today. Traffic,
+  // booking value, frequency, and revenue uplift are unknown until the site has
+  // real attribution data; synthetic defaults used to hide genuine asset gaps.
   const factors = {
-    trafficPotential: intent.trafficPotential || (["ENTITY", "ROUTE"].includes(intent.scopeType) ? 80 : 40), commercialIntent: intent.intentStrength === "VERY_HIGH" ? 95 : 75,
-    frequency: intent.frequency || (["ENTITY", "ROUTE"].includes(intent.scopeType) ? 75 : 40), expectedBookingValue: intent.productCategory === "HOTEL" ? 70 : 65,
-    landingPageMismatch: resolution.asset ? 60 : 85, expectedRevenueUplift: intent.intentStrength === "VERY_HIGH" ? 80 : 60,
+    commercialIntent:intent.intentStrength === "VERY_HIGH" ? 95 : 80,
+    scopeSpecificity:({ENTITY:95,ROUTE:95,AREA:85,DESTINATION:75,COUNTRY:65,CATEGORY:65,GLOBAL:60})[intent.scopeType] || 60,
+    landingPageMismatch:resolution.asset ? 60 : 100,
+    trafficPotential:null,frequency:null,expectedBookingValue:null,expectedRevenueUplift:null,
   };
-  const values = Object.values(factors);
-  const score = Math.pow(values.reduce((total, value) => total * (value / 100), 1), 1 / values.length) * 100;
-  if (score < threshold) return null;
+  const score=Math.round(factors.commercialIntent*0.55+factors.scopeSpecificity*0.15+factors.landingPageMismatch*0.30);
   return {
     id: id("affiliate_opportunity"), intentId: intent.id, provider: resolution.asset?.provider || "trip.com",
     productCategory: intent.productCategory, scopeType: intent.scopeType, scopeKey: intent.scopeKey, score: Math.min(100, Math.round(score)), factors,
-    queueEligible:true, reason: "A high-intent block has a material landing-page precision gap; create the matching official Affiliate Asset for automatic insertion.",
+    queueEligible:score >= threshold, reason: "A high-intent block has a material landing-page precision gap; create the matching official Affiliate Asset for automatic insertion.",
   };
 }
 

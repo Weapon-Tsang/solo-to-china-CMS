@@ -423,6 +423,24 @@ test('an explicit visual-stage retry includes a previously failed visual slot',t
   assert.equal(repository.plannedVisuals('draft-r').length,1);
   assert.equal(repository.plannedVisuals('draft-r')[0].status,'failed');
 });
+test('photo-overlay generation persists derivative proof used by final media validation',t=>{
+  const {db,repository}=fixture(t);
+  db.prepare(`INSERT INTO sources(id,adapter,canonical_url,captured_at,raw_text,raw_html,raw_payload_json,content_hash,created_at,updated_at)
+    VALUES ('source-overlay','manual','manual-source://overlay','now','Evidence','','{}','overlay-hash','now','now')`).run();
+  db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,position,local_path,mime_type,original_filename)
+    VALUES ('source-photo','source-overlay','image','manual-asset://overlay/0',0,'source.jpg','image/jpeg','source.jpg')`).run();
+  repository.replaceDraftVisuals('draft-r',[{
+    placement:'hero',purpose:'Localize the retained overlay',alt_text:'Chongqing food collage',caption:'',generation_prompt:'',
+    aspect_ratio:'3:4',image_type:'real_world_photo',image_role:'hero',image_subject:'Chongqing food',
+    acquisition_strategy:'localize_photo_overlay',factual_image_required:true,source_asset_id:'source-photo',status:'planned',
+  }],'3.5');
+  const visual=db.prepare("SELECT id FROM article_visuals WHERE draft_id='draft-r'").get();
+  repository.saveGeneratedVisual(visual.id,{mediaPath:'/generated/localized-overlay.png',mediaUrl:'https://engine.test/overlay.png',
+    provider:'fixture',model:'fixture',metadata:{binary_qa:{status:'passed'}}});
+  const metadata=JSON.parse(db.prepare("SELECT media_metadata_json FROM article_visuals WHERE id=?").get(visual.id).media_metadata_json);
+  assert.equal(metadata.localized_file,true);
+  assert.equal(metadata.localized_from_source_asset_id,'source-photo');
+});
 test('strategy startup rechecks a historical failure only once per draft revision',t=>{
   const {db,repository}=fixture(t,{productionStartupResumeEnabled:true});
   repository.saveReview('draft-r',{passed:false,score:40,issues:[{code:'protected_evidence_mismatch',severity:'blocker',message:'mismatch'}],checks:[],unsupported_claims:[]},'fixture');

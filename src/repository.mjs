@@ -5583,7 +5583,7 @@ export class Repository {
     const metadata = {
       ...json(current?.media_metadata_json, {}),
       ...(result.metadata || {}),
-      ...(current?.acquisition_strategy === "localize_source_image" ? {
+      ...(["localize_source_image","localize_photo_overlay"].includes(current?.acquisition_strategy) ? {
         localized_file: Boolean(result.mediaPath),
         localized_from_source_asset_id: current.source_asset_id || null,
       } : {}),
@@ -6531,7 +6531,8 @@ export class Repository {
     let provider;
     try { provider = this.ensureTripManualProvider(); }
     catch (error) { return { created: 0, suppressed: opportunities.length, errors: [error.message] }; }
-    const threshold = Number(this.contentConfig.affiliateOpportunityThreshold || 70);
+    const threshold = Number(this.contentConfig.affiliateLinkTaskThreshold
+      ?? this.contentConfig.affiliateOpportunityThreshold ?? 70);
     let created = 0; let suppressed = 0; const errors = [];
     for (const opportunity of opportunities) {
       try {
@@ -9147,8 +9148,14 @@ function imageLanguageStatus(analysis = {}) {
 function deliveryVisualMetadata(row) {
   const stored = json(row.media_metadata_json, {});
   if (!row.source_asset_id) return stored;
+  const localizedPhoto=["localize_source_image","localize_photo_overlay"].includes(row.acquisition_strategy);
+  const localizedFile=localizedPhoto && storedOriginalAvailable(row.media_path);
   return {
     ...stored,
+    ...(localizedPhoto ? {
+      localized_file:Boolean(stored.localized_file || localizedFile),
+      localized_from_source_asset_id:stored.localized_from_source_asset_id || (localizedFile ? row.source_asset_id : null),
+    } : {}),
     source_mime_type: row.source_asset_mime_type || stored.source_mime_type || null,
     storage_status: row.source_asset_storage_status || stored.storage_status || null,
     original_bytes_status: row.source_asset_original_bytes_status || stored.original_bytes_status || null,

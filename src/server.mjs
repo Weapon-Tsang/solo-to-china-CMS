@@ -63,6 +63,7 @@ export function createApplication(config = loadConfig()) {
     sourceComplexityRouting: config.extraction.sourceComplexityRouting === true,
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
     affiliateOpportunityThreshold: config.commercial.opportunityThreshold,
+    affiliateLinkTaskThreshold: config.commercial.linkTaskThreshold,
   });
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
   const aiRequestGate = createRequestGate(config.extraction.requestSpacingMs);
