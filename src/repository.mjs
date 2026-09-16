@@ -8959,16 +8959,18 @@ function normalizeSourceAssetAnalysis(value = {}, asset = {}) {
   const allowedKinds=new Set(["documentary_photo","handwritten_card","editorial_infographic","photo_collage",
     "map_or_route","decorative_illustration","unknown"]);
   const allowedStatuses=new Set(["not_analyzed","ready","failed","needs_review"]);
-  const analysisStatus=allowedStatuses.has(value.analysis_status) ? value.analysis_status : "ready";
+  let analysisStatus=allowedStatuses.has(value.analysis_status) ? value.analysis_status : "ready";
   const assetKind=allowedKinds.has(value.asset_kind) ? value.asset_kind : "unknown";
   const sourceSha256=String(value.source_sha256 || asset.original_sha256 || asset.stored_sha256 || "");
   if (value.source_sha256 && asset.original_sha256 && value.source_sha256 !== asset.original_sha256) {
     throw Object.assign(new Error("Image analysis belongs to different source bytes."),{code:"STALE_MEDIA_ANALYSIS",retryable:false});
   }
   const list=(input,limit=100)=>Array.isArray(input) ? input.filter((item)=>item && typeof item === "object").slice(0,limit) : [];
+  const textRegions=list(value.text_regions);
+  if (analysisStatus === "ready" && sourceAnalysisNeedsDecodedText(assetKind,value.reader_text_present,textRegions)) analysisStatus="needs_review";
   return {
     source_sha256:sourceSha256,analysis_status:analysisStatus,asset_kind:assetKind,
-    text_regions:list(value.text_regions),photo_regions:list(value.photo_regions),entities:Array.isArray(value.entities) ? value.entities.slice(0,100) : [],
+    text_regions:textRegions,photo_regions:list(value.photo_regions),entities:Array.isArray(value.entities) ? value.entities.slice(0,100) : [],
     editor_ui_regions:list(value.editor_ui_regions),primary_subjects:Array.isArray(value.primary_subjects) ? value.primary_subjects.slice(0,30) : [],
     language_by_region:list(value.language_by_region),reader_text_present:typeof value.reader_text_present === "boolean" ? value.reader_text_present : null,
     confidence:Math.max(0,Math.min(1,Number(value.confidence || 0))),
@@ -8979,14 +8981,26 @@ function normalizeSourceAssetAnalysis(value = {}, asset = {}) {
 }
 
 function hydrateSourceAssetAnalysis(row) {
+  const textRegions=json(row.text_regions_json,[]);
+  const assetKind=row.asset_kind || "unknown";
+  let analysisStatus=row.analysis_status || "not_analyzed";
+  if (analysisStatus === "ready" && sourceAnalysisNeedsDecodedText(assetKind,row.reader_text_present == null ? null : Boolean(row.reader_text_present),textRegions)) {
+    analysisStatus="needs_review";
+  }
   return {...row,
-    analysis_status:row.analysis_status || "not_analyzed",asset_kind:row.asset_kind || "unknown",
-    text_regions:json(row.text_regions_json,[]),photo_regions:json(row.photo_regions_json,[]),entities:json(row.entities_json,[]),
+    analysis_status:analysisStatus,asset_kind:assetKind,
+    text_regions:textRegions,photo_regions:json(row.photo_regions_json,[]),entities:json(row.entities_json,[]),
     editor_ui_regions:json(row.editor_ui_regions_json,[]),primary_subjects:json(row.primary_subjects_json,[]),
     language_by_region:json(row.language_by_region_json,[]),
     reader_text_present:row.reader_text_present == null ? null : Boolean(row.reader_text_present),
     analysis_confidence:Number(row.analysis_confidence || 0),
   };
+}
+
+function sourceAnalysisNeedsDecodedText(assetKind,readerTextPresent,textRegions=[]) {
+  const textBearing=new Set(["handwritten_card","editorial_infographic","map_or_route"]);
+  if (!textBearing.has(assetKind) && readerTextPresent !== true) return false;
+  return !textRegions.some((region)=>region?.readable !== false && String(region?.text || "").trim());
 }
 
 function imageLanguageStatus(analysis = {}) {

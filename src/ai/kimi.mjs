@@ -4,12 +4,17 @@ import { createAiClient } from "./client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
 
+const TEXT_REGION_SCHEMA={type:"object",additionalProperties:false,
+  required:["region_id","text","role","language","readable","preserve"],properties:{
+    region_id:{type:"string"},text:{type:"string"},role:{type:"string",enum:["author_overlay","editorial_text","ui_text","real_world_signage"]},
+    language:{type:"string"},readable:{type:"boolean"},preserve:{type:"boolean"},
+  }};
 const MEDIA_ANALYSIS_ITEM_SCHEMA={ type:"object",additionalProperties:false,
   required:["asset_id","analysis_status","asset_kind","text_regions","photo_regions","entities","editor_ui_regions",
     "primary_subjects","language_by_region","reader_text_present","confidence","analysis_version","prompt_version"],
   properties:{ asset_id:{type:"string"},analysis_status:{type:"string",enum:["ready","needs_review","failed"]},
     asset_kind:{type:"string",enum:["documentary_photo","handwritten_card","editorial_infographic","photo_collage","map_or_route","decorative_illustration","unknown"]},
-    text_regions:{type:"array",items:{type:"object",additionalProperties:true}},photo_regions:{type:"array",items:{type:"object",additionalProperties:true}},
+    text_regions:{type:"array",items:TEXT_REGION_SCHEMA},photo_regions:{type:"array",items:{type:"object",additionalProperties:true}},
     entities:{type:"array",items:{type:"string"}},editor_ui_regions:{type:"array",items:{type:"object",additionalProperties:true}},
     primary_subjects:{type:"array",items:{type:"string"}},language_by_region:{type:"array",items:{type:"object",additionalProperties:true}},
     reader_text_present:{type:"boolean"},confidence:{type:"number",minimum:0,maximum:1},analysis_version:{type:"string"},prompt_version:{type:"string"} } };
@@ -73,7 +78,7 @@ export class KimiExtractor {
     const completion=await this.client.completeJson({name:"source_asset_media_analysis",schema:MEDIA_ANALYSIS_SCHEMA,
       instructions:MEDIA_ANALYSIS_PROMPT,content:[{type:"text",text:JSON.stringify({assetId:asset.id,
         sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",altText:asset.alt_text || "",nearbyText:asset.nearby_text || ""})},
-        ...images.parts],signal,telemetryContext});
+        ...images.parts],signal,telemetryContext,validateOutput:validateMediaAnalysisOutput});
     return {result:sanitizeMediaAnalysis({...completion.output,asset_id:asset.id,
       source_sha256:asset.original_sha256 || asset.stored_sha256 || completion.output?.source_sha256 || ""}),
       method:this.config.provider || "vertex",model:completion.model};
@@ -388,11 +393,12 @@ Rules:
 
 const MEDIA_ANALYSIS_PROMPT=`Analyze this authorized source image as a production media asset. Return only the structured record.
 - Classify asset_kind as documentary_photo, handwritten_card, editorial_infographic, photo_collage, map_or_route, decorative_illustration, or unknown.
-- Record every reader-facing text region and its exact visible text when readable. Mark its role as author_overlay, editorial_text, ui_text, or real_world_signage. Set preserve=true only for real-world signs/logos that are evidence inside a photographed scene.
+- Inspect the full-resolution image from top edge through the final line. Record every reader-facing text region in reading order, with a stable region_id and its complete exact visible text when readable; do not summarize or sample. Mark readable=false and use empty text only when that specific region is genuinely illegible.
+- Mark each text role as author_overlay, editorial_text, ui_text, or real_world_signage. Set preserve=true only for real-world signs/logos that are evidence inside a photographed scene.
 - Identify photo regions, entities, primary subjects, and editor UI such as Notes toolbars or canvas controls.
 - Report language per region. Do not use the surrounding note language as a substitute.
-- Do not guess unreadable wording. Use needs_review when important text or route facts are unclear.
-- Use analysis_version media-analysis-1 and prompt_version media-analysis-prompt-1.`;
+- Do not guess unreadable wording. Use needs_review when any important text, number, price, time, negation, condition, order, arrow, or route fact is unclear. A handwritten card, editorial infographic, or route card with zero decoded text regions cannot be ready.
+- Use analysis_version media-analysis-2 and prompt_version media-analysis-prompt-2.`;
 
 const BLUEPRINT_PROMPT = `Analyze only the editorial presentation pattern of this manually selected source.
 - Return format, hook, angle, section organization, strengths, and gaps.
@@ -442,7 +448,18 @@ function sanitizeMediaAnalysis(value={}) {
     photo_regions:objects(value.photo_regions),entities:strings(value.entities),editor_ui_regions:objects(value.editor_ui_regions),
     primary_subjects:strings(value.primary_subjects,30),language_by_region:objects(value.language_by_region),
     reader_text_present:Boolean(value.reader_text_present),confidence:Math.max(0,Math.min(1,Number(value.confidence || 0))),
-    analysis_version:"media-analysis-1",prompt_version:"media-analysis-prompt-1"};
+    analysis_version:"media-analysis-2",prompt_version:"media-analysis-prompt-2"};
+}
+
+function validateMediaAnalysisOutput(value={}) {
+  const normalized=sanitizeMediaAnalysis(value);
+  const textBearing=new Set(["handwritten_card","editorial_infographic","map_or_route"]);
+  const decoded=normalized.text_regions.filter((region)=>region?.readable !== false && String(region?.text || "").trim());
+  if (normalized.analysis_status !== "ready" || ((textBearing.has(normalized.asset_kind) || normalized.reader_text_present) && !decoded.length)) {
+    throw Object.assign(new Error("Source image analysis is incomplete: all important reader-facing text regions must be decoded before conversion."),{
+      code:"MEDIA_ANALYSIS_INCOMPLETE",retryable:true,
+    });
+  }
 }
 
 function sanitizeBlueprint(value) {

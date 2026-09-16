@@ -36,6 +36,21 @@ test("schema persists image-level analysis and hydrates the production decision 
   assert.deepEqual(dto.editor_ui_regions,[{region_id:"toolbar",kind:"notes_toolbar"}]);
 });
 
+test("a text-bearing image cannot hydrate as ready without decoded text regions", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const source=repository.saveCapture(normalizeXiaohongshuCapture({
+    url:"https://www.xiaohongshu.com/explore/incomplete-media-analysis",title:"Handwritten card",
+    text:"A complete selected travel note long enough to create its current capture segments for extraction.",
+    images:[{url:"https://example.test/card.png",alt:"Handwritten travel card"}],
+  }));
+  const asset=db.prepare("SELECT id FROM source_assets WHERE source_id=?").get(source.id);
+  repository.saveSourceAssetAnalysis(asset.id,{analysis_status:"ready",asset_kind:"handwritten_card",reader_text_present:true,
+    text_regions:[],photo_regions:[],entities:[],editor_ui_regions:[],primary_subjects:[],language_by_region:[],confidence:0.9,
+    analysis_version:"media-analysis-1",prompt_version:"media-analysis-prompt-1"});
+  const dto=repository.sourceAssetDecisionDto(asset.id);
+  assert.equal(dto.analysis_status,"needs_review");
+});
+
 test("migration 71 is additive and does not enqueue or rewrite source assets",async(t)=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"stc-migration-71-"));
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
