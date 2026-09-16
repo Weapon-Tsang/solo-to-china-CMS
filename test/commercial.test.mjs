@@ -223,6 +223,8 @@ test("only high-value precision gaps create opportunities and density remains bo
   }, []);
   assert.equal(highValue.status, "no_offers");
   assert.equal(highValue.opportunities.length, 1);
+  assert.ok(highValue.opportunities[0].score >= 70);
+  assert.equal(highValue.opportunities[0].queueEligible, true);
 
   const lowValue = composer.compose({ candidate: { topic_key: "guangzhou:food" }, brief: { destination_slug: "guangzhou", topic: "Guangzhou food" }, draft: { title: "What to eat", body_markdown: "## Local food\n\nTry local dishes." } }, []);
   assert.equal(lowValue.opportunities.length, 0);

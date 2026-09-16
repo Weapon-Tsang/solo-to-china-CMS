@@ -314,14 +314,6 @@ function normalizedPlacement(resolution,blockCount,config) {
 
 function buildOpportunity(intent, resolution, threshold) {
   if (resolution.exact || !["HIGH", "VERY_HIGH"].includes(intent.intentStrength)) return null;
-  const observed=[intent.trafficPotential,intent.frequency,intent.expectedBookingValue,intent.expectedRevenueUplift];
-  if (observed.every((value)=>value == null)) return {
-    id:id("affiliate_opportunity"),intentId:intent.id,provider:resolution.asset?.provider || "unconfigured",
-    productCategory:intent.productCategory,scopeType:intent.scopeType,scopeKey:intent.scopeKey,score:0,
-    factors:{trafficPotential:null,commercialIntent:intent.intentStrength,frequency:null,expectedBookingValue:null,
-      landingPageMismatch:resolution.asset ? "fallback_scope" : "asset_not_configured",expectedRevenueUplift:null},
-    queueEligible:false,reason:"A real reader action has no exact eligible asset; metrics are unknown, so the gap is visible but no link task is auto-created.",
-  };
   const factors = {
     trafficPotential: intent.trafficPotential || (["ENTITY", "ROUTE"].includes(intent.scopeType) ? 80 : 40), commercialIntent: intent.intentStrength === "VERY_HIGH" ? 95 : 75,
     frequency: intent.frequency || (["ENTITY", "ROUTE"].includes(intent.scopeType) ? 75 : 40), expectedBookingValue: intent.productCategory === "HOTEL" ? 70 : 65,
@@ -333,7 +325,7 @@ function buildOpportunity(intent, resolution, threshold) {
   return {
     id: id("affiliate_opportunity"), intentId: intent.id, provider: resolution.asset?.provider || "trip.com",
     productCategory: intent.productCategory, scopeType: intent.scopeType, scopeKey: intent.scopeKey, score: Math.min(100, Math.round(score)), factors,
-    reason: "A high-intent block has a material landing-page precision gap; manual official-link creation may justify its cost.",
+    queueEligible:true, reason: "A high-intent block has a material landing-page precision gap; create the matching official Affiliate Asset for automatic insertion.",
   };
 }
 

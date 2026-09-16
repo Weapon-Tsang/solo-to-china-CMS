@@ -9,7 +9,7 @@ import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue
 import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
 import { KNOWLEDGE_RESOLUTION_VERSION, decideKnowledgeResolution, summarizeResolutionDecisions } from "./knowledge-resolution.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
-import { detectCommercialIntents, legacyOfferToAsset, normalizeCountryCode } from "./commercial.mjs";
+import { legacyOfferToAsset, normalizeCountryCode } from "./commercial.mjs";
 import {
   affiliateAssetFromQueueTask, exportAffiliateQueue, loadAffiliateQueueSeeds,
   normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
@@ -6035,10 +6035,11 @@ export class Repository {
 
   markCommercialRefreshForAsset(asset, timestamp = now()) {
     const scopeType=asset.scopeType || asset.scope_type;
+    const scopeKey=asset.scopeKey || asset.scope_key || "";
     const destination = asset.destinationSlug || asset.destination_slug || "";
     const country=normalizeCountryCode(asset.countryCode || asset.country_code || (scopeType === "COUNTRY" ? asset.scopeKey || asset.scope_key : ""));
     const category=asset.productCategory || asset.product_category;
-    const rows=this.db.prepare(`SELECT cc.draft_id,cb.destination_slug,cb.canonical_json
+    const rows=this.db.prepare(`SELECT cc.draft_id,cb.destination_slug,cb.canonical_json,ad.status AS draft_status
       FROM commercial_compositions cc JOIN article_drafts ad ON ad.id=cc.draft_id
       JOIN content_briefs cb ON cb.id=ad.brief_id`).all();
     const affected=[];
@@ -6046,15 +6047,28 @@ export class Repository {
       const canonical=json(row.canonical_json,{});
       if (destination && !["COUNTRY","CATEGORY","GLOBAL"].includes(scopeType) && row.destination_slug !== destination) continue;
       if (scopeType === "COUNTRY" && normalizeCountryCode(canonical.country_code || "CN") !== country) continue;
-      const pack=this.getDraftPackage(row.draft_id);
-      const blocks=pack?.frontend_page?.payload?.blocks || pack?.draft?.content_blocks || [];
-      const intents=pack ? detectCommercialIntents(pack,blocks) : [];
-      if (category && !intents.some((intent)=>intent.productCategory === category)) continue;
+      const intents=this.db.prepare(`SELECT product_category,destination_slug,area_key,route_key,entity_key
+        FROM commercial_intents WHERE draft_id=? AND product_category=?`).all(row.draft_id,category);
+      const scopeMatches=intents.some((intent)=>{
+        if (["GLOBAL","CATEGORY","COUNTRY"].includes(scopeType)) return true;
+        if (scopeType === "DESTINATION") return intent.destination_slug === (destination || scopeKey);
+        if (scopeType === "AREA") return intent.area_key === (asset.areaKey || asset.area_key || scopeKey);
+        if (scopeType === "ROUTE") return intent.route_key === (asset.routeKey || asset.route_key || scopeKey);
+        if (scopeType === "ENTITY") return intent.entity_key === (asset.entityKey || asset.entity_key || scopeKey);
+        return false;
+      });
+      if (!scopeMatches) continue;
       affected.push(row.draft_id);
     }
     const update=this.db.prepare(`UPDATE commercial_compositions SET refresh_required=1,
       refresh_reason='affiliate_asset_inventory_changed',updated_at=? WHERE draft_id=?`);
-    for (const draftId of affected) update.run(timestamp,draftId);
+    for (const draftId of affected) {
+      update.run(timestamp,draftId);
+      const row=rows.find((item)=>item.draft_id===draftId);
+      if (["ready_for_wordpress","commercial_ready","wordpress_draft"].includes(row?.draft_status)) {
+        this.enqueue("compose_commercial",draftId,{dedupeKey:`affiliate-asset-refresh:${asset.id}:${timestamp}:${draftId}`});
+      }
+    }
     return affected.length;
   }
 
