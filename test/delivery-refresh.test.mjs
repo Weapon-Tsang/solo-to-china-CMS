@@ -53,3 +53,15 @@ test("confirmed delivery refresh atomically queues only the bounded presentation
   assert.equal(jobs[0].options.workloadClass,"historical_recovery");
   assert.equal(jobs[0].options.productionOwnerOpportunityId,"opp-1");
 });
+
+test("media refresh is a first-class bounded scope and reports per-slot repair work",()=>{
+  const {repository}=fixture({modifiedAt:"2026-09-15T06:00:00Z"});
+  repository.mediaRepairPlan=()=>({ plan_hash:"media-plan-1", slots:[
+    { visual_id:"visual-bad",slot:2,disposition:"repair",reason:"quality_qa_failed",requires_model:true,max_model_calls:2 },
+    { visual_id:"visual-good",slot:1,disposition:"retain",reason:"quality_qa_passed",requires_model:false,max_model_calls:0 },
+  ]});
+  const plan=planDeliveryRefresh(repository,{scope:"media",draft_ids:["draft-1"]});
+  assert.equal(plan.items[0].planned_stage,"generate_visuals");
+  assert.equal(plan.items[0].media.slots.filter((slot)=>slot.disposition==="repair").length,1);
+  assert.equal(plan.items[0].preserve.body_sha256.length,64);
+});

@@ -32,7 +32,7 @@ async function fixture(t) {
   });
   return { root, work, filename, original, run };
 }
-test('deployment probe rehearses schema 59 to 70, preserves cited IDs and rolls back paired DB without deleting originals', async t => {
+test('deployment probe rehearses schema 59 to 71, preserves cited IDs and rolls back paired DB without deleting originals', async t => {
   const f = await fixture(t);
   for (const mode of ['backup', 'rehearse', 'migrate']) {
     const result = f.run(mode);
@@ -40,7 +40,7 @@ test('deployment probe rehearses schema 59 to 70, preserves cited IDs and rolls 
     assert.doesNotMatch(result.stdout, /PRIVATE original evidence|original bytes/);
   }
   let db = new DatabaseSync(f.filename);
-  assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 70);
+  assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 71);
   assert.equal(db.prepare('SELECT capture_version FROM source_assets').get().capture_version, 3);
   db.close();
   const restored = f.run('restore'); assert.equal(restored.status, 0, restored.stderr);
@@ -81,7 +81,7 @@ test('deployment opportunity gate reconciles deterministically and rejects an ac
   db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,title,
     content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state,processing_state,
     canonical_intent_key,inbox_state,seo_action,approved_at)
-    VALUES ('production-opportunity','production-destination','["production-destination"]','production:topic','3.4','Approved production opportunity',
+    VALUES ('production-opportunity','production-destination','["production-destination"]','production:topic','3.5','Approved production opportunity',
       'practical_guide',0,'{"ready":false,"score":0}','{"publicationMode":"multi_source_synthesis","proposal":{"readerPromise":"Explain the approved topic."}}',
       'producing','now','now','producing','EVIDENCE_GAP','production:key','ACTIONABLE','NEW','now')`).run();
   const productionAudit = run('scripts/audit-opportunity-qualification.mjs', ['--enforce']);
@@ -91,7 +91,7 @@ test('deployment opportunity gate reconciles deterministically and rejects an ac
   db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,title,
     content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state,processing_state,
     canonical_intent_key,inbox_state,seo_action)
-    VALUES ('bad-opportunity','bad-destination','["bad-destination"]','bad:topic','3.4','Unsupported opportunity',
+    VALUES ('bad-opportunity','bad-destination','["bad-destination"]','bad:topic','3.5','Unsupported opportunity',
       'unsupported_type',100,'{"ready":true,"score":100}','{"publicationMode":"unsupported_mode"}','recommended','now','now',
       'recommended','CURRENT','bad:key','ACTIONABLE','NEW')`).run();
   db.close();
@@ -114,6 +114,8 @@ test('deployment helpers validate the supplied release version instead of a hard
     assert.doesNotMatch(script, /version!==["']\d+\.\d+\.\d+/);
   }
   const resume = fs.readFileSync(path.join(app, 'deployment/gce', 'resume-verified-upgrade.sh'), 'utf8');
-  assert.match(resume, /result\['schema'\]==70/);
-  assert.match(resume, /MAX\(version\).*==70/);
+  assert.match(resume, /result\['schema'\]==71/);
+  assert.match(resume, /h\.contentStrategy\.version!=="3\.5"/);
+  assert.doesNotMatch(resume, /h\.contentStrategy\.version!=="3\.3"/);
+  assert.match(resume, /MAX\(version\).*==71/);
 });

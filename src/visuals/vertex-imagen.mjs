@@ -1,9 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import sharp from "sharp";
 import { ProviderRequestError, providerTransportError } from "../ai/provider-schema.mjs";
 
 const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+const VISUAL_QA_SCHEMA={type:"object",additionalProperties:false,
+  required:["language","completeness","style","semantic","notes"],properties:{
+    language:qaStatusSchema(),completeness:qaStatusSchema(),style:qaStatusSchema(),semantic:qaStatusSchema(),notes:{type:"string"},
+  }};
+
+function qaStatusSchema(){return {type:"object",additionalProperties:false,required:["status","reason"],properties:{
+  status:{type:"string",enum:["passed","failed","needs_review","not_tested"]},reason:{type:"string"},
+}};}
 
 export class VertexImagen {
   constructor(config, fetchImpl = fetch) {
@@ -31,8 +40,9 @@ export class VertexImagen {
     if (!this.enabled || this.config.provider !== "vertex_gemini") {
       throw Object.assign(new Error("中文图片翻译需要已配置的 Vertex Gemini 图片模型。"), { retryable: false, code: "IMAGE_LOCALIZATION_NOT_CONFIGURED" });
     }
-    if (visual.image_type !== "real_world_photo" || visual.acquisition_strategy !== "localize_source_image"
-        || !visual.source_asset_id) {
+    const transformStrategies=new Set(["localize_source_image","localize_photo_overlay","recompose_editorial_card",
+      "recompose_collage","recompose_map_or_route"]);
+    if (!transformStrategies.has(visual.acquisition_strategy) || !visual.source_asset_id) {
       throw Object.assign(new Error("图片翻译只接受已授权并已保存的实景原图。"), { retryable: false, code: "INVALID_IMAGE_LOCALIZATION_SOURCE" });
     }
     const source = readSourceImage(visual);
@@ -40,8 +50,8 @@ export class VertexImagen {
     const location = this.config.location || "global";
     const host = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
     const endpoint = `${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
-    const prompt = `Translate only clearly readable Chinese text in this authorized source photo into concise English for international travelers.
-Preserve the photographed reality exactly: do not alter the scene, people, objects, buildings, food, route geometry, crop, perspective, lighting, colors, logos, or non-Chinese labels. Do not invent, remove, beautify, or reconstruct any object. Keep uncertain or unreadable text unchanged. Return the edited image.`;
+    const metadata=safeJson(visual.media_metadata_json || visual.media_metadata);
+    const prompt = transformPrompt(visual,metadata);
     await this.config.beforeRequest?.({ provider: "vertex_gemini", model: this.config.model, stage: "localize_source_image", attempt: 1 });
     const response = await providerFetch(this.fetch, endpoint, {
       method: "POST",
@@ -59,8 +69,33 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
       { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
     const part = payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
     if (!part) throw imageOutputError("Image localization model", payload);
+    const sourceInspection=await inspectImageBytes(source.bytes,source.mimeType);
+    const outputBytes=Buffer.from(part.inlineData.data,"base64");
+    await inspectImageBytes(outputBytes,part.inlineData.mimeType);
+    const qualityQa=await this.reviewTransformedImage({visual,metadata,source,outputBytes,
+      outputMimeType:part.inlineData.mimeType,endpoint,accessToken,signal:options.signal});
     return this.storeImage({ base64: part.inlineData.data, mimeType: part.inlineData.mimeType, visual, draft,
-      provider: "vertex_gemini", model: this.config.model, sourceDimensions: inspectImageBytes(source.bytes).dimensions });
+      provider: "vertex_gemini", model: this.config.model, sourceDimensions: sourceInspection.dimensions,qualityQa });
+  }
+
+  async reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType,endpoint,accessToken,signal}) {
+    await this.config.beforeRequest?.({provider:"vertex_gemini",model:this.config.model,stage:"visual_quality_qa",attempt:1});
+    const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${accessToken}`,"content-type":"application/json"},
+      body:JSON.stringify({contents:{role:"USER",parts:[{text:visualQaPrompt(visual,metadata)},
+        {inlineData:{mimeType:source.mimeType,data:source.base64}},
+        {inlineData:{mimeType:normalizeMime(outputMimeType),data:outputBytes.toString("base64")}}]},
+      generationConfig:{responseModalities:["TEXT"],responseMimeType:"application/json",responseSchema:VISUAL_QA_SCHEMA}}),
+      signal:combinedSignal(signal,this.config.requestTimeoutMs)},"vertex_gemini",signal);
+    const payload=await response.json().catch(()=>({}));
+    if (!response.ok) throw new ProviderRequestError("Vertex Gemini visual quality QA",response.status,payload?.error?.message || response.statusText,
+      {...(payload?.error || {}),retryAfter:response.headers.get("retry-after")});
+    const raw=payload?.candidates?.flatMap((candidate)=>candidate?.content?.parts || []).find((item)=>item?.text)?.text || "";
+    let qa; try { qa=JSON.parse(raw); } catch { throw Object.assign(new Error("Visual quality QA returned invalid JSON."),{code:"VISUAL_QUALITY_QA_INVALID",retryable:true}); }
+    const normalized=normalizeVisualQa(qa);
+    const failed=Object.entries(normalized).filter(([key,value])=>key !== "notes" && value.status !== "passed");
+    if (failed.length) throw Object.assign(new Error(`Visual quality QA did not pass: ${failed.map(([key,value])=>`${key}=${value.status}`).join(", ")}`),
+      {code:"VISUAL_QUALITY_QA_FAILED",retryable:true,qualityQa:normalized});
+    return normalized;
   }
 
   async generateImagenImage(visual, draft, options = {}) {
@@ -88,7 +123,7 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
       { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
     const prediction = payload?.predictions?.find((item) => item?.bytesBase64Encoded);
     if (!prediction) throw new Error("Vertex Imagen returned no renderable image bytes.");
-    return this.storeImage({
+    return await this.storeImage({
       base64: prediction.bytesBase64Encoded,
       mimeType: prediction.mimeType,
       visual,
@@ -127,7 +162,7 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
       { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
     const part = payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
     if (!part) throw imageOutputError("Gemini 3.1 Flash Image", payload);
-    return this.storeImage({
+    return await this.storeImage({
       base64: part.inlineData.data,
       mimeType: part.inlineData.mimeType,
       visual,
@@ -137,10 +172,11 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
     });
   }
 
-  storeImage({ base64, mimeType: suppliedMimeType, visual, draft, provider, model, sourceDimensions = null }) {
+  async storeImage({ base64, mimeType: suppliedMimeType, visual, draft, provider, model, sourceDimensions = null,
+    qualityQa = defaultVisualQa() }) {
     const mimeType = normalizeMime(suppliedMimeType);
     const bytes = Buffer.from(base64, "base64");
-    const inspection = inspectImageBytes(bytes, mimeType);
+    const inspection = await inspectImageBytes(bytes, mimeType);
     const expectedRatio = sourceDimensions
       ? sourceDimensions.width / sourceDimensions.height
       : parseAspectRatio(visual.aspect_ratio);
@@ -150,19 +186,22 @@ Preserve the photographed reality exactly: do not alter the scene, people, objec
       });
     }
     const extension = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/webp" ? "webp" : "png";
-    const checksum = crypto.createHash("sha256").update(`${draft.id}:${visual.id}:${visual.generation_prompt}`).digest("hex").slice(0, 18);
+    const checksum = crypto.createHash("sha256").update(bytes).update(JSON.stringify({sourceAssetId:visual.source_asset_id || null,
+      strategy:visual.acquisition_strategy,crop:safeJson(visual.media_metadata_json).crop || null,locale:"en",
+      styleVersion:safeJson(visual.media_metadata_json).style_version || null})).digest("hex").slice(0, 32);
     const filename = `${draft.id}-${String(visual.slot).padStart(2, "0")}-${checksum}.${extension}`;
     fs.mkdirSync(this.config.mediaDir, { recursive: true });
     const mediaPath = path.join(this.config.mediaDir, filename);
-    fs.writeFileSync(mediaPath, bytes, { mode: 0o640 });
+    if (!fs.existsSync(mediaPath)) fs.writeFileSync(mediaPath, bytes, { mode: 0o640,flag:"wx" });
     return {
       mediaPath,
       mediaUrl: `${this.config.publicBaseUrl}/media/${filename}`,
       provider,
       model,
       mimeType,
-      metadata: { pixel_qa: { status: "passed", ...inspection, expected_ratio: expectedRatio || null,
-        source_dimensions: sourceDimensions } },
+      metadata: { binary_qa: { status: "passed", ...inspection, expected_ratio: expectedRatio || null,
+        source_dimensions: sourceDimensions },pixel_qa:{status:"passed",...inspection,expected_ratio:expectedRatio || null,
+        source_dimensions:sourceDimensions},quality_qa:qualityQa },
     };
   }
 
@@ -210,32 +249,65 @@ function combinedSignal(signal, timeoutMs) {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
+function transformPrompt(visual,metadata={}) {
+  const decision=metadata.visual_decision || {};
+  const analysis=metadata.source_analysis || {};
+  const requiredText=(analysis.text_regions || []).map((region)=>({region_id:region.region_id,text:region.text || "",
+    role:region.role || "unknown",preserve:Boolean(region.preserve)}));
+  const facts={required_text:requiredText,entities:analysis.entities || [],primary_subjects:analysis.primary_subjects || [],
+    editor_ui_regions:analysis.editor_ui_regions || [],preserve_region_ids:decision.preserveRegionIds || [],
+    translate_region_ids:decision.translateRegionIds || []};
+  const shared=`Use the attached authorized source image. Do not invent unreadable words, prices, times, routes, entities, people, places, or objects. Preserve every number, currency, operating time, negation, exception, arrow, route direction, ordering relationship, photograph, and factual relationship. Return one complete image with no cropped final line. Required source manifest: ${JSON.stringify(facts)}`;
+  if (visual.acquisition_strategy === "recompose_editorial_card") return `${shared}\nRecompose the editorial card from scratch in concise natural English on a warm white background with restrained light-blue accents, dark readable type, generous spacing, and a clear information hierarchy. Remove Notes bars, editor chrome, canvas controls, selection handles, watermarks, and decorative red/black poster styling. Do not pretend this card is a documentary photograph.`;
+  if (visual.acquisition_strategy === "recompose_collage") return `${shared}\nRecompose the collage for an English travel article. Keep every factual photo region unchanged and in its original meaning and order. Keep real-world storefront signs inside photos intact. Replace only author-written captions or overlays with concise English in a warm-white/light-blue editorial system. Never merge several restaurants into one venue or describe the collage as a single photograph.`;
+  if (visual.acquisition_strategy === "recompose_map_or_route") return `${shared}\nRecompose the route or map in English. Preserve topology, start/end points, directions, arrows, step sequence, durations, distances, transfer relationships, and place identity exactly. If all required information cannot fit legibly, use a clearer multi-panel layout without omitting facts.`;
+  return `${shared}\nTranslate only author-added Chinese overlay text into concise English. Preserve the documentary photograph exactly: scene, people, buildings, food, objects, crop, perspective, lighting, natural colors, logos, and real-world signage must remain unchanged.`;
+}
+
+function visualQaPrompt(visual,metadata={}) {
+  return `The first image is the authorized source and the second is its proposed English derivative. Independently audit the derivative for delivery. Check language (all required author/editorial Chinese localized; preserved real-world signs allowed), completeness (all readable facts, numbers, currency, times, negations, exceptions, arrows and ordering preserved with no crop), style (warm-white/light-blue editorial treatment for recomposed cards, no Notes/editor UI, while documentary photos keep natural colors), and semantic fidelity (same subjects, places, photographs, route geometry and meaning; no fabricated content). Return failed or needs_review if uncertain. Strategy: ${visual.acquisition_strategy}. Manifest: ${JSON.stringify(metadata.source_analysis || {})}`;
+}
+
+function normalizeVisualQa(value={}) {
+  const field=(name)=>({status:["passed","failed","needs_review","not_tested"].includes(value?.[name]?.status) ? value[name].status : "needs_review",
+    reason:String(value?.[name]?.reason || "No reason supplied.").slice(0,1000)});
+  return {language:field("language"),completeness:field("completeness"),style:field("style"),semantic:field("semantic"),
+    notes:String(value.notes || "").slice(0,2000)};
+}
+
+function defaultVisualQa(){return {language:{status:"not_tested",reason:"Not a source-text transformation."},
+  completeness:{status:"not_tested",reason:"Not a source-text transformation."},style:{status:"not_tested",reason:"No independent style audit was requested."},
+  semantic:{status:"not_tested",reason:"No source transformation to compare."},notes:""};}
+
+function safeJson(value){if(!value)return {};if(typeof value === "object")return value;try{return JSON.parse(value);}catch{return {};}}
+
 function normalizeMime(value) {
   return ["image/png", "image/jpeg", "image/webp"].includes(value) ? value : "image/png";
 }
 
-export function inspectImageBytes(bytes, suppliedMimeType = "") {
+export async function inspectImageBytes(bytes, suppliedMimeType = "") {
   if (!Buffer.isBuffer(bytes) || bytes.length < 64) throw invalidImage("Image output is empty or truncated.");
-  let mimeType = "";
-  let dimensions = null;
-  if (bytes.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))) {
-    mimeType = "image/png";
-    if (bytes.subarray(12,16).toString("ascii") !== "IHDR") throw invalidImage("PNG output has no IHDR header.");
-    dimensions = { width:bytes.readUInt32BE(16), height:bytes.readUInt32BE(20) };
-  } else if (bytes[0] === 0xff && bytes[1] === 0xd8) {
-    mimeType = "image/jpeg";
-    dimensions = jpegDimensions(bytes);
-  } else if (bytes.subarray(0,4).toString("ascii") === "RIFF" && bytes.subarray(8,12).toString("ascii") === "WEBP") {
-    mimeType = "image/webp";
-    dimensions = webpDimensions(bytes);
-  }
-  if (!dimensions || !dimensions.width || !dimensions.height) throw invalidImage("Image output has no readable pixel dimensions.");
+  let decoded;
+  try { decoded=await sharp(bytes,{failOn:"error",limitInputPixels:40_000_000}).raw().toBuffer({resolveWithObject:true}); }
+  catch (error) { throw Object.assign(invalidImage("Image output cannot be fully decoded."),{cause:error}); }
+  const format=(await sharp(bytes,{failOn:"error",limitInputPixels:40_000_000}).metadata()).format;
+  const mimeType=({png:"image/png",jpeg:"image/jpeg",webp:"image/webp"})[format] || "";
+  const dimensions={width:decoded.info.width,height:decoded.info.height};
+  if (!mimeType || !dimensions.width || !dimensions.height) throw invalidImage("Image output has no readable pixel dimensions.");
   if (suppliedMimeType && normalizeMime(suppliedMimeType) !== mimeType) throw invalidImage("Image MIME type does not match its bytes.");
   const pixels = dimensions.width * dimensions.height;
   if (Math.min(dimensions.width, dimensions.height) < 360 || pixels > 40_000_000) {
     throw Object.assign(invalidImage("Image output fails the delivery pixel budget."), { dimensions, pixels });
   }
-  return { mime_type:mimeType, dimensions, byte_length:bytes.length, sha256:crypto.createHash("sha256").update(bytes).digest("hex") };
+  let minimum=255; let maximum=0; let visible=0;
+  const channels=decoded.info.channels; const data=decoded.data; const stride=Math.max(channels,Math.floor(data.length/200_000/channels)*channels);
+  for(let offset=0;offset+channels<=data.length;offset+=stride){
+    const alpha=channels===4 ? data[offset+3] : 255; if(alpha===0)continue; visible+=1;
+    for(let channel=0;channel<Math.min(3,channels);channel+=1){minimum=Math.min(minimum,data[offset+channel]);maximum=Math.max(maximum,data[offset+channel]);}
+  }
+  if (!visible || maximum-minimum < 2) throw invalidImage("Image output is blank or a solid-color placeholder.");
+  return { mime_type:mimeType, dimensions, byte_length:bytes.length,
+    decoded_pixel_bytes:data.length,dynamic_range:maximum-minimum,sha256:crypto.createHash("sha256").update(bytes).digest("hex") };
 }
 
 function jpegDimensions(bytes) {

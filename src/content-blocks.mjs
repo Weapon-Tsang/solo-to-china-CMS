@@ -380,10 +380,10 @@ function plannedSemanticBlock(node, plan, available) {
   else if (node.type === "paragraph" && ["tip", "warning"].includes(plan.type)) data = { content:text };
   else if (node.type === "list" && ["key_takeaways", "steps", "checklist"].includes(plan.type)) data = { items };
   else if (node.type === "list" && plan.type === "route_timeline") data = { items:items.map((item, index) => {
-    const parts = item.split(/:\s*/, 2); return parts.length > 1 ? { title:parts[0], detail:parts[1] } : { title:`Step ${index + 1}`, detail:item };
+    const parts = splitFirstLabel(item); return parts ? { title:parts.label, detail:parts.value } : { title:`Step ${index + 1}`, detail:item };
   }) };
   else if (node.type === "list" && plan.type === "quick_facts") data = { items:items.map((item) => {
-    const parts = item.split(/:\s*/, 2); return { label:parts.length > 1 ? parts[0] : "Key fact", value:parts.length > 1 ? parts[1] : item };
+    const parts = splitFirstLabel(item); return { label:parts?.label || "Key fact", value:parts?.value || item };
   }) };
   if (!data) return null;
   const schema = component.schema || {};
@@ -392,6 +392,13 @@ function plannedSemanticBlock(node, plan, available) {
     decision:{ requested:plan.type, realized:component.id, status:"adopted",
       readerJob:String(plan.semantic_role || plan.writer_guidance || "").slice(0,300),
       reason:"The planned semantic component directly matches this reader-facing node." } };
+}
+
+function splitFirstLabel(value) {
+  const text=String(value || "");
+  const delimiter=text.indexOf(":");
+  if (delimiter < 0) return null;
+  return {label:text.slice(0,delimiter).trim(),value:text.slice(delimiter+1).trim()};
 }
 
 function fallbackPlanDecision(plan, realized, reason = "The planned component does not fit this node's safe data shape") {

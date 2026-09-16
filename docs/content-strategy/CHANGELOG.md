@@ -1,5 +1,10 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.31 / schema 71 - 2026-09-16
+
+- Activate Strategy 3.5 image-level persistence, verified media transforms, media-only repair, vertical mobile TOC, and two-level commercial placement.
+- This is a development change only. No production migration, enqueue, WordPress mutation, commit, push, or deployment was performed.
+
 ## App 2.0.30 / schema 70 - 2026-09-16
 
 - Preserve the stable page identity during delivery-only recomposition so a refreshed layout cannot detach an existing WordPress draft.

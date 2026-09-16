@@ -26,7 +26,7 @@ export function stageConfiguration(pipeline, stage) {
     } : null,
     provider: config.provider, model: config.model,
     delivery: delivery ? {siteUrl:config.siteUrl,contractAware:Boolean(pipeline.frontendContracts?.configured)} : null,
-    commercial: commercial ? Object.fromEntries(['maxOffersPerDraft','maxContextualUnits','maxEndResourceUnits','minBlockDistance','minimumContentBlocks','opportunityThreshold','disclosure'].map(key=>[key,config[key] ?? null])) : null,
+    commercial: commercial ? Object.fromEntries(['maxOffersPerDraft','maxContextualUnits','maxEndResourceUnits','minBlockDistance','minimumContentBlocks','opportunityThreshold','linkTaskThreshold','policy','disclosure'].map(key=>[key,config[key] ?? null])) : null,
     parameters: Object.fromEntries(['temperature','maxCompletionTokens','thinking','imageBatchSize','imageMaxBytes','textSegmentMaxChars']
       .map(key => [key, config[key] ?? null])),
     stagePolicy: resolveStagePolicy(contract.name || stage, config),

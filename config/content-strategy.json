@@ -1,13 +1,25 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "3.4",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.4.md",
+  "current_version": "3.5",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.5.md",
   "status": "active",
   "history": [
     {
+      "version": "3.5",
+      "effective_date": "2026-09-16",
+      "status": "active",
+      "summary": "Capture-versioned media understanding, verified visual transformation, media-only repair, responsive article navigation, and two-level commercial placement.",
+      "changes": [
+        "Image-level classification, regions, language, subjects and editor UI are persisted and hydrated through the production SQL decision DTO.",
+        "Authorized media follows explicit retain, overlay localization, editorial-card, collage, route or illustration paths with full decode and independent quality states.",
+        "Media-only historical repair reuses qualified slots and frozen prose, while mobile article navigation uses a native vertical disclosure with complete wrapping.",
+        "Commercial composition separates strongly relevant contextual actions from one optional destination planning resource; the score threshold governs link work, not insertion."
+      ]
+    },
+    {
       "version": "3.4",
       "effective_date": "2026-09-15",
-      "status": "active",
+      "status": "superseded",
       "summary": "Reading-task composition, provenance-safe visual delivery, and versioned commercial overlays with end-to-end slot reconciliation.",
       "changes": [
         "CMS page plans are consumed deterministically by reader task, using the simplest Registry component that preserves content and evidence order.",

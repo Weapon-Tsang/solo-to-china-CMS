@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { openDatabase } from "../src/db.mjs";
@@ -12,6 +13,8 @@ const apply = args.includes("--apply");
 const developmentCopy = args.includes("--development-copy");
 const requestedDrafts = args.filter((item, index) => args[index - 1] === "--draft");
 if (!value("--db")) throw new Error("--db <sqlite-file> is required.");
+if (!requestedDrafts.length || requestedDrafts.length > 20) throw new Error("Pass an explicit 1-20 item whitelist with repeated --draft <id> arguments.");
+if (!fs.existsSync(filename)) throw new Error("The target database must already exist; dry-run and apply never create a database implicitly.");
 if (!["commercial", "presentation", "media"].includes(scope)) throw new Error("--scope must be commercial, presentation, or media.");
 if (apply && !developmentCopy) throw new Error("--apply requires --development-copy. This tool must never mutate the production database directly.");
 
@@ -36,7 +39,7 @@ try {
   const report = { mode:apply ? "apply_to_development_copy" : "dry_run_read_only", database:filename, scope,
     safeguards:["draft-only", "no body rewrite", "no visual regeneration outside media scope", "no direct WordPress write", "bounded stage enqueue", "active-job conflict stop"],
     items:[] };
-  const repository = apply ? new Repository(db) : null;
+  const repository = new Repository(db);
   for (const row of rows) {
     const remote = safeJson(row.response_json);
     const remotePublished = remote.status && remote.status !== "draft";
@@ -52,10 +55,12 @@ try {
         commercial_status:row.commercial_status || null,commercial_outcome:row.outcome || null,
         commercial_reason:row.reason_code || null,publish_status:row.publish_status || null,wordpress_status:row.wordpress_status || null },
       disposition,reason,planned_stage:disposition === "eligible" ? action : null,preserve };
+    if (scope === "media") item.media=repository.mediaRepairPlan(row.id);
     if (apply && disposition === "eligible") {
       const recoveryRunId = `repair_${hash(`${scope}:${row.id}:${row.revision}`).slice(0,24)}`;
       if (scope === "commercial") db.prepare("UPDATE commercial_compositions SET refresh_required=1,refresh_reason='operator_scoped_repair' WHERE draft_id=?").run(row.id);
-      item.job_id = repository.enqueue(action,row.id,{dedupeKey:`delivery-repair:${scope}:${row.id}:r${row.revision}`,
+      if (scope === "media") repository.prepareMediaRepair(row.id);
+      item.job_id = repository.enqueue(action,row.id,{dedupeKey:`delivery-refresh:${scope}:${row.id}:r${row.revision}`,
         workloadClass:"historical_recovery",recoveryRunId});
       item.recovery_run_id = recoveryRunId;
     }

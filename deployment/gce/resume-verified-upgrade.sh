@@ -16,7 +16,7 @@ python3 - "$RELEASE" <<'PY'
 import json, pathlib, sqlite3, sys
 release=pathlib.Path(sys.argv[1]); report=release/'migrate.json'; gate=release/'opportunity-audit.json'
 result=json.loads(report.read_text())
-assert result['schema']==70 and result['integrity']=='ok'
+assert result['schema']==71 and result['integrity']=='ok'
 assert result['foreignKeyErrors']==0 and result['preservedContentFingerprints'] is True
 audit=json.loads(gate.read_text())
 assert audit['enforcement']['passed'] is True and audit['enforcement']['hardViolationCount']==0
@@ -25,7 +25,7 @@ assert dbpath.stat().st_mtime_ns <= gate.stat().st_mtime_ns
 wal=pathlib.Path(str(dbpath)+'-wal')
 assert not wal.exists() or wal.stat().st_size==0, 'Unverified WAL writes exist'
 db=sqlite3.connect('file:'+str(dbpath)+'?mode=ro',uri=True)
-assert db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0]==70
+assert db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0]==71
 db.close()
 PY
 TOKEN="$(curl --fail --silent --header 'Metadata-Flavor: Google' \
@@ -47,7 +47,7 @@ docker run --detach --name engine --restart unless-stopped --network none \
   --volume solo_to_china_data:/var/lib/solo-to-china --volume "$LEGACY:/app/data" "$IMAGE" >/dev/null
 READY=0
 for ((attempt=0; attempt<60; attempt++)); do
-  if docker exec --env "EXPECTED_VERSION=$VERSION" engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/health"); const h=await r.json(); if(!r.ok||h.version!==process.env.EXPECTED_VERSION||h.contentStrategy.version!=="3.3"||h.captureMediaProtocol.version!==2)process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
+  if docker exec --env "EXPECTED_VERSION=$VERSION" engine node -e 'const r=await fetch("http://127.0.0.1:8080/api/health"); const h=await r.json(); if(!r.ok||h.version!==process.env.EXPECTED_VERSION||h.contentStrategy.version!=="3.5"||h.captureMediaProtocol.version!==2)process.exit(1)' >"$RELEASE/readiness.log" 2>&1; then
     READY=1; break
   fi
   if [[ "$(docker inspect --format '{{.State.Running}}' engine)" != true ]]; then break; fi

@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 const SCOPES = new Map([
   ["presentation", "compose_frontend_page"],
   ["commercial", "compose_commercial"],
+  ["media", "generate_visuals"],
 ]);
 
 export class DeliveryRefreshError extends Error {
@@ -18,7 +19,7 @@ export class DeliveryRefreshError extends Error {
 export function planDeliveryRefresh(repository, input = {}) {
   const scope = String(input.scope || "presentation");
   const stage = SCOPES.get(scope);
-  if (!stage) throw new DeliveryRefreshError("DELIVERY_REFRESH_SCOPE_INVALID", "scope must be presentation or commercial.", null, 400);
+  if (!stage) throw new DeliveryRefreshError("DELIVERY_REFRESH_SCOPE_INVALID", "scope must be presentation, commercial, or media.", null, 400);
   const draftIds = [...new Set((Array.isArray(input.draft_ids) ? input.draft_ids : []).map(String).filter(Boolean))];
   if (!draftIds.length || draftIds.length > 20) {
     throw new DeliveryRefreshError("DELIVERY_REFRESH_WHITELIST_REQUIRED", "Choose an explicit whitelist of 1-20 draft IDs.", null, 400);
@@ -36,6 +37,7 @@ export function planDeliveryRefresh(repository, input = {}) {
     const remote = safeJson(publication?.response_json);
     const wordpress = postId ? inventory.get(postId) : null;
     const activeJob = repository.db.prepare("SELECT id,type,status FROM jobs WHERE entity_id=? AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1").get(draftId);
+    const media=scope === "media" && typeof repository.mediaRepairPlan === "function" ? repository.mediaRepairPlan(draftId) : null;
     let disposition = "eligible";
     let reason = "whitelisted_incremental_refresh";
     if (!inventoryFresh) { disposition="blocked"; reason="wordpress_inventory_not_fresh"; }
@@ -54,11 +56,13 @@ export function planDeliveryRefresh(repository, input = {}) {
       wordpress_post_id:postId,wordpress_status:wordpress?.status || null,wordpress_modified_at:wordpress?.modified_at || null,
       publication_updated_at:publication?.updated_at || null,disposition,reason,
       planned_stage:disposition === "eligible" ? stage : null,
+      media,
       preserve:{ body_sha256:sha256(pkg.draft.body_markdown || ""),
         visual_fingerprint_sha256:sha256((pkg.draft.visuals || []).map((item) => item.asset_fingerprint || item.id).join("|")) },
     };
   });
   const fingerprintInput = { scope,inventory_synced_at:sync?.last_succeeded_at || null,
+    media_plan_hashes:items.map((item)=>item.media?.plan_hash || null),
     items:items.map(({ draft_id,revision,content_hash,page_id,page_content_hash,wordpress_post_id,wordpress_status,wordpress_modified_at,disposition,reason }) =>
       ({ draft_id,revision,content_hash,page_id,page_content_hash,wordpress_post_id,wordpress_status,wordpress_modified_at,disposition,reason })) };
   return { mode:"dry_run",scope,inventory:{ fresh:inventoryFresh,synced_at:sync?.last_succeeded_at || null },
@@ -83,6 +87,7 @@ export function applyDeliveryRefresh(repository, input = {}, actor = "administra
     for (const item of plan.items) {
       const recoveryRunId = `delivery_refresh_${sha256(`${plan.scope}:${item.draft_id}:${item.revision}:${plan.confirmation}`).slice(0,24)}`;
       if (plan.scope === "commercial") repository.db.prepare("UPDATE commercial_compositions SET refresh_required=1,refresh_reason='operator_scoped_repair',updated_at=? WHERE draft_id=?").run(timestamp,item.draft_id);
+      if (plan.scope === "media") repository.prepareMediaRepair?.(item.draft_id);
       const owner = repository.db.prepare(`SELECT tc.opportunity_id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id
         LEFT JOIN topic_candidates tc ON tc.id=cb.candidate_id WHERE ad.id=?`).get(item.draft_id)?.opportunity_id || null;
       const jobId = repository.enqueue(item.planned_stage,item.draft_id,{ dedupeKey:`delivery-refresh:${plan.scope}:${item.draft_id}:r${item.revision}:${plan.confirmation.slice(0,12)}`,

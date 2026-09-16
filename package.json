@@ -1,6 +1,6 @@
 {
   "name": "solo-to-china-research-engine",
-  "version": "2.0.30",
+  "version": "2.0.31",
   "private": true,
   "description": "Human-selected research capture and content intelligence engine for SoloToChina.",
   "type": "module",
@@ -49,6 +49,7 @@
     "pdfjs-dist": "^6.3.289",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "sharp": "^0.35.4",
     "tailwind-merge": "^3.6.0",
     "word-extractor": "^1.0.4"
   },

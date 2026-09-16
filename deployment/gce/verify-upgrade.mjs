@@ -66,7 +66,7 @@ if (mode === 'backup') {
   const actual = fingerprint(db);
   assert.deepEqual(actual, baseline, 'Migration changed existing content, IDs or row counts');
   const schema = db.prepare('SELECT MAX(version) AS n FROM schema_migrations').get().n;
-  assert.equal(schema, 70);
+  assert.equal(schema, 71);
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   db.close();
   const result = { stage: mode, schema, integrity: 'ok', foreignKeyErrors: 0,

@@ -7,8 +7,8 @@ export const PRODUCT_CATEGORIES = new Set(["HOTEL", "FLIGHT", "TRAIN", "ATTRACTI
 export const SCOPE_TYPES = new Set(["ENTITY", "ROUTE", "AREA", "DESTINATION", "COUNTRY", "CATEGORY", "GLOBAL"]);
 export const CONNECTION_MODES = new Set(["MANUAL", "OFFICIAL_API", "FEED"]);
 export const OFFER_CATEGORIES = new Set(["hotels", "attraction_tickets", "trains", "flights", "tours_activities", "airport_transfer", "planner"]);
-export const COMMERCIAL_STRATEGY_VERSION = "2.0";
-export const READING_LAYOUT_VERSION = "1.0";
+export const COMMERCIAL_STRATEGY_VERSION = "2.1";
+export const READING_LAYOUT_VERSION = "1.1";
 
 const CATEGORY_COMPATIBILITY = new Map([
   ["hotels", "HOTEL"], ["attraction_tickets", "ATTRACTION"], ["trains", "TRAIN"],
@@ -106,6 +106,9 @@ export class CommercialComposer {
     this.config = {
       maxOffersPerDraft: 3, maxContextualUnits: 2, maxEndResourceUnits: 1,
       minBlockDistance: 3, minimumContentBlocks: 2, opportunityThreshold: 70,
+      linkTaskThreshold:70,policy:{destination_resource:{enabled:true,max_units:1,
+        content_types:["first_time_guide","city_guide","itinerary","food_guide","attraction_guide"],
+        topic_patterns:["guide","itinerary","food","things to do","first time","days in"]}},
       disclosure: "SoloToChina may earn a commission from eligible bookings, at no extra cost to you.", ...config,
     };
   }
@@ -119,13 +122,15 @@ export class CommercialComposer {
     // blocks because that is the structure its WordPress adapter publishes.
     const placementBlocks = Array.isArray(contentPackage.frontend_page?.payload?.blocks)
       ? contentPackage.frontend_page.payload.blocks : researchBlocks;
-    const intents = detectCommercialIntents(contentPackage, placementBlocks);
+    const intents = detectCommercialIntents({...contentPackage,commercial_policy:this.config.policy || {}}, placementBlocks);
     const allResolutions = intents.map((intent) => resolveAffiliateAsset(intent, assets));
     const selected = applyDensityGuard(allResolutions.filter((item) => item.asset), placementBlocks.length, this.config);
-    const opportunities = dedupeOpportunities(intents.map((intent, index) => buildOpportunity(intent, allResolutions[index], this.config.opportunityThreshold)).filter(Boolean));
+    const opportunities = dedupeOpportunities(intents.map((intent, index) => buildOpportunity(intent, allResolutions[index],
+      this.config.linkTaskThreshold ?? this.config.opportunityThreshold)).filter(Boolean));
     if (!selected.length) {
-      const outcome = intents.length ? "asset_gap" : "intentional_noop";
-      const reasonCode = intents.length ? "NO_ELIGIBLE_ASSET" : "NO_RELEVANT_COMMERCIAL_DEMAND";
+      const state=commercialEmptyOutcome(intents,allResolutions);
+      const outcome = state.outcome;
+      const reasonCode = state.reasonCode;
       return {
       publishableBodyMarkdown: researchBody, contentBlocks: researchBlocks, commercialBlocks: [], intents, slots: [], offerIds: [], assetIds: [],
       disclosureText: "", requiredComponents: [], opportunities, status: "no_offers", outcome, reasonCode,
@@ -188,14 +193,32 @@ export function detectCommercialIntents(contentPackage, blocks) {
   {
     const articleContext = `${contentPackage.candidate?.topic_key || ""} ${contentPackage.brief?.topic || ""} ${contentPackage.draft.title}`.toLowerCase();
     const detectedCategories = new Set(output.map((item) => item.productCategory));
+    const visibleArticleContext=blocks.map(projectVisibleBlockText).join(" ").toLowerCase();
     for (const [productCategory, pattern] of Object.entries(INTENT_PATTERNS)) {
       if (detectedCategories.has(productCategory) || !pattern.test(articleContext)) continue;
+      if (negativeCommercialContext(productCategory,visibleArticleContext)) continue;
       output.push({
         id: stableIntentId(contentPackage.draft?.id, "article-fallback", productCategory), blockIndex: Math.max(0, blocks.length - 1), blockKey: "article-fallback", intentType: "DESTINATION_GUIDE",
         productCategory, destinationSlug: destination, areaKey: "", routeKey: "", entityKey: "", scopeType: "DESTINATION", scopeKey: destination,
         countryCode,
         intentStrength: "MEDIUM", decisionStage: "DISCOVERY", recommendedComponent: "affiliate_banner", reason: "Article-level context supports only a final utility fallback.",
       });
+    }
+    const policy=contentPackage.commercial_policy || {};
+    const destinationPolicy=policy.destination_resource || {};
+    const contentType=String(contentPackage.brief?.content_type || contentPackage.brief?.canonical?.content_type || "").toLowerCase();
+    const patterns=destinationPolicy.topic_patterns || ["guide","itinerary","food","things to do","first time","days in"];
+    const contentTypes=destinationPolicy.content_types || ["first_time_guide","city_guide","itinerary","food_guide","attraction_guide"];
+    const destinationUseful=destinationPolicy.enabled !== false && destination
+      && (contentTypes.includes(contentType) || patterns.some((value)=>articleContext.includes(String(value).toLowerCase())));
+    if (destinationUseful && !output.some((item)=>item.productCategory === "PLANNER")) {
+      const blockIndex=Math.max(0,blocks.length-1); const blockKey="destination-planning-resource";
+      output.push({id:stableIntentId(contentPackage.draft?.id,blockKey,"PLANNER"),blockIndex,blockKey,contentNodeId:"",
+        intentType:"DESTINATION_PLANNING_RESOURCE",productCategory:"PLANNER",destinationSlug:destination,areaKey:"",routeKey:"",entityKey:"",
+        countryCode,scopeType:"DESTINATION",scopeKey:destination,intentStrength:"MEDIUM",decisionStage:"DISCOVERY",
+        recommendedComponent:"affiliate_booking_card",readerAction:"Continue planning this destination",
+        relevanceReason:"A destination-level planning resource complements the article without interrupting the reading task.",
+        landingScope:"DESTINATION",placementReason:"Optional destination resource after the editorial article."});
     }
   }
   return dedupeIntents(output);
@@ -269,21 +292,36 @@ export function normalizeCommissionRule(input) {
 function applyDensityGuard(resolutions, blockCount, config) {
   const selected = [];
   const actions = new Set();
-  for (const resolution of resolutions.sort((a, b) => intentRank(b.intent) - intentRank(a.intent) || b.score - a.score)) {
+  const normalized=resolutions.map((resolution)=>({...resolution,placement:normalizedPlacement(resolution,blockCount,config)}));
+  for (const resolution of normalized.sort((a, b) => intentRank(b.intent) - intentRank(a.intent) || b.score - a.score)) {
     if (selected.length >= Math.min(config.maxOffersPerDraft, config.maxContextualUnits + config.maxEndResourceUnits)) break;
     const actionKey = `${resolution.intent.productCategory}:${resolution.intent.entityKey || resolution.intent.routeKey || resolution.intent.areaKey || resolution.intent.scopeKey}`;
     if (actions.has(actionKey) || selected.some((item) => item.asset.id === resolution.asset.id)) continue;
-    const contextual = blockCount >= config.minimumContentBlocks && resolution.intent.intentStrength !== "MEDIUM";
-    const placement = contextual && selected.filter((item) => item.placement === "contextual").length < config.maxContextualUnits ? "contextual" : "end_resource";
-    if (placement === "end_resource" && selected.some((item) => item.placement === "end_resource")) continue;
+    const placement=resolution.placement;
+    if (placement === "contextual" && selected.filter((item)=>item.placement === "contextual").length >= config.maxContextualUnits) continue;
+    if (placement === "end_resource" && selected.filter((item) => item.placement === "end_resource").length >= config.maxEndResourceUnits) continue;
     if (placement === "contextual" && selected.some((item) => Math.abs(item.intent.blockIndex - resolution.intent.blockIndex) < config.minBlockDistance)) continue;
     selected.push({ ...resolution, placement }); actions.add(actionKey);
   }
   return selected;
 }
 
+function normalizedPlacement(resolution,blockCount,config) {
+  const assetType=String(resolution.asset?.asset_type || resolution.asset?.assetType || "").toUpperCase();
+  if (["STATIC_BANNER","DYNAMIC_BANNER","PROMOTION"].includes(assetType)) return "end_resource";
+  return blockCount >= config.minimumContentBlocks && resolution.intent.intentStrength !== "MEDIUM" ? "contextual" : "end_resource";
+}
+
 function buildOpportunity(intent, resolution, threshold) {
   if (resolution.exact || !["HIGH", "VERY_HIGH"].includes(intent.intentStrength)) return null;
+  const observed=[intent.trafficPotential,intent.frequency,intent.expectedBookingValue,intent.expectedRevenueUplift];
+  if (observed.every((value)=>value == null)) return {
+    id:id("affiliate_opportunity"),intentId:intent.id,provider:resolution.asset?.provider || "unconfigured",
+    productCategory:intent.productCategory,scopeType:intent.scopeType,scopeKey:intent.scopeKey,score:0,
+    factors:{trafficPotential:null,commercialIntent:intent.intentStrength,frequency:null,expectedBookingValue:null,
+      landingPageMismatch:resolution.asset ? "fallback_scope" : "asset_not_configured",expectedRevenueUplift:null},
+    queueEligible:false,reason:"A real reader action has no exact eligible asset; metrics are unknown, so the gap is visible but no link task is auto-created.",
+  };
   const factors = {
     trafficPotential: intent.trafficPotential || (["ENTITY", "ROUTE"].includes(intent.scopeType) ? 80 : 40), commercialIntent: intent.intentStrength === "VERY_HIGH" ? 95 : 75,
     frequency: intent.frequency || (["ENTITY", "ROUTE"].includes(intent.scopeType) ? 75 : 40), expectedBookingValue: intent.productCategory === "HOTEL" ? 70 : 65,
@@ -297,6 +335,13 @@ function buildOpportunity(intent, resolution, threshold) {
     productCategory: intent.productCategory, scopeType: intent.scopeType, scopeKey: intent.scopeKey, score: Math.min(100, Math.round(score)), factors,
     reason: "A high-intent block has a material landing-page precision gap; manual official-link creation may justify its cost.",
   };
+}
+
+function commercialEmptyOutcome(intents,resolutions) {
+  if (!intents.length) return {outcome:"intentional_noop",reasonCode:"NO_RELEVANT_COMMERCIAL_DEMAND"};
+  if (resolutions.some((item)=>item.asset)) return {outcome:"density_or_duplicate_suppressed",reasonCode:"ELIGIBLE_ASSET_SUPPRESSED"};
+  if (resolutions.some((item)=>item.diagnostics.candidateCount > 0)) return {outcome:"eligibility_rejected",reasonCode:"ASSET_ELIGIBILITY_REJECTED"};
+  return {outcome:"asset_not_configured",reasonCode:"ASSET_NOT_CONFIGURED"};
 }
 
 function commercialBlock(intent, asset, placement, index, disclosure) {
@@ -317,6 +362,10 @@ function commercialBlock(intent, asset, placement, index, disclosure) {
       alt_text: asset.alt_text || asset.altText || "", entity: asset.entity_key || asset.entityKey || "",
       route: asset.route_key || asset.routeKey || "", destination: asset.destination_slug || asset.destinationSlug || "",
       country_code: asset.country_code || asset.countryCode || "",
+      reader_action:intent.readerAction || `Use this ${intent.productCategory.toLowerCase()} resource for the decision described above.`,
+      relevance_reason:intent.relevanceReason || intent.reason || "",
+      landing_scope:intent.landingScope || intent.scopeType,
+      placement_reason:intent.placementReason || (resolvedPlacement === "contextual" ? "Strongly related action beside the relevant passage." : "Optional destination planning resource after the article."),
     },
   };
 }
@@ -438,12 +487,14 @@ function commercialDiagnostics(intents, resolutions, selected, outcome, reasonCo
     intents: resolutions.map((item) => ({ intent_id: item.intent.id, block_key: item.intent.blockKey,
       product_category: item.intent.productCategory, scope_type: item.intent.scopeType, scope_key: item.intent.scopeKey,
       country_code: item.intent.countryCode || "", matched_scope: item.matchedScope,
+      reader_action:item.intent.readerAction || null,relevance_reason:item.intent.relevanceReason || item.intent.reason || "",
+      landing_scope:item.intent.landingScope || item.intent.scopeType,placement_reason:item.intent.placementReason || null,
       selected_asset_id: item.asset?.id || null, ...item.diagnostics })),
   };
 }
 
 function commercialManifest(slots, contentPackage, outcome, reasonCode) {
-  return { version: "commercial-manifest-1", outcome, reason_code: reasonCode,
+  return { version: "commercial-manifest-2", outcome, reason_code: reasonCode,
     draft_id: contentPackage.draft?.id || null, draft_revision: contentPackage.draft?.revision || null,
     page_hash: contentPackage.frontend_page?.content_hash || contentPackage.frontend_page?.page_content_hash || null,
     slots: slots.map((slot) => ({ slot_key: slot.slot_key, affiliate_asset_id: slot.affiliate_asset_id,

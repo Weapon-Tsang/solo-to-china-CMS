@@ -60,6 +60,10 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
             ["beijing.cost.budget", "Beijing budget", "cost budget", "Plan admission and transit costs"],
           ].map(([key, subject, predicate, value]) => ({ key, subject, predicate, value,
             qualifiers: [], confidence: 0.85, source_quote: value })),
+          media_analysis:(source.assets || []).map((asset)=>({asset_id:asset.id,analysis_status:"ready",
+            asset_kind:"documentary_photo",text_regions:[],photo_regions:[{region_id:"photo",subject:"Beijing travel scene"}],
+            entities:["Beijing"],editor_ui_regions:[],primary_subjects:["Beijing travel scene"],language_by_region:[],
+            reader_text_present:false,confidence:0.95,analysis_version:"media-analysis-1",prompt_version:"media-analysis-prompt-1"})),
           blueprint: { format: "guide", hook: "First trip", angle: "solo first visit", sections: [], strengths: ["specific"], gaps: [] },
         },
       };

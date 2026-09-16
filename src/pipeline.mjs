@@ -809,13 +809,30 @@ export class Pipeline {
         }
         case "generate_visuals": {
           if (!this.visuals?.enabled) throw new Error("Visual generation is not configured.");
-          const contentPackage = this.repository.getDraftPackage(job.entity_id);
+          let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
+          for (const visual of this.repository.plannedVisuals(job.entity_id).filter((item)=>item.acquisition_strategy === "analyze_source_image")) {
+            if (typeof this.extractor?.analyzeMediaAsset !== "function") {
+              throw Object.assign(new Error("Image analysis provider is not configured for this source asset."),{
+                code:"MEDIA_ANALYSIS_NOT_CONFIGURED",retryable:false,
+              });
+            }
+            const asset=this.repository.sourceAssetDecisionDto(visual.source_asset_id);
+            const analyzed=await guarded((signal)=>this.extractor.analyzeMediaAsset(asset,{signal,
+              telemetryContext:{...telemetryContext,entityId:visual.source_asset_id}}));
+            commitStage(()=>this.repository.saveSourceAssetAnalysis(visual.source_asset_id,analyzed.result,{
+              provider:analyzed.method,model:analyzed.model,
+            }));
+          }
+          this.repository.prepareMediaRepair(job.entity_id);
+          contentPackage = this.repository.getDraftPackage(job.entity_id);
           for (const visual of this.repository.plannedVisuals(job.entity_id)) {
+            if (visual.acquisition_strategy === "analyze_source_image") continue;
             try {
-              const method = visual.acquisition_strategy === "localize_source_image" ? "localizeSourceImage" : "generate";
+              const method = ["localize_source_image","localize_photo_overlay","recompose_editorial_card","recompose_collage","recompose_map_or_route"]
+                .includes(visual.acquisition_strategy) ? "localizeSourceImage" : "generate";
               const result = await guarded((signal) => this.visuals[method](visual, contentPackage.draft, { signal, idempotencyKey: `${job.id}:${visual.id}` }));
-              this.repository.saveGeneratedVisual(visual.id, result);
+              this.repository.saveGeneratedVisual(visual.id, result,{expectedFingerprint:visual.asset_fingerprint});
             } catch (error) {
               if (isJobLeaseLost(error)) throw error;
               const failed = this.repository.failVisual(visual.id, error);

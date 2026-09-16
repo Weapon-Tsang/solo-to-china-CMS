@@ -55,7 +55,7 @@ test("unsupported map and infographic renderers create no fake visual plan", () 
   assert.deepEqual(output,[]);
 });
 
-test("a real-world photo is retained only when an original authorized source asset matches", () => {
+test("a real-world photo is selected only when an original authorized source asset matches and unknown image content is analyzed", () => {
   const requested = [{ image_type:"real_world_photo",image_subject:"Forbidden City gate" }];
   assert.deepEqual(normalizeVisuals(requested,draft,brief,[],policy),[]);
   const asset = { id:"asset-1",remote_url:"https://example.test/original.jpg",mime_type:"image/jpeg",
@@ -64,20 +64,48 @@ test("a real-world photo is retained only when an original authorized source ass
     source_authorization_status:"legacy",source_publishable:0,asset_authorization_status:"legacy",asset_publishable:0 };
   const output = normalizeVisuals(requested,draft,brief,[asset],policy);
   assert.equal(output.length,1);
-  assert.equal(output[0].acquisition_strategy,"use_authorized_source_image");
+  assert.equal(output[0].acquisition_strategy,"analyze_source_image");
   assert.equal(output[0].source_asset_id,"asset-1");
   assert.equal(output[0].media_metadata.source_provenance.original_stored,true);
   assert.equal(output[0].media_metadata.source_provenance.project_owner_confirmed,true);
 });
 
 test("the shared visual decision blocks unclassified text while preserving authentic signs", () => {
-  assert.deepEqual(decideVisualAsset({ language_status:"unknown", visual_class:"text_overlay", width:1200, height:800 }), {
-    visualClass:"text_overlay", language:"unknown", authenticityCritical:false, action:"reject",
-    reason:"language_analysis_required",
-  });
+  assert.equal(decideVisualAsset({ language_status:"unknown", visual_class:"text_overlay", width:1200, height:800 }).action,"analyze");
   assert.equal(decideVisualAsset({ language_status:"chinese", visual_class:"text_overlay", width:1200, height:800 }).action, "localize");
   assert.equal(decideVisualAsset({ language_status:"chinese", visual_class:"handwritten", width:1200, height:800 }).action, "localize");
-  assert.equal(decideVisualAsset({ language_status:"chinese", visual_class:"text_overlay", alt_text:"Historic station name sign", width:1200, height:800 }).action, "retain");
+  assert.equal(decideVisualAsset({ analysis_status:"ready",language_status:"chinese", asset_kind:"documentary_photo",
+    language_by_region:[{region_id:"sign",language:"zh-CN",role:"real_world_signage",preserve:true}],
+    alt_text:"Historic station name sign", width:1200, height:800 }).action, "retain");
+});
+
+test("unanalysed high-resolution source images never default to text-free documentary photos", () => {
+  const decision = decideVisualAsset({
+    language_status:"unknown", width:2400, height:3200, alt_text:"Chongqing travel guide design",
+  });
+  assert.equal(decision.action, "analyze");
+  assert.equal(decision.reason, "image_analysis_required");
+  assert.equal(decision.visualClass, "unknown");
+});
+
+test("sign matching is token bounded and a storefront collage localizes only author overlays", () => {
+  assert.equal(decideVisualAsset({
+    analysis_status:"ready", asset_kind:"editorial_infographic", reader_text_present:true,
+    language_by_region:[{ region_id:"copy", language:"zh-CN", role:"author_overlay" }],
+    alt_text:"A red and black travel design",
+  }).transformKind, "EDITORIAL_CARD_RECOMPOSE");
+  const collage = decideVisualAsset({
+    analysis_status:"ready", asset_kind:"photo_collage", reader_text_present:true,
+    language_by_region:[
+      { region_id:"sign", language:"zh-CN", role:"real_world_signage", preserve:true },
+      { region_id:"caption", language:"zh-CN", role:"author_overlay", preserve:false },
+    ],
+    primary_subjects:["storefronts"], alt_text:"Three storefronts with author captions",
+  });
+  assert.equal(collage.action, "localize");
+  assert.equal(collage.transformKind, "COLLAGE_RECOMPOSE");
+  assert.deepEqual(collage.preserveRegionIds, ["sign"]);
+  assert.deepEqual(collage.translateRegionIds, ["caption"]);
 });
 
 test("an existing visual plan can be topped up with additional relevant source photos", () => {
@@ -90,4 +118,38 @@ test("an existing visual plan can be topped up with additional relevant source p
     {visuals:{target:3,maximum:5}});
   assert.equal(output.length,3);
   assert.equal(output.filter((item)=>item.source_asset_id).length,2);
+});
+
+test("an equal-count media plan repairs only the stale source slot and preserves successful metadata",()=>{
+  const current=[
+    {source_asset_id:"card",image_type:"real_world_photo",image_subject:"Chongqing route card",placement:"hero",
+      acquisition_strategy:"use_authorized_source_image",status:"generated",media_url:"https://cms.test/old-card.png",
+      media_metadata:{custom_analysis_note:"preserve-me",quality_qa:{status:"not_tested"}}},
+    {image_type:"illustration",image_subject:"Chongqing skyline",placement:"mid_article",acquisition_strategy:"generate_illustration",
+      status:"generated",media_url:"https://cms.test/good.png",media_metadata:{binary_qa:{status:"passed"}}},
+  ];
+  const assets=[{id:"card",remote_url:"https://media.test/card.png",mime_type:"image/png",alt_text:"Chongqing route card",
+    caption_text:"Route card",nearby_text:"Chongqing route",evidence_text:"Chongqing route",storage_status:"saved",
+    original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED",analysis_status:"ready",
+    asset_kind:"editorial_infographic",reader_text_present:true,language_status:"chinese",
+    language_by_region:[{region_id:"body",language:"zh-CN",role:"author_overlay"}],text_regions:[{region_id:"body",text:"09:00–17:00",role:"author_overlay"}],
+    editor_ui_regions:[],photo_regions:[],entities:[],primary_subjects:["route"],analysis_version:"media-analysis-1",
+    original_sha256:"abc",capture_version:2,width:1200,height:1600}];
+  const output=normalizeVisuals(current,{title:"Chongqing route",body_markdown:"A Chongqing route card."},{destination_slug:"chongqing"},assets,
+    {visuals:{target:2,maximum:5}});
+  assert.equal(output.length,2);
+  assert.equal(output[0].source_asset_id,"card");
+  assert.equal(output[0].acquisition_strategy,"recompose_editorial_card");
+  assert.equal(output[0].status,"planned");
+  assert.equal(output[0].media_metadata.custom_analysis_note,"preserve-me");
+  assert.equal(output[1].media_url,"https://cms.test/good.png");
+});
+
+test("relevant food media beyond the former first-24 candidate window can be selected",()=>{
+  const assets=Array.from({length:30},(_,index)=>({id:`asset-${index}`,remote_url:`https://media.test/${index}.jpg`,mime_type:"image/jpeg",
+    alt_text:index===29 ? "Chongqing hotpot meal" : `Unrelated generic view ${index}`,caption_text:"",nearby_text:"",evidence_text:"",
+    language_status:"no_text",width:1600,height:900,storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"}));
+  const output=normalizeVisuals([],{title:"Chongqing food guide",body_markdown:"Choose a Chongqing hotpot meal."},
+    {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
+  assert.equal(output[0].source_asset_id,"asset-29");
 });

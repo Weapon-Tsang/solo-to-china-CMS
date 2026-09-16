@@ -6,6 +6,7 @@ import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const modelStagePolicy = JSON.parse(fs.readFileSync(path.join(root, "config", "model-stage-policy.json"), "utf8"));
 const modelPricing = JSON.parse(fs.readFileSync(path.join(root, "config", "model-pricing.json"), "utf8"));
+const commercialPolicy = JSON.parse(fs.readFileSync(path.join(root, "config", "commercial-policy.json"), "utf8"));
 
 export const AI_MODELS = [
   { id: "vertex-gemini-3.8-flash", provider: "vertex", model: "gemini-3.8-flash", location: "global", label: "Vertex AI · Gemini 3.8 Flash", description: "默认的 Google 多模态工作模型，用于图文理解、结构化提取、写作与审核。", supportsImages: true, isDefault: true },
@@ -217,6 +218,8 @@ export function loadConfig(env = process.env) {
       minBlockDistance: integer(env.COMMERCIAL_MIN_BLOCK_DISTANCE, 3),
       minimumContentBlocks: integer(env.COMMERCIAL_MINIMUM_CONTENT_BLOCKS, 2),
       opportunityThreshold: integer(env.AFFILIATE_OPPORTUNITY_THRESHOLD, 70),
+      linkTaskThreshold:integer(env.AFFILIATE_LINK_TASK_THRESHOLD,commercialPolicy.link_task_threshold || 70),
+      policy:commercialPolicy,
       disclosure: env.AFFILIATE_DISCLOSURE || "SoloToChina may earn a commission from eligible bookings, at no extra cost to you.",
     },
     telemetry: {

@@ -52,6 +52,7 @@ const TRACKED_DELIVERY_STAGES = new Set(['compose_commercial','compose_publish_p
 const COMPATIBLE_DIAGNOSTIC_STRATEGIES = new Map([
   ["3.3", new Set(["3.0", "3.1", "3.2", "3.3"])],
   ["3.4", new Set(["3.0", "3.1", "3.2", "3.3", "3.4"])],
+  ["3.5", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5"])],
 ]);
 
 function isReusableDiagnosticStrategy(previous, current) {
@@ -2262,7 +2263,13 @@ export class Repository {
   getSource(sourceId) {
     const source = this.db.prepare("SELECT * FROM sources WHERE id = ?").get(sourceId);
     if (!source) return null;
-    const assets = this.db.prepare("SELECT * FROM current_source_assets WHERE source_id = ? ORDER BY position").all(sourceId);
+    const assets = this.db.prepare(`SELECT sa.*,saa.analysis_status,saa.asset_kind,saa.text_regions_json,
+      saa.photo_regions_json,saa.entities_json,saa.editor_ui_regions_json,saa.primary_subjects_json,
+      saa.language_by_region_json,saa.reader_text_present,saa.confidence AS analysis_confidence,
+      saa.analysis_version,saa.prompt_version,saa.provider AS analysis_provider,saa.model AS analysis_model,
+      saa.source_sha256 AS analysis_source_sha256,saa.analyzed_at
+      FROM current_source_assets sa LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id
+      WHERE sa.source_id = ? ORDER BY sa.position`).all(sourceId).map(hydrateSourceAssetAnalysis);
     const files = this.db.prepare("SELECT id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at FROM current_source_files WHERE source_id = ? ORDER BY created_at, id").all(sourceId);
     const structured = this.db.prepare("SELECT * FROM structured_sources WHERE source_id = ?").get(sourceId) || null;
     const claims = this.db.prepare("SELECT * FROM claims WHERE source_id = ? ORDER BY normalized_key").all(sourceId);
@@ -2501,7 +2508,12 @@ export class Repository {
           inputModality, JSON.stringify(inputManifest));
       this.db.prepare("UPDATE source_segments SET status='extracted',updated_at=? WHERE id=?").run(timestamp, segmentId);
       if (segment.asset_id) {
-        const languageStatus = detectedAssetLanguage(extraction?.result);
+        const mediaAnalysis = (extraction?.result?.media_analysis || []).find((item) =>
+          !item?.asset_id || item.asset_id === segment.asset_id);
+        if (mediaAnalysis) this.saveSourceAssetAnalysis(segment.asset_id, mediaAnalysis, {
+          provider:extraction.method || "", model:extraction.model || "", withinTransaction:true,
+        });
+        const languageStatus = mediaAnalysis ? imageLanguageStatus(mediaAnalysis) : "unknown";
         this.db.prepare(`UPDATE source_assets SET extraction_status='processed',extraction_error=NULL,processed_at=?,
           language_status=CASE WHEN ?='unknown' THEN language_status ELSE ? END WHERE id=?`)
           .run(timestamp, languageStatus, languageStatus, segment.asset_id);
@@ -2509,6 +2521,41 @@ export class Repository {
       return true;
     };
     return withinTransaction ? write() : transaction(this.db, write);
+  }
+
+  saveSourceAssetAnalysis(assetId, analysis = {}, { provider = "", model = "", withinTransaction = false } = {}) {
+    const asset=this.db.prepare(`SELECT sa.id,sa.source_id,sa.capture_version,sa.original_sha256,sa.stored_sha256,
+      s.capture_version AS current_capture_version FROM source_assets sa JOIN sources s ON s.id=sa.source_id WHERE sa.id=?`).get(assetId);
+    if (!asset || asset.capture_version !== asset.current_capture_version) return false;
+    const normalized=normalizeSourceAssetAnalysis(analysis,asset);
+    const write=()=>this.db.prepare(`INSERT INTO source_asset_analyses(asset_id,source_id,source_sha256,capture_version,
+      analysis_status,asset_kind,text_regions_json,photo_regions_json,entities_json,editor_ui_regions_json,
+      primary_subjects_json,language_by_region_json,reader_text_present,confidence,analysis_version,prompt_version,
+      provider,model,last_error,analyzed_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(asset_id) DO UPDATE SET source_sha256=excluded.source_sha256,capture_version=excluded.capture_version,
+      analysis_status=excluded.analysis_status,asset_kind=excluded.asset_kind,text_regions_json=excluded.text_regions_json,
+      photo_regions_json=excluded.photo_regions_json,entities_json=excluded.entities_json,
+      editor_ui_regions_json=excluded.editor_ui_regions_json,primary_subjects_json=excluded.primary_subjects_json,
+      language_by_region_json=excluded.language_by_region_json,reader_text_present=excluded.reader_text_present,
+      confidence=excluded.confidence,analysis_version=excluded.analysis_version,prompt_version=excluded.prompt_version,
+      provider=excluded.provider,model=excluded.model,last_error=excluded.last_error,analyzed_at=excluded.analyzed_at,
+      updated_at=excluded.updated_at`).run(asset.id,asset.source_id,normalized.source_sha256,asset.capture_version,
+        normalized.analysis_status,normalized.asset_kind,JSON.stringify(normalized.text_regions),JSON.stringify(normalized.photo_regions),
+        JSON.stringify(normalized.entities),JSON.stringify(normalized.editor_ui_regions),JSON.stringify(normalized.primary_subjects),
+        JSON.stringify(normalized.language_by_region),normalized.reader_text_present == null ? null : Number(normalized.reader_text_present),
+        normalized.confidence,normalized.analysis_version,normalized.prompt_version,String(provider || analysis.provider || "").slice(0,100),
+        String(model || analysis.model || "").slice(0,200),normalized.last_error,normalized.analysis_status === "ready" ? now() : null,now(),now()).changes>0;
+    return withinTransaction ? write() : transaction(this.db,write);
+  }
+
+  sourceAssetDecisionDto(assetId) {
+    const row=this.db.prepare(`SELECT sa.*,saa.analysis_status,saa.asset_kind,saa.text_regions_json,
+      saa.photo_regions_json,saa.entities_json,saa.editor_ui_regions_json,saa.primary_subjects_json,
+      saa.language_by_region_json,saa.reader_text_present,saa.confidence AS analysis_confidence,
+      saa.analysis_version,saa.prompt_version,saa.source_sha256 AS analysis_source_sha256
+      FROM source_assets sa LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id WHERE sa.id=?`).get(assetId);
+    return row ? hydrateSourceAssetAnalysis(row) : null;
   }
 
   getSegmentCoveragePackage(segmentId, { extraction = null, retry = false } = {}) {
@@ -4962,6 +5009,11 @@ export class Repository {
         id: asset.id, source_id: asset.source_id, alt_text: asset.alt_text,
         nearby_text: asset.nearby_text, caption_text: asset.caption_text,
         evidence_text: asset.evidence_text, language_status: asset.language_status,
+        analysis_status:asset.analysis_status,asset_kind:asset.asset_kind,
+        text_regions:asset.text_regions,photo_regions:asset.photo_regions,entities:asset.entities,
+        editor_ui_regions:asset.editor_ui_regions,primary_subjects:asset.primary_subjects,
+        language_by_region:asset.language_by_region,reader_text_present:asset.reader_text_present,
+        analysis_confidence:asset.analysis_confidence,analysis_version:asset.analysis_version,
         mime_type: asset.mime_type, preview_url: `/api/source-assets/${asset.id}/preview`,
       })),
       internal_link_inventory: linkInventory,
@@ -5360,13 +5412,48 @@ export class Repository {
     const contentPackage=this.getBriefPackage(row.brief_id);
     const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null});
     const policy=contentPolicyFor(row,contentPackage?.facts || []);
-    if (current.length >= Number(policy.visuals?.target || 0)) return current;
     const visuals=normalizeVisuals(current,row,row,assets,policy);
-    if (visuals.length <= current.length) return current;
     this.replaceDraftVisuals(draftId,visuals,row.strategy_version || this.strategyVersion);
     this.refreshDraftSchema(draftId);
     return this.listDraftVisuals(draftId);
   }
+
+  mediaRepairPlan(draftId) {
+    const current=this.listDraftVisuals(draftId);
+    const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
+      FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
+    if (!row) return { plan_hash:sha256(`missing:${draftId}`),slots:[] };
+    const contentPackage=this.getBriefPackage(row.brief_id);
+    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null});
+    const proposed=normalizeVisuals(current,row,row,assets,contentPolicyFor(row,contentPackage?.facts || []));
+    const slots=proposed.map((visual,index)=>{
+      const existing=current[index] || null;
+      const changed=!existing || existing.asset_fingerprint !== visualFingerprint(visual);
+      const metadata=existing?.media_metadata || {};
+      const qa=metadata.quality_qa?.status || "not_tested";
+      const binary=metadata.binary_qa?.status || metadata.pixel_qa?.status || "not_tested";
+      const transform=visual.acquisition_strategy;
+      const requiresModel=["analyze_source_image","localize_source_image","localize_photo_overlay","recompose_editorial_card",
+        "recompose_collage","recompose_map_or_route","generate_illustration"].includes(transform);
+      const needsQualityQa=requiresModel && transform !== "analyze_source_image" && transform !== "generate_illustration";
+      const repair=changed || ["planned","failed"].includes(existing?.status)
+        || binary === "failed" || (needsQualityQa && qa !== "passed");
+      return { visual_id:existing?.id || null,slot:index+1,source_asset_id:visual.source_asset_id || null,
+        old_media_url:existing?.wordpress_media_url || existing?.media_url || null,
+        old_media_sha256:metadata.binary_qa?.sha256 || metadata.pixel_qa?.sha256 || null,
+        disposition:repair ? "repair" : "retain",
+        reason:changed ? "visual_fingerprint_changed" : existing?.status === "failed" ? "visual_failed"
+          : existing?.status === "planned" ? "visual_incomplete" : binary === "failed" ? "binary_qa_failed"
+            : needsQualityQa && qa !== "passed" ? `quality_qa_${qa}` : "qualified_visual_retained",
+        acquisition_strategy:transform,requires_model:repair && requiresModel,
+        max_model_calls:repair && requiresModel ? (transform === "analyze_source_image" ? 1 : 2) : 0,
+        proposed_fingerprint:visualFingerprint(visual) };
+    });
+    return { plan_hash:sha256(JSON.stringify(slots.map((slot)=>({slot:slot.slot,source:slot.source_asset_id,
+      disposition:slot.disposition,reason:slot.reason,fingerprint:slot.proposed_fingerprint})))),slots };
+  }
+
+  prepareMediaRepair(draftId) { return this.ensureAuthorizedSourceVisuals(draftId); }
 
   replaceDraftVisuals(draftId, visuals, strategyVersion) {
     const timestamp = now();
@@ -5389,7 +5476,7 @@ export class Repository {
           media_url=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_url ELSE excluded.media_url END,
           wordpress_media_id=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.wordpress_media_id ELSE NULL END,
           wordpress_media_url=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.wordpress_media_url ELSE NULL END,
-          media_metadata_json=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_metadata_json ELSE '{}' END,
+          media_metadata_json=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_metadata_json ELSE excluded.media_metadata_json END,
           provider=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.provider ELSE excluded.provider END,
           model=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.model ELSE excluded.model END,
           last_error=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.last_error ELSE NULL END,
@@ -5415,13 +5502,14 @@ export class Repository {
         sa.mime_type AS source_asset_mime_type,sa.language_status AS source_asset_language_status
       FROM article_visuals av LEFT JOIN source_assets sa ON sa.id=av.source_asset_id
       WHERE av.draft_id=? AND av.status IN ('planned','failed')
-        AND av.acquisition_strategy IN ('generate_illustration','localize_source_image')
+        AND av.acquisition_strategy IN ('generate_illustration','analyze_source_image','localize_source_image','localize_photo_overlay',
+          'recompose_editorial_card','recompose_collage','recompose_map_or_route')
         AND (retry_at IS NULL OR retry_at<=?)
       ORDER BY av.slot
     `).all(draftId, now());
   }
 
-  saveGeneratedVisual(visualId, result) {
+  saveGeneratedVisual(visualId, result, { expectedFingerprint = null } = {}) {
     const current = this.db.prepare(`SELECT draft_id,acquisition_strategy,source_asset_id,media_metadata_json
       FROM article_visuals WHERE id=?`).get(visualId);
     const metadata = {
@@ -5432,6 +5520,9 @@ export class Repository {
         localized_from_source_asset_id: current.source_asset_id || null,
       } : {}),
     };
+    if (expectedFingerprint && current && this.db.prepare("SELECT asset_fingerprint FROM article_visuals WHERE id=?").get(visualId)?.asset_fingerprint !== expectedFingerprint) {
+      throw Object.assign(new Error("A late visual result cannot overwrite the current media plan."),{code:"STALE_VISUAL_RESULT",retryable:false});
+    }
     this.db.prepare(`
       UPDATE article_visuals SET status='generated', media_path=?, media_url=?, provider=?, model=?,
         media_metadata_json=?,last_error=NULL, retry_at=NULL, updated_at=?
@@ -6305,7 +6396,7 @@ export class Repository {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(intent.id, draftId, intent.blockIndex, intent.blockKey, intent.intentType, intent.productCategory,
           intent.destinationSlug, intent.areaKey, intent.routeKey, intent.entityKey, intent.intentStrength,
-          intent.decisionStage, intent.recommendedComponent, intent.reason, timestamp, timestamp);
+          intent.decisionStage, intent.recommendedComponent, intent.reason || intent.relevanceReason || null, timestamp, timestamp);
       for (const slot of composition.slots || []) this.db.prepare(`INSERT INTO commercial_slots(
         id, draft_id, intent_id, affiliate_asset_id, slot_key, component_type, placement, block_index,
         strategy_version, created_at, updated_at
@@ -7167,6 +7258,10 @@ export class Repository {
     return this.db.prepare(`
       SELECT sa.id, sa.source_id, sa.remote_url, sa.local_path, sa.mime_type, sa.alt_text, sa.position,
         sa.width,sa.height,sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
+        sa.original_sha256,sa.capture_version,saa.analysis_status,saa.asset_kind,saa.text_regions_json,saa.photo_regions_json,
+        saa.entities_json,saa.editor_ui_regions_json,saa.primary_subjects_json,saa.language_by_region_json,
+        saa.reader_text_present,saa.confidence AS analysis_confidence,saa.analysis_version,saa.prompt_version,
+        saa.source_sha256 AS analysis_source_sha256,
         sa.authorization_status AS asset_authorization_status,sa.publishable AS asset_publishable,
         s.title AS source_title,s.authorization_status AS source_authorization_status,s.publishable AS source_publishable,
         COALESCE((SELECT COALESCE(NULLIF(c.canonical_subject,''),c.subject)
@@ -7180,12 +7275,13 @@ export class Repository {
             JOIN evidence_spans es ON es.id=ids.value WHERE es.asset_id=sa.id
           )), '') AS evidence_text
       FROM source_assets sa JOIN sources s ON s.id=sa.source_id
+      LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id
       WHERE sa.kind='image' AND sa.storage_status='saved' AND sa.local_path<>''
         AND sa.original_bytes_status='saved_original' AND sa.durability_status='ORIGINAL_STORED'
         AND (${scopes.join(" OR ")})
       ORDER BY s.captured_at DESC, sa.position ASC
-      LIMIT 24
-    `).all(...parameters);
+      LIMIT 160
+    `).all(...parameters).map(hydrateSourceAssetAnalysis);
   }
 
   retrySource(sourceId) {
@@ -8562,14 +8658,15 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
   // deterministically instead of fabricating image requests or leaving the page
   // needlessly image-free.
   const visuals = supplied.slice(0, maximum)
-    .filter((item) => !["infographic", "map_or_route"].includes(item?.image_type))
+    .filter((item) => item?.source_asset_id || !["infographic", "map_or_route"].includes(item?.image_type))
     .map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
   const unusedAssets = new Map(authorizedSourceAssets.map((asset) => [asset.id, asset]));
   const normalized = visuals.map((visual) => {
-    if (visual.image_type !== "real_world_photo") return visual;
+    if (!visual.source_asset_id && (visual.image_type !== "real_world_photo" || visual.acquisition_strategy === "generate_illustration")) return visual;
+    const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
     const ranked = [...unusedAssets.values()].map((asset) => ({ asset, score: visualAssetMatchScore(visual, asset) }))
       .sort((left, right) => right.score - left.score);
-    const match = ranked[0];
+    const match = exact ? {asset:exact,score:1} : ranked[0];
     // Asset ownership is insufficient: a factual photo is reusable only when its
     // own alt/evidence metadata matches the planned subject.
     if (!match || match.score < 0.34) return null;
@@ -8577,24 +8674,29 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     unusedAssets.delete(asset.id);
     const decision = decideVisualAsset(asset, visual);
     if (decision.action === "reject") return null;
-    const needsLocalization = decision.action === "localize";
+    const needsWork = ["localize","analyze"].includes(decision.action);
+    const acquisitionStrategy=visualAcquisitionStrategy(decision);
     return {
       ...visual,
       purpose: truncateText(visual.purpose || `Evidence-linked view for ${draft.title}`, 300),
       alt_text: readerVisualAlt(asset, visual.alt_text || visual.image_subject, brief.destination_slug),
       caption: truncateText(asset.caption_text || visual.caption || readerVisualAlt(asset, visual.image_subject, brief.destination_slug), 300),
       generation_prompt: "",
-      acquisition_strategy: needsLocalization ? "localize_source_image" : "use_authorized_source_image",
+      image_type:visualImageType(decision,visual.image_type),
+      acquisition_strategy: acquisitionStrategy,
       factual_image_required: true,
       source_asset_id: asset.id,
       source_remote_url: asset.remote_url,
-      status: needsLocalization ? "planned" : "generated",
-      media_url: needsLocalization ? "" : `/api/source-assets/${asset.id}/preview`,
+      status: needsWork ? "planned" : "generated",
+      media_url: needsWork ? "" : `/api/source-assets/${asset.id}/preview`,
       provider: "authorized_xiaohongshu_source",
       model: "user-authorized-source-image",
-      media_metadata: { source_mime_type: asset.mime_type, storage_status: asset.storage_status,
+      media_metadata: { ...(visual.media_metadata || {}),source_mime_type: asset.mime_type, storage_status: asset.storage_status,
         original_bytes_status: asset.original_bytes_status, durability_status: asset.durability_status,
-        language_status: asset.language_status, visual_decision:decision,
+        language_status: asset.language_status, visual_decision:decision,source_sha256:asset.original_sha256 || "",
+        capture_version:asset.capture_version || null,analysis_version:asset.analysis_version || "",
+        transform_version:"visual-transform-2",style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
+        source_analysis:sourceAnalysisSnapshot(asset),
         authorization_policy:"project_source_media_full_authorization",
         source_provenance: {
           source_asset_id: asset.id,
@@ -8620,19 +8722,24 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     if (!subject) continue;
     const decision = decideVisualAsset(asset, { image_subject:subject, purpose:`Evidence-linked view supporting ${draft.title}` });
     if (decision.action === "reject") continue;
-    const localize = decision.action === "localize";
+    const needsWork = ["localize","analyze"].includes(decision.action);
+    const acquisitionStrategy=visualAcquisitionStrategy(decision);
     normalized.push({
       placement: defaultPlacement(index), purpose:truncateText(`Evidence-linked view supporting ${draft.title}`,300),
       alt_text:subject,
       caption:truncateText(asset.caption_text || subject,300),
-      generation_prompt:"",aspect_ratio:sourceAssetAspectRatio(asset),image_type:"real_world_photo",
+      generation_prompt:"",aspect_ratio:sourceAssetAspectRatio(asset),image_type:visualImageType(decision,"real_world_photo"),
       image_role:index===0 ? "hero" : "support",image_subject:subject,
-      acquisition_strategy:localize ? "localize_source_image" : "use_authorized_source_image",factual_image_required:true,
-      source_asset_id:asset.id,source_remote_url:asset.remote_url,status:localize ? "planned" : "generated",
-      media_url:localize ? "" : `/api/source-assets/${asset.id}/preview`,provider:"authorized_project_source",
+      acquisition_strategy:acquisitionStrategy,factual_image_required:true,
+      source_asset_id:asset.id,source_remote_url:asset.remote_url,status:needsWork ? "planned" : "generated",
+      media_url:needsWork ? "" : `/api/source-assets/${asset.id}/preview`,provider:"authorized_project_source",
       model:"user-authorized-source-image",media_metadata:{source_mime_type:asset.mime_type,
         storage_status:asset.storage_status,original_bytes_status:asset.original_bytes_status,
         durability_status:asset.durability_status,language_status:asset.language_status,visual_decision:decision,
+        source_sha256:asset.original_sha256 || "",capture_version:asset.capture_version || null,
+        analysis_version:asset.analysis_version || "",transform_version:"visual-transform-2",
+        style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
+        source_analysis:sourceAnalysisSnapshot(asset),
         authorization_policy:"project_source_media_full_authorization",source_provenance:{source_asset_id:asset.id,
           original_stored:true,project_owner_confirmed:true}},
     });
@@ -8642,27 +8749,82 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
 }
 
 export function decideVisualAsset(asset = {}, request = {}) {
-  const explicit = String(asset.visual_class || asset.visualClass || "").toLowerCase();
+  const explicit = String(asset.asset_kind || asset.assetKind || asset.visual_class || asset.visualClass || "").toLowerCase();
   const width = Number(asset.width || 0); const height = Number(asset.height || 0);
   const language = String(asset.language_status || asset.languageStatus || "unknown").toLowerCase();
   const searchable = `${asset.alt_text || ""} ${asset.caption_text || ""} ${asset.evidence_text || ""} ${request.image_subject || ""}`.toLowerCase();
-  const authenticityCritical = Boolean(asset.authenticity_critical) || /sign|signage|plaque|storefront|entrance|station name|招牌|牌匾|站名/i.test(searchable);
-  const visualClass = explicit || (Number(asset.handwriting_score || 0) >= 0.5 ? "handwritten"
-    : Number(asset.collage_count || 0) > 1 ? "collage"
-      : Number(asset.text_density || 0) >= 0.35 ? "text_overlay"
-        : width && height && Math.min(width, height) < 480 ? "low_quality" : "real_world_photo");
+  const regions=Array.isArray(asset.language_by_region) ? asset.language_by_region : [];
+  const preserveRegionIds=regions.filter((region)=>region?.preserve === true || region?.role === "real_world_signage")
+    .map((region)=>String(region.region_id || "")).filter(Boolean);
+  const translateRegionIds=regions.filter((region)=>region?.preserve !== true
+    && ["author_overlay","editorial_text","ui_text"].includes(region?.role)
+    && /^(?:zh|chinese|mixed)/i.test(String(region?.language || "")))
+    .map((region)=>String(region.region_id || "")).filter(Boolean);
+  const authenticityCritical = Boolean(asset.authenticity_critical) || preserveRegionIds.length > 0
+    || /\b(?:sign|signage|plaque|storefront|entrance|station name)\b|招牌|牌匾|站名/i.test(searchable);
+  const visualClass = explicit || (Number(asset.handwriting_score || 0) >= 0.5 ? "handwritten_card"
+    : Number(asset.collage_count || 0) > 1 ? "photo_collage"
+      : Number(asset.text_density || 0) >= 0.35 ? "editorial_infographic"
+        : width && height && Math.min(width, height) < 480 ? "low_quality" : "unknown");
+  const analysisStatus=String(asset.analysis_status || asset.analysisStatus || (explicit ? "ready" : "not_analyzed")).toLowerCase();
+  const common={language,authenticityCritical,preserveRegionIds,translateRegionIds};
   if (["low_quality","editor_ui","editor_interface","unreadable"].includes(visualClass)) return {
-    visualClass, language, authenticityCritical, action:"reject", reason:"insufficient_delivery_quality",
+    visualClass,...common,action:"reject", reason:"insufficient_delivery_quality",
   };
-  if (authenticityCritical) return { visualClass, language, authenticityCritical, action:"retain", reason:"authentic_signage_is_reader_evidence" };
-  if (language === "unknown" && ["handwritten","pure_text","text_overlay","infographic","collage"].includes(visualClass)) {
-    return { visualClass, language, authenticityCritical, action:"reject", reason:"language_analysis_required" };
+  if (!explicit || ["not_analyzed","failed"].includes(analysisStatus)) {
+    if (language === "no_text") return {visualClass:"documentary_photo",...common,action:"retain",
+      transformKind:"PHOTO_RETAIN",reason:"legacy_image_level_no_text_evidence"};
+    if (authenticityCritical && !translateRegionIds.length) return {visualClass:"documentary_photo",...common,action:"retain",
+      transformKind:"PHOTO_RETAIN",reason:"authentic_signage_is_reader_evidence"};
+    return {visualClass:"unknown",...common,action:"analyze",transformKind:"ANALYZE_SOURCE_IMAGE",reason:"image_analysis_required"};
   }
-  if (["chinese", "mixed"].includes(language) && ["handwritten","pure_text","text_overlay", "infographic", "collage"].includes(visualClass)) {
-    return { visualClass, language, authenticityCritical, action:"localize", reason:"reader_comprehension_requires_text_localization" };
+  const normalizedClass=({real_world_photo:"documentary_photo",handwritten:"handwritten_card",pure_text:"editorial_infographic",
+    text_overlay:"editorial_infographic",infographic:"editorial_infographic",collage:"photo_collage"})[visualClass] || visualClass;
+  if (language === "unknown" && !regions.length && ["handwritten_card","editorial_infographic","photo_collage","map_or_route"].includes(normalizedClass)) {
+    return {visualClass:normalizedClass,...common,action:"analyze",transformKind:"ANALYZE_SOURCE_IMAGE",reason:"image_analysis_required"};
   }
-  return { visualClass, language, authenticityCritical, action:"retain",
-    reason:language === "unknown" ? "unknown_language_photo_has_no_detected_reader_text" : "authentic_visual_is_readable_as_is" };
+  if (normalizedClass === "documentary_photo") {
+    if (translateRegionIds.length) return {visualClass:normalizedClass,...common,action:"localize",
+      transformKind:"PHOTO_OVERLAY_LOCALIZE",reason:"author_overlay_requires_localization"};
+    return {visualClass:normalizedClass,...common,action:"retain",transformKind:"PHOTO_RETAIN",
+      reason:authenticityCritical ? "authentic_signage_is_reader_evidence" : "documentary_photo_retained"};
+  }
+  if (["handwritten_card","editorial_infographic"].includes(normalizedClass)) return {
+    visualClass:normalizedClass,...common,action:"localize",transformKind:"EDITORIAL_CARD_RECOMPOSE",
+    reason:"editorial_card_requires_english_recomposition",
+  };
+  if (normalizedClass === "photo_collage") {
+    if (!translateRegionIds.length && authenticityCritical) return {visualClass:normalizedClass,...common,action:"retain",
+      transformKind:"PHOTO_RETAIN",reason:"collage_contains_only_authentic_signage"};
+    return {visualClass:normalizedClass,...common,action:"localize",transformKind:"COLLAGE_RECOMPOSE",
+      reason:"collage_author_text_requires_recomposition"};
+  }
+  if (normalizedClass === "map_or_route") return {visualClass:normalizedClass,...common,action:"localize",
+    transformKind:"MAP_OR_ROUTE",reason:"route_labels_require_complete_localization"};
+  if (normalizedClass === "decorative_illustration") return {visualClass:normalizedClass,...common,action:"retain",
+    transformKind:"PHOTO_RETAIN",reason:"decorative_source_is_readable_as_is"};
+  return {visualClass:normalizedClass,...common,action:"analyze",transformKind:"ANALYZE_SOURCE_IMAGE",reason:"image_analysis_required"};
+}
+
+function visualAcquisitionStrategy(decision) {
+  return ({ANALYZE_SOURCE_IMAGE:"analyze_source_image",PHOTO_RETAIN:"use_authorized_source_image",
+    PHOTO_OVERLAY_LOCALIZE:"localize_photo_overlay",EDITORIAL_CARD_RECOMPOSE:"recompose_editorial_card",
+    COLLAGE_RECOMPOSE:"recompose_collage",MAP_OR_ROUTE:"recompose_map_or_route"})[decision.transformKind]
+    || (decision.action === "localize" ? "localize_source_image" : decision.action === "analyze" ? "analyze_source_image" : "use_authorized_source_image");
+}
+
+function visualImageType(decision,fallback) {
+  if (decision.transformKind === "MAP_OR_ROUTE") return "map_or_route";
+  if (["EDITORIAL_CARD_RECOMPOSE","COLLAGE_RECOMPOSE"].includes(decision.transformKind)) return "infographic";
+  return fallback;
+}
+
+function sourceAnalysisSnapshot(asset={}) {
+  return {analysis_status:asset.analysis_status || "not_analyzed",asset_kind:asset.asset_kind || "unknown",
+    text_regions:asset.text_regions || [],photo_regions:asset.photo_regions || [],entities:asset.entities || [],
+    editor_ui_regions:asset.editor_ui_regions || [],primary_subjects:asset.primary_subjects || [],
+    language_by_region:asset.language_by_region || [],reader_text_present:asset.reader_text_present,
+    confidence:asset.analysis_confidence || 0,analysis_version:asset.analysis_version || ""};
 }
 
 function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
@@ -8723,7 +8885,8 @@ function detectedAssetLanguage(result = {}) {
 function normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios) {
   const allowedTypes = ["real_world_photo", "infographic", "map_or_route", "illustration"];
   const imageType = allowedTypes.includes(item?.image_type) ? item.image_type : "illustration";
-  const strategy = imageType === "real_world_photo" ? "search_real_image"
+  const strategy = item?.source_asset_id ? String(item.acquisition_strategy || "use_authorized_source_image")
+    : imageType === "real_world_photo" ? "search_real_image"
     : imageType === "infographic" ? "render_infographic"
       : imageType === "map_or_route" ? "render_map" : "generate_illustration";
   const factualRequired = imageType === "real_world_photo" || Boolean(item?.factual_image_required);
@@ -8740,6 +8903,8 @@ function normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRa
     image_subject: truncateText(item?.image_subject || draft.title, 240),
     acquisition_strategy: strategy,
     factual_image_required: factualRequired,
+    source_asset_id:item?.source_asset_id || null,source_remote_url:item?.source_remote_url || null,
+    status:item?.status || "planned",media_url:item?.media_url || "",provider:item?.provider || null,model:item?.model || null,
     media_metadata: { ...(item?.media_metadata || {}),
       style_version:strategy === "generate_illustration" ? "stc-light-editorial-v1" : null,
       qa_version:"visual-qa-2" },
@@ -8764,6 +8929,50 @@ function visualFingerprint(visual) {
     style_version: visual.style_version || visual.media_metadata?.style_version || "stc-light-editorial-v1",
     qa_version: visual.qa_version || visual.media_metadata?.qa_version || "visual-qa-2",
   }));
+}
+
+function normalizeSourceAssetAnalysis(value = {}, asset = {}) {
+  const allowedKinds=new Set(["documentary_photo","handwritten_card","editorial_infographic","photo_collage",
+    "map_or_route","decorative_illustration","unknown"]);
+  const allowedStatuses=new Set(["not_analyzed","ready","failed","needs_review"]);
+  const analysisStatus=allowedStatuses.has(value.analysis_status) ? value.analysis_status : "ready";
+  const assetKind=allowedKinds.has(value.asset_kind) ? value.asset_kind : "unknown";
+  const sourceSha256=String(value.source_sha256 || asset.original_sha256 || asset.stored_sha256 || "");
+  if (value.source_sha256 && asset.original_sha256 && value.source_sha256 !== asset.original_sha256) {
+    throw Object.assign(new Error("Image analysis belongs to different source bytes."),{code:"STALE_MEDIA_ANALYSIS",retryable:false});
+  }
+  const list=(input,limit=100)=>Array.isArray(input) ? input.filter((item)=>item && typeof item === "object").slice(0,limit) : [];
+  return {
+    source_sha256:sourceSha256,analysis_status:analysisStatus,asset_kind:assetKind,
+    text_regions:list(value.text_regions),photo_regions:list(value.photo_regions),entities:Array.isArray(value.entities) ? value.entities.slice(0,100) : [],
+    editor_ui_regions:list(value.editor_ui_regions),primary_subjects:Array.isArray(value.primary_subjects) ? value.primary_subjects.slice(0,30) : [],
+    language_by_region:list(value.language_by_region),reader_text_present:typeof value.reader_text_present === "boolean" ? value.reader_text_present : null,
+    confidence:Math.max(0,Math.min(1,Number(value.confidence || 0))),
+    analysis_version:String(value.analysis_version || "media-analysis-1").slice(0,100),
+    prompt_version:String(value.prompt_version || "media-analysis-prompt-1").slice(0,100),
+    last_error:value.last_error ? String(value.last_error).slice(0,2000) : null,
+  };
+}
+
+function hydrateSourceAssetAnalysis(row) {
+  return {...row,
+    analysis_status:row.analysis_status || "not_analyzed",asset_kind:row.asset_kind || "unknown",
+    text_regions:json(row.text_regions_json,[]),photo_regions:json(row.photo_regions_json,[]),entities:json(row.entities_json,[]),
+    editor_ui_regions:json(row.editor_ui_regions_json,[]),primary_subjects:json(row.primary_subjects_json,[]),
+    language_by_region:json(row.language_by_region_json,[]),
+    reader_text_present:row.reader_text_present == null ? null : Boolean(row.reader_text_present),
+    analysis_confidence:Number(row.analysis_confidence || 0),
+  };
+}
+
+function imageLanguageStatus(analysis = {}) {
+  const languages=(analysis.language_by_region || []).map((item)=>String(item?.language || "").toLowerCase());
+  const hasHan=languages.some((value)=>/^(?:zh|chinese)/.test(value));
+  const hasEnglish=languages.some((value)=>/^(?:en|english)/.test(value));
+  if (hasHan && hasEnglish) return "mixed";
+  if (hasHan) return "chinese";
+  if (hasEnglish) return "english";
+  return analysis.reader_text_present === false ? "no_text" : "unknown";
 }
 
 function deliveryVisualMetadata(row) {

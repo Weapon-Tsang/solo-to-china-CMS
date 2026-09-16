@@ -7,6 +7,7 @@ import {
   detectCommercialIntents, normalizeCountryCode, projectVisibleBlockText,
 } from "../src/commercial.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
+import { loadConfig } from "../src/config.mjs";
 
 test("commercial composition is a separate overlay and leaves the Research Draft unchanged", () => {
   const researchBody = "## Plan your visit\n\nUse the evidence-backed itinerary.";
@@ -32,7 +33,7 @@ test("commercial composition is a separate overlay and leaves the Research Draft
   assert.equal(composition.offerIds.length, 1);
 });
 
-test("commercial composer is a no-op when no relevant active offer exists", () => {
+test("a destination-planning demand with no configured asset is reported explicitly", () => {
   const contentPackage = {
     candidate: { topic_key: "beijing:food" }, brief: { topic: "Beijing food" },
     draft: { title: "Where to eat", body_markdown: "Research body" },
@@ -40,7 +41,46 @@ test("commercial composer is a no-op when no relevant active offer exists", () =
   const composition = new CommercialComposer({ maxOffersPerDraft: 3, disclosure: "Disclosure" }).compose(contentPackage, []);
   assert.equal(composition.status, "no_offers");
   assert.equal(composition.publishableBodyMarkdown, "Research body");
-  assert.equal(composition.outcome, "intentional_noop");
+  assert.equal(composition.outcome, "asset_not_configured");
+});
+
+test("a city guide can use one real destination planning resource without booking words or a link-task score", () => {
+  const contentPackage = {
+    candidate:{ destination_slug:"chongqing", topic_key:"chongqing:three-day-itinerary" },
+    brief:{ destination_slug:"chongqing", content_type:"itinerary", canonical:{ country_code:"CN" } },
+    draft:{ id:"draft-plan", title:"Three days in Chongqing", body_markdown:"## Day one\n\nStart downtown and keep the route compact." },
+  };
+  const asset = {
+    id:"planner-chongqing", provider:"Trip.com", asset_type:"CATEGORY_LINK", product_category:"PLANNER",
+    scope_type:"DESTINATION", scope_key:"chongqing", destination_slug:"chongqing", active:1,
+    provider_status:"CONFIGURED", lifecycle_state:"operational", language:"en",
+    target_url:"https://www.trip.com/guide/destination/chongqing-158/", title:"Plan a Chongqing trip",
+    cta_label:"Explore planning resources",
+  };
+  const configured = loadConfig({}).commercial;
+  assert.equal(configured.policy.version, "2.1");
+  assert.equal(configured.linkTaskThreshold, 70);
+  const composition = new CommercialComposer(configured).compose(contentPackage, [asset]);
+  assert.equal(composition.outcome, "inserted");
+  assert.equal(composition.slots.length, 1);
+  assert.equal(composition.slots[0].placement, "end_resource");
+  assert.equal(composition.slots[0].affiliate_asset_id, "planner-chongqing");
+});
+
+test("destination planning intent persists when its explanation is carried by relevanceReason", (t) => {
+  const { repository, db } = repositoryFixture(t);
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at)
+    VALUES ('brief-planner-persist','chongqing','Three days in Chongqing','[]','informational','ready','now','now')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-planner-persist','brief-planner-persist','Three days in Chongqing','three-days-chongqing','Body','{}','ready_for_wordpress','now','now',1,'planner-hash')`).run();
+  const composition = new CommercialComposer().compose({
+    candidate:{ destination_slug:"chongqing", topic_key:"chongqing:essentials" },
+    brief:{ destination_slug:"chongqing", content_type:"city_guide", canonical:{ country_code:"CN" } },
+    draft:{ id:"draft-planner-persist", title:"Chongqing essentials", body_markdown:"## Start downtown\n\nKeep the route compact." },
+  }, []);
+  assert.doesNotThrow(() => repository.saveCommercialComposition("draft-planner-persist", composition));
+  const saved = db.prepare("SELECT reason FROM commercial_intents WHERE draft_id=? AND block_key='destination-planning-resource'").get("draft-planner-persist");
+  assert.match(saved.reason, /destination-level planning resource/i);
 });
 
 test("visible-text projection reads Contract list.data.items without scanning URLs or metadata", () => {
@@ -49,7 +89,7 @@ test("visible-text projection reads Contract list.data.items without scanning UR
   assert.equal(projectVisibleBlockText(block), "Book a train from Chongqing to Chengdu");
   const intents = detectCommercialIntents({ candidate:{ destination_slug:"chongqing" }, brief:{ canonical:{ country_code:"CN" } },
     draft:{ id:"draft-list", title:"Rail guide" }, frontend_page:{ provenance:{ entries:[{ contentNodeId:"node-rail" }] } } }, [block]);
-  assert.deepEqual(intents.map((item) => item.productCategory), ["TRAIN"]);
+  assert.deepEqual(intents.map((item) => item.productCategory), ["TRAIN","PLANNER"]);
   assert.equal(intents[0].blockKey, "node:node-rail");
 });
 
@@ -63,14 +103,29 @@ test("COUNTRY fallback compares normalized country codes rather than a city scop
   assert.equal(resolveAffiliateAsset(intent, [us, china]).asset.id, "china");
 });
 
-test("a real commercial demand with no eligible asset is an asset gap, not a successful insertion", () => {
+test("a real commercial demand with no eligible asset is asset_not_configured, not a successful insertion", () => {
   const composition = new CommercialComposer().compose({ candidate:{ destination_slug:"chongqing" },
     brief:{ destination_slug:"chongqing", canonical:{ country_code:"CN" } },
     draft:{ id:"draft-gap", title:"Where to stay", body_markdown:"## Where to stay\n\nCompare hotel areas before booking." } }, []);
   assert.equal(composition.status, "no_offers");
-  assert.equal(composition.outcome, "asset_gap");
-  assert.equal(composition.reasonCode, "NO_ELIGIBLE_ASSET");
+  assert.equal(composition.outcome, "asset_not_configured");
+  assert.equal(composition.reasonCode, "ASSET_NOT_CONFIGURED");
   assert.equal(composition.manifest.slots.length, 0);
+});
+
+test("commercial empty outcomes distinguish no demand, rejected inventory, and density suppression", () => {
+  const noDemand=new CommercialComposer().compose({candidate:{destination_slug:"chongqing"},brief:{destination_slug:"chongqing"},
+    draft:{id:"draft-none",title:"A historical essay",body_markdown:"## Context\n\nA purely historical discussion."}},[]);
+  assert.equal(noDemand.outcome,"intentional_noop");
+
+  const base={id:"planner",provider:"Trip.com",asset_type:"CATEGORY_LINK",product_category:"PLANNER",scope_type:"DESTINATION",
+    scope_key:"chongqing",destination_slug:"chongqing",target_url:"https://www.trip.com/guide/destination/chongqing-158/",
+    title:"Plan Chongqing",cta_label:"Plan",active:1,lifecycle_state:"operational",language:"en"};
+  const pack={candidate:{destination_slug:"chongqing",topic_key:"chongqing:guide"},brief:{destination_slug:"chongqing",content_type:"city_guide"},
+    draft:{id:"draft-outcomes",title:"Chongqing guide",body_markdown:"## Start\n\nUse this guide."}};
+  assert.equal(new CommercialComposer().compose(pack,[{...base,provider_status:"DISABLED"}]).outcome,"eligibility_rejected");
+  assert.equal(new CommercialComposer({maxEndResourceUnits:0}).compose(pack,[{...base,provider_status:"CONFIGURED"}]).outcome,
+    "density_or_duplicate_suppressed");
 });
 
 test("metro station wording alone does not create an intercity train intent", () => {

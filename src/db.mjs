@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 70;
+export const SCHEMA_VERSION = 71;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -91,6 +91,44 @@ function migrate(db) {
   if (current < 68) migrationSixtyEight(db);
   if (current < 69) migrationSixtyNine(db);
   if (current < 70) migrationSeventy(db);
+  if (current < 71) migrationSeventyOne(db);
+}
+
+function migrationSeventyOne(db) {
+  // Image understanding is a durable, capture-versioned source artifact. It is
+  // intentionally separate from source-level extraction language so a Chinese
+  // note cannot silently classify every attached image as Chinese text.
+  transaction(db, () => db.exec(`
+    CREATE TABLE source_asset_analyses (
+      asset_id TEXT PRIMARY KEY REFERENCES source_assets(id) ON DELETE CASCADE,
+      source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      source_sha256 TEXT NOT NULL DEFAULT '',
+      capture_version INTEGER NOT NULL,
+      analysis_status TEXT NOT NULL DEFAULT 'not_analyzed'
+        CHECK (analysis_status IN ('not_analyzed','ready','failed','needs_review')),
+      asset_kind TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (asset_kind IN ('documentary_photo','handwritten_card','editorial_infographic','photo_collage','map_or_route','decorative_illustration','unknown')),
+      text_regions_json TEXT NOT NULL DEFAULT '[]',
+      photo_regions_json TEXT NOT NULL DEFAULT '[]',
+      entities_json TEXT NOT NULL DEFAULT '[]',
+      editor_ui_regions_json TEXT NOT NULL DEFAULT '[]',
+      primary_subjects_json TEXT NOT NULL DEFAULT '[]',
+      language_by_region_json TEXT NOT NULL DEFAULT '[]',
+      reader_text_present INTEGER CHECK (reader_text_present IN (0,1) OR reader_text_present IS NULL),
+      confidence REAL NOT NULL DEFAULT 0 CHECK (confidence >= 0 AND confidence <= 1),
+      analysis_version TEXT NOT NULL DEFAULT '',
+      prompt_version TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      last_error TEXT,
+      analyzed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_source_asset_analyses_source_capture
+      ON source_asset_analyses(source_id,capture_version,analysis_status);
+    INSERT INTO schema_migrations(version, applied_at) VALUES (71, datetime('now'));
+  `));
 }
 
 function migrationSeventy(db) {

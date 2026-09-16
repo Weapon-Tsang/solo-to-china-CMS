@@ -292,6 +292,25 @@ test("deterministic composition consumes the page plan and records readable subs
   assert.equal(page.model, "deterministic-content-ast-reading-3");
 });
 
+test("semantic route and fact components split only the first colon", () => {
+  const timedDraft={title:"Opening plan",slug:"opening-plan",body_markdown:"## Timing\n\n- Monday: 09:00–17:00; last entry: 16:30",
+    evidence_ledger:[]};
+  const ast=buildContentAst({draft:timedDraft,brief:{id:"brief-colons",content_type:"itinerary"}});
+  const components=[
+    {id:"heading",status:"stable",variants:["section"],schema:{properties:{text:{},level:{}}}},
+    {id:"paragraph",status:"stable",variants:["default"],schema:{properties:{content:{}}}},
+    {id:"list",status:"stable",variants:["unordered","ordered"],schema:{properties:{items:{}}}},
+    {id:"route_timeline",status:"stable",variants:["default"],schema:{properties:{items:{},anchor:{}}}},
+  ];
+  const listNode=ast.nodes.find((node)=>node.type==="list");
+  const page=composePageFromAst(ast,{components},pageSchema,{blocks:[{
+    content_node_id:listNode.id,type:"route_timeline",semantic_role:"preserve the full operating-time instruction",
+  }]});
+  assert.deepEqual(page.output.blocks.find((block)=>block.type==="route_timeline").data.items,[{
+    title:"Monday",detail:"09:00–17:00; last entry: 16:30",
+  }]);
+});
+
 test("supporting media follows its semantic section when earlier paragraphs change", () => {
   const visual={id:"food-photo",image_role:"support",placement:"mid_article",image_subject:"spicy Chongqing noodles",
     alt_text:"Bowl of spicy Chongqing noodles",caption:"Spicy Chongqing noodles",factual_image_required:true};

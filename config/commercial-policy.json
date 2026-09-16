@@ -1,0 +1,17 @@
+{
+  "version": "2.1",
+  "contextual": {
+    "minimum_strength": "HIGH",
+    "max_units": 2,
+    "minimum_block_distance": 3
+  },
+  "destination_resource": {
+    "enabled": true,
+    "max_units": 1,
+    "product_category": "PLANNER",
+    "content_types": ["first_time_guide", "city_guide", "itinerary", "food_guide", "attraction_guide"],
+    "topic_patterns": ["guide", "itinerary", "food", "things to do", "first time", "days in"]
+  },
+  "link_task_threshold": 70,
+  "insertion_requires_opportunity_score": false
+}

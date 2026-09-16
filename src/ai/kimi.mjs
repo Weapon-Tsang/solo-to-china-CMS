@@ -4,6 +4,16 @@ import { createAiClient } from "./client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
 
+const MEDIA_ANALYSIS_ITEM_SCHEMA={ type:"object",additionalProperties:false,
+  required:["asset_id","analysis_status","asset_kind","text_regions","photo_regions","entities","editor_ui_regions",
+    "primary_subjects","language_by_region","reader_text_present","confidence","analysis_version","prompt_version"],
+  properties:{ asset_id:{type:"string"},analysis_status:{type:"string",enum:["ready","needs_review","failed"]},
+    asset_kind:{type:"string",enum:["documentary_photo","handwritten_card","editorial_infographic","photo_collage","map_or_route","decorative_illustration","unknown"]},
+    text_regions:{type:"array",items:{type:"object",additionalProperties:true}},photo_regions:{type:"array",items:{type:"object",additionalProperties:true}},
+    entities:{type:"array",items:{type:"string"}},editor_ui_regions:{type:"array",items:{type:"object",additionalProperties:true}},
+    primary_subjects:{type:"array",items:{type:"string"}},language_by_region:{type:"array",items:{type:"object",additionalProperties:true}},
+    reader_text_present:{type:"boolean"},confidence:{type:"number",minimum:0,maximum:1},analysis_version:{type:"string"},prompt_version:{type:"string"} } };
+
 const EXTRACTION_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -21,8 +31,12 @@ const EXTRACTION_SCHEMA = {
       },
     },
     claims: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "subject", "predicate", "value", "qualifiers", "confidence", "source_quote"], properties: { key: { type: "string" }, subject: { type: "string" }, predicate: { type: "string" }, value: { type: "string" }, qualifiers: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 }, source_quote: { type: "string" }, asset_id: { type: "string" }, segment_id: { type: "string" }, observed_at: { type: "string" }, valid_from: { type: "string" }, valid_to: { type: "string" }, date_confidence: { type: "string", enum: ["low", "medium", "high"] }, claim_role: { type: "string", enum: ["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"] }, knowledge_eligible: { type: "boolean" } } } },
+    media_analysis: { type:"array",items:MEDIA_ANALYSIS_ITEM_SCHEMA },
   },
 };
+
+const MEDIA_ANALYSIS_SCHEMA={...MEDIA_ANALYSIS_ITEM_SCHEMA,properties:{...MEDIA_ANALYSIS_ITEM_SCHEMA.properties,
+  source_sha256:{type:"string"}},required:[...MEDIA_ANALYSIS_ITEM_SCHEMA.required,"source_sha256"]};
 
 const BLUEPRINT_SCHEMA = { type: "object", additionalProperties: false, required: ["format", "hook", "angle", "sections", "strengths", "gaps"], properties: { format: { type: "string" }, hook: { type: "string" }, angle: { type: "string" }, sections: { type: "array", items: { type: "object", additionalProperties: false, required: ["heading", "purpose"], properties: { heading: { type: "string" }, purpose: { type: "string" } } } }, strengths: { type: "array", items: { type: "string" } }, gaps: { type: "array", items: { type: "string" } } } };
 
@@ -50,6 +64,19 @@ export class KimiExtractor {
       instructions:"Return JSON with ok=true. This is an operator-requested provider connection test.",
       content:[{type:"text",text:"connection test"}],signal,telemetryContext:{runId:`connection-test-${started}`,entityId:"manual"}});
     return {ok:completion.output?.ok===true,model:completion.model,latencyMs:Date.now()-started,testedAt:new Date().toISOString()};
+  }
+
+  async analyzeMediaAsset(asset, {signal=null,telemetryContext=null}={}) {
+    if (!this.enabled) throw Object.assign(new Error("Image analysis provider is not configured."),{code:"MEDIA_ANALYSIS_NOT_CONFIGURED",retryable:false});
+    const images=await this.client.imageParts([{...asset,kind:"image"}]);
+    if (!images.parts.length) throw Object.assign(new Error("Stored source image bytes are unavailable for analysis."),{code:"SOURCE_IMAGE_BYTES_MISSING",retryable:false});
+    const completion=await this.client.completeJson({name:"source_asset_media_analysis",schema:MEDIA_ANALYSIS_SCHEMA,
+      instructions:MEDIA_ANALYSIS_PROMPT,content:[{type:"text",text:JSON.stringify({assetId:asset.id,
+        sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",altText:asset.alt_text || "",nearbyText:asset.nearby_text || ""})},
+        ...images.parts],signal,telemetryContext});
+    return {result:sanitizeMediaAnalysis({...completion.output,asset_id:asset.id,
+      source_sha256:asset.original_sha256 || asset.stored_sha256 || completion.output?.source_sha256 || ""}),
+      method:this.config.provider || "vertex",model:completion.model};
   }
 
   artifactContract(stage) {
@@ -317,7 +344,12 @@ function mergeExtractionResults(results) {
     seen.add(key);
     claims.push(claim);
   }
-  return { source, claims, blueprint: emptyBlueprint() };
+  const analyses=[]; const analysisIds=new Set();
+  for (const item of results.flatMap((result)=>result.media_analysis || [])) {
+    const normalized=sanitizeMediaAnalysis(item); if (!normalized.asset_id || analysisIds.has(normalized.asset_id)) continue;
+    analysisIds.add(normalized.asset_id);analyses.push(normalized);
+  }
+  return { source, claims, media_analysis:analyses, blueprint: emptyBlueprint() };
 }
 
 function isYoutubeUrl(value) {
@@ -351,8 +383,16 @@ Rules:
 - Set claim_role and knowledge_eligible for every claim. Editorial metadata and personal experience are retained as evidence but knowledge_eligible must be false; promotional observations are false unless they describe a durable, independently useful place feature.
 - Do not add affiliate products, commercial calls to action, or facts absent from the source.
 - destination_slug must be concise lowercase ASCII kebab-case. Use "unknown" if the destination cannot be inferred.
-- Treat supplied images as part of the source, but do not infer details that are not visible.
+- Treat supplied images as part of the source, but do not infer details that are not visible. For every supplied image return one media_analysis record using its exact assetId. Classify the image itself, locate reader-facing text, photo regions, real-world signage, author overlays, editor/tool UI, primary subjects and region languages. Source prose language is not image language. A large unknown image is not a text-free photo.
 - When multiple images are supplied, use the exact assetId and segmentId from the input manifest on every image-derived Claim. Never assign one image's evidence to another image.`;
+
+const MEDIA_ANALYSIS_PROMPT=`Analyze this authorized source image as a production media asset. Return only the structured record.
+- Classify asset_kind as documentary_photo, handwritten_card, editorial_infographic, photo_collage, map_or_route, decorative_illustration, or unknown.
+- Record every reader-facing text region and its exact visible text when readable. Mark its role as author_overlay, editorial_text, ui_text, or real_world_signage. Set preserve=true only for real-world signs/logos that are evidence inside a photographed scene.
+- Identify photo regions, entities, primary subjects, and editor UI such as Notes toolbars or canvas controls.
+- Report language per region. Do not use the surrounding note language as a substitute.
+- Do not guess unreadable wording. Use needs_review when important text or route facts are unclear.
+- Use analysis_version media-analysis-1 and prompt_version media-analysis-prompt-1.`;
 
 const BLUEPRINT_PROMPT = `Analyze only the editorial presentation pattern of this manually selected source.
 - Return format, hook, angle, section organization, strengths, and gaps.
@@ -387,8 +427,22 @@ function sanitizeResult(result) {
   result.source.summary = truncate(result.source.summary, 5_000);
   result.source.warnings = Array.isArray(result.source.warnings) ? result.source.warnings.slice(0, 50) : [];
   result.claims = result.claims.map((claim) => ({ ...claim, key: truncate(claim.key.toLowerCase().replace(/[^a-z0-9._]+/g, ".").replace(/^\.|\.$/g, ""), 300), source_quote: truncate(claim.source_quote, 800) })).filter((claim) => claim.key && claim.value);
+  result.media_analysis=(result.media_analysis || []).map(sanitizeMediaAnalysis).filter((item)=>item.asset_id);
   result.blueprint = emptyBlueprint();
   return result;
+}
+
+function sanitizeMediaAnalysis(value={}) {
+  const objects=(items,limit=100)=>Array.isArray(items) ? items.filter((item)=>item && typeof item === "object").slice(0,limit) : [];
+  const strings=(items,limit=100)=>Array.isArray(items) ? items.map((item)=>truncate(item,300)).filter(Boolean).slice(0,limit) : [];
+  const kinds=new Set(["documentary_photo","handwritten_card","editorial_infographic","photo_collage","map_or_route","decorative_illustration","unknown"]);
+  return {asset_id:truncate(value.asset_id || "",300),source_sha256:truncate(value.source_sha256 || "",128),
+    analysis_status:["ready","needs_review","failed"].includes(value.analysis_status) ? value.analysis_status : "needs_review",
+    asset_kind:kinds.has(value.asset_kind) ? value.asset_kind : "unknown",text_regions:objects(value.text_regions),
+    photo_regions:objects(value.photo_regions),entities:strings(value.entities),editor_ui_regions:objects(value.editor_ui_regions),
+    primary_subjects:strings(value.primary_subjects,30),language_by_region:objects(value.language_by_region),
+    reader_text_present:Boolean(value.reader_text_present),confidence:Math.max(0,Math.min(1,Number(value.confidence || 0))),
+    analysis_version:"media-analysis-1",prompt_version:"media-analysis-prompt-1"};
 }
 
 function sanitizeBlueprint(value) {
