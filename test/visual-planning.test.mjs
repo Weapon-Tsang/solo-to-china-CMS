@@ -170,9 +170,26 @@ test("an equal-count media plan repairs only the stale source slot and preserves
   assert.equal(output.length,2);
   assert.equal(output[0].source_asset_id,"card");
   assert.equal(output[0].acquisition_strategy,"analyze_source_image");
+  assert.equal(output[0].aspect_ratio,"3:4");
   assert.equal(output[0].status,"planned");
   assert.equal(output[0].media_metadata.custom_analysis_note,"preserve-me");
   assert.equal(output[1].media_url,"https://cms.test/good.png");
+});
+
+test("source-shaped ratio repair does not invalidate an already qualified transformed image",()=>{
+  const passed=Object.fromEntries(["language","completeness","style","semantic"].map((field)=>[field,{status:"passed",reason:"ok"}]));
+  const current=[{source_asset_id:"card",image_type:"infographic",image_subject:"Chongqing guide card",
+    placement:"hero",acquisition_strategy:"recompose_editorial_card",aspect_ratio:"9:16",status:"generated",
+    media_url:"https://cms.test/qualified.png",media_metadata:{quality_qa:passed,binary_qa:{status:"passed"}}}];
+  const assets=[{id:"card",remote_url:"https://media.test/card.png",mime_type:"image/png",alt_text:"Chongqing guide card",
+    caption_text:"Guide card",nearby_text:"Chongqing guide",evidence_text:"Chongqing guide",storage_status:"saved",
+    original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED",analysis_status:"ready",
+    asset_kind:"editorial_infographic",reader_text_present:true,language_status:"chinese",analysis_version:"media-analysis-2",
+    text_regions:[{region_id:"body",text:"Guide",role:"editorial_text",language:"zh",readable:true,preserve:false}],
+    width:1200,height:1600}];
+  const output=normalizeVisuals(current,{title:"Chongqing guide",body_markdown:"A Chongqing guide card."},
+    {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
+  assert.equal(output[0].aspect_ratio,"9:16");
 });
 
 test("relevant food media beyond the former first-24 candidate window can be selected",()=>{

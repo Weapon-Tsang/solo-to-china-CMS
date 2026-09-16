@@ -8757,12 +8757,15 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     if (decision.action === "reject") return null;
     const needsWork = ["localize","analyze"].includes(decision.action);
     const acquisitionStrategy=visualAcquisitionStrategy(decision);
+    const qualifiedExisting=visual.status === "generated"
+      && visualQualityQaStatus(visual.media_metadata?.quality_qa) === "passed";
     return {
       ...visual,
       purpose: truncateText(visual.purpose || `Evidence-linked view for ${draft.title}`, 300),
       alt_text: readerVisualAlt(asset, visual.alt_text || visual.image_subject, brief.destination_slug),
       caption: truncateText(asset.caption_text || visual.caption || readerVisualAlt(asset, visual.image_subject, brief.destination_slug), 300),
       generation_prompt: "",
+      aspect_ratio:needsWork && !qualifiedExisting ? sourceAssetAspectRatio(asset) : visual.aspect_ratio,
       image_type:visualImageType(decision,visual.image_type),
       acquisition_strategy: acquisitionStrategy,
       factual_image_required: true,
