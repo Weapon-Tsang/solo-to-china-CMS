@@ -192,13 +192,18 @@ test("collage recomposition requests the source-shaped output and forbids dark c
   await client.localizeSourceImage({id:"visual-collage",slot:1,image_type:"infographic",
     acquisition_strategy:"recompose_collage",factual_image_required:true,source_asset_id:"asset-collage",
     source_asset_local_path:sourcePath,source_asset_mime_type:"image/png",image_role:"support",aspect_ratio:"3:4",
-    media_metadata_json:JSON.stringify({source_analysis:{text_regions:[{region_id:"caption",text:"source caption",role:"author_overlay",preserve:false}]}})},
+    media_metadata_json:JSON.stringify({source_analysis:{text_regions:[{region_id:"caption",text:"source caption",role:"author_overlay",preserve:false}]},
+      quality_qa:{language:{status:"passed",reason:"Readable"},completeness:{status:"failed",reason:"The prior derivative omitted subway in Tip 15."},
+        style:{status:"passed",reason:"Style passed"},semantic:{status:"failed",reason:"The transport mode changed."}}})},
   {id:"draft-collage"});
   const body=JSON.parse(requests[0].options.body);
   assert.equal(body.generationConfig.imageConfig.aspectRatio,"3:4");
   assert.match(body.contents.parts[0].text,/overall canvas and all caption\/card surfaces must be warm white/i);
   assert.match(body.contents.parts[0].text,/Do not use dark blue, dark green/i);
   assert.match(body.contents.parts[0].text,/Natural colors inside the factual photo regions must remain unchanged/i);
+  assert.match(body.contents.parts[0].text,/previous derivative failed independent QA/i);
+  assert.match(body.contents.parts[0].text,/omitted subway in Tip 15/i);
+  assert.match(body.contents.parts[0].text,/Proofread every English proper noun, transport mode/i);
 });
 
 function passedQa(){return {language:{status:"passed",reason:"English overlays are readable."},

@@ -257,12 +257,17 @@ function combinedSignal(signal, timeoutMs) {
 function transformPrompt(visual,metadata={}) {
   const decision=metadata.visual_decision || {};
   const analysis=metadata.source_analysis || {};
+  const priorQa=metadata.quality_qa || {};
+  const retryFeedback=Object.entries(priorQa).filter(([name,value])=>name !== "notes"
+    && ["failed","needs_review"].includes(value?.status)).map(([name,value])=>({field:name,
+    reason:String(value?.reason || "Previous audit did not pass.").slice(0,1000)}));
   const requiredText=(analysis.text_regions || []).map((region)=>({region_id:region.region_id,text:region.text || "",
     role:region.role || "unknown",preserve:Boolean(region.preserve)}));
   const facts={required_text:requiredText,entities:analysis.entities || [],primary_subjects:analysis.primary_subjects || [],
     editor_ui_regions:analysis.editor_ui_regions || [],preserve_region_ids:decision.preserveRegionIds || [],
     translate_region_ids:decision.translateRegionIds || []};
-  const shared=`Use the attached authorized source image. Do not invent unreadable words, prices, times, routes, entities, people, places, or objects. Preserve every number, currency, operating time, negation, exception, arrow, route direction, ordering relationship, photograph, and factual relationship. Return one complete image with no cropped final line. Required source manifest: ${JSON.stringify(facts)}`;
+  const priorFailure=retryFeedback.length ? ` A previous derivative failed independent QA. Correct every listed defect and do not introduce a new omission or spelling error: ${JSON.stringify(retryFeedback)}. Proofread every English proper noun, transport mode, number, time, price, and final line against the source manifest before returning the image.` : "";
+  const shared=`Use the attached authorized source image. Do not invent unreadable words, prices, times, routes, entities, people, places, or objects. Preserve every number, currency, operating time, negation, exception, arrow, route direction, ordering relationship, photograph, and factual relationship. Return one complete image with no cropped final line.${priorFailure} Required source manifest: ${JSON.stringify(facts)}`;
   if (visual.acquisition_strategy === "recompose_editorial_card") return `${shared}\nRecompose the editorial card from scratch in concise natural English on a warm white background with restrained light-blue accents, dark readable type, generous spacing, and a clear information hierarchy. Remove Notes bars, editor chrome, canvas controls, selection handles, watermarks, and decorative red/black poster styling. Do not pretend this card is a documentary photograph.`;
   if (visual.acquisition_strategy === "recompose_collage") return `${shared}\nRecompose the collage for an English travel article. Keep every factual photo region unchanged and in its original meaning and order. Keep real-world storefront signs inside photos intact. Replace only author-written captions or overlays with concise English. The overall canvas and all caption/card surfaces must be warm white; use light blue only as a restrained accent with dark readable type. Do not use dark blue, dark green, purple, red, black, or saturated full-card backgrounds. Natural colors inside the factual photo regions must remain unchanged. Never merge several restaurants into one venue or describe the collage as a single photograph.`;
   if (visual.acquisition_strategy === "recompose_map_or_route") return `${shared}\nRecompose the route or map in English. Preserve topology, start/end points, directions, arrows, step sequence, durations, distances, transfer relationships, and place identity exactly. If all required information cannot fit legibly, use a clearer multi-panel layout without omitting facts.`;
