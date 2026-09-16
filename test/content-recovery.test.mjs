@@ -128,6 +128,7 @@ test('frozen revision rollback restores the exact passed body without replacing 
   assert.match(job.dedupe_key,/^delivery-refresh:presentation:/);
   assert.equal(job.workload_class,'historical_recovery');
   assert.equal(result.preserved_wordpress_post,true);
+  assert.equal(repository.getDraftPackage('draft-r').review.passed,true);
 });
 test('old revision QA cannot masquerade as current QA on content list',t=>{
   const {db,repository}=fixture(t);

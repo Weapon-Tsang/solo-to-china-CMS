@@ -5293,6 +5293,9 @@ export class Repository {
       const recoveryRunId=`revision_restore_${sha256(`${draftId}:${current.revision}:${targetRevision}:${targetRow.content_hash}`).slice(0,24)}`;
       const owner = this.db.prepare(`SELECT co.id FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
         WHERE cb.id=? AND co.approved_at IS NOT NULL ORDER BY (co.status='producing') DESC,co.updated_at DESC LIMIT 1`).get(current.brief_id)?.id || null;
+      this.saveReview(draftId,qualityReport,`revision-restore:${review.id}`,{
+        revision:Number(targetRevision),contentHash:targetRow.content_hash,evidenceHash,productionOwnerOpportunityId:owner,
+      });
       const jobId=this.enqueue("compose_frontend_page",draftId,{
         dedupeKey:`delivery-refresh:presentation:${draftId}:r${targetRevision}:restore-${targetRow.content_hash.slice(0,12)}`,
         workloadClass:"historical_recovery",recoveryRunId,productionOwnerOpportunityId:owner,
