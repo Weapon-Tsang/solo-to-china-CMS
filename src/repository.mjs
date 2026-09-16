@@ -5015,17 +5015,21 @@ export class Repository {
       writing_packet: this.getWritingPacket(briefId),
       content_policy: contentPolicy,
       reader_sources: readerSources(topicPackage?.facts || []),
-      authorized_source_assets: this.authorizedSourceAssetsForBrief(brief).map((asset) => ({
-        id: asset.id, source_id: asset.source_id, alt_text: asset.alt_text,
-        nearby_text: asset.nearby_text, caption_text: asset.caption_text,
-        evidence_text: asset.evidence_text, language_status: asset.language_status,
-        analysis_status:asset.analysis_status,asset_kind:asset.asset_kind,
-        text_regions:asset.text_regions,photo_regions:asset.photo_regions,entities:asset.entities,
-        editor_ui_regions:asset.editor_ui_regions,primary_subjects:asset.primary_subjects,
-        language_by_region:asset.language_by_region,reader_text_present:asset.reader_text_present,
-        analysis_confidence:asset.analysis_confidence,analysis_version:asset.analysis_version,
-        mime_type: asset.mime_type, preview_url: `/api/source-assets/${asset.id}/preview`,
-      })),
+      authorized_source_assets: this.authorizedSourceAssetsForBrief(brief).map((asset) => {
+        const dimensions=sourceAssetDimensions(asset);
+        return {
+          id: asset.id, source_id: asset.source_id, alt_text: asset.alt_text,
+          nearby_text: asset.nearby_text, caption_text: asset.caption_text,
+          evidence_text: asset.evidence_text, language_status: asset.language_status,
+          analysis_status:asset.analysis_status,asset_kind:asset.asset_kind,
+          text_regions:asset.text_regions,photo_regions:asset.photo_regions,entities:asset.entities,
+          editor_ui_regions:asset.editor_ui_regions,primary_subjects:asset.primary_subjects,
+          language_by_region:asset.language_by_region,reader_text_present:asset.reader_text_present,
+          analysis_confidence:asset.analysis_confidence,analysis_version:asset.analysis_version,
+          width:dimensions.width,height:dimensions.height,
+          mime_type: asset.mime_type, preview_url: `/api/source-assets/${asset.id}/preview`,
+        };
+      }),
       internal_link_inventory: linkInventory,
       internal_link_inventory_version: inventoryVersion(publishedInventory, syncState?.last_succeeded_at),
       duplicate_content_risks: duplicateContentRisks(publishedInventory, {
@@ -8944,8 +8948,48 @@ function articleAssetMatchScore(draft, brief, asset) {
   return overlap / Math.max(1, Math.min(article.size, described.size));
 }
 
+function sourceAssetDimensions(asset) {
+  const stored={width:Number(asset?.width || 0),height:Number(asset?.height || 0)};
+  if (stored.width > 0 && stored.height > 0) return stored;
+  const filename=String(asset?.local_path || "");
+  if (!filename || !fs.existsSync(filename)) return stored;
+  try {
+    const bytes=fs.readFileSync(filename);
+    if (bytes.length >= 24 && bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) {
+      return {width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)};
+    }
+    if (bytes.length >= 30 && bytes.subarray(0,4).toString("ascii") === "RIFF"
+      && bytes.subarray(8,12).toString("ascii") === "WEBP") {
+      const chunk=bytes.subarray(12,16).toString("ascii");
+      if (chunk === "VP8X") return {width:1+bytes.readUIntLE(24,3),height:1+bytes.readUIntLE(27,3)};
+      if (chunk === "VP8 " && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+        return {width:bytes.readUInt16LE(26)&0x3fff,height:bytes.readUInt16LE(28)&0x3fff};
+      }
+      if (chunk === "VP8L" && bytes.length >= 25 && bytes[20] === 0x2f) {
+        const bits=bytes.readUInt32LE(21);
+        return {width:1+(bits&0x3fff),height:1+((bits>>14)&0x3fff)};
+      }
+    }
+    if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+      let offset=2;
+      while (offset+9 < bytes.length) {
+        if (bytes[offset] !== 0xff) { offset += 1; continue; }
+        const marker=bytes[offset+1];
+        if ([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf].includes(marker)) {
+          return {height:bytes.readUInt16BE(offset+5),width:bytes.readUInt16BE(offset+7)};
+        }
+        if (marker === 0xd8 || marker === 0xd9) { offset += 2; continue; }
+        const length=bytes.readUInt16BE(offset+2);
+        if (length < 2) break;
+        offset += 2+length;
+      }
+    }
+  } catch {}
+  return stored;
+}
+
 function sourceAssetAspectRatio(asset) {
-  const width=Number(asset?.width || 0); const height=Number(asset?.height || 0);
+  const {width,height}=sourceAssetDimensions(asset);
   if (!width || !height) return "3:2";
   const ratio=width/height;
   const supported=[["21:9",21/9],["16:9",16/9],["3:2",3/2],["4:3",4/3],["5:4",5/4],

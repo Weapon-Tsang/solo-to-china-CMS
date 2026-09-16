@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import sharp from "sharp";
 import { decideVisualAsset, normalizeVisuals, visualQualityQaStatus } from "../src/repository.mjs";
 
 const draft = { title: "A Practical Beijing Guide", body_markdown: "Useful body text." };
@@ -190,6 +194,33 @@ test("source-shaped ratio repair does not invalidate an already qualified transf
   const output=normalizeVisuals(current,{title:"Chongqing guide",body_markdown:"A Chongqing guide card."},
     {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
   assert.equal(output[0].aspect_ratio,"9:16");
+});
+
+test("legacy source assets with zero SQL dimensions recover their ratio from the stored original",async (t)=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"visual-source-ratio-"));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const filename=path.join(directory,"portrait.webp");
+  await sharp({create:{width:1200,height:1600,channels:3,background:"#f7f3eb"}}).webp().toFile(filename);
+  const current=[{
+    placement:"hero",purpose:"Translate the complete Chongqing route card",alt_text:"Chongqing route card",
+    caption:"Chongqing route",generation_prompt:"",aspect_ratio:"3:2",image_type:"infographic",image_role:"hero",
+    image_subject:"Chongqing route",factual_image_required:true,source_asset_id:"asset-legacy-zero-dimensions",
+    acquisition_strategy:"recompose_editorial_card",status:"failed",media_metadata:{quality_qa:{
+      language:{status:"passed"},completeness:{status:"failed"},style:{status:"passed"},semantic:{status:"failed"},
+    }},
+  }];
+  const assets=[{
+    id:"asset-legacy-zero-dimensions",source_id:"source-1",local_path:filename,mime_type:"image/webp",
+    width:0,height:0,alt_text:"Chongqing route card",evidence_text:"Chongqing route",
+    language_status:"chinese",analysis_status:"ready",asset_kind:"editorial_infographic",
+    text_regions:[{region_id:"r1",text:"Chongqing route",role:"editorial_text",language:"zh",readable:true,preserve:false}],
+    analysis_version:"media-analysis-2",reader_text_present:true,storage_status:"saved",
+    original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED",
+  }];
+  const output=normalizeVisuals(current,{id:"draft-1",title:"Chongqing route",body_markdown:"Chongqing route card"},
+    {destination_slug:"chongqing"},assets,{visuals:{maximum:5,target:1}});
+  assert.equal(output.length,1);
+  assert.equal(output[0].aspect_ratio,"3:4");
 });
 
 test("relevant food media beyond the former first-24 candidate window can be selected",()=>{
