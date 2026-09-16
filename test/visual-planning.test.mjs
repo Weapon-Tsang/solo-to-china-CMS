@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decideVisualAsset, normalizeVisuals } from "../src/repository.mjs";
+import { decideVisualAsset, normalizeVisuals, visualQualityQaStatus } from "../src/repository.mjs";
 
 const draft = { title: "A Practical Beijing Guide", body_markdown: "Useful body text." };
 const brief = { destination_slug: "beijing" };
@@ -72,10 +72,11 @@ test("a real-world photo is selected only when an original authorized source ass
 
 test("the shared visual decision blocks unclassified text while preserving authentic signs", () => {
   assert.equal(decideVisualAsset({ language_status:"unknown", visual_class:"text_overlay", width:1200, height:800 }).action,"analyze");
-  assert.equal(decideVisualAsset({ language_status:"chinese", visual_class:"text_overlay", width:1200, height:800 }).action, "localize");
-  assert.equal(decideVisualAsset({ language_status:"chinese", visual_class:"handwritten", width:1200, height:800 }).action, "localize");
+  assert.equal(decideVisualAsset({ language_status:"chinese", visual_class:"text_overlay", width:1200, height:800 }).action, "analyze");
+  assert.equal(decideVisualAsset({ language_status:"chinese", visual_class:"handwritten", width:1200, height:800 }).action, "analyze");
   assert.equal(decideVisualAsset({ analysis_status:"ready",language_status:"chinese", asset_kind:"documentary_photo",
-    language_by_region:[{region_id:"sign",language:"zh-CN",role:"real_world_signage",preserve:true}],
+    analysis_version:"media-analysis-2",reader_text_present:true,
+    text_regions:[{region_id:"sign",text:"重庆站",language:"zh-CN",role:"real_world_signage",readable:true,preserve:true}],
     alt_text:"Historic station name sign", width:1200, height:800 }).action, "retain");
 });
 
@@ -91,14 +92,15 @@ test("unanalysed high-resolution source images never default to text-free docume
 test("sign matching is token bounded and a storefront collage localizes only author overlays", () => {
   assert.equal(decideVisualAsset({
     analysis_status:"ready", asset_kind:"editorial_infographic", reader_text_present:true,
-    language_by_region:[{ region_id:"copy", language:"zh-CN", role:"author_overlay" }],
+    analysis_version:"media-analysis-2",
+    text_regions:[{ region_id:"copy", text:"开放时间",language:"zh-CN", role:"author_overlay",readable:true,preserve:false }],
     alt_text:"A red and black travel design",
   }).transformKind, "EDITORIAL_CARD_RECOMPOSE");
   const collage = decideVisualAsset({
     analysis_status:"ready", asset_kind:"photo_collage", reader_text_present:true,
-    language_by_region:[
-      { region_id:"sign", language:"zh-CN", role:"real_world_signage", preserve:true },
-      { region_id:"caption", language:"zh-CN", role:"author_overlay", preserve:false },
+    analysis_version:"media-analysis-2",text_regions:[
+      { region_id:"sign", text:"重庆站",language:"zh-CN", role:"real_world_signage",readable:true,preserve:true },
+      { region_id:"caption", text:"步行3分钟",language:"zh-CN", role:"author_overlay",readable:true,preserve:false },
     ],
     primary_subjects:["storefronts"], alt_text:"Three storefronts with author captions",
   });
@@ -106,6 +108,34 @@ test("sign matching is token bounded and a storefront collage localizes only aut
   assert.equal(collage.transformKind, "COLLAGE_RECOMPOSE");
   assert.deepEqual(collage.preserveRegionIds, ["sign"]);
   assert.deepEqual(collage.translateRegionIds, ["caption"]);
+});
+
+test("legacy or incomplete text analysis is re-run before any English recomposition",()=>{
+  for (const asset of [
+    {analysis_status:"ready",asset_kind:"handwritten_card",reader_text_present:true,analysis_version:"media-analysis-1",
+      text_regions:[{}],language_status:"chinese"},
+    {analysis_status:"needs_review",asset_kind:"editorial_infographic",reader_text_present:true,analysis_version:"media-analysis-2",
+      text_regions:[{region_id:"one",text:"营业时间",role:"editorial_text",language:"zh",readable:true,preserve:false}],language_status:"chinese"},
+  ]) {
+    const decision=decideVisualAsset(asset);
+    assert.equal(decision.action,"analyze");
+    assert.equal(decision.transformKind,"ANALYZE_SOURCE_IMAGE");
+  }
+  const complete=decideVisualAsset({analysis_status:"ready",asset_kind:"photo_collage",reader_text_present:true,
+    analysis_version:"media-analysis-2",language_status:"mixed",text_regions:[
+      {region_id:"caption",text:"步行3分钟",role:"author_overlay",language:"zh",readable:true,preserve:false},
+      {region_id:"sign",text:"重庆",role:"real_world_signage",language:"zh",readable:true,preserve:true},
+    ]});
+  assert.equal(complete.transformKind,"COLLAGE_RECOMPOSE");
+  assert.deepEqual(complete.translateRegionIds,["caption"]);
+  assert.deepEqual(complete.preserveRegionIds,["sign"]);
+});
+
+test("four-field visual QA is aggregated instead of trusting a cosmetic top-level label",()=>{
+  const passed=Object.fromEntries(["language","completeness","style","semantic"].map((field)=>[field,{status:"passed",reason:"ok"}]));
+  assert.equal(visualQualityQaStatus(passed),"passed");
+  assert.equal(visualQualityQaStatus({...passed,semantic:{status:"failed",reason:"omitted a stop"}}),"failed");
+  assert.equal(visualQualityQaStatus({status:"not_tested"}),"not_tested");
 });
 
 test("an existing visual plan can be topped up with additional relevant source photos", () => {
@@ -139,7 +169,7 @@ test("an equal-count media plan repairs only the stale source slot and preserves
     {visuals:{target:2,maximum:5}});
   assert.equal(output.length,2);
   assert.equal(output[0].source_asset_id,"card");
-  assert.equal(output[0].acquisition_strategy,"recompose_editorial_card");
+  assert.equal(output[0].acquisition_strategy,"analyze_source_image");
   assert.equal(output[0].status,"planned");
   assert.equal(output[0].media_metadata.custom_analysis_note,"preserve-me");
   assert.equal(output[1].media_url,"https://cms.test/good.png");

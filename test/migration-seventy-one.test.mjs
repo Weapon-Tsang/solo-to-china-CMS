@@ -28,6 +28,13 @@ test("schema persists image-level analysis and hydrates the production decision 
     language_by_region:[{region_id:"body",language:"zh-CN",role:"author_overlay"}],confidence:0.94,
     analysis_version:"media-analysis-1",prompt_version:"media-analysis-prompt-1",
   }]}});
+  repository.saveSourceAssetAnalysis(segment.asset_id,{
+    analysis_status:"ready",asset_kind:"editorial_infographic",reader_text_present:true,
+    text_regions:[{region_id:"body",text:"09:00–17:00",role:"author_overlay",language:"zh-CN",readable:true,preserve:false}],
+    photo_regions:[],entities:["Hongyadong"],editor_ui_regions:[{region_id:"toolbar",kind:"notes_toolbar"}],
+    primary_subjects:["Chongqing itinerary"],language_by_region:[{region_id:"body",language:"zh-CN",role:"author_overlay"}],
+    confidence:0.94,analysis_version:"media-analysis-2",prompt_version:"media-analysis-prompt-2",
+  });
   const stored=db.prepare("SELECT * FROM source_asset_analyses WHERE asset_id=?").get(segment.asset_id);
   assert.equal(stored.source_sha256,db.prepare("SELECT original_sha256 FROM source_assets WHERE id=?").get(segment.asset_id).original_sha256);
   const dto=repository.sourceAssetDecisionDto(segment.asset_id);

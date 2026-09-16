@@ -5494,7 +5494,7 @@ export class Repository {
       const existing=current[index] || null;
       const changed=!existing || existing.asset_fingerprint !== visualFingerprint(visual);
       const metadata=existing?.media_metadata || {};
-      const qa=metadata.quality_qa?.status || "not_tested";
+      const qa=visualQualityQaStatus(metadata.quality_qa);
       const binary=metadata.binary_qa?.status || metadata.pixel_qa?.status || "not_tested";
       const transform=visual.acquisition_strategy;
       const requiresModel=["analyze_source_image","localize_source_image","localize_photo_overlay","recompose_editorial_card",
@@ -5596,12 +5596,15 @@ export class Repository {
   }
 
   failVisual(visualId, error) {
-    const row = this.db.prepare("SELECT attempt_count FROM article_visuals WHERE id=?").get(visualId);
+    const row = this.db.prepare("SELECT attempt_count,media_metadata_json FROM article_visuals WHERE id=?").get(visualId);
     const attempts = (row?.attempt_count || 0) + 1;
     const retryable = error?.retryable !== false && attempts < 3;
     const retryAt = retryable ? new Date(Date.now() + Math.min(60_000, 1_000 * (2 ** attempts))).toISOString() : null;
-    this.db.prepare("UPDATE article_visuals SET status=?, attempt_count=?, retry_at=?, last_error=?, updated_at=? WHERE id=?")
-      .run(retryable ? "planned" : "failed", attempts, retryAt, String(error?.message || error).slice(0, 4_000), now(), visualId);
+    const metadata={...json(row?.media_metadata_json,{})};
+    if (error?.qualityQa) metadata.quality_qa=error.qualityQa;
+    this.db.prepare("UPDATE article_visuals SET status=?, attempt_count=?, retry_at=?, last_error=?, media_metadata_json=?, updated_at=? WHERE id=?")
+      .run(retryable ? "planned" : "failed", attempts, retryAt, String(error?.message || error).slice(0, 4_000),
+        JSON.stringify(metadata),now(), visualId);
     return { retryable, status: retryable ? "planned" : "failed" };
   }
 
@@ -8831,7 +8834,13 @@ export function decideVisualAsset(asset = {}, request = {}) {
   const width = Number(asset.width || 0); const height = Number(asset.height || 0);
   const language = String(asset.language_status || asset.languageStatus || "unknown").toLowerCase();
   const searchable = `${asset.alt_text || ""} ${asset.caption_text || ""} ${asset.evidence_text || ""} ${request.image_subject || ""}`.toLowerCase();
-  const regions=Array.isArray(asset.language_by_region) ? asset.language_by_region : [];
+  const regionMap=new Map();
+  for (const region of [...(Array.isArray(asset.language_by_region) ? asset.language_by_region : []),
+    ...(Array.isArray(asset.text_regions) ? asset.text_regions : [])]) {
+    const key=String(region?.region_id || `anonymous-${regionMap.size}`);
+    regionMap.set(key,{...(regionMap.get(key) || {}),...region});
+  }
+  const regions=[...regionMap.values()];
   const preserveRegionIds=regions.filter((region)=>region?.preserve === true || region?.role === "real_world_signage")
     .map((region)=>String(region.region_id || "")).filter(Boolean);
   const translateRegionIds=regions.filter((region)=>region?.preserve !== true
@@ -8844,15 +8853,18 @@ export function decideVisualAsset(asset = {}, request = {}) {
     : Number(asset.collage_count || 0) > 1 ? "photo_collage"
       : Number(asset.text_density || 0) >= 0.35 ? "editorial_infographic"
         : width && height && Math.min(width, height) < 480 ? "low_quality" : "unknown");
-  const analysisStatus=String(asset.analysis_status || asset.analysisStatus || (explicit ? "ready" : "not_analyzed")).toLowerCase();
+  const storedAnalysisStatus=String(asset.analysis_status || asset.analysisStatus || (explicit ? "ready" : "not_analyzed")).toLowerCase();
+  const analysisStatus=storedAnalysisStatus === "ready" && sourceAnalysisRequiresRefresh(normalizedAssetKindForAnalysis(visualClass),
+    asset.reader_text_present,Array.isArray(asset.text_regions) ? asset.text_regions : [],asset.analysis_version)
+    ? "needs_review" : storedAnalysisStatus;
   const common={language,authenticityCritical,preserveRegionIds,translateRegionIds};
   if (["low_quality","editor_ui","editor_interface","unreadable"].includes(visualClass)) return {
     visualClass,...common,action:"reject", reason:"insufficient_delivery_quality",
   };
-  if (!explicit || ["not_analyzed","failed"].includes(analysisStatus)) {
-    if (language === "no_text") return {visualClass:"documentary_photo",...common,action:"retain",
+  if (!explicit || analysisStatus !== "ready") {
+    if (language === "no_text" && analysisStatus !== "needs_review" && asset.reader_text_present !== true) return {visualClass:"documentary_photo",...common,action:"retain",
       transformKind:"PHOTO_RETAIN",reason:"legacy_image_level_no_text_evidence"};
-    if (authenticityCritical && !translateRegionIds.length) return {visualClass:"documentary_photo",...common,action:"retain",
+    if (analysisStatus === "ready" && authenticityCritical && !translateRegionIds.length) return {visualClass:"documentary_photo",...common,action:"retain",
       transformKind:"PHOTO_RETAIN",reason:"authentic_signage_is_reader_evidence"};
     return {visualClass:"unknown",...common,action:"analyze",transformKind:"ANALYZE_SOURCE_IMAGE",reason:"image_analysis_required"};
   }
@@ -9021,7 +9033,7 @@ function normalizeSourceAssetAnalysis(value = {}, asset = {}) {
   }
   const list=(input,limit=100)=>Array.isArray(input) ? input.filter((item)=>item && typeof item === "object").slice(0,limit) : [];
   const textRegions=list(value.text_regions);
-  if (analysisStatus === "ready" && sourceAnalysisNeedsDecodedText(assetKind,value.reader_text_present,textRegions)) analysisStatus="needs_review";
+  if (analysisStatus === "ready" && sourceAnalysisRequiresRefresh(assetKind,value.reader_text_present,textRegions,value.analysis_version)) analysisStatus="needs_review";
   return {
     source_sha256:sourceSha256,analysis_status:analysisStatus,asset_kind:assetKind,
     text_regions:textRegions,photo_regions:list(value.photo_regions),entities:Array.isArray(value.entities) ? value.entities.slice(0,100) : [],
@@ -9038,7 +9050,7 @@ function hydrateSourceAssetAnalysis(row) {
   const textRegions=json(row.text_regions_json,[]);
   const assetKind=row.asset_kind || "unknown";
   let analysisStatus=row.analysis_status || "not_analyzed";
-  if (analysisStatus === "ready" && sourceAnalysisNeedsDecodedText(assetKind,row.reader_text_present == null ? null : Boolean(row.reader_text_present),textRegions)) {
+  if (analysisStatus === "ready" && sourceAnalysisRequiresRefresh(assetKind,row.reader_text_present == null ? null : Boolean(row.reader_text_present),textRegions,row.analysis_version)) {
     analysisStatus="needs_review";
   }
   return {...row,
@@ -9051,10 +9063,29 @@ function hydrateSourceAssetAnalysis(row) {
   };
 }
 
-function sourceAnalysisNeedsDecodedText(assetKind,readerTextPresent,textRegions=[]) {
+function sourceAnalysisRequiresRefresh(assetKind,readerTextPresent,textRegions=[],analysisVersion="") {
   const textBearing=new Set(["handwritten_card","editorial_infographic","map_or_route"]);
   if (!textBearing.has(assetKind) && readerTextPresent !== true) return false;
-  return !textRegions.some((region)=>region?.readable !== false && String(region?.text || "").trim());
+  if (analysisVersion !== "media-analysis-2" || !Array.isArray(textRegions) || !textRegions.length) return true;
+  const allowedRoles=new Set(["author_overlay","editorial_text","ui_text","real_world_signage"]);
+  return textRegions.some((region)=>!region || !String(region.region_id || "").trim()
+    || !allowedRoles.has(region.role) || !String(region.language || "").trim()
+    || typeof region.readable !== "boolean" || typeof region.preserve !== "boolean"
+    || (region.readable && !String(region.text || "").trim()));
+}
+
+function normalizedAssetKindForAnalysis(value="") {
+  return ({handwritten:"handwritten_card",pure_text:"editorial_infographic",text_overlay:"editorial_infographic",
+    infographic:"editorial_infographic",collage:"photo_collage",real_world_photo:"documentary_photo"})[value] || value;
+}
+
+export function visualQualityQaStatus(value={}) {
+  if (value?.status) return String(value.status);
+  const fields=["language","completeness","style","semantic"].map((field)=>value?.[field]?.status || "not_tested");
+  if (fields.every((status)=>status === "passed")) return "passed";
+  if (fields.some((status)=>status === "failed")) return "failed";
+  if (fields.some((status)=>status === "needs_review")) return "needs_review";
+  return "not_tested";
 }
 
 function imageLanguageStatus(analysis = {}) {

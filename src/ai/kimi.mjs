@@ -455,7 +455,13 @@ function validateMediaAnalysisOutput(value={}) {
   const normalized=sanitizeMediaAnalysis(value);
   const textBearing=new Set(["handwritten_card","editorial_infographic","map_or_route"]);
   const decoded=normalized.text_regions.filter((region)=>region?.readable !== false && String(region?.text || "").trim());
-  if (normalized.analysis_status !== "ready" || ((textBearing.has(normalized.asset_kind) || normalized.reader_text_present) && !decoded.length)) {
+  const allowedRoles=new Set(["author_overlay","editorial_text","ui_text","real_world_signage"]);
+  const incomplete=normalized.text_regions.some((region)=>!String(region?.region_id || "").trim()
+    || !allowedRoles.has(region?.role) || !String(region?.language || "").trim()
+    || typeof region?.readable !== "boolean" || typeof region?.preserve !== "boolean"
+    || (region.readable && !String(region.text || "").trim()));
+  if (normalized.analysis_status !== "ready" || incomplete
+    || ((textBearing.has(normalized.asset_kind) || normalized.reader_text_present) && !decoded.length)) {
     throw Object.assign(new Error("Source image analysis is incomplete: all important reader-facing text regions must be decoded before conversion."),{
       code:"MEDIA_ANALYSIS_INCOMPLETE",retryable:true,
     });
