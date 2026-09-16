@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyDeliveryRefresh, planDeliveryRefresh } from "../src/services/delivery-refresh.mjs";
+import { applyDeliveryRefresh, deliveryRefreshContinuation, deliveryRefreshScopeForJob, planDeliveryRefresh } from "../src/services/delivery-refresh.mjs";
 
 function fixture({ modifiedAt="2026-09-15T06:36:52Z", status="draft" } = {}) {
   const commands=[];
@@ -64,4 +64,18 @@ test("media refresh is a first-class bounded scope and reports per-slot repair w
   assert.equal(plan.items[0].planned_stage,"generate_visuals");
   assert.equal(plan.items[0].media.slots.filter((slot)=>slot.disposition==="repair").length,1);
   assert.equal(plan.items[0].preserve.body_sha256.length,64);
+});
+
+test("media and presentation refresh descendants bypass text QA and preserve the frozen body",()=>{
+  const rows=new Map([
+    ["root-media",{id:"root-media",dedupe_key:"delivery-refresh:media:draft-1:r4:abc",parent_job_id:null}],
+    ["page-media",{id:"page-media",dedupe_key:"child:compose_frontend_page",parent_job_id:"root-media"}],
+    ["root-presentation",{id:"root-presentation",dedupe_key:"delivery-refresh:presentation:draft-1:r4:def",parent_job_id:null}],
+  ]);
+  const repository={db:{prepare:()=>({get:(id)=>rows.get(id)})}};
+  const mediaPage=rows.get("page-media");
+  assert.equal(deliveryRefreshScopeForJob(repository,mediaPage),"media");
+  assert.equal(deliveryRefreshContinuation(repository,mediaPage,"compose_frontend_page"),"compose_commercial");
+  assert.equal(deliveryRefreshContinuation(repository,rows.get("root-presentation"),"compose_frontend_page"),"compose_commercial");
+  assert.equal(deliveryRefreshContinuation(repository,{dedupe_key:"ordinary-production"},"compose_frontend_page"),null);
 });

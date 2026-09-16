@@ -13,6 +13,7 @@ import { sourceProcessingProfile } from './source-processing-profile.mjs';
 import { runNodeJsonProcess } from './process-runner.mjs';
 import { normalizeFrontendPageForDelivery } from "./content-taxonomy.mjs";
 import { remapBlockProvenanceForDelivery } from "./evidence-validator.mjs";
+import { deliveryRefreshContinuation } from "./services/delivery-refresh.mjs";
 
 const ISOLATED_REPOSITORY_TASK=fileURLToPath(new URL('../scripts/run-isolated-repository-task.mjs',import.meta.url));
 
@@ -874,7 +875,10 @@ export class Pipeline {
           const savedPage = commitStage(() => {
             const saved = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
               { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash }, composed.provenance);
-            if (saved.validation.valid && !job.dedupe_key?.startsWith("manual-stage:")) this.enqueueChild(job,"review_draft",job.entity_id);
+            if (saved.validation.valid && !job.dedupe_key?.startsWith("manual-stage:")) {
+              const nextStage = deliveryRefreshContinuation(this.repository,job,"compose_frontend_page") || "review_draft";
+              this.enqueueChild(job,nextStage,job.entity_id);
+            }
             return saved;
           }, { acceptResult: saved => saved.validation.valid });
           if (!savedPage.validation.valid) throw new Error(`Frontend page payload is invalid: ${savedPage.validation.errors.map((item) => item.code).join(", ")}`);
@@ -1153,7 +1157,7 @@ export class Pipeline {
         if (draft) { next('review_draft', draft.id); if (this.visuals?.enabled) next('generate_visuals', draft.id); else if (this.canComposeFrontendPage) next('compose_frontend_page', draft.id); }
         break;
       }
-      case 'compose_frontend_page': next('review_draft'); break;
+      case 'compose_frontend_page': next(deliveryRefreshContinuation(repository,job,'compose_frontend_page') || 'review_draft'); break;
       case 'review_draft': {
         const pack = repository.getDraftPackage(entity);
         if (pack?.review?.passed && (!this.canComposeFrontendPage || pack.frontend_page?.current)) next('compose_commercial');

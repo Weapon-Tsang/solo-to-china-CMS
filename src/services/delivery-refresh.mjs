@@ -16,6 +16,28 @@ export class DeliveryRefreshError extends Error {
   }
 }
 
+export function deliveryRefreshScopeForJob(repository, job) {
+  let current = job || null;
+  const seen = new Set();
+  for (let depth = 0; current && depth < 32; depth += 1) {
+    const match = String(current.dedupe_key || "").match(/^delivery-refresh:(presentation|commercial|media):/);
+    if (match) return match[1];
+    const parentId = current.parent_job_id;
+    if (!parentId || seen.has(parentId)) break;
+    seen.add(parentId);
+    current = repository?.db?.prepare("SELECT id,dedupe_key,parent_job_id FROM jobs WHERE id=?").get(parentId) || null;
+  }
+  return null;
+}
+
+export function deliveryRefreshContinuation(repository, job, completedStage) {
+  const scope = deliveryRefreshScopeForJob(repository, job);
+  if (completedStage === "compose_frontend_page" && ["presentation", "media"].includes(scope)) {
+    return "compose_commercial";
+  }
+  return null;
+}
+
 export function planDeliveryRefresh(repository, input = {}) {
   const scope = String(input.scope || "presentation");
   const stage = SCOPES.get(scope);
