@@ -107,6 +107,28 @@ test('manual correction preserves revisions and queues independent QA plus page 
   assert.deepEqual(db.prepare('SELECT type FROM jobs ORDER BY type').all().map((row)=>row.type),['compose_frontend_page','review_draft']);
   assert.equal(repository.listDraftRevisions('draft-r').length,2);
 });
+test('frozen revision rollback restores the exact passed body without replacing repaired media',t=>{
+  const {db,repository}=fixture(t);
+  db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,status,created_at,updated_at)
+    VALUES ('visual-restored','draft-r',0,'hero','Keep','Keep','Keep','generated','now','now')`).run();
+  repository.saveReview('draft-r',{passed:true,score:95,checks:[],issues:[],unsupported_claims:[]},'fixture');
+  repository.recordDraftRevision('draft-r','before-repair');
+  db.prepare("UPDATE article_drafts SET revision=2,body_markdown='Unwanted rewrite',content_hash='hash-2'").run();
+  repository.recordDraftRevision('draft-r','bad-repair');
+  const result=repository.restoreFrozenDraftRevision('draft-r',{
+    targetRevision:1,expectedCurrentRevision:2,expectedContentHash:'hash-1',actor:'release-test',
+  });
+  const restored=db.prepare('SELECT revision,body_markdown,content_hash FROM article_drafts WHERE id=?').get('draft-r');
+  assert.equal(restored.revision,1);
+  assert.equal(restored.body_markdown,'Intro.\n\n## Visit\n\nBody.');
+  assert.equal(restored.content_hash,'hash-1');
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM article_visuals WHERE id='visual-restored'").get().count,1);
+  const job=db.prepare("SELECT type,dedupe_key,workload_class FROM jobs WHERE id=?").get(result.job_id);
+  assert.equal(job.type,'compose_frontend_page');
+  assert.match(job.dedupe_key,/^delivery-refresh:presentation:/);
+  assert.equal(job.workload_class,'historical_recovery');
+  assert.equal(result.preserved_wordpress_post,true);
+});
 test('old revision QA cannot masquerade as current QA on content list',t=>{
   const {db,repository}=fixture(t);
   repository.saveReview('draft-r',{passed:false,score:30,issues:[{code:'bad',severity:'blocker',message:'Old issue'}],checks:[],unsupported_claims:[]},'fixture');

@@ -1094,6 +1094,17 @@ export function createApplication(config = loadConfig()) {
         }
         return sendJson(response, 200, { items: repository.listDraftRevisions(draftId) });
       }
+      const draftRevisionRestoreMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/restore-frozen-revision$/);
+      if (request.method === "POST" && draftRevisionRestoreMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload=await readJson(request,20_000);
+        const result=repository.restoreFrozenDraftRevision(decodeURIComponent(draftRevisionRestoreMatch[1]),{
+          targetRevision:Number(payload.target_revision),expectedCurrentRevision:Number(payload.expected_current_revision),
+          expectedContentHash:String(payload.expected_content_hash || ""),actor:auth.status(request).username || "administrator",
+        });
+        if (result?.job_id) void pipeline.runOne();
+        return result ? sendJson(response,202,result) : sendJson(response,404,{error:"Draft not found."});
+      }
       const draftFeedbackMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/editorial-feedback$/);
       if (request.method === "POST" && draftFeedbackMatch) {
         authorizeAdmin(request, config.adminToken, auth);

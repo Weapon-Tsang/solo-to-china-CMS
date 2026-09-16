@@ -5252,6 +5252,57 @@ export class Repository {
     };
   }
 
+  restoreFrozenDraftRevision(draftId, { targetRevision, expectedCurrentRevision, expectedContentHash, actor = "administrator" } = {}) {
+    return transaction(this.db, () => {
+      const current = this.db.prepare("SELECT * FROM article_drafts WHERE id=?").get(draftId);
+      if (!current) return null;
+      if (!Number.isInteger(Number(targetRevision))) throw conflictError("A numeric target revision is required.");
+      if (Number(current.revision) !== Number(expectedCurrentRevision)) throw conflictError("The draft changed after the rollback preview.");
+      const active = this.db.prepare(`SELECT id,type,status FROM jobs WHERE entity_id IN (?,?)
+        AND status IN ('queued','running') LIMIT 1`).get(draftId,current.brief_id);
+      if (active) throw conflictError("The draft still has an active production job; wait for it before restoring a frozen revision.");
+      const publication = this.db.prepare("SELECT response_json FROM wordpress_publications WHERE draft_id=?").get(draftId);
+      const remoteStatus = json(publication?.response_json,{}).status;
+      if (remoteStatus && remoteStatus !== "draft") throw conflictError("Only a remote WordPress draft can be restored.");
+      const targetRow = this.db.prepare(`SELECT revision,content_hash,snapshot_json FROM draft_revisions
+        WHERE draft_id=? AND revision=? ORDER BY created_at DESC LIMIT 1`).get(draftId,Number(targetRevision));
+      if (!targetRow) throw conflictError("The requested frozen draft revision does not exist.");
+      if (expectedContentHash && targetRow.content_hash !== expectedContentHash) throw conflictError("The frozen revision hash does not match the reviewed rollback target.");
+      const snapshot = json(targetRow.snapshot_json,{});
+      if (!snapshot.body_markdown || snapshot.content_hash !== targetRow.content_hash) throw conflictError("The frozen revision snapshot is incomplete or inconsistent.");
+      const evidenceHash = evidenceHashForFacts(this.getBriefPackage(current.brief_id)?.facts || []);
+      const review = this.db.prepare(`SELECT * FROM quality_reviews WHERE draft_id=? AND draft_revision=?
+        AND draft_content_hash=? AND evidence_hash=? AND passed=1 ORDER BY created_at DESC LIMIT 1`)
+        .get(draftId,Number(targetRevision),targetRow.content_hash,evidenceHash);
+      if (!review) throw conflictError("The frozen revision no longer has a matching passed QA artifact for the current evidence.");
+      this.recordDraftRevision(draftId,actor);
+      const timestamp = now();
+      const qualityReport = { passed:true,score:review.score,checks:json(review.checks_json,[]),
+        issues:json(review.issues_json,[]),unsupported_claims:json(review.unsupported_claims_json,[]) };
+      this.db.prepare(`UPDATE article_drafts SET title=?,slug=?,body_markdown=?,meta_description=?,
+        evidence_ledger_json=?,unresolved_conflicts_json=?,verification_notes_json=?,seo_json=?,schema_jsonld=?,
+        content_blocks_json=?,content_ast_json=?,strategy_version=?,model=?,revision=?,content_hash=?,
+        quality_report_json=?,status=?,updated_at=? WHERE id=?`).run(
+        snapshot.title,snapshot.slug,snapshot.body_markdown,snapshot.meta_description,
+        snapshot.evidence_ledger_json || "[]",snapshot.unresolved_conflicts_json || "[]",
+        snapshot.verification_notes_json || "[]",snapshot.seo_json || "{}",snapshot.schema_jsonld || "{}",
+        snapshot.content_blocks_json || "[]",snapshot.content_ast_json || "{}",snapshot.strategy_version || this.strategyVersion,
+        snapshot.model || "revision-restore",Number(targetRevision),targetRow.content_hash,JSON.stringify(qualityReport),
+        publication ? "wordpress_draft" : "ready_for_wordpress",timestamp,draftId);
+      this.invalidateDraftDependents(draftId,timestamp);
+      const recoveryRunId=`revision_restore_${sha256(`${draftId}:${current.revision}:${targetRevision}:${targetRow.content_hash}`).slice(0,24)}`;
+      const owner = this.db.prepare(`SELECT co.id FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
+        WHERE cb.id=? AND co.approved_at IS NOT NULL ORDER BY (co.status='producing') DESC,co.updated_at DESC LIMIT 1`).get(current.brief_id)?.id || null;
+      const jobId=this.enqueue("compose_frontend_page",draftId,{
+        dedupeKey:`delivery-refresh:presentation:${draftId}:r${targetRevision}:restore-${targetRow.content_hash.slice(0,12)}`,
+        workloadClass:"historical_recovery",recoveryRunId,productionOwnerOpportunityId:owner,
+      });
+      return { draft_id:draftId,restored_revision:Number(targetRevision),restored_content_hash:targetRow.content_hash,
+        previous_revision:Number(current.revision),body_sha256:sha256(snapshot.body_markdown),preserved_visuals:true,
+        preserved_wordpress_post:true,job_id:jobId,recovery_run_id:recoveryRunId };
+    });
+  }
+
   previewContentAction(candidateId, action, actor = "administrator") {
     if (!["continue", "retry_failed_stage", "cancel"].includes(action)) throw new Error("Unsupported content action preview.");
     const item = this.listContent().find((row) => row.id === candidateId);
