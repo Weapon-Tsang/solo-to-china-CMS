@@ -156,6 +156,16 @@ export class Repository {
     });
   }
 
+  checkpointPipelineStage(job, artifact, work) {
+    return transaction(this.db, () => {
+      if (!this.ownsJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error('JOB_LEASE_LOST'), {code:'JOB_LEASE_LOST',retryable:false});
+      this.assertPipelineInput(artifact, job);
+      const result = work();
+      if (result?.then) throw new Error('Pipeline checkpoint must contain only synchronous database work.');
+      return result;
+    });
+  }
+
   failPipelineArtifact(artifact, error) {
     if (!artifact || artifact.reused) return;
     const timestamp = this.jobTimestamp();

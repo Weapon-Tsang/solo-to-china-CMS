@@ -123,6 +123,52 @@ test('authorized visual seeding is frozen before the page artifact input snapsho
   assert.notEqual(job.last_failure_code,'STALE_PIPELINE_INPUT');
 });
 
+test('multi-image analysis keeps the visual Job lease until every slot is processed', async t => {
+  const {repository,db}=repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('topic-visual-analysis','chongqing','visual-analysis','Visual analysis','fixture',80,0,0,'drafted','now','now')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('brief-visual-analysis','chongqing','Visual analysis','[]','informational','drafted','now','now','topic-visual-analysis')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-visual-analysis','brief-visual-analysis','Visual analysis','visual-analysis','## Plan\n\nSupported body.','{}','drafted','now','now',1,'visual-analysis-hash')`).run();
+  const source=repository.saveCapture(normalizeXiaohongshuCapture({
+    url:'https://www.xiaohongshu.com/explore/multiimageanalysis',
+    title:'Three source images',text:'Three authorized source images for a visual-stage regression.',
+    images:[0,1,2].map(index=>({url:`https://example.test/source-${index}.jpg`,alt:`Chongqing scene ${index + 1}`})),
+  }));
+  const assets=db.prepare('SELECT id FROM source_assets WHERE source_id=? ORDER BY position').all(source.id);
+  assert.equal(assets.length,3);
+  repository.replaceDraftVisuals('draft-visual-analysis',assets.map((asset,index)=>({
+    placement:index === 0 ? 'hero' : 'mid_article',purpose:`Classify source scene ${index + 1}`,
+    alt_text:`Chongqing scene ${index + 1}`,caption:'',generation_prompt:'',aspect_ratio:'3:2',
+    image_type:'real_world_photo',image_role:index === 0 ? 'hero' : 'support',image_subject:`Chongqing scene ${index + 1}`,
+    acquisition_strategy:'analyze_source_image',factual_image_required:true,source_asset_id:asset.id,status:'planned',
+  })),'3.5');
+  db.prepare('DELETE FROM jobs').run();
+  // Keep this test focused on the stage lifecycle: the production repository
+  // decision pass is covered separately by visual-planning tests.
+  repository.ensureAuthorizedSourceVisuals=draftId=>repository.listDraftVisuals(draftId);
+  repository.prepareMediaRepair=draftId=>repository.listDraftVisuals(draftId);
+  let jobId; const observedStatuses=[];
+  const extractor={config:{},async analyzeMediaAsset(asset){
+    observedStatuses.push(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId)?.status);
+    return {method:'fixture-analysis',model:'fixture-vision',result:{
+      asset_id:asset.id,analysis_status:'ready',asset_kind:'documentary_photo',text_regions:[],
+      photo_regions:[{region_id:'photo',subject:'Chongqing street scene'}],entities:['Chongqing'],
+      editor_ui_regions:[],primary_subjects:['Chongqing street scene'],language_by_region:[],
+      reader_text_present:false,confidence:.98,analysis_version:'media-analysis-regression',prompt_version:'prompt-regression',
+    }};
+  }};
+  const pipeline=new Pipeline(repository,extractor,{visuals:{enabled:true,async generate(){
+    assert.fail('classified documentary photos should not reach generation in this lifecycle regression');
+  }}});
+  jobId=repository.enqueue('generate_visuals','draft-visual-analysis');
+  assert.equal(await pipeline.runOne(),true);
+  assert.deepEqual(observedStatuses,['running','running','running']);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM source_asset_analyses WHERE source_id=?').get(source.id).n,3);
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status,'succeeded');
+});
+
 test('interactive coverage is not deferred by a Batch threshold; visual pressure does not block text', t => {
   const {repository,db} = repositoryFixture(t);
   repository.enqueue('audit_segment_coverage','interactive',{executionRoute:'realtime'});

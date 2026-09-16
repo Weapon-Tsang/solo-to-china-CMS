@@ -820,9 +820,18 @@ export class Pipeline {
             const asset=this.repository.sourceAssetDecisionDto(visual.source_asset_id);
             const analyzed=await guarded((signal)=>this.extractor.analyzeMediaAsset(asset,{signal,
               telemetryContext:{...telemetryContext,entityId:visual.source_asset_id}}));
-            commitStage(()=>this.repository.saveSourceAssetAnalysis(visual.source_asset_id,analyzed.result,{
+            // One source analysis is an intermediate checkpoint, not the
+            // completion of the generate_visuals stage.  Completing the stage
+            // here releases the Job lease after the first image and makes every
+            // subsequent image fail with JOB_LEASE_LOST.  Keep each analysis
+            // durable, then finish the stage only after every slot below has
+            // been classified and processed.
+            const saveAnalysis=()=>this.repository.saveSourceAssetAnalysis(visual.source_asset_id,analyzed.result,{
               provider:analyzed.method,model:analyzed.model,
-            }));
+            });
+            if (typeof this.repository.checkpointPipelineStage === "function") {
+              this.repository.checkpointPipelineStage(job,pipelineArtifact,saveAnalysis);
+            } else saveAnalysis();
           }
           this.repository.prepareMediaRepair(job.entity_id);
           contentPackage = this.repository.getDraftPackage(job.entity_id);
