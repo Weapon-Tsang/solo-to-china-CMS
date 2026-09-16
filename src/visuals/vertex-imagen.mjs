@@ -9,6 +9,11 @@ const VISUAL_QA_SCHEMA={type:"object",additionalProperties:false,
   required:["language","completeness","style","semantic","notes"],properties:{
     language:qaStatusSchema(),completeness:qaStatusSchema(),style:qaStatusSchema(),semantic:qaStatusSchema(),notes:{type:"string"},
   }};
+const EDITORIAL_TRANSLATION_SCHEMA={type:"object",additionalProperties:false,required:["regions"],properties:{
+  regions:{type:"array",items:{type:"object",additionalProperties:false,required:["region_id","english_text"],properties:{
+    region_id:{type:"string"},english_text:{type:"string"},
+  }}},
+}};
 
 function qaStatusSchema(){return {type:"object",additionalProperties:false,required:["status","reason"],properties:{
   status:{type:"string",enum:["passed","failed","needs_review","not_tested"]},reason:{type:"string"},
@@ -51,6 +56,9 @@ export class VertexImagen {
     const host = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
     const endpoint = `${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const metadata=safeJson(visual.media_metadata_json || visual.media_metadata);
+    if (shouldRenderEditorialTextCard(visual,metadata)) {
+      return this.renderEditorialTextCard({visual,draft,metadata,source,accessToken,signal:options.signal});
+    }
     const prompt = transformPrompt(visual,metadata);
     await this.config.beforeRequest?.({ provider: "vertex_gemini", model: this.config.model, stage: "localize_source_image", attempt: 1 });
     const response = await providerFetch(this.fetch, endpoint, {
@@ -77,6 +85,42 @@ export class VertexImagen {
       outputMimeType:part.inlineData.mimeType,accessToken,signal:options.signal});
     return this.storeImage({ base64: part.inlineData.data, mimeType: part.inlineData.mimeType, visual, draft,
       provider: "vertex_gemini", model: this.config.model, sourceDimensions: sourceInspection.dimensions,qualityQa });
+  }
+
+  async renderEditorialTextCard({visual,draft,metadata,source,accessToken,signal}) {
+    const location=this.config.location || "global";
+    const host=location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
+    const translationModel=this.config.qualityModel || "gemini-3.8-flash";
+    const endpoint=`${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(translationModel)}:generateContent`;
+    const regions=editorialTranslationRegions(metadata);
+    const priorFeedback=visualRetryFeedback(metadata);
+    const prompt=`Translate every source region into concise, natural English for a travel editorial card. Return every region_id exactly once and no extra ids. Preserve every proper noun, number, time, price, transport mode, negation, warning, list item, and factual qualifier. Do not summarize or omit details. Remove no source content except regions already excluded from this manifest. ${priorFeedback ? `The prior derivative failed QA; correct these defects: ${JSON.stringify(priorFeedback)}.` : ""} Source regions: ${JSON.stringify(regions)}`;
+    await this.config.beforeRequest?.({provider:"vertex_gemini",model:translationModel,stage:"translate_editorial_card",attempt:1});
+    const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${accessToken}`,"content-type":"application/json"},
+      body:JSON.stringify({contents:{role:"USER",parts:[{text:prompt}]},generationConfig:{responseModalities:["TEXT"],
+        responseMimeType:"application/json",responseSchema:EDITORIAL_TRANSLATION_SCHEMA}}),
+      signal:combinedSignal(signal,this.config.requestTimeoutMs)},"vertex_gemini",signal);
+    const payload=await response.json().catch(()=>({}));
+    if (!response.ok) throw new ProviderRequestError("Vertex Gemini editorial card translation",response.status,
+      payload?.error?.message || response.statusText,{...(payload?.error || {}),retryAfter:response.headers.get("retry-after")});
+    const raw=payload?.candidates?.flatMap((candidate)=>candidate?.content?.parts || []).find((item)=>item?.text)?.text || "";
+    let translated; try { translated=JSON.parse(raw); }
+    catch { throw Object.assign(new Error("Editorial card translation returned invalid JSON."),{code:"EDITORIAL_TRANSLATION_INVALID",retryable:true}); }
+    const expected=new Set(regions.map((region)=>region.region_id));
+    const entries=Array.isArray(translated?.regions) ? translated.regions : [];
+    const actual=new Set(entries.map((entry)=>String(entry?.region_id || "")));
+    if (entries.length !== expected.size || actual.size !== expected.size || [...expected].some((id)=>!actual.has(id))
+      || entries.some((entry)=>!String(entry?.english_text || "").trim())) {
+      throw Object.assign(new Error("Editorial card translation did not return one complete English region for every source region."),
+        {code:"EDITORIAL_TRANSLATION_INCOMPLETE",retryable:true});
+    }
+    const ordered=regions.map((region)=>({region_id:region.region_id,
+      english_text:String(entries.find((entry)=>entry.region_id === region.region_id).english_text).trim()}));
+    const sourceInspection=await inspectImageBytes(source.bytes,source.mimeType);
+    const outputBytes=await renderTextCardPng(ordered,visual.aspect_ratio);
+    const qualityQa=await this.reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType:"image/png",accessToken,signal});
+    return this.storeImage({base64:outputBytes.toString("base64"),mimeType:"image/png",visual,draft,
+      provider:"vertex_gemini_text_layout",model:translationModel,sourceDimensions:sourceInspection.dimensions,qualityQa});
   }
 
   async reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType,accessToken,signal}) {
@@ -272,6 +316,83 @@ function transformPrompt(visual,metadata={}) {
   if (visual.acquisition_strategy === "recompose_collage") return `${shared}\nRecompose the collage for an English travel article. Keep every factual photo region unchanged and in its original meaning and order. Keep real-world storefront signs inside photos intact. Replace only author-written captions or overlays with concise English. The overall canvas and all caption/card surfaces must be warm white; use light blue only as a restrained accent with dark readable type. Do not use dark blue, dark green, purple, red, black, or saturated full-card backgrounds. Natural colors inside the factual photo regions must remain unchanged. Never merge several restaurants into one venue or describe the collage as a single photograph.`;
   if (visual.acquisition_strategy === "recompose_map_or_route") return `${shared}\nRecompose the route or map in English. Preserve topology, start/end points, directions, arrows, step sequence, durations, distances, transfer relationships, and place identity exactly. If all required information cannot fit legibly, use a clearer multi-panel layout without omitting facts.`;
   return `${shared}\nTranslate only author-added Chinese overlay text into concise English. Preserve the documentary photograph exactly: scene, people, buildings, food, objects, crop, perspective, lighting, natural colors, logos, and real-world signage must remain unchanged.`;
+}
+
+function visualRetryFeedback(metadata={}) {
+  return Object.entries(metadata.quality_qa || {}).filter(([name,value])=>name !== "notes"
+    && ["failed","needs_review"].includes(value?.status)).map(([field,value])=>({field,
+    reason:String(value?.reason || "Previous audit did not pass.").slice(0,1000)}));
+}
+
+function editorialTranslationRegions(metadata={}) {
+  const analysis=metadata.source_analysis || {};
+  const translatedIds=new Set(metadata.visual_decision?.translateRegionIds || []);
+  return (analysis.text_regions || []).filter((region)=>translatedIds.size ? translatedIds.has(region.region_id)
+    : region.readable !== false && region.role !== "ui_text" && !region.preserve).map((region)=>({
+      region_id:String(region.region_id),source_text:String(region.text || ""),role:String(region.role || "editorial_text"),
+    })).filter((region)=>region.source_text.trim());
+}
+
+function shouldRenderEditorialTextCard(visual,metadata={}) {
+  const analysis=metadata.source_analysis || {};
+  return visual.acquisition_strategy === "recompose_editorial_card"
+    && ["handwritten_card","editorial_infographic","text_card"].includes(String(analysis.asset_kind || ""))
+    && Array.isArray(analysis.photo_regions) && analysis.photo_regions.length === 0
+    && editorialTranslationRegions(metadata).length > 0;
+}
+
+async function renderTextCardPng(regions,aspectRatio) {
+  const ratio=parseAspectRatio(aspectRatio) || 3/4;
+  const width=896; const height=Math.round(width/ratio);
+  const title=regions[0]?.english_text || "Travel Notes";
+  const body=regions.slice(1);
+  let fontSize=22; let rendered;
+  while (fontSize >= 14) {
+    rendered=layoutTextCard(body,{width,height,fontSize});
+    if (rendered.bottom <= height-42) break;
+    fontSize -= 1;
+  }
+  if (!rendered || rendered.bottom > height-42) throw Object.assign(new Error("Editorial card text does not fit without cropping."),
+    {code:"EDITORIAL_CARD_TEXT_OVERFLOW",retryable:false});
+  const titleLines=wrapEditorialText(title,44);
+  const titleSpans=titleLines.map((line,index)=>`<tspan x="56" dy="${index ? 38 : 0}">${escapeXml(line)}</tspan>`).join("");
+  const bodyText=(rendered?.items || []).map((item)=>`<text x="64" y="${item.y}" font-family="DejaVu Sans,Arial,sans-serif" font-size="${fontSize}" fill="#172033">${item.lines.map((line,index)=>`<tspan x="64" dy="${index ? fontSize*1.32 : 0}">${escapeXml(line)}</tspan>`).join("")}</text>`).join("");
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+    <rect width="${width}" height="${height}" fill="#fbf8f1"/>
+    <rect x="34" y="34" width="${width-68}" height="118" rx="24" fill="#dceef8"/>
+    <rect x="34" y="174" width="8" height="${height-216}" rx="4" fill="#7fb6d6"/>
+    <text x="56" y="82" font-family="DejaVu Sans,Arial,sans-serif" font-size="34" font-weight="700" fill="#16324a">${titleSpans}</text>
+    ${bodyText}
+  </svg>`;
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+function layoutTextCard(regions,{width,height,fontSize}) {
+  const maxChars=Math.max(34,Math.floor((width-138)/(fontSize*0.56)));
+  let y=202; const items=[];
+  for (const region of regions) {
+    const lines=wrapEditorialText(region.english_text,maxChars);
+    items.push({y,lines});
+    y += lines.length*fontSize*1.32 + fontSize*0.9;
+  }
+  return {items,bottom:y,height};
+}
+
+function wrapEditorialText(value,maxChars) {
+  const words=String(value || "").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
+  const lines=[]; let current="";
+  for (const word of words) {
+    const candidate=current ? `${current} ${word}` : word;
+    if (candidate.length <= maxChars || !current) current=candidate;
+    else { lines.push(current); current=word; }
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [""];
+}
+
+function escapeXml(value) {
+  return String(value || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;").replaceAll("'","&apos;");
 }
 
 function visualQaPrompt(visual,metadata={}) {

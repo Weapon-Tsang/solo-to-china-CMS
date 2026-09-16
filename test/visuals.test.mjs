@@ -206,6 +206,45 @@ test("collage recomposition requests the source-shaped output and forbids dark c
   assert.match(body.contents.parts[0].text,/Proofread every English proper noun, transport mode/i);
 });
 
+test("text-only editorial cards use structured translation and deterministic uncropped layout",async(t)=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"solo-text-card-test-"));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const sourcePath=path.join(directory,"authorized-card.png");
+  const sourceBytes=await pngBytes(900,1200,"source-card");
+  fs.writeFileSync(sourcePath,sourceBytes);
+  const requests=[];
+  const translations={regions:[
+    {region_id:"title",english_text:"Chongqing Travel Notes"},
+    {region_id:"tip-15",english_text:"Choose chain hotels along metro lines, or an all-in-one stay with accommodation, leisure, massage, food, drinks, and entertainment."},
+  ]};
+  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    model:"gemini-3.1-flash-image",qualityModel:"gemini-3.8-flash",accessToken:"token",mediaDir:directory,
+    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000},async(url,options)=>{
+      requests.push({url:String(url),options});
+      if(requests.length===1)return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(translations)}]}}]});
+      return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(passedQa())}]}}]});
+    });
+  const output=await client.localizeSourceImage({id:"visual-text-card",slot:3,image_type:"infographic",
+    acquisition_strategy:"recompose_editorial_card",factual_image_required:true,source_asset_id:"asset-text-card",
+    source_asset_local_path:sourcePath,source_asset_mime_type:"image/png",image_role:"support",aspect_ratio:"3:4",
+    media_metadata_json:JSON.stringify({source_analysis:{asset_kind:"handwritten_card",photo_regions:[],text_regions:[
+      {region_id:"title",text:"Chongqing notes",role:"author_overlay",readable:true,preserve:false},
+      {region_id:"tip-15",text:"Tip 15 source",role:"author_overlay",readable:true,preserve:false},
+      {region_id:"ui",text:"+",role:"ui_text",readable:true,preserve:false},
+    ]},visual_decision:{translateRegionIds:["title","tip-15"]},quality_qa:{semantic:{status:"failed",reason:"Subway was omitted."}}})},
+  {id:"draft-text-card"});
+  assert.equal(requests.length,2,"text-only cards must not depend on raster text generation");
+  assert.match(requests[0].url,/models\/gemini-3\.8-flash:generateContent$/);
+  const translationBody=JSON.parse(requests[0].options.body);
+  assert.equal(translationBody.generationConfig.responseMimeType,"application/json");
+  assert.match(translationBody.contents.parts[0].text,/Subway was omitted/i);
+  assert.match(translationBody.contents.parts[0].text,/Return every region_id exactly once/i);
+  const inspection=await inspectImageBytes(fs.readFileSync(output.mediaPath),"image/png");
+  assert.deepEqual(inspection.dimensions,{width:896,height:1195});
+  assert.equal(output.provider,"vertex_gemini_text_layout");
+  assert.equal(output.metadata.quality_qa.completeness.status,"passed");
+});
+
 function passedQa(){return {language:{status:"passed",reason:"English overlays are readable."},
   completeness:{status:"passed",reason:"All source facts are present."},style:{status:"passed",reason:"Style matches the requested path."},
   semantic:{status:"passed",reason:"Source meaning and imagery are unchanged."},notes:""};}
