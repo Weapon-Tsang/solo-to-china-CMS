@@ -8731,7 +8731,7 @@ function legacyBlockRecord(block, signature) {
 export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], policy = {}) {
   const maximum = policy.visuals?.maximum ?? 5;
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
-  const allowedRatios = ["16:9", "4:3", "1:1", "3:2", "9:16"];
+  const allowedRatios = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"];
   const supplied = Array.isArray(values) ? values : [];
   // Unsupported renderer types stay absent until a real renderer and validated
   // data source are configured. Project source media is fully authorized; when
@@ -8945,11 +8945,10 @@ function sourceAssetAspectRatio(asset) {
   const width=Number(asset?.width || 0); const height=Number(asset?.height || 0);
   if (!width || !height) return "3:2";
   const ratio=width/height;
-  if (ratio>=1.6) return "16:9";
-  if (ratio>=1.35) return "3:2";
-  if (ratio>=1.1) return "4:3";
-  if (ratio<=0.8) return "9:16";
-  return "1:1";
+  const supported=[["21:9",21/9],["16:9",16/9],["3:2",3/2],["4:3",4/3],["5:4",5/4],
+    ["1:1",1],["4:5",4/5],["3:4",3/4],["2:3",2/3],["9:16",9/16]];
+  return supported.reduce((best,candidate)=>Math.abs(Math.log(candidate[1]/ratio))<Math.abs(Math.log(best[1]/ratio))
+    ? candidate : best)[0];
 }
 
 function visualAssetMatchScore(visual, asset) {

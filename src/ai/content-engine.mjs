@@ -147,7 +147,7 @@ const DRAFT_SCHEMA = objectSchema(
     visuals: { type: "array", items: objectSchema(["placement", "purpose", "alt_text", "caption", "generation_prompt", "aspect_ratio", "image_type", "image_role", "image_subject", "factual_image_required"], {
       placement: { type: "string", enum: ["hero", "after_intro", "mid_article", "before_faq", "closing"] },
       purpose: { type: "string" }, alt_text: { type: "string" }, caption: { type: "string" }, generation_prompt: { type: "string" },
-      aspect_ratio: { type: "string", enum: ["16:9", "4:3", "1:1", "3:2", "9:16"] },
+      aspect_ratio: { type: "string", enum: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"] },
       image_type: { type: "string", enum: ["real_world_photo", "infographic", "map_or_route", "illustration"] },
       image_role: { type: "string" }, image_subject: { type: "string" }, factual_image_required: { type: "boolean" },
     }) },

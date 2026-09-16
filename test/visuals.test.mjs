@@ -131,7 +131,7 @@ test("Chinese source-image localization sends the retained original and forbids 
     });
   const output = await client.localizeSourceImage({ id: "visual_localized", slot: 1, image_type: "real_world_photo",
     acquisition_strategy: "localize_source_image", factual_image_required: true, source_asset_id: "asset-1",
-    source_asset_local_path: sourcePath, source_asset_mime_type: "image/png", image_role: "hero", aspect_ratio: "16:9",
+    source_asset_local_path: sourcePath, source_asset_mime_type: "image/png", image_role: "hero", aspect_ratio: "3:2",
     generation_prompt: "" }, { id: "draft-localized" });
   const body = JSON.parse(requests[0].options.body);
   assert.match(requests[0].url,/models\/gemini-3\.1-flash-image:generateContent$/);
@@ -141,7 +141,7 @@ test("Chinese source-image localization sends the retained original and forbids 
   assert.match(body.contents.parts[0].text, /Preserve the documentary photograph exactly/i);
   assert.match(body.contents.parts[0].text, /scene, people, buildings, food/i);
   assert.deepEqual(fs.readFileSync(output.mediaPath), localizedBytes);
-  assert.equal(body.generationConfig.imageConfig, undefined);
+  assert.equal(body.generationConfig.imageConfig.aspectRatio, "3:2");
   assert.equal(output.metadata.quality_qa.semantic.status,"passed");
 });
 
@@ -171,6 +171,34 @@ test("Chinese source-image localization accepts a retained WebP original without
   const body = JSON.parse(requests[0].options.body);
   assert.equal(body.contents.parts[1].inlineData.mimeType, "image/webp");
   assert.equal(body.contents.parts[1].inlineData.data, sourceBytes.toString("base64"));
+  assert.equal(body.generationConfig.imageConfig.aspectRatio, "16:9");
+});
+
+test("collage recomposition requests the source-shaped output and forbids dark card styling", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-collage-visual-test-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const sourcePath = path.join(directory, "authorized-collage.png");
+  const sourceBytes = await pngBytes(900,1200,"original-collage");
+  const localizedBytes = await pngBytes(900,1200,"localized-collage");
+  fs.writeFileSync(sourcePath,sourceBytes);
+  const requests=[];
+  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    model:"gemini-3.1-flash-image",accessToken:"token",mediaDir:directory,
+    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000},async(url,options)=>{
+      requests.push({url:String(url),options});
+      if(requests.length===2)return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(passedQa())}]}}]});
+      return Response.json({candidates:[{content:{parts:[{inlineData:{data:localizedBytes.toString("base64"),mimeType:"image/png"}}]}}]});
+    });
+  await client.localizeSourceImage({id:"visual-collage",slot:1,image_type:"infographic",
+    acquisition_strategy:"recompose_collage",factual_image_required:true,source_asset_id:"asset-collage",
+    source_asset_local_path:sourcePath,source_asset_mime_type:"image/png",image_role:"support",aspect_ratio:"3:4",
+    media_metadata_json:JSON.stringify({source_analysis:{text_regions:[{region_id:"caption",text:"source caption",role:"author_overlay",preserve:false}]}})},
+  {id:"draft-collage"});
+  const body=JSON.parse(requests[0].options.body);
+  assert.equal(body.generationConfig.imageConfig.aspectRatio,"3:4");
+  assert.match(body.contents.parts[0].text,/overall canvas and all caption\/card surfaces must be warm white/i);
+  assert.match(body.contents.parts[0].text,/Do not use dark blue, dark green/i);
+  assert.match(body.contents.parts[0].text,/Natural colors inside the factual photo regions must remain unchanged/i);
 });
 
 function passedQa(){return {language:{status:"passed",reason:"English overlays are readable."},

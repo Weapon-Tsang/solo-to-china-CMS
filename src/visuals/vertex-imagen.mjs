@@ -58,9 +58,10 @@ export class VertexImagen {
       headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
       body: JSON.stringify({
         contents: { role: "USER", parts: [{ text: prompt }, { inlineData: { mimeType: source.mimeType, data: source.base64 } }] },
-        // Localization must retain the source crop and geometry. Asking the
-        // provider for a new aspect ratio can truncate long cards or captions.
-        generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+        // Request the nearest supported ratio selected from the stored source
+        // dimensions. Pixel and semantic QA still reject any crop or omission.
+        generationConfig: { responseModalities: ["TEXT", "IMAGE"],
+          imageConfig: { aspectRatio: visual.aspect_ratio } },
       }),
       signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
     }, "vertex_gemini", options.signal);
@@ -263,7 +264,7 @@ function transformPrompt(visual,metadata={}) {
     translate_region_ids:decision.translateRegionIds || []};
   const shared=`Use the attached authorized source image. Do not invent unreadable words, prices, times, routes, entities, people, places, or objects. Preserve every number, currency, operating time, negation, exception, arrow, route direction, ordering relationship, photograph, and factual relationship. Return one complete image with no cropped final line. Required source manifest: ${JSON.stringify(facts)}`;
   if (visual.acquisition_strategy === "recompose_editorial_card") return `${shared}\nRecompose the editorial card from scratch in concise natural English on a warm white background with restrained light-blue accents, dark readable type, generous spacing, and a clear information hierarchy. Remove Notes bars, editor chrome, canvas controls, selection handles, watermarks, and decorative red/black poster styling. Do not pretend this card is a documentary photograph.`;
-  if (visual.acquisition_strategy === "recompose_collage") return `${shared}\nRecompose the collage for an English travel article. Keep every factual photo region unchanged and in its original meaning and order. Keep real-world storefront signs inside photos intact. Replace only author-written captions or overlays with concise English in a warm-white/light-blue editorial system. Never merge several restaurants into one venue or describe the collage as a single photograph.`;
+  if (visual.acquisition_strategy === "recompose_collage") return `${shared}\nRecompose the collage for an English travel article. Keep every factual photo region unchanged and in its original meaning and order. Keep real-world storefront signs inside photos intact. Replace only author-written captions or overlays with concise English. The overall canvas and all caption/card surfaces must be warm white; use light blue only as a restrained accent with dark readable type. Do not use dark blue, dark green, purple, red, black, or saturated full-card backgrounds. Natural colors inside the factual photo regions must remain unchanged. Never merge several restaurants into one venue or describe the collage as a single photograph.`;
   if (visual.acquisition_strategy === "recompose_map_or_route") return `${shared}\nRecompose the route or map in English. Preserve topology, start/end points, directions, arrows, step sequence, durations, distances, transfer relationships, and place identity exactly. If all required information cannot fit legibly, use a clearer multi-panel layout without omitting facts.`;
   return `${shared}\nTranslate only author-added Chinese overlay text into concise English. Preserve the documentary photograph exactly: scene, people, buildings, food, objects, crop, perspective, lighting, natural colors, logos, and real-world signage must remain unchanged.`;
 }
