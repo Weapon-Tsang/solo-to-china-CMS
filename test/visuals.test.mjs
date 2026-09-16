@@ -134,6 +134,9 @@ test("Chinese source-image localization sends the retained original and forbids 
     source_asset_local_path: sourcePath, source_asset_mime_type: "image/png", image_role: "hero", aspect_ratio: "16:9",
     generation_prompt: "" }, { id: "draft-localized" });
   const body = JSON.parse(requests[0].options.body);
+  assert.match(requests[0].url,/models\/gemini-3\.1-flash-image:generateContent$/);
+  assert.match(requests[1].url,/models\/gemini-3\.8-flash:generateContent$/,
+    "quality QA must use the structured multimodal reviewer, not the image-generation model");
   assert.equal(body.contents.parts[1].inlineData.data, sourceBytes.toString("base64"));
   assert.match(body.contents.parts[0].text, /Preserve the documentary photograph exactly/i);
   assert.match(body.contents.parts[0].text, /scene, people, buildings, food/i);

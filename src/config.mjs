@@ -158,6 +158,7 @@ export function loadConfig(env = process.env) {
       location: env.VERTEX_AI_LOCATION || "us-central1",
       defaultModel: VISUAL_MODELS.some((item) => item.id === env.VISUAL_MODEL) ? env.VISUAL_MODEL : "vertex-gemini-3.1-flash-image",
       model: env.IMAGE_MODEL || env.VERTEX_IMAGEN_MODEL || "gemini-3.1-flash-image",
+      qualityModel: env.VISUAL_QA_MODEL || "gemini-3.8-flash",
       coverQuality: env.IMAGE_COVER_QUALITY || "1K",
       inlineQuality: env.IMAGE_INLINE_QUALITY || "1K",
       mediaDir: generatedMediaDir,

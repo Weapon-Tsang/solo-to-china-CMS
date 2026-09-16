@@ -73,13 +73,17 @@ export class VertexImagen {
     const outputBytes=Buffer.from(part.inlineData.data,"base64");
     await inspectImageBytes(outputBytes,part.inlineData.mimeType);
     const qualityQa=await this.reviewTransformedImage({visual,metadata,source,outputBytes,
-      outputMimeType:part.inlineData.mimeType,endpoint,accessToken,signal:options.signal});
+      outputMimeType:part.inlineData.mimeType,accessToken,signal:options.signal});
     return this.storeImage({ base64: part.inlineData.data, mimeType: part.inlineData.mimeType, visual, draft,
       provider: "vertex_gemini", model: this.config.model, sourceDimensions: sourceInspection.dimensions,qualityQa });
   }
 
-  async reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType,endpoint,accessToken,signal}) {
-    await this.config.beforeRequest?.({provider:"vertex_gemini",model:this.config.model,stage:"visual_quality_qa",attempt:1});
+  async reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType,accessToken,signal}) {
+    const location=this.config.location || "global";
+    const host=location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
+    const qualityModel=this.config.qualityModel || "gemini-3.8-flash";
+    const endpoint=`${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(qualityModel)}:generateContent`;
+    await this.config.beforeRequest?.({provider:"vertex_gemini",model:qualityModel,stage:"visual_quality_qa",attempt:1});
     const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${accessToken}`,"content-type":"application/json"},
       body:JSON.stringify({contents:{role:"USER",parts:[{text:visualQaPrompt(visual,metadata)},
         {inlineData:{mimeType:source.mimeType,data:source.base64}},
