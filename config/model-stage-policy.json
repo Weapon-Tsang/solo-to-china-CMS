@@ -1,10 +1,11 @@
 {
-  "version": "model-stage-policy-1.0.2",
+  "version": "model-stage-policy-1.0.3",
   "optimizationUnit": "qualified_draft_at_unchanged_quality_threshold",
   "defaultModelChange": "requires_same_inputs_same_quality_set_and_explicit_paid_trial_approval",
   "seoGeoPolicy": "integrated_outputs_and_deterministic_checks; no mandatory extra full-document agent",
   "maximumDraftRepairRounds": 1,
   "stages": {
+    "source_asset_media_analysis": { "class": "vision_analysis", "requires": ["structured_output", "source_modality", "complete_text_regions"], "thinking": "LOW", "maxOutputTokens": 16000, "timeoutMs": 360000, "maxAttempts": 2 },
     "source_research_extraction": { "class": "extraction", "requires": ["structured_output", "source_modality"], "thinking": "LOW", "maxOutputTokens": 16000, "timeoutMs": 360000, "maxAttempts": 3 },
     "segment_claim_coverage_audit": { "class": "verification", "requires": ["structured_output", "evidence_fidelity"], "thinking": "LOW", "maxOutputTokens": 8000, "timeoutMs": 360000, "maxAttempts": 2 },
     "content_intake_analysis": { "class": "diagnosis", "requires": ["structured_output"], "thinking": "LOW", "maxOutputTokens": 8000, "timeoutMs": 180000, "maxAttempts": 2 },

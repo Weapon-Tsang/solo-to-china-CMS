@@ -48,9 +48,8 @@ export class VertexGeminiClient {
       generationConfig: {
         responseMimeType: "application/json",
         maxOutputTokens: policy.maxOutputTokens,
-        ...(String(this.config.model).startsWith("gemini-3")
-          ? { thinkingConfig: { thinkingLevel: policy.thinking } }
-          : { temperature: 0.1 }),
+        ...vertexThinkingConfiguration(this.config.model,policy.thinking),
+        ...(String(this.config.model).startsWith("gemini-3") ? {} : { temperature: 0.1 }),
       },
     };
     applyVertexSchemaTransport(requestBody, schema, schemaMode, instructions);
@@ -105,11 +104,20 @@ export class VertexGeminiClient {
       const output = candidate?.content?.parts?.map((part) => part.text || "").join("");
       if (candidate?.finishReason === "MAX_TOKENS") {
         const configuredThinking = String(requestBody.generationConfig.thinkingConfig?.thinkingLevel || "").toUpperCase();
+        const configuredBudget = Number(requestBody.generationConfig.thinkingConfig?.thinkingBudget);
+        const minimumBudget = minimumThinkingBudget(this.config.model);
         if (!thinkingFallbackUsed && configuredThinking && configuredThinking !== "LOW") {
           thinkingFallbackUsed = true;
           this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
             status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: `thinking_budget_fallback:${configuredThinking}->LOW`, usage: payload?.usageMetadata }));
           requestBody.generationConfig.thinkingConfig = { thinkingLevel: "LOW" };
+          continue;
+        }
+        if (!thinkingFallbackUsed && Number.isFinite(configuredBudget) && configuredBudget > minimumBudget) {
+          thinkingFallbackUsed = true;
+          this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
+            status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", retryReason: `thinking_budget_fallback:${configuredBudget}->${minimumBudget}`, usage: payload?.usageMetadata }));
+          requestBody.generationConfig.thinkingConfig = { thinkingBudget: minimumBudget };
           continue;
         }
         this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
@@ -398,8 +406,25 @@ function outputLimitError(stage) {
   }
   const label = stage === "content_brief" ? "content planning" : String(stage).replaceAll("_", " ");
   return Object.assign(new Error(`Vertex Gemini ${label} structured output reached its token limit; narrow or correct the stage input before retrying.`), {
-    code: "MODEL_OUTPUT_LIMIT", retryable: false,
+    code: "MODEL_OUTPUT_LIMIT", retryable: stage === "source_asset_media_analysis",
   });
+}
+
+function vertexThinkingConfiguration(model, level) {
+  const name=String(model || "").toLowerCase();
+  if (name.startsWith("gemini-3")) return {thinkingConfig:{thinkingLevel:level}};
+  if (!name.startsWith("gemini-2.5")) return {};
+  const normalized=String(level || "LOW").toUpperCase();
+  const minimum=minimumThinkingBudget(name);
+  const budget=normalized === "HIGH" ? 8192 : normalized === "MEDIUM" ? 4096 : minimum;
+  return {thinkingConfig:{thinkingBudget:budget}};
+}
+
+function minimumThinkingBudget(model) {
+  const name=String(model || "").toLowerCase();
+  if (name.includes("2.5-pro")) return 128;
+  if (name.includes("2.5-flash-lite")) return 512;
+  return 0;
 }
 
 function xiaohongshuMediaUrl(value) {

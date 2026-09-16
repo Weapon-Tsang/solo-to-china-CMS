@@ -66,6 +66,35 @@ test("Vertex Gemini reserves medium thinking for planning and writing stages", a
   assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "MEDIUM");
 });
 
+test("Vertex Gemini bounds 2.5 Pro thinking so media-analysis output keeps its token budget", async () => {
+  let body;
+  const client = new VertexGeminiClient({
+    projectId:"test-project",location:"global",model:"gemini-2.5-pro",accessToken:"test-token",maxCompletionTokens:16_000,
+  },async (_url,options)=>{
+    body=JSON.parse(options.body);
+    return Response.json({candidates:[{finishReason:"STOP",content:{parts:[{text:'{"ok":true}'}]}}]});
+  });
+  await client.completeJson({name:"source_asset_media_analysis",schema:{type:"object"},instructions:"Decode the image.",content:"image"});
+  assert.equal(body.generationConfig.thinkingConfig.thinkingBudget,128);
+  assert.equal(body.generationConfig.thinkingConfig.thinkingLevel,undefined);
+  assert.equal(body.generationConfig.maxOutputTokens,16_000);
+});
+
+test("Vertex Gemini retries a 2.5 Pro reasoning stage at its minimum thinking budget", async () => {
+  const requests=[];
+  const client = new VertexGeminiClient({
+    projectId:"test-project",location:"global",model:"gemini-2.5-pro",accessToken:"test-token",maxCompletionTokens:16_000,
+  },async (_url,options)=>{
+    requests.push(JSON.parse(options.body));
+    if(requests.length===1)return Response.json({candidates:[{finishReason:"MAX_TOKENS",content:{parts:[{text:'{"partial":'}]}}]});
+    return Response.json({candidates:[{finishReason:"STOP",content:{parts:[{text:'{"ok":true}'}]}}]});
+  });
+  const result=await client.completeJson({name:"content_brief",schema:{type:"object"},instructions:"Plan.",content:"evidence"});
+  assert.deepEqual(result.output,{ok:true});
+  assert.equal(requests[0].generationConfig.thinkingConfig.thinkingBudget,4096);
+  assert.equal(requests[1].generationConfig.thinkingConfig.thinkingBudget,128);
+});
+
 test("Vertex Gemini converts shared text parts and retries malformed structured output once", async () => {
   const requests = [];
   const gatedAttempts = [];
