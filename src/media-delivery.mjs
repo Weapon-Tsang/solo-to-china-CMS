@@ -46,7 +46,8 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true, pa
     }
     if (visual.image_type === "real_world_photo") {
       const strategy = String(visual.acquisition_strategy || "");
-      if (!["use_authorized_source_image", "localize_source_image"].includes(strategy)) {
+      const localizedPhotoStrategies=new Set(["localize_source_image","localize_photo_overlay"]);
+      if (!["use_authorized_source_image",...localizedPhotoStrategies].includes(strategy)) {
         errors.push({ code: "REAL_SCENE_REQUIRES_EVIDENCE_MEDIA", path });
       }
       const sourceAssetId = String(visual.source_asset_id || "").trim();
@@ -61,7 +62,7 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true, pa
         || !provenance.asset_owner_confirmed || !provenance.asset_publishable)) {
         errors.push({ code: "REAL_SCENE_AUTHORIZATION_INVALID", path });
       }
-      if (strategy === "localize_source_image"
+      if (localizedPhotoStrategies.has(strategy)
         && (!metadata.localized_file || metadata.localized_from_source_asset_id !== sourceAssetId)) {
         errors.push({ code: "LOCALIZED_SCENE_FILE_NOT_PROVEN", path });
       }

@@ -56,6 +56,20 @@ test("localized real photos require an original, authorization, a real localized
   assert.ok(invalid.errors.some((error) => error.code === "LOCALIZED_SCENE_FILE_NOT_PROVEN"));
 });
 
+test("photo-overlay localization remains evidence media and requires the same derivative provenance",()=>{
+  const source_asset_id="source-asset-overlay";
+  const metadata={...wordpressMediaMetadata(wpBody,{bytes,contentType:"image/jpeg"}),wordpress_uploaded:true,
+    wordpress_media_id:71,localized_file:true,localized_from_source_asset_id:source_asset_id,
+    authorization_policy:"project_source_media_full_authorization",source_provenance:{
+      source_asset_id,original_stored:true,project_owner_confirmed:true}};
+  const visual={wordpress_media_id:71,wordpress_media_url:wpBody.source_url,source_asset_id,
+    alt_text:"Authorized photo with localized author overlay",image_role:"featured",image_type:"real_world_photo",
+    acquisition_strategy:"localize_photo_overlay",factual_image_required:1,media_metadata:metadata};
+  assert.equal(validateMediaDelivery([visual]).valid,true);
+  const invalid=validateMediaDelivery([{...visual,media_metadata:{...metadata,localized_from_source_asset_id:"other"}}]);
+  assert.ok(invalid.errors.some((error)=>error.code === "LOCALIZED_SCENE_FILE_NOT_PROVEN"));
+});
+
 test("project-wide source authorization supersedes missing legacy per-item flags", () => {
   const source_asset_id = "source-asset-project-authorized";
   const metadata = { ...wordpressMediaMetadata(wpBody, { bytes, contentType: "image/jpeg" }),
