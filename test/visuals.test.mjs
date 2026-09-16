@@ -245,6 +245,12 @@ test("text-only editorial cards use structured translation and deterministic unc
   assert.equal(output.metadata.quality_qa.completeness.status,"passed");
 });
 
+test("production runtime installs the font used by deterministic editorial cards",()=>{
+  const dockerfile=fs.readFileSync(path.resolve("Dockerfile"),"utf8");
+  assert.match(dockerfile,/apt-get install[^\n]*fonts-dejavu-core/,
+    "the slim production image must include DejaVu Sans instead of rendering card text as tofu squares");
+});
+
 function passedQa(){return {language:{status:"passed",reason:"English overlays are readable."},
   completeness:{status:"passed",reason:"All source facts are present."},style:{status:"passed",reason:"Style matches the requested path."},
   semantic:{status:"passed",reason:"Source meaning and imagery are unchanged."},notes:""};}
