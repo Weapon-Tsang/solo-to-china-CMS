@@ -9,6 +9,18 @@ const encryptionKey=Buffer.alloc(32,7).toString("base64");
 const answerSchema={type:"object",additionalProperties:false,required:["answer"],properties:{answer:{type:"string"}}};
 const policy={version:"model-routing-policy-1.1.0",stages:{test_stage:{class:"extraction",role:"extraction",thinking:"LOW",maxOutputTokens:1000,timeoutMs:5000,maxAttempts:1}}};
 
+test("model credential encryption readiness distinguishes missing, malformed, and valid root keys",(t)=>{
+  const missing=repositoryFixture(t).repository.getModelRoutingSettings();
+  assert.equal(missing.encryptionReady,false);
+  assert.equal(missing.encryptionErrorCode,"MODEL_CREDENTIAL_ENCRYPTION_KEY_REQUIRED");
+  const malformed=repositoryFixture(t,{modelCredentialEncryptionKey:"configured-but-invalid"}).repository.getModelRoutingSettings();
+  assert.equal(malformed.encryptionReady,false);
+  assert.equal(malformed.encryptionErrorCode,"MODEL_CREDENTIAL_ENCRYPTION_KEY_INVALID");
+  const valid=repositoryFixture(t,{modelCredentialEncryptionKey:encryptionKey}).repository.getModelRoutingSettings();
+  assert.equal(valid.encryptionReady,true);
+  assert.equal(valid.encryptionErrorCode,null);
+});
+
 test("encrypted extraction routing is optimistic and freezes each new Job profile",(t)=>{
   const {db,repository}=repositoryFixture(t,{modelCredentialEncryptionKey:encryptionKey});
   const initial=repository.getModelRoutingSettings();

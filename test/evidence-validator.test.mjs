@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { factRelevant, pageBlockSignature, protectedFactTokens, remapBlockProvenanceForDelivery,
+import { evidenceTextContains, factRelevant, pageBlockSignature, protectedFactTokens, remapBlockProvenanceForDelivery,
   validatePageEvidence } from "../src/evidence-validator.mjs";
 import { validateFinalPageArtifact } from "../src/publish-page.mjs";
 
@@ -118,6 +118,17 @@ test('zero-fee evidence accepts reader-friendly free admission wording', () => {
   entry.blockSignature = pageBlockSignature(block);
   entry.claimTraces = [{ claimKey: pkg.facts[0].normalized_key, claimId: 'zero-cny', sourceId: 'source-real', evidenceRole: 'current' }];
   assert.equal(validatePageEvidence({ blocks: [block] }, pkg).valid, true);
+});
+
+test('production evidence surface variants are semantically equivalent without accepting wrong values', () => {
+  for (const value of ['24_hours', '24 hours', '24/7', '全天']) {
+    assert.equal(evidenceTextContains('The attraction is open 24 hours a day.', value), true, value);
+  }
+  for (const value of ['0 CNY', 'CNY 0', '0 RMB', 'free']) {
+    assert.equal(evidenceTextContains('Admission is free (0 CNY).', value), true, value);
+  }
+  assert.equal(evidenceTextContains('Admission costs 50 CNY.', '0 CNY'), false);
+  assert.equal(evidenceTextContains('The attraction closes at 22:00.', '24_hours'), false);
 });
 
 test('divergent current-source details are alternatives rather than conjunctive literal requirements', () => {

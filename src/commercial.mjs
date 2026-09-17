@@ -348,7 +348,8 @@ function commercialBlock(intent, asset, placement, index, disclosure) {
     after_block_key: intent.blockKey, slot_key: slotKey,
     data: {
       affiliate_asset_id: asset.id, legacy_offer_id: asset.legacy_offer_id || (asset.category ? asset.id : null), provider: asset.provider,
-      asset_type: asset.asset_type || asset.assetType, product_category: canonicalCategory(asset), title: asset.title, description: asset.description || "",
+      asset_type: asset.asset_type || asset.assetType, product_category: canonicalCategory(asset), title: asset.title,
+      description: commercialDescription(asset, intent),
       cta_label: asset.cta_label || asset.ctaLabel, target_url: asset.target_url || asset.targetUrl || "", embed_config: parseEmbed(asset.embed_config_json || asset.embedConfig),
       disclosure, scope_type: asset.scope_type || asset.scopeType, scope_key: asset.scope_key || asset.scopeKey || "",
       price_text: asset.price_text || asset.priceText || "", valid_from: asset.valid_from || asset.validFrom || "",
@@ -362,6 +363,14 @@ function commercialBlock(intent, asset, placement, index, disclosure) {
       placement_reason:intent.placementReason || (resolvedPlacement === "contextual" ? "Strongly related action beside the relevant passage." : "Optional destination planning resource after the article."),
     },
   };
+}
+
+function commercialDescription(asset, intent) {
+  const supplied = String(asset.description || "").trim();
+  if (supplied) return supplied;
+  const category = canonicalCategory(asset).toLowerCase();
+  const action = String(intent?.readerAction || "").trim();
+  return action || `Check current ${category} details and availability before booking.`;
 }
 
 function insertCommercialBlocks(researchBlocks, commercialBlocks) {

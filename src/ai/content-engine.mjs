@@ -1,7 +1,7 @@
 import { slugify, truncate } from "../utils.mjs";
 import { CONTENT_STRATEGY } from "../content-strategy.mjs";
 import { createAiClient } from "./client.mjs";
-import { pageBlockSignature, protectedFactTokens, validatePageEvidence } from "../evidence-validator.mjs";
+import { evidenceTextContains, pageBlockSignature, protectedFactTokens, validatePageEvidence } from "../evidence-validator.mjs";
 import { titlePromiseRisks } from "../seo-geo.mjs";
 import { separateQualityResults } from "../services/content-recovery-policy.mjs";
 import { normalizeFrontendPageForDelivery } from "../content-taxonomy.mjs";
@@ -1316,13 +1316,15 @@ export function applyDeterministicGates(review, contentPackage) {
     "The post title owns H1; body Markdown may use orderly H2/H3/H4 headings only.", "heading_hierarchy_invalid");
   const visualStrategySafe = (draft.visuals || []).every((visual) => {
     if (visual.image_type === "real_world_photo") {
-      if (["use_authorized_source_image", "localize_source_image"].includes(visual.acquisition_strategy)) {
+      if (["use_authorized_source_image", "localize_source_image", "localize_photo_overlay"].includes(visual.acquisition_strategy)) {
         return visual.factual_image_required && Boolean(visual.source_asset_id);
       }
       return visual.acquisition_strategy === "search_real_image" && visual.factual_image_required;
     }
-    if (visual.image_type === "infographic") return visual.acquisition_strategy === "render_infographic";
-    if (visual.image_type === "map_or_route") return visual.acquisition_strategy === "render_map";
+    if (visual.image_type === "infographic") return visual.acquisition_strategy === "render_infographic"
+      || (["recompose_editorial_card", "recompose_collage"].includes(visual.acquisition_strategy) && Boolean(visual.source_asset_id));
+    if (visual.image_type === "map_or_route") return visual.acquisition_strategy === "render_map"
+      || (visual.acquisition_strategy === "recompose_map_or_route" && Boolean(visual.source_asset_id));
     return visual.image_type === "illustration" && visual.acquisition_strategy === "generate_illustration" && !visual.factual_image_required;
   });
   addGate("image-strategy", visualStrategySafe,
@@ -1409,19 +1411,7 @@ export function normalizeQualityReviewIssues(issues = []) {
 }
 
 function containsProtectedToken(text, token) {
-  const haystack = String(text || "").normalize("NFKC").toLocaleLowerCase("en-US");
-  const needle = String(token || "").normalize("NFKC").toLocaleLowerCase("en-US").trim();
-  if (!needle) return true;
-  const normalizedCurrency = needle.replace(/^(?:cny|rmb|[¥￥])\s*(\d+(?:\.\d+)?)$/u, "$1 cny");
-  if (normalizedCurrency === "0 cny" && /\b(?:free|no admission fee|no entry fee)\b/iu.test(haystack)) return true;
-  const range = needle.match(/^(\d{1,2}(?::\d{2})?)\s*(?:[-\u2012-\u2015\u2212]|to)\s*(\d{1,2}(?::\d{2})?)$/iu);
-  if (range) {
-    const start = escapeRegex(range[1]);
-    const end = escapeRegex(range[2]);
-    if (new RegExp(`(?<![\\p{L}\\p{N}])${start}\\s*(?:[-\\u2012-\\u2015\\u2212]|to)\\s*${end}(?![\\p{L}\\p{N}])`, "iu").test(haystack)) return true;
-  }
-  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(haystack);
+  return !String(token || "").trim() || evidenceTextContains(text, token);
 }
 
 function enforceMandatoryIssueSeverity(issue = {}) {

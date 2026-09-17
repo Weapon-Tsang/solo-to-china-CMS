@@ -374,17 +374,27 @@ export class Repository {
   }
 
   modelCredentialKey() {
-    const value = this.modelCredentialEncryptionKey;
-    if (!value) throw Object.assign(new Error("MODEL_CREDENTIAL_ENCRYPTION_KEY is required before API keys can be stored."), {
+    const status = this.modelCredentialEncryptionStatus();
+    if (status.code === "MODEL_CREDENTIAL_ENCRYPTION_KEY_REQUIRED") throw Object.assign(new Error("MODEL_CREDENTIAL_ENCRYPTION_KEY is required before API keys can be stored."), {
       code: "MODEL_CREDENTIAL_ENCRYPTION_KEY_REQUIRED", statusCode: 409,
     });
-    let key = null;
-    if (/^[a-f0-9]{64}$/i.test(value)) key = Buffer.from(value, "hex");
-    else { try { key = Buffer.from(value, "base64"); } catch { key = null; } }
-    if (!key || key.length !== 32) throw Object.assign(new Error("MODEL_CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes."), {
+    if (!status.ready) throw Object.assign(new Error("MODEL_CREDENTIAL_ENCRYPTION_KEY must be 64 hexadecimal characters or base64 that decodes to exactly 32 bytes."), {
       code: "MODEL_CREDENTIAL_ENCRYPTION_KEY_INVALID", statusCode: 409,
     });
-    return key;
+    return status.key;
+  }
+
+  modelCredentialEncryptionStatus() {
+    const value = this.modelCredentialEncryptionKey;
+    if (!value) return { ready:false, code:"MODEL_CREDENTIAL_ENCRYPTION_KEY_REQUIRED", key:null };
+    let key = null;
+    if (/^[a-f0-9]{64}$/i.test(value)) key = Buffer.from(value, "hex");
+    else if (/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+      try { key = Buffer.from(value, "base64"); } catch { key = null; }
+    }
+    return key?.length === 32
+      ? { ready:true, code:null, key }
+      : { ready:false, code:"MODEL_CREDENTIAL_ENCRYPTION_KEY_INVALID", key:null };
   }
 
   encryptModelCredential(secret) {
@@ -431,11 +441,12 @@ export class Repository {
         validationStatus: stored?.validation_status || "untested", validatedAt: stored?.validated_at || null,
       };
     }
+    const encryption = this.modelCredentialEncryptionStatus();
     return {
       selectedProvider: row.selected_provider, activeProvider: row.active_provider, activeModel: row.active_model,
       activationState: row.activation_state, revision: Number(row.revision || 1), policyVersion: row.policy_version,
       activatedAt: row.activated_at || null, updatedAt: row.updated_at,
-      encryptionReady: Boolean(this.modelCredentialEncryptionKey), credentials, extractionModels: EXTRACTION_MODELS,
+      encryptionReady: encryption.ready, encryptionErrorCode: encryption.code, credentials, extractionModels: EXTRACTION_MODELS,
       fixedRoles: {
         writing: { provider: "vertex", model: "gemini-3.8-flash" },
         articleReview: { provider: "vertex", model: "gemini-3.8-flash" },
@@ -5984,9 +5995,12 @@ export class Repository {
         wpub.preview_url AS wordpress_preview_url, wpub.edit_url AS wordpress_edit_url,
         wpub.status AS wordpress_status, wpub.updated_at AS wordpress_updated_at,
         cc.status AS commercial_status, cc.outcome AS commercial_outcome, cc.reason_code AS commercial_reason_code,
+        cc.refresh_required AS commercial_refresh_required, cc.refresh_reason AS commercial_refresh_reason,
+        cc.draft_revision AS commercial_draft_revision, cc.draft_content_hash AS commercial_draft_content_hash,
         json_array_length(COALESCE(cc.asset_ids_json, '[]')) AS commercial_offer_count,
         COALESCE(vs.visual_total,0) AS visual_total, COALESCE(vs.visual_pending,0) AS visual_pending,
         COALESCE(vs.visual_failed,0) AS visual_failed,
+        COALESCE(vcs.visual_candidate_pending_qa,0) AS visual_candidate_pending_qa,
         prc.disposition AS production_disposition,
         (SELECT COUNT(*) FROM content_opportunities owner_count
           WHERE owner_count.candidate_id=co.candidate_id AND owner_count.approved_at IS NOT NULL) AS approved_owner_count
@@ -6013,6 +6027,8 @@ export class Repository {
         SUM(CASE WHEN status IN ('queued','generating') THEN 1 ELSE 0 END) AS visual_pending,
         SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS visual_failed
         FROM article_visuals GROUP BY draft_id) vs ON vs.draft_id=ad.id
+      LEFT JOIN (SELECT draft_id,COUNT(*) AS visual_candidate_pending_qa FROM visual_candidates
+        WHERE status='pending_qa' GROUP BY draft_id) vcs ON vcs.draft_id=ad.id
       LEFT JOIN production_record_controls prc ON prc.opportunity_id=co.id
       WHERE (? IS NULL OR tc.id=? OR co.id=?)
         AND (?=0 OR co.approved_at IS NOT NULL)

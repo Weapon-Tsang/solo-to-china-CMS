@@ -278,6 +278,8 @@ export function evidenceTextContains(text, phrase) {
 }
 function normalize(value) {
   return decodeHtml(String(value || "")).normalize("NFKC").toLocaleLowerCase("en-US")
+    .replace(/_/gu, " ")
+    .replace(/\b24\s*\/\s*7\b|全天|二十四小时/gu, "24 hours")
     .replace(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/gu, (_, h, m, period) => `${String(Number(h) % 12 + (period === 'pm' ? 12 : 0)).padStart(2,'0')}:${m || '00'}`)
     .replace(/\b(\d):(?=\d{2}\b)/gu, '0$1:')
     .replace(/\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/gu, (_, n) => `${Number(n) * 60} min`)

@@ -156,9 +156,11 @@ function assignFactsToNodes(nodes, ledger, facts) {
         const matched = signals.filter((signal) => normalize(node.visible_text).includes(signal.term));
         const protectedTokens = fact ? protectedFactTokens(fact) : [];
         const protectedValuePresent = !protectedTokens.length
-          || protectedTokens.some((token) => evidenceTextContains(node.visible_text, token));
-        return { node, index, score: protectedValuePresent ? matched.reduce((score, signal) => score + signal.weight, 0) : 0,
-          strongest: Math.max(0, ...matched.map((signal) => signal.weight)) };
+          || protectedTokens.every((token) => evidenceTextContains(node.visible_text, token));
+        const protectedValueScore = protectedTokens.length && protectedValuePresent ? 12 : 0;
+        return { node, index, score: protectedValuePresent
+          ? protectedValueScore + matched.reduce((score, signal) => score + signal.weight, 0) : 0,
+          strongest: Math.max(protectedValueScore, ...matched.map((signal) => signal.weight)) };
       })
         .sort((left, right) => right.score - left.score || left.index - right.index);
       // A ledger states which facts belong to a section, not that every fact is

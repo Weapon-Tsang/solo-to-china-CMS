@@ -41,6 +41,12 @@ function New-RandomToken {
   return [Convert]::ToBase64String($bytes).TrimEnd("=").Replace("+", "-").Replace("/", "_")
 }
 
+function New-EncryptionKey {
+  $bytes = [byte[]]::new(32)
+  [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+  return [Convert]::ToBase64String($bytes)
+}
+
 function Set-GcpSecret {
   param(
     [Parameter(Mandatory = $true)]
@@ -93,12 +99,14 @@ $adminToken = New-RandomToken
 $adminUsername = "admin"
 $adminPassword = New-RandomToken
 $sessionSecret = New-RandomToken
+$modelCredentialEncryptionKey = New-EncryptionKey
 
 Set-GcpSecret -Name "solo-to-china-kimi-api-key" -Value $kimiApiKey
 Set-GcpSecret -Name "solo-to-china-capture-token" -Value $captureToken
 Set-GcpSecret -Name "solo-to-china-admin-token" -Value $adminToken
 Set-GcpSecret -Name "solo-to-china-admin-password" -Value $adminPassword
 Set-GcpSecret -Name "solo-to-china-session-secret" -Value $sessionSecret
+Set-GcpSecret -Name "solo-to-china-model-credential-encryption-key" -Value $modelCredentialEncryptionKey
 
 $outputDirectory = Split-Path -Parent $TokenOutputPath
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
@@ -109,4 +117,4 @@ New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
   "ADMIN_PASSWORD=$adminPassword"
 ))
 
-Write-Output "Created five Secret Manager secrets and saved the generated application credentials to the ignored output directory."
+Write-Output "Created six Secret Manager secrets and saved the generated application credentials to the ignored output directory."

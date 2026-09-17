@@ -67,6 +67,21 @@ test("a city guide can use one real destination planning resource without bookin
   assert.equal(composition.slots[0].affiliate_asset_id, "planner-chongqing");
 });
 
+test("commercial composition supplies a truthful non-empty description when an eligible asset omits one", () => {
+  const contentPackage = {
+    candidate:{ destination_slug:"chongqing", topic_key:"chongqing:attraction-guide" },
+    brief:{ destination_slug:"chongqing", content_type:"attraction_guide", canonical:{ country_code:"CN", entity_key:"attraction.test" } },
+    draft:{ id:"draft-empty-description", title:"Test attraction tickets", body_markdown:"## Tickets\n\nCheck ticket availability before visiting." },
+  };
+  const asset = { id:"asset-empty-description", provider:"Trip.com", asset_type:"DEEP_LINK", product_category:"ATTRACTION",
+    scope_type:"ENTITY", scope_key:"attraction.test", entity_key:"attraction.test", destination_slug:"chongqing",
+    active:1, provider_status:"CONFIGURED", lifecycle_state:"operational", language:"en",
+    target_url:"https://www.trip.com/things-to-do/detail/test", title:"Check attraction tickets", cta_label:"Check availability", description:"" };
+  const composition = new CommercialComposer().compose(contentPackage, [asset]);
+  assert.equal(composition.status, "composed");
+  assert.ok(composition.commercialBlocks[0].data.description.trim());
+});
+
 test("destination planning intent persists when its explanation is carried by relevanceReason", (t) => {
   const { repository, db } = repositoryFixture(t);
   db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at)

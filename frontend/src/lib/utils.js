@@ -49,6 +49,8 @@ export function label(value) {
 
 export function friendlyError(value, context = {}) {
   const text = String(value || "").trim();
+  if (context.code === "MODEL_CREDENTIAL_ENCRYPTION_KEY_REQUIRED") return "服务器尚未配置 API key 加密根密钥，暂时不能保存新凭据。";
+  if (context.code === "MODEL_CREDENTIAL_ENCRYPTION_KEY_INVALID") return "服务器的 API key 加密根密钥格式无效，需要运维修正后才能保存新凭据。";
   if (text.startsWith("Coverage audit still found material evidence without Claims after one targeted retry.")) {
     return "覆盖审计在一次定向重试后仍发现未形成信息主张的重要证据，需要人工检查。";
   }
