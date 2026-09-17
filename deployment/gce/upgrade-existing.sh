@@ -30,6 +30,18 @@ if [[ -f "$RELEASE/started" ]]; then
   exit 1
 fi
 [[ -f "$APP/.env.production" ]]
+MODEL_CREDENTIAL_ENCRYPTION_KEY="$(sed -n 's/^MODEL_CREDENTIAL_ENCRYPTION_KEY=//p' "$APP/.env.production" | tail -1)"
+python3 - "$MODEL_CREDENTIAL_ENCRYPTION_KEY" <<'PY'
+import base64,re,sys
+value=sys.argv[1]
+try:
+    raw=bytes.fromhex(value) if re.fullmatch(r'[0-9a-fA-F]{64}',value) else base64.b64decode(value,validate=True)
+except Exception:
+    raw=b''
+if len(raw)!=32:
+    raise SystemExit('MODEL_CREDENTIAL_ENCRYPTION_KEY is missing or invalid')
+PY
+unset MODEL_CREDENTIAL_ENCRYPTION_KEY
 docker inspect engine >/dev/null
 docker inspect cloudflared >/dev/null
 docker volume inspect solo_to_china_data >/dev/null

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_ID="project-4bcb9146-c37b-43b0-b11"
-IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:2.0.33"
+IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:2.0.34"
 APP_DIR="/opt/solo-to-china"
 METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 
@@ -42,6 +42,7 @@ CAPTURE_TOKEN="$(secret_value solo-to-china-capture-token)"
 ADMIN_TOKEN="$(secret_value solo-to-china-admin-token)"
 ADMIN_PASSWORD="$(secret_value solo-to-china-admin-password)"
 SESSION_SECRET="$(secret_value solo-to-china-session-secret)"
+MODEL_CREDENTIAL_ENCRYPTION_KEY="$(secret_value solo-to-china-model-credential-encryption-key)"
 CLOUDFLARE_TUNNEL_TOKEN="$(secret_value solo-to-china-cloudflare-tunnel-token)"
 WORDPRESS_APPLICATION_PASSWORD="$(secret_value solo-to-china-wordpress-application-password)"
 
@@ -58,6 +59,7 @@ ADMIN_TOKEN=${ADMIN_TOKEN}
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
 SESSION_SECRET=${SESSION_SECRET}
+MODEL_CREDENTIAL_ENCRYPTION_KEY=${MODEL_CREDENTIAL_ENCRYPTION_KEY}
 CAPTURE_HOST=capture.solotochina.com
 
 KIMI_API_KEY=${KIMI_API_KEY}

@@ -1281,6 +1281,7 @@ export function createApplication(config = loadConfig()) {
       log("http.request_failed", { requestId, method: request.method, path: requestPath, status, error });
       return sendJson(response, status, {
         error: error.message || "Unexpected server error.",
+        requestId,
         ...(error?.code ? { code: error.code, details: error.details || null } : {}),
       });
     } finally {

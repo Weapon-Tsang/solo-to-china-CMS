@@ -197,6 +197,20 @@ test("atomic AST assigns a claim only to the block that carries its fact and rec
   assert.ok(reconciled[0].content_node_ids.every((id) => ast.nodes.some((node) => node.id === id)));
 });
 
+test("a multi-value route claim binds only to the paragraph carrying every protected route value", () => {
+  const scopedDraft = { ...draft,
+    body_markdown: "## Getting there\n\nTake Metro Line 1 to Xiaoshizi Station and use Exit 8.\n\nFrom Exit 8, enter the building and take the lift to the 12th floor.",
+    evidence_ledger: [{ section_id:"route", section:"Getting there", claim_keys:["baixiangju.access_route"], source_ids:["source-route"] }],
+  };
+  const facts = [{ normalized_key:"baixiangju.access_route", subject:"Baixiangju", predicate:"access_route",
+    preferred_value:"Xiaoshizi Station Exit 8, then the lift to the 12th floor",
+    evidence:[{ source_id:"source-route", value:"Xiaoshizi Station Exit 8, then the lift to the 12th floor", qualifiers:[] }] }];
+  const ast = buildContentAst({ draft:scopedDraft, brief:{ id:"brief-baixiangju" }, facts });
+  const prose = ast.nodes.filter((node) => node.type === "paragraph");
+  assert.deepEqual(prose[0].fact_refs, []);
+  assert.deepEqual(prose[1].fact_refs, ["baixiangju.access_route"]);
+});
+
 test("compact values and meaningful predicate phrases select the factual paragraph instead of a nearby subject mention", () => {
   const scopedDraft = { ...draft,
     body_markdown: "## Line 1\n\nLine 1 connects Hongyadong with downtown.\n\nHongyadong is open 24/7. Take Metro Line 1 to Xiaoshizi Station.",

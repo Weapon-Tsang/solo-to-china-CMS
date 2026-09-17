@@ -51,6 +51,15 @@ test("repetition is a warning, unsupported FAQ and prompt injection are not acce
   assert.ok(evaluate(injected).issues.some((issue) => issue.code === "prompt_injection_leak"));
 });
 
+test("authorized factual collage recomposition is accepted but a source-less recomposition is blocked", () => {
+  const authorized = basePackage();
+  authorized.draft.visuals = [{ image_type:"infographic", acquisition_strategy:"recompose_collage",
+    factual_image_required:true, source_asset_id:"asset-authorized" }];
+  assert.equal(evaluate(authorized).issues.some((issue) => issue.code === "image_strategy_invalid"), false);
+  authorized.draft.visuals[0].source_asset_id = "";
+  assert.equal(evaluate(authorized).issues.some((issue) => issue.code === "image_strategy_invalid"), true);
+});
+
 test("quality report separates deterministic replay from unmeasured real-model improvement", () => {
   const report = buildQualityEvaluationReport({ dataset, strategyVersion: "1.8", results: dataset.samples.map((sample) => ({
     id: sample.id, passed: sample.expectedPass, hardFailures: sample.expectedPass ? 0 : 1, warnings: 0,

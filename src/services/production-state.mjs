@@ -101,7 +101,7 @@ export function buildProductionState(db, row, options = {}) {
   const frozenScopeFailure = frozenProductionScopeFailure(db,row);
   const truncatedDraftFailure = historicalDraftStructureFailure(db,row,currentJobs);
   const supersededRegenerationFailure = latestRegenerationSupersededRepair(currentJobs);
-  const latestJobFailure=decorateDeliveryFailure(latestUnresolvedFailure(currentJobs));
+  const latestJobFailure=decorateDeliveryFailure(latestUnresolvedFailure(currentJobs, evidence));
   // A current passing review proves that its exact Draft revision, content hash,
   // evidence hash and Frontend Page made it through the quality gate. Older
   // failures in that same quality chain are audit history, even when no later
@@ -413,12 +413,16 @@ function persistedStageEvidence(db, row, { scopeResetAt = null } = {}) {
     assemble_writing_packet: Boolean(row.writing_packet_id || row.draft_id),
     compose_frontend_page_plan: row.frontend_plan_status === "ready",
     generate_draft: Boolean(row.draft_id),
-    generate_visuals: Number(row.visual_total || 0) === 0 ? null : Number(row.visual_pending || 0) === 0 && Number(row.visual_failed || 0) === 0,
+    generate_visuals: Number(row.visual_total || 0) === 0 ? null : Number(row.visual_pending || 0) === 0
+      && Number(row.visual_failed || 0) === 0 && Number(row.visual_candidate_pending_qa || 0) === 0,
     compose_frontend_page: row.frontend_page_status === "valid" && Boolean(row.frontend_page_current),
     review_draft: reviewCompleted,
     revise_draft: null,
-    compose_commercial: Boolean(row.commercial_status),
-    compose_publish_page: ["valid", "delivered", "delivery_failed"].includes(row.publish_composition_status) && Boolean(row.publish_composition_current),
+    compose_commercial: Boolean(row.commercial_status)
+      && !Boolean(row.commercial_refresh_required)
+      && (row.commercial_draft_revision == null || Number(row.commercial_draft_revision) === Number(row.revision))
+      && (!row.commercial_draft_content_hash || row.commercial_draft_content_hash === row.draft_content_hash),
+    compose_publish_page: ["valid", "delivered"].includes(row.publish_composition_status) && Boolean(row.publish_composition_current),
     push_wordpress_draft: row.wordpress_status === "synced",
   };
 }
@@ -432,7 +436,7 @@ function buildStageEntry(definition, jobs, artifacts, receipts, modelCalls, evid
   const persisted = evidence[definition.key];
   let status = persisted === true ? "succeeded" : "waiting";
   if (active) status = active.status;
-  else if (failed && (!succeeded || String(failed.updated_at) > String(succeeded.updated_at))) status = "failed";
+  else if (persisted !== true && failed && (!succeeded || String(failed.updated_at) > String(succeeded.updated_at))) status = "failed";
   else if (succeeded || stageArtifacts.some((item) => item.status === "succeeded") || receipts.some((item) => item.stage === definition.key)) status = persisted === false ? "waiting" : "succeeded";
   const latestJob = stageJobs.at(-1) || null;
   const latestArtifact = stageArtifacts.at(-1) || null;
@@ -491,9 +495,10 @@ function latestActiveJob(jobs, nowValue) {
   };
 }
 
-function latestUnresolvedFailure(jobs) {
+function latestUnresolvedFailure(jobs, evidence = {}) {
   const failures = jobs.filter((item) => item.status === "failed").reverse();
-  return failures.find((failure) => !jobs.some((item) => item.type === failure.type && item.status === "succeeded"
+  return failures.find((failure) => evidence[failure.type] !== true
+    && !jobs.some((item) => item.type === failure.type && item.status === "succeeded"
     && String(item.updated_at) >= String(failure.updated_at))
     && !(failure.type === "revise_draft" && jobs.some((item) => item.type === "generate_draft" && item.status === "succeeded"
       && String(item.updated_at) >= String(failure.updated_at)))) || null;
@@ -508,6 +513,7 @@ function latestRegenerationSupersededRepair(jobs) {
 function decorateDeliveryFailure(failure) {
   if (!failure) return null;
   const code = String(failure.last_failure_code || failure.code || "").toUpperCase();
+  if (code === "COMMERCIAL_OVERLAY_STALE") return { ...failure, recovery_type:"compose_commercial" };
   if (failure.type === "push_wordpress_draft" && ["INVALID_PAGE_SCHEMA", "INVALID_COMPONENT_DATA"].includes(code)) {
     return { ...failure, recovery_type:"compose_publish_page" };
   }
@@ -521,6 +527,27 @@ function decorateDeliveryFailure(failure) {
 }
 
 function inferredPersistedFailure(row) {
+  if (Number(row.visual_candidate_pending_qa || 0) > 0) return {
+    type:"generate_visuals", recovery_type:"generate_visuals",
+    last_error:"已生成的视觉候选仍在等待质量审核；恢复只会继续候选审核，不会重复生图。",
+    last_failure_code:"VISUAL_CANDIDATE_PENDING_QA", failure_class:"retryable_provider",
+    failure_execution_kind:"provider_attempted", failure_details_json:JSON.stringify({ evidence_basis:"persisted_visual_candidate" }),
+    updated_at:row.draft_updated_at,
+  };
+  if (Number(row.visual_failed || 0) > 0) return {
+    type:"generate_visuals", recovery_type:"generate_visuals",
+    last_error:"至少一个必需视觉槽位尚未完成；已有成功视觉和可复用候选会被保留。",
+    last_failure_code:"VISUAL_STAGE_INCOMPLETE", failure_class:"retryable_provider",
+    failure_execution_kind:"persisted_state", failure_details_json:JSON.stringify({ evidence_basis:"persisted_visual_status" }),
+    updated_at:row.draft_updated_at,
+  };
+  if (row.commercial_refresh_required) return {
+    type:"compose_commercial", recovery_type:"compose_commercial",
+    last_error:row.commercial_refresh_reason || "商业叠加层依赖已变化，需要从商业内容组合阶段刷新。",
+    last_failure_code:"COMMERCIAL_OVERLAY_STALE", failure_class:"permanent_input",
+    failure_execution_kind:"deterministic", failure_details_json:JSON.stringify({ evidence_basis:"commercial_refresh_required" }),
+    updated_at:row.draft_updated_at,
+  };
   if (row.brief_status === "exception") return {
     type: row.draft_id ? "generate_draft" : "plan_content",
     last_error: row.brief_last_error || "写作准备记录处于 exception，但没有关联的失败 Job；请从该阶段恢复。",
@@ -530,13 +557,19 @@ function inferredPersistedFailure(row) {
     failure_details_json: JSON.stringify({ evidence_basis:"persisted_state_without_job" }),
     updated_at: row.brief_updated_at,
   };
-  if (row.qa_passed != null && !Boolean(row.qa_passed)) {
+  if (row.qa_passed != null && !Boolean(row.qa_passed)
+      && normalizeQualityReviewIssues(parse(row.draft_quality_report_json, {}).issues).length > 0) {
     const report = parse(row.draft_quality_report_json, {});
     const issues = normalizeQualityReviewIssues(report.issues);
     const issue = issues.find((item) => item?.severity !== "warning") || issues[0] || null;
+    const blockers = issues.filter((item) => item?.severity !== "warning");
+    const deterministicRecheckCodes = new Set(["protected_evidence_mismatch", "image_strategy_invalid", "final_page_evidence_invalid"]);
+    const blockerCodes = blockers.map((item) => String(item?.code || "").toLowerCase());
+    const deterministicRecheck = row.draft_status === "qa_failed" && blockerCodes.includes("image_strategy_invalid")
+      && blockerCodes.every((code) => deterministicRecheckCodes.has(code));
     return {
       type: "review_draft",
-      recovery_type: qualityRepairStage(issues),
+      recovery_type: deterministicRecheck ? "review_draft" : qualityRepairStage(issues),
       last_error: issue?.message || issue?.reason || "当前版本的质量审核未通过；审核结果和原始草稿均已保留。",
       last_failure_code: issue?.code || "QUALITY_REVIEW_FAILED",
       failure_class: "permanent_input",
@@ -549,7 +582,8 @@ function inferredPersistedFailure(row) {
       updated_at: row.draft_updated_at,
     };
   }
-  if (row.draft_status === "exception") return {
+  if (row.draft_status === "exception" && row.qa_passed == null
+      && !row.frontend_page_status && !row.commercial_status && !row.publish_composition_status) return {
     type: "generate_draft",
     last_error: "草稿生产状态显示失败，但没有关联的失败 Job；原始状态已保留。",
     last_failure_code: "DRAFT_EXCEPTION_WITHOUT_JOB",

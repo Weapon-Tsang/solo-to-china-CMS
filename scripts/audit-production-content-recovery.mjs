@@ -12,6 +12,11 @@ if (!/(?:canary|replay|work)/i.test(path.basename(databasePath))) {
 
 const db = openDatabase(databasePath);
 const repository = new Repository(db);
+repository.configureProductionCapabilities({
+  visuals:Boolean(db.prepare('SELECT 1 FROM article_visuals LIMIT 1').get()),
+  frontendContract:Boolean(db.prepare('SELECT 1 FROM frontend_page_compositions LIMIT 1').get()),
+  wordpress:Boolean(db.prepare('SELECT 1 FROM wordpress_publications LIMIT 1').get()),
+});
 const protectedBefore = protectedCounts(repository);
 const modelCallsBefore = modelCallCount(repository);
 const initialActiveJobs = repository.db.prepare(

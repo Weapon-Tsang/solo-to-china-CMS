@@ -4,10 +4,13 @@ export async function api(url, options = {}, canPrompt = true) {
   const response = await fetch(url, { ...options, credentials: "same-origin", headers: { ...(options.headers || {}) } });
   const body = response.status === 204 ? null : await response.json();
   if (!response.ok) {
-    const error = new Error(friendlyError(body?.error, { code: body?.code, status: response.status }));
+    const requestId = body?.requestId || response.headers.get("x-request-id") || "";
+    const message = friendlyError(body?.error, { code: body?.code, status: response.status });
+    const error = new Error(requestId ? `${message}（请求 ID：${requestId}）` : message);
     error.code = body?.code || "REQUEST_FAILED";
     error.details = body?.details || null;
     error.status = response.status;
+    error.requestId = requestId;
     throw error;
   }
   return body;
