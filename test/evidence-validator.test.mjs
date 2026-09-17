@@ -131,6 +131,23 @@ test('production evidence surface variants are semantically equivalent without a
   assert.equal(evidenceTextContains('The attraction closes at 22:00.', '24_hours'), false);
 });
 
+test('a legacy bare 24 opening-hours fact accepts explicit 24-hours-a-day copy only', () => {
+  const block = { ...goodBlock, data: { body: 'The Test Museum is open 24 hours a day.' } };
+  const pkg = packageFor(block);
+  const fact = pkg.facts[0];
+  fact.predicate = 'opening_hours';
+  fact.preferred_value = '24';
+  fact.evidence = [{ claim_id:'always-open', source_id:'source-real', value:'24', qualifiers:[] }];
+  const entry = pkg.frontend_page.validation.blockProvenance[0];
+  entry.blockSignature = pageBlockSignature(block);
+  entry.claimTraces = [{ claimKey:fact.normalized_key, claimId:'always-open', sourceId:'source-real', evidenceRole:'current' }];
+  assert.equal(validatePageEvidence({ blocks:[block] }, pkg).valid, true);
+
+  const wrong = { ...block, data: { body:'The Test Museum closes at 22:00.' } };
+  entry.blockSignature = pageBlockSignature(wrong);
+  assert.ok(codes(validatePageEvidence({ blocks:[wrong] }, pkg)).includes('EVIDENCE_VALUE_MISMATCH'));
+});
+
 test('divergent current-source details are alternatives rather than conjunctive literal requirements', () => {
   const block = { ...goodBlock, data: { body: 'The Test Museum requires online booking; reserve 2 days in advance.' } };
   const pkg = packageFor(block);

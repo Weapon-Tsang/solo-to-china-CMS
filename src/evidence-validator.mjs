@@ -219,6 +219,12 @@ function consensusQualifiers(selected) {
 function protectedQuantities(value, fact, kind) {
   const text = String(value || "");
   const tokens = [];
+  const predicate = String(fact?.predicate || "").toLowerCase();
+  // Historical knowledge can store an always-open schedule as the bare value
+  // `24`. Preserve its opening-hours meaning instead of comparing it as an
+  // unrelated cardinal number (for example, a 24-storey building).
+  if (kind === "value" && /(?:opening_hours|opening_time|open_hours|schedule)/.test(predicate)
+    && /^24(?:\.0+)?$/.test(text.trim())) return ["24 hours"];
   const patterns = [
     /(?<![\p{L}\p{N}])(?:CNY|RMB|¥|￥)\s*\d+(?:[.,]\d+)?|(?<![\p{L}\p{N}])\d+(?:[.,]\d+)?\s*(?:CNY|RMB|元)(?![\p{L}\p{N}])/giu,
     /(?<![\p{L}\p{N}])\d+(?:[.,]\d+)?\s*%(?![\p{L}\p{N}])/gu,
@@ -232,7 +238,6 @@ function protectedQuantities(value, fact, kind) {
     /\b\d+\s*f\b/giu,
   ];
   for (const pattern of patterns) tokens.push(...(text.match(pattern) || []));
-  const predicate = String(fact?.predicate || "").toLowerCase();
   const numericFact = /(?:price|cost|fee|fare|duration|walking_time|opening_hours|schedule|distance|capacity|limit|frequency|age|count|floor|level|exit)/.test(predicate);
   if (!tokens.length && kind === "value" && numericFact && text.length <= 48) {
     tokens.push(...(text.match(/(?<![\p{L}\p{N}])\d+(?:[.,:]\d+)?(?![\p{L}\p{N}])/gu) || []));
