@@ -19,6 +19,24 @@ export const AI_JOB_TYPES = new Set([
   "compose_frontend_page",
 ]);
 
+export const EXTRACTION_JOB_TYPES = new Set([
+  "extract_segment_claims", "extract_media_batch", "audit_segment_coverage", "retry_segment_extraction",
+  "analyze_source_blueprint", "analyze_source_diagnostic", "extract_source_experience",
+  "resolve_entities", "analyze_intake",
+]);
+
+export const WRITING_JOB_TYPES = new Set([
+  "assemble_editorial", "plan_content", "plan_narrative", "compose_frontend_page_plan",
+  "generate_draft", "review_draft", "revise_draft", "compose_frontend_page",
+]);
+
+export function modelRoleForJob(type) {
+  if (EXTRACTION_JOB_TYPES.has(String(type || ""))) return "extraction";
+  if (String(type || "") === "generate_visuals") return "visual";
+  if (WRITING_JOB_TYPES.has(String(type || ""))) return "writing";
+  return "unassigned";
+}
+
 export function isAiJobType(type) {
   return AI_JOB_TYPES.has(String(type || ""));
 }
@@ -64,6 +82,9 @@ export function inheritJobContext(parent = {}, overrides = {}) {
       ?? parent.production_owner_opportunity_id ?? null,
     interactive: Boolean(overrides.interactive ?? parent.interactive ?? workloadClass === "interactive"),
     parentJobId: overrides.parentJobId ?? parent.id ?? null,
+    modelRole: overrides.modelRole ?? parent.model_role ?? "unassigned",
+    modelProfile: overrides.modelProfile ?? parent.model_profile_json ?? null,
+    modelRoutingRevision: overrides.modelRoutingRevision ?? parent.model_routing_revision ?? null,
   };
 }
 

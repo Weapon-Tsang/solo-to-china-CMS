@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 72;
+export const SCHEMA_VERSION = 73;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -93,6 +93,107 @@ function migrate(db) {
   if (current < 70) migrationSeventy(db);
   if (current < 71) migrationSeventyOne(db);
   if (current < 72) migrationSeventyTwo(db);
+  if (current < 73) migrationSeventyThree(db);
+}
+
+function migrationSeventyThree(db) {
+  // Model-routing v1.1 separates extraction credentials and immutable Job
+  // profiles from fixed Vertex writing/image roles. Existing installations
+  // remain on their historical route until an administrator explicitly
+  // activates DeepSeek or OpenAI.
+  transaction(db, () => db.exec(`
+    CREATE TABLE model_credentials (
+      provider TEXT PRIMARY KEY CHECK (provider IN ('deepseek','openai')),
+      encrypted_secret TEXT NOT NULL,
+      iv TEXT NOT NULL,
+      auth_tag TEXT NOT NULL,
+      key_version INTEGER NOT NULL DEFAULT 1,
+      masked_suffix TEXT NOT NULL DEFAULT '',
+      validation_status TEXT NOT NULL DEFAULT 'untested'
+        CHECK (validation_status IN ('untested','text_verified','multimodal_verified','failed')),
+      validation_detail_json TEXT NOT NULL DEFAULT '{}',
+      validated_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE model_routing_settings (
+      singleton INTEGER PRIMARY KEY CHECK (singleton=1),
+      selected_provider TEXT NOT NULL DEFAULT 'deepseek'
+        CHECK (selected_provider IN ('legacy','deepseek','openai')),
+      active_provider TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (active_provider IN ('legacy','deepseek','openai')),
+      active_model TEXT NOT NULL DEFAULT '',
+      activation_state TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (activation_state IN ('candidate','active','legacy')),
+      revision INTEGER NOT NULL DEFAULT 1,
+      policy_version TEXT NOT NULL DEFAULT 'model-routing-policy-1.1.0',
+      activated_at TEXT,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO model_routing_settings(singleton,selected_provider,active_provider,active_model,activation_state,revision,updated_at)
+    SELECT 1,
+      CASE WHEN EXISTS(SELECT 1 FROM sources LIMIT 1) THEN 'legacy' ELSE 'deepseek' END,
+      'legacy',
+      COALESCE(json_extract((SELECT value_json FROM runtime_settings WHERE setting_key='ai'),'$.model'),'vertex-gemini-3.8-flash'),
+      CASE WHEN EXISTS(SELECT 1 FROM sources LIMIT 1) THEN 'legacy' ELSE 'candidate' END,
+      1,datetime('now');
+
+    ALTER TABLE jobs ADD COLUMN model_role TEXT NOT NULL DEFAULT 'unassigned';
+    ALTER TABLE jobs ADD COLUMN model_profile_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE jobs ADD COLUMN model_routing_revision INTEGER;
+    CREATE INDEX idx_jobs_model_profile ON jobs(model_role,model_routing_revision,status,created_at);
+
+    ALTER TABLE model_call_metrics ADD COLUMN role TEXT NOT NULL DEFAULT 'unknown';
+    ALTER TABLE model_call_metrics ADD COLUMN requested_model TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN returned_model TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN source_run_id TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN article_revision INTEGER;
+
+    CREATE TABLE draft_knowledge_updates (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+      dependency_hash TEXT NOT NULL,
+      changed_fact_keys_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'update_available'
+        CHECK (status IN ('update_available','accepted','dismissed','superseded')),
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(draft_id,dependency_hash)
+    );
+    CREATE INDEX idx_draft_knowledge_updates_status ON draft_knowledge_updates(status,updated_at DESC);
+
+    CREATE TABLE luna_dispute_reviews (
+      id TEXT PRIMARY KEY,
+      issue_key TEXT NOT NULL,
+      evidence_hash TEXT NOT NULL,
+      request_json TEXT NOT NULL,
+      result_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'requested'
+        CHECK (status IN ('requested','succeeded','failed')),
+      model_profile_json TEXT NOT NULL,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(issue_key,evidence_hash)
+    );
+
+    CREATE TABLE model_routing_audit (
+      id TEXT PRIMARY KEY,
+      action TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      previous_revision INTEGER,
+      next_revision INTEGER,
+      actor TEXT NOT NULL DEFAULT 'admin',
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_model_routing_audit_created ON model_routing_audit(created_at DESC);
+
+    INSERT INTO schema_migrations(version, applied_at) VALUES (73, datetime('now'));
+  `));
 }
 
 function migrationSeventyTwo(db) {

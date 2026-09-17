@@ -21,13 +21,15 @@ const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 export class Pipeline {
   constructor(repository, extractor, { pollMs = 750, maxConcurrent = null, heartbeatIntervalMs = null, recoveryIntervalMs = 60_000,
-    extractionConfig = {}, contentEngine = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null,
+    extractionConfig = {}, contentEngine = null, sourceEngine = null, visualReviewer = null, visuals = null, wordpress = null, searchConsole = null, commercialComposer = null,
     frontendContracts = null, contentConfig = {}, logger = silentLogger,databasePath=null,processIsolationEnabled=false,
     isolatedTaskRunner=runNodeJsonProcess } = {}) {
     this.repository = repository;
     this.extractor = extractor;
     this.pollMs = pollMs;
     this.contentEngine = contentEngine;
+    this.sourceEngine = sourceEngine || contentEngine || extractor;
+    this.visualReviewer = visualReviewer || extractor;
     this.visuals = visuals;
     this.wordpress = wordpress;
     this.searchConsole = searchConsole;
@@ -354,7 +356,10 @@ export class Pipeline {
         }
       }, this.heartbeatIntervalMs || Math.max(10_000, Math.floor((this.repository.jobLeaseMs || 60_000) / 3)));
       heartbeatTimer.unref();
+      const telemetryIdentity=this.repository.modelTelemetryIdentity?.(job)||{};
       const telemetryContext = { runId: job.id, entityId: job.entity_id,
+        role:job.model_role || "unknown",modelProfile:parseStoredJson(job.model_profile_json),
+        sourceRunId:telemetryIdentity.sourceRunId||null,articleRevision:telemetryIdentity.articleRevision??null,
         jobAttempt:Number(job.attempts || 0),recoveryRunId:job.recovery_run_id || null,
         productionOwnerOpportunityId:job.production_owner_opportunity_id || null,
         queueWaitMs:Math.max(0,startedAt-Date.parse(job.created_at||job.available_at||new Date(startedAt).toISOString())),
@@ -451,9 +456,10 @@ export class Pipeline {
         case "preflight_source": {
           const source = this.repository.getSource(job.entity_id);
           if (!source) throw new Error(`Source ${job.entity_id} no longer exists.`);
+          const extractionRuntime = this.extractor?.configFor?.({ telemetryContext }) || this.extractor?.config || {};
           const preflight = evaluateSourcePreflight(source, {
-            provider: this.extractor?.config?.provider || "kimi",
-            sourceUploadsDir: this.extractor?.config?.sourceUploadsDir,
+            provider: extractionRuntime.provider || "unknown",
+            sourceUploadsDir: extractionRuntime.sourceUploadsDir,
             imageBatchSize: this.repository.contentConfig?.mediaImageBatchSize,
             textSegmentMaxChars: this.repository.contentConfig?.sourceTextSegmentMaxChars,
           });
@@ -566,7 +572,8 @@ export class Pipeline {
         case "finalize_source_extraction": {
           const finalized = commitStage(() => {
             const result = this.repository.finalizeSegmentedExtraction(job.entity_id);
-            if (this.contentEngine?.enabled && typeof this.contentEngine.analyzeExperience === "function") {
+            if ((this.sourceEngine?.enabledFor?.({ telemetryContext }) ?? this.sourceEngine?.enabled)
+              && typeof this.sourceEngine?.analyzeExperience === "function") {
               this.enqueueChild(job,"extract_source_experience",job.entity_id);
             } else {
               this.repository.saveExperienceExtraction(job.entity_id, { blocks: [] }, "no_ai");
@@ -580,7 +587,7 @@ export class Pipeline {
         case "extract_source_experience": {
           const experiencePackage = this.repository.getExperienceExtractionPackage(job.entity_id);
           if (!experiencePackage) throw new Error(`Source ${job.entity_id} is not ready for Experience extraction.`);
-          const extracted = await guarded((signal) => this.contentEngine.analyzeExperience(experiencePackage, { signal, telemetryContext }));
+          const extracted = await guarded((signal) => this.sourceEngine.analyzeExperience(experiencePackage, { signal, telemetryContext }));
           commitStage(() => {
             this.repository.saveExperienceExtraction(job.entity_id, extracted.output, extracted.model, experiencePackage);
             this.enqueueSourceSemanticDownstream(job.entity_id,job);
@@ -607,10 +614,10 @@ export class Pipeline {
         case "analyze_source_diagnostic": {
           // Source diagnostics explain evidence value; they never create or queue
           // an article. The AI intake record remains the human-facing diagnostic.
-          this.requireContentEngine();
+          this.requireExtractionEngine(telemetryContext);
           const intakePackage = this.repository.getIntakePackage(job.entity_id);
           if (!intakePackage) throw new Error(`Source ${job.entity_id} is not ready for diagnostic analysis.`);
-          const analyzed = await guarded((signal) => this.contentEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
+          const analyzed = await guarded((signal) => this.sourceEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
           commitStage(() => this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model));
           break;
         }
@@ -619,9 +626,10 @@ export class Pipeline {
           const resolutions = [];
           do {
             const entityPackage = this.repository.getEntityResolutionPackage(job.entity_id, 300, cursor);
-            if (this.contentEngine?.enabled && typeof this.contentEngine.resolveEntities === "function" && entityPackage.claims.length) {
+            if ((this.sourceEngine?.enabledFor?.({ telemetryContext }) ?? this.sourceEngine?.enabled)
+              && typeof this.sourceEngine?.resolveEntities === "function" && entityPackage.claims.length) {
               try {
-                const resolved = await modelStep(`entities:${cursor || 'start'}`, entityPackage, (signal) => this.contentEngine.resolveEntities(entityPackage, { signal,
+                const resolved = await modelStep(`entities:${cursor || 'start'}`, entityPackage, (signal) => this.sourceEngine.resolveEntities(entityPackage, { signal,
                   telemetryContext: { ...telemetryContext, entityId: `${job.entity_id}:${cursor || "start"}` } }));
                 // Keep every page on the same input revision. Applying page 1
                 // would otherwise mutate aliases/metadata read by page 2 and
@@ -688,10 +696,10 @@ export class Pipeline {
           break;
         }
         case "analyze_intake": {
-          this.requireContentEngine();
+          this.requireExtractionEngine(telemetryContext);
           const intakePackage = this.repository.getIntakePackage(job.entity_id);
           if (!intakePackage) throw new Error(`Source ${job.entity_id} is not ready for intake analysis.`);
-          const analyzed = await guarded((signal) => this.contentEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
+          const analyzed = await guarded((signal) => this.sourceEngine.analyzeIntake(intakePackage, { signal, telemetryContext }));
           commitStage(() => this.repository.saveIntakeAnalysis(job.entity_id, analyzed.output, analyzed.model));
           break;
         }
@@ -815,13 +823,13 @@ export class Pipeline {
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           for (const visual of this.repository.plannedVisuals(job.entity_id).filter((item)=>item.acquisition_strategy === "analyze_source_image")) {
-            if (typeof this.extractor?.analyzeMediaAsset !== "function") {
+            if (typeof this.visualReviewer?.analyzeMediaAsset !== "function") {
               throw Object.assign(new Error("Image analysis provider is not configured for this source asset."),{
                 code:"MEDIA_ANALYSIS_NOT_CONFIGURED",retryable:false,
               });
             }
             const asset=this.repository.sourceAssetDecisionDto(visual.source_asset_id);
-            const analyzed=await guarded((signal)=>this.extractor.analyzeMediaAsset(asset,{signal,
+            const analyzed=await guarded((signal)=>this.visualReviewer.analyzeMediaAsset(asset,{signal,
               telemetryContext:{...telemetryContext,entityId:visual.source_asset_id}}));
             // One source analysis is an intermediate checkpoint, not the
             // completion of the generate_visuals stage.  Completing the stage
@@ -1127,7 +1135,13 @@ export class Pipeline {
   }
 
   requireContentEngine() {
-    if (!this.contentEngine?.enabled) throw new Error("Content production requires a configured Kimi key or Vertex AI project.");
+    if (!this.contentEngine?.enabled) throw new Error("Content production requires the fixed Vertex Gemini 3.8 Flash writing runtime.");
+  }
+
+  requireExtractionEngine(telemetryContext = {}) {
+    if (!(this.sourceEngine?.enabledFor?.({ telemetryContext }) ?? this.sourceEngine?.enabled)) {
+      throw new Error("Source semantic processing requires credentials for the extraction model frozen on this Job.");
+    }
   }
 
   ensureReusedDownstream(job) {
@@ -1214,7 +1228,7 @@ export class Pipeline {
     }
     if (typeof this.extractor?.analyzeBlueprint === "function") this.enqueueChild(parentJob||{},"analyze_source_blueprint",sourceId,{workloadClass:"background_enrichment",priority:40});
     else this.enqueueChild(parentJob||{},"rebuild_editorial","global",{workloadClass:"background_enrichment",priority:40});
-    if (this.contentEngine?.enabled) this.enqueueChild(parentJob||{},"analyze_source_diagnostic",sourceId,{workloadClass:"background_enrichment",priority:40});
+    if (this.sourceEngine?.enabled) this.enqueueChild(parentJob||{},"analyze_source_diagnostic",sourceId,{workloadClass:"background_enrichment",priority:40});
   }
 
   get canComposeFrontendPage() {

@@ -17,6 +17,13 @@ export const AI_MODELS = [
 ];
 export const KIMI_MODELS = AI_MODELS.filter((item) => item.provider === "kimi").map((item) => item.id);
 
+export const EXTRACTION_MODELS = Object.freeze([
+  { id: "deepseek-v4.1-flash", provider: "deepseek", model: "deepseek-flash", endpoint: "https://api.deepseek.com/chat/completions",
+    baseUrl: "https://api.deepseek.com", label: "DeepSeek-V4.1-Flash", description: "推荐默认；用于新来源的图文理解、事实提取与来源语义处理。", supportsImages: true, recommended: true },
+  { id: "openai-gpt-5.6-luna", provider: "openai", model: "gpt-5.6-luna", endpoint: "https://api.openai.com/v1/responses",
+    baseUrl: "https://api.openai.com/v1", label: "GPT-5.6 Luna", description: "可手动切换为新来源提取主力；也支持显式、局部的争议证据复核。", supportsImages: true },
+]);
+
 export const VISUAL_MODELS = [
   {
     id: "vertex-gemini-3.1-flash-image",
@@ -81,6 +88,29 @@ export function loadConfig(env = process.env) {
       stagePolicy: modelStagePolicy,
       pricing: modelPricing,
     },
+    modelCredentials: {
+      encryptionKey: String(env.MODEL_CREDENTIAL_ENCRYPTION_KEY || "").trim(),
+    },
+    deepseek: {
+      provider: "deepseek", apiKey: env.DEEPSEEK_API_KEY || "", model: "deepseek-flash",
+      baseUrl: "https://api.deepseek.com",
+      maxImages: integer(env.AI_IMAGE_BATCH_SIZE || env.DEEPSEEK_MAX_IMAGES, 8),
+      imageBatchSize: Math.min(8, Math.max(4, integer(env.AI_IMAGE_BATCH_SIZE || env.DEEPSEEK_MAX_IMAGES, 6))),
+      maxCompletionTokens: integer(env.DEEPSEEK_MAX_COMPLETION_TOKENS, 16_000),
+      requestTimeoutMs: integer(env.DEEPSEEK_REQUEST_TIMEOUT_MS, 360_000),
+      imageTimeoutMs: integer(env.DEEPSEEK_IMAGE_TIMEOUT_MS, 20_000), sourceUploadsDir,
+      batchEnabled: false,
+    },
+    openai: {
+      provider: "openai", apiKey: env.OPENAI_API_KEY || "", model: "gpt-5.6-luna",
+      baseUrl: "https://api.openai.com/v1",
+      maxImages: integer(env.AI_IMAGE_BATCH_SIZE || env.OPENAI_MAX_IMAGES, 8),
+      imageBatchSize: Math.min(8, Math.max(4, integer(env.AI_IMAGE_BATCH_SIZE || env.OPENAI_MAX_IMAGES, 6))),
+      maxCompletionTokens: integer(env.OPENAI_MAX_COMPLETION_TOKENS, 16_000),
+      requestTimeoutMs: integer(env.OPENAI_REQUEST_TIMEOUT_MS, 360_000),
+      imageTimeoutMs: integer(env.OPENAI_IMAGE_TIMEOUT_MS, 20_000), sourceUploadsDir,
+      batchEnabled: false,
+    },
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
       model: KIMI_MODELS.includes(env.KIMI_MODEL) ? env.KIMI_MODEL : "kimi-k2.7-code",
@@ -101,8 +131,8 @@ export function loadConfig(env = process.env) {
       maxImages: integer(env.AI_IMAGE_BATCH_SIZE || env.VERTEX_AI_MAX_IMAGES || env.AI_MAX_IMAGES, 32),
       imageBatchSize: integer(env.AI_IMAGE_BATCH_SIZE || env.VERTEX_AI_MAX_IMAGES || env.AI_MAX_IMAGES, 32),
       maxCompletionTokens: integer(env.VERTEX_AI_MAX_COMPLETION_TOKENS, 16_000),
-      thinkingLevel: choice(String(env.VERTEX_AI_THINKING_LEVEL || "LOW").toUpperCase(), ["MINIMAL", "LOW", "MEDIUM", "HIGH"], "LOW"),
-      reasoningThinkingLevel: choice(String(env.VERTEX_AI_REASONING_THINKING_LEVEL || "MEDIUM").toUpperCase(), ["MINIMAL", "LOW", "MEDIUM", "HIGH"], "MEDIUM"),
+      thinkingLevel: upperChoice(env.VERTEX_AI_THINKING_LEVEL || "LOW", ["LOW", "MEDIUM", "HIGH"], "LOW"),
+      reasoningThinkingLevel: upperChoice(env.VERTEX_AI_REASONING_THINKING_LEVEL || "MEDIUM", ["LOW", "MEDIUM", "HIGH"], "MEDIUM"),
       sourceUploadsDir,
       maxVideoBytes: integer(env.MANUAL_SOURCE_MAX_VIDEO_BYTES, 256 * 1024 * 1024),
       videoBucket: String(env.MANUAL_SOURCE_GCS_BUCKET || "").trim(),
@@ -279,6 +309,11 @@ function boolean(value, fallback) {
 
 function choice(value, allowed, fallback) {
   const normalized = String(value || "").toLowerCase();
+  return allowed.includes(normalized) ? normalized : fallback;
+}
+
+function upperChoice(value, allowed, fallback) {
+  const normalized = String(value || "").toUpperCase();
   return allowed.includes(normalized) ? normalized : fallback;
 }
 

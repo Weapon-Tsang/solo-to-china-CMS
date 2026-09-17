@@ -25,7 +25,7 @@ test("bounded draft repair reserves JSON output budget instead of medium reasoni
     maxCompletionTokens: 16_000, stagePolicy });
   assert.equal(policy.thinking, "LOW");
   assert.equal(policy.maxOutputTokens, 12_000);
-  assert.equal(policy.version, "model-stage-policy-1.0.3");
+  assert.equal(policy.version, "model-routing-policy-1.1.0");
 });
 
 test("quality review reserves its structured output budget with low thinking", () => {
@@ -33,7 +33,7 @@ test("quality review reserves its structured output budget with low thinking", (
     maxCompletionTokens: 16_000, stagePolicy });
   assert.equal(policy.thinking, "LOW");
   assert.equal(policy.maxOutputTokens, 12_000);
-  assert.equal(policy.version, "model-stage-policy-1.0.3");
+  assert.equal(policy.version, "model-routing-policy-1.1.0");
 });
 
 test("source media analysis reserves complete structured output with low thinking", () => {
@@ -43,7 +43,7 @@ test("source media analysis reserves complete structured output with low thinkin
   assert.equal(policy.thinking,"LOW");
   assert.equal(policy.maxOutputTokens,16_000);
   assert.equal(policy.maxAttempts,2);
-  assert.equal(policy.version,"model-stage-policy-1.0.3");
+  assert.equal(policy.version,"model-routing-policy-1.1.0");
 });
 
 test("every provider attempt is metered, including structured-output repair retries", async () => {

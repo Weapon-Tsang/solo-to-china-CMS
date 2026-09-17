@@ -1,6 +1,13 @@
 # Changelog
 
-## 2.0.32 - Unreleased
+## 2.0.33 - Unreleased
+
+- Add schema 73 and Strategy 3.7 model-role routing: DeepSeek extraction candidate, manual GPT-5.6 Luna extraction/dispute review, fixed Vertex Gemini 3.8 Flash production/review, and fixed Gemini 3.1 Flash Image generation/localization.
+- Encrypt dashboard-managed provider credentials, separate candidate save from optimistic activation, freeze immutable model profiles on new Jobs, and record requested/returned models without inventing costs.
+- Isolate source and article provider availability, preserve frozen draft QA on Knowledge updates, and make approved-evidence reconciliation atomic and idempotent.
+- Production deployment does not provision API keys, activate a new extraction provider, replay history, or invoke real providers.
+
+## 2.0.32 - 2026-09-17
 
 - Preserve complete `FINAL_PAGE_INVALID` validator diagnostics and execution attribution from Job failure through API/UI, without describing deterministic work as a missing model call.
 - Record actual image transform/translation/QA provider calls by model, substage, visual/source, HTTP status and dispatch evidence; persist private immutable transform candidates so a transient QA failure resumes QA without regenerating the image.

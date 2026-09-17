@@ -10,7 +10,7 @@ test("migration 72 is additive and leaves legacy certainty unknown",async(t)=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"stc-migration-72-"));
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const source=fs.readFileSync(new URL("../src/db.mjs",import.meta.url),"utf8")
-    .replace(/^  if \(current < 72\).*$/gm,"");
+    .replace(/^  if \(current < (?:72|73)\).*$/gm,"");
   const legacyPath=path.join(directory,"db-v71.mjs");
   fs.writeFileSync(legacyPath,source);
   const {openDatabase:openV71}=await import(`${pathToFileURL(legacyPath).href}?schema=71`);
@@ -21,8 +21,8 @@ test("migration 72 is additive and leaves legacy certainty unknown",async(t)=>{
   db.close();
 
   db=openDatabase(filename);
-  assert.equal(SCHEMA_VERSION,72);
-  assert.equal(db.prepare("SELECT MAX(version) version FROM schema_migrations").get().version,72);
+  assert.equal(SCHEMA_VERSION,73);
+  assert.equal(db.prepare("SELECT MAX(version) version FROM schema_migrations").get().version,73);
   assert.equal(db.prepare("SELECT failure_execution_kind FROM jobs WHERE id='legacy-job'").get().failure_execution_kind,"legacy_unknown");
   const slotColumns=new Set(db.prepare("PRAGMA table_info(commercial_slots)").all().map((row)=>row.name));
   assert.ok(slotColumns.has("affiliate_asset_revision"));

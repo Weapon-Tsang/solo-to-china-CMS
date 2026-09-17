@@ -1,13 +1,25 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "3.6",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.6.md",
+  "current_version": "3.7",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.7.md",
   "status": "active",
   "history": [
     {
-      "version": "3.6",
+      "version": "3.7",
       "effective_date": "2026-09-17",
       "status": "active",
+      "summary": "Role-isolated model routing with immutable task profiles, encrypted extraction credentials, fixed Vertex production roles, and frozen-draft knowledge updates.",
+      "changes": [
+        "DeepSeek-V4.1-Flash is the recommended candidate for new source extraction; GPT-5.6 Luna is an explicit alternative and an operator-only bounded dispute reviewer.",
+        "Planning, writing, article review and image review stay fixed on Vertex Gemini 3.8 Flash; required generation and localization stay fixed on Gemini 3.1 Flash Image.",
+        "Each new model-backed Job freezes its role, provider, model, routing revision and policy version so setting changes never replay or relabel existing results.",
+        "Source and article production availability are isolated; Knowledge changes create a non-destructive update notice without clearing a frozen draft review, and approved evidence-waiting work remains idempotently reconcilable."
+      ]
+    },
+    {
+      "version": "3.6",
+      "effective_date": "2026-09-17",
+      "status": "superseded",
       "summary": "Evidence-consistent diagnostics, isolated commercial asset revisions, traceable article usage, and resumable visual QA checkpoints.",
       "changes": [
         "Final-page validation preserves original validator paths, safe actual values, stable slot/asset identities, contract identity, job attempt and production owner without misclassifying deterministic failures as model failures.",

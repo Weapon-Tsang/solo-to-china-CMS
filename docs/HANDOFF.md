@@ -1,3 +1,9 @@
+# 2.0.33 model routing v1.1 handoff
+
+App/Extension version `2.0.33`, schema migration `73`, and Content Strategy `3.7` form this model-routing release, with Content Production Strategy 3.7 defined by `config/content-strategy.json`, `production_state` 2.0 and Frontend Contract 1.4.0. Source extraction receives an immutable per-Job provider snapshot and can use DeepSeek Flash by default or GPT-5.6 Luna after an explicit operator switch; article planning, writing and final review remain fixed to Vertex Gemini 3.8 Flash, while image generation and localization remain fixed to Gemini 3.1 Flash Image with Vertex review.
+
+Deployment installs the schema and code without provisioning credentials, activating a new route, replaying historical Jobs or calling a real provider. Candidate configuration, bounded text/image connection checks and activation are separate audited operator actions. Extraction-provider backoff is isolated from article production, frozen Draft QA state survives later Knowledge updates, and approved material-waiting work remains idempotently resumable.
+
 # 2.0.32 evidence, commercial asset, and visual checkpoint repair handoff
 
 App/Extension version `2.0.32`, schema migration `72`, and Content Strategy `3.6` form this release repair, with Content Production Strategy 3.6 defined by `config/content-strategy.json`, `production_state` 2.0 and Frontend Contract 1.4.0. It preserves complete final-page validator evidence, records actual image subcall models and HTTP outcomes, resumes QA from immutable transformed candidates, distinguishes deterministic not-applicable, local not-attempted and unknown call states, and adds revision-safe Affiliate Asset editing with historical article/slot usage. The companion parent theme is 0.33.4; Child 0.12.1, Tools 0.26.0, Registry 1.4.0, Content Contract 2.1.0 and Publish Package 1.0.0 remain compatible.

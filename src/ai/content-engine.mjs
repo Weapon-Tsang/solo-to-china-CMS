@@ -92,6 +92,13 @@ const EXPERIENCE_SCHEMA = objectSchema(["blocks"], {
   },
 });
 
+const DISPUTE_REVIEW_SCHEMA = objectSchema(["assessment", "rationale", "evidence_refs", "cautions"], {
+  assessment: { type: "string", enum: ["supports_claim_a", "supports_claim_b", "compatible", "insufficient_evidence"] },
+  rationale: { type: "string" },
+  evidence_refs: { type: "array", maxItems: 8, items: { type: "string" } },
+  cautions: { type: "array", maxItems: 8, items: { type: "string" } },
+});
+
 const ASSEMBLY_SCHEMA = objectSchema(
   ["selected_fact_keys", "selected_experience_block_ids", "selected_source_ids", "selected_blueprint_source_ids", "exclusions", "rationale"],
   {
@@ -436,6 +443,15 @@ export class ContentEngine {
       schema: ENTITY_RESOLUTION_SCHEMA,
       instructions: ENTITY_RESOLUTION_PROMPT,
       input: JSON.stringify(entityPackage), options,
+    });
+  }
+
+  async reviewDispute(evidencePackage, options = {}) {
+    return this.respond({
+      name: "luna_local_dispute_review",
+      schema: DISPUTE_REVIEW_SCHEMA,
+      instructions: "Review only the bounded evidence provided. Do not add outside facts and do not resolve or mutate Knowledge. Return a recommendation for a human reviewer, citing only supplied evidence_refs.",
+      input: JSON.stringify(evidencePackage), options,
     });
   }
 

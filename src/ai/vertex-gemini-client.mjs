@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { KimiClient } from "./kimi-client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
-import { ProviderRequestError, providerTransportError, vertexStructuredOutput } from "./provider-schema.mjs";
+import { ProviderRequestError, providerReasoningOptions, providerTransportError, vertexStructuredOutput } from "./provider-schema.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
 
 const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
@@ -412,7 +412,7 @@ function outputLimitError(stage) {
 
 function vertexThinkingConfiguration(model, level) {
   const name=String(model || "").toLowerCase();
-  if (name.startsWith("gemini-3")) return {thinkingConfig:{thinkingLevel:level}};
+  if (name.startsWith("gemini-3")) return providerReasoningOptions("vertex",level);
   if (!name.startsWith("gemini-2.5")) return {};
   const normalized=String(level || "LOW").toUpperCase();
   const minimum=minimumThinkingBudget(name);
@@ -477,12 +477,14 @@ function modelCallIdentity(stage, schema, instructions, content) {
 function vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt, status,
   errorCode = null, retryReason = null, usage = null }) {
   return { ...identity, provider: "vertex", model: policy.model,
+    role: telemetryContext?.role || "unknown", requestedModel: policy.model, returnedModel: policy.model,
     inputTokens: usage?.promptTokenCount ?? null, outputTokens: usage?.candidatesTokenCount ?? null,
     cachedTokens: usage?.cachedContentTokenCount ?? null, thinkingTokens: usage?.thoughtsTokenCount ?? null,
     providerUsage: usage || null, latencyMs: Date.now() - attemptStartedAt, attempts: attempt + 1,
     attemptNumber: attempt + 1, status: status === "succeeded" ? "succeeded" : "failed", attemptStatus: status,
     errorCode, retryReason, requestKind: "provider", policyVersion: policy.version, configHash: policy.configHash,
     runId: telemetryContext?.runId || null, entityId: telemetryContext?.entityId || null,
+    sourceRunId: telemetryContext?.sourceRunId || null, articleRevision: telemetryContext?.articleRevision ?? null,
     queueWaitMs:telemetryContext?.queueWaitMs??null,providerRequestMs:Date.now()-attemptStartedAt,
     retryWaitMs:telemetryContext?.retryWaitMs??0,
     totalStageMs:(telemetryContext?.queueWaitMs||0)+Math.max(0,Date.now()-(telemetryContext?.stageStartedAt||attemptStartedAt)),

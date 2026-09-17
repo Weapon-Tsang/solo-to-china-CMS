@@ -1,5 +1,12 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.33 / schema 73 - 2026-09-17
+
+- Activate Strategy 3.7 role-isolated model routing and immutable per-Job provider profiles.
+- Add encrypted DeepSeek/OpenAI credential state, manual Luna dispute review and fixed Vertex writing/image roles.
+- Preserve frozen Draft QA when Knowledge changes and keep approved evidence-waiting reconciliation idempotent.
+- This release does not insert production API keys, activate a new extraction provider, replay historical work or run a real-provider canary.
+
 ## App 2.0.32 / schema 72 - 2026-09-17
 
 - Activate Strategy 3.6 evidence-complete production diagnostics, visual provider subcall accounting and immutable post-transform QA checkpoints.

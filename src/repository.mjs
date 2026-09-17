@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import { canonicalizeUrl, id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
-import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
+import { AI_MODELS, EXTRACTION_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 import { buildContentAst, contentBlockSummary, markdownToContentBlocks, reconcileContentAstLedger } from "./content-blocks.mjs";
 import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue, repairClaimLocally,
@@ -16,7 +17,7 @@ import {
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
 import { AI_JOB_TYPES, DATABASE_HEAVY_JOB_TYPES, classifyBatchFailure, isOperationalFailureRetryable, isProviderPressure,
-  inheritJobContext,laneBackoffMs,workloadClassForJob } from "./job-policy.mjs";
+  inheritJobContext,laneBackoffMs,modelRoleForJob,workloadClassForJob } from "./job-policy.mjs";
 import { pageBlockSignature, selectedFactEvidence, selectedFactSnapshot } from "./evidence-validator.mjs";
 import { estimateSourceProcessing } from "./source-preflight.mjs";
 import { sourceProcessingProfile } from "./source-processing-profile.mjs";
@@ -54,6 +55,7 @@ const COMPATIBLE_DIAGNOSTIC_STRATEGIES = new Map([
   ["3.4", new Set(["3.0", "3.1", "3.2", "3.3", "3.4"])],
   ["3.5", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5"])],
   ["3.6", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6"])],
+  ["3.7", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7"])],
 ]);
 
 function isReusableDiagnosticStrategy(previous, current) {
@@ -82,6 +84,8 @@ export class Repository {
     this.batchBackoffMaxMs = Math.max(this.batchBackoffInitialMs, Number(contentConfig.batchBackoffMaxMs || 300_000));
     this.random = contentConfig.random || Math.random;
     this.productionCapabilities = { frontendContract: false, visuals: false, wordpress: false };
+    this.modelCredentialEncryptionKey = String(contentConfig.modelCredentialEncryptionKey || "").trim();
+    this.environmentCredentialProviders = new Set(contentConfig.environmentCredentialProviders || []);
   }
 
   configureProductionCapabilities(capabilities = {}) {
@@ -367,6 +371,137 @@ export class Repository {
       ON CONFLICT(setting_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
     `).run(JSON.stringify({ model }), timestamp);
     return this.getAiSettings(defaultModel);
+  }
+
+  modelCredentialKey() {
+    const value = this.modelCredentialEncryptionKey;
+    if (!value) throw Object.assign(new Error("MODEL_CREDENTIAL_ENCRYPTION_KEY is required before API keys can be stored."), {
+      code: "MODEL_CREDENTIAL_ENCRYPTION_KEY_REQUIRED", statusCode: 409,
+    });
+    let key = null;
+    if (/^[a-f0-9]{64}$/i.test(value)) key = Buffer.from(value, "hex");
+    else { try { key = Buffer.from(value, "base64"); } catch { key = null; } }
+    if (!key || key.length !== 32) throw Object.assign(new Error("MODEL_CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes."), {
+      code: "MODEL_CREDENTIAL_ENCRYPTION_KEY_INVALID", statusCode: 409,
+    });
+    return key;
+  }
+
+  encryptModelCredential(secret) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", this.modelCredentialKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(String(secret), "utf8"), cipher.final()]);
+    return { encryptedSecret: encrypted.toString("base64"), iv: iv.toString("base64"), authTag: cipher.getAuthTag().toString("base64") };
+  }
+
+  decryptModelCredential(row) {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", this.modelCredentialKey(), Buffer.from(row.iv, "base64"));
+    decipher.setAuthTag(Buffer.from(row.auth_tag, "base64"));
+    return Buffer.concat([decipher.update(Buffer.from(row.encrypted_secret, "base64")), decipher.final()]).toString("utf8");
+  }
+
+  hasModelCredential(provider) {
+    return Boolean(this.db.prepare("SELECT 1 FROM model_credentials WHERE provider=?").get(provider)
+      || this.environmentCredentialProviders.has(provider));
+  }
+
+  readModelCredential(provider) {
+    const row = this.db.prepare("SELECT * FROM model_credentials WHERE provider=?").get(provider);
+    return row ? this.decryptModelCredential(row) : null;
+  }
+
+  recordModelCredentialValidation(provider,status,detail={}) {
+    if(!["untested","text_verified","multimodal_verified","failed"].includes(status))throw new Error("Invalid credential validation status.");
+    const timestamp=now();
+    this.db.prepare(`UPDATE model_credentials SET validation_status=?,validation_detail_json=?,validated_at=?,updated_at=? WHERE provider=?`)
+      .run(status,JSON.stringify(detail&&typeof detail==="object"?detail:{}),timestamp,timestamp,provider);
+    return this.getModelRoutingSettings().credentials[provider];
+  }
+
+  getModelRoutingSettings() {
+    const row = this.db.prepare("SELECT * FROM model_routing_settings WHERE singleton=1").get();
+    const credentials = {};
+    for (const item of EXTRACTION_MODELS) {
+      const stored = this.db.prepare(`SELECT masked_suffix,key_version,validation_status,validated_at
+        FROM model_credentials WHERE provider=?`).get(item.provider);
+      credentials[item.provider] = {
+        configured: Boolean(stored || this.environmentCredentialProviders.has(item.provider)),
+        source: stored ? "encrypted_database" : this.environmentCredentialProviders.has(item.provider) ? "environment" : "none",
+        maskedSuffix: stored?.masked_suffix || "", keyVersion: stored?.key_version || null,
+        validationStatus: stored?.validation_status || "untested", validatedAt: stored?.validated_at || null,
+      };
+    }
+    return {
+      selectedProvider: row.selected_provider, activeProvider: row.active_provider, activeModel: row.active_model,
+      activationState: row.activation_state, revision: Number(row.revision || 1), policyVersion: row.policy_version,
+      activatedAt: row.activated_at || null, updatedAt: row.updated_at,
+      encryptionReady: Boolean(this.modelCredentialEncryptionKey), credentials, extractionModels: EXTRACTION_MODELS,
+      fixedRoles: {
+        writing: { provider: "vertex", model: "gemini-3.8-flash" },
+        articleReview: { provider: "vertex", model: "gemini-3.8-flash" },
+        imageReview: { provider: "vertex", model: "gemini-3.8-flash" },
+        imageGeneration: { provider: "vertex_gemini", model: "gemini-3.1-flash-image" },
+      },
+    };
+  }
+
+  updateModelRouting({ provider, apiKey = "", deleteKey = false, activate = false, expectedRevision, actor = "admin" } = {}) {
+    const selected = EXTRACTION_MODELS.find((item) => item.provider === provider);
+    if (!selected) throw Object.assign(new Error("Unsupported extraction provider."), { statusCode: 400, code: "UNSUPPORTED_EXTRACTION_PROVIDER" });
+    if (!Number.isInteger(Number(expectedRevision))) throw Object.assign(new Error("expectedRevision is required."), { statusCode: 409, code: "MODEL_ROUTING_REVISION_REQUIRED" });
+    const cleanKey = String(apiKey || "").trim();
+    if (cleanKey.length > 16_384) throw Object.assign(new Error("API key is too long."), { statusCode: 400, code: "MODEL_CREDENTIAL_INVALID" });
+    return transaction(this.db, () => {
+      const previous = this.db.prepare("SELECT * FROM model_routing_settings WHERE singleton=1").get();
+      if (Number(previous.revision) !== Number(expectedRevision)) throw Object.assign(new Error("Model routing changed in another session. Reload settings and try again."), {
+        statusCode: 409, code: "MODEL_ROUTING_REVISION_CONFLICT", currentRevision: Number(previous.revision),
+      });
+      const timestamp = now();
+      if (deleteKey) this.db.prepare("DELETE FROM model_credentials WHERE provider=?").run(provider);
+      if (cleanKey) {
+        const sealed = this.encryptModelCredential(cleanKey);
+        const prior = this.db.prepare("SELECT key_version FROM model_credentials WHERE provider=?").get(provider);
+        this.db.prepare(`INSERT INTO model_credentials(provider,encrypted_secret,iv,auth_tag,key_version,masked_suffix,validation_status,
+          validation_detail_json,validated_at,created_at,updated_at) VALUES (?,?,?,?,?,?,'untested','{}',NULL,?,?)
+          ON CONFLICT(provider) DO UPDATE SET encrypted_secret=excluded.encrypted_secret,iv=excluded.iv,auth_tag=excluded.auth_tag,
+            key_version=excluded.key_version,masked_suffix=excluded.masked_suffix,validation_status='untested',validation_detail_json='{}',
+            validated_at=NULL,updated_at=excluded.updated_at`)
+          .run(provider, sealed.encryptedSecret, sealed.iv, sealed.authTag, Number(prior?.key_version || 0) + 1,
+            cleanKey.slice(-4), timestamp, timestamp);
+      }
+      if (deleteKey && previous.active_provider === provider && !this.hasModelCredential(provider)) {
+        throw Object.assign(new Error("The credential for the active extraction route cannot be removed until another route is activated."), {
+          statusCode: 409, code: "ACTIVE_MODEL_CREDENTIAL_REQUIRED",
+        });
+      }
+      if (activate && !this.hasModelCredential(provider)) throw Object.assign(new Error("Configure an API key before activation."), {
+        statusCode: 409, code: "MODEL_CREDENTIAL_REQUIRED",
+      });
+      const nextRevision = Number(previous.revision) + 1;
+      this.db.prepare(`UPDATE model_routing_settings SET selected_provider=?,active_provider=?,active_model=?,activation_state=?,
+        revision=?,activated_at=?,updated_at=? WHERE singleton=1`).run(provider,
+          activate ? provider : previous.active_provider, activate ? selected.model : previous.active_model,
+          activate ? "active" : provider === previous.active_provider ? previous.activation_state : "candidate",
+          nextRevision, activate ? timestamp : previous.activated_at, timestamp);
+      this.db.prepare(`INSERT INTO model_routing_audit(id,action,provider,previous_revision,next_revision,actor,detail_json,created_at)
+        VALUES (?,?,?,?,?,?,?,?)`).run(id("model_route_audit"), activate ? "activate" : deleteKey ? "delete_key" : cleanKey ? "save_key" : "select",
+          provider, Number(previous.revision), nextRevision, String(actor || "admin").slice(0, 200),
+          JSON.stringify({ keyChanged: Boolean(cleanKey || deleteKey), activated: Boolean(activate) }), timestamp);
+      return this.getModelRoutingSettings();
+    });
+  }
+
+  modelProfileForRole(role) {
+    if (role === "writing") return { role, provider: "vertex", model: "gemini-3.8-flash", policyVersion: "model-routing-policy-1.1.0" };
+    if (role === "visual") return { role, provider: "vertex_gemini", model: "gemini-3.1-flash-image", reviewProvider: "vertex", reviewModel: "gemini-3.8-flash", policyVersion: "model-routing-policy-1.1.0" };
+    if (role !== "extraction") return null;
+    const routing = this.getModelRoutingSettings();
+    if (routing.activeProvider === "legacy") {
+      const legacy=AI_MODELS.find((item)=>item.id===routing.activeModel)||AI_MODELS[0];
+      return { role, provider: legacy.provider, model: legacy.model, legacy: true, routingRevision: routing.revision, policyVersion: routing.policyVersion };
+    }
+    const selected = EXTRACTION_MODELS.find((item) => item.provider === routing.activeProvider);
+    return { role, provider: selected.provider, model: selected.model, routingRevision: routing.revision, policyVersion: routing.policyVersion };
   }
 
   getVisualSettings(defaultModel) {
@@ -1634,10 +1769,18 @@ export class Repository {
 
   enqueue(type, entityId, { dedupeKey = null, priority = jobPriority(type), productionAttemptId = null,
     executionRoute = 'auto', workloadClass = "", parentJobId = null, recoveryRunId = null, interactive = false,
-    productionOwnerOpportunityId = null } = {}) {
+    productionOwnerOpportunityId = null, modelRole = "", modelProfile = null, modelRoutingRevision = null } = {}) {
     const timestamp = this.jobTimestamp();
     const resolvedWorkloadClass = workloadClassForJob(type, workloadClass);
     const resolvedOwnerId=productionOwnerOpportunityId || this.resolveProductionOwnerOpportunityId(type,entityId);
+    const resolvedModelRole = modelRoleForJob(type);
+    let resolvedModelProfile = null;
+    if (resolvedModelRole !== "unassigned") {
+      const inherited = typeof modelProfile === "string" ? json(modelProfile, null) : modelProfile;
+      resolvedModelProfile = modelRole === resolvedModelRole && inherited ? inherited : this.modelProfileForRole(resolvedModelRole);
+    }
+    const resolvedRoutingRevision = resolvedModelRole === "extraction"
+      ? Number(resolvedModelProfile?.routingRevision || modelRoutingRevision || 0) || null : null;
     const resolvedDedupeKey=dedupeKey || `${type}:${resolvedOwnerId ? `${resolvedOwnerId}:` : ""}${entityId}`;
     const active = this.db.prepare(`
       SELECT id,status FROM jobs WHERE dedupe_key = ? AND status IN ('queued', 'running') LIMIT 1
@@ -1653,10 +1796,11 @@ export class Repository {
     try {
       this.db.prepare(`
         INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at, dedupe_key,priority,production_attempt_id,execution_route,
-          workload_class,parent_job_id,recovery_run_id,interactive,production_owner_opportunity_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          workload_class,parent_job_id,recovery_run_id,interactive,production_owner_opportunity_id,model_role,model_profile_json,model_routing_revision)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(jobId, type, entityId, timestamp, timestamp, timestamp, resolvedDedupeKey, priority, productionAttemptId, executionRoute,
-        resolvedWorkloadClass,parentJobId,recoveryRunId,interactive ? 1 : 0,resolvedOwnerId);
+        resolvedWorkloadClass,parentJobId,recoveryRunId,interactive ? 1 : 0,resolvedOwnerId,resolvedModelRole,
+        JSON.stringify(resolvedModelProfile || {}),resolvedRoutingRevision);
       return jobId;
     } catch (error) {
       const raced = this.db.prepare("SELECT id FROM jobs WHERE dedupe_key=? AND status IN ('queued','running') LIMIT 1").get(resolvedDedupeKey);
@@ -2014,7 +2158,11 @@ export class Repository {
             SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
             WHERE vbi.job_id=jobs.id AND vbr.status IN ('preparing','submitted')
           )
-          AND (? = 1 OR type='generate_visuals' OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")}))
+          AND (type='generate_visuals' OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")})
+            OR (model_role='writing' AND COALESCE((SELECT backoff_until FROM provider_runtime_state WHERE provider='vertex'),'')<=?)
+            OR (model_role='extraction' AND COALESCE((SELECT backoff_until FROM provider_runtime_state
+              WHERE provider=json_extract(jobs.model_profile_json,'$.provider')),'')<=?)
+            OR (model_role='unassigned' AND ?=1))
           AND (type<>'generate_visuals' OR ?=1)
           AND NOT EXISTS (SELECT 1 FROM jobs database_writer WHERE database_writer.status='running'
             AND database_writer.type IN (${databaseHeavyTypes.map(()=>"?").join(",")}))
@@ -2057,7 +2205,8 @@ export class Repository {
           created_at ASC
         LIMIT 1
       `).get(timestamp, timestamp, deferBatchExtraction ? 1 : 0, deferBatchCoverage ? 1 : 0,
-        providerReady ? 1 : 0, ...AI_JOB_TYPES, this.clock().getTime() >= (this.visualBackoffUntil || 0) ? 1 : 0,
+        ...AI_JOB_TYPES, timestamp, timestamp, providerReady ? 1 : 0,
+        this.clock().getTime() >= (this.visualBackoffUntil || 0) ? 1 : 0,
         ...databaseHeavyTypes, ...databaseHeavyTypes, timestamp);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
@@ -2124,9 +2273,12 @@ export class Repository {
     if(providerPressure)this.db.prepare(`UPDATE model_call_metrics SET retry_after_ms=COALESCE(?,retry_after_ms),backoff_until=?
       WHERE id=(SELECT id FROM model_call_metrics WHERE run_id=? ORDER BY created_at DESC,id DESC LIMIT 1)`)
       .run(error?.retryAfterMs??null,availableAt,job.id);
-    const pressuredProvider=String(error?.provider||this.activeProvider||"");
-    if(providerPressure&&job.type!=="generate_visuals"&&pressuredProvider)this.db.prepare(`UPDATE provider_runtime_state SET backoff_until=?,updated_at=?
-      WHERE provider=?`).run(availableAt,timestamp,pressuredProvider);
+    const frozenProvider=json(job.model_profile_json,{}).provider;
+    const pressuredProvider=String(error?.provider||frozenProvider||this.activeProvider||"");
+    if(providerPressure&&job.type!=="generate_visuals"&&pressuredProvider)this.db.prepare(`INSERT INTO provider_runtime_state(provider,model,
+      consecutive_failures,backoff_until,updated_at) VALUES (?,?,1,?,?) ON CONFLICT(provider) DO UPDATE SET
+      consecutive_failures=provider_runtime_state.consecutive_failures+1,backoff_until=excluded.backoff_until,updated_at=excluded.updated_at`)
+      .run(pressuredProvider,json(job.model_profile_json,{}).model||"",availableAt,timestamp);
     const durationMs = job.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
     const failureClass = terminalFailureClass(error, retry, providerPressure);
     const failureCode = String(error?.code || error?.status || "").slice(0, 120);
@@ -2545,6 +2697,15 @@ export class Repository {
       return true;
     };
     return withinTransaction ? write() : transaction(this.db, write);
+  }
+
+  modelTelemetryIdentity(job) {
+    const draft=this.db.prepare("SELECT revision FROM article_drafts WHERE id=?").get(job?.entity_id);
+    const source=this.db.prepare(`SELECT id,capture_version FROM sources WHERE id=? UNION ALL
+      SELECT s.id,s.capture_version FROM source_segments ss JOIN sources s ON s.id=ss.source_id WHERE ss.id=? UNION ALL
+      SELECT s.id,s.capture_version FROM media_extraction_batches mb JOIN sources s ON s.id=mb.source_id WHERE mb.id=? LIMIT 1`)
+      .get(job?.entity_id,job?.entity_id,job?.entity_id);
+    return {articleRevision:draft?.revision??null,sourceRunId:source?`${source.id}:${source.capture_version}`:null};
   }
 
   saveSourceAssetAnalysis(assetId, analysis = {}, { provider = "", model = "", withinTransaction = false } = {}) {
@@ -3547,6 +3708,10 @@ export class Repository {
   }
 
   reconcileApprovedOpportunity(opportunityId) {
+    return transaction(this.db, () => this.reconcileApprovedOpportunityAtomic(opportunityId));
+  }
+
+  reconcileApprovedOpportunityAtomic(opportunityId) {
     const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(opportunityId);
     if (!opportunity || !["approved_ready", "producing"].includes(opportunity.status)) return { candidateId: opportunity?.candidate_id || null, queued: false };
     const disposition = this.db.prepare("SELECT disposition FROM production_record_controls WHERE opportunity_id=?").get(opportunityId)?.disposition;
@@ -4635,11 +4800,17 @@ export class Repository {
       const draft = this.db.prepare("SELECT id,status FROM article_drafts WHERE brief_id=?").get(brief.id);
       if (!draft) continue;
       draftIds.push(draft.id);
+      const factKeys=[...keys].filter((key) => json(brief.evidence_ledger_json,[]).includes(key)).sort();
+      const updateHash=dependencyHash({draftId:draft.id,factKeys});
+      this.db.prepare(`INSERT INTO draft_knowledge_updates(id,draft_id,dependency_hash,changed_fact_keys_json,status,detail_json,created_at,updated_at)
+        VALUES (?,?,?,?, 'update_available',?,?,?) ON CONFLICT(draft_id,dependency_hash) DO UPDATE SET
+          changed_fact_keys_json=excluded.changed_fact_keys_json,status='update_available',detail_json=excluded.detail_json,updated_at=excluded.updated_at`)
+        .run(id("draft_knowledge_update"),draft.id,updateHash,JSON.stringify(factKeys),
+          JSON.stringify({draftStatus:draft.status,frozen:true,reviewStatePreserved:true}),timestamp,timestamp);
       const publication = this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id=? AND status='synced'").get(draft.id);
       if (publication) {
         const parent = this.db.prepare(`SELECT o.*,tc.proposed_title FROM topic_candidates tc
           JOIN content_opportunities o ON o.id=tc.opportunity_id WHERE tc.id=(SELECT candidate_id FROM content_briefs WHERE id=?)`).get(brief.id);
-        const factKeys=[...keys].filter((key) => json(brief.evidence_ledger_json,[]).includes(key));
         const topicKey=`${parent?.topic_key || destinationSlug}:published-update:${sha256(`${draft.id}:${factKeys.sort().join("|")}`).slice(0,16)}`;
         const opportunityId=`opportunity_${sha256(topicKey).slice(0,24)}`;
         const impactId=`published_impact_${sha256(`${draft.id}:${factKeys.sort().join("|")}`).slice(0,24)}`;
@@ -4662,9 +4833,6 @@ export class Repository {
           .run(impactId,draft.id,opportunityId,JSON.stringify(factKeys),"Published evidence changed; review an update without modifying the live article.",timestamp,timestamp);
         continue;
       }
-      this.invalidateDraftDependents(draft.id, timestamp);
-      this.db.prepare("UPDATE article_drafts SET status='qa_queued',quality_report_json='{}',updated_at=? WHERE id=?").run(timestamp, draft.id);
-      this.enqueue("review_draft", draft.id);
     }
     return { draftIds, factKeys: [...keys] };
   }
@@ -8023,6 +8191,33 @@ export class Repository {
       }));
   }
 
+  getLunaDisputePackage(caseId) {
+    const row=this.db.prepare(`SELECT r.*,a.subject AS subject_a,a.predicate AS predicate_a,a.value_text AS value_a,
+      a.source_quote AS quote_a,a.source_id AS source_a,b.subject AS subject_b,b.predicate AS predicate_b,
+      b.value_text AS value_b,b.source_quote AS quote_b,b.source_id AS source_b
+      FROM claim_review_cases r JOIN claims a ON a.id=r.claim_a_id LEFT JOIN claims b ON b.id=r.claim_b_id
+      WHERE r.id=? AND r.status='pending'`).get(caseId);
+    if(!row)return null;
+    const evidence={issueKey:row.id,reviewType:row.review_type,destinationSlug:row.destination_slug,
+      claimA:{id:row.claim_a_id,subject:row.subject_a,predicate:row.predicate_a,value:row.value_a,
+        evidenceRef:`claim:${row.claim_a_id}`,quote:String(row.quote_a||"").slice(0,2_000),sourceId:row.source_a},
+      claimB:row.claim_b_id?{id:row.claim_b_id,subject:row.subject_b,predicate:row.predicate_b,value:row.value_b,
+        evidenceRef:`claim:${row.claim_b_id}`,quote:String(row.quote_b||"").slice(0,2_000),sourceId:row.source_b}:null};
+    return {...evidence,evidenceHash:sha256(stableCanonicalSerialize(evidence))};
+  }
+
+  saveLunaDisputeReview(caseId,evidencePackage,result,modelProfile) {
+    const timestamp=now();
+    const existing=this.db.prepare("SELECT * FROM luna_dispute_reviews WHERE issue_key=? AND evidence_hash=?").get(caseId,evidencePackage.evidenceHash);
+    if(existing?.status==='succeeded')return {...existing,result:json(existing.result_json,{}) ,reused:true};
+    const reviewId=existing?.id||id("luna_review");
+    this.db.prepare(`INSERT INTO luna_dispute_reviews(id,issue_key,evidence_hash,request_json,result_json,status,model_profile_json,request_count,last_error,created_at,updated_at)
+      VALUES (?,?,?,?,?,'succeeded',?,1,NULL,?,?) ON CONFLICT(issue_key,evidence_hash) DO UPDATE SET result_json=excluded.result_json,
+        status='succeeded',model_profile_json=excluded.model_profile_json,request_count=luna_dispute_reviews.request_count+1,last_error=NULL,updated_at=excluded.updated_at`)
+      .run(reviewId,caseId,evidencePackage.evidenceHash,JSON.stringify(evidencePackage),JSON.stringify(result||{}),JSON.stringify(modelProfile||{}),timestamp,timestamp);
+    return {id:reviewId,issueKey:caseId,evidenceHash:evidencePackage.evidenceHash,status:'succeeded',result,reused:false};
+  }
+
   structuredSchemaModeForJob(jobId) {
     if (!jobId) return null;
     const rows = this.db.prepare(`SELECT attempt_number,retry_reason FROM model_call_metrics
@@ -8292,6 +8487,9 @@ export class Repository {
       metric.queueWaitMs??null,providerRequestMs,metric.retryWaitMs??0,totalStageMs,metric.retryAfterMs??null,
       metric.backoffUntil||null,metric.cacheHit||metric.requestKind==="cache_hit"?1:0,metric.executionRoute||null,metricId);
     }
+    this.db.prepare(`UPDATE model_call_metrics SET role=?,requested_model=?,returned_model=?,source_run_id=?,article_revision=? WHERE id=?`).run(
+      metric.role || "unknown", metric.requestedModel || metric.model || null, metric.returnedModel || null,
+      metric.sourceRunId || null, metric.articleRevision ?? null, metricId);
     if (metric.telemetryPhase === "started") return metricId;
     const provider=metric.provider||"unknown",succeeded=metric.status==="succeeded";
     this.db.prepare(`INSERT INTO provider_runtime_state(provider,model,last_success_at,last_failure_at,last_error_code,

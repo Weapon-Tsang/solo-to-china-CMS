@@ -209,6 +209,7 @@ async function kimiStreamPayload(response) {
 function attemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt, status, errorCode = null,
   retryReason = null, usage = null, model = null }) {
   return { ...identity, provider: "kimi", model: model || policy.model,
+    role: telemetryContext?.role || "unknown", requestedModel: policy.model, returnedModel: model || null,
     inputTokens: usage?.prompt_tokens ?? null, outputTokens: usage?.completion_tokens ?? null,
     cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? null,
     thinkingTokens: usage?.completion_tokens_details?.reasoning_tokens ?? null,
@@ -216,6 +217,7 @@ function attemptMetric({ identity, policy, telemetryContext, attempt, attemptSta
     status: status === "succeeded" ? "succeeded" : "failed", attemptStatus: status, errorCode, retryReason,
     requestKind: "provider", policyVersion: policy.version, configHash: policy.configHash,
     runId: telemetryContext?.runId || null, entityId: telemetryContext?.entityId || null,
+    sourceRunId: telemetryContext?.sourceRunId || null, articleRevision: telemetryContext?.articleRevision ?? null,
     queueWaitMs:telemetryContext?.queueWaitMs??null,providerRequestMs:Date.now()-attemptStartedAt,
     retryWaitMs:telemetryContext?.retryWaitMs??0,
     totalStageMs:(telemetryContext?.queueWaitMs||0)+Math.max(0,Date.now()-(telemetryContext?.stageStartedAt||attemptStartedAt)),

@@ -61,13 +61,25 @@ export class KimiExtractor {
     return this.config.provider === "vertex" && this.client.batchEnabled;
   }
 
-  async testConnection({signal=null}={}) {
+  async testConnection({signal=null,telemetryContext=null}={}) {
     if(!this.enabled)throw Object.assign(new Error("AI provider is not configured."),{code:"AI_NOT_CONFIGURED",retryable:false});
     const started=Date.now();
     const completion=await this.client.completeJson({name:"manual_provider_connection_test",
       schema:{type:"object",additionalProperties:false,required:["ok"],properties:{ok:{type:"boolean"}}},
       instructions:"Return JSON with ok=true. This is an operator-requested provider connection test.",
-      content:[{type:"text",text:"connection test"}],signal,telemetryContext:{runId:`connection-test-${started}`,entityId:"manual"}});
+      content:[{type:"text",text:"connection test"}],signal,telemetryContext:{runId:`connection-test-${started}`,entityId:"manual",role:"extraction",...(telemetryContext||{})}});
+    return {ok:completion.output?.ok===true,model:completion.model,latencyMs:Date.now()-started,testedAt:new Date().toISOString()};
+  }
+
+  async testImageConnection({signal=null,telemetryContext=null}={}) {
+    if(!this.enabled)throw Object.assign(new Error("AI provider is not configured."),{code:"AI_NOT_CONFIGURED",retryable:false});
+    const started=Date.now();
+    const pixel="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z6j8AAAAASUVORK5CYII=";
+    const completion=await this.client.completeJson({name:"manual_provider_image_test",
+      schema:{type:"object",additionalProperties:false,required:["ok"],properties:{ok:{type:"boolean"}}},
+      instructions:"Inspect the supplied image and return JSON with ok=true. This is an operator-requested multimodal capability test.",
+      content:[{type:"text",text:"multimodal connection test"},{type:"image_url",image_url:{url:pixel,detail:"low"}}],signal,
+      telemetryContext:{runId:`image-connection-test-${started}`,entityId:"manual",role:"extraction",...(telemetryContext||{})}});
     return {ok:completion.output?.ok===true,model:completion.model,latencyMs:Date.now()-started,testedAt:new Date().toISOString()};
   }
 

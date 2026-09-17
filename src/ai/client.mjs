@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { KimiClient } from "./kimi-client.mjs";
 import { VertexGeminiClient } from "./vertex-gemini-client.mjs";
+import { DeepSeekClient } from "./deepseek-client.mjs";
+import { OpenAIResponsesClient } from "./openai-responses-client.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
 
 export function createAiClient(config, fetchImpl = fetch) {
@@ -11,9 +13,7 @@ export function createAiClient(config, fetchImpl = fetch) {
   const clientFor = (snapshot = null) => {
     const selected = batchClientConfig(config, snapshot);
     const key = JSON.stringify([selected.provider, selected.model, selected.location, selected.projectId, selected.batchBucket]);
-    if (!clients.has(key)) clients.set(key, selected.provider === "vertex"
-      ? new VertexGeminiClient(selected, fetchImpl)
-      : new KimiClient(selected, fetchImpl));
+    if (!clients.has(key)) clients.set(key, providerClient(selected, fetchImpl));
     return clients.get(key);
   };
   const current = () => clientFor();
@@ -45,6 +45,8 @@ export function createAiClient(config, fetchImpl = fetch) {
               stage: input.name || "structured_completion",
               provider: config.provider || "kimi",
               model: activeModel(config),
+              role: input.telemetryContext?.role || config.role || "unknown",
+              requestedModel: activeModel(config), returnedModel: activeModel(config),
               ...identity.hashes,
               inputTokens: null,
               outputTokens: null,
@@ -62,6 +64,8 @@ export function createAiClient(config, fetchImpl = fetch) {
               configHash: identity.policy.configHash,
               runId: input.telemetryContext?.runId || null,
               entityId: input.telemetryContext?.entityId || null,
+              sourceRunId: input.telemetryContext?.sourceRunId || null,
+              articleRevision: input.telemetryContext?.articleRevision ?? null,
               queueWaitMs: input.telemetryContext?.queueWaitMs ?? null,
               providerRequestMs: 0,
               retryWaitMs: 0,
@@ -103,6 +107,19 @@ export function createAiClient(config, fetchImpl = fetch) {
     readBatchOutput(batch, snapshot) { return batchClient(snapshot).readBatchOutput(batch); },
     cleanupBatch(batch, snapshot) { return batchClient(snapshot).cleanupBatch(batch); },
   };
+}
+
+function providerClient(config, fetchImpl) {
+  // Provider-less configs are the pre-routing local/test contract and remain
+  // Kimi-compatible. Any explicit, unrecognized provider fails closed.
+  if (!config.provider) return new KimiClient(config, fetchImpl);
+  if (config.provider === "vertex") return new VertexGeminiClient(config, fetchImpl);
+  if (config.provider === "kimi") return new KimiClient(config, fetchImpl);
+  if (config.provider === "deepseek") return new DeepSeekClient(config, fetchImpl);
+  if (config.provider === "openai") return new OpenAIResponsesClient(config, fetchImpl);
+  throw Object.assign(new Error(`Unknown AI provider: ${config.provider || "empty"}.`), {
+    code: "UNKNOWN_AI_PROVIDER", retryable: false,
+  });
 }
 
 function acceptCompletion(input, value) {

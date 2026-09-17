@@ -7,6 +7,7 @@ import { openDatabase } from "./db.mjs";
 import { normalizeXiaohongshuCapture, ValidationError } from "./adapters/xiaohongshu.mjs";
 import { ManualSourceError, ManualSourceIngestor } from "./adapters/manual-source.mjs";
 import { KimiExtractor } from "./ai/kimi.mjs";
+import { ExtractionRouter } from "./ai/extraction-router.mjs";
 import { priceModelAttempt } from "./ai/stage-policy.mjs";
 import { ContentEngine } from "./ai/content-engine.mjs";
 import { VertexImagen } from "./visuals/vertex-imagen.mjs";
@@ -64,13 +65,27 @@ export function createApplication(config = loadConfig()) {
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
     affiliateOpportunityThreshold: config.commercial.opportunityThreshold,
     affiliateLinkTaskThreshold: config.commercial.linkTaskThreshold,
+    modelCredentialEncryptionKey: config.modelCredentials.encryptionKey,
+    environmentCredentialProviders: [config.deepseek.apiKey && "deepseek", config.openai.apiKey && "openai"].filter(Boolean),
   });
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
   const aiRequestGate = createRequestGate(config.extraction.requestSpacingMs);
-  const activeAi = { ...config.kimi, ...config.vertex, ...selectedAi,
+  const modelCallTelemetry = (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing));
+  const legacyAi = { ...config.kimi, ...config.vertex, ...selectedAi,
     stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing,
     beforeRequest: aiRequestGate,
-    onModelCall: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)) };
+    onModelCall: modelCallTelemetry };
+  const writingAi = { ...config.vertex, provider: "vertex", model: "gemini-3.8-flash", role: "writing",
+    stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing, beforeRequest: aiRequestGate, onModelCall: modelCallTelemetry };
+  const resolveExtractionConfig = (profile = {}) => {
+    if (profile.provider === "deepseek") return { ...config.deepseek,
+      apiKey: repository.readModelCredential("deepseek") || config.deepseek.apiKey, role: "extraction",
+      stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing, beforeRequest: aiRequestGate, onModelCall: modelCallTelemetry };
+    if (profile.provider === "openai") return { ...config.openai,
+      apiKey: repository.readModelCredential("openai") || config.openai.apiKey, role: profile.role || "extraction",
+      stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing, beforeRequest: aiRequestGate, onModelCall: modelCallTelemetry };
+    return legacyAi;
+  };
   const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
   const activeVisuals = { ...config.visuals, ...selectedVisual,
     beforeRequest: createRequestGate(config.extraction.requestSpacingMs),
@@ -86,8 +101,9 @@ export function createApplication(config = loadConfig()) {
   const captureUploads = new CaptureUploadManager(config.captureUploads);
   const captureMediaUploads = new CaptureMediaUploadManager(config.captureMediaUploads);
   const dashboardSummaryCache = createSummaryCache();
-  const extractor = new KimiExtractor(activeAi);
-  const contentEngine = new ContentEngine(activeAi);
+  const extractor = new ExtractionRouter({ currentProfile: () => repository.modelProfileForRole("extraction"), resolveConfig: resolveExtractionConfig });
+  const contentEngine = new ContentEngine(writingAi);
+  const visualReviewer = new KimiExtractor({ ...writingAi, role: "visual_review" });
   const visuals = new VertexImagen(activeVisuals);
   const wordpress = new WordPressDraftAdapter(config.wordpress);
   repository.configureProductionCapabilities({
@@ -98,7 +114,7 @@ export function createApplication(config = loadConfig()) {
   const searchConsole = new SearchConsoleAdapter(config.searchConsole);
   const commercialComposer = new CommercialComposer(config.commercial);
   const pipeline = new Pipeline(repository, extractor, {
-    contentEngine, visuals, wordpress, searchConsole, commercialComposer, frontendContracts, contentConfig: config.content,
+    contentEngine, sourceEngine:extractor, visualReviewer, visuals, wordpress, searchConsole, commercialComposer, frontendContracts, contentConfig: config.content,
     extractionConfig: config.extraction,
     databasePath:config.databasePath,processIsolationEnabled:config.extraction.processIsolationEnabled,
     logger: logger.child({ component: "pipeline" }),
@@ -193,19 +209,21 @@ export function createApplication(config = loadConfig()) {
 
       if (request.method === "GET" && url.pathname === "/api/health") {
         const queueActive = Number(db.prepare("SELECT COUNT(*) n FROM jobs WHERE status IN ('queued','running')").get().n);
-        const providerRuntime=repository.providerRuntime({provider:activeAi.provider,model:activeAi.model,configured:extractor.enabled});
+        const routing=repository.getModelRoutingSettings();
+        const runtimeProfile=repository.modelProfileForRole("extraction");
+        const providerRuntime=repository.providerRuntime({provider:runtimeProfile.provider,model:runtimeProfile.model,configured:extractor.enabled});
         return sendJson(response, 200, {
           ok: true,
           version: VERSION,
           serviceHealth: { ready:true,http:"ready",database:"ready",version:VERSION },
-          aiConfiguration: { configured:extractor.enabled,provider:extractor.enabled?activeAi.provider:null,
-            model:extractor.enabled?activeAi.model:null,credentialsConfigured:extractor.enabled },
+          aiConfiguration: { configured:extractor.enabled,provider:extractor.enabled?runtimeProfile.provider:null,
+            model:extractor.enabled?runtimeProfile.model:null,credentialsConfigured:extractor.enabled,routingRevision:routing.revision },
           providerRuntime,
           queueHealth: { active:queueActive,queued:Number(db.prepare("SELECT COUNT(*) n FROM jobs WHERE status='queued'").get().n),
             running:Number(db.prepare("SELECT COUNT(*) n FROM jobs WHERE status='running'").get().n) },
           aiConfigured: extractor.enabled,
-          aiProvider: extractor.enabled ? activeAi.provider : null,
-          aiModel: extractor.enabled ? activeAi.model : null,
+          aiProvider: extractor.enabled ? runtimeProfile.provider : null,
+          aiModel: extractor.enabled ? runtimeProfile.model : null,
           vertexBatchConfigured: extractor.batchEnabled,
           vertexBatchActive: repository.activeVertexBatchCount(),
           visualProvider: visuals.enabled ? activeVisuals.provider : null,
@@ -247,7 +265,7 @@ export function createApplication(config = loadConfig()) {
           appVersion: VERSION,
           contentStrategy: config.contentStrategy,
           storage: storageInfo(config),
-          ai: repository.getAiSettings(config.ai.defaultModel),
+          ai: repository.getModelRoutingSettings(),
           visual: repository.getVisualSettings(config.visuals.defaultModel),
           frontendContract: frontendContracts.diagnostics(),
         });
@@ -258,7 +276,7 @@ export function createApplication(config = loadConfig()) {
           vertexBatchActive: repository.activeVertexBatchCount(), visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
           contentStrategy: config.contentStrategy, storage: storageInfo(config), visual: repository.getVisualSettings(config.visuals.defaultModel),
           frontendContract: frontendContracts.diagnostics(),
-          ...repository.getAiSettings(config.ai.defaultModel),
+          ...repository.getAiSettings(config.ai.defaultModel), ...repository.getModelRoutingSettings(),
         });
       }
       if (request.method === "GET" && url.pathname === "/api/settings") {
@@ -266,7 +284,7 @@ export function createApplication(config = loadConfig()) {
           configured: extractor.enabled, vertexBatchConfigured: extractor.batchEnabled,
           vertexBatchActive: repository.activeVertexBatchCount(), visualGenerationConfigured: visuals.enabled, appVersion: VERSION,
           contentStrategy: config.contentStrategy, storage: storageInfo(config), visual: repository.getVisualSettings(config.visuals.defaultModel),
-          frontendContract: frontendContracts.diagnostics(), ...repository.getAiSettings(config.ai.defaultModel),
+          frontendContract: frontendContracts.diagnostics(), ...repository.getAiSettings(config.ai.defaultModel), ...repository.getModelRoutingSettings(),
           operations: {
             counts: {
               systemHealth: repository.systemHealthIssueCount(),
@@ -337,8 +355,12 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "POST" && url.pathname === "/api/settings/ai") {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
-        const settings = repository.setAiModel(String(payload.model || ""), config.ai.defaultModel);
-        Object.assign(activeAi, settings);
+        if (payload.model && !payload.provider) {
+          const settings = repository.setAiModel(String(payload.model || ""), config.ai.defaultModel);
+          return sendJson(response, 200, { legacy: true, ...settings });
+        }
+        const settings = repository.updateModelRouting({ provider:String(payload.provider || ""),apiKey:payload.apiKey,
+          deleteKey:payload.deleteKey === true,activate:payload.activate === true,expectedRevision:Number(payload.expectedRevision),actor:auth.status(request)?.username || "admin" });
         return sendJson(response, 200, {
           configured: extractor.enabled, visualGenerationConfigured: visuals.enabled,
           visual: repository.getVisualSettings(config.visuals.defaultModel), ...settings,
@@ -346,7 +368,22 @@ export function createApplication(config = loadConfig()) {
       }
       if(request.method==="POST"&&url.pathname==="/api/settings/ai/test-connection"){
         authorizeAdmin(request,config.adminToken,auth);
-        return sendJson(response,200,await extractor.testConnection());
+        const payload=await readJson(request,20_000);
+        const provider=String(payload.provider || repository.getModelRoutingSettings().selectedProvider || "");
+        if(!["deepseek","openai"].includes(provider))return sendJson(response,400,{error:"Select DeepSeek or GPT-5.6 Luna for a manual connection test."});
+        const profile={role:"extraction",provider,model:provider==="deepseek"?"deepseek-flash":"gpt-5.6-luna"};
+        try {
+          const textResult=await extractor.testConnection({modelProfile:profile,telemetryContext:{role:"extraction"}});
+          repository.recordModelCredentialValidation(provider,textResult.ok?"text_verified":"failed",{model:textResult.model,latencyMs:textResult.latencyMs});
+          if(!textResult.ok)return sendJson(response,200,{ok:false,text:textResult,multimodal:null});
+          const imageResult=await extractor.testImageConnection({modelProfile:profile,telemetryContext:{role:"extraction"}});
+          repository.recordModelCredentialValidation(provider,imageResult.ok?"multimodal_verified":"failed",{
+            model:imageResult.model,textLatencyMs:textResult.latencyMs,imageLatencyMs:imageResult.latencyMs});
+          return sendJson(response,200,{ok:Boolean(textResult.ok&&imageResult.ok),text:textResult,multimodal:imageResult});
+        } catch(error) {
+          repository.recordModelCredentialValidation(provider,"failed",{code:error?.code||"TEST_FAILED",message:String(error?.message||error).slice(0,500)});
+          throw error;
+        }
       }
       if (request.method === "GET" && url.pathname === "/api/settings/visuals") {
         const settings = repository.getVisualSettings(config.visuals.defaultModel);
@@ -671,6 +708,19 @@ export function createApplication(config = loadConfig()) {
         const result = repository.decideClaimReviewCase(decodeURIComponent(claimReviewDecisionMatch[1]), String(payload.decision || ""), payload.note || "");
         if (!result) return sendJson(response, 404, { error: "Pending claim review not found." });
         return sendJson(response, 200, result);
+      }
+      const lunaReviewMatch = url.pathname.match(/^\/api\/knowledge\/claim-reviews\/([^/]+)\/luna-review$/);
+      if (request.method === "POST" && lunaReviewMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const caseId=decodeURIComponent(lunaReviewMatch[1]);
+        const evidence=repository.getLunaDisputePackage(caseId);
+        if(!evidence)return sendJson(response,404,{error:"Pending claim review not found."});
+        if(!repository.hasModelCredential("openai"))return sendJson(response,409,{error:"Configure the GPT-5.6 Luna API key before requesting a manual dispute review."});
+        const profile={role:"dispute_review",provider:"openai",model:"gpt-5.6-luna"};
+        const existing=db.prepare("SELECT * FROM luna_dispute_reviews WHERE issue_key=? AND evidence_hash=? AND status='succeeded'").get(caseId,evidence.evidenceHash);
+        if(existing)return sendJson(response,200,{id:existing.id,status:existing.status,result:JSON.parse(existing.result_json),reused:true});
+        const reviewed=await extractor.reviewDispute(evidence,{modelProfile:profile,telemetryContext:{role:"dispute_review",entityId:caseId}});
+        return sendJson(response,200,repository.saveLunaDisputeReview(caseId,evidence,reviewed.output,profile));
       }
       const knowledgeResolutionMatch = url.pathname.match(/^\/api\/knowledge\/([^/]+)\/resolve$/);
       if (request.method === "POST" && knowledgeResolutionMatch) {
