@@ -57,37 +57,47 @@ export class VertexImagen {
     const endpoint = `${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const metadata=safeJson(visual.media_metadata_json || visual.media_metadata);
     if (shouldRenderEditorialTextCard(visual,metadata)) {
-      return this.renderEditorialTextCard({visual,draft,metadata,source,accessToken,signal:options.signal});
+      return this.renderEditorialTextCard({visual,draft,metadata,source,accessToken,signal:options.signal,options});
     }
-    const prompt = transformPrompt(visual,metadata);
-    await this.config.beforeRequest?.({ provider: "vertex_gemini", model: this.config.model, stage: "localize_source_image", attempt: 1 });
-    const response = await providerFetch(this.fetch, endpoint, {
-      method: "POST",
-      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: { role: "USER", parts: [{ text: prompt }, { inlineData: { mimeType: source.mimeType, data: source.base64 } }] },
-        // Request the nearest supported ratio selected from the stored source
-        // dimensions. Pixel and semantic QA still reject any crop or omission.
-        generationConfig: { responseModalities: ["TEXT", "IMAGE"],
-          imageConfig: { aspectRatio: visual.aspect_ratio } },
-      }),
-      signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
-    }, "vertex_gemini", options.signal);
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new ProviderRequestError("Vertex Gemini 图片翻译", response.status, payload?.error?.message || response.statusText,
-      { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
-    const part = payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
-    if (!part) throw imageOutputError("Image localization model", payload);
     const sourceInspection=await inspectImageBytes(source.bytes,source.mimeType);
+    const transformInputHash=hashBytes(Buffer.concat([source.bytes,Buffer.from(JSON.stringify({
+      visual_id:visual.id,asset_fingerprint:options.expectedFingerprint || visual.asset_fingerprint || "",
+      strategy:visual.acquisition_strategy,aspect_ratio:visual.aspect_ratio,model:this.config.model,
+    }))]));
+    const resumed=await this.resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata,accessToken});
+    if (resumed) return resumed;
+    const prompt = transformPrompt(visual,metadata);
+    const transformed=await this.trackedRequest({provider:"vertex_gemini",model:this.config.model,stage:"localize_source_image",
+      endpoint,visual,options},async()=>{
+      const response = await providerFetch(this.fetch, endpoint, {
+        method: "POST",
+        headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: { role: "USER", parts: [{ text: prompt }, { inlineData: { mimeType: source.mimeType, data: source.base64 } }] },
+          // Request the nearest supported ratio selected from the stored source
+          // dimensions. Pixel and semantic QA still reject any crop or omission.
+          generationConfig: { responseModalities: ["TEXT", "IMAGE"], imageConfig: { aspectRatio: visual.aspect_ratio } },
+        }),
+        signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
+      }, "vertex_gemini", options.signal);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new ProviderRequestError("Vertex Gemini 图片翻译", response.status, body?.error?.message || response.statusText,
+        { ...(body?.error || {}), retryAfter: response.headers.get("retry-after"),
+          providerRequestId:response.headers.get("x-request-id") || response.headers.get("x-goog-request-id") });
+      const outputPart=body?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
+      if (!outputPart) throw imageOutputError("Image localization model", body);
+      return {payload:body,part:outputPart};
+    });
+    const {part}=transformed;
     const outputBytes=Buffer.from(part.inlineData.data,"base64");
     await inspectImageBytes(outputBytes,part.inlineData.mimeType);
-    const qualityQa=await this.reviewTransformedImage({visual,metadata,source,outputBytes,
-      outputMimeType:part.inlineData.mimeType,accessToken,signal:options.signal});
-    return this.storeImage({ base64: part.inlineData.data, mimeType: part.inlineData.mimeType, visual, draft,
-      provider: "vertex_gemini", model: this.config.model, sourceDimensions: sourceInspection.dimensions,qualityQa });
+    const candidate=await this.persistCandidate({visual,draft,source,outputBytes,mimeType:part.inlineData.mimeType,
+      provider:"vertex_gemini",model:this.config.model,transformInputHash,options});
+    return this.reviewAndPromoteCandidate({candidate,visual,draft,metadata,source,sourceInspection,outputBytes,
+      outputMimeType:part.inlineData.mimeType,accessToken,options});
   }
 
-  async renderEditorialTextCard({visual,draft,metadata,source,accessToken,signal}) {
+  async renderEditorialTextCard({visual,draft,metadata,source,accessToken,signal,options={}}) {
     const location=this.config.location || "global";
     const host=location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
     const translationModel=this.config.qualityModel || "gemini-3.8-flash";
@@ -95,14 +105,24 @@ export class VertexImagen {
     const regions=editorialTranslationRegions(metadata);
     const priorFeedback=visualRetryFeedback(metadata);
     const prompt=`Translate every source region into concise, natural English for a travel editorial card. Return every region_id exactly once and no extra ids. Preserve every proper noun, number, time, price, transport mode, negation, warning, list item, and factual qualifier. Do not summarize or omit details. Remove no source content except regions already excluded from this manifest. ${priorFeedback ? `The prior derivative failed QA; correct these defects: ${JSON.stringify(priorFeedback)}.` : ""} Source regions: ${JSON.stringify(regions)}`;
-    await this.config.beforeRequest?.({provider:"vertex_gemini",model:translationModel,stage:"translate_editorial_card",attempt:1});
-    const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${accessToken}`,"content-type":"application/json"},
-      body:JSON.stringify({contents:{role:"USER",parts:[{text:prompt}]},generationConfig:{responseModalities:["TEXT"],
-        responseMimeType:"application/json",responseSchema:EDITORIAL_TRANSLATION_SCHEMA}}),
-      signal:combinedSignal(signal,this.config.requestTimeoutMs)},"vertex_gemini",signal);
-    const payload=await response.json().catch(()=>({}));
-    if (!response.ok) throw new ProviderRequestError("Vertex Gemini editorial card translation",response.status,
-      payload?.error?.message || response.statusText,{...(payload?.error || {}),retryAfter:response.headers.get("retry-after")});
+    const sourceInspection=await inspectImageBytes(source.bytes,source.mimeType);
+    const transformInputHash=hashBytes(Buffer.concat([source.bytes,Buffer.from(JSON.stringify({visual_id:visual.id,
+      asset_fingerprint:options.expectedFingerprint || visual.asset_fingerprint || "",strategy:visual.acquisition_strategy,
+      aspect_ratio:visual.aspect_ratio,translation_model:translationModel,regions}))]));
+    const resumed=await this.resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata,accessToken});
+    if (resumed) return resumed;
+    const payload=await this.trackedRequest({provider:"vertex_gemini",model:translationModel,stage:"translate_editorial_card",
+      endpoint,visual,options},async()=>{
+      const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${accessToken}`,"content-type":"application/json"},
+        body:JSON.stringify({contents:{role:"USER",parts:[{text:prompt}]},generationConfig:{responseModalities:["TEXT"],
+          responseMimeType:"application/json",responseSchema:EDITORIAL_TRANSLATION_SCHEMA}}),
+        signal:combinedSignal(signal,this.config.requestTimeoutMs)},"vertex_gemini",signal);
+      const body=await response.json().catch(()=>({}));
+      if (!response.ok) throw new ProviderRequestError("Vertex Gemini editorial card translation",response.status,
+        body?.error?.message || response.statusText,{...(body?.error || {}),retryAfter:response.headers.get("retry-after"),
+          providerRequestId:response.headers.get("x-request-id") || response.headers.get("x-goog-request-id")});
+      return body;
+    });
     const raw=payload?.candidates?.flatMap((candidate)=>candidate?.content?.parts || []).find((item)=>item?.text)?.text || "";
     let translated; try { translated=JSON.parse(raw); }
     catch { throw Object.assign(new Error("Editorial card translation returned invalid JSON."),{code:"EDITORIAL_TRANSLATION_INVALID",retryable:true}); }
@@ -116,28 +136,32 @@ export class VertexImagen {
     }
     const ordered=regions.map((region)=>({region_id:region.region_id,
       english_text:String(entries.find((entry)=>entry.region_id === region.region_id).english_text).trim()}));
-    const sourceInspection=await inspectImageBytes(source.bytes,source.mimeType);
     const outputBytes=await renderTextCardPng(ordered,visual.aspect_ratio);
-    const qualityQa=await this.reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType:"image/png",accessToken,signal});
-    return this.storeImage({base64:outputBytes.toString("base64"),mimeType:"image/png",visual,draft,
-      provider:"vertex_gemini_text_layout",model:translationModel,sourceDimensions:sourceInspection.dimensions,qualityQa});
+    const candidate=await this.persistCandidate({visual,draft,source,outputBytes,mimeType:"image/png",
+      provider:"vertex_gemini_text_layout",model:translationModel,transformInputHash,options});
+    return this.reviewAndPromoteCandidate({candidate,visual,draft,metadata,source,sourceInspection,outputBytes,
+      outputMimeType:"image/png",accessToken,options:{...options,signal}});
   }
 
-  async reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType,accessToken,signal}) {
+  async reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType,accessToken,signal,options={}}) {
     const location=this.config.location || "global";
     const host=location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
     const qualityModel=this.config.qualityModel || "gemini-3.8-flash";
     const endpoint=`${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(qualityModel)}:generateContent`;
-    await this.config.beforeRequest?.({provider:"vertex_gemini",model:qualityModel,stage:"visual_quality_qa",attempt:1});
-    const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${accessToken}`,"content-type":"application/json"},
-      body:JSON.stringify({contents:{role:"USER",parts:[{text:visualQaPrompt(visual,metadata)},
-        {inlineData:{mimeType:source.mimeType,data:source.base64}},
-        {inlineData:{mimeType:normalizeMime(outputMimeType),data:outputBytes.toString("base64")}}]},
-      generationConfig:{responseModalities:["TEXT"],responseMimeType:"application/json",responseSchema:VISUAL_QA_SCHEMA}}),
-      signal:combinedSignal(signal,this.config.requestTimeoutMs)},"vertex_gemini",signal);
-    const payload=await response.json().catch(()=>({}));
-    if (!response.ok) throw new ProviderRequestError("Vertex Gemini visual quality QA",response.status,payload?.error?.message || response.statusText,
-      {...(payload?.error || {}),retryAfter:response.headers.get("retry-after")});
+    const payload=await this.trackedRequest({provider:"vertex_gemini",model:qualityModel,stage:"visual_quality_qa",
+      endpoint,visual,options:{...options,signal}},async()=>{
+      const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${accessToken}`,"content-type":"application/json"},
+        body:JSON.stringify({contents:{role:"USER",parts:[{text:visualQaPrompt(visual,metadata)},
+          {inlineData:{mimeType:source.mimeType,data:source.base64}},
+          {inlineData:{mimeType:normalizeMime(outputMimeType),data:outputBytes.toString("base64")}}]},
+        generationConfig:{responseModalities:["TEXT"],responseMimeType:"application/json",responseSchema:VISUAL_QA_SCHEMA}}),
+        signal:combinedSignal(signal,this.config.requestTimeoutMs)},"vertex_gemini",signal);
+      const body=await response.json().catch(()=>({}));
+      if (!response.ok) throw new ProviderRequestError("Vertex Gemini visual quality QA",response.status,body?.error?.message || response.statusText,
+        {...(body?.error || {}),retryAfter:response.headers.get("retry-after"),
+          providerRequestId:response.headers.get("x-request-id") || response.headers.get("x-goog-request-id")});
+      return body;
+    });
     const raw=payload?.candidates?.flatMap((candidate)=>candidate?.content?.parts || []).find((item)=>item?.text)?.text || "";
     let qa; try { qa=JSON.parse(raw); } catch { throw Object.assign(new Error("Visual quality QA returned invalid JSON."),{code:"VISUAL_QUALITY_QA_INVALID",retryable:true}); }
     const normalized=normalizeVisualQa(qa);
@@ -147,31 +171,128 @@ export class VertexImagen {
     return normalized;
   }
 
+  async resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata={},accessToken=null}) {
+    const candidate=await this.config.findVisualCandidate?.({visualId:visual.id,transformInputHash});
+    if (!candidate) return null;
+    const outputBytes=fs.readFileSync(candidate.media_path);
+    const token=accessToken || await this.accessToken();
+    return this.reviewAndPromoteCandidate({candidate,visual,draft,metadata,source,sourceInspection,outputBytes,
+      outputMimeType:candidate.mime_type,accessToken:token,options});
+  }
+
+  async persistCandidate({visual,draft,source,outputBytes,mimeType,provider,model,transformInputHash,options}) {
+    const normalizedMime=normalizeMime(mimeType);
+    const extension=normalizedMime === "image/jpeg" ? "jpg" : normalizedMime === "image/webp" ? "webp" : "png";
+    const outputHash=hashBytes(outputBytes);
+    const pendingDir=path.join(this.config.mediaDir,".pending");
+    fs.mkdirSync(pendingDir,{recursive:true});
+    const mediaPath=path.join(pendingDir,`${draft.id}-${visual.id}-${outputHash.slice(0,24)}.${extension}`);
+    if (!fs.existsSync(mediaPath)) fs.writeFileSync(mediaPath,outputBytes,{mode:0o640,flag:"wx"});
+    const telemetry=options.telemetryContext || {};
+    const saved=await this.config.saveVisualCandidate?.({
+      visualId:visual.id,draftId:draft.id,jobId:telemetry.runId || null,jobAttempt:telemetry.jobAttempt || 0,
+      recoveryRunId:telemetry.recoveryRunId || null,sourceHash:hashBytes(source.bytes),transformInputHash,outputHash,
+      mediaPath,mimeType:normalizedMime,byteSize:outputBytes.length,provider,model,
+      expectedFingerprint:options.expectedFingerprint || visual.asset_fingerprint || null,
+    });
+    return saved || {id:null,media_path:mediaPath,mime_type:normalizedMime,output_hash:outputHash,provider,model};
+  }
+
+  async reviewAndPromoteCandidate({candidate,visual,draft,metadata,source,sourceInspection,outputBytes,outputMimeType,accessToken,options}) {
+    let qualityQa;
+    try {
+      qualityQa=await this.reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType,accessToken,
+        signal:options.signal,options});
+    } catch (error) {
+      const conclusive=error?.code === "VISUAL_QUALITY_QA_FAILED";
+      if (candidate.id) await this.config.updateVisualCandidate?.(candidate.id,{status:conclusive ? "qa_failed" : "pending_qa",
+        qa:error?.qualityQa || null,error:{code:error?.code || null,message:error?.message || String(error),
+          http_status:error?.status ?? null,retry_after_ms:error?.retryAfterMs ?? null,evidence_basis:conclusive ? "qa_response" : "qa_unavailable"}});
+      error.details={...(error.details || {}),candidateHash:candidate.output_hash,candidateId:candidate.id || null,
+        visualId:visual.id,substage:"visual_quality_qa",generationCheckpoint:"persisted_pending_qa"};
+      throw error;
+    }
+    const result=await this.storeImage({base64:outputBytes.toString("base64"),mimeType:outputMimeType,visual,draft,
+      provider:candidate.provider,model:candidate.model,sourceDimensions:sourceInspection.dimensions,qualityQa});
+    if (candidate.id) await this.config.updateVisualCandidate?.(candidate.id,{status:"promoted",qa:qualityQa});
+    return {...result,candidateId:candidate.id || null,candidateHash:candidate.output_hash,resumedCandidate:Boolean(candidate.created_at)};
+  }
+
+  async trackedRequest({provider,model,stage,endpoint,visual,options={}},operation) {
+    const context=options.telemetryContext || {};
+    const startedAt=new Date().toISOString();
+    const startedMs=Date.now();
+    try {
+      await this.config.beforeRequest?.({provider,model,stage,attempt:1});
+    } catch (error) {
+      await this.recordVisualCall({provider,model,stage,visual,context,startedAt,startedMs,status:"failed",
+        error,requestKind:"local_gate",dispatchState:"not_attempted",evidenceBasis:"before_request_gate",endpoint});
+      throw error;
+    }
+    const callId=`visualcall_${crypto.randomUUID()}`;
+    if (this.config.onModelCallStart) await this.recordVisualCall({callId,telemetryPhase:"started",provider,model,stage,visual,context,
+      startedAt,startedMs,status:"failed",requestKind:"provider",attemptStatus:"started",dispatchState:"dispatch_started",
+      evidenceBasis:"dispatch_intent_persisted",endpoint});
+    try {
+      const result=await operation();
+      await this.recordVisualCall({callId,provider,model,stage,visual,context,startedAt,startedMs,status:"succeeded",
+        requestKind:"provider",dispatchState:"completed",evidenceBasis:"provider_response_completed",httpStatus:200,endpoint});
+      return result;
+    } catch (error) {
+      const responded=Number.isFinite(Number(error?.status)) || error?.responseReceived === true;
+      await this.recordVisualCall({callId,provider,model,stage,visual,context,startedAt,startedMs,status:"failed",error,
+        requestKind:"provider",dispatchState:responded ? "response_received" : "dispatch_started",
+        evidenceBasis:responded ? "provider_error_response" : "dispatch_started_outcome_unknown",
+        httpStatus:Number.isFinite(Number(error?.status)) ? Number(error.status) : responded ? 200 : null,endpoint});
+      throw error;
+    }
+  }
+
+  async recordVisualCall({callId=null,telemetryPhase="completed",provider,model,stage,visual,context,startedAt,startedMs,status,error=null,requestKind,
+    attemptStatus=status,dispatchState,evidenceBasis,httpStatus=null,endpoint}) {
+    const sink=telemetryPhase === "started" ? this.config.onModelCallStart : this.config.onModelCall;
+    if (!sink) return;
+    const details=error?.details || {};
+    await sink({callId,telemetryPhase,stage,substage:stage,provider,model,status,errorCode:error?.code || (httpStatus && httpStatus !== 200 ? String(httpStatus) : null),
+      latencyMs:Math.max(0,Date.now()-startedMs),attempts:1,attemptNumber:1,requestKind,attemptStatus,
+      runId:context.runId || null,entityId:context.entityId || visual.id,visualId:visual.id,
+      sourceAssetId:visual.source_asset_id || context.sourceAssetId || null,inputHash:hashBytes(Buffer.from(JSON.stringify({
+        visual_id:visual.id,asset_fingerprint:visual.asset_fingerprint || "",stage,
+      }))),promptHash:"",schemaHash:"",requestStartedAt:startedAt,requestCompletedAt:new Date().toISOString(),
+      httpStatus,providerCode:details.code || details.status || null,
+      providerRequestId:details.providerRequestId || details.requestId || null,dispatchState,evidenceBasis,
+      endpointId:`${provider}:${model}:${stage}`,retryAfterMs:error?.retryAfterMs ?? null,
+      providerUsage:null,inputTokens:null,outputTokens:null,cachedTokens:null,costStatus:"unknown",
+      executionRoute:context.executionRoute || "realtime",queueWaitMs:context.queueWaitMs ?? null,
+    });
+  }
+
   async generateImagenImage(visual, draft, options = {}) {
     const accessToken = await this.accessToken();
     const endpoint = `https://${this.config.location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(this.config.location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:predict`;
-    await this.config.beforeRequest?.({ provider: "vertex_imagen", model: this.config.model, stage: "generate_visual", attempt: 1 });
-    const response = await providerFetch(this.fetch, endpoint, {
-      method: "POST",
-      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        instances: [{ prompt: visual.generation_prompt }],
-        parameters: {
-          sampleCount: 1,
-          aspectRatio: visual.aspect_ratio,
-          sampleImageSize: visual.image_role === "hero" ? this.config.coverQuality : this.config.inlineQuality,
-          addWatermark: true,
-          personGeneration: "dont_allow",
-          safetyFilterLevel: "block_medium_and_above",
-        },
-      }),
-      signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
-    }, "vertex_imagen", options.signal);
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new ProviderRequestError("Vertex Imagen", response.status, payload?.error?.message || response.statusText,
-      { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
-    const prediction = payload?.predictions?.find((item) => item?.bytesBase64Encoded);
-    if (!prediction) throw new Error("Vertex Imagen returned no renderable image bytes.");
+    const prediction=await this.trackedRequest({provider:"vertex_imagen",model:this.config.model,stage:"generate_visual",
+      endpoint,visual,options},async()=>{
+      const response = await providerFetch(this.fetch, endpoint, {
+        method: "POST",
+        headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          instances: [{ prompt: visual.generation_prompt }],
+          parameters: {
+            sampleCount: 1, aspectRatio: visual.aspect_ratio,
+            sampleImageSize: visual.image_role === "hero" ? this.config.coverQuality : this.config.inlineQuality,
+            addWatermark: true, personGeneration: "dont_allow", safetyFilterLevel: "block_medium_and_above",
+          },
+        }),
+        signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
+      }, "vertex_imagen", options.signal);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new ProviderRequestError("Vertex Imagen", response.status, payload?.error?.message || response.statusText,
+        { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after"),
+          providerRequestId:response.headers.get("x-request-id") || response.headers.get("x-goog-request-id") });
+      const output=payload?.predictions?.find((item) => item?.bytesBase64Encoded);
+      if (!output) throw imageOutputError("Vertex Imagen",payload);
+      return output;
+    });
     return await this.storeImage({
       base64: prediction.bytesBase64Encoded,
       mimeType: prediction.mimeType,
@@ -188,29 +309,26 @@ export class VertexImagen {
     const host = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
     const endpoint = `${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const prompt = `${visual.generation_prompt}\n\nCreate an original editorial illustration only. Do not depict people, logos, watermarks, readable text, or a documentary-style real place.`;
-    await this.config.beforeRequest?.({ provider: "vertex_gemini", model: this.config.model, stage: "generate_visual", attempt: 1 });
-    const response = await providerFetch(this.fetch, endpoint, {
-      method: "POST",
-      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: { role: "USER", parts: [{ text: prompt }] },
-        generationConfig: {
-          responseModalities: ["TEXT", "IMAGE"],
-          imageConfig: { aspectRatio: visual.aspect_ratio },
-        },
-        safetySettings: [{
-          method: "PROBABILITY",
-          category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-          threshold: "BLOCK_MEDIUM_AND_ABOVE",
-        }],
-      }),
-      signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
-    }, "vertex_gemini", options.signal);
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new ProviderRequestError("Gemini 3.1 Flash Image", response.status, payload?.error?.message || response.statusText,
-      { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
-    const part = payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
-    if (!part) throw imageOutputError("Gemini 3.1 Flash Image", payload);
+    const part=await this.trackedRequest({provider:"vertex_gemini",model:this.config.model,stage:"generate_visual",
+      endpoint,visual,options},async()=>{
+      const response = await providerFetch(this.fetch, endpoint, {
+        method: "POST",
+        headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: { role: "USER", parts: [{ text: prompt }] },
+          generationConfig: { responseModalities: ["TEXT", "IMAGE"], imageConfig: { aspectRatio: visual.aspect_ratio } },
+          safetySettings: [{ method: "PROBABILITY", category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }],
+        }),
+        signal: combinedSignal(options.signal, this.config.requestTimeoutMs),
+      }, "vertex_gemini", options.signal);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new ProviderRequestError("Gemini 3.1 Flash Image", response.status, payload?.error?.message || response.statusText,
+        { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after"),
+          providerRequestId:response.headers.get("x-request-id") || response.headers.get("x-goog-request-id") });
+      const output=payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []).find((item) => item?.inlineData?.data);
+      if (!output) throw imageOutputError("Gemini 3.1 Flash Image", payload);
+      return output;
+    });
     return await this.storeImage({
       base64: part.inlineData.data,
       mimeType: part.inlineData.mimeType,
@@ -289,6 +407,7 @@ function imageOutputError(label, payload = {}) {
     name:"ProviderImageOutputError",
     code:safetyBlocked ? "IMAGE_SAFETY_BLOCKED" : "EMPTY_IMAGE_OUTPUT",
     provider:"vertex_gemini",
+    responseReceived:true,
     retryable:!safetyBlocked,
   });
 }
@@ -475,6 +594,10 @@ function webpDimensions(bytes) {
 function parseAspectRatio(value) {
   const match=String(value || "").match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
   return match && Number(match[2]) ? Number(match[1]) / Number(match[2]) : null;
+}
+
+function hashBytes(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
 function invalidImage(message) {

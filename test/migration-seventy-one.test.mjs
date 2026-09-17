@@ -10,7 +10,7 @@ import { repositoryFixture } from "../test-support/repository-fixture.mjs";
 
 test("schema persists image-level analysis and hydrates the production decision DTO", (t) => {
   const {db,repository}=repositoryFixture(t);
-  assert.equal(SCHEMA_VERSION,71);
+  assert.ok(SCHEMA_VERSION>=71);
   const source=repository.saveCapture(normalizeXiaohongshuCapture({
     url:"https://www.xiaohongshu.com/explore/media-analysis",title:"Chongqing card",
     text:"A complete selected travel note long enough to create its current capture segments for extraction.",
@@ -62,7 +62,7 @@ test("migration 71 is additive and does not enqueue or rewrite source assets",as
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"stc-migration-71-"));
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const source=fs.readFileSync(new URL("../src/db.mjs",import.meta.url),"utf8")
-    .replace(/^  if \(current < 71\).*$/gm,"");
+    .replace(/^  if \(current < (?:71|72)\).*$/gm,"");
   const legacyPath=path.join(directory,"db-v70.mjs");fs.writeFileSync(legacyPath,source);
   const {openDatabase:openV70}=await import(`${pathToFileURL(legacyPath).href}?schema=70`);
   const filename=path.join(directory,"migration.sqlite");let db=openV70(filename);
@@ -72,7 +72,7 @@ test("migration 71 is additive and does not enqueue or rewrite source assets",as
     VALUES ('asset','source','image','https://example.test/card.png',0,'preserved.png','image/png','card.png')`).run();
   const jobsBefore=db.prepare("SELECT COUNT(*) n FROM jobs").get().n;db.close();
   db=openDatabase(filename);
-  assert.equal(db.prepare("SELECT MAX(version) version FROM schema_migrations").get().version,71);
+  assert.equal(db.prepare("SELECT MAX(version) version FROM schema_migrations").get().version,SCHEMA_VERSION);
   assert.equal(db.prepare("SELECT local_path FROM source_assets WHERE id='asset'").get().local_path,"preserved.png");
   assert.equal(db.prepare("SELECT COUNT(*) n FROM source_asset_analyses").get().n,0);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,jobsBefore);

@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.32 / schema 72 - 2026-09-17
+
+- Activate Strategy 3.6 evidence-complete production diagnostics, visual provider subcall accounting and immutable post-transform QA checkpoints.
+- Add revision-safe Affiliate Asset editing, semantic content hashes, old/new impact calculation and article/slot/delivery usage tracking while keeping plain saves isolated from production execution.
+- Preserve evidence, prose, media, last-good delivery and WordPress identity. Production deployment is authorized; historical record recovery is not automatic and remains dry-run plus explicit selection.
+
 ## App 2.0.31 / schema 71 - 2026-09-16
 
 - Activate Strategy 3.5 image-level persistence, verified media transforms, media-only repair, vertical mobile TOC, and two-level commercial placement.

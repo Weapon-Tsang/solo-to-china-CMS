@@ -270,6 +270,34 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(assetResponse.status, 200);
   const asset = await assetResponse.json();
   assert.equal(asset.product_category, "HOTEL");
+  assert.equal(asset.revision, 1);
+  const assetDetailResponse=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}`);
+  assert.equal(assetDetailResponse.status,200);
+  assert.equal(assetDetailResponse.headers.get("etag"),'"1"');
+  assert.equal((await assetDetailResponse.json()).asset.target_url,"https://www.trip.com/hotels/chongqing");
+  const patchDenied=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}`,{
+    method:"PATCH",headers:{"content-type":"application/json","if-match":'"1"'},
+    body:JSON.stringify({title:"Updated Chongqing hotels"}),
+  });
+  assert.equal(patchDenied.status,401);
+  const patchResponse=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}`,{
+    method:"PATCH",headers:{authorization:"Bearer admin-secret","content-type":"application/json","if-match":'"1"'},
+    body:JSON.stringify({title:"Updated Chongqing hotels"}),
+  });
+  assert.equal(patchResponse.status,200);
+  assert.equal(patchResponse.headers.get("etag"),'"2"');
+  assert.equal((await patchResponse.json()).revision,2);
+  const stalePatch=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}`,{
+    method:"PATCH",headers:{authorization:"Bearer admin-secret","content-type":"application/json","if-match":'"1"'},
+    body:JSON.stringify({title:"Stale title"}),
+  });
+  assert.equal(stalePatch.status,409);
+  const usageResponse=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}/usage`);
+  assert.equal(usageResponse.status,200);
+  assert.deepEqual((await usageResponse.json()).items,[]);
+  const versionsResponse=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}/versions`);
+  assert.equal(versionsResponse.status,200);
+  assert.equal((await versionsResponse.json()).items.length,2);
   const eventResponse = await fetch(`${baseUrl}/api/commercial/events`, {
     method: "POST", headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
     body: JSON.stringify({ eventType: "impression", provider: "Trip.com", category: "HOTEL", slotKey: "end-resource:hotel:1", affiliateAssetId: asset.id, destination: "chongqing" }),

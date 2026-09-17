@@ -9,7 +9,7 @@ import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue
 import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
 import { KNOWLEDGE_RESOLUTION_VERSION, decideKnowledgeResolution, summarizeResolutionDecisions } from "./knowledge-resolution.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
-import { legacyOfferToAsset, normalizeCountryCode } from "./commercial.mjs";
+import { legacyOfferToAsset, normalizeAffiliateAsset, normalizeCountryCode } from "./commercial.mjs";
 import {
   affiliateAssetFromQueueTask, exportAffiliateQueue, loadAffiliateQueueSeeds,
   normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
@@ -53,6 +53,7 @@ const COMPATIBLE_DIAGNOSTIC_STRATEGIES = new Map([
   ["3.3", new Set(["3.0", "3.1", "3.2", "3.3"])],
   ["3.4", new Set(["3.0", "3.1", "3.2", "3.3", "3.4"])],
   ["3.5", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5"])],
+  ["3.6", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6"])],
 ]);
 
 function isReusableDiagnosticStrategy(previous, current) {
@@ -2096,7 +2097,8 @@ export class Repository {
     return this.db.prepare(`
       UPDATE jobs SET status=CASE WHEN dirty_revision>claimed_revision THEN 'queued' ELSE 'succeeded' END,
         completed_at=CASE WHEN dirty_revision>claimed_revision THEN NULL ELSE ? END, duration_ms=?, locked_by=NULL,
-        lease_expires_at=NULL, heartbeat_at=NULL, failure_class='',last_failure_code='',last_error=NULL,next_eligible_at=NULL,updated_at=?
+        lease_expires_at=NULL, heartbeat_at=NULL, failure_class='',last_failure_code='',last_error=NULL,
+        failure_details_json='{}',failure_execution_kind='legacy_unknown',next_eligible_at=NULL,updated_at=?
       WHERE id=? AND status='running' AND locked_by=? AND (? IS NULL OR lease_generation=?)
     `).run(timestamp, durationMs, timestamp, jobId, ownerId, generation, generation).changes === 1;
   }
@@ -2128,14 +2130,26 @@ export class Repository {
     const durationMs = job.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
     const failureClass = terminalFailureClass(error, retry, providerPressure);
     const failureCode = String(error?.code || error?.status || "").slice(0, 120);
+    const failureDiagnostic = structuredFailureDiagnostic(job, error);
     const changed = this.db.prepare(`
       UPDATE jobs SET status=?, available_at=?, next_eligible_at=?,last_error=?, completed_at=?, duration_ms=?,
-        failure_class=?,last_failure_code=?,locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
+        failure_class=?,last_failure_code=?,failure_details_json=?,failure_execution_kind=?,
+        locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
       WHERE id=? AND status='running' AND locked_by=? AND lease_generation=?
     `).run(retry ? "queued" : "failed", availableAt, retry ? availableAt : null, String(error?.message || error).slice(0, 4_000),
-      retry ? null : timestamp, retry ? null : durationMs, failureClass, failureCode, timestamp, job.id, job.locked_by || this.workerId,
+      retry ? null : timestamp, retry ? null : durationMs, failureClass, failureCode,
+      JSON.stringify(failureDiagnostic.details), failureDiagnostic.executionKind,
+      timestamp, job.id, job.locked_by || this.workerId,
       Number(job.lease_generation || 0)).changes;
     if (changed !== 1) return false;
+    this.db.prepare(`INSERT INTO production_failure_diagnostics(id,job_id,job_attempt,stage,error_code,execution_kind,
+      draft_revision,input_hash,candidate_hash,details_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(job_id,job_attempt,error_code) DO UPDATE SET execution_kind=excluded.execution_kind,
+        draft_revision=excluded.draft_revision,input_hash=excluded.input_hash,candidate_hash=excluded.candidate_hash,
+        details_json=excluded.details_json,created_at=excluded.created_at`).run(
+      id("failure_diag"),job.id,Number(job.attempts || 0),job.type,failureCode || "PRODUCTION_FAILED",
+      failureDiagnostic.executionKind,failureDiagnostic.draftRevision,failureDiagnostic.inputHash,
+      failureDiagnostic.candidateHash,JSON.stringify(failureDiagnostic.details),timestamp);
     const message = String(error?.message || error).slice(0, 4_000);
     if (job.type === "extract_source") {
       this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
@@ -5577,6 +5591,62 @@ export class Repository {
     `).all(draftId, now());
   }
 
+  findReusableVisualCandidate({visualId,transformInputHash}) {
+    const row=this.db.prepare(`SELECT * FROM visual_candidates WHERE visual_id=? AND transform_input_hash=?
+      AND status IN ('pending_qa','qa_failed') ORDER BY updated_at DESC LIMIT 1`).get(visualId,transformInputHash);
+    if (!row) return null;
+    if (!row.media_path || !fs.existsSync(row.media_path)) {
+      this.db.prepare("UPDATE visual_candidates SET status='missing',updated_at=? WHERE id=?").run(now(),row.id);
+      return null;
+    }
+    const bytes=fs.readFileSync(row.media_path);
+    if (sha256(bytes)!==row.output_hash || bytes.length!==Number(row.byte_size)) {
+      this.db.prepare(`UPDATE visual_candidates SET status='invalidated',last_error_json=?,updated_at=? WHERE id=?`)
+        .run(JSON.stringify({code:"CANDIDATE_HASH_MISMATCH",evidence_basis:"persisted_bytes"}),now(),row.id);
+      return null;
+    }
+    return {...row,qa:json(row.qa_json,{}),last_error:json(row.last_error_json,{})};
+  }
+
+  saveVisualCandidate(candidate) {
+    const current=this.db.prepare("SELECT draft_id,source_asset_id,asset_fingerprint FROM article_visuals WHERE id=?").get(candidate.visualId);
+    if (!current || current.draft_id!==candidate.draftId) throw conflictError("Visual candidate no longer belongs to the current Draft.");
+    if (candidate.expectedFingerprint && current.asset_fingerprint!==candidate.expectedFingerprint) {
+      throw conflictError("Visual candidate input changed before the checkpoint could be saved.");
+    }
+    const timestamp=now();
+    const candidateId=candidate.id || `visual_candidate_${sha256(`${candidate.visualId}:${candidate.transformInputHash}:${candidate.outputHash}`).slice(0,24)}`;
+    this.db.prepare(`INSERT INTO visual_candidates(id,visual_id,draft_id,job_id,job_attempt,recovery_run_id,source_asset_id,
+      source_hash,transform_input_hash,output_hash,media_path,mime_type,byte_size,provider,model,status,qa_json,last_error_json,
+      created_at,updated_at,promoted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending_qa','{}','{}',?,?,NULL)
+      ON CONFLICT(visual_id,transform_input_hash,output_hash) DO UPDATE SET media_path=excluded.media_path,
+        byte_size=excluded.byte_size,job_id=COALESCE(excluded.job_id,visual_candidates.job_id),
+        job_attempt=MAX(visual_candidates.job_attempt,excluded.job_attempt),recovery_run_id=COALESCE(excluded.recovery_run_id,visual_candidates.recovery_run_id),
+        updated_at=excluded.updated_at`).run(candidateId,candidate.visualId,candidate.draftId,candidate.jobId || null,
+        Number(candidate.jobAttempt || 0),candidate.recoveryRunId || null,current.source_asset_id || null,
+        candidate.sourceHash || "",candidate.transformInputHash,candidate.outputHash,candidate.mediaPath,candidate.mimeType,
+        Number(candidate.byteSize || 0),candidate.provider || "unknown",candidate.model || "unknown",timestamp,timestamp);
+    return this.db.prepare("SELECT * FROM visual_candidates WHERE visual_id=? AND transform_input_hash=? AND output_hash=?")
+      .get(candidate.visualId,candidate.transformInputHash,candidate.outputHash);
+  }
+
+  updateVisualCandidate(candidateId,{status,qa=null,error=null}={}) {
+    const allowed=new Set(["pending_qa","qa_failed","promoted","invalidated","missing"]);
+    if (!allowed.has(status)) throw new Error(`Unsupported visual candidate status: ${status}`);
+    const timestamp=now();
+    this.db.prepare(`UPDATE visual_candidates SET status=?,qa_json=?,last_error_json=?,updated_at=?,
+      promoted_at=CASE WHEN ?='promoted' THEN ? ELSE promoted_at END WHERE id=?`)
+      .run(status,JSON.stringify(qa || {}),JSON.stringify(safeDiagnosticValue(error || {})),timestamp,status,timestamp,candidateId);
+    return this.db.prepare("SELECT * FROM visual_candidates WHERE id=?").get(candidateId) || null;
+  }
+
+  listVisualCandidates(visualId) {
+    return this.db.prepare(`SELECT id,visual_id,draft_id,job_id,job_attempt,recovery_run_id,source_asset_id,source_hash,
+      transform_input_hash,output_hash,mime_type,byte_size,provider,model,status,qa_json,last_error_json,created_at,updated_at,promoted_at
+      FROM visual_candidates WHERE visual_id=? ORDER BY created_at DESC`).all(visualId)
+      .map((row)=>({...row,qa:json(row.qa_json,{}),last_error:json(row.last_error_json,{})}));
+  }
+
   saveGeneratedVisual(visualId, result, { expectedFingerprint = null } = {}) {
     const current = this.db.prepare(`SELECT draft_id,acquisition_strategy,source_asset_id,media_metadata_json
       FROM article_visuals WHERE id=?`).get(visualId);
@@ -5904,7 +5974,10 @@ export class Repository {
       .map((row) => ({ ...row, kind: "failed_attempt", detail: json(row.snapshot_json, {}) }));
     const lessons = this.db.prepare("SELECT * FROM failure_lessons WHERE opportunity_id=? ORDER BY created_at DESC,id DESC").all(opportunityId)
       .map((row) => ({ ...row, kind: "failure_lesson", detail: json(row.lesson_json, {}) }));
-    return [...audit, ...operations, ...attempts, ...lessons]
+    const diagnostics=this.db.prepare(`SELECT pfd.* FROM production_failure_diagnostics pfd JOIN jobs j ON j.id=pfd.job_id
+      WHERE j.production_owner_opportunity_id=? ORDER BY pfd.created_at DESC,pfd.id DESC`).all(opportunityId)
+      .map((row)=>({...row,kind:"failure_diagnostic",detail:json(row.details_json,{})}));
+    return [...audit, ...operations, ...attempts, ...lessons,...diagnostics]
       .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
   }
 
@@ -6058,15 +6131,32 @@ export class Repository {
       FROM affiliate_provider_accounts p ORDER BY p.display_name`).all();
   }
 
-  upsertAffiliateAsset(asset) {
+  upsertAffiliateAsset(asset,{actor="system",queueRefresh=false}={}) {
     const provider = this.getAffiliateProviderAccount(asset.providerAccountId);
     if (!provider) throw new Error("Affiliate asset provider account does not exist.");
     const timestamp = now();
+    const existing=this.db.prepare("SELECT * FROM affiliate_assets WHERE id=?").get(asset.id) || null;
+    const snapshot=affiliateAssetBusinessSnapshot(asset);
+    const contentHash=sha256(JSON.stringify(snapshot));
+    if (existing?.content_hash === contentHash) {
+      return {...this.getAffiliateAsset(asset.id),no_op:true,impact:{draft_ids:[],count:0,queued:false}};
+    }
+    const revision=existing ? Number(existing.revision || 1)+1 : 1;
+    if (existing && !existing.content_hash) {
+      const legacySnapshot=affiliateAssetBusinessSnapshot(existing);
+      const legacyHash=sha256(JSON.stringify(legacySnapshot));
+      this.db.prepare(`INSERT OR IGNORE INTO affiliate_asset_versions(
+        id,affiliate_asset_id,revision,content_hash,snapshot_json,actor,created_at
+      ) VALUES (?,?,?,?,?,'migration_v72',?)`).run(
+        `asset_version_${sha256(`${asset.id}:1:${legacyHash}`).slice(0,24)}`,
+        asset.id,1,legacyHash,JSON.stringify(legacySnapshot),existing.created_at || timestamp);
+    }
     this.db.prepare(`INSERT INTO affiliate_assets(id, provider_account_id, provider, asset_type, product_category,
       scope_type, scope_key, destination_slug, area_key, route_key, entity_key, entity_name, provider_entity_id,
       title, description, cta_label, target_url, embed_config_json, language, priority, active, valid_from,
-      valid_until, source_updated_at, legacy_offer_id, created_at, updated_at, image_url, alt_text, price_text, country_code)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      valid_until, source_updated_at, legacy_offer_id, created_at, updated_at, image_url, alt_text, price_text, country_code,
+      revision,content_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET provider_account_id=excluded.provider_account_id, provider=excluded.provider,
         asset_type=excluded.asset_type, product_category=excluded.product_category, scope_type=excluded.scope_type,
         scope_key=excluded.scope_key, destination_slug=excluded.destination_slug, area_key=excluded.area_key,
@@ -6076,13 +6166,13 @@ export class Repository {
         image_url=excluded.image_url, alt_text=excluded.alt_text, price_text=excluded.price_text,
         language=excluded.language, priority=excluded.priority, active=excluded.active, valid_from=excluded.valid_from,
         valid_until=excluded.valid_until, source_updated_at=excluded.source_updated_at, country_code=excluded.country_code,
-        updated_at=excluded.updated_at`)
+        revision=excluded.revision,content_hash=excluded.content_hash,updated_at=excluded.updated_at`)
       .run(asset.id, asset.providerAccountId, asset.provider, asset.assetType, asset.productCategory, asset.scopeType,
         asset.scopeKey, asset.destinationSlug, asset.areaKey, asset.routeKey, asset.entityKey, asset.entityName,
         asset.providerEntityId, asset.title, asset.description, asset.ctaLabel, asset.targetUrl,
         JSON.stringify(asset.embedConfig || {}), asset.language, asset.priority, asset.active ? 1 : 0, asset.validFrom,
         asset.validUntil, asset.sourceUpdatedAt, asset.legacyOfferId, timestamp, timestamp,
-        asset.imageUrl || "", asset.altText || "", asset.priceText || "", asset.countryCode || "");
+        asset.imageUrl || "", asset.altText || "", asset.priceText || "", asset.countryCode || "",revision,contentHash);
     this.db.prepare("UPDATE affiliate_asset_mappings SET active=0,updated_at=? WHERE affiliate_asset_id=?").run(timestamp, asset.id);
     this.db.prepare(`INSERT INTO affiliate_asset_mappings(id, affiliate_asset_id, scope_type, scope_key, destination_slug, created_at, active, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, 1, ?)
@@ -6090,11 +6180,16 @@ export class Repository {
         destination_slug=excluded.destination_slug,active=1,updated_at=excluded.updated_at`)
       .run(`asset_mapping_${sha256(`${asset.id}:${asset.scopeType}:${asset.scopeKey}`).slice(0, 24)}`,
         asset.id, asset.scopeType, asset.scopeKey || asset.destinationSlug || asset.productCategory, asset.destinationSlug, timestamp, timestamp);
-    this.markCommercialRefreshForAsset(asset, timestamp);
-    return this.getAffiliateAsset(asset.id);
+    this.db.prepare(`INSERT INTO affiliate_asset_versions(id,affiliate_asset_id,revision,content_hash,snapshot_json,actor,created_at)
+      VALUES (?,?,?,?,?,?,?)`).run(`asset_version_${sha256(`${asset.id}:${revision}:${contentHash}`).slice(0,24)}`,
+        asset.id,revision,contentHash,JSON.stringify(snapshot),String(actor || "system").slice(0,200),timestamp);
+    const affected=new Set();
+    if (existing) for (const draftId of this.markCommercialRefreshForAsset(existing,timestamp,{queueRefresh:false})) affected.add(draftId);
+    for (const draftId of this.markCommercialRefreshForAsset(asset,timestamp,{queueRefresh})) affected.add(draftId);
+    return {...this.getAffiliateAsset(asset.id),no_op:false,impact:{draft_ids:[...affected],count:affected.size,queued:false}};
   }
 
-  markCommercialRefreshForAsset(asset, timestamp = now()) {
+  markCommercialRefreshForAsset(asset, timestamp = now(), {queueRefresh=false}={}) {
     const scopeType=asset.scopeType || asset.scope_type;
     const scopeKey=asset.scopeKey || asset.scope_key || "";
     const destination = asset.destinationSlug || asset.destination_slug || "";
@@ -6125,12 +6220,12 @@ export class Repository {
       refresh_reason='affiliate_asset_inventory_changed',updated_at=? WHERE draft_id=?`);
     for (const draftId of affected) {
       update.run(timestamp,draftId);
-      const row=rows.find((item)=>item.draft_id===draftId);
-      if (["ready_for_wordpress","commercial_ready","wordpress_draft"].includes(row?.draft_status)) {
-        this.enqueue("compose_commercial",draftId,{dedupeKey:`affiliate-asset-refresh:${asset.id}:${timestamp}:${draftId}`});
-      }
+      // Asset writes only calculate impact and mark the commercial projection
+      // stale. Execution must go through the fingerprinted commercial
+      // delivery-refresh preflight so ownership, remote edits and scope remain
+      // explicit and auditable.
     }
-    return affected.length;
+    return affected;
   }
 
   getAffiliateAsset(assetId) {
@@ -6144,7 +6239,13 @@ export class Repository {
     if (activeOnly) { clauses.push("active=1 AND lifecycle_state='operational' AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)"); values.push(now(), now()); }
     if (providerAccountId) { clauses.push("provider_account_id=?"); values.push(providerAccountId); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-    return this.db.prepare(`SELECT * FROM affiliate_assets ${where} ORDER BY provider, active DESC, priority DESC, product_category, title`)
+    return this.db.prepare(`SELECT a.*,
+      (SELECT COUNT(DISTINCT cs.draft_id) FROM commercial_slots cs WHERE cs.affiliate_asset_id=a.id) AS adopted_article_count,
+      (SELECT COUNT(DISTINCT cs.draft_id) FROM commercial_slots cs JOIN wordpress_publications wp ON wp.draft_id=cs.draft_id
+        WHERE cs.affiliate_asset_id=a.id AND wp.status='synced') AS delivered_article_count,
+      (SELECT COUNT(*) FROM commercial_slots cs WHERE cs.affiliate_asset_id=a.id) AS slot_count
+      FROM affiliate_assets a ${where ? where.replaceAll(/\b(active|provider_account_id|lifecycle_state|valid_from|valid_until)\b/g,"a.$1") : ""}
+      ORDER BY a.provider, a.active DESC, a.priority DESC, a.product_category, a.title`)
       .all(...values).map((row) => ({ ...row, embed_config: json(row.embed_config_json, {}) }));
   }
 
@@ -6453,6 +6554,67 @@ export class Repository {
         destination_slug: row.effective_destination_slug || row.destination_slug }));
   }
 
+  updateAffiliateAsset(assetId,patch,{expectedRevision=null,actor="admin",queueRefresh=false}={}) {
+    const current=this.getAffiliateAsset(assetId);
+    if (!current) return null;
+    if (expectedRevision != null && Number(expectedRevision)!==Number(current.revision || 1)) {
+      throw conflictError(`Affiliate asset changed since this form was opened (expected revision ${expectedRevision}, current ${current.revision || 1}).`);
+    }
+    const allowed=new Set(["title","description","ctaLabel","cta_label","targetUrl","target_url","providerAccountId","provider_account_id",
+      "assetType","asset_type","productCategory","product_category","scopeType","scope_type","scopeKey","scope_key",
+      "destinationSlug","destination_slug","areaKey","area_key","routeKey","route_key","entityKey","entity_key",
+      "entityName","entity_name","providerEntityId","provider_entity_id","embedConfig","embed_config","language","priority",
+      "active","validFrom","valid_from","validUntil","valid_until","imageUrl","image_url","altText","alt_text","priceText","price_text","countryCode","country_code"]);
+    const unknown=Object.keys(patch || {}).filter((key)=>!allowed.has(key));
+    if (unknown.length) throw Object.assign(new Error(`Unsupported affiliate asset fields: ${unknown.join(", ")}`),{statusCode:400});
+    const providerId=patch.providerAccountId || patch.provider_account_id || current.provider_account_id;
+    const provider=this.getAffiliateProviderAccount(providerId);
+    if (!provider) throw Object.assign(new Error("Affiliate provider account does not exist."),{statusCode:400});
+    const normalizedInput={...current,embed_config:current.embed_config,...patch,id:assetId,
+      active:patch.active ?? Boolean(current.active),
+      providerAccountId:providerId,provider:provider.display_name};
+    return this.upsertAffiliateAsset(normalizeAffiliateAsset(normalizedInput,{id:provider.id,displayName:provider.display_name}),
+      {actor,queueRefresh});
+  }
+
+  affiliateAssetUsage(assetId,{limit=100,offset=0}={}) {
+    const asset=this.getAffiliateAsset(assetId);
+    if (!asset) return null;
+    const total=Number(this.db.prepare("SELECT COUNT(DISTINCT draft_id) AS count FROM commercial_slots WHERE affiliate_asset_id=?").get(assetId)?.count || 0);
+    const rows=this.db.prepare(`SELECT cs.draft_id,cs.slot_key,cs.component_type,cs.placement,cs.block_index,cs.strategy_version,
+      cs.affiliate_asset_revision,cs.affiliate_asset_content_hash,
+      ad.title,ad.revision AS draft_revision,cc.overlay_version,cc.refresh_required,cc.status AS commercial_status,
+      pc.status AS publish_status,pc.wordpress_post_id,wp.post_id,wp.status AS wordpress_status,wp.updated_at AS delivered_at,
+      wp.delivery_manifest_json,co.id AS opportunity_id
+      FROM commercial_slots cs JOIN article_drafts ad ON ad.id=cs.draft_id
+      LEFT JOIN commercial_compositions cc ON cc.draft_id=cs.draft_id
+      LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=cs.draft_id
+      LEFT JOIN wordpress_publications wp ON wp.draft_id=cs.draft_id
+      LEFT JOIN content_briefs cb ON cb.id=ad.brief_id
+      LEFT JOIN content_opportunities co ON co.candidate_id=cb.candidate_id AND co.approved_at IS NOT NULL
+      WHERE cs.affiliate_asset_id=? ORDER BY COALESCE(wp.updated_at,cc.updated_at,ad.updated_at) DESC LIMIT ? OFFSET ?`)
+      .all(assetId,Math.max(1,Math.min(500,Number(limit)||100)),Math.max(0,Number(offset)||0));
+    const items=rows.map((row)=>{
+      const manifest=json(row.delivery_manifest_json,{});
+      const deliveredSlots=manifest.commercial_slots || [];
+      const delivered=deliveredSlots.some((slot)=>slot.affiliate_asset_id===assetId && slot.slot_key===row.slot_key);
+      return {...row,asset_id:assetId,asset_revision:row.affiliate_asset_revision,
+        asset_content_hash:row.affiliate_asset_content_hash,
+        selected:true,legal_page:["valid","delivered"].includes(row.publish_status),publish_package:["valid","delivered"].includes(row.publish_status),
+        wordpress_stored:delivered || (row.wordpress_status === "synced" && row.post_id != null),
+        dom_verified:null,dom_verification_status:"unknown",delivery_evidence:delivered ? "wordpress_delivery_manifest" : "not_confirmed"};
+    });
+    return {asset,summary:{adopted_articles:total,delivered_articles:new Set(items.filter((item)=>item.wordpress_stored).map((item)=>item.draft_id)).size,
+      slot_count:Number(this.db.prepare("SELECT COUNT(*) AS count FROM commercial_slots WHERE affiliate_asset_id=?").get(assetId)?.count || 0)},
+      items,total,limit:Number(limit),offset:Number(offset)};
+  }
+
+  listAffiliateAssetVersions(assetId) {
+    return this.db.prepare(`SELECT id,affiliate_asset_id,revision,content_hash,snapshot_json,actor,created_at
+      FROM affiliate_asset_versions WHERE affiliate_asset_id=? ORDER BY revision DESC`).all(assetId)
+      .map((row)=>({...row,snapshot:json(row.snapshot_json,{})}));
+  }
+
   saveCommercialComposition(draftId, composition) {
     const timestamp = now();
     const compositionId = `composition_${sha256(draftId).slice(0, 24)}`;
@@ -6460,10 +6622,18 @@ export class Repository {
     if (!draft) throw new Error(`Article draft ${draftId} not found.`);
     const page = this.db.prepare("SELECT payload_json,contract_checksum FROM frontend_page_compositions WHERE draft_id=?").get(draftId) || {};
     const editorialPageHash = sha256(page.payload_json || "{}");
-    const assetInventoryHash = sha256(JSON.stringify((composition.diagnostics?.intents || []).map((item) => ({
-      intent_id:item.intent_id,selected_asset_id:item.selected_asset_id,candidate_count:item.candidateCount,
-      eligible_count:item.eligibleCount,exclusions:item.exclusions,
-    }))));
+    const selectedAssetIds=[...new Set([...(composition.assetIds || []),...(composition.slots || [])
+      .map((slot)=>slot.affiliate_asset_id)].filter(Boolean))];
+    const selectedAssetVersions=selectedAssetIds.map((assetId)=>this.db.prepare(`SELECT id,revision,content_hash,target_url,title,
+      description,cta_label,provider,asset_type,product_category,scope_type,scope_key,active,valid_from,valid_until
+      FROM affiliate_assets WHERE id=?`).get(assetId)).filter(Boolean);
+    const assetInventoryHash = sha256(JSON.stringify({
+      intents:(composition.diagnostics?.intents || []).map((item) => ({
+        intent_id:item.intent_id,selected_asset_id:item.selected_asset_id,candidate_count:item.candidateCount,
+        eligible_count:item.eligibleCount,exclusions:item.exclusions,
+      })),
+      selected_assets:selectedAssetVersions,
+    }));
     const commercialStrategyVersion = composition.strategyVersion || this.strategyVersion;
     const readingLayoutVersion = composition.readingLayoutVersion || "";
     const overlayVersion = `overlay_${sha256(`${draftId}:${draft.revision}:${draft.content_hash}:${editorialPageHash}:${assetInventoryHash}:${commercialStrategyVersion}:${readingLayoutVersion}:${page.contract_checksum || ""}`).slice(0, 24)}`;
@@ -6484,12 +6654,15 @@ export class Repository {
           intent.decisionStage, intent.recommendedComponent, intent.reason || intent.relevanceReason || null, timestamp, timestamp);
       for (const slot of composition.slots || []) this.db.prepare(`INSERT INTO commercial_slots(
         id, draft_id, intent_id, affiliate_asset_id, slot_key, component_type, placement, block_index,
-        strategy_version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        strategy_version, affiliate_asset_revision, affiliate_asset_content_hash, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(`commercial_slot_${sha256(`${draftId}:${slot.slot_key}`).slice(0, 24)}`, draftId,
           (composition.intents || []).find((intent) => intent.blockIndex === slot.block_index && intent.productCategory === slot.product_category)?.id || null,
           slot.affiliate_asset_id, slot.slot_key, slot.component_type, slot.placement, slot.block_index,
-          this.strategyVersion, timestamp, timestamp);
+          this.strategyVersion,
+          selectedAssetVersions.find((asset)=>asset.id===slot.affiliate_asset_id)?.revision ?? null,
+          selectedAssetVersions.find((asset)=>asset.id===slot.affiliate_asset_id)?.content_hash || "",
+          timestamp, timestamp);
       for (const opportunity of composition.opportunities || []) this.db.prepare(`INSERT INTO affiliate_opportunities(
         id, draft_id, intent_id, provider, product_category, scope_type, scope_key, score, factors_json,
         reason, status, created_at, updated_at
@@ -8074,13 +8247,31 @@ export class Repository {
   }
 
   recordModelCall(metric) {
-    const metricId=id("modelcall");
+    const metricId=metric.callId || id("modelcall");
     const recordedAt=now();
+    const providerRequestMs=metric.providerRequestMs??metric.latencyMs??0;
+    const totalStageMs=metric.totalStageMs??((metric.queueWaitMs||0)+providerRequestMs+(metric.retryWaitMs||0));
+    const existing=metric.callId ? this.db.prepare("SELECT id FROM model_call_metrics WHERE id=?").get(metricId) : null;
+    if (existing) {
+      this.db.prepare(`UPDATE model_call_metrics SET status=?,error_code=?,latency_ms=?,attempts=?,attempt_status=?,
+        input_tokens=?,output_tokens=?,cached_tokens=?,cost_usd=?,thinking_tokens=?,provider_usage_json=?,cost_status=?,
+        request_completed_at=?,http_status=?,provider_code=?,provider_request_id=?,dispatch_state=?,evidence_basis=?,
+        provider_request_ms=?,retry_wait_ms=?,total_stage_ms=?,retry_after_ms=?,backoff_until=?,execution_route=? WHERE id=?`).run(
+        metric.status === "succeeded" ? "succeeded" : "failed",metric.errorCode || null,metric.latencyMs ?? 0,
+        metric.attempts ?? 1,metric.attemptStatus || metric.status || "failed",metric.inputTokens ?? null,
+        metric.outputTokens ?? null,metric.cachedTokens ?? null,metric.costUsd ?? null,metric.thinkingTokens ?? null,
+        metric.providerUsage ? JSON.stringify(metric.providerUsage) : null,metric.costStatus || "unknown",
+        metric.requestCompletedAt || null,metric.httpStatus ?? null,metric.providerCode || null,metric.providerRequestId || null,
+        metric.dispatchState || "legacy_unknown",metric.evidenceBasis || "",metric.providerRequestMs ?? metric.latencyMs ?? 0,
+        metric.retryWaitMs ?? 0,metric.totalStageMs ?? ((metric.queueWaitMs || 0)+(metric.providerRequestMs ?? metric.latencyMs ?? 0)+(metric.retryWaitMs || 0)),
+        metric.retryAfterMs ?? null,metric.backoffUntil || null,metric.executionRoute || null,metricId);
+    } else {
     this.db.prepare(`INSERT INTO model_call_metrics(id,stage,provider,model,prompt_hash,schema_hash,input_hash,
       input_tokens,output_tokens,cached_tokens,latency_ms,attempts,status,error_code,cost_usd,created_at,
       run_id,entity_id,attempt_number,request_kind,attempt_status,retry_reason,thinking_tokens,provider_usage_json,
-      config_hash,policy_version,cost_status,price_version,price_source,price_as_of,request_started_at,request_completed_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      config_hash,policy_version,cost_status,price_version,price_source,price_as_of,request_started_at,request_completed_at,
+      visual_id,source_asset_id,substage,http_status,provider_code,provider_request_id,dispatch_state,evidence_basis,endpoint_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       metricId, metric.stage || "unknown", metric.provider || "unknown", metric.model || "unknown",
       metric.promptHash || "", metric.schemaHash || "", metric.inputHash || "", metric.inputTokens ?? null,
       metric.outputTokens ?? null, metric.cachedTokens ?? null, metric.latencyMs ?? 0, metric.attempts ?? 1,
@@ -8091,13 +8282,17 @@ export class Repository {
       metric.configHash || "", metric.policyVersion || "legacy", metric.costStatus || "unknown",
       metric.priceVersion || null, metric.priceSource || null, metric.priceAsOf || null,
       metric.requestStartedAt || null, metric.requestCompletedAt || null,
+      metric.visualId || null, metric.sourceAssetId || null, metric.substage || metric.stage || null,
+      metric.httpStatus ?? null, metric.providerCode || null, metric.providerRequestId || null,
+      metric.dispatchState || (metric.requestKind === "cache_hit" ? "cache_hit" : "legacy_unknown"),
+      metric.evidenceBasis || "", metric.endpointId || "",
     );
-    const providerRequestMs=metric.providerRequestMs??metric.latencyMs??0;
-    const totalStageMs=metric.totalStageMs??((metric.queueWaitMs||0)+providerRequestMs+(metric.retryWaitMs||0));
     this.db.prepare(`UPDATE model_call_metrics SET queue_wait_ms=?,provider_request_ms=?,retry_wait_ms=?,total_stage_ms=?,
       retry_after_ms=?,backoff_until=?,cache_hit=?,execution_route=? WHERE id=?`).run(
       metric.queueWaitMs??null,providerRequestMs,metric.retryWaitMs??0,totalStageMs,metric.retryAfterMs??null,
       metric.backoffUntil||null,metric.cacheHit||metric.requestKind==="cache_hit"?1:0,metric.executionRoute||null,metricId);
+    }
+    if (metric.telemetryPhase === "started") return metricId;
     const provider=metric.provider||"unknown",succeeded=metric.status==="succeeded";
     this.db.prepare(`INSERT INTO provider_runtime_state(provider,model,last_success_at,last_failure_at,last_error_code,
         consecutive_failures,backoff_until,last_latency_ms,updated_at) VALUES (?,?,?,?,?,?,?,?,?)
@@ -8118,6 +8313,7 @@ export class Repository {
         this.db.prepare("UPDATE provider_runtime_state SET backoff_until=NULL,updated_at=? WHERE provider=?").run(now(),provider);
       }
     }
+    return metricId;
   }
 }
 
@@ -10398,4 +10594,70 @@ function boundPlanningText(value,limit) {
 function uniqueByKey(values,keyFor) {
   const seen=new Set();
   return values.filter((value)=>{const key=keyFor(value);if(seen.has(key))return false;seen.add(key);return true;});
+}
+
+function structuredFailureDiagnostic(job,error) {
+  const code=String(error?.code || error?.status || "PRODUCTION_FAILED").slice(0,120);
+  const deterministicCodes=new Set([
+    "EDITORIAL_PAGE_INVALID","FINAL_PAGE_INVALID","FINAL_PAGE_QA_FAILED","MEDIA_DELIVERY_INVALID",
+    "PUBLISH_PACKAGE_INVALID","COMMERCIAL_DELIVERY_MISMATCH","CONTRACT_VERSION_MISMATCH",
+    "PROTECTED_EVIDENCE_MISMATCH","DESTINATION_TOPIC_MISMATCH","FROZEN_WRITING_SCOPE_INVALID",
+  ]);
+  const hasProviderEvidence=Boolean(error?.provider || error?.status || error?.details?.http_status
+    || error?.details?.provider_request_id || /^PROVIDER_/.test(code));
+  const hasDeterministicEvidence=deterministicCodes.has(code) || Boolean(error?.details?.validation);
+  const executionKind=hasProviderEvidence && hasDeterministicEvidence ? "mixed"
+    : hasProviderEvidence ? "provider" : hasDeterministicEvidence ? "deterministic" : "legacy_unknown";
+  const details=safeDiagnosticValue({
+    outer_code:code,
+    message:String(error?.message || error || "").slice(0,4_000),
+    stage:job?.type || null,
+    job_id:job?.id || null,
+    job_attempt:Number(job?.attempts || 0),
+    recovery_run_id:job?.recovery_run_id || null,
+    production_owner_opportunity_id:job?.production_owner_opportunity_id || null,
+    provider:error?.provider || null,
+    http_status:Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
+    retry_after_ms:error?.retryAfterMs ?? null,
+    retryable:error?.retryable ?? null,
+    details:error?.details || null,
+    quality_qa:error?.qualityQa || null,
+  });
+  return {
+    executionKind,
+    details,
+    draftRevision:Number(error?.details?.draftRevision ?? error?.details?.draft_revision) || null,
+    inputHash:String(error?.details?.inputHash || error?.details?.input_hash || "").slice(0,200),
+    candidateHash:String(error?.details?.candidateHash || error?.details?.candidate_hash || "").slice(0,200),
+  };
+}
+
+function affiliateAssetBusinessSnapshot(asset) {
+  const value=(camel,snake,fallback="")=>asset?.[camel] ?? asset?.[snake] ?? fallback;
+  return {
+    id:value("id","id"),provider_account_id:value("providerAccountId","provider_account_id"),provider:value("provider","provider"),
+    asset_type:value("assetType","asset_type"),product_category:value("productCategory","product_category"),
+    scope_type:value("scopeType","scope_type"),scope_key:value("scopeKey","scope_key"),country_code:value("countryCode","country_code"),
+    destination_slug:value("destinationSlug","destination_slug"),area_key:value("areaKey","area_key"),route_key:value("routeKey","route_key"),
+    entity_key:value("entityKey","entity_key"),entity_name:value("entityName","entity_name"),provider_entity_id:value("providerEntityId","provider_entity_id"),
+    title:value("title","title"),description:value("description","description"),cta_label:value("ctaLabel","cta_label"),
+    target_url:value("targetUrl","target_url"),embed_config:value("embedConfig","embed_config",json(asset?.embed_config_json,{})),
+    image_url:value("imageUrl","image_url"),alt_text:value("altText","alt_text"),price_text:value("priceText","price_text"),
+    language:value("language","language","en"),priority:Number(value("priority","priority",0)),active:Boolean(value("active","active",true)),
+    valid_from:value("validFrom","valid_from",null),valid_until:value("validUntil","valid_until",null),
+  };
+}
+
+function safeDiagnosticValue(value,depth=0,key="") {
+  if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+  if (depth>6) return "[truncated]";
+  if (typeof value === "string") {
+    if (/(?:authorization|cookie|api[-_]?key|secret|token|password|base64|inlineData|signed[-_]?url)/i.test(key)) return "[redacted]";
+    const text=value.replace(/(?:Bearer\s+)[A-Za-z0-9._~+/=-]+/gi,"Bearer [redacted]");
+    return text.length>2_000 ? `${text.slice(0,2_000)}…[truncated]` : text;
+  }
+  if (Array.isArray(value)) return value.slice(0,100).map((item)=>safeDiagnosticValue(item,depth+1,key));
+  if (typeof value === "object") return Object.fromEntries(Object.entries(value).slice(0,120)
+    .map(([name,item])=>[name,safeDiagnosticValue(item,depth+1,name)]));
+  return String(value).slice(0,500);
 }

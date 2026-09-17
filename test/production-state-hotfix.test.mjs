@@ -349,7 +349,8 @@ test("a current destination mismatch blocks recovery before a legacy failure can
   const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
   assert.equal(state.stage_status,"failed");
   assert.equal(state.latest_error.code,"DESTINATION_TOPIC_MISMATCH");
-  assert.equal(state.latest_error.model_execution,"not_requested");
+  assert.equal(state.latest_error.model_execution,"unknown");
+  assert.equal(state.latest_error.provider_request_sent,null);
   assert.equal(state.recoverable,false);
   assert.equal(state.available_actions.includes("retry_failed_stage"),false);
 });
@@ -509,7 +510,8 @@ test("production_state distinguishes provider cooldown from exhausted automatic 
   let state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
   assert.equal(state.stage_status,"queued");
   assert.equal(state.auto_continue,true);
-  assert.match(state.headline,/等待模型配额恢复/);
+  assert.match(state.headline,/等待供应商服务恢复/);
+  assert.match(state.explanation,/不能判断为余额或配额耗尽/);
   assert.deepEqual(state.retry_state,{reason:"provider_backoff",attempt:1,max_attempts:3,remaining_auto_attempts:2,resume_at:"2099-01-01T00:00:00.000Z"});
 
   db.prepare("UPDATE jobs SET attempts=3 WHERE id=?").run(jobId);

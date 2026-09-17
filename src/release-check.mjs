@@ -111,6 +111,11 @@ try {
       ["wordpress_publications", "delivery_manifest_json"],
       ["commercial_events", "overlay_version"], ["commercial_events", "event_source"],
       ["commercial_events", "conversion_data_status"],
+      ["jobs", "failure_details_json"], ["jobs", "failure_execution_kind"],
+      ["model_call_metrics", "substage"], ["model_call_metrics", "http_status"],
+      ["model_call_metrics", "dispatch_state"], ["model_call_metrics", "evidence_basis"],
+      ["affiliate_assets", "revision"], ["affiliate_assets", "content_hash"],
+      ["commercial_slots", "affiliate_asset_revision"], ["commercial_slots", "affiliate_asset_content_hash"],
       ["source_assets", "durability_status"], ["source_assets", "ai_readability_status"],
       ["source_assets", "repair_status"], ["jobs", "priority"], ["jobs", "production_attempt_id"],
       ["content_opportunities", "lifecycle_state"], ["content_opportunities", "seo_action"],
@@ -133,7 +138,8 @@ try {
       "source_segments", "evidence_spans", "extraction_coverage", "segment_extractions", "source_families", "source_family_memberships",
       "topic_clusters", "coverage_matrices", "knowledge_visibility_overrides",
       "affiliate_provider_accounts", "affiliate_assets", "affiliate_asset_mappings", "commercial_intents",
-      "commercial_slots", "affiliate_opportunities", "commercial_events", "commission_rules", "commercial_overlay_history"]) {
+      "commercial_slots", "affiliate_opportunities", "commercial_events", "commission_rules", "commercial_overlay_history",
+      "affiliate_asset_versions", "production_failure_diagnostics", "visual_candidates"]) {
       if (!database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw new Error(`${table} is required for Entity, Claim, or Commercial Phase 1.`);
     }
     for (const table of ["draft_revisions", "content_operation_history"]) {

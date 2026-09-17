@@ -355,6 +355,8 @@ export class Pipeline {
       }, this.heartbeatIntervalMs || Math.max(10_000, Math.floor((this.repository.jobLeaseMs || 60_000) / 3)));
       heartbeatTimer.unref();
       const telemetryContext = { runId: job.id, entityId: job.entity_id,
+        jobAttempt:Number(job.attempts || 0),recoveryRunId:job.recovery_run_id || null,
+        productionOwnerOpportunityId:job.production_owner_opportunity_id || null,
         queueWaitMs:Math.max(0,startedAt-Date.parse(job.created_at||job.available_at||new Date(startedAt).toISOString())),
         executionRoute:job.execution_route||"auto",
         // Model-call receipts survive durable Job reclaims. Resume the last
@@ -841,7 +843,9 @@ export class Pipeline {
             try {
               const method = ["localize_source_image","localize_photo_overlay","recompose_editorial_card","recompose_collage","recompose_map_or_route"]
                 .includes(visual.acquisition_strategy) ? "localizeSourceImage" : "generate";
-              const result = await guarded((signal) => this.visuals[method](visual, contentPackage.draft, { signal, idempotencyKey: `${job.id}:${visual.id}` }));
+              const result = await guarded((signal) => this.visuals[method](visual, contentPackage.draft, { signal,
+                idempotencyKey: `${job.id}:${visual.id}`,expectedFingerprint:visual.asset_fingerprint,
+                telemetryContext:{...telemetryContext,entityId:visual.id,visualId:visual.id,sourceAssetId:visual.source_asset_id || null} }));
               this.repository.saveGeneratedVisual(visual.id, result,{expectedFingerprint:visual.asset_fingerprint});
             } catch (error) {
               if (isJobLeaseLost(error)) throw error;
@@ -973,21 +977,25 @@ export class Pipeline {
             throw new PublishCompositionError("CONTRACT_VERSION_MISMATCH", "Editorial Page Payload provenance does not match the active Frontend Contract.");
           }
           const editorialValidation = this.frontendContracts.validatePagePayload(editorialPage);
-          if (!editorialValidation.valid) throw invalidPublishPage("EDITORIAL_PAGE_INVALID", editorialValidation);
+          if (!editorialValidation.valid) throw invalidPublishPage("EDITORIAL_PAGE_INVALID", editorialValidation,
+            publishFailureContext({job,contentPackage,contract,page:editorialPage,phase:"editorial_page"}));
           const finalPage = mergeCommercialOverlay(editorialPage, contentPackage.commercial_composition);
           const commercialReconciliation = reconcileCommercialDelivery(contentPackage.commercial_composition, { finalPage });
           if (!commercialReconciliation.valid) throw new PublishCompositionError("COMMERCIAL_DELIVERY_MISMATCH",
             `${commercialReconciliation.errors[0]?.message || "A selected commercial slot was lost while merging the Final Page Payload."} Slot receipt: ${JSON.stringify({slots:commercialReconciliation.slots,block_types:commercialReconciliation.block_types})}.`, commercialReconciliation);
           const finalPageValidation = this.frontendContracts.validatePagePayload(finalPage);
-          if (!finalPageValidation.valid) throw invalidPublishPage("FINAL_PAGE_INVALID", finalPageValidation);
+          if (!finalPageValidation.valid) throw invalidPublishPage("FINAL_PAGE_INVALID", finalPageValidation,
+            publishFailureContext({job,contentPackage,contract,page:finalPage,phase:"final_page_after_commercial_merge"}));
           const deliveryContentPackage = { ...contentPackage, frontend_page:{ ...contentPackage.frontend_page,
             validation:remapBlockProvenanceForDelivery(storedEditorialPage, editorialPage, contentPackage.frontend_page?.validation) } };
           const finalArtifactValidation = validateFinalPageArtifact(finalPage, deliveryContentPackage);
-          if (!finalArtifactValidation.valid) throw invalidPublishPage("FINAL_PAGE_QA_FAILED", finalArtifactValidation);
+          if (!finalArtifactValidation.valid) throw invalidPublishPage("FINAL_PAGE_QA_FAILED", finalArtifactValidation,
+            publishFailureContext({job,contentPackage,contract,page:finalPage,phase:"final_page_qa"}));
           await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
           const mediaValidation = validateMediaDelivery(contentPackage.draft.visuals, { requireMetadata: true, pagePayload:finalPage });
-          if (!mediaValidation.valid) throw invalidPublishPage("MEDIA_DELIVERY_INVALID", mediaValidation);
+          if (!mediaValidation.valid) throw invalidPublishPage("MEDIA_DELIVERY_INVALID", mediaValidation,
+            publishFailureContext({job,contentPackage,contract,page:finalPage,phase:"media_delivery"}));
           if (!contentPackage.draft?.seo?.meta_title || !contentPackage.draft?.meta_description) {
             throw new PublishCompositionError("SEO_PACKAGE_MISSING", "A generated SEO title and meta description are required before delivery.");
           }
@@ -1005,7 +1013,8 @@ export class Pipeline {
           const savePublish = () => this.repository.saveFrontendPublishComposition(job.entity_id, contract, publishPackage, validation, contentPackage.commercial_composition.strategy_version);
           if (!validation.valid) {
             savePublish(); // Preserve invalid output for diagnosis without completing the job.
-            throw invalidPublishPage("PUBLISH_PACKAGE_INVALID", validation);
+            throw invalidPublishPage("PUBLISH_PACKAGE_INVALID", validation,
+              publishFailureContext({job,contentPackage,contract,page:finalPage,publishPackage,phase:"publish_package"}));
           }
           commitStage(() => {
             savePublish();
@@ -1279,8 +1288,78 @@ function correlateBatchOutputs(items, outputs) {
   return { byJobId, duplicates, anomalies };
 }
 
-function invalidPublishPage(code, validation) {
-  return new PublishCompositionError(code, validation.errors.map((item) => `${item.code}@${item.path}`).join(", "), { validation });
+function invalidPublishPage(code, validation, context = {}) {
+  const errors=(validation.errors || []).map((item)=>({
+    issue_id:item.issue_id || null,
+    code:item.code || item.keyword || "VALIDATION_ERROR",
+    subcode:item.subcode || item.keyword || null,
+    cause:item.cause || null,
+    origin:item.origin || null,
+    check_name:item.check_name || null,
+    resource_type:item.resource_type || null,
+    path:item.path || item.instancePath || item.schemaPath || null,
+    instance_path:item.instancePath || null,
+    schema_path:item.schemaPath || null,
+    keyword:item.keyword || null,
+    expected:item.expected ?? item.params ?? null,
+    actual_safe_excerpt:item.actual_safe_excerpt ?? safeValidationExcerpt(item.actual),
+    message:item.message || null,
+    slot_key:item.slot_key || null,
+    affiliate_asset_id:item.affiliate_asset_id || item.asset_id || null,
+    claim_key:item.claim_key || null,
+    content_node_ids:item.content_node_ids || null,
+    evidence_or_asset_snapshot_hash:item.evidence_or_asset_snapshot_hash || null,
+    review_id:item.review_id || null,
+    component:item.component || item.component_type || null,
+  }));
+  return new PublishCompositionError(code, errors.map((item) => `${item.code}@${item.path || "$"}`).join(", "), {
+    ...context,
+    validation:{ valid:false,validator:validation.validator || context.validator || "frontend_contract",errors },
+  });
+}
+
+function publishFailureContext({job,contentPackage,contract,page,publishPackage=null,phase}) {
+  const commercial=contentPackage?.commercial_composition || {};
+  return {
+    phase,
+    execution_kind:"deterministic",
+    draftRevision:contentPackage?.draft?.revision ?? null,
+    inputHash:hashJson({
+      editorial_page_hash:commercial.editorial_page_hash || contentPackage?.frontend_page?.payload_hash || null,
+      overlay_version:commercial.overlay_version || null,
+      asset_inventory_hash:commercial.asset_inventory_hash || null,
+      contract_checksum:contract?.checksum || null,
+    }),
+    candidateHash:hashJson(publishPackage || page || {}),
+    editorial_page_hash:commercial.editorial_page_hash || null,
+    final_page_hash:page ? hashJson(page) : null,
+    publish_package_hash:publishPackage ? hashJson(publishPackage) : null,
+    overlay_version:commercial.overlay_version || null,
+    asset_inventory_hash:commercial.asset_inventory_hash || null,
+    asset_ids:commercial.asset_ids || [],
+    slots:(commercial.slots || []).map((slot)=>({slot_key:slot.slot_key,affiliate_asset_id:slot.affiliate_asset_id,
+      component_type:slot.component_type,placement:slot.placement})),
+    contract_snapshot_id:contract?.id || null,
+    contract_checksum:contract?.checksum || null,
+    contract_schema_version:contract?.pageSchema?.version || null,
+    code_revision:String(process.env.ENGINE_IMAGE || process.env.APP_REVISION || "unknown").slice(0,300),
+    failed_at:new Date().toISOString(),
+    job_id:job?.id || null,
+    recovery_run_id:job?.recovery_run_id || null,
+  };
+}
+
+function safeValidationExcerpt(value) {
+  if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+  let text=typeof value === "string" ? value : JSON.stringify(value);
+  text=text.replace(/https?:\/\/[^\s"']+/giu,(url)=>{try{const parsed=new URL(url);return `${parsed.origin}${parsed.pathname}?[redacted]`;}catch{return "[redacted-url]";}})
+    .replace(/(?:Bearer\s+)[A-Za-z0-9._~+/=-]+/giu,"Bearer [redacted]")
+    .replace(/[A-Za-z0-9+/]{160,}={0,2}/gu,"[redacted-binary]");
+  return text.length>500 ? `${text.slice(0,500)}…[truncated]` : text;
+}
+
+function hashJson(value) {
+  return crypto.createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 }
 
 function mergeExtractionClaims(previous = [], retried = []) {

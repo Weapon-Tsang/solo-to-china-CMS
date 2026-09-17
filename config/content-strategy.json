@@ -1,13 +1,25 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "3.5",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.5.md",
+  "current_version": "3.6",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.6.md",
   "status": "active",
   "history": [
     {
+      "version": "3.6",
+      "effective_date": "2026-09-17",
+      "status": "active",
+      "summary": "Evidence-consistent diagnostics, isolated commercial asset revisions, traceable article usage, and resumable visual QA checkpoints.",
+      "changes": [
+        "Final-page validation preserves original validator paths, safe actual values, stable slot/asset identities, contract identity, job attempt and production owner without misclassifying deterministic failures as model failures.",
+        "Every visual provider subcall records its actual provider, model, substage, HTTP result and dispatch evidence; an immutable post-transform candidate resumes quality review without buying the transform twice.",
+        "Affiliate assets use optimistic revisions and content hashes, preserve URL bytes and version history, compute old/new impact without silently starting production, and expose article/slot/delivery usage evidence.",
+        "Operator state distinguishes local not-applicable work, confirmed not-attempted gates, received provider responses, cache reuse and genuinely unknown historical or transport outcomes."
+      ]
+    },
+    {
       "version": "3.5",
       "effective_date": "2026-09-16",
-      "status": "active",
+      "status": "superseded",
       "summary": "Capture-versioned media understanding, verified visual transformation, media-only repair, responsive article navigation, and two-level commercial placement.",
       "changes": [
         "Image-level classification, regions, language, subjects and editor UI are persisted and hydrated through the production SQL decision DTO.",

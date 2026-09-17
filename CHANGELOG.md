@@ -1,6 +1,18 @@
 # Changelog
 
-## 2.0.30 - Unreleased
+## 2.0.32 - Unreleased
+
+- Preserve complete `FINAL_PAGE_INVALID` validator diagnostics and execution attribution from Job failure through API/UI, without describing deterministic work as a missing model call.
+- Record actual image transform/translation/QA provider calls by model, substage, visual/source, HTTP status and dispatch evidence; persist private immutable transform candidates so a transient QA failure resumes QA without regenerating the image.
+- Add revisioned Affiliate Asset PATCH APIs, optimistic concurrency, exact URL preservation, semantic no-op detection, old/new scope impact, article/slot/version usage evidence, and operator UI for editing and tracing assets.
+- Keep asset saves production-isolated by default: matching drafts are marked for explicit commercial refresh without silently invoking models, image generation or WordPress.
+- Add schema migration 72, Content Strategy 3.6 and v1.1 regression/validation coverage. Historical repair remains separately authorized and dry-run first.
+
+## 2.0.31 - 2026-09-16
+
+- Persist capture-versioned image understanding and verified visual transformation, add media-only repair, vertical mobile navigation and two-level commercial placement.
+
+## 2.0.30 - 2026-09-16
 
 - Preserve the existing page identity during bounded presentation refreshes, including deterministic and provider fallback composition paths.
 - Keep WordPress identity fail-closed while allowing a page fingerprint to rotate only when the existing post and exact stable CMS draft identity both match.

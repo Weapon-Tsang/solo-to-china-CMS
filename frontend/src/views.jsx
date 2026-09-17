@@ -766,16 +766,117 @@ function CommercialView({ data, onGuide, onAction, actionBusy }) {
   const queue = data?.queue || [];
   const performance = data?.performance || [];
   const commissionRules = data?.commissionRules || [];
+  const [assetFilter,setAssetFilter]=useState("all");
+  const [selectedAsset,setSelectedAsset]=useState(null);
+  const [assetForm,setAssetForm]=useState(null);
+  const [assetUsage,setAssetUsage]=useState(null);
+  const [assetVersions,setAssetVersions]=useState([]);
+  const [assetLoading,setAssetLoading]=useState(false);
+  const [refreshPlan,setRefreshPlan]=useState(null);
+  const visibleAssets=items.filter((item)=>assetFilter === "all" || (assetFilter === "active" && item.active)
+    || (assetFilter === "inactive" && !item.active) || (assetFilter === "expired" && item.valid_until && Date.parse(item.valid_until)<Date.now()));
+  const openAsset=async(item)=>{
+    setSelectedAsset(item);setAssetForm(assetEditForm(item));setAssetLoading(true);
+    try {
+      const detail=await api(`/api/commercial/assets/${encodeURIComponent(item.id)}`);
+      setSelectedAsset(detail.asset);setAssetForm(assetEditForm(detail.asset));setAssetUsage(detail.usage);setAssetVersions(detail.versions || []);
+    }
+    catch (error) { setAssetUsage({error:error.message,items:[]});setAssetVersions([]); }
+    finally { setAssetLoading(false); }
+  };
+  const saveAsset=async(applyRefresh=false)=>{
+    const result=await onAction(`/api/commercial/assets/${encodeURIComponent(selectedAsset.id)}`,{
+      method:"PATCH",headers:{"content-type":"application/json","if-match":`\"${selectedAsset.revision || 1}\"`},
+      body:JSON.stringify({expectedRevision:selectedAsset.revision || 1,patch:assetForm}),
+    },"资产已保存；匹配文章仅标记为待确认更新");
+    if (result) {
+      setSelectedAsset(result);setAssetForm(assetEditForm(result));
+      const detail=await api(`/api/commercial/assets/${encodeURIComponent(result.id)}`);
+      setAssetUsage(detail.usage);setAssetVersions(detail.versions || []);
+      const draftIds=result.impact?.draft_ids || [];
+      if (applyRefresh && draftIds.length) {
+        const plan=await onAction("/api/delivery-refresh",{method:"POST",headers:{"content-type":"application/json"},
+          body:JSON.stringify({scope:"commercial",draft_ids:draftIds})},"已生成商业更新预览；确认前不会启动任务或写 WordPress");
+        if (plan) setRefreshPlan(plan);
+      } else if (applyRefresh) setRefreshPlan({scope:"commercial",items:[],summary:{eligible:0,blocked:0,conflict:0,diagnose_only:0}});
+    }
+  };
+  const confirmRefresh=async()=>{
+    if (!refreshPlan?.confirmation) { setRefreshPlan(null);return; }
+    const result=await onAction("/api/delivery-refresh",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({
+      scope:"commercial",draft_ids:refreshPlan.items.map((item)=>item.draft_id),confirmation:refreshPlan.confirmation,apply:true,
+    })},"已按确认指纹排入商业限定更新；正文、证据和图片不会重做");
+    if (result) setRefreshPlan(null);
+  };
   return <>
     <SummaryBar title={`${providers.length} 个提供商 · ${items.length} 个资产`}><span>{opportunities.length} 个高价值 联盟营销机会</span><span>{queue.length} 个建链任务</span><span>{performance.length} 组归因指标 · {commissionRules.length} 条可维护佣金规则</span></SummaryBar>
     <SectionTitle title="联盟营销提供商" description="V1 使用人工模式；账号凭证和登录态不进入 CMS" />
     <TableShell><Table><TableHeader><TableRow><TableHead>提供商</TableHead><TableHead>连接方式</TableHead><TableHead>站点 / 语言</TableHead><TableHead>活跃资产</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{providers.map((item) => <TableRow key={item.id}><TableCell><div className="font-medium text-slate-900">{item.display_name}</div><div className="mt-1 text-[10px] text-slate-400">{item.provider_key}</div></TableCell><TableCell>{label(item.connection_mode)}</TableCell><TableCell>{item.site_name || "—"} · {item.default_language || "en"}</TableCell><TableCell className="tabular-nums">{item.active_asset_count || 0}</TableCell><TableCell><StatusPill status={item.status || "configured"} /></TableCell></TableRow>)}</TableBody></Table></TableShell>
     <SectionTitle title="已有联盟资产" description="链接资产按目的地、区域、路线或实体范围复用，不绑定到单篇文章" />
-    <TableShell><Table><TableHeader><TableRow><TableHead>资产</TableHead><TableHead>范围</TableHead><TableHead>展示类型</TableHead><TableHead>商品类别</TableHead><TableHead className="hidden md:table-cell">提供商</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell><div className="font-medium text-slate-900">{item.title || item.id}</div><div className="mt-1 text-[10px] text-slate-400">优先级 {item.priority} · {item.language || "en"}</div></TableCell><TableCell>{label(item.scope_type)}<div className="mt-1 text-[10px] text-slate-400">{item.scope_key || item.destination_slug || "global"}</div></TableCell><TableCell>{label(item.asset_type)}</TableCell><TableCell>{label(item.product_category)}</TableCell><TableCell className="hidden md:table-cell">{item.provider}</TableCell><TableCell><StatusPill status={item.active ? "active" : "inactive"} /><div className="mt-1 text-[10px] text-slate-400">{item.valid_until ? `有效至 ${formatDate(item.valid_until)}` : "未设置截止时间"}</div></TableCell></TableRow>)}</TableBody></Table></TableShell>
+    <div className="mb-3 flex flex-wrap gap-2">{[["all","全部"],["active","启用"],["inactive","停用"],["expired","已过期"]].map(([key,text])=><Button key={key} size="sm" variant={assetFilter===key ? "default" : "outline"} onClick={()=>setAssetFilter(key)}>{text}</Button>)}</div>
+    <TableShell><Table><TableHeader><TableRow><TableHead>资产</TableHead><TableHead>范围</TableHead><TableHead>展示类型</TableHead><TableHead>商品类别</TableHead><TableHead>使用情况</TableHead><TableHead>状态 / 操作</TableHead></TableRow></TableHeader><TableBody>{visibleAssets.map((item) => <TableRow key={item.id}><TableCell><div className="font-medium text-slate-900">{item.title || item.id}</div><div className="mt-1 break-all text-[10px] text-slate-400">v{item.revision || 1} · {item.target_url || "无目标链接"}</div></TableCell><TableCell>{label(item.scope_type)}<div className="mt-1 text-[10px] text-slate-400">{item.scope_key || item.destination_slug || "global"}</div></TableCell><TableCell>{label(item.asset_type)}</TableCell><TableCell>{label(item.product_category)}</TableCell><TableCell><span>{item.adopted_article_count || 0} 篇采用</span><div className="text-[10px] text-slate-400">{item.delivered_article_count || 0} 篇已交付 · {item.slot_count || 0} 个槽位</div></TableCell><TableCell><StatusPill status={item.active ? "active" : "inactive"} /><div className="mt-2 flex flex-wrap gap-1"><Button size="sm" variant="outline" onClick={()=>openAsset(item)}>编辑 / 使用文章</Button>{item.target_url && <Button size="sm" variant="ghost" onClick={()=>navigator.clipboard?.writeText(item.target_url)}>复制链接</Button>}</div></TableCell></TableRow>)}</TableBody></Table></TableShell>
+    {selectedAsset && assetForm && <AffiliateAssetEditor asset={selectedAsset} form={assetForm} setForm={setAssetForm}
+      providers={providers} usage={assetUsage} versions={assetVersions} loading={assetLoading} busy={actionBusy} onSave={saveAsset} refreshPlan={refreshPlan}
+      onConfirmRefresh={confirmRefresh} onCancelRefresh={()=>setRefreshPlan(null)} onClose={()=>setSelectedAsset(null)} />}
     <AffiliateQueue items={queue} onAction={onAction} actionBusy={actionBusy} />
     {opportunities.length > 0 && <><SectionTitle title="高价值机会" description="仅显示超过人工维护门槛的精度缺口" /><TableShell><Table><TableHeader><TableRow><TableHead>范围</TableHead><TableHead>类别</TableHead><TableHead>评分</TableHead><TableHead className="hidden md:table-cell">原因</TableHead></TableRow></TableHeader><TableBody>{opportunities.map((item) => <TableRow key={item.id}><TableCell>{label(item.scope_type)} · {item.scope_key}</TableCell><TableCell>{label(item.product_category)}</TableCell><TableCell>{Math.round(item.score)}</TableCell><TableCell className="hidden md:table-cell">{item.reason}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
     {performance.length > 0 && <><SectionTitle title="联盟事件一致性" description="点击不等于订单或佣金；未接入并确认转化数据时金额显示未知" /><TableShell><Table><TableHeader><TableRow><TableHead>提供商 / 类别</TableHead><TableHead>位置</TableHead><TableHead>曝光次数</TableHead><TableHead>点击 / 点击率</TableHead><TableHead>订单 / 佣金</TableHead></TableRow></TableHeader><TableBody>{performance.map((item) => <TableRow key={`${item.provider}:${item.category}:${item.slot_key}:${item.destination_slug}`}><TableCell>{item.provider} · {label(item.category)}<div className="mt-1 text-[10px] text-slate-400">归因：{label(item.attribution_status)} · 修订 {item.trace?.articleRevisions || 0} · Overlay {item.trace?.overlayVersions || 0} · 资产 {item.trace?.affiliateAssets || 0}</div></TableCell><TableCell>{item.slot_key || "—"}</TableCell><TableCell>{item.impressions}</TableCell><TableCell>{item.clicks} · {Math.round((item.ctr || 0) * 1000) / 10}%</TableCell><TableCell>{item.conversion_data_status === "confirmed" ? `${item.bookings} · ${Number(item.commission).toFixed(2)}` : "未知 · 未接入或未确认"}</TableCell></TableRow>)}</TableBody></Table></TableShell></>}
   </>;
+}
+
+function AffiliateAssetEditor({asset,form,setForm,providers,usage,versions,loading,busy,onSave,onClose,refreshPlan,onConfirmRefresh,onCancelRefresh}) {
+  const field="min-w-0 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-slate-400";
+  const update=(key,value)=>setForm((current)=>({...current,[key]:value}));
+  return <Card className="my-4 overflow-hidden p-4 sm:p-5">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 className="font-semibold text-slate-900">编辑联盟资产 · {asset.title}</h3><p className="mt-1 break-all text-[10px] text-slate-400">{asset.id} · revision {asset.revision || 1} · {asset.content_hash || "legacy hash pending"}</p></div><Button size="sm" variant="ghost" onClick={onClose}>关闭</Button></div>
+    <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <AssetField label="标题"><input className={field} value={form.title} onChange={(e)=>update("title",e.target.value)} /></AssetField>
+      <AssetField label="CTA"><input className={field} value={form.ctaLabel} onChange={(e)=>update("ctaLabel",e.target.value)} /></AssetField>
+      <AssetField label="语言"><input className={field} value={form.language} onChange={(e)=>update("language",e.target.value)} /></AssetField>
+      <AssetField label="联盟 URL" wide><input className={field+" break-all"} type="url" value={form.targetUrl} onChange={(e)=>update("targetUrl",e.target.value)} /></AssetField>
+      <AssetField label="描述" wide><textarea className={field+" min-h-20 resize-y"} value={form.description} onChange={(e)=>update("description",e.target.value)} /></AssetField>
+      <AssetField label="提供商"><select className={field} value={form.providerAccountId} onChange={(e)=>update("providerAccountId",e.target.value)}>{providers.map((provider)=><option key={provider.id} value={provider.id}>{provider.display_name}</option>)}</select></AssetField>
+      <AssetField label="资产类型"><select className={field} value={form.assetType} onChange={(e)=>update("assetType",e.target.value)}>{["DEEP_LINK","CATEGORY_LINK","SEARCH_BOX","STATIC_BANNER","DYNAMIC_BANNER","PROMOTION"].map((v)=><option key={v}>{v}</option>)}</select></AssetField>
+      <AssetField label="商品类别"><select className={field} value={form.productCategory} onChange={(e)=>update("productCategory",e.target.value)}>{["HOTEL","FLIGHT","TRAIN","ATTRACTION","TOUR_ACTIVITY","FLIGHT_HOTEL","CAR_RENTAL","AIRPORT_TRANSFER","PLANNER"].map((v)=><option key={v}>{v}</option>)}</select></AssetField>
+      <AssetField label="范围类型"><select className={field} value={form.scopeType} onChange={(e)=>update("scopeType",e.target.value)}>{["ENTITY","ROUTE","AREA","DESTINATION","COUNTRY","CATEGORY","GLOBAL"].map((v)=><option key={v}>{v}</option>)}</select></AssetField>
+      <AssetField label="范围键"><input className={field} value={form.scopeKey} onChange={(e)=>update("scopeKey",e.target.value)} /></AssetField>
+      <AssetField label="目的地"><input className={field} value={form.destinationSlug} onChange={(e)=>update("destinationSlug",e.target.value)} /></AssetField>
+      <AssetField label="价格文案"><input className={field} value={form.priceText} onChange={(e)=>update("priceText",e.target.value)} /></AssetField>
+      {form.assetType === "STATIC_BANNER" && <><AssetField label="图片 URL" wide><input className={field+" break-all"} type="url" value={form.imageUrl} onChange={(e)=>update("imageUrl",e.target.value)} /></AssetField><AssetField label="图片替代文字" wide><input className={field} value={form.altText} onChange={(e)=>update("altText",e.target.value)} /></AssetField></>}
+      {["SEARCH_BOX","STATIC_BANNER","DYNAMIC_BANNER"].includes(form.assetType) && <AssetField label="嵌入配置 JSON" wide><textarea className={field+" min-h-24 resize-y font-mono"} value={form.embedConfig} onChange={(e)=>update("embedConfig",e.target.value)} placeholder='{"embed_type":"search_box","src":"https://..."}' /></AssetField>}
+      <AssetField label="优先级"><input className={field} type="number" min="-100" max="100" value={form.priority} onChange={(e)=>update("priority",Number(e.target.value))} /></AssetField>
+      <AssetField label="生效时间"><input className={field} type="datetime-local" value={form.validFrom} onChange={(e)=>update("validFrom",e.target.value || null)} /></AssetField>
+      <AssetField label="失效时间"><input className={field} type="datetime-local" value={form.validUntil} onChange={(e)=>update("validUntil",e.target.value || null)} /></AssetField>
+      <AssetField label="启用"><label className="flex h-9 items-center gap-2 text-xs"><input type="checkbox" checked={form.active} onChange={(e)=>update("active",e.target.checked)} />该资产可参与选择</label></AssetField>
+    </div>
+    <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4"><Button size="sm" disabled={busy} onClick={()=>onSave(false)}>仅保存并查看影响</Button><Button size="sm" variant="secondary" disabled={busy} onClick={()=>onSave(true)}>保存并预览匹配更新</Button><span className="self-center text-[10px] text-slate-500">仅保存不会调用模型、不会写 WordPress；预览会检查范围、远端身份和外部编辑。</span></div>
+    <ConfirmAction open={Boolean(refreshPlan)} onOpenChange={(open)=>!open&&onCancelRefresh()} busy={busy}
+      onConfirm={onConfirmRefresh} confirmLabel={refreshPlan?.confirmation ? "确认商业限定更新" : "关闭"}
+      title="确认匹配文章的商业更新？"
+      description={refreshPlan?.confirmation
+        ? `影响 ${refreshPlan.items.length} 篇：${refreshPlan.summary?.eligible || 0} 篇可更新，${refreshPlan.summary?.blocked || 0} 篇阻塞，${refreshPlan.summary?.conflict || 0} 篇有外部冲突。只执行商业组合、最终页面校验和明确授权的 WordPress 草稿更新；不重写正文、不重生图片。`
+        : "当前没有采用该资产的文章，因此没有需要执行的商业更新。"} />
+    <div className="mt-5 border-t border-slate-100 pt-4"><h4 className="text-xs font-semibold text-slate-900">使用文章与交付证据</h4>{loading ? <p className="mt-2 text-xs text-slate-500">正在读取使用清单…</p> : usage?.error ? <p className="mt-2 text-xs text-red-600">{friendlyError(usage.error)}</p> : <>
+      <p className="mt-1 text-[11px] text-slate-500">{usage?.summary?.adopted_articles || 0} 篇采用 · {usage?.summary?.delivered_articles || 0} 篇已交付 · {usage?.summary?.slot_count || 0} 个槽位。缺少远端 DOM 证据时保持 unknown。</p>
+      <div className="mt-3 grid gap-2">{(usage?.items || []).map((item)=><div key={`${item.draft_id}:${item.slot_key}`} className="min-w-0 rounded-lg border border-slate-100 p-3 text-[11px]"><div className="flex flex-wrap justify-between gap-2"><strong className="break-words text-slate-800">{item.title || item.draft_id}</strong><StatusPill status={item.wordpress_stored ? "delivered" : item.publish_package ? "ready" : "pending"} /></div><p className="mt-1 break-all text-slate-500">draft {item.draft_id} · revision {item.draft_revision} · overlay {item.overlay_version || "—"}</p><p className="mt-1">{item.slot_key} · {label(item.component_type)} · {label(item.placement)} · asset v{item.asset_revision}</p><p className="mt-1 text-slate-500">选择：是 · 合法页面：{item.legal_page ? "是" : "否/未知"} · 发布包：{item.publish_package ? "是" : "否/未知"} · WordPress 存储：{item.wordpress_stored ? "已确认" : "未确认"} · DOM：{item.dom_verification_status}</p></div>)}{!(usage?.items || []).length && <p className="rounded-lg bg-slate-50 p-3 text-[11px] text-slate-500">尚无文章采用该资产。该结论与曝光、点击埋点无关。</p>}</div>
+    </>}</div>
+    <div className="mt-5 border-t border-slate-100 pt-4"><h4 className="text-xs font-semibold text-slate-900">资产版本历史</h4><div className="mt-2 grid gap-2">{(versions || []).map((version)=><div key={version.id} className="min-w-0 rounded-lg bg-slate-50 p-3 text-[11px]"><strong>v{version.revision}</strong><span className="ml-2 text-slate-500">{formatDate(version.created_at)} · {version.actor || "unknown"}</span><p className="mt-1 break-all text-slate-500">{version.content_hash}</p></div>)}{!(versions || []).length && <p className="text-[11px] text-slate-500">尚无历史版本；首次编辑时会保留初始快照。</p>}</div></div>
+  </Card>;
+}
+
+function AssetField({label:fieldLabel,wide=false,children}) {
+  return <label className={cn("min-w-0 space-y-1",wide && "sm:col-span-2 lg:col-span-3")}><span className="block text-[11px] font-medium text-slate-600">{fieldLabel}</span>{children}</label>;
+}
+
+function assetEditForm(asset) {
+  const local=(value)=>value ? String(value).slice(0,16) : "";
+  return {title:asset.title || "",description:asset.description || "",ctaLabel:asset.cta_label || "View option",
+    targetUrl:asset.target_url || "",providerAccountId:asset.provider_account_id || "",assetType:asset.asset_type,productCategory:asset.product_category,
+    scopeType:asset.scope_type,scopeKey:asset.scope_key || "",destinationSlug:asset.destination_slug || "",
+    imageUrl:asset.image_url || "",altText:asset.alt_text || "",priceText:asset.price_text || "",
+    embedConfig:JSON.stringify(asset.embed_config || {},null,2),
+    language:asset.language || "en",priority:Number(asset.priority || 0),active:Boolean(asset.active),
+    validFrom:local(asset.valid_from),validUntil:local(asset.valid_until)};
 }
 
 function AffiliateQueue({ items, onAction, actionBusy }) {

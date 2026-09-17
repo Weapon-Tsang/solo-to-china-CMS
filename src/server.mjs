@@ -72,7 +72,14 @@ export function createApplication(config = loadConfig()) {
     beforeRequest: aiRequestGate,
     onModelCall: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)) };
   const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
-  const activeVisuals = { ...config.visuals, ...selectedVisual, beforeRequest: createRequestGate(config.extraction.requestSpacingMs) };
+  const activeVisuals = { ...config.visuals, ...selectedVisual,
+    beforeRequest: createRequestGate(config.extraction.requestSpacingMs),
+    onModelCallStart: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)),
+    onModelCall: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)),
+    findVisualCandidate: (query) => repository.findReusableVisualCandidate(query),
+    saveVisualCandidate: (candidate) => repository.saveVisualCandidate(candidate),
+    updateVisualCandidate: (candidateId,update) => repository.updateVisualCandidate(candidateId,update),
+  };
   const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
   const manualSources = new ManualSourceIngestor(config.manualSources);
   const chunkedUploads = new ChunkedUploadManager(config.manualSources);
@@ -902,7 +909,8 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname === "/api/commercial") {
         return sendJson(response, 200, {
-          providers: repository.listAffiliateProviderAccounts().filter((item) => item.status==='CONFIGURED'), items: repository.listAffiliateAssets({activeOnly:true}),
+          providers: repository.listAffiliateProviderAccounts().filter((item) => item.status==='CONFIGURED'),
+          items: repository.listAffiliateAssets().filter((item)=>item.lifecycle_state==='operational'),
           mappings: repository.listAffiliateAssetMappings({activeOnly:true}), opportunities: repository.listAffiliateOpportunities().filter((item) => Number(item.score)>=0.75),
           queue: repository.listAffiliateQueueTasks({status:'ACTIVE'}), performance: repository.commercialPerformance(), commissionRules: repository.listCommissionRules(),
         });
@@ -990,7 +998,43 @@ export function createApplication(config = loadConfig()) {
         if (!provider) return sendJson(response, 400, { error: "Affiliate provider account does not exist." });
         return sendJson(response, 200, repository.upsertAffiliateAsset(normalizeAffiliateAsset(payload, {
           id: provider.id, displayName: provider.display_name,
-        })));
+        }),{actor:"admin",queueRefresh:false}));
+      }
+      const commercialAssetUsageMatch=url.pathname.match(/^\/api\/commercial\/assets\/([^/]+)\/usage$/);
+      if (request.method === "GET" && commercialAssetUsageMatch) {
+        const result=repository.affiliateAssetUsage(decodeURIComponent(commercialAssetUsageMatch[1]),{
+          limit:limit(url.searchParams.get("limit")),offset:Number(url.searchParams.get("offset") || 0),
+        });
+        return result ? sendJson(response,200,result) : sendJson(response,404,{error:"Affiliate asset not found."});
+      }
+      const commercialAssetVersionsMatch=url.pathname.match(/^\/api\/commercial\/assets\/([^/]+)\/versions$/);
+      if (request.method === "GET" && commercialAssetVersionsMatch) {
+        const assetId=decodeURIComponent(commercialAssetVersionsMatch[1]);
+        if (!repository.getAffiliateAsset(assetId)) return sendJson(response,404,{error:"Affiliate asset not found."});
+        return sendJson(response,200,{items:repository.listAffiliateAssetVersions(assetId)});
+      }
+      const commercialAssetMatch=url.pathname.match(/^\/api\/commercial\/assets\/([^/]+)$/);
+      if (request.method === "GET" && commercialAssetMatch) {
+        const assetId=decodeURIComponent(commercialAssetMatch[1]);
+        const asset=repository.getAffiliateAsset(assetId);
+        if (!asset) return sendJson(response,404,{error:"Affiliate asset not found."});
+        response.setHeader("etag",`\"${asset.revision || 1}\"`);
+        return sendJson(response,200,{asset,usage:repository.affiliateAssetUsage(assetId,{limit:20,offset:0}),
+          versions:repository.listAffiliateAssetVersions(assetId).slice(0,20)});
+      }
+      if (request.method === "PATCH" && commercialAssetMatch) {
+        authorizeAdmin(request,config.adminToken,auth);
+        const assetId=decodeURIComponent(commercialAssetMatch[1]);
+        const payload=await readJson(request,200_000);
+        const headerRevision=String(request.headers["if-match"] || "").replaceAll('"',"");
+        const expectedRevision=payload.expectedRevision ?? payload.expected_revision ?? (headerRevision ? Number(headerRevision) : null);
+        const {expectedRevision:_expectedRevision,expected_revision:_expectedRevisionSnake,applyRefresh:_applyRefresh,
+          apply_refresh:_applyRefreshSnake,patch:patchPayload,...directPatch}=payload;
+        const result=repository.updateAffiliateAsset(assetId,patchPayload || directPatch,{expectedRevision,actor:"admin",
+          queueRefresh:false});
+        if (!result) return sendJson(response,404,{error:"Affiliate asset not found."});
+        response.setHeader("etag",`\"${result.revision}\"`);
+        return sendJson(response,200,result);
       }
       if (request.method === "GET" && url.pathname === "/api/commercial/mappings") {
         return sendJson(response, 200, { items: repository.listAffiliateAssetMappings() });

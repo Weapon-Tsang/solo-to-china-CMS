@@ -251,6 +251,99 @@ test("production runtime installs the font used by deterministic editorial cards
     "the slim production image must include DejaVu Sans instead of rendering card text as tofu squares");
 });
 
+test("a persisted transform candidate resumes only quality QA after a transient reviewer failure",async(t)=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"solo-visual-candidate-v11-"));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const sourcePath=path.join(directory,"source.png");
+  const sourceBytes=await pngBytes(1200,800,"source");
+  const localizedBytes=await pngBytes(1200,800,"localized");
+  fs.writeFileSync(sourcePath,sourceBytes);
+  let candidate=null,transformCalls=0,qaCalls=0;
+  const ledger=[];const states=[];
+  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    model:"gemini-image-model-a",qualityModel:"gemini-qa-model-b",accessToken:"token",mediaDir:directory,
+    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,onModelCall:(entry)=>ledger.push(entry),
+    findVisualCandidate:()=>candidate,
+    saveVisualCandidate:(entry)=>{candidate={id:"candidate-1",media_path:entry.mediaPath,mime_type:entry.mimeType,
+      output_hash:entry.outputHash,provider:entry.provider,model:entry.model,created_at:"now"};return candidate;},
+    updateVisualCandidate:(id,update)=>{states.push(update.status);candidate={...candidate,status:update.status};return candidate;},
+  },async(url,options)=>{
+    const body=JSON.parse(options.body);
+    if(body.generationConfig.responseModalities.includes("IMAGE")){
+      transformCalls+=1;
+      return Response.json({candidates:[{content:{parts:[{inlineData:{data:localizedBytes.toString("base64"),mimeType:"image/png"}}]}}]});
+    }
+    qaCalls+=1;
+    if(qaCalls===1)return Response.json({error:{code:429,status:"RESOURCE_EXHAUSTED",message:"Shared capacity unavailable."}},
+      {status:429,headers:{"retry-after":"1"}});
+    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(passedQa())}]}}]});
+  });
+  const visual={id:"visual-v11",slot:1,image_type:"real_world_photo",acquisition_strategy:"localize_source_image",
+    factual_image_required:true,source_asset_id:"asset-v11",source_asset_local_path:sourcePath,
+    source_asset_mime_type:"image/png",image_role:"hero",aspect_ratio:"3:2",generation_prompt:"",asset_fingerprint:"fp-v11"};
+  const options={expectedFingerprint:"fp-v11",telemetryContext:{runId:"job-v11",jobAttempt:1,recoveryRunId:"recovery-v11"}};
+  await assert.rejects(client.localizeSourceImage(visual,{id:"draft-v11"},options),(error)=>error.status===429
+    && error.details.candidateHash===candidate.output_hash && error.details.generationCheckpoint==="persisted_pending_qa");
+  assert.deepEqual(states,["pending_qa"]);
+  const result=await client.localizeSourceImage(visual,{id:"draft-v11"},options);
+  assert.equal(transformCalls,1,"the successful transform must not be purchased twice");
+  assert.equal(qaCalls,2);
+  assert.equal(result.candidateHash,candidate.output_hash);
+  assert.deepEqual(states,["pending_qa","promoted"]);
+  assert.deepEqual(ledger.map((entry)=>[entry.substage,entry.model,entry.httpStatus]),[
+    ["localize_source_image","gemini-image-model-a",200],
+    ["visual_quality_qa","gemini-qa-model-b",429],
+    ["visual_quality_qa","gemini-qa-model-b",200],
+  ]);
+});
+
+test("visual call evidence distinguishes local rejection, provider responses, and unknown transport outcomes",async()=>{
+  const visual={id:"visual-evidence",slot:1,image_type:"illustration",acquisition_strategy:"generate_illustration",
+    factual_image_required:false,image_role:"hero",aspect_ratio:"16:9",generation_prompt:"Quiet scene"};
+  let networkCalls=0;const gated=[];
+  const gateClient=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    model:"image-model",accessToken:"token",publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
+    beforeRequest:()=>{throw Object.assign(new Error("local budget gate"),{code:"LOCAL_GATE"});},onModelCall:(entry)=>gated.push(entry)},
+  async()=>{networkCalls+=1;return Response.json({});});
+  await assert.rejects(gateClient.generate(visual,{id:"draft"}),/local budget gate/);
+  assert.equal(networkCalls,0);
+  assert.equal(gated[0].dispatchState,"not_attempted");
+
+  for(const status of [400,403,429,503]){
+    const ledger=[];
+    const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+      model:"image-model",accessToken:"token",publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
+      onModelCall:(entry)=>ledger.push(entry)},async()=>Response.json({error:{code:status,message:`status ${status}`}},
+        {status,headers:{"x-request-id":`request-${status}`}}));
+    await assert.rejects(client.generate(visual,{id:"draft"}),(error)=>error.status===status);
+    assert.equal(ledger[0].httpStatus,status);
+    assert.equal(ledger[0].dispatchState,"response_received");
+    assert.equal(ledger[0].providerRequestId,`request-${status}`);
+  }
+
+  const unknown=[];
+  const transportClient=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    model:"image-model",accessToken:"token",publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
+    onModelCall:(entry)=>unknown.push(entry)},async()=>{throw new TypeError("socket closed");});
+  await assert.rejects(transportClient.generate(visual,{id:"draft"}),/socket closed/);
+  assert.equal(unknown[0].dispatchState,"dispatch_started");
+  assert.equal(unknown[0].httpStatus,null);
+  assert.equal(unknown[0].evidenceBasis,"dispatch_started_outcome_unknown");
+});
+
+test("a transform error never creates a fake resumable candidate",async()=>{
+  let saved=0;const ledger=[];
+  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    model:"image-model",accessToken:"token",publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
+    saveVisualCandidate:()=>{saved+=1;},onModelCall:(entry)=>ledger.push(entry)},async()=>Response.json({error:{message:"busy"}},{status:429}));
+  await assert.rejects(client.generate({id:"visual-transform-429",slot:1,image_type:"illustration",
+    acquisition_strategy:"generate_illustration",factual_image_required:false,image_role:"hero",aspect_ratio:"16:9",
+    generation_prompt:"Quiet scene"},{id:"draft"}),(error)=>error.status===429);
+  assert.equal(saved,0);
+  assert.equal(ledger[0].substage,"generate_visual");
+  assert.equal(ledger[0].httpStatus,429);
+});
+
 function passedQa(){return {language:{status:"passed",reason:"English overlays are readable."},
   completeness:{status:"passed",reason:"All source facts are present."},style:{status:"passed",reason:"Style matches the requested path."},
   semantic:{status:"passed",reason:"Source meaning and imagery are unchanged."},notes:""};}

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 71;
+export const SCHEMA_VERSION = 72;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -92,6 +92,98 @@ function migrate(db) {
   if (current < 69) migrationSixtyNine(db);
   if (current < 70) migrationSeventy(db);
   if (current < 71) migrationSeventyOne(db);
+  if (current < 72) migrationSeventyTwo(db);
+}
+
+function migrationSeventyTwo(db) {
+  // Repair v1.1 keeps deterministic validation evidence, provider-call
+  // attribution and post-transform visual checkpoints durable across retries.
+  // Existing rows intentionally remain legacy_unknown instead of being
+  // rewritten into a certainty the old telemetry cannot support.
+  transaction(db, () => db.exec(`
+    ALTER TABLE jobs ADD COLUMN failure_details_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE jobs ADD COLUMN failure_execution_kind TEXT NOT NULL DEFAULT 'legacy_unknown'
+      CHECK (failure_execution_kind IN ('deterministic','provider','mixed','legacy_unknown'));
+
+    CREATE TABLE production_failure_diagnostics (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      job_attempt INTEGER NOT NULL,
+      stage TEXT NOT NULL,
+      error_code TEXT NOT NULL,
+      execution_kind TEXT NOT NULL
+        CHECK (execution_kind IN ('deterministic','provider','mixed','legacy_unknown')),
+      draft_revision INTEGER,
+      input_hash TEXT NOT NULL DEFAULT '',
+      candidate_hash TEXT NOT NULL DEFAULT '',
+      details_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      UNIQUE(job_id,job_attempt,error_code)
+    );
+    CREATE INDEX idx_failure_diagnostics_job
+      ON production_failure_diagnostics(job_id,created_at DESC);
+
+    ALTER TABLE model_call_metrics ADD COLUMN visual_id TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN source_asset_id TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN substage TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN http_status INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN provider_code TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN provider_request_id TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN dispatch_state TEXT NOT NULL DEFAULT 'legacy_unknown'
+      CHECK (dispatch_state IN ('not_attempted','dispatch_started','response_received','completed','cache_hit','legacy_unknown'));
+    ALTER TABLE model_call_metrics ADD COLUMN evidence_basis TEXT NOT NULL DEFAULT '';
+    ALTER TABLE model_call_metrics ADD COLUMN endpoint_id TEXT NOT NULL DEFAULT '';
+    CREATE INDEX idx_model_call_visual_substage
+      ON model_call_metrics(run_id,visual_id,substage,created_at);
+
+    CREATE TABLE visual_candidates (
+      id TEXT PRIMARY KEY,
+      visual_id TEXT NOT NULL REFERENCES article_visuals(id) ON DELETE CASCADE,
+      draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+      job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+      job_attempt INTEGER NOT NULL DEFAULT 0,
+      recovery_run_id TEXT,
+      source_asset_id TEXT,
+      source_hash TEXT NOT NULL DEFAULT '',
+      transform_input_hash TEXT NOT NULL,
+      output_hash TEXT NOT NULL,
+      media_path TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending_qa'
+        CHECK (status IN ('pending_qa','qa_failed','promoted','invalidated','missing')),
+      qa_json TEXT NOT NULL DEFAULT '{}',
+      last_error_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      promoted_at TEXT,
+      UNIQUE(visual_id,transform_input_hash,output_hash)
+    );
+    CREATE INDEX idx_visual_candidates_resume
+      ON visual_candidates(visual_id,status,updated_at DESC);
+
+    ALTER TABLE affiliate_assets ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE affiliate_assets ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_slots ADD COLUMN affiliate_asset_revision INTEGER;
+    ALTER TABLE commercial_slots ADD COLUMN affiliate_asset_content_hash TEXT NOT NULL DEFAULT '';
+    CREATE TABLE affiliate_asset_versions (
+      id TEXT PRIMARY KEY,
+      affiliate_asset_id TEXT NOT NULL REFERENCES affiliate_assets(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL,
+      content_hash TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      actor TEXT NOT NULL DEFAULT 'system',
+      created_at TEXT NOT NULL,
+      UNIQUE(affiliate_asset_id,revision),
+      UNIQUE(affiliate_asset_id,content_hash)
+    );
+    CREATE INDEX idx_affiliate_asset_versions_asset
+      ON affiliate_asset_versions(affiliate_asset_id,revision DESC);
+
+    INSERT INTO schema_migrations(version, applied_at) VALUES (72, datetime('now'));
+  `));
 }
 
 function migrationSeventyOne(db) {

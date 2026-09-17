@@ -149,7 +149,7 @@ test("completing a task creates a linked Affiliate Asset from task metadata", (t
   assert.equal(result.asset.scope_key, "beijing");
 });
 
-test("completing a qualifying task marks matching historical drafts stale and queues automatic insertion", (t) => {
+test("completing a qualifying task marks matching historical drafts stale without silently starting production", (t) => {
   const repository = fixture(t); const db = repository.db;
   db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at)
     VALUES ('brief-affiliate-refresh','beijing','Forbidden City tickets','[]','transactional','ready','now','now')`).run();
@@ -182,9 +182,8 @@ test("completing a qualifying task marks matching historical drafts stale and qu
   const commercial = db.prepare("SELECT refresh_required,refresh_reason FROM commercial_compositions WHERE draft_id=?").get("draft-affiliate-refresh");
   assert.equal(commercial.refresh_required, 1);
   assert.equal(commercial.refresh_reason, "affiliate_asset_inventory_changed");
-  const queued = db.prepare("SELECT type,status FROM jobs WHERE entity_id=? AND type=?").get("draft-affiliate-refresh", "compose_commercial");
-  assert.equal(queued.type, "compose_commercial");
-  assert.equal(queued.status, "queued");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE entity_id=? AND type=?")
+    .get("draft-affiliate-refresh", "compose_commercial").count, 0);
   const unrelated = db.prepare("SELECT refresh_required FROM commercial_compositions WHERE draft_id=?").get("draft-affiliate-unrelated");
   assert.equal(unrelated.refresh_required, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE entity_id=? AND type=?").get("draft-affiliate-unrelated", "compose_commercial").count, 0);

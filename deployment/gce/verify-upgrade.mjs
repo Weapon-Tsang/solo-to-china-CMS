@@ -55,7 +55,7 @@ if (mode === 'backup') {
   write('restore-drill.json', drillSummary);
   console.log(JSON.stringify(drillSummary));
 } else if (mode === 'rehearse' || mode === 'migrate') {
-  const { openDatabase } = await import(pathToFileURL(path.join(app, 'src/db.mjs')).href);
+  const { openDatabase, SCHEMA_VERSION } = await import(pathToFileURL(path.join(app, 'src/db.mjs')).href);
   const baseline = JSON.parse(fs.readFileSync(`${work}/baseline.json`, 'utf8'));
   const backup = JSON.parse(fs.readFileSync(`${work}/backup.json`, 'utf8'));
   const target = mode === 'rehearse' ? `${work}/rehearsal.sqlite` : `${root}/solo-to-china.sqlite`;
@@ -66,7 +66,7 @@ if (mode === 'backup') {
   const actual = fingerprint(db);
   assert.deepEqual(actual, baseline, 'Migration changed existing content, IDs or row counts');
   const schema = db.prepare('SELECT MAX(version) AS n FROM schema_migrations').get().n;
-  assert.equal(schema, 71);
+  assert.equal(schema, SCHEMA_VERSION);
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   db.close();
   const result = { stage: mode, schema, integrity: 'ok', foreignKeyErrors: 0,

@@ -81,7 +81,9 @@ export function buildProductionState(db, row, options = {}) {
     .filter((artifact)=>currentJobs.some((job)=>job.type===artifact.stage && job.entity_id===artifact.entity_id)) : [];
   const allJobIds=jobs.map((item)=>item.id);
   const allModelCalls = allJobIds.length ? db.prepare(`SELECT id,stage,entity_id,run_id,model,provider,request_kind,cache_hit,status,
-    attempt_number,error_code,input_tokens,output_tokens,request_started_at,request_completed_at,created_at
+    attempt_number,error_code,input_tokens,output_tokens,request_started_at,request_completed_at,created_at,
+    visual_id,source_asset_id,substage,http_status,provider_code,provider_request_id,dispatch_state,evidence_basis,endpoint_id,
+    retry_after_ms,provider_usage_json
     FROM model_call_metrics WHERE run_id IN (${placeholders(allJobIds)}) ORDER BY created_at,id`).all(...allJobIds) : [];
   const currentJobIds=new Set(jobIds);
   const modelCalls=allModelCalls.filter((item)=>currentJobIds.has(item.run_id));
@@ -238,9 +240,9 @@ export function buildProductionState(db, row, options = {}) {
     currentStage = active.type;
     currentStageLabel = productionStageLabel(active.type);
     const providerCooling = active.status === "queued" && retryState?.remaining_auto_attempts > 0;
-    headline = providerCooling ? `${currentStageLabel} · 等待模型配额恢复` : productionStageActivityLabel(active.type, active.status);
+    headline = providerCooling ? `${currentStageLabel} · 等待供应商服务恢复` : productionStageActivityLabel(active.type, active.status);
     explanation = providerCooling
-      ? `Vertex 返回限流或配额不足，任务正在退避；系统还会自动尝试 ${retryState.remaining_auto_attempts} 次，不会重跑已完成步骤。`
+      ? `供应商请求暂时不可用，任务正在退避；系统还会自动尝试 ${retryState.remaining_auto_attempts} 次，不会重跑已完成步骤。仅凭这一状态不能判断为余额或配额耗尽。`
       : active.status === "running" ? "系统正在执行当前步骤，完成后会按流水线依赖自动继续。" : "任务已进入 durable queue，将自动继续。";
     autoContinue = true;
   } else if (dependencyBrokenFailure && firstPending) {
@@ -524,6 +526,8 @@ function inferredPersistedFailure(row) {
     last_error: row.brief_last_error || "写作准备记录处于 exception，但没有关联的失败 Job；请从该阶段恢复。",
     last_failure_code: "BRIEF_EXCEPTION_WITHOUT_JOB",
     failure_class: "permanent_input",
+    failure_execution_kind: "legacy_unknown",
+    failure_details_json: JSON.stringify({ evidence_basis:"persisted_state_without_job" }),
     updated_at: row.brief_updated_at,
   };
   if (row.qa_passed != null && !Boolean(row.qa_passed)) {
@@ -536,6 +540,12 @@ function inferredPersistedFailure(row) {
       last_error: issue?.message || issue?.reason || "当前版本的质量审核未通过；审核结果和原始草稿均已保留。",
       last_failure_code: issue?.code || "QUALITY_REVIEW_FAILED",
       failure_class: "permanent_input",
+      failure_execution_kind: "legacy_unknown",
+      failure_details_json: JSON.stringify({
+        evidence_basis:"quality_review_without_linked_job",
+        issue:{ code:issue?.code || null,claim_key:issue?.claim_key || null,expected:issue?.expected ?? null,
+          origin:issue?.origin || null,content_node_ids:issue?.content_node_ids || [] },
+      }),
       updated_at: row.draft_updated_at,
     };
   }
@@ -544,6 +554,8 @@ function inferredPersistedFailure(row) {
     last_error: "草稿生产状态显示失败，但没有关联的失败 Job；原始状态已保留。",
     last_failure_code: "DRAFT_EXCEPTION_WITHOUT_JOB",
     failure_class: "permanent_input",
+    failure_execution_kind: "legacy_unknown",
+    failure_details_json: JSON.stringify({ evidence_basis:"persisted_state_without_job" }),
     updated_at: row.draft_updated_at,
   };
   return null;
@@ -604,12 +616,26 @@ function normalizeHeadingIdentity(value) {
 
 function failureAttribution(failed, modelCalls, { explanation = null, blocksCurrentFlow = true } = {}) {
   const explained = explanation || explainOperationalFailure(failed);
-  const failedCall = [...modelCalls].reverse().find((item) => item.run_id === failed.id) || null;
-  const providerRequestSent = Boolean(failedCall && failedCall.request_kind !== "cache_hit");
+  const relatedCalls=modelCalls.filter((item)=>item.run_id === failed.id);
+  const failedCall = [...relatedCalls].reverse().find((item)=>item.status === "failed")
+    || [...relatedCalls].reverse()[0] || null;
+  const details=parse(failed.failure_details_json,{});
+  const executionKind=failed.failure_execution_kind || details.execution_kind
+    || (failed.id ? "legacy_unknown" : "legacy_unknown");
+  const dispatchState=failedCall?.dispatch_state || (failedCall?.request_kind === "cache_hit" ? "cache_hit" : "legacy_unknown");
+  const requestState=executionKind === "deterministic" ? "not_applicable"
+    : dispatchState === "not_attempted" ? "not_attempted"
+      : dispatchState === "cache_hit" ? "cache_hit"
+        : ["response_received","completed"].includes(dispatchState) ? "sent"
+          : dispatchState === "dispatch_started" ? "unknown"
+            : failedCall && failedCall.request_kind !== "cache_hit" ? "sent" : "unknown";
+  const providerRequestSent=requestState === "sent" ? true : requestState === "not_attempted" ? false : null;
   const hasUsage = failedCall?.input_tokens != null || failedCall?.output_tokens != null;
-  const modelExecution = !providerRequestSent ? "not_requested"
-    : failedCall.status === "succeeded" || hasUsage ? "confirmed"
-      : ["SCHEMA_MODE_UNSUPPORTED", "400", "INVALID_ARGUMENT"].includes(String(failedCall.error_code || "").toUpperCase())
+  const modelExecution = requestState === "not_applicable" ? "not_applicable"
+    : requestState === "cache_hit" ? "cache_hit"
+      : requestState === "not_attempted" ? "not_requested"
+    : failedCall?.status === "succeeded" || hasUsage ? "confirmed"
+      : ["SCHEMA_MODE_UNSUPPORTED", "400", "INVALID_ARGUMENT"].includes(String(failedCall?.error_code || "").toUpperCase())
         ? "rejected_before_generation" : "unknown";
   return {
     code: failed.last_failure_code || failed.failure_class || "PRODUCTION_FAILED",
@@ -623,9 +649,21 @@ function failureAttribution(failed, modelCalls, { explanation = null, blocksCurr
     failure_class: failed.failure_class || null,
     provider: failedCall?.provider || null,
     model: failedCall?.model || null,
+    substage: failedCall?.substage || failedCall?.stage || null,
+    visual_id: failedCall?.visual_id || null,
+    source_asset_id: failedCall?.source_asset_id || null,
+    execution_kind: executionKind,
+    provider_request_state: requestState,
     provider_request_sent: providerRequestSent,
     model_execution: modelExecution,
     model_called: modelExecution === "confirmed",
+    http_status: failedCall?.http_status ?? details.http_status ?? null,
+    provider_code: failedCall?.provider_code || details.provider_code || null,
+    provider_request_id: failedCall?.provider_request_id || null,
+    dispatch_state: dispatchState,
+    evidence_basis: failedCall?.evidence_basis || details.evidence_basis || (executionKind === "deterministic" ? "stage_contract" : "telemetry_missing"),
+    model_call_count: relatedCalls.filter((item)=>item.request_kind !== "cache_hit").length,
+    technical_details: details,
     blocks_current_flow: blocksCurrentFlow,
   };
 }
