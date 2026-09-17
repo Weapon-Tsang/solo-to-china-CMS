@@ -245,6 +245,39 @@ test("text-only editorial cards use structured translation and deterministic unc
   assert.equal(output.metadata.quality_qa.completeness.status,"passed");
 });
 
+test("photo-omission QA overrides a stale empty photo-region analysis on editorial-card retry",async(t)=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"solo-photo-card-retry-test-"));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const sourcePath=path.join(directory,"authorized-comparison-card.png");
+  const sourceBytes=await pngBytes(900,1200,"four-photo-comparison-card");
+  const localizedBytes=await pngBytes(900,1200,"localized-four-photo-comparison-card");
+  fs.writeFileSync(sourcePath,sourceBytes);
+  const requests=[];
+  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    model:"gemini-3.1-flash-image",qualityModel:"gemini-3.8-flash",accessToken:"token",mediaDir:directory,
+    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000},async(url,options)=>{
+      requests.push({url:String(url),options});
+      if(requests.length===1)return Response.json({candidates:[{content:{parts:[{inlineData:{data:localizedBytes.toString("base64"),mimeType:"image/png"}}]}}]});
+      return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(passedQa())}]}}]});
+    });
+  const output=await client.localizeSourceImage({id:"visual-photo-card-retry",slot:2,image_type:"infographic",
+    acquisition_strategy:"recompose_editorial_card",factual_image_required:true,source_asset_id:"asset-photo-card",
+    source_asset_local_path:sourcePath,source_asset_mime_type:"image/png",image_role:"support",aspect_ratio:"3:4",
+    media_metadata_json:JSON.stringify({source_analysis:{asset_kind:"editorial_infographic",photo_regions:[],text_regions:[
+      {region_id:"title",text:"首次去重庆",role:"editorial_text",readable:true,preserve:false},
+    ]},visual_decision:{translateRegionIds:["title"]},quality_qa:{
+      completeness:{status:"failed",reason:"All four documentary photos from the source were omitted."},
+      style:{status:"failed",reason:"The documentary imagery was stripped from the comparison card."},
+    }})},
+  {id:"draft-photo-card-retry"});
+  assert.equal(requests.length,2);
+  const transformBody=JSON.parse(requests[0].options.body);
+  assert.deepEqual(transformBody.generationConfig.responseModalities,["TEXT","IMAGE"]);
+  assert.match(transformBody.contents.parts[0].text,/All four documentary photos from the source were omitted/i);
+  assert.match(transformBody.contents.parts[0].text,/Preserve every .* photograph/i);
+  assert.equal(output.provider,"vertex_gemini");
+});
+
 test("production runtime installs the font used by deterministic editorial cards",()=>{
   const dockerfile=fs.readFileSync(path.resolve("Dockerfile"),"utf8");
   assert.match(dockerfile,/apt-get install[^\n]*fonts-dejavu-core/,

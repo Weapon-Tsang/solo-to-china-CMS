@@ -457,6 +457,8 @@ function shouldRenderEditorialTextCard(visual,metadata={}) {
   return visual.acquisition_strategy === "recompose_editorial_card"
     && ["handwritten_card","editorial_infographic","text_card"].includes(String(analysis.asset_kind || ""))
     && Array.isArray(analysis.photo_regions) && analysis.photo_regions.length === 0
+    && !visualRetryFeedback(metadata).some(({reason})=>/\b(?:photo(?:graph)?s?|documentary imagery|image regions?)\b/i.test(reason)
+      && /\b(?:omit(?:ted)?|missing|preserv(?:e|ed|ation)?|lost|strip(?:ped)?|flatten(?:ed)?)\b/i.test(reason))
     && editorialTranslationRegions(metadata).length > 0;
 }
 
