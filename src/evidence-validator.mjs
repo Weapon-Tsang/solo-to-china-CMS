@@ -223,8 +223,9 @@ function protectedQuantities(value, fact, kind) {
   // Historical knowledge can store an always-open schedule as the bare value
   // `24`. Preserve its opening-hours meaning instead of comparing it as an
   // unrelated cardinal number (for example, a 24-storey building).
+  const semanticText = text.normalize("NFKC").replace(/_/gu, " ").trim();
   if (kind === "value" && /(?:opening_hours|opening_time|open_hours|schedule)/.test(predicate)
-    && /^24(?:\.0+)?$/.test(text.trim())) return ["24 hours"];
+    && /^(?:24(?:\.0+)?(?:\s*(?:hours?|\/\s*7))?|全天|二十四小时)$/iu.test(semanticText)) return ["24 hours"];
   const patterns = [
     /(?<![\p{L}\p{N}])(?:CNY|RMB|¥|￥)\s*\d+(?:[.,]\d+)?|(?<![\p{L}\p{N}])\d+(?:[.,]\d+)?\s*(?:CNY|RMB|元)(?![\p{L}\p{N}])/giu,
     /(?<![\p{L}\p{N}])\d+(?:[.,]\d+)?\s*%(?![\p{L}\p{N}])/gu,

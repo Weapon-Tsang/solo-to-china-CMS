@@ -131,19 +131,23 @@ test('production evidence surface variants are semantically equivalent without a
   assert.equal(evidenceTextContains('The attraction closes at 22:00.', '24_hours'), false);
 });
 
-test('a legacy bare 24 opening-hours fact accepts explicit 24-hours-a-day copy only', () => {
+test('legacy 24 opening-hours facts accept explicit 24-hours-a-day copy only', () => {
   const block = { ...goodBlock, data: { body: 'The Test Museum is open 24 hours a day.' } };
   const pkg = packageFor(block);
   const fact = pkg.facts[0];
   fact.predicate = 'opening_hours';
-  fact.preferred_value = '24';
-  fact.evidence = [{ claim_id:'always-open', source_id:'source-real', value:'24', qualifiers:[] }];
   const entry = pkg.frontend_page.validation.blockProvenance[0];
   entry.blockSignature = pageBlockSignature(block);
   entry.claimTraces = [{ claimKey:fact.normalized_key, claimId:'always-open', sourceId:'source-real', evidenceRole:'current' }];
-  assert.equal(validatePageEvidence({ blocks:[block] }, pkg).valid, true);
+  for (const value of ['24', '24_hours', '24/7']) {
+    fact.preferred_value = value;
+    fact.evidence = [{ claim_id:'always-open', source_id:'source-real', value, qualifiers:[] }];
+    assert.equal(validatePageEvidence({ blocks:[block] }, pkg).valid, true, value);
+  }
 
   const wrong = { ...block, data: { body:'The Test Museum closes at 22:00.' } };
+  fact.preferred_value = '24_hours';
+  fact.evidence = [{ claim_id:'always-open', source_id:'source-real', value:'24_hours', qualifiers:[] }];
   entry.blockSignature = pageBlockSignature(wrong);
   assert.ok(codes(validatePageEvidence({ blocks:[wrong] }, pkg)).includes('EVIDENCE_VALUE_MISMATCH'));
 });
