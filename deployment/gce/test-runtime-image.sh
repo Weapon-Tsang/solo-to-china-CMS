@@ -21,6 +21,7 @@ docker run --detach --name "$NAME" --network none "${MOUNTS[@]}" \
   --env ADMIN_PASSWORD=runtime-smoke-password-only \
   --env SESSION_SECRET=runtime-smoke-session-secret-only \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
+  --env ALLOW_PRODUCTION_DATABASE_BOOTSTRAP=true \
   --env SOURCE_UPLOADS_DIR=/var/lib/solo-to-china/source-uploads \
   --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media "$IMAGE" >/dev/null
 READY=0

@@ -119,3 +119,10 @@ test('deployment helpers validate the supplied release version instead of a hard
   assert.doesNotMatch(resume, /h\.contentStrategy\.version!=="3\.6"/);
   assert.match(resume, /MAX\(version\).*==73/);
 });
+
+test('runtime image smoke explicitly authorizes only its disposable database bootstrap', () => {
+  const script = fs.readFileSync(path.join(app, 'deployment/gce/test-runtime-image.sh'), 'utf8');
+  assert.match(script, /--env ALLOW_PRODUCTION_DATABASE_BOOTSTRAP=true/);
+  assert.match(script, /--volume "\$DATA:\/var\/lib\/solo-to-china"/);
+  assert.match(script, /--env DATABASE_PATH=\/var\/lib\/solo-to-china\/solo-to-china\.sqlite/);
+});
