@@ -45,7 +45,13 @@ const metricStyles = [
 ];
 
 export function Topbar({ health, refreshing, onRefresh }) {
-  const healthy = health?.ok !== false;
+  const healthy = health?.serviceHealth?.ready ?? health?.ok !== false;
+  const providerState=health?.providerRuntime?.state;
+  const providerHealthy=["available_recent_success","configured_not_observed"].includes(providerState);
+  const providerLabel=!health?.aiConfiguration?.configured?"AI 未配置"
+    : providerState==="backoff"?"AI 限流退避"
+      : providerState==="degraded"?"AI 最近失败"
+        : `${health.aiConfiguration.provider === "vertex" ? "Vertex AI" : "Kimi"} · ${health.aiConfiguration.model || "已配置"}`;
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200/70 bg-slate-50/85 backdrop-blur-xl">
       <div className="mx-auto flex h-[52px] w-full max-w-[1440px] items-center justify-between px-3 sm:h-14 sm:px-6 lg:px-8">
@@ -59,7 +65,10 @@ export function Topbar({ health, refreshing, onRefresh }) {
               {healthy && <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />}
               <span className={cn("relative inline-flex size-2 rounded-full", healthy ? "bg-emerald-500" : "bg-red-500")} />
             </span>
-            <span className="truncate sm:hidden">{healthy ? "服务就绪" : "服务离线"}</span><span className="hidden truncate sm:inline">{health?.aiConfigured ? `${health.aiProvider === "vertex" ? "Vertex AI" : "Kimi"} · ${health.aiModel || "已配置"}` : healthy ? "采集服务就绪 · AI 未配置" : "服务离线"}</span>
+            <span className="truncate">{healthy ? "服务就绪" : "服务离线"}</span>
+          </Badge>
+          <Badge variant={providerHealthy ? "success" : providerState==="not_configured" ? "secondary" : "warning"} className="hidden h-7 max-w-72 px-2.5 sm:flex">
+            <span className="truncate">{providerLabel}</span>
           </Badge>
           <Button variant="ghost" size="sm" aria-label="刷新最新状态" title="刷新最新状态" onClick={onRefresh} disabled={refreshing}>
             <RefreshCw className={cn(refreshing && "animate-spin")} /><span className="hidden sm:inline">刷新状态</span>

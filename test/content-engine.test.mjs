@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ContentEngine } from "../src/ai/content-engine.mjs";
+import { pageBlockSignature } from "../src/evidence-validator.mjs";
 
 test("Kimi-backed independent QA cannot approve deterministic evidence or commercial violations", async () => {
   const modelReview = { passed: true, score: 98, checks: [], issues: [], unsupported_claims: [] };
@@ -18,11 +19,14 @@ test("Kimi-backed independent QA cannot approve deterministic evidence or commer
       { normalized_key: "timed.fact", consensus_status: "corroborated", freshness_state: "time_sensitive", verification_priority: "normal", consensus_method: "RECENCY_WEIGHTED_CONSENSUS" },
     ],
     draft: {
+      id: "draft-internal-id",
       body_markdown: "Book this affiliate deal on Trip.com.",
       evidence_ledger: [{ section: "Test", claim_keys: ["missing.fact", "valid.fact", "timed.fact"], source_ids: [] }],
       unresolved_conflicts: [],
       verification_notes: [],
     },
+    frontend_page: { payload:{metadata:{title:"Large internal payload"},blocks:Array(20).fill({type:"paragraph",data:{content:"internal"}})},
+      validation:{valid:true,internal_diagnostics:Array(20).fill("not for the editor")},current:true,status:"valid" },
   });
   assert.equal(reviewed.output.passed, false);
   assert.ok(reviewed.output.issues.some((issue) => issue.code === "commercial_contamination"));
@@ -32,10 +36,13 @@ test("Kimi-backed independent QA cannot approve deterministic evidence or commer
   assert.equal(reviewed.output.issues.some((issue) => issue.code === "missing_temporal_disclosure"), false);
   assert.equal(request.url, "https://api.example.test/v1/chat/completions");
   assert.equal(request.body.response_format.type, "json_schema");
+  const reviewInput=JSON.parse(request.body.messages[1].content);
+  assert.equal("id" in reviewInput.draft,false);
+  assert.deepEqual(reviewInput.frontend_page,{current:true,status:"valid",valid:true});
 });
 
 test("page composition extracts CMS node references before Frontend validation", async () => {
-  const block = { type: "articleSection", data: { heading: "Plan", body: "Use the metro." },
+  const block = { type: "articleSection", data: { heading: "Plan", body: "Use Traveler&#39;s metro." },
     _cms_content_node_id: "node_transport", _cms_source_section_ids: ["section_plan"],
     _cms_claim_keys: ["transport.metro"], _cms_factuality: "factual" };
   let requestBody;
@@ -56,7 +63,9 @@ test("page composition extracts CMS node references before Frontend validation",
     content_node_id: "node_transport", source_section_ids: ["section_plan"], claim_keys: ["transport.metro"], factuality: "factual",
   }] } }, brief: { strategy_version: "1.8", canonical: {} }, draft: {} }, { components: [] }, pageSchema);
   assert.equal("_cms_content_node_id" in result.output.blocks[0], false);
+  assert.equal(result.output.blocks[0].data.body, "Use Traveler&#039;s metro.");
   assert.equal(result.provenance.valid, true);
+  assert.equal(result.provenance.entries[0].blockSignature, pageBlockSignature(result.output.blocks[0]));
   assert.deepEqual(result.provenance.entries[0].claimKeys, ["transport.metro"]);
   assert.ok(requestBody.response_format.json_schema.schema.properties.blocks.items.required.includes("_cms_content_node_id"));
 });

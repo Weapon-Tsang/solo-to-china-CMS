@@ -75,10 +75,13 @@ export function assessEntityIdentity(candidate) {
     };
   }
   const confidence = Number(candidate.confidence || 0);
+  const positiveIdentity = candidate.identityEvidence === true || Boolean(
+    candidate.candidate_entity_key && candidate.candidate_entity_key === candidate.proposed_entity_key
+    && normalize(candidate.alias) === normalize(candidate.proposed_canonical_subject));
   return {
-    decision: confidence >= 0.85 ? "MERGE" : "UNCERTAIN",
-    reasons: confidence >= 0.85 ? ["type, granularity, geography, and alias plausibility constraints passed"] : ["identity remains plausible but evidence is insufficient"],
-    suggestedRelation: confidence >= 0.85 ? "alias_of" : null,
+    decision: confidence >= 0.85 && positiveIdentity ? "MERGE" : "UNCERTAIN",
+    reasons: positiveIdentity ? ["positive identity evidence and compatibility constraints passed"] : ["缺少正向身份依据；模型置信度不能单独证明同一实体"],
+    suggestedRelation: confidence >= 0.85 && positiveIdentity ? "alias_of" : null,
     alias, target,
   };
 }
@@ -99,6 +102,10 @@ export function granularityCompatible(left, right) {
 function geographyCompatible(left, right) {
   const keys = ["country", "region", "city", "district", "latitude", "longitude"];
   for (const key of keys) {
+    if (['latitude','longitude'].includes(key)) {
+      if (left?.[key] != null && right?.[key] != null && Math.abs(Number(left[key]) - Number(right[key])) > 0.01) return false;
+      continue;
+    }
     if (left?.[key] != null && right?.[key] != null && normalize(left[key]) !== normalize(right[key])) return false;
   }
   return true;
@@ -121,4 +128,5 @@ function safeLocation(value) {
   return Object.fromEntries(Object.entries(value).filter(([key, item]) => ["country", "region", "city", "district", "latitude", "longitude"].includes(key) && item != null));
 }
 
-function normalize(value) { return String(value).normalize("NFKC").toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim(); }
+function normalize(value) { return String(value).normalize("NFKC").toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim()
+  .replace(/^(?:中国|中华人民共和国|people's republic of china|prc|cn)$/, 'china'); }

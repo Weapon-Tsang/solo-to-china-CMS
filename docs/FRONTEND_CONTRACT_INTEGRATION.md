@@ -1,10 +1,56 @@
 # Frontend Capability Contract Integration
 
+## 2.0.27 recovery lineage boundary
+
+The Frontend Contract remains unchanged at 1.4.0. Recovery lineage now continues through quality-repair child Jobs with one `recovery_run_id`; this changes orchestration and operator diagnosis only. CMS still emits semantic payloads and does not duplicate or fabricate Frontend JSX/CSS.
+
+## 2.0.26 quality-repair boundary
+
+Atomic unsupported-assertion repair occurs entirely in the CMS Draft and evidence-ledger layer before a new Page Payload is composed. It changes no Frontend component, schema, JSX or CSS. After the repaired Draft passes current QA, the existing Frontend Contract 1.4.0 composition and WordPress preview remain the only visual acceptance boundary.
+
+## 2.0.25 evidence ownership before composition
+
+Draft evidence reconciliation occurs before Content AST and Frontend Page composition. Optional ledger citations absent from reader-visible prose are removed only when the planned section retains other approved evidence; Source IDs are derived from frozen fact snapshots. This changes no component, schema, JSX or CSS and keeps Frontend Contract 1.4.0 as the sole public rendering boundary.
+
+## 2.0.24 planned-section and review boundary
+
+Exact planned section labels emitted without Markdown heading markers are normalized into semantic H2 nodes before Content AST construction. Evidence-bearing planned sections that remain absent are rejected before page composition, preventing a visually plausible page from losing its ledger scope. Independent QA receives the reader-facing Draft, compact traceability and page-validation status rather than the complete internal Frontend payload; Frontend JSX/CSS, component rendering and responsive presentation remain exclusively owned by the pinned Frontend Contract and WordPress theme.
+
+## 2.0.23 semantic presentation boundary
+
+The CMS continues to emit semantic Page Payloads only. It does not copy or synthesize Frontend JSX/CSS. Reader-visible Markdown tables retained by historical Drafts are parsed into semantic table AST nodes and projected as readable Contract-native list items when the active Registry exposes no table renderer. Model output is instructed to use prose/lists, and final validation rejects leaked Markdown decorators or table syntax before WordPress delivery.
+
+Authorized Source images are attached as media references with Source asset provenance, alt text and placement metadata. Selection is deterministic and relevance-scored; rendering, responsive styles and final visual treatment remain owned by the deployed WordPress theme and Frontend Contract.
+
 ## Ownership boundary
 
 SoloToChina uses two repositories. The Frontend owns components, variants, schemas, Gutenberg serialization, presentation, and rendering. The CMS owns research, evidence, editorial composition, commercial selection, validation, and delivery.
 
 The CMS never scans JSX/CSS or maintains a handwritten production component list. It may emit only components and variants published by the active Frontend Contract.
+
+The CMS workbench's Page Composition Preview is a structural inspection of already persisted `frontend_page_plans.plan_json`, `frontend_page_compositions.payload_json`, or `frontend_publish_compositions.publish_package_json`. It may show block order, published component/variant identifiers, headings, content-node/evidence references, media, commercial markers, internal links, validation, schema/Contract versions and hashes. It never imports, duplicates, approximates or renders Frontend JSX/CSS and must state that WordPress theme visuals may differ. Only the Frontend/WordPress implementation can provide a final visual preview.
+
+After a successful WordPress Draft acknowledgement, the CMS exposes the adapter's persisted `wordpress_publications.preview_url` as the final-page preview and `edit_url` as the editing entry. It does not synthesize either URL from a post ID.
+
+The 2.0.13 production-state hotfix changes only CMS ownership/projection and responsive operator presentation. Mobile cards and the production-detail sheet consume the same persisted structural preview; they do not introduce a renderer, copied component implementation, invented variant, JSX or CSS from the Frontend repository.
+
+The 2.0.14 operator UI correction is also CMS-only. It opens the card's secondary-action menu upward within the mobile card so the clipping boundary and following card cannot cover it, and it labels historical pipeline failures separately from the current recovery target. Neither change renders or copies Frontend components. Page Composition Preview and WordPress final preview continue to use only persisted Contract payloads and the adapter-provided `preview_url`/`edit_url`.
+
+The 2.0.16 repair adds CMS-only production recovery state and operator controls for corrected destination scope, exact stage retry and targeted QA revision. It does not change the Frontend Contract, page payload Schema, component registry, public JSX or public CSS. The CMS still renders only its operator workbench; public page composition remains owned by the Frontend repository and persisted Contract artifacts.
+
+The 2.0.17 Vertex repair changes only the CMS model transport and bounded Draft-revision input/output policy. It does not modify Frontend schemas, components, JSX, CSS, page payload ownership or WordPress rendering. Existing structural Page Composition previews and adapter-provided final preview/edit URLs retain the same contract boundary.
+
+The 2.0.18 post-Draft join keeps the same boundary. A failed Frontend Page Payload remains an auditable parallel-branch result, but it cannot override a failing content-quality review or send recovery directly to the Commercial Layer. After targeted Draft repair, the CMS reuses the Contract schema to compose and validate a new payload; renderer JSX, CSS and final WordPress theme output remain Frontend-owned.
+
+The 2.0.19 composition repair keeps Frontend Contract 1.4.0 unchanged. The CMS normalizes semantic article hierarchy, assigns evidence only to the atomic block that expresses it, and rebuilds Content AST/Page Payload/Publish Package from the current Draft. It validates mobile-readable heading order, answer-first content, SEO/GEO metadata, JSON-LD, media and link semantics, but visual typography, spacing, responsive CSS and renderer implementation remain owned by the Frontend/WordPress theme. Visual acceptance therefore uses the persisted `preview_url`; CMS structural preview is not presented as a screenshot of the final theme.
+
+The 2.0.20 delivery adapter records an additional business invariant discovered by a real WordPress canary. Internal CMS taxonomy is deliberately richer than public renderer taxonomy, so `city_guide`, `first_time_guide`, `food_guide`, `neighborhood_guide`, `hotel_area_guide` and `shopping_guide` deliver as `city-guide`; `attraction_guide` as `attraction-guide`; `practical_guide`, `transport_guide` and `how_to` as `survival-kit`; and `itinerary`, `comparison` and `listicle` as `travel-guide`. This changes semantic delivery metadata only. It does not copy, emulate or modify Frontend JSX/CSS, and unknown values are blocked locally.
+
+The 2.0.21 adapter also canonicalizes safe apostrophe entities to `&#039;`, the exact form preserved by the deployed WordPress sanitizer. This is transport normalization, not presentation logic: the rendered text is identical, no HTML capability is added, and all typography, spacing, responsive layout and components remain Frontend-owned.
+
+Version 2.0.22 keeps CMS evidence provenance consistent with that delivery-only spelling. It remaps a block signature only after the complete stored provenance sequence exactly matches the original page; component selection, layout, JSX and CSS remain governed by the fixed Frontend Contract.
+
+Version 2.0.24 makes page and visual dependency capture immutable. Authorized-source visual selection completes before the durable input artifact is frozen, so deterministic seeding cannot invalidate its own page-composition Job. Narrative Planning is separately bounded to the approved outline and selected evidence; it cannot use complete destination history to expand or reorder the approved page scope. CMS checks answer-first ordering, evidence-bearing section preservation, semantic SEO/GEO and mobile-readable structure, while the real WordPress preview remains the only visual authority for typography, spacing, responsive CSS and component rendering.
 
 Three artifacts remain distinct:
 

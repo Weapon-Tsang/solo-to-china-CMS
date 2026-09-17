@@ -182,7 +182,7 @@ async function smokeReadApis(baseUrl) {
     ["Knowledge API", "/api/knowledge", (body) => Array.isArray(body?.items)],
     ["Editorial blueprints API", "/api/editorial-blueprints", (body) => Array.isArray(body?.items)],
     ["Content API", "/api/content", (body) => Array.isArray(body?.items)],
-    ["Recommendations API", "/api/recommendations", (body) => Array.isArray(body?.items) && Array.isArray(body?.opportunities)],
+    ["Recommendations API", "/api/recommendations", (body) => Array.isArray(body?.items) && Object.hasOwn(body || {}, "nextCursor")],
     ["WordPress inventory API", "/api/wordpress/inventory", (body) => typeof body?.configured === "boolean" && Array.isArray(body?.items)],
     ["Search Console API", "/api/search-console", (body) => typeof body?.configured === "boolean" && Array.isArray(body?.items)],
     ["Commercial offers API", "/api/commercial/offers", (body) => Array.isArray(body?.items)],
@@ -320,7 +320,19 @@ async function verifyExtension() {
     for (const asset of assets) assertFile(path.join(extensionDir, asset), `extension/${asset}`);
     const popup = fs.readFileSync(path.join(extensionDir, manifest.action.default_popup), "utf8");
     if (!/http:\/\/127\.0\.0\.1:4310/.test(popup)) throw new Error("Popup default Engine URL is not aligned with the local server.");
-    for (const injectedAsset of ["page-extractor.js", "sync-core.js"]) assertFile(path.join(extensionDir, injectedAsset), `extension/${injectedAsset}`);
+    for (const injectedAsset of ["page-extractor.js", "sync-core.js", "popup-state.js"]) assertFile(path.join(extensionDir, injectedAsset), `extension/${injectedAsset}`);
+  });
+  report.check("Chrome Extension", "Durable repair scheduler", () => {
+    const core = fs.readFileSync(path.join(extensionDir, "sync-core.js"), "utf8");
+    const background = fs.readFileSync(path.join(extensionDir, "background.js"), "utf8");
+    const extractor = fs.readFileSync(path.join(extensionDir, "page-extractor.js"), "utf8");
+    for (const token of ["leaseNextTask", "reconcileStrandedTasks", "completed_with_failures", "concurrencyWindowSize", "mediaConcurrency"]) {
+      if (!core.includes(token)) throw new Error(`Missing durable repair primitive: ${token}.`);
+    }
+    for (const token of ["ensureWorkerPool", "applySettingsToSession", "mediaRequests", "void drive()", "watchdog"]) {
+      if (!background.includes(token)) throw new Error(`Missing background repair behavior: ${token}.`);
+    }
+    if (!extractor.includes("MutationObserver")) throw new Error("Background extraction must prefer DOM events over fixed polling.");
   });
 }
 
@@ -483,8 +495,12 @@ class ReleaseReport {
 
   async command(section, name, command, args, milliseconds) {
     const result = await runProcess(command, args, milliseconds);
+    const logRoot = path.join(root, 'output', 'release-check-logs');
+    fs.mkdirSync(logRoot, {recursive:true});
+    const logFile = path.join(logRoot, `${Date.now()}-${name.replace(/[^a-z0-9]+/gi,'-')}.log`);
+    fs.writeFileSync(logFile, result.output, 'utf8');
     if (result.ok) { this.pass(section, name, `${result.durationMs} ms`); return result; }
-    this.fail(section, name, summarize(result.output));
+    this.fail(section, name, `${summarize(result.output)} Full output: ${path.relative(root,logFile)}`);
     return result;
   }
 
@@ -526,7 +542,7 @@ class ReleaseReport {
 
 function summarize(value) {
   const text = String(value || "").trim().replace(/\s+/g, " ");
-  return text.length > 700 ? `${text.slice(0, 697)}...` : text || "Process failed without output.";
+  return text.length > 700 ? `...${text.slice(-697)}` : text || "Process failed without output.";
 }
 
 report = new ReleaseReport(packageJson.version);

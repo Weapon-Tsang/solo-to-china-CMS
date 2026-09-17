@@ -22,9 +22,12 @@ test("WordPress media metadata records a public final URL, dimensions, bytes, ha
 
 test("media delivery rejects private/signed routes, missing dimensions, bad alt roles and duplicate uploads", () => {
   const goodMetadata = wordpressMediaMetadata(wpBody, { bytes, contentType: "image/jpeg" });
-  const base = { wordpress_media_id: 71, wordpress_media_url: wpBody.source_url,
+  const source_asset_id = "source-asset-71";
+  const base = { wordpress_media_id: 71, wordpress_media_url: wpBody.source_url, source_asset_id,
     alt_text: "Chongqing riverside walkway at night", image_role: "featured", image_type: "real_world_photo",
-    acquisition_strategy: "use_authorized_source_image", factual_image_required: 1, media_metadata: goodMetadata };
+    acquisition_strategy: "use_authorized_source_image", factual_image_required: 1, media_metadata: { ...goodMetadata,
+      wordpress_uploaded: true, wordpress_media_id: 71, source_provenance: { source_asset_id, original_stored: true,
+        source_owner_confirmed: true, source_publishable: true, asset_owner_confirmed: true, asset_publishable: true } } };
   assert.equal(validateMediaDelivery([base]).valid, true);
   const result = validateMediaDelivery([
     { ...base, wordpress_media_url: "data:image/png;base64,AAAA", alt_text: "guide guide guide guide guide" },
@@ -37,6 +40,53 @@ test("media delivery rejects private/signed routes, missing dimensions, bad alt 
   assert.ok(codes.includes("MEDIA_ALT_ROLE_MISMATCH"));
   assert.ok(codes.includes("MEDIA_ALT_KEYWORD_STUFFING"));
   assert.ok(codes.includes("MEDIA_DUPLICATE_UPLOAD"));
+});
+
+test("localized real photos require an original, authorization, a real localized file and WordPress upload", () => {
+  const source_asset_id = "source-asset-localized";
+  const metadata = { ...wordpressMediaMetadata(wpBody, { bytes, contentType: "image/jpeg" }),
+    wordpress_uploaded: true, wordpress_media_id: 71, localized_file: true,
+    localized_from_source_asset_id: source_asset_id, source_provenance: { source_asset_id, original_stored: true,
+      source_owner_confirmed: true, source_publishable: true, asset_owner_confirmed: true, asset_publishable: true } };
+  const visual = { wordpress_media_id: 71, wordpress_media_url: wpBody.source_url, source_asset_id,
+    alt_text: "Localized authorized source photo", image_role: "featured", image_type: "real_world_photo",
+    acquisition_strategy: "localize_source_image", factual_image_required: 1, media_metadata: metadata };
+  assert.equal(validateMediaDelivery([visual]).valid, true);
+  const invalid = validateMediaDelivery([{ ...visual, media_metadata: { ...metadata, localized_file: false } }]);
+  assert.ok(invalid.errors.some((error) => error.code === "LOCALIZED_SCENE_FILE_NOT_PROVEN"));
+});
+
+test("photo-overlay localization remains evidence media and requires the same derivative provenance",()=>{
+  const source_asset_id="source-asset-overlay";
+  const metadata={...wordpressMediaMetadata(wpBody,{bytes,contentType:"image/jpeg"}),wordpress_uploaded:true,
+    wordpress_media_id:71,localized_file:true,localized_from_source_asset_id:source_asset_id,
+    authorization_policy:"project_source_media_full_authorization",source_provenance:{
+      source_asset_id,original_stored:true,project_owner_confirmed:true}};
+  const visual={wordpress_media_id:71,wordpress_media_url:wpBody.source_url,source_asset_id,
+    alt_text:"Authorized photo with localized author overlay",image_role:"featured",image_type:"real_world_photo",
+    acquisition_strategy:"localize_photo_overlay",factual_image_required:1,media_metadata:metadata};
+  assert.equal(validateMediaDelivery([visual]).valid,true);
+  const invalid=validateMediaDelivery([{...visual,media_metadata:{...metadata,localized_from_source_asset_id:"other"}}]);
+  assert.ok(invalid.errors.some((error)=>error.code === "LOCALIZED_SCENE_FILE_NOT_PROVEN"));
+});
+
+test("project-wide source authorization supersedes missing legacy per-item flags", () => {
+  const source_asset_id = "source-asset-project-authorized";
+  const metadata = { ...wordpressMediaMetadata(wpBody, { bytes, contentType: "image/jpeg" }),
+    wordpress_uploaded:true,wordpress_media_id:71,authorization_policy:"project_source_media_full_authorization",
+    source_provenance:{source_asset_id,original_stored:true,project_owner_confirmed:true,
+      source_owner_confirmed:false,source_publishable:false,asset_owner_confirmed:false,asset_publishable:false} };
+  const result=validateMediaDelivery([{wordpress_media_id:71,wordpress_media_url:wpBody.source_url,source_asset_id,
+    alt_text:"Authorized Chongqing source photo",image_role:"featured",image_type:"real_world_photo",
+    acquisition_strategy:"use_authorized_source_image",factual_image_required:1,media_metadata:metadata}]);
+  assert.equal(result.valid,true,JSON.stringify(result.errors));
+});
+
+test("a planned required visual cannot disappear from the delivery manifest", () => {
+  const result = validateMediaDelivery([{ id:"visual-required", status:"planned", factual_image_required:1,
+    image_type:"real_world_photo", alt_text:"Station entrance" }]);
+  assert.equal(result.valid, false);
+  assert.equal(result.errors[0].code, "MEDIA_REQUIRED_MANIFEST_MISSING");
 });
 
 test("responsive HTML gives only the first image high priority and later images lazy loading", () => {
@@ -72,4 +122,18 @@ test("two placements of the same source asset reuse one WordPress media upload",
   assert.deepEqual(output.map((item) => item.id), [71, 71]);
   assert.equal(sourceFetches, 1);
   assert.equal(uploads, 1);
+});
+
+test("different derivatives of one source asset keep independent WordPress identities", async () => {
+  let uploads=0;
+  const adapter=new WordPressDraftAdapter({siteUrl:"https://site.test",username:"editor",applicationPassword:"password"},async()=>{
+    uploads += 1;
+    return Response.json({...wpBody,id:80 + uploads,source_url:`https://site.test/uploads/${80 + uploads}.jpg`},{status:201});
+  });
+  const output=await adapter.resolveVisualMedia([
+    {id:"localized-a",status:"generated",source_asset_id:"same",asset_fingerprint:"crop-a",media_path:process.argv[1],alt_text:"A"},
+    {id:"localized-b",status:"generated",source_asset_id:"same",asset_fingerprint:"crop-b",media_path:process.argv[1],alt_text:"B"},
+  ]);
+  assert.equal(uploads,2);
+  assert.deepEqual(output.map((item)=>item.id),[81,82]);
 });

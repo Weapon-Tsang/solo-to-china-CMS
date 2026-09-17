@@ -1,5 +1,251 @@
 # Changelog
 
+## 2.0.33 - Unreleased
+
+- Add schema 73 and Strategy 3.7 model-role routing: DeepSeek extraction candidate, manual GPT-5.6 Luna extraction/dispute review, fixed Vertex Gemini 3.8 Flash production/review, and fixed Gemini 3.1 Flash Image generation/localization.
+- Encrypt dashboard-managed provider credentials, separate candidate save from optimistic activation, freeze immutable model profiles on new Jobs, and record requested/returned models without inventing costs.
+- Isolate source and article provider availability, preserve frozen draft QA on Knowledge updates, and make approved-evidence reconciliation atomic and idempotent.
+- Production deployment does not provision API keys, activate a new extraction provider, replay history, or invoke real providers.
+
+## 2.0.32 - 2026-09-17
+
+- Preserve complete `FINAL_PAGE_INVALID` validator diagnostics and execution attribution from Job failure through API/UI, without describing deterministic work as a missing model call.
+- Record actual image transform/translation/QA provider calls by model, substage, visual/source, HTTP status and dispatch evidence; persist private immutable transform candidates so a transient QA failure resumes QA without regenerating the image.
+- Add revisioned Affiliate Asset PATCH APIs, optimistic concurrency, exact URL preservation, semantic no-op detection, old/new scope impact, article/slot/version usage evidence, and operator UI for editing and tracing assets.
+- Keep asset saves production-isolated by default: matching drafts are marked for explicit commercial refresh without silently invoking models, image generation or WordPress.
+- Add schema migration 72, Content Strategy 3.6 and v1.1 regression/validation coverage. Historical repair remains separately authorized and dry-run first.
+
+## 2.0.31 - 2026-09-16
+
+- Persist capture-versioned image understanding and verified visual transformation, add media-only repair, vertical mobile navigation and two-level commercial placement.
+
+## 2.0.30 - 2026-09-16
+
+- Preserve the existing page identity during bounded presentation refreshes, including deterministic and provider fallback composition paths.
+- Keep WordPress identity fail-closed while allowing a page fingerprint to rotate only when the existing post and exact stable CMS draft identity both match.
+
+## 2.0.29 - 2026-09-15
+
+- Consume the frozen Frontend Page Plan during deterministic AST composition, record per-block adoption/substitution reasons, and prefer the simplest Registry component for each reader task.
+- Unify source-image classification across planned and fallback paths, fill relevant visual gaps, preserve source crop during localization, add pixel/aspect QA, and key WordPress media reuse by derivative identity.
+- Add schema 70 for country-aware affiliate assets, versioned commercial overlay dependencies/history, refresh reasons, diagnostics/manifests, and WordPress delivery receipts.
+- Repair Contract `list.data.items` intent projection, COUNTRY/destination/mapping recall, provider/asset eligibility diagnostics, stable anchors, no-op versus asset-gap outcomes, and selected-to-DOM slot reconciliation.
+- Add a scoped short-lived WordPress draft-preview ticket with an explicit login-bound fallback, plus a read-only-by-default commercial/presentation/media repair tool that preserves prose and media.
+- This development change performs no production migration, enqueue, WordPress write, commit, push or deployment. Frontend Contract 1.4.0 remains compatible; Strategy 3.4 is defined in `config/content-strategy.json`.
+
+## 2.0.28 - Unreleased
+
+- Normalize quality-review aliases when historical reviews are read, so an already-persisted `NO_TRAVELER_DECISION` message that actually cites a mandatory Brief item is projected as one `mandatory_brief_requirement_missing` blocker in both Content Workbench and Recovery without rewriting audit history.
+- Refuse production startup when `DATABASE_PATH` is omitted, preventing an ad-hoc container replacement from silently opening the image-local empty database instead of the mounted persistent database.
+- Refuse implicit creation of a missing production database unless an operator explicitly sets `ALLOW_PRODUCTION_DATABASE_BOOTSTRAP=true` for an intentional first deployment.
+- This is a code-only deployment guard. It performs no migration, recovery enqueue, reconciliation, deletion, archive or WordPress publication.
+
+## 2.0.27 - Unreleased
+
+- Scope automatic Draft/QA repair limits to the active explicit recovery run, so historical attempts from older deployments cannot strand a newly diagnosed revision at `attempt_limit_reached`.
+- Preserve `recovery_run_id` across every automatic quality-repair child and include it in the idempotency key while retaining the two-attempt anti-loop limit inside that run.
+- Normalize provider issue-code aliases that describe a missing mandatory Brief requirement, preventing one omission from appearing as both `NO_TRAVELER_DECISION` and `mandatory_brief_requirement_missing`.
+- Instruct bounded repair to restore mandatory fact-bearing requirements only from the matching frozen fact and ledger key.
+
+## 2.0.26 - 2026-09-15
+
+- Preserve the authoritative current quality review in Content Recovery details. A diagnostic recomputation can no longer discard the independent reviewer checks, invent “mandatory requirements not audited”, or hide an explicit unsupported assertion behind a generic unknown-error message.
+- Treat `UNSUPPORTED_ASSERTION` and its legacy plural form as first-class recoverable quality failures with an exact Chinese cause and action. The workbench continues to target bounded Draft revision rather than research, evidence or media regeneration.
+- Pass the reviewer's atomic `unsupported_claims` into bounded repair, treat the frozen repair facts as a complete allow-list, and permit the repair to remove invalid ledger mappings. A fact that exists elsewhere in Knowledge but was not selected for this article cannot be silently imported to preserve unsupported prose.
+- Require QA to separate supported and unsupported values instead of grouping all facts that share a predicate. This release remains schema 69, Content Strategy 3.3, `production_state` 2.0 and Frontend Contract 1.4.0; it performs no migration, bulk retry, deletion or automatic WordPress publication.
+
+## 2.0.25 - 2026-09-15
+
+- Reconcile a generated Draft's evidence ledger with the reader-visible prose before persistence. When a section already retains another honestly expressed approved fact, a model's surplus citation to an unused amount, duration, floor, date, condition or exception is removed instead of forcing that unrelated background detail into the article or failing the entire production flow.
+- Keep fail-closed coverage semantics: the reconciler never removes the only usable evidence from a planned evidence-bearing section. Such a section still receives one exact structured correction request and remains failed if the protected value is not restored.
+- Rebuild ledger Source IDs from the frozen evidence snapshots and restore canonical planned section labels after validation, so a model cannot invent Source ownership while its reader-facing Draft stays unchanged.
+- Add the production-derived `1F` / `10 hours` regression alongside the existing mandatory-duration correction regression. The release remains schema 69, Content Strategy 3.3, `production_state` 2.0 and Frontend Contract 1.4.0; it performs no migration, bulk retry, deletion or automatic publication.
+
+## 2.0.24 - 2026-09-15
+
+- Convert the seven production incidents into reusable production invariants rather than record-specific exceptions: exact Opportunity ownership, bounded stage DTOs, immutable durable inputs, current-attempt precedence, QA supersession and draft-only delivery now apply to every future approval.
+- Bound Narrative Planning to the approved outline, at most 48 selected facts with two compact evidence excerpts each and selected Experience Blocks. The real production replay that previously sent about 177k input tokens now fails locally above a 32k-token/128 KiB budget instead of flooding Vertex with the complete destination package.
+- Seed deterministic authorized-source visuals before the page/visual dependency artifact is frozen, eliminating the self-created `STALE_PIPELINE_INPUT` retry. Missing legacy licence flags remain non-blocking under `AGENTS.md`; relevance, provenance, durable bytes, alt text and Contract safety remain mandatory.
+- Let a current QA pass supersede older prerequisite failures from Editorial Assembly through page composition, while retaining required-media and post-QA failures as current. Historical attempts remain visible and auditable but cannot send a valid current Draft backwards.
+- Cache a structured model completion only after the caller's business/Contract validator accepts it. A Draft that omits a mandatory evidence-bearing section is evicted immediately, so a later recovery makes a new provider request instead of replaying the same invalid completion in milliseconds; the writer prompt also requires every approved evidence-bearing H2 exactly once and in order.
+- Make every Draft-regeneration entry point include the authoritative current QA failure in its dependency hash. Manual, canary and automatic recovery can no longer report a retry while reusing the exact prose that failed.
+- Treat an older writer/page/review/bounded-repair failure as non-blocking history after the exact current Draft revision and Frontend Page pass QA. A successful full regeneration no longer needs an artificial same-type `revise_draft` success to clear the workbench state.
+- Normalize exact planned section labels emitted as plain lines into semantic H2 sections, remove duplicate article-title headings at every level, and reject a generated Draft that still omits an evidence-bearing planned section after one structured retry. This keeps visible sections and the frozen evidence ledger aligned.
+- Send each frozen fact to Vertex once, bound duplicate evidence excerpts and grounded experiences, and give independent QA only the reader-facing Draft plus traceability fields. Real production-copy diagnostics had exposed 75k-130k-token requests caused by repeated internal snapshots.
+- Add permanent regressions for recovery hashing, planned-heading promotion, bounded Draft inputs and compact QA inputs, plus a read-only canary inspector that refuses a live-looking database filename.
+- Upgrade `production_state` to 2.0 for cross-stage quality-failure supersession while keeping schema 69, Content Strategy 3.3 and Frontend Contract 1.4.0. This remains a code-only release with no startup migration, bulk retry or automatic WordPress publication.
+
+## 2.0.23 - 2026-09-14
+
+- Treat the six remaining production failures as three distinct recovery classes instead of repeatedly patching symptoms: global or truncated quality failures rebuild only the Draft from the frozen Writing Packet, a stale Writing Packet/page-plan mismatch resumes at Editorial Assembly, and page-only Contract failures recompose only the Frontend Page.
+- Carry the current failed quality report into manual `generate_draft` recovery, vary section rhythm by editorial purpose, require condition/consequence/action decision logic, and prohibit reader-visible Markdown tables/decorators in model output. Markdown tables retained by legacy Drafts are deterministically converted into Contract-native readable lists, while the final artifact gate rejects any remaining raw presentation syntax.
+- Adopt the project-wide source-media authorization declared in `AGENTS.md`: every retained imported source image is available for editorial use regardless of missing legacy per-item flags. Relevant stored originals are selected deterministically when the writer omits a visual plan, with provenance, destination relevance, alt text, Frontend Contract validation and durable media checks still mandatory.
+- Upgrade `production_state` to 1.9 so failed bounded repair/output-limit attempts recover through `generate_draft` rather than another impossible `revise_draft`. Recovery remains transactional, Opportunity-owned and idempotent; the production-copy replay queues exactly one Job for each of six records with zero model or WordPress calls and no protected-record count changes.
+- Extend the frontend delivery contract/runtime acceptance for English document language, English article dates, CMS SEO metadata and draft-safe robots behavior. WordPress delivery remains draft-only; publishing still requires an explicit later WordPress action.
+- Keep schema 69 and Content Strategy 3.3. The release introduces no migration, startup retry, bulk recovery, automatic approval, production-record deletion or Frontend JSX/CSS duplication.
+
+## 2.0.22 - 2026-09-14
+
+- Keep verified block provenance aligned when delivery-only normalization changes the byte representation of safe inline entities. Remapping occurs only when every stored provenance signature still matches its original block by position, so genuine content changes continue to fail closed.
+- Generate model-page provenance after delivery normalization so new compositions are born consistent. Retained Draft, writing, QA, commercial, Claims, Sources and Evidence artifacts remain unchanged; schema stays 69 and no migration or automatic retry is introduced.
+
+## 2.0.21 - 2026-09-14
+
+- Canonicalize apostrophe entities in inline HTML to the exact safe form preserved by WordPress `wp_kses`. The CMS now rebuilds retained Publish Packages from `&#39;`/`&apos;` to `&#039;`, preventing safe prose from failing the remote strict-equality check without changing rendered text.
+- Extend local Frontend Contract validation with this real WordPress invariant and update deterministic page composition to emit the canonical entity directly. `production_state` 1.8 routes matching remote `INVALID_COMPONENT_DATA` failures to `compose_publish_page`, preserving all writing and research stages.
+- Add regressions for old retained pages, local strict validation, Publish Package normalization and operator recovery. Schema remains 69; no migration or automatic production retry is introduced.
+
+## 2.0.20 - 2026-09-14
+
+- Translate all 13 internal CMS article types into the four public guide types accepted by the deployed WordPress Content Contract. Existing page artifacts are normalized while rebuilding the Publish Package, so successful Draft, evidence, QA, media and commercial stages remain reusable.
+- Enforce the WordPress guide taxonomy in local Frontend Contract validation even though the generic Page JSON Schema exposes `contentType` as a string. Unknown types now fail before delivery rather than passing mock validation and being rejected by WordPress.
+- Upgrade `production_state` to 1.7. A WordPress `INVALID_PAGE_SCHEMA` rejection targets `compose_publish_page`, explains that no remote Draft was created, and cannot send the operator back through writing or other successful upstream stages.
+- Add permanent taxonomy, Page Payload, Publish Package and recovery regressions for the real production-only failure. Schema remains 69, Content Strategy remains 3.3 and the Frontend/WordPress theme retains sole ownership of JSX, CSS and visual rendering.
+
+## 2.0.19 - 2026-09-14
+
+- Rebuild each final Frontend Page Payload from the current Draft, Brief, selected facts and visual state. A stale page can no longer let an earlier quality review masquerade as current, and a changed page now invalidates the reusable `review_draft` artifact input.
+- Scope atomic evidence to the block that actually expresses a fact instead of attaching every section claim to every paragraph. Brief outline identifiers are reconciled only to matching headings, unmatched legacy ledger nodes are removed, and generic workflow qualifiers cannot manufacture evidence bindings.
+- Treat equivalent current evidence values as alternatives and protect only meaningful published quantities, policies, dates and qualifiers. Internal snake-case metadata, source-specific surface variants and unrelated section facts no longer create false final-page failures.
+- Route semantic/value evidence failures to bounded `revise_draft`, while retaining `compose_frontend_page` for Contract/provenance/schema failures. This prevents page-only retry loops from attempting to repair article wording and preserves every successful upstream artifact.
+- Make bounded Draft repair normalize legacy heading hierarchies before selecting replacement boundaries, promote planned article sections to H2, remove duplicate title H1s, and refuse to replace a parent section in a way that consumes later planned sections.
+- Treat provider quality warnings as editorial guidance rather than blockers. A review can fail only with an explicit blocker; missing planned body sections force a fresh Draft from the preserved Writing Packet instead of repeatedly patching a truncated article.
+- Upgrade `production_state` to 1.6 so historical truncated Drafts are detected deterministically and expose `generate_draft` as the exact recovery target. Active work, current QA, successful artifacts and protected research records remain authoritative.
+- Rebuild the final Content AST/Page Payload from visible article facts, deterministic SEO/GEO metadata and the active Frontend Contract. The CMS emits semantic components and provenance only; it neither copies nor invents Frontend JSX/CSS.
+- Add bounded production-copy Vertex and WordPress-draft canaries. Five distinct production flows reached current QA/commercial state, and a complete canary reached final Publish Package plus draft-only WordPress acknowledgement with stored `preview_url` and `edit_url`.
+- Add regressions for atomic claim placement, compact values, qualifier filtering, current-source alternatives, H3 repair, dynamic repair enums, page-before-review ordering, page-driven QA invalidation, warning-only QA and historical truncation. Schema remains 69, Content Strategy remains 3.3 and Frontend Contract 1.4.0 rendering ownership is unchanged.
+
+## 2.0.18 - Unreleased
+
+- Make a current failed quality review authoritative over later failures in the parallel image/page branch. `production_state` 1.5 now keeps `review_draft` as the failed stage, exposes `revise_draft` as both the recovery target and immediate next step, and includes the conditional repair stage in progress even before its first Job exists.
+- Reconcile the post-Draft parallel join whenever image/page processing reaches a terminal state. A quality repair that was deferred while a sibling Job was active is queued exactly once through the existing `auto-quality-repair` dedupe key; no startup scan or bulk retry is added.
+- Let an explicit `generate_visuals` recovery process failed visual slots instead of incorrectly completing with no work, and accept retained WebP originals as `image/webp` input to Vertex Gemini image localization. Original bytes, authorization, source identity and successful visual outputs remain unchanged.
+- Align Content Recovery details with the authoritative backend production state, while retaining a later non-blocking page/image failure as diagnostic history instead of allowing it to override the real recovery action.
+- Add regressions for QA/page precedence, deferred-repair success and failure joins, idempotency, failed visual retry, WebP wire MIME and operator guidance. Schema remains 69, Content Strategy remains 3.3 and Frontend Contract rendering ownership is unchanged.
+- Deployment does not automatically retry, archive or delete the seven failed production records. Their existing Drafts and research/evidence assets remain intact; operators explicitly retry each corrected `revise_draft` target after rollout.
+
+## 2.0.17 - 2026-09-14
+
+- Start Vertex structured generation with the provider-compatible OpenAPI `responseSchema` transport instead of spending one rejected JSON-Schema request on every Job. Omit `minItems`/`maxItems` only from the Vertex wire schema because the current `gemini-3.8-flash` global endpoint rejects those fields; the canonical JSON Schema and authoritative local validation retain all bounds.
+- Reserve enough output capacity for bounded Draft repair: use LOW thinking with 12,000 output tokens, make unchanged metadata/evidence fields optional, exclude warnings and page-only failures, cap repair evidence to 36 facts and two compact evidence samples per fact, and validate any retained ledger key against the complete frozen evidence package.
+- Explain `MODEL_OUTPUT_LIMIT` as a shared thinking/JSON budget exhaustion instead of claiming the input facts were necessarily too large. Existing Drafts, Sources, Claims, Knowledge, Evidence, Experience and successful pipeline artifacts remain unchanged.
+- Add live-compatible Schema probes plus regression tests for transport selection, provider-only bound removal, repair budget, issue filtering, evidence compaction and retained-ledger validation. Schema remains 69, Content Strategy remains 3.3 and Frontend Contract ownership is unchanged.
+- Deployment does not retry, archive or delete the three failed Drafts. Their exact `revise_draft` recovery remains an explicit per-record operator action after the compatible runtime is live; already queued durable Jobs resume normally after restart.
+
+## 2.0.16 - 2026-09-14
+
+- Resolve Opportunity-owned recovery IDs to the canonical Candidate before loading topic/planning packages. Clicking “重试失败步骤” no longer crashes before enqueueing the exact stage, and repeated idempotency keys still reuse one recovery run.
+- Treat a persisted Brief as proof that `plan_content` completed even when a historical downstream failure wrote `content_briefs.status=exception`; interrupted legacy rows now resume at `plan_narrative` instead of trying to overwrite the Brief.
+- Treat a completed failing QA report as a completed `review_draft` stage and recover content blockers through `revise_draft`. The running review Job is excluded from its own active-job guard so bounded automatic repair can actually enqueue.
+- Make destination correction a production-scope revision. Jobs and Editorial Assembly artifacts from the old scope become non-blocking history; the corrected row waits for explicit “确认更正范围并继续”, then enqueues a new Opportunity-owned `assemble_editorial` Job without deleting evidence or automatically retrying other records.
+- Upgrade `production_state` to 1.4, expose the existing `suppression_reason` to the state builder, and translate persisted quality issue codes into their specific Chinese cause rather than the generic “无法确定原因”.
+- Make deterministic Coverage Matrix reconciliation restore an explicitly stored `proposal.readerPromise` from the frozen approval or title when legacy rows omit it. This closes the existing enforced deployment-audit violation without a model call or scope invention.
+- Keep the Frontend Contract and schema migration at their existing versions. This release introduces no migration-time enqueue, model request, production-record deletion or bulk retry.
+- Deploy final revision `4333c7ba559139f42da43e78b3b696978fa1ef69` to production at immutable image digest `sha256:caa42bc384e5295534321a49c194dac97658eb127d287510c7b15618a9965cb4`. The authenticated post-rollout projection contains one corrected-scope confirmation and six exact recovery targets, with mutually exclusive 1/0/6 waiting/running/attention counters, zero active production Jobs and the model-call counter unchanged at 5,748.
+
+## 2.0.15 - 2026-09-14
+
+- Bound the first model-backed `assemble_editorial` input independently of planning: at most 48 ranked facts, 96 evidence snippets, 16 Experience blocks and 128 KiB/~32k estimated tokens are sent to Vertex. The complete Source, Claim, Knowledge, Evidence and Experience stores remain unchanged.
+- Persist Vertex structured-output transport fallback in existing model-call receipts. A durable Job reclaimed after JSON Schema/OpenAPI rejection resumes the next compatible transport instead of restarting the known-invalid request sequence; local JSON Schema validation remains authoritative.
+- Make provider quota/backoff retries respect each Job's `max_attempts`. Transactionally finalize legacy exhausted cooldown rows as failed before claiming work, while preserving the Job and its error for audited stage-targeted recovery.
+- Upgrade `production_state` to 1.3 with explicit provider cooldown/retry metadata, remaining automatic attempts and a distinct exhausted state. Operator messages now distinguish input overflow, structured-interface rejection and Vertex quota exhaustion.
+- Add production-sized input, cross-attempt Schema fallback, 429 retry-budget and cooldown/exhaustion state regression tests. Schema remains 69; no migration, automatic production enqueue or model call is introduced.
+- Deploy revision `a587653` to production; schema remains 69 and no production record was automatically retried during rollout.
+
+## 2.0.14 - 2026-09-13
+
+- Recover legacy/downstream failures from the first missing prerequisite under the current pipeline contract. `production_state` 1.2 separates the non-blocking historical failure from the active interrupted state, and both UI and recovery execution use the same server-resolved target.
+- Add a third, prompt-enforced JSON transport when Vertex rejects both native JSON Schema and OpenAPI Schema requests with HTTP 400. Provider transport fallbacks no longer consume structured-output repair attempts; every returned payload still passes the original local JSON Schema validator.
+- Report provider-request submission separately from confirmed model execution, and explain planning/narrative HTTP 400 failures as structured-interface compatibility failures rather than possible article-fact errors.
+- Open the mobile secondary-action menu upward inside the card with an explicit stacking layer, preventing following cards and the card clipping boundary from hiding archive/delete actions.
+- Expose the existing audited destination-correction workflow from production details for `DESTINATION_TOPIC_MISMATCH`; it recalculates evidence and requires scope reconfirmation instead of blind retry.
+- No database migration and no automatic content retry are introduced by this release.
+- Deploy revision `9341a30ea07ac16fa2803a8aed5f27c776106c17` at immutable image digest `sha256:05db2059e2212bc75ffec8806b3dc651c98d20c53ae598b5ce7ecb50969b2c9c` after a verified backup/restore drill and read-only before/after audit. Production remained at seven approved rows, zero active production Jobs, 5,677 model-call metrics and zero WordPress Jobs; no affected record was retried.
+
+## 2.0.13 - 2026-09-13
+
+- Restrict the Content Workbench to approved Opportunity production instances and make each production Job carry one explicit `production_owner_opportunity_id`; Candidate identity alone is no longer production lineage.
+- Correct `needs_attention`, failed/interrupted/current/recovery/next-stage semantics and keep an older failed attempt from overriding its newer queued, running or successful retry.
+- Make stage recovery Opportunity-owned and idempotent, reuse existing durable Jobs, Artifacts and Step Receipts, and stop startup from synthesizing historical production retries unless an operator explicitly enables the maintenance-only opt-in.
+- Bound `plan_content` to the approved Opportunity and Editorial Assembly fact subset (32 facts, 64 evidence snippets, 96 KiB and approximately 24k input tokens), with deterministic materiality selection and compact structured output limits.
+- Replace the compressed mobile four-column Content table with cards, scrollable single-line filters, 2-by-3 statistics and secondary archive/delete actions; production detail now wraps and collapses internal stage/error keys.
+- Add schema 69 deterministic owner/audit backfill, dry-run projection tooling and regression coverage. Migration 69 does not enqueue work, call a model, alter approvals or delete retained research/evidence records.
+- Complete a read-only audit of the deployed 2.0.12 database before implementation, then deploy revision `8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303` at immutable image digest `sha256:b47514ea2b058ab9f743208e5be24d843def5c5a0543375db67adbf7f5e7cd47` after explicit authorization.
+- Verify the schema 68→69 rehearsal and production migration, paired backup/restore drill, network-isolated deterministic reconciliation, exact seven-row authenticated Content projection, public health, preserved model-call count and zero production/WordPress Jobs before retaining the immediate rollback set and removing superseded storage.
+
+## 2.0.12 - 2026-09-13
+
+- Add the backend-owned `production_state` projection with explicit evidence-waiting, ready, queued, running, failed, interrupted, completed and historical states, accurate stages, progress, next action, automatic-continuation and human-action flags.
+- Rebuild the Content workbench around lifecycle sections and pre-Draft production details; remove frontend inference across opportunity, candidate, Brief, Draft and Job status fields.
+- Add stage-targeted recovery through the existing durable queue, artifacts, step receipts, input/config hashes and idempotency controls. Completed upstream stages remain reusable and are never implicitly restarted by a recovery request.
+- Add transactional, audited and idempotent production-record archive, restore and deletion. Deletion removes only derived production records and refuses local deletion after a remote WordPress Draft exists.
+- Add structural Page Composition preview from persisted Contract payloads and direct final-preview/edit links from WordPress `preview_url` and `edit_url`, without copying Frontend JSX/CSS.
+- Add schema 68 production record controls/audit plus migration, state, recovery, archive, deletion, WordPress guard and preview tests. Migration 68 performs no historical scan, queue insertion or model call.
+- Deploy revision `a592b720edb311f10d88bcfa01e98ab7a945f6cd` at immutable image digest `sha256:6b8ed193ff0e67b871b4252ae03f0aea7b0f16f768f8250f9c32ba657ed8ef97`; verified backup/restore, schema 68 rehearsal and migration, opportunity admission audit, isolated readiness and public health all passed before cleanup of superseded deployment artifacts.
+
+## 2.0.11 - 2026-09-13
+
+- Rebuild Knowledge opportunities from canonical entity groups, including known bilingual destination aliases, while retaining replaced rows as internal audit history.
+- Count only independent Source families after filtering evidence to completed current Sources, and keep coverage refresh scoped to each opportunity's selected facts.
+- Merge semantically equivalent same-mode Source proposals without collapsing different production modes, durations or reader promises.
+- Reject context-free generic Knowledge subjects and infer content type from the topic entity and whole title tokens instead of incidental words in supporting facts.
+
+## 2.0.10 - 2026-09-13
+
+- Reuse Strategy 3.0-3.2 intake diagnostics under the reviewed compatible 3.3 diagnostic contract, then recalculate their opportunities without a model request. Only incompatible diagnostics can enter the paid reconciliation queue.
+- Refresh the strategy version, coverage and readiness of an existing opportunity when the same current topic key is rebuilt, so current qualifying opportunities are no longer hidden as historical processing gaps.
+- Build multi-source opportunities from completed Sources only while unfinished Sources remain in the extraction queue and join later recalculation after completion.
+- Restrict the Source list queue projection to core capture, segmentation, extraction, coverage and finalization stages; downstream Experience and Diagnostic work remains visible in its own status/timeline without making a completed Source look queued.
+- Exclude superseded historical-strategy rows from current system-recalculation totals so the dashboard reports only unfinished current opportunities.
+- Reconcile the destination inbox as soon as Experience extraction completes, so every completed Source that already satisfies the current article-candidate policy appears without a manual dashboard refresh or another model request.
+
+## 2.0.9 - 2026-09-13
+
+- Suppress superseded Source extraction failures from the live status projection while retaining their immutable timeline, and clear transient error text after a successful retry.
+- Add fingerprint-reviewed Content Strategy diagnostic refresh so a strategy upgrade produces current replacement recommendations instead of leaving the historical inbox hidden.
+- Default to one verified local snapshot and prune successful-upgrade rehearsal databases, obsolete rollback containers and unreferenced Docker layers without deleting production Sources, media or the live database.
+
+## 2.0.8 - 2026-09-13
+
+- Add typed, scope-aware and temporal Knowledge resolution with predicate/value repair, independent-source weighted consensus, targeted verification and persisted automatic-decision history. Human review remains for safety-critical or otherwise unresolved same-scope current contradictions.
+- Replace silent historical Source gaps with a complete processing-gap inventory, exact missing-stage recovery plans, idempotent legacy manifests and inherited `historical_recovery` job context. New interactive captures remain ahead of recovery work, including one-paragraph Sources with 19 or 27 images.
+- Split core semantic processing from background enrichment, add guarded fragment routing, compact intake projections, incremental Coverage Matrix refresh and child-process isolation for Knowledge, coverage and scheduled backup work.
+- Serialize SQLite-heavy derived-index jobs against other pipeline writers and defer recovery/heartbeat ticks during a transient database lock, so an isolated child process cannot crash the HTTP process while it commits.
+- Add schema 67, Content Strategy 3.3, Knowledge status/history/verification APIs, admin summary counters, dry-run-only Knowledge recomputation, deployment rehearsal and performance benchmarks.
+
+## 2.0.7 - Unreleased
+
+- Remove the estimated-call manual-start gate: normal, heavy and oversized Sources enter the durable queue automatically, while only explicit technical hard limits block processing.
+- Batch ordinary images in traceable groups of four to eight, keep maps, text-dense media and videos individual, and retain exact asset/segment provenance when splitting model output.
+- Separate service readiness, AI configuration, observed provider runtime and queue health; add lightweight capture-version status and source timelines without provider calls.
+- Add stage timing, cache/route/backoff telemetry, compact downstream model inputs, safe processing-gap dry runs and a non-mutating Base64 migration estimate.
+- Store new valid media payloads as content-addressed originals or derivative cache files and omit repeated Base64 from capture snapshots. Add schema 66 and Content Strategy 3.2.
+
+## 2.0.6 - Unreleased
+
+- Normalize image/video contracts before upload; enforce total and idle response deadlines, cancellation and bounded buffering. Save raw capture manifests and resumable media in IndexedDB; fix empty worker spinning during asynchronous storage.
+- Add v2 upload capabilities, missing-chunk status, conflict checks, durable idempotent receipts and verified storage references while preserving v1 requests. Stream server finalization and remote recovery; pin public DNS targets and validate redirect/socket/path boundaries.
+- Freeze selected evidence and writing context, validate facts at explicit content nodes, and preserve historical/conditional comparisons without requiring unselected historical values.
+- Hash semantic stage dependencies and effective prompt/schema configuration; commit major stage outputs and downstream jobs atomically, reconstruct downstream work on cache reuse, and coalesce Knowledge updates with dirty revisions.
+- Archive failed production attempts while retaining approval and expensive artifacts; require new approval only for explicit scope invalidation. Require positive identity evidence before entity merges.
+- Keep interactive extraction/coverage on realtime, isolate visual pressure, add visibility-aware polling and cached summaries. Optional source complexity routing remains disabled pending real quality validation.
+- App/extension 2.0.6, Content Strategy 3.1, migrations 60–65 (including ID-preserving capture table rebuilds). See the dated implementation audit and upgrade guide for measured tests, performance, compatibility and remaining limitations. No production deployment or publication performed.
+
+## 2.0.5 - Unreleased
+
+- Give Repair, Incremental, and Full Verification distinct Popup progress labels; Repair now presents completed/total progress and counts real in-flight, queued, and retry-wait tasks separately instead of presenting the cumulative repair total as remaining work.
+- Resume running Favorites/Repair sessions automatically after MV3 worker restarts, reconcile expired task leases with a durable alarm watchdog, and reserve full-session pauses for login, verification, capture authorization, and explicit user pause.
+- Replace Note batch barriers with continuously claiming worker slots, apply concurrency settings to a running session immediately, and adapt Auto mode from a 24-task rolling pressure window without treating long media-heavy Notes or isolated media failures as global pressure.
+- Process missing originals through a shared 12-pipeline media semaphore with separate upload, large-file, and memory guards; browser Repair now receives exact missing-media identities and leaves server-recoverable or already stored originals alone.
+- Finish all processable work as `completed_with_failures`, expose an isolated retry action, show configured versus effective concurrency, and benchmark 30-Note repair fixtures against the former two-wide batch/serial scheduler.
+
+## 2.0.4 - Unreleased
+
+- Preserve the writer's actual visual count, skip unsupported renderers, and require durable authorized provenance plus a real localized file before a localized source photo can pass WordPress delivery.
+- Replace heavy dashboard, Knowledge, Recommendations, Settings, and Commercial reads with indexed summaries, pagination, lazy detail endpoints, and per-view stale-while-revalidate frontend caching.
+- Keep Content strictly production-only, archive the four historical Beijing/Shanghai Trip.com seed assets and mappings, and make zero active commercial assets a valid state.
+- Move strict conflicts, Claim extraction reviews, and entity decisions into the Knowledge workspace with a real navigation badge and audited preferred-value or coexistence decisions.
+
 ## 2.0.3 - Unreleased
 
 - Reconcile internal opportunities into an actionable recommendation inbox with current-version checks, processing-versus-evidence gaps, semantic deduplication, collision handling, and safe historical-failure retries.

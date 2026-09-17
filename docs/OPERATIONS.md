@@ -1,5 +1,45 @@
 # V1 Operations
 
+## 2.0.28 production database startup guard
+
+Production must set an explicit `DATABASE_PATH` that already exists. The engine refuses to start against the image-local default or to create a missing production database. `ALLOW_PRODUCTION_DATABASE_BOOTSTRAP=true` is reserved for a deliberate first deployment and must not be used during an upgrade or recovery. Deployment readiness must verify the expected production Content projection, not only HTTP health, before the new container replaces the prior runtime.
+
+## 2.0.27 recovery-run repair budget
+
+Automatic Draft/QA repair is capped at two attempts per explicit `recovery_run_id`, not two attempts for the Draft's full lifetime. A manual recovery and every child Job must retain the same run id. The dedupe identity includes that run id plus stage, Draft and revision. This allows a newly diagnosed revision to converge while preventing repeated work inside one recovery. Operator diagnosis must report the active run's attempts and must not inherit an exhausted counter from an older deployment.
+
+If QA describes `brief-adaptation-N` or `brief-conflict-N` with a general editorial code, the deterministic quality gate canonicalizes it to one mandatory-Brief blocker. Recovery must restore the requirement from the frozen fact set and ledger; it must never import global Knowledge or invent a replacement value.
+
+## 2.0.26 unsupported-assertion recovery acceptance
+
+When QA reports `UNSUPPORTED_ASSERTION`, inspect the atomic `unsupported_claims` against the frozen repair `facts` and the current Draft ledger. A value available elsewhere in destination Knowledge is not part of this article unless its selected key is present in that frozen set. Recover only `revise_draft`; verify the new revision removes or corrects every listed value, reruns independent QA, and preserves unrelated Source, Evidence, media and upstream planning artifacts.
+
+The recovery detail must show the persisted review's exact blocker and checks. “Cause unknown” or newly invented “mandatory requirements not audited” messages are a diagnostic defect when the current review already contains a concrete issue. Continue production serially and draft-only; never delete the row or bulk-retry other Opportunities to clear this condition.
+
+## 2.0.25 evidence-ledger recovery acceptance
+
+For a generated Draft, the reader-visible body is authoritative about which optional selected facts were actually used. A surplus evidence-ledger key whose protected value is absent may be deterministically removed only when the same planned section retains another honestly expressed approved fact. The last usable claim for a required section is never pruned: it must pass the existing exact correction request or the Job fails closed. Rebuilt Source IDs always come from the frozen Writing Packet evidence, not model output.
+
+Production rollout never retries the six historical rows automatically. Recover one Opportunity at a time, confirm the new Job and model metrics belong to that owner, and wait through QA, media, page composition, final artifact validation and WordPress `draft` acknowledgement before selecting the next row.
+
+## 2.0.24 real-provider recovery acceptance
+
+Use `scripts/inspect-production-content-canary.mjs <database-containing-canary|replay|work> [since]` to inspect Jobs, reviews, Drafts and model metrics from a disposable production-copy canary. The script opens SQLite read-only with `query_only=ON` and refuses a filename that could be mistaken for the live database. It performs no recovery, model call or WordPress write.
+
+For real-provider acceptance, retain single concurrency, disable unrelated Batch/image work, recover one approved Opportunity-owned flow at a time, and verify that a failed QA report changes the next `generate_draft` artifact input instead of producing `pipeline.job_reused`. WordPress acceptance remains `draft` only and must store both `preview_url` and `edit_url`; publication is a separate human action.
+
+The canary must quarantine every queued Job not owned by its current target before calling the worker. Its Frontend Contract sources remain blank so the persisted accepted snapshot is used without a test-only sync Job. For a long-Draft QA request, assert LOW thinking, bounded result cardinality and absence of `MODEL_OUTPUT_LIMIT`; a transient 429 may cool down and retry, but it is reported separately from content quality and structured-schema compatibility.
+
+If one durable canary Job exhausts its bounded `retryable_provider`/`capacity` attempts, stop that selected flow and report `provider_capacity` as an inconclusive environment result. The canary must not manufacture a second recovery Job, teach an editorial Failure Lesson, or describe the article as defective. Resume from a fresh disposable baseline after provider capacity returns.
+
+When continued downstream acceptance is required while Vertex text capacity remains unavailable, create a fresh disposable production-copy database and run the same selected Opportunity with `--model kimi-k3 --images`. This is an audited canary-only text-provider fallback: it changes only that disposable database's runtime setting, recalculates model/config artifact identity, and reports Kimi metrics separately. Visual planning and processing remain enabled through the independently configured Vertex Gemini 3.1 Flash Image provider, with generated files isolated under a canary-only media directory. The fallback must not silently modify production model selection or weaken image/alt-text/page/mobile validation.
+
+## 2.0.23 production-copy recovery replay
+
+For a deterministic recovery audit, first create a disposable online backup of production, then run `npm run audit:prod-replay -- --database <name-containing-replay-or-work> --replay-id <unique-id>`. The command refuses filenames that do not explicitly identify a disposable copy, requires a quiescent work database, invokes no worker/model/WordPress client, and verifies one active Opportunity-owned recovery Job plus idempotent replay for each failed/interrupted record. Discard the work database after the report is retained.
+
+Do not point this command at the live database. A successful offline replay authorizes no production retry; production recovery remains an explicit per-record operation after the corrected immutable runtime is healthy.
+
 ## Daily workflow
 
 1. Select useful Xiaohongshu posts on mobile or desktop by adding them to the target Favorites collection.
@@ -16,7 +56,7 @@ The popup may start, pause, resume, cancel, or stop after the current persisted 
 
 Daily incremental discovery starts at the top and stops only after it has matched the saved Scope checkpoint, observed the configured consecutive-known streak, and found no new note in the current window. Full historical sync streams bounded discovery and identity batches until collection end and has no fixed session-total cap. The adaptive browser pool starts at 4–8 according to the PC and can grow to 12 under healthy load; access limits, timeouts, 429/5xx responses, and slow pages reduce pressure. Login walls or verification pages pause the whole session with an actionable state. The Extension never receives account credentials, requests browser cookies, or solves verification.
 
-The CMS Sources list refreshes every five seconds while the durable queue is active. Each note shows its current or next extraction stage, active and remaining job counts, source-level waiting position, queue age, and a retry time when model pressure has placed work into cooldown. Queue order favors dependency-closing article/QA work and explicit realtime work, then gives jobs older than 15 minutes a fairness boost. Vertex Batch chooses the oldest eligible extraction or coverage class, with coverage winning ties, so sustained intake cannot indefinitely starve article completion.
+The CMS Sources list refreshes every five seconds while the durable queue is active. Each note shows its current or next extraction stage, active and remaining job counts, source-level waiting position, queue age, and a retry time when model pressure has placed work into cooldown. A completed Source never displays a superseded failed attempt as its current extraction state; the old attempt remains in the Source timeline for audit. Queue order favors dependency-closing article/QA work and explicit realtime work, then gives jobs older than 15 minutes a fairness boost. Vertex Batch chooses the oldest eligible extraction or coverage class, with coverage winning ties, so sustained intake cannot indefinitely starve article completion.
 
 CMS model work runs in the deployed engine, not in the Chrome extension. After a capture has been accepted by the CMS, the local computer and Chrome may be closed while extraction, Knowledge rebuilds, recommendations, and article work continue on GCE. Keep the local computer and signed-in Chrome open only while the extension is discovering or capturing Xiaohongshu notes, or while a Xiaohongshu verification challenge requires operator action.
 
@@ -56,7 +96,7 @@ Create a consistent SQLite snapshot while the engine is running:
 npm run backup
 ```
 
-Each backup has a JSON manifest containing its byte size, SHA-256, schema version, and integrity result. Defaults are `./backups` and 14 retained snapshots.
+Each backup has a JSON manifest containing its byte size, SHA-256, schema version, and integrity result. Defaults are `./backups` and one retained snapshot. Pruning happens only after the replacement snapshot passes full verification.
 
 Verify any snapshot before restore:
 
@@ -108,6 +148,7 @@ The minimum measurement path accepts authenticated/server-side `impression` and 
 - Knowledge freshness reconciliation: `KNOWLEDGE_RECONCILE_HOURS` (default 24).
 - Consistent database backup: `AUTO_BACKUP_HOURS` (default 24).
 - Successful Job history: `JOB_HISTORY_RETENTION_DAYS` (default 30).
+- Verified local snapshots: `BACKUP_RETENTION` (default 1).
 - WordPress inventory continues to use `WORDPRESS_INVENTORY_SYNC_HOURS`.
 - Search Console query inventory uses `SEARCH_CONSOLE_SYNC_HOURS` when its read-only service account is configured.
 
@@ -180,3 +221,32 @@ Run only the isolated HTTP/API/static smoke phase after an existing build with:
 ```powershell
 npm run test:smoke
 ```
+# Content production workbench operations (2.0.18)
+
+The active Content workspace API is `GET /api/content`; it returns `{ items, sections }`, and every item includes the backend-owned `production_state`. `GET /api/content/:opportunityId/production-state` returns the pre-Draft-or-later detail, timeline, structural page preview, WordPress preview/edit links and combined audit/failure history. `GET /api/content/:opportunityId/history` returns the history alone.
+
+Authenticated mutations are `POST /api/content/:opportunityId/recover`, `POST /api/content/:opportunityId/archive`, `POST /api/content/:opportunityId/restore`, and `DELETE /api/content/:opportunityId/production-record`. Recovery accepts `retry_failed_stage` or `recover_next_stage`; the server chooses the exact stage. Every production mutation targets one approved Opportunity owner, and repeated `Idempotency-Key` values return the original operation result without running the queue again. Disposition mutations accept a JSON `reason`. Do not use the deletion endpoint to remove a remote WordPress Draft; it returns `REMOTE_WORDPRESS_DRAFT_EXISTS`.
+
+In `production_state` 1.2, a failed downstream Job whose current prerequisites are absent is retained as `latest_historical_error`; it does not remain the live retry target. The record becomes `interrupted` and `recovery_target` points to the first missing stage. Never bypass this by manually posting the historical stage. For planning/narrative `PROVIDER_REQUEST_FAILED` HTTP 400 records, verify `provider_request_sent` and `model_execution`: `rejected_before_generation` means Vertex rejected the request contract before confirmed generation. Version 2.0.14 negotiates JSON Schema → OpenAPI Schema → prompt-enforced JSON and still validates the output locally.
+
+Source 2.0.15 extends this to `production_state` 1.3. `retry_state` distinguishes a queued Vertex cooldown from an exhausted retry budget and reports remaining automatic attempts. Schema fallback position is recovered from the current durable Job's model-call receipts, so a 429 between transport attempts cannot reset the next claim to a known-rejected Schema. `assemble_editorial` now builds a deterministic bounded request before calling Vertex; its manifest records original/selected counts, bytes, estimated tokens and budget. A queued cooldown already at `max_attempts` is finalized as failed inside the next claim transaction without another provider request. Wait for quota health, then use the normal “重试失败步骤” action once; do not delete the production record and do not manually enqueue a downstream stage.
+
+Version 2.0.16 extends this to `production_state` 1.4. Recovery endpoints accept the production Opportunity ID but always resolve planning packages through its canonical Candidate; a retry therefore creates the intended owned Job instead of failing before enqueue. A persisted Brief remains proof that planning completed even if a later legacy failure marked the Brief `exception`, and a failed QA report targets `revise_draft` rather than rerunning review.
+
+Version 2.0.17 keeps that recovery contract and fixes the Vertex wire format used by `revise_draft`. The canonical JSON Schema retains array bounds for local validation, while the OpenAPI provider projection omits the `minItems`/`maxItems` fields rejected by the configured global endpoint. Bounded repair uses LOW thinking with a 12,000-token output budget and compact evidence. Deployment never retries failed Drafts automatically; an operator retries each record explicitly after confirming the new runtime is healthy.
+
+Version 2.0.18 upgrades `production_state` to 1.5. If a quality review fails while image or page work is still active, that content gate remains authoritative even if the sibling branch fails later. The terminal sibling releases the deferred `revise_draft` Job through the existing revision-scoped dedupe key; restarts still do not scan or retry historical production rows. Explicit image-stage recovery includes failed slots, and retained WebP source originals are submitted to Vertex Gemini as `image/webp` without replacing or re-encoding the original.
+
+Version 2.0.19 upgrades `production_state` to 1.6. It detects a failed historical Draft that contains fewer than 75% of its named planned sections and targets `generate_draft` from the preserved Writing Packet; it never attempts another partial repair of that truncated body. Current successful QA and active Jobs suppress this compatibility rule. Quality warnings do not fail production without an explicit blocker. Before release, use `test:production-content-canary` only on a disposable production-copy database with bounded real-Provider authorization, then use `test:production-wordpress-canary` against its local draft-only endpoint. When images are in scope, pass `--require-flash-image`; the canary then fails unless a real `vertex_gemini / gemini-3.1-flash-image` output exists on disk with non-zero bytes and a SHA-256 digest. The WordPress canary validates the final Publish Package, binary media uploads, Frontend boundary, idempotency and preview/edit persistence without contacting production WordPress.
+
+Version 2.0.20 adds the WordPress guide-type invariant that a generic JSON Schema could not express. If delivery reports `INVALID_PAGE_SCHEMA` for content type, do not delete the record and do not retry writing: refresh the state and recover from `compose_publish_page`. The system remaps the retained internal type, validates locally and then makes the same idempotent draft-only delivery. A successful response must store both `preview_url` and `edit_url`; production acceptance may inspect the preview but must not publish the post.
+
+Version 2.0.21 adds the corresponding sanitizer-stable inline HTML invariant. A WordPress `INVALID_COMPONENT_DATA` response for otherwise safe prose also recovers from `compose_publish_page`; old `&#39;` or `&apos;` apostrophes become `&#039;` with no visible text change. The local validator now catches a non-canonical form before delivery. Do not bypass the sanitizer or widen the allowed HTML list.
+
+Version 2.0.22 additionally remaps verified block signatures during this delivery-only conversion. Recovery must still start at `compose_publish_page`; do not regenerate the Draft or edit provenance rows manually.
+
+Changing a destination creates a new production-scope boundary. Pre-correction Jobs and Editorial Assembly results remain visible as non-blocking history and are not silently reused. The row remains in “等待开始” until an operator explicitly confirms the corrected scope; only then is a new `assemble_editorial` Job queued. Deployments, migrations and dashboard refreshes never perform that confirmation or enqueue any of the affected records.
+
+Schema 69 adds `jobs.production_owner_opportunity_id` and Opportunity/idempotency ownership on `content_operation_history`. Its transactional migration assigns historical Job/Assembly/operation ownership only where exactly one approved Opportunity proves the owner; ambiguous Candidate history stays unowned for diagnostics. It does not enqueue Jobs, run recovery, contact a model, alter approval decisions, synchronize the Frontend Contract or call WordPress. Startup still resumes already queued durable work, but historical production retry synthesis is disabled unless a controlled maintenance invocation explicitly enables `productionStartupResumeEnabled`.
+
+The 2.0.14 rollout captured a verified paired backup and read-only production classification/model-call/active-job baseline before replacement. Schema remained 69, so no migration was required and the seven affected rows were not enqueued. After isolated readiness and public attachment, repeat the authenticated Content projection and read-only baseline: all seven rows must still be approved, production/model/WordPress counters must not show rollout-triggered work, and the runtime must be pinned to the immutable image digest. The historical 2.0.13 projection helper remains read-only and must not be used to mutate production.

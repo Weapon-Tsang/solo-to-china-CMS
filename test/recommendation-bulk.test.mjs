@@ -97,7 +97,10 @@ test('approval freezes scope and a changed proposal fingerprint is rejected even
   decideRecommendationCommand(repository,{...input(fresh),decision:'approved_article',proposalFingerprint:fresh.opportunities.find(p=>p.id===path.id).proposalFingerprint});
   const before=JSON.parse(db.prepare('SELECT coverage_json FROM content_opportunities WHERE id=?').get(path.id).coverage_json);
   assert.equal(before.approval.proposal.title,'Different promised scope');
+  delete before.proposal;
+  db.prepare('UPDATE content_opportunities SET coverage_json=? WHERE id=?').run(JSON.stringify(before),path.id);
   repository.rebuildCoverageMatrices('chongqing');
   const after=JSON.parse(db.prepare('SELECT coverage_json FROM content_opportunities WHERE id=?').get(path.id).coverage_json);
   assert.deepEqual(after.approval,before.approval);
+  assert.equal(after.proposal.readerPromise,before.approval.proposal.readerPromise);
 });

@@ -53,7 +53,7 @@ test("large extraction backlog stays queued while Vertex Batch runs and updates 
 });
 
 test("large text coverage backlog also uses Vertex Batch and completes only after output import", async (t) => {
-  const { db, repository } = repositoryFixture(t);
+  const { db, repository } = repositoryFixture(t,{coverageAiRoutingEnabled:true});
   for (const [index, title] of ["Coverage A", "Coverage B"].entries()) {
     const source = repository.saveCapture(normalizeXiaohongshuCapture({
       url: `https://www.xiaohongshu.com/explore/${index ? "68abcdef0000000000000012" : "68abcdef0000000000000011"}`,

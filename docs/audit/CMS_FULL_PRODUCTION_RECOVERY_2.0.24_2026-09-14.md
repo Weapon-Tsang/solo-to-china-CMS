@@ -1,0 +1,39 @@
+# CMS 2.0.24 full production recovery and final-preview acceptance
+
+Date: 2026-09-14  
+App/Extension: 2.0.24  
+Schema: 69 (no migration)  
+Content Strategy: 3.3  
+Production state: 2.0  
+Frontend Contract: 1.4.0
+
+## Scope and safety boundary
+
+This code-only release uses the seven approved production records as a permanent regression corpus and must validate the complete Approval → Editorial Assembly → Narrative Plan → Writing Packet → Draft → Page Plan → Page → independent QA/repair → Commercial → Publish Package → WordPress Draft path. It must not publish a WordPress post, delete production records, alter approvals, or rewrite Source, original media, Claims, Knowledge, Evidence, Experience or prior Failure Lessons.
+
+All retained Source assets are authorized for editorial and production use under `AGENTS.md`. Missing historical item-level licence flags cannot suppress them. Durable bytes, destination/factual relevance, provenance, accessible media, accurate alt text and Frontend Contract validation remain mandatory; unrelated or broken media fail closed.
+
+## Systemic lessons and repairs
+
+1. A recovery Job is not proof of new work if its dependency hash omits the current QA blocker. Every Draft-regeneration entry now includes the authoritative QA report and current frozen writing inputs.
+2. A model can return syntactically valid prose that loses planned structure. Exact planned labels are normalized to semantic H2 sections; an evidence-bearing section still missing after one structured correction fails before page composition.
+3. Full internal packages are not safe stage DTOs. Writer and QA inputs are compact, and Narrative Planning now receives only the approved outline, at most 48 selected facts/two excerpts per fact and selected Experience Blocks, with a 32k-token/128 KiB local ceiling. The production-copy canary had exposed an approximately 177k-token narrative request.
+4. A deterministic stage must not change its own durable input. Authorized visual seeding now occurs before artifact preparation, eliminating the first-attempt `STALE_PIPELINE_INPUT` created by page/visual composition itself.
+5. A current QA pass proves that older planning/writing/page failures belong to a superseded revision. They remain audit history but cannot become the current recovery target; required-media and newer post-QA failures are not hidden.
+6. Facts must form traveler decisions, not a database dump. Strategy 3.3 now explicitly requires condition/consequence/action logic, varied section rhythm, transparent uncertainty, natural SEO intent, self-contained GEO answers and visible/page/schema consistency.
+7. Provider-valid JSON is not necessarily a valid production artifact. The first final-candidate replay rejected a Draft missing one required H2, then exposed three two-second recoveries that reused that rejected completion from the local response cache. Cache admission is now gated by the caller's semantic validator, rejected outputs are evicted, and the writer must emit every approved evidence-bearing heading exactly once in order.
+8. A persisted Brief requirement is useless if a compressed downstream DTO drops it. The extended replay showed QA repeatedly enforcing bilingual navigation, seasonal-hour, booking and conflict instructions that neither full Draft regeneration nor bounded repair had received. Both writer paths now retain the bounded requirements, prior blockers become regression guardrails, and independent QA must explicitly pass every mandatory adaptation/conflict requirement before delivery.
+9. A nominal 12k structured-output budget is not a 12k JSON budget on Gemini reasoning models. A real long-Draft review used 11,519 thinking tokens and only 464 visible output tokens before `MAX_TOKENS`. QA now uses LOW thinking, receives one compact non-duplicated evidence projection, and has explicit bounded result cardinality. Any MEDIUM-thinking structured stage gets one measured LOW-thinking fallback before becoming an auditable terminal output-limit failure.
+10. Repeating the same content blocker after a bounded repair is evidence that the repair boundary is wrong, not permission for another oscillation. Consecutive blocker codes now escalate only the Draft to regeneration from its frozen Writing Packet; page/media-only blockers remain on their specialized stages. The provider canary also quarantines non-target copied-queue work before each Job claim, so a single-flow test cannot spend calls or create misleading failures on unrelated background maintenance. If the selected Job exhausts its own bounded Vertex capacity attempts, the canary records an inconclusive `provider_capacity` result and stops; it cannot create another recovery Job or turn provider pressure into an editorial lesson.
+
+## Verification record
+
+Targeted production-derived regressions: PASS.  
+Static/build/boundary checks: PASS.  
+Final full local test suite: pending rerun after the provider-output budget repair.
+Production database replay: PASS on an isolated copy; no production write or model/WordPress call.  
+Real Vertex provider replay: the first three records reached current QA and Commercial successfully; the second group exposed and preserved a real QA thinking-budget exhaustion before the defective canary was stopped. A corrected immutable image must rerun the unfinished group.
+WordPress Draft canary and desktop/mobile final preview: pending final immutable candidate.  
+Production rollout and seven-record recovery: pending final acceptance.
+
+The final section will record the immutable revision/image, exact stage results and provider usage, the seven production states, WordPress Draft IDs/statuses, preview/edit URLs, desktop/mobile visual checks, SEO/GEO checks, rollback reference and disk cleanup. No result may be described as production-complete while a required level remains pending.

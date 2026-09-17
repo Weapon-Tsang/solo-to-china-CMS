@@ -1,5 +1,6 @@
 import { validatePageEvidence } from "./evidence-validator.mjs";
 import { synchronizeSeoMetadata, validateSeoGeoArtifact } from "./seo-geo.mjs";
+import { normalizeFrontendPageForDelivery } from "./content-taxonomy.mjs";
 
 const COMMERCIAL_VARIANTS = {
   affiliate_booking_card: () => "default",
@@ -57,10 +58,14 @@ export function buildPublishPackage({ pagePayload, draft, contract, publication 
   const metadataProperties = contract?.pageSchema?.schema?.properties?.metadata?.properties;
   const supportedMetadataFields = metadataProperties && typeof metadataProperties === "object"
     ? new Set(Object.keys(metadataProperties)) : null;
-  const page = synchronizeSeoMetadata(pagePayload, draft, { supportedMetadataFields });
+  const page = synchronizeSeoMetadata(normalizeFrontendPageForDelivery(pagePayload), draft, { supportedMetadataFields });
+  if ((pagePayload?.blocks || []).length && !(page?.blocks || []).length) {
+    throw new PublishCompositionError("PUBLISH_PAGE_BLOCKS_LOST", "Publish Package normalization removed every Final Page block.");
+  }
   const manifest = buildMediaManifest(media);
   const featured = manifest.find((item) => item.role === "featured");
-  if (featured && page.metadata && page.metadata.featuredMediaId == null) page.metadata.featuredMediaId = featured.media_id;
+  if (featured && page.metadata && (supportedMetadataFields == null || supportedMetadataFields.has("featuredMediaId"))
+    && page.metadata.featuredMediaId == null) page.metadata.featuredMediaId = featured.media_id;
   return {
     contract: {
       componentContractVersion: contract.contractVersion,
@@ -103,12 +108,59 @@ export function validateFinalPageArtifact(page, contentPackage) {
   errors.push(...seoGeoValidation.errors);
   const allowedAssets = new Set(contentPackage?.commercial_composition?.asset_ids || []);
   blocks.forEach((block, index) => {
+    errors.push(...rawPresentationErrors(block?.data, `$.blocks[${index}].data`));
     if (!String(block?.type || "").startsWith("affiliate_")) return;
     if (!allowedAssets.has(block.data?.affiliate_asset_id)) {
       errors.push({ code: "UNVERIFIED_COMMERCIAL_ASSET", path: `$.blocks[${index}].data.affiliate_asset_id` });
     }
   });
   return { valid: errors.length === 0, errors, evidence: evidenceValidation, seoGeo: seoGeoValidation };
+}
+
+export function reconcileCommercialDelivery(composition, {
+  finalPage = null, publishPackage = null, wordpressPackage = null, visibleHtml = "",
+} = {}) {
+  const expected = new Set((composition?.slots || []).map((slot) => slot.slot_key).filter(Boolean));
+  const pageSlots = slotKeysInPage(finalPage);
+  const packageSlots = slotKeysInPage(publishPackage?.page);
+  const wordpressSlots = slotKeysInPage(wordpressPackage?.page || wordpressPackage);
+  const domSlots = new Set([...String(visibleHtml || "").matchAll(/data-(?:affiliate-slot|stc-slot-key)=["']([^"']+)["']/gi)].map((match) => match[1]));
+  const layers = { final_page: pageSlots, publish_package: packageSlots, wordpress_storage: wordpressSlots, visible_dom: domSlots };
+  const errors = [];
+  for (const slotKey of expected) {
+    for (const [layer, actual] of Object.entries(layers)) {
+      if ((layer === "publish_package" && !publishPackage)
+        || (layer === "wordpress_storage" && !wordpressPackage)
+        || (layer === "visible_dom" && !visibleHtml)) continue;
+      if (!actual.has(slotKey)) errors.push({ code: "COMMERCIAL_SLOT_DELIVERY_MISMATCH", slot_key: slotKey, layer,
+        message: `Selected commercial slot '${slotKey}' is missing from ${layer}.` });
+    }
+  }
+  for (const [layer, actual] of Object.entries(layers)) for (const slotKey of actual) {
+    if (!expected.has(slotKey)) errors.push({ code: "UNSELECTED_COMMERCIAL_SLOT_DELIVERED", slot_key: slotKey, layer,
+      message: `Commercial slot '${slotKey}' exists in ${layer} but was not selected by the current composition.` });
+  }
+  return { valid: errors.length === 0, expected_count: expected.size,
+    counts: Object.fromEntries(Object.entries(layers).map(([key, value]) => [key, value.size])),
+    slots: { expected:[...expected], ...Object.fromEntries(Object.entries(layers).map(([key,value])=>[key,[...value]])) },
+    block_types:{ final_page:(finalPage?.blocks || []).map((block)=>block?.type || ""),
+      publish_package:(publishPackage?.page?.blocks || []).map((block)=>block?.type || ""),
+      wordpress_storage:((wordpressPackage?.page || wordpressPackage)?.blocks || []).map((block)=>block?.type || "") }, errors };
+}
+
+function slotKeysInPage(page) {
+  return new Set((page?.blocks || []).filter((block) => String(block?.type || "").startsWith("affiliate_"))
+    .map((block) => block?.data?.slot_key).filter(Boolean));
+}
+
+function rawPresentationErrors(value, path) {
+  if (typeof value === "string") {
+    const rawMarkdown = /\*\*[^*\n]+\*\*|__[^_\n]+__|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|(?:^|\n)\s*\|[^|\n]+\|[^|\n]+\|\s*(?:\n|$)/m;
+    return rawMarkdown.test(value) ? [{ code: "RAW_MARKDOWN_PRESENTATION", path }] : [];
+  }
+  if (Array.isArray(value)) return value.flatMap((entry, index) => rawPresentationErrors(entry, `${path}[${index}]`));
+  if (!isObject(value)) return [];
+  return Object.entries(value).flatMap(([key, entry]) => rawPresentationErrors(entry, `${path}.${key}`));
 }
 
 export function synchronizeSchemaWithPage(sourceSchema, page, draft = {}) {

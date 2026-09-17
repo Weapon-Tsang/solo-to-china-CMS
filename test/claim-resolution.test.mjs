@@ -274,6 +274,33 @@ test("reservation wording is compared as a canonical boolean fact", () => {
   assert.equal(conflict.reviewType, "SOURCE_CONFLICT");
 });
 
+test("reservation channels enrich a positive requirement instead of creating a manual conflict", () => {
+  const relation = classifyClaimPair(
+    claim("true", { predicate: "booking_required", sourceQuote: "Advance booking is required." }),
+    claim("WeChat official account Chongqing Zoo or Meituan", { predicate: "booking_channel", sourceQuote: "Book in the official account or Meituan." }),
+  );
+  assert.equal(relation.relation, "ENRICHMENT");
+  assert.equal(relation.canCoexist, true);
+});
+
+test("free admission and self-paid consumption are compatible price details", () => {
+  const relation = classifyClaimPair(
+    claim("self-pay consumption", { predicate: "ticket_price", sourceQuote: "Admission is free; tea is self-paid." }),
+    claim("free admission, drinks charged separately", { predicate: "admission_fee", sourceQuote: "Free entry; pay for tea." }),
+  );
+  assert.equal(relation.relation, "ENRICHMENT");
+  assert.equal(relation.canCoexist, true);
+});
+
+test("bilingual parenthetical metro descriptions normalize to the same station exit", () => {
+  const relation = classifyClaimPair(
+    claim("上新街 1 号口 (Shangxinjie Station Exit 1)", { predicate: "nearest_metro_exit", sourceQuote: "" }),
+    claim("Shangxinjie Metro Station Exit 1", { predicate: "nearest_subway_station_exit", sourceQuote: "" }),
+  );
+  assert.equal(relation.relation, "PARAPHRASE");
+  assert.equal(relation.canCoexist, true);
+});
+
 test("matching time evidence with richer description is enrichment, not a hard-fact conflict", () => {
   const enriched = classifyClaimPair(
     claim("20:00-23:00", { predicate: "has evening lighting during", sourceQuote: "洪崖洞晚上20:00-23:00亮灯" }),

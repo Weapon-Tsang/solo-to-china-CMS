@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
+import path from "node:path";
 import vm from "node:vm";
 import { createHash } from "node:crypto";
 import { normalizeXiaohongshuCapture, ValidationError } from "../src/adapters/xiaohongshu.mjs";
@@ -128,6 +129,12 @@ test("authorized source images are saved as verified local files with nearby tex
   assert.equal(asset.caption_text, "East entrance");
   assert.equal(asset.dom_order, 7);
   assert.equal(fs.readFileSync(asset.local_path).equals(bytes), true);
+  const storageRef = fixture.db.prepare("SELECT * FROM source_asset_storage_refs WHERE asset_id=?").get(asset.id);
+  assert.match(storageRef.original_storage_ref, /^media\/[a-f0-9]{2}\/[a-f0-9]{64}\.png$/);
+  assert.equal(asset.local_path.endsWith(storageRef.original_storage_ref.replaceAll("/", path.sep)), true);
+  const snapshots = fixture.db.prepare("SELECT raw_payload_json,assets_json FROM capture_versions WHERE source_id=?").get(saved.id);
+  assert.equal(snapshots.raw_payload_json.includes(";base64,"), false);
+  assert.equal(snapshots.assets_json.includes(";base64,"), false);
 });
 
 test("capture identity uses the Xiaohongshu note ID before transient share URLs", (t) => {

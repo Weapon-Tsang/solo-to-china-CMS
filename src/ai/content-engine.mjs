@@ -4,6 +4,7 @@ import { createAiClient } from "./client.mjs";
 import { pageBlockSignature, protectedFactTokens, validatePageEvidence } from "../evidence-validator.mjs";
 import { titlePromiseRisks } from "../seo-geo.mjs";
 import { separateQualityResults } from "../services/content-recovery-policy.mjs";
+import { normalizeFrontendPageForDelivery } from "../content-taxonomy.mjs";
 
 const BRIEF_SCHEMA = objectSchema(
   ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions", "canonical"],
@@ -11,35 +12,35 @@ const BRIEF_SCHEMA = objectSchema(
     title: { type: "string" },
     primary_keyword: { type: "string" },
     search_intent: { type: "string" },
-    audience: { type: "array", items: { type: "string" } },
+    audience: { type: "array", maxItems: 4, items: { type: "string" } },
     angle: { type: "string" },
     reader_promise: { type: "string" },
     outline: {
-      type: "array",
+      type: "array", minItems: 1, maxItems: 10,
       items: objectSchema(["section_id", "heading", "purpose", "claim_keys"], {
         section_id: { type: "string" },
         heading: { type: "string" }, purpose: { type: "string" },
-        claim_keys: { type: "array", items: { type: "string" } },
+        claim_keys: { type: "array", maxItems: 12, items: { type: "string" } },
       }),
     },
-    adaptation_requirements: { type: "array", items: { type: "string" } },
-    conflict_instructions: { type: "array", items: { type: "string" } },
-    verification_instructions: { type: "array", items: { type: "string" } },
+    adaptation_requirements: { type: "array", maxItems: 12, items: { type: "string" } },
+    conflict_instructions: { type: "array", maxItems: 12, items: { type: "string" } },
+    verification_instructions: { type: "array", maxItems: 12, items: { type: "string" } },
     canonical: objectSchema(["content_type", "summary", "quick_answer", "entities", "secondary_queries", "highlights", "practical_tips", "warnings", "faq", "answer_blocks", "image_plan", "seo"], {
       content_type: { type: "string", enum: ["city_guide", "itinerary", "attraction_guide", "food_guide", "transport_guide", "neighborhood_guide", "hotel_area_guide", "shopping_guide", "practical_guide", "first_time_guide", "comparison", "listicle", "how_to"] },
       summary: { type: "string" }, quick_answer: { type: "string" },
-      entities: { type: "array", items: { type: "string" } }, secondary_queries: { type: "array", items: { type: "string" } },
-      highlights: { type: "array", items: { type: "string" } }, practical_tips: { type: "array", items: { type: "string" } }, warnings: { type: "array", items: { type: "string" } },
-      faq: { type: "array", items: objectSchema(["question", "answer"], { question: { type: "string" }, answer: { type: "string" } }) },
-      answer_blocks: { type: "array", items: objectSchema(["question", "direct_answer", "supporting_points", "entity"], {
-        question: { type: "string" }, direct_answer: { type: "string" }, supporting_points: { type: "array", items: { type: "string" } }, entity: { type: "string" },
+      entities: { type: "array", maxItems: 16, items: { type: "string" } }, secondary_queries: { type: "array", maxItems: 12, items: { type: "string" } },
+      highlights: { type: "array", maxItems: 12, items: { type: "string" } }, practical_tips: { type: "array", maxItems: 16, items: { type: "string" } }, warnings: { type: "array", maxItems: 12, items: { type: "string" } },
+      faq: { type: "array", maxItems: 8, items: objectSchema(["question", "answer"], { question: { type: "string" }, answer: { type: "string" } }) },
+      answer_blocks: { type: "array", maxItems: 8, items: objectSchema(["question", "direct_answer", "supporting_points", "entity"], {
+        question: { type: "string" }, direct_answer: { type: "string" }, supporting_points: { type: "array", maxItems: 6, items: { type: "string" } }, entity: { type: "string" },
       }) },
-      image_plan: { type: "array", items: objectSchema(["type", "role", "subject", "placement", "strategy", "factual_image_required"], {
+      image_plan: { type: "array", maxItems: 8, items: objectSchema(["type", "role", "subject", "placement", "strategy", "factual_image_required"], {
         type: { type: "string", enum: ["real_world_photo", "infographic", "map_or_route", "illustration"] },
         role: { type: "string" }, subject: { type: "string" }, placement: { type: "string" }, strategy: { type: "string" }, factual_image_required: { type: "boolean" },
       }) },
       seo: objectSchema(["primary_keyword", "secondary_keywords", "search_intent"], {
-        primary_keyword: { type: "string" }, secondary_keywords: { type: "array", items: { type: "string" } }, search_intent: { type: "string" },
+        primary_keyword: { type: "string" }, secondary_keywords: { type: "array", maxItems: 12, items: { type: "string" } }, search_intent: { type: "string" },
       }),
     }),
   },
@@ -91,6 +92,13 @@ const EXPERIENCE_SCHEMA = objectSchema(["blocks"], {
   },
 });
 
+const DISPUTE_REVIEW_SCHEMA = objectSchema(["assessment", "rationale", "evidence_refs", "cautions"], {
+  assessment: { type: "string", enum: ["supports_claim_a", "supports_claim_b", "compatible", "insufficient_evidence"] },
+  rationale: { type: "string" },
+  evidence_refs: { type: "array", maxItems: 8, items: { type: "string" } },
+  cautions: { type: "array", maxItems: 8, items: { type: "string" } },
+});
+
 const ASSEMBLY_SCHEMA = objectSchema(
   ["selected_fact_keys", "selected_experience_block_ids", "selected_source_ids", "selected_blueprint_source_ids", "exclusions", "rationale"],
   {
@@ -112,6 +120,9 @@ const NARRATIVE_SCHEMA = objectSchema(
       experience_block_id: { type: "string" }, section_id: { type: "string" }, purpose: { type: "string" },
     }) },
     supporting_fact_keys: { type: "array", maxItems: 48, items: { type: "string" } },
+    evidence_selections: { type:'array',maxItems:96,items:objectSchema(['claim_key','claim_id','source_id','role'],{
+      claim_key:{type:'string'},claim_id:{type:'string'},source_id:{type:'string'},role:{type:'string',enum:['current','historical','conditional']},
+    }) },
     conditional_branches: { type: "array", maxItems: 24, items: { type: "string" } },
     tradeoffs: { type: "array", maxItems: 24, items: { type: "string" } },
     exclusions: { type: "array", maxItems: 24, items: { type: "string" } },
@@ -143,7 +154,7 @@ const DRAFT_SCHEMA = objectSchema(
     visuals: { type: "array", items: objectSchema(["placement", "purpose", "alt_text", "caption", "generation_prompt", "aspect_ratio", "image_type", "image_role", "image_subject", "factual_image_required"], {
       placement: { type: "string", enum: ["hero", "after_intro", "mid_article", "before_faq", "closing"] },
       purpose: { type: "string" }, alt_text: { type: "string" }, caption: { type: "string" }, generation_prompt: { type: "string" },
-      aspect_ratio: { type: "string", enum: ["16:9", "4:3", "1:1", "3:2", "9:16"] },
+      aspect_ratio: { type: "string", enum: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"] },
       image_type: { type: "string", enum: ["real_world_photo", "infographic", "map_or_route", "illustration"] },
       image_role: { type: "string" }, image_subject: { type: "string" }, factual_image_required: { type: "boolean" },
     }) },
@@ -151,7 +162,7 @@ const DRAFT_SCHEMA = objectSchema(
 );
 
 const DRAFT_REPAIR_SCHEMA = objectSchema(
-  ["base_content_hash", "replacement_sections", "metadata", "evidence_ledger", "verification_notes"],
+  ["base_content_hash", "replacement_sections"],
   {
     base_content_hash: { type: "string" },
     replacement_sections: {
@@ -182,18 +193,18 @@ const REVIEW_SCHEMA = objectSchema(
   {
     passed: { type: "boolean" }, score: { type: "number", minimum: 0, maximum: 100 },
     checks: {
-      type: "array",
+      type: "array", maxItems: 24,
       items: objectSchema(["name", "passed", "detail"], {
-        name: { type: "string" }, passed: { type: "boolean" }, detail: { type: "string" },
+        name: { type: "string", maxLength: 160 }, passed: { type: "boolean" }, detail: { type: "string", maxLength: 600 },
       }),
     },
     issues: {
-      type: "array",
+      type: "array", maxItems: 16,
       items: objectSchema(["code", "severity", "message"], {
-        code: { type: "string" }, severity: { type: "string", enum: ["blocker", "warning"] }, message: { type: "string" },
+        code: { type: "string", maxLength: 120 }, severity: { type: "string", enum: ["blocker", "warning"] }, message: { type: "string", maxLength: 1_000 },
       }),
     },
-    unsupported_claims: { type: "array", items: { type: "string" } },
+    unsupported_claims: { type: "array", maxItems: 12, items: { type: "string", maxLength: 800 } },
   },
 );
 
@@ -313,13 +324,50 @@ export class ContentEngine {
   }
 
   async draft(contentPackage, revisionFeedback = null, options = {}) {
-    const policy = contentPackage.content_policy || {};
-    const result = await this.respond({
-      name: "article_draft_v2",
-      schema: DRAFT_SCHEMA,
-      instructions: draftPrompt(policy),
-      input: JSON.stringify({ ...draftInputDto(contentPackage), revision_feedback: revisionFeedback }), options,
+    const context = contentPackage.writing_packet?.context;
+    const policy = (context?.version === 2 ? context.content_policy : contentPackage.content_policy) || {};
+    const input = draftInputDto(contentPackage);
+    const allowedFactKeys = input.evidence_ledger_facts.map((fact) => fact.normalized_key);
+    const outline = contentPackage.brief?.plan?.outline || contentPackage.brief?.outline || [];
+    const allowedSectionIds = outline.map((section) => section.section_id).filter(Boolean);
+    const allowedFactSet = new Set(allowedFactKeys);
+    const sectionFactKeys = Object.fromEntries(outline.filter((section) => section.section_id).map((section) => [section.section_id,
+      [...new Set((section.claim_keys || []).filter((key) => allowedFactSet.has(key)))]]));
+    const invalidPlanKeys = [...new Set(outline.flatMap((section) => section.claim_keys || []))].filter((key) => !allowedFactSet.has(key));
+    const uncoveredPlanSections = outline.filter((section) => (section.claim_keys || []).length && !(sectionFactKeys[section.section_id] || []).length)
+      .map((section) => section.section_id);
+    if (invalidPlanKeys.length || uncoveredPlanSections.length) throw Object.assign(new Error(
+      `Frozen Writing Packet does not cover the approved page plan (${invalidPlanKeys.length} unavailable keys, ${uncoveredPlanSections.length} uncovered sections). Rebuild editorial assembly and planning before drafting.`), {
+      code:"FROZEN_WRITING_SCOPE_INVALID",retryable:false,invalidPlanKeys,uncoveredPlanSections,
     });
+    const requiredSectionIds = Object.entries(sectionFactKeys).filter(([,keys]) => keys.length).map(([sectionId]) => sectionId);
+    const schema = draftResponseSchema(allowedFactKeys, allowedSectionIds);
+    const prepareAndValidate = (output) => {
+      output.body_markdown = normalizeDraftHeadingHierarchy(output.body_markdown, output.title,
+        outline.map((section)=>section.heading).filter(Boolean));
+      pruneUnusedProtectedEvidenceClaims(output, input.evidence_ledger_facts, sectionFactKeys);
+      validateGeneratedDraftEvidence(output, allowedFactKeys, allowedSectionIds, requiredSectionIds, sectionFactKeys);
+      validateGeneratedDraftProtectedValues(output, input.evidence_ledger_facts);
+      normalizeGeneratedDraftEvidenceSources(output, input.evidence_ledger_facts, outline);
+      validateGeneratedDraftStructure(output, outline);
+    };
+    const request = (extraFeedback = revisionFeedback) => this.respond({
+      name: "article_draft_v2",
+      schema,
+      instructions: draftPrompt(policy),
+      input: JSON.stringify({ ...input, revision_feedback: extraFeedback }),
+      options: { ...options, validateOutput: prepareAndValidate },
+    });
+    let result;
+    try {
+      result = await request();
+    } catch (error) {
+      if (!["DRAFT_EVIDENCE_SCOPE_INVALID", "DRAFT_EVIDENCE_VALUE_INVALID", "DRAFT_STRUCTURE_INVALID"].includes(error?.code)) throw error;
+      result = await request({ previous: revisionFeedback, draft_contract_error: error.message,
+        rejected_claim_keys: error.invalidClaimKeys || [], rejected_section_ids: error.invalidSectionIds || [],
+        missing_evidence_section_ids: error.missingSectionIds || [], missing_body_section_ids:error.missingBodySectionIds || [],
+        invalid_section_claim_mappings:error.invalidSectionClaims || [], missing_protected_values:error.missingProtectedValues || [] });
+    }
     result.output.slug = slugify(result.output.slug || result.output.title);
     result.output.seo ||= {};
     result.output.meta_description = truncate(result.output.meta_description, 500);
@@ -336,15 +384,45 @@ export class ContentEngine {
   async repairDraft(contentPackage, issues = [], options = {}) {
     const existing = contentPackage?.draft;
     if (!existing?.content_hash) throw new Error("Bounded repair requires a persisted draft content hash.");
-    const repairInput = compactDraftRepairInput(contentPackage, issues);
-    const result = await this.respond({
+    const repairIssues = actionableDraftRepairIssues(issues);
+    if (!repairIssues.length) throw new Error("Bounded repair requires at least one reader-facing content blocker.");
+    const repairInput = compactDraftRepairInput(contentPackage, repairIssues);
+    const headings = repairInput.allowed_replacement_headings || [];
+    const schema = draftRepairSchema(headings);
+    const request = (input) => this.respond({
       name: "bounded_draft_repair",
-      schema: DRAFT_REPAIR_SCHEMA,
+      schema,
       instructions: DRAFT_REPAIR_PROMPT,
-      input: JSON.stringify(repairInput), options,
+      input: JSON.stringify(input), options,
     });
-    result.output = applyBoundedDraftRepair(existing, result.output, issues, { validFactKeys: repairInput.facts.map((fact) => fact.normalized_key) });
-    return result;
+    const apply = (result) => {
+      result.output = applyBoundedDraftRepair(existing, result.output, repairIssues,
+        { validFactKeys: factDtos(contentPackage).map((fact) => fact.normalized_key),
+          sectionHeadings:(contentPackage.brief?.plan?.outline || contentPackage.brief?.outline || []).map((section)=>section.heading).filter(Boolean) });
+      validateGeneratedDraftProtectedValues(result.output, factDtos(contentPackage));
+      return result;
+    };
+    const first = await request(repairInput);
+    try {
+      return apply(first);
+    } catch (error) {
+      if (!["INVALID_DRAFT_REPAIR_SCOPE", "DRAFT_EVIDENCE_VALUE_INVALID"].includes(error?.code)) throw error;
+      const corrected = await request({
+        ...repairInput,
+        rejected_patch: { replacement_headings: (first.output?.replacement_sections || []).map((item) => item.heading) },
+        repair_validation_error: String(error.message || error),
+        missing_protected_values:error.missingProtectedValues || [],
+      });
+      try {
+        return apply(corrected);
+      } catch (correctionError) {
+        if (["INVALID_DRAFT_REPAIR_SCOPE", "DRAFT_EVIDENCE_VALUE_INVALID"].includes(correctionError?.code)) {
+          correctionError.retryable = false;
+          correctionError.failureClass = "permanent_input";
+        }
+        throw correctionError;
+      }
+    }
   }
 
   async composePagePlan(contentPackage, capabilities, options = {}) {
@@ -368,6 +446,15 @@ export class ContentEngine {
     });
   }
 
+  async reviewDispute(evidencePackage, options = {}) {
+    return this.respond({
+      name: "luna_local_dispute_review",
+      schema: DISPUTE_REVIEW_SCHEMA,
+      instructions: "Review only the bounded evidence provided. Do not add outside facts and do not resolve or mutate Knowledge. Return a recommendation for a human reviewer, citing only supplied evidence_refs.",
+      input: JSON.stringify(evidencePackage), options,
+    });
+  }
+
   async composeFrontendPage(contentPackage, capabilities, pageSchema, options = {}) {
     const result = await this.respond({
       name: "frontend_page_payload",
@@ -380,8 +467,13 @@ export class ContentEngine {
         visuals: contentPackage.draft?.visuals || [],
       }), options,
     });
-    const separated = separateCmsProvenance(result.output, contentPackage.frontend_page_plan?.plan);
-    return { ...result, output: separated.payload, provenance: separated.provenance };
+    const supportsContentType = Boolean(pageSchema?.properties?.metadata?.properties?.contentType);
+    const normalized = normalizeFrontendPageForDelivery(result.output,
+      supportsContentType ? contentPackage.brief?.canonical?.content_type : null);
+    const separated = separateCmsProvenance(normalized, contentPackage.frontend_page_plan?.plan);
+    return { ...result,
+      output: separated.payload,
+      provenance: separated.provenance };
   }
 
   async review(contentPackage, options = {}) {
@@ -396,30 +488,55 @@ export class ContentEngine {
 
   async respond({ name, schema, instructions, input, options = {} }) {
     return this.client.completeJson({ name, schema, instructions, content: input, signal: options.signal || null,
-      telemetryContext: options.telemetryContext || null });
+      telemetryContext: options.telemetryContext || null, validateOutput: options.validateOutput });
+  }
+
+  artifactContract(stage) {
+    const contracts = {
+      analyze_intake: ['content_intake_analysis', INTAKE_SCHEMA, intakePrompt(this.contentStrategy.version)],
+      analyze_source_diagnostic: ['content_intake_analysis', INTAKE_SCHEMA, intakePrompt(this.contentStrategy.version)],
+      extract_source_experience: ['experience_extraction', EXPERIENCE_SCHEMA, EXPERIENCE_PROMPT],
+      assemble_editorial: ['editorial_assembly', ASSEMBLY_SCHEMA, ASSEMBLY_PROMPT],
+      plan_content: ['content_brief', BRIEF_SCHEMA, briefPrompt(this.contentStrategy.version)],
+      plan_narrative: ['narrative_plan', NARRATIVE_SCHEMA, NARRATIVE_PROMPT],
+      generate_draft: ['article_draft_v2', DRAFT_SCHEMA, draftPrompt.toString()],
+      revise_draft: ['bounded_draft_repair', DRAFT_REPAIR_SCHEMA, DRAFT_REPAIR_PROMPT],
+      review_draft: ['quality_review_v2', REVIEW_SCHEMA, REVIEW_PROMPT],
+      resolve_entities: ['destination_entity_resolution', ENTITY_RESOLUTION_SCHEMA, ENTITY_RESOLUTION_PROMPT],
+      compose_frontend_page_plan: ['frontend_page_plan', PAGE_PLAN_SCHEMA, pagePlanPrompt.toString()],
+      compose_frontend_page: ['frontend_page_payload', null, pagePayloadPrompt.toString()],
+    };
+    const [name, schema, prompt] = contracts[stage] || [stage, null, 'deterministic-v2'];
+    return { name, schema, prompt };
   }
 }
 
-export function applyBoundedDraftRepair(draft, patch, issues = [], { validFactKeys = [] } = {}) {
+export function applyBoundedDraftRepair(draft, patch, issues = [], { validFactKeys = [], sectionHeadings = [] } = {}) {
   if (!draft?.content_hash || patch?.base_content_hash !== draft.content_hash) {
     throw Object.assign(new Error("Draft repair base hash does not match the current persisted revision."), { code: "STALE_DRAFT_REPAIR" });
   }
   const replacements = patch.replacement_sections || [];
-  if (replacements.length > 3) throw new Error("A bounded repair may replace at most three H2 sections.");
-  let body = String(draft.body_markdown || draft.body || "");
+  if (replacements.length > 3) throw new Error("A bounded repair may replace at most three sections.");
+  let body = normalizeDraftHeadingHierarchy(draft.body_markdown || draft.body || "",draft.title,sectionHeadings);
+  const repairable = repairableMarkdownSections(body);
   const seen = new Set();
+  const resolvedReplacements = [];
   for (const replacement of replacements) {
-    const heading = String(replacement.heading || "").trim().replace(/^##\s+/, "");
-    const key = heading.toLowerCase();
+    const heading = String(replacement.heading || "").trim().replace(/^#{2,3}\s+/, "");
+    const key = normalizeComparable(heading);
     if (!heading || seen.has(key)) throw new Error("Draft repair headings must be unique and non-empty.");
     seen.add(key);
-    const sections = markdownH2Sections(body);
-    const section = sections.find((item) => item.heading.toLowerCase() === key);
-    if (!section) throw Object.assign(new Error(`Draft repair cannot replace unknown H2 section: ${heading}`), { code: "INVALID_DRAFT_REPAIR_SCOPE" });
+    const section = repairable.find((item) => normalizeComparable(item.heading) === key);
+    if (!section) throw Object.assign(new Error(`Draft repair cannot replace unknown section: ${heading}`), { code: "INVALID_DRAFT_REPAIR_SCOPE" });
     const replacementBody = String(replacement.body_markdown || "").trim();
-    if (!replacementBody || /^##\s+/m.test(replacementBody)) {
-      throw Object.assign(new Error("A replacement section must contain body content only and cannot introduce H2 headings."), { code: "INVALID_DRAFT_REPAIR_SCOPE" });
+    if (!replacementBody || new RegExp(`^#{${section.level}}\\s+`, "m").test(replacementBody)) {
+      throw Object.assign(new Error("A replacement section must contain body content only and cannot introduce peer headings."), { code: "INVALID_DRAFT_REPAIR_SCOPE" });
     }
+    resolvedReplacements.push({ section, replacementBody });
+  }
+  // Offsets belong to the immutable base revision. Apply from the end so a
+  // different-length edit cannot shift the offsets of a later replacement.
+  for (const { section, replacementBody } of resolvedReplacements.sort((left, right) => right.section.contentStart - left.section.contentStart)) {
     body = `${body.slice(0, section.contentStart)}\n${replacementBody}\n${body.slice(section.end).replace(/^\n+/, "")}`;
   }
   const issueCodes = (issues || []).map((issue) => String(issue?.code || issue || "").toLowerCase());
@@ -432,7 +549,7 @@ export function applyBoundedDraftRepair(draft, patch, issues = [], { validFactKe
   const seo = { ...(draft.seo || {}) };
   if (metadata.meta_title != null) seo.meta_title = truncate(metadata.meta_title, 70);
   if (metadata.focus_keyword != null) seo.focus_keyword = truncate(metadata.focus_keyword, 160);
-  const evidenceAllowed = issueCodes.some((code) => /evidence|coverage|temporal|conflict|factual/.test(code));
+  const evidenceAllowed = issueCodes.some((code) => /evidence|coverage|temporal|conflict|factual|unsupported|assertion/.test(code));
   const nextLedger = patch.evidence_ledger || draft.evidence_ledger || [];
   const nextNotes = patch.verification_notes || draft.verification_notes || [];
   const ledgerChanged = JSON.stringify(nextLedger) !== JSON.stringify(draft.evidence_ledger || []);
@@ -446,10 +563,11 @@ export function applyBoundedDraftRepair(draft, patch, issues = [], { validFactKe
       || (allowedKeys.size && ledgerKeys.some((key) => !allowedKeys.has(key)))) {
     throw Object.assign(new Error("Repaired evidence ledger exceeds its bounded scope or references an unknown fact."), { code: "INVALID_DRAFT_REPAIR_SCOPE" });
   }
+  const nextTitle = metadata.title == null ? draft.title : truncate(metadata.title, 220);
   return {
     ...draft,
-    body_markdown: body.trim(),
-    title: metadata.title == null ? draft.title : truncate(metadata.title, 220),
+    body_markdown: normalizeDraftHeadingHierarchy(body,nextTitle,sectionHeadings),
+    title: nextTitle,
     meta_description: metadata.meta_description == null ? draft.meta_description : truncate(metadata.meta_description, 160),
     seo,
     faqs: draft.faqs || draft.seo?.faqs || [],
@@ -460,48 +578,310 @@ export function applyBoundedDraftRepair(draft, patch, issues = [], { validFactKe
   };
 }
 
-function markdownH2Sections(body) {
-  const headings = [...String(body).matchAll(/^##\s+(.+?)\s*$/gm)];
+export function normalizeDraftHeadingHierarchy(markdown, title = "", sectionHeadings = []) {
+  const titleKey = normalizeComparable(title);
+  const sectionKeys = new Set(sectionHeadings.map(normalizeComparable).filter(Boolean));
+  let previousLevel = 0;
+  let baselineOriginalLevel = 0;
+  let inFence = false;
+  const output = [];
+  for (const line of String(markdown || "").split(/\r?\n/u)) {
+    if (/^\s*```/.test(line)) { inFence = !inFence;output.push(line);continue; }
+    if (inFence) { output.push(line);continue; }
+    let match = line.match(/^(#{1,6})\s+(.+?)\s*$/u);
+    const plainKey = normalizeComparable(line);
+    if (!match && (sectionKeys.has(plainKey) || plainKey === titleKey)) match = [line, "##", line.trim()];
+    if (!match) { output.push(line);continue; }
+    const heading = match[2].trim();
+    if (normalizeComparable(heading) === titleKey) continue;
+    const originalLevel=match[1].length;
+    baselineOriginalLevel ||= originalLevel;
+    let level = sectionKeys.has(normalizeComparable(heading)) ? 2
+      : Math.max(2,originalLevel-baselineOriginalLevel+2);
+    if (!previousLevel) level = 2;
+    else if (level > previousLevel + 1) level = previousLevel + 1;
+    previousLevel = level;
+    output.push(`${"#".repeat(level)} ${heading}`);
+  }
+  return output.join("\n").replace(/^\s+|\s+$/gu, "");
+}
+
+function markdownSections(body, level) {
+  const headings = [...String(body).matchAll(new RegExp(`^#{${level}}\\s+(.+?)\\s*$`, "gm"))];
   return headings.map((match, index) => ({
     heading: match[1].trim(),
+    level,
     contentStart: match.index + match[0].length,
     end: headings[index + 1]?.index ?? body.length,
   }));
 }
 
+function markdownH2Sections(body) {
+  return markdownSections(body, 2);
+}
+
+function repairableMarkdownSections(body) {
+  const h2 = markdownSections(body, 2);
+  return h2.length ? h2 : markdownSections(body, 3);
+}
+
+function draftRepairSchema(headings) {
+  const schema = structuredClone(DRAFT_REPAIR_SCHEMA);
+  if (headings.length) schema.properties.replacement_sections.items.properties.heading.enum = headings;
+  return schema;
+}
+
+function draftResponseSchema(factKeys, sectionIds) {
+  const schema = structuredClone(DRAFT_SCHEMA);
+  const ledger = schema.properties.evidence_ledger;
+  ledger.maxItems = 24;
+  ledger.items.properties.claim_keys.maxItems = 12;
+  if (factKeys.length) ledger.items.properties.claim_keys.items.enum = [...new Set(factKeys)];
+  if (sectionIds.length) ledger.items.properties.section_id.enum = [...new Set(sectionIds)];
+  return schema;
+}
+
+function validateGeneratedDraftEvidence(output, factKeys, sectionIds, requiredSectionIds = [], sectionFactKeys = {}) {
+  const ledger = Array.isArray(output?.evidence_ledger) ? output.evidence_ledger : [];
+  const allowedFacts = new Set(factKeys);
+  const allowedSections = new Set(sectionIds);
+  const invalidClaimKeys = [...new Set(ledger.flatMap((entry) => entry?.claim_keys || []))]
+    .filter((key) => allowedFacts.size && !allowedFacts.has(key));
+  const invalidSectionIds = [...new Set(ledger.map((entry) => entry?.section_id).filter(Boolean))]
+    .filter((sectionId) => allowedSections.size && !allowedSections.has(sectionId));
+  const coveredSections = new Set(ledger.filter((entry) => (entry?.claim_keys || []).length).map((entry) => entry.section_id));
+  const missingSectionIds = requiredSectionIds.filter((sectionId) => !coveredSections.has(sectionId));
+  const invalidSectionClaims = ledger.flatMap((entry) => {
+    const allowed = new Set(sectionFactKeys[entry?.section_id] || []);
+    const isPlannedSection = Object.prototype.hasOwnProperty.call(sectionFactKeys, entry?.section_id);
+    return (entry?.claim_keys || []).filter((key) => isPlannedSection && !allowed.has(key))
+      .map((key) => ({ section_id:entry.section_id,claim_key:key }));
+  });
+  const uniqueClaims = new Set(ledger.flatMap((entry) => entry?.claim_keys || []));
+  if (ledger.length > 24 || uniqueClaims.size > 48 || ledger.some((entry) => (entry?.claim_keys || []).length > 12)
+      || invalidClaimKeys.length || invalidSectionIds.length || missingSectionIds.length || invalidSectionClaims.length) {
+    const error = Object.assign(new Error(`Draft evidence ledger violates the frozen Writing Packet (${invalidClaimKeys.length} unknown claim keys, ${invalidSectionIds.length} unknown sections, ${missingSectionIds.length} uncovered evidence sections, ${invalidSectionClaims.length} cross-section claim mappings, ${uniqueClaims.size} unique claims).`), {
+      code: "DRAFT_EVIDENCE_SCOPE_INVALID", retryable: false, invalidClaimKeys, invalidSectionIds, missingSectionIds, invalidSectionClaims,
+    });
+    throw error;
+  }
+}
+
+function validateGeneratedDraftProtectedValues(output, facts = []) {
+  const factsByKey = new Map((facts || []).map((fact) => [fact.normalized_key, fact]));
+  const usedKeys = [...new Set((output?.evidence_ledger || []).flatMap((entry) => entry?.claim_keys || []))];
+  const missingProtectedValues = usedKeys.flatMap((key) => {
+    const fact = factsByKey.get(key);
+    return fact ? protectedFactTokens(fact).filter((token) => !containsProtectedToken(output?.body_markdown, token))
+      .map((token) => ({ claim_key:key, required_value:token })) : [];
+  });
+  if (!missingProtectedValues.length) return;
+  throw Object.assign(new Error(`Draft omitted or changed ${missingProtectedValues.length} protected evidence value(s): ${missingProtectedValues
+    .map((item) => `${item.claim_key}=${item.required_value}`).join(", ")}.`), {
+    code:"DRAFT_EVIDENCE_VALUE_INVALID",retryable:false,missingProtectedValues,
+  });
+}
+
+function pruneUnusedProtectedEvidenceClaims(output, facts = [], sectionFactKeys = {}) {
+  if (!Array.isArray(output?.evidence_ledger)) return;
+  const factsByKey = new Map((facts || []).map((fact) => [fact.normalized_key, fact]));
+  const body = output?.body_markdown;
+  const entries = output.evidence_ledger.map((entry) => ({ ...entry, claim_keys:[...new Set(entry?.claim_keys || [])] }));
+  const usableBySection = new Map();
+  for (const entry of entries) {
+    const allowed = new Set(sectionFactKeys[entry?.section_id] || []);
+    const usable = entry.claim_keys.filter((key) => {
+      const fact = factsByKey.get(key);
+      return fact && allowed.has(key) && protectedFactTokens(fact).every((token) => containsProtectedToken(body, token));
+    });
+    if (usable.length) usableBySection.set(entry.section_id, true);
+  }
+  output.evidence_ledger = entries.map((entry) => {
+    if (!usableBySection.get(entry?.section_id)) return entry;
+    const allowed = new Set(sectionFactKeys[entry.section_id] || []);
+    return { ...entry, claim_keys:entry.claim_keys.filter((key) => {
+      const fact = factsByKey.get(key);
+      if (!fact || !allowed.has(key)) return true;
+      return protectedFactTokens(fact).every((token) => containsProtectedToken(body, token));
+    }) };
+  }).filter((entry) => entry.claim_keys.length);
+}
+
+function normalizeGeneratedDraftEvidenceSources(output, facts = [], outline = []) {
+  const factsByKey = new Map((facts || []).map((fact) => [fact.normalized_key, fact]));
+  const headingsBySection = new Map((outline || []).map((section) => [section.section_id, section.heading]));
+  output.evidence_ledger = (output.evidence_ledger || []).map((entry) => {
+    const sourceIds = [...new Set((entry.claim_keys || []).flatMap((key) =>
+      (factsByKey.get(key)?.evidence || []).map((item) => item?.source_id).filter(Boolean)))];
+    return {
+      ...entry,
+      section:headingsBySection.get(entry.section_id) || entry.section,
+      source_ids:sourceIds.length ? sourceIds : [...new Set(entry.source_ids || [])],
+    };
+  });
+}
+
+function validateGeneratedDraftStructure(output, outline = []) {
+  const headings = new Set([...String(output?.body_markdown || "").matchAll(/^#{2,4}\s+(.+?)\s*$/gmu)]
+    .map((match) => normalizeComparable(match[1])));
+  const required = outline.filter((section) => (section?.claim_keys || []).length && String(section?.heading || "").trim());
+  const missing = required.filter((section) => !headings.has(normalizeComparable(section.heading)));
+  if (!missing.length) return;
+  throw Object.assign(new Error(`Draft body is missing ${missing.length} evidence-bearing planned section heading(s): ${missing.map((section) => section.heading).join(", ")}.`), {
+    code: "DRAFT_STRUCTURE_INVALID",
+    retryable: false,
+    missingBodySectionIds: missing.map((section) => section.section_id).filter(Boolean),
+  });
+}
+
 function draftInputDto(contentPackage) {
   const selectedKeys = new Set(contentPackage.writing_packet?.selected_fact_keys || contentPackage.brief?.evidence_ledger || []);
+  const frozenFacts = contentPackage.writing_packet?.evidence_ledger?.map(entry => entry.fact_snapshot);
+  const context = contentPackage.writing_packet?.context;
+  const hasFrozenPacket = context?.version === 2 || Boolean(frozenFacts?.length && frozenFacts.every(Boolean));
+  if (hasFrozenPacket && (!frozenFacts || !frozenFacts.every(Boolean))) throw new Error('WRITING_PACKET_INVALID: selected evidence snapshot is missing.');
+  const facts = (hasFrozenPacket ? frozenFacts : contentPackage.facts || []).filter((fact) => !selectedKeys.size || selectedKeys.has(fact.normalized_key));
+  const validFactKeys = new Set(facts.map((fact) => fact.normalized_key));
+  const outline = contentPackage.brief?.plan?.outline || contentPackage.brief?.outline || [];
+  const experiences = (context?.version === 2 ? context.experiences : contentPackage.experiences) || [];
   return {
-    brief: contentPackage.brief,
+    brief: safeDraftBrief(contentPackage.brief, validFactKeys),
     writing_packet: contentPackage.writing_packet ? {
-      text: contentPackage.writing_packet.packet_text,
-      evidence_ledger: contentPackage.writing_packet.evidence_ledger,
+      text: safeWritingDirective(contentPackage.brief, outline),
+      // Frozen fact snapshots are supplied once in evidence_ledger_facts.
+      // Repeating their complete evidence here previously doubled large
+      // prompts and produced six-figure-token requests in real Vertex runs.
+      evidence_scope: (contentPackage.writing_packet.evidence_ledger || []).map((entry) => ({
+        normalized_key: entry?.fact_snapshot?.normalized_key || entry?.normalized_key || null,
+        source_ids: [...new Set((entry?.fact_snapshot?.evidence || []).map((item) => item?.source_id).filter(Boolean))].slice(0, 3),
+      })).filter((entry) => entry.normalized_key),
     } : null,
-    narrative_plan: contentPackage.narrative_plan || null,
+    narrative_plan: safeNarrativePlan(context?.version === 2 ? context.narrative_plan : contentPackage.narrative_plan,
+      outline, validFactKeys, new Set(experiences.map((item) => item.id))),
+    grounded_experiences: compactGroundedExperiences(experiences),
     production_mode: contentPackage.production_mode || "multi_source_synthesis",
-    source_reference: contentPackage.source_reference || null,
-    content_policy: contentPackage.content_policy,
-    evidence_ledger_facts: (contentPackage.facts || []).filter((fact) => !selectedKeys.size || selectedKeys.has(fact.normalized_key)).map((fact) => ({
+    source_reference: hasFrozenPacket ? null : contentPackage.source_reference || null,
+    content_policy: context?.version === 2 ? context.content_policy : contentPackage.content_policy,
+    evidence_ledger_facts: facts.map((fact) => ({
       normalized_key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate,
       preferred_value: fact.preferred_value, consensus_status: fact.consensus_status,
       freshness_state: fact.freshness_state, verification_priority: fact.verification_priority,
       latest_evidence_at: fact.latest_evidence_at, consensus_method: fact.consensus_method,
       consensus_confidence: fact.consensus_confidence, consensus_detail: fact.consensus_detail,
       validity_state: fact.validity_state,
-      evidence: (fact.evidence || []).map((item) => ({ source_id: item.source_id, value: item.value,
-        quote: item.quote, canonical_url: item.canonical_url, source_title: item.source_title,
+      evidence: compactFactEvidence(fact.evidence).map((item) => ({ claim_id:item.claim_id || item.id, source_id: item.source_id,
+        value: truncate(item.value, 500), qualifiers:(item.qualifiers || []).slice(0, 8).map((value) => truncate(value, 240)),
+        quote: truncate(item.quote, 900), canonical_url: item.canonical_url, source_title: truncate(item.source_title, 180),
         published_at: item.published_at, observed_at: item.observed_at, captured_at: item.captured_at,
         verified_at: item.verified_at, valid_from: item.valid_from, valid_to: item.valid_to,
         date_kind: item.date_kind, date_confidence: item.date_confidence,
         timestamp_basis: item.timestamp_basis, authority_level: item.authority_level,
         publication_usability: item.publication_usability, evidence_coverage: item.evidence_coverage,
-        coverage_limitations: item.coverage_limitations || [] })),
+        coverage_limitations: (item.coverage_limitations || []).slice(0, 8).map((value) => truncate(value, 240)) })),
     })),
-    reader_sources: contentPackage.reader_sources || [],
-    authorized_source_assets: contentPackage.authorized_source_assets || [],
-    internal_link_inventory: contentPackage.internal_link_inventory || [],
-    frontend_page_plan: contentPackage.frontend_page_plan?.plan || null,
+    reader_sources: (context?.version === 2 ? context.reader_sources : contentPackage.reader_sources) || [],
+    authorized_source_assets: (context?.version === 2 ? context.authorized_source_assets : contentPackage.authorized_source_assets) || [],
+    internal_link_inventory: (context?.version === 2 ? context.internal_link_inventory : contentPackage.internal_link_inventory) || [],
+    frontend_page_plan: safeFrontendPlan(contentPackage.frontend_page_plan?.plan, validFactKeys),
   };
+}
+
+function compactFactEvidence(evidence = []) {
+  const seen = new Set();
+  return (evidence || []).filter((item) => {
+    const key = `${item?.source_id || ""}\u0000${item?.value || ""}\u0000${item?.quote || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 3);
+}
+
+function compactGroundedExperiences(experiences = []) {
+  return (experiences || []).slice(0, 24).map((item) => ({
+    id:item.id, type:item.type, title:truncate(item.title, 180), traveler_goal:truncate(item.traveler_goal, 300),
+    sequence:(item.sequence || []).slice(0, 12).map((value) => truncate(value, 400)),
+    decision_logic:(item.decision_logic || []).slice(0, 12).map((value) => truncate(value, 400)),
+    conditions:(item.conditions || []).slice(0, 8).map((value) => truncate(value, 300)),
+    tradeoffs:(item.tradeoffs || []).slice(0, 8).map((value) => truncate(value, 300)),
+    warnings:(item.warnings || []).slice(0, 8).map((value) => truncate(value, 300)),
+    alternatives:(item.alternatives || []).slice(0, 8).map((value) => truncate(value, 300)),
+    supporting_claim_ids:(item.supporting_claim_ids || []).slice(0, 24),
+    evidence_span_ids:(item.evidence_span_ids || []).slice(0, 24),
+    confidence:item.confidence,
+  }));
+}
+
+function safeDraftBrief(brief = {}, validFactKeys = new Set()) {
+  const plan = brief.plan || brief;
+  return {
+    strategy_version:brief.strategy_version,
+    title:plan.title || brief.topic,
+    primary_keyword:plan.primary_keyword,
+    search_intent:plan.search_intent || brief.search_intent,
+    audience:plan.audience || brief.audience,
+    angle:plan.angle,
+    reader_promise:plan.reader_promise || brief.canonical?.reader_promise,
+    content_type:plan.canonical?.content_type || brief.canonical?.content_type,
+    adaptation_requirements:boundedRequirements(plan.adaptation_requirements),
+    conflict_instructions:boundedRequirements(plan.conflict_instructions),
+    verification_instructions:boundedRequirements(plan.verification_instructions),
+    outline:(plan.outline || []).map((section) => ({ section_id:section.section_id,heading:section.heading,purpose:section.purpose,
+      claim_keys:(section.claim_keys || []).filter((key) => validFactKeys.has(key)) })),
+  };
+}
+
+function safeWritingDirective(brief = {}, outline = []) {
+  const plan = brief.plan || brief;
+  return ["ARTICLE GOAL",plan.reader_promise || plan.title || brief.topic || "Answer the approved reader need.","",
+    "EVIDENCE-BOUND SECTION ORDER",...outline.map((section,index) => `${index + 1}. ${section.heading || section.section_id}`),"",
+    "MANDATORY TRAVELER ADAPTATIONS",...numberedRequirements(plan.adaptation_requirements),"",
+    "MANDATORY CONFLICT HANDLING",...numberedRequirements(plan.conflict_instructions),"",
+    "VERIFICATION AND QUALIFIER NOTES",...numberedRequirements(plan.verification_instructions),"",
+    "Use only evidence_ledger_facts and grounded_experiences. Narrative labels and page-plan order are structure, never factual evidence."].join("\n");
+}
+
+function boundedRequirements(values = []) {
+  return (Array.isArray(values) ? values : []).filter(Boolean).slice(0, 12).map((value) => truncate(value, 800));
+}
+
+function numberedRequirements(values = []) {
+  const bounded = boundedRequirements(values);
+  return bounded.length ? bounded.map((value, index) => `${index + 1}. ${value}`) : ["None supplied."];
+}
+
+function mandatoryBriefRequirements(brief = {}) {
+  const plan = brief.plan || brief;
+  return [
+    ...boundedRequirements(plan.adaptation_requirements).map((requirement, index) => ({
+      id:`brief-adaptation-${index + 1}`,kind:"adaptation",requirement,
+    })),
+    ...boundedRequirements(plan.conflict_instructions).map((requirement, index) => ({
+      id:`brief-conflict-${index + 1}`,kind:"conflict",requirement,
+    })),
+  ];
+}
+
+function safeNarrativePlan(narrative = {}, outline = [], validFactKeys = new Set(), validExperienceIds = new Set()) {
+  const sectionIds = outline.map((section) => section.section_id).filter(Boolean);
+  const validSections = new Set(sectionIds);
+  const placements = (narrative?.experience_placements || []).filter((item) => validExperienceIds.has(item?.experience_block_id)
+    && validSections.has(item?.section_id)).map((item) => ({ experience_block_id:item.experience_block_id,section_id:item.section_id }));
+  return {
+    opening_job:"Answer the approved reader promise directly with evidence-backed practical guidance.",
+    throughline:"Connect each selected fact to a traveler condition, consequence, trade-off, or next action.",
+    route_sequence:sectionIds,
+    experience_placements:placements,
+    supporting_fact_keys:(narrative?.supporting_fact_keys || []).filter((key) => validFactKeys.has(key)),
+    conditional_branches:[],tradeoffs:[],exclusions:[],
+    closing_decision:"End with the next concrete traveler decision supported by the selected evidence.",
+  };
+}
+
+function safeFrontendPlan(plan = null, validFactKeys = new Set()) {
+  if (!plan) return null;
+  return { blocks:(plan.blocks || []).map((block) => ({ component:block.component || block.type,variant:block.variant,
+    content_node_id:block.content_node_id,source_section_ids:block.source_section_ids || [],factuality:block.factuality,
+    claim_keys:(block.claim_keys || []).filter((key) => validFactKeys.has(key)) })) };
 }
 
 function factDtos(contentPackage) {
@@ -518,27 +898,43 @@ function compactDraftRepairInput(contentPackage, issues = []) {
   }
   const issueText = (issues || []).map((issue) => `${issue?.code || ""} ${issue?.message || ""}`).join(" ").toLowerCase();
   const outline = brief.plan?.outline || brief.outline || [];
+  const normalizedBody = normalizeDraftHeadingHierarchy(draft.body_markdown,draft.title,
+    outline.map((section)=>section.heading).filter(Boolean));
   const affectedSections = outline.filter((section) => issueText.includes(String(section.heading || section.section_id || "").toLowerCase()));
   for (const section of affectedSections) for (const key of section.claim_keys || []) mentioned.add(key);
   if (!mentioned.size) for (const entry of draft.evidence_ledger || []) for (const key of entry.claim_keys || []) mentioned.add(key);
   const allFacts = factDtos(contentPackage);
-  const facts = allFacts.filter((fact) => mentioned.has(fact.normalized_key));
-  const fallbackFacts = facts.length ? facts : allFacts;
-  const compactIssues = (issues || []).slice(0, 12).map((issue) => ({
+  const draftLedgerKeys = new Set((draft.evidence_ledger || []).flatMap((entry) => entry.claim_keys || []));
+  const priorityFacts = allFacts.filter((fact) => mentioned.has(fact.normalized_key));
+  const ledgerFacts = allFacts.filter((fact) => draftLedgerKeys.has(fact.normalized_key));
+  const fallbackFacts = uniqueBy([...(priorityFacts.length ? priorityFacts : ledgerFacts), ...ledgerFacts], (fact) => fact.normalized_key).slice(0, 36);
+  const compactIssues = (issues || []).slice(0, 8).map((issue) => ({
     code: issue.code, severity: issue.severity,
     message: String(issue.message || '').split(',').slice(0, 8).join(',').slice(0, 1_200),
   }));
+  const currentIssueFingerprints = new Set(compactIssues.map((issue) => `${issue.code}:${issue.message}`));
+  const regressionGuardrails = (contentPackage.review_history || []).flatMap((review) => review?.issues || [])
+    .filter((issue) => issue?.severity !== "warning")
+    .map((issue) => ({ code:String(issue.code || "QUALITY_BLOCKER"), message:truncate(issue.message, 800) }))
+    .filter((issue) => !currentIssueFingerprints.has(`${issue.code}:${issue.message}`));
   return {
     base_content_hash: draft.content_hash,
+    allowed_replacement_headings: repairableMarkdownSections(normalizedBody).map((section) => section.heading),
     issues: compactIssues,
+    unsupported_claims: (contentPackage.review?.unsupported_claims || []).slice(0, 12)
+      .map((claim) => truncate(claim, 800)),
+    regression_guardrails: uniqueBy(regressionGuardrails, (issue) => `${issue.code}:${issue.message}`).slice(0, 12),
     allowed_changes: {
-      evidence_ledger: [...issueCodes].some((code) => /evidence|coverage|temporal|conflict|factual/.test(code)),
+      evidence_ledger: [...issueCodes].some((code) => /evidence|coverage|temporal|conflict|factual|unsupported|assertion/i.test(code)),
       metadata: [...issueCodes].some((code) => /seo|title|meta|keyword|slug/.test(code)),
       maximum_replacement_sections: 3,
     },
     brief: {
       title: brief.plan?.title || brief.title,
       reader_promise: brief.plan?.reader_promise || brief.canonical?.reader_promise,
+      adaptation_requirements: boundedRequirements(brief.plan?.adaptation_requirements || brief.adaptation_requirements),
+      conflict_instructions: boundedRequirements(brief.plan?.conflict_instructions || brief.conflict_instructions),
+      verification_instructions: boundedRequirements(brief.plan?.verification_instructions || brief.verification_instructions),
       outline: (brief.plan?.outline || brief.outline || []).map((section) => ({
         section_id: section.section_id, heading: section.heading,
         claim_keys: (section.claim_keys || []).filter((key) => fallbackFacts.some((fact) => fact.normalized_key === key)).slice(0, 12),
@@ -548,29 +944,85 @@ function compactDraftRepairInput(contentPackage, issues = []) {
       normalized_key: fact.normalized_key, subject: fact.subject, predicate: fact.predicate,
       preferred_value: fact.preferred_value, consensus_status: fact.consensus_status,
       freshness_state: fact.freshness_state, latest_evidence_at: fact.latest_evidence_at,
-      evidence: (fact.evidence || []).map((item) => ({ source_id: item.source_id, value: item.value,
-        quote: item.quote, qualifiers: item.qualifiers || [], coverage_limitations: item.coverage_limitations || [],
+      evidence: (fact.evidence || []).slice(0, 2).map((item) => ({ source_id: item.source_id, value: truncate(item.value, 500),
+        quote: truncate(item.quote, 700), qualifiers: (item.qualifiers || []).slice(0, 8), coverage_limitations: (item.coverage_limitations || []).slice(0, 8),
         published_at: item.published_at, observed_at: item.observed_at, captured_at: item.captured_at })),
     })),
-    draft: { title:draft.title, body_markdown:draft.body_markdown, meta_description:draft.meta_description,
+    draft: { title:draft.title, body_markdown:normalizedBody, meta_description:draft.meta_description,
       seo:draft.seo, evidence_ledger:draft.evidence_ledger, verification_notes:draft.verification_notes },
   };
 }
 
+function actionableDraftRepairIssues(issues = []) {
+  const deliveryOnly = new Set(["required_visual_missing", "visual_renderer_incomplete", "final_page_invalid",
+    "final_page_content_missing", "final_page_evidence_invalid"]);
+  return (issues || []).filter((issue) => issue?.severity !== "warning" && !deliveryOnly.has(String(issue?.code || "")));
+}
+
 function reviewInputDto(contentPackage) {
+  const draft=contentPackage.draft || {};
+  const facts=qualityReviewFactDtos(contentPackage,draft);
+  const factKeys=new Set(facts.map((fact)=>fact.normalized_key));
+  const plan=contentPackage.brief?.plan || contentPackage.brief || {};
+  const canonical=contentPackage.brief?.canonical || plan.canonical || {};
   return {
-    brief: { plan: contentPackage.brief?.plan, canonical: contentPackage.brief?.canonical, strategy_version: contentPackage.brief?.strategy_version },
+    brief: safeDraftBrief(contentPackage.brief,factKeys),
+    canonical: {
+      content_type:canonical.content_type,
+      quick_answer:truncate(canonical.quick_answer,800),
+      secondary_queries:(canonical.secondary_queries || []).slice(0,12).map((value)=>truncate(value,240)),
+      warnings:(canonical.warnings || []).slice(0,12).map((value)=>truncate(value,400)),
+      faq:(canonical.faq || []).slice(0,8).map((item)=>({question:truncate(item?.question,300),answer:truncate(item?.answer,600)})),
+      seo:canonical.seo || null,
+    },
+    mandatory_requirements: mandatoryBriefRequirements(contentPackage.brief),
     content_policy: contentPackage.content_policy,
-    facts: factDtos(contentPackage),
-    reader_sources: contentPackage.reader_sources || [],
-    draft: contentPackage.draft,
+    facts,
+    reader_sources: (contentPackage.reader_sources || []).slice(0, 24).map((source)=>({
+      label:truncate(source.label,180),url:source.url,published_at:source.published_at,verified_at:source.verified_at,
+      authority_level:source.authority_level,
+    })),
+    // Independent editorial QA needs the frozen reader-facing artifact and its
+    // traceability, not every internal row attached to the hydrated Draft.
+    draft: {
+      title:draft.title,slug:draft.slug,meta_description:draft.meta_description,body_markdown:draft.body_markdown,
+      evidence_ledger:draft.evidence_ledger,unresolved_conflicts:draft.unresolved_conflicts,
+      verification_notes:draft.verification_notes,seo:draft.seo,faqs:draft.faqs || draft.seo?.faqs || [],
+      visuals:(draft.visuals || []).map((visual)=>({placement:visual.placement,purpose:visual.purpose,
+        alt_text:visual.alt_text,image_type:visual.image_type,image_role:visual.image_role,factual_image_required:visual.factual_image_required})),
+    },
     frontend_page: contentPackage.frontend_page ? {
-      payload: contentPackage.frontend_page.payload,
-      validation: contentPackage.frontend_page.validation,
       current: contentPackage.frontend_page.current,
       status: contentPackage.frontend_page.status,
+      valid: contentPackage.frontend_page.validation?.valid,
     } : null,
   };
+}
+
+// QA needs the facts asserted by the current Draft plus facts promised by its
+// approved outline. It does not need the Writer's repeated source titles,
+// canonical URLs, or three long evidence quotations per fact. Keeping this DTO
+// semantically complete but compact reduces both provider pressure and Gemini
+// thinking spent re-deduplicating the same evidence.
+function qualityReviewFactDtos(contentPackage,draft) {
+  const allFacts=factDtos(contentPackage);
+  const requested=new Set([
+    ...(draft.evidence_ledger || []).flatMap((entry)=>entry?.claim_keys || []),
+    ...((contentPackage.brief?.plan || contentPackage.brief)?.outline || []).flatMap((section)=>section?.claim_keys || []),
+  ].filter(Boolean));
+  const selected=(requested.size ? allFacts.filter((fact)=>requested.has(fact.normalized_key)) : allFacts).slice(0,48);
+  return selected.map((fact)=>({
+    normalized_key:fact.normalized_key,subject:truncate(fact.subject,240),predicate:truncate(fact.predicate,200),
+    preferred_value:truncate(fact.preferred_value,800),consensus_status:fact.consensus_status,
+    freshness_state:fact.freshness_state,validity_state:fact.validity_state,
+    evidence:(fact.evidence || []).slice(0,2).map((item)=>({
+      source_id:item.source_id,value:truncate(item.value,500),quote:truncate(item.quote,500),
+      qualifiers:(item.qualifiers || []).slice(0,8).map((value)=>truncate(value,240)),
+      coverage_limitations:(item.coverage_limitations || []).slice(0,8).map((value)=>truncate(value,240)),
+      published_at:item.published_at,observed_at:item.observed_at,verified_at:item.verified_at,
+      valid_from:item.valid_from,valid_to:item.valid_to,publication_usability:item.publication_usability,
+    })),
+  }));
 }
 const intakePrompt = (strategyVersion) => `Analyze one already-captured human-selected China travel source for SoloToChina Content Production Strategy ${strategyVersion}.
 - This is decision support, not article generation. Do not write an article and do not reveal private reasoning.
@@ -598,12 +1050,14 @@ const ASSEMBLY_PROMPT = `Act as an editorial commissioning desk. Select the smal
 - Choose exact supplied IDs only. Preserve the approved reader promise and production mode.
 - Select facts for accuracy, Experience Blocks for route/decision/trade-off texture, and blueprints only for reusable structural lessons.
 - Prefer independent source families for multi-source synthesis. Do not require several sources for a bounded source adaptation.
+- Select for coverage diversity, not input order: represent every named entity or route segment essential to the approved reader promise before adding secondary facts. If the available evidence cannot support the promise, select only grounded facts and state the missing scope in exclusions.
 - Exclude tangential, duplicate, conflicted, stale, failed-before, or unsupported material and explain exclusions briefly.
 - Failure lessons and editorial lessons are constraints, not content to quote. Return selection decisions, not an article.`;
 
 const NARRATIVE_PROMPT = `Design the article's narrative logic from the approved brief and editorial assembly.
 - Decide the opening's practical job, the throughline, route or decision sequence, experience placements, conditional branches, trade-offs, exclusions, and closing decision.
 - Use exact supplied fact keys, section IDs and Experience Block IDs. Never invent lived experience or first-person narration.
+- route_sequence contains section IDs, never unverified landmarks or prose facts. Free-form branches, trade-offs and exclusions are structural suggestions only and must never introduce a price, time, route, venue, policy or recommendation absent from the supplied facts.
 - Avoid encyclopedia/database structure, repetitive section templates, generic travel prose and artificial comprehensiveness.
 - Preserve conditions and uncertainty. The result is a plan for the writer, not reader-facing copy.`;
 
@@ -612,6 +1066,7 @@ const briefPrompt = (strategyVersion) => `Create an evidence-backed English cont
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
 - Select only the evidence needed to fulfill the approved reader promise: at most 48 unique claim keys for the whole plan and at most 12 per section. The remaining destination knowledge stays available for other articles; it is not mandatory coverage for this draft.
+- Keep the response compact: at most 10 outline sections, 8 answer blocks, 8 FAQs and 8 image-plan entries. Refer to claim keys; never repeat evidence quotes or reproduce the input fact objects.
 - Evidence marked partial_usable is valid only for the supplied Claim. Treat its coverage_limitations as explicit boundaries: narrow the reader promise, omit unsupported details, and never describe the source or topic as complete. Unrelated source gaps are already removed from this topic package.
 - Unresolved strict safety/semantic conflicts require explicit handling instructions; never silently choose a side.
 - The operator explicitly selected these sources. Prices, hours, reservations, schedules and access details are usable as supplied and do not require another official-page check or a fabricated publication-date gate. Preserve genuine mutually-exclusive conflicts for one grouped human decision; do not invent a conflict merely because dates are missing.
@@ -632,7 +1087,11 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - Return a separate evidence ledger mapping each article section to exact claim keys and source IDs.
 - Preserve any explicit dates and validity ranges supplied by a source, but do not invent an “as of” date or force repetitive change-risk disclaimers when a source did not provide one.
 - The article should be useful even with no commercial module. Follow this evidence-scaled content policy: ${JSON.stringify(policy)}. Never pad thin evidence to reach a word target.
+- Keep body_markdown at or below content_policy.maximum_words when configured. Prefer two to four concise paragraphs or a short decision list per section; structured JSON and internal ledgers are not a reason to overrun the reader-facing word budget.
 - Make the body easy to understand: answer the confirmed reader promise directly, then use descriptive headings or concise lists only where the material benefits from them. No fixed heading or summary module is mandatory. Do not make unsupported claims just for SEO.
+- Emit every evidence-bearing heading in brief.outline exactly once as \`## <heading>\`, in the supplied order, including the first section. Introductory prose may precede the first H2 but cannot replace it. Each evidence_ledger section_id must therefore have a matching reader-visible H2.
+- Do not emit Markdown tables, bold markers, inline-code markers, or reader-visible implementation notation. Convert comparisons into concise prose or ordinary lists; the Frontend Contract owns final presentation.
+- Every source asset supplied in authorized_source_assets is fully authorized for this project's editorial and production use. Freely select relevant originals for useful page visuals; missing legacy per-item licensing flags are not a veto. Keep source provenance, never use an unrelated image, and never fabricate an asset.
 - FAQ is optional. Include it only when content_policy.faq.allowed is true and the supplied evidence answers real reader questions. When present, include the exact same questions and answers in a visible "Frequently asked questions" section of body_markdown; otherwise return an empty faqs array and omit that section.
 - Return SEO metadata integrated with this draft: a natural meta title, one focus phrase, and only useful reader-facing takeaways. The configured title/description lengths are editing hints, not ranking thresholds; preserve names, amounts and qualifiers when shortening. The meta description remains the top-level meta_description field.
 - Return SEO metadata with secondary keywords and search intent. Use internal links only from internal_link_inventory and preserve their exact URL. Do not invent canonical URLs.
@@ -641,14 +1100,23 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - Return only evidence-supported, rights-safe image plans, never filler to meet a count. Every included item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. When a factual real-world visual supports the evidence, plan REAL_WORLD_PHOTO: the pipeline will prioritize an explicitly saved, user-authorized source image that is linked to the article evidence. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
 - Select real-world photo subjects from authorized_source_assets before writing when a saved asset actually matches the subject. These entries describe local retained files; do not copy or expose preview URLs in body_markdown.
 - Use a concise, practical guide voice. Prefer direct instructions and short useful paragraphs; avoid literary scene-setting, generic enthusiasm, and padding.
-- If revision_feedback exists, fix every blocker without adding unsupported facts.`;
+- If revision_feedback exists, rebuild from the frozen Writing Packet and fix every blocker. Never reuse failed prose, and do not add unsupported facts.
+- For every fact you cite in evidence_ledger, preserve its supplied amounts, durations, dates, negations, audiences, conditions and exceptions in the reader-visible section. Treat revision_feedback.missing_protected_values as an exact must-include list; verify each value is visible before returning.
+- Every planned section that declares claim_keys must use at least one of those exact approved keys in evidence_ledger. A factual sentence without an honest ledger mapping is forbidden.
+- Turn supported facts into a traveler decision: state the condition, practical consequence, and best next action. Do not stack isolated facts merely to maximize coverage.
+- Vary section rhythm according to its practical job. Use route sequence for movement, condition/consequence/action for decisions, and a short comparison only for genuine trade-offs. Never repeat one mechanical template across every section.`;
 
-const DRAFT_REPAIR_PROMPT = `Repair only the failed fields or H2 sections named by the supplied QA issues.
+const DRAFT_REPAIR_PROMPT = `Repair only the failed fields or existing draft sections named by the supplied QA issues.
 - The confirmed topic, brief, evidence set, claim keys and unaffected prose are immutable.
+- brief.adaptation_requirements and brief.conflict_instructions are mandatory reader-facing constraints, not optional suggestions. Satisfy every applicable item in the replacement sections.
+- regression_guardrails are blockers found in earlier revisions. Do not reintroduce them while fixing the current issues.
+- unsupported_claims are atomic reader-facing assertions that the latest audit could not map to this article's frozen evidence. Remove or correct every listed assertion in the smallest affected section. Keep one only when its exact value is present in facts and its normalized_key remains honestly mapped in that section's evidence_ledger.
+- A missing mandatory Brief requirement must be restored in the smallest affected section. When it contains a time, price, route, reservation rule, or other factual value, copy only the matching preferred_value from facts and keep that normalized_key in the section ledger; never satisfy it with an unsupported substitute or by deleting the requirement.
 - Return the exact base_content_hash supplied by the caller.
-- replacement_sections may contain at most three existing H2 headings. Supply body content only; do not add or rename headings.
+- replacement_sections may contain at most three headings copied exactly from allowed_replacement_headings. Some legacy drafts use H3 as their primary section level. Supply body content only; do not add or rename peer headings.
 - Change metadata only when a QA issue explicitly identifies title, meta, keyword, slug or SEO metadata.
-- Change evidence_ledger or verification_notes only for evidence, coverage, conflict or temporal-disclosure failures. Remove invalid or unused keys instead of forcing every available fact into the prose; keep at most 12 claim keys per section and 48 total.
+- Change evidence_ledger or verification_notes only for evidence, coverage, unsupported-assertion, conflict or temporal-disclosure failures. Remove invalid or unused keys instead of forcing every available fact into the prose; keep at most 12 claim keys per section and 48 total.
+- facts is the complete fact allow-list for this bounded repair. A fact that may exist elsewhere in the knowledge base but is absent from facts is out of scope and must be removed from the prose, never silently imported.
 - Preserve specific names, amounts, dates, conditions, exceptions and audience qualifiers. Do not add facts or experiences.
 - Keep replacement text concise and do not expand the article merely to reach a word target.
 - Return JSON only. The caller will reject stale hashes and out-of-scope patches, re-hash the assembled draft and run QA again.`;
@@ -688,35 +1156,57 @@ Current capability candidates (machine-derived):\n${JSON.stringify(promptCapabil
 const REVIEW_PROMPT = `Act as an independent senior editor. Audit the English draft against its evidence package and brief.
 Grade reader-facing prose and factual support only. Missing image downloads, renderers, page composition or provider errors are separate deterministic delivery checks, not reasons to lower this editorial score. Never relax factual support or evidence scope.
 Fail the draft for any unsupported factual assertion, hidden conflict, misleading certainty, source-key leakage, affiliate contamination, or unsafe advice.
+For an unsupported factual assertion, report each atomic unsupported value separately in unsupported_claims and identify the smallest affected reader-facing section. Do not group a supported fact with an unsupported fact merely because they share a predicate such as opening hours. A value present in facts and honestly mapped by the current draft evidence ledger is supported; do not describe that evidence object as empty.
 Also check originality, usefulness for solo/first-time/non-Chinese-speaking visitors, SEO/GEO structure, clarity, and whether the evidence ledger honestly covers factual sections.
+For every item in mandatory_requirements, emit exactly one checks entry whose name is the supplied requirement id. Mark it passed only when the reader-facing draft actually satisfies the complete requirement. Missing a mandatory adaptation or conflict-handling requirement is a blocker, never a warning.
 Use these editorial issue codes when applicable: DATABASE_DUMP, GENERIC_AI_TRANSITIONS, REPETITIVE_EXPLANATION, UNIFORM_SECTION_RHYTHM, EXCESSIVE_HEDGING, NO_TRAVELER_DECISION, NO_CAUSAL_FLOW, FAKE_FIRST_PERSON.
-Do not rewrite the article. Return actionable blockers and warnings.`;
+Set passed=false only when at least one issue has severity=blocker; warning-only reviews must set passed=true. Do not hide a failure reason outside issues.
+Do not rewrite the article. Keep the audit compact: no more than 24 checks, 16 distinct issues, or 12 unsupported claims; merge duplicates, keep each check detail under 60 words and each issue message under 100 words. Return only actionable blockers and warnings.`;
 
 export function applyDeterministicGates(review, contentPackage) {
   const draft = contentPackage.draft;
   const facts = contentPackage.facts || [];
   const validKeys = new Set(facts.map((fact) => fact.normalized_key));
   const ledgerKeys = new Set((draft.evidence_ledger || []).flatMap((entry) => entry.claim_keys));
-  const issues = [...review.issues];
-  const checks = [...review.checks];
-  const addGate = (name, passed, detail, code) => {
+  const issues = normalizeQualityReviewIssues(review.issues);
+  const checks = [...(review.checks || [])];
+  const addGate = (name, passed, detail, code, metadata = {}) => {
     checks.push({ name, passed, detail });
-    if (!passed) issues.push({ code, severity: "blocker", message: detail });
+    if (!passed) issues.push({ code, severity: "blocker", message: detail, ...metadata });
   };
   const addWarning = (name, passed, detail, code) => {
     checks.push({ name, passed, detail });
     if (!passed) issues.push({ code, severity: "warning", message: detail });
   };
 
+  const mandatoryRequirements = mandatoryBriefRequirements(contentPackage.brief);
+  const requirementChecks = new Map(checks.map((check) => [String(check?.name || ""), check]));
+  const failedRequirements = mandatoryRequirements.filter((requirement) => requirementChecks.get(requirement.id)?.passed !== true);
+  addGate("mandatory-brief-requirements", failedRequirements.length === 0,
+    failedRequirements.length
+      ? `Mandatory brief requirements missing or not audited: ${failedRequirements.map((item) => `${item.id}: ${item.requirement}`).join(" | ")}`
+      : "Every mandatory adaptation and conflict-handling requirement was explicitly audited and satisfied.",
+    "mandatory_brief_requirement_missing", { affected_count:failedRequirements.length });
+
   const invalidKeys = [...ledgerKeys].filter((key) => !validKeys.has(key));
   addGate("evidence-key-integrity", invalidKeys.length === 0, invalidKeys.length ? `Unknown claim keys: ${invalidKeys.join(", ")}` : "All ledger keys exist in the research package.", "invalid_evidence_key");
   const plannedSections = contentPackage.brief?.plan?.outline || contentPackage.brief?.outline || [];
   const draftSections = draft.evidence_ledger || [];
+  const bodyHeadingKeys = new Set([...String(draft.body_markdown || "").matchAll(/^#{2,6}\s+(.+?)\s*$/gm)]
+    .map((match)=>normalizeComparable(match[1])));
+  const missingBodySections = plannedSections.filter((section)=>(section.claim_keys || []).length
+    && String(section.heading || "").trim()
+    && !bodyHeadingKeys.has(normalizeComparable(section.heading)));
+  addGate("planned-body-section-presence",missingBodySections.length===0,
+    missingBodySections.length ? `Planned article sections are absent from the reader-facing body: ${missingBodySections.map((section)=>section.heading || section.section_id).join(", ")}`
+      : "Every evidence-bearing planned section is present in the reader-facing body.",
+    "planned_body_sections_missing",{affected_count:missingBodySections.length});
   const uncoveredSections = plannedSections.filter((section) => (section.claim_keys || []).length
     && !draftSections.some((entry) => entry.section_id === section.section_id && (entry.claim_keys || []).some((key) => (section.claim_keys || []).includes(key))));
   addGate("confirmed-topic-coverage", uncoveredSections.length === 0,
     uncoveredSections.length ? `Planned sections without any supported evidence in the draft ledger: ${uncoveredSections.map((section) => section.heading || section.section_id).join(", ")}`
-      : "Every evidence-bearing planned section uses at least one selected fact; unused background facts are not mandatory coverage.", "confirmed_topic_coverage_missing");
+      : "Every evidence-bearing planned section uses at least one selected fact; unused background facts are not mandatory coverage.",
+    "confirmed_topic_coverage_missing", { affected_count: uncoveredSections.length });
   const protectedMismatches = [];
   let semanticUnverified = 0;
   for (const key of ledgerKeys) {
@@ -732,7 +1222,7 @@ export function applyDeterministicGates(review, contentPackage) {
   checks.push({ name: "semantic-evidence-sampling", passed: null,
     detail: semanticUnverified ? `${semanticUnverified} used fact(s) need semantic sampling because no deterministic protected token was available.`
       : "All used facts contained at least one deterministically checkable protected token." });
-  const affiliateLeak = /trip\.com|affiliate|commission|booking link/i.test(draft.body_markdown);
+  const affiliateLeak = /\btrip\.com\b|\baffiliate\b|\bcommission\b|\bbooking link\b/i.test(draft.body_markdown);
   addGate("commercial-isolation", !affiliateLeak, affiliateLeak ? "Commercial or affiliate language leaked into the Research Draft." : "No commercial language detected.", "commercial_contamination");
   const internalLeak = /\bclaim[_ .-]?key\b|\bevidence ledger\b|\bsrc_[a-f0-9]+\b/i.test(draft.body_markdown);
   addGate("internal-metadata", !internalLeak, internalLeak ? "Internal research metadata appears in reader-facing copy." : "No internal identifiers detected.", "internal_metadata_leak");
@@ -849,10 +1339,19 @@ export function applyDeterministicGates(review, contentPackage) {
       missingHeadings.length ? `Final page omits critical headings: ${missingHeadings.join(", ")}` : "Final page title and critical section headings match the draft.",
       "final_page_content_missing");
     const evidenceValidation = validatePageEvidence(payload, contentPackage);
-    addGate("final-page-evidence", evidenceValidation.valid,
-      evidenceValidation.valid ? "Every factual semantic node retains its evidence values, conditions, source relation and visible date disclosure."
-        : `Final page evidence mismatch: ${[...new Set(evidenceValidation.errors.map((item) => `${item.code} at ${item.path}${item.claimKey ? ` (${item.claimKey})` : ""}${item.expected ? ` expected: ${item.expected}` : ""}`))].join("; ")}`,
+    const pageEvidenceCodes = new Set(["EMPTY_FACTUAL_LEDGER", "BLOCK_PROVENANCE_MISSING", "FACTUAL_BLOCK_UNMAPPED",
+      "CLAIM_SOURCE_RELATION_INVALID", "UNKNOWN_BLOCK_CLAIM", "FORGED_SOURCE_REFERENCE", "FORGED_CLAIM_REFERENCE"]);
+    const mappingErrors = evidenceValidation.errors.filter((item) => pageEvidenceCodes.has(item.code));
+    const contentErrors = evidenceValidation.errors.filter((item) => !pageEvidenceCodes.has(item.code));
+    const evidenceDetail = (items) => [...new Set(items.map((item) => `${item.code} at ${item.path}${item.claimKey ? ` (${item.claimKey})` : ""}${item.expected ? ` expected: ${item.expected}` : ""}`))].join("; ");
+    addGate("final-page-evidence-provenance", mappingErrors.length === 0,
+      mappingErrors.length ? `Final page evidence mapping mismatch: ${evidenceDetail(mappingErrors)}`
+        : "Every factual page block retains an explicit, valid Claim-to-Source mapping.",
       "final_page_evidence_invalid");
+    addGate("final-page-evidence-content", contentErrors.length === 0,
+      contentErrors.length ? `Draft evidence content mismatch: ${evidenceDetail(contentErrors)}`
+        : "Every factual semantic node retains its selected values and material conditions.",
+      "protected_evidence_mismatch");
   }
   const graph = draft.schema_jsonld?.["@graph"] || [];
   addGate("schema-consistency", graph.some((item) => item["@type"] === "Article") && graph.every((item) => !/undefined|null/.test(JSON.stringify(item))),
@@ -869,25 +1368,77 @@ export function applyDeterministicGates(review, contentPackage) {
   addWarning("english-readability", readability.length === 0,
     readability.length ? readability.join(" ") : "English sentence and paragraph rhythm is within the configured editorial guidance.",
     "readability_suggestion");
-  const finalIssues = uniqueBy(issues, (item) => `${item.code}:${item.message}`);
+  // Provider reviewers occasionally describe a missing Brief requirement with
+  // a general editorial code (for example NO_TRAVELER_DECISION). Normalize
+  // those aliases and keep one blocker per missing-requirement class so the
+  // operator sees the real repair target instead of two contradictory causes.
+  const finalIssues = normalizeQualityReviewIssues(issues);
+  const hasBlocker=finalIssues.some((item)=>item.severity==="blocker");
   return {
     ...review,
     ...separateQualityResults(review, finalIssues),
     checks: uniqueBy(checks, (item) => `${item.name}:${item.detail}`),
     issues: finalIssues,
-    passed: review.passed && !finalIssues.some((item) => item.severity === "blocker"),
+    passed: !hasBlocker,
     score: Math.max(0, review.score - finalIssues.filter((item) => item.severity === "blocker").length * 10),
     deterministic_summary: { hardFailures: finalIssues.filter((item) => item.severity === "blocker").length,
       warnings: finalIssues.filter((item) => item.severity === "warning").length, semanticUnverified },
   };
 }
 
+function normalizeReviewIssue(issue = {}) {
+  const code = String(issue.code || "");
+  const message = String(issue.message || "");
+  const requirementReference = /\bbrief-(?:adaptation|conflict)-\d+\b|\bmandatory brief requirement\b|\bbrief(?:'s)? (?:adaptation|conflict)\b/iu.test(message);
+  if (requirementReference && ["NO_TRAVELER_DECISION", "NO_CAUSAL_FLOW", "MISLEADING_CERTAINTY",
+    "EXCESSIVE_HEDGING", "GENERIC_AI_TRANSITIONS"].includes(code.toUpperCase())) {
+    return { ...issue, code:"mandatory_brief_requirement_missing", severity:"blocker",
+      affected_count:Number(issue.affected_count || 0) || 1 };
+  }
+  return issue;
+}
+
+// Persisted reviews can outlive the release that produced them. Keep the
+// operator-facing classification compatible at read time without rewriting
+// audit history or pretending that an old provider response was re-run.
+export function normalizeQualityReviewIssues(issues = []) {
+  return uniqueBy((Array.isArray(issues) ? issues : [])
+    .map(normalizeReviewIssue)
+    .map(enforceMandatoryIssueSeverity), (item) => String(item.code || "") === "mandatory_brief_requirement_missing"
+      ? "mandatory_brief_requirement_missing" : `${item.code}:${item.message}`);
+}
+
 function containsProtectedToken(text, token) {
   const haystack = String(text || "").normalize("NFKC").toLocaleLowerCase("en-US");
   const needle = String(token || "").normalize("NFKC").toLocaleLowerCase("en-US").trim();
   if (!needle) return true;
+  const normalizedCurrency = needle.replace(/^(?:cny|rmb|[¥￥])\s*(\d+(?:\.\d+)?)$/u, "$1 cny");
+  if (normalizedCurrency === "0 cny" && /\b(?:free|no admission fee|no entry fee)\b/iu.test(haystack)) return true;
+  const range = needle.match(/^(\d{1,2}(?::\d{2})?)\s*(?:[-\u2012-\u2015\u2212]|to)\s*(\d{1,2}(?::\d{2})?)$/iu);
+  if (range) {
+    const start = escapeRegex(range[1]);
+    const end = escapeRegex(range[2]);
+    if (new RegExp(`(?<![\\p{L}\\p{N}])${start}\\s*(?:[-\\u2012-\\u2015\\u2212]|to)\\s*${end}(?![\\p{L}\\p{N}])`, "iu").test(haystack)) return true;
+  }
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(haystack);
+}
+
+function enforceMandatoryIssueSeverity(issue = {}) {
+  if (issue?.severity !== "warning") return issue;
+  const code = String(issue.code || "").toUpperCase();
+  const alwaysBlocking = new Set([
+    "MISSING_MANDATORY_ADAPTATION", "MISSING_CHINESE_SCRIPT", "CONFLICT_HANDLING_OMISSION",
+    "UNRESOLVED_HOURS_CONFLICT", "HIDDEN_CONFLICT", "UNRESOLVED_CONFLICT",
+  ]);
+  const requirementRelated = new Set([
+    "MISLEADING_CERTAINTY", "EXCESSIVE_HEDGING", "NO_TRAVELER_DECISION", "DATABASE_DUMP",
+  ]);
+  const message = String(issue.message || "");
+  const explicitRequirement = /\b(?:mandatory|mandated|required by|explicit(?:ly)? (?:required|directed|instructed)|failed to (?:follow|provide)|brief(?:'s)? (?:adaptation|conflict)|adaptation requirement|conflict (?:resolution )?instruction)\b/iu.test(message);
+  return alwaysBlocking.has(code) || (requirementRelated.has(code) && explicitRequirement)
+    ? { ...issue, severity:"blocker" }
+    : issue;
 }
 
 function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
@@ -926,7 +1477,7 @@ function visiblePageText(payload) {
 }
 
 function normalizeComparable(value) {
-  return String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return String(value || "").toLowerCase().replace(/&/g, " and ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 function objectSchema(required, properties) {

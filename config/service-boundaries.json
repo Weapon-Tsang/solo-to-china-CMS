@@ -2,22 +2,64 @@
   "version": "service-boundaries-1",
   "compatibilityFacade": "src/repository.mjs",
   "boundaries": {
-    "source_evidence": ["src/adapters", "src/capture-upload.mjs", "src/source-preflight.mjs", "src/evidence-validator.mjs", "src/evidence-consensus.mjs"],
-    "knowledge": ["src/claim-resolution.mjs", "src/entity-resolution.mjs"],
-    "editorial": ["src/services/operations-workspace.mjs"],
-    "job_batch": ["src/job-policy.mjs", "src/ai/stage-policy.mjs"],
-    "publishing": ["src/publish-page.mjs", "src/wordpress.mjs", "src/seo-geo.mjs", "src/media-delivery.mjs", "src/final-html-validator.mjs"],
-    "commercial": ["src/commercial.mjs", "src/affiliate-queue.mjs", "src/repositories/commercial-events.mjs"],
-    "statistics": ["src/release-check.mjs"]
+    "source_evidence": [
+      "src/adapters",
+      "src/capture-upload.mjs",
+      "src/source-preflight.mjs",
+      "src/evidence-validator.mjs",
+      "src/evidence-consensus.mjs",
+      "src/capture-media-upload.mjs",
+      "src/source-media-store.mjs",
+      "src/media-storage.mjs",
+      "src/safe-media-http.mjs"
+    ],
+    "knowledge": [
+      "src/claim-resolution.mjs",
+      "src/entity-resolution.mjs"
+    ],
+    "editorial": [
+      "src/services/operations-workspace.mjs"
+    ],
+    "job_batch": [
+      "src/job-policy.mjs",
+      "src/ai/stage-policy.mjs",
+      "src/pipeline-contract.mjs",
+      "src/source-processing-profile.mjs",
+      "src/repositories/pipeline-step-receipts.mjs"
+    ],
+    "publishing": [
+      "src/publish-page.mjs",
+      "src/wordpress.mjs",
+      "src/seo-geo.mjs",
+      "src/media-delivery.mjs",
+      "src/final-html-validator.mjs"
+    ],
+    "commercial": [
+      "src/commercial.mjs",
+      "src/affiliate-queue.mjs",
+      "src/repositories/commercial-events.mjs"
+    ],
+    "statistics": [
+      "src/release-check.mjs",
+      "src/services/summary-cache.mjs"
+    ]
   },
   "dependencyRules": [
     {
       "from": "source_evidence",
-      "forbidImportFragments": ["/commercial.mjs", "/affiliate-queue.mjs", "/repositories/commercial-events.mjs"]
+      "forbidImportFragments": [
+        "/commercial.mjs",
+        "/affiliate-queue.mjs",
+        "/repositories/commercial-events.mjs"
+      ]
     },
     {
       "from": "knowledge",
-      "forbidImportFragments": ["/commercial.mjs", "/affiliate-queue.mjs", "/repositories/commercial-events.mjs"]
+      "forbidImportFragments": [
+        "/commercial.mjs",
+        "/affiliate-queue.mjs",
+        "/repositories/commercial-events.mjs"
+      ]
     }
   ]
 }

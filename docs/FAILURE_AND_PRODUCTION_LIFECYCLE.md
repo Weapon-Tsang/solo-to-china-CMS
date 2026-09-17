@@ -1,5 +1,83 @@
 # Failure and production lifecycle
 
+## 2.0.28 historical review projection
+
+Quality Review audit records are immutable evidence, but their operational projection uses the current issue normalizer. Content Workbench and Content Recovery therefore agree on one current failure cause even when an older provider response used a generic editorial alias for a named mandatory Brief requirement. This compatibility layer performs no model call and no data rewrite.
+
+## 2.0.27 quality-repair convergence
+
+The two-attempt automatic quality-repair ceiling is a per-recovery-run circuit breaker. Historical automatic repair Jobs remain audit history but do not consume a new explicit recovery's budget. `recovery_run_id` is inherited by revision repair, page composition, QA and any automatic escalation; dedupe still prevents the same stage and revision from running twice inside that recovery.
+
+A provider issue that cites a specific mandatory Brief id cannot be surfaced under a semantically unrelated editorial code. It is canonicalized to a single `mandatory_brief_requirement_missing` blocker, and its repair remains bounded to the smallest affected Draft section unless the same blocker repeats and triggers the existing full-Draft escalation from the preserved Writing Packet.
+
+## 2.0.26 atomic unsupported-assertion recovery
+
+A current persisted Quality Review is authoritative for its immutable Draft revision. Content Recovery must not recompute a review from empty model checks, because that would label mandatory Brief requirements “not audited” and suppress the actual reviewer blocker. Deterministic-only diagnostics are used only when the current revision has no persisted review.
+
+`UNSUPPORTED_ASSERTION` identifies an atomic reader-visible value that is not supported by both the article's frozen fact allow-list and its current evidence ledger. Bounded repair receives the exact `unsupported_claims`, may remove invalid ledger mappings, and must remove rather than import any fact that exists only in global Knowledge. QA separates supported and unsupported values even when they share a predicate such as opening hours. The recovery target remains `revise_draft` for the first bounded incident and escalates through the existing repeated-blocker policy if it survives another current review.
+
+## 2.0.25 surplus evidence reconciliation
+
+`DRAFT_EVIDENCE_VALUE_INVALID` distinguishes an actually used fact whose protected value was changed or omitted from a model's surplus internal citation. Before a generated Draft is persisted, known section-allowed claims are compared with its reader-visible body. If a protected value is absent but another honest claim still supports that planned section, the unused citation is removed and its Source IDs are rebuilt from the frozen evidence. The prose, frozen fact and upstream artifacts are not changed.
+
+The final supporting claim for an evidence-bearing section cannot be removed. That case still triggers one exact provider correction and then fails closed at `generate_draft` if unresolved. This prevents both false permanent failures and evidence-free sections.
+
+## 2.0.24 genuine Draft regeneration
+
+`production_state` 2.0 separates cross-stage quality-repair history from the current revision.
+
+Every `generate_draft` Job includes the current owner-matched failed QA review in its dependency hash, whether it was created by automatic repair, the workbench, a canary or another explicit recovery caller. A newly queued recovery therefore cannot reuse the prose that triggered the current blocker. The writer still reuses the approved Brief, Narrative Plan, frozen Writing Packet, authorized Source media and evidence facts; successful upstream research is not rerun.
+
+The generated Draft must contain every evidence-bearing planned section. Exact planned labels output as plain standalone lines are promoted to H2 before validation; after one structured correction request, any still-missing section fails closed as `DRAFT_STRUCTURE_INVALID` and remains auditable instead of silently clearing its evidence scope.
+
+A current passing QA record is revision-, content-, evidence- and page-bound. Once it exists, earlier failures in `generate_draft`, `compose_frontend_page`, `review_draft` or `revise_draft` remain visible only as `latest_historical_error`; they cannot keep the current workbench row failed merely because the successful replacement used a different stage type.
+
+Quality review is a compact independent audit, not another writing pass. It uses LOW thinking so the configured completion allowance remains available for JSON, and its checks, issues and unsupported-claim lists are bounded and deduplicated. A MEDIUM-thinking structured stage that consumes its output allowance may retry exactly once at LOW thinking, recorded as `thinking_budget_fallback`; an unchanged second exhaustion remains a real `MODEL_OUTPUT_LIMIT`. When the same content blocker appears in two consecutive reviews, automatic recovery regenerates only the Draft from the existing Writing Packet instead of issuing another bounded patch. Repeated delivery/media blockers retain their exact specialized recovery target.
+
+## 2.0.23 recovery depth and authorized source media
+
+`production_state` 1.9 chooses recovery depth from the authoritative failure, not from the button that happens to be visible. `INVALID_DRAFT_REPAIR_SCOPE`, `MODEL_OUTPUT_LIMIT`, a database-dump-style Draft, missing planned sections, evidence-ledger evasion, or multiple global structure blockers target `generate_draft`. This preserves Editorial Assembly, Narrative Plan, Writing Packet and Frontend Page Plan while rebuilding only the failed prose. A frozen Writing Packet/page-plan scope mismatch targets `assemble_editorial`; a page/Contract-only failure targets `compose_frontend_page`.
+
+Manual recovery uses the same current failed-QA feedback as automatic recovery. The operation is transactional, Opportunity-owned and idempotent; replaying one idempotency key cannot create another Job. Startup, migration and list projection never enqueue these recoveries.
+
+Every imported Source asset is project-authorized for editorial and production use. Legacy item-level authorization fields remain audit data but cannot veto a retained original. Recovery and delivery still require stored bytes, exact Source provenance, destination/factual relevance, useful alt text and a valid Frontend Contract payload; inaccessible or unrelated media remains blocked.
+
+## Unified production state
+
+`production_state` is the only workbench lifecycle contract. It is calculated server-side from approved Opportunity readiness, Candidate/Brief/Draft lineage, durable Jobs and leases, Pipeline Artifacts, Step Receipts, current revision/hash-bound outputs, Frontend compositions, Quality Reviews, WordPress publications and record disposition. Clients must not combine `status`, `brief_status`, `draft_status` or `workflow_status` to infer production state.
+
+The top-level shape contains `version`, `lifecycle`, `readiness`, `headline`, `explanation`, `blocking_requirements`, `current_stage`, `current_stage_label`, `stage_status`, `completed_stages`, `pending_stages`, `production_instance_id`, `production_owner_opportunity_id`, `owner_resolution`, `recovery_target`, `recovery_target_label`, `next_stage`, `next_stage_label`, `progress`, `auto_continue`, `needs_human`, `recoverable`, `retry_state`, `latest_error`, `latest_historical_error`, `last_attempt_at`, `available_actions`, `stage_registry`, `timeline`, `disposition` and `has_production_lineage`. `lifecycle` is one of `pending_start`, `in_progress`, `needs_attention`, `completed` or `history`; `stage_status` distinguishes `waiting`, `queued`, `running`, `failed`, `interrupted`, `blocked` and `succeeded`. In contract 1.3, `retry_state` reports provider backoff attempt, maximum attempts, remaining automatic attempts and resume time; an exhausted cooldown is displayed as failed and never as an indefinitely auto-continuing queue item.
+
+The approved Opportunity ID is both the production instance and canonical production owner. New production Jobs always store that owner and child Jobs inherit it. A legacy unowned Job may be used only when the Candidate has exactly one approved Opportunity; it is never copied across siblings. Candidate identity by itself is neither admission to `productionOnly` nor production lineage.
+
+An unresolved owner-matched failed Job wins over legacy Brief/Draft labels only when its current-contract dependencies are complete. It supplies the stage, failure code, operator-safe reason, occurrence time, Job/request identity, attempt, failure class, provider/model, whether a provider request was sent and whether model execution is confirmed. A provider request rejected without token/usage evidence is `rejected_before_generation`, not “model called”. A later queued/running/succeeded attempt for the same stage supersedes the old failure. A Brief/Draft `exception` without a retained failed Job is surfaced as an explicit persisted-state inconsistency rather than a generic “ready” label. A running Job whose lease has expired is `interrupted`. A completed persisted step followed by no downstream Job/output beyond the continuity grace period is also `interrupted`.
+
+When an old downstream failure lacks a prerequisite required by the current registry, it is not allowed to override the live recovery target. `production_state` 1.2 and later move its attribution to `latest_historical_error`, annotate the timeline step as non-blocking history, report the live state as `interrupted`, and choose the first missing prerequisite-safe step. This is how an old Page Plan failure now resumes Narrative/Packet assembly rather than attempting to skip directly to Page Plan.
+
+`production_state` 1.6 also recognizes an old failed Draft whose visible headings retain fewer than 75% of the named evidence-bearing Brief sections. That record remains a QA failure for attribution, but its exact `recovery_target` becomes `generate_draft`; the preserved Brief, Narrative Plan and Writing Packet are reused, and only the damaged Draft plus its current dependent page/review artifacts are rebuilt. Active Jobs and a current passing review always take precedence, preventing compatibility detection from interrupting live or completed work.
+
+`production_state` 1.7 treats a WordPress `INVALID_PAGE_SCHEMA` rejection as a delivery-boundary failure whose exact recovery target is `compose_publish_page`. The failed remote write created no WordPress Draft. Recovery reuses the current QA-passed Draft, Frontend page, media and commercial composition, remaps the public guide taxonomy, validates a new Publish Package and then resumes draft-only delivery. It never returns to writing or evidence stages.
+
+`production_state` 1.8 applies the same targeted recovery to a WordPress `INVALID_COMPONENT_DATA` response caused by sanitizer-stable inline encoding. The Publish Package is rebuilt with canonical safe entities and revalidated locally; recovery neither reuses the rejected package nor restarts article production.
+
+In 2.0.22 the final-page evidence gate also recognizes this delivery-only normalization by re-signing already verified block provenance in memory. The operation is fail-closed: any missing, reordered or changed original signature disables remapping and produces the existing QA failure.
+
+Failed state separates `current_stage` (the failed step), `recovery_target` (repeat that exact step) and `next_stage` (the following pipeline step). Interrupted state reports the last completed position as current and the first missing dependency-safe step as both recovery target and next step. Queued/running state reports its active step and the following step. Only succeeded evidence increments `progress.completed`.
+
+## Recovery and record disposition
+
+Both `retry_failed_stage` and `recover_next_stage` resolve through the backend `recovery_target`; the former is valid only for `failed`, the latter only for `interrupted`. Dependencies must already be complete. A stale client request receives a refresh-and-use-current-target conflict in operator-facing Chinese instead of raw internal stage keys. The recovery Job receives the exact Opportunity owner and a recovery-run identity and uses the normal durable Job dedupe, stage Artifact hash, Step Receipt, lease and transaction mechanisms. The operation is idempotent by owner/stage/input identity/retry generation; a matching active recovery is returned instead of enqueued again. It does not delete or overwrite successful upstream outputs.
+
+Vertex structured output uses native JSON Schema, then the provider OpenAPI Schema dialect. If both transports are rejected with HTTP 400, the client removes the provider-side schema, places the same contract in the system instruction and keeps `application/json`; the returned result must still pass the unchanged local JSON Schema validator. Each rejected transport transition is persisted in the existing model-call receipt. When the same durable Job is reclaimed after a provider backoff, it resumes the persisted transport instead of submitting a known-invalid Schema again. Transport negotiation does not consume the bounded semantic repair attempts. It creates no background retries and is used only when an explicitly queued stage executes.
+
+Editorial Assembly has its own deterministic pre-model budget because it executes before a frozen fact selection exists: 48 ranked facts, 96 evidence snippets, 16 Experience blocks, 48 Source-family links, bounded learning examples and at most 128 KiB/~32k estimated input tokens. Materiality ranking retains conflicts, negatives, dates, exceptions and reader-promise overlap. This projection only limits the model request; complete Source, media, Claim, Knowledge, Evidence, Experience, approval and audit records remain stored unchanged.
+
+Provider pressure uses exponential cooldown but never bypasses `jobs.max_attempts`. The final permitted 429 becomes an auditable failed Job with `failure_class=retryable_provider`; a later operator recovery creates/reuses the normal idempotent stage recovery. Legacy queued cooldown rows already at or above their maximum are transactionally finalized before Job selection without calling a model.
+
+Raw fetch failures and provider deadlines are normalized as `PROVIDER_TRANSPORT_FAILED` or `PROVIDER_TIMEOUT` with the originating text or visual provider. They remain bounded and retryable, and terminal exhaustion is still `retryable_provider` rather than an unclassified generic failure. A Flash Image response without image bytes is `EMPTY_IMAGE_OUTPUT` and may retry within the same durable Job; an explicit safety block is `IMAGE_SAFETY_BLOCKED`, is not blindly retried, and never falls back to a fabricated or unrelated image.
+
+Archive stops active production Jobs and moves the attempt to `history` without deleting artifacts. Restore is explicit. “Delete production record” removes production Jobs/Artifacts/Receipts plus Editorial Assembly, Brief, Draft, current review/visual/page/commercial/publish/WordPress-local descendants and orphanable Frontend capability requests. It retains Sources, original media/capture versions, Claims, Knowledge, Evidence, Experience, recommendations and decisions, Candidate/Opportunity approval, Failure Lessons, attempt archives, model-call accounting and operation audit. A retained remote WordPress Draft makes deletion invalid; archive must be used instead. All disposition operations are transactional, idempotency-keyed and recorded in `production_record_audit` with a deletion tombstone.
+
 ## Opportunity states
 
 Actionable opportunities begin as `recommended` (or return as `recommended_again`). An editor may independently approve, defer or ignore each item. Approval changes the state to `approved`; evidence-ready work moves through `producing` to `finished`. Evidence-incomplete approval remains durable and resumes only when a Knowledge rebuild makes the coverage ready.
@@ -8,17 +86,17 @@ Actionable opportunities begin as `recommended` (or return as `recommended_again
 
 ## Terminal production failure
 
-A bounded, non-system production failure creates one `failure_lessons` record containing the normalized reason, failing stage, prior inputs and remediation rule. The same transaction:
+A bounded, non-system production failure under Strategy 3.1 creates a `failure_lessons` record and an idempotent `production_attempt_archives` snapshot containing the failing stage, inputs, Assembly, Brief, Narrative, Packet, Draft/revisions, reviews, visuals, page and WordPress association. It preserves approval and all production artifacts for the existing bounded stage repair workflow.
 
-- cancels other active jobs for that production attempt;
-- deletes transient Brief, Draft, Narrative, Writing Packet, page, visual and delivery descendants through foreign-key cascades;
-- preserves Sources, capture versions, media originals, Segments, Evidence Spans, Claims, Knowledge, Experience, editorial lessons and Golden Articles;
-- records the removal/preservation result in `production_rollbacks`;
-- resets the candidate and returns the opportunity to `recommended_again` with its previous failure visible.
+- Expression or local ledger problems remain `qa_failed`; other recoverable content-stage failures remain `exception` with a specific repair stage.
+- Sources, capture versions, original media, Claims, Knowledge, Experience, production artifacts, feedback and Golden Article associations remain available.
+- Only explicit `APPROVED_SCOPE_INVALID` or `EVIDENCE_SCOPE_INVALID` cancels the remaining attempt jobs and resets the candidate/opportunity to `recommended_again`. Cancellation retains job rows and artifact history, and the preservation result is recorded in `production_rollbacks`.
 
-The editor must approve the opportunity again. A generic retry endpoint cannot bypass this gate.
+The editor must approve a changed scope again. Ordinary expression, media, page, network or provider failures do not request a second approval of the same scope. Assembly receives only active, retry-safe Failure Lessons for the current opportunity; unrelated automatic failure lessons are excluded.
 
-Database corruption/unavailability, credentials, provider quota, network and lease faults remain operational exceptions. A source-media fault marks the Draft `media_pending` and queues repair without rewriting valid prose. Ordinary learned content failures do not remain in the system exception inbox.
+Database corruption/unavailability, credentials, provider quota, network and lease faults remain operational exceptions. A source-media fault marks the Draft `media_pending` and queues repair without rewriting valid prose. Automatic repair budgets remain enforced; exhausting a budget keeps a reviewable artifact and actionable diagnosis.
+
+Entity-resolution pages and targeted extraction/coverage calls retain verified `pipeline_step_receipts` across worker replacement. Input/configuration changes and damaged output hashes prevent reuse; lost ownership cannot write a receipt. Targeted extraction stays private until coverage succeeds, then extraction, audit, downstream work and job completion commit together. Page/commercial/publish saves and WordPress acknowledgement also use guarded local transactions. External delivery still follows the existing idempotency/receipt protocol; a provider call cannot participate in the SQLite transaction.
 
 ## Published content impact
 

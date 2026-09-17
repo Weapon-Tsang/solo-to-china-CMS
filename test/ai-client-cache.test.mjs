@@ -27,14 +27,17 @@ test("AI client reuses a bounded hash-identified structured response without ano
     content: "same evidence input",
   };
 
-  const first = await client.completeJson(input);
-  const second = await client.completeJson(input);
+  const first = await client.completeJson({...input,telemetryContext:{queueWaitMs:17,executionRoute:"realtime"}});
+  const second = await client.completeJson({...input,telemetryContext:{queueWaitMs:17,executionRoute:"realtime"}});
 
   assert.deepEqual(second, first);
   assert.equal(requests, 1);
   assert.equal(metrics.length, 2);
   assert.equal(metrics[1].attempts, 0);
   assert.equal(metrics[1].costUsd, 0);
+  assert.equal(metrics[1].providerRequestMs, 0);
+  assert.equal(metrics[1].totalStageMs, 17);
+  assert.equal(metrics[1].executionRoute, "realtime");
   assert.match(metrics[1].promptHash, /^[a-f0-9]{64}$/);
   assert.match(metrics[1].inputHash, /^[a-f0-9]{64}$/);
 });

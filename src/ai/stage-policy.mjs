@@ -15,6 +15,7 @@ export function resolveStagePolicy(stage, config = {}) {
     stage: stage || "unknown",
     provider: config.provider || "unknown",
     model: config.model || "unknown",
+    role: selected.role || config.role || "unknown",
     class: selected.class || "general",
     requires: [...new Set(selected.requires || ["structured_output"])],
     thinking: selected.thinking || config.thinkingLevel || "LOW",

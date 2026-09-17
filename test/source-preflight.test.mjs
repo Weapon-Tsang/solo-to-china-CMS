@@ -81,7 +81,7 @@ test("unprocessable local PDF is blocked before any model extraction call", asyn
   assert.equal(JSON.parse(source.diagnostic_json).preflight.ready, false);
 });
 
-test("duplicates and high-cost captures do not enqueue full model work", (t) => {
+test("duplicates and heavy captures are auto-scheduled without a manual-start gate", (t) => {
   const { db, repository } = repositoryFixture(t);
   const images = Array.from({ length: 25 }, (_, index) => ({ url: `https://sns-img.xhscdn.com/high-${index}.jpg`, alt: `evidence ${index}` }));
   const capture = normalizeXiaohongshuCapture({
@@ -89,14 +89,29 @@ test("duplicates and high-cost captures do not enqueue full model work", (t) => 
     text: "A manually confirmed source with a large but technically measurable media set.", images,
   });
   const estimate = estimateSourceProcessing(capture);
-  assert.equal(estimate.requiresManualStart, true);
-  assert.equal(estimate.estimatedExtractionCalls, 26);
+  assert.equal(estimate.requiresManualStart, false);
+  assert.equal(estimate.processingClass, "heavy");
+  assert.equal(estimate.estimatedExtractionCalls, 6);
   const first = repository.saveCapture(capture);
   const duplicate = repository.saveCapture(capture);
-  assert.equal(first.requiresManualStart, true);
-  assert.equal(first.queued, false);
+  assert.equal(first.requiresManualStart, false);
+  assert.equal(first.queued, true);
   assert.equal(duplicate.duplicate, true);
-  assert.equal(db.prepare("SELECT COUNT(*) count FROM jobs").get().count, 0);
-  assert.equal(repository.retrySource(first.id), true);
-  assert.equal(db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='extract_source' AND status='queued'").get().count, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='repair_media_asset'").get().count,25);
+});
+
+test("18, 19 and 27 images never pause solely because of estimated model calls", () => {
+  for (const count of [18,19,27]) {
+    const estimate=estimateSourceProcessing({rawText:"One paragraph of source text.",assets:Array.from({length:count},(_,index)=>({kind:"image",url:`https://example.com/${index}.jpg`}))});
+    assert.equal(estimate.blocked,false);
+    assert.equal(estimate.requiresManualStart,false);
+    assert.ok(["normal","heavy"].includes(estimate.processingClass));
+  }
+});
+
+test("only an explicit technical hard limit blocks processing", () => {
+  const estimate=estimateSourceProcessing({rawText:"Evidence",files:[{sizeBytes:513*1024*1024}],assets:[]});
+  assert.equal(estimate.processingClass,"blocked_hard_limit");
+  assert.equal(estimate.blocked,true);
+  assert.equal(estimate.requiresManualStart,false);
 });

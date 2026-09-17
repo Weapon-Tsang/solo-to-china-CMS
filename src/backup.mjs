@@ -24,7 +24,7 @@ export function createBackup({
   backupDir,
   sourceUploadsDir = null,
   generatedMediaDir = null,
-  retention = 14,
+  retention = 1,
   offsiteLocation = "",
   offsiteRetentionDays = 0,
   codeRevision = "",
@@ -125,7 +125,7 @@ export function createBackup({
       },
       secrets: { included: false, store: "controlled secret store", references: SECRET_REFERENCES },
       retention: {
-        localSnapshotCount: Math.max(1, Number.parseInt(retention, 10) || 14),
+        localSnapshotCount: Math.max(1, Number.parseInt(retention, 10) || 1),
         offsiteLocation: String(offsiteLocation || "not-configured"),
         offsiteRetentionDays: Math.max(0, Number.parseInt(offsiteRetentionDays, 10) || 0),
         offsiteReplication: offsiteLocation ? "operator-managed" : "not-configured",
@@ -448,7 +448,7 @@ function hashFile(filename) {
 }
 
 function pruneBackups(directory, retention) {
-  const keep = Math.max(1, Number.parseInt(retention, 10) || 14);
+  const keep = Math.max(1, Number.parseInt(retention, 10) || 1);
   const backups = fs.readdirSync(directory, { withFileTypes: true })
     .filter((entry) => (entry.isDirectory() && /^solo-to-china-.+\.snapshot$/.test(entry.name))
       || (entry.isFile() && /^solo-to-china-.+\.sqlite$/.test(entry.name)))
@@ -485,7 +485,7 @@ if (import.meta.main) {
   } else {
     const databasePath = path.resolve(args[0] || process.env.DATABASE_PATH || path.join(projectRoot, "data", "solo-to-china.sqlite"));
     const backupDir = path.resolve(args[1] || process.env.BACKUP_DIR || path.join(projectRoot, "backups"));
-    const retention = Number.parseInt(process.env.BACKUP_RETENTION || "14", 10);
+    const retention = Number.parseInt(process.env.BACKUP_RETENTION || "1", 10);
     console.log(JSON.stringify(createBackup({
       databasePath,
       backupDir,

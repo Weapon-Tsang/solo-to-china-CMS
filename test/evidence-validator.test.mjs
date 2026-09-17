@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pageBlockSignature, validatePageEvidence } from "../src/evidence-validator.mjs";
+import { factRelevant, pageBlockSignature, protectedFactTokens, remapBlockProvenanceForDelivery,
+  validatePageEvidence } from "../src/evidence-validator.mjs";
 import { validateFinalPageArtifact } from "../src/publish-page.mjs";
 
 const goodBlock = { type: "articleSection", variant: "answer-first", data: {
@@ -39,7 +40,7 @@ test("layout variants and an explicitly non-factual image do not break evidence 
   assert.equal(result.valid, true);
 });
 
-test("atomic blocks validate evidence at the shared ledger-section boundary", () => {
+test("atomic blocks validate evidence only at an explicitly shared content-node boundary", () => {
   const heading = { type: "heading", variant: "section", data: { text: "Ticket plan", level: 2 } };
   const paragraph = { type: "paragraph", variant: "default", data: { content: "The Test Museum ticket costs CNY 50." } };
   const list = { type: "list", variant: "unordered", data: { items: ["Only on weekdays", "Checked September 7, 2026"] } };
@@ -49,16 +50,131 @@ test("atomic blocks validate evidence at the shared ledger-section boundary", ()
     { ...factual, blockId: "block-heading", contentNodeId: "node-heading", factuality: "non_factual",
       claimKeys: [], sourceIds: [], claimTraces: [], blockSignature: pageBlockSignature(heading) },
     { ...factual, blockId: "block-paragraph", blockSignature: pageBlockSignature(paragraph) },
-    { ...factual, blockId: "block-list", contentNodeId: "node-list", blockSignature: pageBlockSignature(list) },
+    { ...factual, blockId: "block-list", contentNodeId: factual.contentNodeId, blockSignature: pageBlockSignature(list) },
   ];
   const result = validatePageEvidence({ metadata: { title: "Guide" }, blocks: [heading, paragraph, list] }, contentPackage);
   assert.equal(result.valid, true, JSON.stringify(result.errors));
+});
+
+test('current selected price excludes unselected historical evidence, and another node cannot mask a wrong price', () => {
+  const block = { ...goodBlock, data: { body: 'The Test Museum ticket costs 60 CNY only on weekdays.' } };
+  const pkg = packageFor(block);
+  pkg.facts[0].preferred_value = 'CNY 60';
+  pkg.facts[0].evidence = [
+    { source_id: 'source-real', claim_id: 'claim-current', value: 'CNY 60', qualifiers: ['only on weekdays'] },
+    { source_id: 'source-old', claim_id: 'claim-old', value: 'CNY 40', qualifiers: ['only on Sundays'] },
+  ];
+  pkg.frontend_page.validation.blockProvenance[0].claimTraces[0].claimId = 'claim-current';
+  assert.equal(validatePageEvidence({ blocks: [block] }, pkg).valid, true);
+  const wrong = { ...block, data: { body: 'The Test Museum ticket costs CNY 40 only on weekdays.' } };
+  pkg.frontend_page.validation.blockProvenance.push({ ...pkg.frontend_page.validation.blockProvenance[0],
+    contentNodeId: 'node_wrong', blockSignature: pageBlockSignature(wrong) });
+  const result = validatePageEvidence({ blocks: [block, wrong] }, pkg);
+  assert.ok(result.errors.some(x => x.code === 'EVIDENCE_VALUE_MISMATCH' && x.path === '$.blocks[1]'));
+  assert.ok(!result.errors.some(x => x.path === '$.blocks[0]'));
+});
+
+test('explicit historical and conditional claims retain their own values and qualifiers', () => {
+  const block = { ...goodBlock, data: { body: 'The Test Museum adult ticket costs ¥60; students pay CNY 30.' } };
+  const pkg = packageFor(block);
+  const fact = pkg.facts[0];
+  fact.preferred_value = 'CNY 60';
+  fact.evidence = [
+    { claim_id: 'adult', source_id: 'source-real', value: 'CNY 60', qualifiers: ['adults'] },
+    { claim_id: 'student', source_id: 'source-real', value: 'CNY 30', qualifiers: ['students'] },
+  ];
+  const entry = pkg.frontend_page.validation.blockProvenance[0];
+  entry.claimTraces = fact.evidence.map(e => ({ claimKey: fact.normalized_key, claimId: e.claim_id, sourceId: e.source_id, evidenceRole: 'conditional' }));
+  assert.equal(validatePageEvidence({ blocks: [block] }, pkg).valid, true);
+  const swapped = { ...block, data: { body: 'The Test Museum adult ticket costs CNY 30; students pay CNY 60.' } };
+  entry.blockSignature = pageBlockSignature(swapped);
+  assert.equal(validatePageEvidence({ blocks: [swapped] }, pkg).valid, false);
+  entry.claimTraces[1].claimId = 'forged';
+  assert.ok(codes(validatePageEvidence({ blocks: [swapped] }, pkg)).includes('FORGED_CLAIM_REFERENCE'));
+});
+
+test('equivalent current currency surfaces require one canonical value instead of every spelling', () => {
+  const block = { ...goodBlock, data: { body: 'The Test Museum ticket costs CNY 0 on weekdays.' } };
+  const pkg = packageFor(block);
+  const fact = pkg.facts[0];
+  fact.preferred_value = 'CNY 0';
+  fact.evidence = [
+    { claim_id: 'zero-cny', source_id: 'source-real', value: '0 CNY', qualifiers: ['weekdays'] },
+    { claim_id: 'zero-rmb', source_id: 'source-real', value: '0 RMB', qualifiers: ['weekdays'] },
+  ];
+  const entry = pkg.frontend_page.validation.blockProvenance[0];
+  entry.blockSignature = pageBlockSignature(block);
+  entry.claimTraces = fact.evidence.map((item) => ({ claimKey: fact.normalized_key, claimId: item.claim_id,
+    sourceId: item.source_id, evidenceRole: 'current' }));
+  assert.equal(validatePageEvidence({ blocks: [block] }, pkg).valid, true);
+});
+
+test('zero-fee evidence accepts reader-friendly free admission wording', () => {
+  const block = { ...goodBlock, data: { body: 'Admission to the Test Museum is free on weekdays.' } };
+  const pkg = packageFor(block);
+  pkg.facts[0].preferred_value = 'CNY 0';
+  pkg.facts[0].evidence = [{ claim_id: 'zero-cny', source_id: 'source-real', value: '0 CNY', qualifiers: ['weekdays'] }];
+  const entry = pkg.frontend_page.validation.blockProvenance[0];
+  entry.blockSignature = pageBlockSignature(block);
+  entry.claimTraces = [{ claimKey: pkg.facts[0].normalized_key, claimId: 'zero-cny', sourceId: 'source-real', evidenceRole: 'current' }];
+  assert.equal(validatePageEvidence({ blocks: [block] }, pkg).valid, true);
+});
+
+test('divergent current-source details are alternatives rather than conjunctive literal requirements', () => {
+  const block = { ...goodBlock, data: { body: 'The Test Museum requires online booking; reserve 2 days in advance.' } };
+  const pkg = packageFor(block);
+  const fact = pkg.facts[0];
+  fact.predicate = 'reservation_required';
+  fact.preferred_value = 'true';
+  fact.evidence = [
+    { claim_id:'two-days', source_id:'source-real', value:'true', qualifiers:['2 days in advance'] },
+    { claim_id:'one-day', source_id:'source-other', value:'true', qualifiers:['advance: 1 day'] },
+    { claim_id:'unspecified', source_id:'source-third', value:'true', qualifiers:['book in advance'] },
+  ];
+  const entry = pkg.frontend_page.validation.blockProvenance[0];
+  entry.sourceIds = ['source-other', 'source-real', 'source-third'];
+  entry.blockSignature = pageBlockSignature(block);
+  entry.claimTraces = fact.evidence.map((item) => ({ claimKey:fact.normalized_key, claimId:item.claim_id,
+    sourceId:item.source_id, evidenceRole:'current' }));
+  assert.equal(validatePageEvidence({ blocks:[block] }, pkg).valid, true);
+});
+
+test('production vocabulary variants remain relevant without protecting internal workflow qualifiers', () => {
+  const nightView = { normalized_key:'attraction.hongyadong.night_view', subject:'Hongyadong and Qiansimen Bridge',
+    predicate:'night_lighting', preferred_value:'brightly illuminated multi-level stilt-house complex framed beneath the red Qiansimen cable-stayed bridge' };
+  assert.equal(factRelevant('The multi-level stilt-house complex uses warm lighting beside the red Qiansimen cable-stayed bridge at night.', nightView), true);
+  assert.deepEqual(protectedFactTokens({ predicate:'terrain_feature', preferred_value:'全是梯坎',
+    evidence:[{ value:'全是梯坎', qualifiers:['stairs_common', 'not_mobility_friendly'] }] }), []);
 });
 
 test("an empty ledger cannot support a factual page", () => {
   const contentPackage = packageFor(goodBlock);
   contentPackage.draft.evidence_ledger = [];
   assert.ok(codes(validatePageEvidence({ metadata: { title: "Guide" }, blocks: [goodBlock] }, contentPackage)).includes("EMPTY_FACTUAL_LEDGER"));
+});
+
+test('historical comparison keeps value and year paired; frozen block evidence survives live consensus changes', () => {
+  const block={...goodBlock,data:{body:'The Test Museum ticket was CNY 40 in 2024; it is CNY 60 in 2026.'}};
+  const pkg=packageFor(block),fact=pkg.facts[0],entry=pkg.frontend_page.validation.blockProvenance[0];
+  fact.preferred_value='CNY 60';
+  fact.evidence=[{claim_id:'old',source_id:'source-real',value:'CNY 40',qualifiers:['in 2024']},
+    {claim_id:'current',source_id:'source-real',value:'CNY 60',qualifiers:['in 2026']}];
+  entry.evidenceSnapshots=structuredClone([fact]);
+  entry.claimTraces=fact.evidence.map(e=>({claimKey:fact.normalized_key,claimId:e.claim_id,sourceId:e.source_id,evidenceRole:e.claim_id==='old'?'historical':'current'}));
+  fact.preferred_value='CNY 80';fact.evidence=[];
+  assert.equal(validatePageEvidence({blocks:[block]},pkg).valid,true);
+  const swapped={...block,data:{body:'The Test Museum ticket was CNY 60 in 2024; it is CNY 40 in 2026.'}};
+  entry.blockSignature=pageBlockSignature(swapped);
+  assert.ok(codes(validatePageEvidence({blocks:[swapped]},pkg)).includes('EVIDENCE_CONDITION_MISMATCH'));
+});
+
+test('equivalent clock and duration forms pass while lost negation and reversed ranges do not',()=>{
+  const block={...goodBlock,data:{body:'Test Museum admission starts at 09:00; the visit takes 60 minutes. No entry after closing. Open 9 to 17.'}};
+  const pkg=packageFor(block);pkg.facts[0].preferred_value='9:00 am; 1 hour; 9–17';pkg.facts[0].evidence=[{source_id:'source-real',qualifiers:['No entry after closing']}];
+  assert.equal(validatePageEvidence({blocks:[block]},pkg).valid,true);
+  const invalid={...block,data:{body:block.data.body.replace('No entry after closing','Entry after closing').replace('9 to 17','17 to 9')}};
+  pkg.frontend_page.validation.blockProvenance[0].blockSignature=pageBlockSignature(invalid);
+  assert.equal(validatePageEvidence({blocks:[invalid]},pkg).valid,false);
 });
 
 test("the final artifact gate consumes the semantic evidence validator", () => {
@@ -68,6 +184,31 @@ test("the final artifact gate consumes the semantic evidence validator", () => {
   assert.equal(validateFinalPageArtifact(page, contentPackage).valid, true);
   page.blocks[0] = { ...goodBlock, data: { ...goodBlock.data, body: goodBlock.data.body.replace("CNY 50", "CNY 500") } };
   assert.ok(codes(validateFinalPageArtifact(page, contentPackage)).includes("BLOCK_PROVENANCE_MISSING"));
+});
+
+test("the final artifact gate rejects reader-visible raw Markdown formatting", () => {
+  const page = { metadata: { title: "Guide" }, blocks: [goodBlock] };
+  const contentPackage = packageFor(goodBlock);
+  contentPackage.draft.title = "Guide";
+  page.blocks.push({ type: "list", variant: "unordered", data: { items: ["**Jiefangbei:** Start here"] } });
+  page.blocks.push({ type: "paragraph", variant: "default", data: { content: "| Mode | Cost |" } });
+  const result = validateFinalPageArtifact(page, contentPackage);
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.errors.filter((item) => item.code === "RAW_MARKDOWN_PRESENTATION").map((item) => item.path), [
+    "$.blocks[1].data.items[0]",
+    "$.blocks[2].data.content",
+  ]);
+});
+
+test("delivery-only entity canonicalization remaps verified block provenance without trusting changed content", () => {
+  const source = { blocks:[{ type:"paragraph", data:{ content:"Traveler&#39;s route" } }] };
+  const delivery = { blocks:[{ type:"paragraph", data:{ content:"Traveler&#039;s route" } }] };
+  const validation = { blockProvenance:[{ blockId:"stable", blockSignature:pageBlockSignature(source.blocks[0]) }] };
+  const remapped = remapBlockProvenanceForDelivery(source, delivery, validation);
+  assert.equal(remapped.blockProvenance[0].blockId, "stable");
+  assert.equal(remapped.blockProvenance[0].blockSignature, pageBlockSignature(delivery.blocks[0]));
+  const changedSource = { blocks:[{ type:"paragraph", data:{ content:"unverified change" } }] };
+  assert.equal(remapBlockProvenanceForDelivery(changedSource, delivery, validation), validation);
 });
 
 function validate(block) {

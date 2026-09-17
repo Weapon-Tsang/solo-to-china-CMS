@@ -149,6 +149,46 @@ test("completing a task creates a linked Affiliate Asset from task metadata", (t
   assert.equal(result.asset.scope_key, "beijing");
 });
 
+test("completing a qualifying task marks matching historical drafts stale without silently starting production", (t) => {
+  const repository = fixture(t); const db = repository.db;
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at)
+    VALUES ('brief-affiliate-refresh','beijing','Forbidden City tickets','[]','transactional','ready','now','now')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-affiliate-refresh','brief-affiliate-refresh','Forbidden City tickets','forbidden-city-tickets','## Tickets\n\nReserve your entry.','{}','wordpress_draft','now','now',1,'affiliate-refresh-hash')`).run();
+  repository.saveCommercialComposition("draft-affiliate-refresh", {
+    publishableBodyMarkdown:"## Tickets\n\nReserve your entry.", slots:[], offerIds:[], assetIds:[], commercialBlocks:[], contentBlocks:[],
+    disclosureText:"", strategyVersion:"3.5", readingLayoutVersion:"1", status:"no_offers",
+    outcome:"asset_not_configured", reasonCode:"ASSET_NOT_CONFIGURED", opportunities:[],
+    intents:[{ id:"intent-affiliate-refresh", blockIndex:0, blockKey:"tickets", intentType:"ATTRACTION_GUIDE",
+      productCategory:"ATTRACTION", destinationSlug:"beijing", areaKey:"", routeKey:"", entityKey:"attraction.forbidden_city",
+      intentStrength:"VERY_HIGH", decisionStage:"TRANSACTION", recommendedComponent:"affiliate_booking_card", reason:"Ticket action." }],
+  });
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at)
+    VALUES ('brief-affiliate-unrelated','beijing','Summer Palace tickets','[]','transactional','ready','now','now')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-affiliate-unrelated','brief-affiliate-unrelated','Summer Palace tickets','summer-palace-tickets','## Tickets\n\nReserve your entry.','{}','wordpress_draft','now','now',1,'affiliate-unrelated-hash')`).run();
+  repository.saveCommercialComposition("draft-affiliate-unrelated", {
+    publishableBodyMarkdown:"## Tickets\n\nReserve your entry.", slots:[], offerIds:[], assetIds:[], commercialBlocks:[], contentBlocks:[],
+    disclosureText:"", strategyVersion:"3.5", readingLayoutVersion:"1", status:"no_offers",
+    outcome:"asset_not_configured", reasonCode:"ASSET_NOT_CONFIGURED", opportunities:[],
+    intents:[{ id:"intent-affiliate-unrelated", blockIndex:0, blockKey:"tickets", intentType:"ATTRACTION_GUIDE",
+      productCategory:"ATTRACTION", destinationSlug:"beijing", areaKey:"", routeKey:"", entityKey:"attraction.summer_palace",
+      intentStrength:"VERY_HIGH", decisionStage:"TRANSACTION", recommendedComponent:"affiliate_booking_card", reason:"Ticket action." }],
+  });
+  const task = createTask(repository, { productCategory:"ATTRACTION", assetType:"DEEP_LINK", scopeType:"ENTITY",
+    scopeKey:"attraction.forbidden_city", destinationSlug:"beijing", entityKey:"attraction.forbidden_city",
+    tripToolType:"CUSTOM_LINK", opportunityId:"opp-affiliate-refresh", score:88 });
+  repository.completeAffiliateQueueTask(task.id, { affiliateUrl:"https://www.trip.com/t/example?sub1=stc_attraction_forbidden_city" });
+  const commercial = db.prepare("SELECT refresh_required,refresh_reason FROM commercial_compositions WHERE draft_id=?").get("draft-affiliate-refresh");
+  assert.equal(commercial.refresh_required, 1);
+  assert.equal(commercial.refresh_reason, "affiliate_asset_inventory_changed");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE entity_id=? AND type=?")
+    .get("draft-affiliate-refresh", "compose_commercial").count, 0);
+  const unrelated = db.prepare("SELECT refresh_required FROM commercial_compositions WHERE draft_id=?").get("draft-affiliate-unrelated");
+  assert.equal(unrelated.refresh_required, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE entity_id=? AND type=?").get("draft-affiliate-unrelated", "compose_commercial").count, 0);
+});
+
 test("completing an already completed task is idempotent", (t) => {
   const repository = fixture(t); const task = createTask(repository);
   const first = repository.completeAffiliateQueueTask(task.id, { affiliateUrl: "https://www.trip.com/t/first" });

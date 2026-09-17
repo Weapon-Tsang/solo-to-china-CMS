@@ -16,6 +16,16 @@ test("Vertex uses full JSON Schema mode and has a loss-aware OpenAPI fallback", 
   assert.equal(adapted.properties.block.anyOf[1].nullable, true);
 });
 
+test("Vertex OpenAPI transport omits provider-rejected array bounds while local validation keeps them", () => {
+  const schema = { type: "array", minItems: 1, maxItems: 3, items: { type: "string" } };
+  const adapted = adaptOpenApiSchema(schema);
+  assert.equal(adapted.type, "ARRAY");
+  assert.equal(adapted.minItems, undefined);
+  assert.equal(adapted.maxItems, undefined);
+  assert.equal(schema.minItems, 1);
+  assert.equal(schema.maxItems, 3);
+});
+
 test("provider errors classify permanent and transient HTTP failures", () => {
   assert.equal(new ProviderRequestError("Vertex", 400, "bad schema").retryable, false);
   assert.equal(new ProviderRequestError("Vertex", 429, "quota").retryable, true);

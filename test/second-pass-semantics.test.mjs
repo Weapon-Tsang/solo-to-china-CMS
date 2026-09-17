@@ -45,7 +45,71 @@ test("recommendation inbox separates processing gaps from approvable evidence ga
   const approved=repository.decideOpportunity(inbox[0].id,"approve");
   assert.equal(approved.needsEvidence,true);
   assert.deepEqual(repository.listProductionContentOpportunities(),[]);
-  assert.deepEqual(repository.listContent({productionOnly:true}),[]);
+  const workbench=repository.listContent({productionOnly:true});
+  assert.equal(workbench.length,1);
+  assert.equal(workbench[0].production_state.readiness,"waiting_for_evidence");
+  assert.equal(workbench[0].production_state.needs_human,false);
+});
+
+test("Experience completion immediately admits an already-current eligible source", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const sourceId=saveSource(repository,{externalId:"experience-admits-current-opportunity"});
+  const opportunity=saveRecommendation(repository,sourceId);
+  const waiting=db.prepare("SELECT processing_state,inbox_state FROM content_opportunities WHERE id=?").get(opportunity.id);
+  assert.equal(waiting.processing_state,"PROCESSING_GAP");
+  assert.equal(waiting.inbox_state,"INTERNAL");
+
+  repository.saveExperienceExtraction(sourceId,{blocks:[]},"test");
+
+  const admitted=db.prepare("SELECT processing_state,inbox_state FROM content_opportunities WHERE id=?").get(opportunity.id);
+  assert.equal(admitted.processing_state,"EVIDENCE_GAP");
+  assert.equal(admitted.inbox_state,"ACTIONABLE");
+});
+
+test("recommendation backfill promotes compatible diagnostics without another model job", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const sourceId=saveSource(repository,{externalId:"stale-strategy-diagnostic"});
+  repository.saveExperienceExtraction(sourceId,{blocks:[]},"test");
+  saveRecommendation(repository,sourceId);
+  db.prepare("UPDATE content_intake_analyses SET strategy_version='3.2' WHERE source_id=?").run(sourceId);
+  db.prepare("UPDATE content_recommendations SET strategy_version='3.2' WHERE source_id=?").run(sourceId);
+  db.prepare("UPDATE content_opportunities SET strategy_version='3.2' WHERE source_id=?").run(sourceId);
+  db.prepare("DELETE FROM jobs").run();
+  const preview=repository.runRecommendationReconciliationBackfill();
+  assert.equal(preview.reusableDiagnosticSources,1);
+  assert.equal(preview.staleDiagnosticSources,0);
+  assert.equal(preview.modelCallsAvoided,1);
+  assert.equal(preview.queued,0);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,0);
+  const applied=repository.runRecommendationReconciliationBackfill({dryRun:false,approvedFromRunId:preview.id});
+  assert.equal(applied.reused,1);
+  assert.equal(applied.queued,0);
+  assert.equal(applied.modelCallsAvoided,1);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,0);
+  assert.equal(db.prepare("SELECT strategy_version FROM content_intake_analyses WHERE source_id=?").get(sourceId).strategy_version,repository.strategyVersion);
+  assert.equal(db.prepare("SELECT strategy_version FROM content_recommendations WHERE source_id=?").get(sourceId).strategy_version,repository.strategyVersion);
+  assert.equal(db.prepare("SELECT strategy_version FROM content_opportunities WHERE source_id=?").get(sourceId).strategy_version,repository.strategyVersion);
+  assert.throws(()=>repository.runRecommendationReconciliationBackfill({dryRun:false,approvedFromRunId:"missing"}),/dry-run/);
+});
+
+test("recommendation backfill queues only diagnostics with an incompatible contract", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const sourceId=saveSource(repository,{externalId:"incompatible-strategy-diagnostic"});
+  repository.saveExperienceExtraction(sourceId,{blocks:[]},"test");
+  saveRecommendation(repository,sourceId);
+  db.prepare("UPDATE content_intake_analyses SET strategy_version='1.8' WHERE source_id=?").run(sourceId);
+  db.prepare("UPDATE content_recommendations SET strategy_version='1.8' WHERE source_id=?").run(sourceId);
+  db.prepare("DELETE FROM jobs").run();
+  const preview=repository.runRecommendationReconciliationBackfill();
+  assert.equal(preview.reusableDiagnosticSources,0);
+  assert.equal(preview.staleDiagnosticSources,1);
+  const applied=repository.runRecommendationReconciliationBackfill({dryRun:false,approvedFromRunId:preview.id});
+  assert.equal(applied.reused,0);
+  assert.equal(applied.queued,1);
+  const job=db.prepare("SELECT type,workload_class,recovery_run_id FROM jobs WHERE entity_id=?").get(sourceId);
+  assert.equal(job.type,"analyze_source_diagnostic");
+  assert.equal(job.workload_class,"historical_recovery");
+  assert.equal(job.recovery_run_id,preview.id);
 });
 
 test("Content becomes visible only after the durable production entry job exists", (t) => {
@@ -76,6 +140,20 @@ test("semantic intent reconciliation merges title variants without deleting inte
   assert.equal(summary.merged,1);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM content_opportunities").get().n,2);
   assert.equal(repository.listRecommendationInbox().length,1);
+});
+
+test("superseded strategy rows do not inflate current processing totals", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,
+    title,content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state)
+    VALUES ('historical-opportunity','chongqing','["chongqing"]','chongqing:historical','3.0','Historical guide',
+      'practical_guide',100,'{"ready":true}','{"publicationMode":"topic_feature"}','recommended','now','now','recommended')`).run();
+  const summary=repository.reconcileRecommendationInbox();
+  assert.equal(summary.internalOpportunities,0);
+  assert.equal(summary.processingGap,0);
+  assert.equal(summary.superseded,1);
+  assert.equal(repository.dashboardSummary().totals.processingGapOpportunities,0);
+  assert.equal(db.prepare("SELECT inbox_state FROM content_opportunities WHERE id='historical-opportunity'").get().inbox_state,"SUPERSEDED");
 });
 
 test("historical production failure re-enters the inbox only with an active safe remediation", (t) => {

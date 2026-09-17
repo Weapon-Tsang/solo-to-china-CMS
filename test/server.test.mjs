@@ -54,7 +54,7 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
   assert.equal(sources.items[0].destination_name, "Chengdu");
 });
 
-test("settings payload keeps the total exception count while bounding the preview", async (t) => {
+test("settings defaults to counts and lazily bounds system-health detail", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-settings-preview-"));
   const config = loadConfig({
     HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "api.sqlite"),
@@ -71,8 +71,11 @@ test("settings payload keeps the total exception count while bounding the previe
   });
   const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
   const settings = await (await fetch(`${baseUrl}/api/settings`)).json();
-  assert.equal(settings.operations.exceptionTotal, 105);
-  assert.equal(settings.operations.exceptions.length, 100);
+  assert.equal(settings.operations.counts.systemHealth, 105);
+  assert.equal(settings.operations.exceptions, undefined);
+  const health = await (await fetch(`${baseUrl}/api/settings/system-health?limit=100`)).json();
+  assert.equal(health.totalCount, 105);
+  assert.equal(health.items.length, 100);
 });
 
 test("authenticated source evidence preview streams the stored review image", async (t) => {
@@ -267,6 +270,34 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(assetResponse.status, 200);
   const asset = await assetResponse.json();
   assert.equal(asset.product_category, "HOTEL");
+  assert.equal(asset.revision, 1);
+  const assetDetailResponse=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}`);
+  assert.equal(assetDetailResponse.status,200);
+  assert.equal(assetDetailResponse.headers.get("etag"),'"1"');
+  assert.equal((await assetDetailResponse.json()).asset.target_url,"https://www.trip.com/hotels/chongqing");
+  const patchDenied=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}`,{
+    method:"PATCH",headers:{"content-type":"application/json","if-match":'"1"'},
+    body:JSON.stringify({title:"Updated Chongqing hotels"}),
+  });
+  assert.equal(patchDenied.status,401);
+  const patchResponse=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}`,{
+    method:"PATCH",headers:{authorization:"Bearer admin-secret","content-type":"application/json","if-match":'"1"'},
+    body:JSON.stringify({title:"Updated Chongqing hotels"}),
+  });
+  assert.equal(patchResponse.status,200);
+  assert.equal(patchResponse.headers.get("etag"),'"2"');
+  assert.equal((await patchResponse.json()).revision,2);
+  const stalePatch=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}`,{
+    method:"PATCH",headers:{authorization:"Bearer admin-secret","content-type":"application/json","if-match":'"1"'},
+    body:JSON.stringify({title:"Stale title"}),
+  });
+  assert.equal(stalePatch.status,409);
+  const usageResponse=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}/usage`);
+  assert.equal(usageResponse.status,200);
+  assert.deepEqual((await usageResponse.json()).items,[]);
+  const versionsResponse=await fetch(`${baseUrl}/api/commercial/assets/${asset.id}/versions`);
+  assert.equal(versionsResponse.status,200);
+  assert.equal((await versionsResponse.json()).items.length,2);
   const eventResponse = await fetch(`${baseUrl}/api/commercial/events`, {
     method: "POST", headers: { authorization: "Bearer admin-secret", "content-type": "application/json" },
     body: JSON.stringify({ eventType: "impression", provider: "Trip.com", category: "HOTEL", slotKey: "end-resource:hotel:1", affiliateAssetId: asset.id, destination: "chongqing" }),
@@ -278,10 +309,10 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(commercial.performance[0].impressions, 1);
   const content = await (await fetch(`${baseUrl}/api/content`)).json();
   assert.ok(Array.isArray(content.items));
-  assert.ok(Array.isArray(content.opportunities));
+  assert.equal(content.opportunities, undefined);
   const fullSettings = await (await fetch(`${baseUrl}/api/settings`)).json();
-  assert.ok(Array.isArray(fullSettings.operations.exceptions));
-  assert.equal(fullSettings.operations.exceptionTotal, 0);
+  assert.equal(fullSettings.operations.counts.systemHealth, 0);
+  assert.equal(fullSettings.operations.exceptions, undefined);
   const missing = await fetch(`${baseUrl}/api/not-found`);
   assert.equal(missing.status, 404);
   assert.deepEqual(await missing.json(), { error: "Not found." });
@@ -418,6 +449,28 @@ test("capture-only Cloudflare hostname cannot expose dashboard data", async (t) 
 test("non-loopback binding refuses to start without both operational tokens", () => {
   const config = loadConfig({ HOST: "0.0.0.0", DATABASE_PATH: "data/should-not-open.sqlite" });
   assert.throws(() => createApplication(config), /requires CAPTURE_TOKEN, ADMIN_TOKEN, ADMIN_PASSWORD, and SESSION_SECRET/);
+});
+
+test("production refuses the image-local default database when DATABASE_PATH is omitted", () => {
+  const config = loadConfig({
+    NODE_ENV: "production", HOST: "0.0.0.0",
+    CAPTURE_TOKEN: "capture-secret", ADMIN_TOKEN: "admin-secret",
+    ADMIN_PASSWORD: "private-password", SESSION_SECRET: "private-session-secret",
+  });
+  assert.throws(() => createApplication(config), /requires an explicit DATABASE_PATH/);
+});
+
+test("production refuses to create a missing database without an explicit bootstrap opt-in", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-production-db-guard-test-"));
+  const databasePath = path.join(directory, "missing.sqlite");
+  const config = loadConfig({
+    NODE_ENV: "production", HOST: "0.0.0.0", DATABASE_PATH: databasePath,
+    CAPTURE_TOKEN: "capture-secret", ADMIN_TOKEN: "admin-secret",
+    ADMIN_PASSWORD: "private-password", SESSION_SECRET: "private-session-secret",
+  });
+  assert.throws(() => createApplication(config), /DATABASE_PATH does not exist/);
+  assert.equal(fs.existsSync(databasePath), false);
+  fs.rmSync(directory, { recursive: true, force: true });
 });
 
 test("dashboard password login creates a secure session and requires an initial password change", async (t) => {

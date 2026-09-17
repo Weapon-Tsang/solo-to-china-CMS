@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sha256 } from "./utils.mjs";
+import { isFrontendGuideType, normalizeWordPressInlineHtml } from "./content-taxonomy.mjs";
 
 const MAX_CONTRACT_BYTES = 2 * 1024 * 1024;
 const COMPONENT_STATUSES = new Set(["stable", "deprecated", "experimental", "beta"]);
@@ -200,6 +201,10 @@ export class FrontendContractConsumer {
     const blocks = Array.isArray(payload?.blocks) ? payload.blocks : null;
     const errors = [];
     const warnings = [];
+    const contentTypeSchema = active.pageSchema.schema?.properties?.metadata?.properties?.contentType;
+    if (contentTypeSchema && !isFrontendGuideType(payload?.metadata?.contentType)) {
+      errors.push(issue("INVALID_PAGE_SCHEMA", "metadata.contentType must use a guide type accepted by the active WordPress Content Contract.", "metadata.contentType"));
+    }
     if (!blocks?.length) errors.push(issue("MISSING_PAGE_BLOCKS", "Page payload must contain a non-empty blocks array in final render order.", "blocks"));
     for (const [index, block] of (blocks || []).entries()) {
       const component = active.componentsById.get(block?.type);
@@ -502,6 +507,7 @@ function validateComponentInvariants(block, index) {
 }
 
 function isSafeInlineHtml(value) {
+  if (normalizeWordPressInlineHtml(value) !== String(value)) return false;
   const allowed = new Set(["a", "br", "strong", "b", "em", "i", "code", "s", "sup", "sub"]);
   let unsafe = false;
   const stripped = String(value).replace(/<\/?([a-z0-9]+)\b([^>]*)>/gi, (tag, name, attributes) => {

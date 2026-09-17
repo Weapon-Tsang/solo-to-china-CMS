@@ -5,6 +5,15 @@ export const DELIVERY_ISSUE_CODES = new Set([
 ]);
 
 const ISSUE_GUIDANCE = {
+  UNSUPPORTED_ASSERTION: ['正文包含当前证据范围外的事实', '质量审核发现正文中的具体数值或事实没有被本篇冻结证据和证据账本共同支持；这不代表来源库有错，系统也没有丢失已有产物。', '只删除或改正明确列出的无支持表述，并重新审核；不得为保留一句话而引用本篇范围外的事实。'],
+  UNSUPPORTED_FACTUAL_CLAIMS: ['正文包含当前证据范围外的事实', '质量审核发现正文中的具体数值或事实没有被本篇冻结证据和证据账本共同支持；这不代表来源库有错，系统也没有丢失已有产物。', '只删除或改正明确列出的无支持表述，并重新审核；不得为保留一句话而引用本篇范围外的事实。'],
+  mandatory_brief_requirement_missing: ['强制编辑要求尚未完成', '写作 Brief 要求的语言适配或冲突说明没有在正文中完成，或者质量审核没有逐项确认。', '把缺失要求作为不可回退约束修订；涉及范围过大时仅重写正文，不重跑研究步骤。'],
+  MISSING_MANDATORY_ADAPTATION: ['强制读者适配缺失', '面向国际独行游客的明确语言、导航、支付或操作适配没有完整写入正文。', '补齐 Brief 指定的适配内容并重新审核。'],
+  MISSING_CHINESE_SCRIPT: ['中文导航名称缺失', '正文缺少 Brief 要求的简体中文地点或交通名称，读者无法在本地地图、站牌或出租车场景中直接核对。', '在对应英文名称旁补充有证据支持的中文名称。'],
+  CONFLICT_HANDLING_OMISSION: ['证据冲突说明缺失', '正文选择了一个值，却遗漏 Brief 要求公开说明的差异、条件或变化范围。', '保留不确定性并写清条件、影响和读者下一步。'],
+  UNRESOLVED_HOURS_CONFLICT: ['营业时间范围说明缺失', '正文把有场景或季节差异的时间写成了单一绝对值。', '按 Brief 给出的范围和适用条件修订。'],
+  INVALID_DRAFT_REPAIR_SCOPE: ['自动修订没有命中当前草稿章节', '旧修订请求使用了写作提纲标题或旧版章节层级，和当前草稿可替换章节不一致；系统已停止，未覆盖现有正文。', '按当前草稿列出的真实章节重新执行定向修订。'],
+  DRAFT_EVIDENCE_VALUE_INVALID: ['关键事实修订后仍不一致', '定向修订后，正文仍遗漏或改写了证据台账中的金额、时长、日期、条件或例外；该版本没有进入图片和页面阶段。', '从保留的 Writing Packet 重建正文，并逐项保留系统列出的受保护值。'],
   DATABASE_DUMP: ['正文像数据库导出', '事实被逐条堆放，没有形成可读的旅行决策逻辑。', '重新组织叙事与因果关系，不新增事实。'],
   GENERIC_AI_TRANSITIONS: ['正文存在通用 AI 过渡语', '泛化过渡语取代了具体的路线、条件或因果连接。', '删除套话，直接连接读者问题和下一步。'],
   REPETITIVE_EXPLANATION: ['正文重复解释', '相同观点被多次换句表达，却没有增加条件、取舍或行动信息。', '合并重复段落，保留最清楚的一处。'],
@@ -15,6 +24,7 @@ const ISSUE_GUIDANCE = {
   FAKE_FIRST_PERSON: ['出现虚构第一人称经验', '正文把未被来源支持的经历写成作者亲历。', '删除虚构亲历，改为有出处的旅行者经验或客观说明。'],
   invalid_evidence_key: ['证据编号无效', '草稿台账引用了本篇证据包里不存在的编号。', '修正证据台账后重新质检。'],
   confirmed_topic_coverage_missing: ['文章结构与证据范围不一致', '至少一个计划章节没有引用任何可用证据；不再要求把素材库里的每条事实都写进文章。', '让自动修订补齐缺证据的章节，或删去没有证据支撑的承诺。'],
+  PLANNED_BODY_SECTIONS_MISSING: ['正文缺少计划章节', '当前草稿只保留了部分页面计划章节，继续局部修订会放大内容断裂；已保留的 Writing Packet 不受影响。', '从已保留的 Writing Packet 重新生成正文，再继续质量审核。'],
   protected_evidence_mismatch: ['关键事实被改写错了', '正文中的金额、日期、否定条件、适用人群或例外，与证据台账不一致。', '只修订涉及这些事实的段落并重新质检。'],
   missing_temporal_disclosure: ['时效信息缺少日期说明', '正文使用了票价、营业时间、预约或交通等会变化的信息，却没有说明证据截至什么时候。', '补充“截至某日”和可能变化的提示，再重新质检。'],
   hidden_conflict: ['证据冲突没有说明', '正文使用了存在冲突的事实，却没有向读者说明不确定性。', '补充冲突说明或删除该事实。'],
@@ -81,6 +91,52 @@ export function explainOperationalFailure(job) {
   const code = String(job.last_failure_code || job.code || '').toUpperCase();
   const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
   const details = operatorSafeDetails(message);
+  const normalizedIssueCode = code.toLowerCase();
+  if (type === 'push_wordpress_draft' && ['INVALID_PAGE_SCHEMA','INVALID_COMPONENT_DATA'].includes(code)) return {
+    category:'page',headline:'发布包与 WordPress 内容契约不兼容',
+    reason:'WordPress 在创建草稿前拒绝了发布包的类型或内联内容编码；来源、证据、正文和已完成产物仍然保留，站点没有产生残缺草稿。',
+    action:{id:'compose_publish_page',label:'重新生成发布页面组合',why:'从发布页面组合规范化公开类型和安全内容编码，再投递草稿；不会重新写作或重跑前置步骤。'},
+    technicalDetail:details,
+  };
+  if (code === 'FROZEN_WRITING_SCOPE_INVALID') return {
+    category:'scope',headline:'旧写作包与页面计划的证据范围不一致',
+    reason:'旧流程的页面计划引用了未冻结事实，部分章节没有可用证据；继续重写正文只会重复失败。来源、Claims、Knowledge、Evidence 和既有草稿都仍保留。',
+    action:{id:'assemble_editorial',label:'重新组装素材并生成写作计划',why:'只从素材组装开始重建后续生产产物，不重跑来源提取、Claims、Knowledge 或审批。'},
+    technicalDetail:details,
+  };
+  if (code === 'DESTINATION_TOPIC_MISMATCH') return {
+    category:'scope',headline:'文章主题与目的地归属不一致',
+    reason:'标题明确承诺的城市或区域与当前批准记录的目的地不一致。规划在调用模型前已停止，避免用错误范围生成文章。',
+    action:{id:'correct_destination',label:'更正目的地并重新确认范围',why:'先修正批准范围和证据归属，再从写作准备继续；重复重试同一输入不会解决问题。'},
+    technicalDetail:details,
+  };
+  if (DELIVERY_ISSUE_CODES.has(normalizedIssueCode)) {
+    const issue = explainQualityIssue({ code: normalizedIssueCode, message, severity: 'blocker' });
+    return {
+      category: 'page',
+      headline: issue.title,
+      reason: issue.reason,
+      action: { id: type || null, label: issue.action, why: '已有正文和证据保持不变，只恢复失败的交付步骤。' },
+      technicalDetail: details,
+    };
+  }
+  const knownIssueCode = Object.keys(ISSUE_GUIDANCE)
+    .find((issueCode) => issueCode.toLowerCase() === normalizedIssueCode);
+  if (knownIssueCode) {
+    const issue = explainQualityIssue({ code: knownIssueCode, message, severity: 'blocker' });
+    const repairStage = qualityRepairStage([{ code: knownIssueCode, severity: 'blocker' }]);
+    return {
+      category: DELIVERY_ISSUE_CODES.has(normalizedIssueCode) ? 'page' : 'content',
+      headline: issue.title,
+      reason: issue.reason,
+      action: repairStage ? {
+        id: repairStage,
+        label: repairStage === 'compose_frontend_page' ? '仅重新编排页面' : '仅修订失败内容',
+        why: '只恢复质量检查指向的最小阶段，保留已经成功的正文、证据和图片产物。',
+      } : { id: null, label: issue.action, why: issue.reason },
+      technicalDetail: details,
+    };
+  }
   if (/requires a configured Kimi key or Vertex AI project/i.test(message)) return {
     category: 'configuration', headline: '生产模型尚未配置',
     reason: '系统没有可用的 Kimi 密钥或 Vertex AI 项目，因此生产阶段无法执行；这不是文章内容错误。',
@@ -105,12 +161,24 @@ export function explainOperationalFailure(job) {
       technicalDetail: details,
     };
   }
+  if (code === 'SOURCE_IMAGE_FORMAT_UNSUPPORTED') return {
+    category: 'media', headline: '旧版本没有识别已保存的 WebP 原图',
+    reason: '授权原图已经留存在系统中；旧版本的图片本地化入口只识别 PNG/JPEG，因而在调用图片模型前错误停止。新版会直接按 WebP MIME 类型提交，不需要重新采集来源。',
+    action: { id: 'generate_visuals', label: '重新执行图片处理', why: '只重试失败的图片槽位，已完成的正文、证据和其他图片不会重新生成。' },
+    technicalDetail: details,
+  };
   const sourceMediaFailure = code.startsWith('AUTHORIZED_SOURCE') || code.startsWith('SOURCE_IMAGE')
     || (/authorized source image download failed/i.test(message) && ['generate_visuals', 'compose_frontend_page'].includes(type));
   if (sourceMediaFailure) return {
     category: 'media', headline: '来源图片没有成功保存',
     reason: '这篇文章需要的授权原图没有留存在系统中，旧链接现在无法读取。已有正文和证据不会丢失。',
     action: { id: 'recapture_media', label: '打开原文并重新采集图片', why: '新版采集器会保留已授权原图；重新采集后系统可继续页面编排。' },
+    technicalDetail: details,
+  };
+  if (status === 429 || /resource (?:has been )?exhausted|quota|rate.?limit/i.test(message)) return {
+    category: 'capacity', headline: '模型配额暂时不足',
+    reason: 'Vertex 当前返回限流或配额不足。系统会按有限次数退避重试；次数用完后会停止，避免任务无限排队或重复调用。已有素材和成功步骤不会丢失。',
+    action: { id: type || null, label: '配额恢复后重试当前步骤', why: '只恢复当前失败步骤，不会删除记录或重跑已经成功的前置步骤。' },
     technicalDetail: details,
   };
   if (status === 403 && /wordpress/i.test(type)) return {
@@ -143,6 +211,19 @@ export function explainOperationalFailure(job) {
     action: { id: 'revise_draft', label: '只修订未通过的内容', why: '保留已经通过的正文、证据和图片。' },
     technicalDetail: details,
   };
+  if (status === 400 && code === 'PROVIDER_REQUEST_FAILED' && /input token count exceeds|maximum number of tokens|too many input tokens/i.test(message)) return {
+    category: 'input', headline: type === 'assemble_editorial' ? '素材组装输入超过模型上限' : '生产输入超过模型上限',
+    reason: '旧流程在这一阶段一次提交了过多事实、证据或经验文本。新版会在调用模型前按批准范围确定性裁剪，不删除底层素材。',
+    action: { id: type || null, label: `重新执行${type === 'assemble_editorial' ? '素材组装' : '当前步骤'}`, why: '仅重新运行失败阶段，Source、Claims、Knowledge、Evidence 和 Experience 仍完整保留。' },
+    technicalDetail: details,
+  };
+  if (status === 400 && code === 'PROVIDER_REQUEST_FAILED'
+    && ['assemble_editorial', 'plan_content', 'plan_narrative'].includes(type)) return {
+    category: 'configuration', headline: '模型接口拒绝了结构化输出格式',
+    reason: '这里记录的是上一次 Vertex 在开始生成前拒绝结构化请求的历史结果，不代表兼容补丁没有部署，也不代表来源、证据或文章事实有错。部署不会擅自重试；点击“重试失败步骤”后会从本步骤使用新版兼容链路继续，已有成功产物仍然保留。',
+    action: { id: type, label: `重新执行${type === 'assemble_editorial' ? '素材组装' : type === 'plan_content' ? '写作准备' : '叙事规划'}`, why: '兼容层会记住已拒绝的 Schema 传输并从下一种格式继续，最终仍使用本地 Schema 严格校验；无需重跑前置步骤。' },
+    technicalDetail: details,
+  };
   if (type === 'compose_frontend_page' && /400|invalid argument/i.test(message)) return {
     category: 'page', headline: '页面编排提交的数据不符合模型接口要求',
     reason: '页面编排输入过大或结构与外部模型接口不兼容，因此正文虽然还在，页面没有成功生成。',
@@ -150,9 +231,15 @@ export function explainOperationalFailure(job) {
     technicalDetail: details,
   };
   if (/token limit|MODEL_OUTPUT_LIMIT|structured output reached/i.test(message)) return {
-    category: 'content', headline: type === 'plan_content' ? '写作准备输入过大' : '自动修订输出超过上限',
-    reason: '旧流程把过多事实编号和重复错误明细一次性交给模型，超出了结构化输出限制。',
-    action: { id: type === 'plan_content' ? 'plan_content' : 'revise_draft', label: type === 'plan_content' ? '用精简证据重新准备' : '仅修订失败内容', why: '新版会压缩事实范围和错误明细，并限制修订次数。' },
+    category: 'content', headline: type === 'plan_content' ? '写作准备结果超过模型预算' : '自动修订结果被模型截断',
+    reason: type === 'revise_draft'
+      ? '模型的思考过程和修订 JSON 共用输出预算，旧配置在完整结果返回前耗尽了额度；已有草稿和证据没有丢失。'
+      : '模型未能在本阶段输出预算内返回完整的结构化结果；已有素材和已完成步骤没有丢失。',
+    action: { id: type === 'plan_content' ? 'plan_content' : type === 'revise_draft' ? 'generate_draft' : type,
+      label: type === 'plan_content' ? '用精简证据重新准备' : type === 'revise_draft' ? '从 Writing Packet 重建正文' : '重新执行当前步骤',
+      why: type === 'revise_draft'
+        ? '局部修订结果已经超出安全边界，改为保留素材、证据、写作准备和页面规划，只重新生成正文。'
+        : '新版会压缩事实范围和错误明细，并限制修订次数。' },
     technicalDetail: details,
   };
   return {
@@ -173,16 +260,37 @@ export function separateQualityResults(review, issues = review.issues || []) {
   const contentIssues = issues.filter(issue=>!DELIVERY_ISSUE_CODES.has(issue.code));
   const deliveryIssues = issues.filter(issue=>DELIVERY_ISSUE_CODES.has(issue.code));
   const contentBlockers = contentIssues.filter(issue=>issue.severity==='blocker');
-  return {content_quality:{passed:review.passed && !contentBlockers.length,
+  return {content_quality:{passed:!contentBlockers.length,
     score:Math.max(0,Number(review.score || 0)-contentBlockers.length*10),issues:contentIssues},
     delivery_quality:{passed:!deliveryIssues.some(issue=>issue.severity==='blocker'),issues:deliveryIssues}};
 }
 
-export function qualityRepairStage(issues = []) {
+export function qualityRepairStage(issues = [], { repeatedBlockerCodes = [] } = {}) {
   const blockers = issues.filter((issue) => issue.severity !== 'warning');
   if (!blockers.length) return null;
+  const repeated=new Set((repeatedBlockerCodes || []).map((code)=>String(code || '').toUpperCase()));
   const media = new Set(['required_visual_missing', 'visual_renderer_incomplete']);
   const page = new Set(['final_page_invalid', 'final_page_content_missing', 'final_page_evidence_invalid']);
+  const deliveryCodes=new Set([...media,...page].map((code)=>code.toUpperCase()));
+  const globalStructure = new Set(['DATABASE_DUMP', 'NO_CAUSAL_FLOW', 'NO_TRAVELER_DECISION',
+    'UNIFORM_SECTION_RHYTHM', 'REPETITIVE_EXPLANATION', 'GENERIC_AI_TRANSITIONS']);
+  const globalStructureCount = new Set(blockers.map((issue) => String(issue.code || '').toUpperCase())
+    .filter((code) => globalStructure.has(code))).size;
+  // A ledger-evasion blocker means the current prose is globally outside the
+  // frozen Writing Packet. A three-section patch cannot make that draft
+  // trustworthy; regenerate only the draft from the preserved upstream
+  // artifacts instead of repeatedly rewriting arbitrary fragments.
+  if (blockers.some((issue) => {
+      const code=String(issue.code || '').toUpperCase();
+      return repeated.has(code) && !deliveryCodes.has(code);
+    })
+    || blockers.some((issue) => String(issue.code || '').toUpperCase() === 'EVIDENCE_LEDGER_EVASION'
+    || String(issue.code || '').toUpperCase() === 'PLANNED_BODY_SECTIONS_MISSING'
+    || String(issue.code || '').toUpperCase() === 'INVALID_DRAFT_REPAIR_SCOPE'
+    || (String(issue.code || '').toUpperCase() === 'MANDATORY_BRIEF_REQUIREMENT_MISSING' && Number(issue.affected_count || 0) > 3)
+    || (String(issue.code || '').toLowerCase() === 'confirmed_topic_coverage_missing' && Number(issue.affected_count || 0) > 3))
+    || blockers.some((issue) => String(issue.code || '').toUpperCase() === 'DATABASE_DUMP')
+    || globalStructureCount >= 2) return 'generate_draft';
   if (blockers.some((issue) => !media.has(issue.code) && !page.has(issue.code))) return 'revise_draft';
   if (blockers.some((issue) => media.has(issue.code))) return null;
   return 'compose_frontend_page';

@@ -14,6 +14,7 @@ const KNOWN_DESTINATIONS = [
 ];
 
 export function validatePlanningDestination(contentPackage = {}) {
+  contentPackage = contentPackage && typeof contentPackage === "object" ? contentPackage : {};
   const candidate = contentPackage.candidate || {};
   const destinationSlug = String(candidate.destination_slug || "").toLowerCase();
   const assignedDestination = KNOWN_DESTINATIONS.find(([slug]) => destinationSlug === slug

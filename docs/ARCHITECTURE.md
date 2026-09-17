@@ -1,5 +1,17 @@
 # Architecture
 
+## Reliability boundaries in 2.0.6
+
+The public Repository remains the compatibility facade. New focused modules own transport/body lifetime (`extension/transport.js`), media type contracts, binary journals, verified media references (`src/media-storage.mjs`), pinned remote media transport, stage dependency contracts and summary caching. Service-boundary checks include these modules; research/knowledge modules still cannot import Commercial.
+
+Capture v2 persists the manifest before downloading, uses bounded binary staging and chunk resume, and commits complete versions only after original-byte validation. Server finalization streams with two finalizer slots. File hashes and immutable receipt metadata establish trust; unchanged file stamps permit a small read/stat fast path, while legacy HTTP references are revalidated asynchronously. Inline legacy image handling remains bounded synchronous compatibility code.
+
+Migrations 60–63 add dirty/claimed job revisions, failed-attempt archives, frozen Writing Packet context and precise Narrative evidence selections. Migration 64 preserves asset/file/segment capture versions and rebuilds asset/file/segment uniqueness while retaining IDs and foreign keys. Current-state consumers use `current_source_*` views; historical evidence and frozen article media resolve exact original IDs. Old snapshots with missing asset rows remain explicitly snapshot-only. Migration 65 adds durable model-step receipts in `src/repositories/pipeline-step-receipts.mjs`.
+
+Main one-model stages, targeted extraction plus coverage, segmentation/finalization, page/commercial/publish composition and WordPress acknowledgement commit database output and downstream work atomically. Invalid pages remain diagnostic output and cannot complete the job. Entity pages and targeted-retry model outputs persist checked step receipts before the final business transaction. An interrupted next call reuses completed steps without exposing half-applied aliases/extractions. Delivery stages track actual draft, evidence, QA, commercial and media dependencies, but do not reuse a cached success to skip external delivery checks. There is no transaction across a provider request; returned-but-not-yet-persisted output may still be billed again. Lease/input checks fence stale results. Batch retains its independent persisted submit/receive lifecycle.
+
+See [implementation evidence](audit/CMS_PIPELINE_RELIABILITY_2026-09-12.md) and [upgrade/rollback](CMS_RELIABILITY_UPGRADE_2.0.6.md) for verification scope and remaining limits.
+
 ## Design target
 
 长期人工操作必须尽可能只剩：决定 Source 是否值得保存、决定最终 Draft 是否发布、处理少量异常/冲突。任何需要维护 Excel、Source Card、Research Pack、手工标签或手工 Knowledge Base 的流程，都视为产品缺陷。
@@ -68,7 +80,7 @@ Favorites/explicit Save 会保存完整媒体清单和原始远程 URL；Extensi
 - `content_briefs`：Outline 中的事实段落必须引用真实 Claim key。
 - `article_drafts`：Reader-facing Markdown 与内部 Evidence Ledger 分开存储。
 - `quality_reviews`：独立模型 Review，再叠加代码级 evidence/commercial/conflict/length gates。
-- QA 失败时自动修订一次；仍失败才保留为异常供人工判断。
+- QA 失败按已有阶段预算执行局部修订；耗尽预算后保留产物和批准，显示最小修复动作。只有明确批准范围失效才重新推荐。
 - `wordpress_publications`：保存内部 Draft 到 WordPress post ID 的幂等映射。
 
 QA 通过并配置 WordPress 时会自动创建 `draft`。这不等于发布；最终 Publish 始终由用户在 WordPress 完成。

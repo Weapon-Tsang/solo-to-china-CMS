@@ -2,13 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 58;
+export const SCHEMA_VERSION = 73;
 
 export function openDatabase(filename) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = new DatabaseSync(filename);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-  migrate(db);
+  try { migrate(db); } catch (error) { db.close(); throw error; }
   return db;
 }
 
@@ -79,6 +79,677 @@ function migrate(db) {
   if (current < 56) migrationFiftySix(db);
   if (current < 57) migrationFiftySeven(db);
   if (current < 58) migrationFiftyEight(db);
+  if (current < 59) migrationFiftyNine(db);
+  if (current < 60) migrationSixty(db);
+  if (current < 61) migrationSixtyOne(db);
+  if (current < 62) migrationSixtyTwo(db);
+  if (current < 63) migrationSixtyThree(db);
+  if (current < 64) migrationSixtyFour(db);
+  if (current < 65) migrationSixtyFive(db);
+  if (current < 66) migrationSixtySix(db);
+  if (current < 67) migrationSixtySeven(db);
+  if (current < 68) migrationSixtyEight(db);
+  if (current < 69) migrationSixtyNine(db);
+  if (current < 70) migrationSeventy(db);
+  if (current < 71) migrationSeventyOne(db);
+  if (current < 72) migrationSeventyTwo(db);
+  if (current < 73) migrationSeventyThree(db);
+}
+
+function migrationSeventyThree(db) {
+  // Model-routing v1.1 separates extraction credentials and immutable Job
+  // profiles from fixed Vertex writing/image roles. Existing installations
+  // remain on their historical route until an administrator explicitly
+  // activates DeepSeek or OpenAI.
+  transaction(db, () => db.exec(`
+    CREATE TABLE model_credentials (
+      provider TEXT PRIMARY KEY CHECK (provider IN ('deepseek','openai')),
+      encrypted_secret TEXT NOT NULL,
+      iv TEXT NOT NULL,
+      auth_tag TEXT NOT NULL,
+      key_version INTEGER NOT NULL DEFAULT 1,
+      masked_suffix TEXT NOT NULL DEFAULT '',
+      validation_status TEXT NOT NULL DEFAULT 'untested'
+        CHECK (validation_status IN ('untested','text_verified','multimodal_verified','failed')),
+      validation_detail_json TEXT NOT NULL DEFAULT '{}',
+      validated_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE model_routing_settings (
+      singleton INTEGER PRIMARY KEY CHECK (singleton=1),
+      selected_provider TEXT NOT NULL DEFAULT 'deepseek'
+        CHECK (selected_provider IN ('legacy','deepseek','openai')),
+      active_provider TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (active_provider IN ('legacy','deepseek','openai')),
+      active_model TEXT NOT NULL DEFAULT '',
+      activation_state TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (activation_state IN ('candidate','active','legacy')),
+      revision INTEGER NOT NULL DEFAULT 1,
+      policy_version TEXT NOT NULL DEFAULT 'model-routing-policy-1.1.0',
+      activated_at TEXT,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO model_routing_settings(singleton,selected_provider,active_provider,active_model,activation_state,revision,updated_at)
+    SELECT 1,
+      CASE WHEN EXISTS(SELECT 1 FROM sources LIMIT 1) THEN 'legacy' ELSE 'deepseek' END,
+      'legacy',
+      COALESCE(json_extract((SELECT value_json FROM runtime_settings WHERE setting_key='ai'),'$.model'),'vertex-gemini-3.8-flash'),
+      CASE WHEN EXISTS(SELECT 1 FROM sources LIMIT 1) THEN 'legacy' ELSE 'candidate' END,
+      1,datetime('now');
+
+    ALTER TABLE jobs ADD COLUMN model_role TEXT NOT NULL DEFAULT 'unassigned';
+    ALTER TABLE jobs ADD COLUMN model_profile_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE jobs ADD COLUMN model_routing_revision INTEGER;
+    CREATE INDEX idx_jobs_model_profile ON jobs(model_role,model_routing_revision,status,created_at);
+
+    ALTER TABLE model_call_metrics ADD COLUMN role TEXT NOT NULL DEFAULT 'unknown';
+    ALTER TABLE model_call_metrics ADD COLUMN requested_model TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN returned_model TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN source_run_id TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN article_revision INTEGER;
+
+    CREATE TABLE draft_knowledge_updates (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+      dependency_hash TEXT NOT NULL,
+      changed_fact_keys_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'update_available'
+        CHECK (status IN ('update_available','accepted','dismissed','superseded')),
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(draft_id,dependency_hash)
+    );
+    CREATE INDEX idx_draft_knowledge_updates_status ON draft_knowledge_updates(status,updated_at DESC);
+
+    CREATE TABLE luna_dispute_reviews (
+      id TEXT PRIMARY KEY,
+      issue_key TEXT NOT NULL,
+      evidence_hash TEXT NOT NULL,
+      request_json TEXT NOT NULL,
+      result_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'requested'
+        CHECK (status IN ('requested','succeeded','failed')),
+      model_profile_json TEXT NOT NULL,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(issue_key,evidence_hash)
+    );
+
+    CREATE TABLE model_routing_audit (
+      id TEXT PRIMARY KEY,
+      action TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      previous_revision INTEGER,
+      next_revision INTEGER,
+      actor TEXT NOT NULL DEFAULT 'admin',
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_model_routing_audit_created ON model_routing_audit(created_at DESC);
+
+    INSERT INTO schema_migrations(version, applied_at) VALUES (73, datetime('now'));
+  `));
+}
+
+function migrationSeventyTwo(db) {
+  // Repair v1.1 keeps deterministic validation evidence, provider-call
+  // attribution and post-transform visual checkpoints durable across retries.
+  // Existing rows intentionally remain legacy_unknown instead of being
+  // rewritten into a certainty the old telemetry cannot support.
+  transaction(db, () => db.exec(`
+    ALTER TABLE jobs ADD COLUMN failure_details_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE jobs ADD COLUMN failure_execution_kind TEXT NOT NULL DEFAULT 'legacy_unknown'
+      CHECK (failure_execution_kind IN ('deterministic','provider','mixed','legacy_unknown'));
+
+    CREATE TABLE production_failure_diagnostics (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      job_attempt INTEGER NOT NULL,
+      stage TEXT NOT NULL,
+      error_code TEXT NOT NULL,
+      execution_kind TEXT NOT NULL
+        CHECK (execution_kind IN ('deterministic','provider','mixed','legacy_unknown')),
+      draft_revision INTEGER,
+      input_hash TEXT NOT NULL DEFAULT '',
+      candidate_hash TEXT NOT NULL DEFAULT '',
+      details_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      UNIQUE(job_id,job_attempt,error_code)
+    );
+    CREATE INDEX idx_failure_diagnostics_job
+      ON production_failure_diagnostics(job_id,created_at DESC);
+
+    ALTER TABLE model_call_metrics ADD COLUMN visual_id TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN source_asset_id TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN substage TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN http_status INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN provider_code TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN provider_request_id TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN dispatch_state TEXT NOT NULL DEFAULT 'legacy_unknown'
+      CHECK (dispatch_state IN ('not_attempted','dispatch_started','response_received','completed','cache_hit','legacy_unknown'));
+    ALTER TABLE model_call_metrics ADD COLUMN evidence_basis TEXT NOT NULL DEFAULT '';
+    ALTER TABLE model_call_metrics ADD COLUMN endpoint_id TEXT NOT NULL DEFAULT '';
+    CREATE INDEX idx_model_call_visual_substage
+      ON model_call_metrics(run_id,visual_id,substage,created_at);
+
+    CREATE TABLE visual_candidates (
+      id TEXT PRIMARY KEY,
+      visual_id TEXT NOT NULL REFERENCES article_visuals(id) ON DELETE CASCADE,
+      draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+      job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+      job_attempt INTEGER NOT NULL DEFAULT 0,
+      recovery_run_id TEXT,
+      source_asset_id TEXT,
+      source_hash TEXT NOT NULL DEFAULT '',
+      transform_input_hash TEXT NOT NULL,
+      output_hash TEXT NOT NULL,
+      media_path TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending_qa'
+        CHECK (status IN ('pending_qa','qa_failed','promoted','invalidated','missing')),
+      qa_json TEXT NOT NULL DEFAULT '{}',
+      last_error_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      promoted_at TEXT,
+      UNIQUE(visual_id,transform_input_hash,output_hash)
+    );
+    CREATE INDEX idx_visual_candidates_resume
+      ON visual_candidates(visual_id,status,updated_at DESC);
+
+    ALTER TABLE affiliate_assets ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE affiliate_assets ADD COLUMN content_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_slots ADD COLUMN affiliate_asset_revision INTEGER;
+    ALTER TABLE commercial_slots ADD COLUMN affiliate_asset_content_hash TEXT NOT NULL DEFAULT '';
+    CREATE TABLE affiliate_asset_versions (
+      id TEXT PRIMARY KEY,
+      affiliate_asset_id TEXT NOT NULL REFERENCES affiliate_assets(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL,
+      content_hash TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      actor TEXT NOT NULL DEFAULT 'system',
+      created_at TEXT NOT NULL,
+      UNIQUE(affiliate_asset_id,revision),
+      UNIQUE(affiliate_asset_id,content_hash)
+    );
+    CREATE INDEX idx_affiliate_asset_versions_asset
+      ON affiliate_asset_versions(affiliate_asset_id,revision DESC);
+
+    INSERT INTO schema_migrations(version, applied_at) VALUES (72, datetime('now'));
+  `));
+}
+
+function migrationSeventyOne(db) {
+  // Image understanding is a durable, capture-versioned source artifact. It is
+  // intentionally separate from source-level extraction language so a Chinese
+  // note cannot silently classify every attached image as Chinese text.
+  transaction(db, () => db.exec(`
+    CREATE TABLE source_asset_analyses (
+      asset_id TEXT PRIMARY KEY REFERENCES source_assets(id) ON DELETE CASCADE,
+      source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      source_sha256 TEXT NOT NULL DEFAULT '',
+      capture_version INTEGER NOT NULL,
+      analysis_status TEXT NOT NULL DEFAULT 'not_analyzed'
+        CHECK (analysis_status IN ('not_analyzed','ready','failed','needs_review')),
+      asset_kind TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (asset_kind IN ('documentary_photo','handwritten_card','editorial_infographic','photo_collage','map_or_route','decorative_illustration','unknown')),
+      text_regions_json TEXT NOT NULL DEFAULT '[]',
+      photo_regions_json TEXT NOT NULL DEFAULT '[]',
+      entities_json TEXT NOT NULL DEFAULT '[]',
+      editor_ui_regions_json TEXT NOT NULL DEFAULT '[]',
+      primary_subjects_json TEXT NOT NULL DEFAULT '[]',
+      language_by_region_json TEXT NOT NULL DEFAULT '[]',
+      reader_text_present INTEGER CHECK (reader_text_present IN (0,1) OR reader_text_present IS NULL),
+      confidence REAL NOT NULL DEFAULT 0 CHECK (confidence >= 0 AND confidence <= 1),
+      analysis_version TEXT NOT NULL DEFAULT '',
+      prompt_version TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      last_error TEXT,
+      analyzed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_source_asset_analyses_source_capture
+      ON source_asset_analyses(source_id,capture_version,analysis_status);
+    INSERT INTO schema_migrations(version, applied_at) VALUES (71, datetime('now'));
+  `));
+}
+
+function migrationSeventy(db) {
+  // Commercial overlays are independently refreshable delivery artifacts.
+  // The stored manifest makes an empty composition explainable and lets the
+  // publish/WordPress layers prove every selected slot survived end to end.
+  transaction(db, () => db.exec(`
+    ALTER TABLE affiliate_assets ADD COLUMN country_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE affiliate_asset_mappings ADD COLUMN updated_at TEXT;
+    UPDATE affiliate_asset_mappings SET updated_at=created_at WHERE updated_at IS NULL;
+
+    ALTER TABLE commercial_compositions ADD COLUMN outcome TEXT NOT NULL DEFAULT 'intentional_noop';
+    ALTER TABLE commercial_compositions ADD COLUMN reason_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_compositions ADD COLUMN diagnostics_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE commercial_compositions ADD COLUMN manifest_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE commercial_compositions ADD COLUMN editorial_page_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_compositions ADD COLUMN asset_inventory_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_compositions ADD COLUMN reading_layout_version TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_compositions ADD COLUMN contract_checksum TEXT NOT NULL DEFAULT '';
+    ALTER TABLE commercial_compositions ADD COLUMN refresh_required INTEGER NOT NULL DEFAULT 0 CHECK (refresh_required IN (0,1));
+    ALTER TABLE commercial_compositions ADD COLUMN refresh_reason TEXT NOT NULL DEFAULT '';
+
+    CREATE TABLE commercial_overlay_history (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+      overlay_version TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(draft_id,overlay_version)
+    );
+    CREATE INDEX idx_commercial_overlay_history_draft
+      ON commercial_overlay_history(draft_id,created_at DESC);
+
+    ALTER TABLE wordpress_publications ADD COLUMN delivery_manifest_json TEXT NOT NULL DEFAULT '{}';
+    INSERT INTO schema_migrations(version, applied_at) VALUES (70, datetime('now'));
+  `));
+}
+
+function migrationSixtyNine(db) {
+  // Production ownership is deliberately attached to the durable Job. The
+  // backfill is deterministic and offline: it neither enqueues work nor calls
+  // an external service. Ambiguous legacy Jobs remain ownerless diagnostics.
+  transaction(db, () => db.exec(`
+    ALTER TABLE jobs ADD COLUMN production_owner_opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL;
+    CREATE INDEX idx_jobs_production_owner
+      ON jobs(production_owner_opportunity_id,status,type,updated_at DESC);
+    ALTER TABLE content_operation_history ADD COLUMN opportunity_id TEXT REFERENCES content_opportunities(id) ON DELETE SET NULL;
+    ALTER TABLE content_operation_history ADD COLUMN idempotency_key TEXT;
+    CREATE INDEX idx_content_operation_history_owner
+      ON content_operation_history(opportunity_id,created_at DESC);
+    CREATE UNIQUE INDEX idx_content_operation_history_idempotency
+      ON content_operation_history(idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+    UPDATE jobs
+    SET production_owner_opportunity_id=(
+      SELECT MIN(co.id)
+      FROM content_opportunities co
+      WHERE co.approved_at IS NOT NULL
+        AND co.candidate_id=CASE
+          WHEN jobs.type IN ('assemble_editorial','plan_content') THEN jobs.entity_id
+          WHEN jobs.type IN ('plan_narrative','assemble_writing_packet','compose_frontend_page_plan','generate_draft')
+            THEN (SELECT cb.candidate_id FROM content_briefs cb WHERE cb.id=jobs.entity_id)
+          WHEN jobs.type IN ('generate_visuals','compose_frontend_page','review_draft','revise_draft','compose_commercial','compose_publish_page','push_wordpress_draft')
+            THEN (SELECT cb.candidate_id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=jobs.entity_id)
+          ELSE NULL END
+      HAVING COUNT(*)=1
+    )
+    WHERE jobs.type IN ('assemble_editorial','plan_content','plan_narrative','assemble_writing_packet','compose_frontend_page_plan',
+      'generate_draft','generate_visuals','compose_frontend_page','review_draft','revise_draft','compose_commercial',
+      'compose_publish_page','push_wordpress_draft');
+
+    UPDATE editorial_assemblies
+    SET opportunity_id=(
+      SELECT MIN(co.id) FROM content_opportunities co
+      WHERE co.candidate_id=editorial_assemblies.candidate_id AND co.approved_at IS NOT NULL
+      HAVING COUNT(*)=1
+    )
+    WHERE EXISTS (
+      SELECT COUNT(*) FROM content_opportunities co
+      WHERE co.candidate_id=editorial_assemblies.candidate_id AND co.approved_at IS NOT NULL
+      HAVING COUNT(*)=1
+    );
+
+    UPDATE content_operation_history
+    SET opportunity_id=(
+      SELECT MIN(co.id) FROM content_opportunities co
+      WHERE co.candidate_id=content_operation_history.candidate_id AND co.approved_at IS NOT NULL
+      HAVING COUNT(*)=1
+    );
+    INSERT INTO schema_migrations(version, applied_at) VALUES (69, datetime('now'));
+  `));
+}
+
+function migrationSixtyEight(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE production_record_controls (
+      opportunity_id TEXT PRIMARY KEY REFERENCES content_opportunities(id) ON DELETE CASCADE,
+      disposition TEXT NOT NULL DEFAULT 'active' CHECK (disposition IN ('active','archived','deleted')),
+      archived_at TEXT,
+      deleted_at TEXT,
+      reason TEXT NOT NULL DEFAULT '',
+      actor TEXT NOT NULL DEFAULT 'system',
+      idempotency_key TEXT,
+      tombstone_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_production_record_controls_disposition
+      ON production_record_controls(disposition,updated_at DESC);
+    CREATE UNIQUE INDEX idx_production_record_controls_idempotency
+      ON production_record_controls(idempotency_key) WHERE idempotency_key IS NOT NULL;
+    CREATE TABLE production_record_audit (
+      id TEXT PRIMARY KEY,
+      opportunity_id TEXT NOT NULL REFERENCES content_opportunities(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('completed','rejected')),
+      actor TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_production_record_audit_history
+      ON production_record_audit(opportunity_id,created_at DESC);
+    INSERT INTO schema_migrations(version, applied_at) VALUES (68, datetime('now'));
+  `));
+}
+
+function migrationSixtySeven(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE jobs ADD COLUMN workload_class TEXT NOT NULL DEFAULT 'normal_ingest';
+    ALTER TABLE jobs ADD COLUMN parent_job_id TEXT;
+    ALTER TABLE jobs ADD COLUMN recovery_run_id TEXT;
+    ALTER TABLE jobs ADD COLUMN interactive INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX idx_jobs_lane_ready ON jobs(status,workload_class,priority,available_at,created_at);
+
+    CREATE TABLE knowledge_resolution_events (
+      id TEXT PRIMARY KEY,
+      destination_slug TEXT NOT NULL,
+      normalized_key TEXT NOT NULL,
+      claim_a_id TEXT REFERENCES claims(id) ON DELETE SET NULL,
+      claim_b_id TEXT REFERENCES claims(id) ON DELETE SET NULL,
+      resolution_state TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      engine_version TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(destination_slug,normalized_key,claim_a_id,claim_b_id,resolution_state,engine_version)
+    );
+    CREATE INDEX idx_knowledge_resolution_history ON knowledge_resolution_events(destination_slug,created_at DESC);
+
+    CREATE TABLE knowledge_verification_jobs (
+      id TEXT PRIMARY KEY,
+      destination_slug TEXT NOT NULL,
+      normalized_key TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      source_priority_json TEXT NOT NULL DEFAULT '[]',
+      evidence_json TEXT NOT NULL DEFAULT '[]',
+      result_json TEXT NOT NULL DEFAULT '{}',
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      UNIQUE(destination_slug,normalized_key)
+    );
+    CREATE INDEX idx_knowledge_verification_status ON knowledge_verification_jobs(status,updated_at DESC);
+
+    CREATE TABLE claim_repair_jobs (
+      id TEXT PRIMARY KEY,
+      claim_id TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'queued',
+      repair_type TEXT NOT NULL,
+      input_json TEXT NOT NULL,
+      result_json TEXT NOT NULL DEFAULT '{}',
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      UNIQUE(claim_id,repair_type)
+    );
+    CREATE INDEX idx_claim_repair_status ON claim_repair_jobs(status,updated_at DESC);
+
+    CREATE TABLE coverage_dirty_scopes (
+      destination_slug TEXT NOT NULL,
+      topic_key TEXT NOT NULL DEFAULT '',
+      changed_fact_keys_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'dirty',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(destination_slug,topic_key)
+    );
+
+    CREATE TABLE source_recovery_manifests (
+      id TEXT PRIMARY KEY,
+      reason TEXT NOT NULL,
+      status TEXT NOT NULL,
+      report_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      executed_at TEXT
+    );
+
+    ALTER TABLE system_backfill_runs RENAME TO system_backfill_runs_v66;
+    CREATE TABLE system_backfill_runs (
+      id TEXT PRIMARY KEY,
+      backfill_type TEXT NOT NULL CHECK (backfill_type IN ('experience','recommendation_reconciliation','failed_production_cleanup','knowledge_resolution')),
+      status TEXT NOT NULL CHECK (status IN ('dry_run','queued','completed','failed')),
+      dry_run INTEGER NOT NULL DEFAULT 1 CHECK (dry_run IN (0,1)),
+      approved_from_run_id TEXT REFERENCES system_backfill_runs(id) ON DELETE SET NULL,
+      report_json TEXT NOT NULL DEFAULT '{}',
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    INSERT INTO system_backfill_runs SELECT * FROM system_backfill_runs_v66;
+    DROP TABLE system_backfill_runs_v66;
+    CREATE INDEX idx_system_backfill_runs_type ON system_backfill_runs(backfill_type,created_at DESC);
+
+    INSERT INTO schema_migrations(version,applied_at) VALUES (67,datetime('now'));
+  `));
+}
+
+function migrationSixtySix(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE media_extraction_batches (
+      id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      capture_version INTEGER NOT NULL,
+      sequence INTEGER NOT NULL,
+      segment_ids_json TEXT NOT NULL,
+      asset_ids_json TEXT NOT NULL,
+      classification TEXT NOT NULL DEFAULT 'ordinary_image',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','extracting','extracted','failed','complete')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(source_id,capture_version,sequence)
+    );
+    CREATE INDEX idx_media_batches_source ON media_extraction_batches(source_id,capture_version,status,sequence);
+
+    CREATE TABLE source_processing_gap_runs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK (status IN ('dry_run','queued','completed','failed')),
+      dry_run INTEGER NOT NULL DEFAULT 1 CHECK (dry_run IN (0,1)),
+      approved_from_run_id TEXT REFERENCES source_processing_gap_runs(id) ON DELETE SET NULL,
+      report_json TEXT NOT NULL DEFAULT '{}',
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_source_gap_runs_created ON source_processing_gap_runs(created_at DESC);
+
+    CREATE TABLE media_storage_migration_runs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL CHECK (status IN ('dry_run','completed','failed')),
+      dry_run INTEGER NOT NULL DEFAULT 1 CHECK (dry_run IN (0,1)),
+      approved_from_run_id TEXT REFERENCES media_storage_migration_runs(id) ON DELETE SET NULL,
+      report_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+
+    CREATE TABLE provider_runtime_state (
+      provider TEXT PRIMARY KEY,
+      model TEXT NOT NULL DEFAULT '',
+      last_success_at TEXT,
+      last_failure_at TEXT,
+      last_error_code TEXT,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      backoff_until TEXT,
+      last_latency_ms INTEGER,
+      updated_at TEXT NOT NULL
+    );
+
+    ALTER TABLE model_call_metrics ADD COLUMN queue_wait_ms INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN provider_request_ms INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN retry_wait_ms INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN total_stage_ms INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN retry_after_ms INTEGER;
+    ALTER TABLE model_call_metrics ADD COLUMN backoff_until TEXT;
+    ALTER TABLE model_call_metrics ADD COLUMN cache_hit INTEGER NOT NULL DEFAULT 0 CHECK (cache_hit IN (0,1));
+    ALTER TABLE model_call_metrics ADD COLUMN execution_route TEXT;
+
+    CREATE TABLE source_asset_storage_refs (
+      asset_id TEXT PRIMARY KEY REFERENCES source_assets(id) ON DELETE CASCADE,
+      original_storage_ref TEXT NOT NULL DEFAULT '',
+      derivative_storage_ref TEXT NOT NULL DEFAULT '',
+      derivative_cache_key TEXT NOT NULL DEFAULT '',
+      transform_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    INSERT INTO schema_migrations(version,applied_at) VALUES (66,datetime('now'));
+  `));
+}
+
+function migrationSixtyFive(db) {
+  transaction(db,()=>db.exec(`
+    CREATE TABLE pipeline_step_receipts (
+      request_hash TEXT PRIMARY KEY, stage TEXT NOT NULL, entity_id TEXT NOT NULL,
+      step_key TEXT NOT NULL, input_hash TEXT NOT NULL, config_hash TEXT NOT NULL,
+      output_hash TEXT NOT NULL, result_json TEXT NOT NULL, job_id TEXT NOT NULL,
+      lease_generation INTEGER NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_pipeline_step_scope ON pipeline_step_receipts(stage,entity_id,created_at);
+    INSERT INTO schema_migrations(version,applied_at) VALUES (65,datetime('now'));
+  `));
+}
+
+function migrationSixtyFour(db) {
+  // SQLite cannot remove an inline UNIQUE constraint with ALTER TABLE. Copy
+  // each table in one transaction, keeping IDs and dependent foreign keys.
+  const rebuild = (name, constraint) => {
+    const definition=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name).sql;
+    const indexes=db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL").all(name);
+    const next=definition.replace(/^CREATE TABLE\s+(?:"[^"]+"|\w+)/i,`CREATE TABLE ${name}_v64`).replace(constraint.before,constraint.after);
+    if(next===definition||!next.includes(constraint.after))throw new Error(`Unexpected ${name} schema during migration 64`);
+    const columns=db.prepare(`PRAGMA table_info(${name})`).all().map(column=>`"${column.name}"`).join(',');
+    db.exec(`${next}; INSERT INTO ${name}_v64(${columns}) SELECT ${columns} FROM ${name}; DROP TABLE ${name}; ALTER TABLE ${name}_v64 RENAME TO ${name};`);
+    for(const index of indexes)db.exec(index.sql);
+  };
+  db.exec('PRAGMA foreign_keys=OFF');
+  try {
+    transaction(db,()=>{
+      db.exec(`ALTER TABLE source_assets ADD COLUMN capture_version INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE source_files ADD COLUMN capture_version INTEGER NOT NULL DEFAULT 1;
+        UPDATE source_assets SET capture_version=(SELECT capture_version FROM sources WHERE id=source_assets.source_id);
+        UPDATE source_files SET capture_version=(SELECT capture_version FROM sources WHERE id=source_files.source_id);`);
+      rebuild('source_assets',{before:/UNIQUE\(source_id,\s*remote_url\)/,after:'UNIQUE(source_id, capture_version, remote_url)'});
+      rebuild('source_files',{before:/UNIQUE\(source_id,\s*storage_path\)/,after:'UNIQUE(source_id, capture_version, storage_path)'});
+      rebuild('source_segments',{before:/UNIQUE\(source_id,\s*sequence\)/,after:'UNIQUE(source_id, capture_version, sequence)'});
+      db.exec(`CREATE INDEX idx_source_assets_version ON source_assets(source_id,capture_version,position);
+        CREATE INDEX idx_source_files_version ON source_files(source_id,capture_version);
+        CREATE INDEX idx_source_segments_version ON source_segments(source_id,capture_version,sequence);
+        CREATE VIEW current_source_assets AS SELECT a.* FROM source_assets a JOIN sources s ON s.id=a.source_id AND s.capture_version=a.capture_version;
+        CREATE VIEW current_source_files AS SELECT a.* FROM source_files a JOIN sources s ON s.id=a.source_id AND s.capture_version=a.capture_version;
+        CREATE VIEW current_source_segments AS SELECT a.* FROM source_segments a JOIN sources s ON s.id=a.source_id AND s.capture_version=a.capture_version;
+        CREATE VIEW current_extraction_coverage AS SELECT c.* FROM extraction_coverage c JOIN current_source_segments s ON s.id=c.segment_id;
+        CREATE VIEW current_evidence_spans AS SELECT e.* FROM evidence_spans e JOIN current_source_segments s ON s.id=e.segment_id;`);
+      if(db.prepare('PRAGMA foreign_key_check').all().length)throw new Error('Migration 64 found broken foreign keys');
+      db.exec("INSERT INTO schema_migrations(version,applied_at) VALUES (64,datetime('now'));");
+    });
+  } finally { db.exec('PRAGMA foreign_keys=ON'); }
+}
+
+function migrationSixtyThree(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE narrative_plans ADD COLUMN evidence_selections_json TEXT NOT NULL DEFAULT '[]';
+    INSERT INTO schema_migrations(version,applied_at) VALUES (63,datetime('now'));
+  `));
+}
+
+function migrationSixtyTwo(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE writing_packets ADD COLUMN context_json TEXT NOT NULL DEFAULT '{}';
+    INSERT INTO schema_migrations(version,applied_at) VALUES (62,datetime('now'));
+  `));
+}
+
+function migrationSixty(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE jobs ADD COLUMN dirty_revision INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE jobs ADD COLUMN claimed_revision INTEGER NOT NULL DEFAULT 0;
+    INSERT INTO schema_migrations(version,applied_at) VALUES (60,datetime('now'));
+  `));
+}
+
+function migrationSixtyOne(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE production_attempt_archives (
+      id TEXT PRIMARY KEY, opportunity_id TEXT NOT NULL, failing_job_id TEXT NOT NULL,
+      failing_stage TEXT NOT NULL, snapshot_json TEXT NOT NULL, failure_code TEXT NOT NULL,
+      created_at TEXT NOT NULL, UNIQUE(opportunity_id,failing_job_id)
+    );
+    CREATE INDEX idx_attempt_archive_opportunity ON production_attempt_archives(opportunity_id,created_at);
+    INSERT INTO schema_migrations(version,applied_at) VALUES (61,datetime('now'));
+  `));
+}
+
+function migrationFiftyNine(db) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`
+      ALTER TABLE affiliate_assets ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'operational'
+        CHECK (lifecycle_state IN ('operational','archived','legacy_test_seed'));
+      ALTER TABLE affiliate_assets ADD COLUMN archived_at TEXT;
+      ALTER TABLE affiliate_assets ADD COLUMN archive_reason TEXT NOT NULL DEFAULT '';
+      ALTER TABLE affiliate_asset_mappings ADD COLUMN active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1));
+      ALTER TABLE knowledge_resolutions ADD COLUMN resolution_type TEXT NOT NULL DEFAULT 'preferred_value'
+        CHECK (resolution_type IN ('preferred_value','coexist_scope'));
+
+      UPDATE affiliate_assets SET active=0, lifecycle_state='legacy_test_seed',
+        archived_at=COALESCE(archived_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        archive_reason='Archived historical Trip.com seed asset; preserved for audit only.',
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE id IN (
+        SELECT affiliate_asset_id FROM affiliate_asset_queue_tasks
+        WHERE source_type='SEED' AND task_key IN (
+          'trip:hotel:destination:beijing',
+          'trip:hotel:destination:shanghai',
+          'trip:attraction:destination:beijing',
+          'trip:attraction:destination:shanghai'
+        ) AND affiliate_asset_id IS NOT NULL
+      );
+
+      UPDATE affiliate_asset_mappings SET active=0
+      WHERE affiliate_asset_id IN (SELECT id FROM affiliate_assets WHERE lifecycle_state='legacy_test_seed');
+
+      CREATE INDEX idx_affiliate_assets_operational
+        ON affiliate_assets(lifecycle_state,active,provider_account_id,priority DESC,updated_at DESC);
+      CREATE INDEX idx_affiliate_mappings_operational
+        ON affiliate_asset_mappings(active,destination_slug,scope_type,scope_key);
+      CREATE INDEX idx_knowledge_facts_directory
+        ON knowledge_facts(destination_id,visibility_status,canonical_subject,subject,id);
+      CREATE INDEX idx_knowledge_facts_review
+        ON knowledge_facts(consensus_status,visibility_status,destination_id,updated_at DESC);
+      CREATE INDEX idx_content_recommendations_inbox
+        ON content_recommendations(decision,updated_at DESC,source_id);
+      CREATE INDEX idx_jobs_light_status
+        ON jobs(status,updated_at DESC,type);
+
+      INSERT INTO schema_migrations(version, applied_at) VALUES (59, datetime('now'));
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function migrationFiftyEight(db) {

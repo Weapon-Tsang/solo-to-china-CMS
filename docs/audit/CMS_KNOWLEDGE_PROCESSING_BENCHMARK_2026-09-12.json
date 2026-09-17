@@ -1,0 +1,35 @@
+{
+  "claimCount": 120,
+  "factCount": 120,
+  "opportunityCount": 60,
+  "coverage": {
+    "full": {
+      "durationMs": 169.31,
+      "updated": 60
+    },
+    "incremental": {
+      "durationMs": 15.63,
+      "updated": 1
+    },
+    "speedup": 10.83
+  },
+  "intake": {
+    "legacyBytes": 571331,
+    "compactBytes": 59423,
+    "reductionPercent": 89.6
+  },
+  "isolatedWorkerHealth": {
+    "samples": 30,
+    "p50Ms": 0.89,
+    "p95Ms": 1.84,
+    "maxMs": 21.2
+  },
+  "isolatedBackupHealth": {
+    "samples": 30,
+    "p50Ms": 0.71,
+    "p95Ms": 0.98,
+    "maxMs": 3.08,
+    "backupBytes": 4468736,
+    "verified": true
+  }
+}

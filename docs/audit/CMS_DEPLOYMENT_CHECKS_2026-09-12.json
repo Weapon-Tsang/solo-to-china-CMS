@@ -1,0 +1,497 @@
+{
+  "status": "deployed",
+  "recordedAt": "2026-09-12T08:39:59.135Z",
+  "baselineRevision": "2395fe4ed68f7414d777d0156770af76e858eb1b",
+  "coreImplementationRevision": "f6ffc3d19b22322dd04be069d828c2507a0fc4cb",
+  "runtimeRevision": "8a6f3383176c918b3a353ddb586968219d0ffe9a",
+  "appVersion": "2.0.6",
+  "strategyVersion": "3.1",
+  "schemaVersion": 65,
+  "project": "project-4bcb9146-c37b-43b0-b11",
+  "instance": "solo-to-china-engine",
+  "zone": "asia-east1-b",
+  "build": {
+    "id": "ad416530-c595-4291-8751-582f4261c40f",
+    "status": "SUCCESS",
+    "finishedAt": "2026-09-12T08:27:56.484830Z",
+    "actualImageHttpReadiness": "passed",
+    "rollbackAcrossSeparateDockerMounts": "passed"
+  },
+  "ci": {
+    "runtimeRun": "https://github.com/Weapon-Tsang/solo-to-china-CMS/actions/runs/34683247217",
+    "status": "success",
+    "note": "Further operations/documentation changes add the network handoff to the same mandatory image smoke workflow."
+  },
+  "localChecks": {
+    "baselineTests": 437,
+    "implementationTests": 480,
+    "withDeploymentTests": 482,
+    "failures": 0,
+    "skipped": 0,
+    "implementationMandatoryChecks": 51,
+    "warnings": 4,
+    "notTestedOrUnconfigured": 5
+  },
+  "finalState": {
+    "verifiedAt": "2026-09-12T08:34:01.492553+00:00",
+    "completedAt": "2026-09-12T08:31:57+00:00",
+    "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:90edeaa896864729a50b4e83a9e86d25e35e6ea438061b2dd5224a9333ba3f03",
+    "runtimeRevision": "8a6f3383176c918b3a353ddb586968219d0ffe9a",
+    "containerStatus": "running",
+    "networks": [
+      "solo-to-china"
+    ],
+    "mounts": [
+      {
+        "source": "/var/lib/docker/volumes/solo_to_china_data/_data",
+        "destination": "/var/lib/solo-to-china"
+      },
+      {
+        "source": "/opt/solo-to-china/upgrades/f6ffc3d19b22322dd04be069d828c2507a0fc4cb-attempt-2/legacy-app-data",
+        "destination": "/app/data"
+      }
+    ],
+    "schema": 65,
+    "backup": {
+      "backupPath": "/var/lib/solo-to-china/backups/solo-to-china-2026-09-12T07-58-50-074Z.snapshot",
+      "databaseBackupPath": "/var/lib/solo-to-china/backups/solo-to-china-2026-09-12T07-58-50-074Z.snapshot/database.sqlite",
+      "manifestPath": "/var/lib/solo-to-china/backups/solo-to-china-2026-09-12T07-58-50-074Z.snapshot/manifest.json",
+      "backup": "solo-to-china-2026-09-12T07-58-50-074Z.snapshot",
+      "bytes": 1918566400,
+      "sha256": "d3f339ae6f5139492b550314e7f940b86f1b016a1ecf87969cae1d675594fda7",
+      "schemaVersion": 59,
+      "integrity": "ok",
+      "fileCount": 1009
+    },
+    "rehearsal": {
+      "stage": "rehearse",
+      "schema": 65,
+      "integrity": "ok",
+      "foreignKeyErrors": 0,
+      "preservedContentFingerprints": true,
+      "migrationMs": 223071,
+      "tables": {
+        "sources": {
+          "count": 74,
+          "sha256": "a53027e3f254bf41e1fb936528f427dcfc225126bd4c268d40bd662501e39dc2"
+        },
+        "capture_versions": {
+          "count": 149,
+          "sha256": "ff3ba453144cda8a1912a99e224f5c2f9b2f973d1ad73bb205289a9c124b8e8c"
+        },
+        "source_assets": {
+          "count": 1318,
+          "sha256": "074ef02b7da6b8499c0a2177b60067166cc7749f19b0b3add293d40ad8c21d14"
+        },
+        "source_files": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "source_segments": {
+          "count": 1391,
+          "sha256": "caf44593b7e506aab5054605135ab717013c3a7e2e833b3e86c556bc71457431"
+        },
+        "claims": {
+          "count": 6595,
+          "sha256": "5f7e2fa95db79c4ee16e3adb1076c0951dbdcdb1273673da0ee97eec30f1c972"
+        },
+        "evidence_spans": {
+          "count": 5588,
+          "sha256": "32a241de082b858cdf80087d05d84ea0ebe919427c4e111d6d0cd3aeb24ae20f"
+        },
+        "extraction_coverage": {
+          "count": 1389,
+          "sha256": "0eb68fb663e34d93eaf0781c3e9623697e8399ff6f51d78d9caea8aa77ac7290"
+        },
+        "article_drafts": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "article_visuals": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    "migration": {
+      "stage": "migrate",
+      "schema": 65,
+      "integrity": "ok",
+      "foreignKeyErrors": 0,
+      "preservedContentFingerprints": true,
+      "migrationMs": 227110,
+      "tables": {
+        "sources": {
+          "count": 74,
+          "sha256": "a53027e3f254bf41e1fb936528f427dcfc225126bd4c268d40bd662501e39dc2"
+        },
+        "capture_versions": {
+          "count": 149,
+          "sha256": "ff3ba453144cda8a1912a99e224f5c2f9b2f973d1ad73bb205289a9c124b8e8c"
+        },
+        "source_assets": {
+          "count": 1318,
+          "sha256": "074ef02b7da6b8499c0a2177b60067166cc7749f19b0b3add293d40ad8c21d14"
+        },
+        "source_files": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "source_segments": {
+          "count": 1391,
+          "sha256": "caf44593b7e506aab5054605135ab717013c3a7e2e833b3e86c556bc71457431"
+        },
+        "claims": {
+          "count": 6595,
+          "sha256": "5f7e2fa95db79c4ee16e3adb1076c0951dbdcdb1273673da0ee97eec30f1c972"
+        },
+        "evidence_spans": {
+          "count": 5588,
+          "sha256": "32a241de082b858cdf80087d05d84ea0ebe919427c4e111d6d0cd3aeb24ae20f"
+        },
+        "extraction_coverage": {
+          "count": 1389,
+          "sha256": "0eb68fb663e34d93eaf0781c3e9623697e8399ff6f51d78d9caea8aa77ac7290"
+        },
+        "article_drafts": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "article_visuals": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    "postRecoveryVerification": {
+      "stage": "migrate",
+      "schema": 65,
+      "integrity": "ok",
+      "foreignKeyErrors": 0,
+      "preservedContentFingerprints": true,
+      "migrationMs": 102349,
+      "tables": {
+        "sources": {
+          "count": 74,
+          "sha256": "a53027e3f254bf41e1fb936528f427dcfc225126bd4c268d40bd662501e39dc2"
+        },
+        "capture_versions": {
+          "count": 149,
+          "sha256": "ff3ba453144cda8a1912a99e224f5c2f9b2f973d1ad73bb205289a9c124b8e8c"
+        },
+        "source_assets": {
+          "count": 1318,
+          "sha256": "074ef02b7da6b8499c0a2177b60067166cc7749f19b0b3add293d40ad8c21d14"
+        },
+        "source_files": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "source_segments": {
+          "count": 1391,
+          "sha256": "caf44593b7e506aab5054605135ab717013c3a7e2e833b3e86c556bc71457431"
+        },
+        "claims": {
+          "count": 6595,
+          "sha256": "5f7e2fa95db79c4ee16e3adb1076c0951dbdcdb1273673da0ee97eec30f1c972"
+        },
+        "evidence_spans": {
+          "count": 5588,
+          "sha256": "32a241de082b858cdf80087d05d84ea0ebe919427c4e111d6d0cd3aeb24ae20f"
+        },
+        "extraction_coverage": {
+          "count": 1389,
+          "sha256": "0eb68fb663e34d93eaf0781c3e9623697e8399ff6f51d78d9caea8aa77ac7290"
+        },
+        "article_drafts": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "article_visuals": {
+          "count": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    "imagePin": {
+      "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:90edeaa896864729a50b4e83a9e86d25e35e6ea438061b2dd5224a9333ba3f03",
+      "otherRuntimeConfigPreserved": true,
+      "environmentSha256": "03f14d855b425ab93b7d0115323b6c256c2db98f692df04f4cbc4ffdb551fc03",
+      "privatePreviousConfig": "/opt/solo-to-china/upgrades/8a6f3383176c918b3a353ddb586968219d0ffe9a/.env.production.before-image-pin"
+    },
+    "restoreDrill": {
+      "stage": "restore-drill",
+      "status": "passed",
+      "externalSideEffects": false,
+      "evidencePreviewsOpened": 1318,
+      "draftMediaOpened": 0,
+      "deliveryProbe": "not_applicable"
+    }
+  },
+  "finalPublicHealth": [
+    {
+      "url": "https://engine.solotochina.com/api/health",
+      "status": 200,
+      "version": "2.0.6",
+      "strategyVersion": "3.1",
+      "mediaProtocol": 2,
+      "frontendContract": {
+        "status": "healthy",
+        "version": "1.3.0",
+        "commit": "f44ce1092ced93dfb47d9b3eae83d0d5e4b97086",
+        "checksum": "d049ccabc8efe98a00bfcd48936585b31d54e41c0421ff07f5bb55c4aa7b44f2"
+      },
+      "queueActive": 0
+    },
+    {
+      "url": "https://engine.solotochina.com/api/ready",
+      "status": 200,
+      "version": "2.0.6",
+      "database": "ready",
+      "ready": true
+    },
+    {
+      "url": "https://capture.solotochina.com/api/health",
+      "status": 200,
+      "version": "2.0.6",
+      "strategyVersion": "3.1",
+      "mediaProtocol": 2,
+      "frontendContract": {
+        "status": "healthy",
+        "version": "1.3.0",
+        "commit": "f44ce1092ced93dfb47d9b3eae83d0d5e4b97086",
+        "checksum": "d049ccabc8efe98a00bfcd48936585b31d54e41c0421ff07f5bb55c4aa7b44f2"
+      },
+      "queueActive": 0
+    }
+  ],
+  "firstPostSwitchHttpProbes": [
+    {
+      "origin": "https://engine.solotochina.com",
+      "path": "/api/health",
+      "status": 200,
+      "durationMs": 557,
+      "version": "2.0.6",
+      "strategyVersion": "3.1",
+      "protocol": {
+        "version": 2,
+        "resume": true,
+        "uploadCapability": true,
+        "maxBytes": 536870912
+      },
+      "frontendContract": {
+        "configured": true,
+        "status": "stale",
+        "sourceRepository": "https://github.com/Weapon-Tsang/solo-to-china",
+        "registrySource": "https://solotochina.com/wp-json/stc/v1/component-registry/generated",
+        "pageSchemaSource": "https://solotochina.com/wp-json/stc/v1/page-schema",
+        "publishPackageSchemaSource": "https://solotochina.com/wp-json/stc/v1/cms-publish-package-schema",
+        "lastAttemptAt": "2026-09-12T08:29:46.061Z",
+        "lastSuccessAt": "2026-09-12T08:20:32.161Z",
+        "lastError": "fetch failed",
+        "active": {
+          "id": "fcontract_8499005727f94939a8eed6a36ce214bd",
+          "contractVersion": "1.3.0",
+          "schemaVersion": "2020-12",
+          "pageSchemaContractVersion": "1.3.0",
+          "publishPackageVersion": "1.0.0",
+          "checksum": "d049ccabc8efe98a00bfcd48936585b31d54e41c0421ff07f5bb55c4aa7b44f2",
+          "frontendCommitSha": "f44ce1092ced93dfb47d9b3eae83d0d5e4b97086",
+          "syncedAt": "2026-09-12T08:20:32.161Z",
+          "sourceRepository": "https://github.com/Weapon-Tsang/solo-to-china"
+        },
+        "availableComponents": 26,
+        "stableComponents": 26,
+        "deprecatedComponents": [],
+        "canCompose": true
+      },
+      "queueActive": 0
+    },
+    {
+      "origin": "https://engine.solotochina.com",
+      "path": "/api/ready",
+      "status": 200,
+      "durationMs": 401,
+      "ready": true,
+      "database": "ready",
+      "version": "2.0.6"
+    },
+    {
+      "origin": "https://capture.solotochina.com",
+      "path": "/api/health",
+      "status": 200,
+      "durationMs": 428,
+      "version": "2.0.6",
+      "strategyVersion": "3.1",
+      "protocol": {
+        "version": 2,
+        "resume": true,
+        "uploadCapability": true,
+        "maxBytes": 536870912
+      },
+      "frontendContract": {
+        "configured": true,
+        "status": "stale",
+        "sourceRepository": "https://github.com/Weapon-Tsang/solo-to-china",
+        "registrySource": "https://solotochina.com/wp-json/stc/v1/component-registry/generated",
+        "pageSchemaSource": "https://solotochina.com/wp-json/stc/v1/page-schema",
+        "publishPackageSchemaSource": "https://solotochina.com/wp-json/stc/v1/cms-publish-package-schema",
+        "lastAttemptAt": "2026-09-12T08:29:46.061Z",
+        "lastSuccessAt": "2026-09-12T08:20:32.161Z",
+        "lastError": "fetch failed",
+        "active": {
+          "id": "fcontract_8499005727f94939a8eed6a36ce214bd",
+          "contractVersion": "1.3.0",
+          "schemaVersion": "2020-12",
+          "pageSchemaContractVersion": "1.3.0",
+          "publishPackageVersion": "1.0.0",
+          "checksum": "d049ccabc8efe98a00bfcd48936585b31d54e41c0421ff07f5bb55c4aa7b44f2",
+          "frontendCommitSha": "f44ce1092ced93dfb47d9b3eae83d0d5e4b97086",
+          "syncedAt": "2026-09-12T08:20:32.161Z",
+          "sourceRepository": "https://github.com/Weapon-Tsang/solo-to-china"
+        },
+        "availableComponents": 26,
+        "stableComponents": 26,
+        "deprecatedComponents": [],
+        "canCompose": true
+      },
+      "queueActive": 0
+    },
+    {
+      "origin": "https://capture.solotochina.com",
+      "path": "/api/dashboard",
+      "status": 404,
+      "durationMs": 1281
+    },
+    {
+      "origin": "https://engine.solotochina.com",
+      "path": "/api/dashboard/summary",
+      "status": 200,
+      "durationMs": 3947,
+      "topLevelFields": [
+        "generatedAt",
+        "sources",
+        "jobs",
+        "queue",
+        "health",
+        "actionCounts",
+        "totals"
+      ]
+    },
+    {
+      "origin": "https://engine.solotochina.com",
+      "path": "/api/sources?limit=20&offset=0",
+      "status": 200,
+      "durationMs": 3844,
+      "topLevelFields": [
+        "items"
+      ],
+      "returnedSources": 20
+    },
+    {
+      "origin": "https://engine.solotochina.com",
+      "path": "/api/content-strategy",
+      "status": 200,
+      "durationMs": 429,
+      "version": "3.1"
+    }
+  ],
+  "productionReadObservations": [
+    {
+      "round": 1,
+      "path": "/api/health",
+      "status": 200,
+      "durationMs": 895,
+      "responseBytes": 14847
+    },
+    {
+      "round": 1,
+      "path": "/api/dashboard/summary",
+      "status": 200,
+      "durationMs": 2038,
+      "responseBytes": 818
+    },
+    {
+      "round": 1,
+      "path": "/api/sources?limit=20",
+      "status": 200,
+      "durationMs": 2231,
+      "responseBytes": 46443
+    },
+    {
+      "round": 2,
+      "path": "/api/health",
+      "status": 200,
+      "durationMs": 415,
+      "responseBytes": 14847
+    },
+    {
+      "round": 2,
+      "path": "/api/dashboard/summary",
+      "status": 200,
+      "durationMs": 725,
+      "responseBytes": 818
+    },
+    {
+      "round": 2,
+      "path": "/api/sources?limit=20",
+      "status": 200,
+      "durationMs": 2019,
+      "responseBytes": 46443
+    },
+    {
+      "round": 3,
+      "path": "/api/health",
+      "status": 200,
+      "durationMs": 378,
+      "responseBytes": 14847
+    },
+    {
+      "round": 3,
+      "path": "/api/dashboard/summary",
+      "status": 200,
+      "durationMs": 276,
+      "responseBytes": 818
+    },
+    {
+      "round": 3,
+      "path": "/api/sources?limit=20",
+      "status": 200,
+      "durationMs": 2068,
+      "responseBytes": 46443
+    }
+  ],
+  "performanceScope": "Three observations per production read route, including network time; no production p95 or before/after speedup claimed. Local ABBA mixed-load benchmark is separate.",
+  "recovery": {
+    "diskSnapshot": "stc-pre206-20260912-f6ffc3d",
+    "diskSnapshotStatus": "READY",
+    "diskSizeGbBefore": 30,
+    "diskSizeGbAfter": 50,
+    "temporaryIapRuleAndTag": "stc-upgrade-iap-f6ffc3d",
+    "temporaryIapRuleAndTagRemovedAndAbsenceVerified": true,
+    "previousContainer": "engine-before-8a6f338",
+    "previousContainerStopped": true,
+    "previousRuntimeRepositoryDigest": "sha256:1c51f03fc7f5f3e64f841aaa4931ec18cfdf0541109d92f9e355193d61d5eb63",
+    "previousRuntimeLocalImageId": "sha256:504a233d218acb8cdd9e79f8a2a5ec445e6e980241f1d35b2448eee6da3bbe46"
+  },
+  "observedAndCorrectedFailures": [
+    "Cancelled the first archive build after Windows tar rejected Chinese paths; used full UTF-8 extraction.",
+    "Disk preflight blocked at 1.5 GB free; expanded the same disk without deleting originals/backups.",
+    "Absent /app/data produced Docker-specific copy error wording; changed to explicit existence detection.",
+    "Initial candidate missed shared extension modules in the runtime image; fixed Docker COPY and added actual container startup to CI.",
+    "Rollback rename crossed Docker mounts (EXDEV); fixed retention location and explicit shell failure propagation.",
+    "Old 2.0.5 engine briefly ran 08:20:14Z–08:21:22Z while DB remained 65; stopped it and rechecked all baseline fingerprints successfully before continuing.",
+    "The first new runtime-smoke fixture lacked required test credentials; added explicit isolated credentials without weakening production authentication.",
+    "Docker none network must be disconnected before service-network attachment; corrected both deployment helpers and added the transition to image smoke."
+  ],
+  "unverifiedOrLimited": [
+    "Real Chrome MV3 worker/tab lifecycle and real user-selected Xiaohongshu capture.",
+    "Large-video streaming to IndexedDB is not implemented; explicit per-media and memory budgets apply.",
+    "Real model semantic quality, provider latency, billing and end-to-end article production.",
+    "Production WordPress article delivery/publication and search outcomes; no production drafts existed for the restore delivery probe.",
+    "Production sources list still measured roughly 2.0–2.2 seconds in the three subsequent read observations."
+  ],
+  "wordpressArticlesPublishedByThisTask": false,
+  "productionBackfillsTriggeredByThisTask": false,
+  "originalsDeletedByThisTask": false
+}

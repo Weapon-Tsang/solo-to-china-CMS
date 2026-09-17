@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, uploadChunk } from "@/lib/api";
-import { classifyRefreshOutcome, createInFlightRequestCoordinator, createLatestRequestCoordinator } from "@/lib/request-coordinator";
+import { classifyRefreshOutcome, createInFlightRequestCoordinator, createLatestRequestCoordinator, startStatusPolling } from "@/lib/request-coordinator";
 import { cn, friendlyError, label } from "@/lib/utils";
 import { ViewRenderer } from "@/views";
 import { ContentRecovery, QualityIssue } from "@/workspaces/content-recovery";
@@ -31,7 +31,7 @@ export default function App() {
   const [auth, setAuth] = useState(null);
   const [totals, setTotals] = useState({});
   const [actionCounts, setActionCounts] = useState({});
-  const [viewData, setViewData] = useState(null);
+  const [viewCache, setViewCache] = useState({});
   const [pendingActionView, setPendingActionView] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -40,9 +40,13 @@ export default function App() {
   const [detail, setDetail] = useState({ open: false, type: null, data: null, loading: false });
   const [toast, setToast] = useState({ message: "", error: false });
   const requestSequence = useRef(0);
+  const viewCacheRef = useRef({});
   const overviewRequests = useRef(createInFlightRequestCoordinator());
   const viewRequests = useRef(createInFlightRequestCoordinator());
   const detailRequests = useRef(createLatestRequestCoordinator());
+  const viewData = viewCache[activeView]?.data || null;
+
+  useEffect(() => { viewCacheRef.current = viewCache; }, [viewCache]);
 
   const showToast = useCallback((message, isError = false) => {
     setToast({ message, error: isError });
@@ -55,21 +59,39 @@ export default function App() {
   }, [toast]);
 
   const loadOverview = useCallback(() => overviewRequests.current.run("overview", async ({ signal }) => {
-    const [nextHealth, dashboard] = await Promise.all([api("/api/health", { signal }), api("/api/dashboard", { signal })]);
+    const [nextHealth, dashboard] = await Promise.all([api("/api/health", { signal }), api("/api/dashboard/summary", { signal })]);
     setHealth(nextHealth);
     setTotals(dashboard.totals || {});
     setActionCounts(dashboard.actionCounts || {});
   }), []);
 
+  const loadStatusSummary = useCallback(() => overviewRequests.current.run("status", async ({ signal }) => {
+    const [nextHealth,dashboard,sourceStatus] = await Promise.all([
+      api("/api/health",{signal}),api("/api/dashboard/summary", { signal }),
+      activeView==="sources"?api("/api/sources/status?limit=100",{signal}):Promise.resolve(null),
+    ]);
+    setTotals(dashboard.totals || {});
+    setActionCounts(dashboard.actionCounts || {});
+    setHealth(nextHealth);
+    if(sourceStatus?.items)setViewCache((current)=>{
+      const cached=current.sources?.data;if(!cached?.items)return current;
+      const updates=new Map(sourceStatus.items.map((item)=>[item.id,item]));
+      return {...current,sources:{...current.sources,data:{...cached,items:cached.items.map((item)=>updates.has(item.id)?{...item,...updates.get(item.id)}:item)}}};
+    });
+  }), [activeView]);
+
   const loadAuth = useCallback(async () => setAuth(await api("/api/auth/status")), []);
 
   const loadView = useCallback((view, { quiet = false } = {}) => viewRequests.current.run(view, async ({ signal }) => {
     const sequence = ++requestSequence.current;
-    if (!quiet) setLoading(true);
+    if (!quiet && !viewCacheRef.current[view]?.data) setLoading(true);
     try {
-      const data = await api(endpoints[view], { signal });
+      const data = view === "knowledge"
+        ? await Promise.all([api("/api/knowledge/summary", { signal }), api("/api/knowledge/subjects?limit=50", { signal })])
+          .then(([summary, subjects]) => ({ summary, subjects: subjects.items || [], nextCursor: subjects.nextCursor || null }))
+        : await api(endpoints[view], { signal });
       if (sequence !== requestSequence.current) return { ok: false, stale: true };
-      setViewData({ ...data, _loadedView: view });
+      setViewCache((current) => ({ ...current, [view]: { data: { ...data, _loadedView: view }, loadedAt: Date.now() } }));
       setError("");
       return { ok: true, stale: false };
     } catch (caught) {
@@ -87,17 +109,14 @@ export default function App() {
 
   useEffect(() => {
     if (!auth?.authenticated || auth.mustChangePassword) return;
-    setViewData(null);
     void Promise.all([loadOverview(), loadView(activeView)]).catch((caught) => setError(caught.message));
   }, [activeView, auth, loadOverview, loadView]);
 
   useEffect(() => {
     if (!auth?.authenticated || auth.mustChangePassword) return undefined;
-    const interval = setInterval(() => {
-      void Promise.all([loadOverview(), loadView(activeView, { quiet: true })]).catch((caught) => setError(caught.message));
-    }, health?.queueActive > 0 ? 5_000 : 60_000);
-    return () => clearInterval(interval);
-  }, [activeView, auth, health?.queueActive, loadOverview, loadView]);
+    return startStatusPolling({ document, active: health?.queueActive > 0, refresh: loadStatusSummary,
+      onError: caught => setError(caught.message) });
+  }, [auth, health?.queueActive, loadStatusSummary]);
 
   const refresh = useCallback(async (notify = false) => {
     setRefreshing(true);
@@ -192,7 +211,9 @@ export default function App() {
     const request = detailRequests.current.begin();
     setDetail({ open: true, type, data: null, loading: true });
     try {
-      const data = await api(type === "source" ? `/api/sources/${id}` : `/api/drafts/${id}`, { signal: request.signal });
+      const endpoint = type === "source" ? `/api/sources/${id}` : type === "production"
+        ? `/api/content/${encodeURIComponent(id)}/production-state` : `/api/drafts/${id}`;
+      const data = await api(endpoint, { signal: request.signal });
       if (!request.isCurrent()) return;
       setDetail({ open: true, type, data, loading: false });
     } catch (caught) {
@@ -213,7 +234,7 @@ export default function App() {
       const target = (viewData.items || []).find((item) => item.queue?.state === "failed" || item.status === "exception");
       if (target) void openPackage("source", target.id);
     }
-    setPendingActionView(null);
+    if (activeView !== "knowledge") setPendingActionView(null);
   }, [activeView, loading, openPackage, pendingActionView, viewData]);
 
   if (!auth) return <LoadingView />;
@@ -230,17 +251,17 @@ export default function App() {
           <div className="sticky top-[53px] z-30 -mx-1 py-1.5 sm:top-[62px] sm:hidden">
             <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 p-1.5 shadow-sm backdrop-blur">
               <TabsList aria-label="手机端后台菜单" className="grid h-auto w-full grid-cols-3 gap-1 border-0 bg-transparent p-0 shadow-none">
-                {Object.entries(views).map(([key, item]) => { const Icon = item.icon; const badge = <NavigationBadge count={actionCounts[key]} active={activeView === key} compact />; return <TabsTrigger key={key} value={key} title={item.title} className="relative h-11 min-w-0 w-full px-1.5"><Icon className="size-3.5 shrink-0" /><span className="truncate">{item.label}</span>{key === "sources" ? <NavigationAction count={actionCounts[key]} onActivate={() => openNavigationAction(key)}>{badge}</NavigationAction> : badge}</TabsTrigger>; })}
+                {Object.entries(views).map(([key, item]) => { const Icon = item.icon; const badge = <NavigationBadge count={actionCounts[key]} active={activeView === key} compact />; return <TabsTrigger key={key} value={key} title={item.title} className="relative h-11 min-w-0 w-full px-1.5"><Icon className="size-3.5 shrink-0" /><span className="truncate">{item.label}</span>{["sources", "knowledge"].includes(key) ? <NavigationAction count={actionCounts[key]} onActivate={() => openNavigationAction(key)}>{badge}</NavigationAction> : badge}</TabsTrigger>; })}
               </TabsList>
             </div>
           </div>
           <div className="sticky top-[62px] z-30 -mx-1 hidden overflow-x-auto px-1 py-1.5 scrollbar-none sm:block">
-            <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; const badge = <NavigationBadge count={actionCounts[key]} active={activeView === key} />; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span>{key === "sources" ? <NavigationAction count={actionCounts[key]} onActivate={() => openNavigationAction(key)}>{badge}</NavigationAction> : badge}</TabsTrigger>; })}</TabsList>
+            <TabsList aria-label="后台功能导航">{Object.entries(views).map(([key, item]) => { const Icon = item.icon; const badge = <NavigationBadge count={actionCounts[key]} active={activeView === key} />; return <TabsTrigger key={key} value={key} title={item.title}><Icon className="size-3.5 shrink-0" /><span>{item.label}</span>{["sources", "knowledge"].includes(key) ? <NavigationAction count={actionCounts[key]} onActivate={() => openNavigationAction(key)}>{badge}</NavigationAction> : badge}</TabsTrigger>; })}</TabsList>
           </div>
         </Tabs>
         {health && !health.aiConfigured && <AiAlert onConfigure={() => openGuide("ai")} />}
         <section aria-live="polite">
-          {loading ? <LoadingView /> : error ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onAction={runAction} onSubmitManualSource={submitManualSource} actionBusy={actionBusy} />}
+          {loading && !viewData ? <LoadingView /> : error && !viewData ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} reviewRequest={pendingActionView?.view === "knowledge" ? pendingActionView.requestedAt : null} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onOpenProduction={(id) => openPackage("production", id)} onAction={runAction} onSubmitManualSource={submitManualSource} actionBusy={actionBusy} />}
         </section>
         <footer className="flex flex-col gap-1 border-t border-slate-200/70 pt-4 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:pt-5"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
       </main>
@@ -305,21 +326,49 @@ function AuthField({ label, type = "text", value, onChange, autoComplete, hint }
 function DetailDialog({ detail, health, actionBusy, onOpenChange, onAction, onClose }) {
   return (
     <Dialog open={detail.open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className={detail.type === "production" ? "inset-x-0 bottom-0 top-auto max-h-[92dvh] w-full max-w-none translate-x-0 translate-y-0 rounded-b-none rounded-t-2xl p-4 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:w-[calc(100%-2rem)] sm:max-w-3xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:p-6" : undefined}>
         {detail.loading ? <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-slate-500"><LoaderCircle className="size-4 animate-spin" /> 正在加载详情</div>
           : detail.type === "guide" ? <GuideContent guide={detail.data.guide} />
             : detail.type === "strategy" ? <ContentStrategyDetail strategy={detail.data} />
             : detail.type === "source" ? <SourceDetail source={detail.data} actionBusy={actionBusy} onAction={onAction} onClose={onClose} />
-              : detail.type === "draft" ? <DraftDetail item={detail.data} health={health} actionBusy={actionBusy} onAction={onAction} onClose={onClose} /> : null}
+              : detail.type === "draft" ? <DraftDetail item={detail.data} health={health} actionBusy={actionBusy} onAction={onAction} onClose={onClose} />
+                : detail.type === "production" ? <ProductionDetail item={detail.data} health={health} actionBusy={actionBusy} onAction={onAction} onClose={onClose} /> : null}
       </DialogContent>
     </Dialog>
   );
 }
 
+function ProductionDetail({ item, health, actionBusy, onAction, onClose }) {
+  const state = item.production_state || {};
+  const preview = item.page_preview || {};
+  const publication = item.publication;
+  return <>
+    <DialogHeader><Badge variant={state.needs_human ? "warning" : "info"} className="w-max"><Layers3 className="size-3" /> 内容生产详情</Badge><DialogTitle className="break-words text-lg sm:text-xl">{item.draft_title || item.title || item.proposed_title || "未命名文章"}</DialogTitle><DialogDescription>{state.headline}。{state.explanation}</DialogDescription></DialogHeader>
+    <div className="mb-4 flex flex-wrap items-center gap-2"><StatusPill status={state.stage_status || "waiting"} /><Badge>完成 {state.progress?.completed || 0}/{state.progress?.total || 0}</Badge><Badge variant={state.auto_continue ? "success" : state.needs_human ? "warning" : "secondary"}>{state.auto_continue ? "会自动继续" : state.needs_human ? "等待人工" : "不会自动继续"}</Badge>{state.retry_state && <Badge variant="warning">模型重试 {state.retry_state.attempt}/{state.retry_state.max_attempts} · 剩余 {state.retry_state.remaining_auto_attempts}</Badge>}<FinalPreviewAction draftId={item.draft?.draft?.id || item.draft_id} available={Boolean(publication?.preview_url)} complete={Boolean(item.draft?.commercial_composition?.current && item.draft?.publish_composition?.status === "delivered")} />{publication?.edit_url && <Button size="sm" variant="outline" asChild><a href={publication.edit_url} target="_blank" rel="noreferrer"><ExternalLink />在 WordPress 编辑</a></Button>}</div>
+    {state.latest_error && <DetailCard title="准确失败原因" className="mb-3 border-rose-200 bg-rose-50/40"><p><strong>失败阶段：</strong>{state.latest_error.stage_label || state.current_stage_label}</p><p>{state.latest_error.reason}</p><details className="mt-2 rounded-lg border border-rose-100 bg-white/70 p-2"><summary className="cursor-pointer font-medium text-slate-700">技术详情</summary><dl className="mt-2 grid gap-1 break-all text-[10px] text-slate-600"><div>code: {state.latest_error.code || "—"}</div><div>job: {state.latest_error.job_id || "—"}</div><div>request: {state.latest_error.request_id || "—"}</div><div>job attempt: {state.latest_error.attempt ?? "—"} · model calls: {state.latest_error.model_call_count ?? "未知"}</div><div>class / kind: {state.latest_error.failure_class || "—"} / {state.latest_error.execution_kind || "legacy_unknown"}</div><div>substage / visual: {state.latest_error.substage || "—"} / {state.latest_error.visual_id || "—"}</div><div>provider/model: {state.latest_error.provider || "—"} / {state.latest_error.model || "—"}</div><div>服务请求：{providerRequestLabel(state.latest_error.provider_request_state)}</div><div>HTTP / provider code: {state.latest_error.http_status ?? "未知"} / {state.latest_error.provider_code || "—"}</div><div>模型执行：{modelExecutionLabel(state.latest_error.model_execution)}</div><div>证据依据：{state.latest_error.evidence_basis || "telemetry_missing"}</div>{(state.latest_error.technical_details?.validation?.errors || []).map((error,index)=><div key={`${error.code}:${error.path}:${index}`} className="mt-1 rounded bg-rose-50 p-1">{error.code || "VALIDATION_ERROR"} @ {error.path || "$"}{error.slot_key ? ` · slot ${error.slot_key}` : ""}{error.affiliate_asset_id ? ` · asset ${error.affiliate_asset_id}` : ""}{error.message ? ` · ${error.message}` : ""}</div>)}</dl></details></DetailCard>}
+    {state.latest_historical_error && <DetailCard title="历史失败（不阻塞当前恢复）" className="mb-3 border-amber-200 bg-amber-50/40"><p><strong>历史阶段：</strong>{state.latest_historical_error.stage_label}</p><p>这条旧失败缺少当前流水线要求的前置产物，系统不会再把它当作当前恢复目标。请按下方时间线显示的断点继续。</p><details className="mt-2 rounded-lg border border-amber-100 bg-white/70 p-2"><summary className="cursor-pointer font-medium text-slate-700">历史技术记录</summary><p className="mt-2 break-all text-[10px]">job: {state.latest_historical_error.job_id || "—"} · code: {state.latest_historical_error.code || "—"}</p></details></DetailCard>}
+    {(state.latest_error?.code === "DESTINATION_TOPIC_MISMATCH" || state.available_actions?.includes("confirm_destination_scope")) && <DetailCard title="更正目的地归属" className="mb-3 border-amber-200"><p>{state.available_actions?.includes("confirm_destination_scope") ? "目的地已更正；请确认更正后的生产范围，旧失败不会继续阻塞。" : "该错误不能靠重复重试解决。更正后系统会重新计算证据范围，并要求重新确认生产范围。"}</p><ContentRecovery candidateId={item.opportunity_id || item.candidate_id} onAction={onAction} actionBusy={actionBusy} /></DetailCard>}
+    {publication?.post_id && <DetailCard title="远端 WordPress 草稿保护" className="mb-3 border-amber-200 bg-amber-50/40"><p>这篇内容已经创建 WordPress 草稿。删除本地生产记录不会删除 WordPress 中的草稿。为避免记录失配，本次只能归档本地生产记录。</p></DetailCard>}
+    <DetailCard title="生产时间线" className="mb-3"><ol className="space-y-2">{(state.timeline || []).map((step) => <li key={step.key} className="flex min-w-0 items-start justify-between gap-3 rounded-lg border border-slate-100 px-3 py-2"><div className="min-w-0"><strong>{step.label}</strong><small>{step.dependencies?.length ? `已有 ${step.dependencies.length} 个前置依赖` : "生产入口"}{step.reused ? " · 已复用持久化产物" : ""}{step.historical_failure ? " · 旧失败已移入历史，不阻塞当前断点" : ""}</small></div><StatusPill status={step.status} /></li>)}</ol><p className="mt-3">{state.stage_status === "failed" ? `恢复目标：重新执行${state.recovery_target_label || state.current_stage_label}` : state.stage_status === "interrupted" ? `断点恢复目标：${state.recovery_target_label || state.next_stage_label || "无"}` : `下一步骤：${state.next_stage_label || "无"}`}</p><details className="mt-3 rounded-lg bg-slate-50 p-2"><summary className="cursor-pointer font-medium">展开内部 stage key</summary><ul className="mt-2 break-all text-[10px]">{(state.timeline || []).map((step)=><li key={step.key}>{step.label}: {step.key} · dependencies [{(step.dependencies || []).join(", ")}]</li>)}</ul></details></DetailCard>
+    <DetailCard title="页面编排预览" className="mb-3"><p>{preview.notice}</p>{preview.kind === "unavailable" ? <small>页面规划尚未生成；生产详情仍可正常查看。</small> : <><p className="mt-2">来源：{label(preview.kind)} · Contract {preview.contract_version || "—"} · Schema {preview.schema_version || "—"}</p><ol className="mt-3 space-y-2">{(preview.blocks || []).map((block) => <li key={`${block.order}:${block.component}`} className="rounded-lg border border-slate-100 px-3 py-2"><strong>{block.order}. {block.component}{block.variant ? ` · ${block.variant}` : ""}</strong><small>{block.heading || "无标题"} · Claims {block.claim_keys?.length || 0} · 来源章节 {block.source_section_ids?.length || 0}{block.commercial ? " · 商业模块" : ""}</small></li>)}</ol><small>Payload hash：{preview.payload_hash || "—"} · Contract checksum：{preview.contract_checksum || "—"}</small></>}</DetailCard>
+    {item.draft ? <details className="rounded-xl border border-slate-200 p-3"><summary className="cursor-pointer text-xs font-semibold text-slate-800">展开 Draft 正文、质量与商业层详情</summary><div className="mt-4"><DraftDetail item={item.draft} health={health} actionBusy={actionBusy} onAction={onAction} onClose={onClose} /></div></details> : <DetailCard title="Draft 尚未生成"><p>这不是详情缺失。你仍可查看已完成步骤、当前步骤、下一步骤、自动继续状态及历史记录。</p></DetailCard>}
+    {(item.history || []).length > 0 && <DetailCard title={`生产与审计历史（${item.history.length}）`} className="mt-3"><ul className="max-h-48 space-y-2 overflow-auto">{item.history.map((event, index) => <li key={`${event.kind}:${event.id}:${index}`}><strong>{label(event.action || event.failing_stage || event.kind)}</strong><small>{event.created_at} · {label(event.status || event.failure_code || event.kind)}</small></li>)}</ul></DetailCard>}
+  </>;
+}
+
+function modelExecutionLabel(value) {
+  return ({ confirmed:"已确认执行", rejected_before_generation:"接口在生成前拒绝", not_requested:"未发起", not_applicable:"本步骤不适用", cache_hit:"复用已有合格结果，本次未新增调用", unknown:"调用情况未知" })[value] || "未确认";
+}
+
+function providerRequestLabel(value) {
+  return ({ sent:"已发送并收到可归因结果",not_attempted:"本地前置检查拦截，未发起",not_applicable:"本步骤不需要外部调用",
+    cache_hit:"缓存复用，本次无新增外部请求",unknown:"调用情况未知" })[value] || "调用情况未知";
+}
+
 function SourceDetail({ source, actionBusy, onAction, onClose }) {
   const retry = async () => { if (await onAction(`/api/sources/${source.id}/retry`, { method: "POST" }, "已重新加入提取队列")) onClose(); };
   const processingEstimate = source.submission_metadata?.processingEstimate;
-  const awaitingManualStart = Boolean(processingEstimate?.requiresManualStart && !source.segments?.length && !source.claims?.length);
+  const blockedByHardLimit = processingEstimate?.processingClass === "blocked_hard_limit";
   const reviewEvidence = (decision, authorityLevel) => onAction(`/api/sources/${source.id}/evidence-review`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ decision, authorityLevel, note: "在来源详情中完成审核" }),
@@ -327,16 +376,18 @@ function SourceDetail({ source, actionBusy, onAction, onClose }) {
   const originalUrl = /^https?:\/\//.test(source.submitted_url || "") ? source.submitted_url : /^https?:\/\//.test(source.canonical_url || "") ? source.canonical_url : "";
   return <>
     <DialogHeader><Badge variant="info" className="w-max"><FileText className="size-3" /> 来源详情</Badge><DialogTitle>{source.title || "未命名来源"}</DialogTitle><DialogDescription>原始证据、上传文件来源、结构化提取、信息主张和编辑模式均可追溯到当前来源。</DialogDescription></DialogHeader>
-    <div className="mb-4 flex flex-wrap items-center gap-2">{originalUrl && <Button variant="secondary" size="sm" asChild><a href={originalUrl} target="_blank" rel="noreferrer"><ExternalLink /> 打开原文</a></Button>}<Button size="sm" disabled={actionBusy} onClick={retry}><RefreshCw className={cn(actionBusy && "animate-spin")} /> {awaitingManualStart ? "开始提取" : "重新提取"}</Button><Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => reviewEvidence("verified", 1)}><CheckCircle2 /> 核验为官方来源</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => reviewEvidence("unverified", 4)}>标记为未核验</Button><StatusPill status={source.status} /><Badge variant={source.verified_at ? "success" : "warning"}>权威等级 L{source.authority_level || 4} · {source.verified_at ? "已核验" : "未核验"}</Badge></div>
+    <div className="mb-4 flex flex-wrap items-center gap-2">{originalUrl && <Button variant="secondary" size="sm" asChild><a href={originalUrl} target="_blank" rel="noreferrer"><ExternalLink /> 打开原文</a></Button>}<Button size="sm" disabled={actionBusy || blockedByHardLimit} onClick={retry}><RefreshCw className={cn(actionBusy && "animate-spin")} /> 重新提取</Button><Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => reviewEvidence("verified", 1)}><CheckCircle2 /> 核验为官方来源</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => reviewEvidence("unverified", 4)}>标记为未核验</Button><StatusPill status={source.status} /><Badge variant={source.verified_at ? "success" : "warning"}>权威等级 L{source.authority_level || 4} · {source.verified_at ? "已核验" : "未核验"}</Badge></div>
     {source.last_error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><strong>处理失败</strong><p className="mt-1 leading-relaxed">{friendlyError(source.last_error)}</p><small>请先修正访问权限、模型配置或来源内容问题，再重新执行提取。</small></div>}
-    {processingEstimate && <DetailCard title="处理规模预估" className="mb-3"><p>预计提取调用 {processingEstimate.estimatedExtractionCalls} 次 · 文本分段 {processingEstimate.textSegments} 个 · 媒体 {processingEstimate.assetCount} 项 · 文件 {(processingEstimate.totalFileBytes / 1024 / 1024).toFixed(2)} MB</p><small>{awaitingManualStart ? `尚未调用模型；请确认范围后手动开始。${processingEstimate.manualStartReasons?.join("；") || ""}` : "仅按技术处理范围估算，不评价内容价值。"}</small></DetailCard>}
+    {processingEstimate && <DetailCard title="处理规模预估" className="mb-3"><p>预计提取请求 {processingEstimate.estimatedExtractionCalls} 次 · 文本分段 {processingEstimate.textSegments} 个 · 媒体 {processingEstimate.assetCount} 项 · 文件 {(processingEstimate.totalFileBytes / 1024 / 1024).toFixed(2)} MB</p><small>{blockedByHardLimit ? `已超过硬限制：${processingEstimate.blockReasons?.join("；") || "请检查来源文件"}` : `处理级别：${processingEstimate.processingClass || "normal"}，系统会自动排队。`}</small></DetailCard>}
+    {source.status_projection && <DetailCard title="当前处理阶段" className="mb-3"><p>{label(source.status_projection.current_stage)} · 捕获版本 v{source.status_projection.capture_version}</p><small>媒体 {source.status_projection.media_ready_count}/{source.status_projection.media_count} · 分段 {source.status_projection.extracted_segment_count}/{source.status_projection.segment_count} · 覆盖 {source.status_projection.audited_segment_count}/{source.status_projection.segment_count} · Experience {label(source.status_projection.experience_status || "pending")}</small></DetailCard>}
+    {source.timeline?.length>0 && <DetailCard title="来源处理时间线" className="mb-3"><ul className="max-h-48 space-y-2 overflow-auto">{source.timeline.slice(0,30).map((event,index)=><li key={`${event.kind}:${event.stage}:${event.occurred_at}:${index}`}><strong>{label(event.stage)}</strong><small>{label(event.status)} · {event.occurred_at}{event.detail?` · ${friendlyError(event.detail)}`:""}</small></li>)}</ul></DetailCard>}
     <div className="mb-3 grid gap-3 md:grid-cols-2"><DetailCard title="媒体原件耐久化"><p>{source.media_manifest?.mediaDurability?.originalsStored || 0} / {source.media_manifest?.mediaDurability?.discovered || 0} 个原件已保存</p><small>状态：{source.media_manifest?.mediaDurability?.status || "等待发现"} · 浏览器修复 {source.media_manifest?.mediaDurability?.browserRepairRequired || 0}</small></DetailCard><DetailCard title={`旅行经验层（${source.experience_blocks?.length || 0}）`}>{source.experience_blocks?.length ? <ul className="space-y-2">{source.experience_blocks.map((block)=><li key={block.id}><strong>{block.title}</strong><small>{label(block.type)} · 序列 {block.sequence.length} · 决策 {block.decision_logic.length} · 证据跨度 {block.evidence_span_ids.length}</small></li>)}</ul>:<p>尚无可追溯 Experience Block；写作者不得编造第一人称经历。</p>}</DetailCard></div>
     <div className="grid gap-3 md:grid-cols-2"><DetailCard title="结构化来源"><p>{source.structured?.summary || "等待提取"}</p><small>目的地：{source.structured?.destination_name || "—"} · 置信度 {source.structured?.confidence ?? "—"}</small></DetailCard><DetailCard title="编辑蓝图"><p>{source.blueprint?.angle === "pending-ai-analysis" ? "等待 AI 分析" : source.blueprint?.angle || "等待提取"}</p><small>{source.blueprint?.format === "unclassified" ? "待分类" : source.blueprint?.format || "—"}</small></DetailCard>{source.files?.length > 0 && <DetailCard title={`原始文件（${source.files.length}）`} className="md:col-span-2"><ul className="space-y-1">{source.files.map((file) => <li key={file.id}><strong className="text-xs text-slate-700">{file.original_filename}</strong><small className="ml-2">{file.mime_type} · {(file.size_bytes / 1024 / 1024).toFixed(2)} MB · SHA-256 {file.sha256.slice(0, 12)}…</small></li>)}</ul></DetailCard>}{source.segments?.length > 0 && <SegmentCoverageList source={source} actionBusy={actionBusy} onAction={onAction} onClose={onClose} />}<DetailCard title={`信息主张（${source.claims.length}）`} className="md:col-span-2">{source.claims.length ? <ul className="space-y-3">{source.claims.map((claim) => <li key={claim.id} className={claim.lifecycle_status === "excluded" ? "opacity-50" : ""}><div className="flex items-start justify-between gap-3"><div><strong className="text-xs text-slate-800">{claim.subject} {claim.predicate}</strong><p>{claim.value_text}</p><small>“{claim.source_quote}”</small></div><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => onAction(`/api/claims/${claim.id}/${claim.lifecycle_status === "excluded" ? "restore" : "exclude"}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ reason: "后台人工管理" }) }, claim.lifecycle_status === "excluded" ? "信息主张已恢复" : "信息主张已排除并将重建知识库")}>{claim.lifecycle_status === "excluded" ? "恢复" : "排除"}</Button></div></li>)}</ul> : <p>尚未提取信息主张。</p>}</DetailCard><DetailCard title="原始采集文本" className="md:col-span-2"><pre className="max-h-60 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-slate-500">{source.raw_text}</pre></DetailCard></div>
   </>;
 }
 
 function DraftDetail({ item, health, actionBusy, onAction, onClose }) {
-  const { draft, review, commercial_composition: composition } = item;
+  const { draft, review, commercial_composition: composition, publish_composition: publishComposition, publication } = item;
   const [seoTitle, setSeoTitle] = useState(draft.seo?.meta_title || draft.title || "");
   const [seoDescription, setSeoDescription] = useState(draft.meta_description || "");
   const titleLength = [...seoTitle].length;
@@ -350,17 +401,38 @@ function DraftDetail({ item, health, actionBusy, onAction, onClose }) {
   };
   return <>
     <DialogHeader><Badge variant="info" className="w-max"><Layers3 className="size-3" /> 文章草稿 · 修订版 {draft.revision}</Badge><DialogTitle>{draft.title}</DialogTitle><DialogDescription>面向读者的正文与内部证据台账、商业内容层保持分离。</DialogDescription></DialogHeader>
-    <div className="mb-4 flex flex-wrap items-center gap-2"><StatusPill status={draft.status} /><Badge>质量审核 {review ? `${Math.round(review.score)} / 100` : "待处理"}</Badge>{review?.passed && health?.wordpressConfigured && draft.status === "ready_for_wordpress" && <Button size="sm" disabled={actionBusy} onClick={push}><Send /> 发送到 WordPress 草稿箱</Button>}</div>
+    <div className="mb-4 flex flex-wrap items-center gap-2"><StatusPill status={draft.status} /><Badge>质量审核 {review ? `${Math.round(review.score)} / 100` : "待处理"}</Badge>{review?.passed && health?.wordpressConfigured && draft.status === "ready_for_wordpress" && <Button size="sm" disabled={actionBusy} onClick={push}><Send /> 发送到 WordPress 草稿箱</Button>}<FinalPreviewAction draftId={draft.id} available={Boolean(publication?.preview_url)} complete={Boolean(composition?.current && publishComposition?.status === "delivered")} />{publication?.edit_url && <Button size="sm" variant="outline" asChild><a href={publication.edit_url} target="_blank" rel="noreferrer"><ExternalLink />在 WordPress 编辑</a></Button>}</div>
     <ContentRecovery candidateId={item.candidate?.id} onAction={onAction} actionBusy={actionBusy} />
     <ContentQualityStatus operation={item.operation} actionBusy={actionBusy} onRetry={retryFailedStage} onAction={onAction} />
     <DetailCard title="编辑反馈与金标" className="mb-3"><div className="flex flex-wrap gap-2">{["满意","AI味重","太啰嗦","信息太平","像数据库","结构不好","很好"].map((feedback)=><Button key={feedback} size="sm" variant="outline" disabled={actionBusy} onClick={()=>onAction(`/api/drafts/${draft.id}/editorial-feedback`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({feedback})},`已记录“${feedback}”，后续组装与叙事规划会参考。`)}>{feedback}</Button>)}<Button size="sm" disabled={actionBusy} onClick={()=>onAction(`/api/drafts/${draft.id}/golden`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({principles:["evidence-led","concise","traveler-decision-focused"]})},"已标记为金标文章。")}>标记金标</Button></div></DetailCard>
     {review?.issues?.length > 0 && <DetailCard title="质量审核问题" className="mb-3 border-amber-200 bg-amber-50/40"><ul className="space-y-2">{review.issues.map((issue, index) => <li key={`${issue.message}-${index}`} className="text-xs text-amber-900"><QualityIssue issue={issue} /></li>)}</ul></DetailCard>}
-    <div className="grid gap-3"><DetailCard title="读者正文（Markdown）"><pre className="max-h-[420px] overflow-auto whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">{draft.body_markdown}</pre></DetailCard><DetailCard title="SEO / GEO 编辑预览"><label className="block text-xs font-semibold text-slate-700">页面标题<input className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-normal" value={seoTitle} maxLength={200} onChange={(event) => setSeoTitle(event.target.value)} /></label><p className={titleLength > 60 ? "text-amber-700" : "text-slate-500"}>{titleLength} 个字符{titleLength > 60 ? " · 超出编辑建议长度，请人工判断，不会机械截断" : " · 在编辑建议范围内"}</p><label className="mt-3 block text-xs font-semibold text-slate-700">页面描述<textarea className="mt-1 min-h-20 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-normal" value={seoDescription} maxLength={500} onChange={(event) => setSeoDescription(event.target.value)} /></label><p className={descriptionLength > 160 ? "text-amber-700" : "text-slate-500"}>{descriptionLength} 个字符{descriptionLength > 160 ? " · 超出编辑建议长度，请人工判断，不会机械截断" : " · 在编辑建议范围内"}</p><p className="mt-2 text-[11px] text-slate-500">仅供编辑预览；搜索引擎可能改写或截断标题与描述，不承诺展示方式或点击率。</p><div className="mt-3 flex items-center gap-2"><Button size="sm" variant="outline" disabled={actionBusy || !seoTitle.trim() || !seoDescription.trim()} onClick={saveSeo}>保存并重新检查</Button><span className="text-[11px] text-slate-500">正文与证据提取不会重跑。</span></div><p className="mt-3"><strong>核心关键词：</strong> {draft.seo?.focus_keyword || "待处理"}</p><p><strong>核心要点：</strong> {draft.seo?.key_takeaways?.length || 0} · <strong>常见问题：</strong> {draft.seo?.faqs?.length || 0} · <strong>JSON-LD：</strong> {draft.schema_jsonld?.["@graph"]?.length || 0} 个实体</p></DetailCard><DetailCard title={`原创配图计划（${draft.visuals?.length || 0}）`}><ul className="space-y-2">{(draft.visuals || []).map((visual) => <li key={visual.id} className="rounded-lg bg-slate-50 px-3 py-2"><div className="flex items-center justify-between gap-3"><strong>{label(visual.placement)}</strong><StatusPill status={visual.status} /></div><p className="mt-1">{visual.alt_text}</p>{visual.media_url && <a className="mt-1 inline-block text-[11px] text-blue-600 hover:underline" href={visual.media_url} target="_blank" rel="noreferrer">打开生成图片</a>}</li>)}</ul></DetailCard><DetailCard title="内部证据台账"><p>{draft.evidence_ledger.length} 个已映射章节 · {draft.unresolved_conflicts.length} 项未解决冲突 · {draft.verification_notes.length} 项时效性核验备注</p></DetailCard><DetailCard title="商业内容层"><p>{composition ? `${composition.offer_ids.length} 个商品 · ${label(composition.status)}` : "等待编排"}</p>{composition?.status === "composed" && <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-slate-600">{composition.publishable_body_markdown.slice(draft.body_markdown.length).trim()}</pre>}</DetailCard></div>
+    <div className="grid gap-3"><DetailCard title="读者正文（Markdown）"><pre className="max-h-[420px] overflow-auto whitespace-pre-wrap font-serif text-sm leading-7 text-slate-700">{draft.body_markdown}</pre></DetailCard><DetailCard title="SEO / GEO 编辑预览"><label className="block text-xs font-semibold text-slate-700">页面标题<input className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-normal" value={seoTitle} maxLength={200} onChange={(event) => setSeoTitle(event.target.value)} /></label><p className={titleLength > 60 ? "text-amber-700" : "text-slate-500"}>{titleLength} 个字符{titleLength > 60 ? " · 超出编辑建议长度，请人工判断，不会机械截断" : " · 在编辑建议范围内"}</p><label className="mt-3 block text-xs font-semibold text-slate-700">页面描述<textarea className="mt-1 min-h-20 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-normal" value={seoDescription} maxLength={500} onChange={(event) => setSeoDescription(event.target.value)} /></label><p className={descriptionLength > 160 ? "text-amber-700" : "text-slate-500"}>{descriptionLength} 个字符{descriptionLength > 160 ? " · 超出编辑建议长度，请人工判断，不会机械截断" : " · 在编辑建议范围内"}</p><p className="mt-2 text-[11px] text-slate-500">仅供编辑预览；搜索引擎可能改写或截断标题与描述，不承诺展示方式或点击率。</p><div className="mt-3 flex items-center gap-2"><Button size="sm" variant="outline" disabled={actionBusy || !seoTitle.trim() || !seoDescription.trim()} onClick={saveSeo}>保存并重新检查</Button><span className="text-[11px] text-slate-500">正文与证据提取不会重跑。</span></div><p className="mt-3"><strong>核心关键词：</strong> {draft.seo?.focus_keyword || "待处理"}</p><p><strong>核心要点：</strong> {draft.seo?.key_takeaways?.length || 0} · <strong>常见问题：</strong> {draft.seo?.faqs?.length || 0} · <strong>JSON-LD：</strong> {draft.schema_jsonld?.["@graph"]?.length || 0} 个实体</p></DetailCard><DetailCard title={`视觉资产（${draft.visuals?.length || 0}）`}><ul className="space-y-2">{(draft.visuals || []).map((visual) => <li key={visual.id} className="rounded-lg bg-slate-50 px-3 py-2"><div className="flex items-center justify-between gap-3"><strong>{label(visual.placement)} · {label(visual.acquisition_strategy)}</strong><StatusPill status={visual.status} /></div><p className="mt-1">{visual.alt_text}</p>{visual.media_url && <a className="mt-1 inline-block text-[11px] text-blue-600 hover:underline" href={visual.media_url} target="_blank" rel="noreferrer">打开视觉资产</a>}</li>)}</ul></DetailCard><DetailCard title="内部证据台账"><p>{draft.evidence_ledger.length} 个已映射章节 · {draft.unresolved_conflicts.length} 项未解决冲突 · {draft.verification_notes.length} 项时效性核验备注</p></DetailCard><DetailCard title="商业内容层"><p>{composition ? `${composition.asset_ids?.length || 0} 个已选资产 · ${label(composition.outcome || composition.status)}` : "等待编排"}</p>{composition?.reason_code && <small>原因：{composition.reason_code}</small>}{composition?.diagnostics?.intents?.length > 0 && <small>检测到 {composition.diagnostics.intent_count} 个意图；合格资产 {composition.diagnostics.intents.reduce((sum,item)=>sum+(item.eligibleCount || 0),0)} 个。</small>}{(composition?.slots || []).map((slot)=><p key={slot.slot_key} className="mt-2 break-all rounded bg-slate-50 p-2 text-[11px]">资产 {slot.affiliate_asset_id} · {slot.slot_key} · {label(slot.component_type)} · {label(slot.placement)}</p>)}{composition?.status === "composed" && <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-slate-600">{composition.publishable_body_markdown.slice(draft.body_markdown.length).trim()}</pre>}</DetailCard></div>
   </>;
 }
 
 function DetailCard({ title, className, children }) {
   return <Card className={cn("p-4 shadow-none", className)}><h3 className="mb-2 text-xs font-semibold text-slate-900">{title}</h3><div className="text-xs leading-relaxed text-slate-600 [&_small]:mt-2 [&_small]:block [&_small]:text-[10px] [&_small]:text-slate-400 [&_p]:leading-relaxed">{children}</div></Card>;
+}
+
+function FinalPreviewAction({ draftId, available, complete = false }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  if (!available || !draftId) return null;
+  const open = async () => {
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) { setMessage("浏览器阻止了新窗口，请允许弹窗后重试。"); return; }
+    popup.opener = null;
+    setBusy(true); setMessage("");
+    try {
+      const result = await api(`/api/drafts/${encodeURIComponent(draftId)}/final-preview`, { method:"POST" });
+      popup.location.replace(result.url);
+      if (result.mode === "wordpress_login_required") setMessage("需要先登录 WordPress；登录后会进入这篇草稿的最终预览。");
+    } catch (caught) {
+      popup.close();
+      setMessage(friendlyError(caught));
+    } finally { setBusy(false); }
+  };
+  return <span className="inline-flex flex-col items-start"><Button type="button" size="sm" variant={complete ? "default" : "outline"} disabled={busy} onClick={open}><ExternalLink />{busy ? "正在准备预览…" : complete ? "预览最终页面" : "诊断预览 / 待修复"}</Button>{message && <small className="max-w-72 text-[10px] text-amber-700" role="status">{message}</small>}</span>;
 }
 
 function SegmentCoverageList({ source, actionBusy, onAction, onClose }) {

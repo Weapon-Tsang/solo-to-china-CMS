@@ -66,8 +66,11 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
 });
 
 test("content workspace explains records, failures, and bounded automatic repair before opening details", () => {
-  for (const text of ["已启动的生产记录", "已生成正文", "需要处理", "结果与处理"]) {
+  for (const text of ["等待开始", "生产中", "已生成正文", "需要处理", "进度与下一步", "Draft 生成前即可查看生产详情", "系统会自动继续"]) {
     assert.ok(viewsSource.includes(text), `内容队列缺少直白说明：${text}`);
+  }
+  for (const text of ["重试失败步骤", "从断点继续", "删除生产记录", "不会删除原始来源", "已有远端 WordPress 草稿时禁止删除"]) {
+    assert.ok(viewsSource.includes(text), `内容操作缺少边界说明：${text}`);
   }
   for (const text of ["未通过原因：", "自动处理：", "已自动修复", "需要补齐真实输入"]) {
     assert.ok(qualityStatusSource.includes(text), `内容行缺少失败或自修复说明：${text}`);

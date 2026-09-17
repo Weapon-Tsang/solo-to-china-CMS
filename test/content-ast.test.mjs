@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildContentAst, composeFirstTimeGuideFromAst, composePageFromAst, renderContentAstMarkdown } from "../src/content-blocks.mjs";
+import { buildContentAst, composeFirstTimeGuideFromAst, composePageFromAst, markdownToContentBlocks,
+  reconcileContentAstLedger, renderContentAstMarkdown } from "../src/content-blocks.mjs";
 import { validateJsonSchema } from "../src/frontend-contract.mjs";
 import { synchronizeSchemaWithPage } from "../src/publish-page.mjs";
 import { synchronizeSeoMetadata, validateSeoGeoArtifact } from "../src/seo-geo.mjs";
@@ -105,9 +106,13 @@ test("production atomic components compose every content type without a model or
   assert.equal(page.model, "deterministic-content-ast-compat-2");
   assert.deepEqual([...new Set(page.output.blocks.map((block) => block.type))], ["heading", "paragraph", "list", "faq"]);
   assert.equal(page.output.blocks.some((block) => block.type === "articleSection"), false);
-  assert.equal(page.output.metadata.contentType, "itinerary");
+  assert.equal(page.output.metadata.contentType, "travel-guide");
   assert.equal(page.provenance.entries.length, page.output.blocks.length);
   assert.deepEqual(validateJsonSchema(page.output, productionPageSchema), []);
+
+  const refreshed = composePageFromAst(ast, { components }, productionPageSchema, null, "stable-page-identity");
+  assert.equal(refreshed.output.metadata.pageId, "stable-page-identity",
+    "incremental page recomposition must preserve the existing WordPress-bound page identity");
 });
 
 test("an unlisted section does not inherit the previous section evidence and ordered lists stay ordered", () => {
@@ -121,6 +126,25 @@ test("an unlisted section does not inherit the previous section evidence and ord
   assert.deepEqual(editorialList.fact_refs, []);
   assert.deepEqual(editorialList.source_section_ids, []);
   assert.match(renderContentAstMarkdown(ast), /1\. First\n2\. Second/);
+});
+
+test("Markdown tables and decorated list labels become readable Contract-native lists", () => {
+  const body = "## Transit\n\n| Mode | Typical Cost | Best use |\n| :— | :— | :— |\n| Taxi | 20–30 RMB | **Steep climbs** |\n| Metro | 2–7 RMB | Long crossings |\n\n- **Jiefangbei:** Start here";
+  const parsed = markdownToContentBlocks(body);
+  assert.deepEqual(parsed.map((block) => block.type), ["heading", "table", "list"]);
+  assert.deepEqual(parsed[2].items, ["**Jiefangbei:** Start here"]);
+  const ast = buildContentAst({ draft:{ title:"Transit", slug:"transit", body_markdown:body },
+    brief:{ id:"brief-table", content_type:"itinerary" } });
+  const components = [
+    { id:"heading", status:"stable", variants:["section"], schema:{ properties:{ text:{}, level:{} } } },
+    { id:"paragraph", status:"stable", variants:["default"], schema:{ properties:{ content:{} } } },
+    { id:"list", status:"stable", variants:["unordered","ordered"], schema:{ properties:{ items:{} } } },
+  ];
+  const page = composePageFromAst(ast, { components }, pageSchema);
+  const lists = page.output.blocks.filter((block) => block.type === "list");
+  assert.equal(lists[0].data.items[0], "Taxi — Typical Cost: 20–30 RMB; Best use: Steep climbs");
+  assert.equal(lists[1].data.items[0], "Jiefangbei: Start here");
+  assert.doesNotMatch(JSON.stringify(page.output.blocks), /\*\*|\| :?—/);
 });
 
 test("media placements become stable AST nodes with retained source references", () => {
@@ -153,4 +177,147 @@ test("a stable image component consumes AST media without flattening the surroun
   assert.equal(imageBlock.data.media_id, 88);
   assert.equal(imageBlock.data.alt, "Museum entrance");
   assert.ok(page.output.blocks.some((block) => block.type === "paragraph"));
+});
+
+test("atomic AST assigns a claim only to the block that carries its fact and reconciles ledger node ids", () => {
+  const scopedDraft = { ...draft,
+    body_markdown: "### Tickets\n\nBuy online before arrival.\n\nAdmission costs CNY 50 on weekdays.\n\nUse the east entrance.",
+    evidence_ledger: [{ section_id: "section_ticket", section: "Tickets",
+      content_node_ids: ["node_old_one", "node_old_two", "node_unused"],
+      claim_keys: ["museum.ticket.price"], source_ids: ["source-1"] }],
+  };
+  const facts = [{ normalized_key: "museum.ticket.price", subject: "Museum admission",
+    preferred_value: "CNY 50", evidence: [{ source_id: "source-1", value: "CNY 50", qualifiers: ["weekdays"] }] }];
+  const ast = buildContentAst({ draft: scopedDraft, brief: { id: "brief-scoped" }, facts });
+  const prose = ast.nodes.filter((node) => node.type === "paragraph");
+  assert.deepEqual(prose.map((node) => node.fact_refs.length), [0, 1, 0]);
+  assert.equal(prose[1].fact_refs[0], "museum.ticket.price");
+  const reconciled = reconcileContentAstLedger(ast, scopedDraft.evidence_ledger);
+  assert.deepEqual(reconciled[0].content_node_ids, [prose[1].id]);
+  assert.ok(reconciled[0].content_node_ids.every((id) => ast.nodes.some((node) => node.id === id)));
+});
+
+test("compact values and meaningful predicate phrases select the factual paragraph instead of a nearby subject mention", () => {
+  const scopedDraft = { ...draft,
+    body_markdown: "## Line 1\n\nLine 1 connects Hongyadong with downtown.\n\nHongyadong is open 24/7. Take Metro Line 1 to Xiaoshizi Station.",
+    evidence_ledger: [{ section_id:"line-one", section:"Line 1", claim_keys:["hongyadong.hours", "hongyadong.metro"], source_ids:["source-1"] }],
+  };
+  const facts = [
+    { normalized_key:"hongyadong.hours", subject:"Hongyadong", predicate:"opening_hours", preferred_value:"24/7",
+      evidence:[{ source_id:"source-1", value:"24/7", qualifiers:[] }] },
+    { normalized_key:"hongyadong.metro", subject:"Hongyadong", predicate:"nearest_metro_station", preferred_value:"小什字站 (Line 1)",
+      evidence:[{ source_id:"source-1", value:"小什字站", qualifiers:["Line 1"] }] },
+  ];
+  const ast = buildContentAst({ draft:scopedDraft, brief:{ id:"brief-compact" }, facts });
+  const prose = ast.nodes.filter((node) => node.type === "paragraph");
+  assert.deepEqual(prose[0].fact_refs, []);
+  assert.deepEqual(new Set(prose[1].fact_refs), new Set(["hongyadong.hours", "hongyadong.metro"]));
+});
+
+test("generic workflow qualifiers never project an unmatched claim onto an arbitrary paragraph", () => {
+  const scopedDraft = { ...draft, body_markdown:"## Day 1\n\nDay 1 stays inside Yuzhong District.",
+    evidence_ledger:[{ section_id:"day-one", section:"Day 1", claim_keys:["route.walk.duration"], source_ids:["source-1"] }] };
+  const facts = [{ normalized_key:"route.walk.duration", subject:"山城步道到解放碑路线", predicate:"typical_duration_minutes",
+    preferred_value:"< 120", evidence:[{ source_id:"source-1", value:"< 120", qualifiers:["walking", "community_estimate"] }] }];
+  const ast = buildContentAst({ draft:scopedDraft, brief:{ id:"brief-unmatched" }, facts });
+  assert.deepEqual(ast.nodes.find((node) => node.type === "paragraph").fact_refs, []);
+  assert.deepEqual(reconcileContentAstLedger(ast, scopedDraft.evidence_ledger)[0].content_node_ids, []);
+});
+
+test("draft ledger reconciliation drops planned facts that visible prose never asserts", () => {
+  const scopedDraft = { ...draft, body_markdown: "## Tickets\n\nAdmission is free.", evidence_ledger: [{
+    section_id: "tickets", section: "Tickets", content_node_ids: [],
+    claim_keys: ["museum.fee", "museum.hours"], source_ids: ["fee-source", "hours-source"],
+  }] };
+  const facts = [
+    { normalized_key: "museum.fee", subject: "Museum", predicate: "admission_fee", preferred_value: "CNY 0",
+      evidence: [{ source_id: "fee-source", value: "CNY 0" }] },
+    { normalized_key: "museum.hours", subject: "Museum", predicate: "opening_hours", preferred_value: "09:00-17:00",
+      evidence: [{ source_id: "hours-source", value: "09:00-17:00" }] },
+  ];
+  const ast = buildContentAst({ draft: scopedDraft, brief: { id: "brief-ledger" }, facts });
+  const [entry] = reconcileContentAstLedger(ast, scopedDraft.evidence_ledger);
+  assert.deepEqual(entry.claim_keys, ["museum.fee"]);
+  assert.deepEqual(entry.source_ids, ["fee-source"]);
+  assert.equal(entry.content_node_ids.length, 1);
+});
+
+test("answer-first prose before the first H2 belongs to the first planned evidence section", () => {
+  const scopedDraft = { ...draft, body_markdown: "Admission is free.\n\n## Route\n\nTake the signed exit.", evidence_ledger: [
+    { section_id: "answer", section: "Quick answer", content_node_ids: [], claim_keys: ["museum.fee"], source_ids: ["fee-source"] },
+    { section_id: "route", section: "Route", content_node_ids: [], claim_keys: [], source_ids: [] },
+  ] };
+  const facts = [{ normalized_key: "museum.fee", subject: "Museum", predicate: "admission_fee", preferred_value: "CNY 0",
+    evidence: [{ source_id: "fee-source", value: "CNY 0" }] }];
+  const ast = buildContentAst({ draft: scopedDraft, brief: { id: "brief-intro" }, facts });
+  const [entry] = reconcileContentAstLedger(ast, scopedDraft.evidence_ledger);
+  assert.deepEqual(entry.claim_keys, ["museum.fee"]);
+  assert.equal(ast.nodes.find((node) => node.type === "paragraph").source_section_ids[0], "answer");
+});
+
+test("a subject mention without its protected numeric value does not assert the fee fact", () => {
+  const scopedDraft = { ...draft, body_markdown: "## Buses\n\nPublic buses run on surface roads.", evidence_ledger: [{
+    section_id: "buses", section: "Buses", content_node_ids: [], claim_keys: ["bus.fare"], source_ids: ["fare-source"],
+  }] };
+  const facts = [{ normalized_key: "bus.fare", subject: "Public buses", predicate: "fare", preferred_value: "CNY 2",
+    evidence: [{ source_id: "fare-source", value: "CNY 2" }] }];
+  const ast = buildContentAst({ draft: scopedDraft, brief: { id: "brief-fee" }, facts });
+  assert.deepEqual(reconcileContentAstLedger(ast, scopedDraft.evidence_ledger)[0].claim_keys, []);
+});
+
+test("deterministic composition consumes the page plan and records readable substitutions", () => {
+  const plannedDraft = { title:"Two-day route", slug:"two-day-route", meta_description:"A compact route.",
+    body_markdown:"## Quick answer\n\nStay in one area on day one.\n\n## Route\n\n1. Morning: Start at the old city\n2. Evening: Finish near the metro",
+    evidence_ledger:[
+      { section_id:"answer", section:"Quick answer", content_node_ids:["node-answer"], claim_keys:[], source_ids:[] },
+      { section_id:"route", section:"Route", content_node_ids:["node-route"], claim_keys:[], source_ids:[] },
+    ] };
+  const ast = buildContentAst({ draft:plannedDraft, brief:{ id:"brief-planned", content_type:"itinerary" } });
+  const components = [
+    { id:"heading", status:"stable", variants:["section"], schema:{ properties:{ text:{},level:{} } } },
+    { id:"paragraph", status:"stable", variants:["default"], schema:{ properties:{ content:{} } } },
+    { id:"list", status:"stable", variants:["unordered","ordered"], schema:{ properties:{ items:{} } } },
+    { id:"quick_answer", status:"stable", variants:["default"], schema:{ properties:{ answer:{},anchor:{} } } },
+    { id:"route_timeline", status:"stable", variants:["default"], schema:{ properties:{ items:{},anchor:{} } } },
+  ];
+  const plan = { blocks:[
+    { content_node_id:"node-answer", type:"quick_answer", semantic_role:"answer the route choice" },
+    { content_node_id:"node-route", type:"route_timeline", semantic_role:"show sequence" },
+  ] };
+  const page = composePageFromAst(ast, { components }, pageSchema, plan);
+  assert.deepEqual(page.output.blocks.filter((block) => !["heading"].includes(block.type)).map((block) => block.type),
+    ["quick_answer", "route_timeline"]);
+  assert.equal(page.provenance.planReconciliation.omitted.length, 0);
+  assert.equal(page.provenance.decisions.every((item) => item.status === "adopted"), true);
+  assert.equal(page.model, "deterministic-content-ast-reading-3");
+});
+
+test("semantic route and fact components split only the first colon", () => {
+  const timedDraft={title:"Opening plan",slug:"opening-plan",body_markdown:"## Timing\n\n- Monday: 09:00–17:00; last entry: 16:30",
+    evidence_ledger:[]};
+  const ast=buildContentAst({draft:timedDraft,brief:{id:"brief-colons",content_type:"itinerary"}});
+  const components=[
+    {id:"heading",status:"stable",variants:["section"],schema:{properties:{text:{},level:{}}}},
+    {id:"paragraph",status:"stable",variants:["default"],schema:{properties:{content:{}}}},
+    {id:"list",status:"stable",variants:["unordered","ordered"],schema:{properties:{items:{}}}},
+    {id:"route_timeline",status:"stable",variants:["default"],schema:{properties:{items:{},anchor:{}}}},
+  ];
+  const listNode=ast.nodes.find((node)=>node.type==="list");
+  const page=composePageFromAst(ast,{components},pageSchema,{blocks:[{
+    content_node_id:listNode.id,type:"route_timeline",semantic_role:"preserve the full operating-time instruction",
+  }]});
+  assert.deepEqual(page.output.blocks.find((block)=>block.type==="route_timeline").data.items,[{
+    title:"Monday",detail:"09:00–17:00; last entry: 16:30",
+  }]);
+});
+
+test("supporting media follows its semantic section when earlier paragraphs change", () => {
+  const visual={id:"food-photo",image_role:"support",placement:"mid_article",image_subject:"spicy Chongqing noodles",
+    alt_text:"Bowl of spicy Chongqing noodles",caption:"Spicy Chongqing noodles",factual_image_required:true};
+  const make=(intro)=>buildContentAst({draft:{title:"Food guide",slug:"food-guide",body_markdown:`${intro}\n\n## Transport\n\nTake the metro.\n\n## Noodles\n\nOrder spicy Chongqing noodles at a suitable restaurant.`,evidence_ledger:[]},
+    brief:{id:"brief-food",content_type:"food_guide"},visuals:[visual]});
+  for (const ast of [make("Direct answer."),make("Direct answer.\n\nExtra context.\n\nAnother useful note.")]) {
+    const mediaIndex=ast.nodes.findIndex((node)=>node.type==="media");
+    assert.match(ast.nodes[mediaIndex - 1].visible_text,/spicy Chongqing noodles/i);
+  }
 });

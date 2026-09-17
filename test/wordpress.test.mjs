@@ -60,6 +60,21 @@ test("media progress is persisted per image and retry skips an already uploaded 
   assert.equal(mediaCalls, 3, "retry uploads only the previously failed image");
 });
 
+test("WordPress media upload preserves CMS Source provenance metadata", async () => {
+  const adapter = new WordPressDraftAdapter({ siteUrl: "https://site.test", username: "editor", applicationPassword: "password" },
+    async () => Response.json({ id: 121, source_url: "https://site.test/uploads/localized.png", mime_type: "image/png",
+      media_details: { width: 1600, height: 900 } }, { status: 201 }));
+  const sourceProvenance = { source_asset_id: "asset-121", original_stored: true, project_owner_confirmed: true };
+  const [uploaded] = await adapter.resolveVisualMedia([{ id: "visual-121", status: "generated", media_path: process.argv[1],
+    source_asset_id: "asset-121", alt_text: "Authorized Chongqing street scene", image_type: "real_world_photo",
+    acquisition_strategy: "localize_source_image", media_metadata: { authorization_policy: "project_source_media_full_authorization",
+      localized_file: true, localized_from_source_asset_id: "asset-121", source_provenance: sourceProvenance } }]);
+  assert.deepEqual(uploaded.metadata.source_provenance, sourceProvenance);
+  assert.equal(uploaded.metadata.authorization_policy, "project_source_media_full_authorization");
+  assert.equal(uploaded.metadata.localized_from_source_asset_id, "asset-121");
+  assert.match(uploaded.metadata.sha256, /^[a-f0-9]{64}$/);
+});
+
 test("WordPress adapter refuses to overwrite a post after a human publishes it", async () => {
   const fetchStub = async () => new Response(JSON.stringify({ id: 7, status: "publish" }), { status: 200, headers: { "content-type": "application/json" } });
   const adapter = new WordPressDraftAdapter({
@@ -230,6 +245,23 @@ test("Contract-aware adapter sends the exact Publish Package to the STC CMS Arti
   assert.equal(result.previewUrl, "https://site.test/?p=71&preview=true");
 });
 
+test("Contract delivery requires an exact WordPress commercial slot receipt", async () => {
+  const publishPackage={contract:{},page:{metadata:{pageId:"draft-commercial",slug:"guide"},blocks:[{
+    type:"affiliate_booking_card",variant:"contextual",
+    data:{slot_key:"contextual:hotel:one",placement:"contextual",affiliate_asset_id:"asset-hotel"},
+  }]},publication:{status:"draft",cms_draft_id:"draft-commercial"}};
+  const missing=new WordPressDraftAdapter({siteUrl:"https://site.test",username:"editor",applicationPassword:"password"},async()=>
+    Response.json({post_id:91,status:"draft",preview_url:"https://site.test/?p=91&preview=true"},{status:201}));
+  await assert.rejects(()=>missing.upsertContractDraft(publishPackage),
+    (error)=>error.code==="COMMERCIAL_DELIVERY_RECEIPT_MISSING");
+  const exact=new WordPressDraftAdapter({siteUrl:"https://site.test",username:"editor",applicationPassword:"password"},async()=>
+    Response.json({post_id:91,status:"draft",preview_url:"https://site.test/?p=91&preview=true",commercial_slots:[{
+      slot_key:"contextual:hotel:one",affiliate_asset_id:"asset-hotel",component_type:"affiliate_booking_card",placement:"contextual",
+    }]},{status:201}));
+  const result=await exact.upsertContractDraft(publishPackage);
+  assert.equal(result.deliveryManifest.commercial_slots[0].affiliate_asset_id,"asset-hotel");
+});
+
 test("Contract-aware adapter uses explicit PUT and surfaces non-retryable Frontend validation errors", async () => {
   const methods = [];
   const adapter = new WordPressDraftAdapter({ siteUrl: "https://site.test", username: "editor", applicationPassword: "app-password" }, async (url, options) => {
@@ -243,6 +275,22 @@ test("Contract-aware adapter uses explicit PUT and surfaces non-retryable Fronte
     return true;
   });
   assert.deepEqual(methods[0], ["https://site.test/wp-json/stc/v1/cms-articles/71", "PUT"]);
+});
+
+test("scoped final preview tickets stay on the configured WordPress origin and bind the delivered page", async () => {
+  let request;
+  const adapter=new WordPressDraftAdapter({siteUrl:"https://site.test",username:"editor",applicationPassword:"password"},async(url,options)=>{
+    request={url:String(url),body:JSON.parse(options.body)};
+    return Response.json({preview_url:"https://site.test/?p=71&preview=true&stc_preview_ticket=opaque",expires_at:"2026-09-15T01:15:00Z"});
+  });
+  const result=await adapter.createScopedPreviewTicket({postId:71,draftId:"draft-71",revision:4,pagePayloadHash:"a".repeat(64)});
+  assert.equal(result.mode,"scoped_preview_ticket");
+  assert.match(request.url,/cms-articles\/71\/preview-ticket$/);
+  assert.deepEqual(request.body,{cms_draft_id:"draft-71",cms_revision:4,page_payload_hash:"a".repeat(64)});
+  const unsafe=new WordPressDraftAdapter({siteUrl:"https://site.test",username:"editor",applicationPassword:"password"},async()=>
+    Response.json({preview_url:"https://evil.test/steal",expires_at:"2026-09-15T01:15:00Z"}));
+  await assert.rejects(()=>unsafe.createScopedPreviewTicket({postId:71,draftId:"draft-71"}),
+    (error)=>error.code==="INVALID_PREVIEW_TICKET_RESPONSE");
 });
 
 test("WordPress renderers place generated visual media safely within the article", () => {

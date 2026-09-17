@@ -2,6 +2,26 @@
 
 Use one Google Compute Engine VM, a persistent Docker volume, and one Cloudflare Tunnel. The project currently uses SQLite plus an in-process durable queue and scheduler; a stateless Cloud Run revision is not a safe replacement without a database and worker redesign.
 
+## Existing schema 68 installation → schema 69
+
+Use `upgrade-existing.sh` with `verify-upgrade.mjs` for an existing-installation application upgrade only after separate deployment authorization. Supply an immutable image digest, the exact 40-character Git revision and the expected application version. The helper preserves the active `/app/data` mount, creates and drills a verified paired backup, rehearses the current schema offline, deterministically reconciles opportunities, and runs the enforced opportunity-qualification audit before it connects public traffic. For production-state releases, retain a read-only classification/model-call/active-job baseline and compare it after rollout; do not enqueue or retry projected rows. A release such as 2.0.14 that keeps schema 69 still runs the rehearsal and integrity/fingerprint gates but performs no schema migration. The gate rejects old strategy rows, incomplete evidence, invalid lifecycle/type/mode/readiness, missing declared Source paths, Knowledge admission failures, generic topics, broken migration links and duplicate intents across a city and its nested destination scopes. Evidence-gap opportunities are reported separately and remain unable to enter production until their Coverage Matrix is ready. Processing-gap, Knowledge-resolution and media-storage maintenance remain dry-run-only unless a separate reviewed run is required.
+
+## Existing installation: 2.0.5 → 2.0.6
+
+Use `upgrade-existing.sh` with `verify-upgrade.mjs` for this schema 59→65 upgrade. `startup.sh` below remains the fresh-install provisioner; it rewrites configuration and does not perform a migration rehearsal. The actual deployment record, immutable image, disk snapshot and results are in [the 2.0.6 rollout record](../../docs/audit/CMS_DEPLOYMENT_2.0.6_2026-09-12.md).
+
+Prepare a startup wrapper that exports `STC_UPGRADE_IMAGE` as the exact `@sha256:` image, `STC_UPGRADE_REVISION` as its 40-character runtime Git commit, `STC_UPGRADE_VERSION` as the expected semantic application version, and `STC_UPGRADE_PROBE_BASE64` as the base64 contents of `verify-upgrade.mjs`, then includes `upgrade-existing.sh`. These fields contain code and image identity, never credentials. Validate it with `bash -n`; install using `gcloud compute instances add-metadata --metadata-from-file=startup-script=<wrapper>` on the existing instance, then use controlled stop/start. Keep the existing metadata locally in an ignored operations directory before replacement. Wait for the private disk snapshot to be READY first.
+
+This release-specific helper checks free space for backup/drill/table copies, preserves the existing environment, stops the old container with 120 seconds' grace, copies container-layer `/app/data` to `/opt/solo-to-china/upgrades/<revision>/legacy-app-data`, creates and verifies a system snapshot, performs an offline restore drill, and rehearses the migration against the actual backup. It checks integrity, foreign keys, counts and old-column content fingerprints before migrating production. The old container remains stopped as `engine-before-<short-revision>` with restart disabled. The new container mounts the copied `/app/data` at the same path on persistent disk, retaining legacy capture chunks and receipts across container replacement. Keep that directory in future disk backups.
+
+The probe, opportunity reconciliation and qualification audit use no network, model provider, application worker or WordPress adapter. Public traffic is connected only after the data gate and new-container readiness pass. Before exposure, a failed attempt restores the verified old DB and restarts the paired old container; the failed database is retained. After public exposure, automatic data rollback is disabled to avoid discarding new captures. A post-exposure rollback requires stopping traffic/workers, backing up the new database and files, preserving new captures for reconciliation, then restoring the paired old code/database under maintenance. Do not simply start old application code against a newer schema.
+
+Reports and phases are retained under `/opt/solo-to-china/upgrades/<revision>/`; only aggregate non-secret records marked `[stc-upgrade]` are emitted to serial output. An interrupted attempt with `started` but no `complete` stops on the next boot for inspection; do not delete its marker and repeat blindly. Successful future boots start the existing engine/tunnel and do not reapply migrations or overwrite configuration. After a successful rollout, the helper deletes rehearsal databases, removes older stopped rollback/failed containers and prunes their unreferenced image layers. It keeps the active container, one immediately previous rollback container, one verified application snapshot, deployment reports and every original business-data file.
+
+Production verification exposed two required details now covered by the helpers: retain a failed database inside its **data mount** to avoid `EXDEV`, and explicitly propagate a failed offline Docker command even inside a Bash `||` recovery context. Before attaching a healthy container to the service network, disconnect its `none` network. `test-runtime-image.sh` now checks actual built-image startup, that network transition using an isolated internal network, and restore across separate Docker mounts; CI runs it after the source release gate.
+
+`resume-verified-upgrade.sh` is a bounded continuation for an image-only failure after migration: it requires a stopped engine, a successful fresh integrity/fingerprint report, schema 73, an unchanged DB mtime, and no unverified WAL writes. It keeps failed containers/data and does not start old code automatically. After successful online checks, `pin-runtime-image.py <release-directory> <immutable-image>` updates only `ENGINE_IMAGE`, retaining the previous private environment file and proving other configuration bytes unchanged. A whole-disk rollback also requires restoring the intended instance startup metadata; it is not included in the disk snapshot.
+
 ## Layout
 
 ```text
@@ -44,7 +64,7 @@ From an authenticated Google Cloud shell or workstation, substitute your own val
 $project = "YOUR_PROJECT_ID"
 $region = "us-central1"
 $repo = "solo-to-china"
-$image = "$region-docker.pkg.dev/$project/$repo/engine:2.0.3"
+$image = "$region-docker.pkg.dev/$project/$repo/engine:2.0.10"
 
 gcloud services enable compute.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com aiplatform.googleapis.com --project $project
 gcloud artifacts repositories create $repo --repository-format=docker --location=$region --project=$project

@@ -21,13 +21,19 @@ export function parseMediaMetadata(value) {
   try { return JSON.parse(value || "{}"); } catch { return {}; }
 }
 
-export function validateMediaDelivery(visuals = [], { requireMetadata = true } = {}) {
+export function validateMediaDelivery(visuals = [], { requireMetadata = true, pagePayload = null } = {}) {
   const errors = [];
   const hashes = new Map();
+  const deliveredIds = new Set();
   for (const [index, visual] of visuals.entries()) {
     const mediaId = positiveInteger(visual.wordpress_media_id || visual.media_id || visual.id);
-    if (!mediaId) continue;
     const path = `$.media[${index}]`;
+    if (!mediaId) {
+      const optionalFailure = visual.status === "failed" && !Boolean(visual.factual_image_required);
+      if (!optionalFailure) errors.push({ code:"MEDIA_REQUIRED_MANIFEST_MISSING", path, visual_id:visual.id || null });
+      continue;
+    }
+    deliveredIds.add(mediaId);
     const url = publicMediaUrl(visual.wordpress_media_url || visual.url || visual.media_url);
     const metadata = parseMediaMetadata(visual.media_metadata || visual.media_metadata_json || visual.metadata);
     const role = String(visual.image_role || visual.role || "context").toLowerCase();
@@ -38,9 +44,31 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true } =
     if (Boolean(visual.factual_image_required) && visual.image_type === "illustration") {
       errors.push({ code: "FACTUAL_SCENE_CANNOT_USE_ILLUSTRATION", path });
     }
-    if (visual.image_type === "real_world_photo"
-      && !["use_authorized_source_image", "search_real_image"].includes(visual.acquisition_strategy)) {
-      errors.push({ code: "REAL_SCENE_REQUIRES_EVIDENCE_MEDIA", path });
+    if (visual.image_type === "real_world_photo") {
+      const strategy = String(visual.acquisition_strategy || "");
+      const localizedPhotoStrategies=new Set(["localize_source_image","localize_photo_overlay"]);
+      if (!["use_authorized_source_image",...localizedPhotoStrategies].includes(strategy)) {
+        errors.push({ code: "REAL_SCENE_REQUIRES_EVIDENCE_MEDIA", path });
+      }
+      const sourceAssetId = String(visual.source_asset_id || "").trim();
+      const provenance = metadata.source_provenance || {};
+      const projectAuthorized = metadata.authorization_policy === "project_source_media_full_authorization"
+        && provenance.project_owner_confirmed === true;
+      if (!sourceAssetId || provenance.source_asset_id !== sourceAssetId) {
+        errors.push({ code: "REAL_SCENE_SOURCE_ASSET_MISSING", path: `${path}.source_asset_id` });
+      }
+      if (!provenance.original_stored) errors.push({ code: "REAL_SCENE_ORIGINAL_NOT_STORED", path });
+      if (!projectAuthorized && (!provenance.source_owner_confirmed || !provenance.source_publishable
+        || !provenance.asset_owner_confirmed || !provenance.asset_publishable)) {
+        errors.push({ code: "REAL_SCENE_AUTHORIZATION_INVALID", path });
+      }
+      if (localizedPhotoStrategies.has(strategy)
+        && (!metadata.localized_file || metadata.localized_from_source_asset_id !== sourceAssetId)) {
+        errors.push({ code: "LOCALIZED_SCENE_FILE_NOT_PROVEN", path });
+      }
+      if (!metadata.wordpress_uploaded || positiveInteger(metadata.wordpress_media_id) !== mediaId) {
+        errors.push({ code: "REAL_SCENE_WORDPRESS_UPLOAD_NOT_PROVEN", path });
+      }
     }
     if (requireMetadata) {
       if (!positiveInteger(metadata.width) || !positiveInteger(metadata.height)) errors.push({ code: "MEDIA_DIMENSIONS_MISSING", path });
@@ -58,6 +86,12 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true } =
       if (prior && prior !== mediaId) errors.push({ code: "MEDIA_DUPLICATE_UPLOAD", path, mediaIds: [prior, mediaId] });
       else hashes.set(metadata.sha256, mediaId);
     }
+  }
+  if (pagePayload) {
+    const pageIds = new Set((pagePayload.blocks || []).filter((block) => ["image", "annotated_image", "place_info_card"].includes(block?.type))
+      .map((block) => positiveInteger(block?.data?.media_id)).filter(Boolean));
+    for (const mediaId of deliveredIds) if (!pageIds.has(mediaId)) errors.push({ code:"MEDIA_MISSING_FROM_FINAL_PAGE", path:"$.page.blocks", media_id:mediaId });
+    for (const mediaId of pageIds) if (!deliveredIds.has(mediaId)) errors.push({ code:"PAGE_REFERENCES_UNDELIVERED_MEDIA", path:"$.page.blocks", media_id:mediaId });
   }
   return { valid: errors.length === 0, errors, checked: visuals.length };
 }

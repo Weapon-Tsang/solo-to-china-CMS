@@ -4,7 +4,7 @@ import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus
 
 const nowMs = Date.parse("2026-09-10T00:00:00.000Z");
 
-test("operator-selected daily facts remain usable without a date gate while conflicts stay explicit", () => {
+test("ordinary daily facts use weighted multi-source consensus without a manual gate", () => {
   const rows = [
     row("recent-a", "CNY 50", "2026-09-08", "author-a"),
     row("recent-b", "CNY 50", "2026-09-09", "author-b"),
@@ -23,7 +23,8 @@ test("operator-selected daily facts remain usable without a date gate while conf
   assert.equal(result.dateKind, "captured_at");
   assert.equal(result.dateConfidence, "low");
   assert.equal(result.freshnessState, "current");
-  assert.equal(result.autoResolved, false);
+  assert.equal(result.autoResolved, true);
+  assert.equal(result.resolutionState, "AUTO_CONSENSUS");
 });
 
 test("posts in one source family or by one author count as one independent vote", () => {

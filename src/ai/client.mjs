@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { KimiClient } from "./kimi-client.mjs";
 import { VertexGeminiClient } from "./vertex-gemini-client.mjs";
+import { DeepSeekClient } from "./deepseek-client.mjs";
+import { OpenAIResponsesClient } from "./openai-responses-client.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
 
 export function createAiClient(config, fetchImpl = fetch) {
@@ -11,9 +13,7 @@ export function createAiClient(config, fetchImpl = fetch) {
   const clientFor = (snapshot = null) => {
     const selected = batchClientConfig(config, snapshot);
     const key = JSON.stringify([selected.provider, selected.model, selected.location, selected.projectId, selected.batchBucket]);
-    if (!clients.has(key)) clients.set(key, selected.provider === "vertex"
-      ? new VertexGeminiClient(selected, fetchImpl)
-      : new KimiClient(selected, fetchImpl));
+    if (!clients.has(key)) clients.set(key, providerClient(selected, fetchImpl));
     return clients.get(key);
   };
   const current = () => clientFor();
@@ -36,39 +36,62 @@ export function createAiClient(config, fetchImpl = fetch) {
       const identity = callIdentity(config, input);
       if (responseCache.has(identity.key)) {
         const cached = responseCache.get(identity.key);
-        responseCache.delete(identity.key);
-        responseCache.set(identity.key, cached);
         try {
-          config.onModelCall?.({
-            stage: input.name || "structured_completion",
-            provider: config.provider || "kimi",
-            model: activeModel(config),
-            ...identity.hashes,
-            inputTokens: null,
-            outputTokens: null,
-            cachedTokens: null,
-            latencyMs: 0,
-            attempts: 0,
-            status: "succeeded",
-            errorCode: null,
-            costUsd: 0,
-            costStatus: "confirmed",
-            requestKind: "cache_hit",
-            attemptStatus: "succeeded",
-            attemptNumber: 0,
-            policyVersion: identity.policy.version,
-            configHash: identity.policy.configHash,
-            runId: input.telemetryContext?.runId || null,
-            entityId: input.telemetryContext?.entityId || null,
-          });
-        } catch { /* cache telemetry must never fail production */ }
-        return structuredClone(cached);
+          acceptCompletion(input, cached);
+          responseCache.delete(identity.key);
+          responseCache.set(identity.key, cached);
+          try {
+            config.onModelCall?.({
+              stage: input.name || "structured_completion",
+              provider: config.provider || "kimi",
+              model: activeModel(config),
+              role: input.telemetryContext?.role || config.role || "unknown",
+              requestedModel: activeModel(config), returnedModel: activeModel(config),
+              ...identity.hashes,
+              inputTokens: null,
+              outputTokens: null,
+              cachedTokens: null,
+              latencyMs: 0,
+              attempts: 0,
+              status: "succeeded",
+              errorCode: null,
+              costUsd: 0,
+              costStatus: "confirmed",
+              requestKind: "cache_hit",
+              attemptStatus: "succeeded",
+              attemptNumber: 0,
+              policyVersion: identity.policy.version,
+              configHash: identity.policy.configHash,
+              runId: input.telemetryContext?.runId || null,
+              entityId: input.telemetryContext?.entityId || null,
+              sourceRunId: input.telemetryContext?.sourceRunId || null,
+              articleRevision: input.telemetryContext?.articleRevision ?? null,
+              queueWaitMs: input.telemetryContext?.queueWaitMs ?? null,
+              providerRequestMs: 0,
+              retryWaitMs: 0,
+              totalStageMs: input.telemetryContext?.queueWaitMs || 0,
+              executionRoute: input.telemetryContext?.executionRoute || null,
+            });
+          } catch { /* cache telemetry must never fail production */ }
+          return structuredClone(cached);
+        } catch {
+          // Provider-level JSON Schema success is not enough to make an output
+          // reusable. If the current business/Contract validator rejects an old
+          // response, evict it and make a fresh request instead of replaying the
+          // same invalid prose on every recovery Job.
+          responseCache.delete(identity.key);
+        }
       }
-      if (pending.has(identity.key)) return structuredClone(await pending.get(identity.key));
+      if (pending.has(identity.key)) {
+        const shared = structuredClone(await pending.get(identity.key));
+        acceptCompletion(input, shared);
+        return shared;
+      }
       const completion = current().completeJson(input);
       pending.set(identity.key, completion);
       try {
         const value = await completion;
+        acceptCompletion(input, value);
         responseCache.set(identity.key, structuredClone(value));
         while (responseCache.size > maxCacheEntries) responseCache.delete(responseCache.keys().next().value);
         return value;
@@ -84,6 +107,31 @@ export function createAiClient(config, fetchImpl = fetch) {
     readBatchOutput(batch, snapshot) { return batchClient(snapshot).readBatchOutput(batch); },
     cleanupBatch(batch, snapshot) { return batchClient(snapshot).cleanupBatch(batch); },
   };
+}
+
+function providerClient(config, fetchImpl) {
+  // Provider-less configs are the pre-routing local/test contract and remain
+  // Kimi-compatible. Any explicit, unrecognized provider fails closed.
+  if (!config.provider) return new KimiClient(config, fetchImpl);
+  if (config.provider === "vertex") return new VertexGeminiClient(config, fetchImpl);
+  if (config.provider === "kimi") return new KimiClient(config, fetchImpl);
+  if (config.provider === "deepseek") return new DeepSeekClient(config, fetchImpl);
+  if (config.provider === "openai") return new OpenAIResponsesClient(config, fetchImpl);
+  throw Object.assign(new Error(`Unknown AI provider: ${config.provider || "empty"}.`), {
+    code: "UNKNOWN_AI_PROVIDER", retryable: false,
+  });
+}
+
+function acceptCompletion(input, value) {
+  if (typeof input.validateOutput !== "function") return;
+  try {
+    input.validateOutput(value?.output, value);
+  } catch (error) {
+    if (error && typeof error === "object" && !error.rejectedCompletion) {
+      error.rejectedCompletion = structuredClone(value);
+    }
+    throw error;
+  }
 }
 
 function batchClientConfig(config, snapshot) {

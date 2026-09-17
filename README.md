@@ -1,5 +1,7 @@
 # SoloToChina Research & Content Engine
 
+Current development source: **2.0.31 / Strategy 3.5 / schema 71** (unreleased). This label is not a production-deployment claim; see the current handoff and repair validation for tested and untested boundaries.
+
 SoloToChina 的内部研究与内容生产基础设施。当前采集路径采用 **Human Discovery + Human Favorite Selection → Incremental / Repair / Full Sync → Durable Research Pipeline**：用户用收藏完成研究价值和授权确认，Chrome Extension 将正文、DOM 以及全部授权图片/视频原件校验后持久化，系统再负责 Claims、Experience、Knowledge、内容机会和人工批准后的原创写作。
 
 后台“来源”页也支持管理员主动提交公开的小红书、微信公众号、视频和普通网页链接，以及 PDF、Word、图片和视频文件。提交内容会进入同一套 Source → Claims → Knowledge → Blueprint → 内容建议流程；链接读取失败会明确区分登录墙、反爬、限流、超时、空内容和不支持格式。参见 [Manual Source Ingestion](docs/MANUAL_SOURCE_INGESTION.md)。
@@ -23,7 +25,7 @@ Human Favorite Selection
   → Independent prose QA + independent media/delivery checks
   → Commercial Overlay (optional, isolated, deterministic)
   → WordPress draft-only delivery (optional)
-  → Failure Lesson + recommended_again when bounded production fails
+  → Failure Lesson + archived attempt + bounded repair (reapproval only for invalid scope)
 ```
 
 - 单进程低运维部署：Node 24、内置 SQLite，React 前端在启动前构建为静态资源并由同一服务托管。
@@ -60,20 +62,20 @@ The dashboard is a React + Vite application styled with Tailwind CSS and source-
 2. 开启 Developer mode。
 3. 点击 Load unpacked，选择仓库内的 `extension/` 目录。
 4. 在 Chrome 中保持小红书已登录，打开目标收藏页/收藏夹。
-5. 日常点击 **Sync New Favorites**；修复历史原件点击 **Repair Stored Favorites**；首次或完整重扫选择 **Full Historical Sync**。页面结构异常时仍可打开单篇笔记并点 **Save Current Note**。
+5. 日常点击 **Sync New Favorites**；修复历史原件点击一次 **Repair Stored Favorites**；首次或完整重扫选择 **Full Historical Sync**。启动后可关闭 Popup 或切换标签页/程序；只有登录失效、真实安全验证或 Capture Token 无效才需要人工处理。页面结构异常时仍可打开单篇笔记并点 **Save Current Note**。
 
 扩展默认连接 `http://127.0.0.1:4310`。如设置了 `CAPTURE_TOKEN`，在扩展的 Connection settings 中填入相同值。
 
 扩展声明以下最小运行权限：
 
 - `activeTab`、`scripting`：读取用户打开的收藏页或单篇详情页，并执行普通页面展开/轮播遍历；
-- `storage`：持久化每个收藏 Scope 的 checkpoint、浏览器采集队列、进度、设置和最近结果，使 MV3 service worker 或 Chrome 重启后可恢复；
-- `tabs`：复用有限数量的后台详情页标签执行采集；
-- `alarms`：恢复长任务，以及可选的 Chrome 启动时/每日自动同步；
+- `storage`：持久化每个收藏 Scope 的 checkpoint、浏览器采集队列、Task lease、进度、运行中配置和最近结果，使 MV3 service worker 或 Chrome 重启后可自动续跑；
+- `tabs`：复用稳定 worker slots 的有限数量后台详情页标签执行采集，关闭或崩溃后自动重建；
+- `alarms`：watchdog 自动协调 stranded Task 并唤醒长任务，以及可选的 Chrome 启动时/每日自动同步；
 - `https://*.xiaohongshu.com/*`：访问收藏页和详情页；`xhscdn` 权限用于读取用户已授权媒体并计算原始哈希/生成 AI 尺寸衍生件；
 - Engine host permission：向本地或打包时配置的 Capture Host 发送身份批量查询、分片 Capture 和聚合状态。
 
-Extension 不申请 `cookies` 权限。日常增量同步用 checkpoint 与连续已知身份停止条件；Repair 只消费 CMS 返回的修复清单；完整历史同步按有界窗口流式运行，没有固定 Session 总数上限。每个媒体原件以分块上传、大小、MIME 和 SHA-256 校验完成后 Capture 才可被接受，AI 抽取继续使用 SQLite durable Job queue。
+Extension 不申请 `cookies` 权限。日常增量同步用 checkpoint 与连续已知身份停止条件；Repair 只消费 CMS 返回的 browser repair 清单及精确缺失原件 identity，不打开可由 Server Direct Recovery 处理的 Source，也不重复下载 `ORIGINAL_STORED`。Note 使用持续 worker pool（2/4/8 或自定义 1–16），Auto 默认上限 12、可调至 16；所有 Note 共享独立的全局媒体 semaphore。运行中保存并发设置会立即更新当前 Session。完整历史同步按有界窗口流式运行，没有固定 Session 总数上限。每个媒体原件以分块上传、大小、MIME 和 SHA-256 校验完成后 Capture 才可被接受，AI 抽取继续使用 SQLite durable Job queue。
 
 ## AI 配置
 
@@ -144,9 +146,9 @@ CONTENT_PUBLISHER_LOGO_URL=https://www.solotochina.com/logo.png
 
 Generated assets use original no-text/no-logo illustration prompts and are uploaded into WordPress as media when the Draft is delivered. Real-world photos, maps, and infographics remain acquisition/render tasks and are never fabricated by the image model. `WORDPRESS_SCHEMA_JSONLD_META_KEY` can write the graph to a REST-exposed custom SEO meta field when your WordPress theme or SEO plugin supports one.
 
-## Content Production Strategy 3.0
+## Content Production Strategy 3.5
 
-The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.0.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.0.md), and summarized by the Chinese [evolution log](docs/content-strategy/CHANGELOG.md). Captured sources create Claims and grounded Experience Blocks before Knowledge and opportunities. A concrete opportunity is approved independently, then receives a bounded Editorial Assembly, Narrative Plan and human-readable Writing Packet. Terminal editorial failures learn from the attempt, remove only transient production assets and require reapproval. The live operating path is:
+The active strategy is defined in [`config/content-strategy.json`](config/content-strategy.json), documented in [`docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.5.md`](docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.5.md), and summarized by the [evolution log](docs/content-strategy/CHANGELOG.md). It preserves the Strategy 3.4 evidence/approval pipeline and adds capture-versioned media analysis, independently verified image transforms, media-only repair, responsive article navigation, and two-level commercial placement. The live operating path is:
 
 ```text
 Capture + durable originals → Claims → Experience → Knowledge / source diagnostic

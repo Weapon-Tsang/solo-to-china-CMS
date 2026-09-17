@@ -1,20 +1,26 @@
+import fs from "node:fs";
+import crypto from "node:crypto";
 import { canonicalizeUrl, id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
-import { AI_MODELS, VISUAL_MODELS } from "./config.mjs";
+import { AI_MODELS, EXTRACTION_MODELS, VISUAL_MODELS } from "./config.mjs";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
-import { buildContentAst, contentBlockSummary, markdownToContentBlocks } from "./content-blocks.mjs";
-import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue, structureClaim } from "./claim-resolution.mjs";
+import { buildContentAst, contentBlockSummary, markdownToContentBlocks, reconcileContentAstLedger } from "./content-blocks.mjs";
+import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue, repairClaimLocally,
+  stableCanonicalSerialize, structureClaim } from "./claim-resolution.mjs";
 import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
+import { KNOWLEDGE_RESOLUTION_VERSION, decideKnowledgeResolution, summarizeResolutionDecisions } from "./knowledge-resolution.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
-import { legacyOfferToAsset } from "./commercial.mjs";
+import { legacyOfferToAsset, normalizeAffiliateAsset, normalizeCountryCode } from "./commercial.mjs";
 import {
   affiliateAssetFromQueueTask, exportAffiliateQueue, loadAffiliateQueueSeeds,
   normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
-import { AI_JOB_TYPES, classifyBatchFailure, isOperationalFailureRetryable, isProviderPressure } from "./job-policy.mjs";
-import { pageBlockSignature } from "./evidence-validator.mjs";
+import { AI_JOB_TYPES, DATABASE_HEAVY_JOB_TYPES, classifyBatchFailure, isOperationalFailureRetryable, isProviderPressure,
+  inheritJobContext,laneBackoffMs,modelRoleForJob,workloadClassForJob } from "./job-policy.mjs";
+import { pageBlockSignature, selectedFactEvidence, selectedFactSnapshot } from "./evidence-validator.mjs";
 import { estimateSourceProcessing } from "./source-preflight.mjs";
+import { sourceProcessingProfile } from "./source-processing-profile.mjs";
 import { summarizeModelCostLedger } from "./ai/stage-policy.mjs";
 import {
   affectedInternalLinkBlocks, buildSeoPreview, duplicateContentRisks, inventoryTargetChanges,
@@ -24,19 +30,37 @@ export { pageBlockSignature } from "./evidence-validator.mjs";
 import { buildContentTaskCard, normalizeWorkspaceQuery, paginateWorkspace } from "./services/operations-workspace.mjs";
 import { freezeProposal, proposalFingerprint, proposalForOpportunity } from "./services/editorial-proposal.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./services/content-recovery-policy.mjs";
+import { buildPageCompositionPreview, buildProductionState, summarizeProductionSections } from "./services/production-state.mjs";
 import { insertCommercialEvent, listCommercialPerformance } from "./repositories/commercial-events.mjs";
 import { persistCaptureAssets } from "./source-media-store.mjs";
+import { dependencyHash, semanticMaterial, PIPELINE_CONTRACT_VERSION } from './pipeline-contract.mjs';
+import { stepIdentity, readStepReceipt, saveStepReceipt } from './repositories/pipeline-step-receipts.mjs';
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
 
 const REUSABLE_PIPELINE_STAGES = new Set([
-  "extract_segment_claims", "audit_segment_coverage", "analyze_source_blueprint", "analyze_source_diagnostic", "extract_source_experience",
+  "extract_segment_claims", "extract_media_batch", "audit_segment_coverage", "retry_segment_extraction", "analyze_source_blueprint", "analyze_source_diagnostic", "extract_source_experience",
   "analyze_intake", "resolve_entities", "assemble_editorial", "plan_content", "plan_narrative", "assemble_writing_packet", "compose_frontend_page_plan", "generate_draft",
   "compose_frontend_page", "review_draft", "revise_draft",
 ]);
 const PRODUCTION_JOB_TYPES = new Set(["assemble_editorial","plan_content","plan_narrative","assemble_writing_packet",
   "compose_frontend_page_plan","generate_draft","generate_visuals","compose_frontend_page","review_draft","revise_draft",
   "compose_commercial","compose_publish_page","push_wordpress_draft"]);
+const TRACKED_DELIVERY_STAGES = new Set(['compose_commercial','compose_publish_page','push_wordpress_draft']);
+// Intake schema and decision instructions have been stable since Strategy 3.0.
+// A later strategy label alone must not purchase the same diagnostic again.
+// Future strategy releases must opt in here after reviewing that contract.
+const COMPATIBLE_DIAGNOSTIC_STRATEGIES = new Map([
+  ["3.3", new Set(["3.0", "3.1", "3.2", "3.3"])],
+  ["3.4", new Set(["3.0", "3.1", "3.2", "3.3", "3.4"])],
+  ["3.5", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5"])],
+  ["3.6", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6"])],
+  ["3.7", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7"])],
+]);
+
+function isReusableDiagnosticStrategy(previous, current) {
+  return Boolean(String(previous || "") && COMPATIBLE_DIAGNOSTIC_STRATEGIES.get(current)?.has(String(previous)));
+}
 
 export class Repository {
   constructor(db, contentConfig = {}) {
@@ -54,22 +78,44 @@ export class Repository {
     this.providerPressureStreak = 0;
     this.providerSuccessStreak = 0;
     this.providerBackoffUntil = 0;
+    this.activeProvider = "";
     this.batchMaxAttempts = Math.max(1, Number(contentConfig.batchMaxAttempts || 2));
     this.batchBackoffInitialMs = Math.max(1_000, Number(contentConfig.batchBackoffInitialMs || 5_000));
     this.batchBackoffMaxMs = Math.max(this.batchBackoffInitialMs, Number(contentConfig.batchBackoffMaxMs || 300_000));
     this.random = contentConfig.random || Math.random;
+    this.productionCapabilities = { frontendContract: false, visuals: false, wordpress: false };
+    this.modelCredentialEncryptionKey = String(contentConfig.modelCredentialEncryptionKey || "").trim();
+    this.environmentCredentialProviders = new Set(contentConfig.environmentCredentialProviders || []);
+  }
+
+  configureProductionCapabilities(capabilities = {}) {
+    this.productionCapabilities = { ...this.productionCapabilities, ...capabilities };
   }
 
   jobTimestamp() { return this.clock().toISOString(); }
 
   jobLeaseExpiry() { return new Date(this.clock().getTime() + this.jobLeaseMs).toISOString(); }
 
+  pipelineStepIdentity(job, artifact, key, input, configHash) {
+    return stepIdentity(job, artifact, key, input, configHash);
+  }
+
+  readPipelineStep(identity) { return readStepReceipt(this.db, identity); }
+
+  savePipelineStep(job, artifact, identity, value) {
+    return transaction(this.db, () => {
+      if (!this.ownsJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error('JOB_LEASE_LOST'), {code:'JOB_LEASE_LOST',retryable:false});
+      this.assertPipelineInput(artifact, job);
+      return saveStepReceipt(this.db, identity, value, job, this.jobTimestamp());
+    });
+  }
+
   preparePipelineArtifact(job, configHash = "") {
-    if (!REUSABLE_PIPELINE_STAGES.has(job?.type)) return null;
-    const inputHash = sha256(JSON.stringify(this.pipelineDependencyMaterial(job)));
+    if (!REUSABLE_PIPELINE_STAGES.has(job?.type) && !TRACKED_DELIVERY_STAGES.has(job?.type)) return null;
+    const inputHash = dependencyHash({ version: PIPELINE_CONTRACT_VERSION, inputs: this.pipelineDependencyMaterial(job) });
     const existing = this.db.prepare(`SELECT * FROM pipeline_artifacts
       WHERE stage=? AND entity_id=? AND input_hash=? AND config_hash=?`).get(job.type, job.entity_id, inputHash, configHash);
-    if (existing?.status === "succeeded" && existing.output_hash
+    if (REUSABLE_PIPELINE_STAGES.has(job.type) && existing?.status === "succeeded" && existing.output_hash
       && existing.output_hash === this.pipelineOutputHash(job)) return { ...existing, reused: true };
     const timestamp = this.jobTimestamp();
     const artifactId = existing?.id || id("artifact");
@@ -88,6 +134,43 @@ export class Repository {
       .run(this.pipelineOutputHash(job), timestamp, timestamp, artifact.id);
   }
 
+  assertPipelineInput(artifact, job) {
+    if (artifact && artifact.input_hash !== dependencyHash({ version: PIPELINE_CONTRACT_VERSION, inputs: this.pipelineDependencyMaterial(job) })) {
+      throw Object.assign(new Error('阶段输入已变化，旧结果未保存。'), { code: 'STALE_PIPELINE_INPUT', retryable: true });
+    }
+  }
+
+  finishPipelineJob(job, artifact) {
+    return transaction(this.db, () => {
+      if (!this.completeJob(job.id, job.locked_by, job.lease_generation)) return false;
+      this.completePipelineArtifact(artifact, job);
+      this.reconcileDeferredQualityRepair(job);
+      return true;
+    });
+  }
+
+  commitPipelineStage(job, artifact, work, { acceptResult = () => true } = {}) {
+    return transaction(this.db, () => {
+      if (!this.ownsJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error('JOB_LEASE_LOST'), {code:'JOB_LEASE_LOST',retryable:false});
+      this.assertPipelineInput(artifact, job);
+      const result = work();
+      if (result?.then) throw new Error('Pipeline commit must contain only synchronous database work.');
+      if (!acceptResult(result)) return result; // Retain invalid output for diagnosis; the caller fails the job.
+      if (!this.finishPipelineJob(job, artifact)) throw Object.assign(new Error('JOB_LEASE_LOST'), {code:'JOB_LEASE_LOST',retryable:false});
+      return result;
+    });
+  }
+
+  checkpointPipelineStage(job, artifact, work) {
+    return transaction(this.db, () => {
+      if (!this.ownsJob(job.id, job.locked_by, job.lease_generation)) throw Object.assign(new Error('JOB_LEASE_LOST'), {code:'JOB_LEASE_LOST',retryable:false});
+      this.assertPipelineInput(artifact, job);
+      const result = work();
+      if (result?.then) throw new Error('Pipeline checkpoint must contain only synchronous database work.');
+      return result;
+    });
+  }
+
   failPipelineArtifact(artifact, error) {
     if (!artifact || artifact.reused) return;
     const timestamp = this.jobTimestamp();
@@ -97,52 +180,131 @@ export class Repository {
 
   pipelineDependencyMaterial(job) {
     const entityId = job.entity_id;
-    if (["extract_segment_claims", "audit_segment_coverage"].includes(job.type)) {
+    if (["extract_segment_claims", "audit_segment_coverage", "retry_segment_extraction"].includes(job.type)) {
       return {
-        segment: this.db.prepare("SELECT id,source_id,content_hash,capture_version,segment_type FROM source_segments WHERE id=?").get(entityId),
-        extraction: job.type === "audit_segment_coverage"
+        currentCapture: this.db.prepare('SELECT s.capture_version FROM sources s JOIN source_segments ss ON ss.source_id=s.id WHERE ss.id=?').get(entityId),
+        segment: this.db.prepare(`SELECT id,source_id,content_hash,capture_version,segment_type,raw_text,asset_id,
+          title,sequence,page_start,page_end,image_index,destination_scopes_json,topic_scopes_json FROM source_segments WHERE id=?`).get(entityId),
+        media: this.db.prepare(`SELECT a.id,a.media_identity,a.original_sha256,a.stored_sha256,a.durability_status,a.ai_derivative_sha256
+          FROM source_assets a JOIN source_segments s ON s.source_id=a.source_id AND s.capture_version=a.capture_version WHERE s.id=? ORDER BY a.id`).all(entityId),
+        extraction: job.type !== "extract_segment_claims"
           ? this.db.prepare("SELECT result_json,input_manifest_json,attempt FROM segment_extractions WHERE segment_id=?").get(entityId) : null,
+        coverage: job.type === 'retry_segment_extraction' ? this.db.prepare('SELECT * FROM extraction_coverage WHERE segment_id=?').get(entityId) : null,
       };
     }
+    if (job.type === "extract_media_batch") return {
+      batch: this.db.prepare("SELECT * FROM media_extraction_batches WHERE id=?").get(entityId),
+      segments: this.db.prepare(`SELECT s.id,s.content_hash,s.asset_id,s.capture_version,a.stored_sha256,a.ai_derivative_sha256,a.durability_status
+        FROM source_segments s LEFT JOIN source_assets a ON a.id=s.asset_id
+        WHERE s.id IN (SELECT value FROM json_each((SELECT segment_ids_json FROM media_extraction_batches WHERE id=?))) ORDER BY s.sequence`).all(entityId),
+    };
     if (["analyze_source_blueprint", "analyze_source_diagnostic", "analyze_intake", "extract_source_experience"].includes(job.type)) {
-      const source=this.db.prepare("SELECT id,content_hash,capture_version,status FROM sources WHERE id=?").get(entityId);
-      if (job.type !== "extract_source_experience") return source;
+      const source=this.db.prepare("SELECT id,content_hash,capture_version FROM sources WHERE id=?").get(entityId);
+      const claims = this.db.prepare(`SELECT *
+        FROM claims WHERE source_id=? AND lifecycle_status='active' ORDER BY id`).all(entityId);
+      if (job.type !== "extract_source_experience") return { source, claims,
+        experience: this.db.prepare('SELECT id,input_hash,status FROM experience_extraction_runs WHERE source_id=? ORDER BY id').all(entityId) };
       const media=this.db.prepare(`SELECT id,durability_status,stored_sha256,recovered_at
-        FROM source_assets WHERE source_id=? ORDER BY position,id`).all(entityId);
-      return {source,media};
+        FROM current_source_assets WHERE source_id=? ORDER BY position,id`).all(entityId);
+      return {source,media,claims};
     }
-    if (job.type === "resolve_entities") return this.db.prepare(`SELECT group_concat(id || ':' || source_key || ':' || value_text, '|') AS claims
-      FROM (SELECT c.id,COALESCE(NULLIF(c.original_normalized_key,''),c.normalized_key) AS source_key,c.value_text FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
-        WHERE ss.destination_slug=? AND c.lifecycle_status='active' ORDER BY c.id)`).get(entityId);
+    if (job.type === "resolve_entities") return {
+      claims:this.db.prepare(`SELECT c.id,COALESCE(NULLIF(c.original_normalized_key,''),c.normalized_key) AS source_key,
+        c.subject,c.value_text,c.source_quote,c.entity_type,c.granularity,c.entity_location_json
+        FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
+        WHERE ss.destination_slug=? AND c.lifecycle_status='active' ORDER BY c.id`).all(entityId),
+      aliases:this.listEntityAliases(entityId),
+    };
     if (["assemble_editorial", "plan_content"].includes(job.type)) {
       const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id=?").get(entityId);
+      const opportunityId=job.production_owner_opportunity_id || null;
+      if (job.type === "plan_content") return { productionOwnerOpportunityId:opportunityId,
+        planning:this.getPlanningPackage(entityId,{opportunityId}),assembly:this.getEditorialAssembly(entityId) };
       const facts = candidate ? this.db.prepare(`SELECT k.normalized_key,k.preferred_value,k.consensus_status,k.updated_at
         FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id WHERE d.slug=? ORDER BY k.normalized_key`).all(candidate.destination_slug) : [];
-      return { candidate, facts };
+      return { productionOwnerOpportunityId:opportunityId,candidate, facts,
+        selection: this.getEditorialAssemblyPackage(entityId,{opportunityId}) };
     }
     if (["plan_narrative", "assemble_writing_packet", "compose_frontend_page_plan", "generate_draft"].includes(job.type)) {
       const brief = this.db.prepare(`SELECT id,plan_json,canonical_json,evidence_ledger_json,strategy_version,updated_at
         FROM content_briefs WHERE id=?`).get(entityId);
-      const facts = brief ? this.getBriefPackage(entityId)?.facts || [] : [];
-      return { brief, evidenceHash: evidenceHashForFacts(facts) };
+      const pack = brief ? (job.type === 'plan_narrative'
+        ? this.getNarrativePlanningPackage(entityId) : this.getBriefPackage(entityId)) : null;
+      const facts = pack?.facts || [];
+      return { productionOwnerOpportunityId:job.production_owner_opportunity_id || null,
+        brief, facts: semanticMaterial(facts), assembly: pack?.editorial_assembly,
+        experiences: pack?.experiences, contentPolicy: pack?.content_policy,
+        narrative: job.type === 'plan_narrative' ? null : this.getNarrativePlan(entityId),
+        packet: ['generate_draft','compose_frontend_page_plan'].includes(job.type) ? this.getWritingPacket(entityId) : null,
+        // Any generate_draft job may be a manual, canary, or automatic recovery.
+        // The current failed-review fingerprint must therefore participate in
+        // the artifact hash regardless of the caller's dedupe-key namespace;
+        // otherwise a recovery can incorrectly reuse the prose that just failed.
+        qualityRegeneration: job.type === 'generate_draft'
+          ? this.qualityRegenerationFeedback(entityId) : null };
     }
     const draft = this.db.prepare(`SELECT id,brief_id,content_hash,revision,seo_json,strategy_version,updated_at
       FROM article_drafts WHERE id=?`).get(entityId);
+    if (draft && (job.type === 'compose_frontend_page' || TRACKED_DELIVERY_STAGES.has(job.type))) {
+      // Localization writes the derived OG URL itself. Its source asset identity
+      // is tracked below; this URL must not invalidate that same upload operation.
+      const {og_image,...editorialSeo}=json(draft.seo_json,{});
+      draft.seo_json=JSON.stringify(editorialSeo);
+    }
+    if (job.type === "review_draft") return {
+      productionOwnerOpportunityId:job.production_owner_opportunity_id || null,
+      draft,
+      evidence:draft ? semanticMaterial(this.getBriefPackage(draft.brief_id)?.facts || []) : [],
+      content:draft ? this.db.prepare(`SELECT title,slug,meta_description,body_markdown,evidence_ledger_json,
+        unresolved_conflicts_json,verification_notes_json,content_ast_json FROM article_drafts WHERE id=?`).get(entityId) : null,
+      page:this.db.prepare(`SELECT payload_json,validation_json,status,contract_checksum,draft_revision,draft_content_hash
+        FROM frontend_page_compositions WHERE draft_id=?`).get(entityId),
+      media:this.db.prepare(`SELECT id,status,asset_fingerprint,source_asset_id,media_path,wordpress_media_id
+        FROM article_visuals WHERE draft_id=? ORDER BY id`).all(entityId),
+    };
+    if (TRACKED_DELIVERY_STAGES.has(job.type)) return {
+      productionOwnerOpportunityId:job.production_owner_opportunity_id || null,
+      draft,
+      evidence: draft ? semanticMaterial(this.getBriefPackage(draft.brief_id)?.facts || []) : [],
+      content: draft ? this.db.prepare('SELECT title,slug,meta_description,body_markdown,content_blocks_json FROM article_drafts WHERE id=?').get(entityId) : null,
+      review: this.db.prepare('SELECT passed,draft_content_hash,evidence_hash,checks_json FROM quality_reviews WHERE draft_id=? ORDER BY created_at DESC,id DESC LIMIT 1').get(entityId),
+      commercial: job.type === 'compose_commercial'
+        ? this.activeOffersForDestination(this.db.prepare('SELECT destination_slug FROM content_briefs WHERE id=?').get(draft?.brief_id || '')?.destination_slug || '')
+        : this.db.prepare('SELECT * FROM commercial_compositions WHERE draft_id=?').get(entityId),
+      page: this.db.prepare('SELECT payload_json,validation_json,contract_checksum,draft_content_hash FROM frontend_page_compositions WHERE draft_id=?').get(entityId),
+      publish: job.type === 'push_wordpress_draft' ? this.db.prepare('SELECT publish_package_json,contract_checksum FROM frontend_publish_compositions WHERE draft_id=?').get(entityId) : null,
+      media: this.db.prepare(`SELECT v.id,v.status,v.asset_fingerprint,v.source_asset_id,v.media_path,a.stored_sha256,a.authorization_status,a.publishable
+        FROM article_visuals v LEFT JOIN source_assets a ON a.id=v.source_asset_id WHERE v.draft_id=? ORDER BY v.id`).all(entityId),
+    };
     if (job.type === "revise_draft") {
       const review = this.db.prepare(`SELECT issues_json,draft_content_hash,evidence_hash FROM quality_reviews
         WHERE draft_id=? ORDER BY created_at DESC LIMIT 1`).get(entityId);
-      return { draft, review };
+      return { draft, review,
+        evidence:draft ? semanticMaterial(this.getBriefPackage(draft.brief_id)?.facts || []) : [],
+        brief:draft ? this.db.prepare("SELECT plan_json,canonical_json,evidence_ledger_json,strategy_version FROM content_briefs WHERE id=?").get(draft.brief_id) : null };
     }
     const facts = draft ? this.getBriefPackage(draft.brief_id)?.facts || [] : [];
-    return { draft, evidenceHash: evidenceHashForFacts(facts) };
+    return { productionOwnerOpportunityId:job.production_owner_opportunity_id || null,draft, facts: semanticMaterial(facts),
+      media: job.type === 'compose_frontend_page' ? this.db.prepare('SELECT id,status,source_asset_id,media_path FROM article_visuals WHERE draft_id=? ORDER BY id').all(entityId) : null };
   }
 
   pipelineOutputHash(job) {
     let value = null;
     if (job.type === "extract_segment_claims") value = this.db.prepare("SELECT result_json,input_manifest_json FROM segment_extractions WHERE segment_id=?").get(job.entity_id);
+    else if (job.type === "extract_media_batch") value = {
+      batch:this.db.prepare("SELECT status,updated_at FROM media_extraction_batches WHERE id=?").get(job.entity_id),
+      extractions:this.db.prepare(`SELECT se.segment_id,se.result_json,se.input_manifest_json FROM segment_extractions se
+        WHERE se.segment_id IN (SELECT value FROM json_each((SELECT segment_ids_json FROM media_extraction_batches WHERE id=?))) ORDER BY se.segment_id`).all(job.entity_id),
+    };
+    else if (job.type === 'retry_segment_extraction') value = {
+      extraction:this.db.prepare('SELECT result_json,input_manifest_json,attempt FROM segment_extractions WHERE segment_id=?').get(job.entity_id),
+      coverage:this.db.prepare('SELECT * FROM extraction_coverage WHERE segment_id=?').get(job.entity_id),
+    };
     else if (job.type === "audit_segment_coverage") value = this.db.prepare("SELECT * FROM extraction_coverage WHERE segment_id=?").get(job.entity_id);
     else if (job.type === "analyze_source_blueprint") value = this.db.prepare("SELECT * FROM source_blueprints WHERE source_id=?").get(job.entity_id);
-    else if (job.type === "extract_source_experience") value = this.db.prepare("SELECT id,input_hash,status,updated_at FROM experience_extraction_runs WHERE source_id=? AND status='succeeded' ORDER BY updated_at DESC LIMIT 1").get(job.entity_id);
+    else if (job.type === "extract_source_experience") value = {
+      run:this.db.prepare("SELECT id,input_hash,status FROM experience_extraction_runs WHERE source_id=? AND status='succeeded' ORDER BY updated_at DESC LIMIT 1").get(job.entity_id),
+      blocks:this.db.prepare('SELECT * FROM experience_blocks WHERE source_id=? ORDER BY id').all(job.entity_id) };
     else if (["analyze_source_diagnostic", "analyze_intake"].includes(job.type)) value = this.db.prepare("SELECT * FROM content_intake_analyses WHERE source_id=?").get(job.entity_id);
     else if (job.type === "resolve_entities") value = this.db.prepare(`SELECT group_concat(id || ':' || entity_key || ':' || entity_resolution_status, '|') AS value
       FROM (SELECT c.id,c.entity_key,c.entity_resolution_status FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
@@ -150,13 +312,16 @@ export class Repository {
     else if (job.type === "assemble_editorial") value = this.db.prepare("SELECT id,input_hash,selected_fact_keys_json,selected_experience_block_ids_json FROM editorial_assemblies WHERE candidate_id=?").get(job.entity_id);
     else if (job.type === "plan_content") value = this.db.prepare("SELECT id,plan_json,canonical_json FROM content_briefs WHERE candidate_id=?").get(job.entity_id);
     else if (job.type === "plan_narrative") value = this.db.prepare("SELECT * FROM narrative_plans WHERE brief_id=?").get(job.entity_id);
-    else if (job.type === "assemble_writing_packet") value = this.db.prepare("SELECT input_hash FROM writing_packets WHERE brief_id=?").get(job.entity_id);
+    else if (job.type === "assemble_writing_packet") value = this.db.prepare("SELECT packet_text,evidence_ledger_json,selected_fact_keys_json,selected_experience_block_ids_json,context_json FROM writing_packets WHERE brief_id=?").get(job.entity_id);
     else if (job.type === "compose_frontend_page_plan") value = this.db.prepare("SELECT plan_json,validation_json,contract_checksum FROM frontend_page_plans WHERE brief_id=?").get(job.entity_id);
     else if (job.type === "generate_draft") value = this.db.prepare("SELECT id,content_hash,revision FROM article_drafts WHERE brief_id=?").get(job.entity_id);
     else if (job.type === "compose_frontend_page") value = this.db.prepare("SELECT payload_json,validation_json,draft_content_hash FROM frontend_page_compositions WHERE draft_id=?").get(job.entity_id);
     else if (job.type === "review_draft") value = this.db.prepare("SELECT draft_content_hash,evidence_hash,passed,checks_json,issues_json FROM quality_reviews WHERE draft_id=? ORDER BY created_at DESC LIMIT 1").get(job.entity_id);
     else if (job.type === "revise_draft") value = this.db.prepare("SELECT content_hash,revision FROM article_drafts WHERE id=?").get(job.entity_id);
-    return value ? sha256(JSON.stringify(value)) : "";
+    else if (job.type === 'compose_commercial') value = this.db.prepare('SELECT * FROM commercial_compositions WHERE draft_id=?').get(job.entity_id);
+    else if (job.type === 'compose_publish_page') value = this.db.prepare('SELECT * FROM frontend_publish_compositions WHERE draft_id=?').get(job.entity_id);
+    else if (job.type === 'push_wordpress_draft') value = this.db.prepare('SELECT * FROM wordpress_publications WHERE draft_id=?').get(job.entity_id);
+    return value ? dependencyHash(value) : "";
   }
 
   recoverExpiredJobs() {
@@ -186,6 +351,9 @@ export class Repository {
     const model = json(saved?.value_json, {}).model;
     const selected = AI_MODELS.some((item) => item.id === model) ? model : defaultModel;
     const active = AI_MODELS.find((item) => item.id === selected) || AI_MODELS[0];
+    this.activeProvider = active.provider;
+    const persistedProviderState=this.db.prepare("SELECT backoff_until FROM provider_runtime_state WHERE provider=?").get(active.provider);
+    this.providerBackoffUntil=Math.max(0,Date.parse(persistedProviderState?.backoff_until||"")||0);
     return {
       id: active.id, model: active.model, provider: active.provider,
       ...(active.location ? { location: active.location } : {}),
@@ -203,6 +371,137 @@ export class Repository {
       ON CONFLICT(setting_key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
     `).run(JSON.stringify({ model }), timestamp);
     return this.getAiSettings(defaultModel);
+  }
+
+  modelCredentialKey() {
+    const value = this.modelCredentialEncryptionKey;
+    if (!value) throw Object.assign(new Error("MODEL_CREDENTIAL_ENCRYPTION_KEY is required before API keys can be stored."), {
+      code: "MODEL_CREDENTIAL_ENCRYPTION_KEY_REQUIRED", statusCode: 409,
+    });
+    let key = null;
+    if (/^[a-f0-9]{64}$/i.test(value)) key = Buffer.from(value, "hex");
+    else { try { key = Buffer.from(value, "base64"); } catch { key = null; } }
+    if (!key || key.length !== 32) throw Object.assign(new Error("MODEL_CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes."), {
+      code: "MODEL_CREDENTIAL_ENCRYPTION_KEY_INVALID", statusCode: 409,
+    });
+    return key;
+  }
+
+  encryptModelCredential(secret) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", this.modelCredentialKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(String(secret), "utf8"), cipher.final()]);
+    return { encryptedSecret: encrypted.toString("base64"), iv: iv.toString("base64"), authTag: cipher.getAuthTag().toString("base64") };
+  }
+
+  decryptModelCredential(row) {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", this.modelCredentialKey(), Buffer.from(row.iv, "base64"));
+    decipher.setAuthTag(Buffer.from(row.auth_tag, "base64"));
+    return Buffer.concat([decipher.update(Buffer.from(row.encrypted_secret, "base64")), decipher.final()]).toString("utf8");
+  }
+
+  hasModelCredential(provider) {
+    return Boolean(this.db.prepare("SELECT 1 FROM model_credentials WHERE provider=?").get(provider)
+      || this.environmentCredentialProviders.has(provider));
+  }
+
+  readModelCredential(provider) {
+    const row = this.db.prepare("SELECT * FROM model_credentials WHERE provider=?").get(provider);
+    return row ? this.decryptModelCredential(row) : null;
+  }
+
+  recordModelCredentialValidation(provider,status,detail={}) {
+    if(!["untested","text_verified","multimodal_verified","failed"].includes(status))throw new Error("Invalid credential validation status.");
+    const timestamp=now();
+    this.db.prepare(`UPDATE model_credentials SET validation_status=?,validation_detail_json=?,validated_at=?,updated_at=? WHERE provider=?`)
+      .run(status,JSON.stringify(detail&&typeof detail==="object"?detail:{}),timestamp,timestamp,provider);
+    return this.getModelRoutingSettings().credentials[provider];
+  }
+
+  getModelRoutingSettings() {
+    const row = this.db.prepare("SELECT * FROM model_routing_settings WHERE singleton=1").get();
+    const credentials = {};
+    for (const item of EXTRACTION_MODELS) {
+      const stored = this.db.prepare(`SELECT masked_suffix,key_version,validation_status,validated_at
+        FROM model_credentials WHERE provider=?`).get(item.provider);
+      credentials[item.provider] = {
+        configured: Boolean(stored || this.environmentCredentialProviders.has(item.provider)),
+        source: stored ? "encrypted_database" : this.environmentCredentialProviders.has(item.provider) ? "environment" : "none",
+        maskedSuffix: stored?.masked_suffix || "", keyVersion: stored?.key_version || null,
+        validationStatus: stored?.validation_status || "untested", validatedAt: stored?.validated_at || null,
+      };
+    }
+    return {
+      selectedProvider: row.selected_provider, activeProvider: row.active_provider, activeModel: row.active_model,
+      activationState: row.activation_state, revision: Number(row.revision || 1), policyVersion: row.policy_version,
+      activatedAt: row.activated_at || null, updatedAt: row.updated_at,
+      encryptionReady: Boolean(this.modelCredentialEncryptionKey), credentials, extractionModels: EXTRACTION_MODELS,
+      fixedRoles: {
+        writing: { provider: "vertex", model: "gemini-3.8-flash" },
+        articleReview: { provider: "vertex", model: "gemini-3.8-flash" },
+        imageReview: { provider: "vertex", model: "gemini-3.8-flash" },
+        imageGeneration: { provider: "vertex_gemini", model: "gemini-3.1-flash-image" },
+      },
+    };
+  }
+
+  updateModelRouting({ provider, apiKey = "", deleteKey = false, activate = false, expectedRevision, actor = "admin" } = {}) {
+    const selected = EXTRACTION_MODELS.find((item) => item.provider === provider);
+    if (!selected) throw Object.assign(new Error("Unsupported extraction provider."), { statusCode: 400, code: "UNSUPPORTED_EXTRACTION_PROVIDER" });
+    if (!Number.isInteger(Number(expectedRevision))) throw Object.assign(new Error("expectedRevision is required."), { statusCode: 409, code: "MODEL_ROUTING_REVISION_REQUIRED" });
+    const cleanKey = String(apiKey || "").trim();
+    if (cleanKey.length > 16_384) throw Object.assign(new Error("API key is too long."), { statusCode: 400, code: "MODEL_CREDENTIAL_INVALID" });
+    return transaction(this.db, () => {
+      const previous = this.db.prepare("SELECT * FROM model_routing_settings WHERE singleton=1").get();
+      if (Number(previous.revision) !== Number(expectedRevision)) throw Object.assign(new Error("Model routing changed in another session. Reload settings and try again."), {
+        statusCode: 409, code: "MODEL_ROUTING_REVISION_CONFLICT", currentRevision: Number(previous.revision),
+      });
+      const timestamp = now();
+      if (deleteKey) this.db.prepare("DELETE FROM model_credentials WHERE provider=?").run(provider);
+      if (cleanKey) {
+        const sealed = this.encryptModelCredential(cleanKey);
+        const prior = this.db.prepare("SELECT key_version FROM model_credentials WHERE provider=?").get(provider);
+        this.db.prepare(`INSERT INTO model_credentials(provider,encrypted_secret,iv,auth_tag,key_version,masked_suffix,validation_status,
+          validation_detail_json,validated_at,created_at,updated_at) VALUES (?,?,?,?,?,?,'untested','{}',NULL,?,?)
+          ON CONFLICT(provider) DO UPDATE SET encrypted_secret=excluded.encrypted_secret,iv=excluded.iv,auth_tag=excluded.auth_tag,
+            key_version=excluded.key_version,masked_suffix=excluded.masked_suffix,validation_status='untested',validation_detail_json='{}',
+            validated_at=NULL,updated_at=excluded.updated_at`)
+          .run(provider, sealed.encryptedSecret, sealed.iv, sealed.authTag, Number(prior?.key_version || 0) + 1,
+            cleanKey.slice(-4), timestamp, timestamp);
+      }
+      if (deleteKey && previous.active_provider === provider && !this.hasModelCredential(provider)) {
+        throw Object.assign(new Error("The credential for the active extraction route cannot be removed until another route is activated."), {
+          statusCode: 409, code: "ACTIVE_MODEL_CREDENTIAL_REQUIRED",
+        });
+      }
+      if (activate && !this.hasModelCredential(provider)) throw Object.assign(new Error("Configure an API key before activation."), {
+        statusCode: 409, code: "MODEL_CREDENTIAL_REQUIRED",
+      });
+      const nextRevision = Number(previous.revision) + 1;
+      this.db.prepare(`UPDATE model_routing_settings SET selected_provider=?,active_provider=?,active_model=?,activation_state=?,
+        revision=?,activated_at=?,updated_at=? WHERE singleton=1`).run(provider,
+          activate ? provider : previous.active_provider, activate ? selected.model : previous.active_model,
+          activate ? "active" : provider === previous.active_provider ? previous.activation_state : "candidate",
+          nextRevision, activate ? timestamp : previous.activated_at, timestamp);
+      this.db.prepare(`INSERT INTO model_routing_audit(id,action,provider,previous_revision,next_revision,actor,detail_json,created_at)
+        VALUES (?,?,?,?,?,?,?,?)`).run(id("model_route_audit"), activate ? "activate" : deleteKey ? "delete_key" : cleanKey ? "save_key" : "select",
+          provider, Number(previous.revision), nextRevision, String(actor || "admin").slice(0, 200),
+          JSON.stringify({ keyChanged: Boolean(cleanKey || deleteKey), activated: Boolean(activate) }), timestamp);
+      return this.getModelRoutingSettings();
+    });
+  }
+
+  modelProfileForRole(role) {
+    if (role === "writing") return { role, provider: "vertex", model: "gemini-3.8-flash", policyVersion: "model-routing-policy-1.1.0" };
+    if (role === "visual") return { role, provider: "vertex_gemini", model: "gemini-3.1-flash-image", reviewProvider: "vertex", reviewModel: "gemini-3.8-flash", policyVersion: "model-routing-policy-1.1.0" };
+    if (role !== "extraction") return null;
+    const routing = this.getModelRoutingSettings();
+    if (routing.activeProvider === "legacy") {
+      const legacy=AI_MODELS.find((item)=>item.id===routing.activeModel)||AI_MODELS[0];
+      return { role, provider: legacy.provider, model: legacy.model, legacy: true, routingRevision: routing.revision, policyVersion: routing.policyVersion };
+    }
+    const selected = EXTRACTION_MODELS.find((item) => item.provider === routing.activeProvider);
+    return { role, provider: selected.provider, model: selected.model, routingRevision: routing.revision, policyVersion: routing.policyVersion };
   }
 
   getVisualSettings(defaultModel) {
@@ -343,9 +642,14 @@ export class Repository {
       throw Object.assign(new Error("STALE_DRAFT_VERSION: page composition input changed before it could be saved."), { retryable: false });
     }
     const existing = this.db.prepare("SELECT id FROM frontend_page_compositions WHERE draft_id=?").get(draftId);
-    const draftRow = this.db.prepare(`SELECT ad.evidence_ledger_json,cb.destination_slug FROM article_drafts ad
+    const draftRow = this.db.prepare(`SELECT ad.evidence_ledger_json,ad.brief_id,cb.destination_slug FROM article_drafts ad
       JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
-    const sourceRows = this.db.prepare(`SELECT c.id,c.normalized_key,c.source_id,c.evidence_span_ids_json FROM claims c
+    const packet = this.getWritingPacket(draftRow?.brief_id);
+    const frozenFacts = packet?.evidence_ledger?.map(entry => entry.fact_snapshot);
+    const hasFrozenPacket = frozenFacts?.length > 0 && frozenFacts.every(Boolean);
+    const sourceRows = hasFrozenPacket ? frozenFacts.flatMap(fact => fact.evidence.map(evidence => ({
+      ...evidence, id:evidence.claim_id || evidence.id, normalized_key:fact.normalized_key,
+      evidence_span_ids_json:JSON.stringify(evidence.evidence_span_ids || []) }))) : this.db.prepare(`SELECT c.id,c.normalized_key,c.source_id,c.evidence_span_ids_json FROM claims c
       JOIN structured_sources ss ON ss.source_id=c.source_id
       WHERE ss.destination_slug=? AND c.lifecycle_status='active' AND c.knowledge_eligible=1`).all(draftRow?.destination_slug || "");
     const sourceIdsByClaim = new Map();
@@ -354,9 +658,11 @@ export class Repository {
       [...new Set([...(sourceIdsByClaim.get(row.normalized_key) || []), row.source_id])].sort());
     for (const row of sourceRows) claimTracesByKey.set(row.normalized_key,
       [...(claimTracesByKey.get(row.normalized_key) || []), { claimId: row.id, sourceId: row.source_id,
-        evidenceSpanIds: json(row.evidence_span_ids_json, []) }]);
+        evidenceSpanIds: json(row.evidence_span_ids_json, []), ...(hasFrozenPacket ? {
+          evidenceRole:row.evidence_role || 'current', value:row.value, qualifiers:row.qualifiers,
+          validFrom:row.valid_from,validTo:row.valid_to,revision:row.extraction_revision } : {}) }]);
     const provenance = buildBlockProvenance(payload, json(draftRow?.evidence_ledger_json, []), explicitProvenance,
-      sourceIdsByClaim, claimTracesByKey);
+      sourceIdsByClaim, claimTracesByKey, hasFrozenPacket ? new Map(frozenFacts.map(fact => [fact.normalized_key,fact])) : new Map());
     const validationRecord = { ...validation, valid: Boolean(validation.valid && provenance.valid),
       errors: [...(validation.errors || []), ...provenance.errors], blockProvenance: provenance.blocks,
       provenanceVersion: provenance.version };
@@ -374,6 +680,9 @@ export class Repository {
     `).run(compositionId, draftId, planId || null, snapshot.id, snapshot.contractVersion, snapshot.schemaVersion,
       snapshot.checksum, JSON.stringify(payload), JSON.stringify(validationRecord), validationRecord.valid ? "valid" : "invalid", model, timestamp, timestamp,
       draft.revision, draft.content_hash);
+    const pageHash = sha256(JSON.stringify(payload));
+    this.db.prepare(`UPDATE commercial_compositions SET refresh_required=1,refresh_reason='editorial_page_recomposed',updated_at=?
+      WHERE draft_id=? AND editorial_page_hash<>?`).run(timestamp,draftId,pageHash);
     return this.getFrontendPageComposition(draftId);
   }
 
@@ -478,14 +787,15 @@ export class Repository {
     capture = persistCaptureAssets(capture, this.contentConfig.sourceUploadsDir);
     const timestamp = now();
     const contentHash = captureContentHash(capture);
+    const storageSnapshot=captureStorageSnapshot(capture);
     const sourceKind = capture.sourceKind || (capture.adapter === "xiaohongshu" ? "xiaohongshu_note" : "manual_source");
     const submittedUrl = capture.submittedUrl || capture.canonicalUrl;
     const submissionMetadata = { ...(capture.submissionMetadata || {}) };
     submissionMetadata.processingEstimate ||= estimateSourceProcessing(capture, {
-      imageBatchSize: this.contentConfig.imageBatchSize,
+      imageBatchSize: this.contentConfig.mediaImageBatchSize,
       textSegmentMaxChars: this.contentConfig.sourceTextSegmentMaxChars,
     });
-    const requiresManualStart = Boolean(submissionMetadata.processingEstimate?.requiresManualStart);
+    const hardLimitBlocked = submissionMetadata.processingEstimate?.processingClass === "blocked_hard_limit";
     const completeness = capture.completeness || { overall: "complete" };
     const completenessStatus = ["complete", "partial_retryable", "partial_needs_attention"].includes(completeness.overall)
       ? completeness.overall : "complete";
@@ -511,6 +821,23 @@ export class Repository {
       let sourceId;
       let duplicate = false;
       let captureVersion = 1;
+      if (existing?.completeness_status === 'complete'
+        && !this.db.prepare("SELECT 1 FROM current_source_assets WHERE source_id=? AND durability_status<>'ORIGINAL_STORED' LIMIT 1").get(existing.id)
+        && (completenessStatus !== 'complete'
+        || (capture.adapter === 'xiaohongshu' && capture.assets.some(asset => asset.durabilityStatus !== 'ORIGINAL_STORED')))) {
+        const prior = this.db.prepare('SELECT capture_version FROM capture_versions WHERE source_id=? AND content_hash=? AND completeness_status=?')
+          .get(existing.id, contentHash, completenessStatus);
+        if (!prior) {
+          const revision = this.db.prepare('SELECT COALESCE(MAX(capture_version),0)+1 AS next FROM capture_versions WHERE source_id=?').get(existing.id).next;
+          this.db.prepare(`INSERT INTO capture_versions(id,source_id,capture_version,captured_at,raw_text,raw_html,raw_payload_json,
+            assets_json,content_hash,completeness_status,completeness_json,acquisition_origin,sync_scope_key,extension_version,created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id('capture_version'), existing.id, revision, capture.capturedAt,
+              capture.rawText, capture.rawHtml, JSON.stringify(storageSnapshot), JSON.stringify(storageSnapshot.assets), contentHash,
+              completenessStatus, JSON.stringify(completeness), acquisitionOrigin, syncScopeKey, extensionVersion, timestamp);
+        }
+        return { id: existing.id, accepted: true, duplicate: Boolean(prior), captureVersion: existing.capture_version,
+          completenessStatus: 'partial_retryable', mediaDurabilityComplete: false, extractionQueued: false, preservedCompleteVersion: true };
+      }
       const completenessUpgrade = existing?.completeness_status !== "complete" && completenessStatus === "complete";
       if (existing && existing.content_hash === contentHash && !completenessUpgrade) {
         sourceId = existing.id;
@@ -518,8 +845,8 @@ export class Repository {
         captureVersion = existing.capture_version;
         this.db.prepare(`UPDATE sources SET captured_at=?,published_at=COALESCE(?,published_at),submission_metadata_json=?,
           raw_payload_json=?,extension_version=?,updated_at=? WHERE id=?`).run(capture.capturedAt,capture.publishedAt,
-          JSON.stringify(submissionMetadata),JSON.stringify(capture),extensionVersion,timestamp,sourceId);
-        const findRefreshAsset = this.db.prepare(`SELECT id,ai_derivative_data_url FROM source_assets
+           JSON.stringify(submissionMetadata),JSON.stringify(storageSnapshot),extensionVersion,timestamp,sourceId);
+        const findRefreshAsset = this.db.prepare(`SELECT id,ai_derivative_data_url FROM current_source_assets
           WHERE source_id=? AND kind=? AND (media_identity=? OR position=?) LIMIT 1`);
         const refreshAsset = this.db.prepare(`UPDATE source_assets SET remote_url=?,local_path=CASE WHEN ?<>'' THEN ? ELSE local_path END,
           mime_type=CASE WHEN ?<>'' THEN ? ELSE mime_type END,storage_status=?,original_bytes_status=?,
@@ -529,9 +856,10 @@ export class Repository {
           ai_derivative_sha256=CASE WHEN ?<>'' THEN ? ELSE ai_derivative_sha256 END,
           durability_status=?,ai_readability_status=?,repair_status=?,storage_error='',
           recovered_at=CASE WHEN ?='ORIGINAL_STORED' THEN ? ELSE recovered_at END,
-          provenance_json=? WHERE source_id=? AND kind=? AND (media_identity=? OR position=?)`);
+          provenance_json=? WHERE source_id=? AND kind=? AND (media_identity=? OR position=?)
+          AND capture_version=(SELECT capture_version FROM sources WHERE sources.id=source_assets.source_id)`);
         for (const asset of capture.assets || []) {
-          if (!asset.aiDerivativeDataUrl && !asset.originalSha256) continue;
+          if (!asset.derivativeStorageRef && !asset.originalSha256) continue;
           const storedAsset = findRefreshAsset.get(sourceId, asset.kind, asset.mediaIdentity || asset.url, asset.position);
           refreshAsset.run(asset.url,asset.localPath || '',asset.localPath || '',asset.mimeType || '',asset.mimeType || '',asset.storageStatus || 'discovered',asset.originalBytesStatus || 'missing',
             asset.storedSha256 || '',asset.storedSha256 || '',asset.storedSizeBytes ?? null,asset.originalSha256 || '',asset.originalSha256 || '',
@@ -545,31 +873,32 @@ export class Repository {
             this.db.prepare(`DELETE FROM jobs WHERE entity_id=? AND type IN ('repair_media_asset','backfill_media_asset') AND status='queued'`)
               .run(storedAsset.id);
           }
-          if (storedAsset && !storedAsset.ai_derivative_data_url && asset.aiDerivativeDataUrl) restoredAssetIds.push(storedAsset.id);
+          if (storedAsset && asset.derivativeStorageRef) this.saveSourceAssetStorageRef(storedAsset.id,asset);
+          if (storedAsset && !storedAsset.ai_derivative_data_url && (asset.aiDerivativeDataUrl || asset.derivativeStorageRef)) restoredAssetIds.push(storedAsset.id);
         }
       } else if (existing) {
         sourceId = existing.id;
-        captureVersion = existing.capture_version + 1;
+        captureVersion = this.db.prepare('SELECT COALESCE(MAX(capture_version),0)+1 AS next FROM capture_versions WHERE source_id=?').get(sourceId).next;
         this.db.prepare(`
           UPDATE sources SET adapter = ?, external_id = ?, canonical_url = ?, submitted_url = ?, source_kind = ?, submission_metadata_json = ?,
             title = ?, author_name = ?, author_url = ?, published_at = ?,
             captured_at = ?, raw_text = ?, raw_html = ?, raw_payload_json = ?, content_hash = ?,
-            capture_version = capture_version + 1, status = ?, last_error = NULL, acquisition_origin=?, sync_scope_key=?,
+            capture_version = ?, status = ?, last_error = NULL, acquisition_origin=?, sync_scope_key=?,
             extension_version=?, completeness_status=?, completeness_json=?, authorization_status=?, commercial_use_allowed=?,
             editing_allowed=?, redistribution_allowed=?, publishable=?, authorization_origin=?, license_scope_json=?, updated_at = ?
           WHERE id = ?
         `).run(
           capture.adapter, capture.externalId, capture.canonicalUrl, submittedUrl, sourceKind, JSON.stringify(submissionMetadata),
           capture.title, capture.authorName, capture.authorUrl, capture.publishedAt,
-          capture.capturedAt, capture.rawText, capture.rawHtml, JSON.stringify(capture), contentHash,
-          completenessStatus === "complete" ? "captured" : "partial", acquisitionOrigin, syncScopeKey, extensionVersion,
+          capture.capturedAt, capture.rawText, capture.rawHtml, JSON.stringify(storageSnapshot), contentHash,
+          captureVersion, completenessStatus === "complete" ? "captured" : "partial", acquisitionOrigin, syncScopeKey, extensionVersion,
           completenessStatus, JSON.stringify(completeness), rights.authorizationStatus || "legacy",
           rights.commercialUseAllowed ? 1 : 0, rights.editingAllowed ? 1 : 0, rights.redistributionAllowed ? 1 : 0,
           rights.publishable ? 1 : 0, rights.authorizationOrigin || acquisitionOrigin, JSON.stringify(rights.licenseScope || []),
           timestamp, sourceId,
         );
-        this.db.prepare("DELETE FROM source_assets WHERE source_id = ?").run(sourceId);
-        this.db.prepare("DELETE FROM source_files WHERE source_id = ?").run(sourceId);
+        // Keep prior asset IDs, file paths and evidence relationships intact.
+        // Current readers select only sources.capture_version through views.
         this.db.prepare(`DELETE FROM jobs WHERE status IN ('queued','failed') AND (
           entity_id=? OR entity_id IN (SELECT id FROM source_segments WHERE source_id=?)
         )`).run(sourceId, sourceId);
@@ -584,7 +913,7 @@ export class Repository {
         `).run(
           sourceId, capture.adapter, capture.externalId, capture.canonicalUrl, submittedUrl, sourceKind, JSON.stringify(submissionMetadata), capture.title, capture.authorName,
           capture.authorUrl, capture.publishedAt, capture.capturedAt, capture.rawText, capture.rawHtml,
-          JSON.stringify(capture), contentHash, completenessStatus === "complete" ? "captured" : "partial",
+          JSON.stringify(storageSnapshot), contentHash, completenessStatus === "complete" ? "captured" : "partial",
           acquisitionOrigin, syncScopeKey, extensionVersion, completenessStatus, JSON.stringify(completeness),
           rights.authorizationStatus || "legacy", rights.commercialUseAllowed ? 1 : 0, rights.editingAllowed ? 1 : 0,
           rights.redistributionAllowed ? 1 : 0, rights.publishable ? 1 : 0, rights.authorizationOrigin || acquisitionOrigin,
@@ -604,13 +933,14 @@ export class Repository {
             media_identity,width,height,duration,original_sha256,ai_derivative_data_url,ai_derivative_sha256,authorization_status,
             commercial_use_allowed,editing_allowed,redistribution_allowed,publishable,authorization_origin,provenance_json,
             storage_status,original_bytes_status,stored_sha256,stored_size_bytes,language_status,nearby_text,caption_text,dom_order,
-            durability_status,ai_readability_status,repair_status,storage_error,recovered_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)
+            durability_status,ai_readability_status,repair_status,storage_error,recovered_at,capture_version)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)
         `);
         for (const asset of capture.assets) {
           const originalBytesStored = Boolean(asset.localPath && (asset.originalBytesStatus === "saved_original"
             || (capture.adapter !== "xiaohongshu" && asset.originalBytesStatus === "saved_unknown")));
-          insertAsset.run(id("asset"), sourceId, asset.kind, asset.url, asset.alt, asset.position,
+          const assetId=id("asset");
+          insertAsset.run(assetId, sourceId, asset.kind, asset.url, asset.alt, asset.position,
             asset.localPath || "", asset.mimeType || "", asset.originalFilename || "", asset.mediaIdentity || asset.url,
             asset.width ?? null, asset.height ?? null, asset.duration ?? null, asset.originalSha256 || "",
             asset.aiDerivativeDataUrl || "", asset.aiDerivativeSha256 || "", rights.authorizationStatus || "legacy",
@@ -624,26 +954,28 @@ export class Repository {
             asset.nearbyText || asset.provenance?.nearbyText || "", asset.captionText || asset.provenance?.captionText || "",
             asset.domOrder ?? asset.provenance?.domOrder ?? asset.position,
             asset.durabilityStatus || (originalBytesStored ? "ORIGINAL_STORED"
-              : asset.localPath || asset.aiDerivativeDataUrl ? "DERIVATIVE_ONLY" : asset.url ? "REMOTE_ONLY" : "UNAVAILABLE"),
-            asset.aiReadabilityStatus || (asset.localPath || asset.aiDerivativeDataUrl ? "processable" : asset.url ? "temporarily_unavailable" : "unsupported"),
+              : asset.localPath || asset.derivativeStorageRef ? "DERIVATIVE_ONLY" : asset.url ? "REMOTE_ONLY" : "UNAVAILABLE"),
+            asset.aiReadabilityStatus || (asset.localPath || asset.derivativeStorageRef ? "processable" : asset.url ? "temporarily_unavailable" : "unsupported"),
             asset.repairStatus || (originalBytesStored ? "not_needed"
               : asset.url ? "server_recovery_pending" : "unavailable"),
-            originalBytesStored ? timestamp : null,
+            originalBytesStored ? timestamp : null, captureVersion,
           );
+          this.saveSourceAssetStorageRef(assetId,asset);
         }
         const insertFile = this.db.prepare(`
-          INSERT INTO source_files(id, source_id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO source_files(id, source_id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at,capture_version)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const file of capture.files || []) {
-          insertFile.run(file.id || id("source_file"), sourceId, file.fileKind, file.originalFilename,
-            file.mimeType, file.storagePath, file.sizeBytes, file.sha256, timestamp);
+          const fileId=file.id && !this.db.prepare('SELECT 1 FROM source_files WHERE id=?').get(file.id) ? file.id : id('source_file');
+          insertFile.run(fileId, sourceId, file.fileKind, file.originalFilename,
+            file.mimeType, file.storagePath, file.sizeBytes, file.sha256, timestamp, captureVersion);
         }
         this.db.prepare(`INSERT INTO capture_versions(id,source_id,capture_version,captured_at,raw_text,raw_html,raw_payload_json,
           assets_json,content_hash,completeness_status,completeness_json,acquisition_origin,sync_scope_key,extension_version,created_at)
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
           .run(id("capture_version"), sourceId, captureVersion, capture.capturedAt, capture.rawText, capture.rawHtml,
-            JSON.stringify(capture), JSON.stringify(capture.assets || []), contentHash, completenessStatus,
+            JSON.stringify(storageSnapshot), JSON.stringify(storageSnapshot.assets || []), contentHash, completenessStatus,
             JSON.stringify(completeness), acquisitionOrigin, syncScopeKey, extensionVersion, timestamp);
       }
 
@@ -668,11 +1000,12 @@ export class Repository {
       const mediaDurability = this.mediaRepairManifest(sourceId);
       let extractionQueued = false;
       let mediaRepairQueued = 0;
-      if (completenessStatus === "complete" && !requiresManualStart) {
+      if (completenessStatus === "complete" && !hardLimitBlocked) {
         if (mediaDurability.mediaDurability.complete) {
           if (duplicate) extractionQueued = this.resumeSourceAfterMediaRecovery(sourceId);
           else {
-            this.enqueue("extract_source", sourceId, { dedupeKey: `extract_source:${sourceId}:${captureVersion}` });
+            this.enqueue("extract_source", sourceId, { dedupeKey: `extract_source:${sourceId}:${captureVersion}`,
+              workloadClass:"interactive",interactive:true,priority:10 });
             extractionQueued = true;
           }
         } else {
@@ -688,7 +1021,9 @@ export class Repository {
         queued: extractionQueued || mediaRepairQueued > 0,
         extractionQueued,
         mediaRepairQueued,
-        requiresManualStart: !duplicate && completenessStatus === "complete" && requiresManualStart,
+        requiresManualStart: false,
+        processingClass: submissionMetadata.processingEstimate?.processingClass || "normal",
+        hardLimitBlocked: completenessStatus === "complete" && hardLimitBlocked,
         processingEstimate: submissionMetadata.processingEstimate,
         captureVersion,
         completenessStatus,
@@ -746,16 +1081,17 @@ export class Repository {
           mediaDiscovery: { images: { expected: null, discovered: 0 }, videos: { expected: null, discovered: 0 } },
           mediaDurability: { status: "missing", complete: false, originalsStored: 0, discovered: 0, remoteOnly: 0,
             derivativeOnly: 0, unavailable: 0, serverRecoverable: 0, browserRepairRequired: 0 },
+          repairMedia: { missingOriginals: [] },
           extractionStatus: "missing", experience: { status: "missing", complete: false }, requiredActions: ["CAPTURE_NEW"] };
     });
   }
 
   mediaRepairManifest(sourceId) {
-    const source = this.db.prepare(`SELECT id,status,completeness_status,completeness_json,raw_text,raw_html
+    const source = this.db.prepare(`SELECT id,status,capture_version,completeness_status,completeness_json,raw_text,raw_html
       FROM sources WHERE id=?`).get(sourceId);
     if (!source) return null;
-    const assets = this.db.prepare(`SELECT kind,durability_status,repair_status,ai_readability_status
-      FROM source_assets WHERE source_id=?`).all(sourceId);
+    const assets = this.db.prepare(`SELECT kind,media_identity,durability_status,repair_status,ai_readability_status
+      FROM current_source_assets WHERE source_id=?`).all(sourceId);
     const completeness = json(source.completeness_json, {});
     const summarize = (kind) => {
       const rows = assets.filter((asset) => asset.kind === kind);
@@ -776,11 +1112,16 @@ export class Repository {
       browserRepairRequired: assets.filter((asset) => asset.repair_status === "browser_repair_required").length,
     };
     const experience = this.db.prepare(`SELECT status,degraded,updated_at FROM experience_extraction_runs
-      WHERE source_id=? ORDER BY CASE status WHEN 'succeeded' THEN 0 ELSE 1 END,updated_at DESC,created_at DESC LIMIT 1`).get(sourceId);
+      WHERE source_id=? AND capture_version=? ORDER BY updated_at DESC,created_at DESC LIMIT 1`).get(sourceId,source.capture_version);
     return {
       capture: { text: source.raw_text ? "complete" : "missing", dom: source.raw_html ? "complete" : "missing", status: source.completeness_status },
       mediaDiscovery: { images: summarize("image"), videos: summarize("video") },
       mediaDurability: durability,
+      repairMedia: {
+        missingOriginals: assets.filter((asset) => asset.durability_status !== "ORIGINAL_STORED").map((asset) => ({
+          mediaIdentity: asset.media_identity, kind: asset.kind, repairStatus: asset.repair_status,
+        })),
+      },
       aiReadability: { processable: assets.filter((asset) => asset.ai_readability_status === "processable").length,
         temporarilyUnavailable: assets.filter((asset) => asset.ai_readability_status === "temporarily_unavailable").length,
         unsupported: assets.filter((asset) => asset.ai_readability_status === "unsupported").length },
@@ -790,8 +1131,19 @@ export class Repository {
   }
 
   getMediaRecoveryAsset(assetId) {
-    return this.db.prepare(`SELECT sa.*,s.adapter,s.canonical_url,s.external_id FROM source_assets sa
+    return this.db.prepare(`SELECT sa.*,s.adapter,s.canonical_url,s.external_id,sa.capture_version=s.capture_version AS is_current FROM source_assets sa
       JOIN sources s ON s.id=sa.source_id WHERE sa.id=?`).get(assetId) || null;
+  }
+
+  saveSourceAssetStorageRef(assetId,asset={}) {
+    if(!asset.originalStorageRef&&!asset.derivativeStorageRef)return false;
+    const timestamp=now();
+    this.db.prepare(`INSERT INTO source_asset_storage_refs(asset_id,original_storage_ref,derivative_storage_ref,derivative_cache_key,transform_json,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?) ON CONFLICT(asset_id) DO UPDATE SET original_storage_ref=excluded.original_storage_ref,
+        derivative_storage_ref=excluded.derivative_storage_ref,derivative_cache_key=excluded.derivative_cache_key,
+        transform_json=excluded.transform_json,updated_at=excluded.updated_at`).run(assetId,asset.originalStorageRef||"",asset.derivativeStorageRef||"",
+          asset.aiDerivativeSha256||asset.storedSha256||"",JSON.stringify(asset.derivativeTransform||{}),timestamp,timestamp);
+    return true;
   }
 
   startMediaRecovery(assetId) {
@@ -806,7 +1158,7 @@ export class Repository {
       ai_readability_status='processable',repair_status='not_needed',storage_error='',recovered_at=? WHERE id=?`)
       .run(stored.localPath, stored.mimeType, stored.sha256, stored.sha256, stored.sizeBytes, timestamp, assetId);
     const asset = this.getMediaRecoveryAsset(assetId);
-    if (asset) this.resumeSourceAfterMediaRecovery(asset.source_id);
+    if (asset?.is_current) this.resumeSourceAfterMediaRecovery(asset.source_id);
     this.refreshMediaBackfillRuns();
     return asset;
   }
@@ -821,7 +1173,7 @@ export class Repository {
   }
 
   enqueueSourceMediaRepairs(sourceId, type = "repair_media_asset") {
-    const assets = this.db.prepare(`SELECT id FROM source_assets WHERE source_id=?
+    const assets = this.db.prepare(`SELECT id FROM current_source_assets WHERE source_id=?
       AND durability_status<>'ORIGINAL_STORED' AND remote_url<>''
       AND repair_status NOT IN ('unavailable','browser_repair_required') ORDER BY position,id`).all(sourceId);
     for (const asset of assets) this.enqueue(type, asset.id, { dedupeKey: `${type}:${asset.id}`, priority: 10 });
@@ -832,13 +1184,13 @@ export class Repository {
     const source = this.db.prepare(`SELECT id,status,capture_version,completeness_status,submission_metadata_json
       FROM sources WHERE id=?`).get(sourceId);
     if (!source || source.completeness_status !== "complete") return false;
-    if (json(source.submission_metadata_json, {}).processingEstimate?.requiresManualStart) return false;
+    if (json(source.submission_metadata_json, {}).processingEstimate?.processingClass === "blocked_hard_limit") return false;
     const manifest = this.mediaRepairManifest(sourceId);
     if (!manifest?.mediaDurability.complete) return false;
     if (["processing","processed","needs_ai"].includes(source.status)) {
       if (source.status === "processing") return false;
       const mediaRevision=this.db.prepare(`SELECT group_concat(id || ':' || durability_status || ':' || COALESCE(stored_sha256,''), '|') value
-        FROM (SELECT id,durability_status,stored_sha256 FROM source_assets WHERE source_id=? ORDER BY position,id)`).get(sourceId)?.value || "no-media";
+        FROM (SELECT id,durability_status,stored_sha256 FROM current_source_assets WHERE source_id=? ORDER BY position,id)`).get(sourceId)?.value || "no-media";
       const timestamp=now();
       transaction(this.db,() => {
         this.db.prepare(`UPDATE sources SET recommendation_reconciled_version='',recommendation_reconciled_at=NULL,updated_at=? WHERE id=?`)
@@ -887,7 +1239,7 @@ export class Repository {
   }
 
   enqueueMediaDurabilityBackfill({ dryRun = false } = {}) {
-    const rows = this.db.prepare(`SELECT id,durability_status,repair_status,remote_url FROM source_assets
+    const rows = this.db.prepare(`SELECT id,durability_status,repair_status,remote_url FROM current_source_assets
       WHERE durability_status<>'ORIGINAL_STORED' ORDER BY source_id,position,id`).all();
     const report = {
       scanned: rows.length,
@@ -916,13 +1268,13 @@ export class Repository {
   runExperienceBackfill({ dryRun = true } = {}) {
     const rows = this.db.prepare(`SELECT s.id,s.title,s.capture_version FROM sources s
       WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
-        AND NOT EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')
+        AND NOT EXISTS (SELECT 1 FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')
         AND NOT EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
           AND er.capture_version=s.capture_version AND er.degraded=0)
       ORDER BY s.captured_at,s.id`).all();
     const blockedByMedia=Number(this.db.prepare(`SELECT COUNT(*) n FROM sources s
       WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
-        AND EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')`).get()?.n || 0);
+        AND EXISTS (SELECT 1 FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')`).get()?.n || 0);
     const report = {eligible:rows.length,blockedByMedia,queued:0,sourceIds:rows.map((row) => row.id)};
     if (!dryRun) for (const row of rows) {
       // Share the canonical key with startup/source-completion scheduling so a
@@ -990,12 +1342,53 @@ export class Repository {
     return runs.length;
   }
 
-  runRecommendationReconciliationBackfill({ dryRun = true } = {}) {
+  runRecommendationReconciliationBackfill({ dryRun = true, approvedFromRunId = null } = {}) {
     const destinations = this.db.prepare(`SELECT DISTINCT destination_slug FROM structured_sources
       WHERE destination_slug<>'' AND destination_slug<>'unknown' ORDER BY destination_slug`).all().map((row) => row.destination_slug);
+    const diagnosticSources=this.db.prepare(`SELECT s.id,s.capture_version,
+        (SELECT strategy_version FROM content_intake_analyses ai WHERE ai.source_id=s.id ORDER BY ai.updated_at DESC LIMIT 1) AS diagnostic_strategy
+      FROM sources s WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
+        AND NOT EXISTS (SELECT 1 FROM current_source_assets a WHERE a.source_id=s.id AND a.durability_status<>'ORIGINAL_STORED')
+        AND EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
+          AND er.capture_version=s.capture_version AND er.degraded=0)
+      ORDER BY s.captured_at,s.id`).all();
+    const currentDiagnostics=diagnosticSources.filter((row)=>row.diagnostic_strategy===this.strategyVersion);
+    const reusableDiagnostics=diagnosticSources.filter((row)=>row.diagnostic_strategy!==this.strategyVersion
+      && isReusableDiagnosticStrategy(row.diagnostic_strategy,this.strategyVersion));
+    const staleDiagnostics=diagnosticSources.filter((row)=>row.diagnostic_strategy!==this.strategyVersion
+      && !isReusableDiagnosticStrategy(row.diagnostic_strategy,this.strategyVersion));
+    const fingerprint=sha256(JSON.stringify({strategyVersion:this.strategyVersion,
+      current:currentDiagnostics.map((row)=>[row.id,Number(row.capture_version||0)]),
+      reusable:reusableDiagnostics.map((row)=>[row.id,Number(row.capture_version||0),row.diagnostic_strategy]),
+      stale:staleDiagnostics.map((row)=>[row.id,Number(row.capture_version||0),row.diagnostic_strategy||""])}));
     const before = Number(this.db.prepare("SELECT COUNT(*) n FROM content_opportunities").get().n || 0);
+    const sourceTotal=Number(this.db.prepare("SELECT COUNT(*) n FROM sources").get().n||0);
     const report = {destinations,diagnostics:Number(this.db.prepare("SELECT COUNT(*) n FROM content_intake_analyses").get().n || 0),
-      opportunitiesBefore:before,createdOrRefreshed:0,approvedReconciled:0};
+      currentDiagnosticSources:currentDiagnostics.length,reusableDiagnosticSources:reusableDiagnostics.length,
+      staleDiagnosticSources:staleDiagnostics.length,modelCallsAvoided:dryRun ? reusableDiagnostics.length : 0,
+      blockedDiagnosticSources:Math.max(0,sourceTotal-diagnosticSources.length),sourceIds:staleDiagnostics.map((row)=>row.id),
+      reusableSourceIds:reusableDiagnostics.map((row)=>row.id),fingerprint,opportunitiesBefore:before,
+      createdOrRefreshed:0,approvedReconciled:0,reused:0,queued:0};
+    if (!dryRun) {
+      const approval=this.db.prepare(`SELECT report_json FROM system_backfill_runs WHERE id=?
+        AND backfill_type='recommendation_reconciliation' AND status='dry_run' AND dry_run=1`).get(approvedFromRunId);
+      if (!approval) throw conflictError("Recommendation refresh requires the ID of a completed dry-run report.");
+      const approved=json(approval.report_json,{});
+      if (approved.fingerprint!==fingerprint) throw conflictError("Recommendation refresh inputs changed after dry-run; review a new dry-run report.");
+      for (const row of reusableDiagnostics) {
+        if (this.promoteCompatibleIntakeAnalysis(row.id,row.diagnostic_strategy)) {
+          report.reused += 1;
+          report.modelCallsAvoided += 1;
+        }
+      }
+      for (const row of staleDiagnostics) {
+        const jobId=this.enqueue("analyze_source_diagnostic",row.id,{
+          dedupeKey:`recommendation-diagnostic:${row.id}:${row.capture_version}:${this.strategyVersion}`,
+          workloadClass:"historical_recovery",priority:70,recoveryRunId:approvedFromRunId,
+        });
+        if (jobId) report.queued += 1;
+      }
+    }
     if (!dryRun) for (const destination of destinations) {
       this.rebuildTopicClusters(destination);
       const rebuilt = this.rebuildKnowledgeOpportunities(destination);
@@ -1004,7 +1397,33 @@ export class Repository {
       report.approvedReconciled += this.reconcileApprovedOpportunities(destination).filter((item) => item.queued).length;
     }
     report.opportunitiesAfter = dryRun ? before : Number(this.db.prepare("SELECT COUNT(*) n FROM content_opportunities").get().n || 0);
-    return this.saveSystemBackfillRun("recommendation_reconciliation",dryRun,report);
+    return this.saveSystemBackfillRun("recommendation_reconciliation",dryRun,report,approvedFromRunId);
+  }
+
+  refreshRecommendationBackfillRuns() {
+    const runs=this.db.prepare(`SELECT id,report_json FROM system_backfill_runs
+      WHERE backfill_type='recommendation_reconciliation' AND status='queued'`).all();
+    const timestamp=now();
+    for (const run of runs) {
+      const report=json(run.report_json,{}); const sourceIds=uniqueStrings(report.sourceIds,100_000);
+      let current=0; let active=0; let failed=0;
+      for (let offset=0;offset<sourceIds.length;offset+=500) {
+        const page=sourceIds.slice(offset,offset+500); const placeholders=page.map(()=>"?").join(",");
+        current += Number(this.db.prepare(`SELECT COUNT(*) n FROM content_intake_analyses
+          WHERE strategy_version=? AND source_id IN (${placeholders})`).get(this.strategyVersion,...page)?.n||0);
+        active += Number(this.db.prepare(`SELECT COUNT(*) n FROM jobs WHERE type='analyze_source_diagnostic'
+          AND status IN ('queued','running') AND entity_id IN (${placeholders})`).get(...page)?.n||0);
+        failed += Number(this.db.prepare(`SELECT COUNT(*) n FROM jobs WHERE type='analyze_source_diagnostic'
+          AND status='failed' AND entity_id IN (${placeholders})`).get(...page)?.n||0);
+      }
+      const pending=Math.max(0,sourceIds.length-current);
+      const status=pending===0 ? "completed" : active===0 ? "failed" : "queued";
+      this.db.prepare(`UPDATE system_backfill_runs SET status=?,report_json=?,
+        completed_at=CASE WHEN ?<>'queued' THEN ? ELSE NULL END,updated_at=? WHERE id=?`)
+        .run(status,JSON.stringify({...report,current,pending,failed:status==="failed"?pending:0,failedJobCount:failed}),
+          status,timestamp,timestamp,run.id);
+    }
+    return runs.length;
   }
 
   runFailedProductionCleanupBackfill({ dryRun = true, approvedFromRunId = null } = {}) {
@@ -1033,9 +1452,179 @@ export class Repository {
     return this.saveSystemBackfillRun("failed_production_cleanup",dryRun,report,approvedFromRunId);
   }
 
+  runKnowledgeResolutionBackfill({dryRun=true,approvedFromRunId=null}={}) {
+    if(!dryRun){
+      const approval=this.db.prepare(`SELECT report_json FROM system_backfill_runs
+        WHERE id=? AND backfill_type='knowledge_resolution' AND status='dry_run' AND dry_run=1`).get(approvedFromRunId);
+      if(!approval)throw conflictError("Knowledge resolution recompute requires the ID of a completed dry-run report.");
+    }
+    const reviewCases=this.db.prepare(`SELECT * FROM claim_review_cases WHERE status='pending' ORDER BY created_at,id`).all();
+    const claimQuery=this.db.prepare(`SELECT c.*,s.authority_level AS source_authority_level,s.adapter AS source_adapter,
+        s.source_identity,s.source_publisher,s.author_name AS source_author_name,s.captured_at,s.published_at,
+        s.observed_at AS source_observed_at,s.verified_at AS source_verified_at,
+        s.valid_from AS source_valid_from,s.valid_to AS source_valid_to,s.date_kind AS source_date_kind,
+        s.date_confidence AS source_date_confidence,s.completeness_status AS source_completeness_status,
+        ss.destination_slug
+      FROM claims c JOIN sources s ON s.id=c.source_id LEFT JOIN structured_sources ss ON ss.source_id=c.source_id
+      WHERE c.id=?`);
+    const decisions=[];
+    for(const review of reviewCases){
+      const left=claimQuery.get(review.claim_a_id);
+      const right=review.claim_b_id?claimQuery.get(review.claim_b_id):null;
+      if(!left)continue;
+      left.structured_value=structureClaim({predicate:left.predicate,value:left.value_text,
+        qualifiers:json(left.qualifiers_json,[]),sourceQuote:left.source_quote});
+      let resolution;
+      if(!right){
+        resolution={state:"REPAIR_REQUIRED",autoResolved:true,humanRequired:false,verificationRequired:false,repairRequired:true,
+          reason:"The extraction issue is routed to a bounded Claim repair job instead of human conflict review."};
+      }else{
+        right.structured_value=structureClaim({predicate:right.predicate,value:right.value_text,
+          qualifiers:json(right.qualifiers_json,[]),sourceQuote:right.source_quote});
+        const comparison=classifyClaimPair(left,right);
+        const consensus=resolveEvidenceConsensus([left,right],{variantKey:(row)=>canonicalKnowledgeVariant(row),
+          nowMs:this.clock().getTime(),staleAfterDays:this.contentConfig.volatileStaleAfterDays});
+        resolution=decideKnowledgeResolution({comparison,left,right,consensus,nowMs:this.clock().getTime()});
+      }
+      decisions.push({reviewId:review.id,destinationSlug:review.destination_slug,normalizedKey:left.normalized_key,
+        claimAId:left.id,claimBId:right?.id||null,previousReviewType:review.review_type,...resolution});
+    }
+    const summary=summarizeResolutionDecisions(decisions);
+    const report={engineVersion:KNOWLEDGE_RESOLUTION_VERSION,beforeManualReviewCount:reviewCases.length,
+      evaluatedCount:decisions.length,...summary,
+      autoEquivalent:summary.counts.AUTO_EQUIVALENT+summary.counts.AUTO_CONSENSUS,
+      autoScopeSplit:summary.counts.AUTO_SCOPE_SPLIT,autoTemporal:summary.counts.AUTO_TEMPORAL,
+      extractionRepair:summary.counts.AUTO_REPAIRED+summary.counts.REPAIR_REQUIRED,
+      verificationNeeded:summary.counts.VERIFICATION_REQUIRED,humanRequired:summary.counts.HUMAN_REQUIRED,
+      projectedManualReviewCount:summary.counts.HUMAN_REQUIRED,items:decisions};
+    if(!dryRun){
+      const destinations=[...new Set(reviewCases.map((row)=>row.destination_slug).filter(Boolean))];
+      for(const destination of destinations)this.rebuildKnowledge(destination);
+      report.recomputedDestinations=destinations.length;
+    }
+    return this.saveSystemBackfillRun("knowledge_resolution",dryRun,report,approvedFromRunId);
+  }
+
+  runSourceProcessingGapRecovery({dryRun=true,approvedFromRunId=null}={}) {
+    const sources=this.db.prepare(`SELECT s.id,s.status,s.capture_version,s.title,s.completeness_status,
+        json_extract(s.submission_metadata_json,'$.processingEstimate.requiresManualStart') AS legacy_manual_start,
+        json_extract(s.submission_metadata_json,'$.processingEstimate.processingClass') AS processing_class,
+        json_extract(s.submission_metadata_json,'$.processingEstimate.blockReasons') AS hard_limit_reasons,
+        (SELECT COUNT(*) FROM current_source_assets a WHERE a.source_id=s.id) AS media_count,
+        (SELECT COUNT(*) FROM current_source_assets a WHERE a.source_id=s.id AND a.durability_status='ORIGINAL_STORED') AS stored_media_count,
+        (SELECT COUNT(*) FROM current_source_segments sg WHERE sg.source_id=s.id) AS segment_count,
+        (SELECT COUNT(*) FROM segment_extractions se JOIN current_source_segments sg ON sg.id=se.segment_id WHERE sg.source_id=s.id) AS extraction_count,
+        (SELECT COUNT(*) FROM current_extraction_coverage ec WHERE ec.source_id=s.id AND ec.audited_at IS NOT NULL) AS coverage_count,
+        EXISTS(SELECT 1 FROM structured_sources ss WHERE ss.source_id=s.id) AS has_structured
+      FROM sources s
+      ORDER BY s.captured_at,s.id`).all();
+    const items=[];
+    for(const source of sources){
+      const segments=this.db.prepare("SELECT id FROM current_source_segments WHERE source_id=? ORDER BY sequence").all(source.id);
+      const missingExtractions=segments.filter((segment)=>!this.db.prepare("SELECT 1 FROM segment_extractions WHERE segment_id=?").get(segment.id));
+      const missingCoverage=segments.filter((segment)=>!missingExtractions.some((item)=>item.id===segment.id)
+        &&!this.db.prepare("SELECT 1 FROM current_extraction_coverage WHERE segment_id=? AND audited_at IS NOT NULL").get(segment.id));
+      const currentExperience=this.db.prepare("SELECT 1 FROM experience_extraction_runs WHERE source_id=? AND capture_version=? AND status='succeeded'")
+        .get(source.id,source.capture_version);
+      const actions=[];
+      let category="COMPLETE";
+      const hardBlocked=source.processing_class==="blocked_hard_limit";
+      const activeJobs=this.db.prepare(`SELECT j.id,j.type,j.status,j.workload_class FROM jobs j
+        LEFT JOIN current_source_segments sg ON sg.id=j.entity_id LEFT JOIN media_extraction_batches mb ON mb.id=j.entity_id
+        WHERE (j.entity_id=? OR sg.source_id=? OR mb.source_id=?) AND j.status IN ('queued','running') ORDER BY j.created_at`).all(source.id,source.id,source.id);
+      if(source.completeness_status!=="complete")category="CAPTURE_INCOMPLETE";
+      else if(hardBlocked)category="BLOCKED_HARD_LIMIT";
+      else if(Number(source.stored_media_count)<Number(source.media_count))category="MEDIA_NOT_DURABLE";
+      else if(activeJobs.length)category="ACTIVE_PIPELINE";
+      else if(!segments.length){actions.push({stage:"preflight_source",entityId:source.id});category=source.legacy_manual_start?"NO_JOB_LEGACY_GATE":"MISSING_SEGMENTS";}
+      else if(missingExtractions.length)actions.push(...missingExtractions.map((segment)=>({stage:"extract_segment_claims",entityId:segment.id})));
+      else if(missingCoverage.length)actions.push(...missingCoverage.map((segment)=>({stage:"audit_segment_coverage",entityId:segment.id})));
+      else if(source.status==="processing")actions.push({stage:"finalize_source_extraction",entityId:source.id});
+      else if(!currentExperience&&source.has_structured)actions.push({stage:"extract_source_experience",entityId:source.id});
+      if(category==="COMPLETE"&&actions.length)category=missingExtractions.length?"MISSING_EXTRACTION"
+        :missingCoverage.length?"MISSING_COVERAGE":source.status==="processing"?"MISSING_FINALIZATION":"MISSING_EXPERIENCE";
+      if(category!=="COMPLETE")items.push({sourceId:source.id,captureVersion:source.capture_version,title:source.title,category,
+        legacyManualStart:Boolean(source.legacy_manual_start),processingClass:source.processing_class||"legacy_unknown",
+        hardLimitReasons:json(source.hard_limit_reasons,[]),media:{discovered:Number(source.media_count),stored:Number(source.stored_media_count)},
+        segments:{total:Number(source.segment_count),extracted:Number(source.extraction_count),audited:Number(source.coverage_count)},
+        experienceCurrent:Boolean(currentExperience),activeJobs,actions});
+    }
+    const fingerprint=sha256(JSON.stringify(items.map((item)=>({sourceId:item.sourceId,captureVersion:item.captureVersion,actions:item.actions}))));
+    const timestamp=now(),runId=id("processing_gap_run");
+    const actionableCount=items.reduce((sum,item)=>sum+item.actions.length,0);
+    if(!dryRun){
+      const approval=this.db.prepare("SELECT report_json FROM source_processing_gap_runs WHERE id=? AND status='dry_run' AND dry_run=1").get(approvedFromRunId);
+      if(!approval)throw conflictError("Processing-gap recovery requires the ID of a completed dry-run report.");
+      if(json(approval.report_json,{}).fingerprint!==fingerprint)throw conflictError("Processing-gap candidates changed after the dry run; generate and review a new report.");
+      for(const item of items)for(const action of item.actions)this.enqueue(action.stage,action.entityId,{
+        dedupeKey:`processing-gap:${item.captureVersion}:${action.stage}:${action.entityId}`,
+        priority:70,executionRoute:action.stage==="extract_segment_claims"?"batch":"auto",
+        workloadClass:"historical_recovery",recoveryRunId:runId});
+    }
+    const report={fingerprint,scannedSourceCount:sources.length,sourceCount:items.filter((item)=>item.actions.length).length,
+      gapCount:items.length,actionCount:actionableCount,
+      legacyManualStartCount:items.filter((item)=>item.category==="NO_JOB_LEGACY_GATE").length,
+      noActiveJobCount:items.filter((item)=>!item.activeJobs.length&&item.actions.length).length,
+      hardLimitBlockedCount:items.filter((item)=>item.category==="BLOCKED_HARD_LIMIT").length,
+      categoryCounts:Object.fromEntries([...Map.groupBy(items,(item)=>item.category)].map(([category,rows])=>[category,rows.length])),items};
+    this.db.prepare(`INSERT INTO source_processing_gap_runs(id,status,dry_run,approved_from_run_id,report_json,started_at,completed_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(runId,dryRun?"dry_run":actionableCount?"queued":"completed",dryRun?1:0,approvedFromRunId,
+        JSON.stringify(report),timestamp,dryRun||!actionableCount?timestamp:null,timestamp,timestamp);
+    return {id:runId,dryRun,queued:!dryRun&&actionableCount>0,...report};
+  }
+
+  createLegacySourceRecoveryManifest({execute=false}={}){
+    const existing=this.db.prepare(`SELECT * FROM source_recovery_manifests
+      WHERE reason='legacy_manual_start_gate' ORDER BY created_at ASC LIMIT 1`).get();
+    if(existing){
+      const stored=json(existing.report_json,{});
+      if(!execute||existing.status!=="dry_run")return {id:existing.id,dryRun:existing.status==="dry_run",
+        sourceCount:Number(stored.sourceCount||0),fingerprint:stored.fingerprint||null,processingGapRunId:stored.processingGapRunId||null};
+      const recovery=this.runSourceProcessingGapRecovery({dryRun:false,approvedFromRunId:stored.processingGapRunId});
+      this.db.prepare("UPDATE source_recovery_manifests SET status=?,executed_at=? WHERE id=?")
+        .run(recovery.queued?"queued":"completed",now(),existing.id);
+      return {id:existing.id,dryRun:false,sourceCount:Number(stored.sourceCount||0),fingerprint:stored.fingerprint||null,
+        processingGapRunId:stored.processingGapRunId||null,recoveryRunId:recovery.id};
+    }
+    const report=this.runSourceProcessingGapRecovery({dryRun:true});
+    const legacyItems=report.items.filter((item)=>item.category==="NO_JOB_LEGACY_GATE");
+    const manifestId=`source_recovery_manifest_${sha256(`v1:${report.fingerprint}`).slice(0,24)}`;
+    const timestamp=now();
+    this.db.prepare(`INSERT OR IGNORE INTO source_recovery_manifests(id,reason,status,report_json,created_at,executed_at)
+      VALUES (?,'legacy_manual_start_gate',?,?,?,?)`).run(manifestId,execute?'queued':'dry_run',JSON.stringify({
+        processingGapRunId:report.id,fingerprint:report.fingerprint,sourceCount:legacyItems.length,items:legacyItems}),timestamp,execute?timestamp:null);
+    if(execute&&legacyItems.length)this.runSourceProcessingGapRecovery({dryRun:false,approvedFromRunId:report.id});
+    return {id:manifestId,dryRun:!execute,sourceCount:legacyItems.length,fingerprint:report.fingerprint};
+  }
+
+  runMediaStorageMigrationEstimate({dryRun=true}={}) {
+    if(!dryRun)throw conflictError("Media storage migration execution is intentionally disabled in the online process; review the dry run and use the documented offline verified-copy procedure.");
+    const fields=[
+      ["sources","raw_payload_json"],["capture_versions","raw_payload_json"],["capture_versions","assets_json"],
+      ["source_assets","ai_derivative_data_url"],
+    ].map(([table,column])=>({table,column,...this.db.prepare(
+      `SELECT COUNT(*) AS rows_with_base64,COALESCE(SUM(length(${column})),0) AS encoded_chars FROM ${table} WHERE ${column} LIKE '%;base64,%'`
+    ).get()}));
+    const assetSummary=this.db.prepare(`SELECT COUNT(*) AS asset_rows,COUNT(DISTINCT NULLIF(stored_sha256,'')) AS stored_hashes,
+        COUNT(DISTINCT NULLIF(local_path,'')) AS local_paths,
+        SUM(CASE WHEN ai_derivative_data_url LIKE '%;base64,%' THEN 1 ELSE 0 END) AS derivative_base64_rows
+      FROM source_assets`).get();
+    const storageRefs=this.db.prepare("SELECT COUNT(*) AS count FROM source_asset_storage_refs").get().count;
+    const report={fields,assetSummary,storageRefs:Number(storageRefs||0),
+      encodedChars:fields.reduce((sum,item)=>sum+Number(item.encoded_chars||0),0)};
+    report.estimatedDecodedBytes=Math.floor(report.encodedChars*0.75);
+    report.policy={mode:"dry_run_only",copyOrder:["write content-addressed file","fsync and hash verify","write side-table reference","verify reader","remove one legacy field in a later approved transaction"],
+      automaticDeletion:false};
+    const timestamp=now(),runId=id("media_storage_run");
+    this.db.prepare("INSERT INTO media_storage_migration_runs(id,status,dry_run,approved_from_run_id,report_json,created_at,completed_at) VALUES (?,'dry_run',1,NULL,?,?,?)")
+      .run(runId,JSON.stringify(report),timestamp,timestamp);
+    return {id:runId,dryRun:true,...report};
+  }
+
   saveSystemBackfillRun(backfillType,dryRun,report,approvedFromRunId = null) {
     const timestamp=now(); const runId=id("backfill");
-    const queued=!dryRun && backfillType==="experience" && Number(report.queued || 0)>0;
+    const queued=!dryRun && ["experience","recommendation_reconciliation"].includes(backfillType)
+      && Number(report.queued || 0)>0;
     this.db.prepare(`INSERT INTO system_backfill_runs(id,backfill_type,status,dry_run,approved_from_run_id,report_json,
       started_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
       .run(runId,backfillType,dryRun ? "dry_run" : queued ? "queued" : "completed",dryRun ? 1 : 0,approvedFromRunId,
@@ -1054,16 +1643,16 @@ export class Repository {
     const activeExtraction = this.db.prepare(`SELECT id FROM extraction_runs WHERE source_id=? AND status='active'
       ORDER BY revision DESC LIMIT 1`).get(sourceId);
     const packageValue = {
-      source: { id: source.id, title: source.title, raw_text: source.raw_text, raw_html: source.raw_html,
+      source: { id: source.id, title: source.title,
         capture_version: source.capture_version, destination: source.structured.destination_name,
         summary: source.structured.summary },
       segments: source.segments.map((segment) => ({ id: segment.id, sequence: segment.sequence, type: segment.segment_type,
-        title: segment.title, text: segment.raw_text, asset_id: segment.asset_id })),
+        title: segment.title, text_excerpt: String(segment.raw_text || "").slice(0, 600), asset_id: segment.asset_id })),
       claims: source.claims.map((claim) => ({ id: claim.id, subject: claim.subject, predicate: claim.predicate,
         value: claim.value_text, qualifiers: claim.qualifiers, role: claim.claim_role,
         source_quote: claim.source_quote, evidence_span_ids: claim.evidence_span_ids })),
       evidence_spans: this.db.prepare(`SELECT id,segment_id,asset_id,locator_type,quote,start_offset,end_offset
-        FROM evidence_spans WHERE source_id=? ORDER BY id`).all(sourceId),
+        FROM current_evidence_spans WHERE source_id=? ORDER BY id`).all(sourceId),
       media: source.assets.map((asset) => ({ id: asset.id,kind:asset.kind,position:asset.position,
         durability_status:asset.durability_status,ai_readability_status:asset.ai_readability_status,
         alt_text:asset.alt_text,nearby_text:asset.nearby_text,caption_text:asset.caption_text })),
@@ -1076,9 +1665,14 @@ export class Repository {
   saveExperienceExtraction(sourceId, extraction, model = null, packageValue = null) {
     const input = packageValue || this.getExperienceExtractionPackage(sourceId);
     if (!input) throw new Error(`Source ${sourceId} is not ready for Experience extraction.`);
+    const reconcileSourceOpportunities = () => {
+      const destination = this.db.prepare("SELECT destination_slug FROM structured_sources WHERE source_id=?").get(sourceId);
+      if (destination?.destination_slug) this.reconcileRecommendationInbox(destination.destination_slug);
+    };
     const existing = this.db.prepare(`SELECT * FROM experience_extraction_runs WHERE source_id=? AND input_hash=?`).get(sourceId, input.input_hash);
     if (existing?.status === "succeeded") {
       this.refreshExperienceBackfillRuns();
+      reconcileSourceOpportunities();
       return { runId: existing.id, reused: true, blocks: this.listExperienceBlocks(sourceId) };
     }
     const timestamp = now();
@@ -1115,6 +1709,10 @@ export class Repository {
         input.degraded ? "degraded" : "grounded",timestamp,timestamp);
     });
     this.refreshExperienceBackfillRuns();
+    // Experience completion is the last processing gate for a source. Reconcile
+    // immediately so an already-current diagnostic becomes visible without a
+    // manual dashboard refresh or another model call.
+    reconcileSourceOpportunities();
     return { runId, reused: false, blocks: this.listExperienceBlocks(sourceId) };
   }
 
@@ -1169,21 +1767,43 @@ export class Repository {
       .map((row) => ({ ...row, mode:row.sync_mode_v2 || row.mode, stats: json(row.stats_json, {}), lastError: json(row.last_error_json, {}) }));
   }
 
-  enqueue(type, entityId, { dedupeKey = `${type}:${entityId}`, priority = jobPriority(type), productionAttemptId = null } = {}) {
+  enqueue(type, entityId, { dedupeKey = null, priority = jobPriority(type), productionAttemptId = null,
+    executionRoute = 'auto', workloadClass = "", parentJobId = null, recoveryRunId = null, interactive = false,
+    productionOwnerOpportunityId = null, modelRole = "", modelProfile = null, modelRoutingRevision = null } = {}) {
     const timestamp = this.jobTimestamp();
+    const resolvedWorkloadClass = workloadClassForJob(type, workloadClass);
+    const resolvedOwnerId=productionOwnerOpportunityId || this.resolveProductionOwnerOpportunityId(type,entityId);
+    const resolvedModelRole = modelRoleForJob(type);
+    let resolvedModelProfile = null;
+    if (resolvedModelRole !== "unassigned") {
+      const inherited = typeof modelProfile === "string" ? json(modelProfile, null) : modelProfile;
+      resolvedModelProfile = modelRole === resolvedModelRole && inherited ? inherited : this.modelProfileForRole(resolvedModelRole);
+    }
+    const resolvedRoutingRevision = resolvedModelRole === "extraction"
+      ? Number(resolvedModelProfile?.routingRevision || modelRoutingRevision || 0) || null : null;
+    const resolvedDedupeKey=dedupeKey || `${type}:${resolvedOwnerId ? `${resolvedOwnerId}:` : ""}${entityId}`;
     const active = this.db.prepare(`
-      SELECT id FROM jobs WHERE dedupe_key = ? AND status IN ('queued', 'running') LIMIT 1
-    `).get(dedupeKey);
-    if (active) return active.id;
+      SELECT id,status FROM jobs WHERE dedupe_key = ? AND status IN ('queued', 'running') LIMIT 1
+    `).get(resolvedDedupeKey);
+    if (active) {
+      if (active.status === 'running' && ['resolve_entities','rebuild_knowledge','rebuild_topic_clusters','build_coverage_matrix',
+        'rebuild_content_opportunities','reconcile_approved_opportunities','rebuild_editorial'].includes(type)) {
+        this.db.prepare('UPDATE jobs SET dirty_revision=dirty_revision+1 WHERE id=?').run(active.id);
+      }
+      return active.id;
+    }
     const jobId = id("job");
     try {
       this.db.prepare(`
-        INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at, dedupe_key,priority,production_attempt_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(jobId, type, entityId, timestamp, timestamp, timestamp, dedupeKey, priority, productionAttemptId);
+        INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at, dedupe_key,priority,production_attempt_id,execution_route,
+          workload_class,parent_job_id,recovery_run_id,interactive,production_owner_opportunity_id,model_role,model_profile_json,model_routing_revision)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(jobId, type, entityId, timestamp, timestamp, timestamp, resolvedDedupeKey, priority, productionAttemptId, executionRoute,
+        resolvedWorkloadClass,parentJobId,recoveryRunId,interactive ? 1 : 0,resolvedOwnerId,resolvedModelRole,
+        JSON.stringify(resolvedModelProfile || {}),resolvedRoutingRevision);
       return jobId;
     } catch (error) {
-      const raced = this.db.prepare("SELECT id FROM jobs WHERE dedupe_key=? AND status IN ('queued','running') LIMIT 1").get(dedupeKey);
+      const raced = this.db.prepare("SELECT id FROM jobs WHERE dedupe_key=? AND status IN ('queued','running') LIMIT 1").get(resolvedDedupeKey);
       if (raced) return raced.id;
       throw error;
     }
@@ -1208,6 +1828,7 @@ export class Repository {
 
   countVertexBatchEligibleJobs(type = "extract_segment_claims") {
     if (!["extract_segment_claims", "audit_segment_coverage"].includes(type)) return 0;
+    if (type === "audit_segment_coverage" && this.contentConfig.coverageAiRoutingEnabled !== true) return 0;
     return Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs j
       JOIN source_segments ss ON ss.id=j.entity_id
       WHERE j.type=? AND j.status='queued' AND j.available_at<=? AND COALESCE(j.next_eligible_at,j.available_at)<=?
@@ -1377,8 +1998,8 @@ export class Repository {
     transaction(this.db, () => {
       saved = this.saveSegmentExtraction(item.segment_id, extraction, { withinTransaction: true });
       if (!saved) return;
-      this.enqueue("audit_segment_coverage", item.segment_id);
-      const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(item.job_id);
+      const job = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(item.job_id);
+      this.enqueue("audit_segment_coverage", item.segment_id, inheritJobContext(job,{type:"audit_segment_coverage"}));
       const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
       this.db.prepare(`UPDATE vertex_batch_items SET status='succeeded',last_error='',completed_at=?,ingested_at=?,
         output_object=?,output_line=?,output_checksum=? WHERE run_id=? AND job_id=? AND status='submitted'`)
@@ -1397,11 +2018,12 @@ export class Repository {
     let audit;
     transaction(this.db, () => {
       audit = this.auditSegmentCoverage(item.segment_id, assessment?.output || assessment);
-      if (audit.status === "retry_required") this.enqueue("retry_segment_extraction", item.segment_id);
+      const job = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(item.job_id);
+      if (audit.status === "retry_required") this.enqueue("retry_segment_extraction", item.segment_id,
+        inheritJobContext(job,{type:"retry_segment_extraction"}));
       else if (audit.status !== "stale" && this.sourceCoverageReady(audit.sourceId)) {
-        this.enqueue("finalize_source_extraction", audit.sourceId);
+        this.enqueue("finalize_source_extraction", audit.sourceId,inheritJobContext(job,{type:"finalize_source_extraction"}));
       }
-      const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(item.job_id);
       const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
       this.db.prepare(`UPDATE vertex_batch_items SET status='succeeded',last_error='',completed_at=?,ingested_at=?,
         output_object=?,output_line=?,output_checksum=? WHERE run_id=? AND job_id=? AND status='submitted'`)
@@ -1509,22 +2131,49 @@ export class Repository {
     return transaction(this.db, () => {
       const timestamp = this.jobTimestamp();
       const providerReady = this.clock().getTime() >= this.providerBackoffUntil;
+      const databaseHeavyTypes = [...DATABASE_HEAVY_JOB_TYPES];
       this.db.prepare(`
         UPDATE jobs SET status='queued', locked_at=NULL, locked_by=NULL, lease_expires_at=NULL,
           heartbeat_at=NULL, available_at=?, next_eligible_at=?, updated_at=?
         WHERE status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?
       `).run(timestamp, timestamp, timestamp, timestamp);
+      // A provider backoff is still an attempt. Older behavior allowed 429s to
+      // bypass max_attempts indefinitely, leaving production rows oscillating
+      // between queued/running forever. Finalize already-exhausted cooldowns
+      // transactionally before selecting more work; the failed Job remains an
+      // auditable, manually recoverable production attempt.
+      this.db.prepare(`
+        UPDATE jobs SET status='failed', completed_at=COALESCE(completed_at,?), duration_ms=CASE
+            WHEN started_at IS NULL THEN duration_ms
+            ELSE MAX(0,CAST((julianday(?) - julianday(started_at))*86400000 AS INTEGER)) END,
+          next_eligible_at=NULL, locked_at=NULL, locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
+        WHERE status='queued' AND next_eligible_at IS NOT NULL AND attempts>=max_attempts
+      `).run(timestamp, timestamp, timestamp);
       const job = this.db.prepare(`
         SELECT * FROM jobs
         WHERE status = 'queued' AND available_at <= ? AND COALESCE(next_eligible_at,available_at)<=?
           AND (? = 0 OR type <> 'extract_segment_claims' OR execution_route='realtime')
-          AND (? = 0 OR type <> 'audit_segment_coverage')
+          AND (? = 0 OR type <> 'audit_segment_coverage' OR execution_route='realtime')
           AND NOT EXISTS (
             SELECT 1 FROM vertex_batch_items vbi JOIN vertex_batch_runs vbr ON vbr.id=vbi.run_id
             WHERE vbi.job_id=jobs.id AND vbr.status IN ('preparing','submitted')
           )
-          AND (? = 1 OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")}))
+          AND (type='generate_visuals' OR type NOT IN (${[...AI_JOB_TYPES].map(() => "?").join(",")})
+            OR (model_role='writing' AND COALESCE((SELECT backoff_until FROM provider_runtime_state WHERE provider='vertex'),'')<=?)
+            OR (model_role='extraction' AND COALESCE((SELECT backoff_until FROM provider_runtime_state
+              WHERE provider=json_extract(jobs.model_profile_json,'$.provider')),'')<=?)
+            OR (model_role='unassigned' AND ?=1))
+          AND (type<>'generate_visuals' OR ?=1)
+          AND NOT EXISTS (SELECT 1 FROM jobs database_writer WHERE database_writer.status='running'
+            AND database_writer.type IN (${databaseHeavyTypes.map(()=>"?").join(",")}))
+          AND (jobs.type NOT IN (${databaseHeavyTypes.map(()=>"?").join(",")})
+            OR NOT EXISTS (SELECT 1 FROM jobs active_pipeline_job WHERE active_pipeline_job.status='running'))
+          AND (SELECT COUNT(*) FROM jobs running_lane WHERE running_lane.status='running'
+            AND running_lane.workload_class=jobs.workload_class) < CASE jobs.workload_class
+              WHEN 'interactive' THEN 2 WHEN 'normal_ingest' THEN 2 ELSE 1 END
         ORDER BY
+          CASE workload_class WHEN 'interactive' THEN 0 WHEN 'historical_recovery' THEN 2
+            WHEN 'maintenance' THEN 3 ELSE 1 END,
           CASE WHEN datetime(created_at)<=datetime(?,'-15 minutes') THEN 0 ELSE 1 END,
           priority ASC,
           CASE execution_route WHEN 'realtime' THEN 0 WHEN 'auto' THEN 1 ELSE 2 END,
@@ -1556,11 +2205,13 @@ export class Repository {
           created_at ASC
         LIMIT 1
       `).get(timestamp, timestamp, deferBatchExtraction ? 1 : 0, deferBatchCoverage ? 1 : 0,
-        providerReady ? 1 : 0, ...AI_JOB_TYPES, timestamp);
+        ...AI_JOB_TYPES, timestamp, timestamp, providerReady ? 1 : 0,
+        this.clock().getTime() >= (this.visualBackoffUntil || 0) ? 1 : 0,
+        ...databaseHeavyTypes, ...databaseHeavyTypes, timestamp);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
       const claimed = this.db.prepare(`
-        UPDATE jobs SET status = 'running', attempts = attempts + 1, lease_generation=lease_generation+1, locked_at = ?,
+        UPDATE jobs SET status = 'running', attempts = attempts + 1, lease_generation=lease_generation+1, claimed_revision=dirty_revision, locked_at = ?,
           locked_by = ?, lease_expires_at = ?, heartbeat_at = ?, started_at = COALESCE(started_at, ?),
           queue_latency_ms = COALESCE(queue_latency_ms, ?), updated_at = ?
         WHERE id = ? AND status='queued'
@@ -1593,15 +2244,17 @@ export class Repository {
     const job = this.db.prepare("SELECT started_at FROM jobs WHERE id=?").get(jobId);
     const durationMs = job?.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
     return this.db.prepare(`
-      UPDATE jobs SET status='succeeded', completed_at=?, duration_ms=?, locked_by=NULL,
-        lease_expires_at=NULL, heartbeat_at=NULL, failure_class='',last_failure_code='',next_eligible_at=NULL,updated_at=?
+      UPDATE jobs SET status=CASE WHEN dirty_revision>claimed_revision THEN 'queued' ELSE 'succeeded' END,
+        completed_at=CASE WHEN dirty_revision>claimed_revision THEN NULL ELSE ? END, duration_ms=?, locked_by=NULL,
+        lease_expires_at=NULL, heartbeat_at=NULL, failure_class='',last_failure_code='',last_error=NULL,
+        failure_details_json='{}',failure_execution_kind='legacy_unknown',next_eligible_at=NULL,updated_at=?
       WHERE id=? AND status='running' AND locked_by=? AND (? IS NULL OR lease_generation=?)
     `).run(timestamp, durationMs, timestamp, jobId, ownerId, generation, generation).changes === 1;
   }
 
   failJob(job, error) {
     const providerPressure = isProviderPressure(error);
-    const retry = error?.retryable !== false && (providerPressure || job.attempts < job.max_attempts);
+    const retry = error?.retryable !== false && job.attempts < job.max_attempts;
     if (providerPressure) {
       this.providerPressureStreak += 1;
       this.providerSuccessStreak = 0;
@@ -1609,21 +2262,46 @@ export class Repository {
     const baseDelayMs = providerPressure
       ? Math.min(this.providerBackoffMaxMs, this.providerBackoffInitialMs * 2 ** Math.min(10, Math.max(0, this.providerPressureStreak - 1)))
       : Math.min(300_000, 10_000 * 2 ** Math.max(0, job.attempts - 1));
-    const delayMs = Math.max(Number(error?.retryAfterMs || 0), Math.round(baseDelayMs * (0.8 + Math.random() * 0.4)));
+    const delayMs = Math.max(Number(error?.retryAfterMs || 0),laneBackoffMs(job.workload_class,
+      Math.round(baseDelayMs * (0.8 + Math.random() * 0.4))));
     const availableAt = new Date(this.clock().getTime() + delayMs).toISOString();
-    if (providerPressure) this.providerBackoffUntil = Math.max(this.providerBackoffUntil, Date.parse(availableAt));
+    if (providerPressure) {
+      if (job.type === 'generate_visuals') this.visualBackoffUntil = Math.max(this.visualBackoffUntil || 0, Date.parse(availableAt));
+      else this.providerBackoffUntil = Math.max(this.providerBackoffUntil, Date.parse(availableAt));
+    }
     const timestamp = this.jobTimestamp();
+    if(providerPressure)this.db.prepare(`UPDATE model_call_metrics SET retry_after_ms=COALESCE(?,retry_after_ms),backoff_until=?
+      WHERE id=(SELECT id FROM model_call_metrics WHERE run_id=? ORDER BY created_at DESC,id DESC LIMIT 1)`)
+      .run(error?.retryAfterMs??null,availableAt,job.id);
+    const frozenProvider=json(job.model_profile_json,{}).provider;
+    const pressuredProvider=String(error?.provider||frozenProvider||this.activeProvider||"");
+    if(providerPressure&&job.type!=="generate_visuals"&&pressuredProvider)this.db.prepare(`INSERT INTO provider_runtime_state(provider,model,
+      consecutive_failures,backoff_until,updated_at) VALUES (?,?,1,?,?) ON CONFLICT(provider) DO UPDATE SET
+      consecutive_failures=provider_runtime_state.consecutive_failures+1,backoff_until=excluded.backoff_until,updated_at=excluded.updated_at`)
+      .run(pressuredProvider,json(job.model_profile_json,{}).model||"",availableAt,timestamp);
     const durationMs = job.started_at ? Math.max(0, Date.parse(timestamp) - Date.parse(job.started_at)) : null;
     const failureClass = terminalFailureClass(error, retry, providerPressure);
     const failureCode = String(error?.code || error?.status || "").slice(0, 120);
+    const failureDiagnostic = structuredFailureDiagnostic(job, error);
     const changed = this.db.prepare(`
       UPDATE jobs SET status=?, available_at=?, next_eligible_at=?,last_error=?, completed_at=?, duration_ms=?,
-        failure_class=?,last_failure_code=?,locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
+        failure_class=?,last_failure_code=?,failure_details_json=?,failure_execution_kind=?,
+        locked_by=NULL, lease_expires_at=NULL, heartbeat_at=NULL, updated_at=?
       WHERE id=? AND status='running' AND locked_by=? AND lease_generation=?
     `).run(retry ? "queued" : "failed", availableAt, retry ? availableAt : null, String(error?.message || error).slice(0, 4_000),
-      retry ? null : timestamp, retry ? null : durationMs, failureClass, failureCode, timestamp, job.id, job.locked_by || this.workerId,
+      retry ? null : timestamp, retry ? null : durationMs, failureClass, failureCode,
+      JSON.stringify(failureDiagnostic.details), failureDiagnostic.executionKind,
+      timestamp, job.id, job.locked_by || this.workerId,
       Number(job.lease_generation || 0)).changes;
     if (changed !== 1) return false;
+    this.db.prepare(`INSERT INTO production_failure_diagnostics(id,job_id,job_attempt,stage,error_code,execution_kind,
+      draft_revision,input_hash,candidate_hash,details_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(job_id,job_attempt,error_code) DO UPDATE SET execution_kind=excluded.execution_kind,
+        draft_revision=excluded.draft_revision,input_hash=excluded.input_hash,candidate_hash=excluded.candidate_hash,
+        details_json=excluded.details_json,created_at=excluded.created_at`).run(
+      id("failure_diag"),job.id,Number(job.attempts || 0),job.type,failureCode || "PRODUCTION_FAILED",
+      failureDiagnostic.executionKind,failureDiagnostic.draftRevision,failureDiagnostic.inputHash,
+      failureDiagnostic.candidateHash,JSON.stringify(failureDiagnostic.details),timestamp);
     const message = String(error?.message || error).slice(0, 4_000);
     if (job.type === "extract_source") {
       this.db.prepare("UPDATE sources SET status = 'exception', last_error = ?, updated_at = ? WHERE id = ?").run(message, now(), job.entity_id);
@@ -1637,7 +2315,9 @@ export class Repository {
       this.db.prepare("UPDATE article_drafts SET status='exception', updated_at=? WHERE id=?").run(now(), job.entity_id);
     }
     if (!retry && PRODUCTION_JOB_TYPES.has(job.type)) this.handleTerminalProductionFailure(job, error);
+    if (!retry && ["generate_visuals", "compose_frontend_page"].includes(job.type)) this.reconcileDeferredQualityRepair(job);
     if (!retry && job.type === "extract_source_experience") this.refreshExperienceBackfillRuns();
+    if (!retry && job.type === "analyze_source_diagnostic") this.refreshRecommendationBackfillRuns();
     return true;
   }
 
@@ -1661,23 +2341,34 @@ export class Repository {
       briefId:context.brief_id,draftId:context.draft_id,opportunityStatus:context.opportunity_status };
     const remediation = failureRemediation(category);
     return transaction(this.db, () => {
+      const snapshot = this.productionAttemptSnapshot(context);
+      this.db.prepare(`INSERT OR IGNORE INTO production_attempt_archives(id,opportunity_id,failing_job_id,failing_stage,
+        snapshot_json,failure_code,created_at) VALUES (?,?,?,?,?,?,?)`).run(id('attempt_archive'),context.opportunity_id,
+          job.id || `${job.type}:${job.entity_id}`,job.type,JSON.stringify(snapshot),code,timestamp);
       this.db.prepare(`INSERT INTO failure_lessons(id,scope,failure_code,category,normalized_reason,source_id,opportunity_id,
         failing_stage,previous_input_json,remediation_rule,retry_safe,status,created_at,updated_at)
         VALUES (?,'OPPORTUNITY',?,?,?,?,?,?,?, ?,?,'active',?,?)`)
         .run(lessonId,code || "PRODUCTION_FAILED",category,normalizeFailureReason(message),context.source_id || null,
           context.opportunity_id,job.type,JSON.stringify(previousInput),remediation,productionFailureRetrySafe(category) ? 1 : 0,timestamp,timestamp);
+      const scopeInvalid = ['APPROVED_SCOPE_INVALID','EVIDENCE_SCOPE_INVALID'].includes(code);
+      if (!scopeInvalid) {
+        // Keep the approval and every successful artifact. Existing bounded
+        // recovery selects the failed body/page/delivery stage on this revision.
+        if (context.draft_id) this.db.prepare("UPDATE article_drafts SET status=?,updated_at=? WHERE id=?")
+          .run(['review_draft','revise_draft'].includes(job.type) ? 'qa_failed' : 'exception',timestamp,context.draft_id);
+        return { rolledBack:false, archived:true, lessonId, retainedApproval:true, repairStage:job.type };
+      }
       const entityIds = [context.candidate_id,context.brief_id,context.draft_id].filter(Boolean);
       let cancelledJobs = 0;
       if (entityIds.length) {
         const placeholders = entityIds.map(() => "?").join(",");
-        cancelledJobs = this.db.prepare(`DELETE FROM jobs WHERE status IN ('queued','running') AND id<>? AND entity_id IN (${placeholders})`)
-          .run(job.id,...entityIds).changes;
+        cancelledJobs = this.db.prepare(`UPDATE jobs SET status='failed',last_failure_code='ATTEMPT_SCOPE_INVALID',
+          last_error='已批准范围失效；产物与任务历史保留。',locked_by=NULL,lease_expires_at=NULL
+          WHERE status IN ('queued','running') AND id<>? AND entity_id IN (${placeholders})`).run(job.id,...entityIds).changes;
       }
       const removed = {
-        drafts:context.brief_id ? Number(this.db.prepare("SELECT COUNT(*) n FROM article_drafts WHERE brief_id=?").get(context.brief_id)?.n || 0) : 0,
-        briefs:context.brief_id ? 1 : 0,cancelledJobs,
+        drafts:0, briefs:0, cancelledJobs,
       };
-      if (context.brief_id) this.db.prepare("DELETE FROM content_briefs WHERE id=?").run(context.brief_id);
       if (context.candidate_id) this.db.prepare("UPDATE topic_candidates SET status='candidate',suppression_reason=NULL,updated_at=? WHERE id=?")
         .run(timestamp,context.candidate_id);
       this.db.prepare(`UPDATE content_opportunities SET status='recommended',lifecycle_state='recommended_again',approved_at=NULL,
@@ -1687,10 +2378,21 @@ export class Repository {
       this.db.prepare(`INSERT INTO production_rollbacks(id,opportunity_id,failure_lesson_id,failing_stage,removed_artifacts_json,
         preserved_assets_json,previous_status,result_status,created_at) VALUES (?,?,?,?,?,?,?,?,?)`)
         .run(id("rollback"),context.opportunity_id,lessonId,job.type,JSON.stringify(removed),
-          JSON.stringify({ sources:true,claims:true,knowledge:true,experiences:true,editorialLessons:true }),
+          JSON.stringify({ sources:true,claims:true,knowledge:true,experiences:true,editorialLessons:true, productionArtifacts:true, wordpressAssociations:true }),
           context.opportunity_status,"recommended_again",timestamp);
       return { rolledBack:true,lessonId,opportunityId:context.opportunity_id,removed };
     });
+  }
+
+  productionAttemptSnapshot(context) {
+    const one = (table, field, value) => value ? this.db.prepare(`SELECT * FROM ${table} WHERE ${field}=?`).all(value) : [];
+    return { version:1, context,
+      assembly:one('editorial_assemblies','candidate_id',context.candidate_id),
+      brief:one('content_briefs','id',context.brief_id), narrative:one('narrative_plans','brief_id',context.brief_id),
+      packet:one('writing_packets','brief_id',context.brief_id), draft:one('article_drafts','id',context.draft_id),
+      revisions:one('draft_revisions','draft_id',context.draft_id), reviews:one('quality_reviews','draft_id',context.draft_id),
+      visuals:one('article_visuals','draft_id',context.draft_id), page:one('frontend_page_compositions','draft_id',context.draft_id),
+      wordpress:one('wordpress_publications','draft_id',context.draft_id) };
   }
 
   productionContext(job) {
@@ -1700,7 +2402,9 @@ export class Repository {
     let draftId = ["generate_visuals","compose_frontend_page","review_draft","revise_draft","compose_commercial","compose_publish_page","push_wordpress_draft"].includes(type) ? job.entity_id : null;
     if (draftId && !briefId) briefId = this.db.prepare("SELECT brief_id FROM article_drafts WHERE id=?").get(draftId)?.brief_id || null;
     if (briefId && !candidateId) candidateId = this.db.prepare("SELECT candidate_id FROM content_briefs WHERE id=?").get(briefId)?.candidate_id || null;
-    const opportunity = candidateId ? this.db.prepare("SELECT * FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1").get(candidateId) : null;
+    const opportunity = job.production_owner_opportunity_id
+      ? this.db.prepare("SELECT * FROM content_opportunities WHERE id=? AND candidate_id=?").get(job.production_owner_opportunity_id,candidateId)
+      : candidateId ? this.db.prepare("SELECT * FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL ORDER BY updated_at DESC LIMIT 1").get(candidateId) : null;
     return opportunity ? { candidate_id:candidateId,brief_id:briefId,draft_id:draftId,opportunity_id:opportunity.id,
       opportunity_status:opportunity.status,source_id:opportunity.source_id } : null;
   }
@@ -1735,8 +2439,14 @@ export class Repository {
   getSource(sourceId) {
     const source = this.db.prepare("SELECT * FROM sources WHERE id = ?").get(sourceId);
     if (!source) return null;
-    const assets = this.db.prepare("SELECT * FROM source_assets WHERE source_id = ? ORDER BY position").all(sourceId);
-    const files = this.db.prepare("SELECT id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at FROM source_files WHERE source_id = ? ORDER BY created_at, id").all(sourceId);
+    const assets = this.db.prepare(`SELECT sa.*,saa.analysis_status,saa.asset_kind,saa.text_regions_json,
+      saa.photo_regions_json,saa.entities_json,saa.editor_ui_regions_json,saa.primary_subjects_json,
+      saa.language_by_region_json,saa.reader_text_present,saa.confidence AS analysis_confidence,
+      saa.analysis_version,saa.prompt_version,saa.provider AS analysis_provider,saa.model AS analysis_model,
+      saa.source_sha256 AS analysis_source_sha256,saa.analyzed_at
+      FROM current_source_assets sa LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id
+      WHERE sa.source_id = ? ORDER BY sa.position`).all(sourceId).map(hydrateSourceAssetAnalysis);
+    const files = this.db.prepare("SELECT id, file_kind, original_filename, mime_type, storage_path, size_bytes, sha256, created_at FROM current_source_files WHERE source_id = ? ORDER BY created_at, id").all(sourceId);
     const structured = this.db.prepare("SELECT * FROM structured_sources WHERE source_id = ?").get(sourceId) || null;
     const claims = this.db.prepare("SELECT * FROM claims WHERE source_id = ? ORDER BY normalized_key").all(sourceId);
     const extractionRuns = this.db.prepare("SELECT * FROM extraction_runs WHERE source_id=? ORDER BY revision DESC").all(sourceId);
@@ -1746,14 +2456,24 @@ export class Repository {
     const recommendation = this.db.prepare("SELECT * FROM content_recommendations WHERE source_id = ? ORDER BY updated_at DESC LIMIT 1").get(sourceId) || null;
     const captureVersions = this.db.prepare(`SELECT id,capture_version,captured_at,content_hash,completeness_status,
       acquisition_origin,sync_scope_key,extension_version,created_at FROM capture_versions WHERE source_id=? ORDER BY capture_version DESC`).all(sourceId);
-    const segments = this.db.prepare("SELECT * FROM source_segments WHERE source_id=? ORDER BY sequence").all(sourceId);
-    const coverage = this.db.prepare("SELECT * FROM extraction_coverage WHERE source_id=? ORDER BY segment_id").all(sourceId);
+    const segments = this.db.prepare("SELECT * FROM current_source_segments WHERE source_id=? ORDER BY sequence").all(sourceId);
+    const coverage = this.db.prepare("SELECT * FROM current_extraction_coverage WHERE source_id=? ORDER BY segment_id").all(sourceId);
     const family = this.db.prepare(`SELECT sf.*, sfm.relation_type, sfm.overlap_score, sfm.incremental_claim_count, sfm.analysis_json
       FROM source_family_memberships sfm JOIN source_families sf ON sf.id=sfm.family_id WHERE sfm.source_id=?`).get(sourceId) || null;
     const experienceBlocks = this.listExperienceBlocks(sourceId);
     const mediaManifest = this.mediaRepairManifest(sourceId);
     return hydrateSource({ source, assets, files, structured, claims, extractionRuns, claimHistory, blueprint, analysis, recommendation, segments, coverage, family, captureVersions,
       experienceBlocks, mediaManifest });
+  }
+
+  getSourceCaptureVersion(sourceId, captureVersion) {
+    const version=this.db.prepare('SELECT * FROM capture_versions WHERE source_id=? AND capture_version=?').get(sourceId,Number(captureVersion));
+    if(!version)return null;
+    const assets=this.db.prepare('SELECT * FROM source_assets WHERE source_id=? AND capture_version=? ORDER BY position,id').all(sourceId,version.capture_version);
+    return {...version,assets,assetSnapshots:json(version.assets_json,[]),
+      files:this.db.prepare('SELECT * FROM source_files WHERE source_id=? AND capture_version=? ORDER BY id').all(sourceId,version.capture_version),
+      segments:this.db.prepare('SELECT * FROM source_segments WHERE source_id=? AND capture_version=? ORDER BY sequence').all(sourceId,version.capture_version),
+      assetLinkage:assets.length?'retained':'snapshot_only'};
   }
 
   recordSourcePreflight(sourceId, result) {
@@ -1793,7 +2513,7 @@ export class Repository {
     if (!assets.length && placeholderQuote) {
       assets = this.db.prepare(`SELECT id,kind,remote_url,alt_text,position,mime_type,
         CASE WHEN ai_derivative_data_url<>'' THEN 1 ELSE 0 END AS preview_stored
-        FROM source_assets WHERE source_id=? ORDER BY position,id LIMIT 3`).all(sourceId);
+        FROM current_source_assets WHERE source_id=? ORDER BY position,id LIMIT 3`).all(sourceId);
     }
     assets = assets.map((asset) => ({ id: asset.id, kind: asset.kind, position: asset.position,
       altText: asset.alt_text, mimeType: asset.mime_type, previewUrl: `/api/source-assets/${encodeURIComponent(asset.id)}/preview`,
@@ -1820,26 +2540,89 @@ export class Repository {
     const stored = this.db.prepare("SELECT * FROM source_segments WHERE source_id=? AND capture_version=? ORDER BY sequence")
       .all(sourceId, source.capture_version);
     if (stored.length) return stored.filter((item) => !["complete", "extracted"].includes(item.status));
-    const values = segmentSource(source, { maxChars: this.contentConfig.sourceTextSegmentMaxChars });
+    const values = segmentSource(source, { maxChars: this.contentConfig.sourceTextSegmentMaxChars })
+      .map(item=>source.capture_version>1?{...item,id:`segment_${sha256(`${item.id}:v${source.capture_version}`).slice(0,24)}`}:item);
     const timestamp = now();
     transaction(this.db, () => {
-      this.db.prepare("DELETE FROM source_segments WHERE source_id=?").run(sourceId);
       const insert = this.db.prepare(`INSERT INTO source_segments(id,source_id,segment_type,sequence,title,raw_text,page_start,page_end,asset_id,image_index,destination_scopes_json,topic_scopes_json,content_hash,semantic_hash,status,created_at,updated_at,capture_version)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?,?)`);
       for (const item of values) insert.run(item.id, sourceId, item.segmentType, item.sequence, item.title, item.rawText,
         item.pageStart, item.pageEnd, item.assetId, item.imageIndex, JSON.stringify(item.destinationScopes), JSON.stringify(item.topicScopes),
         item.contentHash, item.semanticHash, timestamp, timestamp, source.capture_version);
-      this.db.prepare("UPDATE source_assets SET extraction_status='pending', extraction_error=NULL, processed_at=NULL WHERE source_id=?").run(sourceId);
+      this.db.prepare("UPDATE source_assets SET extraction_status='pending', extraction_error=NULL, processed_at=NULL WHERE source_id=? AND capture_version=?").run(sourceId,source.capture_version);
       this.db.prepare("UPDATE sources SET status='processing', diagnostic_json=?, updated_at=? WHERE id=?")
         .run(JSON.stringify({ ...json(source.diagnostic_json, {}), strategy_version: this.strategyVersion,
-          stage: "segmented", segment_count: values.length, asset_count: source.assets.length }), timestamp, sourceId);
+          stage: "segmented", processing_profile:sourceProcessingProfile(source),
+          segment_count: values.length, asset_count: source.assets.length }), timestamp, sourceId);
     });
     return values;
+  }
+
+  prepareMediaExtractionBatches(sourceId) {
+    if(this.contentConfig.mediaBatchingEnabled===false)return [];
+    const source=this.db.prepare("SELECT id,capture_version FROM sources WHERE id=?").get(sourceId);
+    if(!source)return [];
+    const existing=this.db.prepare(`SELECT * FROM media_extraction_batches WHERE source_id=? AND capture_version=? ORDER BY sequence`)
+      .all(sourceId,source.capture_version);
+    if(existing.length)return existing.filter((row)=>!["complete","extracted"].includes(row.status)).map(hydrateMediaBatch);
+    const rows=this.db.prepare(`SELECT s.id AS segment_id,s.segment_type,s.sequence,s.title,s.raw_text,s.asset_id,
+        a.kind,a.width,a.height,a.alt_text,a.nearby_text,a.caption_text
+      FROM source_segments s JOIN source_assets a ON a.id=s.asset_id
+      WHERE s.source_id=? AND s.capture_version=? AND a.kind='image' ORDER BY s.sequence`).all(sourceId,source.capture_version);
+    const ordinary=rows.filter((row)=>!sensitiveMediaRow(row));
+    const groups=balancedMediaGroups(ordinary,Math.min(8,Math.max(4,Number(this.contentConfig.mediaImageBatchSize || 6))));
+    const timestamp=now();
+    transaction(this.db,()=>{
+      const insert=this.db.prepare(`INSERT INTO media_extraction_batches(id,source_id,capture_version,sequence,segment_ids_json,asset_ids_json,classification,status,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,'pending',?,?)`);
+      groups.forEach((group,index)=>{
+        const batchId=`media_batch_${sha256(`${sourceId}:${source.capture_version}:${group.map((row)=>row.asset_id).join(":")}`).slice(0,24)}`;
+        insert.run(batchId,sourceId,source.capture_version,index,JSON.stringify(group.map((row)=>row.segment_id)),
+          JSON.stringify(group.map((row)=>row.asset_id)),"ordinary_image",timestamp,timestamp);
+      });
+    });
+    return this.db.prepare(`SELECT * FROM media_extraction_batches WHERE source_id=? AND capture_version=? ORDER BY sequence`)
+      .all(sourceId,source.capture_version).map(hydrateMediaBatch);
+  }
+
+  getMediaBatchExtractionPackage(batchId) {
+    const row=this.db.prepare("SELECT * FROM media_extraction_batches WHERE id=?").get(batchId);
+    if(!row)return null;
+    const batch=hydrateMediaBatch(row);
+    const source=this.getSource(row.source_id);
+    if(!source||source.capture_version!==row.capture_version)return {batch,staleCaptureVersion:true};
+    const segments=this.db.prepare(`SELECT * FROM source_segments WHERE id IN (${batch.segmentIds.map(()=>"?").join(",")}) ORDER BY sequence`).all(...batch.segmentIds);
+    const segmentByAsset=Object.fromEntries(segments.map((segment)=>[segment.asset_id,segment.id]));
+    const assets=source.assets.filter((asset)=>batch.assetIds.includes(asset.id)).map((asset)=>({...asset,segment_id:segmentByAsset[asset.id]}));
+    return {batch,segments,source:{...source,raw_text:"",assets,title:`${source.title} · media batch ${row.sequence+1}`,
+      submission_metadata:{...source.submission_metadata,media_batch_id:row.id,asset_segment_ids:segmentByAsset}}};
+  }
+
+  saveMediaBatchExtraction(batchId,extraction) {
+    const pack=this.getMediaBatchExtractionPackage(batchId);
+    if(!pack||pack.staleCaptureVersion)return [];
+    const claims=Array.isArray(extraction?.result?.claims)?extraction.result.claims:[];
+    return transaction(this.db,()=>{
+      const saved=[];
+      for(const segment of pack.segments){
+        const scopedClaims=claims.filter((claim)=>claim.segment_id===segment.id||claim.asset_id===segment.asset_id
+          || (pack.segments.length===1&&!claim.segment_id&&!claim.asset_id));
+        const scoped={...extraction,result:{...(extraction.result||{}),claims:scopedClaims}};
+        if(this.saveSegmentExtraction(segment.id,scoped,{withinTransaction:true}))saved.push(segment.id);
+      }
+      this.db.prepare("UPDATE media_extraction_batches SET status='extracted',updated_at=? WHERE id=?").run(now(),batchId);
+      return saved;
+    });
   }
 
   splitSourceSegmentForRetry(segmentId) {
     const segment = this.db.prepare("SELECT * FROM source_segments WHERE id=?").get(segmentId);
     if (!segment || segment.asset_id || String(segment.raw_text || "").length < 800) return [];
+    // Automatic output-limit splitting is for an unprocessed current segment.
+    // A forced re-extraction must never cascade-delete previously cited evidence.
+    if (segment.capture_version !== this.db.prepare('SELECT capture_version FROM sources WHERE id=?').get(segment.source_id)?.capture_version
+      || this.db.prepare('SELECT 1 FROM segment_extractions WHERE segment_id=?').get(segmentId)
+      || this.db.prepare('SELECT 1 FROM evidence_spans WHERE segment_id=? LIMIT 1').get(segmentId)) return [];
     const text = String(segment.raw_text);
     let midpoint = Math.floor(text.length / 2);
     const boundary = Math.max(text.lastIndexOf("。", midpoint), text.lastIndexOf(". ", midpoint), text.lastIndexOf("\n", midpoint));
@@ -1848,13 +2631,13 @@ export class Repository {
     if (parts.length !== 2) return [];
     const timestamp = now();
     return transaction(this.db, () => {
-      const maximum = this.db.prepare("SELECT COALESCE(MAX(sequence),-1) AS value FROM source_segments WHERE source_id=?").get(segment.source_id).value;
+      const maximum = this.db.prepare("SELECT COALESCE(MAX(sequence),-1) AS value FROM source_segments WHERE source_id=? AND capture_version=?").get(segment.source_id,segment.capture_version).value;
       this.db.prepare("DELETE FROM source_segments WHERE id=?").run(segmentId);
       const shift = maximum + 2;
-      this.db.prepare("UPDATE source_segments SET sequence=sequence+? WHERE source_id=? AND sequence>?")
-        .run(shift, segment.source_id, segment.sequence);
-      this.db.prepare("UPDATE source_segments SET sequence=sequence-?+1 WHERE source_id=? AND sequence>?")
-        .run(shift, segment.source_id, segment.sequence + shift);
+      this.db.prepare("UPDATE source_segments SET sequence=sequence+? WHERE source_id=? AND sequence>? AND capture_version=?")
+        .run(shift, segment.source_id, segment.sequence,segment.capture_version);
+      this.db.prepare("UPDATE source_segments SET sequence=sequence-?+1 WHERE source_id=? AND sequence>? AND capture_version=?")
+        .run(shift, segment.source_id, segment.sequence + shift,segment.capture_version);
       const insert = this.db.prepare(`INSERT INTO source_segments(id,source_id,segment_type,sequence,title,raw_text,page_start,page_end,
         asset_id,image_index,destination_scopes_json,topic_scopes_json,content_hash,semantic_hash,status,created_at,updated_at,capture_version)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending',?,?,?)`);
@@ -1890,22 +2673,7 @@ export class Repository {
     if (segment.capture_version !== sourceVersion) return false;
     const timestamp = now();
     const attempt = retry ? 2 : 1;
-    const suppliedManifest = normalizeExtractionInputManifest(extraction?.inputManifest);
-    // Text segments are passed to every extractor directly in `source.raw_text`, so
-    // record that known transport fact even for older/custom extractor adapters.
-    // Media must still provide a provider manifest; we never infer it from a method
-    // name because that was the lossy behavior A01 removes.
-    const inputManifest = suppliedManifest.version > 0 || segment.asset_id
-      ? suppliedManifest
-      : normalizeExtractionInputManifest({
-        version: 1,
-        expectedModality: "text",
-        receivedModality: "text",
-        provider: extraction?.provider || "adapter",
-        model: extraction?.model || "",
-        capabilities: { text: true, image: false, video: false, batch: false },
-        assets: [],
-      });
+    const inputManifest = extractionInputManifest(segment, extraction);
     const inputModality = inputManifest.receivedModality;
     const write = () => {
       this.db.prepare(`INSERT INTO segment_extractions(segment_id,source_id,result_json,method,model,attempt,created_at,updated_at,input_modality,input_manifest_json)
@@ -1916,7 +2684,12 @@ export class Repository {
           inputModality, JSON.stringify(inputManifest));
       this.db.prepare("UPDATE source_segments SET status='extracted',updated_at=? WHERE id=?").run(timestamp, segmentId);
       if (segment.asset_id) {
-        const languageStatus = detectedAssetLanguage(extraction?.result);
+        const mediaAnalysis = (extraction?.result?.media_analysis || []).find((item) =>
+          !item?.asset_id || item.asset_id === segment.asset_id);
+        if (mediaAnalysis) this.saveSourceAssetAnalysis(segment.asset_id, mediaAnalysis, {
+          provider:extraction.method || "", model:extraction.model || "", withinTransaction:true,
+        });
+        const languageStatus = mediaAnalysis ? imageLanguageStatus(mediaAnalysis) : "unknown";
         this.db.prepare(`UPDATE source_assets SET extraction_status='processed',extraction_error=NULL,processed_at=?,
           language_status=CASE WHEN ?='unknown' THEN language_status ELSE ? END WHERE id=?`)
           .run(timestamp, languageStatus, languageStatus, segment.asset_id);
@@ -1926,10 +2699,59 @@ export class Repository {
     return withinTransaction ? write() : transaction(this.db, write);
   }
 
-  getSegmentCoveragePackage(segmentId) {
+  modelTelemetryIdentity(job) {
+    const draft=this.db.prepare("SELECT revision FROM article_drafts WHERE id=?").get(job?.entity_id);
+    const source=this.db.prepare(`SELECT id,capture_version FROM sources WHERE id=? UNION ALL
+      SELECT s.id,s.capture_version FROM source_segments ss JOIN sources s ON s.id=ss.source_id WHERE ss.id=? UNION ALL
+      SELECT s.id,s.capture_version FROM media_extraction_batches mb JOIN sources s ON s.id=mb.source_id WHERE mb.id=? LIMIT 1`)
+      .get(job?.entity_id,job?.entity_id,job?.entity_id);
+    return {articleRevision:draft?.revision??null,sourceRunId:source?`${source.id}:${source.capture_version}`:null};
+  }
+
+  saveSourceAssetAnalysis(assetId, analysis = {}, { provider = "", model = "", withinTransaction = false } = {}) {
+    const asset=this.db.prepare(`SELECT sa.id,sa.source_id,sa.capture_version,sa.original_sha256,sa.stored_sha256,
+      s.capture_version AS current_capture_version FROM source_assets sa JOIN sources s ON s.id=sa.source_id WHERE sa.id=?`).get(assetId);
+    if (!asset || asset.capture_version !== asset.current_capture_version) return false;
+    const normalized=normalizeSourceAssetAnalysis(analysis,asset);
+    const write=()=>this.db.prepare(`INSERT INTO source_asset_analyses(asset_id,source_id,source_sha256,capture_version,
+      analysis_status,asset_kind,text_regions_json,photo_regions_json,entities_json,editor_ui_regions_json,
+      primary_subjects_json,language_by_region_json,reader_text_present,confidence,analysis_version,prompt_version,
+      provider,model,last_error,analyzed_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(asset_id) DO UPDATE SET source_sha256=excluded.source_sha256,capture_version=excluded.capture_version,
+      analysis_status=excluded.analysis_status,asset_kind=excluded.asset_kind,text_regions_json=excluded.text_regions_json,
+      photo_regions_json=excluded.photo_regions_json,entities_json=excluded.entities_json,
+      editor_ui_regions_json=excluded.editor_ui_regions_json,primary_subjects_json=excluded.primary_subjects_json,
+      language_by_region_json=excluded.language_by_region_json,reader_text_present=excluded.reader_text_present,
+      confidence=excluded.confidence,analysis_version=excluded.analysis_version,prompt_version=excluded.prompt_version,
+      provider=excluded.provider,model=excluded.model,last_error=excluded.last_error,analyzed_at=excluded.analyzed_at,
+      updated_at=excluded.updated_at`).run(asset.id,asset.source_id,normalized.source_sha256,asset.capture_version,
+        normalized.analysis_status,normalized.asset_kind,JSON.stringify(normalized.text_regions),JSON.stringify(normalized.photo_regions),
+        JSON.stringify(normalized.entities),JSON.stringify(normalized.editor_ui_regions),JSON.stringify(normalized.primary_subjects),
+        JSON.stringify(normalized.language_by_region),normalized.reader_text_present == null ? null : Number(normalized.reader_text_present),
+        normalized.confidence,normalized.analysis_version,normalized.prompt_version,String(provider || analysis.provider || "").slice(0,100),
+        String(model || analysis.model || "").slice(0,200),normalized.last_error,normalized.analysis_status === "ready" ? now() : null,now(),now()).changes>0;
+    return withinTransaction ? write() : transaction(this.db,write);
+  }
+
+  sourceAssetDecisionDto(assetId) {
+    const row=this.db.prepare(`SELECT sa.*,saa.analysis_status,saa.asset_kind,saa.text_regions_json,
+      saa.photo_regions_json,saa.entities_json,saa.editor_ui_regions_json,saa.primary_subjects_json,
+      saa.language_by_region_json,saa.reader_text_present,saa.confidence AS analysis_confidence,
+      saa.analysis_version,saa.prompt_version,saa.source_sha256 AS analysis_source_sha256
+      FROM source_assets sa LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id WHERE sa.id=?`).get(assetId);
+    return row ? hydrateSourceAssetAnalysis(row) : null;
+  }
+
+  getSegmentCoveragePackage(segmentId, { extraction = null, retry = false } = {}) {
     const row = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model,se.attempt,se.input_modality,se.input_manifest_json FROM source_segments ss
       JOIN segment_extractions se ON se.segment_id=ss.id WHERE ss.id=?`).get(segmentId);
     if (!row) return null;
+    if (extraction) {
+      const manifest = extractionInputManifest(row, extraction);
+      Object.assign(row, { result_json: JSON.stringify(extraction.result), method: extraction.method, model: extraction.model,
+        attempt: retry ? 2 : 1, input_modality: manifest.receivedModality, input_manifest_json: JSON.stringify(manifest), status: 'extracted' });
+    }
     const coverage = this.db.prepare("SELECT * FROM extraction_coverage WHERE segment_id=?").get(segmentId);
     const source = this.getSource(row.source_id);
     if (row.capture_version !== source?.capture_version) return { segment: row, staleCaptureVersion: true };
@@ -1940,6 +2762,17 @@ export class Repository {
       expectedModality: row.asset_id ? (asset?.kind === "video" ? "video" : "image") : "text",
       coverage: coverage ? { ...coverage, uncovered_spans: json(coverage.uncovered_spans_json, []), audit: json(coverage.audit_json, {}) } : null,
     };
+  }
+
+  shouldRunAiCoverage(segmentId) {
+    if(this.contentConfig.coverageAiRoutingEnabled!==true)return false;
+    const row=this.db.prepare(`SELECT s.raw_text,s.asset_id,se.result_json,se.method FROM source_segments s
+      JOIN segment_extractions se ON se.segment_id=s.id WHERE s.id=?`).get(segmentId);
+    if(!row||row.asset_id)return false;
+    const claims=json(row.result_json,{}).claims||[];
+    const text=String(row.raw_text||"");
+    return row.method==="heuristic"||claims.length===0||text.length>2000
+      ||/(?:price|ticket|hours?|open|closed|reservation|safety|warning|must|only|except|票价|价格|营业|开放|关闭|预约|安全|必须|仅限|除外)/iu.test(text);
   }
 
   auditSegmentCoverage(segmentId, assessment = null) {
@@ -2025,7 +2858,7 @@ export class Repository {
       SUM(CASE WHEN ec.publication_usability='non_material' THEN 1 ELSE 0 END) AS non_material,
       SUM(CASE WHEN ec.publication_usability='review_needed' AND ec.status='manual_review' THEN 1 ELSE 0 END) AS review_needed,
       SUM(CASE WHEN ec.publication_usability IN ('usable','partial_usable','non_material') OR ec.status='manual_review' THEN 1 ELSE 0 END) AS terminal
-      FROM source_segments ss LEFT JOIN extraction_coverage ec ON ec.segment_id=ss.id WHERE ss.source_id=?`).get(sourceId);
+      FROM current_source_segments ss LEFT JOIN extraction_coverage ec ON ec.segment_id=ss.id WHERE ss.source_id=?`).get(sourceId);
     const total = Number(counts.total || 0);
     const usable = Number(counts.usable || 0);
     const partialUsable = Number(counts.partial_usable || 0);
@@ -2053,7 +2886,7 @@ export class Repository {
   reviewSegmentCoverage(sourceId, segmentId, { decision, note = "", operator = "administrator" } = {}) {
     if (!["retry", "not_material"].includes(decision)) throw new Error("Coverage review decision must be retry or not_material.");
     const row = this.db.prepare(`SELECT ss.*,ec.id AS coverage_id,ec.status AS coverage_status,ec.audit_json
-      FROM source_segments ss JOIN extraction_coverage ec ON ec.segment_id=ss.id
+      FROM current_source_segments ss JOIN extraction_coverage ec ON ec.segment_id=ss.id
       WHERE ss.id=? AND ss.source_id=?`).get(segmentId, sourceId);
     if (!row) return null;
     if (row.coverage_status !== "manual_review") {
@@ -2090,7 +2923,7 @@ export class Repository {
   finalizeSegmentedExtraction(sourceId) {
     if (!this.sourceCoverageReady(sourceId)) throw new Error(`Source ${sourceId} still has unaudited segments.`);
     const sourceVersion = this.db.prepare("SELECT capture_version FROM sources WHERE id=?").get(sourceId)?.capture_version;
-    const rows = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model FROM source_segments ss
+    const rows = this.db.prepare(`SELECT ss.*,se.result_json,se.method,se.model FROM current_source_segments ss
       JOIN segment_extractions se ON se.segment_id=ss.id WHERE ss.source_id=? ORDER BY ss.sequence`).all(sourceId);
     if (!rows.length || rows.some((row) => row.capture_version !== sourceVersion)) {
       throw Object.assign(new Error(`Source ${sourceId} extraction belongs to a stale capture version.`), { code: "STALE_CAPTURE_VERSION", retryable: false });
@@ -2122,18 +2955,23 @@ export class Repository {
     }
     this.db.prepare("UPDATE sources SET destination_scopes_json=?,diagnostic_json=?,updated_at=? WHERE id=?")
       .run(JSON.stringify([primary.destination_slug].filter(Boolean)), JSON.stringify({ strategy_version: this.strategyVersion, stage: "finalized", segment_count: rows.length, claim_count: claims.length,
-        coverage: this.db.prepare("SELECT status,COUNT(*) count FROM extraction_coverage WHERE source_id=? GROUP BY status").all(sourceId) }), now(), sourceId);
+        coverage: this.db.prepare("SELECT status,COUNT(*) count FROM current_extraction_coverage WHERE source_id=? GROUP BY status").all(sourceId) }), now(), sourceId);
     return { destinationSlug: primary.destination_slug, claimCount: claims.length };
   }
 
   getIntakePackage(sourceId) {
     const source = this.getSource(sourceId);
     if (!source?.structured) return null;
-    return {
+    const existingKnowledge=this.knowledgeForDestination(source.structured.destination_slug).slice(0,80).map((fact)=>({
+      key:fact.normalized_key,subject:fact.subject,predicate:fact.predicate,preferred_value:fact.preferred_value,
+      consensus_status:fact.consensus_status,confidence:fact.consensus_confidence,freshness:fact.freshness_state,
+      evidence:(fact.evidence||[]).slice(0,2).map((item)=>({source_id:item.source_id,quote:String(item.quote||"").slice(0,200),
+        confidence:item.confidence,observed_at:item.observed_at||item.published_at||null})),
+    }));
+    const result={
       strategy_version: this.strategyVersion,
       source: {
         id: source.id, title: source.title, captured_at: source.captured_at,
-        text: String(source.raw_text || "").slice(0, 40_000),
         destination: source.structured.destination_name,
         destination_slug: source.structured.destination_slug,
         summary: source.structured.summary,
@@ -2149,12 +2987,15 @@ export class Repository {
       claims: source.claims.map((claim) => ({
         key: claim.normalized_key, subject: claim.subject, predicate: claim.predicate,
         value: claim.value_text, qualifiers: claim.qualifiers, confidence: claim.confidence,
+        source_quote: String(claim.source_quote || "").slice(0, 300),
       })),
-      existing_knowledge: this.knowledgeForDestination(source.structured.destination_slug).slice(0, 80),
+      existing_knowledge:existingKnowledge,
     };
+    const inputBytes=Buffer.byteLength(JSON.stringify(result));
+    return {...result,input_telemetry:{projection:"compact_claim_evidence_v1",bytes:inputBytes,estimated_tokens:Math.ceil(inputBytes/3)}};
   }
 
-  saveIntakeAnalysis(sourceId, analysis, model) {
+  saveIntakeAnalysis(sourceId, analysis, model, { deferReconciliation = false } = {}) {
     const source = this.db.prepare(`
       SELECT s.id, ss.destination_slug FROM sources s JOIN structured_sources ss ON ss.source_id=s.id WHERE s.id=?
     `).get(sourceId);
@@ -2209,8 +3050,33 @@ export class Repository {
         }, { linkRecommendation: false, status: "recommended" });
       }
     }
-    this.reconcileRecommendationInbox(source.destination_slug);
+    if (!deferReconciliation) {
+      this.reconcileRecommendationInbox(source.destination_slug);
+      this.refreshRecommendationBackfillRuns();
+    }
     return this.getSource(sourceId).analysis;
+  }
+
+  resolveProductionOwnerOpportunityId(type,entityId) {
+    if (!PRODUCTION_JOB_TYPES.has(type)) return null;
+    let candidateId=["assemble_editorial","plan_content"].includes(type) ? entityId : null;
+    if (!candidateId && ["plan_narrative","assemble_writing_packet","compose_frontend_page_plan","generate_draft"].includes(type)) {
+      candidateId=this.db.prepare("SELECT candidate_id FROM content_briefs WHERE id=?").get(entityId)?.candidate_id || null;
+    }
+    if (!candidateId) candidateId=this.db.prepare(`SELECT cb.candidate_id FROM article_drafts ad
+      JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(entityId)?.candidate_id || null;
+    if (!candidateId) return null;
+    return this.db.prepare(`SELECT MIN(id) AS id FROM content_opportunities
+      WHERE candidate_id=? AND approved_at IS NOT NULL HAVING COUNT(*)=1`).get(candidateId)?.id || null;
+  }
+
+  promoteCompatibleIntakeAnalysis(sourceId, expectedStrategy) {
+    const existing=this.db.prepare("SELECT strategy_version,analysis_json,model FROM content_intake_analyses WHERE source_id=?").get(sourceId);
+    if (!existing || existing.strategy_version!==expectedStrategy
+      || !isReusableDiagnosticStrategy(existing.strategy_version,this.strategyVersion)) return false;
+    this.saveIntakeAnalysis(sourceId,json(existing.analysis_json,{}),
+      existing.model || "reused-compatible-diagnostic",{deferReconciliation:true});
+    return true;
   }
 
   listContentRecommendations(limit = 100) {
@@ -2282,8 +3148,8 @@ export class Repository {
   sourceProcessingState(sourceId,{requireDiagnostic=true}={}) {
     const source = this.db.prepare(`SELECT s.id,s.status,s.capture_version,s.completeness_status,
         s.recommendation_reconciled_version,s.recommendation_reconciled_at,
-        (SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id) AS media_count,
-        (SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status='ORIGINAL_STORED') AS original_count,
+        (SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id) AS media_count,
+        (SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status='ORIGINAL_STORED') AS original_count,
         (SELECT status FROM experience_extraction_runs er WHERE er.source_id=s.id ORDER BY CASE er.status WHEN 'succeeded' THEN 0 ELSE 1 END,er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_status,
         (SELECT capture_version FROM experience_extraction_runs er WHERE er.source_id=s.id ORDER BY CASE er.status WHEN 'succeeded' THEN 0 ELSE 1 END,er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_capture_version,
         (SELECT degraded FROM experience_extraction_runs er WHERE er.source_id=s.id ORDER BY CASE er.status WHEN 'succeeded' THEN 0 ELSE 1 END,er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_degraded,
@@ -2307,7 +3173,16 @@ export class Repository {
   reconcileRecommendationInbox(destinationSlug = null) {
     const clauses=["o.lifecycle_state IN ('recommended','recommended_again','deferred')"];
     const values=[];
-    if (destinationSlug) { clauses.push("o.destination_slug=?"); values.push(destinationSlug); }
+    if (destinationSlug) {
+      const normalizedDestination=slugify(destinationSlug);
+      const region=primaryDestinationScope(normalizedDestination);
+      if (region!==normalizedDestination || PRIMARY_DESTINATION_SCOPES.has(region)) {
+        clauses.push("(o.destination_slug=? OR o.destination_slug LIKE ?)");
+        values.push(region,`${region}-%`);
+      } else {
+        clauses.push("o.destination_slug=?"); values.push(destinationSlug);
+      }
+    }
     const rows=this.db.prepare(`SELECT o.*,r.reasoning_summary,r.strategy_version AS recommendation_strategy_version
       FROM content_opportunities o LEFT JOIN content_recommendations r ON r.id=o.recommendation_id
       WHERE ${clauses.join(" AND ")} ORDER BY o.updated_at DESC,o.id`).all(...values);
@@ -2337,11 +3212,7 @@ export class Repository {
       return {row,sourceIds,sourceStates,processingState,processingGaps,versionCurrent,retryEligible,eligible,
         canonicalIntentKey:canonicalIntentKeyForOpportunity(row),lesson};
     });
-    const groups=new Map();
-    for (const item of evaluated.filter((entry) => entry.eligible)) {
-      const list=groups.get(item.canonicalIntentKey) || [];
-      list.push(item); groups.set(item.canonicalIntentKey,list);
-    }
+    const groups=groupRecommendationIntents(evaluated.filter((entry) => entry.eligible));
     const primaries=new Map();
     for (const [key,items] of groups) {
       items.sort((a,b) => recommendationInboxRank(b)-recommendationInboxRank(a)
@@ -2374,9 +3245,10 @@ export class Repository {
         updateSource.run(this.strategyVersion,timestamp,sourceId);
       }
     });
-    const stateCounts=(state) => evaluated.filter((item) => item.processingState===state).length;
+    const activeEvaluated=evaluated.filter((item)=>item.versionCurrent);
+    const stateCounts=(state) => activeEvaluated.filter((item) => item.processingState===state).length;
     return {
-      internalOpportunities:rows.length,
+      internalOpportunities:activeEvaluated.length,
       actionableInbox:[...primaries.values()].length,
       processingGap:stateCounts("PROCESSING_GAP"),evidenceGap:stateCounts("EVIDENCE_GAP"),current:stateCounts("CURRENT"),
       merged:evaluated.filter((item) => item.eligible && primaries.get(item.canonicalIntentKey)!==item.row.id).length,
@@ -2384,7 +3256,7 @@ export class Repository {
     };
   }
 
-  listRecommendationInbox(limit = 100,{reconcile=true}={}) {
+  listRecommendationInbox(limit = 100,{reconcile=true,cursor=0}={}) {
     if (reconcile) this.reconcileRecommendationInbox();
     return this.db.prepare(`SELECT o.*,r.classification,r.recommended_action,r.reasoning_summary,
         s.title AS source_title,ss.destination_name
@@ -2394,7 +3266,7 @@ export class Repository {
       LEFT JOIN structured_sources ss ON ss.source_id=o.source_id
       WHERE o.inbox_state='ACTIONABLE'
       ORDER BY CASE o.lifecycle_state WHEN 'recommended_again' THEN 0 WHEN 'recommended' THEN 1 ELSE 2 END,
-        o.readiness_score DESC,o.updated_at DESC LIMIT ?`).all(Math.max(1,Math.min(500,Number(limit)||100)))
+        o.readiness_score DESC,o.updated_at DESC LIMIT ? OFFSET ?`).all(Math.max(1,Math.min(500,Number(limit)||100)),Math.max(0,Number(cursor)||0))
       .map((row) => {
         const readiness=json(row.readiness_json,{}); const previousFailure=json(row.previous_failure_json,{});
         return { ...row,readiness,coverage:json(row.coverage_json,{}),publicationImpact:json(row.publication_impact_json,{}),
@@ -2604,6 +3476,7 @@ export class Repository {
         lifecycle_action,target_post_id,publication_impact_json)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(topic_key) DO UPDATE SET recommendation_id=excluded.recommendation_id, candidate_id=excluded.candidate_id,
+        strategy_version=excluded.strategy_version,source_id=excluded.source_id,
         title=excluded.title, content_type=excluded.content_type, readiness_score=excluded.readiness_score,
         readiness_json=excluded.readiness_json,coverage_json=excluded.coverage_json,
         status=CASE WHEN content_opportunities.status IN ('approved_waiting_for_evidence','approved_ready','producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft','suppressed') THEN content_opportunities.status ELSE excluded.status END,
@@ -2658,37 +3531,68 @@ export class Repository {
     return new Set((facts || []).flatMap(independentEvidenceKeysForFact)).size;
   }
 
+  completedOpportunityFacts(facts) {
+    const completed=new Set(this.db.prepare(`SELECT s.id FROM sources s
+      WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
+        AND NOT EXISTS (SELECT 1 FROM current_source_assets a WHERE a.source_id=s.id AND a.durability_status<>'ORIGINAL_STORED')
+        AND EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version
+          AND er.status='succeeded' AND er.degraded=0)`).all().map((row)=>row.id));
+    const familyBySource=new Map(this.db.prepare("SELECT source_id,family_id FROM source_family_memberships").all()
+      .map((row)=>[row.source_id,row.family_id]));
+    return (facts || []).map((fact)=>{
+      const evidence=(fact.evidence || []).filter((item)=>completed.has(item.source_id));
+      const independenceKeys=uniqueStrings(evidence.map((item)=>familyBySource.get(item.source_id)
+        ? `family:${familyBySource.get(item.source_id)}` : item.source_id ? `source:${item.source_id}` : null),10_000);
+      return {...fact,evidence,consensus_detail:{variants:[{independenceKeys}]}};
+    }).filter((fact)=>fact.evidence.length>0);
+  }
+
   rebuildTopicClusters(destinationSlug) {
     const facts = this.knowledgeForDestination(destinationSlug);
-    const grouped = Map.groupBy(facts, (fact) => slugify(fact.subject || "general") || "general");
+    const grouped = groupKnowledgeFacts(facts,destinationSlug);
     const timestamp = now();
-    for (const [subject, values] of grouped) {
-      const topicKey = `${destinationSlug}:cluster:${subject}`;
+    const activeTopicKeys=[];
+    transaction(this.db,()=>{
+    for (const [identity, values] of grouped) {
+      const topicKey = `${destinationSlug}:cluster:${slugify(identity)}`;
+      const title=(countStrings(values.map((item)=>item.canonical_subject || item.subject))[0]?.value
+        || values[0]?.canonical_subject || values[0]?.subject || identity).replaceAll("_"," ");
+      activeTopicKeys.push(topicKey);
       this.db.prepare(`INSERT INTO topic_clusters(id,destination_slug,topic_key,title,claim_keys_json,source_family_ids_json,updated_at)
         VALUES (?,?,?,?,?,?,?) ON CONFLICT(topic_key) DO UPDATE SET title=excluded.title,claim_keys_json=excluded.claim_keys_json,
         source_family_ids_json=excluded.source_family_ids_json,updated_at=excluded.updated_at`)
-        .run(`cluster_${sha256(topicKey).slice(0, 24)}`, destinationSlug, topicKey, values[0]?.subject || subject,
+        .run(`cluster_${sha256(topicKey).slice(0, 24)}`, destinationSlug, topicKey, title,
           JSON.stringify(values.map((item) => item.normalized_key)),
           JSON.stringify([...new Set(values.flatMap(independentEvidenceKeysForFact))]), timestamp);
     }
+    const existing=this.db.prepare("SELECT id,topic_key FROM topic_clusters WHERE destination_slug=?").all(destinationSlug);
+    const active=new Set(activeTopicKeys);
+    const remove=this.db.prepare("DELETE FROM topic_clusters WHERE id=?");
+    for(const row of existing)if(!active.has(row.topic_key))remove.run(row.id);
+    });
     return grouped.size;
   }
 
   rebuildKnowledgeOpportunities(destinationSlug) {
-    const factsByKey = new Map(this.knowledgeForDestination(destinationSlug).map((fact) => [fact.normalized_key,fact]));
+    const factsByKey = new Map(this.completedOpportunityFacts(this.knowledgeForDestination(destinationSlug))
+      .map((fact) => [fact.normalized_key,fact]));
     const clusters = this.db.prepare(`SELECT * FROM topic_clusters WHERE destination_slug=? ORDER BY topic_key`).all(destinationSlug);
     const timestamp = now();
     let created = 0;
     let refreshed = 0;
     let retired = 0;
+    const activeTopicKeys=new Set();
     for (const cluster of clusters) {
       const facts = json(cluster.claim_keys_json,[]).map((key) => factsByKey.get(key)).filter(Boolean);
       const sourceFamilyIds = [...new Set(facts.flatMap(independentEvidenceKeysForFact))];
       const sourceIds = [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))];
       const usableFacts = facts.filter((fact) => fact.consensus_status !== "conflicted"
         && ["current","unknown"].includes(fact.validity_state || "unknown"));
-      const actionability = usableFacts.length >= 2 && sourceFamilyIds.length >= 2;
-      const topicKey = `${destinationSlug}:knowledge:${slugify(cluster.title || cluster.topic_key) || sha256(cluster.topic_key).slice(0,12)}`;
+      const actionability = usableFacts.length >= 2 && sourceFamilyIds.length >= 2
+        && knowledgeClusterIsArticleWorthy(cluster.title,usableFacts,destinationSlug);
+      const titleIdentity=slugify(cluster.title) || "topic";
+      const topicKey = `${destinationSlug}:knowledge:${titleIdentity}:${sha256(cluster.topic_key).slice(0,12)}`;
+      activeTopicKeys.add(topicKey);
       const opportunityId = `opportunity_${sha256(topicKey).slice(0,24)}`;
       const existing = this.db.prepare("SELECT id,lifecycle_state,status FROM content_opportunities WHERE topic_key=?").get(topicKey);
       if (!actionability) {
@@ -2699,11 +3603,12 @@ export class Repository {
         }
         continue;
       }
-      const contentType = inferKnowledgeOpportunityType(cluster.title,facts);
+      const contentType = inferKnowledgeOpportunityType(cluster.title,facts,destinationSlug);
       const title = `${cluster.title}: a practical guide for independent travelers`;
       const matrix = evaluateCoverage({topicKey,contentType,facts:usableFacts,sourceFamilyCount:sourceFamilyIds.length,
         publicationMode:"multi_source_synthesis"});
       const coverage = { ...matrix,publicationMode:"multi_source_synthesis",knowledgeEventGenerated:true,
+        knowledgeIntentIdentity:String(cluster.topic_key || "").split(":cluster:").at(-1) || titleIdentity,
         proposal:{readerPromise:`Help an independent traveler make a confident decision about ${cluster.title}.`,
           evidenceBoundary:`Use only the ${usableFacts.length} current, traceable facts in this knowledge cluster.`,targetEntities:[cluster.title]},
         selectedFactKeys:usableFacts.map((fact) => fact.normalized_key),selectedSourceIds:sourceIds };
@@ -2712,7 +3617,8 @@ export class Repository {
         source_id,source_ids_json,recommendation_id,candidate_id,title,content_type,readiness_score,readiness_json,coverage_json,status,
         approved_at,created_at,updated_at,lifecycle_action,target_post_id,publication_impact_json)
         VALUES (?,?,?,?,?,NULL,?,NULL,NULL,?,?,?,?,?,'recommended',NULL,?,?,?,?,?)
-        ON CONFLICT(topic_key) DO UPDATE SET source_ids_json=excluded.source_ids_json,title=excluded.title,content_type=excluded.content_type,
+        ON CONFLICT(topic_key) DO UPDATE SET strategy_version=excluded.strategy_version,
+          source_ids_json=excluded.source_ids_json,title=excluded.title,content_type=excluded.content_type,
           readiness_score=excluded.readiness_score,readiness_json=excluded.readiness_json,coverage_json=excluded.coverage_json,
           suppression_reason=CASE WHEN content_opportunities.suppression_reason='knowledge_cluster_no_longer_actionable' THEN NULL ELSE content_opportunities.suppression_reason END,
           status=CASE WHEN content_opportunities.status='suppressed' AND content_opportunities.suppression_reason='knowledge_cluster_no_longer_actionable'
@@ -2725,24 +3631,61 @@ export class Repository {
       this.saveCoverageMatrix(matrix,destinationSlug);
       if (existing) refreshed += 1; else created += 1;
     }
+    const obsolete=this.db.prepare(`SELECT id,topic_key FROM content_opportunities
+      WHERE destination_slug=? AND json_extract(coverage_json,'$.knowledgeEventGenerated')=1
+        AND lifecycle_state IN ('recommended','deferred')`).all(destinationSlug);
+    const retireObsolete=this.db.prepare(`UPDATE content_opportunities SET status='suppressed',inbox_state='INTERNAL',
+      primary_opportunity_id=NULL,suppression_reason='knowledge_cluster_replaced',updated_at=? WHERE id=?`);
+    for(const row of obsolete)if(!activeTopicKeys.has(row.topic_key)){
+      retireObsolete.run(timestamp,row.id); retired += 1;
+    }
     this.reconcileRecommendationInbox(destinationSlug);
     return {clusters:clusters.length,created,refreshed,retired};
   }
 
-  rebuildCoverageMatrices(destinationSlug) {
+  rebuildCoverageMatrices(destinationSlug,{changedFactKeys=null}={}) {
+    const startedAt=Date.now();
     const allFacts = this.knowledgeForDestination(destinationSlug);
-    const opportunities = this.db.prepare("SELECT * FROM content_opportunities WHERE destination_slug=?").all(destinationSlug);
+    const completedFacts = this.completedOpportunityFacts(allFacts);
+    const completedFactsByKey=new Map(completedFacts.map((fact)=>[fact.normalized_key,fact]));
+    const allOpportunities = this.db.prepare("SELECT * FROM content_opportunities WHERE destination_slug=?").all(destinationSlug);
+    const changed=new Set((changedFactKeys||[]).filter(Boolean));
+    const changedFacts=changed.size?allFacts.filter((fact)=>changed.has(fact.normalized_key)):[];
+    const opportunities=!changed.size?allOpportunities:allOpportunities.filter((opportunity)=>{
+      const previous=json(opportunity.coverage_json,{});
+      if(String(opportunity.topic_key||"").includes(":knowledge:")){
+        if((previous.selectedFactKeys||[]).some((key)=>changed.has(key)))return true;
+        return changedFacts.some((fact)=>{
+          const subject=slugify(fact.subject||fact.canonical_subject||"");
+          return subject&&(`${opportunity.topic_key} ${opportunity.title||""}`.toLowerCase().replace(/_/gu,"-").includes(subject));
+        });
+      }
+      if((previous.selectedFactKeys||[]).some((key)=>changed.has(key)))return true;
+      return changedFacts.some((fact)=>factCouldAffectOpportunity(fact,opportunity,destinationSlug));
+    });
     for (const opportunity of opportunities) {
       const previousCoverage = json(opportunity.coverage_json, {});
       const publicationMode = normalizePublicationMode(previousCoverage.publicationMode);
       if (previousCoverage.manualAssignmentId) continue; // Manual scope is rebuilt only by its own evaluator.
       const sourceFacts = factsForSource(allFacts, opportunity.source_id);
-      const facts = ["source_adaptation", "topic_feature"].includes(publicationMode) && sourceFacts.length
-        ? sourceFacts : scopeFactsForOpportunity(allFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
+      const facts = previousCoverage.knowledgeEventGenerated
+        ? (previousCoverage.selectedFactKeys || []).map((key)=>completedFactsByKey.get(key)).filter(Boolean)
+        : ["source_adaptation", "topic_feature"].includes(publicationMode) && sourceFacts.length
+          ? sourceFacts : scopeFactsForOpportunity(completedFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
       const familyCount = this.independentSourceFamilyCountForFacts(facts);
       const matrix = evaluateCoverage({ topicKey: opportunity.topic_key, contentType: opportunity.content_type, facts, sourceFamilyCount: familyCount, publicationMode });
+      const previousProposal = previousCoverage.proposal && typeof previousCoverage.proposal === "object"
+        ? previousCoverage.proposal : {};
+      const approvedProposal = previousCoverage.approval?.proposal && typeof previousCoverage.approval.proposal === "object"
+        ? previousCoverage.approval.proposal : {};
+      const proposal = {
+        ...previousProposal,
+        readerPromise: String(previousProposal.readerPromise || approvedProposal.readerPromise
+          || previousCoverage.editorialBrief || opportunity.title || "").trim(),
+      };
       const coverage = { ...previousCoverage, ...matrix, publicationMode, selectedFactKeys: facts.map((fact) => fact.normalized_key),
-        selectedSourceIds: [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))] };
+        selectedSourceIds: [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))],
+        proposal };
       this.saveCoverageMatrix(matrix, destinationSlug);
       const current = opportunity.status;
       const next = current === "approved_waiting_for_evidence" && matrix.readiness.ready ? "approved_ready" : current;
@@ -2750,6 +3693,8 @@ export class Repository {
         .run(matrix.readiness.score, JSON.stringify(matrix.readiness), JSON.stringify(coverage), next, now(), opportunity.id);
     }
     this.reconcileRecommendationInbox(destinationSlug);
+    this.lastCoverageRebuildTelemetry={destinationSlug,mode:changed.size?'incremental':'full',changedFactCount:changed.size,
+      scannedOpportunityCount:allOpportunities.length,updatedOpportunityCount:opportunities.length,durationMs:Date.now()-startedAt};
     return opportunities.length;
   }
 
@@ -2763,8 +3708,14 @@ export class Repository {
   }
 
   reconcileApprovedOpportunity(opportunityId) {
+    return transaction(this.db, () => this.reconcileApprovedOpportunityAtomic(opportunityId));
+  }
+
+  reconcileApprovedOpportunityAtomic(opportunityId) {
     const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(opportunityId);
     if (!opportunity || !["approved_ready", "producing"].includes(opportunity.status)) return { candidateId: opportunity?.candidate_id || null, queued: false };
+    const disposition = this.db.prepare("SELECT disposition FROM production_record_controls WHERE opportunity_id=?").get(opportunityId)?.disposition;
+    if (["archived", "deleted"].includes(disposition)) return { candidateId: opportunity.candidate_id || null, queued: false, disposition };
     const readiness = json(opportunity.readiness_json, {});
     if (!readiness.ready) {
       this.db.prepare("UPDATE content_opportunities SET status='approved_waiting_for_evidence',updated_at=? WHERE id=?").run(now(), opportunityId);
@@ -2784,7 +3735,7 @@ export class Repository {
     this.db.prepare("UPDATE content_opportunities SET candidate_id=?,status='producing',lifecycle_state='producing',updated_at=? WHERE id=?").run(candidateId, timestamp, opportunityId);
     this.db.prepare("UPDATE content_recommendations SET approved_candidate_id=?,opportunity_id=?,updated_at=? WHERE id=?")
       .run(candidateId, opportunityId, timestamp, opportunity.recommendation_id);
-    return { candidateId, queued: this.queueCandidate(candidateId) };
+    return { candidateId, queued: this.queueCandidate(candidateId, { opportunityId }) };
   }
 
   reconcileApprovedOpportunities(destinationSlug = null) {
@@ -2806,32 +3757,33 @@ export class Repository {
   listSources(limit = 100) {
     const sources = this.db.prepare(`
       SELECT s.id, s.adapter, s.external_id, s.title, s.author_name, s.canonical_url, s.submitted_url, s.source_kind,
-        s.status, s.last_error, s.captured_at, s.capture_version, s.authority_level, s.verified_at,
+        s.status, s.last_error, s.captured_at, s.updated_at, s.capture_version, s.authority_level, s.verified_at,
         s.completeness_status,s.completeness_json,
         ss.destination_name, ss.summary, ss.extraction_method,
         (SELECT COUNT(*) FROM claims c WHERE c.source_id = s.id) AS claim_count,
-        (SELECT COUNT(*) FROM source_files sf WHERE sf.source_id = s.id) AS file_count,
-        (SELECT COUNT(*) FROM source_segments sg WHERE sg.source_id = s.id) AS segment_count,
-        (SELECT COUNT(*) FROM segment_extractions se WHERE se.source_id = s.id) AS extracted_segment_count,
-        (SELECT COUNT(*) FROM extraction_coverage ec WHERE ec.source_id = s.id AND ec.audited_at IS NOT NULL) AS audited_segment_count
-        ,(SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id) AS discovered_media_count
-        ,(SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status='ORIGINAL_STORED') AS stored_original_count
-        ,(SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.repair_status='browser_repair_required') AS browser_repair_count
-        ,(SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.repair_status IN ('server_recovery_pending','server_recovery_running')) AS server_repair_count
-        ,(SELECT status FROM experience_extraction_runs er WHERE er.source_id=s.id ORDER BY CASE er.status WHEN 'succeeded' THEN 0 ELSE 1 END,er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_status
-        ,(SELECT degraded FROM experience_extraction_runs er WHERE er.source_id=s.id ORDER BY CASE er.status WHEN 'succeeded' THEN 0 ELSE 1 END,er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_degraded
+        (SELECT COUNT(*) FROM current_source_files sf WHERE sf.source_id = s.id) AS file_count,
+        (SELECT COUNT(*) FROM current_source_segments sg WHERE sg.source_id = s.id) AS segment_count,
+        (SELECT COUNT(*) FROM segment_extractions se JOIN current_source_segments csg ON csg.id=se.segment_id WHERE se.source_id = s.id) AS extracted_segment_count,
+        (SELECT COUNT(*) FROM current_extraction_coverage ec WHERE ec.source_id = s.id AND ec.audited_at IS NOT NULL) AS audited_segment_count
+        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id) AS discovered_media_count
+        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status='ORIGINAL_STORED') AS stored_original_count
+        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.repair_status='browser_repair_required') AS browser_repair_count
+        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.repair_status IN ('server_recovery_pending','server_recovery_running')) AS server_repair_count
+        ,(SELECT status FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version ORDER BY er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_status
+        ,(SELECT degraded FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version ORDER BY er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_degraded
       FROM sources s LEFT JOIN structured_sources ss ON ss.source_id = s.id
       ORDER BY s.captured_at DESC, s.id DESC LIMIT ?
     `).all(limit);
     const queueJobs = this.db.prepare(`
       SELECT j.id,j.type,j.entity_id,j.status,j.attempts,j.max_attempts,j.available_at,j.next_eligible_at,j.created_at,j.started_at,j.updated_at,j.last_error,
         j.execution_route,j.failure_class,j.batch_attempts,j.last_failure_code,
-        COALESCE(sg.source_id,j.entity_id) AS source_id
+        COALESCE(sg.source_id,mb.source_id,j.entity_id) AS source_id
       FROM jobs j LEFT JOIN source_segments sg ON sg.id=j.entity_id
+      LEFT JOIN media_extraction_batches mb ON mb.id=j.entity_id
       WHERE j.type IN ('extract_source','preflight_source','segment_source','extract_segment_claims',
-        'audit_segment_coverage','retry_segment_extraction','finalize_source_extraction')
+        'extract_media_batch','audit_segment_coverage','retry_segment_extraction','finalize_source_extraction')
         AND j.status IN ('queued','running','failed')
-        AND (sg.source_id IS NOT NULL OR EXISTS (SELECT 1 FROM sources direct_source WHERE direct_source.id=j.entity_id))
+        AND (sg.source_id IS NOT NULL OR mb.source_id IS NOT NULL OR EXISTS (SELECT 1 FROM sources direct_source WHERE direct_source.id=j.entity_id))
     `).all();
     const queueStates = sourceQueueStates(queueJobs);
     return sources.map((source, index) => {
@@ -2844,6 +3796,55 @@ export class Repository {
           : Number(source.browser_repair_count) ? "BROWSER_REPAIR_REQUIRED" : "INCOMPLETE",
         queue: source.status === "processed" && queue?.state === "failed" ? null : queue };
     });
+  }
+
+  listSourceStatusProjection({limit=100,ids=[]}={}) {
+    const sourceIds=[...new Set((ids||[]).map(String).filter(Boolean))].slice(0,200);
+    const where=sourceIds.length?`WHERE s.id IN (${sourceIds.map(()=>"?").join(",")})`:"";
+    const rows=this.db.prepare(`SELECT s.id,s.status,s.last_error,s.capture_version,s.updated_at,s.captured_at,
+        s.extension_version,s.completeness_status,
+        COALESCE(json_extract(s.submission_metadata_json,'$.processingEstimate.processingClass'),
+          CASE WHEN json_extract(s.submission_metadata_json,'$.processingEstimate.requiresManualStart')=1 THEN 'heavy' ELSE 'normal' END) AS processing_class,
+        (SELECT COUNT(*) FROM current_source_assets a WHERE a.source_id=s.id) AS media_count,
+        (SELECT COUNT(*) FROM current_source_assets a WHERE a.source_id=s.id AND a.durability_status='ORIGINAL_STORED') AS media_ready_count,
+        (SELECT COUNT(*) FROM current_source_segments sg WHERE sg.source_id=s.id) AS segment_count,
+        (SELECT COUNT(*) FROM segment_extractions se JOIN current_source_segments sg ON sg.id=se.segment_id WHERE sg.source_id=s.id) AS extracted_segment_count,
+        (SELECT COUNT(*) FROM current_extraction_coverage ec WHERE ec.source_id=s.id AND ec.audited_at IS NOT NULL) AS audited_segment_count,
+        (SELECT status FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version ORDER BY er.updated_at DESC LIMIT 1) AS experience_status,
+        (SELECT degraded FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version ORDER BY er.updated_at DESC LIMIT 1) AS experience_degraded,
+        EXISTS(SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded' AND er.capture_version<>s.capture_version) AS stale_experience
+      FROM sources s ${where} ORDER BY s.updated_at DESC,s.id LIMIT ?`).all(...sourceIds,Math.max(1,Math.min(500,Number(limit)||100)));
+    if(!rows.length)return [];
+    const wanted=new Set(rows.map((row)=>row.id));
+    const jobs=this.db.prepare(`SELECT j.id,j.type,j.status,j.attempts,j.max_attempts,j.available_at,j.started_at,j.updated_at,j.last_error,
+        j.execution_route,j.workload_class,j.recovery_run_id,j.last_failure_code,COALESCE(sg.source_id,mb.source_id,direct.id) AS source_id
+      FROM jobs j
+      LEFT JOIN source_segments sg ON sg.id=j.entity_id
+      LEFT JOIN media_extraction_batches mb ON mb.id=j.entity_id
+      LEFT JOIN sources direct ON direct.id=j.entity_id
+      WHERE j.status IN ('queued','running','failed')
+        AND j.type IN ('extract_source','preflight_source','segment_source','extract_segment_claims','extract_media_batch',
+          'audit_segment_coverage','retry_segment_extraction','finalize_source_extraction') ORDER BY j.updated_at DESC`).all()
+      .filter((job)=>wanted.has(job.source_id));
+    const states=sourceQueueStates(jobs);
+    return rows.map((row)=>{
+      const queue=states.get(row.id)||null;
+      const currentQueue=row.status==="processed"&&queue?.state==="failed"?null:queue;
+      return {...row,experience_degraded:Boolean(row.experience_degraded),stale_experience:Boolean(row.stale_experience),
+        queue:currentQueue,current_stage:currentQueue?.stage||sourceStageFromProjection(row)};
+    });
+  }
+
+  sourceTimeline(sourceId,limit=100) {
+    if(!this.db.prepare("SELECT 1 FROM sources WHERE id=?").get(sourceId))return [];
+    const captures=this.db.prepare(`SELECT 'capture' AS kind,'capture_saved' AS stage,'succeeded' AS status,
+        captured_at AS occurred_at,capture_version AS version,NULL AS detail FROM capture_versions WHERE source_id=?`).all(sourceId);
+    const jobs=this.db.prepare(`SELECT 'job' AS kind,j.type AS stage,j.status,j.updated_at AS occurred_at,
+        NULL AS version,COALESCE(j.last_failure_code,j.last_error) AS detail
+      FROM jobs j LEFT JOIN source_segments sg ON sg.id=j.entity_id LEFT JOIN media_extraction_batches mb ON mb.id=j.entity_id
+      WHERE j.entity_id=? OR sg.source_id=? OR mb.source_id=?`).all(sourceId,sourceId,sourceId);
+    return [...captures,...jobs].sort((a,b)=>String(b.occurred_at).localeCompare(String(a.occurred_at)))
+      .slice(0,Math.max(1,Math.min(500,Number(limit)||100)));
   }
 
   reviewSourceEvidence(sourceId, { decision, authorityLevel = 4, verifiedAt = null, note = "", operator = "administrator" } = {}) {
@@ -3110,7 +4111,8 @@ export class Repository {
       });
       const identity = { entityKey, canonicalSubject, aliases, status: "resolved", ...metadata };
       entities.set(entityKey, identity);
-      for (const alias of aliases) this.upsertEntityAlias(destinationSlug, normalizeEntityAlias(alias), identity, "model", Number(item.confidence), timestamp);
+      // Model-proposed aliases are candidates until a source-grounded Claim
+      // update proves the identity. Do not populate the alias registry here.
     }
     const claims = new Map(this.db.prepare(`
       SELECT c.* FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=?
@@ -3129,13 +4131,16 @@ export class Repository {
           alias: row.subject, candidate_entity_key: row.entity_key, candidate_entity_type: row.entity_type,
           candidate_granularity: row.granularity, proposed_entity_key: entityKey,
           proposed_canonical_subject: canonicalSubject, proposed_entity_type: metadata.entityType,
-          proposed_granularity: metadata.granularity, location: metadata.location, confidence: item.confidence,
+          proposed_granularity: metadata.granularity, candidateLocation: json(row.entity_location_json, {}),
+          proposedLocation: metadata.location, confidence: item.confidence,
+          identityEvidence: this.hasSourceAliasEvidence(row, canonicalSubject),
         });
-        if (assessment.decision === "DO_NOT_MERGE") {
-          if (row.entity_key && assessment.suggestedRelation) this.upsertEntityRelation(destinationSlug, row.entity_key, assessment.suggestedRelation, entityKey, "model", Number(item.confidence), assessment.reasons.join("; "));
+        if (assessment.decision !== "MERGE") {
+          if (row.entity_key && row.entity_key !== entityKey) this.upsertEntityRelation(destinationSlug, row.entity_key, assessment.suggestedRelation || 'related_to', entityKey, "model", Number(item.confidence), assessment.reasons.join("; "));
           continue;
         }
         const identity = entities.get(entityKey) || { entityKey, canonicalSubject, aliases: uniqueEntityAliases([canonicalSubject, row.subject]), status: "resolved", ...metadata };
+        identity.aliases = uniqueEntityAliases([canonicalSubject, row.subject]);
         const canonicalKey = normalizeClaimKey(item?.canonical_key);
         this.db.prepare(`
           UPDATE claims SET original_normalized_key=CASE WHEN original_normalized_key='' THEN normalized_key ELSE original_normalized_key END,
@@ -3196,6 +4201,16 @@ export class Repository {
     });
     this.resolveEntitiesDeterministically(destinationSlug);
     return { resolvedEntities: entities.size, candidates: this.listEntityMergeCandidates().filter((item) => item.destination_slug === destinationSlug).length };
+  }
+
+  hasSourceAliasEvidence(claim, canonicalSubject) {
+    const existing = this.db.prepare("SELECT 1 FROM entity_aliases WHERE alias_normalized=? AND canonical_subject=? AND resolution_source='manual'")
+      .get(normalizeEntityAlias(claim.subject),canonicalSubject);
+    if (existing) return true;
+    const source = this.db.prepare('SELECT raw_text FROM sources WHERE id=?').get(claim.source_id);
+    const escape = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const alias = escape(claim.subject), canonical = escape(canonicalSubject);
+    return new RegExp(`${alias}\\s*[（(]\\s*${canonical}\\s*[）)]|${canonical}\\s*[（(]\\s*${alias}\\s*[）)]`, 'iu').test(source?.raw_text || '');
   }
 
   decideEntityMergeCandidate(candidateId, decision, options = {}) {
@@ -3399,6 +4414,20 @@ export class Repository {
       const insertClaimRelation = this.db.prepare(`INSERT OR IGNORE INTO claim_relations(id, destination_slug, claim_a_id, claim_b_id,
         relation_type, can_coexist, reason, scope_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const insertResolutionEvent = this.db.prepare(`INSERT OR IGNORE INTO knowledge_resolution_events(id,destination_slug,
+        normalized_key,claim_a_id,claim_b_id,resolution_state,reason,detail_json,engine_version,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`);
+      const upsertVerificationJob = this.db.prepare(`INSERT INTO knowledge_verification_jobs(id,destination_slug,normalized_key,status,
+        source_priority_json,evidence_json,result_json,created_at,updated_at)
+        VALUES (?,?,?,'queued',?,?,'{}',?,?) ON CONFLICT(destination_slug,normalized_key) DO UPDATE SET
+          status=CASE WHEN knowledge_verification_jobs.status='completed' THEN 'completed' ELSE 'queued' END,
+          source_priority_json=excluded.source_priority_json,evidence_json=excluded.evidence_json,updated_at=excluded.updated_at`);
+      const completeVerificationJob=this.db.prepare(`UPDATE knowledge_verification_jobs SET status='completed',result_json=?,
+        completed_at=?,updated_at=? WHERE destination_slug=? AND normalized_key=? AND status<>'completed'`);
+      const upsertRepairJob = this.db.prepare(`INSERT INTO claim_repair_jobs(id,claim_id,status,repair_type,input_json,result_json,created_at,updated_at)
+        VALUES (?,?,'queued',?,?,'{}',?,?) ON CONFLICT(claim_id,repair_type) DO UPDATE SET
+          status=CASE WHEN claim_repair_jobs.status='completed' THEN 'completed' ELSE 'queued' END,
+          input_json=excluded.input_json,updated_at=excluded.updated_at`);
       const selectVisibility = this.db.prepare(
         "SELECT * FROM knowledge_visibility_overrides WHERE destination_slug=? AND normalized_key=?",
       );
@@ -3445,13 +4474,24 @@ export class Repository {
           const quoteKey = `${row.source_id}:${sha256(row.source_quote)}:${extractionIssue}`;
           if (reviewedExtractionQuotes.has(quoteKey)) continue;
           reviewedExtractionQuotes.add(quoteKey);
-          const reviewId = `claim_review_${sha256(`${row.id}:${extractionIssue}`).slice(0, 24)}`;
-          const previous = previousReviewDecisions.get(reviewId);
-          // A legacy "resolved" extraction review only acknowledged the issue; it did not
-          // correct the Claim. Re-open genuine issues, while preserving explicit false-positive dismissals.
-          const status = previous?.status === "dismissed" ? "dismissed" : "pending";
-          insertClaimReview.run(reviewId, destinationSlug, row.id, null, extractionIssue,
-              "The original source contains negation or a limiting qualifier that is absent from the normalized Claim.", status, timestamp, timestamp);
+          const repairId=`claim_repair_${sha256(`${row.id}:${extractionIssue}`).slice(0,24)}`;
+          upsertRepairJob.run(repairId,row.id,extractionIssue,JSON.stringify({claimId:row.id,predicate:row.predicate,
+            value:row.value_text,sourceQuote:row.source_quote,qualifiers:json(row.qualifiers_json,[])}),timestamp,timestamp);
+          insertResolutionEvent.run(`knowledge_resolution_${sha256(`${row.id}:${extractionIssue}:${KNOWLEDGE_RESOLUTION_VERSION}`).slice(0,24)}`,
+            destinationSlug,row.normalized_key,row.id,null,"REPAIR_REQUIRED",
+            "The extraction issue is queued for bounded Claim repair rather than human conflict review.",
+            JSON.stringify({repairType:extractionIssue}),KNOWLEDGE_RESOLUTION_VERSION,timestamp);
+        }
+        const mismatch=row.structured_value.compatibility;
+        if(mismatch?.code==="PREDICATE_VALUE_MISMATCH"){
+          const state=mismatch.repairedPredicate?"AUTO_REPAIRED":"REPAIR_REQUIRED";
+          if(!mismatch.repairedPredicate)upsertRepairJob.run(
+            `claim_repair_${sha256(`${row.id}:${mismatch.code}`).slice(0,24)}`,row.id,mismatch.code,
+            JSON.stringify({claimId:row.id,predicate:row.predicate,value:row.value_text,sourceQuote:row.source_quote,
+              proposedPredicate:mismatch.repairedPredicate||null}),timestamp,timestamp);
+          insertResolutionEvent.run(`knowledge_resolution_${sha256(`${row.id}:${state}:${KNOWLEDGE_RESOLUTION_VERSION}`).slice(0,24)}`,
+            destinationSlug,row.normalized_key,row.id,null,state,mismatch.repair||"Predicate/value compatibility was evaluated locally.",
+            JSON.stringify(mismatch),KNOWLEDGE_RESOLUTION_VERSION,timestamp);
         }
       }
       // A broad Claim can generalize a specific Claim only when they express
@@ -3462,7 +4502,7 @@ export class Repository {
       const generalizationGroups = Map.groupBy(sourceRows, (row) => {
         const predicate = row.structured_value.canonical_predicate || normalizeValue(row.predicate);
         const value = row.structured_value.typed_value != null
-          ? JSON.stringify(row.structured_value.typed_value)
+          ? stableCanonicalSerialize(row.structured_value.typed_value)
           : normalizeValue(row.value_text);
         return `${predicate}:${value}`;
       });
@@ -3486,9 +4526,7 @@ export class Repository {
         const canonicalPredicates = new Set(rows.map((row) => row.structured_value.canonical_predicate).filter(Boolean));
         const typedFact = canonicalPredicates.size === 1 && rows.every((row) => row.structured_value.typed_value != null);
         const canonicalPredicate = typedFact ? [...canonicalPredicates][0] : null;
-        const variantKey = (row) => typedFact
-          ? `${canonicalPredicate}:${JSON.stringify(row.structured_value.typed_value)}`
-          : normalizeValue(row.value_text);
+        const variantKey = (row) => typedFact ? canonicalKnowledgeVariant(row) : normalizeValue(row.value_text);
         const applicableRows = rows.filter((row) => ["current", "unknown"].includes(evidenceTemporalState(row, Date.parse(timestamp)).validityState));
         const variants = Map.groupBy(applicableRows, variantKey);
         const resolutionMode = evidenceResolutionMode(rows);
@@ -3500,21 +4538,45 @@ export class Repository {
         const ranked = [...variants.entries()].sort((a, b) => b[1].length - a[1].length
           || knowledgeValueSpecificity(b[1][0].value_text) - knowledgeValueSpecificity(a[1][0].value_text));
         const relations = [];
+        const resolutionStates=[];
+        for(const row of rows){
+          const issue=detectClaimExtractionIssue(row,claimsBySource.get(row.source_id)||[]);
+          const mismatch=row.structured_value.compatibility;
+          if(issue||mismatch?.code==="PREDICATE_VALUE_MISMATCH"&&!mismatch.repairedPredicate)resolutionStates.push("REPAIR_REQUIRED");
+          else if(mismatch?.repairedPredicate)resolutionStates.push("AUTO_REPAIRED");
+        }
         for (let left = 0; left < rows.length; left += 1) {
           for (let right = left + 1; right < rows.length; right += 1) {
             const comparison = classifyClaimPair(rows[left], rows[right]);
-            const automaticallyResolved = false;
-            const reviewId = !automaticallyResolved && comparison.reviewType && !comparison.reviewType.includes("EXTRACTION_ERROR")
+            const resolution=decideKnowledgeResolution({comparison,left:rows[left],right:rows[right],
+              consensus:evidenceConsensus,nowMs:Date.parse(timestamp)});
+            resolutionStates.push(resolution.state);
+            const reviewId = resolution.humanRequired
               ? `claim_review_${sha256(`${rows[left].id}:${rows[right].id}:${comparison.reviewType}`).slice(0, 24)}`
               : null;
             const reviewStatus = reviewId ? previousReviewDecisions.get(reviewId)?.status || "pending" : null;
             if (reviewId) {
               insertClaimReview.run(reviewId, destinationSlug, rows[left].id, rows[right].id,
-                comparison.reviewType, comparison.reason, reviewStatus, timestamp, timestamp);
+                comparison.reviewType||"HARD_FACT_CONFLICT", resolution.reason, reviewStatus, timestamp, timestamp);
             }
-            const effectiveComparison = automaticallyResolved
+            if(resolution.verificationRequired)upsertVerificationJob.run(
+              `knowledge_verification_${sha256(`${destinationSlug}:${key}`).slice(0,24)}`,destinationSlug,key,
+              JSON.stringify(verificationSourcePriority(rows)),JSON.stringify(rows.map((row)=>({claimId:row.id,sourceId:row.source_id,
+                value:row.value_text,quote:row.source_quote}))),timestamp,timestamp);
+            if(resolution.repairRequired){
+              for(const row of [rows[left],rows[right]].filter((item)=>item.structured_value.compatibility?.code==="PREDICATE_VALUE_MISMATCH")){
+                const repair=row.structured_value.compatibility;
+                upsertRepairJob.run(`claim_repair_${sha256(`${row.id}:${repair.code}`).slice(0,24)}`,row.id,repair.code,
+                  JSON.stringify({claimId:row.id,predicate:row.predicate,value:row.value_text,sourceQuote:row.source_quote}),timestamp,timestamp);
+              }
+            }
+            insertResolutionEvent.run(`knowledge_resolution_${sha256(`${rows[left].id}:${rows[right].id}:${resolution.state}:${KNOWLEDGE_RESOLUTION_VERSION}`).slice(0,24)}`,
+              destinationSlug,key,rows[left].id,rows[right].id,resolution.state,resolution.reason,
+              JSON.stringify({comparison,consensusMethod:evidenceConsensus.method}),KNOWLEDGE_RESOLUTION_VERSION,timestamp);
+            const automaticallyResolved = resolution.autoResolved || resolution.verificationRequired || resolution.repairRequired;
+            const effectiveComparison = automaticallyResolved && !comparison.canCoexist
               ? { ...comparison, relation: "COMPATIBLE", canCoexist: true, reviewType: null,
-                reason: `${comparison.reason} Values are retained as dated observations and resolved by independent-source, quality, and recency weighting.` }
+                reason: `${comparison.reason} Resolution: ${resolution.state}. ${resolution.reason}` }
               : reviewStatus === "dismissed"
                 ? { ...comparison, relation: "COMPATIBLE", canCoexist: true,
                   reason: `${comparison.reason} Operator dismissed this comparison as a false positive.` }
@@ -3526,8 +4588,10 @@ export class Repository {
           }
         }
         const conflicts = relations.filter((relation) => !relation.canCoexist);
-        const status = conflicts.length ? "conflicted"
-          : evidenceConsensus.autoResolved
+        if(!resolutionStates.includes("VERIFICATION_REQUIRED"))completeVerificationJob.run(
+          JSON.stringify({resolution:"evidence_recomputed",states:resolutionStates}),timestamp,timestamp,destinationSlug,key);
+        const status = resolutionStates.includes("HUMAN_REQUIRED") ? "conflicted"
+          : resolutionStates.includes("VERIFICATION_REQUIRED")
             ? evidenceConsensus.supportCount > 1 ? "corroborated" : "single_source"
             : rows.length > 1 ? "corroborated" : "single_source";
         const consensusWinner = applicableRows.find((row) => variantKey(row) === evidenceConsensus.preferredVariantKey)
@@ -3542,7 +4606,9 @@ export class Repository {
           : evidenceConsensus.autoResolved
           ? { state: evidenceConsensus.freshnessState, latestEvidenceAt: evidenceConsensus.latestEvidenceAt, volatile: true }
           : legacyFreshness;
-        const verificationPriority = trustedDailyFact
+        const verificationPriority = resolutionStates.includes("HUMAN_REQUIRED") ? "review"
+          : resolutionStates.includes("VERIFICATION_REQUIRED") || resolutionStates.includes("REPAIR_REQUIRED") ? "review"
+          : trustedDailyFact
           ? status === "conflicted" ? "review" : "normal"
           : evidenceConsensus.autoResolved
           ? freshness.state === "stale" || evidenceConsensus.method === "LATEST_WEIGHTED_PROVISIONAL"
@@ -3551,6 +4617,11 @@ export class Repository {
             : status === "single_source" || freshness.state === "stale" ? "review" : "normal";
         const entity = aggregateEntityIdentity(rows);
         const evidence = rows.map((row) => ({
+          claim_id: row.id,
+          extraction_revision: row.extraction_revision,
+          evidence_span_ids: json(row.evidence_span_ids_json, []),
+          entity_key: row.entity_key,
+          predicate: row.predicate,
           source_id: row.source_id,
           value: row.value_text,
           quote: row.source_quote,
@@ -3598,7 +4669,8 @@ export class Repository {
           preferred_value: preferredValue,
           support_count: evidenceConsensus.autoResolved ? evidenceConsensus.supportCount
             : status === "conflicted" ? ranked[0][1].length : rows.length,
-          contradiction_count: evidenceConsensus.autoResolved ? evidenceConsensus.contradictionCount : conflicts.length,
+          contradiction_count: resolutionStates.includes("VERIFICATION_REQUIRED") || evidenceConsensus.autoResolved
+            ? evidenceConsensus.contradictionCount : conflicts.length,
           evidence_json: JSON.stringify(evidence),
           freshness_state: freshness.state,
           latest_evidence_at: freshness.latestEvidenceAt,
@@ -3644,7 +4716,78 @@ export class Repository {
       if (!previous || knowledgeDependencyHash(previous) !== knowledgeDependencyHash(row)) changedKeys.add(row.normalized_key);
     }
     for (const [factId, row] of existingFactsById) if (!latestFacts.has(factId)) changedKeys.add(row.normalized_key);
-    if (changedKeys.size) this.invalidateFactDependents(destinationSlug, [...changedKeys], timestamp);
+    if (changedKeys.size) {
+      this.invalidateFactDependents(destinationSlug, [...changedKeys], timestamp);
+      this.markCoverageDirty(destinationSlug,[...changedKeys],timestamp);
+    }
+    return {destinationSlug,changedKeys:[...changedKeys],knowledgeResolutionVersion:KNOWLEDGE_RESOLUTION_VERSION};
+  }
+
+  markCoverageDirty(destinationSlug,changedFactKeys,timestamp=now()){
+    const current=this.db.prepare("SELECT changed_fact_keys_json FROM coverage_dirty_scopes WHERE destination_slug=? AND topic_key=''").get(destinationSlug);
+    const keys=[...new Set([...json(current?.changed_fact_keys_json,[]),...(changedFactKeys||[])].filter(Boolean))].sort();
+    this.db.prepare(`INSERT INTO coverage_dirty_scopes(destination_slug,topic_key,changed_fact_keys_json,status,created_at,updated_at)
+      VALUES (?,'',?,'dirty',?,?) ON CONFLICT(destination_slug,topic_key) DO UPDATE SET
+        changed_fact_keys_json=excluded.changed_fact_keys_json,status='dirty',updated_at=excluded.updated_at`)
+      .run(destinationSlug,JSON.stringify(keys),timestamp,timestamp);
+    return keys;
+  }
+
+  takeCoverageDirty(destinationSlug){
+    const row=this.db.prepare("SELECT * FROM coverage_dirty_scopes WHERE destination_slug=? AND topic_key='' AND status='dirty'").get(destinationSlug);
+    if(!row)return null;
+    this.db.prepare("UPDATE coverage_dirty_scopes SET status='processing',updated_at=? WHERE destination_slug=? AND topic_key='' AND status='dirty'")
+      .run(now(),destinationSlug);
+    return {destinationSlug,changedFactKeys:json(row.changed_fact_keys_json,[])};
+  }
+
+  completeCoverageDirty(destinationSlug,{failed=false}={}){
+    this.db.prepare("UPDATE coverage_dirty_scopes SET status=?,updated_at=? WHERE destination_slug=? AND topic_key=''")
+      .run(failed?'dirty':'complete',now(),destinationSlug);
+  }
+
+  getKnowledgeResolutionStatus(destinationSlug=null){
+    const args=destinationSlug?[destinationSlug]:[];
+    const where=destinationSlug?' WHERE destination_slug=?':'';
+    const count=(table)=>this.db.prepare(`SELECT status,COUNT(*) AS count FROM ${table}${where} GROUP BY status`).all(...args);
+    const human=this.db.prepare(`SELECT status,COUNT(*) AS count FROM claim_review_cases${where} GROUP BY status`).all(...args);
+    const events=this.db.prepare(`SELECT resolution_state AS status,COUNT(*) AS count FROM knowledge_resolution_events${where} GROUP BY resolution_state`).all(...args);
+    const repairs=destinationSlug
+      ? this.db.prepare(`SELECT cr.status,COUNT(*) AS count FROM claim_repair_jobs cr JOIN claims c ON c.id=cr.claim_id
+          JOIN structured_sources ss ON ss.source_id=c.source_id WHERE ss.destination_slug=? GROUP BY cr.status`).all(destinationSlug)
+      : this.db.prepare("SELECT status,COUNT(*) AS count FROM claim_repair_jobs GROUP BY status").all();
+    return {engineVersion:KNOWLEDGE_RESOLUTION_VERSION,automatic:events,verification:count('knowledge_verification_jobs'),
+      repairs,humanReview:human};
+  }
+
+  listKnowledgeResolutionHistory({destinationSlug=null,limit=100}={}){
+    const bounded=Math.max(1,Math.min(500,Number(limit)||100));
+    const rows=destinationSlug
+      ? this.db.prepare("SELECT * FROM knowledge_resolution_events WHERE destination_slug=? ORDER BY created_at DESC LIMIT ?").all(destinationSlug,bounded)
+      : this.db.prepare("SELECT * FROM knowledge_resolution_events ORDER BY created_at DESC LIMIT ?").all(bounded);
+    return rows.map((row)=>({...row,detail:json(row.detail_json,{})}));
+  }
+
+  listKnowledgeVerificationJobs({destinationSlug=null,status="",limit=100}={}){
+    const clauses=[],values=[];
+    if(destinationSlug){clauses.push("destination_slug=?");values.push(destinationSlug);}
+    if(status){clauses.push("status=?");values.push(status);}
+    values.push(Math.max(1,Math.min(500,Number(limit)||100)));
+    return this.db.prepare(`SELECT * FROM knowledge_verification_jobs${clauses.length?` WHERE ${clauses.join(" AND ")}`:""}
+      ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'failed' THEN 1 ELSE 2 END,updated_at DESC LIMIT ?`).all(...values)
+      .map((row)=>({...row,sourcePriorities:json(row.source_priority_json,[]),evidence:json(row.evidence_json,[]),result:json(row.result_json,{})}));
+  }
+
+  updateKnowledgeVerificationJob(jobId,{action,result={}}={}){
+    const row=this.db.prepare("SELECT * FROM knowledge_verification_jobs WHERE id=?").get(jobId);
+    if(!row)return null;
+    const timestamp=now();
+    if(action==="retry")this.db.prepare("UPDATE knowledge_verification_jobs SET status='queued',last_error=NULL,completed_at=NULL,updated_at=? WHERE id=?")
+      .run(timestamp,jobId);
+    else if(action==="complete")this.db.prepare("UPDATE knowledge_verification_jobs SET status='completed',result_json=?,last_error=NULL,completed_at=?,updated_at=? WHERE id=?")
+      .run(JSON.stringify(result&&typeof result==='object'?result:{}),timestamp,timestamp,jobId);
+    else throw conflictError("Verification action must be retry or complete.");
+    return this.listKnowledgeVerificationJobs({destinationSlug:row.destination_slug,limit:500}).find((item)=>item.id===jobId)||null;
   }
 
   invalidateFactDependents(destinationSlug, normalizedKeys, timestamp = now()) {
@@ -3657,11 +4800,17 @@ export class Repository {
       const draft = this.db.prepare("SELECT id,status FROM article_drafts WHERE brief_id=?").get(brief.id);
       if (!draft) continue;
       draftIds.push(draft.id);
+      const factKeys=[...keys].filter((key) => json(brief.evidence_ledger_json,[]).includes(key)).sort();
+      const updateHash=dependencyHash({draftId:draft.id,factKeys});
+      this.db.prepare(`INSERT INTO draft_knowledge_updates(id,draft_id,dependency_hash,changed_fact_keys_json,status,detail_json,created_at,updated_at)
+        VALUES (?,?,?,?, 'update_available',?,?,?) ON CONFLICT(draft_id,dependency_hash) DO UPDATE SET
+          changed_fact_keys_json=excluded.changed_fact_keys_json,status='update_available',detail_json=excluded.detail_json,updated_at=excluded.updated_at`)
+        .run(id("draft_knowledge_update"),draft.id,updateHash,JSON.stringify(factKeys),
+          JSON.stringify({draftStatus:draft.status,frozen:true,reviewStatePreserved:true}),timestamp,timestamp);
       const publication = this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id=? AND status='synced'").get(draft.id);
       if (publication) {
         const parent = this.db.prepare(`SELECT o.*,tc.proposed_title FROM topic_candidates tc
           JOIN content_opportunities o ON o.id=tc.opportunity_id WHERE tc.id=(SELECT candidate_id FROM content_briefs WHERE id=?)`).get(brief.id);
-        const factKeys=[...keys].filter((key) => json(brief.evidence_ledger_json,[]).includes(key));
         const topicKey=`${parent?.topic_key || destinationSlug}:published-update:${sha256(`${draft.id}:${factKeys.sort().join("|")}`).slice(0,16)}`;
         const opportunityId=`opportunity_${sha256(topicKey).slice(0,24)}`;
         const impactId=`published_impact_${sha256(`${draft.id}:${factKeys.sort().join("|")}`).slice(0,24)}`;
@@ -3684,9 +4833,6 @@ export class Repository {
           .run(impactId,draft.id,opportunityId,JSON.stringify(factKeys),"Published evidence changed; review an update without modifying the live article.",timestamp,timestamp);
         continue;
       }
-      this.invalidateDraftDependents(draft.id, timestamp);
-      this.db.prepare("UPDATE article_drafts SET status='qa_queued',quality_report_json='{}',updated_at=? WHERE id=?").run(timestamp, draft.id);
-      this.enqueue("review_draft", draft.id);
     }
     return { draftIds, factKeys: [...keys] };
   }
@@ -3855,52 +5001,58 @@ export class Repository {
     return this.db.prepare(`SELECT * FROM topic_candidates WHERE id IN (${placeholders}) AND status='candidate' ORDER BY coverage_score DESC`).all(...selectedIds);
   }
 
-  queueCandidate(candidateId) {
+  queueCandidate(candidateId, { opportunityId = null } = {}) {
     const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
     if (!candidate || !["candidate", "brief_queued"].includes(candidate.status)) return false;
+    let approved = null;
     if (candidate.strategy_version) {
-      const approved = this.db.prepare(`
+      approved = this.db.prepare(`
         SELECT id FROM content_opportunities
-        WHERE candidate_id=? AND strategy_version=? AND status='producing'
+        WHERE candidate_id=? AND strategy_version=? AND status='producing' AND (? IS NULL OR id=?)
         LIMIT 1
-      `).get(candidateId, candidate.strategy_version);
+      `).get(candidateId, candidate.strategy_version, opportunityId, opportunityId);
       if (!approved) return false;
     }
     this.db.prepare("UPDATE topic_candidates SET status = 'brief_queued', updated_at = ? WHERE id = ?").run(now(), candidateId);
     // `plan_content` is the durable production entrypoint. The Pipeline persists an
     // Editorial Assembly first inside that job, so legacy operators retain one clear
     // queue action while the new semantic boundary remains mandatory.
-    this.enqueue("plan_content", candidateId);
+    const ownerId = opportunityId || approved?.id || null;
+    this.enqueue("plan_content", candidateId, { productionOwnerOpportunityId: ownerId,
+      dedupeKey: `plan_content:${ownerId || candidateId}:${candidateId}` });
     return true;
   }
 
-  getEditorialAssemblyPackage(candidateId) {
-    const topic = this.getTopicPackage(candidateId);
+  getEditorialAssemblyPackage(candidateId, { opportunityId = null } = {}) {
+    const topic = this.getTopicPackage(candidateId, { opportunityId });
     if (!topic) return null;
     const sourceIds = new Set([topic.source_reference?.id, ...(topic.facts || []).flatMap((fact) =>
       (fact.evidence || []).map((item) => item.source_id))].filter(Boolean));
     const experiences = [...sourceIds].flatMap((sourceId) => this.listExperienceBlocks(sourceId));
     const failureLessons = this.db.prepare(`SELECT scope,failure_code,category,normalized_reason,remediation_rule,failing_stage
-      FROM failure_lessons WHERE status='active' ORDER BY created_at DESC LIMIT 30`).all();
+      FROM failure_lessons WHERE status='active' AND retry_safe=1 AND opportunity_id IN
+        (SELECT id FROM content_opportunities WHERE candidate_id=? AND (? IS NULL OR id=?))
+      ORDER BY created_at DESC LIMIT 30`).all(candidateId, opportunityId, opportunityId);
     const editorialLessons = this.db.prepare(`SELECT feedback,principle,created_at FROM editorial_lessons
       WHERE active=1 ORDER BY created_at DESC LIMIT 30`).all();
     const goldenArticles = this.db.prepare(`SELECT ga.id,ga.draft_id,ga.principles_json,ga.title
       FROM golden_articles ga WHERE ga.active=1 ORDER BY ga.created_at DESC LIMIT 10`).all()
       .map((row) => ({ ...row, principles: json(row.principles_json, []) }));
-    return {
+    return boundedEditorialAssemblyPackage({
       ...topic,
       available_experiences: experiences,
       source_families: this.db.prepare(`SELECT sfm.source_id,sfm.family_id,sfm.relation_type,sfm.overlap_score
-        FROM source_family_memberships sfm WHERE sfm.source_id IN (${[...sourceIds].map(() => "?").join(",") || "NULL"})`)
+        FROM source_family_memberships sfm WHERE sfm.source_id IN (${[...sourceIds].map(() => "?").join(",") || "NULL"})
+        ORDER BY sfm.source_id,sfm.family_id,sfm.relation_type`)
         .all(...sourceIds),
       failure_lessons: failureLessons,
       editorial_lessons: editorialLessons,
       golden_articles: goldenArticles,
-    };
+    });
   }
 
-  saveEditorialAssembly(candidateId, output, model = null, packageValue = null) {
-    const input = packageValue || this.getEditorialAssemblyPackage(candidateId);
+  saveEditorialAssembly(candidateId, output, model = null, packageValue = null, { opportunityId = null } = {}) {
+    const input = packageValue || this.getEditorialAssemblyPackage(candidateId, { opportunityId });
     if (!input) throw new Error(`Topic candidate ${candidateId} no longer exists.`);
     const validFacts = new Set((input.facts || []).map((item) => item.normalized_key));
     const validExperiences = new Set((input.available_experiences || []).map((item) => item.id));
@@ -3913,7 +5065,9 @@ export class Repository {
     if (!selectedFacts.length) selectedFacts.push(...[...validFacts].slice(0, 48));
     const timestamp = now();
     const assemblyId = `assembly_${sha256(candidateId).slice(0, 24)}`;
-    const opportunity = this.db.prepare("SELECT id FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1").get(candidateId);
+    const opportunity = opportunityId
+      ? this.db.prepare("SELECT id FROM content_opportunities WHERE id=? AND candidate_id=? AND approved_at IS NOT NULL").get(opportunityId,candidateId)
+      : this.db.prepare("SELECT MIN(id) AS id FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL HAVING COUNT(*)=1").get(candidateId);
     this.db.prepare(`INSERT INTO editorial_assemblies(id,candidate_id,opportunity_id,input_hash,selected_fact_keys_json,
       selected_experience_block_ids_json,selected_source_ids_json,selected_blueprint_source_ids_json,exclusions_json,rationale,status,model,created_at,updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,'ready',?,?,?) ON CONFLICT(candidate_id) DO UPDATE SET opportunity_id=excluded.opportunity_id,
@@ -3934,10 +5088,13 @@ export class Repository {
       selected_blueprint_source_ids:json(row.selected_blueprint_source_ids_json,[]), exclusions:json(row.exclusions_json,[]) } : null;
   }
 
-  getTopicPackage(candidateId) {
+  getTopicPackage(candidateId, { opportunityId = null } = {}) {
     const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
     if (!candidate) return null;
-    const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1").get(candidateId);
+    const opportunity = opportunityId
+      ? this.db.prepare("SELECT * FROM content_opportunities WHERE id=? AND candidate_id=?").get(opportunityId,candidateId)
+      : this.db.prepare(`SELECT * FROM content_opportunities WHERE candidate_id=?
+          ORDER BY (approved_at IS NOT NULL) DESC,(status='producing') DESC,updated_at DESC,id DESC LIMIT 1`).get(candidateId);
     const coverage = json(opportunity?.coverage_json, {});
     const publicationMode = normalizePublicationMode(coverage.publicationMode);
     const assembly = this.getEditorialAssembly(candidateId);
@@ -3982,7 +5139,11 @@ export class Repository {
     };
   }
 
-  saveBrief(candidateId, plan, model, { deferDraft = false } = {}) {
+  getPlanningPackage(candidateId, { opportunityId = null } = {}) {
+    return boundedPlanningPackage(this.getTopicPackage(candidateId, { opportunityId }));
+  }
+
+  saveBrief(candidateId, plan, model, { deferDraft = false, opportunityId = null } = {}) {
     const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
     if (!candidate) throw new Error(`Topic candidate ${candidateId} not found.`);
     plan = normalizeBriefPlan(plan);
@@ -4006,7 +5167,10 @@ export class Repository {
         JSON.stringify(canonical), timestamp, timestamp, candidateId, JSON.stringify(ledger), model, this.strategyVersion);
     }
     this.db.prepare("UPDATE topic_candidates SET status='brief_ready', updated_at=? WHERE id=?").run(timestamp, candidateId);
-    this.db.prepare("UPDATE content_opportunities SET status='producing',lifecycle_state='producing',updated_at=? WHERE candidate_id=?").run(timestamp, candidateId);
+    if (opportunityId) this.db.prepare("UPDATE content_opportunities SET status='producing',lifecycle_state='producing',updated_at=? WHERE id=? AND candidate_id=?")
+      .run(timestamp, opportunityId, candidateId);
+    else this.db.prepare(`UPDATE content_opportunities SET status='producing',lifecycle_state='producing',updated_at=?
+      WHERE id=(SELECT MIN(id) FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL HAVING COUNT(*)=1)`).run(timestamp,candidateId);
     if (!deferDraft) this.enqueue("generate_draft", briefId);
     return briefId;
   }
@@ -4033,12 +5197,21 @@ export class Repository {
       writing_packet: this.getWritingPacket(briefId),
       content_policy: contentPolicy,
       reader_sources: readerSources(topicPackage?.facts || []),
-      authorized_source_assets: this.authorizedSourceAssetsForBrief(brief).map((asset) => ({
-        id: asset.id, source_id: asset.source_id, alt_text: asset.alt_text,
-        nearby_text: asset.nearby_text, caption_text: asset.caption_text,
-        evidence_text: asset.evidence_text, language_status: asset.language_status,
-        mime_type: asset.mime_type, preview_url: `/api/source-assets/${asset.id}/preview`,
-      })),
+      authorized_source_assets: this.authorizedSourceAssetsForBrief(brief).map((asset) => {
+        const dimensions=sourceAssetDimensions(asset);
+        return {
+          id: asset.id, source_id: asset.source_id, alt_text: asset.alt_text,
+          nearby_text: asset.nearby_text, caption_text: asset.caption_text,
+          evidence_text: asset.evidence_text, language_status: asset.language_status,
+          analysis_status:asset.analysis_status,asset_kind:asset.asset_kind,
+          text_regions:asset.text_regions,photo_regions:asset.photo_regions,entities:asset.entities,
+          editor_ui_regions:asset.editor_ui_regions,primary_subjects:asset.primary_subjects,
+          language_by_region:asset.language_by_region,reader_text_present:asset.reader_text_present,
+          analysis_confidence:asset.analysis_confidence,analysis_version:asset.analysis_version,
+          width:dimensions.width,height:dimensions.height,
+          mime_type: asset.mime_type, preview_url: `/api/source-assets/${asset.id}/preview`,
+        };
+      }),
       internal_link_inventory: linkInventory,
       internal_link_inventory_version: inventoryVersion(publishedInventory, syncState?.last_succeeded_at),
       duplicate_content_risks: duplicateContentRisks(publishedInventory, {
@@ -4048,34 +5221,45 @@ export class Repository {
     };
   }
 
+  getNarrativePlanningPackage(briefId) {
+    return boundedNarrativePackage(this.getBriefPackage(briefId));
+  }
+
   saveNarrativePlan(briefId, plan, model = null) {
     const contentPackage = this.getBriefPackage(briefId);
     if (!contentPackage) throw new Error(`Content brief ${briefId} no longer exists.`);
     const validFacts = new Set((contentPackage.facts || []).map((item) => item.normalized_key));
     const validExperiences = new Set((contentPackage.experiences || []).map((item) => item.id));
+    const evidenceSelections = (Array.isArray(plan?.evidence_selections) ? plan.evidence_selections : []).slice(0,96);
+    for (const selection of evidenceSelections) {
+      const fact = (contentPackage.facts || []).find(fact => fact.normalized_key === selection.claim_key);
+      if (!['current','historical','conditional'].includes(selection.role) || !fact?.evidence.some(evidence => evidence.claim_id === selection.claim_id && evidence.source_id === selection.source_id)) {
+        throw Object.assign(new Error('叙事计划引用了未知或错配的证据陈述。'),{code:'NARRATIVE_EVIDENCE_INVALID',retryable:false});
+      }
+    }
     const timestamp = now();
     const narrativeId = `narrative_${sha256(briefId).slice(0, 24)}`;
     const placements = (Array.isArray(plan?.experience_placements) ? plan.experience_placements : [])
       .filter((item) => validExperiences.has(item?.experience_block_id)).slice(0, 24)
       .map((item) => ({ experience_block_id:item.experience_block_id,section_id:String(item.section_id || "").slice(0,200),purpose:String(item.purpose || "").slice(0,500) }));
     this.db.prepare(`INSERT INTO narrative_plans(id,brief_id,opening_job,throughline,route_sequence_json,experience_placements_json,
-      supporting_fact_keys_json,conditional_branches_json,tradeoffs_json,exclusions_json,closing_decision,model,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(brief_id) DO UPDATE SET opening_job=excluded.opening_job,
+      supporting_fact_keys_json,conditional_branches_json,tradeoffs_json,exclusions_json,closing_decision,model,created_at,updated_at,evidence_selections_json)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(brief_id) DO UPDATE SET opening_job=excluded.opening_job,
       throughline=excluded.throughline,route_sequence_json=excluded.route_sequence_json,experience_placements_json=excluded.experience_placements_json,
       supporting_fact_keys_json=excluded.supporting_fact_keys_json,conditional_branches_json=excluded.conditional_branches_json,
       tradeoffs_json=excluded.tradeoffs_json,exclusions_json=excluded.exclusions_json,closing_decision=excluded.closing_decision,
-      model=excluded.model,updated_at=excluded.updated_at`)
+      model=excluded.model,updated_at=excluded.updated_at,evidence_selections_json=excluded.evidence_selections_json`)
       .run(narrativeId,briefId,String(plan?.opening_job || "").slice(0,1000),String(plan?.throughline || "").slice(0,2000),
         JSON.stringify(uniqueStrings(plan?.route_sequence).slice(0,24)),JSON.stringify(placements),
         JSON.stringify(uniqueStrings(plan?.supporting_fact_keys).filter((value) => validFacts.has(value)).slice(0,48)),
         JSON.stringify(uniqueStrings(plan?.conditional_branches).slice(0,24)),JSON.stringify(uniqueStrings(plan?.tradeoffs).slice(0,24)),
-        JSON.stringify(uniqueStrings(plan?.exclusions).slice(0,24)),String(plan?.closing_decision || "").slice(0,1000),model,timestamp,timestamp);
+        JSON.stringify(uniqueStrings(plan?.exclusions).slice(0,24)),String(plan?.closing_decision || "").slice(0,1000),model,timestamp,timestamp,JSON.stringify(evidenceSelections));
     return this.getNarrativePlan(briefId);
   }
 
   getNarrativePlan(briefId) {
     const row = this.db.prepare("SELECT * FROM narrative_plans WHERE brief_id=?").get(briefId);
-    return row ? { ...row, route_sequence:json(row.route_sequence_json,[]), experience_placements:json(row.experience_placements_json,[]),
+    return row ? { ...row, evidence_selections:json(row.evidence_selections_json,[]), route_sequence:json(row.route_sequence_json,[]), experience_placements:json(row.experience_placements_json,[]),
       supporting_fact_keys:json(row.supporting_fact_keys_json,[]), conditional_branches:json(row.conditional_branches_json,[]),
       tradeoffs:json(row.tradeoffs_json,[]), exclusions:json(row.exclusions_json,[]) } : null;
   }
@@ -4085,54 +5269,91 @@ export class Repository {
     const narrative = contentPackage?.narrative_plan;
     if (!contentPackage || !narrative) throw new Error(`Content brief ${briefId} has no Narrative Plan.`);
     const factKeys = uniqueStrings([...(narrative.supporting_fact_keys || []), ...(contentPackage.brief.evidence_ledger || [])]).slice(0,48);
-    const facts = (contentPackage.facts || []).filter((fact) => factKeys.includes(fact.normalized_key));
+    const facts = (contentPackage.facts || []).filter((fact) => factKeys.includes(fact.normalized_key)).map(fact => {
+      const snapshot = selectedFactSnapshot(fact);
+      const selections = (narrative.evidence_selections || []).filter(item => item.claim_key === fact.normalized_key);
+      if (selections.length) {
+        snapshot.evidence = selectedFactEvidence(fact,selections.map(item=>({claimId:item.claim_id,sourceId:item.source_id,evidenceRole:item.role})))
+          .map(evidence=>({...evidence,evidence_role:selections.find(item=>item.claim_id===evidence.claim_id && item.source_id===evidence.source_id).role}));
+        if (snapshot.evidence.length !== selections.length) throw Object.assign(new Error('所选叙事证据已变化，请重新规划该叙事。'),{code:'NARRATIVE_EVIDENCE_STALE',retryable:false});
+        snapshot.selection_frozen = true;
+        if (snapshot.evidence.length === 1) snapshot.preferred_value = snapshot.evidence[0].value;
+      }
+      snapshot.evidence = snapshot.evidence.flatMap(evidence => {
+        if (evidence.claim_id) return [evidence];
+        const claim = this.db.prepare(`SELECT id,extraction_revision,evidence_span_ids_json FROM claims
+          WHERE source_id=? AND normalized_key=? AND value_text=? AND source_quote=? ORDER BY extraction_revision DESC LIMIT 1`)
+          .get(evidence.source_id,fact.normalized_key,evidence.value || fact.preferred_value,evidence.quote || '');
+        if (!claim) throw Object.assign(new Error('写作证据无法对应精确陈述，请重建该来源的知识后重试。'),{code:'WRITING_PACKET_EVIDENCE_UNRESOLVED',retryable:false});
+        return [{...evidence,claim_id:claim.id,extraction_revision:claim.extraction_revision,evidence_span_ids:json(claim.evidence_span_ids_json,[])}];
+      });
+      return snapshot;
+    });
     const experiences = contentPackage.experiences || [];
-    const evidenceLedger = facts.map((fact) => ({ key:fact.normalized_key,subject:fact.subject,predicate:fact.predicate,
-      value:fact.preferred_value,status:fact.consensus_status,sources:(fact.evidence || []).map((item) => ({ source_id:item.source_id,quote:item.quote,url:item.canonical_url })) }));
+    const evidenceLedger = facts.map((fact) => ({ version:2, key:fact.normalized_key,subject:fact.subject,predicate:fact.predicate,
+      value:fact.preferred_value,status:fact.consensus_status,
+      fact_snapshot:semanticMaterial(selectedFactSnapshot(fact)),
+      sources:selectedFactEvidence(fact).map((item) => ({ claim_id:item.claim_id || item.id,source_id:item.source_id,
+        quote:item.quote,url:item.canonical_url,qualifiers:item.qualifiers,valid_from:item.valid_from,valid_to:item.valid_to })) }));
     const lines = [
       "ARTICLE GOAL", contentPackage.brief.plan?.reader_promise || contentPackage.brief.topic || "", "",
       "NARRATIVE", `Opening job: ${narrative.opening_job}`, `Throughline: ${narrative.throughline}`,
       ...(narrative.route_sequence || []).map((item,index) => `${index+1}. ${item}`), "",
       "WHY THIS WORKS", contentPackage.editorial_assembly?.rationale || contentPackage.approved_proposal?.whyItWorks || "The selected material directly supports the approved reader promise.", "",
+      'SCOPE AND EXCLUSIONS', ...(narrative.exclusions || []).map(value => `- ${value}`),
+      'CONDITIONAL BRANCHES', ...(narrative.conditional_branches || []).map(value => `- ${value}`),
+      'TRADE-OFFS', ...(narrative.tradeoffs || []).map(value => `- ${value}`),
+      'MEDIA CANDIDATES', ...(contentPackage.authorized_source_assets || []).map(asset =>
+        `- ${asset.id || asset.source_asset_id}: ${asset.alt_text || asset.caption_text || 'Use only if relevant to the selected scene'}; ${asset.nearby_text || ''}`), '',
       "REAL TRAVELER EXPERIENCES", ...(experiences.length ? experiences.flatMap((item) => [
         `- ${item.title} [${item.id}]`, ...item.sequence.map((value) => `  Sequence: ${value}`),
         ...item.decision_logic.map((value) => `  Decision: ${value}`), ...item.conditions.map((value) => `  Condition: ${value}`),
         ...item.tradeoffs.map((value) => `  Trade-off: ${value}`), ...item.warnings.map((value) => `  Warning: ${value}`),
         ...item.alternatives.map((value) => `  Alternative: ${value}`),
       ]) : ["- No grounded first-hand experience block is available; do not invent one."]), "",
-      "CURRENT PRACTICAL FACTS", ...facts.map((fact) => `- ${fact.subject} — ${fact.predicate}: ${fact.preferred_value} [${fact.normalized_key}]`), "",
+      "SELECTED PRACTICAL FACTS", ...facts.flatMap(fact => fact.evidence.map(evidence =>
+        `- ${fact.subject} — ${fact.predicate}: ${evidence.value || fact.preferred_value} [${fact.normalized_key}; ${evidence.claim_id}; ${evidence.evidence_role || 'current'}]\n  Conditions: ${(evidence.qualifiers || []).join('; ') || 'No additional stated conditions'}; valid from ${evidence.valid_from || 'unspecified'} to ${evidence.valid_to || 'unspecified'}`)), "",
       "WRITING PATTERN", ...(contentPackage.editorial_patterns || []).slice(0,3).map((item) => `- ${item.format}: ${item.angle || "useful evidence-led structure"}`),
       "- Use third-person, evidence-backed traveler situations. Avoid generic introductions, database dumps, repeated section templates and filler.",
     ];
     const packetText = lines.join("\n").trim();
+    const context = semanticMaterial({ version:2, narrative_plan:narrative,
+      content_policy:contentPackage.content_policy, reader_sources:contentPackage.reader_sources,
+      authorized_source_assets:contentPackage.authorized_source_assets, internal_link_inventory:contentPackage.internal_link_inventory,
+      experiences });
     const timestamp = now();
     const packetId = `packet_${sha256(briefId).slice(0,24)}`;
     this.db.prepare(`INSERT INTO writing_packets(id,brief_id,narrative_plan_id,packet_text,evidence_ledger_json,
-      selected_fact_keys_json,selected_experience_block_ids_json,input_hash,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(brief_id) DO UPDATE SET narrative_plan_id=excluded.narrative_plan_id,
+      selected_fact_keys_json,selected_experience_block_ids_json,input_hash,created_at,updated_at,context_json)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(brief_id) DO UPDATE SET narrative_plan_id=excluded.narrative_plan_id,
       packet_text=excluded.packet_text,evidence_ledger_json=excluded.evidence_ledger_json,selected_fact_keys_json=excluded.selected_fact_keys_json,
-      selected_experience_block_ids_json=excluded.selected_experience_block_ids_json,input_hash=excluded.input_hash,updated_at=excluded.updated_at`)
+      selected_experience_block_ids_json=excluded.selected_experience_block_ids_json,input_hash=excluded.input_hash,updated_at=excluded.updated_at,context_json=excluded.context_json`)
       .run(packetId,briefId,narrative.id,packetText,JSON.stringify(evidenceLedger),JSON.stringify(factKeys),
-        JSON.stringify(experiences.map((item) => item.id)),sha256(JSON.stringify({ narrative, evidenceLedger, experiences:experiences.map((item) => item.id) })),timestamp,timestamp);
+        JSON.stringify(experiences.map((item) => item.id)),dependencyHash({ narrative, packetText, evidenceLedger, context }),timestamp,timestamp,JSON.stringify(context));
     return this.getWritingPacket(briefId);
   }
 
   getWritingPacket(briefId) {
     const row = this.db.prepare("SELECT * FROM writing_packets WHERE brief_id=?").get(briefId);
-    return row ? { ...row, evidence_ledger:json(row.evidence_ledger_json,[]),selected_fact_keys:json(row.selected_fact_keys_json,[]),
+    return row ? { ...row, context:json(row.context_json,{}), evidence_ledger:json(row.evidence_ledger_json,[]),selected_fact_keys:json(row.selected_fact_keys_json,[]),
       selected_experience_block_ids:json(row.selected_experience_block_ids_json,[]) } : null;
   }
 
-  saveDraft(briefId, draft, model, { deferReview = false } = {}) {
+  saveDraft(briefId, draft, model, { deferReview = false, opportunityId = null } = {}) {
     const brief = this.db.prepare("SELECT * FROM content_briefs WHERE id = ?").get(briefId);
     if (!brief) throw new Error(`Content brief ${briefId} not found.`);
     draft.evidence_ledger = normalizeDraftLedger(draft.evidence_ledger, json(brief.plan_json, {}));
     const existing = this.db.prepare("SELECT id, revision FROM article_drafts WHERE brief_id = ?").get(briefId);
     const draftId = existing?.id || id("draft");
     const timestamp = now();
-    const authorizedSourceAssets = this.authorizedSourceAssetsForBrief(brief);
-    const policy = contentPolicyFor(brief, this.getTopicPackage(brief.candidate_id)?.facts || []);
-    const metadata = draftMetadata(draft, brief, this.contentConfig, authorizedSourceAssets, policy);
+    const packet = this.getWritingPacket(briefId);
+    const briefPackage = this.getBriefPackage(briefId);
+    const facts = briefPackage?.facts || [];
+    const authorizedSourceAssets = this.authorizedSourceAssetsForBrief(brief, { packet });
+    const policy = packet?.context?.version === 2 ? packet.context.content_policy
+      : contentPolicyFor(brief, facts);
+    const metadata = draftMetadata(draft, brief, this.contentConfig, authorizedSourceAssets, policy, facts);
+    draft.evidence_ledger = metadata.evidenceLedger;
     const contentHash = draftContentHash(draft, metadata, brief);
     if (existing) {
       this.db.prepare(`
@@ -4161,8 +5382,10 @@ export class Repository {
     this.recordDraftRevision(draftId, model || "unknown");
     this.db.prepare("UPDATE topic_candidates SET status='drafted', updated_at=? WHERE id=?").run(timestamp, brief.candidate_id);
     this.db.prepare("UPDATE content_briefs SET status='drafted', updated_at=? WHERE id=?").run(timestamp, briefId);
-    this.db.prepare("UPDATE content_opportunities SET status='drafted',lifecycle_state='producing',updated_at=? WHERE candidate_id=?").run(timestamp, brief.candidate_id);
-    if (!deferReview) this.enqueue("review_draft", draftId);
+    this.db.prepare(`UPDATE content_opportunities SET status='drafted',lifecycle_state='producing',updated_at=?
+      WHERE id=COALESCE(?,(SELECT MIN(id) FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL HAVING COUNT(*)=1))`)
+      .run(timestamp,opportunityId,brief.candidate_id);
+    if (!deferReview) this.enqueue("review_draft", draftId,{productionOwnerOpportunityId:opportunityId});
     return draftId;
   }
 
@@ -4215,6 +5438,60 @@ export class Repository {
     };
   }
 
+  restoreFrozenDraftRevision(draftId, { targetRevision, expectedCurrentRevision, expectedContentHash, actor = "administrator" } = {}) {
+    return transaction(this.db, () => {
+      const current = this.db.prepare("SELECT * FROM article_drafts WHERE id=?").get(draftId);
+      if (!current) return null;
+      if (!Number.isInteger(Number(targetRevision))) throw conflictError("A numeric target revision is required.");
+      if (Number(current.revision) !== Number(expectedCurrentRevision)) throw conflictError("The draft changed after the rollback preview.");
+      const active = this.db.prepare(`SELECT id,type,status FROM jobs WHERE entity_id IN (?,?)
+        AND status IN ('queued','running') LIMIT 1`).get(draftId,current.brief_id);
+      if (active) throw conflictError("The draft still has an active production job; wait for it before restoring a frozen revision.");
+      const publication = this.db.prepare("SELECT response_json FROM wordpress_publications WHERE draft_id=?").get(draftId);
+      const remoteStatus = json(publication?.response_json,{}).status;
+      if (remoteStatus && remoteStatus !== "draft") throw conflictError("Only a remote WordPress draft can be restored.");
+      const targetRow = this.db.prepare(`SELECT revision,content_hash,snapshot_json FROM draft_revisions
+        WHERE draft_id=? AND revision=? ORDER BY created_at DESC LIMIT 1`).get(draftId,Number(targetRevision));
+      if (!targetRow) throw conflictError("The requested frozen draft revision does not exist.");
+      if (expectedContentHash && targetRow.content_hash !== expectedContentHash) throw conflictError("The frozen revision hash does not match the reviewed rollback target.");
+      const snapshot = json(targetRow.snapshot_json,{});
+      if (!snapshot.body_markdown || snapshot.content_hash !== targetRow.content_hash) throw conflictError("The frozen revision snapshot is incomplete or inconsistent.");
+      const evidenceHash = evidenceHashForFacts(this.getBriefPackage(current.brief_id)?.facts || []);
+      const review = this.db.prepare(`SELECT * FROM quality_reviews WHERE draft_id=? AND draft_revision=?
+        AND draft_content_hash=? AND evidence_hash=? AND passed=1 ORDER BY created_at DESC LIMIT 1`)
+        .get(draftId,Number(targetRevision),targetRow.content_hash,evidenceHash);
+      if (!review) throw conflictError("The frozen revision no longer has a matching passed QA artifact for the current evidence.");
+      this.recordDraftRevision(draftId,actor);
+      const timestamp = now();
+      const qualityReport = { passed:true,score:review.score,checks:json(review.checks_json,[]),
+        issues:json(review.issues_json,[]),unsupported_claims:json(review.unsupported_claims_json,[]) };
+      this.db.prepare(`UPDATE article_drafts SET title=?,slug=?,body_markdown=?,meta_description=?,
+        evidence_ledger_json=?,unresolved_conflicts_json=?,verification_notes_json=?,seo_json=?,schema_jsonld=?,
+        content_blocks_json=?,content_ast_json=?,strategy_version=?,model=?,revision=?,content_hash=?,
+        quality_report_json=?,status=?,updated_at=? WHERE id=?`).run(
+        snapshot.title,snapshot.slug,snapshot.body_markdown,snapshot.meta_description,
+        snapshot.evidence_ledger_json || "[]",snapshot.unresolved_conflicts_json || "[]",
+        snapshot.verification_notes_json || "[]",snapshot.seo_json || "{}",snapshot.schema_jsonld || "{}",
+        snapshot.content_blocks_json || "[]",snapshot.content_ast_json || "{}",snapshot.strategy_version || this.strategyVersion,
+        snapshot.model || "revision-restore",Number(targetRevision),targetRow.content_hash,JSON.stringify(qualityReport),
+        publication ? "wordpress_draft" : "ready_for_wordpress",timestamp,draftId);
+      this.invalidateDraftDependents(draftId,timestamp);
+      const recoveryRunId=`revision_restore_${sha256(`${draftId}:${current.revision}:${targetRevision}:${targetRow.content_hash}`).slice(0,24)}`;
+      const owner = this.db.prepare(`SELECT co.id FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
+        WHERE cb.id=? AND co.approved_at IS NOT NULL ORDER BY (co.status='producing') DESC,co.updated_at DESC LIMIT 1`).get(current.brief_id)?.id || null;
+      this.saveReview(draftId,qualityReport,`revision-restore:${review.id}`,{
+        revision:Number(targetRevision),contentHash:targetRow.content_hash,evidenceHash,productionOwnerOpportunityId:owner,
+      });
+      const jobId=this.enqueue("compose_frontend_page",draftId,{
+        dedupeKey:`delivery-refresh:presentation:${draftId}:r${targetRevision}:restore-${targetRow.content_hash.slice(0,12)}`,
+        workloadClass:"historical_recovery",recoveryRunId,productionOwnerOpportunityId:owner,
+      });
+      return { draft_id:draftId,restored_revision:Number(targetRevision),restored_content_hash:targetRow.content_hash,
+        previous_revision:Number(current.revision),body_sha256:sha256(snapshot.body_markdown),preserved_visuals:true,
+        preserved_wordpress_post:true,job_id:jobId,recovery_run_id:recoveryRunId };
+    });
+  }
+
   previewContentAction(candidateId, action, actor = "administrator") {
     if (!["continue", "retry_failed_stage", "cancel"].includes(action)) throw new Error("Unsupported content action preview.");
     const item = this.listContent().find((row) => row.id === candidateId);
@@ -4248,7 +5525,7 @@ export class Repository {
     if (pkg.frontend_page_plan && !pkg.frontend_page?.current) return "compose_frontend_page";
     if (!pkg.review) return "review_draft";
     if (!pkg.review.passed) return qualityRepairStage(pkg.review.issues);
-    if (!pkg.commercial_composition) return "compose_commercial";
+    if (!pkg.commercial_composition || !pkg.commercial_composition.current || pkg.commercial_composition.refresh_required) return "compose_commercial";
     if (pkg.frontend_page && !this.db.prepare("SELECT id FROM frontend_publish_compositions WHERE draft_id=?").get(draft.id)) return "compose_publish_page";
     return null;
   }
@@ -4288,6 +5565,8 @@ export class Repository {
     const review = this.db.prepare(`SELECT * FROM quality_reviews
       WHERE draft_id=? AND draft_revision=? AND draft_content_hash=? AND evidence_hash=? ORDER BY created_at DESC LIMIT 1`)
       .get(draftId, draft.revision, draft.content_hash, currentEvidenceHash) || null;
+    const reviewHistory = this.db.prepare(`SELECT * FROM quality_reviews
+      WHERE draft_id=? ORDER BY created_at DESC,id DESC LIMIT 6`).all(draftId).map(hydrateReview);
     const publication = this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id = ?").get(draftId) || null;
     const compositionRow = this.db.prepare(`SELECT * FROM commercial_compositions
       WHERE draft_id=? AND draft_revision=? AND draft_content_hash=?`).get(draftId, draft.revision, draft.content_hash) || null;
@@ -4295,25 +5574,33 @@ export class Repository {
       candidateId: briefPackage.candidate.id,
       evidenceHashes: new Map([[draftId, currentEvidenceHash]]),
     }).find((item) => item.draft_id === draftId)?.operation || null;
+    const visuals = this.listDraftVisuals(draftId);
+    const hydratedDraft = {
+      ...draft,
+      evidence_ledger: json(draft.evidence_ledger_json, []),
+      unresolved_conflicts: json(draft.unresolved_conflicts_json, []),
+      verification_notes: json(draft.verification_notes_json, []),
+      seo: json(draft.seo_json, {}),
+      schema_jsonld: json(draft.schema_jsonld, {}),
+      content_blocks: json(draft.content_blocks_json, []),
+      visuals,
+      seo_preview: buildSeoPreview({ ...draft, seo: json(draft.seo_json, {}) }),
+    };
+    const currentAst = buildContentAst({ draft: hydratedDraft, brief: briefPackage.brief,
+      visuals, facts: briefPackage.facts || [] });
+    const frontendPage = this.getFrontendPageComposition(draftId);
+    const currentEditorialPageHash = sha256(JSON.stringify(frontendPage?.payload || {}));
+    hydratedDraft.evidence_ledger = reconcileContentAstLedger(currentAst, hydratedDraft.evidence_ledger);
+    hydratedDraft.content_ast = currentAst;
     return {
       ...briefPackage,
       evidence_hash: currentEvidenceHash,
       operation,
-      draft: {
-        ...draft,
-        evidence_ledger: json(draft.evidence_ledger_json, []),
-        unresolved_conflicts: json(draft.unresolved_conflicts_json, []),
-        verification_notes: json(draft.verification_notes_json, []),
-        seo: json(draft.seo_json, {}),
-        schema_jsonld: json(draft.schema_jsonld, {}),
-        content_blocks: json(draft.content_blocks_json, []),
-        content_ast: json(draft.content_ast_json, {}),
-        visuals: this.listDraftVisuals(draftId),
-        seo_preview: buildSeoPreview({ ...draft, seo: json(draft.seo_json, {}) }),
-      },
-      frontend_page: this.getFrontendPageComposition(draftId),
+      draft: hydratedDraft,
+      frontend_page: frontendPage,
       publish_composition: this.getFrontendPublishComposition(draftId),
       review: review ? hydrateReview(review) : null,
+      review_history: reviewHistory,
       publication,
       commercial_composition: compositionRow ? {
         ...compositionRow,
@@ -4322,6 +5609,10 @@ export class Repository {
         asset_ids: json(compositionRow.asset_ids_json, []),
         commercial_blocks: json(compositionRow.commercial_blocks_json, []),
         content_blocks: json(compositionRow.content_blocks_json, []),
+        diagnostics: json(compositionRow.diagnostics_json, {}),
+        manifest: json(compositionRow.manifest_json, {}),
+        current: Boolean(frontendPage?.current && !compositionRow.refresh_required
+          && compositionRow.editorial_page_hash === currentEditorialPageHash),
       } : null,
     };
   }
@@ -4344,15 +5635,75 @@ export class Repository {
     if (!draftId) return [];
     return this.db.prepare(`
       SELECT av.*, sa.local_path AS source_asset_local_path,
-        sa.ai_derivative_data_url AS source_asset_data_url
+        sa.ai_derivative_data_url AS source_asset_data_url,
+        sa.mime_type AS source_asset_mime_type,
+        sa.storage_status AS source_asset_storage_status,
+        sa.original_bytes_status AS source_asset_original_bytes_status,
+        sa.durability_status AS source_asset_durability_status,
+        sa.authorization_status AS asset_authorization_status,
+        sa.publishable AS asset_publishable,
+        s.authorization_status AS source_authorization_status,
+        s.publishable AS source_publishable
       FROM article_visuals av LEFT JOIN source_assets sa ON sa.id=av.source_asset_id
+      LEFT JOIN sources s ON s.id=sa.source_id
       WHERE av.draft_id=? ORDER BY av.slot
     `).all(draftId).map((row) => ({
       ...row,
       media_path: row.media_path || row.source_asset_local_path || "",
-      media_metadata: json(row.media_metadata_json, {}),
+      media_metadata: deliveryVisualMetadata(row),
     }));
   }
+
+  ensureAuthorizedSourceVisuals(draftId) {
+    const current=this.listDraftVisuals(draftId);
+    const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
+      FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
+    if (!row) return current;
+    const contentPackage=this.getBriefPackage(row.brief_id);
+    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null});
+    const policy=contentPolicyFor(row,contentPackage?.facts || []);
+    const visuals=normalizeVisuals(current,row,row,assets,policy);
+    this.replaceDraftVisuals(draftId,visuals,row.strategy_version || this.strategyVersion);
+    this.refreshDraftSchema(draftId);
+    return this.listDraftVisuals(draftId);
+  }
+
+  mediaRepairPlan(draftId) {
+    const current=this.listDraftVisuals(draftId);
+    const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
+      FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
+    if (!row) return { plan_hash:sha256(`missing:${draftId}`),slots:[] };
+    const contentPackage=this.getBriefPackage(row.brief_id);
+    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null});
+    const proposed=normalizeVisuals(current,row,row,assets,contentPolicyFor(row,contentPackage?.facts || []));
+    const slots=proposed.map((visual,index)=>{
+      const existing=current[index] || null;
+      const changed=!existing || existing.asset_fingerprint !== visualFingerprint(visual);
+      const metadata=existing?.media_metadata || {};
+      const qa=visualQualityQaStatus(metadata.quality_qa);
+      const binary=metadata.binary_qa?.status || metadata.pixel_qa?.status || "not_tested";
+      const transform=visual.acquisition_strategy;
+      const requiresModel=["analyze_source_image","localize_source_image","localize_photo_overlay","recompose_editorial_card",
+        "recompose_collage","recompose_map_or_route","generate_illustration"].includes(transform);
+      const needsQualityQa=requiresModel && transform !== "analyze_source_image" && transform !== "generate_illustration";
+      const repair=changed || ["planned","failed"].includes(existing?.status)
+        || binary === "failed" || (needsQualityQa && qa !== "passed");
+      return { visual_id:existing?.id || null,slot:index+1,source_asset_id:visual.source_asset_id || null,
+        old_media_url:existing?.wordpress_media_url || existing?.media_url || null,
+        old_media_sha256:metadata.binary_qa?.sha256 || metadata.pixel_qa?.sha256 || null,
+        disposition:repair ? "repair" : "retain",
+        reason:changed ? "visual_fingerprint_changed" : existing?.status === "failed" ? "visual_failed"
+          : existing?.status === "planned" ? "visual_incomplete" : binary === "failed" ? "binary_qa_failed"
+            : needsQualityQa && qa !== "passed" ? `quality_qa_${qa}` : "qualified_visual_retained",
+        acquisition_strategy:transform,requires_model:repair && requiresModel,
+        max_model_calls:repair && requiresModel ? (transform === "analyze_source_image" ? 1 : 2) : 0,
+        proposed_fingerprint:visualFingerprint(visual) };
+    });
+    return { plan_hash:sha256(JSON.stringify(slots.map((slot)=>({slot:slot.slot,source:slot.source_asset_id,
+      disposition:slot.disposition,reason:slot.reason,fingerprint:slot.proposed_fingerprint})))),slots };
+  }
+
+  prepareMediaRepair(draftId) { return this.ensureAuthorizedSourceVisuals(draftId); }
 
   replaceDraftVisuals(draftId, visuals, strategyVersion) {
     const timestamp = now();
@@ -4375,7 +5726,7 @@ export class Repository {
           media_url=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_url ELSE excluded.media_url END,
           wordpress_media_id=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.wordpress_media_id ELSE NULL END,
           wordpress_media_url=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.wordpress_media_url ELSE NULL END,
-          media_metadata_json=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_metadata_json ELSE '{}' END,
+          media_metadata_json=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_metadata_json ELSE excluded.media_metadata_json END,
           provider=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.provider ELSE excluded.provider END,
           model=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.model ELSE excluded.model END,
           last_error=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.last_error ELSE NULL END,
@@ -4400,40 +5751,114 @@ export class Repository {
       SELECT av.*,sa.local_path AS source_asset_local_path,sa.ai_derivative_data_url AS source_asset_data_url,
         sa.mime_type AS source_asset_mime_type,sa.language_status AS source_asset_language_status
       FROM article_visuals av LEFT JOIN source_assets sa ON sa.id=av.source_asset_id
-      WHERE av.draft_id=? AND av.status='planned'
-        AND av.acquisition_strategy IN ('generate_illustration','localize_source_image')
+      WHERE av.draft_id=? AND av.status IN ('planned','failed')
+        AND av.acquisition_strategy IN ('generate_illustration','analyze_source_image','localize_source_image','localize_photo_overlay',
+          'recompose_editorial_card','recompose_collage','recompose_map_or_route')
         AND (retry_at IS NULL OR retry_at<=?)
       ORDER BY av.slot
     `).all(draftId, now());
   }
 
-  saveGeneratedVisual(visualId, result) {
+  findReusableVisualCandidate({visualId,transformInputHash}) {
+    const row=this.db.prepare(`SELECT * FROM visual_candidates WHERE visual_id=? AND transform_input_hash=?
+      AND status IN ('pending_qa','qa_failed') ORDER BY updated_at DESC LIMIT 1`).get(visualId,transformInputHash);
+    if (!row) return null;
+    if (!row.media_path || !fs.existsSync(row.media_path)) {
+      this.db.prepare("UPDATE visual_candidates SET status='missing',updated_at=? WHERE id=?").run(now(),row.id);
+      return null;
+    }
+    const bytes=fs.readFileSync(row.media_path);
+    if (sha256(bytes)!==row.output_hash || bytes.length!==Number(row.byte_size)) {
+      this.db.prepare(`UPDATE visual_candidates SET status='invalidated',last_error_json=?,updated_at=? WHERE id=?`)
+        .run(JSON.stringify({code:"CANDIDATE_HASH_MISMATCH",evidence_basis:"persisted_bytes"}),now(),row.id);
+      return null;
+    }
+    return {...row,qa:json(row.qa_json,{}),last_error:json(row.last_error_json,{})};
+  }
+
+  saveVisualCandidate(candidate) {
+    const current=this.db.prepare("SELECT draft_id,source_asset_id,asset_fingerprint FROM article_visuals WHERE id=?").get(candidate.visualId);
+    if (!current || current.draft_id!==candidate.draftId) throw conflictError("Visual candidate no longer belongs to the current Draft.");
+    if (candidate.expectedFingerprint && current.asset_fingerprint!==candidate.expectedFingerprint) {
+      throw conflictError("Visual candidate input changed before the checkpoint could be saved.");
+    }
+    const timestamp=now();
+    const candidateId=candidate.id || `visual_candidate_${sha256(`${candidate.visualId}:${candidate.transformInputHash}:${candidate.outputHash}`).slice(0,24)}`;
+    this.db.prepare(`INSERT INTO visual_candidates(id,visual_id,draft_id,job_id,job_attempt,recovery_run_id,source_asset_id,
+      source_hash,transform_input_hash,output_hash,media_path,mime_type,byte_size,provider,model,status,qa_json,last_error_json,
+      created_at,updated_at,promoted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending_qa','{}','{}',?,?,NULL)
+      ON CONFLICT(visual_id,transform_input_hash,output_hash) DO UPDATE SET media_path=excluded.media_path,
+        byte_size=excluded.byte_size,job_id=COALESCE(excluded.job_id,visual_candidates.job_id),
+        job_attempt=MAX(visual_candidates.job_attempt,excluded.job_attempt),recovery_run_id=COALESCE(excluded.recovery_run_id,visual_candidates.recovery_run_id),
+        updated_at=excluded.updated_at`).run(candidateId,candidate.visualId,candidate.draftId,candidate.jobId || null,
+        Number(candidate.jobAttempt || 0),candidate.recoveryRunId || null,current.source_asset_id || null,
+        candidate.sourceHash || "",candidate.transformInputHash,candidate.outputHash,candidate.mediaPath,candidate.mimeType,
+        Number(candidate.byteSize || 0),candidate.provider || "unknown",candidate.model || "unknown",timestamp,timestamp);
+    return this.db.prepare("SELECT * FROM visual_candidates WHERE visual_id=? AND transform_input_hash=? AND output_hash=?")
+      .get(candidate.visualId,candidate.transformInputHash,candidate.outputHash);
+  }
+
+  updateVisualCandidate(candidateId,{status,qa=null,error=null}={}) {
+    const allowed=new Set(["pending_qa","qa_failed","promoted","invalidated","missing"]);
+    if (!allowed.has(status)) throw new Error(`Unsupported visual candidate status: ${status}`);
+    const timestamp=now();
+    this.db.prepare(`UPDATE visual_candidates SET status=?,qa_json=?,last_error_json=?,updated_at=?,
+      promoted_at=CASE WHEN ?='promoted' THEN ? ELSE promoted_at END WHERE id=?`)
+      .run(status,JSON.stringify(qa || {}),JSON.stringify(safeDiagnosticValue(error || {})),timestamp,status,timestamp,candidateId);
+    return this.db.prepare("SELECT * FROM visual_candidates WHERE id=?").get(candidateId) || null;
+  }
+
+  listVisualCandidates(visualId) {
+    return this.db.prepare(`SELECT id,visual_id,draft_id,job_id,job_attempt,recovery_run_id,source_asset_id,source_hash,
+      transform_input_hash,output_hash,mime_type,byte_size,provider,model,status,qa_json,last_error_json,created_at,updated_at,promoted_at
+      FROM visual_candidates WHERE visual_id=? ORDER BY created_at DESC`).all(visualId)
+      .map((row)=>({...row,qa:json(row.qa_json,{}),last_error:json(row.last_error_json,{})}));
+  }
+
+  saveGeneratedVisual(visualId, result, { expectedFingerprint = null } = {}) {
+    const current = this.db.prepare(`SELECT draft_id,acquisition_strategy,source_asset_id,media_metadata_json
+      FROM article_visuals WHERE id=?`).get(visualId);
+    const metadata = {
+      ...json(current?.media_metadata_json, {}),
+      ...(result.metadata || {}),
+      ...(["localize_source_image","localize_photo_overlay"].includes(current?.acquisition_strategy) ? {
+        localized_file: Boolean(result.mediaPath),
+        localized_from_source_asset_id: current.source_asset_id || null,
+      } : {}),
+    };
+    if (expectedFingerprint && current && this.db.prepare("SELECT asset_fingerprint FROM article_visuals WHERE id=?").get(visualId)?.asset_fingerprint !== expectedFingerprint) {
+      throw Object.assign(new Error("A late visual result cannot overwrite the current media plan."),{code:"STALE_VISUAL_RESULT",retryable:false});
+    }
     this.db.prepare(`
       UPDATE article_visuals SET status='generated', media_path=?, media_url=?, provider=?, model=?,
-        last_error=NULL, retry_at=NULL, updated_at=?
+        media_metadata_json=?,last_error=NULL, retry_at=NULL, updated_at=?
       WHERE id=?
-    `).run(result.mediaPath, result.mediaUrl, result.provider, result.model, now(), visualId);
-    const visual = this.db.prepare("SELECT draft_id FROM article_visuals WHERE id=?").get(visualId);
-    if (visual) this.refreshDraftSchema(visual.draft_id);
+    `).run(result.mediaPath, result.mediaUrl, result.provider, result.model, JSON.stringify(metadata), now(), visualId);
+    if (current) this.refreshDraftSchema(current.draft_id);
   }
 
   failVisual(visualId, error) {
-    const row = this.db.prepare("SELECT attempt_count FROM article_visuals WHERE id=?").get(visualId);
+    const row = this.db.prepare("SELECT attempt_count,media_metadata_json FROM article_visuals WHERE id=?").get(visualId);
     const attempts = (row?.attempt_count || 0) + 1;
     const retryable = error?.retryable !== false && attempts < 3;
     const retryAt = retryable ? new Date(Date.now() + Math.min(60_000, 1_000 * (2 ** attempts))).toISOString() : null;
-    this.db.prepare("UPDATE article_visuals SET status=?, attempt_count=?, retry_at=?, last_error=?, updated_at=? WHERE id=?")
-      .run(retryable ? "planned" : "failed", attempts, retryAt, String(error?.message || error).slice(0, 4_000), now(), visualId);
+    const metadata={...json(row?.media_metadata_json,{})};
+    if (error?.qualityQa) metadata.quality_qa=error.qualityQa;
+    this.db.prepare("UPDATE article_visuals SET status=?, attempt_count=?, retry_at=?, last_error=?, media_metadata_json=?, updated_at=? WHERE id=?")
+      .run(retryable ? "planned" : "failed", attempts, retryAt, String(error?.message || error).slice(0, 4_000),
+        JSON.stringify(metadata),now(), visualId);
     return { retryable, status: retryable ? "planned" : "failed" };
   }
 
   saveWordPressVisual(visualId, media) {
     const before = this.db.prepare(`
-      SELECT av.draft_id, av.media_url AS previous_media_url, ad.seo_json
+      SELECT av.draft_id, av.media_url AS previous_media_url,av.source_asset_id,av.media_metadata_json,ad.seo_json
       FROM article_visuals av JOIN article_drafts ad ON ad.id=av.draft_id WHERE av.id=?
     `).get(visualId);
+    const metadata = { ...json(before?.media_metadata_json, {}), ...(media.metadata || {}),
+      wordpress_uploaded: Boolean(media.id && media.url), wordpress_media_id: media.id || null };
     this.db.prepare("UPDATE article_visuals SET wordpress_media_id=?, wordpress_media_url=?, media_url=?, media_metadata_json=?, updated_at=? WHERE id=?")
-      .run(media.id, media.url, media.url, JSON.stringify(media.metadata || {}), now(), visualId);
+      .run(media.id, media.url, media.url, JSON.stringify(metadata), now(), visualId);
     if (before) {
       const seo = json(before.seo_json, {});
       if (!seo.og_image || seo.og_image === before.previous_media_url) {
@@ -4479,9 +5904,10 @@ export class Repository {
       draft.revision, draft.content_hash, evidenceHash);
     this.db.prepare("UPDATE article_drafts SET quality_report_json=?, status=?, updated_at=? WHERE id=?")
       .run(JSON.stringify(review), review.passed ? "ready_for_wordpress" : "qa_failed", timestamp, draftId);
-    this.db.prepare(`UPDATE content_opportunities SET status=?,updated_at=? WHERE candidate_id=(
-      SELECT cb.candidate_id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?)`)
-      .run(review.passed ? "ready_for_wordpress" : "qa_failed", timestamp, draftId);
+    this.db.prepare(`UPDATE content_opportunities SET status=?,updated_at=? WHERE id=COALESCE(?,(
+      SELECT MIN(co.id) FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
+      JOIN article_drafts ad ON ad.brief_id=cb.id WHERE ad.id=? AND co.approved_at IS NOT NULL HAVING COUNT(*)=1))`)
+      .run(review.passed ? "ready_for_wordpress" : "qa_failed", timestamp, expectedVersion?.productionOwnerOpportunityId || null, draftId);
     return this.db.prepare("SELECT revision FROM article_drafts WHERE id = ?").get(draftId)?.revision || 1;
   }
 
@@ -4501,57 +5927,124 @@ export class Repository {
     return publication;
   }
 
-  completeWordPressPublication(draftId, result) {
+  completeWordPressPublication(draftId, result, { opportunityId = null } = {}) {
     this.db.prepare(`
-      UPDATE wordpress_publications SET post_id=?, post_url=?, preview_url=?, edit_url=?, response_json=?, status='synced',
+      UPDATE wordpress_publications SET post_id=?, post_url=?, preview_url=?, edit_url=?, response_json=?, delivery_manifest_json=?, status='synced',
         last_error=NULL, error_code=NULL, updated_at=? WHERE draft_id=?
     `).run(result.postId, result.postUrl, result.previewUrl || result.postUrl || null, result.editUrl || null,
-      JSON.stringify(result), now(), draftId);
+      JSON.stringify(result), JSON.stringify(result.deliveryManifest || {}), now(), draftId);
     for (const visual of result.visuals || []) this.saveWordPressVisual(visual.visualId, visual);
     this.markFrontendPublishComposition(draftId, "delivered", result.postId);
     this.db.prepare("UPDATE article_drafts SET status='wordpress_draft', updated_at=? WHERE id=?").run(now(), draftId);
-    this.db.prepare(`UPDATE content_opportunities SET status='wordpress_draft',lifecycle_state='finished',updated_at=? WHERE candidate_id=(
-      SELECT cb.candidate_id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?)`).run(now(), draftId);
+    this.db.prepare(`UPDATE content_opportunities SET status='wordpress_draft',lifecycle_state='finished',updated_at=? WHERE id=COALESCE(?,(
+      SELECT MIN(co.id) FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
+      JOIN article_drafts ad ON ad.brief_id=cb.id WHERE ad.id=? AND co.approved_at IS NOT NULL HAVING COUNT(*)=1))`).run(now(),opportunityId,draftId);
   }
 
-  failWordPressPublication(draftId, error) {
+  failWordPressPublication(draftId, error, { opportunityId = null } = {}) {
     const timestamp=now();
     this.db.prepare("UPDATE wordpress_publications SET status='failed', last_error=?, error_code=?, updated_at=? WHERE draft_id=?")
       .run(String(error?.message || error).slice(0, 4000), String(error?.code || "WORDPRESS_DELIVERY_FAILED").slice(0, 120), timestamp, draftId);
-    this.db.prepare(`UPDATE content_opportunities SET status='ready_for_wordpress',lifecycle_state='producing',updated_at=? WHERE candidate_id=(
-      SELECT cb.candidate_id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?)`).run(timestamp,draftId);
+    this.db.prepare(`UPDATE content_opportunities SET status='ready_for_wordpress',lifecycle_state='producing',updated_at=? WHERE id=COALESCE(?,(
+      SELECT MIN(co.id) FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
+      JOIN article_drafts ad ON ad.brief_id=cb.id WHERE ad.id=? AND co.approved_at IS NOT NULL HAVING COUNT(*)=1))`).run(timestamp,opportunityId,draftId);
     if (this.getFrontendPublishComposition(draftId)) this.markFrontendPublishComposition(draftId, "delivery_failed");
   }
 
   listContent({ candidateId = null, approvedOnly = false, productionOnly = false, evidenceHashes = new Map() } = {}) {
-    const rows = this.db.prepare(`
-      SELECT tc.*, cb.id AS brief_id, cb.status AS brief_status, ad.id AS draft_id, ad.status AS draft_status,
-        ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score,
-        wp.post_id AS wordpress_post_id, wp.post_url AS wordpress_post_url, wp.status AS wordpress_status,
-        cc.status AS commercial_status, json_array_length(COALESCE(cc.offer_ids_json, '[]')) AS commercial_offer_count,
-        pc.status AS publish_composition_status
-      FROM topic_candidates tc
-      LEFT JOIN content_briefs cb ON cb.candidate_id = tc.id
-      LEFT JOIN article_drafts ad ON ad.brief_id = cb.id
+    const rows = productionOnly ? this.db.prepare(`
+      SELECT co.id AS id, co.id AS production_instance_id, co.id AS opportunity_id, co.destination_slug, co.topic_key,
+        co.title, co.content_type, co.readiness_score, co.readiness_json, co.coverage_json,
+        co.status, co.status AS opportunity_status, co.suppression_reason, co.approved_at, co.lifecycle_state,
+        co.processing_state, co.processing_detail_json, co.created_at AS opportunity_created_at,
+        co.updated_at AS opportunity_updated_at,
+        tc.id AS candidate_id, tc.proposed_title, tc.coverage_score, tc.evidence_count, tc.conflict_count,
+        tc.status AS candidate_status, tc.created_at AS candidate_created_at, tc.updated_at AS candidate_updated_at,
+        cb.id AS brief_id, cb.status AS brief_status, cb.last_error AS brief_last_error,
+        cb.created_at AS brief_created_at, cb.updated_at AS brief_updated_at,
+        ad.id AS draft_id, ad.status AS draft_status, ad.title AS draft_title, ad.revision,
+        ad.content_hash AS draft_content_hash, ad.quality_report_json AS draft_quality_report_json,
+        ad.created_at AS draft_created_at, ad.updated_at AS draft_updated_at,
+        qr.passed AS qa_passed, qr.score AS qa_score, qr.created_at AS qa_created_at,
+        ea.id AS editorial_assembly_id,
+        np.id AS narrative_plan_id, wpkt.id AS writing_packet_id,
+        fpp.status AS frontend_plan_status, fpp.plan_json AS frontend_page_plan_json,
+        fpp.validation_json AS frontend_plan_validation_json, fpp.contract_version AS frontend_plan_contract_version,
+        fpp.schema_version AS frontend_plan_schema_version, fpp.contract_checksum AS frontend_plan_contract_checksum,
+        fpc.status AS frontend_page_status, fpc.payload_json AS frontend_page_payload_json,
+        fpc.validation_json AS frontend_page_validation_json, fpc.contract_version AS frontend_contract_version,
+        fpc.schema_version AS frontend_schema_version, fpc.contract_checksum AS frontend_contract_checksum,
+        CASE WHEN fpc.draft_revision=ad.revision AND fpc.draft_content_hash=ad.content_hash THEN 1 ELSE 0 END AS frontend_page_current,
+        pub.status AS publish_composition_status, pub.publish_package_json AS publish_package_json,
+        pub.validation_json AS publish_validation_json, pub.contract_version AS publish_contract_version,
+        pub.page_schema_version AS publish_schema_version, pub.contract_checksum AS publish_contract_checksum,
+        pub.page_content_hash, pub.seo_artifact_hash,
+        CASE WHEN pub.draft_revision=ad.revision AND pub.draft_content_hash=ad.content_hash THEN 1 ELSE 0 END AS publish_composition_current,
+        wpub.post_id AS wordpress_post_id, wpub.post_url AS wordpress_post_url,
+        wpub.preview_url AS wordpress_preview_url, wpub.edit_url AS wordpress_edit_url,
+        wpub.status AS wordpress_status, wpub.updated_at AS wordpress_updated_at,
+        cc.status AS commercial_status, cc.outcome AS commercial_outcome, cc.reason_code AS commercial_reason_code,
+        json_array_length(COALESCE(cc.asset_ids_json, '[]')) AS commercial_offer_count,
+        COALESCE(vs.visual_total,0) AS visual_total, COALESCE(vs.visual_pending,0) AS visual_pending,
+        COALESCE(vs.visual_failed,0) AS visual_failed,
+        prc.disposition AS production_disposition,
+        (SELECT COUNT(*) FROM content_opportunities owner_count
+          WHERE owner_count.candidate_id=co.candidate_id AND owner_count.approved_at IS NOT NULL) AS approved_owner_count
+      FROM content_opportunities co
+      LEFT JOIN topic_candidates tc ON tc.id=co.candidate_id
+      LEFT JOIN content_briefs cb ON cb.id=(SELECT latest_brief.id FROM content_briefs latest_brief
+        WHERE latest_brief.candidate_id=tc.id ORDER BY latest_brief.updated_at DESC,latest_brief.id DESC LIMIT 1)
+      LEFT JOIN article_drafts ad ON ad.id=(SELECT latest_draft.id FROM article_drafts latest_draft
+        WHERE latest_draft.brief_id=cb.id ORDER BY latest_draft.updated_at DESC,latest_draft.id DESC LIMIT 1)
       LEFT JOIN quality_reviews qr ON qr.id = (
         SELECT id FROM quality_reviews WHERE draft_id = ad.id AND draft_revision=ad.revision
           AND draft_content_hash=ad.content_hash ORDER BY created_at DESC LIMIT 1
       )
+      LEFT JOIN editorial_assemblies ea ON ea.id=(SELECT latest_ea.id FROM editorial_assemblies latest_ea
+        WHERE latest_ea.opportunity_id=co.id ORDER BY latest_ea.updated_at DESC LIMIT 1)
+      LEFT JOIN narrative_plans np ON np.id=(SELECT latest_np.id FROM narrative_plans latest_np WHERE latest_np.brief_id=cb.id ORDER BY latest_np.updated_at DESC LIMIT 1)
+      LEFT JOIN writing_packets wpkt ON wpkt.id=(SELECT latest_wpkt.id FROM writing_packets latest_wpkt WHERE latest_wpkt.brief_id=cb.id ORDER BY latest_wpkt.updated_at DESC LIMIT 1)
+      LEFT JOIN frontend_page_plans fpp ON fpp.id=(SELECT latest_fpp.id FROM frontend_page_plans latest_fpp WHERE latest_fpp.brief_id=cb.id ORDER BY latest_fpp.updated_at DESC LIMIT 1)
+      LEFT JOIN frontend_page_compositions fpc ON fpc.id=(SELECT latest_fpc.id FROM frontend_page_compositions latest_fpc WHERE latest_fpc.draft_id=ad.id ORDER BY latest_fpc.updated_at DESC LIMIT 1)
+      LEFT JOIN frontend_publish_compositions pub ON pub.id=(SELECT latest_pub.id FROM frontend_publish_compositions latest_pub WHERE latest_pub.draft_id=ad.id ORDER BY latest_pub.updated_at DESC LIMIT 1)
+      LEFT JOIN wordpress_publications wpub ON wpub.draft_id = ad.id
+      LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
+      LEFT JOIN (SELECT draft_id,COUNT(*) AS visual_total,
+        SUM(CASE WHEN status IN ('queued','generating') THEN 1 ELSE 0 END) AS visual_pending,
+        SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS visual_failed
+        FROM article_visuals GROUP BY draft_id) vs ON vs.draft_id=ad.id
+      LEFT JOIN production_record_controls prc ON prc.opportunity_id=co.id
+      WHERE (? IS NULL OR tc.id=? OR co.id=?)
+        AND (?=0 OR co.approved_at IS NOT NULL)
+        AND (?=0 OR co.approved_at IS NOT NULL OR prc.disposition IN ('archived','deleted'))
+      ORDER BY CASE COALESCE(prc.disposition,'active') WHEN 'active' THEN 0 ELSE 1 END,
+        co.updated_at DESC, co.readiness_score DESC
+    `).all(candidateId, candidateId, candidateId, approvedOnly ? 1 : 0, productionOnly ? 1 : 0) : this.db.prepare(`
+      SELECT tc.*, cb.id AS brief_id, cb.status AS brief_status, ad.id AS draft_id, ad.status AS draft_status,
+        ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score, qr.created_at AS qa_created_at,
+        wp.post_id AS wordpress_post_id, wp.post_url AS wordpress_post_url, wp.preview_url AS wordpress_preview_url,
+        wp.edit_url AS wordpress_edit_url, wp.status AS wordpress_status,
+        cc.status AS commercial_status, cc.outcome AS commercial_outcome, cc.reason_code AS commercial_reason_code,
+        json_array_length(COALESCE(cc.asset_ids_json, '[]')) AS commercial_offer_count,
+        pc.status AS publish_composition_status, co.id AS opportunity_id, co.approved_at,
+        co.readiness_json, co.updated_at AS opportunity_updated_at
+      FROM topic_candidates tc
+      LEFT JOIN content_opportunities co ON co.candidate_id=tc.id
+      LEFT JOIN content_briefs cb ON cb.candidate_id = tc.id
+      LEFT JOIN article_drafts ad ON ad.brief_id = cb.id
+      LEFT JOIN quality_reviews qr ON qr.id = (
+        SELECT id FROM quality_reviews WHERE draft_id = ad.id AND draft_revision=ad.revision
+          AND draft_content_hash=ad.content_hash ORDER BY created_at DESC LIMIT 1)
       LEFT JOIN wordpress_publications wp ON wp.draft_id = ad.id
       LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
       LEFT JOIN frontend_publish_compositions pc ON pc.draft_id = ad.id
       WHERE (? IS NULL OR tc.id=?)
-        AND (?=0 OR EXISTS (SELECT 1 FROM content_opportunities approved
-          WHERE approved.candidate_id=tc.id AND approved.approved_at IS NOT NULL))
-        AND (?=0 OR EXISTS (SELECT 1 FROM content_opportunities production
-          WHERE production.candidate_id=tc.id AND production.lifecycle_state IN ('producing','finished')
-            AND (EXISTS (SELECT 1 FROM jobs entry_job WHERE entry_job.entity_id=tc.id AND entry_job.type='plan_content')
-              OR EXISTS (SELECT 1 FROM content_briefs entry_brief WHERE entry_brief.candidate_id=tc.id)
-              OR tc.status='brief_queued')))
+        AND (?=0 OR co.approved_at IS NOT NULL)
       ORDER BY tc.coverage_score DESC, tc.updated_at DESC
-    `).all(candidateId, candidateId, approvedOnly ? 1 : 0, productionOnly ? 1 : 0);
+    `).all(candidateId, candidateId, approvedOnly ? 1 : 0);
     const draftIds = rows.map((row) => row.draft_id).filter(Boolean);
-    if (!draftIds.length) return rows;
+    if (!draftIds.length) return rows.map((row) => ({ ...row, workflow_status: row.candidate_status || row.opportunity_status,
+      production_state: buildProductionState(this.db, row, { capabilities:this.productionCapabilities }) }));
     const placeholders = draftIds.map(() => "?").join(",");
     const operationRows = this.db.prepare(`SELECT ad.id AS draft_id, tc.id, cb.id AS brief_id,
       CASE WHEN qr.id IS NOT NULL THEN ad.quality_report_json ELSE '{}' END AS quality_report_json,
@@ -4598,14 +6091,185 @@ export class Repository {
       };
       return [row.draft_id, operation];
     }));
-    const active = this.db.prepare("SELECT entity_id,type,status FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").all();
+    const active = this.db.prepare("SELECT entity_id,type,status,production_owner_opportunity_id FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").all();
     return rows.map((row) => {
-      const job = active.find((j) => [row.id,row.brief_id,row.draft_id].includes(j.entity_id));
+      const job = active.find((j) => j.production_owner_opportunity_id === row.opportunity_id
+        && [row.candidate_id || row.id,row.brief_id,row.draft_id].includes(j.entity_id));
       if (staleReviews.has(row.draft_id)) { row.qa_score=null;row.qa_passed=null; }
       return { ...row, workflow_status: job ? `${job.type}_${job.status}`
-        : row.draft_status === "qa_queued" ? "awaiting_review" : row.draft_status || row.brief_status || row.status,
+        : row.draft_status === "qa_queued" ? "awaiting_review" : row.draft_status || row.brief_status || row.candidate_status || row.opportunity_status,
+        production_state: buildProductionState(this.db, row, { capabilities:this.productionCapabilities }),
         ...(row.draft_id ? { operation: operations.get(row.draft_id) || null } : {}) };
     });
+  }
+
+  listContentWorkspace(options = {}) {
+    const items = this.listContent(options);
+    return { items, sections: summarizeProductionSections(items) };
+  }
+
+  getContentProductionDetail(opportunityOrCandidateId) {
+    const item = this.listContent({ candidateId: opportunityOrCandidateId, productionOnly: true })[0];
+    if (!item) return null;
+    const history = this.listProductionRecordHistory(item.opportunity_id);
+    return {
+      ...item,
+      production_state: buildProductionState(this.db, item, { capabilities:this.productionCapabilities }),
+      page_preview: buildPageCompositionPreview(item),
+      publication: item.wordpress_status ? {
+        status: item.wordpress_status,
+        post_id: item.wordpress_post_id,
+        post_url: item.wordpress_post_url,
+        preview_url: item.wordpress_preview_url,
+        edit_url: item.wordpress_edit_url,
+      } : null,
+      draft: item.draft_id ? this.getDraftPackage(item.draft_id) : null,
+      history,
+    };
+  }
+
+  listProductionRecordHistory(opportunityId) {
+    const opportunity = this.db.prepare("SELECT id,candidate_id FROM content_opportunities WHERE id=?").get(opportunityId);
+    if (!opportunity) return null;
+    const audit = this.db.prepare("SELECT * FROM production_record_audit WHERE opportunity_id=? ORDER BY created_at DESC,id DESC").all(opportunityId)
+      .map((row) => ({ ...row, kind: "record_operation", detail: json(row.detail_json, {}) }));
+    const operations = opportunity.candidate_id ? this.db.prepare(`SELECT * FROM content_operation_history
+      WHERE opportunity_id=? OR (opportunity_id IS NULL AND candidate_id=? AND
+        (SELECT COUNT(*) FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL)=1)
+      ORDER BY created_at DESC,id DESC`).all(opportunityId,opportunity.candidate_id,opportunity.candidate_id)
+      .map((row) => ({ ...row, kind: "content_operation", detail: { preview: json(row.preview_json, {}), result: json(row.result_json, {}) } })) : [];
+    const attempts = this.db.prepare("SELECT * FROM production_attempt_archives WHERE opportunity_id=? ORDER BY created_at DESC,id DESC").all(opportunityId)
+      .map((row) => ({ ...row, kind: "failed_attempt", detail: json(row.snapshot_json, {}) }));
+    const lessons = this.db.prepare("SELECT * FROM failure_lessons WHERE opportunity_id=? ORDER BY created_at DESC,id DESC").all(opportunityId)
+      .map((row) => ({ ...row, kind: "failure_lesson", detail: json(row.lesson_json, {}) }));
+    const diagnostics=this.db.prepare(`SELECT pfd.* FROM production_failure_diagnostics pfd JOIN jobs j ON j.id=pfd.job_id
+      WHERE j.production_owner_opportunity_id=? ORDER BY pfd.created_at DESC,pfd.id DESC`).all(opportunityId)
+      .map((row)=>({...row,kind:"failure_diagnostic",detail:json(row.details_json,{})}));
+    return [...audit, ...operations, ...attempts, ...lessons,...diagnostics]
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+  }
+
+  archiveProductionRecord(opportunityId, { actor = "admin", reason = "", idempotencyKey = null } = {}) {
+    return this.#changeProductionDisposition(opportunityId, "archived", { actor, reason, idempotencyKey });
+  }
+
+  restoreProductionRecord(opportunityId, { actor = "admin", reason = "", idempotencyKey = null } = {}) {
+    return this.#changeProductionDisposition(opportunityId, "active", { actor, reason, idempotencyKey });
+  }
+
+  #changeProductionDisposition(opportunityId, disposition, { actor, reason, idempotencyKey }) {
+    const operationKey = idempotencyKey || sha256(`${disposition}:${opportunityId}:${actor}:${reason}`);
+    return transaction(this.db, () => {
+      const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(opportunityId);
+      if (!opportunity) return null;
+      const prior = this.db.prepare("SELECT * FROM production_record_audit WHERE idempotency_key=?").get(operationKey);
+      if (prior) return this.getContentProductionDetail(opportunityId);
+      const timestamp = now();
+      if (disposition === "archived") {
+        const entityIds = this.#productionEntityIds(opportunity);
+        if (entityIds.length) this.db.prepare(`UPDATE jobs SET status='failed',last_error='Production attempt archived by user',
+          failure_class='permanent_input',last_failure_code='PRODUCTION_ARCHIVED',locked_at=NULL,locked_by=NULL,
+          lease_expires_at=NULL,heartbeat_at=NULL,completed_at=?,updated_at=?
+          WHERE status IN ('queued','running') AND type IN (${[...PRODUCTION_JOB_TYPES].map(() => "?").join(",")})
+            AND entity_id IN (${entityIds.map(() => "?").join(",")})
+            AND (production_owner_opportunity_id=? OR (production_owner_opportunity_id IS NULL AND
+              (SELECT COUNT(*) FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL)=1))`)
+          .run(timestamp, timestamp, ...PRODUCTION_JOB_TYPES, ...entityIds,opportunityId,opportunity.candidate_id);
+      }
+      this.db.prepare(`INSERT INTO production_record_controls(opportunity_id,disposition,archived_at,deleted_at,reason,actor,idempotency_key,tombstone_json,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,'{}',?,?) ON CONFLICT(opportunity_id) DO UPDATE SET disposition=excluded.disposition,
+        archived_at=excluded.archived_at,deleted_at=excluded.deleted_at,reason=excluded.reason,actor=excluded.actor,
+        idempotency_key=excluded.idempotency_key,updated_at=excluded.updated_at`)
+        .run(opportunityId, disposition, disposition === "archived" ? timestamp : null, null, reason, actor, operationKey, timestamp, timestamp);
+      this.#auditProductionRecord(opportunityId, disposition === "active" ? "restore_archive" : "archive", actor, operationKey,
+        { reason, cancelled_active_jobs: disposition === "archived" });
+      return this.getContentProductionDetail(opportunityId);
+    });
+  }
+
+  deleteProductionRecord(opportunityId, { actor = "admin", reason = "", idempotencyKey = null } = {}) {
+    const operationKey = idempotencyKey || sha256(`delete:${opportunityId}:${actor}:${reason}`);
+    return transaction(this.db, () => {
+      const opportunity = this.db.prepare("SELECT * FROM content_opportunities WHERE id=?").get(opportunityId);
+      if (!opportunity) return null;
+      const prior = this.db.prepare("SELECT * FROM production_record_audit WHERE idempotency_key=?").get(operationKey);
+      if (prior) return this.getContentProductionDetail(opportunityId);
+      if (opportunity.candidate_id && Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL").get(opportunity.candidate_id)?.count || 0)>1) {
+        const error=conflictError("Production ownership is ambiguous; archive this record and reconcile its owner before deleting derived data.");
+        error.code="AMBIGUOUS_PRODUCTION_OWNER"; throw error;
+      }
+      const item = this.listContent({ candidateId: opportunityId, productionOnly:true })[0];
+      if (item?.wordpress_post_id || item?.wordpress_status === "synced") {
+        const error = conflictError("This production record has a remote WordPress draft and cannot be deleted locally. Archive it instead.");
+        error.code = "REMOTE_WORDPRESS_DRAFT_EXISTS";
+        throw error;
+      }
+      if (item?.draft_id && this.db.prepare("SELECT 1 FROM published_content_impacts WHERE draft_id=? LIMIT 1").get(item.draft_id)) {
+        const error = conflictError("This production record has published-content impact history and cannot be deleted locally. Archive it instead.");
+        error.code = "PUBLISHED_CONTENT_HISTORY_EXISTS";
+        throw error;
+      }
+      const entityIds = this.#productionEntityIds(opportunity);
+      const tombstone = {
+        opportunity_id: opportunityId,
+        candidate_id: opportunity.candidate_id || null,
+        brief_ids: opportunity.candidate_id ? this.db.prepare("SELECT id FROM content_briefs WHERE candidate_id=?").all(opportunity.candidate_id).map((row) => row.id) : [],
+        draft_ids: opportunity.candidate_id ? this.db.prepare("SELECT ad.id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE cb.candidate_id=?").all(opportunity.candidate_id).map((row) => row.id) : [],
+        removed: {},
+        retained: ["sources", "source_assets", "capture_versions", "claims", "knowledge", "evidence", "experiences",
+          "content_recommendations", "content_opportunities", "approval", "failure_lessons", "production_attempt_archives", "operation_audit"],
+      };
+      const productionStages = [...PRODUCTION_JOB_TYPES];
+      if (entityIds.length) {
+        const entitiesSql = entityIds.map(() => "?").join(",");
+        const stagesSql = productionStages.map(() => "?").join(",");
+        const ownedJobIds=this.db.prepare(`SELECT id FROM jobs WHERE entity_id IN (${entitiesSql}) AND type IN (${stagesSql})
+          AND (production_owner_opportunity_id=? OR production_owner_opportunity_id IS NULL)`).all(...entityIds,...productionStages,opportunityId).map((row)=>row.id);
+        tombstone.removed.jobs = ownedJobIds.length;
+        tombstone.removed.pipeline_artifacts = this.db.prepare(`SELECT COUNT(*) AS count FROM pipeline_artifacts WHERE entity_id IN (${entitiesSql}) AND stage IN (${stagesSql})`).get(...entityIds, ...productionStages).count;
+        tombstone.removed.step_receipts = ownedJobIds.length ? this.db.prepare(`SELECT COUNT(*) AS count FROM pipeline_step_receipts WHERE job_id IN (${ownedJobIds.map(()=>"?").join(",")})`).get(...ownedJobIds).count : 0;
+        if (ownedJobIds.length) this.db.prepare(`DELETE FROM pipeline_step_receipts WHERE job_id IN (${ownedJobIds.map(()=>"?").join(",")})`).run(...ownedJobIds);
+        this.db.prepare(`DELETE FROM pipeline_artifacts WHERE entity_id IN (${entitiesSql}) AND stage IN (${stagesSql})`).run(...entityIds, ...productionStages);
+        if (ownedJobIds.length) this.db.prepare(`DELETE FROM jobs WHERE id IN (${ownedJobIds.map(()=>"?").join(",")})`).run(...ownedJobIds);
+      }
+      if (tombstone.brief_ids.length) {
+        const briefSql = tombstone.brief_ids.map(() => "?").join(",");
+        if (tombstone.draft_ids.length) {
+          const draftSql = tombstone.draft_ids.map(() => "?").join(",");
+          this.db.prepare(`DELETE FROM frontend_capability_requests WHERE brief_id IN (${briefSql}) OR draft_id IN (${draftSql})`)
+            .run(...tombstone.brief_ids, ...tombstone.draft_ids);
+        } else this.db.prepare(`DELETE FROM frontend_capability_requests WHERE brief_id IN (${briefSql})`).run(...tombstone.brief_ids);
+      }
+      if (opportunity.candidate_id) {
+        this.db.prepare("DELETE FROM editorial_assemblies WHERE candidate_id=? OR opportunity_id=?").run(opportunity.candidate_id, opportunityId);
+        this.db.prepare("DELETE FROM content_briefs WHERE candidate_id=?").run(opportunity.candidate_id);
+        this.db.prepare("UPDATE topic_candidates SET status='candidate',updated_at=? WHERE id=?").run(now(), opportunity.candidate_id);
+      }
+      const timestamp = now();
+      const nextOpportunityStatus = json(opportunity.readiness_json, {}).ready ? "approved_ready" : "approved_waiting_for_evidence";
+      this.db.prepare("UPDATE content_opportunities SET status=?,lifecycle_state='approved',processing_state='CURRENT',processing_detail_json='{}',updated_at=? WHERE id=?")
+        .run(nextOpportunityStatus, timestamp, opportunityId);
+      this.db.prepare(`INSERT INTO production_record_controls(opportunity_id,disposition,archived_at,deleted_at,reason,actor,idempotency_key,tombstone_json,created_at,updated_at)
+        VALUES (?,'deleted',NULL,?,?,?,?,?,?,?) ON CONFLICT(opportunity_id) DO UPDATE SET disposition='deleted',archived_at=NULL,
+        deleted_at=excluded.deleted_at,reason=excluded.reason,actor=excluded.actor,idempotency_key=excluded.idempotency_key,
+        tombstone_json=excluded.tombstone_json,updated_at=excluded.updated_at`)
+        .run(opportunityId, timestamp, reason, actor, operationKey, JSON.stringify(tombstone), timestamp, timestamp);
+      this.#auditProductionRecord(opportunityId, "delete_production_record", actor, operationKey, { reason, tombstone });
+      return this.getContentProductionDetail(opportunityId);
+    });
+  }
+
+  #productionEntityIds(opportunity) {
+    const candidateId = opportunity.candidate_id;
+    if (!candidateId) return [];
+    const briefIds = this.db.prepare("SELECT id FROM content_briefs WHERE candidate_id=?").all(candidateId).map((row) => row.id);
+    const draftIds = briefIds.length ? this.db.prepare(`SELECT id FROM article_drafts WHERE brief_id IN (${briefIds.map(() => "?").join(",")})`).all(...briefIds).map((row) => row.id) : [];
+    return [candidateId, ...briefIds, ...draftIds];
+  }
+
+  #auditProductionRecord(opportunityId, action, actor, idempotencyKey, detail) {
+    this.db.prepare(`INSERT INTO production_record_audit(id,opportunity_id,action,status,actor,idempotency_key,detail_json,created_at)
+      VALUES (?,?,?,'completed',?,?,?,?)`).run(id("prod_audit"), opportunityId, action, actor, idempotencyKey, JSON.stringify(detail || {}), now());
   }
 
   upsertAffiliateProviderAccount(account) {
@@ -4625,25 +6289,42 @@ export class Repository {
 
   getAffiliateProviderAccount(providerId) {
     return this.db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM affiliate_assets a
-      WHERE a.provider_account_id=p.id AND a.active=1) AS active_asset_count
+      WHERE a.provider_account_id=p.id AND a.active=1 AND a.lifecycle_state='operational') AS active_asset_count
       FROM affiliate_provider_accounts p WHERE p.id=?`).get(providerId) || null;
   }
 
   listAffiliateProviderAccounts() {
     return this.db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM affiliate_assets a
-      WHERE a.provider_account_id=p.id AND a.active=1) AS active_asset_count
+      WHERE a.provider_account_id=p.id AND a.active=1 AND a.lifecycle_state='operational') AS active_asset_count
       FROM affiliate_provider_accounts p ORDER BY p.display_name`).all();
   }
 
-  upsertAffiliateAsset(asset) {
+  upsertAffiliateAsset(asset,{actor="system",queueRefresh=false}={}) {
     const provider = this.getAffiliateProviderAccount(asset.providerAccountId);
     if (!provider) throw new Error("Affiliate asset provider account does not exist.");
     const timestamp = now();
+    const existing=this.db.prepare("SELECT * FROM affiliate_assets WHERE id=?").get(asset.id) || null;
+    const snapshot=affiliateAssetBusinessSnapshot(asset);
+    const contentHash=sha256(JSON.stringify(snapshot));
+    if (existing?.content_hash === contentHash) {
+      return {...this.getAffiliateAsset(asset.id),no_op:true,impact:{draft_ids:[],count:0,queued:false}};
+    }
+    const revision=existing ? Number(existing.revision || 1)+1 : 1;
+    if (existing && !existing.content_hash) {
+      const legacySnapshot=affiliateAssetBusinessSnapshot(existing);
+      const legacyHash=sha256(JSON.stringify(legacySnapshot));
+      this.db.prepare(`INSERT OR IGNORE INTO affiliate_asset_versions(
+        id,affiliate_asset_id,revision,content_hash,snapshot_json,actor,created_at
+      ) VALUES (?,?,?,?,?,'migration_v72',?)`).run(
+        `asset_version_${sha256(`${asset.id}:1:${legacyHash}`).slice(0,24)}`,
+        asset.id,1,legacyHash,JSON.stringify(legacySnapshot),existing.created_at || timestamp);
+    }
     this.db.prepare(`INSERT INTO affiliate_assets(id, provider_account_id, provider, asset_type, product_category,
       scope_type, scope_key, destination_slug, area_key, route_key, entity_key, entity_name, provider_entity_id,
       title, description, cta_label, target_url, embed_config_json, language, priority, active, valid_from,
-      valid_until, source_updated_at, legacy_offer_id, created_at, updated_at, image_url, alt_text, price_text)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      valid_until, source_updated_at, legacy_offer_id, created_at, updated_at, image_url, alt_text, price_text, country_code,
+      revision,content_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET provider_account_id=excluded.provider_account_id, provider=excluded.provider,
         asset_type=excluded.asset_type, product_category=excluded.product_category, scope_type=excluded.scope_type,
         scope_key=excluded.scope_key, destination_slug=excluded.destination_slug, area_key=excluded.area_key,
@@ -4652,18 +6333,67 @@ export class Repository {
         cta_label=excluded.cta_label, target_url=excluded.target_url, embed_config_json=excluded.embed_config_json,
         image_url=excluded.image_url, alt_text=excluded.alt_text, price_text=excluded.price_text,
         language=excluded.language, priority=excluded.priority, active=excluded.active, valid_from=excluded.valid_from,
-        valid_until=excluded.valid_until, source_updated_at=excluded.source_updated_at, updated_at=excluded.updated_at`)
+        valid_until=excluded.valid_until, source_updated_at=excluded.source_updated_at, country_code=excluded.country_code,
+        revision=excluded.revision,content_hash=excluded.content_hash,updated_at=excluded.updated_at`)
       .run(asset.id, asset.providerAccountId, asset.provider, asset.assetType, asset.productCategory, asset.scopeType,
         asset.scopeKey, asset.destinationSlug, asset.areaKey, asset.routeKey, asset.entityKey, asset.entityName,
         asset.providerEntityId, asset.title, asset.description, asset.ctaLabel, asset.targetUrl,
         JSON.stringify(asset.embedConfig || {}), asset.language, asset.priority, asset.active ? 1 : 0, asset.validFrom,
         asset.validUntil, asset.sourceUpdatedAt, asset.legacyOfferId, timestamp, timestamp,
-        asset.imageUrl || "", asset.altText || "", asset.priceText || "");
-    this.db.prepare(`INSERT OR IGNORE INTO affiliate_asset_mappings(id, affiliate_asset_id, scope_type, scope_key, destination_slug, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)`)
+        asset.imageUrl || "", asset.altText || "", asset.priceText || "", asset.countryCode || "",revision,contentHash);
+    this.db.prepare("UPDATE affiliate_asset_mappings SET active=0,updated_at=? WHERE affiliate_asset_id=?").run(timestamp, asset.id);
+    this.db.prepare(`INSERT INTO affiliate_asset_mappings(id, affiliate_asset_id, scope_type, scope_key, destination_slug, created_at, active, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+      ON CONFLICT(affiliate_asset_id,scope_type,scope_key) DO UPDATE SET
+        destination_slug=excluded.destination_slug,active=1,updated_at=excluded.updated_at`)
       .run(`asset_mapping_${sha256(`${asset.id}:${asset.scopeType}:${asset.scopeKey}`).slice(0, 24)}`,
-        asset.id, asset.scopeType, asset.scopeKey || asset.destinationSlug || asset.productCategory, asset.destinationSlug, timestamp);
-    return this.getAffiliateAsset(asset.id);
+        asset.id, asset.scopeType, asset.scopeKey || asset.destinationSlug || asset.productCategory, asset.destinationSlug, timestamp, timestamp);
+    this.db.prepare(`INSERT INTO affiliate_asset_versions(id,affiliate_asset_id,revision,content_hash,snapshot_json,actor,created_at)
+      VALUES (?,?,?,?,?,?,?)`).run(`asset_version_${sha256(`${asset.id}:${revision}:${contentHash}`).slice(0,24)}`,
+        asset.id,revision,contentHash,JSON.stringify(snapshot),String(actor || "system").slice(0,200),timestamp);
+    const affected=new Set();
+    if (existing) for (const draftId of this.markCommercialRefreshForAsset(existing,timestamp,{queueRefresh:false})) affected.add(draftId);
+    for (const draftId of this.markCommercialRefreshForAsset(asset,timestamp,{queueRefresh})) affected.add(draftId);
+    return {...this.getAffiliateAsset(asset.id),no_op:false,impact:{draft_ids:[...affected],count:affected.size,queued:false}};
+  }
+
+  markCommercialRefreshForAsset(asset, timestamp = now(), {queueRefresh=false}={}) {
+    const scopeType=asset.scopeType || asset.scope_type;
+    const scopeKey=asset.scopeKey || asset.scope_key || "";
+    const destination = asset.destinationSlug || asset.destination_slug || "";
+    const country=normalizeCountryCode(asset.countryCode || asset.country_code || (scopeType === "COUNTRY" ? asset.scopeKey || asset.scope_key : ""));
+    const category=asset.productCategory || asset.product_category;
+    const rows=this.db.prepare(`SELECT cc.draft_id,cb.destination_slug,cb.canonical_json,ad.status AS draft_status
+      FROM commercial_compositions cc JOIN article_drafts ad ON ad.id=cc.draft_id
+      JOIN content_briefs cb ON cb.id=ad.brief_id`).all();
+    const affected=[];
+    for (const row of rows) {
+      const canonical=json(row.canonical_json,{});
+      if (destination && !["COUNTRY","CATEGORY","GLOBAL"].includes(scopeType) && row.destination_slug !== destination) continue;
+      if (scopeType === "COUNTRY" && normalizeCountryCode(canonical.country_code || "CN") !== country) continue;
+      const intents=this.db.prepare(`SELECT product_category,destination_slug,area_key,route_key,entity_key
+        FROM commercial_intents WHERE draft_id=? AND product_category=?`).all(row.draft_id,category);
+      const scopeMatches=intents.some((intent)=>{
+        if (["GLOBAL","CATEGORY","COUNTRY"].includes(scopeType)) return true;
+        if (scopeType === "DESTINATION") return intent.destination_slug === (destination || scopeKey);
+        if (scopeType === "AREA") return intent.area_key === (asset.areaKey || asset.area_key || scopeKey);
+        if (scopeType === "ROUTE") return intent.route_key === (asset.routeKey || asset.route_key || scopeKey);
+        if (scopeType === "ENTITY") return intent.entity_key === (asset.entityKey || asset.entity_key || scopeKey);
+        return false;
+      });
+      if (!scopeMatches) continue;
+      affected.push(row.draft_id);
+    }
+    const update=this.db.prepare(`UPDATE commercial_compositions SET refresh_required=1,
+      refresh_reason='affiliate_asset_inventory_changed',updated_at=? WHERE draft_id=?`);
+    for (const draftId of affected) {
+      update.run(timestamp,draftId);
+      // Asset writes only calculate impact and mark the commercial projection
+      // stale. Execution must go through the fingerprinted commercial
+      // delivery-refresh preflight so ownership, remote edits and scope remain
+      // explicit and auditable.
+    }
+    return affected;
   }
 
   getAffiliateAsset(assetId) {
@@ -4674,16 +6404,23 @@ export class Repository {
   listAffiliateAssets({ activeOnly = false, providerAccountId = null } = {}) {
     const clauses = [];
     const values = [];
-    if (activeOnly) { clauses.push("active=1 AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)"); values.push(now(), now()); }
+    if (activeOnly) { clauses.push("active=1 AND lifecycle_state='operational' AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)"); values.push(now(), now()); }
     if (providerAccountId) { clauses.push("provider_account_id=?"); values.push(providerAccountId); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-    return this.db.prepare(`SELECT * FROM affiliate_assets ${where} ORDER BY provider, active DESC, priority DESC, product_category, title`)
+    return this.db.prepare(`SELECT a.*,
+      (SELECT COUNT(DISTINCT cs.draft_id) FROM commercial_slots cs WHERE cs.affiliate_asset_id=a.id) AS adopted_article_count,
+      (SELECT COUNT(DISTINCT cs.draft_id) FROM commercial_slots cs JOIN wordpress_publications wp ON wp.draft_id=cs.draft_id
+        WHERE cs.affiliate_asset_id=a.id AND wp.status='synced') AS delivered_article_count,
+      (SELECT COUNT(*) FROM commercial_slots cs WHERE cs.affiliate_asset_id=a.id) AS slot_count
+      FROM affiliate_assets a ${where ? where.replaceAll(/\b(active|provider_account_id|lifecycle_state|valid_from|valid_until)\b/g,"a.$1") : ""}
+      ORDER BY a.provider, a.active DESC, a.priority DESC, a.product_category, a.title`)
       .all(...values).map((row) => ({ ...row, embed_config: json(row.embed_config_json, {}) }));
   }
 
-  listAffiliateAssetMappings() {
+  listAffiliateAssetMappings({ activeOnly = false } = {}) {
     return this.db.prepare(`SELECT m.*, a.title, a.provider, a.product_category, a.asset_type
       FROM affiliate_asset_mappings m JOIN affiliate_assets a ON a.id=m.affiliate_asset_id
+      ${activeOnly ? "WHERE m.active=1 AND a.active=1 AND a.lifecycle_state='operational'" : ""}
       ORDER BY m.destination_slug, m.scope_type, m.scope_key`).all();
   }
 
@@ -4963,10 +6700,87 @@ export class Repository {
   }
 
   activeOffersForDestination(destinationSlug) {
-    return this.db.prepare(`SELECT * FROM affiliate_assets
-      WHERE active=1 AND (destination_slug=? OR scope_type IN ('COUNTRY','CATEGORY','GLOBAL'))
-        AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)
-      ORDER BY priority DESC, product_category, title`).all(destinationSlug, now(), now());
+    // Preserve relevant ineligible rows so the composer can distinguish an
+    // asset gap from a disabled provider, stale campaign, or scope mismatch.
+    return this.db.prepare(`SELECT a.*,p.status AS provider_status,
+        COALESCE(m.scope_type,a.scope_type) AS effective_scope_type,
+        COALESCE(m.scope_key,a.scope_key) AS effective_scope_key,
+        COALESCE(m.destination_slug,a.destination_slug) AS effective_destination_slug,
+        m.id AS mapping_id
+      FROM affiliate_assets a
+      JOIN affiliate_provider_accounts p ON p.id=a.provider_account_id
+      LEFT JOIN affiliate_asset_mappings m ON m.affiliate_asset_id=a.id AND m.active=1
+      WHERE a.destination_slug=? OR m.destination_slug=?
+        OR (a.scope_type='DESTINATION' AND a.scope_key=?)
+        OR (m.scope_type='DESTINATION' AND m.scope_key=?)
+        OR a.scope_type IN ('COUNTRY','CATEGORY','GLOBAL')
+        OR m.scope_type IN ('COUNTRY','CATEGORY','GLOBAL')
+      ORDER BY a.priority DESC,a.product_category,a.title,m.scope_type,m.scope_key`)
+      .all(destinationSlug, destinationSlug, destinationSlug, destinationSlug)
+      .map((row) => ({ ...row, scope_type: row.effective_scope_type || row.scope_type,
+        scope_key: row.effective_scope_key || row.scope_key,
+        destination_slug: row.effective_destination_slug || row.destination_slug }));
+  }
+
+  updateAffiliateAsset(assetId,patch,{expectedRevision=null,actor="admin",queueRefresh=false}={}) {
+    const current=this.getAffiliateAsset(assetId);
+    if (!current) return null;
+    if (expectedRevision != null && Number(expectedRevision)!==Number(current.revision || 1)) {
+      throw conflictError(`Affiliate asset changed since this form was opened (expected revision ${expectedRevision}, current ${current.revision || 1}).`);
+    }
+    const allowed=new Set(["title","description","ctaLabel","cta_label","targetUrl","target_url","providerAccountId","provider_account_id",
+      "assetType","asset_type","productCategory","product_category","scopeType","scope_type","scopeKey","scope_key",
+      "destinationSlug","destination_slug","areaKey","area_key","routeKey","route_key","entityKey","entity_key",
+      "entityName","entity_name","providerEntityId","provider_entity_id","embedConfig","embed_config","language","priority",
+      "active","validFrom","valid_from","validUntil","valid_until","imageUrl","image_url","altText","alt_text","priceText","price_text","countryCode","country_code"]);
+    const unknown=Object.keys(patch || {}).filter((key)=>!allowed.has(key));
+    if (unknown.length) throw Object.assign(new Error(`Unsupported affiliate asset fields: ${unknown.join(", ")}`),{statusCode:400});
+    const providerId=patch.providerAccountId || patch.provider_account_id || current.provider_account_id;
+    const provider=this.getAffiliateProviderAccount(providerId);
+    if (!provider) throw Object.assign(new Error("Affiliate provider account does not exist."),{statusCode:400});
+    const normalizedInput={...current,embed_config:current.embed_config,...patch,id:assetId,
+      active:patch.active ?? Boolean(current.active),
+      providerAccountId:providerId,provider:provider.display_name};
+    return this.upsertAffiliateAsset(normalizeAffiliateAsset(normalizedInput,{id:provider.id,displayName:provider.display_name}),
+      {actor,queueRefresh});
+  }
+
+  affiliateAssetUsage(assetId,{limit=100,offset=0}={}) {
+    const asset=this.getAffiliateAsset(assetId);
+    if (!asset) return null;
+    const total=Number(this.db.prepare("SELECT COUNT(DISTINCT draft_id) AS count FROM commercial_slots WHERE affiliate_asset_id=?").get(assetId)?.count || 0);
+    const rows=this.db.prepare(`SELECT cs.draft_id,cs.slot_key,cs.component_type,cs.placement,cs.block_index,cs.strategy_version,
+      cs.affiliate_asset_revision,cs.affiliate_asset_content_hash,
+      ad.title,ad.revision AS draft_revision,cc.overlay_version,cc.refresh_required,cc.status AS commercial_status,
+      pc.status AS publish_status,pc.wordpress_post_id,wp.post_id,wp.status AS wordpress_status,wp.updated_at AS delivered_at,
+      wp.delivery_manifest_json,co.id AS opportunity_id
+      FROM commercial_slots cs JOIN article_drafts ad ON ad.id=cs.draft_id
+      LEFT JOIN commercial_compositions cc ON cc.draft_id=cs.draft_id
+      LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=cs.draft_id
+      LEFT JOIN wordpress_publications wp ON wp.draft_id=cs.draft_id
+      LEFT JOIN content_briefs cb ON cb.id=ad.brief_id
+      LEFT JOIN content_opportunities co ON co.candidate_id=cb.candidate_id AND co.approved_at IS NOT NULL
+      WHERE cs.affiliate_asset_id=? ORDER BY COALESCE(wp.updated_at,cc.updated_at,ad.updated_at) DESC LIMIT ? OFFSET ?`)
+      .all(assetId,Math.max(1,Math.min(500,Number(limit)||100)),Math.max(0,Number(offset)||0));
+    const items=rows.map((row)=>{
+      const manifest=json(row.delivery_manifest_json,{});
+      const deliveredSlots=manifest.commercial_slots || [];
+      const delivered=deliveredSlots.some((slot)=>slot.affiliate_asset_id===assetId && slot.slot_key===row.slot_key);
+      return {...row,asset_id:assetId,asset_revision:row.affiliate_asset_revision,
+        asset_content_hash:row.affiliate_asset_content_hash,
+        selected:true,legal_page:["valid","delivered"].includes(row.publish_status),publish_package:["valid","delivered"].includes(row.publish_status),
+        wordpress_stored:delivered || (row.wordpress_status === "synced" && row.post_id != null),
+        dom_verified:null,dom_verification_status:"unknown",delivery_evidence:delivered ? "wordpress_delivery_manifest" : "not_confirmed"};
+    });
+    return {asset,summary:{adopted_articles:total,delivered_articles:new Set(items.filter((item)=>item.wordpress_stored).map((item)=>item.draft_id)).size,
+      slot_count:Number(this.db.prepare("SELECT COUNT(*) AS count FROM commercial_slots WHERE affiliate_asset_id=?").get(assetId)?.count || 0)},
+      items,total,limit:Number(limit),offset:Number(offset)};
+  }
+
+  listAffiliateAssetVersions(assetId) {
+    return this.db.prepare(`SELECT id,affiliate_asset_id,revision,content_hash,snapshot_json,actor,created_at
+      FROM affiliate_asset_versions WHERE affiliate_asset_id=? ORDER BY revision DESC`).all(assetId)
+      .map((row)=>({...row,snapshot:json(row.snapshot_json,{})}));
   }
 
   saveCommercialComposition(draftId, composition) {
@@ -4974,8 +6788,28 @@ export class Repository {
     const compositionId = `composition_${sha256(draftId).slice(0, 24)}`;
     const draft = this.db.prepare("SELECT revision, content_hash FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) throw new Error(`Article draft ${draftId} not found.`);
-    const overlayVersion = `overlay_${sha256(`${draftId}:${draft.revision}:${draft.content_hash}:${this.strategyVersion}`).slice(0, 24)}`;
+    const page = this.db.prepare("SELECT payload_json,contract_checksum FROM frontend_page_compositions WHERE draft_id=?").get(draftId) || {};
+    const editorialPageHash = sha256(page.payload_json || "{}");
+    const selectedAssetIds=[...new Set([...(composition.assetIds || []),...(composition.slots || [])
+      .map((slot)=>slot.affiliate_asset_id)].filter(Boolean))];
+    const selectedAssetVersions=selectedAssetIds.map((assetId)=>this.db.prepare(`SELECT id,revision,content_hash,target_url,title,
+      description,cta_label,provider,asset_type,product_category,scope_type,scope_key,active,valid_from,valid_until
+      FROM affiliate_assets WHERE id=?`).get(assetId)).filter(Boolean);
+    const assetInventoryHash = sha256(JSON.stringify({
+      intents:(composition.diagnostics?.intents || []).map((item) => ({
+        intent_id:item.intent_id,selected_asset_id:item.selected_asset_id,candidate_count:item.candidateCount,
+        eligible_count:item.eligibleCount,exclusions:item.exclusions,
+      })),
+      selected_assets:selectedAssetVersions,
+    }));
+    const commercialStrategyVersion = composition.strategyVersion || this.strategyVersion;
+    const readingLayoutVersion = composition.readingLayoutVersion || "";
+    const overlayVersion = `overlay_${sha256(`${draftId}:${draft.revision}:${draft.content_hash}:${editorialPageHash}:${assetInventoryHash}:${commercialStrategyVersion}:${readingLayoutVersion}:${page.contract_checksum || ""}`).slice(0, 24)}`;
     transaction(this.db, () => {
+      const prior = this.db.prepare("SELECT * FROM commercial_compositions WHERE draft_id=?").get(draftId);
+      if (prior?.overlay_version) this.db.prepare(`INSERT OR IGNORE INTO commercial_overlay_history(id,draft_id,overlay_version,snapshot_json,created_at)
+        VALUES (?,?,?,?,?)`).run(`overlay_history_${sha256(`${draftId}:${prior.overlay_version}`).slice(0,24)}`,
+          draftId,prior.overlay_version,JSON.stringify(prior),timestamp);
       this.db.prepare("DELETE FROM commercial_slots WHERE draft_id=?").run(draftId);
       this.db.prepare("DELETE FROM affiliate_opportunities WHERE draft_id=?").run(draftId);
       this.db.prepare("DELETE FROM commercial_intents WHERE draft_id=?").run(draftId);
@@ -4985,15 +6819,18 @@ export class Repository {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(intent.id, draftId, intent.blockIndex, intent.blockKey, intent.intentType, intent.productCategory,
           intent.destinationSlug, intent.areaKey, intent.routeKey, intent.entityKey, intent.intentStrength,
-          intent.decisionStage, intent.recommendedComponent, intent.reason, timestamp, timestamp);
+          intent.decisionStage, intent.recommendedComponent, intent.reason || intent.relevanceReason || null, timestamp, timestamp);
       for (const slot of composition.slots || []) this.db.prepare(`INSERT INTO commercial_slots(
         id, draft_id, intent_id, affiliate_asset_id, slot_key, component_type, placement, block_index,
-        strategy_version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        strategy_version, affiliate_asset_revision, affiliate_asset_content_hash, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(`commercial_slot_${sha256(`${draftId}:${slot.slot_key}`).slice(0, 24)}`, draftId,
           (composition.intents || []).find((intent) => intent.blockIndex === slot.block_index && intent.productCategory === slot.product_category)?.id || null,
           slot.affiliate_asset_id, slot.slot_key, slot.component_type, slot.placement, slot.block_index,
-          this.strategyVersion, timestamp, timestamp);
+          this.strategyVersion,
+          selectedAssetVersions.find((asset)=>asset.id===slot.affiliate_asset_id)?.revision ?? null,
+          selectedAssetVersions.find((asset)=>asset.id===slot.affiliate_asset_id)?.content_hash || "",
+          timestamp, timestamp);
       for (const opportunity of composition.opportunities || []) this.db.prepare(`INSERT INTO affiliate_opportunities(
         id, draft_id, intent_id, provider, product_category, scope_type, scope_key, score, factors_json,
         reason, status, created_at, updated_at
@@ -5002,19 +6839,29 @@ export class Repository {
           opportunity.scopeType, opportunity.scopeKey, opportunity.score, JSON.stringify(opportunity.factors), opportunity.reason, timestamp, timestamp);
       this.db.prepare(`INSERT INTO commercial_compositions(id, draft_id, publishable_body_markdown, slots_json, offer_ids_json,
         disclosure_text, status, created_at, updated_at, asset_ids_json, commercial_blocks_json,
-        content_blocks_json, strategy_version, draft_revision, draft_content_hash, overlay_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        content_blocks_json, strategy_version, draft_revision, draft_content_hash, overlay_version,
+        outcome,reason_code,diagnostics_json,manifest_json,editorial_page_hash,asset_inventory_hash,
+        reading_layout_version,contract_checksum,refresh_required,refresh_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '')
         ON CONFLICT(draft_id) DO UPDATE SET publishable_body_markdown=excluded.publishable_body_markdown,
           slots_json=excluded.slots_json, offer_ids_json=excluded.offer_ids_json, disclosure_text=excluded.disclosure_text,
           status=excluded.status, updated_at=excluded.updated_at, asset_ids_json=excluded.asset_ids_json,
           commercial_blocks_json=excluded.commercial_blocks_json, content_blocks_json=excluded.content_blocks_json,
           strategy_version=excluded.strategy_version, draft_revision=excluded.draft_revision,
-          draft_content_hash=excluded.draft_content_hash, overlay_version=excluded.overlay_version`)
+          draft_content_hash=excluded.draft_content_hash, overlay_version=excluded.overlay_version,
+          outcome=excluded.outcome,reason_code=excluded.reason_code,diagnostics_json=excluded.diagnostics_json,
+          manifest_json=excluded.manifest_json,editorial_page_hash=excluded.editorial_page_hash,
+          asset_inventory_hash=excluded.asset_inventory_hash,reading_layout_version=excluded.reading_layout_version,
+          contract_checksum=excluded.contract_checksum,refresh_required=0,refresh_reason=''`)
         .run(compositionId, draftId, composition.publishableBodyMarkdown, JSON.stringify(composition.slots),
           JSON.stringify(composition.offerIds), composition.disclosureText, composition.status, timestamp, timestamp,
           JSON.stringify(composition.assetIds || []), JSON.stringify(composition.commercialBlocks || []),
-          JSON.stringify(composition.contentBlocks || []), this.strategyVersion, draft.revision, draft.content_hash, overlayVersion);
-      this.db.prepare("UPDATE article_drafts SET status='commercial_ready', updated_at=? WHERE id=?").run(timestamp, draftId);
+          JSON.stringify(composition.contentBlocks || []), commercialStrategyVersion, draft.revision, draft.content_hash, overlayVersion,
+          composition.outcome || (composition.status === "composed" ? "inserted" : "intentional_noop"), composition.reasonCode || "",
+          JSON.stringify(composition.diagnostics || {}), JSON.stringify(composition.manifest || {}), editorialPageHash,
+          assetInventoryHash, readingLayoutVersion, page.contract_checksum || "");
+      this.db.prepare(`UPDATE article_drafts SET status=CASE WHEN status='wordpress_draft' THEN status ELSE 'commercial_ready' END,
+        updated_at=? WHERE id=?`).run(timestamp, draftId);
     });
     this.enqueueAffiliateQueueFromComposition(composition);
   }
@@ -5025,7 +6872,8 @@ export class Repository {
     let provider;
     try { provider = this.ensureTripManualProvider(); }
     catch (error) { return { created: 0, suppressed: opportunities.length, errors: [error.message] }; }
-    const threshold = Number(this.contentConfig.affiliateOpportunityThreshold || 70);
+    const threshold = Number(this.contentConfig.affiliateLinkTaskThreshold
+      ?? this.contentConfig.affiliateOpportunityThreshold ?? 70);
     let created = 0; let suppressed = 0; const errors = [];
     for (const opportunity of opportunities) {
       try {
@@ -5056,7 +6904,7 @@ export class Repository {
       WHERE tc.id=?
     `).get(candidateId);
     if (!row) return null;
-    const opportunity = this.db.prepare("SELECT lifecycle_state FROM content_opportunities WHERE candidate_id=? ORDER BY updated_at DESC LIMIT 1").get(candidateId);
+    const opportunity = this.db.prepare("SELECT id,lifecycle_state FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL ORDER BY (status='producing') DESC,updated_at DESC LIMIT 1").get(candidateId);
     if (opportunity && !["approved","producing"].includes(opportunity.lifecycle_state)) return null;
     if (this.db.prepare("SELECT id FROM jobs WHERE entity_id IN (?,?,?) AND status IN ('queued','running') LIMIT 1")
       .get(candidateId,row.brief_id || '',row.draft_id || '')) return null;
@@ -5065,65 +6913,127 @@ export class Repository {
       ORDER BY updated_at DESC LIMIT 1`).get(row.draft_id);
     if (failed) {
       if (!isOperationalFailureRetryable(failed)) return null;
-      this.enqueue(failed.type,row.draft_id,{dedupeKey:`manual-stage:${failed.type}:${row.draft_id}`});
+      this.enqueue(failed.type,row.draft_id,{dedupeKey:`manual-stage:${opportunity?.id}:${failed.type}:${row.draft_id}`,productionOwnerOpportunityId:opportunity?.id || null});
       return failed.type;
     }
     if (!row.brief_id) {
       const stage = this.retryContentStage(candidateId) || "assemble_editorial";
-      this.enqueue(stage,candidateId,{dedupeKey:`manual-stage:${stage}:${candidateId}`});
+      this.enqueue(stage,candidateId,{dedupeKey:`manual-stage:${opportunity?.id}:${stage}:${candidateId}`,productionOwnerOpportunityId:opportunity?.id || null});
       return stage;
     }
     if (!row.draft_id) {
       this.db.prepare("UPDATE content_briefs SET status='ready', last_error=NULL, updated_at=? WHERE id=?").run(now(), row.brief_id);
       const stage = this.retryContentStage(candidateId) || "generate_draft";
-      this.enqueue(stage,row.brief_id,{dedupeKey:`manual-stage:${stage}:${row.brief_id}`});
+      this.enqueue(stage,row.brief_id,{dedupeKey:`manual-stage:${opportunity?.id}:${stage}:${row.brief_id}`,productionOwnerOpportunityId:opportunity?.id || null});
       return stage;
     }
     if (contractAware && (!this.getFrontendPageComposition(row.draft_id)?.current || row.frontend_page_status === "stale_contract" || row.publish_composition_status === "stale_contract")) {
-      this.enqueue("compose_frontend_page", row.draft_id);
+      this.enqueue("compose_frontend_page", row.draft_id,{productionOwnerOpportunityId:opportunity?.id || null});
       return "compose_frontend_page";
     }
     if (row.qa_passed && !row.commercial_status) {
-      this.enqueue("compose_commercial", row.draft_id);
+      this.enqueue("compose_commercial", row.draft_id,{productionOwnerOpportunityId:opportunity?.id || null});
       return "compose_commercial";
     }
     if (row.qa_passed && row.commercial_status && !row.publish_composition_status) {
       const jobType = contractAware ? "compose_publish_page" : "push_wordpress_draft";
-      this.enqueue(jobType, row.draft_id);
+      this.enqueue(jobType, row.draft_id,{productionOwnerOpportunityId:opportunity?.id || null});
       return jobType;
     }
     if (row.qa_passed && row.wordpress_status === "failed") {
       const jobType = contractAware && row.publish_composition_status === "stale_contract" ? "compose_publish_page" : "push_wordpress_draft";
-      this.enqueue(jobType, row.draft_id);
+      this.enqueue(jobType, row.draft_id,{productionOwnerOpportunityId:opportunity?.id || null});
       return jobType;
     }
     if (!row.qa_passed) {
       const pkg = this.getDraftPackage(row.draft_id);
       const stage = !pkg.review ? "review_draft" : qualityRepairStage(pkg.review.issues);
       if (!stage) return null;
-      this.enqueue(stage, row.draft_id, {dedupeKey:`manual-stage:${stage}:${row.draft_id}`});
+      this.enqueue(stage, row.draft_id, {dedupeKey:`manual-stage:${opportunity?.id}:${stage}:${row.draft_id}`,productionOwnerOpportunityId:opportunity?.id || null});
       return stage;
     }
     return null;
   }
 
-  automaticQualityRepairState(draftId, issues = [], { enqueue = false, maxAttempts = 2 } = {}) {
-    const draft = this.db.prepare("SELECT id,revision FROM article_drafts WHERE id=?").get(draftId);
+  automaticQualityRepairState(draftId, issues = [], { enqueue = false, maxAttempts = 2, productionOwnerOpportunityId = null,
+    ignoreActiveJobId = null, recoveryRunId = null } = {}) {
+    const draft = this.db.prepare("SELECT id,brief_id,revision FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) return { eligible: false, queued: false, stage: null, attempts: 0, maxAttempts, reason: "draft_missing" };
-    const stage = qualityRepairStage(issues);
-    const attempts = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs
-      WHERE entity_id=? AND dedupe_key LIKE 'auto-quality-repair:%'`).get(draftId)?.count || 0);
+    const recentFailedReviews=this.db.prepare(`SELECT issues_json FROM quality_reviews
+      WHERE draft_id=? AND passed=0 ORDER BY created_at DESC,id DESC LIMIT 2`).all(draftId)
+      .map((row)=>json(row.issues_json,[]));
+    const currentCodes=new Set(issues.filter((issue)=>issue?.severity!=='warning').map((issue)=>String(issue?.code || '').toUpperCase()));
+    const previousCodes=new Set((recentFailedReviews[1] || []).filter((issue)=>issue?.severity!=='warning')
+      .map((issue)=>String(issue?.code || '').toUpperCase()));
+    const repeatedBlockerCodes=[...currentCodes].filter((code)=>previousCodes.has(code));
+    const stage = qualityRepairStage(issues,{repeatedBlockerCodes});
+    const entityId = stage === "generate_draft" ? draft.brief_id : draftId;
+    // The safety budget belongs to one explicit recovery run. Historical
+    // attempts from an earlier deployment or operator recovery must not make a
+    // newly diagnosed, current revision permanently unrecoverable.
+    const attempts = recoveryRunId
+      ? Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs
+          WHERE entity_id IN (?,?) AND dedupe_key LIKE 'auto-quality-repair:%' AND recovery_run_id=?`)
+        .get(draftId,draft.brief_id,recoveryRunId)?.count || 0)
+      : Number(this.db.prepare(`SELECT COUNT(*) AS count FROM jobs
+          WHERE entity_id IN (?,?) AND dedupe_key LIKE 'auto-quality-repair:%' AND recovery_run_id IS NULL`)
+        .get(draftId,draft.brief_id)?.count || 0);
     if (!stage) return { eligible: false, queued: false, stage: null, attempts, maxAttempts, reason: "manual_media_or_no_blocker" };
     if (attempts >= maxAttempts) return { eligible: false, queued: false, stage, attempts, maxAttempts, reason: "attempt_limit_reached" };
-    const active = this.db.prepare("SELECT id,type,status FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1").get(draftId);
+    const active = this.db.prepare(`SELECT id,type,status FROM jobs WHERE entity_id IN (?,?) AND status IN ('queued','running')
+      AND (? IS NULL OR id<>?) LIMIT 1`).get(draftId,draft.brief_id,ignoreActiveJobId,ignoreActiveJobId);
     if (active) return { eligible: true, queued: false, stage, attempts, maxAttempts, reason: "job_already_active", activeJob: active };
-    const dedupeKey = `auto-quality-repair:${stage}:${draftId}:r${draft.revision}`;
+    const dedupeKey = `auto-quality-repair:${recoveryRunId ? `${recoveryRunId}:` : ""}${stage}:${draftId}:r${draft.revision}`;
     const attempted = this.db.prepare("SELECT id,status FROM jobs WHERE dedupe_key=? LIMIT 1").get(dedupeKey);
     if (attempted) return { eligible: false, queued: false, stage, attempts, maxAttempts, reason: "revision_already_attempted" };
     if (!enqueue) return { eligible: true, queued: false, stage, attempts, maxAttempts, reason: "ready_to_queue" };
-    const jobId = this.enqueue(stage, draftId, { dedupeKey });
+    const jobId = this.enqueue(stage, entityId, { dedupeKey, productionOwnerOpportunityId, recoveryRunId });
     return { eligible: true, queued: Boolean(jobId), stage, jobId, attempts: attempts + (jobId ? 1 : 0), maxAttempts,
       reason: jobId ? "queued" : "queue_rejected" };
+  }
+
+  qualityRegenerationFeedback(briefId) {
+    const current = this.db.prepare(`SELECT ad.id,ad.revision,ad.content_hash,qr.score,qr.issues_json,qr.checks_json
+      FROM article_drafts ad
+      LEFT JOIN quality_reviews qr ON qr.id=(SELECT id FROM quality_reviews current_review
+        WHERE current_review.draft_id=ad.id AND current_review.draft_content_hash=ad.content_hash
+        ORDER BY current_review.created_at DESC,current_review.id DESC LIMIT 1)
+      WHERE ad.brief_id=?`).get(briefId);
+    if (!current?.content_hash || current.score == null) return null;
+    const reviewRows = this.db.prepare(`SELECT issues_json FROM quality_reviews
+      WHERE draft_id=? AND passed=0 ORDER BY created_at DESC,id DESC LIMIT 6`).all(current.id);
+    const currentIssues = json(current.issues_json, []);
+    const issues = uniqueByKey([...currentIssues, ...reviewRows.flatMap((row) => json(row.issues_json, []))]
+      .filter((issue) => issue?.severity !== 'warning')
+      .map((issue) => ({ code:String(issue.code || 'QUALITY_BLOCKER'), message:String(issue.message || '').slice(0, 1_500),
+        affected_count:Number(issue.affected_count || 0) || undefined })),
+      (issue) => `${issue.code}:${issue.message}`).slice(0, 16);
+    if (!issues.length) return null;
+    return {
+      base_draft_id: current.id,
+      base_draft_revision: current.revision,
+      base_content_hash: current.content_hash,
+      quality_score: current.score,
+      blockers: issues,
+      rewrite_strategy: [
+        'Rebuild the complete draft from the frozen Writing Packet; do not reuse failed prose.',
+        'Use at least one approved claim key in every evidence-bearing planned section and map it honestly in evidence_ledger.',
+        'Delete every unsupported detail identified by the audit; never replace it with a newly invented price, time, route, venue, or recommendation.',
+        'Synthesize facts into traveler decisions, conditions, consequences, and trade-offs instead of listing isolated database rows.',
+        'Use varied section structures suited to each editorial job; do not repeat one heading-and-list rhythm throughout the article.',
+        'Return plain reader-facing Markdown without tables, bold markers, inline-code notation, or internal implementation labels.',
+      ],
+    };
+  }
+
+  reconcileDeferredQualityRepair(job) {
+    if (!job || !["generate_visuals", "compose_frontend_page", "review_draft"].includes(job.type)) return null;
+    const pkg = this.getDraftPackage(job.entity_id);
+    if (!pkg?.review || pkg.review.passed) return null;
+    return this.automaticQualityRepairState(job.entity_id, pkg.review.issues || [], {
+      enqueue: true,
+      productionOwnerOpportunityId: job.production_owner_opportunity_id || null,
+    });
   }
 
   enqueueStartupReconciliation({ wordpressEnabled = false, contractAware = false } = {}) {
@@ -5173,6 +7083,11 @@ export class Repository {
     for (const row of this.db.prepare("SELECT slug FROM destinations").all()) {
       if (!researchSlugs.has(row.slug)) this.enqueue("rebuild_topics", row.slug);
     }
+    // A process restart may resume already queued durable Jobs, but must not
+    // synthesize retries for historical production records. Operators recover
+    // an exact stage from Content Workbench. This opt-in remains available for
+    // controlled maintenance windows only.
+    if (this.contentConfig.productionStartupResumeEnabled !== true) return;
     this.reconcileApprovedOpportunities();
     // Strategy upgrades must re-check historical failures with the current rules before
     // spending a bounded repair attempt. Old reviews may contain false positives from a
@@ -5681,7 +7596,7 @@ export class Repository {
   enqueueCommercialForDestination(destinationSlug) {
     const rows = this.db.prepare(`
       SELECT ad.id FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id
-      WHERE cb.destination_slug=? AND ad.status IN ('ready_for_wordpress','commercial_ready')
+      WHERE cb.destination_slug=? AND ad.status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')
     `).all(destinationSlug);
     for (const row of rows) this.enqueue("compose_commercial", row.id);
     return rows.length;
@@ -5745,7 +7660,7 @@ export class Repository {
     return { factId, action, status: hidden ? "hidden" : "visible", destinationSlug: fact.destination_slug };
   }
 
-  authorizedSourceAssetsForBrief(brief) {
+  authorizedSourceAssetsForBrief(brief, { packet = null } = {}) {
     const claimKeys = json(brief.evidence_ledger_json, []);
     const supportingFacts = this.knowledgeForDestination(brief.destination_slug)
       .filter((fact) => !claimKeys.length || claimKeys.includes(fact.normalized_key));
@@ -5753,27 +7668,47 @@ export class Repository {
       .flatMap((fact) => fact.evidence || [])
       .map((evidence) => evidence.source_id)
       .filter(Boolean))];
-    if (!sourceIds.length) return [];
-    const placeholders = sourceIds.map(() => "?").join(",");
+    const selectedAssetIds=packet?.context?.version===2
+      ? uniqueStrings((packet.context.authorized_source_assets || []).map(asset=>asset.id || asset.source_asset_id),100) : [];
+    if (!sourceIds.length && !selectedAssetIds.length) return [];
+    const scopes=[];
+    const parameters=[];
+    if (selectedAssetIds.length) {
+      scopes.push(`sa.id IN (${selectedAssetIds.map(() => "?").join(",")})`);
+      parameters.push(...selectedAssetIds);
+    }
+    if (sourceIds.length) {
+      scopes.push(`sa.id IN (SELECT current.id FROM current_source_assets current
+        WHERE current.source_id IN (${sourceIds.map(() => "?").join(",")}))`);
+      parameters.push(...sourceIds);
+    }
     return this.db.prepare(`
       SELECT sa.id, sa.source_id, sa.remote_url, sa.local_path, sa.mime_type, sa.alt_text, sa.position,
-        sa.storage_status,sa.original_bytes_status,sa.language_status,sa.nearby_text,sa.caption_text,
-        s.title AS source_title,
+        sa.width,sa.height,sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
+        sa.original_sha256,sa.capture_version,saa.analysis_status,saa.asset_kind,saa.text_regions_json,saa.photo_regions_json,
+        saa.entities_json,saa.editor_ui_regions_json,saa.primary_subjects_json,saa.language_by_region_json,
+        saa.reader_text_present,saa.confidence AS analysis_confidence,saa.analysis_version,saa.prompt_version,
+        saa.source_sha256 AS analysis_source_sha256,
+        sa.authorization_status AS asset_authorization_status,sa.publishable AS asset_publishable,
+        s.title AS source_title,s.authorization_status AS source_authorization_status,s.publishable AS source_publishable,
+        COALESCE((SELECT COALESCE(NULLIF(c.canonical_subject,''),c.subject)
+          FROM claims c WHERE c.source_id=sa.source_id AND EXISTS (
+            SELECT 1 FROM json_each(c.evidence_span_ids_json) ids
+            JOIN evidence_spans es ON es.id=ids.value WHERE es.asset_id=sa.id
+          ) ORDER BY c.created_at ASC,c.id ASC LIMIT 1), '') AS evidence_subject,
         COALESCE((SELECT group_concat(canonical_subject || ' ' || subject || ' ' || predicate || ' ' || value_text, ' ')
           FROM claims c WHERE c.source_id=sa.source_id AND EXISTS (
             SELECT 1 FROM json_each(c.evidence_span_ids_json) ids
             JOIN evidence_spans es ON es.id=ids.value WHERE es.asset_id=sa.id
           )), '') AS evidence_text
       FROM source_assets sa JOIN sources s ON s.id=sa.source_id
-      WHERE sa.kind='image' AND s.adapter='xiaohongshu'
-        AND s.authorization_status='owner_confirmed' AND s.publishable=1
-        AND sa.authorization_status='owner_confirmed' AND sa.publishable=1
-        AND sa.storage_status='saved' AND sa.local_path<>''
-        AND sa.original_bytes_status IN ('saved_original','saved_unknown')
-        AND sa.source_id IN (${placeholders})
+      LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id
+      WHERE sa.kind='image' AND sa.storage_status='saved' AND sa.local_path<>''
+        AND sa.original_bytes_status='saved_original' AND sa.durability_status='ORIGINAL_STORED'
+        AND (${scopes.join(" OR ")})
       ORDER BY s.captured_at DESC, sa.position ASC
-      LIMIT 12
-    `).all(...sourceIds);
+      LIMIT 160
+    `).all(...parameters).map(hydrateSourceAssetAnalysis);
   }
 
   retrySource(sourceId) {
@@ -6004,14 +7939,14 @@ export class Repository {
       SUM(durability_status='ORIGINAL_STORED') AS stored,
       SUM(repair_status IN ('server_recovery_pending','server_recovery_running')) AS server_pending,
       SUM(repair_status='browser_repair_required') AS browser_pending,
-      SUM(durability_status='UNAVAILABLE' OR repair_status='unavailable') AS unavailable FROM source_assets`).get();
+      SUM(durability_status='UNAVAILABLE' OR repair_status='unavailable') AS unavailable FROM current_source_assets`).get();
     const experience=this.db.prepare(`SELECT COUNT(*) AS eligible,
       SUM(EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
         AND er.capture_version=s.capture_version AND er.degraded=0)) AS completed,
       SUM(NOT EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded'
         AND er.capture_version=s.capture_version AND er.degraded=0)
-        AND NOT EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')) AS pending,
-      SUM(EXISTS (SELECT 1 FROM source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')) AS blocked
+        AND NOT EXISTS (SELECT 1 FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')) AS pending,
+      SUM(EXISTS (SELECT 1 FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status<>'ORIGINAL_STORED')) AS blocked
       FROM sources s WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')`).get();
     const failure=this.db.prepare(`SELECT COUNT(*) AS total,
       SUM(status='active' AND retry_safe=1) AS retry_eligible FROM failure_lessons`).get();
@@ -6069,7 +8004,7 @@ export class Repository {
     return false;
   }
 
-  resolveKnowledgeConflict(factId, preferredValue, note = "") {
+  resolveKnowledgeConflict(factId, preferredValue, note = "", resolutionType = "preferred_value") {
     const fact = this.db.prepare(`
       SELECT k.id, k.normalized_key, k.consensus_status, d.slug AS destination_slug
       FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id WHERE k.id=?
@@ -6077,16 +8012,17 @@ export class Repository {
     if (!fact || fact.consensus_status !== "conflicted") return null;
     const value = String(preferredValue || "").trim().slice(0, 2_000);
     if (!value) throw new Error("A confirmed knowledge value is required to resolve a conflict.");
+    if (!["preferred_value", "coexist_scope"].includes(resolutionType)) throw new Error("Unknown knowledge resolution type.");
     const timestamp = now();
     this.db.prepare(`
-      INSERT INTO knowledge_resolutions(id, destination_slug, normalized_key, status, preferred_value, note, resolved_at, created_at, updated_at)
-      VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?, ?)
+      INSERT INTO knowledge_resolutions(id, destination_slug, normalized_key, status, preferred_value, note, resolved_at, created_at, updated_at,resolution_type)
+      VALUES (?, ?, ?, 'resolved', ?, ?, ?, ?, ?,?)
       ON CONFLICT(destination_slug, normalized_key) DO UPDATE SET status='resolved', preferred_value=excluded.preferred_value,
-        note=excluded.note, resolved_at=excluded.resolved_at, updated_at=excluded.updated_at
+        note=excluded.note, resolved_at=excluded.resolved_at, updated_at=excluded.updated_at,resolution_type=excluded.resolution_type
     `).run(`resolution_${sha256(`${fact.destination_slug}:${fact.normalized_key}`).slice(0, 24)}`,
-      fact.destination_slug, fact.normalized_key, value, String(note || "").trim().slice(0, 1_000), timestamp, timestamp, timestamp);
+      fact.destination_slug, fact.normalized_key, value, String(note || "").trim().slice(0, 1_000), timestamp, timestamp, timestamp,resolutionType);
     this.rebuildTopicCandidates(fact.destination_slug);
-    return { factId, destinationSlug: fact.destination_slug, normalizedKey: fact.normalized_key, preferredValue: value };
+    return { factId, destinationSlug: fact.destination_slug, normalizedKey: fact.normalized_key, preferredValue: value,resolutionType };
   }
 
   decideClaimReviewCase(caseId, decision, note = "") {
@@ -6104,31 +8040,144 @@ export class Repository {
     return { id: caseId, status: decision, destinationSlug: row.destination_slug };
   }
 
+  knowledgeSummary({ destination = "" } = {}) {
+    const destinationClause = destination ? " AND d.slug=?" : "";
+    const values = destination ? [destination] : [];
+    const totals = this.db.prepare(`SELECT COUNT(*) AS facts,
+      COUNT(DISTINCT CASE WHEN k.entity_key<>'' THEN 'entity:'||k.entity_key
+        ELSE 'subject:'||lower(trim(COALESCE(NULLIF(k.canonical_subject,''),k.subject))) END) AS subjects,
+      SUM(CASE WHEN k.consensus_status='corroborated' THEN 1 ELSE 0 END) AS corroborated,
+      SUM(CASE WHEN k.consensus_status='single_source' THEN 1 ELSE 0 END) AS single_source,
+      SUM(CASE WHEN k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved' THEN 1 ELSE 0 END) AS strict_conflicts,
+      SUM(CASE WHEN kr.status='resolved' THEN 1 ELSE 0 END) AS manually_resolved
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE k.visibility_status='visible'${destinationClause}`).get(...values);
+    const destinations = this.db.prepare(`SELECT d.slug,d.name,COUNT(*) AS facts,
+      COUNT(DISTINCT CASE WHEN k.entity_key<>'' THEN 'entity:'||k.entity_key
+        ELSE 'subject:'||lower(trim(COALESCE(NULLIF(k.canonical_subject,''),k.subject))) END) AS subjects
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      WHERE k.visibility_status='visible' GROUP BY d.id,d.slug,d.name ORDER BY d.name`).all();
+    const themes = this.db.prepare(`SELECT ${knowledgeThemeSql("k")} AS theme,COUNT(*) AS count
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      WHERE k.visibility_status='visible'${destinationClause} GROUP BY theme ORDER BY count DESC`).all(...values);
+    const evidence = this.db.prepare(`SELECT COUNT(DISTINCT json_extract(e.value,'$.source_id')) AS sources
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id,json_each(k.evidence_json) e
+      WHERE k.visibility_status='visible'${destinationClause}`).get(...values);
+    const claimReviews = this.db.prepare(`SELECT COUNT(*) AS count FROM claim_review_cases
+      WHERE status='pending'${destination ? " AND destination_slug=?" : ""}`).get(...values).count;
+    const verificationJobs=this.db.prepare(`SELECT COUNT(*) AS count FROM knowledge_verification_jobs
+      WHERE status<>'completed'${destination?" AND destination_slug=?":""}`).get(...values).count;
+    const repairJobs=destination
+      ? this.db.prepare(`SELECT COUNT(*) AS count FROM claim_repair_jobs cr JOIN claims c ON c.id=cr.claim_id
+          JOIN structured_sources ss ON ss.source_id=c.source_id WHERE cr.status<>'completed' AND ss.destination_slug=?`).get(destination).count
+      : this.db.prepare("SELECT COUNT(*) AS count FROM claim_repair_jobs WHERE status<>'completed'").get().count;
+    const automatic=this.db.prepare(`SELECT COUNT(*) AS count FROM knowledge_resolution_events
+      WHERE resolution_state LIKE 'AUTO_%'${destination?" AND destination_slug=?":""}`).get(...values).count;
+    const entityReviews = this.listEntityMergeCandidates("pending")
+      .filter((item) => !destination || item.destination_slug === destination).length;
+    return {
+      destination: destination || null,
+      totals: {
+        facts: Number(totals.facts || 0), subjects: Number(totals.subjects || 0),
+        independentSources: Number(evidence.sources || 0), strictConflicts: Number(totals.strict_conflicts || 0),
+        pendingClaimReviews: Number(claimReviews || 0), pendingEntityReviews: Number(entityReviews || 0),
+        pendingManualReview:Number(claimReviews||0)+Number(entityReviews||0),
+        automaticResolutions:Number(automatic||0),verificationNeeded:Number(verificationJobs||0),repairNeeded:Number(repairJobs||0),
+      },
+      consensus: { corroborated: Number(totals.corroborated || 0), singleSource: Number(totals.single_source || 0),
+        manuallyResolved: Number(totals.manually_resolved || 0) },
+      destinations, themes,
+    };
+  }
+
+  listKnowledgeSubjects({ destination = "", search = "", limit = 50, cursor = "" } = {}) {
+    const clauses = ["k.visibility_status='visible'"];
+    const values = [];
+    if (destination) { clauses.push("d.slug=?"); values.push(destination); }
+    if (search) { clauses.push("lower(COALESCE(NULLIF(k.canonical_subject,''),k.subject)) LIKE ?"); values.push(`%${search.toLowerCase()}%`); }
+    const pageSize = Math.max(1, Math.min(100, Number(limit) || 50));
+    const offset = Math.max(0, Number.parseInt(cursor, 10) || 0);
+    const rows = this.db.prepare(`SELECT d.slug AS destination_slug,d.name AS destination_name,
+      CASE WHEN k.entity_key<>'' THEN 'entity:'||k.entity_key
+        ELSE 'subject:'||lower(trim(COALESCE(NULLIF(k.canonical_subject,''),k.subject))) END AS subject_key,
+      COALESCE(NULLIF(k.canonical_subject,''),k.subject) AS subject,k.entity_type,k.granularity,
+      COUNT(*) AS fact_count,MAX(k.updated_at) AS updated_at,
+      SUM(CASE WHEN k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved' THEN 1 ELSE 0 END) AS conflict_count,
+      SUM(CASE WHEN ${knowledgeThemeSql("k")}='planning' THEN 1 ELSE 0 END) AS planning_count,
+      SUM(CASE WHEN ${knowledgeThemeSql("k")}='transport' THEN 1 ELSE 0 END) AS transport_count,
+      SUM(CASE WHEN ${knowledgeThemeSql("k")}='cost' THEN 1 ELSE 0 END) AS cost_count,
+      SUM(CASE WHEN ${knowledgeThemeSql("k")}='experience' THEN 1 ELSE 0 END) AS experience_count
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE ${clauses.join(" AND ")}
+      GROUP BY d.id,subject_key ORDER BY conflict_count DESC,updated_at DESC,subject LIMIT ? OFFSET ?`)
+      .all(...values, pageSize + 1, offset);
+    const page = rows.slice(0, pageSize).map((row) => ({ ...row,
+      themes: ["planning", "transport", "cost", "experience"].filter((theme) => Number(row[`${theme}_count`] || 0) > 0) }));
+    return { items: page, nextCursor: rows.length > pageSize ? String(offset + pageSize) : null };
+  }
+
+  listKnowledgeFacts({ destination = "", subjectKey = "", theme = "", conflictOnly = false, limit = 50, cursor = "" } = {}) {
+    const clauses = ["k.visibility_status='visible'"];
+    const values = [];
+    if (destination) { clauses.push("d.slug=?"); values.push(destination); }
+    if (subjectKey.startsWith("entity:")) { clauses.push("k.entity_key=?"); values.push(subjectKey.slice(7)); }
+    else if (subjectKey.startsWith("subject:")) {
+      clauses.push("lower(trim(COALESCE(NULLIF(k.canonical_subject,''),k.subject)))=?"); values.push(subjectKey.slice(8));
+    }
+    if (theme) { clauses.push(`${knowledgeThemeSql("k")}=?`); values.push(theme); }
+    if (conflictOnly) clauses.push("k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved'");
+    const pageSize = Math.max(1, Math.min(100, Number(limit) || 50));
+    const offset = Math.max(0, Number.parseInt(cursor, 10) || 0);
+    const rows = this.db.prepare(`SELECT k.*,d.slug AS destination_slug,d.name AS destination_name,
+      kr.status AS resolution_status,kr.preferred_value AS resolved_value,kr.note AS resolution_note,
+      kr.resolved_at AS resolution_resolved_at,kr.resolution_type
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE ${clauses.join(" AND ")} ORDER BY k.updated_at DESC,k.id LIMIT ? OFFSET ?`)
+      .all(...values, pageSize + 1, offset);
+    return { items: rows.slice(0, pageSize).map(hydrateKnowledgeFact), nextCursor: rows.length > pageSize ? String(offset + pageSize) : null };
+  }
+
+  listKnowledgeReviews({ destination = "", limit = 50, cursor = "" } = {}) {
+    const values = destination ? [destination] : [];
+    const destinationClause = destination ? " AND d.slug=?" : "";
+    const strict = this.db.prepare(`SELECT k.*,d.slug AS destination_slug,d.name AS destination_name,
+      kr.status AS resolution_status,kr.preferred_value AS resolved_value,kr.note AS resolution_note,
+      kr.resolved_at AS resolution_resolved_at,kr.resolution_type
+      FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE k.visibility_status='visible' AND k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved'${destinationClause}
+      ORDER BY k.updated_at DESC`).all(...values).map((row) => ({ kind: "strict_conflict", id: row.id,
+        updated_at: row.updated_at, knowledge: hydrateKnowledgeFact(row) }));
+    const claimValues = destination ? [destination] : [];
+    const claimCases = this.db.prepare(`SELECT crc.*,ca.subject,ca.predicate,ca.value_text,ca.source_quote,ca.source_id,
+      cb.value_text AS other_value,cb.source_quote AS other_source_quote,cb.source_id AS other_source_id,
+      s.title AS source_title,s2.title AS other_source_title
+      FROM claim_review_cases crc JOIN claims ca ON ca.id=crc.claim_a_id
+      LEFT JOIN claims cb ON cb.id=crc.claim_b_id LEFT JOIN sources s ON s.id=ca.source_id LEFT JOIN sources s2 ON s2.id=cb.source_id
+      WHERE crc.status='pending'${destination ? " AND crc.destination_slug=?" : ""} ORDER BY crc.updated_at DESC`).all(...claimValues)
+      .map((row) => ({ ...row, kind: "claim_review" }));
+    const entityCases = this.db.prepare(`SELECT * FROM entity_merge_candidates WHERE status='pending'${destination ? " AND destination_slug=?" : ""}
+      ORDER BY confidence DESC,updated_at DESC`).all(...values).map((row) => ({ ...row, kind: "entity_review",assessment:assessEntityIdentity(row) }))
+      .filter((row) => row.assessment.decision !== "DO_NOT_MERGE");
+    const all = [...strict, ...claimCases, ...entityCases].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)));
+    const pageSize = Math.max(1, Math.min(100, Number(limit) || 50));
+    const offset = Math.max(0, Number.parseInt(cursor, 10) || 0);
+    return { items: all.slice(offset, offset + pageSize), nextCursor: all.length > offset + pageSize ? String(offset + pageSize) : null,
+      total: all.length };
+  }
+
   getKnowledge() {
     return this.db.prepare(`
       SELECT k.*, d.slug AS destination_slug, d.name AS destination_name,
         kr.status AS resolution_status, kr.preferred_value AS resolved_value, kr.note AS resolution_note,
-        kr.resolved_at AS resolution_resolved_at
+        kr.resolved_at AS resolution_resolved_at,kr.resolution_type
       FROM knowledge_facts k JOIN destinations d ON d.id = k.destination_id
       LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
       ORDER BY d.name, k.normalized_key
-    `).all().map((row) => ({
-      ...row,
-      raw_consensus_status: row.consensus_status,
-      consensus_status: resolvedConsensusStatus(row),
-      preferred_value: resolvedPreferredValue(row),
-      evidence: json(row.evidence_json, []),
-      entity_aliases: json(row.entity_aliases_json, []),
-      canonical_subject: row.canonical_subject || row.subject,
-      entity_resolution_status: row.entity_resolution_status || "unresolved",
-      entity_location: json(row.entity_location_json, {}),
-      claim_relations: json(row.claim_relations_json, []),
-      consensus_method: row.consensus_method || "legacy_count",
-      consensus_confidence: Number(row.consensus_confidence || 0),
-      consensus_detail: json(row.consensus_detail_json, {}),
-      manual_resolution: hydrateKnowledgeResolution(row),
-      verification_priority: resolvedVerificationPriority(row),
-    }));
+    `).all().map(hydrateKnowledgeFact);
   }
 
   getEditorialBlueprints() {
@@ -6140,6 +8189,48 @@ export class Repository {
         gaps: json(row.gaps_json, []),
         source_ids: json(row.source_ids_json, []),
       }));
+  }
+
+  getLunaDisputePackage(caseId) {
+    const row=this.db.prepare(`SELECT r.*,a.subject AS subject_a,a.predicate AS predicate_a,a.value_text AS value_a,
+      a.source_quote AS quote_a,a.source_id AS source_a,b.subject AS subject_b,b.predicate AS predicate_b,
+      b.value_text AS value_b,b.source_quote AS quote_b,b.source_id AS source_b
+      FROM claim_review_cases r JOIN claims a ON a.id=r.claim_a_id LEFT JOIN claims b ON b.id=r.claim_b_id
+      WHERE r.id=? AND r.status='pending'`).get(caseId);
+    if(!row)return null;
+    const evidence={issueKey:row.id,reviewType:row.review_type,destinationSlug:row.destination_slug,
+      claimA:{id:row.claim_a_id,subject:row.subject_a,predicate:row.predicate_a,value:row.value_a,
+        evidenceRef:`claim:${row.claim_a_id}`,quote:String(row.quote_a||"").slice(0,2_000),sourceId:row.source_a},
+      claimB:row.claim_b_id?{id:row.claim_b_id,subject:row.subject_b,predicate:row.predicate_b,value:row.value_b,
+        evidenceRef:`claim:${row.claim_b_id}`,quote:String(row.quote_b||"").slice(0,2_000),sourceId:row.source_b}:null};
+    return {...evidence,evidenceHash:sha256(stableCanonicalSerialize(evidence))};
+  }
+
+  saveLunaDisputeReview(caseId,evidencePackage,result,modelProfile) {
+    const timestamp=now();
+    const existing=this.db.prepare("SELECT * FROM luna_dispute_reviews WHERE issue_key=? AND evidence_hash=?").get(caseId,evidencePackage.evidenceHash);
+    if(existing?.status==='succeeded')return {...existing,result:json(existing.result_json,{}) ,reused:true};
+    const reviewId=existing?.id||id("luna_review");
+    this.db.prepare(`INSERT INTO luna_dispute_reviews(id,issue_key,evidence_hash,request_json,result_json,status,model_profile_json,request_count,last_error,created_at,updated_at)
+      VALUES (?,?,?,?,?,'succeeded',?,1,NULL,?,?) ON CONFLICT(issue_key,evidence_hash) DO UPDATE SET result_json=excluded.result_json,
+        status='succeeded',model_profile_json=excluded.model_profile_json,request_count=luna_dispute_reviews.request_count+1,last_error=NULL,updated_at=excluded.updated_at`)
+      .run(reviewId,caseId,evidencePackage.evidenceHash,JSON.stringify(evidencePackage),JSON.stringify(result||{}),JSON.stringify(modelProfile||{}),timestamp,timestamp);
+    return {id:reviewId,issueKey:caseId,evidenceHash:evidencePackage.evidenceHash,status:'succeeded',result,reused:false};
+  }
+
+  structuredSchemaModeForJob(jobId) {
+    if (!jobId) return null;
+    const rows = this.db.prepare(`SELECT attempt_number,retry_reason FROM model_call_metrics
+      WHERE run_id=? AND provider='vertex' AND error_code='SCHEMA_MODE_UNSUPPORTED'
+      ORDER BY created_at,id`).all(jobId);
+    let mode = null;
+    for (const row of rows) {
+      const transition = String(row.retry_reason || "").match(/->(json_schema|openapi|prompt_only)$/);
+      if (transition) mode = transition[1];
+      else if (Number(row.attempt_number || 0) >= 2) mode = "prompt_only";
+      else if (!mode) mode = "openapi";
+    }
+    return mode;
   }
 
   modelRuntimeReport({ runId = null, since = null, until = null } = {}) {
@@ -6263,13 +8354,120 @@ export class Repository {
     };
   }
 
+  dashboardSummary() {
+    const sources = this.db.prepare("SELECT status,COUNT(*) AS count FROM sources GROUP BY status").all();
+    const jobs = this.db.prepare("SELECT status,COUNT(*) AS count FROM jobs GROUP BY status").all();
+    const jobCounts = Object.fromEntries(jobs.map((row) => [row.status, Number(row.count || 0)]));
+    const strictConflicts = Number(this.db.prepare(`SELECT COUNT(*) AS count FROM knowledge_facts k
+      JOIN destinations d ON d.id=k.destination_id
+      LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
+      WHERE k.visibility_status='visible' AND k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved'`).get().count || 0);
+    const claimReviews = Number(this.db.prepare("SELECT COUNT(*) AS count FROM claim_review_cases WHERE status='pending'").get().count || 0);
+    const entityReviews = this.listEntityMergeCandidates("pending").length;
+    const sourceExceptions = Number(this.db.prepare("SELECT COUNT(*) AS count FROM sources WHERE status='exception'").get().count || 0);
+    const failedJobs = this.db.prepare(`SELECT j.type,j.last_failure_code,j.last_error FROM jobs j
+      WHERE j.status='failed' AND NOT EXISTS (SELECT 1 FROM jobs recovered
+        WHERE recovered.type=j.type AND recovered.entity_id=j.entity_id
+          AND recovered.status='succeeded' AND recovered.updated_at>=j.updated_at)`)
+      .all().filter((row) => isSystemLevelFailure(row.last_failure_code,row.last_error)).length;
+    const pendingRecommendations = Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE inbox_state='ACTIONABLE' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0);
+    const contentPipelineItems = Number(this.db.prepare(`SELECT COUNT(DISTINCT candidate_id) AS count FROM content_opportunities
+      WHERE candidate_id IS NOT NULL AND lifecycle_state IN ('producing','finished')
+        AND status IN ('producing','drafted','qa_failed','ready_for_wordpress','wordpress_draft')`).get().count || 0);
+    const commercialActions = Number(this.db.prepare(`SELECT
+      (SELECT COUNT(*) FROM affiliate_asset_queue_tasks WHERE status IN ('PENDING','READY_FOR_MANUAL','INVALID'))+
+      (SELECT COUNT(*) FROM affiliate_opportunities WHERE status='open' AND score>=0.75) AS count`).get().count || 0);
+    const queueActive = Number(jobCounts.queued || 0) + Number(jobCounts.running || 0);
+    return {
+      generatedAt: now(), sources: Object.fromEntries(sources.map((row) => [row.status, Number(row.count || 0)])), jobs,
+      queue: { active: queueActive, queued: Number(jobCounts.queued || 0), running: Number(jobCounts.running || 0) },
+      health: { ok: sourceExceptions + failedJobs === 0, issues: sourceExceptions + failedJobs },
+      actionCounts: {
+        sources: sourceExceptions, recommendations: pendingRecommendations,
+        knowledge: strictConflicts + claimReviews + entityReviews, blueprints: 0, content: 0, wordpress: 0,
+        commercial: commercialActions, exceptions: sourceExceptions + failedJobs, maintenance: queueActive, settings: 0,
+      },
+      totals: {
+        sources: Number(this.db.prepare("SELECT COUNT(*) AS count FROM sources").get().count || 0),
+        claims: Number(this.db.prepare("SELECT COUNT(*) AS count FROM claims").get().count || 0),
+        knowledgeFacts: Number(this.db.prepare("SELECT COUNT(*) AS count FROM knowledge_facts WHERE visibility_status='visible'").get().count || 0),
+        conflicts: strictConflicts, exceptions: sourceExceptions + failedJobs, exceptionRecords: sourceExceptions + failedJobs,
+        topicCandidates: Number(this.db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count || 0),
+        pendingRecommendations, internalOpportunities: Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE inbox_state='INTERNAL' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0),
+        processingGapOpportunities: Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE inbox_state='INTERNAL' AND processing_state='PROCESSING_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0),
+        evidenceGapOpportunities: Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE processing_state='EVIDENCE_GAP' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0),
+        contentPipelineItems, contentNeedsAttention: 0,
+        draftsReady: Number(this.db.prepare("SELECT COUNT(*) AS count FROM article_drafts WHERE status IN ('ready_for_wordpress','commercial_ready','wordpress_draft')").get().count || 0),
+        activeOffers: Number(this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_assets WHERE active=1 AND lifecycle_state='operational'").get().count || 0),
+        affiliateQueueTasks: Number(this.db.prepare("SELECT COUNT(*) AS count FROM affiliate_asset_queue_tasks WHERE status IN ('PENDING','READY_FOR_MANUAL','INVALID')").get().count || 0),
+        wordpressInventory: Number(this.db.prepare("SELECT COUNT(*) AS count FROM wordpress_content_inventory").get().count || 0),
+      },
+    };
+  }
+
+  providerRuntime({provider="",model="",configured=false}={}) {
+    if(!configured)return {state:"not_configured",provider:null,model:null,lastSuccessAt:null,lastFailureAt:null};
+    const key=String(provider||"unknown");
+    const persisted=this.db.prepare("SELECT * FROM provider_runtime_state WHERE provider=?").get(key)||{};
+    const latestSuccess=this.db.prepare("SELECT created_at,latency_ms FROM model_call_metrics WHERE provider=? AND status='succeeded' ORDER BY created_at DESC LIMIT 1").get(key);
+    const latestFailure=this.db.prepare("SELECT created_at,error_code,latency_ms FROM model_call_metrics WHERE provider=? AND status='failed' ORDER BY created_at DESC LIMIT 1").get(key);
+    const aggregate=(hours)=>this.db.prepare(`SELECT COUNT(*) AS attempts,
+        SUM(CASE WHEN status='succeeded' THEN 1 ELSE 0 END) AS successes,
+        SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failures,
+        SUM(CASE WHEN error_code LIKE '%429%' OR lower(error_code) LIKE '%rate%' THEN 1 ELSE 0 END) AS rate_limited,
+        ROUND(AVG(provider_request_ms),1) AS average_provider_ms,ROUND(AVG(total_stage_ms),1) AS average_total_ms,
+        ROUND(AVG(retry_wait_ms),1) AS average_retry_wait_ms
+      FROM model_call_metrics WHERE provider=? AND created_at>=datetime('now',?)`).get(key,`-${hours} hours`);
+    const oneHour=aggregate(1),twentyFourHours=aggregate(24);
+    const backoffUntil=Math.max(this.providerBackoffUntil,Date.parse(persisted.backoff_until||"")||0);
+    const lastSuccessAt=persisted.last_success_at||latestSuccess?.created_at||null,lastFailureAt=persisted.last_failure_at||latestFailure?.created_at||null;
+    const state=backoffUntil>Date.now()?"backoff"
+      : !lastSuccessAt&&!lastFailureAt?"configured_not_observed"
+        : lastFailureAt&&(!lastSuccessAt||lastFailureAt>lastSuccessAt)?"degraded"
+          : "available_recent_success";
+    return {state,provider:key,model:model||persisted.model||null,lastSuccessAt,lastFailureAt,
+      lastErrorCode:persisted.last_error_code||latestFailure?.error_code||null,consecutiveFailures:Number(persisted.consecutive_failures||0),
+      backoffUntil:backoffUntil?new Date(backoffUntil).toISOString():null,lastLatencyMs:persisted.last_latency_ms??latestSuccess?.latency_ms??latestFailure?.latency_ms??null,
+      windows:{oneHour,twentyFourHours},source:"persisted_model_call_telemetry"};
+  }
+
+  systemHealthIssueCount() {
+    const sourceExceptions = Number(this.db.prepare("SELECT COUNT(*) AS count FROM sources WHERE status='exception'").get().count || 0);
+    const failedJobs = this.db.prepare(`SELECT j.type,j.last_failure_code,j.last_error FROM jobs j
+      WHERE j.status='failed' AND NOT EXISTS (SELECT 1 FROM jobs recovered
+        WHERE recovered.type=j.type AND recovered.entity_id=j.entity_id
+          AND recovered.status='succeeded' AND recovered.updated_at>=j.updated_at)`)
+      .all().filter((row) => isSystemLevelFailure(row.last_failure_code,row.last_error)).length;
+    return sourceExceptions + failedJobs;
+  }
+
   recordModelCall(metric) {
+    const metricId=metric.callId || id("modelcall");
+    const recordedAt=now();
+    const providerRequestMs=metric.providerRequestMs??metric.latencyMs??0;
+    const totalStageMs=metric.totalStageMs??((metric.queueWaitMs||0)+providerRequestMs+(metric.retryWaitMs||0));
+    const existing=metric.callId ? this.db.prepare("SELECT id FROM model_call_metrics WHERE id=?").get(metricId) : null;
+    if (existing) {
+      this.db.prepare(`UPDATE model_call_metrics SET status=?,error_code=?,latency_ms=?,attempts=?,attempt_status=?,
+        input_tokens=?,output_tokens=?,cached_tokens=?,cost_usd=?,thinking_tokens=?,provider_usage_json=?,cost_status=?,
+        request_completed_at=?,http_status=?,provider_code=?,provider_request_id=?,dispatch_state=?,evidence_basis=?,
+        provider_request_ms=?,retry_wait_ms=?,total_stage_ms=?,retry_after_ms=?,backoff_until=?,execution_route=? WHERE id=?`).run(
+        metric.status === "succeeded" ? "succeeded" : "failed",metric.errorCode || null,metric.latencyMs ?? 0,
+        metric.attempts ?? 1,metric.attemptStatus || metric.status || "failed",metric.inputTokens ?? null,
+        metric.outputTokens ?? null,metric.cachedTokens ?? null,metric.costUsd ?? null,metric.thinkingTokens ?? null,
+        metric.providerUsage ? JSON.stringify(metric.providerUsage) : null,metric.costStatus || "unknown",
+        metric.requestCompletedAt || null,metric.httpStatus ?? null,metric.providerCode || null,metric.providerRequestId || null,
+        metric.dispatchState || "legacy_unknown",metric.evidenceBasis || "",metric.providerRequestMs ?? metric.latencyMs ?? 0,
+        metric.retryWaitMs ?? 0,metric.totalStageMs ?? ((metric.queueWaitMs || 0)+(metric.providerRequestMs ?? metric.latencyMs ?? 0)+(metric.retryWaitMs || 0)),
+        metric.retryAfterMs ?? null,metric.backoffUntil || null,metric.executionRoute || null,metricId);
+    } else {
     this.db.prepare(`INSERT INTO model_call_metrics(id,stage,provider,model,prompt_hash,schema_hash,input_hash,
       input_tokens,output_tokens,cached_tokens,latency_ms,attempts,status,error_code,cost_usd,created_at,
       run_id,entity_id,attempt_number,request_kind,attempt_status,retry_reason,thinking_tokens,provider_usage_json,
-      config_hash,policy_version,cost_status,price_version,price_source,price_as_of,request_started_at,request_completed_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      id("modelcall"), metric.stage || "unknown", metric.provider || "unknown", metric.model || "unknown",
+      config_hash,policy_version,cost_status,price_version,price_source,price_as_of,request_started_at,request_completed_at,
+      visual_id,source_asset_id,substage,http_status,provider_code,provider_request_id,dispatch_state,evidence_basis,endpoint_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      metricId, metric.stage || "unknown", metric.provider || "unknown", metric.model || "unknown",
       metric.promptHash || "", metric.schemaHash || "", metric.inputHash || "", metric.inputTokens ?? null,
       metric.outputTokens ?? null, metric.cachedTokens ?? null, metric.latencyMs ?? 0, metric.attempts ?? 1,
       metric.status === "succeeded" ? "succeeded" : "failed", metric.errorCode || null, metric.costUsd ?? null, now(),
@@ -6279,15 +8477,41 @@ export class Repository {
       metric.configHash || "", metric.policyVersion || "legacy", metric.costStatus || "unknown",
       metric.priceVersion || null, metric.priceSource || null, metric.priceAsOf || null,
       metric.requestStartedAt || null, metric.requestCompletedAt || null,
+      metric.visualId || null, metric.sourceAssetId || null, metric.substage || metric.stage || null,
+      metric.httpStatus ?? null, metric.providerCode || null, metric.providerRequestId || null,
+      metric.dispatchState || (metric.requestKind === "cache_hit" ? "cache_hit" : "legacy_unknown"),
+      metric.evidenceBasis || "", metric.endpointId || "",
     );
+    this.db.prepare(`UPDATE model_call_metrics SET queue_wait_ms=?,provider_request_ms=?,retry_wait_ms=?,total_stage_ms=?,
+      retry_after_ms=?,backoff_until=?,cache_hit=?,execution_route=? WHERE id=?`).run(
+      metric.queueWaitMs??null,providerRequestMs,metric.retryWaitMs??0,totalStageMs,metric.retryAfterMs??null,
+      metric.backoffUntil||null,metric.cacheHit||metric.requestKind==="cache_hit"?1:0,metric.executionRoute||null,metricId);
+    }
+    this.db.prepare(`UPDATE model_call_metrics SET role=?,requested_model=?,returned_model=?,source_run_id=?,article_revision=? WHERE id=?`).run(
+      metric.role || "unknown", metric.requestedModel || metric.model || null, metric.returnedModel || null,
+      metric.sourceRunId || null, metric.articleRevision ?? null, metricId);
+    if (metric.telemetryPhase === "started") return metricId;
+    const provider=metric.provider||"unknown",succeeded=metric.status==="succeeded";
+    this.db.prepare(`INSERT INTO provider_runtime_state(provider,model,last_success_at,last_failure_at,last_error_code,
+        consecutive_failures,backoff_until,last_latency_ms,updated_at) VALUES (?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(provider) DO UPDATE SET model=excluded.model,
+        last_success_at=CASE WHEN excluded.last_success_at IS NOT NULL THEN excluded.last_success_at ELSE provider_runtime_state.last_success_at END,
+        last_failure_at=CASE WHEN excluded.last_failure_at IS NOT NULL THEN excluded.last_failure_at ELSE provider_runtime_state.last_failure_at END,
+        last_error_code=CASE WHEN excluded.last_failure_at IS NOT NULL THEN excluded.last_error_code ELSE provider_runtime_state.last_error_code END,
+        consecutive_failures=CASE WHEN excluded.last_success_at IS NOT NULL THEN 0 ELSE provider_runtime_state.consecutive_failures+1 END,
+        backoff_until=COALESCE(excluded.backoff_until,provider_runtime_state.backoff_until),last_latency_ms=excluded.last_latency_ms,
+        updated_at=excluded.updated_at`).run(provider,metric.model||"",succeeded?recordedAt:null,succeeded?null:recordedAt,
+          succeeded?null:(metric.errorCode||"MODEL_CALL_FAILED"),succeeded?0:1,metric.backoffUntil||null,providerRequestMs,recordedAt);
     if (metric.status === "succeeded" && Number(metric.attempts ?? 1) > 0 && this.providerPressureStreak) {
       this.providerSuccessStreak += 1;
       if (this.providerSuccessStreak >= this.providerRecoverySuccesses) {
         this.providerPressureStreak = 0;
         this.providerSuccessStreak = 0;
         this.providerBackoffUntil = 0;
+        this.db.prepare("UPDATE provider_runtime_state SET backoff_until=NULL,updated_at=? WHERE provider=?").run(now(),provider);
       }
     }
+    return metricId;
   }
 }
 
@@ -6377,15 +8601,76 @@ function normalizeExperienceType(value) {
   return allowed.has(normalized) ? normalized : "experience_sequence";
 }
 
-function inferKnowledgeOpportunityType(title, facts) {
-  const text = `${title || ""} ${(facts || []).map((fact) => `${fact.subject || ""} ${fact.predicate || ""}`).join(" ")}`.toLowerCase();
-  if (/(?:food|restaurant|dish|eat|餐|菜|美食|小吃)/u.test(text)) return "food_guide";
-  if (/(?:transport|metro|rail|bus|station|route|交通|地铁|车站|路线)/u.test(text)) return "transport_guide";
-  if (/(?:itinerary|day trip|行程|一日游)/u.test(text)) return "itinerary";
-  if (/(?:hotel|stay|neighbou?rhood|住宿|酒店|区域)/u.test(text)) return "hotel_area_guide";
-  if (/(?:attraction|ticket|reservation|visit|景点|门票|预约)/u.test(text)) return "attraction_guide";
-  if (/(?:compare|versus|difference|比较|区别)/u.test(text)) return "comparison";
+function inferKnowledgeOpportunityType(title, facts, destinationSlug) {
+  const titleText=String(title || "").toLowerCase();
+  const normalizedTitle=normalizeKnowledgeIdentityAlias(title,destinationSlug);
+  if(normalizedTitle===`destination:${normalizeTitle(destinationSlug)}`)return "city_guide";
+  const entityType=countStrings((facts || []).map((fact)=>fact.entity_type).filter(Boolean))[0]?.value || "other";
+  if (entityType==="route" || /\b(?:itinerary|day trip)\b/u.test(titleText)) return "itinerary";
+  if (/\b(?:compare|versus|difference)\b/u.test(titleText)) return "comparison";
+  if (/(?:\b(?:transport|metro|rail(?:way)?|bus|station|airport|taxi|navigation)\b|交通|地铁|车站|机场|出租车|导航)/u.test(titleText)) return "transport_guide";
+  if (/(?:\b(?:hotel|stay|accommodation|lodging|neighbou?rhood)\b|住宿|酒店|民宿)/u.test(titleText)) return "hotel_area_guide";
+  if (/(?:\b(?:food|restaurant|dish|eat|dining|cuisine|hotpot|snack)\b|餐|菜|美食|小吃|火锅)/u.test(titleText)) return "food_guide";
+  if (/(?:\b(?:attraction|ticket|reservation|visit|museum|park|viewpoint|skyline|old street)\b|景点|门票|预约|博物馆|公园|观景|老街)/u.test(titleText)) return "attraction_guide";
+  const entityKeys=(facts || []).map((fact)=>String(fact.entity_key || "").toLowerCase());
+  if (entityType==="transport_hub" || entityKeys.some((key)=>key.startsWith("transport_hub."))) return "transport_guide";
+  if (entityType==="hotel" || entityKeys.some((key)=>key.startsWith("hotel."))) return "hotel_area_guide";
+  if (entityType==="restaurant" || entityKeys.some((key)=>key.startsWith("restaurant."))) return "food_guide";
+  if (entityType==="attraction" || entityKeys.some((key)=>key.startsWith("attraction."))) return "attraction_guide";
+  if (entityType==="collection") return "listicle";
   return "practical_guide";
+}
+
+function groupKnowledgeFacts(facts,destinationSlug) {
+  const values=Array.isArray(facts) ? facts : [];
+  const parent=values.map((_,index)=>index);
+  const find=(index)=>parent[index]===index ? index : (parent[index]=find(parent[index]));
+  const join=(left,right)=>{ left=find(left); right=find(right); if(left!==right)parent[right]=left; };
+  const identities=new Map();
+  for(let index=0;index<values.length;index+=1){
+    const fact=values[index];
+    const keys=uniqueStrings([
+      fact.entity_key ? `entity:${fact.entity_key}` : null,
+      normalizeKnowledgeIdentityAlias(fact.canonical_subject || fact.subject,destinationSlug)
+        ? `name:${normalizeKnowledgeIdentityAlias(fact.canonical_subject || fact.subject,destinationSlug)}` : null,
+    ]);
+    for(const key of keys){
+      if(identities.has(key))join(index,identities.get(key)); else identities.set(key,index);
+    }
+  }
+  const components=Map.groupBy(values.map((fact,index)=>({fact,index})),({index})=>find(index));
+  const grouped=new Map();
+  for(const component of components.values()){
+    const rows=component.map(({fact})=>fact);
+    const entityKey=countStrings(rows.map((fact)=>fact.entity_key).filter(Boolean))[0]?.value;
+    const name=countStrings(rows.map((fact)=>fact.canonical_subject || fact.subject).filter(Boolean))[0]?.value || "general";
+    grouped.set(entityKey ? `entity:${entityKey}` : `subject:${slugify(name)}`,rows);
+  }
+  return grouped;
+}
+
+function normalizeKnowledgeIdentityAlias(value,destinationSlug) {
+  const normalized=normalizeEntityAlias(value);
+  const destination=normalizeTitle(destinationSlug);
+  const known={
+    beijing:["beijing","北京"],shanghai:["shanghai","上海"],xian:["xian","xi an","西安"],
+    chengdu:["chengdu","成都"],chongqing:["chongqing","重庆"],hangzhou:["hangzhou","杭州"],
+    suzhou:["suzhou","苏州"],guilin:["guilin","桂林"],guangzhou:["guangzhou","广州"],
+    shenzhen:["shenzhen","深圳"],yunnan:["yunnan","云南"],zhangjiajie:["zhangjiajie","张家界"],
+  };
+  if((known[destination] || [destination]).some((alias)=>normalizeEntityAlias(alias)===normalized))return `destination:${destination}`;
+  return normalized;
+}
+
+function knowledgeClusterIsArticleWorthy(title,facts,destinationSlug) {
+  const normalized=normalizeTitle(String(title || "").replaceAll("_"," "));
+  if(!normalized || /\b(?:unnamed|unknown|unspecified)\b/u.test(normalized))return false;
+  const destination=normalizeTitle(destinationSlug).replaceAll(" ","");
+  const withoutDestination=normalized.split(" ").filter((token)=>token!==destination).join(" ");
+  const generic=new Set(["restaurant","featured restaurant","hotpot restaurant","hotel room","pathway","trail","route","viewpoint","venue",
+    "accommodation","hotel","food","attraction","transport","public transport","metro station","railway station"]);
+  if(generic.has(normalized) || generic.has(withoutDestination) || /^day \d+ itinerary$/u.test(withoutDestination))return false;
+  return (facts || []).some((fact)=>String(fact.preferred_value || "").trim());
 }
 
 function jobPriority(type) {
@@ -6445,8 +8730,10 @@ function recommendationInboxRank(item) {
 function canonicalIntentKeyForOpportunity(row) {
   const coverage=json(row.coverage_json,{});
   const duration=canonicalDuration(`${row.title || ""} ${row.topic_key || ""} ${coverage.proposal?.readerPromise || ""}`);
-  const destination=slugify(row.destination_slug || "unknown") || "unknown";
+  const exactDestination=slugify(row.destination_slug || "unknown") || "unknown";
+  const destination=coverage.knowledgeEventGenerated===true ? primaryDestinationScope(exactDestination) : exactDestination;
   const mode=normalizePublicationMode(coverage.publicationMode);
+  const knowledgeIdentity=coverage.knowledgeEventGenerated===true ? slugify(coverage.knowledgeIntentIdentity || "") : "";
   const generic=new Set([
     "a","an","and","for","in","of","the","to","travel","guide","how","visit","independently","independent",
     "traveler","travelers","first","time","solo","practical","help","make","confident","decision","about",
@@ -6455,7 +8742,62 @@ function canonicalIntentKeyForOpportunity(row) {
   const text=`${row.title || ""} ${coverage.proposal?.readerPromise || ""}`
     .toLowerCase().replace(/\b(?:72\s*[- ]?hours?|3\s*[- ]?days?)\b/gu," ");
   const tokens=[...topicTokens(text)].filter((token) => !generic.has(token) && token!==destination && !/^\d+$/u.test(token)).sort();
-  return [destination,normalizeContentType(row.content_type),mode,duration,tokens.slice(0,12).join("-") || "destination-core"].join(":");
+  return [destination,normalizeContentType(row.content_type),mode,duration,
+    knowledgeIdentity ? `knowledge-${knowledgeIdentity}` : tokens.slice(0,12).join("-") || "destination-core"].join(":");
+}
+
+const PRIMARY_DESTINATION_SCOPES=new Set([
+  "beijing","shanghai","xian","chengdu","chongqing","hangzhou","suzhou","guilin","guangzhou","shenzhen","yunnan","zhangjiajie",
+]);
+
+function primaryDestinationScope(value) {
+  const destination=slugify(value || "unknown") || "unknown";
+  return [...PRIMARY_DESTINATION_SCOPES].find((scope)=>destination===scope || destination.startsWith(`${scope}-`)) || destination;
+}
+
+function groupRecommendationIntents(items) {
+  const parent=items.map((_,index)=>index);
+  const find=(index)=>parent[index]===index ? index : (parent[index]=find(parent[index]));
+  const join=(left,right)=>{ left=find(left); right=find(right); if(left!==right)parent[right]=left; };
+  for(let left=0;left<items.length;left+=1)for(let right=left+1;right<items.length;right+=1){
+    if(items[left].canonicalIntentKey===items[right].canonicalIntentKey
+      || sourceProposalIntentsOverlap(items[left].row,items[right].row))join(left,right);
+  }
+  const components=Map.groupBy(items.map((item,index)=>({item,index})),({index})=>find(index));
+  const groups=new Map();
+  for(const component of components.values()){
+    const key=component.map(({item})=>item.canonicalIntentKey).sort()[0];
+    const values=component.map(({item})=>{ item.canonicalIntentKey=key; return item; });
+    groups.set(key,values);
+  }
+  return groups;
+}
+
+function sourceProposalIntentsOverlap(left,right) {
+  if(!left.source_id || !right.source_id)return false;
+  const leftCoverage=json(left.coverage_json,{}); const rightCoverage=json(right.coverage_json,{});
+  if(left.destination_slug!==right.destination_slug || normalizeContentType(left.content_type)!==normalizeContentType(right.content_type)
+    || normalizePublicationMode(leftCoverage.publicationMode)!==normalizePublicationMode(rightCoverage.publicationMode))return false;
+  const leftDuration=canonicalDuration(left.title); const rightDuration=canonicalDuration(right.title);
+  if(leftDuration!==rightDuration && !([leftDuration,rightDuration].includes("flex") && [leftDuration,rightDuration].includes("1d")))return false;
+  const generic=new Set(["a","an","and","for","in","of","the","to","travel","guide","how","visit","independently","independent",
+    "traveler","travelers","first","time","solo","practical","walking","walk","city","route","routes","itinerary","itineraries",
+    "day","days","hour","hours","hourly"]);
+  const destination=slugify(left.destination_slug);
+  const tokensFor=(row)=>new Set([...topicTokens(row.title)].filter((token)=>!generic.has(token)&&token!==destination&&!/^\d+$/u.test(token)));
+  const leftTokens=tokensFor(left); const rightTokens=tokensFor(right);
+  const tokenScore=tokenOverlap(leftTokens,rightTokens);
+  const bigramsFor=(value)=>{
+    const normalized=normalizeTitle(value).replaceAll(" ",""); const result=new Set();
+    for(let index=0;index<normalized.length-1;index+=1)result.add(normalized.slice(index,index+2));
+    return result;
+  };
+  const leftBigrams=bigramsFor(left.title); const rightBigrams=bigramsFor(right.title);
+  const intersection=[...leftBigrams].filter((token)=>rightBigrams.has(token)).length;
+  const titleScore=leftBigrams.size || rightBigrams.size ? 2*intersection/(leftBigrams.size+rightBigrams.size) : 0;
+  const sameSource=left.source_id===right.source_id;
+  return sameSource ? (titleScore>=0.72 && tokenScore>=0.35) || tokenScore>=0.62
+    : (titleScore>=0.84 && tokenScore>=0.45) || tokenScore>=0.78;
 }
 
 function canonicalDuration(value) {
@@ -6542,13 +8884,18 @@ function captureContentHash(capture) {
   }));
 }
 
+function captureStorageSnapshot(capture){
+  const cleanAsset=(asset)=>{const {originalDataUrl:_original,aiDerivativeDataUrl:_derivative,...stored}=asset||{};return stored;};
+  return {...capture,assets:(capture.assets||[]).map(cleanAsset)};
+}
+
 function safeIsoDate(value) {
   if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
 }
 
-function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy = contentPolicyFor(brief)) {
+function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy = contentPolicyFor(brief), facts = []) {
   const canonical = json(brief.canonical_json, {});
   const canonicalResolution = resolveCanonicalUrl({ siteUrl: config.publicSiteUrl, slug: draft.slug });
   const canonicalUrl = canonicalResolution.url;
@@ -6576,12 +8923,13 @@ function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy
   const visuals = normalizeVisuals(draft.visuals, draft, brief, authorizedSourceAssets, policy);
   const firstGenerated = visuals.find((visual) => visual.status === "generated" && visual.media_url);
   if (firstGenerated) seo.og_image = firstGenerated.media_url;
-  const contentAst = buildContentAst({ draft: { ...draft, seo }, brief: { ...brief, canonical }, visuals });
+  const contentAst = buildContentAst({ draft: { ...draft, seo }, brief: { ...brief, canonical }, visuals, facts });
+  const evidenceLedger = reconcileContentAstLedger(contentAst, draft.evidence_ledger || []);
   const blocks = contentAst.nodes.filter((node) => node.type !== "media").map((node) => node.type === "list"
     ? { type: "list", items: node.items } : node.type === "heading"
       ? { type: "heading", level: node.level, text: node.visible_text } : { type: "paragraph", text: node.visible_text });
   return {
-    seo, visuals, blocks, contentAst,
+    seo, visuals, blocks, contentAst, evidenceLedger,
     schema: buildArticleSchema({ ...draft, seo, content_ast: contentAst, destination_slug: brief.destination_slug, canonical }, visuals, config),
   };
 }
@@ -6595,7 +8943,7 @@ export function contentPolicyFor(brief, facts = []) {
   const multiDay = /\b(?:[2-9]|two|three|four|five|six|seven)[ -]?day\b/i.test(topic);
   const profiles = {
     city_guide: [900, 1400, 3], first_time_guide: [900, 1400, 3], itinerary: multiDay ? [900, 1400, 3] : [600, 1000, 2],
-    comparison: [600, 1000, 2], listicle: [600, 1000, 2], food_guide: [600, 1000, 2],
+    comparison: [600, 1000, 2], listicle: [600, 1000, 2], food_guide: [600, 1200, 6],
     neighborhood_guide: [600, 1000, 2], hotel_area_guide: [600, 1000, 2], shopping_guide: [600, 1000, 2],
     attraction_guide: [350, 700, 2], transport_guide: [350, 700, 2], practical_guide: shortTips ? [200, 400, 1] : [350, 700, 2],
     how_to: shortTips ? [200, 400, 1] : [350, 700, 2],
@@ -6615,8 +8963,9 @@ export function contentPolicyFor(brief, facts = []) {
     required_visible_sections: [],
     seo: { title_suggested_max: 60, description_suggested_max: 160, length_mode: "soft_editorial_guidance" },
     faq: { required: false, allowed: faqSupported, minimum: 0, maximum: faqSupported ? 4 : 0 },
-    visuals: { minimum: 0, target: substantialEvidence ? Math.min(baseVisuals, Math.max(1, Math.ceil(substantialEvidence / 4))) : 0,
-      maximum: baseVisuals + 1, count_mode: "soft_editorial_guidance" },
+    visuals: { minimum: 0,
+      target: substantialEvidence ? Math.min(baseVisuals, Math.max(type === "food_guide" ? 5 : 1, Math.ceil(substantialEvidence / 4))) : 0,
+      maximum: type === "food_guide" ? 8 : baseVisuals + 1, count_mode: "soft_editorial_guidance" },
   };
 }
 
@@ -6668,13 +9017,7 @@ function draftContentHash(draft, metadata, brief) {
 }
 
 function evidenceHashForFacts(facts) {
-  return sha256(JSON.stringify((facts || []).map((fact) => ({
-    key: fact.normalized_key,
-    value: fact.preferred_value,
-    status: fact.consensus_status,
-    freshness: fact.freshness_state,
-    updatedAt: fact.updated_at,
-  }))));
+  return dependencyHash((facts || []).map(selectedFactSnapshot).sort((a,b)=>a.normalized_key.localeCompare(b.normalized_key)));
 }
 
 function normalizeBriefPlan(plan) {
@@ -6733,7 +9076,7 @@ function validSemanticId(value) {
   return /^[a-z][a-z0-9_.:-]{2,127}$/i.test(text) ? text : "";
 }
 
-export function buildBlockProvenance(payload, ledger, explicit, sourceIdsByClaim = new Map(), claimTracesByKey = new Map()) {
+export function buildBlockProvenance(payload, ledger, explicit, sourceIdsByClaim = new Map(), claimTracesByKey = new Map(), factSnapshots = new Map()) {
   const ledgerBySection = new Map((ledger || []).map((entry) => [entry.section_id, entry]));
   const entriesBySignature = Map.groupBy(explicit?.entries || [], (entry) => entry.blockSignature);
   const errors = [...(explicit?.errors || [])];
@@ -6766,6 +9109,7 @@ export function buildBlockProvenance(payload, ledger, explicit, sourceIdsByClaim
       claimKeys,
       sourceIds,
       claimTraces,
+      evidenceSnapshots: claimKeys.map(key => factSnapshots.get(key)).filter(Boolean),
       mappingStatus: "explicit_v2",
       blockSignature: signature,
     };
@@ -6783,51 +9127,270 @@ function legacyBlockRecord(block, signature) {
     mappingStatus: "legacy_unknown", blockSignature: signature };
 }
 
-function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], policy = {}) {
-  const minimum = policy.visuals?.minimum ?? 1;
+export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], policy = {}) {
   const maximum = policy.visuals?.maximum ?? 5;
-  const requestedTarget = policy.visuals?.target ?? visualCountForWords(wordCount(draft.body_markdown));
-  const target = Math.max(minimum, Math.min(maximum, Array.isArray(values) && values.length ? values.length : requestedTarget));
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
-  const allowedRatios = ["16:9", "4:3", "1:1", "3:2", "9:16"];
+  const allowedRatios = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"];
   const supplied = Array.isArray(values) ? values : [];
-  const visuals = supplied.slice(0, target).map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
-  while (visuals.length < target) {
-    const index = visuals.length;
-    visuals.push(normalizeVisual({}, index, draft, brief, allowedPlacements, allowedRatios));
-  }
-  if (!authorizedSourceAssets.length) return visuals;
-
+  // Unsupported renderer types stay absent until a real renderer and validated
+  // data source are configured. Project source media is fully authorized; when
+  // the writer omits a visual plan, relevant stored originals may be selected
+  // deterministically instead of fabricating image requests or leaving the page
+  // needlessly image-free.
+  const visuals = supplied.slice(0, maximum)
+    .filter((item) => item?.source_asset_id || !["infographic", "map_or_route"].includes(item?.image_type))
+    .map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
   const unusedAssets = new Map(authorizedSourceAssets.map((asset) => [asset.id, asset]));
-  return visuals.map((visual) => {
-    if (visual.image_type !== "real_world_photo") return visual;
+  const normalized = visuals.map((visual) => {
+    if (!visual.source_asset_id && (visual.image_type !== "real_world_photo" || visual.acquisition_strategy === "generate_illustration")) return visual;
+    const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
     const ranked = [...unusedAssets.values()].map((asset) => ({ asset, score: visualAssetMatchScore(visual, asset) }))
       .sort((left, right) => right.score - left.score);
-    const match = ranked[0];
+    const match = exact ? {asset:exact,score:1} : ranked[0];
     // Asset ownership is insufficient: a factual photo is reusable only when its
     // own alt/evidence metadata matches the planned subject.
-    if (!match || match.score < 0.34) return visual;
+    if (!match || match.score < 0.34) return null;
     const asset = match.asset;
     unusedAssets.delete(asset.id);
-    const needsLocalization = ["chinese", "mixed"].includes(asset.language_status);
+    const decision = decideVisualAsset(asset, visual);
+    if (decision.action === "reject") return null;
+    const needsWork = ["localize","analyze"].includes(decision.action);
+    const acquisitionStrategy=visualAcquisitionStrategy(decision);
+    const qualifiedExisting=visual.status === "generated"
+      && visualQualityQaStatus(visual.media_metadata?.quality_qa) === "passed";
     return {
       ...visual,
       purpose: truncateText(visual.purpose || `Evidence-linked view for ${draft.title}`, 300),
-      alt_text: truncateText(asset.alt_text || visual.alt_text || visual.image_subject, 220),
-      caption: truncateText(asset.caption_text || visual.caption || "Photo retained from an authorized research source.", 300),
+      alt_text: readerVisualAlt(asset, visual.alt_text || visual.image_subject, brief.destination_slug),
+      caption: truncateText(asset.caption_text || visual.caption || readerVisualAlt(asset, visual.image_subject, brief.destination_slug), 300),
       generation_prompt: "",
-      acquisition_strategy: needsLocalization ? "localize_source_image" : "use_authorized_source_image",
+      aspect_ratio:needsWork && !qualifiedExisting ? sourceAssetAspectRatio(asset) : visual.aspect_ratio,
+      image_type:visualImageType(decision,visual.image_type),
+      acquisition_strategy: acquisitionStrategy,
       factual_image_required: true,
       source_asset_id: asset.id,
       source_remote_url: asset.remote_url,
-      status: needsLocalization ? "planned" : "generated",
-      media_url: needsLocalization ? "" : `/api/source-assets/${asset.id}/preview`,
+      status: needsWork ? "planned" : "generated",
+      media_url: needsWork ? "" : `/api/source-assets/${asset.id}/preview`,
       provider: "authorized_xiaohongshu_source",
       model: "user-authorized-source-image",
-      media_metadata: { source_mime_type: asset.mime_type, storage_status: asset.storage_status,
-        original_bytes_status: asset.original_bytes_status, language_status: asset.language_status },
+      media_metadata: { ...(visual.media_metadata || {}),source_mime_type: asset.mime_type, storage_status: asset.storage_status,
+        original_bytes_status: asset.original_bytes_status, durability_status: asset.durability_status,
+        language_status: asset.language_status, visual_decision:decision,source_sha256:asset.original_sha256 || "",
+        capture_version:asset.capture_version || null,analysis_version:asset.analysis_version || "",
+        transform_version:"visual-transform-2",style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
+        source_analysis:sourceAnalysisSnapshot(asset),
+        authorization_policy:"project_source_media_full_authorization",
+        source_provenance: {
+          source_asset_id: asset.id,
+          original_stored: asset.durability_status === "ORIGINAL_STORED" && asset.original_bytes_status === "saved_original",
+          project_owner_confirmed: true,
+          source_owner_confirmed: asset.source_authorization_status === "owner_confirmed",
+          source_publishable: Boolean(asset.source_publishable),
+          asset_owner_confirmed: asset.asset_authorization_status === "owner_confirmed",
+          asset_publishable: Boolean(asset.asset_publishable),
+      } },
     };
-  });
+  }).filter(Boolean);
+  const target = Math.min(maximum, Math.max(normalized.length, Number(policy.visuals?.target || 0)));
+  if (normalized.length >= target) return normalized;
+  const fallbackAssets = [...unusedAssets.values()]
+    .map((asset) => ({ asset, score: articleAssetMatchScore(draft, brief, asset) }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || Number(right.asset.width || 0) * Number(right.asset.height || 0)
+      - Number(left.asset.width || 0) * Number(left.asset.height || 0));
+  for (const { asset } of fallbackAssets.slice(0, target - normalized.length)) {
+    const index = normalized.length;
+    const subject = readerVisualAlt(asset, "", brief.destination_slug);
+    if (!subject) continue;
+    const decision = decideVisualAsset(asset, { image_subject:subject, purpose:`Evidence-linked view supporting ${draft.title}` });
+    if (decision.action === "reject") continue;
+    const needsWork = ["localize","analyze"].includes(decision.action);
+    const acquisitionStrategy=visualAcquisitionStrategy(decision);
+    normalized.push({
+      placement: defaultPlacement(index), purpose:truncateText(`Evidence-linked view supporting ${draft.title}`,300),
+      alt_text:subject,
+      caption:truncateText(asset.caption_text || subject,300),
+      generation_prompt:"",aspect_ratio:sourceAssetAspectRatio(asset),image_type:visualImageType(decision,"real_world_photo"),
+      image_role:index===0 ? "hero" : "support",image_subject:subject,
+      acquisition_strategy:acquisitionStrategy,factual_image_required:true,
+      source_asset_id:asset.id,source_remote_url:asset.remote_url,status:needsWork ? "planned" : "generated",
+      media_url:needsWork ? "" : `/api/source-assets/${asset.id}/preview`,provider:"authorized_project_source",
+      model:"user-authorized-source-image",media_metadata:{source_mime_type:asset.mime_type,
+        storage_status:asset.storage_status,original_bytes_status:asset.original_bytes_status,
+        durability_status:asset.durability_status,language_status:asset.language_status,visual_decision:decision,
+        source_sha256:asset.original_sha256 || "",capture_version:asset.capture_version || null,
+        analysis_version:asset.analysis_version || "",transform_version:"visual-transform-2",
+        style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
+        source_analysis:sourceAnalysisSnapshot(asset),
+        authorization_policy:"project_source_media_full_authorization",source_provenance:{source_asset_id:asset.id,
+          original_stored:true,project_owner_confirmed:true}},
+    });
+    unusedAssets.delete(asset.id);
+  }
+  return normalized;
+}
+
+export function decideVisualAsset(asset = {}, request = {}) {
+  const explicit = String(asset.asset_kind || asset.assetKind || asset.visual_class || asset.visualClass || "").toLowerCase();
+  const width = Number(asset.width || 0); const height = Number(asset.height || 0);
+  const language = String(asset.language_status || asset.languageStatus || "unknown").toLowerCase();
+  const searchable = `${asset.alt_text || ""} ${asset.caption_text || ""} ${asset.evidence_text || ""} ${request.image_subject || ""}`.toLowerCase();
+  const regionMap=new Map();
+  for (const region of [...(Array.isArray(asset.language_by_region) ? asset.language_by_region : []),
+    ...(Array.isArray(asset.text_regions) ? asset.text_regions : [])]) {
+    const key=String(region?.region_id || `anonymous-${regionMap.size}`);
+    regionMap.set(key,{...(regionMap.get(key) || {}),...region});
+  }
+  const regions=[...regionMap.values()];
+  const preserveRegionIds=regions.filter((region)=>region?.preserve === true || region?.role === "real_world_signage")
+    .map((region)=>String(region.region_id || "")).filter(Boolean);
+  const translateRegionIds=regions.filter((region)=>region?.preserve !== true
+    && ["author_overlay","editorial_text","ui_text"].includes(region?.role)
+    && /^(?:zh|chinese|mixed)/i.test(String(region?.language || "")))
+    .map((region)=>String(region.region_id || "")).filter(Boolean);
+  const authenticityCritical = Boolean(asset.authenticity_critical) || preserveRegionIds.length > 0
+    || /\b(?:sign|signage|plaque|storefront|entrance|station name)\b|招牌|牌匾|站名/i.test(searchable);
+  const visualClass = explicit || (Number(asset.handwriting_score || 0) >= 0.5 ? "handwritten_card"
+    : Number(asset.collage_count || 0) > 1 ? "photo_collage"
+      : Number(asset.text_density || 0) >= 0.35 ? "editorial_infographic"
+        : width && height && Math.min(width, height) < 480 ? "low_quality" : "unknown");
+  const storedAnalysisStatus=String(asset.analysis_status || asset.analysisStatus || (explicit ? "ready" : "not_analyzed")).toLowerCase();
+  const analysisStatus=storedAnalysisStatus === "ready" && sourceAnalysisRequiresRefresh(normalizedAssetKindForAnalysis(visualClass),
+    asset.reader_text_present,Array.isArray(asset.text_regions) ? asset.text_regions : [],asset.analysis_version)
+    ? "needs_review" : storedAnalysisStatus;
+  const common={language,authenticityCritical,preserveRegionIds,translateRegionIds};
+  if (["low_quality","editor_ui","editor_interface","unreadable"].includes(visualClass)) return {
+    visualClass,...common,action:"reject", reason:"insufficient_delivery_quality",
+  };
+  if (!explicit || analysisStatus !== "ready") {
+    if (language === "no_text" && analysisStatus !== "needs_review" && asset.reader_text_present !== true) return {visualClass:"documentary_photo",...common,action:"retain",
+      transformKind:"PHOTO_RETAIN",reason:"legacy_image_level_no_text_evidence"};
+    if (analysisStatus === "ready" && authenticityCritical && !translateRegionIds.length) return {visualClass:"documentary_photo",...common,action:"retain",
+      transformKind:"PHOTO_RETAIN",reason:"authentic_signage_is_reader_evidence"};
+    return {visualClass:"unknown",...common,action:"analyze",transformKind:"ANALYZE_SOURCE_IMAGE",reason:"image_analysis_required"};
+  }
+  const normalizedClass=({real_world_photo:"documentary_photo",handwritten:"handwritten_card",pure_text:"editorial_infographic",
+    text_overlay:"editorial_infographic",infographic:"editorial_infographic",collage:"photo_collage"})[visualClass] || visualClass;
+  if (language === "unknown" && !regions.length && ["handwritten_card","editorial_infographic","photo_collage","map_or_route"].includes(normalizedClass)) {
+    return {visualClass:normalizedClass,...common,action:"analyze",transformKind:"ANALYZE_SOURCE_IMAGE",reason:"image_analysis_required"};
+  }
+  if (normalizedClass === "documentary_photo") {
+    if (translateRegionIds.length) return {visualClass:normalizedClass,...common,action:"localize",
+      transformKind:"PHOTO_OVERLAY_LOCALIZE",reason:"author_overlay_requires_localization"};
+    return {visualClass:normalizedClass,...common,action:"retain",transformKind:"PHOTO_RETAIN",
+      reason:authenticityCritical ? "authentic_signage_is_reader_evidence" : "documentary_photo_retained"};
+  }
+  if (["handwritten_card","editorial_infographic"].includes(normalizedClass)) return {
+    visualClass:normalizedClass,...common,action:"localize",transformKind:"EDITORIAL_CARD_RECOMPOSE",
+    reason:"editorial_card_requires_english_recomposition",
+  };
+  if (normalizedClass === "photo_collage") {
+    if (!translateRegionIds.length && authenticityCritical) return {visualClass:normalizedClass,...common,action:"retain",
+      transformKind:"PHOTO_RETAIN",reason:"collage_contains_only_authentic_signage"};
+    return {visualClass:normalizedClass,...common,action:"localize",transformKind:"COLLAGE_RECOMPOSE",
+      reason:"collage_author_text_requires_recomposition"};
+  }
+  if (normalizedClass === "map_or_route") return {visualClass:normalizedClass,...common,action:"localize",
+    transformKind:"MAP_OR_ROUTE",reason:"route_labels_require_complete_localization"};
+  if (normalizedClass === "decorative_illustration") return {visualClass:normalizedClass,...common,action:"retain",
+    transformKind:"PHOTO_RETAIN",reason:"decorative_source_is_readable_as_is"};
+  return {visualClass:normalizedClass,...common,action:"analyze",transformKind:"ANALYZE_SOURCE_IMAGE",reason:"image_analysis_required"};
+}
+
+function visualAcquisitionStrategy(decision) {
+  return ({ANALYZE_SOURCE_IMAGE:"analyze_source_image",PHOTO_RETAIN:"use_authorized_source_image",
+    PHOTO_OVERLAY_LOCALIZE:"localize_photo_overlay",EDITORIAL_CARD_RECOMPOSE:"recompose_editorial_card",
+    COLLAGE_RECOMPOSE:"recompose_collage",MAP_OR_ROUTE:"recompose_map_or_route"})[decision.transformKind]
+    || (decision.action === "localize" ? "localize_source_image" : decision.action === "analyze" ? "analyze_source_image" : "use_authorized_source_image");
+}
+
+function visualImageType(decision,fallback) {
+  if (decision.transformKind === "MAP_OR_ROUTE") return "map_or_route";
+  if (["EDITORIAL_CARD_RECOMPOSE","COLLAGE_RECOMPOSE"].includes(decision.transformKind)) return "infographic";
+  return fallback;
+}
+
+function sourceAnalysisSnapshot(asset={}) {
+  return {analysis_status:asset.analysis_status || "not_analyzed",asset_kind:asset.asset_kind || "unknown",
+    text_regions:asset.text_regions || [],photo_regions:asset.photo_regions || [],entities:asset.entities || [],
+    editor_ui_regions:asset.editor_ui_regions || [],primary_subjects:asset.primary_subjects || [],
+    language_by_region:asset.language_by_region || [],reader_text_present:asset.reader_text_present,
+    confidence:asset.analysis_confidence || 0,analysis_version:asset.analysis_version || ""};
+}
+
+function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
+  const clean = (value) => String(value || "").replace(/\s+/g," ").trim();
+  const isEditorial = (value) => value && !/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/i.test(value)
+    && !/\b(?:claim|source|asset|fact|draft)_[a-f0-9]{8,}\b/i.test(value);
+  for (const value of [asset?.alt_text, asset?.caption_text, fallback].map(clean)) {
+    if (isEditorial(value)) return truncateText(value,220);
+  }
+  const subject = clean(asset?.evidence_subject);
+  if (!isEditorial(subject)) return "";
+  const destination = clean(String(destinationSlug || "").replace(/[-_]+/g," "))
+    .replace(/\b[a-z]/g,(character)=>character.toUpperCase());
+  const suffix = destination && !subject.toLowerCase().includes(destination.toLowerCase()) ? ` in ${destination}` : "";
+  return truncateText(`Photo of ${subject}${suffix}.`,220);
+}
+
+function articleAssetMatchScore(draft, brief, asset) {
+  const article = topicTokens(`${draft?.title || ""} ${draft?.body_markdown || ""}`);
+  for (const token of topicTokens(brief?.destination_slug || "")) article.delete(token);
+  const described = topicTokens(`${asset.alt_text || ""} ${asset.caption_text || ""} ${asset.nearby_text || ""} ${asset.evidence_text || ""}`);
+  if (!article.size || !described.size) return 0;
+  const overlap = [...described].filter((token) => article.has(token)).length;
+  return overlap / Math.max(1, Math.min(article.size, described.size));
+}
+
+function sourceAssetDimensions(asset) {
+  const stored={width:Number(asset?.width || 0),height:Number(asset?.height || 0)};
+  if (stored.width > 0 && stored.height > 0) return stored;
+  const filename=String(asset?.local_path || "");
+  if (!filename || !fs.existsSync(filename)) return stored;
+  try {
+    const bytes=fs.readFileSync(filename);
+    if (bytes.length >= 24 && bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) {
+      return {width:bytes.readUInt32BE(16),height:bytes.readUInt32BE(20)};
+    }
+    if (bytes.length >= 30 && bytes.subarray(0,4).toString("ascii") === "RIFF"
+      && bytes.subarray(8,12).toString("ascii") === "WEBP") {
+      const chunk=bytes.subarray(12,16).toString("ascii");
+      if (chunk === "VP8X") return {width:1+bytes.readUIntLE(24,3),height:1+bytes.readUIntLE(27,3)};
+      if (chunk === "VP8 " && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) {
+        return {width:bytes.readUInt16LE(26)&0x3fff,height:bytes.readUInt16LE(28)&0x3fff};
+      }
+      if (chunk === "VP8L" && bytes.length >= 25 && bytes[20] === 0x2f) {
+        const bits=bytes.readUInt32LE(21);
+        return {width:1+(bits&0x3fff),height:1+((bits>>14)&0x3fff)};
+      }
+    }
+    if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+      let offset=2;
+      while (offset+9 < bytes.length) {
+        if (bytes[offset] !== 0xff) { offset += 1; continue; }
+        const marker=bytes[offset+1];
+        if ([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf].includes(marker)) {
+          return {height:bytes.readUInt16BE(offset+5),width:bytes.readUInt16BE(offset+7)};
+        }
+        if (marker === 0xd8 || marker === 0xd9) { offset += 2; continue; }
+        const length=bytes.readUInt16BE(offset+2);
+        if (length < 2) break;
+        offset += 2+length;
+      }
+    }
+  } catch {}
+  return stored;
+}
+
+function sourceAssetAspectRatio(asset) {
+  const {width,height}=sourceAssetDimensions(asset);
+  if (!width || !height) return "3:2";
+  const ratio=width/height;
+  const supported=[["21:9",21/9],["16:9",16/9],["3:2",3/2],["4:3",4/3],["5:4",5/4],
+    ["1:1",1],["4:5",4/5],["3:4",3/4],["2:3",2/3],["9:16",9/16]];
+  return supported.reduce((best,candidate)=>Math.abs(Math.log(candidate[1]/ratio))<Math.abs(Math.log(best[1]/ratio))
+    ? candidate : best)[0];
 }
 
 function visualAssetMatchScore(visual, asset) {
@@ -6853,7 +9416,8 @@ function detectedAssetLanguage(result = {}) {
 function normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios) {
   const allowedTypes = ["real_world_photo", "infographic", "map_or_route", "illustration"];
   const imageType = allowedTypes.includes(item?.image_type) ? item.image_type : "illustration";
-  const strategy = imageType === "real_world_photo" ? "search_real_image"
+  const strategy = item?.source_asset_id ? String(item.acquisition_strategy || "use_authorized_source_image")
+    : imageType === "real_world_photo" ? "search_real_image"
     : imageType === "infographic" ? "render_infographic"
       : imageType === "map_or_route" ? "render_map" : "generate_illustration";
   const factualRequired = imageType === "real_world_photo" || Boolean(item?.factual_image_required);
@@ -6870,6 +9434,11 @@ function normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRa
     image_subject: truncateText(item?.image_subject || draft.title, 240),
     acquisition_strategy: strategy,
     factual_image_required: factualRequired,
+    source_asset_id:item?.source_asset_id || null,source_remote_url:item?.source_remote_url || null,
+    status:item?.status || "planned",media_url:item?.media_url || "",provider:item?.provider || null,model:item?.model || null,
+    media_metadata: { ...(item?.media_metadata || {}),
+      style_version:strategy === "generate_illustration" ? "stc-light-editorial-v1" : null,
+      qa_version:"visual-qa-2" },
   };
 }
 
@@ -6882,7 +9451,128 @@ function visualFingerprint(visual) {
     aspect_ratio: visual.aspect_ratio,
     source_asset_id: visual.source_asset_id || null,
     source_remote_url: visual.source_remote_url || null,
+    source_sha256: visual.source_sha256 || visual.media_metadata?.source_sha256 || null,
+    capture_version: visual.capture_version || visual.media_metadata?.capture_version || null,
+    crop: visual.crop || visual.media_metadata?.crop || null,
+    locale: visual.locale || visual.media_metadata?.locale || "en",
+    transform_version: visual.transform_version || visual.media_metadata?.transform_version || "visual-transform-1",
+    model: visual.model || null,
+    style_version: visual.style_version || visual.media_metadata?.style_version || "stc-light-editorial-v1",
+    qa_version: visual.qa_version || visual.media_metadata?.qa_version || "visual-qa-2",
   }));
+}
+
+function normalizeSourceAssetAnalysis(value = {}, asset = {}) {
+  const allowedKinds=new Set(["documentary_photo","handwritten_card","editorial_infographic","photo_collage",
+    "map_or_route","decorative_illustration","unknown"]);
+  const allowedStatuses=new Set(["not_analyzed","ready","failed","needs_review"]);
+  let analysisStatus=allowedStatuses.has(value.analysis_status) ? value.analysis_status : "ready";
+  const assetKind=allowedKinds.has(value.asset_kind) ? value.asset_kind : "unknown";
+  const sourceSha256=String(value.source_sha256 || asset.original_sha256 || asset.stored_sha256 || "");
+  if (value.source_sha256 && asset.original_sha256 && value.source_sha256 !== asset.original_sha256) {
+    throw Object.assign(new Error("Image analysis belongs to different source bytes."),{code:"STALE_MEDIA_ANALYSIS",retryable:false});
+  }
+  const list=(input,limit=100)=>Array.isArray(input) ? input.filter((item)=>item && typeof item === "object").slice(0,limit) : [];
+  const textRegions=list(value.text_regions);
+  if (analysisStatus === "ready" && sourceAnalysisRequiresRefresh(assetKind,value.reader_text_present,textRegions,value.analysis_version)) analysisStatus="needs_review";
+  return {
+    source_sha256:sourceSha256,analysis_status:analysisStatus,asset_kind:assetKind,
+    text_regions:textRegions,photo_regions:list(value.photo_regions),entities:Array.isArray(value.entities) ? value.entities.slice(0,100) : [],
+    editor_ui_regions:list(value.editor_ui_regions),primary_subjects:Array.isArray(value.primary_subjects) ? value.primary_subjects.slice(0,30) : [],
+    language_by_region:list(value.language_by_region),reader_text_present:typeof value.reader_text_present === "boolean" ? value.reader_text_present : null,
+    confidence:Math.max(0,Math.min(1,Number(value.confidence || 0))),
+    analysis_version:String(value.analysis_version || "media-analysis-1").slice(0,100),
+    prompt_version:String(value.prompt_version || "media-analysis-prompt-1").slice(0,100),
+    last_error:value.last_error ? String(value.last_error).slice(0,2000) : null,
+  };
+}
+
+function hydrateSourceAssetAnalysis(row) {
+  const textRegions=json(row.text_regions_json,[]);
+  const assetKind=row.asset_kind || "unknown";
+  let analysisStatus=row.analysis_status || "not_analyzed";
+  if (analysisStatus === "ready" && sourceAnalysisRequiresRefresh(assetKind,row.reader_text_present == null ? null : Boolean(row.reader_text_present),textRegions,row.analysis_version)) {
+    analysisStatus="needs_review";
+  }
+  return {...row,
+    analysis_status:analysisStatus,asset_kind:assetKind,
+    text_regions:textRegions,photo_regions:json(row.photo_regions_json,[]),entities:json(row.entities_json,[]),
+    editor_ui_regions:json(row.editor_ui_regions_json,[]),primary_subjects:json(row.primary_subjects_json,[]),
+    language_by_region:json(row.language_by_region_json,[]),
+    reader_text_present:row.reader_text_present == null ? null : Boolean(row.reader_text_present),
+    analysis_confidence:Number(row.analysis_confidence || 0),
+  };
+}
+
+function sourceAnalysisRequiresRefresh(assetKind,readerTextPresent,textRegions=[],analysisVersion="") {
+  const textBearing=new Set(["handwritten_card","editorial_infographic","map_or_route"]);
+  if (!textBearing.has(assetKind) && readerTextPresent !== true) return false;
+  if (analysisVersion !== "media-analysis-2" || !Array.isArray(textRegions) || !textRegions.length) return true;
+  const allowedRoles=new Set(["author_overlay","editorial_text","ui_text","real_world_signage"]);
+  return textRegions.some((region)=>!region || !String(region.region_id || "").trim()
+    || !allowedRoles.has(region.role) || !String(region.language || "").trim()
+    || typeof region.readable !== "boolean" || typeof region.preserve !== "boolean"
+    || (region.readable && !String(region.text || "").trim()));
+}
+
+function normalizedAssetKindForAnalysis(value="") {
+  return ({handwritten:"handwritten_card",pure_text:"editorial_infographic",text_overlay:"editorial_infographic",
+    infographic:"editorial_infographic",collage:"photo_collage",real_world_photo:"documentary_photo"})[value] || value;
+}
+
+export function visualQualityQaStatus(value={}) {
+  if (value?.status) return String(value.status);
+  const fields=["language","completeness","style","semantic"].map((field)=>value?.[field]?.status || "not_tested");
+  if (fields.every((status)=>status === "passed")) return "passed";
+  if (fields.some((status)=>status === "failed")) return "failed";
+  if (fields.some((status)=>status === "needs_review")) return "needs_review";
+  return "not_tested";
+}
+
+function imageLanguageStatus(analysis = {}) {
+  const languages=(analysis.language_by_region || []).map((item)=>String(item?.language || "").toLowerCase());
+  const hasHan=languages.some((value)=>/^(?:zh|chinese)/.test(value));
+  const hasEnglish=languages.some((value)=>/^(?:en|english)/.test(value));
+  if (hasHan && hasEnglish) return "mixed";
+  if (hasHan) return "chinese";
+  if (hasEnglish) return "english";
+  return analysis.reader_text_present === false ? "no_text" : "unknown";
+}
+
+function deliveryVisualMetadata(row) {
+  const stored = json(row.media_metadata_json, {});
+  if (!row.source_asset_id) return stored;
+  const localizedPhoto=["localize_source_image","localize_photo_overlay"].includes(row.acquisition_strategy);
+  const localizedFile=localizedPhoto && storedOriginalAvailable(row.media_path);
+  return {
+    ...stored,
+    ...(localizedPhoto ? {
+      localized_file:Boolean(stored.localized_file || localizedFile),
+      localized_from_source_asset_id:stored.localized_from_source_asset_id || (localizedFile ? row.source_asset_id : null),
+    } : {}),
+    source_mime_type: row.source_asset_mime_type || stored.source_mime_type || null,
+    storage_status: row.source_asset_storage_status || stored.storage_status || null,
+    original_bytes_status: row.source_asset_original_bytes_status || stored.original_bytes_status || null,
+    durability_status: row.source_asset_durability_status || stored.durability_status || null,
+    authorization_policy: "project_source_media_full_authorization",
+    source_provenance: {
+      ...(stored.source_provenance || {}),
+      source_asset_id: row.source_asset_id,
+      original_stored: row.source_asset_durability_status === "ORIGINAL_STORED"
+        && row.source_asset_original_bytes_status === "saved_original"
+        && storedOriginalAvailable(row.source_asset_local_path),
+      project_owner_confirmed: true,
+      source_owner_confirmed: row.source_authorization_status === "owner_confirmed",
+      source_publishable: Boolean(row.source_publishable),
+      asset_owner_confirmed: row.asset_authorization_status === "owner_confirmed",
+      asset_publishable: Boolean(row.asset_publishable),
+    },
+  };
+}
+
+function storedOriginalAvailable(value) {
+  try { const stat = fs.statSync(String(value || "")); return stat.isFile() && stat.size > 0; }
+  catch { return false; }
 }
 
 function buildArticleSchema(draft, visuals, config) {
@@ -7163,7 +9853,7 @@ function defaultPlacement(index) {
 }
 
 function defaultVisualPrompt(title, destination, index) {
-  return `Original editorial illustration for \"${title}\" in ${destination || "China"}, scene ${index + 1}; calm editorial travel artwork, simplified authentic atmosphere, no realistic documentary claim, no readable text, no logos, no watermark, no copied social-media imagery.`;
+  return `Original editorial illustration for \"${title}\" in ${destination || "China"}, scene ${index + 1}; SoloToChina light editorial style stc-light-editorial-v1: warm white or pale background, clear deep-blue structure, generous whitespace, restrained accent colors, red only for a small warning detail; calm useful travel artwork, never a dark red-black split poster or dense headline graphic; simplified authentic atmosphere, no realistic documentary claim, no readable text, no logos, no watermark, no copied social-media imagery.`;
 }
 
 function visualCountForWords(words) {
@@ -7251,11 +9941,21 @@ function extractionJobPriority(type) {
   if (type === "finalize_source_extraction") return 0;
   if (type === "retry_segment_extraction") return 4;
   if (type === "audit_segment_coverage") return 5;
-  if (type === "extract_segment_claims") return 9;
+  if (["extract_segment_claims","extract_media_batch"].includes(type)) return 9;
   if (type === "segment_source") return 10;
   if (type === "preflight_source") return 11;
   if (type === "extract_source") return 12;
   return 9;
+}
+
+function sourceStageFromProjection(row){
+  if(row.status==="exception")return "exception";
+  if(row.media_ready_count<row.media_count)return "persisting_media";
+  if(!row.segment_count)return "processing_gap";
+  if(row.extracted_segment_count<row.segment_count)return "extracting_evidence";
+  if(row.audited_segment_count<row.segment_count)return "auditing_coverage";
+  if(row.experience_status!=="succeeded")return "extracting_experience";
+  return row.status==="processed"?"core_complete":row.status;
 }
 
 function compareEligibleJobs(a, b) {
@@ -7277,6 +9977,20 @@ function knowledgeValueSpecificity(value) {
   const normalized = normalizeValue(value);
   if (/^(?:true|false|yes|no|present|absent|available|unavailable|有|无|是|否)$/.test(normalized)) return 0;
   return normalized.length;
+}
+
+function canonicalKnowledgeVariant(row){
+  const structured=row?.structured_value||{};
+  return `${structured.canonical_predicate||normalizeValue(row?.predicate)}:${structured.typed_value==null
+    ? normalizeValue(row?.value_text):stableCanonicalSerialize(structured.typed_value)}`;
+}
+
+function verificationSourcePriority(rows=[]){
+  const predicates=[...new Set(rows.map((row)=>row?.structured_value?.canonical_predicate||normalizeValue(row?.predicate)).filter(Boolean))];
+  const official=predicates.some((value)=>/opening|price|reservation|schedule|address|transport|access/.test(value));
+  return official
+    ? ["official operator or venue","current on-site observation","independent recent source"]
+    : ["independent recent source","primary source","current observation"];
 }
 
 function displayTypedKnowledgeValue(value) {
@@ -7416,6 +10130,41 @@ function resolvedVerificationPriority(row) {
     ? "manual_confirmed" : row.verification_priority;
 }
 
+function hydrateKnowledgeFact(row) {
+  return {
+    ...row,
+    raw_consensus_status: row.consensus_status,
+    consensus_status: resolvedConsensusStatus(row),
+    preferred_value: resolvedPreferredValue(row),
+    evidence: json(row.evidence_json, []),
+    entity_aliases: json(row.entity_aliases_json, []),
+    canonical_subject: row.canonical_subject || row.subject,
+    entity_resolution_status: row.entity_resolution_status || "unresolved",
+    entity_location: json(row.entity_location_json, {}),
+    claim_relations: json(row.claim_relations_json, []),
+    consensus_method: row.consensus_method || "legacy_count",
+    consensus_confidence: Number(row.consensus_confidence || 0),
+    consensus_detail: json(row.consensus_detail_json, {}),
+    manual_resolution: hydrateKnowledgeResolution(row),
+    verification_priority: resolvedVerificationPriority(row),
+  };
+}
+
+function knowledgeThemeSql(alias = "k") {
+  return `CASE
+    WHEN lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%metro%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%transport%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%station%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%route%' THEN 'transport'
+    WHEN lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%price%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%cost%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%ticket%' THEN 'cost'
+    WHEN lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%experience%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%view%'
+      OR lower(${alias}.predicate||' '||${alias}.normalized_key) LIKE '%photo%' THEN 'experience'
+    ELSE 'planning' END`;
+}
+
 function hydrateKnowledgeResolution(row) {
   if (row.resolution_status !== "resolved") return null;
   return {
@@ -7423,6 +10172,7 @@ function hydrateKnowledgeResolution(row) {
     preferred_value: row.resolved_value,
     note: row.resolution_note || "",
     resolved_at: row.resolution_resolved_at || null,
+    resolution_type: row.resolution_type || "preferred_value",
   };
 }
 
@@ -7548,6 +10298,14 @@ export function scopeFactsForOpportunity(facts, { destinationSlug, topic, topic_
   return withScopedCoverageLimitations(selected, terms);
 }
 
+function factCouldAffectOpportunity(fact,opportunity,destinationSlug){
+  const terms=topicTokens(`${opportunity.topic_key||""} ${opportunity.title||""}`);
+  for(const term of topicTokens(destinationSlug))terms.delete(term);
+  if(!terms.size)return true;
+  const factTerms=topicTokens(`${fact.normalized_key||""} ${fact.subject||""} ${fact.predicate||""}`);
+  return [...terms].some((term)=>factTerms.has(term));
+}
+
 function withScopedCoverageLimitations(facts, terms) {
   return facts.map((fact) => ({
     ...fact,
@@ -7623,6 +10381,24 @@ function countStrings(values) {
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([value, count]) => ({ value, count }));
 }
 
+function hydrateMediaBatch(row){return {...row,segmentIds:json(row.segment_ids_json,[]),assetIds:json(row.asset_ids_json,[])};}
+
+function sensitiveMediaRow(row){
+  if(["infographic","table","map"].includes(row.segment_type))return true;
+  const descriptor=`${row.title||""} ${row.raw_text||""} ${row.alt_text||""} ${row.nearby_text||""} ${row.caption_text||""}`.normalize("NFKC").toLowerCase();
+  return /(?:map|menu|table|schedule|timetable|price|ticket|route|diagram|screenshot|receipt|地图|菜单|表格|时刻|价格|票价|路线|截图|收据|长图|文字)/u.test(descriptor);
+}
+
+function balancedMediaGroups(rows,target=6){
+  if(!rows.length)return [];
+  if(rows.length<4)return [rows];
+  const groupCount=Math.ceil(rows.length/Math.min(8,Math.max(4,target)));
+  const base=Math.floor(rows.length/groupCount),extra=rows.length%groupCount,groups=[];
+  let offset=0;
+  for(let index=0;index<groupCount;index+=1){const size=base+(index<extra?1:0);groups.push(rows.slice(offset,offset+size));offset+=size;}
+  return groups;
+}
+
 function normalizeInputModality(value) {
   const modality = String(value || "unknown").toLowerCase();
   return ["text", "image", "video", "mixed", "unknown"].includes(modality) ? modality : "unknown";
@@ -7670,4 +10446,416 @@ function normalizeExtractionInputManifest(value) {
       failureReason: item?.failureReason ? String(item.failureReason).slice(0, 1_000) : null,
     })) : [],
   };
+}
+
+function extractionInputManifest(segment, extraction) {
+    const suppliedManifest = normalizeExtractionInputManifest(extraction?.inputManifest);
+    // Text segments are passed to every extractor directly in `source.raw_text`, so
+    // record that known transport fact even for older/custom extractor adapters.
+    // Media must still provide a provider manifest; we never infer it from a method
+    // name because that was the lossy behavior A01 removes.
+    return suppliedManifest.version > 0 || segment.asset_id
+      ? suppliedManifest
+      : normalizeExtractionInputManifest({
+        version: 1,
+        expectedModality: "text",
+        receivedModality: "text",
+        provider: extraction?.provider || "adapter",
+        model: extraction?.model || "",
+        capabilities: { text: true, image: false, video: false, batch: false },
+        assets: [],
+      });
+}
+
+export const EDITORIAL_ASSEMBLY_INPUT_BUDGET = Object.freeze({
+  maxFacts: 48,
+  maxEvidenceSnippets: 96,
+  maxExperiences: 16,
+  maxSourceFamilies: 48,
+  maxFailureLessons: 12,
+  maxEditorialLessons: 12,
+  maxGoldenArticles: 6,
+  maxInputBytes: 128 * 1024,
+  maxEstimatedTokens: 32_000,
+});
+
+// Editorial Assembly is the first model-backed production stage. It must be
+// bounded independently of plan_content because no frozen assembly exists yet.
+// The selection is deterministic and keeps high-materiality facts plus their
+// dates, exceptions, conflicts and strongest evidence; it never mutates Source,
+// Knowledge, Claims, Evidence or Experience records.
+export function boundedEditorialAssemblyPackage(input, budget = EDITORIAL_ASSEMBLY_INPUT_BUDGET) {
+  if (!input) return null;
+  const allFacts = uniqueByKey(input.facts || [], (fact) => fact.normalized_key || sha256(JSON.stringify(fact)));
+  const promiseTokens = topicTokens(JSON.stringify(input.approved_proposal || {}));
+  const ranked = allFacts.map((fact) => ({ fact, score: planningFactScore(fact, promiseTokens) }))
+    .sort((left,right) => right.score-left.score || String(left.fact.normalized_key || "").localeCompare(String(right.fact.normalized_key || "")));
+  let snippetCount = 0;
+  const facts = ranked.slice(0,Math.max(1,Number(budget.maxFacts || 48))).map(({fact}) => {
+    const allowed = Math.max(0,Math.min(3,Number(budget.maxEvidenceSnippets || 96)-snippetCount));
+    const evidence = (fact.evidence || []).slice().sort((a,b) => Number(b.confidence || 0)-Number(a.confidence || 0)
+      || String(a.source_id || "").localeCompare(String(b.source_id || ""))).slice(0,allowed).map(compactPlanningEvidence);
+    snippetCount += evidence.length;
+    return compactPlanningFact(fact,evidence);
+  });
+  const counts = {
+    destination_fact_count:allFacts.length,
+    available_experience_count:(input.available_experiences || []).length,
+    source_family_count:(input.source_families || []).length,
+    failure_lesson_count:(input.failure_lessons || []).length,
+    editorial_lesson_count:(input.editorial_lessons || []).length,
+    golden_article_count:(input.golden_articles || []).length,
+  };
+  const compact = {
+    candidate:compactObject(input.candidate,1_200),
+    approved_proposal:compactObject(input.approved_proposal,6_000),
+    facts,
+    production_mode:input.production_mode,
+    source_reference:compactObject(input.source_reference,4_000),
+    editorial_assembly:input.editorial_assembly ? compactObject(input.editorial_assembly,4_000) : null,
+    experiences:(input.experiences || []).slice(0,12).map((item)=>compactObject(item,2_500)),
+    editorial_patterns:(input.editorial_patterns || []).slice(0,4).map((item)=>compactObject(item,2_000)),
+    constraints:compactObject(input.constraints,2_000),
+    available_experiences:(input.available_experiences || []).slice(0,Math.max(0,Number(budget.maxExperiences || 16)))
+      .map((item)=>compactObject(item,2_500)),
+    source_families:(input.source_families || []).slice(0,Math.max(0,Number(budget.maxSourceFamilies || 48)))
+      .map((item)=>compactObject(item,800)),
+    failure_lessons:(input.failure_lessons || []).slice(0,Math.max(0,Number(budget.maxFailureLessons || 12)))
+      .map((item)=>compactObject(item,1_500)),
+    editorial_lessons:(input.editorial_lessons || []).slice(0,Math.max(0,Number(budget.maxEditorialLessons || 12)))
+      .map((item)=>compactObject(item,1_500)),
+    golden_articles:(input.golden_articles || []).slice(0,Math.max(0,Number(budget.maxGoldenArticles || 6)))
+      .map((item)=>compactObject(item,2_000)),
+  };
+  const manifest = {
+    version:1, selected_by:"approved_scope_materiality", ...counts,
+    fact_count:0,evidence_snippet_count:0,input_bytes:0,estimated_tokens:0,
+    budget:{...budget},deterministic_compression:false,
+  };
+  compact.editorial_assembly_input_manifest = manifest;
+  const inputSize = () => Buffer.byteLength(JSON.stringify(compact));
+  const exceedsBudget = () => inputSize() > Number(budget.maxInputBytes || 128*1024)
+    || Math.ceil(inputSize()/4) > Number(budget.maxEstimatedTokens || 32_000);
+  const optionalLists = ["golden_articles","editorial_lessons","failure_lessons","source_families","available_experiences","editorial_patterns"];
+  while (exceedsBudget()) {
+    const key = optionalLists.find((name) => compact[name].length > 0);
+    if (key) compact[key].pop();
+    else if (facts.length > 1) facts.pop();
+    else break;
+  }
+  manifest.fact_count=facts.length;
+  manifest.evidence_snippet_count=facts.reduce((sum,fact)=>sum+(fact.evidence?.length || 0),0);
+  manifest.deterministic_compression = counts.destination_fact_count!==facts.length
+    || counts.available_experience_count!==compact.available_experiences.length
+    || counts.source_family_count!==compact.source_families.length
+    || counts.failure_lesson_count!==compact.failure_lessons.length
+    || counts.editorial_lesson_count!==compact.editorial_lessons.length
+    || counts.golden_article_count!==compact.golden_articles.length;
+  // Stabilize the self-reported size after digit counts in the manifest change.
+  for (let pass=0;pass<3;pass+=1) {
+    manifest.input_bytes=inputSize();
+    manifest.estimated_tokens=Math.ceil(manifest.input_bytes/4);
+  }
+  if (manifest.input_bytes > Number(budget.maxInputBytes || 128*1024)
+    || manifest.estimated_tokens > Number(budget.maxEstimatedTokens || 32_000)) {
+    throw Object.assign(new Error("EDITORIAL_ASSEMBLY_INPUT_BUDGET_EXCEEDED: bounded Editorial Assembly input exceeds the configured token budget."), {
+      code:"EDITORIAL_ASSEMBLY_INPUT_BUDGET_EXCEEDED",retryable:false,details:manifest,
+    });
+  }
+  return compact;
+}
+
+export const NARRATIVE_INPUT_BUDGET = Object.freeze({
+  maxFacts: 48,
+  maxEvidenceSnippetsPerFact: 2,
+  maxExperiences: 16,
+  maxInputBytes: 128 * 1024,
+  maxEstimatedTokens: 32_000,
+});
+
+// Narrative planning consumes the already approved outline and frozen
+// Editorial Assembly scope. Sending getBriefPackage() directly also sent the
+// complete destination Topic package (sources, assets, lessons and repeated
+// evidence), which produced six-figure-token requests in real production data.
+// This DTO keeps every planned fact key and enough exact Claim provenance for
+// evidence selection while deterministically discarding unrelated history.
+export function boundedNarrativePackage(input, budget = NARRATIVE_INPUT_BUDGET) {
+  if (!input) return null;
+  const outline=input.brief?.plan?.outline || input.brief?.outline || [];
+  const requestedKeys=[...new Set([
+    ...(input.brief?.evidence_ledger || []),
+    ...outline.flatMap((section)=>section?.claim_keys || []),
+  ].filter(Boolean))].slice(0,Math.max(1,Number(budget.maxFacts || 48)));
+  const factsByKey=new Map((input.facts || []).map((fact)=>[fact.normalized_key,fact]));
+  const facts=requestedKeys.map((key)=>factsByKey.get(key)).filter(Boolean).map((fact)=>compactNarrativeFact(fact,
+    (fact.evidence || []).slice().sort((a,b)=>Number(b.confidence || 0)-Number(a.confidence || 0)
+      || String(a.source_id || '').localeCompare(String(b.source_id || '')))
+      .slice(0,Math.max(1,Number(budget.maxEvidenceSnippetsPerFact || 2))).map(compactNarrativeEvidence)));
+  const selectedExperienceIds=new Set(input.editorial_assembly?.selected_experience_block_ids || []);
+  const sourceExperiences=selectedExperienceIds.size
+    ? (input.experiences || []).filter((item)=>selectedExperienceIds.has(item.id))
+    : input.experiences || [];
+  const compact={
+    brief:{
+      id:input.brief?.id,destination_slug:input.brief?.destination_slug,topic:input.brief?.topic,
+      strategy_version:input.brief?.strategy_version,
+      plan:{
+        title:input.brief?.plan?.title || input.brief?.topic,
+        primary_keyword:input.brief?.plan?.primary_keyword,
+        search_intent:input.brief?.plan?.search_intent || input.brief?.search_intent,
+        audience:input.brief?.plan?.audience || input.brief?.audience,
+        angle:input.brief?.plan?.angle,reader_promise:input.brief?.plan?.reader_promise,
+        outline:outline.map((section)=>({section_id:section.section_id,heading:boundPlanningText(section.heading,300),
+          purpose:boundPlanningText(section.purpose,600),claim_keys:(section.claim_keys || []).filter((key)=>factsByKey.has(key)).slice(0,12)})),
+      },
+      canonical:compactObject(input.brief?.canonical,6_000),
+      evidence_ledger:requestedKeys,
+    },
+    approved_proposal:compactObject(input.approved_proposal,6_000),
+    production_mode:input.production_mode,
+    editorial_assembly:input.editorial_assembly ? {
+      id:input.editorial_assembly.id,opportunity_id:input.editorial_assembly.opportunity_id,
+      selected_fact_keys:(input.editorial_assembly.selected_fact_keys || []).filter((key)=>factsByKey.has(key)).slice(0,48),
+      selected_experience_block_ids:[...selectedExperienceIds].slice(0,24),
+      exclusions:(input.editorial_assembly.exclusions || []).slice(0,24).map((value)=>boundPlanningText(value,500)),
+      rationale:boundPlanningText(input.editorial_assembly.rationale,1_500),
+    } : null,
+    facts,
+    experiences:sourceExperiences.slice(0,Math.max(0,Number(budget.maxExperiences || 16)))
+      .map((item)=>compactObject(item,2_500)),
+    content_policy:compactObject(input.content_policy,2_000),
+    constraints:compactObject(input.constraints,2_000),
+  };
+  const inputSize=()=>Buffer.byteLength(JSON.stringify(compact));
+  const effectiveMaxBytes=Math.min(Number(budget.maxInputBytes || 128*1024),
+    Number(budget.maxEstimatedTokens || 32_000)*4-2_048);
+  while(inputSize()>effectiveMaxBytes && facts.some((fact)=>(fact.evidence || []).length>1)){
+    const fact=[...facts].reverse().find((item)=>(item.evidence || []).length>1);
+    fact.evidence.pop();
+  }
+  while(inputSize()>effectiveMaxBytes && compact.experiences.length) compact.experiences.pop();
+  const manifest={
+    version:1,selected_by:'approved_outline_and_editorial_assembly',
+    requested_fact_count:requestedKeys.length,fact_count:facts.length,
+    evidence_snippet_count:facts.reduce((sum,fact)=>sum+(fact.evidence?.length || 0),0),
+    experience_count:compact.experiences.length,input_bytes:0,estimated_tokens:0,budget:{...budget},
+    deterministic_compression:true,
+  };
+  compact.narrative_input_manifest=manifest;
+  for(let pass=0;pass<3;pass+=1){manifest.input_bytes=inputSize();manifest.estimated_tokens=Math.ceil(manifest.input_bytes/4);}
+  if(manifest.input_bytes>Number(budget.maxInputBytes || 128*1024)
+    || manifest.estimated_tokens>Number(budget.maxEstimatedTokens || 32_000)){
+    throw Object.assign(new Error('NARRATIVE_INPUT_BUDGET_EXCEEDED: bounded narrative input exceeds the configured token budget.'),{
+      code:'NARRATIVE_INPUT_BUDGET_EXCEEDED',retryable:false,details:manifest,
+    });
+  }
+  return compact;
+}
+
+function compactNarrativeFact(fact,evidence){
+  return {
+    normalized_key:fact.normalized_key,subject:boundPlanningText(fact.subject,300),
+    predicate:boundPlanningText(fact.predicate,300),
+    preferred_value:boundPlanningText(fact.preferred_value ?? fact.value,800),
+    qualifiers:compactObject(fact.qualifiers || fact.qualifiers_json,1_000),
+    consensus_status:fact.consensus_status,consensus_method:fact.consensus_method,
+    freshness_state:fact.freshness_state,valid_from:fact.valid_from,valid_until:fact.valid_until,
+    coverage_limitations:compactObject(fact.coverage_limitations,800),evidence,
+  };
+}
+
+function compactNarrativeEvidence(item){
+  return {
+    source_id:item.source_id,source_title:boundPlanningText(item.source_title || item.title,200),
+    claim_id:item.claim_id,quote:boundPlanningText(item.quote || item.source_quote,450),
+    value:boundPlanningText(item.value || item.value_text,450),confidence:item.confidence,
+    captured_at:item.captured_at,verified_at:item.verified_at,valid_from:item.valid_from,valid_to:item.valid_to,
+    final_url:item.final_url || item.canonical_url || item.original_url,
+  };
+}
+
+export const PLANNING_INPUT_BUDGET = Object.freeze({
+  maxFacts: 32,
+  maxEvidenceSnippets: 64,
+  maxInputBytes: 96 * 1024,
+  maxEstimatedTokens: 24_000,
+});
+
+// plan_content receives the frozen Editorial Assembly selection, never the full
+// destination Knowledge store. Ranking is materiality-based and deterministic;
+// limits, dates, negatives, exceptions and conflict metadata remain attached to
+// each selected fact while long prose/quotes are bounded.
+export function boundedPlanningPackage(input, budget = PLANNING_INPUT_BUDGET) {
+  if (!input) return null;
+  const promise = JSON.stringify(input.approved_proposal || {});
+  const promiseTokens = topicTokens(promise);
+  const allFacts = uniqueByKey(input.facts || [], (fact) => fact.normalized_key || sha256(JSON.stringify(fact)));
+  const frozenKeys=new Set(input.editorial_assembly?.selected_fact_keys || []);
+  const sourceFacts=frozenKeys.size ? allFacts.filter((fact)=>frozenKeys.has(fact.normalized_key)) : allFacts;
+  const ranked = sourceFacts.map((fact) => ({ fact, score: planningFactScore(fact, promiseTokens) }))
+    .sort((left,right) => right.score-left.score || String(left.fact.normalized_key || "").localeCompare(String(right.fact.normalized_key || "")));
+  let snippetCount = 0;
+  let facts = ranked.slice(0,Math.max(1,Number(budget.maxFacts || 32))).map(({fact}) => {
+    const allowed = Math.max(0,Math.min(3,Number(budget.maxEvidenceSnippets || 64)-snippetCount));
+    const evidence = (fact.evidence || []).slice().sort((a,b) => Number(b.confidence || 0)-Number(a.confidence || 0)
+      || String(a.source_id || "").localeCompare(String(b.source_id || ""))).slice(0,allowed).map(compactPlanningEvidence);
+    snippetCount += evidence.length;
+    return compactPlanningFact(fact,evidence);
+  });
+  const compact = {
+    candidate: compactObject(input.candidate,1_200),
+    approved_proposal: compactObject(input.approved_proposal,6_000),
+    facts,
+    production_mode: input.production_mode,
+    source_reference: compactObject(input.source_reference,4_000),
+    editorial_assembly: input.editorial_assembly ? {
+      id:input.editorial_assembly.id,
+      opportunity_id:input.editorial_assembly.opportunity_id,
+      input_hash:input.editorial_assembly.input_hash,
+      selected_fact_keys:input.editorial_assembly.selected_fact_keys || [],
+      selected_experience_block_ids:input.editorial_assembly.selected_experience_block_ids || [],
+    } : null,
+    experiences:(input.experiences || []).slice(0,12).map((item) => compactObject(item,2_500)),
+    editorial_patterns:(input.editorial_patterns || []).slice(0,4).map((item) => compactObject(item,2_000)),
+    constraints:input.constraints,
+  };
+  while (facts.length > 1 && Buffer.byteLength(JSON.stringify(compact)) > Number(budget.maxInputBytes || 96*1024)) {
+    facts.pop();
+  }
+  const inputBytes = Buffer.byteLength(JSON.stringify(compact));
+  compact.planning_input_manifest = {
+    version:1,
+    selected_by:"editorial_assembly_materiality",
+    destination_fact_count:allFacts.length,
+    source_fact_count:sourceFacts.length,
+    fact_count:facts.length,
+    evidence_snippet_count:facts.reduce((sum,fact) => sum+(fact.evidence?.length || 0),0),
+    input_bytes:inputBytes,
+    estimated_tokens:Math.ceil(inputBytes/4),
+    budget:{...budget},
+    deterministic_compression:sourceFacts.length!==facts.length || inputBytes>=Number(budget.maxInputBytes || 96*1024),
+  };
+  if (compact.planning_input_manifest.estimated_tokens > Number(budget.maxEstimatedTokens || 24_000)) {
+    throw Object.assign(new Error("PLAN_INPUT_BUDGET_EXCEEDED: bounded planning input exceeds the configured token budget."), {
+      code:"PLAN_INPUT_BUDGET_EXCEEDED",retryable:false,details:compact.planning_input_manifest,
+    });
+  }
+  return compact;
+}
+
+function planningFactScore(fact,tokens) {
+  const haystack=topicTokens(`${fact.normalized_key || ""} ${fact.subject || ""} ${fact.predicate || ""} ${fact.preferred_value || fact.value || ""}`);
+  const overlap=[...haystack].filter((token)=>tokens.has(token)).length;
+  return overlap*100 + (/conflict|warning|exception|negative|closed|not_|date|price|hour/i.test(JSON.stringify(fact)) ? 50 : 0)
+    + Number(fact.support_count || fact.independent_source_count || 0)*5 + Number(fact.confidence || 0);
+}
+
+function compactPlanningFact(fact,evidence) {
+  return {
+    normalized_key:fact.normalized_key,subject:fact.subject,predicate:fact.predicate,
+    preferred_value:boundPlanningText(fact.preferred_value ?? fact.value,1_500),
+    qualifiers:compactObject(fact.qualifiers || fact.qualifiers_json,2_500),
+    consensus_status:fact.consensus_status,consensus_method:fact.consensus_method,
+    freshness_state:fact.freshness_state,valid_from:fact.valid_from,valid_until:fact.valid_until,
+    coverage_limitations:compactObject(fact.coverage_limitations,2_000),
+    support_count:fact.support_count,independent_source_count:fact.independent_source_count,
+    confidence:fact.confidence,evidence,
+  };
+}
+
+function compactPlanningEvidence(item) {
+  return { source_id:item.source_id,source_title:boundPlanningText(item.source_title || item.title,300),
+    claim_id:item.claim_id,quote:boundPlanningText(item.quote || item.source_quote,700),
+    value:boundPlanningText(item.value || item.value_text,700),confidence:item.confidence,
+    captured_at:item.captured_at,verified_at:item.verified_at,final_url:item.final_url || item.canonical_url || item.original_url };
+}
+
+function compactObject(value,maxBytes) {
+  if (value == null) return value;
+  const walk=(item) => {
+    if (typeof item === "string") return boundPlanningText(item,1_200);
+    if (Array.isArray(item)) return item.slice(0,24).map(walk);
+    if (item && typeof item === "object") return Object.fromEntries(Object.entries(item).slice(0,48).map(([key,entry])=>[key,walk(entry)]));
+    return item;
+  };
+  const result=walk(value);
+  return Buffer.byteLength(JSON.stringify(result))<=maxBytes ? result : { summary:boundPlanningText(JSON.stringify(result),Math.max(100,maxBytes-32)) };
+}
+
+function boundPlanningText(value,limit) {
+  const text=String(value ?? "");
+  if (text.length<=limit) return text;
+  const head=Math.ceil((limit-20)*0.7); const tail=Math.floor((limit-20)*0.3);
+  return `${text.slice(0,head)} …[bounded]… ${text.slice(-tail)}`;
+}
+
+function uniqueByKey(values,keyFor) {
+  const seen=new Set();
+  return values.filter((value)=>{const key=keyFor(value);if(seen.has(key))return false;seen.add(key);return true;});
+}
+
+function structuredFailureDiagnostic(job,error) {
+  const code=String(error?.code || error?.status || "PRODUCTION_FAILED").slice(0,120);
+  const deterministicCodes=new Set([
+    "EDITORIAL_PAGE_INVALID","FINAL_PAGE_INVALID","FINAL_PAGE_QA_FAILED","MEDIA_DELIVERY_INVALID",
+    "PUBLISH_PACKAGE_INVALID","COMMERCIAL_DELIVERY_MISMATCH","CONTRACT_VERSION_MISMATCH",
+    "PROTECTED_EVIDENCE_MISMATCH","DESTINATION_TOPIC_MISMATCH","FROZEN_WRITING_SCOPE_INVALID",
+  ]);
+  const hasProviderEvidence=Boolean(error?.provider || error?.status || error?.details?.http_status
+    || error?.details?.provider_request_id || /^PROVIDER_/.test(code));
+  const hasDeterministicEvidence=deterministicCodes.has(code) || Boolean(error?.details?.validation);
+  const executionKind=hasProviderEvidence && hasDeterministicEvidence ? "mixed"
+    : hasProviderEvidence ? "provider" : hasDeterministicEvidence ? "deterministic" : "legacy_unknown";
+  const details=safeDiagnosticValue({
+    outer_code:code,
+    message:String(error?.message || error || "").slice(0,4_000),
+    stage:job?.type || null,
+    job_id:job?.id || null,
+    job_attempt:Number(job?.attempts || 0),
+    recovery_run_id:job?.recovery_run_id || null,
+    production_owner_opportunity_id:job?.production_owner_opportunity_id || null,
+    provider:error?.provider || null,
+    http_status:Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
+    retry_after_ms:error?.retryAfterMs ?? null,
+    retryable:error?.retryable ?? null,
+    details:error?.details || null,
+    quality_qa:error?.qualityQa || null,
+  });
+  return {
+    executionKind,
+    details,
+    draftRevision:Number(error?.details?.draftRevision ?? error?.details?.draft_revision) || null,
+    inputHash:String(error?.details?.inputHash || error?.details?.input_hash || "").slice(0,200),
+    candidateHash:String(error?.details?.candidateHash || error?.details?.candidate_hash || "").slice(0,200),
+  };
+}
+
+function affiliateAssetBusinessSnapshot(asset) {
+  const value=(camel,snake,fallback="")=>asset?.[camel] ?? asset?.[snake] ?? fallback;
+  return {
+    id:value("id","id"),provider_account_id:value("providerAccountId","provider_account_id"),provider:value("provider","provider"),
+    asset_type:value("assetType","asset_type"),product_category:value("productCategory","product_category"),
+    scope_type:value("scopeType","scope_type"),scope_key:value("scopeKey","scope_key"),country_code:value("countryCode","country_code"),
+    destination_slug:value("destinationSlug","destination_slug"),area_key:value("areaKey","area_key"),route_key:value("routeKey","route_key"),
+    entity_key:value("entityKey","entity_key"),entity_name:value("entityName","entity_name"),provider_entity_id:value("providerEntityId","provider_entity_id"),
+    title:value("title","title"),description:value("description","description"),cta_label:value("ctaLabel","cta_label"),
+    target_url:value("targetUrl","target_url"),embed_config:value("embedConfig","embed_config",json(asset?.embed_config_json,{})),
+    image_url:value("imageUrl","image_url"),alt_text:value("altText","alt_text"),price_text:value("priceText","price_text"),
+    language:value("language","language","en"),priority:Number(value("priority","priority",0)),active:Boolean(value("active","active",true)),
+    valid_from:value("validFrom","valid_from",null),valid_until:value("validUntil","valid_until",null),
+  };
+}
+
+function safeDiagnosticValue(value,depth=0,key="") {
+  if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+  if (depth>6) return "[truncated]";
+  if (typeof value === "string") {
+    if (/(?:authorization|cookie|api[-_]?key|secret|token|password|base64|inlineData|signed[-_]?url)/i.test(key)) return "[redacted]";
+    const text=value.replace(/(?:Bearer\s+)[A-Za-z0-9._~+/=-]+/gi,"Bearer [redacted]");
+    return text.length>2_000 ? `${text.slice(0,2_000)}…[truncated]` : text;
+  }
+  if (Array.isArray(value)) return value.slice(0,100).map((item)=>safeDiagnosticValue(item,depth+1,key));
+  if (typeof value === "object") return Object.fromEntries(Object.entries(value).slice(0,120)
+    .map(([name,item])=>[name,safeDiagnosticValue(item,depth+1,name)]));
+  return String(value).slice(0,500);
 }

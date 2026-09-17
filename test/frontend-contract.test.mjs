@@ -189,6 +189,52 @@ test("component validation rejects unknown components, variants, required fields
   assert.ok(arbitrary.errors.some((item) => item.code === "INVALID_COMPONENT_DATA"));
 });
 
+test("local validation enforces the WordPress guide taxonomy omitted by the generic JSON Schema", async (t) => {
+  const { repository } = repositoryFixture(t);
+  const pageSchema = {
+    schemaVersion:"1.4.0", type:"object", additionalProperties:false, required:["metadata", "blocks"],
+    properties:{
+      metadata:{ type:"object", additionalProperties:false, required:["title", "contentType"], properties:{
+        title:{ type:"string", minLength:1 }, contentType:{ type:"string" },
+      } },
+      blocks:{
+        type:"array", minItems:1,
+        items:{ type:"object", additionalProperties:false, required:["type", "data"],
+          properties:{ type:{ type:"string" }, variant:{ type:"string" }, data:{ type:"object" } } },
+      },
+    },
+  };
+  const fixture = frontendContractFixture(t, { schemaVersion:"1.4.0", pageSchema });
+  const consumer = consumerFor(repository, fixture);
+  await consumer.sync();
+  const base = { metadata:{ title:"Route", contentType:"travel-guide" },
+    blocks:[{ type:"articleSection", variant:"answer-first", data:{ heading:"Answer", body:"Use the route." } }] };
+  assert.equal(consumer.validatePagePayload(base).valid, true);
+  const invalid = consumer.validatePagePayload({ ...base, metadata:{ ...base.metadata, contentType:"itinerary" } });
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.errors.some((item) => item.code === "INVALID_PAGE_SCHEMA" && item.path === "metadata.contentType"));
+});
+
+test("local validation rejects an entity spelling WordPress would rewrite", async (t) => {
+  const { repository } = repositoryFixture(t);
+  const components = defaultComponents().map((component) => component.id !== "articleSection" ? component : {
+    ...component,
+    schema:{ ...component.schema, properties:{ ...component.schema.properties,
+      body:{ ...component.schema.properties.body, contentMediaType:"text/html" },
+    } },
+  });
+  const fixture = frontendContractFixture(t, { components });
+  const consumer = consumerFor(repository, fixture);
+  await consumer.sync();
+  const invalid = consumer.validatePagePayload({ metadata:{ title:"Route" },
+    blocks:[{ type:"articleSection", variant:"answer-first", data:{ heading:"Answer", body:"Traveler&#39;s route" } }] });
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.errors.some((item) => item.path === "blocks[0].data.body"));
+  const valid = consumer.validatePagePayload({ metadata:{ title:"Route" },
+    blocks:[{ type:"articleSection", variant:"answer-first", data:{ heading:"Answer", body:"Traveler&#039;s route" } }] });
+  assert.equal(valid.valid, true);
+});
+
 test("deprecated components are blocked for new pages and warned for historical compatibility", async (t) => {
   const { repository } = repositoryFixture(t);
   const fixture = frontendContractFixture(t);

@@ -160,39 +160,29 @@ test("a warning knowledge conflict can be resolved by an administrator and then 
   assert.equal(repository.dashboard().totals.conflicts, 0);
 });
 
-test("extraction review dismissals survive rebuilds while legacy acknowledgements reopen for real correction", (t) => {
+test("extraction errors create an idempotent repair job instead of a manual review", (t) => {
   const { db, repository } = repositoryFixture(t);
   const source = repository.saveCapture(normalizeXiaohongshuCapture({
     url: "https://www.xiaohongshu.com/explore/extraction-review",
     title: "Chongqing reservation note",
-    text: "这是一篇人工筛选保存的重庆旅行笔记，原文说明重庆景点无需提前预约。",
+    text: "A manually selected travel note says the attraction does not require advance reservation.",
     images: [],
   }));
   repository.saveExtraction(source.id, {
-    source: { language: "zh-CN", summary: "Reservation", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
-    claims: [{ key: "chongqing.reservation", subject: "Chongqing attraction", predicate: "reservation information", value: "advance reservation", qualifiers: [], source_quote: "无需提前预约", confidence: 0.9 }],
+    source: { language: "en", summary: "Reservation", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+    claims: [{ key: "chongqing.reservation", subject: "Chongqing attraction", predicate: "reservation information", value: "advance reservation", qualifiers: [], source_quote: "does not require advance reservation", confidence: 0.9 }],
     blueprint: { format: "guide", hook: "Booking", angle: "practical", sections: [], strengths: [], gaps: [] },
   }, "test", "fixture-model");
 
   repository.rebuildKnowledge("chongqing");
-  let review = db.prepare("SELECT * FROM claim_review_cases").get();
-  assert.equal(review.status, "pending");
-  const exception = repository.listOperationalExceptions().find((item) => item.claim_review?.id === review.id);
-  assert.equal(exception.claim_review.claimA.sourceId, source.id);
-  assert.equal(exception.title, "原文中的否定语义可能没有被完整提取");
-  assert.match(exception.claim_review.explanation, /重新提取/);
-  assert.throws(() => repository.decideClaimReviewCase(review.id, "resolved"), /can only be resolved by re-extracting/);
-
-  repository.decideClaimReviewCase(review.id, "dismissed");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM claim_review_cases").get().count, 0);
+  const repair = db.prepare("SELECT * FROM claim_repair_jobs").get();
+  assert.equal(repair.status, "queued");
+  assert.equal(repair.repair_type, "NEGATION_EXTRACTION_ERROR");
+  assert.equal(db.prepare("SELECT resolution_state FROM knowledge_resolution_events WHERE claim_a_id=?").get(repair.claim_id).resolution_state, "REPAIR_REQUIRED");
+  assert.equal(repository.listOperationalExceptions().some((item) => item.kind === "source_conflict"), false);
   repository.rebuildKnowledge("chongqing");
-  review = db.prepare("SELECT * FROM claim_review_cases").get();
-  assert.equal(review.status, "dismissed");
-  assert.equal(repository.listOperationalExceptions().some((item) => item.claim_review?.id === review.id), false);
-
-  db.prepare("UPDATE claim_review_cases SET status='resolved' WHERE id=?").run(review.id);
-  repository.rebuildKnowledge("chongqing");
-  review = db.prepare("SELECT * FROM claim_review_cases").get();
-  assert.equal(review.status, "pending");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM claim_repair_jobs").get().count, 1);
 });
 
 test("claim review exceptions include both source records, text context, and the exact evidence image", (t) => {
@@ -254,7 +244,7 @@ test("claim review exceptions include both source records, text context, and the
   assert.match(review.claimB.evidence.assets[0].previewUrl, /^\/api\/source-assets\/asset_[^/]+\/preview$/);
 });
 
-test("mutually exclusive daily hard facts create one reusable operator decision", (t) => {
+test("mutually exclusive ordinary daily facts create targeted verification instead of human review", (t) => {
   const { db, repository } = repositoryFixture(t);
   for (const [externalId, value, quote, capturedAt] of [
     ["aaaaaaaaaaaaaaaaaaaaaaaa", "true", "Advance reservation is required.", "2026-01-01T00:00:00.000Z"],
@@ -276,12 +266,14 @@ test("mutually exclusive daily hard facts create one reusable operator decision"
 
   repository.rebuildKnowledge("chongqing");
   const review = db.prepare("SELECT * FROM claim_review_cases WHERE review_type='SOURCE_CONFLICT'").get();
-  assert.ok(review);
+  assert.equal(review, undefined);
   const fact = repository.knowledgeForDestination("chongqing")[0];
-  assert.equal(fact.consensus_status, "conflicted");
-  assert.equal(fact.consensus_method, "STRICT_SEMANTIC_REVIEW");
+  assert.equal(fact.consensus_status, "single_source");
+  assert.equal(fact.consensus_method, "TRUSTED_SOURCE_POLICY");
   assert.equal(fact.verification_priority, "review");
   assert.equal(fact.contradiction_count, 1);
-  assert.equal(fact.claim_relations[0].relation, "CONFLICT");
-  assert.equal(repository.listOperationalExceptions().filter((item) => item.kind === "source_conflict").length, 1);
+  assert.equal(fact.claim_relations[0].relation, "COMPATIBLE");
+  assert.match(fact.claim_relations[0].reason, /VERIFICATION_REQUIRED/);
+  assert.equal(db.prepare("SELECT status FROM knowledge_verification_jobs").get().status, "queued");
+  assert.equal(repository.listOperationalExceptions().filter((item) => item.kind === "source_conflict").length, 0);
 });

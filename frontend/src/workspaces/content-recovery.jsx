@@ -9,6 +9,7 @@ const ACTION_LABELS = {
   review_draft: '仅重新质检',
   revise_draft: '仅修订失败内容',
   plan_content: '继续创建内容',
+  confirm_destination_scope: '确认更正范围并继续',
 };
 
 export function ContentRecovery({ candidateId,onAction,actionBusy=false }) {
@@ -71,6 +72,12 @@ export function ContentRecovery({ candidateId,onAction,actionBusy=false }) {
           <select className="min-h-11 flex-1 rounded border bg-white p-2" value={destination} onChange={(event) => setDestination(event.target.value)}>{report.destinations.map((item) => <option key={item.slug} value={item.slug}>{item.name} ({item.slug})</option>)}</select>
           <Button size="sm" className="min-h-11" disabled={disabled || destination === report.destination} onClick={() => execute('correct_destination',{destination})}>更正归属并重算证据</Button>
         </div>
+      </div>}
+
+      {report.destinationScopeConfirmationRequired && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+        <p><strong>目的地已经更正为 {report.destination}。</strong>旧目的地下的失败只保留在历史中，不再阻塞当前生产。</p>
+        <Button size="sm" className="mt-2 min-h-11 w-full sm:w-auto" disabled={disabled || !report.destinationCheck.valid}
+          onClick={() => execute('confirm_destination_scope')}>确认更正范围并继续</Button>
       </div>}
 
       <details className="rounded-lg border p-3"><summary className="cursor-pointer font-semibold text-slate-800">其他高级操作</summary>

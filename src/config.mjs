@@ -6,6 +6,7 @@ import { CONTENT_STRATEGY } from "./content-strategy.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const modelStagePolicy = JSON.parse(fs.readFileSync(path.join(root, "config", "model-stage-policy.json"), "utf8"));
 const modelPricing = JSON.parse(fs.readFileSync(path.join(root, "config", "model-pricing.json"), "utf8"));
+const commercialPolicy = JSON.parse(fs.readFileSync(path.join(root, "config", "commercial-policy.json"), "utf8"));
 
 export const AI_MODELS = [
   { id: "vertex-gemini-3.8-flash", provider: "vertex", model: "gemini-3.8-flash", location: "global", label: "Vertex AI · Gemini 3.8 Flash", description: "默认的 Google 多模态工作模型，用于图文理解、结构化提取、写作与审核。", supportsImages: true, isDefault: true },
@@ -15,6 +16,13 @@ export const AI_MODELS = [
   { id: "vertex-gemini-2.5-pro", provider: "vertex", model: "gemini-2.5-pro", label: "Vertex AI · Gemini 2.5 Pro", description: "Vertex AI 的稳定 Gemini 高阶推理模型。", supportsImages: true },
 ];
 export const KIMI_MODELS = AI_MODELS.filter((item) => item.provider === "kimi").map((item) => item.id);
+
+export const EXTRACTION_MODELS = Object.freeze([
+  { id: "deepseek-v4.1-flash", provider: "deepseek", model: "deepseek-flash", endpoint: "https://api.deepseek.com/chat/completions",
+    baseUrl: "https://api.deepseek.com", label: "DeepSeek-V4.1-Flash", description: "推荐默认；用于新来源的图文理解、事实提取与来源语义处理。", supportsImages: true, recommended: true },
+  { id: "openai-gpt-5.6-luna", provider: "openai", model: "gpt-5.6-luna", endpoint: "https://api.openai.com/v1/responses",
+    baseUrl: "https://api.openai.com/v1", label: "GPT-5.6 Luna", description: "可手动切换为新来源提取主力；也支持显式、局部的争议证据复核。", supportsImages: true },
+]);
 
 export const VISUAL_MODELS = [
   {
@@ -37,6 +45,8 @@ export const VISUAL_MODELS = [
 ];
 
 export function loadConfig(env = process.env) {
+  const runtimeEnvironment = String(env.NODE_ENV || "development").trim().toLowerCase();
+  const databasePathConfigured = Boolean(String(env.DATABASE_PATH || "").trim());
   const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
   const sourceUploadsDir = path.resolve(root, env.SOURCE_UPLOADS_DIR || "data/source-uploads");
   const captureUploadsDir = path.resolve(root, env.CAPTURE_UPLOADS_DIR || "data/capture-uploads");
@@ -45,6 +55,11 @@ export function loadConfig(env = process.env) {
   const imageProvider = env.IMAGE_PROVIDER || env.VISUAL_PROVIDER || "none";
   return {
     root,
+    deployment: {
+      environment: runtimeEnvironment,
+      databasePathConfigured,
+      allowProductionDatabaseBootstrap: boolean(env.ALLOW_PRODUCTION_DATABASE_BOOTSTRAP, false),
+    },
     contentStrategy: CONTENT_STRATEGY,
     host: env.HOST || "127.0.0.1",
     port: integer(env.PORT, 4310),
@@ -73,6 +88,29 @@ export function loadConfig(env = process.env) {
       stagePolicy: modelStagePolicy,
       pricing: modelPricing,
     },
+    modelCredentials: {
+      encryptionKey: String(env.MODEL_CREDENTIAL_ENCRYPTION_KEY || "").trim(),
+    },
+    deepseek: {
+      provider: "deepseek", apiKey: env.DEEPSEEK_API_KEY || "", model: "deepseek-flash",
+      baseUrl: "https://api.deepseek.com",
+      maxImages: integer(env.AI_IMAGE_BATCH_SIZE || env.DEEPSEEK_MAX_IMAGES, 8),
+      imageBatchSize: Math.min(8, Math.max(4, integer(env.AI_IMAGE_BATCH_SIZE || env.DEEPSEEK_MAX_IMAGES, 6))),
+      maxCompletionTokens: integer(env.DEEPSEEK_MAX_COMPLETION_TOKENS, 16_000),
+      requestTimeoutMs: integer(env.DEEPSEEK_REQUEST_TIMEOUT_MS, 360_000),
+      imageTimeoutMs: integer(env.DEEPSEEK_IMAGE_TIMEOUT_MS, 20_000), sourceUploadsDir,
+      batchEnabled: false,
+    },
+    openai: {
+      provider: "openai", apiKey: env.OPENAI_API_KEY || "", model: "gpt-5.6-luna",
+      baseUrl: "https://api.openai.com/v1",
+      maxImages: integer(env.AI_IMAGE_BATCH_SIZE || env.OPENAI_MAX_IMAGES, 8),
+      imageBatchSize: Math.min(8, Math.max(4, integer(env.AI_IMAGE_BATCH_SIZE || env.OPENAI_MAX_IMAGES, 6))),
+      maxCompletionTokens: integer(env.OPENAI_MAX_COMPLETION_TOKENS, 16_000),
+      requestTimeoutMs: integer(env.OPENAI_REQUEST_TIMEOUT_MS, 360_000),
+      imageTimeoutMs: integer(env.OPENAI_IMAGE_TIMEOUT_MS, 20_000), sourceUploadsDir,
+      batchEnabled: false,
+    },
     kimi: {
       apiKey: env.KIMI_API_KEY || "",
       model: KIMI_MODELS.includes(env.KIMI_MODEL) ? env.KIMI_MODEL : "kimi-k2.7-code",
@@ -93,8 +131,8 @@ export function loadConfig(env = process.env) {
       maxImages: integer(env.AI_IMAGE_BATCH_SIZE || env.VERTEX_AI_MAX_IMAGES || env.AI_MAX_IMAGES, 32),
       imageBatchSize: integer(env.AI_IMAGE_BATCH_SIZE || env.VERTEX_AI_MAX_IMAGES || env.AI_MAX_IMAGES, 32),
       maxCompletionTokens: integer(env.VERTEX_AI_MAX_COMPLETION_TOKENS, 16_000),
-      thinkingLevel: choice(String(env.VERTEX_AI_THINKING_LEVEL || "LOW").toUpperCase(), ["MINIMAL", "LOW", "MEDIUM", "HIGH"], "LOW"),
-      reasoningThinkingLevel: choice(String(env.VERTEX_AI_REASONING_THINKING_LEVEL || "MEDIUM").toUpperCase(), ["MINIMAL", "LOW", "MEDIUM", "HIGH"], "MEDIUM"),
+      thinkingLevel: upperChoice(env.VERTEX_AI_THINKING_LEVEL || "LOW", ["LOW", "MEDIUM", "HIGH"], "LOW"),
+      reasoningThinkingLevel: upperChoice(env.VERTEX_AI_REASONING_THINKING_LEVEL || "MEDIUM", ["LOW", "MEDIUM", "HIGH"], "MEDIUM"),
       sourceUploadsDir,
       maxVideoBytes: integer(env.MANUAL_SOURCE_MAX_VIDEO_BYTES, 256 * 1024 * 1024),
       videoBucket: String(env.MANUAL_SOURCE_GCS_BUCKET || "").trim(),
@@ -128,6 +166,8 @@ export function loadConfig(env = process.env) {
       chunkBytes: integer(env.CAPTURE_MEDIA_CHUNK_BYTES, 4 * 1024 * 1024),
     },
     extraction: {
+      processIsolationEnabled: boolean(env.PROCESS_ISOLATION_ENABLED,!(env.NODE_TEST_CONTEXT||process.env.NODE_TEST_CONTEXT)),
+      sourceComplexityRouting: boolean(env.SOURCE_COMPLEXITY_ROUTING, false),
       concurrencyMode: choice(env.AI_CONCURRENCY_MODE || env.EXTRACT_CONCURRENCY_MODE, ["auto", "fixed"], "auto"),
       concurrencyInitial: integer(env.AI_CONCURRENCY_INITIAL || env.EXTRACT_CONCURRENCY_INITIAL, 2),
       concurrencyMax: integer(env.AI_CONCURRENCY_MAX || env.EXTRACT_CONCURRENCY_MAX, 4),
@@ -137,6 +177,9 @@ export function loadConfig(env = process.env) {
       providerBackoffMaxMs: integer(env.AI_PROVIDER_BACKOFF_MAX_MS, 300_000),
       providerRecoverySuccesses: integer(env.AI_PROVIDER_RECOVERY_SUCCESSES, 5),
       sourceTextSegmentMaxChars: integer(env.SOURCE_TEXT_SEGMENT_MAX_CHARS, 120_000),
+      mediaImageBatchSize: Math.min(8,Math.max(4,integer(env.MEDIA_EXTRACTION_BATCH_SIZE,6))),
+      mediaBatchingEnabled: boolean(env.MEDIA_EXTRACTION_BATCHING_ENABLED,true),
+      coverageAiRoutingEnabled: boolean(env.COVERAGE_AI_ROUTING_ENABLED,false),
     },
     visuals: {
       enabled: boolean(env.IMAGE_ENABLED, false),
@@ -145,6 +188,7 @@ export function loadConfig(env = process.env) {
       location: env.VERTEX_AI_LOCATION || "us-central1",
       defaultModel: VISUAL_MODELS.some((item) => item.id === env.VISUAL_MODEL) ? env.VISUAL_MODEL : "vertex-gemini-3.1-flash-image",
       model: env.IMAGE_MODEL || env.VERTEX_IMAGEN_MODEL || "gemini-3.1-flash-image",
+      qualityModel: env.VISUAL_QA_MODEL || "gemini-3.8-flash",
       coverQuality: env.IMAGE_COVER_QUALITY || "1K",
       inlineQuality: env.IMAGE_INLINE_QUALITY || "1K",
       mediaDir: generatedMediaDir,
@@ -205,6 +249,8 @@ export function loadConfig(env = process.env) {
       minBlockDistance: integer(env.COMMERCIAL_MIN_BLOCK_DISTANCE, 3),
       minimumContentBlocks: integer(env.COMMERCIAL_MINIMUM_CONTENT_BLOCKS, 2),
       opportunityThreshold: integer(env.AFFILIATE_OPPORTUNITY_THRESHOLD, 70),
+      linkTaskThreshold:integer(env.AFFILIATE_LINK_TASK_THRESHOLD,commercialPolicy.link_task_threshold || 70),
+      policy:commercialPolicy,
       disclosure: env.AFFILIATE_DISCLOSURE || "SoloToChina may earn a commission from eligible bookings, at no extra cost to you.",
     },
     telemetry: {
@@ -223,6 +269,7 @@ export function loadConfig(env = process.env) {
       timeoutMs: integer(env.EXCEPTION_WEBHOOK_TIMEOUT_MS, 10_000),
     },
     maintenance: {
+      processIsolationEnabled: boolean(env.PROCESS_ISOLATION_ENABLED,!(env.NODE_TEST_CONTEXT||process.env.NODE_TEST_CONTEXT)),
       enabled: boolean(env.MAINTENANCE_ENABLED, true),
       intervalMinutes: integer(env.MAINTENANCE_INTERVAL_MINUTES, 15),
       knowledgeReconcileHours: integer(env.KNOWLEDGE_RECONCILE_HOURS, 24),
@@ -230,7 +277,7 @@ export function loadConfig(env = process.env) {
       autoBackupHours: integer(env.AUTO_BACKUP_HOURS, 24),
       jobHistoryRetentionDays: integer(env.JOB_HISTORY_RETENTION_DAYS, 30),
       backupDir: path.resolve(root, env.BACKUP_DIR || "backups"),
-      backupRetention: integer(env.BACKUP_RETENTION, 14),
+      backupRetention: integer(env.BACKUP_RETENTION, 1),
       backupOffsiteLocation: String(env.BACKUP_OFFSITE_LOCATION || "").trim(),
       backupOffsiteRetentionDays: integer(env.BACKUP_OFFSITE_RETENTION_DAYS, 0),
       sourceUploadsDir,
@@ -262,6 +309,11 @@ function boolean(value, fallback) {
 
 function choice(value, allowed, fallback) {
   const normalized = String(value || "").toLowerCase();
+  return allowed.includes(normalized) ? normalized : fallback;
+}
+
+function upperChoice(value, allowed, fallback) {
+  const normalized = String(value || "").toUpperCase();
   return allowed.includes(normalized) ? normalized : fallback;
 }
 

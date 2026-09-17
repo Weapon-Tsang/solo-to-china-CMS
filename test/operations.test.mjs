@@ -40,6 +40,43 @@ test("source list exposes running, queued, and cooldown order with stable list n
   assert.match(byId.get(sources[2].id).queue.last_error, /429/);
 });
 
+test("a processed source does not project a superseded extraction failure", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const source=repository.saveCapture(normalizeXiaohongshuCapture({
+    url:"https://www.xiaohongshu.com/explore/status-projection-recovered",title:"Recovered source",
+    text:"Complete evidence for a source whose older extraction attempt failed.",images:[],
+  }));
+  const job=db.prepare("SELECT id FROM jobs WHERE type='extract_source' AND entity_id=?").get(source.id);
+  db.prepare("UPDATE jobs SET status='failed',attempts=3,max_attempts=3,last_error='old fetch failure' WHERE id=?").run(job.id);
+  db.prepare("UPDATE sources SET status='processed',last_error=NULL WHERE id=?").run(source.id);
+  const projected=repository.listSourceStatusProjection({ids:[source.id]})[0];
+  assert.equal(projected.queue,null);
+  assert.equal(repository.sourceTimeline(source.id).some((event)=>event.status==="failed"),true);
+});
+
+test("downstream diagnostics do not make a completed source look queued", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const source=repository.saveCapture(normalizeXiaohongshuCapture({
+    url:"https://www.xiaohongshu.com/explore/status-projection-diagnostic",title:"Completed source",
+    text:"Complete evidence whose source extraction already finished before downstream analysis.",images:[],
+  }));
+  db.prepare("UPDATE jobs SET status='failed',attempts=max_attempts WHERE type='extract_source' AND entity_id=?").run(source.id);
+  db.prepare("UPDATE sources SET status='processed',last_error=NULL WHERE id=?").run(source.id);
+  repository.enqueue("analyze_source_diagnostic",source.id,{dedupeKey:`diagnostic-visible-state:${source.id}`});
+  assert.equal(repository.listSources(10).find((item)=>item.id===source.id).queue,null);
+  assert.equal(repository.listSourceStatusProjection({ids:[source.id]})[0].queue,null);
+  assert.equal(repository.sourceTimeline(source.id).some((event)=>event.stage==="analyze_source_diagnostic"&&event.status==="queued"),true);
+});
+
+test("successful retry clears its previous error text", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  repository.enqueue("rebuild_editorial","global");
+  const job=repository.claimJob();
+  db.prepare("UPDATE jobs SET last_error='temporary provider failure' WHERE id=?").run(job.id);
+  assert.equal(repository.completeJob(job.id,job.locked_by,job.lease_generation),true);
+  assert.equal(db.prepare("SELECT last_error FROM jobs WHERE id=?").get(job.id).last_error,null);
+});
+
 test("job telemetry reports durable queue latency, duration, outcomes, and active work", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-telemetry-test-"));
   const database = openDatabase(path.join(directory, "telemetry.sqlite"));
@@ -185,9 +222,9 @@ test("a worker can release only its own running jobs during graceful shutdown", 
   const { db } = repositoryFixture(t);
   const owner = new Repository(db, { workerId: "worker-owner" });
   const peer = new Repository(db, { workerId: "worker-peer" });
-  const ownerJob = owner.enqueue("rebuild_editorial", "owned");
+  const ownerJob = owner.enqueue("extract_source", "owned");
   owner.claimJob();
-  const peerJob = peer.enqueue("rebuild_editorial", "peer");
+  const peerJob = peer.enqueue("extract_source", "peer");
   peer.claimJob();
 
   assert.equal(owner.releaseOwnedJobs(), 1);
@@ -339,7 +376,7 @@ test("provider quota exhaustion pauses AI claiming without rewriting the whole v
   const repository = new Repository(database, { providerBackoffInitialMs: 5_000, providerBackoffMaxMs: 300_000, clock: () => current });
   try {
     const limitedId = repository.enqueue("extract_segment_claims", "segment-limited");
-    database.prepare("UPDATE jobs SET max_attempts=1 WHERE id=?").run(limitedId);
+    database.prepare("UPDATE jobs SET max_attempts=2 WHERE id=?").run(limitedId);
     const limited = repository.claimJob();
     const waitingId = repository.enqueue("audit_segment_coverage", "segment-waiting");
     const contentId = repository.enqueue("generate_draft", "brief-waiting");
@@ -384,6 +421,97 @@ test("provider quota exhaustion pauses AI claiming without rewriting the whole v
     repository.failJob(recovered, error);
     const recoveredDelayMs = Date.parse(database.prepare("SELECT available_at FROM jobs WHERE id=?").get(recoveredId).available_at) - current.getTime();
     assert.ok(recoveredDelayMs >= 3_500 && recoveredDelayMs < 7_000);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("provider pressure respects max attempts and exhausted cooldowns cannot be reclaimed", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-provider-retry-bound-test-"));
+  const database = openDatabase(path.join(directory, "retry-bound.sqlite"));
+  let current = new Date("2026-09-09T00:00:00.000Z");
+  const repository = new Repository(database, { providerBackoffInitialMs: 100, providerBackoffMaxMs: 1_000, clock: () => current });
+  try {
+    const jobId = repository.enqueue("assemble_editorial", "candidate-limited");
+    database.prepare("UPDATE jobs SET max_attempts=2 WHERE id=?").run(jobId);
+    const error = Object.assign(new Error("Vertex Gemini request failed (429): Resource has been exhausted."), {
+      status:429,code:"PROVIDER_REQUEST_FAILED",retryable:true,provider:"vertex",
+    });
+    const first = repository.claimJob();
+    repository.failJob(first,error);
+    let stored = database.prepare("SELECT status,attempts,next_eligible_at FROM jobs WHERE id=?").get(jobId);
+    assert.equal(stored.status,"queued");
+    assert.equal(stored.attempts,1);
+
+    current = new Date(Math.max(repository.providerBackoffUntil,Date.parse(stored.next_eligible_at))+1);
+    const second = repository.claimJob();
+    assert.equal(second.id,jobId);
+    repository.failJob(second,error);
+    stored = database.prepare("SELECT status,attempts,next_eligible_at,failure_class FROM jobs WHERE id=?").get(jobId);
+    assert.equal(stored.status,"failed");
+    assert.equal(stored.attempts,2);
+    assert.equal(stored.next_eligible_at,null);
+    assert.equal(stored.failure_class,"retryable_provider");
+
+    current = new Date(repository.providerBackoffUntil+1);
+    assert.equal(repository.claimJob(),null);
+
+    const legacyId = repository.enqueue("assemble_editorial","candidate-legacy");
+    database.prepare(`UPDATE jobs SET attempts=11,max_attempts=3,next_eligible_at=?,available_at=?,failure_class='retryable_provider',
+      last_failure_code='PROVIDER_REQUEST_FAILED',last_error='Vertex Gemini request failed (429): Resource exhausted.' WHERE id=?`)
+      .run(current.toISOString(),current.toISOString(),legacyId);
+    assert.equal(repository.claimJob(),null);
+    stored = database.prepare("SELECT status,attempts,next_eligible_at FROM jobs WHERE id=?").get(legacyId);
+    assert.equal(stored.status,"failed");
+    assert.equal(stored.attempts,11);
+    assert.equal(stored.next_eligible_at,null);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive:true,force:true });
+  }
+});
+
+test("provider transport failures stay retryable and provider-attributed after durable exhaustion", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-provider-transport-test-"));
+  const database = openDatabase(path.join(directory, "transport.sqlite"));
+  let current = new Date("2026-09-14T00:00:00.000Z");
+  const repository = new Repository(database, {
+    providerBackoffInitialMs: 100,
+    providerBackoffMaxMs: 1_000,
+    clock: () => current,
+  });
+  try {
+    const jobId = repository.enqueue("generate_draft", "draft-transport-failure");
+    database.prepare("UPDATE jobs SET max_attempts=2 WHERE id=?").run(jobId);
+    const error = Object.assign(new TypeError("fetch failed"), {
+      name: "ProviderTransportError",
+      code: "PROVIDER_TRANSPORT_FAILED",
+      provider: "kimi",
+      retryable: true,
+    });
+
+    const first = repository.claimJob();
+    repository.failJob(first, error);
+    let stored = database.prepare("SELECT status,attempts,last_failure_code,failure_class FROM jobs WHERE id=?").get(jobId);
+    assert.deepEqual({ ...stored }, {
+      status: "queued",
+      attempts: 1,
+      last_failure_code: "PROVIDER_TRANSPORT_FAILED",
+      failure_class: "retryable_provider",
+    });
+
+    current = new Date(repository.providerBackoffUntil + 1);
+    const second = repository.claimJob();
+    repository.failJob(second, error);
+    stored = database.prepare("SELECT status,attempts,last_failure_code,failure_class,next_eligible_at FROM jobs WHERE id=?").get(jobId);
+    assert.deepEqual({ ...stored }, {
+      status: "failed",
+      attempts: 2,
+      last_failure_code: "PROVIDER_TRANSPORT_FAILED",
+      failure_class: "retryable_provider",
+      next_eligible_at: null,
+    });
   } finally {
     database.close();
     fs.rmSync(directory, { recursive: true, force: true });
