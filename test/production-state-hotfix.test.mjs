@@ -55,6 +55,22 @@ test("an approved ready instance without a Job is the only interrupted sibling a
   assert.equal(workspace.items[0].production_state.recovery_target,"assemble_editorial");
 });
 
+test("a planned visual remains pending in production state instead of appearing complete",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"visual-pending-owner",{approved:true});
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('visual-pending-brief','beijing','Beijing guide','[]','informational','drafted','2026-09-13','2026-09-13','shared-candidate')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('visual-pending-draft','visual-pending-brief','Beijing guide','beijing-guide','## Visit\n\nBody.','{}','qa_queued','2026-09-13','2026-09-13',1,'visual-pending-hash')`).run();
+  db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,caption,generation_prompt,aspect_ratio,
+    image_type,image_role,image_subject,acquisition_strategy,factual_image_required,status,created_at,updated_at,asset_fingerprint)
+    VALUES ('visual-pending','visual-pending-draft',1,'hero','support','Alt','','','16:9','editorial_card','hero','Beijing',
+      'recompose_editorial_card',1,'planned','2026-09-13','2026-09-13','pending-fingerprint')`).run();
+  const item=repository.listContentWorkspace({productionOnly:true}).items[0];
+  assert.equal(item.visual_total,1);
+  assert.equal(item.visual_pending,1);
+  assert.equal(item.production_state.completed_stages.includes('generate_visuals'),false);
+});
+
 test("one Candidate-level failure has one canonical approved production owner",(t)=>{
   const {db,repository}=repositoryFixture(t); candidate(db);
   opportunity(db,"owner-approved",{approved:true}); opportunity(db,"sibling-a"); opportunity(db,"sibling-b");

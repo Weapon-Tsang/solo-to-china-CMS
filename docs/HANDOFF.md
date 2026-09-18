@@ -1,3 +1,9 @@
+# 2.0.37 revision visual-preservation repair handoff
+
+App/Extension version `2.0.37`, schema migration `73`, and Content Strategy `3.7` form this code-only pipeline repair. A production replay of the approved Ciqikou article proved that a bounded `revise_draft` pass replaced an already-qualified visual plan and unnecessarily returned the article to image generation. The repair preserves qualified visuals through prose-only revision, keeps incomplete `planned` media visible as pending work, and reuses byte-verified candidates whose persisted independent QA already passed.
+
+After a prose repair, the pipeline now enters `generate_visuals` only when the retained plan still has incomplete media; otherwise it proceeds to page composition. Candidate reuse verifies the persisted file hash and passing QA before local promotion, and does not call the image or QA provider. WordPress remains draft-only, and no schema migration, backup, snapshot or bulk reconciliation is part of this code-only release.
+
 # 2.0.36 visual-plan stability repair handoff
 
 App/Extension version `2.0.36`, schema migration `73`, and Content Strategy `3.7` form this code-only pipeline repair. A production replay of the approved Ciqikou article proved that `generate_visuals` completed, but `compose_frontend_page` immediately re-normalized the existing visual plan and replaced its generated media identity. The final publish package then correctly failed closed because its required media manifest was missing.

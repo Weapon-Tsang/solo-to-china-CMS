@@ -1,5 +1,10 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.37 / schema 73 - 2026-09-18
+
+- Bounded prose repair preserves the current visual plan and only re-enters image generation when a slot is still planned or failed.
+- Production state counts planned visual rows as pending, and previously promoted candidates with passing QA can be reused without another provider request.
+
 ## App 2.0.36 / schema 73 - 2026-09-18
 
 - Keep Strategy 3.7 unchanged while freezing an existing generated visual plan across page composition.

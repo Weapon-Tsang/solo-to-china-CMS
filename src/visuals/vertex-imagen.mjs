@@ -51,21 +51,21 @@ export class VertexImagen {
       throw Object.assign(new Error("图片翻译只接受已授权并已保存的实景原图。"), { retryable: false, code: "INVALID_IMAGE_LOCALIZATION_SOURCE" });
     }
     const source = readSourceImage(visual);
-    const accessToken = await this.accessToken();
     const location = this.config.location || "global";
     const host = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
     const endpoint = `${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const metadata=safeJson(visual.media_metadata_json || visual.media_metadata);
     if (shouldRenderEditorialTextCard(visual,metadata)) {
-      return this.renderEditorialTextCard({visual,draft,metadata,source,accessToken,signal:options.signal,options});
+      return this.renderEditorialTextCard({visual,draft,metadata,source,signal:options.signal,options});
     }
     const sourceInspection=await inspectImageBytes(source.bytes,source.mimeType);
     const transformInputHash=hashBytes(Buffer.concat([source.bytes,Buffer.from(JSON.stringify({
       visual_id:visual.id,asset_fingerprint:options.expectedFingerprint || visual.asset_fingerprint || "",
       strategy:visual.acquisition_strategy,aspect_ratio:visual.aspect_ratio,model:this.config.model,
     }))]));
-    const resumed=await this.resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata,accessToken});
+    const resumed=await this.resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata});
     if (resumed) return resumed;
+    const accessToken = await this.accessToken();
     const prompt = transformPrompt(visual,metadata);
     const transformed=await this.trackedRequest({provider:"vertex_gemini",model:this.config.model,stage:"localize_source_image",
       endpoint,visual,options},async()=>{
@@ -97,7 +97,7 @@ export class VertexImagen {
       outputMimeType:part.inlineData.mimeType,accessToken,options});
   }
 
-  async renderEditorialTextCard({visual,draft,metadata,source,accessToken,signal,options={}}) {
+  async renderEditorialTextCard({visual,draft,metadata,source,accessToken=null,signal,options={}}) {
     const location=this.config.location || "global";
     const host=location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
     const translationModel=this.config.qualityModel || "gemini-3.8-flash";
@@ -111,9 +111,10 @@ export class VertexImagen {
       aspect_ratio:visual.aspect_ratio,translation_model:translationModel,regions}))]));
     const resumed=await this.resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata,accessToken});
     if (resumed) return resumed;
+    const token=accessToken || await this.accessToken();
     const payload=await this.trackedRequest({provider:"vertex_gemini",model:translationModel,stage:"translate_editorial_card",
       endpoint,visual,options},async()=>{
-      const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${accessToken}`,"content-type":"application/json"},
+      const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},
         body:JSON.stringify({contents:{role:"USER",parts:[{text:prompt}]},generationConfig:{responseModalities:["TEXT"],
           responseMimeType:"application/json",responseSchema:EDITORIAL_TRANSLATION_SCHEMA}}),
         signal:combinedSignal(signal,this.config.requestTimeoutMs)},"vertex_gemini",signal);
@@ -140,7 +141,7 @@ export class VertexImagen {
     const candidate=await this.persistCandidate({visual,draft,source,outputBytes,mimeType:"image/png",
       provider:"vertex_gemini_text_layout",model:translationModel,transformInputHash,options});
     return this.reviewAndPromoteCandidate({candidate,visual,draft,metadata,source,sourceInspection,outputBytes,
-      outputMimeType:"image/png",accessToken,options:{...options,signal}});
+      outputMimeType:"image/png",accessToken:token,options:{...options,signal}});
   }
 
   async reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType,accessToken,signal,options={}}) {
@@ -175,6 +176,15 @@ export class VertexImagen {
     const candidate=await this.config.findVisualCandidate?.({visualId:visual.id,transformInputHash});
     if (!candidate) return null;
     const outputBytes=fs.readFileSync(candidate.media_path);
+    const persistedQa=normalizeVisualQa(candidate.qa);
+    const alreadyPassed=candidate.status === "promoted"
+      && Object.entries(persistedQa).every(([key,value])=>key === "notes" || value.status === "passed");
+    if (alreadyPassed) {
+      const result=await this.storeImage({base64:outputBytes.toString("base64"),mimeType:candidate.mime_type,visual,draft,
+        provider:candidate.provider,model:candidate.model,sourceDimensions:sourceInspection.dimensions,qualityQa:persistedQa});
+      return {...result,candidateId:candidate.id || null,candidateHash:candidate.output_hash,
+        resumedCandidate:true,reusedPromotedCandidate:true};
+    }
     const token=accessToken || await this.accessToken();
     return this.reviewAndPromoteCandidate({candidate,visual,draft,metadata,source,sourceInspection,outputBytes,
       outputMimeType:candidate.mime_type,accessToken:token,options});
