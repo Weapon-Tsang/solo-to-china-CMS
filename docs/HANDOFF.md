@@ -1,3 +1,9 @@
+# 2.0.40 qualified-visual immutability handoff
+
+App/Extension version `2.0.40`, schema migration `73`, and Content Strategy `3.7` form this final code-only media convergence repair. The 2.0.39 production recovery exposed legacy visual rows created before displaced-asset markers existed: a later text score could still replace a generated, independently QA-passed visual, and one incidental Ciqikou mention could admit a destination-wide collage or map.
+
+Generated visuals with persisted four-dimension passing QA are now immutable while their source remains authorized. Article-level fallback coverage excludes the observed broad collage and map, and the previously promoted qualified derivative can be restored locally without another provider generation or QA request. WordPress remains draft-only, with no schema migration, backup, snapshot or bulk reconciliation.
+
 # 2.0.39 weak visual-fallback rejection handoff
 
 App/Extension version `2.0.39`, schema migration `73`, and Content Strategy `3.7` form this code-only media relevance repair. The 2.0.38 production Canary correctly regenerated failed bytes and kept source selection stable, then independent QA proved that the second selected asset was a broad Chongqing attractions collage rather than sufficiently focused Ciqikou evidence.

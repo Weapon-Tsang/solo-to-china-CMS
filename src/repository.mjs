@@ -9160,7 +9160,7 @@ function legacyBlockRecord(block, signature) {
 
 export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], policy = {}) {
   const maximum = policy.visuals?.maximum ?? 5;
-  const articleFallbackMinimum = 0.25;
+  const articleFallbackMinimum = 0.34;
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
   const allowedRatios = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"];
   const supplied = Array.isArray(values) ? values : [];
@@ -9204,12 +9204,12 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     // however, must converge on the highest-scoring authorized asset instead
     // of preferring whichever asset happened to occupy the slot last. Exact-id
     // preference made repeated normalization oscillate between two plans.
-    const match = stabilizedSelection && exact ? {asset:exact,score:exactScore}
-      : (qualifiedExisting || coherentExisting) && exact && exactScore >= 0.34
+    const match = (qualifiedExisting || stabilizedSelection) && exact ? {asset:exact,score:exactScore}
+      : coherentExisting && exact && exactScore >= 0.34
         ? {asset:exact,score:exactScore} : ranked[0];
     // Asset ownership is insufficient: a factual photo is reusable only when its
     // own alt/evidence metadata matches the planned subject.
-    if (!match || (!stabilizedSelection && match.score < 0.34)) {
+    if (!match || (!qualifiedExisting && !stabilizedSelection && match.score < 0.34)) {
       // A writer-selected id is evidence of intent, not evidence of semantic
       // relevance. Do not silently re-select the same rejected asset later as an
       // article-level fallback during this normalization pass.
@@ -9242,8 +9242,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       factual_image_required: true,
       source_asset_id: asset.id,
       source_remote_url: asset.remote_url,
-      status: needsWork ? "planned" : "generated",
-      media_url: needsWork ? "" : `/api/source-assets/${asset.id}/preview`,
+      status: qualifiedExisting ? "generated" : needsWork ? "planned" : "generated",
+      media_url: qualifiedExisting ? visual.media_url : needsWork ? "" : `/api/source-assets/${asset.id}/preview`,
       provider: "authorized_xiaohongshu_source",
       model: "user-authorized-source-image",
       media_metadata: { ...(visual.media_metadata || {}),source_mime_type: asset.mime_type, storage_status: asset.storage_status,

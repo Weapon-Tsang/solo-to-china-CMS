@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.40 / schema 73 - 2026-09-18
+
+- Keep Strategy 3.7 unchanged while making independently QA-passed generated visuals immutable.
+- Exclude destination-wide collage/map fallbacks whose article coverage is below the strengthened threshold.
+- Reuse the verified promoted candidate locally when the legacy Ciqikou visual plan is restored.
+
 ## App 2.0.39 / schema 73 - 2026-09-18
 
 - Keep Strategy 3.7 unchanged while requiring stronger article-level relevance for fallback media.
