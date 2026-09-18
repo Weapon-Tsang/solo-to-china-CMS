@@ -361,6 +361,30 @@ test("a persisted transform candidate resumes only quality QA after a transient 
   ]);
 });
 
+test("a promoted candidate with passing QA is reused without another provider call",async(t)=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"solo-promoted-candidate-"));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const sourcePath=path.join(directory,"source.png");
+  const candidatePath=path.join(directory,"candidate.png");
+  fs.writeFileSync(sourcePath,await pngBytes(1200,800,"source"));
+  const candidateBytes=await pngBytes(1200,800,"localized");
+  fs.writeFileSync(candidatePath,candidateBytes);
+  let providerCalls=0;
+  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    model:"gemini-image-model",qualityModel:"gemini-qa-model",mediaDir:directory,publicBaseUrl:"https://engine.example.com",
+    requestTimeoutMs:5_000,findVisualCandidate:()=>({id:"candidate-promoted",media_path:candidatePath,mime_type:"image/png",
+      output_hash:"promoted-hash",provider:"vertex_gemini",model:"gemini-image-model",status:"promoted",qa:passedQa()})},
+  async()=>{providerCalls+=1;throw new Error("provider must not be called for a qualified promoted candidate");});
+  const visual={id:"visual-promoted",slot:1,image_type:"real_world_photo",acquisition_strategy:"localize_source_image",
+    factual_image_required:true,source_asset_id:"asset-promoted",source_asset_local_path:sourcePath,
+    source_asset_mime_type:"image/png",image_role:"hero",aspect_ratio:"3:2",generation_prompt:"",asset_fingerprint:"fp-promoted"};
+  const result=await client.localizeSourceImage(visual,{id:"draft-promoted"},{expectedFingerprint:"fp-promoted"});
+  assert.equal(providerCalls,0);
+  assert.equal(result.reusedPromotedCandidate,true);
+  assert.equal(result.candidateHash,"promoted-hash");
+  assert.ok(fs.existsSync(result.mediaPath));
+});
+
 test("visual call evidence distinguishes local rejection, provider responses, and unknown transport outcomes",async()=>{
   const visual={id:"visual-evidence",slot:1,image_type:"illustration",acquisition_strategy:"generate_illustration",
     factual_image_required:false,image_role:"hero",aspect_ratio:"16:9",generation_prompt:"Quiet scene"};

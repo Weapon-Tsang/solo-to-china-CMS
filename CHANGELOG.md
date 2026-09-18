@@ -1,6 +1,13 @@
 # Changelog
 
-## 2.0.36 - Unreleased
+## 2.0.37 - Unreleased
+
+- Preserve generated, QA-qualified visual slots across bounded prose revisions and continue directly to page composition when no media work remains.
+- Treat `planned` visual rows as pending production work, preventing exhausted image Jobs from being projected as completed.
+- Reuse byte-verified promoted visual candidates with persisted passing QA without another model or QA request.
+- Add production-derived regressions for revision/media separation, pending visual state and no-cost promoted-candidate reuse. No schema migration is introduced.
+
+## 2.0.36 - 2026-09-18
 
 - Preserve an existing generated visual plan when page composition starts, so a completed derivative and its WordPress media identity cannot be replaced by a second normalization pass.
 - Route a publish-page failure caused by missing required media manifests back to `generate_visuals`, while preserving the approved scope, article body, QA result and commercial composition.

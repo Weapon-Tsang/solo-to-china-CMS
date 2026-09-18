@@ -158,6 +158,43 @@ test('page composition preserves an existing generated visual plan instead of re
   assert.equal(after.image_subject,'Ciqikou food');
 });
 
+test('bounded prose revision preserves qualified visuals and continues with page composition', async t => {
+  const {repository,db}=repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('topic-revision-visual','chongqing','revision-visual','Ciqikou guide','fixture',80,0,0,'drafted','now','now')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('brief-revision-visual','chongqing','Ciqikou guide','[]','informational','drafted','now','now','topic-revision-visual')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,meta_description,evidence_ledger_json,
+    unresolved_conflicts_json,verification_notes_json,seo_json,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-revision-visual','brief-revision-visual','Ciqikou guide','ciqikou-guide','## Visit\n\nOriginal body.','Guide.','[]','[]','[]','{}','{}','qa_failed','now','now',1,'revision-visual-hash')`).run();
+  repository.replaceDraftVisuals('draft-revision-visual',[{
+    placement:'hero',purpose:'Show relevant Ciqikou food',alt_text:'Ciqikou food',caption:'Qualified source card',generation_prompt:'',
+    aspect_ratio:'16:9',image_type:'editorial_card',image_role:'hero',image_subject:'Ciqikou food',
+    acquisition_strategy:'recompose_editorial_card',factual_image_required:true,status:'generated',media_url:'/media/qualified.png',
+    media_metadata:{quality_qa:{language:{status:'passed'},completeness:{status:'passed'},style:{status:'passed'},semantic:{status:'passed'}}},
+  }],'3.8');
+  const before=repository.listDraftVisuals('draft-revision-visual')[0];
+  db.prepare('DELETE FROM jobs').run();
+  const contentEngine={enabled:true,config:{provider:'fixture',model:'fixture'},async repairDraft(contentPackage){
+    return {model:'fixture',output:{...contentPackage.draft,body_markdown:'## Visit\n\nRevised body.',visuals:[{
+      placement:'hero',purpose:'Wrong broad route map',alt_text:'Broad route map',caption:'',generation_prompt:'',aspect_ratio:'16:9',
+      image_type:'map',image_role:'hero',image_subject:'Chongqing route',acquisition_strategy:'recompose_map_or_route',factual_image_required:true,
+    }]}};
+  }};
+  const frontendContracts={configured:true,active:{id:'contract',checksum:'checksum',pageSchema:{schema:{}}},
+    diagnostics:()=>({canCompose:true}),resolveForArticle:()=>({components:[]})};
+  const pipeline=new Pipeline(repository,{enabled:false,config:{}},{contentEngine,frontendContracts,visuals:{enabled:true}});
+  repository.enqueue('revise_draft','draft-revision-visual');
+  assert.equal(await pipeline.runOne(),true);
+  const after=repository.listDraftVisuals('draft-revision-visual')[0];
+  assert.equal(after.id,before.id);
+  assert.equal(after.asset_fingerprint,before.asset_fingerprint);
+  assert.equal(after.status,'generated');
+  assert.equal(after.image_subject,'Ciqikou food');
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='generate_visuals'").get().count,0);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='compose_frontend_page' AND status='queued'").get().count,1);
+});
+
 test('multi-image analysis keeps the visual Job lease until every slot is processed', async t => {
   const {repository,db}=repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)

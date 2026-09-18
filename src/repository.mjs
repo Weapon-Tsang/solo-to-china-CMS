@@ -5350,12 +5350,13 @@ export class Repository {
       selected_experience_block_ids:json(row.selected_experience_block_ids_json,[]) } : null;
   }
 
-  saveDraft(briefId, draft, model, { deferReview = false, opportunityId = null } = {}) {
+  saveDraft(briefId, draft, model, { deferReview = false, opportunityId = null, preserveVisuals = false } = {}) {
     const brief = this.db.prepare("SELECT * FROM content_briefs WHERE id = ?").get(briefId);
     if (!brief) throw new Error(`Content brief ${briefId} not found.`);
     draft.evidence_ledger = normalizeDraftLedger(draft.evidence_ledger, json(brief.plan_json, {}));
     const existing = this.db.prepare("SELECT id, revision FROM article_drafts WHERE brief_id = ?").get(briefId);
     const draftId = existing?.id || id("draft");
+    const retainedVisuals = preserveVisuals && existing ? this.listDraftVisuals(draftId) : [];
     const timestamp = now();
     const packet = this.getWritingPacket(briefId);
     const briefPackage = this.getBriefPackage(briefId);
@@ -5363,7 +5364,8 @@ export class Repository {
     const authorizedSourceAssets = this.authorizedSourceAssetsForBrief(brief, { packet });
     const policy = packet?.context?.version === 2 ? packet.context.content_policy
       : contentPolicyFor(brief, facts);
-    const metadata = draftMetadata(draft, brief, this.contentConfig, authorizedSourceAssets, policy, facts);
+    const metadata = draftMetadata(draft, brief, this.contentConfig, authorizedSourceAssets, policy, facts,
+      retainedVisuals.length ? retainedVisuals : null);
     draft.evidence_ledger = metadata.evidenceLedger;
     const contentHash = draftContentHash(draft, metadata, brief);
     if (existing) {
@@ -5389,7 +5391,9 @@ export class Repository {
         JSON.stringify(metadata.blocks), JSON.stringify(metadata.contentAst), brief.strategy_version || this.strategyVersion, contentHash);
     }
     this.invalidateDraftDependents(draftId, timestamp);
-    this.replaceDraftVisuals(draftId, metadata.visuals, brief.strategy_version || this.strategyVersion);
+    if (!retainedVisuals.length) {
+      this.replaceDraftVisuals(draftId, metadata.visuals, brief.strategy_version || this.strategyVersion);
+    }
     this.recordDraftRevision(draftId, model || "unknown");
     this.db.prepare("UPDATE topic_candidates SET status='drafted', updated_at=? WHERE id=?").run(timestamp, brief.candidate_id);
     this.db.prepare("UPDATE content_briefs SET status='drafted', updated_at=? WHERE id=?").run(timestamp, briefId);
@@ -5772,7 +5776,8 @@ export class Repository {
 
   findReusableVisualCandidate({visualId,transformInputHash}) {
     const row=this.db.prepare(`SELECT * FROM visual_candidates WHERE visual_id=? AND transform_input_hash=?
-      AND status IN ('pending_qa','qa_failed') ORDER BY updated_at DESC LIMIT 1`).get(visualId,transformInputHash);
+      AND status IN ('pending_qa','qa_failed','promoted')
+      ORDER BY CASE status WHEN 'promoted' THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`).get(visualId,transformInputHash);
     if (!row) return null;
     if (!row.media_path || !fs.existsSync(row.media_path)) {
       this.db.prepare("UPDATE visual_candidates SET status='missing',updated_at=? WHERE id=?").run(now(),row.id);
@@ -6024,7 +6029,7 @@ export class Repository {
       LEFT JOIN wordpress_publications wpub ON wpub.draft_id = ad.id
       LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
       LEFT JOIN (SELECT draft_id,COUNT(*) AS visual_total,
-        SUM(CASE WHEN status IN ('queued','generating') THEN 1 ELSE 0 END) AS visual_pending,
+        SUM(CASE WHEN status IN ('planned','queued','generating') THEN 1 ELSE 0 END) AS visual_pending,
         SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS visual_failed
         FROM article_visuals GROUP BY draft_id) vs ON vs.draft_id=ad.id
       LEFT JOIN (SELECT draft_id,COUNT(*) AS visual_candidate_pending_qa FROM visual_candidates
@@ -8911,7 +8916,7 @@ function safeIsoDate(value) {
   return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
 }
 
-function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy = contentPolicyFor(brief), facts = []) {
+function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy = contentPolicyFor(brief), facts = [], retainedVisuals = null) {
   const canonical = json(brief.canonical_json, {});
   const canonicalResolution = resolveCanonicalUrl({ siteUrl: config.publicSiteUrl, slug: draft.slug });
   const canonicalUrl = canonicalResolution.url;
@@ -8936,7 +8941,7 @@ function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy
       ? (draft.faqs || []).slice(0, policy.faq.maximum || 4).map((item) => ({ question: truncateText(item.question, 220), answer: truncateText(item.answer, 700) }))
       : [],
   };
-  const visuals = normalizeVisuals(draft.visuals, draft, brief, authorizedSourceAssets, policy);
+  const visuals = retainedVisuals || normalizeVisuals(draft.visuals, draft, brief, authorizedSourceAssets, policy);
   const firstGenerated = visuals.find((visual) => visual.status === "generated" && visual.media_url);
   if (firstGenerated) seo.og_image = firstGenerated.media_url;
   const contentAst = buildContentAst({ draft: { ...draft, seo }, brief: { ...brief, canonical }, visuals, facts });

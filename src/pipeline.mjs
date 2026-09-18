@@ -927,9 +927,9 @@ export class Pipeline {
           const contractAware = this.canComposeFrontendPage;
           const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model,
             { deferReview: job.dedupe_key?.startsWith("manual-stage:") || contractAware,
-              opportunityId:job.production_owner_opportunity_id || null });
+              opportunityId:job.production_owner_opportunity_id || null,preserveVisuals:true });
           if (!job.dedupe_key?.startsWith("manual-stage:")) {
-            if (this.visuals?.enabled) this.enqueueChild(job,"generate_visuals",draftId);
+            if (this.visuals?.enabled && this.repository.plannedVisuals(draftId).length) this.enqueueChild(job,"generate_visuals",draftId);
             else if (contractAware) this.enqueueChild(job,"compose_frontend_page",draftId);
           }
           });
