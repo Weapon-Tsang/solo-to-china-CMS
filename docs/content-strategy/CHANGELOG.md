@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.38 / schema 73 - 2026-09-18
+
+- Keep Strategy 3.7 unchanged while making visual fallback selection converge across retries.
+- Regenerate after conclusive visual QA failure instead of reusing the same failed candidate bytes.
+- Skip redundant no-analysis media normalization; this code-only release introduces no schema migration or bulk recovery.
+
 ## App 2.0.37 / schema 73 - 2026-09-18
 
 - Bounded prose repair preserves the current visual plan and only re-enters image generation when a slot is still planned or failed.

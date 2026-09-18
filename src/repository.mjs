@@ -5741,7 +5741,9 @@ export class Repository {
           media_url=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_url ELSE excluded.media_url END,
           wordpress_media_id=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.wordpress_media_id ELSE NULL END,
           wordpress_media_url=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.wordpress_media_url ELSE NULL END,
-          media_metadata_json=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_metadata_json ELSE excluded.media_metadata_json END,
+          media_metadata_json=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint
+            THEN json_patch(COALESCE(article_visuals.media_metadata_json,'{}'),excluded.media_metadata_json)
+            ELSE excluded.media_metadata_json END,
           provider=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.provider ELSE excluded.provider END,
           model=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.model ELSE excluded.model END,
           last_error=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.last_error ELSE NULL END,
@@ -5776,7 +5778,7 @@ export class Repository {
 
   findReusableVisualCandidate({visualId,transformInputHash}) {
     const row=this.db.prepare(`SELECT * FROM visual_candidates WHERE visual_id=? AND transform_input_hash=?
-      AND status IN ('pending_qa','qa_failed','promoted')
+      AND status IN ('pending_qa','promoted')
       ORDER BY CASE status WHEN 'promoted' THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`).get(visualId,transformInputHash);
     if (!row) return null;
     if (!row.media_path || !fs.existsSync(row.media_path)) {
@@ -9167,10 +9169,24 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
     const ranked = [...unusedAssets.values()].map((asset) => ({ asset, score: visualAssetMatchScore(visual, asset) }))
       .sort((left, right) => right.score - left.score);
-    const match = exact ? {asset:exact,score:visualAssetMatchScore(visual,exact)} : ranked[0];
+    const exactScore=exact ? visualAssetMatchScore(visual,exact) : 0;
+    const selectionRequestHash=sha256(`${visual.image_subject || ""}\n${visual.purpose || ""}`);
+    const stabilizedSelection=visual.media_metadata?.authorized_asset_match?.version === "visual-match-2"
+      && visual.media_metadata.authorized_asset_match.request_hash === selectionRequestHash;
+    const coherentExisting=Boolean(visual.asset_fingerprint)
+      && visual.asset_fingerprint === visualFingerprint(visual);
+    const qualifiedExisting=visual.status === "generated"
+      && visualQualityQaStatus(visual.media_metadata?.quality_qa) === "passed";
+    // A qualified derivative is immutable input. Incomplete or failed work,
+    // however, must converge on the highest-scoring authorized asset instead
+    // of preferring whichever asset happened to occupy the slot last. Exact-id
+    // preference made repeated normalization oscillate between two plans.
+    const match = stabilizedSelection && exact ? {asset:exact,score:exactScore}
+      : (qualifiedExisting || coherentExisting) && exact && exactScore >= 0.34
+        ? {asset:exact,score:exactScore} : ranked[0];
     // Asset ownership is insufficient: a factual photo is reusable only when its
     // own alt/evidence metadata matches the planned subject.
-    if (!match || match.score < 0.34) {
+    if (!match || (!stabilizedSelection && match.score < 0.34)) {
       // A writer-selected id is evidence of intent, not evidence of semantic
       // relevance. Do not silently re-select the same rejected asset later as an
       // article-level fallback during this normalization pass.
@@ -9183,8 +9199,6 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     if (decision.action === "reject") return null;
     const needsWork = ["localize","analyze"].includes(decision.action);
     const acquisitionStrategy=visualAcquisitionStrategy(decision);
-    const qualifiedExisting=visual.status === "generated"
-      && visualQualityQaStatus(visual.media_metadata?.quality_qa) === "passed";
     return {
       ...visual,
       purpose: truncateText(visual.purpose || `Evidence-linked view for ${draft.title}`, 300),
@@ -9207,6 +9221,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
         capture_version:asset.capture_version || null,analysis_version:asset.analysis_version || "",
         transform_version:"visual-transform-2",style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
         source_analysis:sourceAnalysisSnapshot(asset),
+        authorized_asset_match:{version:"visual-match-2",request_hash:selectionRequestHash,score:match.score},
         authorization_policy:"project_source_media_full_authorization",
         source_provenance: {
           source_asset_id: asset.id,
@@ -9230,12 +9245,13 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const index = normalized.length;
     const subject = readerVisualAlt(asset, "", brief.destination_slug);
     if (!subject) continue;
-    const decision = decideVisualAsset(asset, { image_subject:subject, purpose:`Evidence-linked view supporting ${draft.title}` });
+    const purpose=truncateText(`Evidence-linked view supporting ${draft.title}`,300);
+    const decision = decideVisualAsset(asset, { image_subject:subject, purpose });
     if (decision.action === "reject") continue;
     const needsWork = ["localize","analyze"].includes(decision.action);
     const acquisitionStrategy=visualAcquisitionStrategy(decision);
     normalized.push({
-      placement: defaultPlacement(index), purpose:truncateText(`Evidence-linked view supporting ${draft.title}`,300),
+      placement: defaultPlacement(index), purpose,
       alt_text:subject,
       caption:truncateText(asset.caption_text || subject,300),
       generation_prompt:"",aspect_ratio:sourceAssetAspectRatio(asset),image_type:visualImageType(decision,"real_world_photo"),
@@ -9250,6 +9266,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
         analysis_version:asset.analysis_version || "",transform_version:"visual-transform-2",
         style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
         source_analysis:sourceAnalysisSnapshot(asset),
+        authorized_asset_match:{version:"visual-match-2",request_hash:sha256(`${subject}\n${purpose}`),
+          score:articleAssetMatchScore(draft,brief,asset),mode:"article_fallback"},
         authorization_policy:"project_source_media_full_authorization",source_provenance:{source_asset_id:asset.id,
           original_stored:true,project_owner_confirmed:true}},
     });
