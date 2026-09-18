@@ -1,13 +1,25 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "3.7",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.7.md",
+  "current_version": "3.8",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.8.md",
   "status": "active",
   "history": [
     {
+      "version": "3.8",
+      "effective_date": "2026-09-19",
+      "status": "active",
+      "summary": "Explicit reader-promise planning, source-role mapping, evidence plans, translation checkpoints, and neutral commercial-language QA.",
+      "changes": [
+        "Content Briefs carry a working title, why-this-article rationale, reader promise, source-role map, and section-level evidence plan into writing and bounded repair.",
+        "Neutral factual references to a commercial brand are distinct from promotional language; commercial overlays remain isolated from Research Drafts.",
+        "Pure-text image localization persists structured translation before deterministic layout and reuses it through adaptive-layout recovery.",
+        "Commercial modules use compact English category defaults and the visible Paid link disclosure while remaining separate from editorial writing."
+      ]
+    },
+    {
       "version": "3.7",
       "effective_date": "2026-09-17",
-      "status": "active",
+      "status": "superseded",
       "summary": "Role-isolated model routing with immutable task profiles, encrypted extraction credentials, fixed Vertex production roles, and frozen-draft knowledge updates.",
       "changes": [
         "DeepSeek-V4.1-Flash is the recommended candidate for new source extraction; GPT-5.6 Luna is an explicit alternative and an operator-only bounded dispute reviewer.",

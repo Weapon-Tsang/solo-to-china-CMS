@@ -10,7 +10,7 @@ import { CLAIM_RESOLUTION_VERSION, classifyClaimPair, detectClaimExtractionIssue
 import { evidenceResolutionMode, evidenceTemporalState, resolveEvidenceConsensus } from "./evidence-consensus.mjs";
 import { KNOWLEDGE_RESOLUTION_VERSION, decideKnowledgeResolution, summarizeResolutionDecisions } from "./knowledge-resolution.mjs";
 import { assessEntityIdentity, inferEntityMetadata, normalizeEntityType, normalizeGranularity, ENTITY_RELATION_TYPES } from "./entity-resolution.mjs";
-import { legacyOfferToAsset, normalizeAffiliateAsset, normalizeCountryCode } from "./commercial.mjs";
+import { DEFAULT_COMMERCIAL_DISCLOSURE, legacyOfferToAsset, normalizeAffiliateAsset, normalizeCountryCode } from "./commercial.mjs";
 import {
   affiliateAssetFromQueueTask, exportAffiliateQueue, loadAffiliateQueueSeeds,
   normalizeAffiliateQueueTask, parseAffiliateQueueImport, queueTaskFromOpportunity,
@@ -56,6 +56,7 @@ const COMPATIBLE_DIAGNOSTIC_STRATEGIES = new Map([
   ["3.5", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5"])],
   ["3.6", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6"])],
   ["3.7", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7"])],
+  ["3.8", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8"])],
 ]);
 
 function isReusableDiagnosticStrategy(previous, current) {
@@ -5824,6 +5825,29 @@ export class Repository {
       .get(candidate.visualId,candidate.transformInputHash,candidate.outputHash);
   }
 
+  findVisualTranslationArtifact({ visualId, translationInputHash }) {
+    const row=this.db.prepare("SELECT media_metadata_json FROM article_visuals WHERE id=?").get(visualId);
+    const artifact=json(row?.media_metadata_json,{}).translation_artifact;
+    if (!artifact || artifact.status!=="translated" || artifact.translation_input_hash!==translationInputHash
+      || !Array.isArray(artifact.regions) || !artifact.regions.length) return null;
+    return artifact;
+  }
+
+  saveVisualTranslationArtifact(artifact) {
+    const current=this.db.prepare("SELECT draft_id,asset_fingerprint,media_metadata_json FROM article_visuals WHERE id=?").get(artifact.visualId);
+    if (!current || current.draft_id!==artifact.draftId) throw conflictError("Visual translation no longer belongs to the current Draft.");
+    if (artifact.expectedFingerprint && current.asset_fingerprint!==artifact.expectedFingerprint) {
+      throw conflictError("Visual translation input changed before the checkpoint could be saved.");
+    }
+    const translation={status:"translated",translation_input_hash:artifact.translationInputHash,
+      source_hash:artifact.sourceHash || "",provider:artifact.provider || "unknown",model:artifact.model || "unknown",
+      regions:artifact.regions,translated_at:now()};
+    const metadata={...json(current.media_metadata_json,{}),translation_artifact:translation};
+    this.db.prepare("UPDATE article_visuals SET media_metadata_json=?,updated_at=? WHERE id=?")
+      .run(JSON.stringify(metadata),translation.translated_at,artifact.visualId);
+    return translation;
+  }
+
   updateVisualCandidate(candidateId,{status,qa=null,error=null}={}) {
     const allowed=new Set(["pending_qa","qa_failed","promoted","invalidated","missing"]);
     if (!allowed.has(status)) throw new Error(`Unsupported visual candidate status: ${status}`);
@@ -6468,7 +6492,7 @@ export class Repository {
     return this.upsertAffiliateProviderAccount({
       id: `provider_${sha256("trip-com").slice(0, 24)}`, providerKey: "trip-com", displayName: "Trip.com",
       connectionMode: "MANUAL", siteName: "SoloToChina", defaultLanguage: "en",
-      defaultDisclosure: "SoloToChina may earn a commission from eligible bookings, at no extra cost to you.", status: "CONFIGURED",
+      defaultDisclosure: DEFAULT_COMMERCIAL_DISCLOSURE, status: "CONFIGURED",
     });
   }
 
@@ -9053,6 +9077,9 @@ function evidenceHashForFacts(facts) {
 
 function normalizeBriefPlan(plan) {
   const normalized = structuredClone(plan || {});
+  normalized.working_title=String(normalized.working_title || normalized.title || "").trim();
+  normalized.why_this_article=String(normalized.why_this_article || normalized.reader_promise || "").trim();
+  normalized.source_role_map=Array.isArray(normalized.source_role_map) ? normalized.source_role_map.slice(0,12) : [];
   const selected = new Set();
   let requestedCount = 0;
   normalized.outline = (normalized.outline || []).map((section) => {
@@ -9070,6 +9097,9 @@ function normalizeBriefPlan(plan) {
     max_total: 48,
     max_per_section: 12,
   };
+  normalized.evidence_plan=(Array.isArray(normalized.evidence_plan) && normalized.evidence_plan.length
+    ? normalized.evidence_plan : normalized.outline.map((section)=>({section_id:section.section_id,
+      claim_keys:section.claim_keys,reader_job:section.purpose || section.heading || "Answer the planned reader need."}))).slice(0,10);
   return normalized;
 }
 

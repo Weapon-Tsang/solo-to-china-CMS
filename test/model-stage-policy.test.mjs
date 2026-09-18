@@ -596,3 +596,14 @@ test("an Affiliated Hospital name is not mistaken for affiliate commerce", () =>
   });
   assert.equal(result.issues.some((issue) => issue.code === "commercial_contamination"), false);
 });
+
+test("a neutral Trip.com reference is not commercial contamination", () => {
+  const result = applyDeterministicGates({ passed: true, score: 100, issues: [], checks: [], unsupported_claims: [] }, {
+    draft: { title: "Travel platform context", body_markdown: "Trip.com is a travel platform headquartered in Shanghai.",
+      evidence_ledger: [], unresolved_conflicts: [], seo: { meta_title: "Travel platform context", focus_keyword: "travel platform" },
+      meta_description: "Neutral context about a travel platform.", visuals: [], strategy_version: "3.7", schema_jsonld: { "@graph": [{ "@type": "Article" }] } },
+    facts: [], brief: { strategy_version: "3.7", canonical: { quick_answer: "Neutral company context.", answer_blocks: [] }, plan: { outline: [] } },
+    content_policy: { minimum_words: 0, faq: { allowed: false }, visuals: { minimum: 0, maximum: 5 } }, reader_sources: [],
+  });
+  assert.equal(result.issues.some((issue) => issue.code === "commercial_contamination"), false);
+});

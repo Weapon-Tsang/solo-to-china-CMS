@@ -1,0 +1,31 @@
+# SoloToChina Content Production Strategy 3.8
+
+Strategy 3.8 inherits Strategy 3.7 in full. Existing evidence ownership, model-role isolation, immutable task profiles, finite retries, source authorization, visual QA, stable production ownership, and draft-only WordPress delivery remain mandatory.
+
+## 不变的安全边界
+
+事实保护、证据可追溯、商业与研究隔离、有限重试、当前修订所有权、明确人工批准和仅写 WordPress 草稿的边界继续完整生效。本策略的计划、文案和恢复增强不得绕过这些约束。
+
+## Planning contract
+
+Every new Content Brief preserves five connected fields:
+
+- `working_title`: a useful editorial direction, not an SEO promise beyond the evidence.
+- `why_this_article`: the bounded reason this article deserves to exist.
+- `reader_promise`: the practical outcome the finished article must deliver.
+- `source_role_map`: each selected source classified as primary, supporting, contrast, or excluded, with a reason.
+- `evidence_plan`: each planned section mapped to exact claim keys and one concrete reader job.
+
+These fields travel into the frozen writing directive, QA context, and bounded repair context. Missing optional provider fields are normalized from the approved title, reader promise, and outline without broadening scope.
+
+## Editorial and commercial isolation
+
+The Research Draft must remain useful without a commercial module. Affiliate, commission, paid-link, sponsored, booking-link, or promotional call-to-action language is a blocker. A neutral factual mention of a company name alone is not commercial contamination. Commercial cards are composed later from approved assets and use concise English category labels plus the default visible disclosure `Paid link`.
+
+## Visual translation recovery
+
+For a pure-text authorized editorial card, the order is source analysis, structured translation, durable translation checkpoint, deterministic layout, independent visual QA, and promotion. Layout-only failure cannot purchase the same translation again. Layout recovery may use up to three deterministic columns while preserving all regions, the planned aspect ratio, minimum readable type, and complete telemetry. If the content still cannot fit, the pipeline fails with `EDITORIAL_CARD_TEXT_OVERFLOW` and keeps the translation checkpoint for a changed layout plan.
+
+## Verification boundary
+
+This strategy does not authorize paid provider canaries, production replay, production database writes, WordPress publication, deployment, or historical backfill. Those remain separately authorized operations.

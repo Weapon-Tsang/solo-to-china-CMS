@@ -1,5 +1,12 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.42 / schema 73 / Strategy 3.8 - 2026-09-19
+
+- Carry working title, why-this-article, reader promise, source roles, and section evidence plans through planning, writing, QA, and bounded repair.
+- Persist pure-text visual translations before deterministic layout and reuse them after layout-only failure; add adaptive multi-column recovery telemetry.
+- Distinguish neutral company references from promotional commercial leakage and standardize new commercial UI copy on `Paid link`.
+- Pin Frontend Contract 1.4.1 at its exact provider commit and verify a commercial payload without `disclosure` across repositories.
+
 ## App 2.0.41 / schema 73 - 2026-09-18
 
 - Keep Strategy 3.7 unchanged while invalidating the exclusions owned by a superseded low-relevance fallback decision.

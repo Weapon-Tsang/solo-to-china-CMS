@@ -60,6 +60,14 @@ database = openDatabase(path.join(temporary, "contract.sqlite"));
   };
   const validation = consumer.validatePagePayload(payload);
   if (!validation.valid) throw new Error(`Generated Page Schema rejected a Registry-derived block: ${JSON.stringify(validation.errors)}`);
+  const publishedRegistry=JSON.parse(fs.readFileSync(files.registry.target,"utf8"));
+  const booking=publishedRegistry.components.find((component)=>component.id==="affiliate_booking_card");
+  if (!booking) throw new Error("Frontend Registry no longer publishes affiliate_booking_card.");
+  if ((booking.input_schema?.required || []).includes("disclosure")) throw new Error("Frontend Registry still requires verbose commercial disclosure.");
+  const bookingData={...booking.example.data}; delete bookingData.disclosure;
+  const commercialValidation=consumer.validatePagePayload({metadata:{pageId:"cross-repo-commercial-gate",title:"Commercial gate",
+    slug:"commercial-gate",contentType:"travel-guide"},blocks:[{type:"affiliate_booking_card",variant:booking.variants[0],data:bookingData}]});
+  if (!commercialValidation.valid) throw new Error(`Frontend rejected a commercial payload without disclosure: ${JSON.stringify(commercialValidation.errors)}`);
   if (!active.artifact_checksum || active.artifact_checksum.length !== 64) throw new Error("Composite Registry/Page/Publish artifact checksum was not persisted.");
   console.log(`Cross-repository contract gate passed for ${active.contractVersion} at ${frontendCommit} (${active.artifact_checksum}).`);
 } finally {

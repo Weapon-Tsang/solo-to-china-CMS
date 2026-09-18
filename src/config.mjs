@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CONTENT_STRATEGY } from "./content-strategy.mjs";
+import { DEFAULT_COMMERCIAL_DISCLOSURE } from "./commercial.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const modelStagePolicy = JSON.parse(fs.readFileSync(path.join(root, "config", "model-stage-policy.json"), "utf8"));
@@ -251,7 +252,7 @@ export function loadConfig(env = process.env) {
       opportunityThreshold: integer(env.AFFILIATE_OPPORTUNITY_THRESHOLD, 70),
       linkTaskThreshold:integer(env.AFFILIATE_LINK_TASK_THRESHOLD,commercialPolicy.link_task_threshold || 70),
       policy:commercialPolicy,
-      disclosure: env.AFFILIATE_DISCLOSURE || "SoloToChina may earn a commission from eligible bookings, at no extra cost to you.",
+      disclosure: env.AFFILIATE_DISCLOSURE || DEFAULT_COMMERCIAL_DISCLOSURE,
     },
     telemetry: {
       windowHours: integer(env.TELEMETRY_WINDOW_HOURS, 24),
