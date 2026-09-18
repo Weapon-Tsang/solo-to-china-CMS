@@ -369,11 +369,14 @@ export class Pipeline {
         // known-invalid native Schema request on every worker attempt.
         structuredSchemaMode:this.repository.structuredSchemaModeForJob?.(job.id) || null };
       // Authorized-source visual seeding is deterministic prerequisite work for
-      // both visual processing and page composition.  It must finish before the
-      // durable input snapshot is frozen; doing it inside either stage made the
-      // stage mutate its own dependency material and fail once with
-      // STALE_PIPELINE_INPUT before an identical retry could succeed.
-      if (["generate_visuals", "compose_frontend_page"].includes(job.type)) {
+      // visual processing. Page composition may seed an entirely empty legacy
+      // Draft, but it must never re-normalize an existing plan: generated media
+      // is bound to that plan's fingerprint and reseeding here can silently
+      // replace a completed visual immediately before delivery.
+      if (job.type === "generate_visuals") {
+        this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
+      } else if (job.type === "compose_frontend_page"
+          && !(this.repository.listDraftVisuals?.(job.entity_id) || []).length) {
         this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
       }
       const artifactConfigHash = stageConfiguration(this, job.type);

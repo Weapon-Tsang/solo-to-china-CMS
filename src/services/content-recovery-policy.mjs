@@ -92,6 +92,13 @@ export function explainOperationalFailure(job) {
   const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
   const details = operatorSafeDetails(message);
   const normalizedIssueCode = code.toLowerCase();
+  if (type === 'compose_publish_page' && code === 'MEDIA_DELIVERY_INVALID'
+      && /MEDIA_REQUIRED_MANIFEST_MISSING/i.test(message)) return {
+    category:'media',headline:'发布所需图片尚未完成',
+    reason:'页面引用的必需图片没有可交付媒体清单；正文、证据、质量审核和商业内容均已保留，WordPress 尚未收到残缺草稿。',
+    action:{id:'generate_visuals',label:'继续完成图片处理',why:'只恢复图片处理及其后续页面交付，不重新写作正文或重跑前置研究。'},
+    technicalDetail:details,
+  };
   if (type === 'push_wordpress_draft' && ['INVALID_PAGE_SCHEMA','INVALID_COMPONENT_DATA'].includes(code)) return {
     category:'page',headline:'发布包与 WordPress 内容契约不兼容',
     reason:'WordPress 在创建草稿前拒绝了发布包的类型或内联内容编码；来源、证据、正文和已完成产物仍然保留，站点没有产生残缺草稿。',

@@ -1,6 +1,12 @@
 # Changelog
 
-## 2.0.35 - Unreleased
+## 2.0.36 - Unreleased
+
+- Preserve an existing generated visual plan when page composition starts, so a completed derivative and its WordPress media identity cannot be replaced by a second normalization pass.
+- Route a publish-page failure caused by missing required media manifests back to `generate_visuals`, while preserving the approved scope, article body, QA result and commercial composition.
+- Add production-derived regressions for visual-plan stability and exact media-manifest recovery. No schema migration is introduced.
+
+## 2.0.35 - 2026-09-18
 
 - Prevent an explicit source-asset id from bypassing subject relevance, and require article fallback media to match both a distinctive article topic and more than one meaningful asset-level term.
 - Route itinerary/map structures to map recomposition even when legacy analysis labels them as editorial infographics.

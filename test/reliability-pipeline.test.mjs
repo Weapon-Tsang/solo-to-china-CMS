@@ -123,6 +123,41 @@ test('authorized visual seeding is frozen before the page artifact input snapsho
   assert.notEqual(job.last_failure_code,'STALE_PIPELINE_INPUT');
 });
 
+test('page composition preserves an existing generated visual plan instead of reseeding it', async t => {
+  const {repository,db}=repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('topic-visual-preserve','chongqing','visual-preserve','Ciqikou guide','fixture',80,0,0,'drafted','now','now')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('brief-visual-preserve','chongqing','Ciqikou guide','[]','informational','drafted','now','now','topic-visual-preserve')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-visual-preserve','brief-visual-preserve','Ciqikou guide','ciqikou-guide','## Visit\n\nSupported body.','{}','drafted','now','now',1,'visual-preserve-hash')`).run();
+  repository.replaceDraftVisuals('draft-visual-preserve',[{
+    placement:'hero',purpose:'Show Ciqikou food',alt_text:'Ciqikou food',caption:'',generation_prompt:'',
+    aspect_ratio:'16:9',image_type:'editorial_card',image_role:'hero',image_subject:'Ciqikou food',
+    acquisition_strategy:'recompose_editorial_card',factual_image_required:true,status:'generated',
+  }],'3.8');
+  const before=repository.listDraftVisuals('draft-visual-preserve')[0];
+  let reseedCalls=0;
+  repository.ensureAuthorizedSourceVisuals=()=>{ reseedCalls++; repository.replaceDraftVisuals('draft-visual-preserve',[{
+    placement:'hero',purpose:'Wrong broad route map',alt_text:'Broad route map',caption:'',generation_prompt:'',
+    aspect_ratio:'16:9',image_type:'map',image_role:'hero',image_subject:'Chongqing route',
+    acquisition_strategy:'recompose_map_or_route',factual_image_required:true,status:'planned',
+  }],'3.8'); };
+  const frontendContracts={configured:true,active:{id:'contract',checksum:'checksum',pageSchema:{schema:{}}},
+    diagnostics:()=>({canCompose:true}),resolveForArticle:()=>({components:[]})};
+  const pipeline=new Pipeline(repository,{enabled:false,config:{}},{
+    contentEngine:{enabled:true,config:{provider:'fixture',model:'fixture'}},frontendContracts,
+  });
+  repository.enqueue('compose_frontend_page','draft-visual-preserve');
+  assert.equal(await pipeline.runOne(),false,'the fixture intentionally stops at missing page capabilities');
+  const after=repository.listDraftVisuals('draft-visual-preserve')[0];
+  assert.equal(reseedCalls,0);
+  assert.equal(after.id,before.id);
+  assert.equal(after.asset_fingerprint,before.asset_fingerprint);
+  assert.equal(after.status,'generated');
+  assert.equal(after.image_subject,'Ciqikou food');
+});
+
 test('multi-image analysis keeps the visual Job lease until every slot is processed', async t => {
   const {repository,db}=repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)

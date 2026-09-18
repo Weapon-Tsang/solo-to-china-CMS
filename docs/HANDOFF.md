@@ -1,3 +1,9 @@
+# 2.0.36 visual-plan stability repair handoff
+
+App/Extension version `2.0.36`, schema migration `73`, and Content Strategy `3.7` form this code-only pipeline repair. A production replay of the approved Ciqikou article proved that `generate_visuals` completed, but `compose_frontend_page` immediately re-normalized the existing visual plan and replaced its generated media identity. The final publish package then correctly failed closed because its required media manifest was missing.
+
+Page composition now seeds visuals only for a genuinely empty legacy Draft and otherwise treats the existing visual plan as immutable input. The exact media-manifest failure is attributed to deterministic delivery state and recovers from `generate_visuals`, preserving the approved scope, frozen writing inputs, current body, QA and commercial composition. Deployment may recover only the affected approved Opportunity; WordPress remains draft-only, and no schema migration, backup, snapshot or bulk reconciliation is part of this code-only release.
+
 # 2.0.35 Ciqikou visual-routing repair handoff
 
 App/Extension version `2.0.35`, schema migration `73`, and Content Strategy `3.7` form this code-only visual-routing repair, with Content Production Strategy 3.7 defined by `config/content-strategy.json`, `production_state` 2.0 and Frontend Contract 1.4.0. The production-derived Ciqikou failure is now blocked at three boundaries: an explicit Source Asset id must still match the requested visual subject, a broad itinerary/map cannot masquerade as a scene-specific hero or single-column editorial card, and dense source text is capacity-checked before a paid translation request.
