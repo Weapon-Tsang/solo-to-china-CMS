@@ -1,6 +1,12 @@
 # Changelog
 
-## 2.0.38 - Unreleased
+## 2.0.39 - Unreleased
+
+- Reject weak article-level fallback media instead of forcing the configured visual target with a broad destination collage.
+- Retire previously stabilized low-coverage fallbacks before their generated alt text can bootstrap false relevance on later retries.
+- Add a production-derived regression for the Ciqikou broad-collage quality failure. No schema migration is introduced.
+
+## 2.0.38 - 2026-09-18
 
 - Make authorized visual fallback selection idempotent across retries by persisting a subject-bound selection decision and merging deterministic planning metadata without discarding prior QA evidence.
 - Exclude conclusive `qa_failed` candidates from resumable visual reuse so retries regenerate with feedback instead of re-reviewing identical rejected bytes.

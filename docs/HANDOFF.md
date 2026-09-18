@@ -1,3 +1,9 @@
+# 2.0.39 weak visual-fallback rejection handoff
+
+App/Extension version `2.0.39`, schema migration `73`, and Content Strategy `3.7` form this code-only media relevance repair. The 2.0.38 production Canary correctly regenerated failed bytes and kept source selection stable, then independent QA proved that the second selected asset was a broad Chongqing attractions collage rather than sufficiently focused Ciqikou evidence.
+
+Article-level media fallback now requires meaningful topic coverage and actively retires any previously stabilized weak fallback before its own generated alt text can create circular relevance. The affected article may proceed with its one qualified Ciqikou visual rather than forcing a second unrelated image. WordPress remains draft-only, and no schema migration, backup, snapshot or bulk reconciliation is part of this release.
+
 # 2.0.38 visual-retry convergence repair handoff
 
 App/Extension version `2.0.38`, schema migration `73`, and Content Strategy `3.7` form this code-only pipeline repair. A real 2.0.37 recovery of the approved Ciqikou article proved that retries could re-review a conclusive `qa_failed` candidate and that repeated deterministic media normalization could alternate between two source-asset plans.

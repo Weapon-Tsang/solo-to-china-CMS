@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.39 / schema 73 - 2026-09-18
+
+- Keep Strategy 3.7 unchanged while requiring stronger article-level relevance for fallback media.
+- Remove a previously stabilized weak fallback instead of allowing generated alt text to become circular relevance evidence.
+- A qualified article may use fewer visuals than its editorial target when no second relevant authorized asset exists.
+
 ## App 2.0.38 / schema 73 - 2026-09-18
 
 - Keep Strategy 3.7 unchanged while making visual fallback selection converge across retries.
