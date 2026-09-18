@@ -5675,7 +5675,11 @@ export class Repository {
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
     if (!row) return current;
     const contentPackage=this.getBriefPackage(row.brief_id);
-    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null});
+    const currentSourceIds=new Set(current.map((visual)=>visual.source_asset_id).filter(Boolean));
+    const failedSourceIds=new Set(this.db.prepare(`SELECT DISTINCT source_asset_id FROM visual_candidates
+      WHERE draft_id=? AND status='qa_failed' AND source_asset_id IS NOT NULL`).all(draftId).map((item)=>item.source_asset_id));
+    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null})
+      .filter((asset)=>currentSourceIds.has(asset.id) || !failedSourceIds.has(asset.id));
     const policy=contentPolicyFor(row,contentPackage?.facts || []);
     const visuals=normalizeVisuals(current,row,row,assets,policy);
     this.replaceDraftVisuals(draftId,visuals,row.strategy_version || this.strategyVersion);
@@ -5689,7 +5693,11 @@ export class Repository {
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
     if (!row) return { plan_hash:sha256(`missing:${draftId}`),slots:[] };
     const contentPackage=this.getBriefPackage(row.brief_id);
-    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null});
+    const currentSourceIds=new Set(current.map((visual)=>visual.source_asset_id).filter(Boolean));
+    const failedSourceIds=new Set(this.db.prepare(`SELECT DISTINCT source_asset_id FROM visual_candidates
+      WHERE draft_id=? AND status='qa_failed' AND source_asset_id IS NOT NULL`).all(draftId).map((item)=>item.source_asset_id));
+    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null})
+      .filter((asset)=>currentSourceIds.has(asset.id) || !failedSourceIds.has(asset.id));
     const proposed=normalizeVisuals(current,row,row,assets,contentPolicyFor(row,contentPackage?.facts || []));
     const slots=proposed.map((visual,index)=>{
       const existing=current[index] || null;
@@ -9152,9 +9160,11 @@ function legacyBlockRecord(block, signature) {
 
 export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], policy = {}) {
   const maximum = policy.visuals?.maximum ?? 5;
+  const articleFallbackMinimum = 0.25;
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
   const allowedRatios = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"];
   const supplied = Array.isArray(values) ? values : [];
+  const displacedAssetIds=new Set(supplied.flatMap((item)=>item?.media_metadata?.authorized_asset_match?.displaced_asset_ids || []));
   // Unsupported renderer types stay absent until a real renderer and validated
   // data source are configured. Project source media is fully authorized; when
   // the writer omits a visual plan, relevant stored originals may be selected
@@ -9164,9 +9174,22 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     .filter((item) => item?.source_asset_id || !["infographic", "map_or_route"].includes(item?.image_type))
     .map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
   const unusedAssets = new Map(authorizedSourceAssets.map((asset) => [asset.id, asset]));
+  for (const assetId of displacedAssetIds) unusedAssets.delete(assetId);
   const normalized = visuals.map((visual) => {
     if (!visual.source_asset_id && (visual.image_type !== "real_world_photo" || visual.acquisition_strategy === "generate_illustration")) return visual;
     const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
+    const priorAssetMatch=visual.media_metadata?.authorized_asset_match || {};
+    const obsoleteFallbackSelection=priorAssetMatch.version === "visual-match-2"
+      && priorAssetMatch.mode === "article_fallback"
+      && Number(priorAssetMatch.score || 0) < articleFallbackMinimum;
+    if (obsoleteFallbackSelection && exact) {
+      // A broad article-level fallback can manufacture a self-reinforcing
+      // visual subject after its first pass. Retire the weak original decision
+      // instead of treating the generated alt text as new relevance evidence.
+      unusedAssets.delete(exact.id);
+      displacedAssetIds.add(exact.id);
+      return null;
+    }
     const ranked = [...unusedAssets.values()].map((asset) => ({ asset, score: visualAssetMatchScore(visual, asset) }))
       .sort((left, right) => right.score - left.score);
     const exactScore=exact ? visualAssetMatchScore(visual,exact) : 0;
@@ -9191,12 +9214,20 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       // relevance. Do not silently re-select the same rejected asset later as an
       // article-level fallback during this normalization pass.
       if (exact) unusedAssets.delete(exact.id);
+      if (exact) displacedAssetIds.add(exact.id);
       return null;
     }
     const asset = match.asset;
     unusedAssets.delete(asset.id);
+    if (exact && exact.id !== asset.id) {
+      unusedAssets.delete(exact.id);
+      displacedAssetIds.add(exact.id);
+    }
     const decision = decideVisualAsset(asset, visual);
-    if (decision.action === "reject") return null;
+    if (decision.action === "reject") {
+      displacedAssetIds.add(asset.id);
+      return null;
+    }
     const needsWork = ["localize","analyze"].includes(decision.action);
     const acquisitionStrategy=visualAcquisitionStrategy(decision);
     return {
@@ -9221,7 +9252,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
         capture_version:asset.capture_version || null,analysis_version:asset.analysis_version || "",
         transform_version:"visual-transform-2",style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
         source_analysis:sourceAnalysisSnapshot(asset),
-        authorized_asset_match:{version:"visual-match-2",request_hash:selectionRequestHash,score:match.score},
+        authorized_asset_match:{version:"visual-match-2",request_hash:selectionRequestHash,score:match.score,
+          mode:priorAssetMatch.mode || "visual_subject",displaced_asset_ids:[...displacedAssetIds].sort()},
         authorization_policy:"project_source_media_full_authorization",
         source_provenance: {
           source_asset_id: asset.id,
@@ -9234,11 +9266,16 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       } },
     };
   }).filter(Boolean);
+  for (const visual of normalized) {
+    if (visual.media_metadata?.authorized_asset_match) {
+      visual.media_metadata.authorized_asset_match.displaced_asset_ids=[...displacedAssetIds].sort();
+    }
+  }
   const target = Math.min(maximum, Math.max(normalized.length, Number(policy.visuals?.target || 0)));
   if (normalized.length >= target) return normalized;
   const fallbackAssets = [...unusedAssets.values()]
     .map((asset) => ({ asset, score: articleAssetMatchScore(draft, brief, asset) }))
-    .filter((entry) => entry.score > 0)
+    .filter((entry) => entry.score >= articleFallbackMinimum)
     .sort((left, right) => right.score - left.score || Number(right.asset.width || 0) * Number(right.asset.height || 0)
       - Number(left.asset.width || 0) * Number(left.asset.height || 0));
   for (const { asset } of fallbackAssets.slice(0, target - normalized.length)) {
@@ -9267,7 +9304,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
         style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
         source_analysis:sourceAnalysisSnapshot(asset),
         authorized_asset_match:{version:"visual-match-2",request_hash:sha256(`${subject}\n${purpose}`),
-          score:articleAssetMatchScore(draft,brief,asset),mode:"article_fallback"},
+          score:articleAssetMatchScore(draft,brief,asset),mode:"article_fallback",
+          displaced_asset_ids:[...displacedAssetIds].sort()},
         authorization_policy:"project_source_media_full_authorization",source_provenance:{source_asset_id:asset.id,
           original_stored:true,project_owner_confirmed:true}},
     });

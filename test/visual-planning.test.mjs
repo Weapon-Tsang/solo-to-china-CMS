@@ -122,6 +122,7 @@ test("incomplete visual normalization converges on the best asset and remains id
   const second=normalizeVisuals(first,{title:"Ciqikou food guide",body_markdown:"Ciqikou ancient town food."},
     {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
   assert.equal(first[0].source_asset_id,"specific");
+  assert.deepEqual(first[0].media_metadata.authorized_asset_match.displaced_asset_ids,["broad"]);
   assert.equal(second[0].source_asset_id,"specific");
   assert.equal(second[0].acquisition_strategy,first[0].acquisition_strategy);
   assert.equal(second[0].media_metadata.authorized_asset_match.request_hash,
@@ -146,6 +147,21 @@ test("article-level fallback records a stable asset decision for later normaliza
   assert.equal(second[0].source_asset_id,"ciqikou-card");
   assert.equal(second[0].media_metadata.authorized_asset_match.request_hash,
     first[0].media_metadata.authorized_asset_match.request_hash);
+});
+
+test("a weak article fallback cannot bootstrap its own relevance on retry",()=>{
+  const asset={id:"broad-collage",remote_url:"https://media.example/chongqing-collage.webp",mime_type:"image/webp",
+    alt_text:"Eling Park in a broad Chongqing attractions collage",primary_subjects:["Chongqing travel guide","Eling Park"],
+    analysis_status:"ready",asset_kind:"photo_collage",analysis_version:"media-analysis-2",reader_text_present:true,
+    language_status:"chinese",text_regions:[{region_id:"copy",text:"鹅岭公园",role:"author_overlay",language:"zh",readable:true,preserve:false}],
+    storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"};
+  const requested=[{source_asset_id:asset.id,image_type:"infographic",image_role:"support",status:"failed",
+    image_subject:"Eling Park in Chongqing",purpose:"Evidence-linked view supporting Ciqikou Ancient Town",
+    media_metadata:{authorized_asset_match:{version:"visual-match-2",mode:"article_fallback",score:0.18,
+      request_hash:"legacy-low-coverage"}}}];
+  const output=normalizeVisuals(requested,{title:"Ciqikou Ancient Town",body_markdown:"Walk Ciqikou's old lanes."},
+    {destination_slug:"chongqing",topic:"Ciqikou Ancient Town"},[asset],{visuals:{target:1,maximum:5}});
+  assert.deepEqual(output,[],"a broad failed fallback must be removed instead of becoming relevant through its own alt text");
 });
 
 test("a complex itinerary classified as an editorial infographic is routed as a map",()=>{
