@@ -6,6 +6,7 @@ import { boundedEditorialAssemblyPackage, EDITORIAL_ASSEMBLY_INPUT_BUDGET,
   boundedPlanningPackage, PLANNING_INPUT_BUDGET } from "../src/repository.mjs";
 import { contentRecoveryReport, executeContentRecovery } from "../src/services/content-recovery.mjs";
 import { explainOperationalFailure } from "../src/services/content-recovery-policy.mjs";
+import { decorateDeliveryFailure } from "../src/services/production-state.mjs";
 import { validatePlanningDestination } from "../src/destination-consistency.mjs";
 
 function candidate(db,id="shared-candidate") {
@@ -436,6 +437,18 @@ test("a WordPress inline-content rejection also rebuilds only the publish packag
   });
   assert.equal(explanation.category,"page");
   assert.equal(explanation.action.id,"compose_publish_page");
+});
+
+test("a missing delivery manifest recovers from visual generation without rewriting the article",()=>{
+  const failure={type:"compose_publish_page",last_failure_code:"MEDIA_DELIVERY_INVALID",
+    last_error:"MEDIA_DELIVERY_INVALID: MEDIA_REQUIRED_MANIFEST_MISSING@$.media[0]"};
+  const decorated=decorateDeliveryFailure(failure);
+  const explanation=explainOperationalFailure(failure);
+  assert.equal(decorated.recovery_type,"generate_visuals");
+  assert.equal(explanation.category,"media");
+  assert.equal(explanation.action.id,"generate_visuals");
+  assert.match(explanation.reason,/WordPress 尚未收到残缺草稿/);
+  assert.match(explanation.action.why,/不重新写作正文/);
 });
 
 test("plan_content output-limit fixture uses the Editorial Assembly subset, stays bounded and preserves qualifiers",()=>{

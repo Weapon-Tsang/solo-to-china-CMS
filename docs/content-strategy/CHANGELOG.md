@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.36 / schema 73 - 2026-09-18
+
+- Keep Strategy 3.7 unchanged while freezing an existing generated visual plan across page composition.
+- Recover a missing required media manifest from image processing without rewriting approved article content.
+- This code-only release introduces no schema migration, historical bulk repair or WordPress publication.
+
 ## App 2.0.35 / schema 73 - 2026-09-18
 
 - Keep Strategy 3.7 unchanged while tightening asset-level relevance, destination-topic fallback matching and itinerary/map routing.

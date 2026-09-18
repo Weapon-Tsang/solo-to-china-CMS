@@ -510,10 +510,14 @@ function latestRegenerationSupersededRepair(jobs) {
       && String(item.updated_at) >= String(failure.updated_at))) || null;
 }
 
-function decorateDeliveryFailure(failure) {
+export function decorateDeliveryFailure(failure) {
   if (!failure) return null;
   const code = String(failure.last_failure_code || failure.code || "").toUpperCase();
   if (code === "COMMERCIAL_OVERLAY_STALE") return { ...failure, recovery_type:"compose_commercial" };
+  if (failure.type === "compose_publish_page" && code === "MEDIA_DELIVERY_INVALID"
+      && /MEDIA_REQUIRED_MANIFEST_MISSING/i.test(String(failure.last_error || failure.error || ""))) {
+    return { ...failure, recovery_type:"generate_visuals" };
+  }
   if (failure.type === "push_wordpress_draft" && ["INVALID_PAGE_SCHEMA", "INVALID_COMPONENT_DATA"].includes(code)) {
     return { ...failure, recovery_type:"compose_publish_page" };
   }
