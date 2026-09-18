@@ -164,6 +164,22 @@ test("a weak article fallback cannot bootstrap its own relevance on retry",()=>{
   assert.deepEqual(output,[],"a broad failed fallback must be removed instead of becoming relevant through its own alt text");
 });
 
+test("a generated visual with passing independent QA remains immutable despite a weak text match",()=>{
+  const asset={id:"qualified-source",remote_url:"https://media.example/qualified.webp",mime_type:"image/webp",
+    alt_text:"General Chongqing visitor notes",primary_subjects:["Chongqing visitor notes"],analysis_status:"ready",
+    asset_kind:"editorial_infographic",analysis_version:"media-analysis-2",reader_text_present:true,language_status:"english",
+    text_regions:[{region_id:"copy",text:"Visitor notes",role:"editorial_text",language:"en",readable:true,preserve:false}],
+    storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"};
+  const requested=[{source_asset_id:asset.id,image_type:"infographic",image_role:"hero",status:"generated",
+    image_subject:"Ciqikou Ancient Town lanes",purpose:"Show Ciqikou Ancient Town lanes",media_url:"/media/qualified.webp",
+    media_metadata:{quality_qa:{language:{status:"passed"},completeness:{status:"passed"},style:{status:"passed"},
+      semantic:{status:"passed"}}}}];
+  const output=normalizeVisuals(requested,{title:"Ciqikou Ancient Town",body_markdown:"Walk the old lanes."},
+    {destination_slug:"chongqing"},[asset],{visuals:{target:1,maximum:5}});
+  assert.equal(output[0].source_asset_id,asset.id);
+  assert.equal(output[0].status,"generated");
+});
+
 test("a complex itinerary classified as an editorial infographic is routed as a map",()=>{
   const decision=decideVisualAsset({analysis_status:"ready",asset_kind:"editorial_infographic",
     analysis_version:"media-analysis-2",reader_text_present:true,language_status:"chinese",

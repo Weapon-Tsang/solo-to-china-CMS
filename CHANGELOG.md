@@ -1,6 +1,12 @@
 # Changelog
 
-## 2.0.39 - Unreleased
+## 2.0.40 - Unreleased
+
+- Preserve an existing generated visual with persisted passing independent QA regardless of later text-match score changes.
+- Raise article fallback coverage so a destination-wide collage or map with one incidental Ciqikou mention cannot occupy a required slot.
+- Add production-derived regressions for immutable qualified media and the legacy broad-fallback boundary. No schema migration is introduced.
+
+## 2.0.39 - 2026-09-18
 
 - Reject weak article-level fallback media instead of forcing the configured visual target with a broad destination collage.
 - Retire previously stabilized low-coverage fallbacks before their generated alt text can bootstrap false relevance on later retries.
