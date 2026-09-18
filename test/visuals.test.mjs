@@ -245,6 +245,37 @@ test("text-only editorial cards use structured translation and deterministic unc
   assert.equal(output.metadata.quality_qa.completeness.status,"passed");
 });
 
+test("dense editorial cards bypass deterministic text layout before purchasing a translation",async(t)=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"solo-dense-card-test-"));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const sourcePath=path.join(directory,"authorized-dense-card.png");
+  const sourceBytes=await pngBytes(900,1200,"dense-route-card");
+  const localizedBytes=await pngBytes(900,1200,"localized-dense-route-card");
+  fs.writeFileSync(sourcePath,sourceBytes);
+  const requests=[];
+  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    model:"gemini-3.1-flash-image",qualityModel:"gemini-3.8-flash",accessToken:"token",mediaDir:directory,
+    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000},async(url,options)=>{
+      requests.push({url:String(url),options});
+      if(requests.length===1)return Response.json({candidates:[{content:{parts:[{inlineData:{data:localizedBytes.toString("base64"),mimeType:"image/png"}}]}}]});
+      return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(passedQa())}]}}]});
+    });
+  const denseRegions=Array.from({length:28},(_,index)=>({region_id:index===0 ? "title" : `route_${index}`,
+    text:index===0 ? "重庆三日行程地图" : "磁器口古镇洪崖洞解放碑步行路线交通换乘注意事项",
+    role:"editorial_text",language:"zh",readable:true,preserve:false}));
+  await client.localizeSourceImage({id:"visual-dense-card",slot:1,image_type:"infographic",
+    acquisition_strategy:"recompose_editorial_card",factual_image_required:true,source_asset_id:"asset-dense-card",
+    source_asset_local_path:sourcePath,source_asset_mime_type:"image/png",image_role:"hero",aspect_ratio:"3:4",
+    media_metadata_json:JSON.stringify({source_analysis:{asset_kind:"editorial_infographic",photo_regions:[],text_regions:denseRegions},
+      visual_decision:{translateRegionIds:denseRegions.map((region)=>region.region_id)}})},
+  {id:"draft-dense-card"});
+  assert.equal(requests.length,2);
+  const transformBody=JSON.parse(requests[0].options.body);
+  assert.deepEqual(transformBody.generationConfig.responseModalities,["TEXT","IMAGE"]);
+  assert.match(transformBody.contents.parts[0].text,/no cropped final line/i);
+  assert.doesNotMatch(requests[0].url,/models\/gemini-3\.8-flash:generateContent$/);
+});
+
 test("photo-omission QA overrides a stale empty photo-region analysis on editorial-card retry",async(t)=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"solo-photo-card-retry-test-"));
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));

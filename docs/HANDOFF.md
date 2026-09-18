@@ -1,3 +1,9 @@
+# 2.0.35 Ciqikou visual-routing repair handoff
+
+App/Extension version `2.0.35`, schema migration `73`, and Content Strategy `3.7` form this code-only visual-routing repair, with Content Production Strategy 3.7 defined by `config/content-strategy.json`, `production_state` 2.0 and Frontend Contract 1.4.0. The production-derived Ciqikou failure is now blocked at three boundaries: an explicit Source Asset id must still match the requested visual subject, a broad itinerary/map cannot masquerade as a scene-specific hero or single-column editorial card, and dense source text is capacity-checked before a paid translation request.
+
+Release validation uses a read-only production source, a fresh baseline copy and a disposable work database. It does not modify schema or historical production rows during replay. Deployment may run the exact backend-owned recovery for the affected approved Opportunity after candidate readiness and bounded provider canary checks; WordPress remains draft-only and no bulk recovery, backup, snapshot or migration is part of this code-only release.
+
 # 2.0.33 model routing v1.1 handoff
 
 App/Extension version `2.0.33`, schema migration `73`, and Content Strategy `3.7` form this model-routing release, with Content Production Strategy 3.7 defined by `config/content-strategy.json`, `production_state` 2.0 and Frontend Contract 1.4.0. Source extraction receives an immutable per-Job provider snapshot and can use DeepSeek Flash by default or GPT-5.6 Luna after an explicit operator switch; article planning, writing and final review remain fixed to Vertex Gemini 3.8 Flash, while image generation and localization remain fixed to Gemini 3.1 Flash Image with Vertex review.

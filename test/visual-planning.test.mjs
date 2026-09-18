@@ -37,6 +37,22 @@ test("a missing writer visual plan deterministically uses relevant project-autho
   assert.equal(output[0].media_metadata.authorization_policy,"project_source_media_full_authorization");
 });
 
+test("article fallback rejects a destination-wide asset that shares only one generic word",()=>{
+  const assets=[
+    {id:"duck",remote_url:"https://media.example/duck.jpg",mime_type:"image/jpeg",
+      alt_text:"Baishiyi pressed duck",caption_text:"",nearby_text:"",evidence_text:"Chongqing food",
+      language_status:"no_text",width:1600,height:900,storage_status:"saved",
+      original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"},
+    {id:"other-old-street",remote_url:"https://media.example/other.jpg",mime_type:"image/jpeg",
+      alt_text:"",caption_text:"",nearby_text:"",evidence_subject:"Danzishi Old Street",
+      language_status:"no_text",width:1600,height:900,storage_status:"saved",
+      original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"},
+  ];
+  const output=normalizeVisuals([],{title:"Ciqikou Ancient Town",body_markdown:"Walk the old lanes and try local food."},
+    {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
+  assert.deepEqual(output,[]);
+});
+
 test("authorized fallback photos never expose raw Claim keys as reader alt text", () => {
   const assets = [{ id:"asset-claim-dump",remote_url:"https://media.example/chongqing.jpg",mime_type:"image/jpeg",
     alt_text:"",caption_text:"",nearby_text:"",evidence_subject:"Guotai Arts Center",
@@ -72,6 +88,34 @@ test("a real-world photo is selected only when an original authorized source ass
   assert.equal(output[0].source_asset_id,"asset-1");
   assert.equal(output[0].media_metadata.source_provenance.original_stored,true);
   assert.equal(output[0].media_metadata.source_provenance.project_owner_confirmed,true);
+});
+
+test("an explicit source id cannot bypass subject relevance for a factual hero",()=>{
+  const requested=[{source_asset_id:"broad-map",image_type:"real_world_photo",image_role:"hero",
+    image_subject:"Steep flagstone lane in Ciqikou Ancient Town with Bayu stilt houses and lanterns",
+    purpose:"Show the historic Ciqikou streets and traditional hillside architecture"}];
+  const assets=[{id:"broad-map",remote_url:"https://media.example/chongqing-itinerary.webp",mime_type:"image/webp",
+    alt_text:"",caption_text:"",nearby_text:"",evidence_text:"",analysis_status:"ready",
+    asset_kind:"editorial_infographic",analysis_version:"media-analysis-2",reader_text_present:true,
+    primary_subjects:["Chongqing travel guide infographic","Tourist map of Chongqing"],
+    entities:["Ciqikou Ancient Town","Hongyadong","Dazu Rock Carvings"],language_status:"chinese",
+    text_regions:[{region_id:"map_poi_1",text:"磁器口",role:"editorial_text",language:"zh",readable:true,preserve:false}],
+    photo_regions:[],storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"}];
+  const output=normalizeVisuals(requested,{title:"Ciqikou Ancient Town",body_markdown:"Walk Ciqikou's flagstone lanes."},
+    {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
+  assert.deepEqual(output,[]);
+});
+
+test("a complex itinerary classified as an editorial infographic is routed as a map",()=>{
+  const decision=decideVisualAsset({analysis_status:"ready",asset_kind:"editorial_infographic",
+    analysis_version:"media-analysis-2",reader_text_present:true,language_status:"chinese",
+    primary_subjects:["Tourist map of Chongqing"],photo_regions:[],text_regions:[
+      {region_id:"map_poi_1",text:"磁器口",role:"editorial_text",language:"zh",readable:true,preserve:false},
+      {region_id:"route_stop_2",text:"洪崖洞",role:"editorial_text",language:"zh",readable:true,preserve:false},
+    ]});
+  assert.equal(decision.visualClass,"map_or_route");
+  assert.equal(decision.transformKind,"MAP_OR_ROUTE");
+  assert.equal(decision.reason,"route_structure_requires_map_recomposition");
 });
 
 test("the shared visual decision blocks unclassified text while preserving authentic signs", () => {

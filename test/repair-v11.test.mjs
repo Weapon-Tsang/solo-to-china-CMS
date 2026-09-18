@@ -40,6 +40,19 @@ test("FINAL_PAGE_INVALID keeps original validator paths and deterministic attrib
   assert.equal(db.prepare("SELECT COUNT(*) count FROM model_call_metrics WHERE run_id=?").get(job.id).count,0);
 });
 
+test("editorial card overflow is attributed to deterministic layout, not the preceding provider call",(t)=>{
+  const {db,repository}=repositoryFixture(t);
+  repository.enqueue("generate_visuals","draft-overflow",{dedupeKey:"v11-card-overflow"});
+  const job=repository.claimJob();
+  const error=Object.assign(new Error("Editorial card text does not fit without cropping."),{
+    code:"EDITORIAL_CARD_TEXT_OVERFLOW",retryable:false,details:{validation:"deterministic_text_layout_capacity"},
+  });
+  assert.equal(repository.failJob(job,error),true);
+  const stored=db.prepare("SELECT failure_execution_kind,failure_details_json FROM jobs WHERE id=?").get(job.id);
+  assert.equal(stored.failure_execution_kind,"deterministic");
+  assert.equal(JSON.parse(stored.failure_details_json).details.validation,"deterministic_text_layout_capacity");
+});
+
 test("a visual dispatch intent is durable and completed in one call-ledger row",(t)=>{
   const {db,repository}=repositoryFixture(t);
   const common={callId:"visualcall-v11",stage:"visual_quality_qa",substage:"visual_quality_qa",

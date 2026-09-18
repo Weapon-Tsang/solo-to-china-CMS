@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.35 / schema 73 - 2026-09-18
+
+- Keep Strategy 3.7 unchanged while tightening asset-level relevance, destination-topic fallback matching and itinerary/map routing.
+- Capacity-check dense text cards before provider translation and retain deterministic failure attribution.
+- Production recovery remains targeted to the approved Ciqikou Opportunity; there is no schema migration or bulk historical replay.
+
 ## App 2.0.33 / schema 73 - 2026-09-17
 
 - Activate Strategy 3.7 role-isolated model routing and immutable per-Job provider profiles.
