@@ -164,6 +164,30 @@ test("a weak article fallback cannot bootstrap its own relevance on retry",()=>{
   assert.deepEqual(output,[],"a broad failed fallback must be removed instead of becoming relevant through its own alt text");
 });
 
+test("an obsolete qualified fallback releases assets displaced by its superseded decision",()=>{
+  const common={remote_url:"https://media.example/source.webp",mime_type:"image/webp",analysis_status:"ready",
+    asset_kind:"editorial_infographic",analysis_version:"media-analysis-2",reader_text_present:true,
+    language_status:"chinese",text_regions:[{region_id:"copy",text:"磁器口",role:"author_overlay",language:"zh",readable:true,preserve:false}],
+    storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"};
+  const broad={...common,id:"broad-collage",alt_text:"Chongqing attractions collage",
+    primary_subjects:["Chongqing attractions collage"]};
+  const focused={...common,id:"focused-card",alt_text:"Ciqikou Ancient Town independent travel guide",
+    primary_subjects:["Ciqikou Ancient Town","independent travel guide"]};
+  const requested=[{source_asset_id:broad.id,image_type:"infographic",image_role:"hero",status:"generated",
+    image_subject:"Chongqing attractions collage",purpose:"Evidence-linked view supporting Ciqikou Ancient Town",
+    media_url:"/media/broad.png",media_metadata:{
+      quality_qa:{language:{status:"passed"},completeness:{status:"passed"},style:{status:"passed"},semantic:{status:"passed"}},
+      authorized_asset_match:{version:"visual-match-2",mode:"article_fallback",score:0.30,
+        request_hash:"obsolete-selection",displaced_asset_ids:[focused.id]}}}];
+  const output=normalizeVisuals(requested,{title:"Ciqikou Ancient Town: A Practical Guide for Independent Travelers",
+    body_markdown:"Walk Ciqikou Ancient Town's old lanes."},{destination_slug:"chongqing",topic:"Ciqikou Ancient Town"},
+    [broad,focused],{visuals:{target:1,maximum:5}});
+  assert.equal(output.length,1);
+  assert.equal(output[0].source_asset_id,focused.id);
+  assert.equal(output[0].status,"planned");
+  assert.deepEqual(output[0].media_metadata.authorized_asset_match.displaced_asset_ids,[broad.id]);
+});
+
 test("a generated visual with passing independent QA remains immutable despite a weak text match",()=>{
   const asset={id:"qualified-source",remote_url:"https://media.example/qualified.webp",mime_type:"image/webp",
     alt_text:"General Chongqing visitor notes",primary_subjects:["Chongqing visitor notes"],analysis_status:"ready",

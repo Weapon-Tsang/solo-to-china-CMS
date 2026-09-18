@@ -1,3 +1,9 @@
+# 2.0.41 obsolete-fallback displacement repair handoff
+
+App/Extension version `2.0.41`, schema migration `73`, and Content Strategy `3.7` form this final code-only relevance repair. The 2.0.40 production inspection showed that the broad Chongqing collage was correctly below the strengthened relevance floor, but its independently passing derivative QA and persisted displaced-asset list prevented the focused Ciqikou asset from re-entering selection.
+
+An obsolete low-relevance fallback decision now loses both its qualified lock and the exclusions owned by that decision. Unrelated generated visuals with passing independent QA remain immutable. A disposable copy of the live database projects the affected slot from the broad collage to the focused Ciqikou editorial card. WordPress remains draft-only, with no schema migration, backup, snapshot or bulk reconciliation.
+
 # 2.0.40 qualified-visual immutability handoff
 
 App/Extension version `2.0.40`, schema migration `73`, and Content Strategy `3.7` form this final code-only media convergence repair. The 2.0.39 production recovery exposed legacy visual rows created before displaced-asset markers existed: a later text score could still replace a generated, independently QA-passed visual, and one incidental Ciqikou mention could admit a destination-wide collage or map.

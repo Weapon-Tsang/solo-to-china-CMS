@@ -9164,7 +9164,16 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
   const allowedRatios = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"];
   const supplied = Array.isArray(values) ? values : [];
-  const displacedAssetIds=new Set(supplied.flatMap((item)=>item?.media_metadata?.authorized_asset_match?.displaced_asset_ids || []));
+  const obsoleteFallback=(item)=>{
+    const match=item?.media_metadata?.authorized_asset_match || {};
+    return match.version === "visual-match-2" && match.mode === "article_fallback"
+      && Number(match.score || 0) < articleFallbackMinimum;
+  };
+  // Displacements belong to the selection decision that produced them. Once
+  // that decision is invalid under the current relevance floor, its old
+  // exclusions must not hide a now-eligible, independently qualified asset.
+  const displacedAssetIds=new Set(supplied.filter((item)=>!obsoleteFallback(item))
+    .flatMap((item)=>item?.media_metadata?.authorized_asset_match?.displaced_asset_ids || []));
   // Unsupported renderer types stay absent until a real renderer and validated
   // data source are configured. Project source media is fully authorized; when
   // the writer omits a visual plan, relevant stored originals may be selected
@@ -9179,9 +9188,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     if (!visual.source_asset_id && (visual.image_type !== "real_world_photo" || visual.acquisition_strategy === "generate_illustration")) return visual;
     const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
     const priorAssetMatch=visual.media_metadata?.authorized_asset_match || {};
-    const obsoleteFallbackSelection=priorAssetMatch.version === "visual-match-2"
-      && priorAssetMatch.mode === "article_fallback"
-      && Number(priorAssetMatch.score || 0) < articleFallbackMinimum;
+    const obsoleteFallbackSelection=obsoleteFallback(visual);
     if (obsoleteFallbackSelection && exact) {
       // A broad article-level fallback can manufacture a self-reinforcing
       // visual subject after its first pass. Retire the weak original decision
