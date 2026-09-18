@@ -1,3 +1,9 @@
+# 2.0.38 visual-retry convergence repair handoff
+
+App/Extension version `2.0.38`, schema migration `73`, and Content Strategy `3.7` form this code-only pipeline repair. A real 2.0.37 recovery of the approved Ciqikou article proved that retries could re-review a conclusive `qa_failed` candidate and that repeated deterministic media normalization could alternate between two source-asset plans.
+
+The repair excludes failed candidate bytes from reuse, freezes article-level authorized fallback selection to its subject signature, merges new deterministic planning evidence into an otherwise unchanged visual row, and avoids a duplicate normalization pass unless source analysis changed during the Job. Deployment may recover only the affected approved Opportunity; WordPress remains draft-only, and no schema migration, backup, snapshot or bulk reconciliation is part of this code-only release.
+
 # 2.0.37 revision visual-preservation repair handoff
 
 App/Extension version `2.0.37`, schema migration `73`, and Content Strategy `3.7` form this code-only pipeline repair. A production replay of the approved Ciqikou article proved that a bounded `revise_draft` pass replaced an already-qualified visual plan and unnecessarily returned the article to image generation. The repair preserves qualified visuals through prose-only revision, keeps incomplete `planned` media visible as pending work, and reuses byte-verified candidates whose persisted independent QA already passed.

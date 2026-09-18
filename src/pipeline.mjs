@@ -825,7 +825,9 @@ export class Pipeline {
           if (!this.visuals?.enabled) throw new Error("Visual generation is not configured.");
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
-          for (const visual of this.repository.plannedVisuals(job.entity_id).filter((item)=>item.acquisition_strategy === "analyze_source_image")) {
+          const analysisVisuals=this.repository.plannedVisuals(job.entity_id)
+            .filter((item)=>item.acquisition_strategy === "analyze_source_image");
+          for (const visual of analysisVisuals) {
             if (typeof this.visualReviewer?.analyzeMediaAsset !== "function") {
               throw Object.assign(new Error("Image analysis provider is not configured for this source asset."),{
                 code:"MEDIA_ANALYSIS_NOT_CONFIGURED",retryable:false,
@@ -847,7 +849,11 @@ export class Pipeline {
               this.repository.checkpointPipelineStage(job,pipelineArtifact,saveAnalysis);
             } else saveAnalysis();
           }
-          this.repository.prepareMediaRepair(job.entity_id);
+          // The stage already normalized the plan before freezing its artifact
+          // input. Re-run planning only when this attempt added new source
+          // analysis; otherwise a second pass is redundant and historically
+          // allowed an unstable plan to flip assets inside one Job attempt.
+          if (analysisVisuals.length) this.repository.prepareMediaRepair(job.entity_id);
           contentPackage = this.repository.getDraftPackage(job.entity_id);
           for (const visual of this.repository.plannedVisuals(job.entity_id)) {
             if (visual.acquisition_strategy === "analyze_source_image") continue;

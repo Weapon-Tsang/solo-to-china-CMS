@@ -1,6 +1,12 @@
 # Changelog
 
-## 2.0.37 - Unreleased
+## 2.0.38 - Unreleased
+
+- Make authorized visual fallback selection idempotent across retries by persisting a subject-bound selection decision and merging deterministic planning metadata without discarding prior QA evidence.
+- Exclude conclusive `qa_failed` candidates from resumable visual reuse so retries regenerate with feedback instead of re-reviewing identical rejected bytes.
+- Avoid the redundant second media normalization pass when a visual Job did not add source analysis, preventing in-attempt asset oscillation. No schema migration is introduced.
+
+## 2.0.37 - 2026-09-18
 
 - Preserve generated, QA-qualified visual slots across bounded prose revisions and continue directly to page composition when no media work remains.
 - Treat `planned` visual rows as pending production work, preventing exhausted image Jobs from being projected as completed.

@@ -143,6 +143,11 @@ test("visual candidate reuse fails closed for missing or altered bytes",(t)=>{
     outputHash,mediaPath:file,mimeType:"image/png",byteSize:bytes.length,provider:"vertex_gemini",model:"image-model",
     expectedFingerprint:"fingerprint"});
   assert.equal(repository.findReusableVisualCandidate({visualId:"candidate-visual",transformInputHash:"transform-1"}).output_hash,outputHash);
+  const candidateId=repository.listVisualCandidates("candidate-visual")[0].id;
+  repository.updateVisualCandidate(candidateId,{status:"qa_failed",qa:{semantic:{status:"failed",reason:"wrong meaning"}}});
+  assert.equal(repository.findReusableVisualCandidate({visualId:"candidate-visual",transformInputHash:"transform-1"}),null,
+    "a conclusive QA failure must regenerate with feedback instead of re-reviewing identical bytes");
+  repository.updateVisualCandidate(candidateId,{status:"pending_qa"});
   fs.writeFileSync(file,Buffer.from("tampered"));
   assert.equal(repository.findReusableVisualCandidate({visualId:"candidate-visual",transformInputHash:"transform-1"}),null);
   assert.equal(repository.listVisualCandidates("candidate-visual")[0].status,"invalidated");

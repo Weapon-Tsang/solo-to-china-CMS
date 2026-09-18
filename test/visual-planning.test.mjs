@@ -106,6 +106,48 @@ test("an explicit source id cannot bypass subject relevance for a factual hero",
   assert.deepEqual(output,[]);
 });
 
+test("incomplete visual normalization converges on the best asset and remains idempotent",()=>{
+  const requested=[{source_asset_id:"broad",image_type:"infographic",image_role:"hero",status:"planned",
+    image_subject:"Ciqikou ancient town food guide",purpose:"Ciqikou ancient town food guide"}];
+  const common={remote_url:"https://media.example/card.webp",mime_type:"image/webp",analysis_status:"ready",
+    asset_kind:"editorial_infographic",analysis_version:"media-analysis-2",reader_text_present:true,language_status:"chinese",
+    text_regions:[{region_id:"copy",text:"磁器口美食",role:"editorial_text",language:"zh",readable:true,preserve:false}],
+    storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"};
+  const assets=[
+    {...common,id:"broad",alt_text:"Ciqikou town map",primary_subjects:["Ciqikou town map"]},
+    {...common,id:"specific",alt_text:"Ciqikou ancient town food guide",primary_subjects:["Ciqikou ancient town food guide"]},
+  ];
+  const first=normalizeVisuals(requested,{title:"Ciqikou food guide",body_markdown:"Ciqikou ancient town food."},
+    {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
+  const second=normalizeVisuals(first,{title:"Ciqikou food guide",body_markdown:"Ciqikou ancient town food."},
+    {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
+  assert.equal(first[0].source_asset_id,"specific");
+  assert.equal(second[0].source_asset_id,"specific");
+  assert.equal(second[0].acquisition_strategy,first[0].acquisition_strategy);
+  assert.equal(second[0].media_metadata.authorized_asset_match.request_hash,
+    first[0].media_metadata.authorized_asset_match.request_hash);
+});
+
+test("article-level fallback records a stable asset decision for later normalization",()=>{
+  const requested=[{source_asset_id:"stale",image_type:"real_world_photo",image_role:"hero",status:"failed",
+    image_subject:"Unrelated stale scene",purpose:"Unrelated stale scene"}];
+  const asset={id:"ciqikou-card",remote_url:"https://media.example/ciqikou.webp",mime_type:"image/webp",
+    alt_text:"Ciqikou Ancient Town practical guide",primary_subjects:["Ciqikou Ancient Town practical guide"],
+    analysis_status:"ready",asset_kind:"editorial_infographic",analysis_version:"media-analysis-2",
+    reader_text_present:true,language_status:"chinese",
+    text_regions:[{region_id:"copy",text:"磁器口实用指南",role:"editorial_text",language:"zh",readable:true,preserve:false}],
+    storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"};
+  const draft={title:"Ciqikou Ancient Town practical guide",body_markdown:"Plan a visit to Ciqikou Ancient Town."};
+  const brief={destination_slug:"chongqing",topic:"Ciqikou Ancient Town"};
+  const first=normalizeVisuals(requested,draft,brief,[asset],{visuals:{target:1,maximum:5}});
+  const second=normalizeVisuals(first,draft,brief,[asset],{visuals:{target:1,maximum:5}});
+  assert.equal(first[0].source_asset_id,"ciqikou-card");
+  assert.equal(first[0].media_metadata.authorized_asset_match.mode,"article_fallback");
+  assert.equal(second[0].source_asset_id,"ciqikou-card");
+  assert.equal(second[0].media_metadata.authorized_asset_match.request_hash,
+    first[0].media_metadata.authorized_asset_match.request_hash);
+});
+
 test("a complex itinerary classified as an editorial infographic is routed as a map",()=>{
   const decision=decideVisualAsset({analysis_status:"ready",asset_kind:"editorial_infographic",
     analysis_version:"media-analysis-2",reader_text_present:true,language_status:"chinese",
