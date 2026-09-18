@@ -1,5 +1,11 @@
 # SoloToChina Content Strategy changelog
 
+## App 2.0.41 / schema 73 - 2026-09-18
+
+- Keep Strategy 3.7 unchanged while invalidating the exclusions owned by a superseded low-relevance fallback decision.
+- Reconsider a generated fallback only when its persisted article-level score is below the current relevance floor; unrelated qualified visuals remain immutable.
+- Restore the focused Ciqikou asset from the authorized production inventory without schema or historical bulk migration.
+
 ## App 2.0.40 / schema 73 - 2026-09-18
 
 - Keep Strategy 3.7 unchanged while making independently QA-passed generated visuals immutable.

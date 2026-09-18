@@ -1,6 +1,12 @@
 # Changelog
 
-## 2.0.40 - Unreleased
+## 2.0.41 - Unreleased
+
+- Revalidate generated visuals that came from an obsolete weak article-fallback decision, even when the derivative previously passed independent image QA.
+- Release the superseded decision's displaced-asset list so a focused, independently qualified source can re-enter deterministic selection.
+- Add a production-derived regression and production-database replay for the completed Ciqikou draft. No schema migration is introduced.
+
+## 2.0.40 - 2026-09-18
 
 - Preserve an existing generated visual with persisted passing independent QA regardless of later text-match score changes.
 - Raise article fallback coverage so a destination-wide collage or map with one incidental Ciqikou mention cannot occupy a required slot.
