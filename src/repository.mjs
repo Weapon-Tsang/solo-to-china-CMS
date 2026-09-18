@@ -9162,10 +9162,16 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
     const ranked = [...unusedAssets.values()].map((asset) => ({ asset, score: visualAssetMatchScore(visual, asset) }))
       .sort((left, right) => right.score - left.score);
-    const match = exact ? {asset:exact,score:1} : ranked[0];
+    const match = exact ? {asset:exact,score:visualAssetMatchScore(visual,exact)} : ranked[0];
     // Asset ownership is insufficient: a factual photo is reusable only when its
     // own alt/evidence metadata matches the planned subject.
-    if (!match || match.score < 0.34) return null;
+    if (!match || match.score < 0.34) {
+      // A writer-selected id is evidence of intent, not evidence of semantic
+      // relevance. Do not silently re-select the same rejected asset later as an
+      // article-level fallback during this normalization pass.
+      if (exact) unusedAssets.delete(exact.id);
+      return null;
+    }
     const asset = match.asset;
     unusedAssets.delete(asset.id);
     const decision = decideVisualAsset(asset, visual);
@@ -9297,6 +9303,10 @@ export function decideVisualAsset(asset = {}, request = {}) {
     return {visualClass:normalizedClass,...common,action:"retain",transformKind:"PHOTO_RETAIN",
       reason:authenticityCritical ? "authentic_signage_is_reader_evidence" : "documentary_photo_retained"};
   }
+  if (normalizedClass === "editorial_infographic" && looksLikeMapOrRoute(asset,regions)) return {
+    visualClass:"map_or_route",...common,action:"localize",transformKind:"MAP_OR_ROUTE",
+    reason:"route_structure_requires_map_recomposition",
+  };
   if (["handwritten_card","editorial_infographic"].includes(normalizedClass)) return {
     visualClass:normalizedClass,...common,action:"localize",transformKind:"EDITORIAL_CARD_RECOMPOSE",
     reason:"editorial_card_requires_english_recomposition",
@@ -9353,9 +9363,20 @@ function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
 function articleAssetMatchScore(draft, brief, asset) {
   const article = topicTokens(`${draft?.title || ""} ${draft?.body_markdown || ""}`);
   for (const token of topicTokens(brief?.destination_slug || "")) article.delete(token);
-  const described = topicTokens(`${asset.alt_text || ""} ${asset.caption_text || ""} ${asset.nearby_text || ""} ${asset.evidence_text || ""}`);
+  const described = topicTokens(`${assetTopicText(asset)} ${asset.evidence_subject || ""}`);
   if (!article.size || !described.size) return 0;
-  const overlap = [...described].filter((token) => article.has(token)).length;
+  const overlapping=[...described].filter((token) => article.has(token));
+  const overlap = overlapping.length;
+  // One generic word such as "food" or "view" is not enough to bind a
+  // destination-wide source photo to a specific article.
+  if (overlap < 2) return 0;
+  const generic=new Set(["ancient","area","city","food","landmark","landmarks","local","old","photo","route","scene",
+    "street","streets","town","view","views","walk","walking"]);
+  if (!overlapping.some((token)=>!generic.has(token))) return 0;
+  const titleAnchors=topicTokens(draft?.title || "");
+  for (const token of topicTokens(brief?.destination_slug || "")) titleAnchors.delete(token);
+  for (const token of generic) titleAnchors.delete(token);
+  if (titleAnchors.size && ![...titleAnchors].some((token)=>described.has(token))) return 0;
   return overlap / Math.max(1, Math.min(article.size, described.size));
 }
 
@@ -9411,10 +9432,34 @@ function sourceAssetAspectRatio(asset) {
 
 function visualAssetMatchScore(visual, asset) {
   const requested = topicTokens(`${visual.image_subject || ""} ${visual.purpose || ""}`);
-  const described = topicTokens(`${asset.alt_text || ""} ${asset.caption_text || ""} ${asset.nearby_text || ""} ${asset.evidence_text || ""}`);
+  const described = topicTokens(assetTopicText(asset));
   if (!requested.size || !described.size) return 0;
   const overlap = [...requested].filter((token) => described.has(token)).length;
-  return overlap / Math.max(1, Math.min(requested.size, described.size));
+  // Cover the requested subject, rather than rewarding a broad asset merely
+  // because one place name appears somewhere in a long itinerary or collage.
+  return overlap / Math.max(1, requested.size);
+}
+
+function assetTopicText(asset={}) {
+  // Claim evidence may mention one place inside a broad itinerary/card. It is
+  // useful for article-level discovery, but is not asset-level proof that the
+  // pixels depict a requested scene.
+  const values=[asset.alt_text,asset.caption_text,asset.nearby_text,
+    ...(Array.isArray(asset.primary_subjects) ? asset.primary_subjects : []),
+    ...(Array.isArray(asset.entities) ? asset.entities.map((entry)=>typeof entry === "string" ? entry
+      : entry?.name || entry?.label || entry?.value || "") : [])];
+  return values.filter(Boolean).join(" ");
+}
+
+function looksLikeMapOrRoute(asset={},regions=[]) {
+  const subjects=Array.isArray(asset.primary_subjects) ? asset.primary_subjects : [];
+  const entities=Array.isArray(asset.entities) ? asset.entities : [];
+  const analysisText=[asset.asset_kind,asset.visual_class,...subjects,
+    ...entities.map((entry)=>typeof entry === "string" ? entry : entry?.name || entry?.label || entry?.value || ""),
+    ...regions.map((region)=>`${region?.region_id || ""} ${region?.text || ""}`)].join(" ");
+  if (/(?:行程地图|路线图|返程方向|游览路线|交通路线|tourist map|route map|itinerary map)/i.test(analysisText)) return true;
+  const structuralRegions=regions.filter((region)=>/(?:^|[_-])(?:map|route|stop|poi|waypoint)(?:[_-]|$)/i.test(String(region?.region_id || "")));
+  return structuralRegions.length >= 2;
 }
 
 function detectedAssetLanguage(result = {}) {
@@ -10816,6 +10861,7 @@ function structuredFailureDiagnostic(job,error) {
     "EDITORIAL_PAGE_INVALID","FINAL_PAGE_INVALID","FINAL_PAGE_QA_FAILED","MEDIA_DELIVERY_INVALID",
     "PUBLISH_PACKAGE_INVALID","COMMERCIAL_DELIVERY_MISMATCH","CONTRACT_VERSION_MISMATCH",
     "PROTECTED_EVIDENCE_MISMATCH","DESTINATION_TOPIC_MISMATCH","FROZEN_WRITING_SCOPE_INVALID",
+    "EDITORIAL_CARD_TEXT_OVERFLOW",
   ]);
   const hasProviderEvidence=Boolean(error?.provider || error?.status || error?.details?.http_status
     || error?.details?.provider_request_id || /^PROVIDER_/.test(code));

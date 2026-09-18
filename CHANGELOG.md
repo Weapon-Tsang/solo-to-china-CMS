@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.35 - Unreleased
+
+- Prevent an explicit source-asset id from bypassing subject relevance, and require article fallback media to match both a distinctive article topic and more than one meaningful asset-level term.
+- Route itinerary/map structures to map recomposition even when legacy analysis labels them as editorial infographics.
+- Preflight deterministic editorial-card capacity before purchasing translation, and attribute any residual overflow to deterministic layout instead of an earlier provider call.
+- Add production-derived visual regressions for the Ciqikou failure, dense 28-region cards, unrelated destination-wide fallbacks, and deterministic diagnostics. No schema migration is introduced.
+
 ## 2.0.33 - Unreleased
 
 - Add schema 73 and Strategy 3.7 model-role routing: DeepSeek extraction candidate, manual GPT-5.6 Luna extraction/dispute review, fixed Vertex Gemini 3.8 Flash production/review, and fixed Gemini 3.1 Flash Image generation/localization.

@@ -454,12 +454,32 @@ function editorialTranslationRegions(metadata={}) {
 
 function shouldRenderEditorialTextCard(visual,metadata={}) {
   const analysis=metadata.source_analysis || {};
+  const regions=editorialTranslationRegions(metadata);
   return visual.acquisition_strategy === "recompose_editorial_card"
     && ["handwritten_card","editorial_infographic","text_card"].includes(String(analysis.asset_kind || ""))
     && Array.isArray(analysis.photo_regions) && analysis.photo_regions.length === 0
     && !visualRetryFeedback(metadata).some(({reason})=>/\b(?:photo(?:graph)?s?|documentary imagery|image regions?)\b/i.test(reason)
       && /\b(?:omit(?:ted)?|missing|preserv(?:e|ed|ation)?|lost|strip(?:ped)?|flatten(?:ed)?)\b/i.test(reason))
-    && editorialTranslationRegions(metadata).length > 0;
+    && regions.length > 0
+    && editorialCardSourceFits(regions,visual.aspect_ratio);
+}
+
+function editorialCardSourceFits(regions,aspectRatio) {
+  const ratio=parseAspectRatio(aspectRatio) || 3/4;
+  const width=896; const height=Math.round(width/ratio); const fontSize=14;
+  const maxChars=Math.max(34,Math.floor((width-138)/(fontSize*0.56)));
+  let bottom=202;
+  for (const region of regions.slice(1)) {
+    const source=String(region.source_text || "").trim();
+    const hanCount=(source.match(/\p{Script=Han}/gu) || []).length;
+    const estimatedEnglishLength=Math.max(source.length,source.length-hanCount+(hanCount*3));
+    const lines=Math.max(1,Math.ceil(estimatedEnglishLength/maxChars));
+    bottom += lines*fontSize*1.32 + fontSize*0.9;
+  }
+  // Translation length is non-deterministic. Keep enough headroom for English
+  // expansion and font metrics instead of discovering overflow after paying for
+  // the translation request.
+  return bottom <= height-42-Math.round(height*0.15);
 }
 
 async function renderTextCardPng(regions,aspectRatio) {
@@ -474,7 +494,8 @@ async function renderTextCardPng(regions,aspectRatio) {
     fontSize -= 1;
   }
   if (!rendered || rendered.bottom > height-42) throw Object.assign(new Error("Editorial card text does not fit without cropping."),
-    {code:"EDITORIAL_CARD_TEXT_OVERFLOW",retryable:false});
+    {code:"EDITORIAL_CARD_TEXT_OVERFLOW",retryable:false,details:{validation:"deterministic_text_layout_capacity",
+      region_count:regions.length,aspect_ratio:aspectRatio,minimum_font_size:14,rendered_bottom:rendered?.bottom || null,height}});
   const titleLines=wrapEditorialText(title,44);
   const titleSpans=titleLines.map((line,index)=>`<tspan x="56" dy="${index ? 38 : 0}">${escapeXml(line)}</tspan>`).join("");
   const bodyText=(rendered?.items || []).map((item)=>`<text x="64" y="${item.y}" font-family="DejaVu Sans,Arial,sans-serif" font-size="${fontSize}" fill="#172033">${item.lines.map((line,index)=>`<tspan x="64" dy="${index ? fontSize*1.32 : 0}">${escapeXml(line)}</tspan>`).join("")}</text>`).join("");
