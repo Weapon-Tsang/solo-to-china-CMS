@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.43 - Unreleased
+
+- Prevent a previously QA-qualified, city-wide collage or route card from being reused as a focused attraction guide image; derivative QA alone does not prove article relevance.
+- Require the source image's own subject evidence to identify the guide's attraction before exact-ID reuse or article-level fallback. When no relevant authorized image exists, preserve the accurate text-only draft instead of inserting unrelated media.
+- Add a production-derived Huguang Guild Hall regression and read-only production-database media-plan replay. No schema migration or bulk backfill is introduced.
+
 ## 2.0.42 - Unreleased
 
 - Carry explicit editorial intent, source roles, and evidence plans from planning through bounded repair under Content Production Strategy 3.8.

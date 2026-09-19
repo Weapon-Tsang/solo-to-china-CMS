@@ -9212,7 +9212,18 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
   const visuals = supplied.slice(0, maximum)
     .filter((item) => item?.source_asset_id || !["infographic", "map_or_route"].includes(item?.image_type))
     .map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
-  const unusedAssets = new Map(authorizedSourceAssets.map((asset) => [asset.id, asset]));
+  // A transformed image can faithfully reproduce its source and still mislead
+  // readers when the source is a city-wide collage used as a single-attraction
+  // image. The four-field derivative QA does not establish article relevance.
+  // Keep such assets out of both exact-id reuse and article-level fallback,
+  // including previously generated/qualified derivatives.
+  const unsafeAttractionAssetIds = new Set(authorizedSourceAssets
+    .filter((asset) => assetUnsafeForFocusedAttraction(asset, brief, policy))
+    .map((asset) => asset.id));
+  for (const assetId of unsafeAttractionAssetIds) displacedAssetIds.add(assetId);
+  const unusedAssets = new Map(authorizedSourceAssets
+    .filter((asset) => !unsafeAttractionAssetIds.has(asset.id))
+    .map((asset) => [asset.id, asset]));
   for (const assetId of displacedAssetIds) unusedAssets.delete(assetId);
   const normalized = visuals.map((visual) => {
     if (!visual.source_asset_id && (visual.image_type !== "real_world_photo" || visual.acquisition_strategy === "generate_illustration")) return visual;
@@ -9441,6 +9452,26 @@ function sourceAnalysisSnapshot(asset={}) {
     editor_ui_regions:asset.editor_ui_regions || [],primary_subjects:asset.primary_subjects || [],
     language_by_region:asset.language_by_region || [],reader_text_present:asset.reader_text_present,
     confidence:asset.analysis_confidence || 0,analysis_version:asset.analysis_version || ""};
+}
+
+function assetUnsafeForFocusedAttraction(asset = {}, brief = {}, policy = {}) {
+  if (policy.content_type !== "attraction_guide") return false;
+  // A destination-wide note may mention the attraction only as one route stop;
+  // nearby prose and a list of recognized entities are not pixel-level proof.
+  const focus = String(brief.topic || "").split(":", 1)[0];
+  const focusTokens = topicTokens(focus);
+  for (const token of topicTokens(brief.destination_slug || "")) focusTokens.delete(token);
+  const imageLevelTokens = topicTokens([
+    asset.alt_text, asset.caption_text, asset.evidence_subject,
+    ...(Array.isArray(asset.primary_subjects) ? asset.primary_subjects : []),
+  ].filter(Boolean).join(" "));
+  if (focusTokens.size && [...focusTokens].filter((token) => imageLevelTokens.has(token)).length
+    < Math.max(1, Math.ceil(focusTokens.size * 0.67))) return true;
+  if (!["photo_collage", "editorial_infographic", "map_or_route"].includes(String(asset.asset_kind || ""))) return false;
+  const entities = Array.isArray(asset.entities) ? asset.entities : [];
+  const namedPlaces = new Set(entities.map((entry) => String(typeof entry === "string" ? entry
+    : entry?.name || entry?.label || entry?.value || "").trim().toLowerCase()).filter(Boolean));
+  return namedPlaces.size >= 3;
 }
 
 function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
