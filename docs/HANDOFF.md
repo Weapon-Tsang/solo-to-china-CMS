@@ -1,3 +1,9 @@
+# 2.0.42 unified content and contract upgrade handoff
+
+App/Extension version `2.0.42`, schema migration `73`, and Content Strategy `3.8` form this code-only release candidate. The active Content Production Strategy 3.8 is declared by `config/content-strategy.json`; Frontend Contract `1.4.1` is pinned to its separately committed provider revision. The CMS accepts commercial payloads without verbose disclosure, defaults visible commercial disclosure to `Paid link`, carries explicit editorial intent fields through the writing boundary, and persists pure-text image translations before deterministic adaptive layout. No schema migration or historical backfill is introduced.
+
+The visual recovery boundary is source analysis → structured translation → durable translation checkpoint → one-to-three-column deterministic layout → independent QA. Layout failure keeps the translation artifact and reports exact layout telemetry. Neutral factual uses of `Trip.com` no longer fail commercial-isolation QA unless promotional language is present.
+
 # 2.0.41 obsolete-fallback displacement repair handoff
 
 App/Extension version `2.0.41`, schema migration `73`, and Content Strategy `3.7` form this final code-only relevance repair. The 2.0.40 production inspection showed that the broad Chongqing collage was correctly below the strengthened relevance floor, but its independently passing derivative QA and persisted displaced-asset list prevented the focused Ciqikou asset from re-entering selection.

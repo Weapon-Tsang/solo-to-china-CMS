@@ -15,6 +15,14 @@ const BRIEF_SCHEMA = objectSchema(
     audience: { type: "array", maxItems: 4, items: { type: "string" } },
     angle: { type: "string" },
     reader_promise: { type: "string" },
+    working_title: { type: "string" },
+    why_this_article: { type: "string" },
+    source_role_map: { type: "array", maxItems: 12, items: objectSchema(["source_id", "role", "reason"], {
+      source_id: { type: "string" }, role: { type: "string" }, reason: { type: "string" },
+    }) },
+    evidence_plan: { type: "array", maxItems: 10, items: objectSchema(["section_id", "claim_keys", "reader_job"], {
+      section_id: { type: "string" }, claim_keys: { type: "array", maxItems: 12, items: { type: "string" } }, reader_job: { type: "string" },
+    }) },
     outline: {
       type: "array", minItems: 1, maxItems: 10,
       items: objectSchema(["section_id", "heading", "purpose", "claim_keys"], {
@@ -821,6 +829,10 @@ function safeDraftBrief(brief = {}, validFactKeys = new Set()) {
     audience:plan.audience || brief.audience,
     angle:plan.angle,
     reader_promise:plan.reader_promise || brief.canonical?.reader_promise,
+    working_title:plan.working_title || plan.title || brief.topic,
+    why_this_article:plan.why_this_article || plan.reader_promise || "",
+    source_role_map:(plan.source_role_map || []).slice(0,12),
+    evidence_plan:(plan.evidence_plan || []).slice(0,10),
     content_type:plan.canonical?.content_type || brief.canonical?.content_type,
     adaptation_requirements:boundedRequirements(plan.adaptation_requirements),
     conflict_instructions:boundedRequirements(plan.conflict_instructions),
@@ -832,7 +844,9 @@ function safeDraftBrief(brief = {}, validFactKeys = new Set()) {
 
 function safeWritingDirective(brief = {}, outline = []) {
   const plan = brief.plan || brief;
-  return ["ARTICLE GOAL",plan.reader_promise || plan.title || brief.topic || "Answer the approved reader need.","",
+  return ["ARTICLE GOAL",plan.reader_promise || plan.title || brief.topic || "Answer the approved reader need.",
+    "WHY THIS ARTICLE",plan.why_this_article || plan.reader_promise || "Fulfill the approved reader need with the bounded evidence.",
+    "WORKING TITLE",plan.working_title || plan.title || brief.topic || "Untitled guide","",
     "EVIDENCE-BOUND SECTION ORDER",...outline.map((section,index) => `${index + 1}. ${section.heading || section.section_id}`),"",
     "MANDATORY TRAVELER ADAPTATIONS",...numberedRequirements(plan.adaptation_requirements),"",
     "MANDATORY CONFLICT HANDLING",...numberedRequirements(plan.conflict_instructions),"",
@@ -932,6 +946,10 @@ function compactDraftRepairInput(contentPackage, issues = []) {
     brief: {
       title: brief.plan?.title || brief.title,
       reader_promise: brief.plan?.reader_promise || brief.canonical?.reader_promise,
+      working_title: brief.plan?.working_title || brief.plan?.title || brief.title,
+      why_this_article: brief.plan?.why_this_article || brief.plan?.reader_promise || brief.canonical?.reader_promise,
+      source_role_map: (brief.plan?.source_role_map || []).slice(0, 12),
+      evidence_plan: (brief.plan?.evidence_plan || []).slice(0, 10),
       adaptation_requirements: boundedRequirements(brief.plan?.adaptation_requirements || brief.adaptation_requirements),
       conflict_instructions: boundedRequirements(brief.plan?.conflict_instructions || brief.conflict_instructions),
       verification_instructions: boundedRequirements(brief.plan?.verification_instructions || brief.verification_instructions),
@@ -1062,6 +1080,7 @@ const NARRATIVE_PROMPT = `Design the article's narrative logic from the approved
 - Preserve conditions and uncertainty. The result is a plan for the writer, not reader-facing copy.`;
 
 const briefPrompt = (strategyVersion) => `Create an evidence-backed English content plan and Canonical Travel Content object for SoloToChina Content Production Strategy ${strategyVersion}.
+- Set working_title, why_this_article, reader_promise, source_role_map, and evidence_plan explicitly. Each source role must explain why that source is primary, supporting, contrast, or excluded. Each evidence-plan row must map one planned section to exact claim keys and a concrete reader job.
 - approved_proposal is the operator-approved scope. Preserve its readerPromise, destination, production mode and evidenceBoundary. Do not expand a narrow proposal into a whole-city guide. Cover each promised section with exact supplied claim keys; if support is absent, disclose the gap rather than invent facts.
 - Audience: independent international visitors, especially solo travelers, first-time China visitors, and people who cannot read Chinese.
 - Use only the supplied knowledge facts. Claim keys in the outline must exactly match supplied keys.
@@ -1222,7 +1241,7 @@ export function applyDeterministicGates(review, contentPackage) {
   checks.push({ name: "semantic-evidence-sampling", passed: null,
     detail: semanticUnverified ? `${semanticUnverified} used fact(s) need semantic sampling because no deterministic protected token was available.`
       : "All used facts contained at least one deterministically checkable protected token." });
-  const affiliateLeak = /\btrip\.com\b|\baffiliate\b|\bcommission\b|\bbooking link\b/i.test(draft.body_markdown);
+  const affiliateLeak = containsCommercialPromotion(draft.body_markdown);
   addGate("commercial-isolation", !affiliateLeak, affiliateLeak ? "Commercial or affiliate language leaked into the Research Draft." : "No commercial language detected.", "commercial_contamination");
   const internalLeak = /\bclaim[_ .-]?key\b|\bevidence ledger\b|\bsrc_[a-f0-9]+\b/i.test(draft.body_markdown);
   addGate("internal-metadata", !internalLeak, internalLeak ? "Internal research metadata appears in reader-facing copy." : "No internal identifiers detected.", "internal_metadata_leak");
@@ -1386,6 +1405,12 @@ export function applyDeterministicGates(review, contentPackage) {
     deterministic_summary: { hardFailures: finalIssues.filter((item) => item.severity === "blocker").length,
       warnings: finalIssues.filter((item) => item.severity === "warning").length, semanticUnverified },
   };
+}
+
+function containsCommercialPromotion(value) {
+  const text=String(value || "");
+  if (/\baffiliate\b|\bcommission\b|\bbooking link\b|\bpaid link\b|\bsponsored\b/i.test(text)) return true;
+  return /(?:\b(?:book|reserve|buy|search|compare|deal|discount|offer|save|click|check)\w*\b[^.!?\n]{0,80}\btrip\.com\b)|(?:\btrip\.com\b[^.!?\n]{0,80}\b(?:book|reserve|buy|search|compare|deal|discount|offer|save|click|check)\w*\b)/i.test(text);
 }
 
 function normalizeReviewIssue(issue = {}) {

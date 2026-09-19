@@ -9,6 +9,17 @@ export const CONNECTION_MODES = new Set(["MANUAL", "OFFICIAL_API", "FEED"]);
 export const OFFER_CATEGORIES = new Set(["hotels", "attraction_tickets", "trains", "flights", "tours_activities", "airport_transfer", "planner"]);
 export const COMMERCIAL_STRATEGY_VERSION = "2.1";
 export const READING_LAYOUT_VERSION = "1.1";
+export const DEFAULT_COMMERCIAL_DISCLOSURE = "Paid link";
+export const COMMERCIAL_COPY_DEFAULTS = Object.freeze({
+  HOTEL: Object.freeze({ eyebrow:"HOTELS", ctaLabel:"Search hotels" }),
+  FLIGHT: Object.freeze({ eyebrow:"FLIGHTS", ctaLabel:"Search flights" }),
+  TRAIN: Object.freeze({ eyebrow:"TRAINS", ctaLabel:"Search trains" }),
+  ATTRACTION: Object.freeze({ eyebrow:"ATTRACTIONS & TOURS", ctaLabel:"View attractions & tours" }),
+  TOUR_ACTIVITY: Object.freeze({ eyebrow:"ATTRACTIONS & TOURS", ctaLabel:"View attractions & tours" }),
+  PLANNER: Object.freeze({ eyebrow:"TRIP PLANNING", ctaLabel:"Plan your trip" }),
+  PROMOTION: Object.freeze({ eyebrow:"TRIP.COM OFFERS", ctaLabel:"View offers" }),
+  DEFAULT: Object.freeze({ eyebrow:"TRAVEL BOOKING", ctaLabel:"View options" }),
+});
 
 const CATEGORY_COMPATIBILITY = new Map([
   ["hotels", "HOTEL"], ["attraction_tickets", "ATTRACTION"], ["trains", "TRAIN"],
@@ -66,7 +77,7 @@ export function normalizeAffiliateAsset(input, providerAccount = null) {
     routeKey: singleLine(truncate(input.routeKey || input.route_key, 300)), entityKey: singleLine(truncate(input.entityKey || input.entity_key, 300)),
     entityName: singleLine(truncate(input.entityName || input.entity_name, 300)), providerEntityId: singleLine(truncate(input.providerEntityId || input.provider_entity_id, 300)),
     title: requiredSingleLine(input.title, "title", 500), description: truncate(input.description, 1_000),
-    ctaLabel: singleLine(truncate(input.ctaLabel || input.cta_label || "View option", 100)).replaceAll("|", " "),
+    ctaLabel: singleLine(truncate(input.ctaLabel || input.cta_label || commercialCopyDefaults(productCategory,assetType).ctaLabel, 100)).replaceAll("|", " "),
     targetUrl, imageUrl, altText, priceText: singleLine(truncate(input.priceText || input.price_text, 120)),
     embedConfig, language: singleLine(truncate(input.language || "en", 30)), priority: boundedInteger(input.priority, -100, 100), active: input.active !== false,
     validFrom: safeDate(input.validFrom || input.valid_from), validUntil: safeDate(input.validUntil || input.valid_until),
@@ -109,7 +120,7 @@ export class CommercialComposer {
       linkTaskThreshold:70,policy:{destination_resource:{enabled:true,max_units:1,
         content_types:["first_time_guide","city_guide","itinerary","food_guide","attraction_guide"],
         topic_patterns:["guide","itinerary","food","things to do","first time","days in"]}},
-      disclosure: "SoloToChina may earn a commission from eligible bookings, at no extra cost to you.", ...config,
+      disclosure: DEFAULT_COMMERCIAL_DISCLOSURE, ...config,
     };
   }
 
@@ -351,7 +362,9 @@ function commercialBlock(intent, asset, placement, index, disclosure) {
       asset_type: asset.asset_type || asset.assetType, product_category: canonicalCategory(asset), title: asset.title,
       description: commercialDescription(asset, intent),
       cta_label: asset.cta_label || asset.ctaLabel, target_url: asset.target_url || asset.targetUrl || "", embed_config: parseEmbed(asset.embed_config_json || asset.embedConfig),
-      disclosure, scope_type: asset.scope_type || asset.scopeType, scope_key: asset.scope_key || asset.scopeKey || "",
+      disclosure:disclosure || DEFAULT_COMMERCIAL_DISCLOSURE,
+      eyebrow:commercialCopyDefaults(canonicalCategory(asset),assetType).eyebrow,
+      scope_type: asset.scope_type || asset.scopeType, scope_key: asset.scope_key || asset.scopeKey || "",
       price_text: asset.price_text || asset.priceText || "", valid_from: asset.valid_from || asset.validFrom || "",
       valid_until: asset.valid_until || asset.validUntil || "", image_url: asset.image_url || asset.imageUrl || "",
       alt_text: asset.alt_text || asset.altText || "", entity: asset.entity_key || asset.entityKey || "",
@@ -363,6 +376,11 @@ function commercialBlock(intent, asset, placement, index, disclosure) {
       placement_reason:intent.placementReason || (resolvedPlacement === "contextual" ? "Strongly related action beside the relevant passage." : "Optional destination planning resource after the article."),
     },
   };
+}
+
+export function commercialCopyDefaults(productCategory,assetType="") {
+  if (assetType === "PROMOTION") return COMMERCIAL_COPY_DEFAULTS.PROMOTION;
+  return COMMERCIAL_COPY_DEFAULTS[String(productCategory || "").toUpperCase()] || COMMERCIAL_COPY_DEFAULTS.DEFAULT;
 }
 
 function commercialDescription(asset, intent) {

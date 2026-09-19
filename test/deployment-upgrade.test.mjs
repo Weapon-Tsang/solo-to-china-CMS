@@ -6,6 +6,7 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { CONTENT_STRATEGY } from '../src/content-strategy.mjs';
 
 const app = fileURLToPath(new URL('..', import.meta.url));
 async function fixture(t) {
@@ -81,9 +82,9 @@ test('deployment opportunity gate reconciles deterministically and rejects an ac
   db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,title,
     content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state,processing_state,
     canonical_intent_key,inbox_state,seo_action,approved_at)
-    VALUES ('production-opportunity','production-destination','["production-destination"]','production:topic','3.7','Approved production opportunity',
+    VALUES ('production-opportunity','production-destination','["production-destination"]','production:topic',?,'Approved production opportunity',
       'practical_guide',0,'{"ready":false,"score":0}','{"publicationMode":"multi_source_synthesis","proposal":{"readerPromise":"Explain the approved topic."}}',
-      'producing','now','now','producing','EVIDENCE_GAP','production:key','ACTIONABLE','NEW','now')`).run();
+      'producing','now','now','producing','EVIDENCE_GAP','production:key','ACTIONABLE','NEW','now')`).run(CONTENT_STRATEGY.version);
   const productionAudit = run('scripts/audit-opportunity-qualification.mjs', ['--enforce']);
   assert.equal(productionAudit.status, 0, productionAudit.stderr);
   assert.equal(JSON.parse(productionAudit.stdout).qualification.wrongLifecycle.count, 0);
@@ -91,9 +92,9 @@ test('deployment opportunity gate reconciles deterministically and rejects an ac
   db.prepare(`INSERT INTO content_opportunities(id,destination_slug,destination_scopes_json,topic_key,strategy_version,title,
     content_type,readiness_score,readiness_json,coverage_json,status,created_at,updated_at,lifecycle_state,processing_state,
     canonical_intent_key,inbox_state,seo_action)
-    VALUES ('bad-opportunity','bad-destination','["bad-destination"]','bad:topic','3.7','Unsupported opportunity',
+    VALUES ('bad-opportunity','bad-destination','["bad-destination"]','bad:topic',?,'Unsupported opportunity',
       'unsupported_type',100,'{"ready":true,"score":100}','{"publicationMode":"unsupported_mode"}','recommended','now','now',
-      'recommended','CURRENT','bad:key','ACTIONABLE','NEW')`).run();
+      'recommended','CURRENT','bad:key','ACTIONABLE','NEW')`).run(CONTENT_STRATEGY.version);
   db.close();
   const rejected = run('scripts/audit-opportunity-qualification.mjs', ['--enforce']);
   assert.notEqual(rejected.status, 0);

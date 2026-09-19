@@ -94,6 +94,8 @@ export function createApplication(config = loadConfig()) {
     findVisualCandidate: (query) => repository.findReusableVisualCandidate(query),
     saveVisualCandidate: (candidate) => repository.saveVisualCandidate(candidate),
     updateVisualCandidate: (candidateId,update) => repository.updateVisualCandidate(candidateId,update),
+    findVisualTranslationArtifact: (query) => repository.findVisualTranslationArtifact(query),
+    saveVisualTranslationArtifact: (artifact) => repository.saveVisualTranslationArtifact(artifact),
   };
   const frontendContracts = new FrontendContractConsumer(repository, config.frontendContract);
   const manualSources = new ManualSourceIngestor(config.manualSources);

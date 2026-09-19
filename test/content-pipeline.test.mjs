@@ -226,6 +226,10 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(deliveredCommercial.type, "affiliate_booking_card");
   assert.equal(deliveredCommercial.data.disclosure, "Affiliate disclosure.");
   const generatedPackage = repository.getDraftPackage(content[0].draft_id);
+  assert.equal(generatedPackage.brief.plan.working_title,"First-Time Beijing Solo Travel Guide");
+  assert.equal(generatedPackage.brief.plan.why_this_article,"Plan with confidence");
+  assert.equal(generatedPackage.brief.plan.evidence_plan[0].section_id,"section_plan");
+  assert.deepEqual(generatedPackage.brief.plan.evidence_plan[0].claim_keys,["beijing.orientation.location","beijing.transport.metro"]);
   const researchDraft = generatedPackage.draft.body_markdown;
   assert.doesNotMatch(researchDraft, /Trip\.com|Optional booking resources/);
   assert.equal(generatedPackage.draft.visuals.length, 2);

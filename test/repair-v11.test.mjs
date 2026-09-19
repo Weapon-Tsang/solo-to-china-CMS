@@ -137,6 +137,16 @@ test("visual candidate reuse fails closed for missing or altered bytes",(t)=>{
     image_type,image_role,image_subject,acquisition_strategy,factual_image_required,status,created_at,updated_at,asset_fingerprint)
     VALUES ('candidate-visual','candidate-draft',1,'hero','support evidence','Alt','','','3:2','3.6','real_world_photo','hero','Place',
       'localize_source_image',1,'planned','now','now','fingerprint')`).run();
+  const translation=repository.saveVisualTranslationArtifact({visualId:"candidate-visual",draftId:"candidate-draft",
+    translationInputHash:"translation-1",sourceHash:"source-hash",provider:"vertex_gemini",model:"translation-model",
+    regions:[{region_id:"title",english_text:"Beijing guide"}],expectedFingerprint:"fingerprint"});
+  assert.equal(translation.status,"translated");
+  assert.deepEqual(repository.findVisualTranslationArtifact({visualId:"candidate-visual",translationInputHash:"translation-1"}).regions,
+    [{region_id:"title",english_text:"Beijing guide"}]);
+  assert.equal(repository.findVisualTranslationArtifact({visualId:"candidate-visual",translationInputHash:"translation-stale"}),null);
+  assert.throws(()=>repository.saveVisualTranslationArtifact({visualId:"candidate-visual",draftId:"candidate-draft",
+    translationInputHash:"translation-2",regions:[{region_id:"title",english_text:"Changed"}],expectedFingerprint:"stale"}),
+  /input changed/);
   const file=path.join(directory,"candidate.png");const bytes=Buffer.from("immutable candidate bytes");fs.writeFileSync(file,bytes);
   const outputHash=crypto.createHash("sha256").update(bytes).digest("hex");
   repository.saveVisualCandidate({visualId:"candidate-visual",draftId:"candidate-draft",transformInputHash:"transform-1",

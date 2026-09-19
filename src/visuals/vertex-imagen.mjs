@@ -106,42 +106,60 @@ export class VertexImagen {
     const priorFeedback=visualRetryFeedback(metadata);
     const prompt=`Translate every source region into concise, natural English for a travel editorial card. Return every region_id exactly once and no extra ids. Preserve every proper noun, number, time, price, transport mode, negation, warning, list item, and factual qualifier. Do not summarize or omit details. Remove no source content except regions already excluded from this manifest. ${priorFeedback ? `The prior derivative failed QA; correct these defects: ${JSON.stringify(priorFeedback)}.` : ""} Source regions: ${JSON.stringify(regions)}`;
     const sourceInspection=await inspectImageBytes(source.bytes,source.mimeType);
-    const transformInputHash=hashBytes(Buffer.concat([source.bytes,Buffer.from(JSON.stringify({visual_id:visual.id,
+    const translationInputHash=hashBytes(Buffer.concat([source.bytes,Buffer.from(JSON.stringify({visual_id:visual.id,
       asset_fingerprint:options.expectedFingerprint || visual.asset_fingerprint || "",strategy:visual.acquisition_strategy,
-      aspect_ratio:visual.aspect_ratio,translation_model:translationModel,regions}))]));
-    const resumed=await this.resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata,accessToken});
-    if (resumed) return resumed;
-    const token=accessToken || await this.accessToken();
-    const payload=await this.trackedRequest({provider:"vertex_gemini",model:translationModel,stage:"translate_editorial_card",
-      endpoint,visual,options},async()=>{
-      const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},
-        body:JSON.stringify({contents:{role:"USER",parts:[{text:prompt}]},generationConfig:{responseModalities:["TEXT"],
-          responseMimeType:"application/json",responseSchema:EDITORIAL_TRANSLATION_SCHEMA}}),
-        signal:combinedSignal(signal,this.config.requestTimeoutMs)},"vertex_gemini",signal);
-      const body=await response.json().catch(()=>({}));
-      if (!response.ok) throw new ProviderRequestError("Vertex Gemini editorial card translation",response.status,
-        body?.error?.message || response.statusText,{...(body?.error || {}),retryAfter:response.headers.get("retry-after"),
-          providerRequestId:response.headers.get("x-request-id") || response.headers.get("x-goog-request-id")});
-      return body;
-    });
-    const raw=payload?.candidates?.flatMap((candidate)=>candidate?.content?.parts || []).find((item)=>item?.text)?.text || "";
-    let translated; try { translated=JSON.parse(raw); }
-    catch { throw Object.assign(new Error("Editorial card translation returned invalid JSON."),{code:"EDITORIAL_TRANSLATION_INVALID",retryable:true}); }
-    const expected=new Set(regions.map((region)=>region.region_id));
-    const entries=Array.isArray(translated?.regions) ? translated.regions : [];
-    const actual=new Set(entries.map((entry)=>String(entry?.region_id || "")));
-    if (entries.length !== expected.size || actual.size !== expected.size || [...expected].some((id)=>!actual.has(id))
-      || entries.some((entry)=>!String(entry?.english_text || "").trim())) {
-      throw Object.assign(new Error("Editorial card translation did not return one complete English region for every source region."),
-        {code:"EDITORIAL_TRANSLATION_INCOMPLETE",retryable:true});
+      translation_model:translationModel,regions,prior_feedback:priorFeedback}))]));
+    let artifact=await this.config.findVisualTranslationArtifact?.({visualId:visual.id,translationInputHash});
+    let token=accessToken;
+    if (!artifact) {
+      token=token || await this.accessToken();
+      const payload=await this.trackedRequest({provider:"vertex_gemini",model:translationModel,stage:"translate_editorial_card",
+        endpoint,visual,options},async()=>{
+        const response=await providerFetch(this.fetch,endpoint,{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},
+          body:JSON.stringify({contents:{role:"USER",parts:[{text:prompt}]},generationConfig:{responseModalities:["TEXT"],
+            responseMimeType:"application/json",responseSchema:EDITORIAL_TRANSLATION_SCHEMA}}),
+          signal:combinedSignal(signal,this.config.requestTimeoutMs)},"vertex_gemini",signal);
+        const body=await response.json().catch(()=>({}));
+        if (!response.ok) throw new ProviderRequestError("Vertex Gemini editorial card translation",response.status,
+          body?.error?.message || response.statusText,{...(body?.error || {}),retryAfter:response.headers.get("retry-after"),
+            providerRequestId:response.headers.get("x-request-id") || response.headers.get("x-goog-request-id")});
+        return body;
+      });
+      const raw=payload?.candidates?.flatMap((candidate)=>candidate?.content?.parts || []).find((item)=>item?.text)?.text || "";
+      let translated; try { translated=JSON.parse(raw); }
+      catch { throw Object.assign(new Error("Editorial card translation returned invalid JSON."),{code:"EDITORIAL_TRANSLATION_INVALID",retryable:true}); }
+      const expected=new Set(regions.map((region)=>region.region_id));
+      const entries=Array.isArray(translated?.regions) ? translated.regions : [];
+      const actual=new Set(entries.map((entry)=>String(entry?.region_id || "")));
+      if (entries.length !== expected.size || actual.size !== expected.size || [...expected].some((id)=>!actual.has(id))
+        || entries.some((entry)=>!String(entry?.english_text || "").trim())) {
+        throw Object.assign(new Error("Editorial card translation did not return one complete English region for every source region."),
+          {code:"EDITORIAL_TRANSLATION_INCOMPLETE",retryable:true});
+      }
+      const ordered=regions.map((region)=>({region_id:region.region_id,
+        english_text:String(entries.find((entry)=>entry.region_id === region.region_id).english_text).trim()}));
+      artifact=await this.config.saveVisualTranslationArtifact?.({visualId:visual.id,draftId:draft.id,
+        translationInputHash,sourceHash:hashBytes(source.bytes),provider:"vertex_gemini",model:translationModel,regions:ordered,
+        expectedFingerprint:options.expectedFingerprint || visual.asset_fingerprint || null});
+      artifact=artifact || {translation_input_hash:translationInputHash,regions:ordered,status:"translated"};
     }
-    const ordered=regions.map((region)=>({region_id:region.region_id,
-      english_text:String(entries.find((entry)=>entry.region_id === region.region_id).english_text).trim()}));
-    const outputBytes=await renderTextCardPng(ordered,visual.aspect_ratio);
+    const ordered=Array.isArray(artifact.regions) ? artifact.regions : [];
+    const transformInputHash=hashBytes(Buffer.from(JSON.stringify({translation_input_hash:translationInputHash,
+      aspect_ratio:visual.aspect_ratio,regions:ordered,layout_version:"editorial-card-layout-2"})));
+    const resumed=await this.resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata,accessToken:token});
+    if (resumed) return resumed;
+    let rendered;
+    try { rendered=await renderTextCardPng(ordered,visual.aspect_ratio); }
+    catch (error) {
+      error.details={...(error.details || {}),visualId:visual.id,substage:"deterministic_text_layout",
+        translationCheckpoint:"persisted",translationInputHash};
+      throw error;
+    }
+    const outputBytes=rendered.bytes;
     const candidate=await this.persistCandidate({visual,draft,source,outputBytes,mimeType:"image/png",
       provider:"vertex_gemini_text_layout",model:translationModel,transformInputHash,options});
     return this.reviewAndPromoteCandidate({candidate,visual,draft,metadata,source,sourceInspection,outputBytes,
-      outputMimeType:"image/png",accessToken:token,options:{...options,signal}});
+      outputMimeType:"image/png",accessToken:token || await this.accessToken(),options:{...options,signal,layoutTelemetry:rendered.telemetry}});
   }
 
   async reviewTransformedImage({visual,metadata,source,outputBytes,outputMimeType,accessToken,signal,options={}}) {
@@ -223,7 +241,8 @@ export class VertexImagen {
       throw error;
     }
     const result=await this.storeImage({base64:outputBytes.toString("base64"),mimeType:outputMimeType,visual,draft,
-      provider:candidate.provider,model:candidate.model,sourceDimensions:sourceInspection.dimensions,qualityQa});
+      provider:candidate.provider,model:candidate.model,sourceDimensions:sourceInspection.dimensions,qualityQa,
+      layoutTelemetry:options.layoutTelemetry || null});
     if (candidate.id) await this.config.updateVisualCandidate?.(candidate.id,{status:"promoted",qa:qualityQa});
     return {...result,candidateId:candidate.id || null,candidateHash:candidate.output_hash,resumedCandidate:Boolean(candidate.created_at)};
   }
@@ -350,7 +369,7 @@ export class VertexImagen {
   }
 
   async storeImage({ base64, mimeType: suppliedMimeType, visual, draft, provider, model, sourceDimensions = null,
-    qualityQa = defaultVisualQa() }) {
+    qualityQa = defaultVisualQa(), layoutTelemetry = null }) {
     const mimeType = normalizeMime(suppliedMimeType);
     const bytes = Buffer.from(base64, "base64");
     const inspection = await inspectImageBytes(bytes, mimeType);
@@ -378,7 +397,8 @@ export class VertexImagen {
       mimeType,
       metadata: { binary_qa: { status: "passed", ...inspection, expected_ratio: expectedRatio || null,
         source_dimensions: sourceDimensions },pixel_qa:{status:"passed",...inspection,expected_ratio:expectedRatio || null,
-        source_dimensions:sourceDimensions},quality_qa:qualityQa },
+        source_dimensions:sourceDimensions},quality_qa:qualityQa,
+        ...(layoutTelemetry ? {layout_telemetry:layoutTelemetry} : {}) },
     };
   }
 
@@ -470,26 +490,7 @@ function shouldRenderEditorialTextCard(visual,metadata={}) {
     && Array.isArray(analysis.photo_regions) && analysis.photo_regions.length === 0
     && !visualRetryFeedback(metadata).some(({reason})=>/\b(?:photo(?:graph)?s?|documentary imagery|image regions?)\b/i.test(reason)
       && /\b(?:omit(?:ted)?|missing|preserv(?:e|ed|ation)?|lost|strip(?:ped)?|flatten(?:ed)?)\b/i.test(reason))
-    && regions.length > 0
-    && editorialCardSourceFits(regions,visual.aspect_ratio);
-}
-
-function editorialCardSourceFits(regions,aspectRatio) {
-  const ratio=parseAspectRatio(aspectRatio) || 3/4;
-  const width=896; const height=Math.round(width/ratio); const fontSize=14;
-  const maxChars=Math.max(34,Math.floor((width-138)/(fontSize*0.56)));
-  let bottom=202;
-  for (const region of regions.slice(1)) {
-    const source=String(region.source_text || "").trim();
-    const hanCount=(source.match(/\p{Script=Han}/gu) || []).length;
-    const estimatedEnglishLength=Math.max(source.length,source.length-hanCount+(hanCount*3));
-    const lines=Math.max(1,Math.ceil(estimatedEnglishLength/maxChars));
-    bottom += lines*fontSize*1.32 + fontSize*0.9;
-  }
-  // Translation length is non-deterministic. Keep enough headroom for English
-  // expansion and font metrics instead of discovering overflow after paying for
-  // the translation request.
-  return bottom <= height-42-Math.round(height*0.15);
+    && regions.length > 0;
 }
 
 async function renderTextCardPng(regions,aspectRatio) {
@@ -497,18 +498,21 @@ async function renderTextCardPng(regions,aspectRatio) {
   const width=896; const height=Math.round(width/ratio);
   const title=regions[0]?.english_text || "Travel Notes";
   const body=regions.slice(1);
-  let fontSize=22; let rendered;
-  while (fontSize >= 14) {
-    rendered=layoutTextCard(body,{width,height,fontSize});
-    if (rendered.bottom <= height-42) break;
-    fontSize -= 1;
+  let fontSize=22; let rendered; let columns=1; let attempts=0;
+  outer: for (columns=1;columns<=3;columns+=1) {
+    for (fontSize=22;fontSize>=14;fontSize-=1) {
+      attempts+=1;
+      rendered=layoutTextCard(body,{width,height,fontSize,columns});
+      if (rendered.bottom <= height-42) break outer;
+    }
   }
   if (!rendered || rendered.bottom > height-42) throw Object.assign(new Error("Editorial card text does not fit without cropping."),
     {code:"EDITORIAL_CARD_TEXT_OVERFLOW",retryable:false,details:{validation:"deterministic_text_layout_capacity",
-      region_count:regions.length,aspect_ratio:aspectRatio,minimum_font_size:14,rendered_bottom:rendered?.bottom || null,height}});
+      region_count:regions.length,aspect_ratio:aspectRatio,minimum_font_size:14,rendered_bottom:rendered?.bottom || null,height,
+      attempted_columns:3,fallback_attempts:attempts,layout_version:"editorial-card-layout-2"}});
   const titleLines=wrapEditorialText(title,44);
   const titleSpans=titleLines.map((line,index)=>`<tspan x="56" dy="${index ? 38 : 0}">${escapeXml(line)}</tspan>`).join("");
-  const bodyText=(rendered?.items || []).map((item)=>`<text x="64" y="${item.y}" font-family="DejaVu Sans,Arial,sans-serif" font-size="${fontSize}" fill="#172033">${item.lines.map((line,index)=>`<tspan x="64" dy="${index ? fontSize*1.32 : 0}">${escapeXml(line)}</tspan>`).join("")}</text>`).join("");
+  const bodyText=(rendered?.items || []).map((item)=>`<text x="${item.x}" y="${item.y}" font-family="DejaVu Sans,Arial,sans-serif" font-size="${fontSize}" fill="#172033">${item.lines.map((line,index)=>`<tspan x="${item.x}" dy="${index ? fontSize*1.32 : 0}">${escapeXml(line)}</tspan>`).join("")}</text>`).join("");
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
     <rect width="${width}" height="${height}" fill="#fbf8f1"/>
     <rect x="34" y="34" width="${width-68}" height="118" rx="24" fill="#dceef8"/>
@@ -516,18 +520,21 @@ async function renderTextCardPng(regions,aspectRatio) {
     <text x="56" y="82" font-family="DejaVu Sans,Arial,sans-serif" font-size="34" font-weight="700" fill="#16324a">${titleSpans}</text>
     ${bodyText}
   </svg>`;
-  return sharp(Buffer.from(svg)).png().toBuffer();
+  return {bytes:await sharp(Buffer.from(svg)).png().toBuffer(),telemetry:{layout_version:"editorial-card-layout-2",
+    columns,font_size:fontSize,region_count:regions.length,aspect_ratio:aspectRatio,rendered_bottom:rendered.bottom,height,fallback_attempts:attempts}};
 }
 
-function layoutTextCard(regions,{width,height,fontSize}) {
-  const maxChars=Math.max(34,Math.floor((width-138)/(fontSize*0.56)));
-  let y=202; const items=[];
+function layoutTextCard(regions,{width,height,fontSize,columns=1}) {
+  const gutter=28; const usableWidth=width-128; const columnWidth=(usableWidth-(columns-1)*gutter)/columns;
+  const maxChars=Math.max(18,Math.floor(columnWidth/(fontSize*0.56)));
+  const columnsState=Array.from({length:columns},(_,index)=>({x:64+index*(columnWidth+gutter),y:202,items:[]}));
   for (const region of regions) {
     const lines=wrapEditorialText(region.english_text,maxChars);
-    items.push({y,lines});
-    y += lines.length*fontSize*1.32 + fontSize*0.9;
+    const target=columnsState.reduce((best,current)=>current.y<best.y ? current : best,columnsState[0]);
+    target.items.push({x:Math.round(target.x),y:target.y,lines});
+    target.y += lines.length*fontSize*1.32 + fontSize*0.9;
   }
-  return {items,bottom:y,height};
+  return {items:columnsState.flatMap((column)=>column.items),bottom:Math.max(...columnsState.map((column)=>column.y)),height,columns};
 }
 
 function wrapEditorialText(value,maxChars) {

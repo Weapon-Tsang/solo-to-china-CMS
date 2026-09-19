@@ -245,19 +245,20 @@ test("text-only editorial cards use structured translation and deterministic unc
   assert.equal(output.metadata.quality_qa.completeness.status,"passed");
 });
 
-test("dense editorial cards bypass deterministic text layout before purchasing a translation",async(t)=>{
+test("dense editorial cards translate first and use deterministic adaptive columns",async(t)=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"solo-dense-card-test-"));
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const sourcePath=path.join(directory,"authorized-dense-card.png");
   const sourceBytes=await pngBytes(900,1200,"dense-route-card");
-  const localizedBytes=await pngBytes(900,1200,"localized-dense-route-card");
   fs.writeFileSync(sourcePath,sourceBytes);
   const requests=[];
   const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
     model:"gemini-3.1-flash-image",qualityModel:"gemini-3.8-flash",accessToken:"token",mediaDir:directory,
     publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000},async(url,options)=>{
       requests.push({url:String(url),options});
-      if(requests.length===1)return Response.json({candidates:[{content:{parts:[{inlineData:{data:localizedBytes.toString("base64"),mimeType:"image/png"}}]}}]});
+      if(requests.length===1)return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({regions:denseRegions.map((region,index)=>({
+        region_id:region.region_id,english_text:index===0 ? "Chongqing three-day route" : `Stop ${index}: metro transfer and walking notes`,
+      }))})}]}}]});
       return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(passedQa())}]}}]});
     });
   const denseRegions=Array.from({length:28},(_,index)=>({region_id:index===0 ? "title" : `route_${index}`,
@@ -271,9 +272,48 @@ test("dense editorial cards bypass deterministic text layout before purchasing a
   {id:"draft-dense-card"});
   assert.equal(requests.length,2);
   const transformBody=JSON.parse(requests[0].options.body);
-  assert.deepEqual(transformBody.generationConfig.responseModalities,["TEXT","IMAGE"]);
-  assert.match(transformBody.contents.parts[0].text,/no cropped final line/i);
-  assert.doesNotMatch(requests[0].url,/models\/gemini-3\.8-flash:generateContent$/);
+  assert.deepEqual(transformBody.generationConfig.responseModalities,["TEXT"]);
+  assert.equal(transformBody.generationConfig.responseMimeType,"application/json");
+  assert.match(requests[0].url,/models\/gemini-3\.8-flash:generateContent$/);
+});
+
+test("layout overflow persists translation and a layout retry does not translate twice",async(t)=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"solo-translation-checkpoint-"));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const sourcePath=path.join(directory,"authorized-card.png");
+  fs.writeFileSync(sourcePath,await pngBytes(900,1200,"translation-checkpoint"));
+  const longText=Array.from({length:200},(_,index)=>`detail${index}`).join(" ");
+  const translated={regions:[{region_id:"title",english_text:"Route notes"},{region_id:"body",english_text:longText}]};
+  let artifact=null; let translationCalls=0; let qaCalls=0;
+  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    model:"gemini-3.1-flash-image",qualityModel:"gemini-3.8-flash",accessToken:"token",mediaDir:directory,
+    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
+    findVisualTranslationArtifact:({translationInputHash})=>artifact?.translation_input_hash===translationInputHash ? artifact : null,
+    saveVisualTranslationArtifact:(entry)=>{artifact={status:"translated",translation_input_hash:entry.translationInputHash,
+      regions:entry.regions,provider:entry.provider,model:entry.model};return artifact;},
+  },async(url,options)=>{
+    const body=JSON.parse(options.body);
+    if(body.generationConfig.responseMimeType==="application/json" && body.generationConfig.responseSchema?.properties?.regions){
+      translationCalls+=1;return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(translated)}]}}]});
+    }
+    qaCalls+=1;return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(passedQa())}]}}]});
+  });
+  const visual={id:"visual-checkpoint",slot:1,image_type:"infographic",acquisition_strategy:"recompose_editorial_card",
+    factual_image_required:true,source_asset_id:"asset-checkpoint",source_asset_local_path:sourcePath,
+    source_asset_mime_type:"image/png",image_role:"support",aspect_ratio:"16:9",asset_fingerprint:"fp-checkpoint",
+    media_metadata_json:JSON.stringify({source_analysis:{asset_kind:"text_card",photo_regions:[],text_regions:[
+      {region_id:"title",text:"Route",role:"editorial_text",readable:true,preserve:false},
+      {region_id:"body",text:"Detailed route",role:"editorial_text",readable:true,preserve:false},
+    ]},visual_decision:{translateRegionIds:["title","body"]}})};
+  await assert.rejects(client.localizeSourceImage(visual,{id:"draft-checkpoint"},{expectedFingerprint:"fp-checkpoint"}),
+    (error)=>error.code==="EDITORIAL_CARD_TEXT_OVERFLOW" && error.details.translationCheckpoint==="persisted"
+      && error.details.fallback_attempts>0);
+  assert.equal(artifact.status,"translated");
+  const recovered=await client.localizeSourceImage({...visual,aspect_ratio:"3:4"},{id:"draft-checkpoint"},
+    {expectedFingerprint:"fp-checkpoint"});
+  assert.equal(translationCalls,1,"persisted translation must be reused after a layout-only failure");
+  assert.equal(qaCalls,1);
+  assert.equal(recovered.provider,"vertex_gemini_text_layout");
 });
 
 test("photo-omission QA overrides a stale empty photo-region analysis on editorial-card retry",async(t)=>{

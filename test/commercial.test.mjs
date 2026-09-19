@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  CommercialComposer, CommercialValidationError, normalizeAffiliateAsset,
+  CommercialComposer, CommercialValidationError, COMMERCIAL_COPY_DEFAULTS, DEFAULT_COMMERCIAL_DISCLOSURE, normalizeAffiliateAsset,
   normalizeAffiliateProviderAccount, normalizeCommercialEvent, normalizeCommercialOffer,
   normalizeCommissionRule, resolveAffiliateAsset,
   detectCommercialIntents, normalizeCountryCode, projectVisibleBlockText,
@@ -31,6 +31,14 @@ test("commercial composition is a separate overlay and leaves the Research Draft
   assert.equal(composition.status, "composed");
   assert.match(composition.publishableBodyMarkdown, /Optional booking resources/);
   assert.equal(composition.offerIds.length, 1);
+});
+
+test("commercial copy defaults stay compact, English, and centralized", () => {
+  assert.equal(DEFAULT_COMMERCIAL_DISCLOSURE,"Paid link");
+  assert.deepEqual(Object.values(COMMERCIAL_COPY_DEFAULTS).map((entry)=>entry.eyebrow),[
+    "HOTELS","FLIGHTS","TRAINS","ATTRACTIONS & TOURS","ATTRACTIONS & TOURS","TRIP PLANNING","TRIP.COM OFFERS","TRAVEL BOOKING",
+  ]);
+  assert.equal(loadConfig({}).commercial.disclosure,"Paid link");
 });
 
 test("a destination-planning demand with no configured asset is reported explicitly", () => {
@@ -65,6 +73,8 @@ test("a city guide can use one real destination planning resource without bookin
   assert.equal(composition.slots.length, 1);
   assert.equal(composition.slots[0].placement, "end_resource");
   assert.equal(composition.slots[0].affiliate_asset_id, "planner-chongqing");
+  assert.equal(composition.commercialBlocks[0].data.disclosure,"Paid link");
+  assert.equal(composition.commercialBlocks[0].data.eyebrow,"TRIP PLANNING");
 });
 
 test("commercial composition supplies a truthful non-empty description when an eligible asset omits one", () => {
