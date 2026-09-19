@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.42 - Unreleased
+
+- Carry explicit editorial intent, source roles, and evidence plans from planning through bounded repair under Content Production Strategy 3.8.
+- Persist structured editorial-card translation before deterministic adaptive layout and retain layout recovery telemetry.
+- Adopt Frontend Contract 1.4.1 with compact commercial copy, optional disclosure input, and the visible `Paid link` default.
+
 ## 2.0.41 - Unreleased
 
 - Revalidate generated visuals that came from an obsolete weak article-fallback decision, even when the derivative previously passed independent image QA.
