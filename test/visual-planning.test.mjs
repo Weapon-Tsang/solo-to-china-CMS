@@ -204,6 +204,67 @@ test("a generated visual with passing independent QA remains immutable despite a
   assert.equal(output[0].status,"generated");
 });
 
+test("a focused attraction guide rejects previously qualified multi-place visuals and does not reselect them as fallback",()=>{
+  const passed=Object.fromEntries(["language","completeness","style","semantic"]
+    .map((field)=>[field,{status:"passed",reason:"source derivative matched"}]));
+  const common={remote_url:"https://media.example/chongqing.webp",mime_type:"image/webp",
+    analysis_status:"ready",analysis_version:"media-analysis-2",reader_text_present:true,
+    language_status:"chinese",storage_status:"saved",original_bytes_status:"saved_original",
+    durability_status:"ORIGINAL_STORED"};
+  const assets=[
+    {...common,id:"city-collage",asset_kind:"photo_collage",
+      primary_subjects:["Chongqing travel guide","Scenic tourist spots collage"],
+      entities:["Huguang Guild Hall","Chongqing Zoo","Eling Park","Ciqikou"],
+      nearby_text:"Huguang Guild Hall yellow walls and visitor tips"},
+    {...common,id:"route-card",asset_kind:"editorial_infographic",
+      primary_subjects:["Travel itinerary","Chongqing"],
+      entities:["Huguang Guild Hall","Yangtze River Cableway","Longmenhao Old Street","Nanbin Road"],
+      nearby_text:"Huguang Guild Hall, Longmenhao Old Street and other route stops"},
+  ];
+  const current=assets.map((asset,index)=>({source_asset_id:asset.id,image_type:"infographic",
+    image_role:index ? "support" : "hero",placement:index ? "after_intro" : "hero",
+    image_subject:index ? "Longmenhao Old Street" : "Huguang Guild Hall yellow walls",
+    purpose:index ? "Photo of Longmenhao Old Street" : "Panoramic view of Huguang Guild Hall",
+    status:"generated",media_url:`/media/${asset.id}.png`,media_metadata:{quality_qa:passed}}));
+  const output=normalizeVisuals(current,{title:"Huguang Guild Hall Chongqing: Independent Visitor Guide",
+    body_markdown:"Visit Huguang Guild Hall and walk to Longmenhao Old Street."},
+    {destination_slug:"chongqing",topic:"Huguang Guild Hall"},assets,
+    {content_type:"attraction_guide",visuals:{target:2,maximum:5}});
+  assert.deepEqual(output,[]);
+});
+
+test("an attraction guide may use an image whose own subject identifies the attraction",()=>{
+  const asset={id:"focused-photo",remote_url:"https://media.example/huguang.webp",mime_type:"image/webp",
+    analysis_status:"ready",analysis_version:"media-analysis-2",asset_kind:"documentary_photo",
+    reader_text_present:false,language_status:"no_text",primary_subjects:["Huguang Guild Hall yellow walls"],
+    alt_text:"Yellow walls of Huguang Guild Hall",
+    entities:["Huguang Guild Hall"],storage_status:"saved",original_bytes_status:"saved_original",
+    durability_status:"ORIGINAL_STORED"};
+  const output=normalizeVisuals([],{title:"Huguang Guild Hall Chongqing: Independent Visitor Guide",
+    body_markdown:"Visit the yellow-walled Huguang Guild Hall."},
+    {destination_slug:"chongqing",topic:"Huguang Guild Hall: A Practical Guide"},[asset],
+    {content_type:"attraction_guide",visuals:{target:1,maximum:5}});
+  assert.equal(output.length,1);
+  assert.equal(output[0].source_asset_id,asset.id);
+});
+
+test("a multi-place itinerary may retain a qualified multi-place source visual",()=>{
+  const asset={id:"route-card",asset_kind:"editorial_infographic",remote_url:"https://media.example/route.webp",
+    primary_subjects:["Chongqing itinerary"],entities:["Huguang Guild Hall","Ciqikou","Hongyadong"],
+    analysis_status:"ready",analysis_version:"media-analysis-2",reader_text_present:true,
+    language_status:"english",storage_status:"saved",original_bytes_status:"saved_original",
+    durability_status:"ORIGINAL_STORED"};
+  const quality_qa=Object.fromEntries(["language","completeness","style","semantic"]
+    .map((field)=>[field,{status:"passed",reason:"ok"}]));
+  const output=normalizeVisuals([{source_asset_id:asset.id,image_type:"infographic",image_role:"hero",
+    placement:"hero",image_subject:"Chongqing itinerary",purpose:"Show the multi-stop Chongqing route",
+    status:"generated",media_url:"/media/route.png",media_metadata:{quality_qa}}],
+    {title:"Chongqing 3-Day Itinerary",body_markdown:"Visit three route stops."},
+    {destination_slug:"chongqing"},[asset],{content_type:"itinerary",visuals:{target:1,maximum:5}});
+  assert.equal(output[0].source_asset_id,asset.id);
+  assert.equal(output[0].status,"generated");
+});
+
 test("a complex itinerary classified as an editorial infographic is routed as a map",()=>{
   const decision=decideVisualAsset({analysis_status:"ready",asset_kind:"editorial_infographic",
     analysis_version:"media-analysis-2",reader_text_present:true,language_status:"chinese",
