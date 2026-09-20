@@ -54,6 +54,15 @@ test("nonempty production-shaped workspace pages in SQL and omits heavy detail p
   assert.equal(pageCount, 3);
   assert.equal(seen.size, 121);
 
+  const originalGetBriefPackage = repository.getBriefPackage;
+  repository.getBriefPackage = () => { throw new Error("compact workspace must not load full brief/media evidence"); };
+  try {
+    const compact = repository.listContentWorkspace({ productionOnly: true, limit: 50, offset: 0, compact: true });
+    assert.equal(compact.items.length, 50);
+  } finally {
+    repository.getBriefPackage = originalGetBriefPackage;
+  }
+
   let prepared=0;
   const originalPrepare=db.prepare.bind(db);
   db.prepare=(...args)=>{prepared+=1;return originalPrepare(...args);};

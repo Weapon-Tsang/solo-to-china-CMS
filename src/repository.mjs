@@ -6029,7 +6029,7 @@ export class Repository {
     if (this.getFrontendPublishComposition(draftId)) this.markFrontendPublishComposition(draftId, "delivery_failed");
   }
 
-  listContent({ candidateId = null, approvedOnly = false, productionOnly = false, evidenceHashes = new Map(), limit = null, offset = 0 } = {}) {
+  listContent({ candidateId = null, approvedOnly = false, productionOnly = false, evidenceHashes = new Map(), limit = null, offset = 0, compact = false } = {}) {
     const paged = productionOnly && Number.isInteger(limit) && limit > 0;
     const pageLimit = paged ? Math.min(101, limit) : null;
     const pageOffset = paged ? Math.max(0, Math.trunc(Number(offset) || 0)) : 0;
@@ -6133,6 +6133,21 @@ export class Repository {
     const draftIds = rows.map((row) => row.draft_id).filter(Boolean);
     if (!draftIds.length) return rows.map((row) => ({ ...row, workflow_status: row.candidate_status || row.opportunity_status,
       production_state: buildProductionState(this.db, row, { capabilities:this.productionCapabilities }) }));
+    if (compact && productionOnly) {
+      const active = this.db.prepare("SELECT entity_id,type,status,production_owner_opportunity_id FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").all();
+      const activeByOwner = new Map();
+      for (const job of active) {
+        if (!activeByOwner.has(job.production_owner_opportunity_id)) activeByOwner.set(job.production_owner_opportunity_id, []);
+        activeByOwner.get(job.production_owner_opportunity_id).push(job);
+      }
+      return rows.map((row) => {
+        const job = (activeByOwner.get(row.opportunity_id) || []).find((item) =>
+          [row.candidate_id || row.id,row.brief_id,row.draft_id].includes(item.entity_id));
+        return { ...row, workflow_status: job ? `${job.type}_${job.status}`
+          : row.draft_status === "qa_queued" ? "awaiting_review" : row.draft_status || row.brief_status || row.candidate_status || row.opportunity_status,
+          production_state: buildProductionState(this.db, row, { capabilities:this.productionCapabilities }) };
+      });
+    }
     const placeholders = draftIds.map(() => "?").join(",");
     const operationRows = this.db.prepare(`SELECT ad.id AS draft_id, tc.id, cb.id AS brief_id,
       CASE WHEN qr.id IS NOT NULL THEN ad.quality_report_json ELSE '{}' END AS quality_report_json,
