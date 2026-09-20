@@ -44,7 +44,7 @@
 
 ## 环境和验证边界
 
-- 2026-09-20 发布准备补充：用户新授权提交、推送、合并和部署。前端 `codex/v3-rectification-staged` / `55bf2c70a610817e69a396051e1076867a078469`、CMS `codex/v3-rectification-staged` / 初始 `f3b9924080621f303fddc87d0370b705c1cf3b37` 均已独立推送；`main` 仍分别为原基线。CMS pin、GCE startup 和 CI workflow 现一致指向新前端 SHA，复跑离线发布门禁 50 项 PASS、5 warning、5 not tested。此处记录初始 CMS 提交，后续台账更新会产生新的 CMS SHA，以最终 `git rev-parse HEAD` 为准。
+- 2026-09-20 发布准备补充：用户新授权提交、推送、合并和部署。前端 `codex/v3-rectification-staged` 起始提交 `55bf2c7…`，随后将子主题版本、manifest 与校验规则对齐为发布候选 `0.13.0`，最新前端 SHA `0c4b327287c016aee138f735a8a13eb2baa74542`；CMS `codex/v3-rectification-staged` 初始提交 `f3b9924…`。两仓独立推送；本段写入时 `main` 仍分别为原基线。CMS pin、GCE startup 和 CI workflow 已同步新前端 SHA；本次 pin 更新后的固定提交门禁须再跑。最终提交以 `git rev-parse HEAD` 为准。
 - 线上只读基线：`https://capture.solotochina.com/api/health` 返回应用版本 `2.0.43`、ready=true、队列 active=0，当前活跃前端契约 SHA `0daedc5f3243c870427fffc36d5c168a25e8a01c`、checksum `57246c13…c49349f18`；生产 WP Registry 端点同一 ETag。隔离本地 WP 的新 Registry ETag 为 `d83d9c0d…68276c880`，两者确实不同。真实生产首页已用 Playwright 打开并目视核查改前状态，截图在前端未跟踪的 `output/playwright/v3-production-before-home-20260920.png`；此观察不是部署后验收。
 - 发布决定：六领域 B/R/M/F/C/E 仍全部 PARTIAL；L3 当前生产 DB 只读来源副本重放、L5 真实 Provider canary、L6 全流程生产形态重放、全 V/MOTION/商业矩阵和拆卡最终 WP 交付未完成。离线门禁 PASS 不可替代这些，因此尚未合并 `main`、打包/安装正式主题、切换 GCE 容器或改写生产历史文章。下一步是补足真实数据/浏览器/模型授权范围内的发布证据并修复失败项，而不是直接切换流量。
 
@@ -52,6 +52,6 @@
 - 本地 CMS：`http://127.0.0.1:9410/`，`scripts/start-local-preview.ps1`，账号 `local-review` / `LocalOnly-V3-Review-2026!`，独立 SQLite；`scripts/seed-local-preview.mjs --isolated-fixture` 明确标注的 121 机会/60 草稿测试数据，不代表真实业务内容。
 - 浏览器实操：CMS “内容”→`TEST DATA · Local CMS delivery preview`→“预览最终页面”；该测试记录绑定的是本地 HTTP 投递草稿 #41 而非生产文章。前端首页 390px More 快点 10 次维持正确 4/8 数量及焦点。Taxi Card 对未收录长中文地址返回明确未核实 404，对已有 Forbidden City 本地目录生成带“入口/落客未确认”限定的司机卡，390px 无横向溢出，Driver Mode Escape 归焦；Find This Place 在识别供应商未配置时禁用且说明原因，不冒称真实识别。
 - 本地自动化、浏览器操作、真实模型、线上生产、历史生产数据修复分别报告，绝不相互替代。
-- 前端 Contract/能力已先在独立 `codex/v3-rectification-staged` 分支提交并推送，commit `55bf2c70a610817e69a396051e1076867a078469`；既有未跟踪 `output/` 未纳入提交。CMS 发布 pin 随后改为该准确 SHA，固定提交跨仓校验 PASS。不会覆盖生产 URL、WordPress 身份、归因或现有合格媒体。
+- 前端 Contract/能力已先在独立 `codex/v3-rectification-staged` 分支提交并推送，最新 commit `0c4b327287c016aee138f735a8a13eb2baa74542`；既有未跟踪 `output/` 未纳入提交。CMS 发布 pin 随后改为该准确 SHA。不会覆盖生产 URL、WordPress 身份、归因或现有合格媒体。
 - 发布准备检查：前端 `verify-upgrade.ps1` 首次因本地 Playground 停止失败，重新启动隔离 WordPress 后完整静态/内容 runtime/Tools runtime PASS。CMS 首次把发布 pin 改为新前端 SHA 后，`release:check` 准确报出 GCE startup 与 CI workflow 仍引用旧 SHA；现已将三处 pin 对齐，再跑离线发布门禁 50 项 PASS、5 warning、5 not tested，固定新前端 SHA 的跨仓契约校验 PASS。离线发布门禁不等于六领域验收、真实模型 canary、生产数据库回放或线上主题核验。
 - 本轮新增/扩展测试：最新全量 `npm test` 752/752 PASS，晚序必需媒体相关回归 48/48 PASS；`npm run check` PASS（含 build/boundaries），双仓 `git diff --check` PASS（前端仅 Git 行尾转换警告）。`node scripts/verify-cross-repo-contract.mjs --working-tree` PASS，明确验证未提交前端当前文件而非旧固定 commit。前端 `pwsh -NoProfile -File scripts/verify-upgrade.ps1 -BaseUrl http://127.0.0.1:9400` PASS（PHP CLI lint skipped，Playground PHP Runtime 已执行）；重启蓝图又执行五类披露回归成功。跨日从当前本地 CMS 重新点击预览最终页面打开 draft #41，两条 Paid link，截图 `output/playwright/v3-cms-to-local-wp-20260920.png`；390px 实操首页 More/导航 Escape、文章 Share Escape，reduced motion 下 Share 弹层仍可操作且计算 transition 为 `1e-05s`，前端截图 `output/playwright/v3-reduced-motion-share-390.png`。模型调用均为本地 mock；L5 真实 Provider NOT TESTED。
