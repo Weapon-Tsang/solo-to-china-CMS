@@ -44,6 +44,10 @@
 
 ## 环境和验证边界
 
+- 2026-09-20 发布准备补充：用户新授权提交、推送、合并和部署。前端 `codex/v3-rectification-staged` / `55bf2c70a610817e69a396051e1076867a078469`、CMS `codex/v3-rectification-staged` / 初始 `f3b9924080621f303fddc87d0370b705c1cf3b37` 均已独立推送；`main` 仍分别为原基线。CMS pin、GCE startup 和 CI workflow 现一致指向新前端 SHA，复跑离线发布门禁 50 项 PASS、5 warning、5 not tested。此处记录初始 CMS 提交，后续台账更新会产生新的 CMS SHA，以最终 `git rev-parse HEAD` 为准。
+- 线上只读基线：`https://capture.solotochina.com/api/health` 返回应用版本 `2.0.43`、ready=true、队列 active=0，当前活跃前端契约 SHA `0daedc5f3243c870427fffc36d5c168a25e8a01c`、checksum `57246c13…c49349f18`；生产 WP Registry 端点同一 ETag。隔离本地 WP 的新 Registry ETag 为 `d83d9c0d…68276c880`，两者确实不同。真实生产首页已用 Playwright 打开并目视核查改前状态，截图在前端未跟踪的 `output/playwright/v3-production-before-home-20260920.png`；此观察不是部署后验收。
+- 发布决定：六领域 B/R/M/F/C/E 仍全部 PARTIAL；L3 当前生产 DB 只读来源副本重放、L5 真实 Provider canary、L6 全流程生产形态重放、全 V/MOTION/商业矩阵和拆卡最终 WP 交付未完成。离线门禁 PASS 不可替代这些，因此尚未合并 `main`、打包/安装正式主题、切换 GCE 容器或改写生产历史文章。下一步是补足真实数据/浏览器/模型授权范围内的发布证据并修复失败项，而不是直接切换流量。
+
 - 本地 WordPress：`http://127.0.0.1:9400/`；`scripts/start-preview.ps1` 重建 Playground 测试站点（父/子主题和 Tools 当前代码），测试账号 `admin` / `LocalOnly-WP-V3-2026!`，非生产。当前测试草稿 `http://127.0.0.1:9400/?p=41&preview=true` 需登录；从 CMS 按钮可取得短期本地预览券。测试站点重启后 ID 可能变化；先启动 WP，再启动 CMS，重跑本地投递脚本。持续可达性/启动停止流程仍待验收。
 - 本地 CMS：`http://127.0.0.1:9410/`，`scripts/start-local-preview.ps1`，账号 `local-review` / `LocalOnly-V3-Review-2026!`，独立 SQLite；`scripts/seed-local-preview.mjs --isolated-fixture` 明确标注的 121 机会/60 草稿测试数据，不代表真实业务内容。
 - 浏览器实操：CMS “内容”→`TEST DATA · Local CMS delivery preview`→“预览最终页面”；该测试记录绑定的是本地 HTTP 投递草稿 #41 而非生产文章。前端首页 390px More 快点 10 次维持正确 4/8 数量及焦点。Taxi Card 对未收录长中文地址返回明确未核实 404，对已有 Forbidden City 本地目录生成带“入口/落客未确认”限定的司机卡，390px 无横向溢出，Driver Mode Escape 归焦；Find This Place 在识别供应商未配置时禁用且说明原因，不冒称真实识别。
