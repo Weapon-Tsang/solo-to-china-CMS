@@ -106,10 +106,15 @@ export class VertexImagen {
     const priorFeedback=visualRetryFeedback(metadata);
     const prompt=`Translate every source region into concise, natural English for a travel editorial card. Return every region_id exactly once and no extra ids. Preserve every proper noun, number, time, price, transport mode, negation, warning, list item, and factual qualifier. Do not summarize or omit details. Remove no source content except regions already excluded from this manifest. ${priorFeedback ? `The prior derivative failed QA; correct these defects: ${JSON.stringify(priorFeedback)}.` : ""} Source regions: ${JSON.stringify(regions)}`;
     const sourceInspection=await inspectImageBytes(source.bytes,source.mimeType);
+    const sourceHash=hashBytes(source.bytes);
+    const regionManifestHash=hashBytes(Buffer.from(JSON.stringify(regions)));
     const translationInputHash=hashBytes(Buffer.concat([source.bytes,Buffer.from(JSON.stringify({visual_id:visual.id,
-      asset_fingerprint:options.expectedFingerprint || visual.asset_fingerprint || "",strategy:visual.acquisition_strategy,
-      translation_model:translationModel,regions,prior_feedback:priorFeedback}))]));
+      strategy:visual.acquisition_strategy,translation_model:translationModel,
+      translation_prompt_version:"editorial-card-translation-1",regions,prior_feedback:priorFeedback}))]));
     let artifact=await this.config.findVisualTranslationArtifact?.({visualId:visual.id,translationInputHash});
+    const checkpointIdentity={visualId:visual.id,draftId:draft.id,sourceHash,
+      regionManifestHash,model:translationModel};
+    if (artifact && !completeTranslationArtifact(artifact,regions,translationInputHash,checkpointIdentity)) artifact=null;
     let token=accessToken;
     if (!artifact) {
       token=token || await this.accessToken();
@@ -139,17 +144,23 @@ export class VertexImagen {
       const ordered=regions.map((region)=>({region_id:region.region_id,
         english_text:String(entries.find((entry)=>entry.region_id === region.region_id).english_text).trim()}));
       artifact=await this.config.saveVisualTranslationArtifact?.({visualId:visual.id,draftId:draft.id,
-        translationInputHash,sourceHash:hashBytes(source.bytes),provider:"vertex_gemini",model:translationModel,regions:ordered,
+        translationInputHash,sourceHash,regionManifestHash,provider:"vertex_gemini",model:translationModel,
+        providerResponseId:payload?.responseId || payload?.response_id || null,regions:ordered,
         expectedFingerprint:options.expectedFingerprint || visual.asset_fingerprint || null});
-      artifact=artifact || {translation_input_hash:translationInputHash,regions:ordered,status:"translated"};
+      if (!artifact || !completeTranslationArtifact(artifact,regions,translationInputHash,checkpointIdentity)) {
+        throw Object.assign(new Error("Editorial translation was not durably checkpointed."),
+          {code:"EDITORIAL_TRANSLATION_CHECKPOINT_MISSING",retryable:true});
+      }
     }
     const ordered=Array.isArray(artifact.regions) ? artifact.regions : [];
+    const layoutMaxHeight=boundedEditorialCardHeight(this.config.editorialCardMaxHeight);
     const transformInputHash=hashBytes(Buffer.from(JSON.stringify({translation_input_hash:translationInputHash,
-      aspect_ratio:visual.aspect_ratio,regions:ordered,layout_version:"editorial-card-layout-2"})));
+      aspect_ratio:visual.aspect_ratio,regions:ordered,layout_max_height:layoutMaxHeight,
+      layout_version:"editorial-card-layout-3"})));
     const resumed=await this.resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata,accessToken:token});
     if (resumed) return resumed;
     let rendered;
-    try { rendered=await renderTextCardPng(ordered,visual.aspect_ratio); }
+    try { rendered=await renderTextCardPng(ordered,visual.aspect_ratio,{maxHeight:layoutMaxHeight}); }
     catch (error) {
       error.details={...(error.details || {}),visualId:visual.id,substage:"deterministic_text_layout",
         translationCheckpoint:"persisted",translationInputHash};
@@ -273,6 +284,9 @@ export class VertexImagen {
         requestKind:"provider",dispatchState:responded ? "response_received" : "dispatch_started",
         evidenceBasis:responded ? "provider_error_response" : "dispatch_started_outcome_unknown",
         httpStatus:Number.isFinite(Number(error?.status)) ? Number(error.status) : responded ? 200 : null,endpoint});
+      // Pass the exact persisted attempt through failJob; the job may contain
+      // older calls from translation, generation or a previous recovery run.
+      error.causalModelCallId=callId;
       throw error;
     }
   }
@@ -373,7 +387,9 @@ export class VertexImagen {
     const mimeType = normalizeMime(suppliedMimeType);
     const bytes = Buffer.from(base64, "base64");
     const inspection = await inspectImageBytes(bytes, mimeType);
-    const expectedRatio = sourceDimensions
+    const adaptiveTextCard=provider === "vertex_gemini_text_layout"
+      && shouldRenderEditorialTextCard(visual,safeJson(visual.media_metadata_json || visual.media_metadata));
+    const expectedRatio = adaptiveTextCard ? null : sourceDimensions
       ? sourceDimensions.width / sourceDimensions.height
       : parseAspectRatio(visual.aspect_ratio);
     if (expectedRatio && Math.abs(inspection.dimensions.width / inspection.dimensions.height - expectedRatio) / expectedRatio > 0.16) {
@@ -397,7 +413,7 @@ export class VertexImagen {
       mimeType,
       metadata: { binary_qa: { status: "passed", ...inspection, expected_ratio: expectedRatio || null,
         source_dimensions: sourceDimensions },pixel_qa:{status:"passed",...inspection,expected_ratio:expectedRatio || null,
-        source_dimensions:sourceDimensions},quality_qa:qualityQa,
+        source_dimensions:sourceDimensions,adaptive_text_height:adaptiveTextCard},quality_qa:qualityQa,
         ...(layoutTelemetry ? {layout_telemetry:layoutTelemetry} : {}) },
     };
   }
@@ -415,6 +431,22 @@ export class VertexImagen {
     this.tokenExpiresAt = Date.now() + Math.max(60, Number(payload.expires_in || 300) - 60) * 1_000;
     return this.token;
   }
+}
+
+function completeTranslationArtifact(artifact,sourceRegions,inputHash,{visualId,draftId,sourceHash,regionManifestHash,model}) {
+  if (artifact?.status !== "translated" || artifact.translation_input_hash !== inputHash
+    || artifact.visual_id !== visualId || artifact.draft_id !== draftId
+    || artifact.source_hash !== sourceHash || artifact.region_manifest_hash !== regionManifestHash
+    || artifact.model !== model || !Array.isArray(artifact.regions)
+    || artifact.regions.length !== sourceRegions.length) return false;
+  const ids=new Set();
+  for (let index=0;index<sourceRegions.length;index+=1) {
+    const region=artifact.regions[index];
+    if (region?.region_id !== sourceRegions[index].region_id || !String(region.english_text || "").trim()
+      || ids.has(region.region_id)) return false;
+    ids.add(region.region_id);
+  }
+  return artifact.output_hash === hashBytes(Buffer.from(JSON.stringify(artifact.regions)));
 }
 
 async function providerFetch(fetchImpl, url, init, provider, externalSignal = null) {
@@ -493,57 +525,84 @@ function shouldRenderEditorialTextCard(visual,metadata={}) {
     && regions.length > 0;
 }
 
-async function renderTextCardPng(regions,aspectRatio) {
-  const ratio=parseAspectRatio(aspectRatio) || 3/4;
-  const width=896; const height=Math.round(width/ratio);
-  const title=regions[0]?.english_text || "Travel Notes";
-  const body=regions.slice(1);
-  let fontSize=22; let rendered; let columns=1; let attempts=0;
-  outer: for (columns=1;columns<=3;columns+=1) {
-    for (fontSize=22;fontSize>=14;fontSize-=1) {
-      attempts+=1;
-      rendered=layoutTextCard(body,{width,height,fontSize,columns});
-      if (rendered.bottom <= height-42) break outer;
-    }
-  }
-  if (!rendered || rendered.bottom > height-42) throw Object.assign(new Error("Editorial card text does not fit without cropping."),
-    {code:"EDITORIAL_CARD_TEXT_OVERFLOW",retryable:false,details:{validation:"deterministic_text_layout_capacity",
-      region_count:regions.length,aspect_ratio:aspectRatio,minimum_font_size:14,rendered_bottom:rendered?.bottom || null,height,
-      attempted_columns:3,fallback_attempts:attempts,layout_version:"editorial-card-layout-2"}});
-  const titleLines=wrapEditorialText(title,44);
-  const titleSpans=titleLines.map((line,index)=>`<tspan x="56" dy="${index ? 38 : 0}">${escapeXml(line)}</tspan>`).join("");
-  const bodyText=(rendered?.items || []).map((item)=>`<text x="${item.x}" y="${item.y}" font-family="DejaVu Sans,Arial,sans-serif" font-size="${fontSize}" fill="#172033">${item.lines.map((line,index)=>`<tspan x="${item.x}" dy="${index ? fontSize*1.32 : 0}">${escapeXml(line)}</tspan>`).join("")}</text>`).join("");
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-    <rect width="${width}" height="${height}" fill="#fbf8f1"/>
-    <rect x="34" y="34" width="${width-68}" height="118" rx="24" fill="#dceef8"/>
-    <rect x="34" y="174" width="8" height="${height-216}" rx="4" fill="#7fb6d6"/>
-    <text x="56" y="82" font-family="DejaVu Sans,Arial,sans-serif" font-size="34" font-weight="700" fill="#16324a">${titleSpans}</text>
-    ${bodyText}
-  </svg>`;
-  return {bytes:await sharp(Buffer.from(svg)).png().toBuffer(),telemetry:{layout_version:"editorial-card-layout-2",
-    columns,font_size:fontSize,region_count:regions.length,aspect_ratio:aspectRatio,rendered_bottom:rendered.bottom,height,fallback_attempts:attempts}};
+function boundedEditorialCardHeight(value) {
+  const parsed=Number(value);
+  return Number.isFinite(parsed) && parsed >= 1000 ? Math.min(Math.floor(parsed),4096) : 4096;
 }
 
-function layoutTextCard(regions,{width,height,fontSize,columns=1}) {
-  const gutter=28; const usableWidth=width-128; const columnWidth=(usableWidth-(columns-1)*gutter)/columns;
-  const maxChars=Math.max(18,Math.floor(columnWidth/(fontSize*0.56)));
-  const columnsState=Array.from({length:columns},(_,index)=>({x:64+index*(columnWidth+gutter),y:202,items:[]}));
-  for (const region of regions) {
-    const lines=wrapEditorialText(region.english_text,maxChars);
-    const target=columnsState.reduce((best,current)=>current.y<best.y ? current : best,columnsState[0]);
-    target.items.push({x:Math.round(target.x),y:target.y,lines});
-    target.y += lines.length*fontSize*1.32 + fontSize*0.9;
+async function renderTextCardPng(regions,aspectRatio,{maxHeight=4096}={}) {
+  const ratio=parseAspectRatio(aspectRatio) || 3/4;
+  const width=896; const minimumHeight=Math.max(500,Math.round(width/ratio));
+  const fontSize=38; const titleFontSize=46; const lineHeight=52;
+  const title=regions[0]?.english_text || "Travel Notes";
+  const titleLayout=await fitEditorialLines(title,36,766,titleFontSize);
+  const titleLines=titleLayout.lines;
+  const headerHeight=96+titleLines.length*60;
+  const items=[]; let bottom=headerHeight+80; let maximumMeasuredWidth=titleLayout.maximumMeasuredWidth;
+  for (const region of regions.slice(1)) {
+    const layout=await fitEditorialLines(region.english_text,39,750,fontSize);
+    const lines=layout.lines;
+    maximumMeasuredWidth=Math.max(maximumMeasuredWidth,layout.maximumMeasuredWidth);
+    items.push({region_id:region.region_id,y:bottom,lines});
+    bottom+=lines.length*lineHeight+36;
   }
-  return {items:columnsState.flatMap((column)=>column.items),bottom:Math.max(...columnsState.map((column)=>column.y)),height,columns};
+  const height=Math.max(minimumHeight,bottom+64);
+  if (height>maxHeight) throw Object.assign(new Error("Editorial card text cannot fit at a mobile-readable size; ordered split delivery is required."),
+    {code:"EDITORIAL_CARD_TEXT_OVERFLOW",retryable:false,details:{validation:"deterministic_text_layout_capacity",
+      region_count:regions.length,aspect_ratio:aspectRatio,minimum_font_size:fontSize,
+      title_bottom:headerHeight,rendered_bottom:bottom,height,max_height:maxHeight,
+      attempted_columns:1,fallback_attempts:1,layout_version:"editorial-card-layout-3",recovery_target:"ordered_child_cards"}});
+  const titleSpans=titleLines.map((line,index)=>`<tspan x="58" dy="${index ? 60 : 0}">${escapeXml(line)}</tspan>`).join("");
+  const bodyText=items.map((item)=>`<text x="64" y="${item.y}" font-family="DejaVu Sans,Arial,sans-serif" font-size="${fontSize}" fill="#172033">${item.lines.map((line,index)=>`<tspan x="64" dy="${index ? lineHeight : 0}">${escapeXml(line)}</tspan>`).join("")}</text>`).join("");
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+    <rect width="${width}" height="${height}" fill="#fbf8f1"/>
+    <rect x="34" y="34" width="${width-68}" height="${headerHeight}" rx="24" fill="#dceef8"/>
+    <rect x="34" y="${headerHeight+56}" width="8" height="${Math.max(0,height-headerHeight-100)}" rx="4" fill="#7fb6d6"/>
+    <text x="58" y="94" font-family="DejaVu Sans,Arial,sans-serif" font-size="${titleFontSize}" font-weight="700" fill="#16324a">${titleSpans}</text>
+    ${bodyText}
+  </svg>`;
+  return {bytes:await sharp(Buffer.from(svg)).png().toBuffer(),telemetry:{layout_version:"editorial-card-layout-3",
+    columns:1,font_size:fontSize,title_font_size:titleFontSize,region_count:regions.length,
+    region_order:items.map((item)=>item.region_id),max_measured_line_width:maximumMeasuredWidth,
+    aspect_ratio:aspectRatio,rendered_bottom:bottom,height,
+    fallback_attempts:1}};
+}
+
+async function fitEditorialLines(value,maxChars,maxWidth,fontSize) {
+  const pending=wrapEditorialText(value,maxChars); const lines=[]; let maximumMeasuredWidth=0;
+  while (pending.length) {
+    const line=pending.shift();
+    const measuredWidth=await measureEditorialLine(line,fontSize);
+    if (measuredWidth<=maxWidth) {
+      lines.push(line);maximumMeasuredWidth=Math.max(maximumMeasuredWidth,measuredWidth);continue;
+    }
+    const characters=Array.from(line);
+    if (characters.length<=1) throw Object.assign(new Error("One editorial glyph exceeds the safe text width."),
+      {code:"EDITORIAL_CARD_TEXT_OVERFLOW",retryable:false,details:{glyph:line,measured_width:measuredWidth,max_width:maxWidth}});
+    let split=Math.floor(characters.length/2);
+    for (let index=split;index>1;index-=1) if (characters[index]===" ") {split=index;break;}
+    pending.unshift(characters.slice(0,split).join("").trimEnd(),characters.slice(split).join("").trimStart());
+  }
+  return {lines,maximumMeasuredWidth};
+}
+
+async function measureEditorialLine(line,fontSize) {
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="4096" height="128"><text x="0" y="80" font-family="DejaVu Sans,Arial,sans-serif" font-size="${fontSize}">${escapeXml(line)}</text></svg>`;
+  const {info}=await sharp(Buffer.from(svg)).trim().toBuffer({resolveWithObject:true});
+  return info.width;
 }
 
 function wrapEditorialText(value,maxChars) {
   const words=String(value || "").replace(/\s+/g," ").trim().split(" ").filter(Boolean);
   const lines=[]; let current="";
   for (const word of words) {
-    const candidate=current ? `${current} ${word}` : word;
-    if (candidate.length <= maxChars || !current) current=candidate;
-    else { lines.push(current); current=word; }
+    const pieces=[]; const characters=Array.from(word);
+    for (let index=0;index<characters.length;index+=maxChars) pieces.push(characters.slice(index,index+maxChars).join(""));
+    for (const piece of pieces) {
+      const candidate=current ? `${current} ${piece}` : piece;
+      if (Array.from(candidate).length<=maxChars) current=candidate;
+      else { lines.push(current); current=piece; }
+    }
   }
   if (current) lines.push(current);
   return lines.length ? lines : [""];

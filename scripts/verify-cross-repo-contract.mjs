@@ -10,8 +10,11 @@ import { FrontendContractConsumer } from "../src/frontend-contract.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const frontend = path.resolve(process.env.FRONTEND_REPOSITORY_PATH || path.join(root, "..", "solo-to-china"));
+const workingTree = process.argv.includes("--working-tree");
 const releaseGate = JSON.parse(fs.readFileSync(path.join(root, "config", "release-gate.json"), "utf8"));
-const frontendCommit = String(process.env.FRONTEND_CONTRACT_COMMIT_SHA || releaseGate.frontend.commitSha || "").toLowerCase();
+const frontendCommit = workingTree
+  ? execFileSync("git", ["-C", frontend, "rev-parse", "HEAD"], {encoding:"utf8",windowsHide:true}).trim().toLowerCase()
+  : String(process.env.FRONTEND_CONTRACT_COMMIT_SHA || releaseGate.frontend.commitSha || "").toLowerCase();
 if (!/^[a-f0-9]{40}$/.test(frontendCommit)) throw new Error("A fixed Frontend commit SHA is required for the contract gate.");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "stc-cross-repo-"));
 const files = {
@@ -24,7 +27,8 @@ try {
 for (const [name, file] of Object.entries(files)) {
   let contents;
   try {
-    contents = execFileSync("git", ["-C", frontend, "show", `${frontendCommit}:${file.source}`], { encoding: "utf8", windowsHide: true });
+    contents = workingTree ? fs.readFileSync(path.join(frontend,file.source),"utf8")
+      : execFileSync("git", ["-C", frontend, "show", `${frontendCommit}:${file.source}`], { encoding: "utf8", windowsHide: true });
   } catch (error) {
     throw new Error(`Frontend ${name} artifact is unavailable at fixed commit ${frontendCommit}: ${error?.stderr || error.message}`);
   }
@@ -69,7 +73,7 @@ database = openDatabase(path.join(temporary, "contract.sqlite"));
     slug:"commercial-gate",contentType:"travel-guide"},blocks:[{type:"affiliate_booking_card",variant:booking.variants[0],data:bookingData}]});
   if (!commercialValidation.valid) throw new Error(`Frontend rejected a commercial payload without disclosure: ${JSON.stringify(commercialValidation.errors)}`);
   if (!active.artifact_checksum || active.artifact_checksum.length !== 64) throw new Error("Composite Registry/Page/Publish artifact checksum was not persisted.");
-  console.log(`Cross-repository contract gate passed for ${active.contractVersion} at ${frontendCommit} (${active.artifact_checksum}).`);
+  console.log(`Cross-repository contract gate passed for ${active.contractVersion} at ${workingTree ? `UNCOMMITTED working tree based on ${frontendCommit}` : frontendCommit} (${active.artifact_checksum}).`);
 } finally {
   database?.close();
   fs.rmSync(temporary, { recursive: true, force: true });

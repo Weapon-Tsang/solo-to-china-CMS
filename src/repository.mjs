@@ -5710,17 +5710,19 @@ export class Repository {
       const requiresModel=["analyze_source_image","localize_source_image","localize_photo_overlay","recompose_editorial_card",
         "recompose_collage","recompose_map_or_route","generate_illustration"].includes(transform);
       const needsQualityQa=requiresModel && transform !== "analyze_source_image" && transform !== "generate_illustration";
+      const requiredGap=visual.media_metadata?.required_visual_gap || null;
       const repair=changed || ["planned","failed"].includes(existing?.status)
         || binary === "failed" || (needsQualityQa && qa !== "passed");
       return { visual_id:existing?.id || null,slot:index+1,source_asset_id:visual.source_asset_id || null,
         old_media_url:existing?.wordpress_media_url || existing?.media_url || null,
         old_media_sha256:metadata.binary_qa?.sha256 || metadata.pixel_qa?.sha256 || null,
-        disposition:repair ? "repair" : "retain",
-        reason:changed ? "visual_fingerprint_changed" : existing?.status === "failed" ? "visual_failed"
+        disposition:requiredGap ? "blocked" : repair ? "repair" : "retain",
+        reason:requiredGap ? `required_visual_${requiredGap.reason}` : changed ? "visual_fingerprint_changed" : existing?.status === "failed" ? "visual_failed"
           : existing?.status === "planned" ? "visual_incomplete" : binary === "failed" ? "binary_qa_failed"
             : needsQualityQa && qa !== "passed" ? `quality_qa_${qa}` : "qualified_visual_retained",
-        acquisition_strategy:transform,requires_model:repair && requiresModel,
-        max_model_calls:repair && requiresModel ? (transform === "analyze_source_image" ? 1 : 2) : 0,
+        acquisition_strategy:transform,requires_model:!requiredGap && repair && requiresModel,
+        max_model_calls:!requiredGap && repair && requiresModel ? (transform === "analyze_source_image" ? 1 : 2) : 0,
+        required_visual_gap:requiredGap,
         proposed_fingerprint:visualFingerprint(visual) };
     });
     return { plan_hash:sha256(JSON.stringify(slots.map((slot)=>({slot:slot.slot,source:slot.source_asset_id,
@@ -5785,6 +5787,14 @@ export class Repository {
     `).all(draftId, now());
   }
 
+  blockedRequiredVisuals(draftId) {
+    return this.db.prepare(`SELECT id,slot,image_subject,media_metadata_json FROM article_visuals
+      WHERE draft_id=? AND status='failed' AND acquisition_strategy='await_authorized_source_image'
+        AND factual_image_required=1 ORDER BY slot`).all(draftId)
+      .map((row)=>({id:row.id,slot:row.slot,image_subject:row.image_subject,
+        gap:json(row.media_metadata_json,{}).required_visual_gap || null}));
+  }
+
   findReusableVisualCandidate({visualId,transformInputHash}) {
     const row=this.db.prepare(`SELECT * FROM visual_candidates WHERE visual_id=? AND transform_input_hash=?
       AND status IN ('pending_qa','promoted')
@@ -5839,9 +5849,16 @@ export class Repository {
     if (artifact.expectedFingerprint && current.asset_fingerprint!==artifact.expectedFingerprint) {
       throw conflictError("Visual translation input changed before the checkpoint could be saved.");
     }
-    const translation={status:"translated",translation_input_hash:artifact.translationInputHash,
+    if (!artifact.translationInputHash || !artifact.sourceHash || !artifact.regionManifestHash
+      || !artifact.model || !Array.isArray(artifact.regions) || !artifact.regions.length
+      || artifact.regions.some((region)=>!region?.region_id || !String(region.english_text || "").trim())) {
+      throw conflictError("Visual translation checkpoint is incomplete and cannot be persisted.");
+    }
+    const translation={status:"translated",visual_id:artifact.visualId,draft_id:artifact.draftId,
+      translation_input_hash:artifact.translationInputHash,region_manifest_hash:artifact.regionManifestHash,
       source_hash:artifact.sourceHash || "",provider:artifact.provider || "unknown",model:artifact.model || "unknown",
-      regions:artifact.regions,translated_at:now()};
+      provider_response_id:artifact.providerResponseId || null,regions:artifact.regions,
+      output_hash:sha256(JSON.stringify(artifact.regions)),translated_at:now()};
     const metadata={...json(current.media_metadata_json,{}),translation_artifact:translation};
     this.db.prepare("UPDATE article_visuals SET media_metadata_json=?,updated_at=? WHERE id=?")
       .run(JSON.stringify(metadata),translation.translated_at,artifact.visualId);
@@ -5890,14 +5907,25 @@ export class Repository {
   failVisual(visualId, error) {
     const row = this.db.prepare("SELECT attempt_count,media_metadata_json FROM article_visuals WHERE id=?").get(visualId);
     const attempts = (row?.attempt_count || 0) + 1;
-    const retryable = error?.retryable !== false && attempts < 3;
-    const retryAt = retryable ? new Date(Date.now() + Math.min(60_000, 1_000 * (2 ** attempts))).toISOString() : null;
     const metadata={...json(row?.media_metadata_json,{})};
+    const code=String(error?.code || "").toUpperCase();
+    const status=Number(error?.status || 0);
+    const lane=isProviderPressure(error) || ["VISUAL_QUALITY_QA_INVALID","EDITORIAL_TRANSLATION_INVALID"].includes(code)
+      ? "provider_retry" : code === "VISUAL_QUALITY_QA_FAILED" ? "visual_revision" : "deterministic_recovery";
+    const budget={provider_retry:Number(metadata.recovery_budget?.provider_retry || 0),
+      visual_revision:Number(metadata.recovery_budget?.visual_revision || 0),
+      deterministic_recovery:Number(metadata.recovery_budget?.deterministic_recovery || 0)};
+    budget[lane]+=1;
+    metadata.recovery_budget=budget;
+    const retryable=error?.retryable !== false && ![401,403].includes(status) && budget[lane]<3;
+    const backoff=Math.min(300_000,Math.max(1_000 * (2 ** Math.min(budget[lane],8)),
+      lane==="provider_retry" ? Number(error?.retryAfterMs || 0) : 0));
+    const retryAt=retryable ? new Date(Date.now()+backoff).toISOString() : null;
     if (error?.qualityQa) metadata.quality_qa=error.qualityQa;
     this.db.prepare("UPDATE article_visuals SET status=?, attempt_count=?, retry_at=?, last_error=?, media_metadata_json=?, updated_at=? WHERE id=?")
       .run(retryable ? "planned" : "failed", attempts, retryAt, String(error?.message || error).slice(0, 4_000),
         JSON.stringify(metadata),now(), visualId);
-    return { retryable, status: retryable ? "planned" : "failed" };
+    return { retryable, status: retryable ? "planned" : "failed",budgetLane:lane,budget };
   }
 
   saveWordPressVisual(visualId, media) {
@@ -6001,7 +6029,10 @@ export class Repository {
     if (this.getFrontendPublishComposition(draftId)) this.markFrontendPublishComposition(draftId, "delivery_failed");
   }
 
-  listContent({ candidateId = null, approvedOnly = false, productionOnly = false, evidenceHashes = new Map() } = {}) {
+  listContent({ candidateId = null, approvedOnly = false, productionOnly = false, evidenceHashes = new Map(), limit = null, offset = 0 } = {}) {
+    const paged = productionOnly && Number.isInteger(limit) && limit > 0;
+    const pageLimit = paged ? Math.min(101, limit) : null;
+    const pageOffset = paged ? Math.max(0, Math.trunc(Number(offset) || 0)) : 0;
     const rows = productionOnly ? this.db.prepare(`
       SELECT co.id AS id, co.id AS production_instance_id, co.id AS opportunity_id, co.destination_slug, co.topic_key,
         co.title, co.content_type, co.readiness_score, co.readiness_json, co.coverage_json,
@@ -6073,8 +6104,10 @@ export class Repository {
         AND (?=0 OR co.approved_at IS NOT NULL)
         AND (?=0 OR co.approved_at IS NOT NULL OR prc.disposition IN ('archived','deleted'))
       ORDER BY CASE COALESCE(prc.disposition,'active') WHEN 'active' THEN 0 ELSE 1 END,
-        co.updated_at DESC, co.readiness_score DESC
-    `).all(candidateId, candidateId, candidateId, approvedOnly ? 1 : 0, productionOnly ? 1 : 0) : this.db.prepare(`
+        co.updated_at DESC, co.readiness_score DESC, co.id DESC
+      ${paged ? 'LIMIT ? OFFSET ?' : ''}
+    `).all(candidateId, candidateId, candidateId, approvedOnly ? 1 : 0, productionOnly ? 1 : 0,
+      ...(paged ? [pageLimit, pageOffset] : [])) : this.db.prepare(`
       SELECT tc.*, cb.id AS brief_id, cb.status AS brief_status, ad.id AS draft_id, ad.status AS draft_status,
         ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score, qr.created_at AS qa_created_at,
         wp.post_id AS wordpress_post_id, wp.post_url AS wordpress_post_url, wp.preview_url AS wordpress_preview_url,
@@ -6128,8 +6161,12 @@ export class Repository {
         FROM model_call_metrics WHERE entity_id IN (${placeholders}) GROUP BY entity_id) metrics ON metrics.entity_id=ad.id
       WHERE ad.id IN (${placeholders})`).all(...draftIds, ...draftIds);
     const staleReviews = new Set();
+    const latestReviews = new Map(this.db.prepare(`SELECT draft_id,evidence_hash FROM quality_reviews
+      WHERE draft_id IN (${placeholders}) AND id IN (SELECT id FROM quality_reviews qr2
+        WHERE qr2.draft_id=quality_reviews.draft_id ORDER BY created_at DESC,id DESC LIMIT 1)`).all(...draftIds)
+      .map((review) => [review.draft_id, review]));
     const operations = new Map(operationRows.map((row) => {
-      const review = this.db.prepare('SELECT evidence_hash FROM quality_reviews WHERE draft_id=? ORDER BY created_at DESC LIMIT 1').get(row.draft_id);
+      const review = latestReviews.get(row.draft_id);
       const currentHash = review ? (evidenceHashes.get(row.draft_id)
         ?? evidenceHashForFacts(this.getBriefPackage(row.brief_id)?.facts || [])) : null;
       if (review && review.evidence_hash !== currentHash) {
@@ -6147,9 +6184,14 @@ export class Repository {
       return [row.draft_id, operation];
     }));
     const active = this.db.prepare("SELECT entity_id,type,status,production_owner_opportunity_id FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").all();
+    const activeByOwner = new Map();
+    for (const job of active) {
+      if (!activeByOwner.has(job.production_owner_opportunity_id)) activeByOwner.set(job.production_owner_opportunity_id, []);
+      activeByOwner.get(job.production_owner_opportunity_id).push(job);
+    }
     return rows.map((row) => {
-      const job = active.find((j) => j.production_owner_opportunity_id === row.opportunity_id
-        && [row.candidate_id || row.id,row.brief_id,row.draft_id].includes(j.entity_id));
+      const job = (activeByOwner.get(row.opportunity_id) || []).find((j) =>
+        [row.candidate_id || row.id,row.brief_id,row.draft_id].includes(j.entity_id));
       if (staleReviews.has(row.draft_id)) { row.qa_score=null;row.qa_passed=null; }
       return { ...row, workflow_status: job ? `${job.type}_${job.status}`
         : row.draft_status === "qa_queued" ? "awaiting_review" : row.draft_status || row.brief_status || row.candidate_status || row.opportunity_status,
@@ -6159,8 +6201,28 @@ export class Repository {
   }
 
   listContentWorkspace(options = {}) {
-    const items = this.listContent(options);
-    return { items, sections: summarizeProductionSections(items) };
+    const requestedLimit = Number.isInteger(options.limit) && options.limit > 0 ? Math.min(options.limit, 100) : null;
+    const offset = Math.max(0, Math.trunc(Number(options.offset) || 0));
+    const rows = this.listContent({ ...options, ...(requestedLimit ? { limit: requestedLimit + 1, offset } : {}) });
+    const hasMore = Boolean(requestedLimit && rows.length > requestedLimit);
+    const items = hasMore ? rows.slice(0, requestedLimit) : rows;
+    const sections = summarizeProductionSections(items);
+    if (!requestedLimit) return { items, sections };
+    const compactItems = options.compact ? items.map((row) => {
+      const state = row.production_state || {};
+      return {
+        id: row.id, opportunity_id: row.opportunity_id, candidate_id: row.candidate_id,
+        title: row.title, proposed_title: row.proposed_title, draft_title: row.draft_title,
+        draft_id: row.draft_id, revision: row.revision,
+        production_state: Object.fromEntries([
+          'lifecycle', 'disposition', 'readiness', 'stage_status', 'headline', 'explanation', 'progress', 'current_stage_label',
+          'next_stage_label', 'recovery_target_label', 'auto_continue', 'needs_human',
+          'retry_state', 'latest_error', 'available_actions',
+        ].map((key) => [key, state[key]])),
+      };
+    }) : items;
+    return { items: compactItems, sections, nextCursor: hasMore ? String(offset + requestedLimit) : null,
+      sectionScope: 'loaded' };
   }
 
   getContentProductionDetail(opportunityOrCandidateId) {
@@ -9209,8 +9271,20 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
   // the writer omits a visual plan, relevant stored originals may be selected
   // deterministically instead of fabricating image requests or leaving the page
   // needlessly image-free.
-  const visuals = supplied.slice(0, maximum)
-    .filter((item) => item?.source_asset_id || !["infographic", "map_or_route"].includes(item?.image_type))
+  const eligible = supplied
+    .filter((item) => item?.source_asset_id || item?.factual_image_required || item?.required_in_article
+      || item?.media_metadata?.required_visual_obligation?.required
+      || !["infographic", "map_or_route"].includes(item?.image_type));
+  // Presentation limits may displace optional slots, never an explicit core
+  // visual obligation. Keep source order so a late required item retains its
+  // article position; if obligations alone exceed the limit, preserve all of
+  // them for a truthful delivery/manifest failure rather than deleting one.
+  const isRequired=(item)=>item?.image_type !== "illustration" && (item?.required_in_article === true
+    || item?.media_metadata?.required_visual_obligation?.required === true);
+  const obligations=eligible.filter(isRequired).length;
+  let optionalCount=0;
+  const visuals = eligible.filter((item)=>isRequired(item)
+      || optionalCount++ < Math.max(0,maximum-obligations))
     .map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
   // A transformed image can faithfully reproduce its source and still mislead
   // readers when the source is a city-wide collage used as a single-attraction
@@ -9220,13 +9294,19 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
   const unsafeAttractionAssetIds = new Set(authorizedSourceAssets
     .filter((asset) => assetUnsafeForFocusedAttraction(asset, brief, policy))
     .map((asset) => asset.id));
-  for (const assetId of unsafeAttractionAssetIds) displacedAssetIds.add(assetId);
+  const scopedRouteAssetIds=new Set(visuals.filter((visual)=>{
+    const asset=authorizedSourceAssets.find((candidate)=>candidate.id===visual.source_asset_id);
+    return asset && unsafeAttractionAssetIds.has(asset.id) && scopedRouteFit(asset,visual,draft);
+  }).map((visual)=>visual.source_asset_id));
+  for (const assetId of scopedRouteAssetIds) displacedAssetIds.delete(assetId);
+  for (const assetId of unsafeAttractionAssetIds) if (!scopedRouteAssetIds.has(assetId)) displacedAssetIds.add(assetId);
   const unusedAssets = new Map(authorizedSourceAssets
-    .filter((asset) => !unsafeAttractionAssetIds.has(asset.id))
+    .filter((asset) => !unsafeAttractionAssetIds.has(asset.id) || scopedRouteAssetIds.has(asset.id))
     .map((asset) => [asset.id, asset]));
   for (const assetId of displacedAssetIds) unusedAssets.delete(assetId);
   const normalized = visuals.map((visual) => {
-    if (!visual.source_asset_id && (visual.image_type !== "real_world_photo" || visual.acquisition_strategy === "generate_illustration")) return visual;
+    if (!visual.source_asset_id && !visual.factual_image_required
+      && (visual.image_type !== "real_world_photo" || visual.acquisition_strategy === "generate_illustration")) return visual;
     const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
     const priorAssetMatch=visual.media_metadata?.authorized_asset_match || {};
     const obsoleteFallbackSelection=obsoleteFallback(visual);
@@ -9236,7 +9316,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       // instead of treating the generated alt text as new relevance evidence.
       unusedAssets.delete(exact.id);
       displacedAssetIds.add(exact.id);
-      return null;
+      return requiredVisualGap(visual,"obsolete_fallback_selection");
     }
     const ranked = [...unusedAssets.values()].map((asset) => ({ asset, score: visualAssetMatchScore(visual, asset) }))
       .sort((left, right) => right.score - left.score);
@@ -9263,7 +9343,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       // article-level fallback during this normalization pass.
       if (exact) unusedAssets.delete(exact.id);
       if (exact) displacedAssetIds.add(exact.id);
-      return null;
+      return requiredVisualGap(visual,"no_relevant_authorized_source");
     }
     const asset = match.asset;
     unusedAssets.delete(asset.id);
@@ -9274,15 +9354,18 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const decision = decideVisualAsset(asset, visual);
     if (decision.action === "reject") {
       displacedAssetIds.add(asset.id);
-      return null;
+      return requiredVisualGap(visual,"source_not_deliverable");
     }
     const needsWork = ["localize","analyze"].includes(decision.action);
     const acquisitionStrategy=visualAcquisitionStrategy(decision);
+    const scopedRoute=scopedRouteAssetIds.has(asset.id) && scopedRouteFit(asset,visual,draft);
     return {
       ...visual,
       purpose: truncateText(visual.purpose || `Evidence-linked view for ${draft.title}`, 300),
-      alt_text: readerVisualAlt(asset, visual.alt_text || visual.image_subject, brief.destination_slug),
-      caption: truncateText(asset.caption_text || visual.caption || readerVisualAlt(asset, visual.image_subject, brief.destination_slug), 300),
+      alt_text: scopedRoute ? truncateText(`Map of ${visual.image_subject}.`,220)
+        : readerVisualAlt(asset, visual.alt_text || visual.image_subject, brief.destination_slug),
+      caption: scopedRoute ? truncateText(`Route map: ${visual.image_subject}.`,300)
+        : truncateText(asset.caption_text || visual.caption || readerVisualAlt(asset, visual.image_subject, brief.destination_slug), 300),
       generation_prompt: "",
       aspect_ratio:needsWork && !qualifiedExisting ? sourceAssetAspectRatio(asset) : visual.aspect_ratio,
       image_type:visualImageType(decision,visual.image_type),
@@ -9295,13 +9378,15 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       provider: "authorized_xiaohongshu_source",
       model: "user-authorized-source-image",
       media_metadata: { ...(visual.media_metadata || {}),source_mime_type: asset.mime_type, storage_status: asset.storage_status,
+        required_visual_gap:null,
         original_bytes_status: asset.original_bytes_status, durability_status: asset.durability_status,
         language_status: asset.language_status, visual_decision:decision,source_sha256:asset.original_sha256 || "",
         capture_version:asset.capture_version || null,analysis_version:asset.analysis_version || "",
         transform_version:"visual-transform-2",style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
         source_analysis:sourceAnalysisSnapshot(asset),
         authorized_asset_match:{version:"visual-match-2",request_hash:selectionRequestHash,score:match.score,
-          mode:priorAssetMatch.mode || "visual_subject",displaced_asset_ids:[...displacedAssetIds].sort()},
+          mode:scopedRoute ? "section_route" : priorAssetMatch.mode || "visual_subject",
+          displaced_asset_ids:[...displacedAssetIds].sort()},
         authorization_policy:"project_source_media_full_authorization",
         source_provenance: {
           source_asset_id: asset.id,
@@ -9322,6 +9407,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
   const target = Math.min(maximum, Math.max(normalized.length, Number(policy.visuals?.target || 0)));
   if (normalized.length >= target) return normalized;
   const fallbackAssets = [...unusedAssets.values()]
+    .filter((asset)=>!unsafeAttractionAssetIds.has(asset.id))
     .map((asset) => ({ asset, score: articleAssetMatchScore(draft, brief, asset) }))
     .filter((entry) => entry.score >= articleFallbackMinimum)
     .sort((left, right) => right.score - left.score || Number(right.asset.width || 0) * Number(right.asset.height || 0)
@@ -9360,6 +9446,17 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     unusedAssets.delete(asset.id);
   }
   return normalized;
+}
+
+function requiredVisualGap(visual,reason) {
+  if (!visual.factual_image_required || visual.media_metadata?.required_visual_obligation?.required !== true) return null;
+  const prior=visual.media_metadata || {};
+  return {...visual,status:"failed",acquisition_strategy:"await_authorized_source_image",
+    source_asset_id:null,source_remote_url:null,media_url:"",alt_text:"",caption:"",provider:null,model:null,
+    media_metadata:{...prior,authorized_asset_match:null,
+      required_visual_gap:{version:"required-visual-gap-1",reason,
+        requested_source_asset_id:visual.source_asset_id || prior.required_visual_gap?.requested_source_asset_id || null,
+        image_subject:visual.image_subject || "",image_type:visual.image_type || ""}}};
 }
 
 export function decideVisualAsset(asset = {}, request = {}) {
@@ -9461,17 +9558,38 @@ function assetUnsafeForFocusedAttraction(asset = {}, brief = {}, policy = {}) {
   const focus = String(brief.topic || "").split(":", 1)[0];
   const focusTokens = topicTokens(focus);
   for (const token of topicTokens(brief.destination_slug || "")) focusTokens.delete(token);
+  const multiPlaceKind=["photo_collage","editorial_infographic","map_or_route"].includes(String(asset.asset_kind || ""));
   const imageLevelTokens = topicTokens([
-    asset.alt_text, asset.caption_text, asset.evidence_subject,
+    // A legacy caption can repeat the desired place even when its pixels show
+    // several unrelated places; only source analysis can establish the subject.
+    ...(multiPlaceKind ? [] : [asset.alt_text,asset.caption_text,asset.evidence_subject]),
     ...(Array.isArray(asset.primary_subjects) ? asset.primary_subjects : []),
   ].filter(Boolean).join(" "));
   if (focusTokens.size && [...focusTokens].filter((token) => imageLevelTokens.has(token)).length
     < Math.max(1, Math.ceil(focusTokens.size * 0.67))) return true;
-  if (!["photo_collage", "editorial_infographic", "map_or_route"].includes(String(asset.asset_kind || ""))) return false;
+  if (!multiPlaceKind) return false;
   const entities = Array.isArray(asset.entities) ? asset.entities : [];
   const namedPlaces = new Set(entities.map((entry) => String(typeof entry === "string" ? entry
     : entry?.name || entry?.label || entry?.value || "").trim().toLowerCase()).filter(Boolean));
   return namedPlaces.size >= 3;
+}
+
+function scopedRouteFit(asset,visual,draft) {
+  if (visual.source_asset_id!==asset.id || visual.placement==="hero" || visual.image_role==="hero"
+    || visual.image_type!=="map_or_route" || !["map_or_route","editorial_infographic"].includes(asset.asset_kind)
+    || !looksLikeMapOrRoute(asset,asset.text_regions || [])) return false;
+  const primary=topicTokens((asset.primary_subjects || []).join(" "));
+  const requested=topicTokens(`${visual.image_subject || ""} ${visual.purpose || ""}`);
+  if (requested.size<3 || [...requested].filter((token)=>primary.has(token)).length
+    < Math.ceil(requested.size*0.67)) return false;
+  const subject=normalizeTitle(`${visual.image_subject || ""} ${visual.purpose || ""}`);
+  const article=normalizeTitle(draft.body_markdown || "");
+  const namedPlaces=[...new Set((asset.entities || []).map((entry)=>String(typeof entry === "string" ? entry
+    : entry?.name || entry?.label || entry?.value || "").trim()).filter(Boolean))];
+  return namedPlaces.filter((name)=>{
+    const normalized=normalizeTitle(name);
+    return normalized.length>=6 && subject.includes(normalized) && article.includes(normalized);
+  }).length>=2;
 }
 
 function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
@@ -9610,7 +9728,10 @@ function normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRa
     : imageType === "real_world_photo" ? "search_real_image"
     : imageType === "infographic" ? "render_infographic"
       : imageType === "map_or_route" ? "render_map" : "generate_illustration";
-  const factualRequired = imageType === "real_world_photo" || Boolean(item?.factual_image_required);
+  const requiredInArticle=imageType!=="illustration" && (item?.required_in_article === true
+    || item?.media_metadata?.required_visual_obligation?.required === true);
+  const factualRequired = imageType === "real_world_photo" || Boolean(item?.factual_image_required)
+    || requiredInArticle;
   return {
     placement: allowedPlacements.includes(item?.placement) ? item.placement : defaultPlacement(index),
     purpose: truncateText(item?.purpose || `Orient readers to ${draft.title}`, 300),
@@ -9627,6 +9748,8 @@ function normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRa
     source_asset_id:item?.source_asset_id || null,source_remote_url:item?.source_remote_url || null,
     status:item?.status || "planned",media_url:item?.media_url || "",provider:item?.provider || null,model:item?.model || null,
     media_metadata: { ...(item?.media_metadata || {}),
+      required_visual_obligation: requiredInArticle ? {version:"required-visual-obligation-1",required:true,
+        subject:truncateText(item?.image_subject || draft.title,240)} : null,
       style_version:strategy === "generate_illustration" ? "stc-light-editorial-v1" : null,
       qa_version:"visual-qa-2" },
   };
@@ -11006,6 +11129,7 @@ function structuredFailureDiagnostic(job,error) {
     recovery_run_id:job?.recovery_run_id || null,
     production_owner_opportunity_id:job?.production_owner_opportunity_id || null,
     provider:error?.provider || null,
+    causal_model_call_id:error?.causalModelCallId || error?.details?.causal_model_call_id || null,
     http_status:Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
     retry_after_ms:error?.retryAfterMs ?? null,
     retryable:error?.retryable ?? null,

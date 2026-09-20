@@ -35,6 +35,7 @@ export default function App() {
   const [pendingActionView, setPendingActionView] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [contentPagingBusy, setContentPagingBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState({ open: false, type: null, data: null, loading: false });
@@ -82,7 +83,9 @@ export default function App() {
 
   const loadAuth = useCallback(async () => setAuth(await api("/api/auth/status")), []);
 
-  const loadView = useCallback((view, { quiet = false } = {}) => viewRequests.current.run(view, async ({ signal }) => {
+  const loadView = useCallback((view, { quiet = false, force = false } = {}) => viewRequests.current.run(view, async ({ signal }) => {
+    const cached = viewCacheRef.current[view];
+    if (!force && cached?.data && Date.now() - cached.loadedAt < 30_000) return { ok: true, cached: true };
     const sequence = ++requestSequence.current;
     if (!quiet && !viewCacheRef.current[view]?.data) setLoading(true);
     try {
@@ -103,6 +106,25 @@ export default function App() {
     }
   }), []);
 
+  const loadMoreContent = useCallback(async () => {
+    const cursor = viewCacheRef.current.content?.data?.nextCursor;
+    if (!cursor || contentPagingBusy) return;
+    setContentPagingBusy(true);
+    try {
+      const page = await api(`/api/content?cursor=${encodeURIComponent(cursor)}`);
+      setViewCache((current) => {
+        const previous = current.content;
+        if (previous?.data?.nextCursor !== cursor) return current;
+        const sections = { ...previous.data.sections };
+        for (const [key, value] of Object.entries(page.sections || {})) sections[key] = (sections[key] || 0) + value;
+        return { ...current, content: { ...previous, data: { ...previous.data,
+          items: [...(previous.data.items || []), ...(page.items || [])], sections,
+          nextCursor: page.nextCursor } } };
+      });
+    } catch (caught) { showToast(caught.message, true); }
+    finally { setContentPagingBusy(false); }
+  }, [contentPagingBusy, showToast]);
+
   useEffect(() => {
     void loadAuth().catch((caught) => setError(caught.message));
   }, [loadAuth]);
@@ -121,7 +143,7 @@ export default function App() {
   const refresh = useCallback(async (notify = false) => {
     setRefreshing(true);
     try {
-      const [overviewResult, viewResult] = await Promise.allSettled([loadOverview(), loadView(activeView, { quiet: true })]);
+      const [overviewResult, viewResult] = await Promise.allSettled([loadOverview(), loadView(activeView, { quiet: true, force: true })]);
       const outcome = classifyRefreshOutcome(overviewResult, viewResult);
       if (notify) showToast(outcome.message, outcome.state !== "success");
       return outcome;
@@ -261,7 +283,7 @@ export default function App() {
         </Tabs>
         {health && !health.aiConfigured && <AiAlert onConfigure={() => openGuide("ai")} />}
         <section aria-live="polite">
-          {loading && !viewData ? <LoadingView /> : error && !viewData ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} reviewRequest={pendingActionView?.view === "knowledge" ? pendingActionView.requestedAt : null} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onOpenProduction={(id) => openPackage("production", id)} onAction={runAction} onSubmitManualSource={submitManualSource} actionBusy={actionBusy} />}
+          {loading && !viewData ? <LoadingView /> : error && !viewData ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} reviewRequest={pendingActionView?.view === "knowledge" ? pendingActionView.requestedAt : null} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onOpenProduction={(id) => openPackage("production", id)} onAction={runAction} onSubmitManualSource={submitManualSource} onLoadMoreContent={loadMoreContent} contentPagingBusy={contentPagingBusy} actionBusy={actionBusy} />}
         </section>
         <footer className="flex flex-col gap-1 border-t border-slate-200/70 pt-4 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:pt-5"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
       </main>

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {normalizeAffiliateAsset,normalizeAffiliateProviderAccount} from "../src/commercial.mjs";
+import {normalizeVisuals} from "../src/repository.mjs";
 import {repositoryFixture} from "../test-support/repository-fixture.mjs";
 
 test("FINAL_PAGE_INVALID keeps original validator paths and deterministic attribution",(t)=>{
@@ -51,6 +52,31 @@ test("editorial card overflow is attributed to deterministic layout, not the pre
   const stored=db.prepare("SELECT failure_execution_kind,failure_details_json FROM jobs WHERE id=?").get(job.id);
   assert.equal(stored.failure_execution_kind,"deterministic");
   assert.equal(JSON.parse(stored.failure_details_json).details.validation,"deterministic_text_layout_capacity");
+});
+
+test("visual provider pressure, quality revision and layout recovery keep independent durable budgets",(t)=>{
+  const {db,repository}=repositoryFixture(t);
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at)
+    VALUES ('budget-brief','beijing','Guide','[]','informational','ready','now','now')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('budget-draft','budget-brief','Guide','guide','## Guide','{}','qa_queued','now','now',1,'budget-hash')`).run();
+  db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,caption,generation_prompt,aspect_ratio,
+    image_type,image_role,image_subject,acquisition_strategy,factual_image_required,status,created_at,updated_at)
+    VALUES ('budget-visual','budget-draft',1,'hero','support','Alt','','','3:2','infographic','support','Guide',
+      'recompose_editorial_card',1,'planned','now','now')`).run();
+  const pressure=Object.assign(new Error("HTTP 429 resource exhausted"),{status:429,provider:"vertex_gemini",retryable:true,retryAfterMs:2000});
+  assert.equal(repository.failVisual("budget-visual",pressure).budgetLane,"provider_retry");
+  assert.equal(repository.failVisual("budget-visual",pressure).retryable,true);
+  const quality=Object.assign(new Error("semantic QA rejected"),{code:"VISUAL_QUALITY_QA_FAILED",retryable:true});
+  assert.equal(repository.failVisual("budget-visual",quality).budgetLane,"visual_revision");
+  assert.equal(repository.failVisual("budget-visual",quality).retryable,true);
+  assert.equal(repository.failVisual("budget-visual",quality).retryable,false);
+  const layout=Object.assign(new Error("text does not fit"),{code:"EDITORIAL_CARD_TEXT_OVERFLOW",retryable:false});
+  assert.equal(repository.failVisual("budget-visual",layout).budgetLane,"deterministic_recovery");
+  const stored=db.prepare("SELECT attempt_count,media_metadata_json FROM article_visuals WHERE id='budget-visual'").get();
+  assert.equal(stored.attempt_count,6);
+  assert.deepEqual(JSON.parse(stored.media_metadata_json).recovery_budget,
+    {provider_retry:2,visual_revision:3,deterministic_recovery:1});
 });
 
 test("a visual dispatch intent is durable and completed in one call-ledger row",(t)=>{
@@ -138,12 +164,22 @@ test("visual candidate reuse fails closed for missing or altered bytes",(t)=>{
     VALUES ('candidate-visual','candidate-draft',1,'hero','support evidence','Alt','','','3:2','3.6','real_world_photo','hero','Place',
       'localize_source_image',1,'planned','now','now','fingerprint')`).run();
   const translation=repository.saveVisualTranslationArtifact({visualId:"candidate-visual",draftId:"candidate-draft",
-    translationInputHash:"translation-1",sourceHash:"source-hash",provider:"vertex_gemini",model:"translation-model",
+    translationInputHash:"translation-1",sourceHash:"source-hash",regionManifestHash:"manifest-hash",
+    provider:"vertex_gemini",model:"translation-model",providerResponseId:"local-test-response",
     regions:[{region_id:"title",english_text:"Beijing guide"}],expectedFingerprint:"fingerprint"});
   assert.equal(translation.status,"translated");
+  assert.equal(translation.visual_id,"candidate-visual");
+  assert.equal(translation.draft_id,"candidate-draft");
+  assert.equal(translation.region_manifest_hash,"manifest-hash");
+  assert.equal(translation.provider_response_id,"local-test-response");
+  assert.equal(translation.output_hash,crypto.createHash("sha256").update(JSON.stringify(translation.regions)).digest("hex"));
   assert.deepEqual(repository.findVisualTranslationArtifact({visualId:"candidate-visual",translationInputHash:"translation-1"}).regions,
     [{region_id:"title",english_text:"Beijing guide"}]);
   assert.equal(repository.findVisualTranslationArtifact({visualId:"candidate-visual",translationInputHash:"translation-stale"}),null);
+  assert.throws(()=>repository.saveVisualTranslationArtifact({visualId:"candidate-visual",draftId:"candidate-draft",
+    translationInputHash:"translation-incomplete",sourceHash:"source-hash",model:"translation-model",
+    regions:[{region_id:"title",english_text:"Beijing guide"}],expectedFingerprint:"fingerprint"}),
+  /checkpoint is incomplete/);
   assert.throws(()=>repository.saveVisualTranslationArtifact({visualId:"candidate-visual",draftId:"candidate-draft",
     translationInputHash:"translation-2",regions:[{region_id:"title",english_text:"Changed"}],expectedFingerprint:"stale"}),
   /input changed/);
@@ -168,4 +204,23 @@ test("visual candidate reuse fails closed for missing or altered bytes",(t)=>{
     expectedFingerprint:"fingerprint"});
   assert.equal(repository.findReusableVisualCandidate({visualId:"candidate-visual",transformInputHash:"transform-2"}),null);
   assert.equal(repository.listVisualCandidates("candidate-visual").find((item)=>item.transform_input_hash==="transform-2").status,"missing");
+
+  const unresolved=normalizeVisuals([{image_type:"real_world_photo",image_subject:"Confirmed Beijing gate",
+    image_role:"hero",purpose:"Show the real gate",required_in_article:true}],{title:"Guide",body_markdown:"Visit the gate."},
+    {destination_slug:"beijing",topic:"Confirmed Beijing gate"},[],{visuals:{target:1,maximum:5}});
+  const frozenDraft=db.prepare('SELECT body_markdown,content_hash FROM article_drafts WHERE id=?').get('candidate-draft');
+  repository.replaceDraftVisuals("candidate-draft",unresolved,"3.8");
+  assert.equal(repository.plannedVisuals("candidate-draft").length,0,
+    "a missing real source must not fall through to image generation");
+  const gaps=repository.blockedRequiredVisuals("candidate-draft");
+  assert.equal(gaps.length,1);
+  assert.equal(gaps[0].gap.reason,"no_relevant_authorized_source");
+  assert.equal(repository.listDraftVisuals("candidate-draft")[0].factual_image_required,1);
+  assert.deepEqual(db.prepare('SELECT body_markdown,content_hash FROM article_drafts WHERE id=?').get('candidate-draft'),
+    frozenDraft,"media gap state must not rewrite the frozen prose or content hash");
+  const dryRun=repository.mediaRepairPlan('candidate-draft');
+  assert.equal(dryRun.slots[0].disposition,'blocked');
+  assert.equal(dryRun.slots[0].requires_model,false);
+  assert.equal(dryRun.slots[0].max_model_calls,0);
+  assert.equal(dryRun.slots[0].required_visual_gap.reason,'no_relevant_authorized_source');
 });

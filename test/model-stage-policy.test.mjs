@@ -520,6 +520,28 @@ test("mandatory brief requirements are audited explicitly and cannot be downgrad
   assert.equal(result.issues.some((issue)=>issue.code==="mandatory_brief_requirement_missing"),true);
 });
 
+test("approved reader promise and concrete reader job require explicit semantic QA checks",()=>{
+  const sample={
+    draft:{title:"One museum",body_markdown:"## Context\n\nThe museum is in Beijing.",meta_description:"A museum guide.",
+      seo:{meta_title:"One museum",focus_keyword:"museum",faqs:[]},evidence_ledger:[],unresolved_conflicts:[],
+      verification_notes:[],visuals:[],faqs:[],schema_jsonld:{"@graph":[{"@type":"Article"}]}},
+    facts:[],brief:{strategy_version:"3.8",plan:{outline:[],reader_promise:"Help readers distinguish the museum's visitor entrance from the vehicle drop-off.",
+      evidence_plan:[{section_id:"arrival",reader_job:"Choose the documented visitor entrance",claim_keys:["museum.arrival"]}]}},
+    content_policy:{minimum_words:0,faq:{allowed:false},visuals:{minimum:0,maximum:0}},reader_sources:[],
+  };
+  const audit=applyDeterministicGates({passed:true,score:90,issues:[],checks:[],unsupported_claims:[]},sample);
+  const missing=audit.issues.find((issue)=>issue.code==="mandatory_brief_requirement_missing");
+  assert.ok(missing);
+  assert.match(missing.message,/brief-reader-promise/);
+  assert.match(missing.message,/brief-reader-job-1/);
+  assert.equal(audit.issues.some((issue)=>issue.code==="reader_goal_evidence_missing"),true);
+  assert.equal(audit.passed,false);
+  const legacy=applyDeterministicGates({passed:true,score:90,issues:[],checks:[],unsupported_claims:[]},
+    {...sample,brief:{...sample.brief,strategy_version:"3.7"}});
+  assert.equal(legacy.issues.some((issue)=>issue.message?.includes("brief-reader-promise")),false,
+    "legacy frozen strategy must not acquire a new mandatory audit requirement");
+});
+
 test("a provider cannot disguise a missing Brief requirement as an unrelated editorial blocker", () => {
   const result=applyDeterministicGates({passed:false,score:72,issues:[{
     code:"NO_TRAVELER_DECISION",severity:"blocker",

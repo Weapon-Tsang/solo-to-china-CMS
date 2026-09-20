@@ -92,8 +92,32 @@ export function explainOperationalFailure(job) {
   const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
   const details = operatorSafeDetails(message);
   const normalizedIssueCode = code.toLowerCase();
-  if (type === 'compose_publish_page' && code === 'MEDIA_DELIVERY_INVALID'
-      && /MEDIA_REQUIRED_MANIFEST_MISSING/i.test(message)) return {
+  if (code === 'EDITORIAL_CARD_TEXT_OVERFLOW') return {
+    category:'media',headline:'图片上的文字超出安全排版范围',
+    reason:'本地排版容量检查未通过；这不是模型配额或网络限流。已保存的译文、候选图、正文和证据仍可复用。',
+    action:{id:'generate_visuals',label:'只修复失败的图片排版',why:'调整文字布局或选择已有候选图后重试该图片，不重新生成正文或已完成图片。'},
+    technicalDetail:details,
+  };
+  if (code === 'VISUAL_CANDIDATE_PENDING_QA') return {
+    category:'media',headline:'候选图片已保存，等待独立质量检查',
+    reason:'图片变换结果已经持久化，本次质量检查未得出结论；不能据此判定图片不合格，也不需要再次购买图片生成。',
+    action:{id:'generate_visuals',label:'继续候选图片的质量检查',why:'从保存的同一候选图恢复 QA；文件缺失或校验不符时才重新处理该图片。'},
+    technicalDetail:details,
+  };
+  if (code === 'VISUAL_QUALITY_QA_FAILED') return {
+    category:'media',headline:'候选图片未通过独立质量检查',
+    reason:'独立检查已返回具体视觉或事实缺陷；这与供应商限流不同，也不能靠反复审核同一张坏图解决。正文和其他合格图片保留。',
+    action:{id:'generate_visuals',label:'只修复未通过的图片',why:'携带本次 QA 反馈重做失败候选，按视觉修订预算计数，不重写正文。'},
+    technicalDetail:details,
+  };
+  if (type === 'generate_visuals' && code === 'MEDIA_REQUIRED_MANIFEST_MISSING') return {
+    category:'media',headline:'必需实景图缺少相关且留存的原图',
+    reason:'必需视觉槽位仍在，但现有原图不符合实体或章节用途。系统不会用不相关拼图或生成式照片替代，也不会重写正文。',
+    action:{id:null,label:'核对来源并补齐对应原图',why:'先提供实际拍到目标的已授权素材；仅重试模型不会填补事实性图片缺口。'},
+    technicalDetail:details,
+  };
+  if (type === 'compose_publish_page' && (code === 'MEDIA_REQUIRED_MANIFEST_MISSING'
+      || code === 'MEDIA_DELIVERY_INVALID' && /MEDIA_REQUIRED_MANIFEST_MISSING/i.test(message))) return {
     category:'media',headline:'发布所需图片尚未完成',
     reason:'页面引用的必需图片没有可交付媒体清单；正文、证据、质量审核和商业内容均已保留，WordPress 尚未收到残缺草稿。',
     action:{id:'generate_visuals',label:'继续完成图片处理',why:'只恢复图片处理及其后续页面交付，不重新写作正文或重跑前置研究。'},
@@ -183,8 +207,8 @@ export function explainOperationalFailure(job) {
     technicalDetail: details,
   };
   if (status === 429 || /resource (?:has been )?exhausted|quota|rate.?limit/i.test(message)) return {
-    category: 'capacity', headline: '模型配额暂时不足',
-    reason: 'Vertex 当前返回限流或配额不足。系统会按有限次数退避重试；次数用完后会停止，避免任务无限排队或重复调用。已有素材和成功步骤不会丢失。',
+    category: 'capacity', headline: '供应商请求遇到限流或容量压力',
+    reason: '外部服务返回 429 或配额/容量提示；无法仅凭此判断是余额、硬配额还是共享容量。系统应遵守 Retry-After 与有界退避，不把它算作内容或图片质量失败。已有成功产物继续保留。',
     action: { id: type || null, label: '配额恢复后重试当前步骤', why: '只恢复当前失败步骤，不会删除记录或重跑已经成功的前置步骤。' },
     technicalDetail: details,
   };
@@ -194,10 +218,13 @@ export function explainOperationalFailure(job) {
     action: { id: null, label: '检查 WordPress 权限', why: '确认站点地址、用户名、应用密码和文章写入权限后，再重试发送草稿。' },
     technicalDetail: details,
   };
-  if (status === 403) return {
-    category: 'configuration', headline: '外部模型服务拒绝了请求',
-    reason: '当前项目、模型或凭据没有执行这一步的权限；这不代表来源图片失效，也不代表文章事实有错。',
-    action: { id: 'configure_ai', label: '检查模型服务权限', why: '确认项目、地区、模型和服务账号权限后，再重试失败阶段。' },
+  if (status === 401 || status === 403) return {
+    category:'configuration',headline:/\b(?:vertex|gemini|kimi|model)\b/i.test(message)
+      ? '模型服务拒绝了当前凭据或权限' : '外部服务拒绝了当前凭据或权限',
+    reason:/\b(?:vertex|gemini|kimi|model)\b/i.test(message)
+      ? '模型服务的身份、项目或权限未通过；重复付费重试不能解决，也不代表来源图片失效。'
+      : '这一步的身份、项目或模型权限未通过；重复付费重试不能解决，也不代表文章或图片内容本身错误。',
+    action:{id:'configure_ai',label:'核对服务凭据与模型权限',why:'先修复配置，再明确恢复失败步骤；不要自动耗尽重试预算。'},
     technicalDetail: details,
   };
   if (/aborted|aborterror|timed? ?out|timeout/i.test(message)) return {

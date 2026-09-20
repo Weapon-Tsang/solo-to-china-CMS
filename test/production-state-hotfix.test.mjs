@@ -381,9 +381,10 @@ test("a Vertex schema rejection records a provider request without claiming mode
   });
   db.prepare(`UPDATE jobs SET status='failed',attempts=1,failure_class='permanent_input',last_failure_code='PROVIDER_REQUEST_FAILED',
     last_error='Vertex Gemini request failed (400): Request contains an invalid argument.',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(failed);
-  repository.recordModelCall({ stage:"content_brief",provider:"vertex",model:"gemini-3.8-flash",promptHash:"p",schemaHash:"s",inputHash:"i",
+  const callId=repository.recordModelCall({ stage:"content_brief",provider:"vertex",model:"gemini-3.8-flash",promptHash:"p",schemaHash:"s",inputHash:"i",
     latencyMs:12,attempts:2,status:"failed",errorCode:"400",runId:failed,entityId:"shared-candidate",attemptNumber:2,
     requestKind:"provider",attemptStatus:"failed",retryReason:"provider_retry" });
+  db.prepare("UPDATE jobs SET failure_details_json=? WHERE id=?").run(JSON.stringify({causal_model_call_id:callId}),failed);
   const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
   assert.equal(state.stage_status,"failed");
   assert.match(state.headline,/结构化输出格式/);
@@ -391,6 +392,55 @@ test("a Vertex schema rejection records a provider request without claiming mode
   assert.equal(state.latest_error.provider_request_sent,true);
   assert.equal(state.latest_error.model_execution,"rejected_before_generation");
   assert.equal(state.latest_error.model_called,false);
+  assert.equal(state.latest_error.request_id,callId);
+});
+
+test("provider history without a causal receipt stays unlinked",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"unlinked-owner",{approved:true});
+  db.prepare(`INSERT INTO editorial_assemblies(id,candidate_id,opportunity_id,input_hash,created_at,updated_at)
+    VALUES ('unlinked-assembly','shared-candidate','unlinked-owner','hash','2026-09-13','2026-09-13')`).run();
+  const jobId=repository.enqueue("plan_content","shared-candidate",{
+    dedupeKey:"unlinked-provider",productionOwnerOpportunityId:"unlinked-owner",
+  });
+  repository.recordModelCall({stage:"content_brief",provider:"vertex",model:"gemini-test",promptHash:"p",schemaHash:"s",inputHash:"i",
+    latencyMs:12,attempts:1,status:"failed",errorCode:"429",httpStatus:429,runId:jobId,entityId:"shared-candidate"});
+  db.prepare(`UPDATE jobs SET status='failed',attempts=2,last_failure_code='PROVIDER_REQUEST_FAILED',
+    failure_execution_kind='provider',last_error='provider request failed',updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(jobId);
+  const failure=repository.listContentWorkspace({productionOnly:true}).items[0].production_state.latest_error;
+  assert.equal(failure.request_id,null);
+  assert.equal(failure.provider,null);
+  assert.equal(failure.http_status,null);
+  assert.equal(failure.model_execution,"unknown");
+  assert.equal(failure.evidence_basis,"causal_link_missing");
+  assert.equal(failure.model_call_count,1);
+});
+
+test("deterministic editorial-card overflow does not inherit an earlier 429 model call",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"overflow-owner",{approved:true});
+  db.prepare(`INSERT INTO editorial_assemblies(id,candidate_id,opportunity_id,input_hash,created_at,updated_at)
+    VALUES ('overflow-assembly','shared-candidate','overflow-owner','hash','2026-09-13','2026-09-13')`).run();
+  const jobId=repository.enqueue("plan_content","shared-candidate",{
+    dedupeKey:"overflow-after-provider",productionOwnerOpportunityId:"overflow-owner",
+  });
+  repository.recordModelCall({stage:"content_brief",provider:"vertex",model:"gemini-test",promptHash:"p",schemaHash:"s",inputHash:"i",
+    latencyMs:12,attempts:1,status:"failed",errorCode:"429",httpStatus:429,runId:jobId,entityId:"shared-candidate",
+    attemptNumber:1,requestKind:"provider",attemptStatus:"failed"});
+  db.prepare(`UPDATE jobs SET status='failed',attempts=2,failure_class='permanent_input',
+    last_failure_code='EDITORIAL_CARD_TEXT_OVERFLOW',last_error='caption exceeds local card capacity',
+    failure_execution_kind='deterministic',failure_details_json='{"outer_code":"EDITORIAL_CARD_TEXT_OVERFLOW"}',
+    updated_at='2026-09-13T01:00:00Z' WHERE id=?`).run(jobId);
+  const failure=repository.listContentWorkspace({productionOnly:true}).items[0].production_state.latest_error;
+  assert.equal(failure.code,"EDITORIAL_CARD_TEXT_OVERFLOW");
+  assert.equal(failure.execution_kind,"deterministic");
+  assert.equal(failure.provider_request_state,"not_applicable");
+  assert.equal(failure.model_execution,"not_applicable");
+  assert.equal(failure.model_called,false);
+  assert.equal(failure.request_id,null);
+  assert.equal(failure.provider,null);
+  assert.equal(failure.model,null);
+  assert.equal(failure.http_status,null);
+  assert.equal(failure.model_call_count,1);
+  assert.match(failure.reason,/不是模型配额/);
 });
 
 test("a revise_draft output limit is described as a truncated result, not oversized input",()=>{
@@ -465,6 +515,28 @@ test("a missing delivery manifest recovers from visual generation without rewrit
   assert.equal(explanation.action.id,"generate_visuals");
   assert.match(explanation.reason,/WordPress 尚未收到残缺草稿/);
   assert.match(explanation.action.why,/不重新写作正文/);
+});
+
+test("visual and provider failure codes receive distinct minimal recovery guidance",()=>{
+  const pending=explainOperationalFailure({type:"generate_visuals",last_failure_code:"VISUAL_CANDIDATE_PENDING_QA",
+    last_error:"quality QA returned HTTP 429 after candidate persistence"});
+  assert.equal(pending.category,"media");
+  assert.equal(pending.action.id,"generate_visuals");
+  assert.match(pending.reason,/不需要再次购买图片生成/);
+  const rejected=explainOperationalFailure({type:"generate_visuals",last_failure_code:"VISUAL_QUALITY_QA_FAILED",
+    last_error:"semantic content missing"});
+  assert.equal(rejected.action.id,"generate_visuals");
+  assert.match(rejected.reason,/不能靠反复审核同一张坏图/);
+  const pressure=explainOperationalFailure({type:"generate_visuals",last_failure_code:"PROVIDER_REQUEST_FAILED",
+    last_error:"HTTP 429 resource exhausted"});
+  assert.equal(pressure.category,"capacity");
+  assert.doesNotMatch(pressure.reason,/Vertex 当前/);
+  const auth=explainOperationalFailure({type:"generate_visuals",last_failure_code:"PROVIDER_REQUEST_FAILED",
+    last_error:"HTTP 401 Unauthorized"});
+  assert.equal(auth.action.id,"configure_ai");
+  const manifest=explainOperationalFailure({type:"compose_publish_page",last_failure_code:"MEDIA_REQUIRED_MANIFEST_MISSING",
+    last_error:"required image has no manifest"});
+  assert.equal(manifest.action.id,"generate_visuals");
 });
 
 test("plan_content output-limit fixture uses the Editorial Assembly subset, stays bounded and preserves qualifiers",()=>{

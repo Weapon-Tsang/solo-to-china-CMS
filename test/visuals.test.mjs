@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import sharp from "sharp";
 import { inspectImageBytes, VertexImagen } from "../src/visuals/vertex-imagen.mjs";
+
+function savedTranslation(entry) {
+  return {status:"translated",visual_id:entry.visualId,draft_id:entry.draftId,
+    translation_input_hash:entry.translationInputHash,source_hash:entry.sourceHash,
+    region_manifest_hash:entry.regionManifestHash,provider:entry.provider,model:entry.model,
+    regions:entry.regions,output_hash:crypto.createHash("sha256").update(JSON.stringify(entry.regions)).digest("hex")};
+}
 
 async function pngBytes(width = 1600, height = 900, marker = "image") {
   const color=marker.includes("localized") ? {r:40,g:120,b:220} : {r:220,g:80,b:50};
@@ -215,11 +223,12 @@ test("text-only editorial cards use structured translation and deterministic unc
   const requests=[];
   const translations={regions:[
     {region_id:"title",english_text:"Chongqing Travel Notes"},
-    {region_id:"tip-15",english_text:"Choose chain hotels along metro lines, or an all-in-one stay with accommodation, leisure, massage, food, drinks, and entertainment."},
+    {region_id:"tip-15",english_text:`Choose chain hotels along metro lines, or an all-in-one stay with accommodation, leisure, massage, food, drinks, and entertainment. https://example.com/${"W".repeat(110)}`},
   ]};
   const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
     model:"gemini-3.1-flash-image",qualityModel:"gemini-3.8-flash",accessToken:"token",mediaDir:directory,
-    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000},async(url,options)=>{
+    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
+    saveVisualTranslationArtifact:savedTranslation},async(url,options)=>{
       requests.push({url:String(url),options});
       if(requests.length===1)return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(translations)}]}}]});
       return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(passedQa())}]}}]});
@@ -243,9 +252,12 @@ test("text-only editorial cards use structured translation and deterministic unc
   assert.deepEqual(inspection.dimensions,{width:896,height:1195});
   assert.equal(output.provider,"vertex_gemini_text_layout");
   assert.equal(output.metadata.quality_qa.completeness.status,"passed");
+  assert.equal(output.metadata.layout_telemetry.font_size,38);
+  assert.deepEqual(output.metadata.layout_telemetry.region_order,["tip-15"]);
+  assert.ok(output.metadata.layout_telemetry.max_measured_line_width<=766);
 });
 
-test("dense editorial cards translate first and use deterministic adaptive columns",async(t)=>{
+test("dense editorial cards translate first and preserve ordered readable layout",async(t)=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"solo-dense-card-test-"));
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const sourcePath=path.join(directory,"authorized-dense-card.png");
@@ -254,7 +266,8 @@ test("dense editorial cards translate first and use deterministic adaptive colum
   const requests=[];
   const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
     model:"gemini-3.1-flash-image",qualityModel:"gemini-3.8-flash",accessToken:"token",mediaDir:directory,
-    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000},async(url,options)=>{
+    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
+    saveVisualTranslationArtifact:savedTranslation},async(url,options)=>{
       requests.push({url:String(url),options});
       if(requests.length===1)return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({regions:denseRegions.map((region,index)=>({
         region_id:region.region_id,english_text:index===0 ? "Chongqing three-day route" : `Stop ${index}: metro transfer and walking notes`,
@@ -264,7 +277,7 @@ test("dense editorial cards translate first and use deterministic adaptive colum
   const denseRegions=Array.from({length:28},(_,index)=>({region_id:index===0 ? "title" : `route_${index}`,
     text:index===0 ? "重庆三日行程地图" : "磁器口古镇洪崖洞解放碑步行路线交通换乘注意事项",
     role:"editorial_text",language:"zh",readable:true,preserve:false}));
-  await client.localizeSourceImage({id:"visual-dense-card",slot:1,image_type:"infographic",
+  const output=await client.localizeSourceImage({id:"visual-dense-card",slot:1,image_type:"infographic",
     acquisition_strategy:"recompose_editorial_card",factual_image_required:true,source_asset_id:"asset-dense-card",
     source_asset_local_path:sourcePath,source_asset_mime_type:"image/png",image_role:"hero",aspect_ratio:"3:4",
     media_metadata_json:JSON.stringify({source_analysis:{asset_kind:"editorial_infographic",photo_regions:[],text_regions:denseRegions},
@@ -275,6 +288,9 @@ test("dense editorial cards translate first and use deterministic adaptive colum
   assert.deepEqual(transformBody.generationConfig.responseModalities,["TEXT"]);
   assert.equal(transformBody.generationConfig.responseMimeType,"application/json");
   assert.match(requests[0].url,/models\/gemini-3\.8-flash:generateContent$/);
+  assert.deepEqual(output.metadata.layout_telemetry.region_order,denseRegions.slice(1).map((region)=>region.region_id));
+  assert.ok(output.metadata.layout_telemetry.height>1200,"pure-text cards may grow instead of shrinking their type");
+  assert.ok(output.metadata.layout_telemetry.max_measured_line_width<=766);
 });
 
 test("layout overflow persists translation and a layout retry does not translate twice",async(t)=>{
@@ -285,12 +301,17 @@ test("layout overflow persists translation and a layout retry does not translate
   const longText=Array.from({length:200},(_,index)=>`detail${index}`).join(" ");
   const translated={regions:[{region_id:"title",english_text:"Route notes"},{region_id:"body",english_text:longText}]};
   let artifact=null; let translationCalls=0; let qaCalls=0;
-  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+  const checkpointPath=path.join(directory,"translation-checkpoint.json");
+  const makeClient=(editorialCardMaxHeight=4096)=>new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
     model:"gemini-3.1-flash-image",qualityModel:"gemini-3.8-flash",accessToken:"token",mediaDir:directory,
-    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
-    findVisualTranslationArtifact:({translationInputHash})=>artifact?.translation_input_hash===translationInputHash ? artifact : null,
-    saveVisualTranslationArtifact:(entry)=>{artifact={status:"translated",translation_input_hash:entry.translationInputHash,
-      regions:entry.regions,provider:entry.provider,model:entry.model};return artifact;},
+    publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,editorialCardMaxHeight,
+    findVisualTranslationArtifact:({translationInputHash})=>{
+      if(!fs.existsSync(checkpointPath))return null;
+      const saved=JSON.parse(fs.readFileSync(checkpointPath,"utf8"));
+      return saved.translation_input_hash===translationInputHash ? saved : null;
+    },
+    saveVisualTranslationArtifact:(entry)=>{artifact=savedTranslation(entry);
+      fs.writeFileSync(checkpointPath,JSON.stringify(artifact));return artifact;},
   },async(url,options)=>{
     const body=JSON.parse(options.body);
     if(body.generationConfig.responseMimeType==="application/json" && body.generationConfig.responseSchema?.properties?.regions){
@@ -305,15 +326,43 @@ test("layout overflow persists translation and a layout retry does not translate
       {region_id:"title",text:"Route",role:"editorial_text",readable:true,preserve:false},
       {region_id:"body",text:"Detailed route",role:"editorial_text",readable:true,preserve:false},
     ]},visual_decision:{translateRegionIds:["title","body"]}})};
-  await assert.rejects(client.localizeSourceImage(visual,{id:"draft-checkpoint"},{expectedFingerprint:"fp-checkpoint"}),
+  await assert.rejects(makeClient(1000).localizeSourceImage(visual,{id:"draft-checkpoint"},{expectedFingerprint:"fp-checkpoint"}),
     (error)=>error.code==="EDITORIAL_CARD_TEXT_OVERFLOW" && error.details.translationCheckpoint==="persisted"
       && error.details.fallback_attempts>0);
   assert.equal(artifact.status,"translated");
-  const recovered=await client.localizeSourceImage({...visual,aspect_ratio:"3:4"},{id:"draft-checkpoint"},
+  artifact=null; // A fresh client reads the saved bytes, not the first process's memory.
+  const recovered=await makeClient().localizeSourceImage({...visual,aspect_ratio:"3:4",asset_fingerprint:"layout-only-new-fp"},{id:"draft-checkpoint"},
     {expectedFingerprint:"fp-checkpoint"});
   assert.equal(translationCalls,1,"persisted translation must be reused after a layout-only failure");
   assert.equal(qaCalls,1);
   assert.equal(recovered.provider,"vertex_gemini_text_layout");
+  const corrupted=JSON.parse(fs.readFileSync(checkpointPath,"utf8"));
+  corrupted.source_hash="not-the-retained-source";
+  fs.writeFileSync(checkpointPath,JSON.stringify(corrupted));
+  await makeClient().localizeSourceImage({...visual,aspect_ratio:"3:4"},{id:"draft-checkpoint"},
+    {expectedFingerprint:"fp-checkpoint"});
+  assert.equal(translationCalls,2,"a stale source identity must invalidate the checkpoint even when its input key matches");
+});
+
+test("editorial translation refuses an in-memory success without a durable checkpoint",async(t)=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"solo-translation-durability-"));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const sourcePath=path.join(directory,"card.png");fs.writeFileSync(sourcePath,await pngBytes(900,1200,"card"));
+  let calls=0;
+  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+    qualityModel:"gemini-3.8-flash",accessToken:"token",mediaDir:directory,publicBaseUrl:"https://engine.example.com",
+    requestTimeoutMs:5_000,
+    saveVisualTranslationArtifact:()=>null},async()=>{
+    calls+=1;return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({regions:[
+      {region_id:"title",english_text:"Travel notes"}]})}]}}]});
+  });
+  const visual={id:"card",slot:1,image_type:"infographic",acquisition_strategy:"recompose_editorial_card",
+    source_asset_id:"source",source_asset_local_path:sourcePath,source_asset_mime_type:"image/png",aspect_ratio:"3:4",
+    media_metadata_json:JSON.stringify({source_analysis:{asset_kind:"text_card",photo_regions:[],text_regions:[
+      {region_id:"title",text:"旅行",role:"editorial_text"}]}})};
+  await assert.rejects(client.localizeSourceImage(visual,{id:"draft"}),
+    (error)=>error.code==="EDITORIAL_TRANSLATION_CHECKPOINT_MISSING");
+  assert.equal(calls,1);
 });
 
 test("photo-omission QA overrides a stale empty photo-region analysis on editorial-card retry",async(t)=>{
@@ -364,7 +413,7 @@ test("a persisted transform candidate resumes only quality QA after a transient 
   fs.writeFileSync(sourcePath,sourceBytes);
   let candidate=null,transformCalls=0,qaCalls=0;
   const ledger=[];const states=[];
-  const client=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
+  const makeClient=()=>new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
     model:"gemini-image-model-a",qualityModel:"gemini-qa-model-b",accessToken:"token",mediaDir:directory,
     publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,onModelCall:(entry)=>ledger.push(entry),
     findVisualCandidate:()=>candidate,
@@ -386,10 +435,11 @@ test("a persisted transform candidate resumes only quality QA after a transient 
     factual_image_required:true,source_asset_id:"asset-v11",source_asset_local_path:sourcePath,
     source_asset_mime_type:"image/png",image_role:"hero",aspect_ratio:"3:2",generation_prompt:"",asset_fingerprint:"fp-v11"};
   const options={expectedFingerprint:"fp-v11",telemetryContext:{runId:"job-v11",jobAttempt:1,recoveryRunId:"recovery-v11"}};
-  await assert.rejects(client.localizeSourceImage(visual,{id:"draft-v11"},options),(error)=>error.status===429
-    && error.details.candidateHash===candidate.output_hash && error.details.generationCheckpoint==="persisted_pending_qa");
+  await assert.rejects(makeClient().localizeSourceImage(visual,{id:"draft-v11"},options),(error)=>error.status===429
+    && error.details.candidateHash===candidate.output_hash && error.details.generationCheckpoint==="persisted_pending_qa"
+    && error.causalModelCallId===ledger[1].callId);
   assert.deepEqual(states,["pending_qa"]);
-  const result=await client.localizeSourceImage(visual,{id:"draft-v11"},options);
+  const result=await makeClient().localizeSourceImage(visual,{id:"draft-v11"},options);
   assert.equal(transformCalls,1,"the successful transform must not be purchased twice");
   assert.equal(qaCalls,2);
   assert.equal(result.candidateHash,candidate.output_hash);

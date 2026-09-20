@@ -6,6 +6,7 @@ import { sourceProcessingProfile } from '../src/source-processing-profile.mjs';
 import { Pipeline } from '../src/pipeline.mjs';
 import { assessEntityIdentity } from '../src/entity-resolution.mjs';
 import { normalizeXiaohongshuCapture } from '../src/adapters/xiaohongshu.mjs';
+import { normalizeVisuals } from '../src/repository.mjs';
 
 test('paged entity resolution keeps one input revision and commits all pages with the downstream task', async t => {
   const {repository,db}=repositoryFixture(t);
@@ -239,6 +240,35 @@ test('multi-image analysis keeps the visual Job lease until every slot is proces
   assert.deepEqual(observedStatuses,['running','running','running']);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM source_asset_analyses WHERE source_id=?').get(source.id).n,3);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status,'succeeded');
+});
+
+test('a persisted required-media gap stops the visual stage before generation or page delivery', async t => {
+  const {repository,db}=repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('topic-media-gap','beijing','media-gap','Missing gate','fixture',80,0,0,'drafted','now','now')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('brief-media-gap','beijing','Missing gate','[]','informational','drafted','now','now','topic-media-gap')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('draft-media-gap','brief-media-gap','Missing gate','missing-gate','## Visit\n\nEvidence remains.','{}','drafted','now','now',1,'media-gap-hash')`).run();
+  const visuals=normalizeVisuals([{image_type:'real_world_photo',image_role:'hero',image_subject:'Confirmed Beijing gate',
+    required_in_article:true}],
+    {title:'Missing gate',body_markdown:'Visit the gate.'},{destination_slug:'beijing',topic:'Confirmed Beijing gate'},[],
+    {visuals:{target:1,maximum:5}});
+  repository.replaceDraftVisuals('draft-media-gap',visuals,'3.8');
+  db.prepare('DELETE FROM jobs').run();
+  repository.prepareMediaRepair=()=>repository.listDraftVisuals('draft-media-gap');
+  let calls=0;
+  const pipeline=new Pipeline(repository,{config:{}},{visuals:{enabled:true,
+    async generate(){calls+=1;throw new Error('generation must not be called');}}});
+  const jobId=repository.enqueue('generate_visuals','draft-media-gap');
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId)?.status,'queued');
+  assert.equal(await pipeline.runOne(),false,"a deterministic required-media blocker fails this Job");
+  const job=db.prepare('SELECT status,last_failure_code FROM jobs WHERE id=?').get(jobId);
+  assert.equal(job.status,'failed');
+  assert.equal(job.last_failure_code,'MEDIA_REQUIRED_MANIFEST_MISSING');
+  assert.equal(calls,0);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='compose_frontend_page' AND entity_id='draft-media-gap'").get().n,0);
+  assert.equal(repository.blockedRequiredVisuals('draft-media-gap').length,1);
 });
 
 test('interactive coverage is not deferred by a Batch threshold; visual pressure does not block text', t => {

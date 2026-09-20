@@ -73,11 +73,42 @@ test("unsupported map and infographic renderers create no fake visual plan", () 
     { image_type:"infographic",image_subject:"Ticket steps" },
   ],draft,brief,[],policy);
   assert.deepEqual(output,[]);
+  const required=normalizeVisuals([{image_type:"map_or_route",image_subject:"Verified station transfer map",
+    required_in_article:true}],draft,brief,[],policy);
+  assert.equal(required.length,1);
+  assert.equal(required[0].status,"failed");
+  assert.equal(required[0].image_type,"map_or_route");
+  assert.equal(required[0].media_metadata.required_visual_obligation.required,true);
+});
+
+test("a late required visual survives the presentation limit and displaces an optional illustration",()=>{
+  const items=[
+    {image_type:"illustration",image_subject:"Opening scene"},
+    {image_type:"illustration",image_subject:"Decorative transition"},
+    {image_type:"map_or_route",image_subject:"Required station transfer",required_in_article:true},
+  ];
+  const selected=normalizeVisuals(items,draft,brief,[],{visuals:{target:0,maximum:2}});
+  assert.deepEqual(selected.map((item)=>item.image_subject),["Opening scene","Required station transfer"]);
+  assert.equal(selected[1].status,"failed");
+  assert.equal(selected[1].media_metadata.required_visual_gap.reason,"no_relevant_authorized_source");
+  const overflow=normalizeVisuals(items.map((item,index)=>({image_type:"map_or_route",
+    image_subject:`Required route ${index}`,required_in_article:true})),draft,brief,[],
+    {visuals:{target:0,maximum:2}});
+  assert.equal(overflow.length,3,"even an over-limit obligation must remain visible to delivery validation");
 });
 
 test("a real-world photo is selected only when an original authorized source asset matches and unknown image content is analyzed", () => {
   const requested = [{ image_type:"real_world_photo",image_subject:"Forbidden City gate" }];
-  assert.deepEqual(normalizeVisuals(requested,draft,brief,[],policy),[]);
+  assert.deepEqual(normalizeVisuals(requested,draft,brief,[],policy),[],"optional factual photos may be omitted");
+  const required=[{...requested[0],required_in_article:true}];
+  const missing=normalizeVisuals(required,draft,brief,[],policy);
+  assert.equal(missing.length,1);
+  assert.equal(missing[0].status,"failed");
+  assert.equal(missing[0].acquisition_strategy,"await_authorized_source_image");
+  assert.equal(missing[0].factual_image_required,true);
+  assert.equal(missing[0].media_metadata.required_visual_obligation.required,true);
+  assert.equal(missing[0].source_asset_id,null);
+  assert.equal(missing[0].media_metadata.required_visual_gap.reason,"no_relevant_authorized_source");
   const asset = { id:"asset-1",remote_url:"https://example.test/original.jpg",mime_type:"image/jpeg",
     alt_text:"Forbidden City gate",caption_text:"Forbidden City gate",nearby_text:"Forbidden City gate",evidence_text:"Forbidden City gate",
     language_status:"chinese",storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED",
@@ -88,6 +119,9 @@ test("a real-world photo is selected only when an original authorized source ass
   assert.equal(output[0].source_asset_id,"asset-1");
   assert.equal(output[0].media_metadata.source_provenance.original_stored,true);
   assert.equal(output[0].media_metadata.source_provenance.project_owner_confirmed,true);
+  const recovered=normalizeVisuals(missing,draft,brief,[asset],policy);
+  assert.equal(recovered[0].source_asset_id,"asset-1");
+  assert.equal(recovered[0].media_metadata.required_visual_gap,null);
 });
 
 test("an explicit source id cannot bypass subject relevance for a factual hero",()=>{
@@ -104,6 +138,11 @@ test("an explicit source id cannot bypass subject relevance for a factual hero",
   const output=normalizeVisuals(requested,{title:"Ciqikou Ancient Town",body_markdown:"Walk Ciqikou's flagstone lanes."},
     {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
   assert.deepEqual(output,[]);
+  const required=normalizeVisuals([{...requested[0],required_in_article:true}],
+    {title:"Ciqikou Ancient Town",body_markdown:"Walk Ciqikou's flagstone lanes."},
+    {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
+  assert.equal(required[0].status,"failed");
+  assert.equal(required[0].media_metadata.required_visual_gap.requested_source_asset_id,"broad-map");
 });
 
 test("incomplete visual normalization converges on the best asset and remains idempotent",()=>{
@@ -129,9 +168,9 @@ test("incomplete visual normalization converges on the best asset and remains id
     first[0].media_metadata.authorized_asset_match.request_hash);
 });
 
-test("article-level fallback records a stable asset decision for later normalization",()=>{
+test("article-level fallback cannot erase an unrelated required photo obligation",()=>{
   const requested=[{source_asset_id:"stale",image_type:"real_world_photo",image_role:"hero",status:"failed",
-    image_subject:"Unrelated stale scene",purpose:"Unrelated stale scene"}];
+    image_subject:"Unrelated stale scene",purpose:"Unrelated stale scene",required_in_article:true}];
   const asset={id:"ciqikou-card",remote_url:"https://media.example/ciqikou.webp",mime_type:"image/webp",
     alt_text:"Ciqikou Ancient Town practical guide",primary_subjects:["Ciqikou Ancient Town practical guide"],
     analysis_status:"ready",asset_kind:"editorial_infographic",analysis_version:"media-analysis-2",
@@ -142,11 +181,10 @@ test("article-level fallback records a stable asset decision for later normaliza
   const brief={destination_slug:"chongqing",topic:"Ciqikou Ancient Town"};
   const first=normalizeVisuals(requested,draft,brief,[asset],{visuals:{target:1,maximum:5}});
   const second=normalizeVisuals(first,draft,brief,[asset],{visuals:{target:1,maximum:5}});
-  assert.equal(first[0].source_asset_id,"ciqikou-card");
-  assert.equal(first[0].media_metadata.authorized_asset_match.mode,"article_fallback");
-  assert.equal(second[0].source_asset_id,"ciqikou-card");
-  assert.equal(second[0].media_metadata.authorized_asset_match.request_hash,
-    first[0].media_metadata.authorized_asset_match.request_hash);
+  assert.equal(first[0].status,"failed");
+  assert.equal(first[0].media_metadata.required_visual_gap.requested_source_asset_id,"stale");
+  assert.equal(second[0].status,"failed");
+  assert.equal(second[0].source_asset_id,null);
 });
 
 test("a weak article fallback cannot bootstrap its own relevance on retry",()=>{
@@ -231,6 +269,60 @@ test("a focused attraction guide rejects previously qualified multi-place visual
     {destination_slug:"chongqing",topic:"Huguang Guild Hall"},assets,
     {content_type:"attraction_guide",visuals:{target:2,maximum:5}});
   assert.deepEqual(output,[]);
+});
+
+test("a two-stop route map is eligible only for its evidenced non-hero route section",()=>{
+  const asset={id:"huguang-longmenhao-route",remote_url:"https://media.example/route.webp",mime_type:"image/webp",
+    asset_kind:"map_or_route",analysis_status:"ready",analysis_version:"media-analysis-2",
+    language_status:"english",reader_text_present:true,storage_status:"saved",
+    original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED",
+    primary_subjects:["Walking route from Huguang Guild Hall to Longmenhao Old Street"],
+    caption_text:"Outdated general Chongqing city poster",
+    entities:["Huguang Guild Hall","Longmenhao Old Street","Nanbin Road"],
+    text_regions:[{region_id:"route_stop_1",text:"Huguang Guild Hall",language:"en",role:"editorial_text"},
+      {region_id:"route_stop_2",text:"Longmenhao Old Street",language:"en",role:"editorial_text"}]};
+  const article={title:"Huguang Guild Hall guide",body_markdown:"Visit Huguang Guild Hall, then walk to Longmenhao Old Street."};
+  const focused={destination_slug:"chongqing",topic:"Huguang Guild Hall"};
+  const route={source_asset_id:asset.id,image_type:"map_or_route",image_role:"support",placement:"mid_article",
+    image_subject:"Walking route from Huguang Guild Hall to Longmenhao Old Street",
+    purpose:"Map the walking route from Huguang Guild Hall to Longmenhao Old Street"};
+  const policy={content_type:"attraction_guide",visuals:{target:1,maximum:5}};
+  const selected=normalizeVisuals([route],article,focused,[asset],policy);
+  assert.equal(selected.length,1);
+  assert.equal(selected[0].source_asset_id,asset.id);
+  assert.equal(selected[0].placement,"mid_article");
+  assert.equal(selected[0].media_metadata.authorized_asset_match.mode,"section_route");
+  assert.match(selected[0].alt_text,/^Map of Walking route from Huguang Guild Hall/);
+  assert.match(selected[0].caption,/^Route map: Walking route from Huguang Guild Hall/);
+  assert.doesNotMatch(`${selected[0].alt_text} ${selected[0].caption}`,/Outdated general/);
+  assert.deepEqual(normalizeVisuals(selected,article,focused,[asset],policy).map((item)=>item.source_asset_id),[asset.id]);
+  assert.deepEqual(normalizeVisuals([{...route,placement:"hero",image_role:"hero"}],article,focused,[asset],policy),[]);
+  const wrongType=normalizeVisuals([{...route,image_type:"real_world_photo",purpose:"Photo of Huguang Guild Hall"}],
+    article,focused,[asset],policy);
+  assert.deepEqual(wrongType,[]);
+  assert.deepEqual(normalizeVisuals([route],{...article,body_markdown:"Visit Huguang Guild Hall."},focused,[asset],policy),[]);
+  assert.deepEqual(normalizeVisuals([route],article,focused,[{...asset,primary_subjects:["Chongqing city map"]}],policy),[]);
+});
+
+test("a two-place collage cannot borrow an inaccurate old caption as image-subject evidence",()=>{
+  const asset={id:"mis-captioned",asset_kind:"photo_collage",remote_url:"https://media.example/collage.webp",
+    mime_type:"image/webp",analysis_status:"ready",analysis_version:"media-analysis-2",
+    primary_subjects:["Chongqing highlights collage"],entities:["Huguang Guild Hall","Chongqing Zoo"],
+    alt_text:"Huguang Guild Hall",caption_text:"Huguang Guild Hall visitor photo",
+    language_status:"english",storage_status:"saved",original_bytes_status:"saved_original",
+    durability_status:"ORIGINAL_STORED"};
+  const visual={source_asset_id:asset.id,image_type:"real_world_photo",image_role:"hero",placement:"hero",
+    image_subject:"Huguang Guild Hall",purpose:"Show the Huguang Guild Hall buildings"};
+  const output=normalizeVisuals([visual],{title:"Huguang Guild Hall",body_markdown:"Visit Huguang Guild Hall."},
+    {destination_slug:"chongqing",topic:"Huguang Guild Hall"},[asset],
+    {content_type:"attraction_guide",visuals:{target:1,maximum:5}});
+  assert.deepEqual(output,[]);
+  const required=normalizeVisuals([{...visual,required_in_article:true}],
+    {title:"Huguang Guild Hall",body_markdown:"Visit Huguang Guild Hall."},
+    {destination_slug:"chongqing",topic:"Huguang Guild Hall"},[asset],
+    {content_type:"attraction_guide",visuals:{target:1,maximum:5}});
+  assert.equal(required[0].status,"failed");
+  assert.equal(required[0].media_metadata.required_visual_gap.requested_source_asset_id,"mis-captioned");
 });
 
 test("an attraction guide may use an image whose own subject identifies the attraction",()=>{

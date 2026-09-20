@@ -165,6 +165,7 @@ const DRAFT_SCHEMA = objectSchema(
       aspect_ratio: { type: "string", enum: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"] },
       image_type: { type: "string", enum: ["real_world_photo", "infographic", "map_or_route", "illustration"] },
       image_role: { type: "string" }, image_subject: { type: "string" }, factual_image_required: { type: "boolean" },
+      required_in_article: { type: "boolean" },
     }) },
   },
 );
@@ -485,8 +486,9 @@ export class ContentEngine {
   }
 
   async review(contentPackage, options = {}) {
+    const goalAudit=Number.parseFloat(String(contentPackage.brief?.strategy_version || "0"))>=3.8;
     const modelReview = await this.respond({
-      name: "quality_review_v2",
+      name: goalAudit ? "quality_review_v3" : "quality_review_v2",
       schema: REVIEW_SCHEMA,
       instructions: REVIEW_PROMPT,
       input: JSON.stringify(reviewInputDto(contentPackage)), options,
@@ -865,7 +867,13 @@ function numberedRequirements(values = []) {
 
 function mandatoryBriefRequirements(brief = {}) {
   const plan = brief.plan || brief;
+  const goalAudit=Number.parseFloat(String(brief.strategy_version || "0"))>=3.8;
   return [
+    ...(goalAudit && String(plan.reader_promise || "").trim() ? [{id:"brief-reader-promise",kind:"reader_promise",
+      requirement:truncate(plan.reader_promise,800)}] : []),
+    ...(goalAudit && Array.isArray(plan.evidence_plan) ? plan.evidence_plan : []).filter((item)=>String(item?.reader_job || "").trim())
+      .slice(0,3).map((item,index)=>({id:`brief-reader-job-${index+1}`,kind:"reader_job",
+        requirement:`${truncate(item.reader_job,500)} (section ${String(item.section_id || "unrecorded")}; approved claim keys: ${(item.claim_keys || []).slice(0,12).join(", ")})` })),
     ...boundedRequirements(plan.adaptation_requirements).map((requirement, index) => ({
       id:`brief-adaptation-${index + 1}`,kind:"adaptation",requirement,
     })),
@@ -1116,7 +1124,7 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - Return SEO metadata with secondary keywords and search intent. Use internal links only from internal_link_inventory and preserve their exact URL. Do not invent canonical URLs.
 - Preserve the internal evidence ledger for every factual section. A visible Sources section is optional unless the confirmed brief requests one; if used, show human-readable titles, real URLs and supplied dates without internal IDs.
 - If the evidence package includes a frontend_page_plan, honor its semantic section order and writer guidance in the reader-facing article. It is a composition plan, not permission to invent components, props, or visual styling.
-- Return only evidence-supported, rights-safe image plans, never filler to meet a count. Every included item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. When a factual real-world visual supports the evidence, plan REAL_WORLD_PHOTO: the pipeline will prioritize an explicitly saved, user-authorized source image that is linked to the article evidence. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
+- Return only evidence-supported, rights-safe image plans, never filler to meet a count. Every included item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. Set required_in_article true only when an approved core reader promise genuinely requires that exact factual visual; otherwise it is optional and may be omitted if no relevant image exists. factual_image_required means a factual scene must not be fabricated, not that every photo is mandatory. When a factual real-world visual supports the evidence, plan REAL_WORLD_PHOTO: the pipeline will prioritize an explicitly saved, user-authorized source image that is linked to the article evidence. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
 - Select real-world photo subjects from authorized_source_assets before writing when a saved asset actually matches the subject. These entries describe local retained files; do not copy or expose preview URLs in body_markdown.
 - Use a concise, practical guide voice. Prefer direct instructions and short useful paragraphs; avoid literary scene-setting, generic enthusiasm, and padding.
 - If revision_feedback exists, rebuild from the frozen Writing Packet and fix every blocker. Never reuse failed prose, and do not add unsupported facts.
@@ -1177,7 +1185,7 @@ Grade reader-facing prose and factual support only. Missing image downloads, ren
 Fail the draft for any unsupported factual assertion, hidden conflict, misleading certainty, source-key leakage, affiliate contamination, or unsafe advice.
 For an unsupported factual assertion, report each atomic unsupported value separately in unsupported_claims and identify the smallest affected reader-facing section. Do not group a supported fact with an unsupported fact merely because they share a predicate such as opening hours. A value present in facts and honestly mapped by the current draft evidence ledger is supported; do not describe that evidence object as empty.
 Also check originality, usefulness for solo/first-time/non-Chinese-speaking visitors, SEO/GEO structure, clarity, and whether the evidence ledger honestly covers factual sections.
-For every item in mandatory_requirements, emit exactly one checks entry whose name is the supplied requirement id. Mark it passed only when the reader-facing draft actually satisfies the complete requirement. Missing a mandatory adaptation or conflict-handling requirement is a blocker, never a warning.
+For every item in mandatory_requirements, emit exactly one checks entry whose name is the supplied requirement id. Mark it passed only when the reader-facing draft actually satisfies the complete requirement, with a locatable section or passage and supporting fact keys for reader jobs. A literal phrase, a choose/if word, or the existence of a section ID does not prove the approved reader promise was answered. Missing a core reader promise, reader job, mandatory adaptation or conflict-handling requirement is a blocker, never a warning.
 Use these editorial issue codes when applicable: DATABASE_DUMP, GENERIC_AI_TRANSITIONS, REPETITIVE_EXPLANATION, UNIFORM_SECTION_RHYTHM, EXCESSIVE_HEDGING, NO_TRAVELER_DECISION, NO_CAUSAL_FLOW, FAKE_FIRST_PERSON.
 Set passed=false only when at least one issue has severity=blocker; warning-only reviews must set passed=true. Do not hide a failure reason outside issues.
 Do not rewrite the article. Keep the audit compact: no more than 24 checks, 16 distinct issues, or 12 unsupported claims; merge duplicates, keep each check detail under 60 words and each issue message under 100 words. Return only actionable blockers and warnings.`;
@@ -1206,6 +1214,15 @@ export function applyDeterministicGates(review, contentPackage) {
       ? `Mandatory brief requirements missing or not audited: ${failedRequirements.map((item) => `${item.id}: ${item.requirement}`).join(" | ")}`
       : "Every mandatory adaptation and conflict-handling requirement was explicitly audited and satisfied.",
     "mandatory_brief_requirement_missing", { affected_count:failedRequirements.length });
+
+  if (Number.parseFloat(String(contentPackage.brief?.strategy_version || "0"))>=3.8) {
+    const promisedKeys=(contentPackage.brief?.plan?.evidence_plan || []).flatMap((item)=>item.claim_keys || []);
+    const unknownPromisedKeys=[...new Set(promisedKeys)].filter((key)=>!validKeys.has(key));
+    addGate("reader-goal-evidence-refs",unknownPromisedKeys.length===0,
+      unknownPromisedKeys.length ? `Approved reader jobs cite unavailable fact keys: ${unknownPromisedKeys.join(", ")}`
+        : "Reader-job evidence references resolve within the frozen fact package.",
+      "reader_goal_evidence_missing",{affected_count:unknownPromisedKeys.length});
+  }
 
   const invalidKeys = [...ledgerKeys].filter((key) => !validKeys.has(key));
   addGate("evidence-key-integrity", invalidKeys.length === 0, invalidKeys.length ? `Unknown claim keys: ${invalidKeys.join(", ")}` : "All ledger keys exist in the research package.", "invalid_evidence_key");
@@ -1259,8 +1276,8 @@ export function applyDeterministicGates(review, contentPackage) {
     "GENERIC_AI_TRANSITIONS");
   const listLines = (String(draft.body_markdown || "").match(/^(?:[-*]|\d+\.)\s+/gm) || []).length;
   const databaseDump = listLines >= 18 && listLines > wordCount(draft.body_markdown) / 18;
-  addGate("editorial-synthesis", !databaseDump,
-    databaseDump ? "The article reads like a database export: too many disconnected fact-list rows without narrative decisions." : "Facts are synthesized into reader decisions.",
+  addWarning("editorial-synthesis", !databaseDump,
+    databaseDump ? "This long list merits a semantic synthesis check; row count alone cannot prove that a useful checklist is a database dump." : "List density does not raise a synthesis concern.",
     "DATABASE_DUMP");
   const bodyText = String(draft.body_markdown || "");
   const genericTransitions = (bodyText.match(/\b(?:moreover|furthermore|in conclusion|it is worth noting|delve into|embark on|tapestry|bustling metropolis)\b/giu) || []).length;

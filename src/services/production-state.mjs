@@ -655,11 +655,14 @@ function normalizeHeadingIdentity(value) {
 function failureAttribution(failed, modelCalls, { explanation = null, blocksCurrentFlow = true } = {}) {
   const explained = explanation || explainOperationalFailure(failed);
   const relatedCalls=modelCalls.filter((item)=>item.run_id === failed.id);
-  const failedCall = [...relatedCalls].reverse().find((item)=>item.status === "failed")
-    || [...relatedCalls].reverse()[0] || null;
   const details=parse(failed.failure_details_json,{});
   const executionKind=failed.failure_execution_kind || details.execution_kind
     || (failed.id ? "legacy_unknown" : "legacy_unknown");
+  // A shared run_id is a timeline relationship, not proof that the last call
+  // caused this failure. Legacy records without an explicit link stay unknown.
+  const causalCallId=details.causal_model_call_id || details.details?.causal_model_call_id || null;
+  const failedCall=executionKind === "deterministic" ? null
+    : relatedCalls.find((item)=>item.id === causalCallId) || null;
   const dispatchState=failedCall?.dispatch_state || (failedCall?.request_kind === "cache_hit" ? "cache_hit" : "legacy_unknown");
   const requestState=executionKind === "deterministic" ? "not_applicable"
     : dispatchState === "not_attempted" ? "not_attempted"
@@ -695,11 +698,11 @@ function failureAttribution(failed, modelCalls, { explanation = null, blocksCurr
     provider_request_sent: providerRequestSent,
     model_execution: modelExecution,
     model_called: modelExecution === "confirmed",
-    http_status: failedCall?.http_status ?? details.http_status ?? null,
-    provider_code: failedCall?.provider_code || details.provider_code || null,
+    http_status: executionKind === "deterministic" ? null : failedCall?.http_status ?? details.http_status ?? null,
+    provider_code: executionKind === "deterministic" ? null : failedCall?.provider_code || details.provider_code || null,
     provider_request_id: failedCall?.provider_request_id || null,
     dispatch_state: dispatchState,
-    evidence_basis: failedCall?.evidence_basis || details.evidence_basis || (executionKind === "deterministic" ? "stage_contract" : "telemetry_missing"),
+    evidence_basis: executionKind === "deterministic" ? "stage_contract" : failedCall?.evidence_basis || details.evidence_basis || "causal_link_missing",
     model_call_count: relatedCalls.filter((item)=>item.request_kind !== "cache_hit").length,
     technical_details: details,
     blocks_current_flow: blocksCurrentFlow,

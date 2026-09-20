@@ -472,6 +472,11 @@ test('operator diagnosis is concise Chinese and hides long code lists behind tec
   assert.match(model403.reason,/不代表来源图片失效/);
   const source403=recoveryDiagnosis({failedJob:{type:'compose_frontend_page',last_error:'Authorized source image download failed (403).'}});
   assert.match(source403.headline,/图片/);
+  const missingRequired=recoveryDiagnosis({failedJob:{type:'generate_visuals',
+    last_failure_code:'MEDIA_REQUIRED_MANIFEST_MISSING',last_error:'Required factual visual has no relevant retained source.'}});
+  assert.match(missingRequired.headline,/必需实景图/);
+  assert.equal(missingRequired.recommendedAction.id,null);
+  assert.match(missingRequired.reason,/不会用不相关拼图/);
   const media403=recoveryDiagnosis({failedJob:{type:'backfill_media_asset',last_failure_code:'REMOTE_MEDIA_403',last_error:'Remote media returned HTTP 403.'}});
   assert.match(media403.headline,/原件.*浏览器修复/);
   assert.doesNotMatch(`${media403.headline} ${media403.reason}`,/模型服务拒绝/);

@@ -736,7 +736,10 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, { items: repository.getEditorialBlueprints() });
       }
       if (request.method === "GET" && url.pathname === "/api/content") {
-        return sendJson(response, 200, repository.listContentWorkspace({ productionOnly: true }));
+        const cursor = url.searchParams.get("cursor") || "0";
+        if (!/^(0|[1-9]\d{0,8})$/.test(cursor)) return sendJson(response, 400, { error: "Invalid content cursor." });
+        return sendJson(response, 200, repository.listContentWorkspace({ productionOnly: true,
+          limit: Math.min(100, limit(url.searchParams.get("limit") || "50")), offset: Number(cursor), compact: true }));
       }
       const productionDetailMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/production-state$/);
       if (request.method === "GET" && productionDetailMatch) {

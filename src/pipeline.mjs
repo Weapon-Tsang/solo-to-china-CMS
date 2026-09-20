@@ -855,6 +855,12 @@ export class Pipeline {
           // allowed an unstable plan to flip assets inside one Job attempt.
           if (analysisVisuals.length) this.repository.prepareMediaRepair(job.entity_id);
           contentPackage = this.repository.getDraftPackage(job.entity_id);
+          const requiredGaps=this.repository.blockedRequiredVisuals?.(job.entity_id) || [];
+          if (requiredGaps.length) throw Object.assign(new Error("Required factual visual has no relevant retained authorized source."),{
+            code:"MEDIA_REQUIRED_MANIFEST_MISSING",retryable:false,
+            details:{substage:"editorial_fit",required_visual_gaps:requiredGaps.map((gap)=>({
+              visual_id:gap.id,slot:gap.slot,image_subject:gap.image_subject,reason:gap.gap?.reason || "missing_source"}))},
+          });
           for (const visual of this.repository.plannedVisuals(job.entity_id)) {
             if (visual.acquisition_strategy === "analyze_source_image") continue;
             try {

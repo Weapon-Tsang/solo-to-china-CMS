@@ -77,6 +77,17 @@ function evaluate(contentPackage) {
   return applyDeterministicGates({ passed: true, score: 95, checks: [], issues: [], unsupported_claims: [] }, contentPackage);
 }
 
+test("a useful long checklist is not automatically blocked as DATABASE_DUMP by row count",()=>{
+  const body=`## What to check\n\nUse this checklist to compare the documented facilities before you choose.\n\n${Array.from({length:24},(_,index)=>
+    `- Check item ${index+1}: record its published condition and keep the exception beside it.`).join("\n")}\n\nChoose only the items that match your own route.`;
+  const result=evaluate({facts:[],brief:{plan:{outline:[]}},
+    content_policy:{minimum_words:0,faq:{allowed:false},visuals:{minimum:0,maximum:0}},reader_sources:[],
+    draft:{title:"Useful checklist",body_markdown:body,meta_description:"A checklist for a documented route.",
+      evidence_ledger:[],unresolved_conflicts:[],verification_notes:[],visuals:[],faqs:[],
+      seo:{meta_title:"Useful checklist",focus_keyword:"checklist",faqs:[]},schema_jsonld:{"@graph":[{"@type":"Article"}]}}});
+  assert.equal(result.issues.some((issue)=>issue.code==="DATABASE_DUMP" && issue.severity==="blocker"),false);
+});
+
 function basePackage(body = "The museum ticket costs CNY 50 only on weekdays for foreign visitors after 2026-09-01.") {
   return {
     facts: [{ normalized_key: "museum.ticket.price", subject: "Test Museum", predicate: "ticket price",
