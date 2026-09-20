@@ -1,3 +1,7 @@
+# 2.0.44 commercial B presentation handoff
+
+App/Extension version `2.0.44`, schema migration `73`, and Content Strategy `3.8` form this code-only release. The active Content Production Strategy 3.8 remains declared by `config/content-strategy.json`; Frontend Contract `1.4.1` is pinned to frontend commit `293ea96623da674b7d7ea9b8adcdb83f23878d75`. Generated legacy commercial titles/filler are normalized only for matching templates; manually edited copy remains untouched. The CMS offers human category labels and a page-level relationship notice, while preserving affiliate URLs/attribution and existing WordPress drafts. No schema migration or historical body rewrite is required. Local numeric tickets are TEST DATA; active production assets lack verified percentage-off terms and remain non-discount tickets.
+
 # 2.0.43 attraction-guide media relevance repair handoff
 
 App/Extension version `2.0.43`, schema migration `73`, and Content Strategy `3.8` form this code-only repair. The active Content Production Strategy 3.8 is declared by `config/content-strategy.json`; Frontend Contract `1.4.1` remains pinned to the separately committed provider revision. Production browser inspection of the draft-only Huguang Guild Hall page found a multi-attraction collage falsely captioned as a panoramic single-attraction photo, plus a route card described as a documentary photo. Their four-field image QA had tested source-to-derivative fidelity, not whether the source itself depicted the article's promised attraction.

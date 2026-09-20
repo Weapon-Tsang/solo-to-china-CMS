@@ -53,6 +53,8 @@ if (Test-Path -LiteralPath $FrontendPreview) {
         $env:WORDPRESS_USERNAME = "admin"
         $env:WORDPRESS_APPLICATION_PASSWORD = $LocalPassword
         Write-Host "Local WordPress delivery enabled for http://127.0.0.1:9400 only."
+        & node (Join-Path $PSScriptRoot "deliver-local-contract-preview.mjs") --isolated-fixture
+        if ($LASTEXITCODE -ne 0) { throw "Local WordPress fixture delivery failed." }
     }
 }
 

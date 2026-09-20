@@ -7,18 +7,19 @@ export const PRODUCT_CATEGORIES = new Set(["HOTEL", "FLIGHT", "TRAIN", "ATTRACTI
 export const SCOPE_TYPES = new Set(["ENTITY", "ROUTE", "AREA", "DESTINATION", "COUNTRY", "CATEGORY", "GLOBAL"]);
 export const CONNECTION_MODES = new Set(["MANUAL", "OFFICIAL_API", "FEED"]);
 export const OFFER_CATEGORIES = new Set(["hotels", "attraction_tickets", "trains", "flights", "tours_activities", "airport_transfer", "planner"]);
-export const COMMERCIAL_STRATEGY_VERSION = "2.1";
+export const COMMERCIAL_STRATEGY_VERSION = "2.2";
 export const READING_LAYOUT_VERSION = "1.1";
-export const DEFAULT_COMMERCIAL_DISCLOSURE = "Paid link";
+export const DEFAULT_COMMERCIAL_DISCLOSURE = "We may earn a commission from bookings through these links.";
 export const COMMERCIAL_COPY_DEFAULTS = Object.freeze({
-  HOTEL: Object.freeze({ eyebrow:"HOTELS", ctaLabel:"Search hotels" }),
-  FLIGHT: Object.freeze({ eyebrow:"FLIGHTS", ctaLabel:"Search flights" }),
-  TRAIN: Object.freeze({ eyebrow:"TRAINS", ctaLabel:"Search trains" }),
-  ATTRACTION: Object.freeze({ eyebrow:"ATTRACTIONS & TOURS", ctaLabel:"View attractions & tours" }),
-  TOUR_ACTIVITY: Object.freeze({ eyebrow:"ATTRACTIONS & TOURS", ctaLabel:"View attractions & tours" }),
-  PLANNER: Object.freeze({ eyebrow:"TRIP PLANNING", ctaLabel:"Plan your trip" }),
-  PROMOTION: Object.freeze({ eyebrow:"TRIP.COM OFFERS", ctaLabel:"View offers" }),
-  DEFAULT: Object.freeze({ eyebrow:"TRAVEL BOOKING", ctaLabel:"View options" }),
+  HOTEL: Object.freeze({ eyebrow:"Hotels & Homes", ctaLabel:"Explore hotels", fallbackDescription:"Compare location, arrival access and current terms." }),
+  FLIGHT: Object.freeze({ eyebrow:"Flights", ctaLabel:"Explore flights", fallbackDescription:"Compare current flight options and fare terms." }),
+  TRAIN: Object.freeze({ eyebrow:"Trains", ctaLabel:"Explore trains", fallbackDescription:"Check the route, schedule and current ticket terms." }),
+  ATTRACTION: Object.freeze({ eyebrow:"Attractions & Tickets", ctaLabel:"Explore tickets", fallbackDescription:"Check entry conditions and current ticket options." }),
+  TOUR_ACTIVITY: Object.freeze({ eyebrow:"Tours & Tickets", ctaLabel:"Explore tours", fallbackDescription:"Check what is included and current booking terms." }),
+  AIRPORT_TRANSFER: Object.freeze({ eyebrow:"Airport Transfers", ctaLabel:"Explore transfers", fallbackDescription:"Compare pickup details and current transfer terms." }),
+  PLANNER: Object.freeze({ eyebrow:"Trip Planning", ctaLabel:"Plan your trip", fallbackDescription:"Explore options that fit your route and dates." }),
+  PROMOTION: Object.freeze({ eyebrow:"Offers", ctaLabel:"View offer", fallbackDescription:"Check current eligibility and terms before booking." }),
+  DEFAULT: Object.freeze({ eyebrow:"Travel Booking", ctaLabel:"View options", fallbackDescription:"Check current options and provider terms." }),
 });
 
 const CATEGORY_COMPATIBILITY = new Map([
@@ -359,7 +360,7 @@ function commercialBlock(intent, asset, placement, index, disclosure) {
     after_block_key: intent.blockKey, slot_key: slotKey,
     data: {
       affiliate_asset_id: asset.id, legacy_offer_id: asset.legacy_offer_id || (asset.category ? asset.id : null), provider: asset.provider,
-      asset_type: asset.asset_type || asset.assetType, product_category: canonicalCategory(asset), title: asset.title,
+      asset_type: asset.asset_type || asset.assetType, product_category: canonicalCategory(asset), title: commercialTitle(asset, intent),
       description: commercialDescription(asset, intent),
       cta_label: asset.cta_label || asset.ctaLabel, target_url: asset.target_url || asset.targetUrl || "", embed_config: parseEmbed(asset.embed_config_json || asset.embedConfig),
       disclosure:disclosure || DEFAULT_COMMERCIAL_DISCLOSURE,
@@ -370,7 +371,7 @@ function commercialBlock(intent, asset, placement, index, disclosure) {
       alt_text: asset.alt_text || asset.altText || "", entity: asset.entity_key || asset.entityKey || "",
       route: asset.route_key || asset.routeKey || "", destination: asset.destination_slug || asset.destinationSlug || "",
       country_code: asset.country_code || asset.countryCode || "",
-      reader_action:intent.readerAction || `Use this ${intent.productCategory.toLowerCase()} resource for the decision described above.`,
+      reader_action:intent.readerAction || `Use this ${commercialCopyDefaults(intent.productCategory,assetType).eyebrow.toLowerCase()} resource for the decision described above.`,
       relevance_reason:intent.relevanceReason || intent.reason || "",
       landing_scope:intent.landingScope || intent.scopeType,
       placement_reason:intent.placementReason || (resolvedPlacement === "contextual" ? "Strongly related action beside the relevant passage." : "Optional destination planning resource after the article."),
@@ -383,12 +384,25 @@ export function commercialCopyDefaults(productCategory,assetType="") {
   return COMMERCIAL_COPY_DEFAULTS[String(productCategory || "").toUpperCase()] || COMMERCIAL_COPY_DEFAULTS.DEFAULT;
 }
 
+function commercialTitle(asset, intent) {
+  const title=String(asset.title || "").trim();
+  const category=canonicalCategory(asset);
+  const destination=String(asset.destination_slug || asset.destinationSlug || intent?.destinationSlug || "").trim();
+  const templates={ATTRACTION:[/^Tickets and attractions for (.+)$/i,"Find your next attraction"],
+    TOUR_ACTIVITY:[/^Tours and activities for (.+)$/i,"Find your next experience"]};
+  const candidate=templates[category];
+  if (!candidate || !destination) return title;
+  const match=title.match(candidate[0]);
+  return match && slugify(match[1])===slugify(destination) ? candidate[1] : title;
+}
+
 function commercialDescription(asset, intent) {
   const supplied = String(asset.description || "").trim();
-  if (supplied) return supplied;
-  const category = canonicalCategory(asset).toLowerCase();
+  const category = canonicalCategory(asset);
+  const historicalDefault = `Check current ${category.toLowerCase()} details and availability before booking.`;
+  if (supplied && supplied !== historicalDefault) return supplied;
   const action = String(intent?.readerAction || "").trim();
-  return action || `Check current ${category} details and availability before booking.`;
+  return action || commercialCopyDefaults(category, asset.asset_type || asset.assetType).fallbackDescription;
 }
 
 function insertCommercialBlocks(researchBlocks, commercialBlocks) {

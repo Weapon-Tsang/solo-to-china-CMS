@@ -1,6 +1,15 @@
 # SoloToChina v3.0 整改台账（DEVELOPMENT）
 
-任务书：`D:\UU远程\GameViewer\Download\SoloToChina_Codex_Rectification_v3.0.txt`。本台账只记录本轮可复核证据；旧 QA、旧 SHA 和生产状态不作为本轮通过依据。两仓保持独立。初始阶段严格 DEVELOPMENT；用户随后明确授权提交、推送、合并和生产部署，现转入发布准备审计。六领域仍未通过，至本次记录未合并、部署、写生产 WordPress/数据库或调用付费模型。
+任务书：`D:\UU远程\GameViewer\Download\SoloToChina_Codex_Rectification_v3.0.txt`。本台账只记录本轮可复核证据；旧 QA、旧 SHA 和生产状态不作为本轮通过依据。两仓保持独立。初始阶段严格 DEVELOPMENT；用户随后明确授权提交、推送、合并和生产部署，两个仓库已分别合并并部署。六领域的完整验收仍未通过；未调用本轮真实付费模型，未修改生产历史数据或公开发布草稿。
+
+## 2026-09-20 发布后补充验收
+
+- 已部署：公开前端 `main` / `0c4b327287c016aee138f735a8a13eb2baa74542`（WordPress 父子主题）；CMS `main` / `21c217fa9c3b3bb56db6ea314dfa247bc837ca50`（不可变镜像，旧容器保留回滚）。生产 `/api/ready` 返回 `ready=true`、`database=ready`；`/api/health` 显示 Frontend Contract 1.4.1、当前前端 SHA 与 checksum `d83d9c0d…68276c880`，队列 active/queued/running 均为 0。
+- L1/L2：CMS `npm test` 752/752 PASS，`npm run check` PASS，`npm run test:cross-repo` PASS；前端 `verify-upgrade.ps1` 静态及本地 runtime PASS；CMS `release:check` 50 mandatory PASS、0 failures、5 warnings、5 NOT TESTED。PHP CLI lint 未运行，但 WordPress Playground PHP runtime 已检查。
+- L3（只读、非完整生产重放）：在 2,287,411,200 字节、74 sources / 1,395 opportunities / 10 drafts / 26 visuals / 6,181 model calls 的既有生产形态 baseline 上，以当前 CMS 不可变镜像、`--network none`、只读 bind mount 和 `PRAGMA query_only=ON` 重测：实际 UI 紧凑分页路径 214.8 ms / 10,996 B；旧 full 路径仍为 24,442.2 ms / 1,718,860 B。全路径慢的问题保留为明确剩余项，不以紧凑路径结果概括全部后台。
+- L4（真实浏览器）：生产首页 FAQ 展开；Tools 日期检查显示 `RULE NOT CONFIRMED` 而非编造开票日；Share/More 展开、Escape 关闭；390px Tools 无横向溢出，移动菜单可打开并用 Escape 关闭。本地 CMS 和 WordPress 重新启动后，CMS 内容详情中的“预览最终页面”实际打开本地草稿 #40；长文章 fixture 的目录锚点、图片懒加载、旧/新商业卡、`sponsored nofollow noopener` 已检查。生产 WordPress REST 当前已发布文章数为 0，故公开文章验收不能宣称通过。
+- 本地恢复缺陷及修复：Playground 重启后旧 CMS post ID 41 不存在，预览按钮返回 403。`scripts/deliver-local-contract-preview.mjs` 现在先验证本地映射的草稿仍存在且 slug 匹配，再决定更新还是重投递；`scripts/start-local-preview.ps1` 在隔离 WordPress 凭据就绪时自动执行交付。重复运行保持草稿 #40 唯一；CMS/WordPress 双服务完整重启后从 CMS 按钮再次打开 #40，匿名访问 `?p=40` 返回 404。仅本地测试数据受影响，未触及生产。
+- L5 真实模型 Canary：NOT TESTED（v3 任务书未授权付费调用，本轮用户的“全部验证和验收”未给出具体付费预算）；L6 全生产形态可写重放：NOT TESTED。生产历史修复：NOT DONE。生产公开文章：0，故六领域总验收仍为 PARTIAL。
 
 ## S0 基线与 A01–A08 差距审计
 

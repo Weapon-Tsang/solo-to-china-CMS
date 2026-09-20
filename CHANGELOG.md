@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.44 - Unreleased
+
+- Align CMS commercial fallback copy with the Frontend commercial B ticket presentation, normalizing exact historical generated title/filler templates without overwriting manual copy.
+- Move commission disclosure outside individual legacy HTML cards into one adjacent page-level relationship notice; preserve provider links and attribution.
+- Pin release gate and deployment metadata to the independently committed Frontend contract revision. Restore stale local draft mappings during isolated CMS-to-WordPress preview startup. No database schema change or production backfill.
+
 ## 2.0.43 - Unreleased
 
 - Prevent a previously QA-qualified, city-wide collage or route card from being reused as a focused attraction guide image; derivative QA alone does not prove article relevance.

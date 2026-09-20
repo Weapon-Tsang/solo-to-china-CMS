@@ -392,10 +392,17 @@ function safeAuthorizedSourceImageUrl(value) {
 }
 
 function renderContentBlocks(contentBlocks) {
+  let relationshipShown = false;
   return contentBlocks.map((block) => {
     if (block.type === "heading") return { ...block, html: `<h${block.level}>${inline(block.text)}</h${block.level}>` };
     if (block.type === "list") return { ...block, html: `<ul>${block.items.map((item) => `<li>${inline(item)}</li>`).join("")}</ul>` };
-    if (block.type === "commercial") return { ...block, html: commercialBlockHtml(block) };
+    if (block.type === "commercial") {
+      const html = commercialBlockHtml(block);
+      if (!html) return { ...block, html };
+      const notice = relationshipShown ? "" : '<p class="stc-affiliate-relationship">We may earn a commission from bookings through these links. <a href="/affiliate-disclosure/">How affiliate links work</a></p>';
+      relationshipShown = true;
+      return { ...block, html: `${notice}${html}` };
+    }
     return { ...block, html: `<p>${inline(block.text)}</p>` };
   });
 }
@@ -412,10 +419,13 @@ function commercialBlockHtml(block) {
     ["data-affiliate-component", block.component],
   ].filter(([, value]) => value).map(([key, value]) => `${key}="${escapeHtml(value)}"`).join(" ");
   const action = targetUrl
-    ? `<p><a href="${escapeHtml(targetUrl)}" rel="sponsored nofollow noopener" target="_blank">${escapeHtml(data.cta_label || "View option")}</a></p>`
+    ? `<a class="stc-button stc-dynamic-component__action" href="${escapeHtml(targetUrl)}" rel="sponsored nofollow noopener" target="_blank">${escapeHtml(data.cta_label || "View option")}</a>`
     : embedUrl ? `<iframe src="${escapeHtml(embedUrl)}" title="${escapeHtml(data.title || "Booking search")}" loading="lazy" sandbox="allow-forms allow-popups allow-scripts" referrerpolicy="strict-origin-when-cross-origin"></iframe>` : "";
   if (!action) return "";
-  return `<aside class="solotochina-commercial ${escapeHtml(block.component)}" ${attributes}><h3>${escapeHtml(data.title || "Booking resource")}</h3>${data.description ? `<p>${escapeHtml(data.description)}</p>` : ""}${action}${data.disclosure ? `<p class="affiliate-disclosure">${escapeHtml(data.disclosure)}</p>` : ""}</aside>`;
+  const labels = {HOTEL:"Hotels & Homes",FLIGHT:"Flights",TRAIN:"Trains",ATTRACTION:"Attractions & Tickets",TOUR_ACTIVITY:"Tours & Tickets",AIRPORT_TRANSFER:"Airport Transfers",PLANNER:"Trip Planning"};
+  const category = labels[data.product_category] || String(data.product_category || "Travel booking").replaceAll("_", " ");
+  const offer = /\b(?:up to\s+)?\d{1,2}%\s+off\b/i.test(String(data.price_text || "")) ? String(data.price_text) : "";
+  return `<aside class="solotochina-commercial stc-dynamic-component stc-commercial-component ${escapeHtml(block.component)}" ${attributes}><div class="stc-dynamic-component__body"><p class="stc-dynamic-component__eyebrow">${escapeHtml(data.provider)}</p><p class="stc-commercial-component__category">${escapeHtml(category)}</p><h3>${escapeHtml(offer || data.title || "Booking resource")}</h3>${data.description ? `<p class="stc-commercial-component__detail">${escapeHtml(data.description)}</p>` : ""}</div>${action}</aside>`;
 }
 
 function safeCommercialUrl(value) {

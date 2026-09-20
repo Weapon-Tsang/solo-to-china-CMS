@@ -34,11 +34,11 @@ test("commercial composition is a separate overlay and leaves the Research Draft
 });
 
 test("commercial copy defaults stay compact, English, and centralized", () => {
-  assert.equal(DEFAULT_COMMERCIAL_DISCLOSURE,"Paid link");
+  assert.equal(DEFAULT_COMMERCIAL_DISCLOSURE,"We may earn a commission from bookings through these links.");
   assert.deepEqual(Object.values(COMMERCIAL_COPY_DEFAULTS).map((entry)=>entry.eyebrow),[
-    "HOTELS","FLIGHTS","TRAINS","ATTRACTIONS & TOURS","ATTRACTIONS & TOURS","TRIP PLANNING","TRIP.COM OFFERS","TRAVEL BOOKING",
+    "Hotels & Homes","Flights","Trains","Attractions & Tickets","Tours & Tickets","Airport Transfers","Trip Planning","Offers","Travel Booking",
   ]);
-  assert.equal(loadConfig({}).commercial.disclosure,"Paid link");
+  assert.equal(loadConfig({}).commercial.disclosure,"We may earn a commission from bookings through these links.");
 });
 
 test("a destination-planning demand with no configured asset is reported explicitly", () => {
@@ -73,8 +73,8 @@ test("a city guide can use one real destination planning resource without bookin
   assert.equal(composition.slots.length, 1);
   assert.equal(composition.slots[0].placement, "end_resource");
   assert.equal(composition.slots[0].affiliate_asset_id, "planner-chongqing");
-  assert.equal(composition.commercialBlocks[0].data.disclosure,"Paid link");
-  assert.equal(composition.commercialBlocks[0].data.eyebrow,"TRIP PLANNING");
+  assert.equal(composition.commercialBlocks[0].data.disclosure,"We may earn a commission from bookings through these links.");
+  assert.equal(composition.commercialBlocks[0].data.eyebrow,"Trip Planning");
 });
 
 test("commercial composition supplies a truthful non-empty description when an eligible asset omits one", () => {
@@ -90,6 +90,25 @@ test("commercial composition supplies a truthful non-empty description when an e
   const composition = new CommercialComposer().compose(contentPackage, [asset]);
   assert.equal(composition.status, "composed");
   assert.ok(composition.commercialBlocks[0].data.description.trim());
+});
+
+test("historical TOUR_ACTIVITY filler is upgraded without overwriting manual copy", () => {
+  const packageData={candidate:{destination_slug:"beijing",topic_key:"beijing:walking-tours"},
+    brief:{destination_slug:"beijing",content_type:"city_guide",canonical:{country_code:"CN"}},
+    draft:{id:"draft-old-tour-copy",title:"Beijing walking tours",body_markdown:"## Walking tours\n\nCompare walking tours and booking terms before visiting."}};
+  const base={id:"old-tour",provider:"Trip.com",asset_type:"CATEGORY_LINK",product_category:"TOUR_ACTIVITY",
+    scope_type:"DESTINATION",scope_key:"beijing",destination_slug:"beijing",active:1,
+    provider_status:"CONFIGURED",lifecycle_state:"operational",language:"en",target_url:"https://www.trip.com/",
+    title:"Compare walking tours",cta_label:"Explore tours"};
+  const old=new CommercialComposer().compose(packageData,[{...base,description:"Check current tour_activity details and availability before booking."}]);
+  assert.equal(old.commercialBlocks[0].data.description,"Check what is included and current booking terms.");
+  assert.equal(old.commercialBlocks[0].data.eyebrow,"Tours & Tickets");
+  const manual=new CommercialComposer().compose(packageData,[{...base,description:"Includes a local guide and flexible cancellation."}]);
+  assert.equal(manual.commercialBlocks[0].data.description,"Includes a local guide and flexible cancellation.");
+  const systemTitle=new CommercialComposer().compose(packageData,[{...base,title:"Tours and activities for Beijing"}]);
+  assert.equal(systemTitle.commercialBlocks[0].data.title,"Find your next experience");
+  const humanTitle=new CommercialComposer().compose(packageData,[{...base,title:"Tours and activities for Shanghai"}]);
+  assert.equal(humanTitle.commercialBlocks[0].data.title,"Tours and activities for Shanghai");
 });
 
 test("destination planning intent persists when its explanation is carried by relevanceReason", (t) => {

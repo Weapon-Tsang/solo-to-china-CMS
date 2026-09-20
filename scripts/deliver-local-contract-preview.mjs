@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { WordPressDraftAdapter } from "../src/wordpress.mjs";
 import { openDatabase } from "../src/db.mjs";
 
@@ -43,6 +44,31 @@ const packageData = {
   schema_jsonld: { "@context": "https://schema.org", "@type": "Article", headline: "Local CMS delivery preview", inLanguage: "en" },
   media: [], publication: { status: "draft", existing_post_id: null, cms_draft_id: "v3-local-cms-draft" },
 };
+// Playground starts with a fresh WordPress database. Reuse the mapped draft only
+// when it still exists in this local instance; otherwise replace the stale ID.
+if (fs.existsSync(localDatabase)) {
+  const priorDb = new DatabaseSync(localDatabase, { readOnly: true });
+  let mapped;
+  try {
+    mapped = priorDb.prepare("SELECT post_id,site_url FROM wordpress_publications WHERE draft_id=?")
+      .get("v3-local-cms-draft");
+  } finally {
+    priorDb.close();
+  }
+  if (mapped?.site_url === "http://127.0.0.1:9400" && Number.isInteger(Number(mapped.post_id)) && Number(mapped.post_id) > 0) {
+    const password = fs.readFileSync(localSecret, "utf8").trim();
+    const authorization = `Basic ${Buffer.from(`admin:${password}`).toString("base64")}`;
+    const response = await fetch(`http://127.0.0.1:9400/wp-json/wp/v2/posts/${Number(mapped.post_id)}?context=edit`, {
+      headers: { authorization },
+    }).catch(() => null);
+    if (response?.ok) {
+      const post = await response.json();
+      if (post.status === "draft" && post.slug === packageData.page.metadata.slug) {
+        packageData.publication.existing_post_id = Number(mapped.post_id);
+      }
+    }
+  }
+}
 const adapter = new WordPressDraftAdapter({ siteUrl: "http://127.0.0.1:9400", username: "admin",
   applicationPassword: fs.readFileSync(localSecret, "utf8").trim() });
 let routeReady=false;

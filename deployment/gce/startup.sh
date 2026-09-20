@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_ID="project-4bcb9146-c37b-43b0-b11"
-IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:2.0.43"
+IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:2.0.44"
 APP_DIR="/opt/solo-to-china"
 METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 
@@ -124,7 +124,7 @@ FRONTEND_CONTRACT_SOURCE_REPOSITORY=https://github.com/Weapon-Tsang/solo-to-chin
 FRONTEND_COMPONENT_REGISTRY_SOURCE=https://solotochina.com/wp-json/stc/v1/component-registry/generated
 FRONTEND_PAGE_SCHEMA_SOURCE=https://solotochina.com/wp-json/stc/v1/page-schema
 FRONTEND_PUBLISH_PACKAGE_SCHEMA_SOURCE=https://solotochina.com/wp-json/stc/v1/cms-publish-package-schema
-FRONTEND_CONTRACT_COMMIT_SHA=0c4b327287c016aee138f735a8a13eb2baa74542
+FRONTEND_CONTRACT_COMMIT_SHA=293ea96623da674b7d7ea9b8adcdb83f23878d75
 FRONTEND_CONTRACT_SYNC_HOURS=6
 FRONTEND_CONTRACT_TIMEOUT_MS=15000
 BACKUP_RETENTION=14
