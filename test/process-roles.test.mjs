@@ -50,3 +50,38 @@ test('API and worker roles run as two real processes against the same initialize
   const payload=await response.json();
   assert.ok(payload.items.some((item)=>item.id==='shared-source'));
 });
+
+test('standalone Worker CLI remains alive after readiness without an HTTP listener or stdin',async(t)=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'stc-worker-liveness-'));
+  const databasePath=path.join(directory,'db.sqlite');
+  const initialized=openDatabase(databasePath);initialized.close();
+  let child;
+  t.after(async()=>{
+    if(child && child.exitCode===null && child.signalCode===null){
+      child.kill('SIGTERM');
+      await new Promise(resolve=>child.once('exit',resolve));
+    }
+    fs.rmSync(directory,{recursive:true,force:true});
+  });
+  child=spawn(process.execPath,[path.resolve('src/server.mjs')],{
+    env:{...process.env,NODE_ENV:'development',CMS_PROCESS_ROLE:'worker',DATABASE_PATH:databasePath,
+      MAINTENANCE_ENABLED:'false',LOG_LEVEL:'info',CAPTURE_TOKEN:'local-test-token',
+      ADMIN_TOKEN:'local-test-token',WORDPRESS_SITE_URL:'',DEEPSEEK_API_KEY:'',
+      OPENAI_API_KEY:'',GOOGLE_CLOUD_PROJECT:''},
+    stdio:['ignore','pipe','pipe'],windowsHide:true,
+  });
+  let output='';
+  await new Promise((resolve,reject)=>{
+    const timeout=setTimeout(()=>reject(new Error(`Worker readiness timed out: ${output}`)),10_000);
+    child.stdout.on('data',chunk=>{
+      output+=chunk;
+      if(output.includes('worker.ready')){clearTimeout(timeout);resolve();}
+    });
+    child.stderr.on('data',chunk=>{output+=chunk;});
+    child.once('exit',code=>{clearTimeout(timeout);reject(new Error(`Worker exited ${code}: ${output}`));});
+    child.once('error',error=>{clearTimeout(timeout);reject(error);});
+  });
+  await new Promise(resolve=>setTimeout(resolve,500));
+  assert.equal(child.exitCode,null,`Worker exited after readiness: ${output}`);
+  assert.equal(child.signalCode,null);
+});

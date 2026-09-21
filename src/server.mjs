@@ -1344,7 +1344,7 @@ export function createApplication(config = loadConfig()) {
     },
     startWorker() {
       if (processRole !== 'worker') throw new Error('startWorker requires CMS_PROCESS_ROLE=worker.');
-      pipeline.start();
+      pipeline.start({ keepAlive: true });
       maintenance.start();
     },
     async stop() {

@@ -55,7 +55,7 @@ export class Pipeline {
     this.activeAbortControllers = new Set();
   }
 
-  start() {
+  start({ keepAlive = false } = {}) {
     if (this.timer) return;
     const recovered = this.repository.recoverExpiredJobs?.() || 0;
     if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
@@ -63,7 +63,7 @@ export class Pipeline {
     if (recoveredBatches) this.logger.warn("pipeline.vertex_batch_preparation_recovered", { count: recoveredBatches });
     this.nextRecoveryAt = Date.now() + this.recoveryIntervalMs;
     this.timer = setInterval(() => this.pump(), this.pollMs);
-    this.timer.unref();
+    if (!keepAlive) this.timer.unref();
     this.pump();
   }
 
