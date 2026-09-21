@@ -5,7 +5,7 @@ import { buildContentAst, composePageFromAst, markdownToContentBlocks } from "./
 import { validatePlanningDestination } from "./destination-consistency.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, reconcileCommercialDelivery, validateFinalPageArtifact } from "./publish-page.mjs";
 import { validateMediaDelivery } from "./media-delivery.mjs";
-import { assertPublicationEligibility, freezeRequiredMediaManifest, mediaManifestForDraft } from "./publication-eligibility.mjs";
+import { assertPublicationEligibility, evaluatePublicationEligibility, freezeRequiredMediaManifest, mediaManifestForDraft } from "./publication-eligibility.mjs";
 import { inheritJobContext, isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
 import { recoverRemoteOriginal } from "./source-media-store.mjs";
@@ -925,6 +925,10 @@ export class Pipeline {
               this.logger.warn("pipeline.optional_visual_skipped", { visualId: visual.id, draftId: job.entity_id, error });
             }
           }
+          const mediaGate=evaluatePublicationEligibility(this.repository.db,job.entity_id);
+          if (!mediaGate.passed) throw Object.assign(new Error(`${mediaGate.code}: required media remains incomplete after the visual stage.`),{
+            code:mediaGate.code,retryable:false,details:mediaGate,
+          });
           if (this.canComposeFrontendPage) this.enqueueChild(job,"compose_frontend_page",job.entity_id);
           break;
         }

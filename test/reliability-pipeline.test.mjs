@@ -247,10 +247,13 @@ test('multi-image analysis keeps the visual Job lease until every slot is proces
     assert.fail('classified documentary photos should not reach generation in this lifecycle regression');
   }}});
   jobId=repository.enqueue('generate_visuals','draft-visual-analysis');
-  assert.equal(await pipeline.runOne(),true);
+  assert.equal(await pipeline.runOne(),false,
+    'analysis checkpoints alone cannot finish the stage while required image delivery remains incomplete');
   assert.deepEqual(observedStatuses,['running','running','running']);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM source_asset_analyses WHERE source_id=?').get(source.id).n,3);
-  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status,'succeeded');
+  const job=db.prepare('SELECT status,last_failure_code FROM jobs WHERE id=?').get(jobId);
+  assert.equal(job.status,'failed');
+  assert.equal(job.last_failure_code,'MEDIA_INCOMPLETE');
 });
 
 test('a persisted required-media gap stops the visual stage before generation or page delivery', async t => {

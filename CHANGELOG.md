@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.57 - Unreleased
+
+- Require the live media manifest, file hashes and independent image QA to pass before a visual Job can succeed or enqueue page composition. A skipped required slot now leaves the article in `needs_review` with an explicit `MEDIA_INCOMPLETE` failure and preserved body/media.
+
 ## 2.0.56 - Unreleased
 
 - Mark a historical photo refresh as blocked when its live required-media manifest or file/QA gate fails, even if normalized planning proposes no visual change. Surface the exact media gate in the dry-run result instead of reporting a misleading no-op.

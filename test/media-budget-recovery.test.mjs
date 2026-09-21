@@ -93,3 +93,37 @@ test('exhausted image step resumes only missing visual after an explicit durable
   assert.equal(db.prepare("SELECT body_markdown FROM article_drafts WHERE id='media-draft'").get().body_markdown,
     'Preserved evidence-led body.');
 });
+
+test('a visual Job cannot succeed while a required planned slot remains unfinished',async t=>{
+  const {db,repository}=repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,
+    evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('topic','beijing','media','Media replay','fixture',80,0,0,'drafted','now','now')`).run();
+  db.prepare(`INSERT INTO content_opportunities(id,destination_slug,topic_key,strategy_version,candidate_id,title,
+    readiness_score,readiness_json,status,approved_at,created_at,updated_at,lifecycle_state)
+    VALUES ('owner','beijing','media','3.9','topic','Media replay',100,'{"ready":true}',
+      'producing','now','now','now','producing')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,
+    updated_at,candidate_id) VALUES ('brief','beijing','Media','[]','informational','drafted','now','now','topic')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,
+    created_at,updated_at,revision,content_hash) VALUES ('draft','brief','Media','media','Preserved body','{}',
+    'drafted','now','now',1,'body-hash')`).run();
+  repository.replaceDraftVisuals('draft',[{placement:'hero',purpose:'Required guide illustration',
+    alt_text:'Guide illustration',caption:'',generation_prompt:'Travel scene',aspect_ratio:'16:9',
+    image_type:'illustration',image_role:'hero',image_subject:'Travel scene',
+    acquisition_strategy:'generate_illustration',factual_image_required:false,required_in_article:true,
+    media_metadata:{required_visual_obligation:{required:true}},status:'planned'}],'3.9');
+  repository.ensureAuthorizedSourceVisuals=()=>repository.listDraftVisuals('draft');
+  repository.plannedVisuals=()=>[]; // Reproduces a transient or stale stage selection.
+  const pipeline=new Pipeline(repository,{config:{}},{visuals:{enabled:true,
+    async generate(){throw new Error('The missing visual must not be fabricated.');}}});
+  const jobId=repository.enqueue('generate_visuals','draft',{
+    dedupeKey:'missing-required-slot',productionOwnerOpportunityId:'owner'});
+  assert.equal(await pipeline.runOne(),false);
+  const job=db.prepare('SELECT status,last_failure_code FROM jobs WHERE id=?').get(jobId);
+  assert.equal(job.status,'failed');
+  assert.equal(job.last_failure_code,'MEDIA_INCOMPLETE');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='compose_frontend_page'").get().n,0);
+  assert.equal(db.prepare("SELECT status FROM article_drafts WHERE id='draft'").get().status,'needs_review');
+  assert.equal(db.prepare("SELECT body_markdown FROM article_drafts WHERE id='draft'").get().body_markdown,'Preserved body');
+});
