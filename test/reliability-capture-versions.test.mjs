@@ -106,6 +106,15 @@ test('complete recapture retains referenced images and evidence spans while curr
   const frozenMedia=repository.authorizedSourceAssetsForBrief({destination_slug:'chongqing',evidence_ledger_json:'[]'},
     {packet:{context:{version:2,authorized_source_assets:[{id:asset.id}]}}});
   assert.deepEqual(frozenMedia.map(item=>item.id),[asset.id],'frozen Packet can retain its old authorized photo after recapture');
+  db.prepare(`INSERT INTO claims(id,source_id,normalized_key,subject,predicate,value_text,
+    qualifiers_json,source_quote,confidence,created_at,canonical_subject,evidence_span_ids_json)
+    VALUES ('photo-claim',?,'old_entrance','Old entrance','location','east bank',
+      '{}','Old entrance',0.9,'now','Historic old entrance',?)`)
+    .run(first.id,JSON.stringify(['old-span','old-span']));
+  const evidenced=repository.authorizedSourceAssetsForBrief({destination_slug:'chongqing',evidence_ledger_json:'[]'},
+    {packet:{context:{version:2,authorized_source_assets:[{id:asset.id}]}}});
+  assert.equal(evidenced[0].evidence_subject,'Historic old entrance');
+  assert.equal(evidenced[0].evidence_text,'Historic old entrance Old entrance location east bank');
   assert.deepEqual(repository.authorizedSourceAssetsForBrief({destination_slug:'chongqing',evidence_ledger_json:'[]'},
     {packet:{context:{version:2,authorized_source_assets:[]}}}),[]);
   assert.equal(db.prepare('SELECT source_asset_id FROM article_visuals').get().source_asset_id,asset.id);

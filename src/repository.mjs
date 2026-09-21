@@ -5906,12 +5906,12 @@ export class Repository {
     return this.listDraftVisuals(draftId);
   }
 
-  mediaRepairPlan(draftId, { strategyVersion = null } = {}) {
+  mediaRepairPlan(draftId, { strategyVersion = null, contentPackage = null } = {}) {
     const current=this.listDraftVisuals(draftId);
     const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
     if (!row) return { plan_hash:sha256(`missing:${draftId}`),slots:[] };
-    const contentPackage=this.getBriefPackage(row.brief_id);
+    contentPackage ||= this.getBriefPackage(row.brief_id);
     const currentSourceIds=new Set(current.map((visual)=>visual.source_asset_id).filter(Boolean));
     const failedSourceIds=new Set(this.db.prepare(`SELECT DISTINCT source_asset_id FROM visual_candidates
       WHERE draft_id=? AND status='qa_failed' AND source_asset_id IS NOT NULL`).all(draftId).map((item)=>item.source_asset_id));
@@ -5963,30 +5963,37 @@ export class Repository {
     const ids=[...new Set(draftIds.map(String).filter(Boolean))];
     if (!ids.length || ids.length>20) throw conflictError('Select 1-20 article draft IDs for photo refresh.');
     const items=ids.map((draftId)=>{
-      const pkg=this.getDraftPackage(draftId);
-      if (!pkg?.draft) return {draft_id:draftId,disposition:'blocked',reason:'draft_missing'};
-      const publication=pkg.publication;
+      const draft=this.db.prepare('SELECT * FROM article_drafts WHERE id=?').get(draftId);
+      if (!draft) return {draft_id:draftId,disposition:'blocked',reason:'draft_missing'};
+      const brief=this.db.prepare('SELECT * FROM content_briefs WHERE id=?').get(draft.brief_id);
+      const contentPackage={facts:this.getTopicPackage(brief.candidate_id)?.facts || [],
+        writing_packet:this.getWritingPacket(brief.id)};
+      const evidenceHash=evidenceHashForFacts(contentPackage?.facts || []);
+      const review=this.db.prepare(`SELECT * FROM quality_reviews
+        WHERE draft_id=? AND draft_revision=? AND draft_content_hash=? AND evidence_hash=?
+        ORDER BY created_at DESC LIMIT 1`).get(draftId,draft.revision,draft.content_hash,evidenceHash);
+      const publication=this.db.prepare('SELECT * FROM wordpress_publications WHERE draft_id=?').get(draftId);
       const postId=Number(publication?.post_id || 0);
       const siteUrl=publication?.site_url || '';
       const inventory=postId ? this.db.prepare('SELECT * FROM wordpress_content_inventory WHERE site_url=? AND post_id=?')
         .get(siteUrl,postId) : null;
       const sync=postId ? this.getWordPressSyncState(siteUrl) : null;
       const inventoryAge=sync?.last_succeeded_at ? Date.now()-Date.parse(sync.last_succeeded_at) : Infinity;
-      const media=this.mediaRepairPlan(draftId,{strategyVersion:'3.9'});
+      const media=this.mediaRepairPlan(draftId,{strategyVersion:'3.9',contentPackage});
       const active=this.db.prepare("SELECT 1 FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1").get(draftId);
       let disposition='eligible'; let reason='local_photo_refresh';
-      if (!pkg.review?.passed) {disposition='blocked';reason='independent_article_qa_missing';}
+      if (!review?.passed) {disposition='blocked';reason='independent_article_qa_missing';}
       else if (active) {disposition='blocked';reason='active_article_job';}
       else if (!media.slots.some((slot)=>['repair','remove'].includes(slot.disposition))) {disposition='noop';reason='no_photo_change';}
       else if (media.slots.some((slot)=>slot.disposition==='blocked')) {disposition='blocked';reason='required_photo_needs_review';}
       else if (postId && (!Number.isFinite(inventoryAge) || inventoryAge<0 || inventoryAge>600_000)) {
         disposition='blocked';reason='wordpress_inventory_stale';
-      } else if (postId && inventory?.status !== (pkg.draft.status==='published' ? 'publish' : 'draft')) {
+      } else if (postId && inventory?.status !== (draft.status==='published' ? 'publish' : 'draft')) {
         disposition='blocked';reason='wordpress_status_mismatch';
       }
-      return {draft_id:draftId,title:pkg.draft.title,revision:pkg.draft.revision,
-        strategy_version:pkg.draft.strategy_version,status:pkg.draft.status,post_id:postId || null,
-        wordpress_status:inventory?.status || null,review_id:pkg.review?.id || null,
+      return {draft_id:draftId,title:draft.title,revision:draft.revision,
+        strategy_version:draft.strategy_version,status:draft.status,post_id:postId || null,
+        wordpress_status:inventory?.status || null,review_id:review?.id || null,
         disposition,reason,media};
     });
     const confirmation=sha256(JSON.stringify(items.map(({draft_id,revision,strategy_version,status,post_id,
@@ -8258,7 +8265,7 @@ export class Repository {
         WHERE current.source_id IN (${sourceIds.map(() => "?").join(",")}))`);
       parameters.push(...sourceIds);
     }
-    return this.db.prepare(`
+    const assets=this.db.prepare(`
       SELECT sa.id, sa.source_id, sa.remote_url, sa.local_path, sa.mime_type, sa.alt_text, sa.position,
         sa.width,sa.height,sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
         sa.original_sha256,sa.capture_version,sa.local_photo_audit_json,saa.analysis_status,saa.asset_kind,saa.text_regions_json,saa.photo_regions_json,
@@ -8266,17 +8273,7 @@ export class Repository {
         saa.reader_text_present,saa.confidence AS analysis_confidence,saa.analysis_version,saa.prompt_version,
         saa.source_sha256 AS analysis_source_sha256,
         sa.authorization_status AS asset_authorization_status,sa.publishable AS asset_publishable,
-        s.title AS source_title,s.authorization_status AS source_authorization_status,s.publishable AS source_publishable,
-        COALESCE((SELECT COALESCE(NULLIF(c.canonical_subject,''),c.subject)
-          FROM claims c WHERE c.source_id=sa.source_id AND EXISTS (
-            SELECT 1 FROM json_each(c.evidence_span_ids_json) ids
-            JOIN evidence_spans es ON es.id=ids.value WHERE es.asset_id=sa.id
-          ) ORDER BY c.created_at ASC,c.id ASC LIMIT 1), '') AS evidence_subject,
-        COALESCE((SELECT group_concat(canonical_subject || ' ' || subject || ' ' || predicate || ' ' || value_text, ' ')
-          FROM claims c WHERE c.source_id=sa.source_id AND EXISTS (
-            SELECT 1 FROM json_each(c.evidence_span_ids_json) ids
-            JOIN evidence_spans es ON es.id=ids.value WHERE es.asset_id=sa.id
-          )), '') AS evidence_text
+        s.title AS source_title,s.authorization_status AS source_authorization_status,s.publishable AS source_publishable
       FROM source_assets sa JOIN sources s ON s.id=sa.source_id
       LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id
       WHERE sa.kind='image' AND sa.storage_status='saved' AND sa.local_path<>''
@@ -8284,7 +8281,28 @@ export class Repository {
         AND (${scopes.join(" OR ")})
       ORDER BY s.captured_at DESC, sa.position ASC
       LIMIT 160
-    `).all(...parameters).map(hydrateSourceAssetAnalysis);
+    `).all(...parameters);
+    if (!assets.length) return [];
+    const byId=new Map(assets.map((asset)=>[asset.id,{asset,claims:new Map()}]));
+    const evidenceSourceIds=[...new Set(assets.map((asset)=>asset.source_id))];
+    const evidence=this.db.prepare(`SELECT c.id,c.source_id,c.created_at,c.canonical_subject,c.subject,
+        c.predicate,c.value_text,es.asset_id FROM claims c
+      JOIN json_each(c.evidence_span_ids_json) ids
+      JOIN evidence_spans es ON es.id=ids.value
+      WHERE c.source_id IN (${evidenceSourceIds.map(()=>'?').join(',')})
+        AND es.asset_id IN (${assets.map(()=>'?').join(',')})
+      ORDER BY c.created_at ASC,c.id ASC`).all(...evidenceSourceIds,...assets.map((asset)=>asset.id));
+    for (const claim of evidence) {
+      const entry=byId.get(claim.asset_id);
+      if (entry?.asset.source_id===claim.source_id) entry.claims.set(claim.id,claim);
+    }
+    return assets.map((asset)=>{
+      const claims=[...byId.get(asset.id).claims.values()];
+      return hydrateSourceAssetAnalysis({...asset,
+        evidence_subject:claims.length ? (claims[0].canonical_subject || claims[0].subject || '') : '',
+        evidence_text:claims.map((claim)=>[claim.canonical_subject,claim.subject,
+          claim.predicate,claim.value_text].join(' ')).join(' ')});
+    });
   }
 
   retrySource(sourceId) {

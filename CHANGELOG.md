@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.52 - Unreleased
+
+- Replace per-photo correlated claim/evidence scans with one bounded evidence lookup for the selected source assets. Keep image subjects and evidence text tied to the same source and deduplicate repeated span references.
+- Plan historical article photo refresh from the current draft, independent review, and one shared brief context without constructing the full editorial detail twice. A local production-copy run of 13 drafts fell from 25.5 seconds to 12.1 seconds with the same dispositions and repair counts.
+
 ## 2.0.51 - Unreleased
 
 - Restrict Settings and Dashboard recovery checks to system-level failures before probing successful jobs; the live read-only query fell from a multi-second all-success scan to about 252 ms under photo-audit load.
