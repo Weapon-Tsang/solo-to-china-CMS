@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.55 - Unreleased
+
+- Fill remaining article visual slots with relevant analyzed Chinese information graphics as well as qualified original photographs. Graphics still require English localization and independent image QA; qualified originals use no Provider request.
+- Reattach historical transformed image files only when their bytes match the recorded SHA-256, their four independent QA decisions passed, and the frozen visual plan still matches. Skip failed and unknown outcomes, and provide a guarded dry-run/apply repair command.
+
 ## 2.0.54 - Unreleased
 
 - Treat a generated visual whose local bytes are absent as incomplete even when its old row says `generated`. Replan that slot without discarding successful article text or other valid images.

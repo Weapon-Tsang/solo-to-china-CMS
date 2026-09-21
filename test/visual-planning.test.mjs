@@ -490,6 +490,29 @@ test("an existing visual plan can be topped up with additional relevant source p
   assert.equal(output.filter((item)=>item.source_asset_id).length,2);
 });
 
+test('strategy 3.9 uses qualified originals and still plans relevant Chinese information graphics for English localization',()=>{
+  const photoHash='a'.repeat(64);
+  const common={remote_url:'https://media.test/asset.png',mime_type:'image/png',
+    storage_status:'saved',original_bytes_status:'saved_original',durability_status:'ORIGINAL_STORED',
+    width:1600,height:1200,evidence_text:'Chongqing food guide hotpot restaurant menu',
+    nearby_text:'Chongqing food guide hotpot restaurant menu'};
+  const assets=[{...common,id:'photo',alt_text:'Chongqing hotpot restaurant dining room',
+    caption_text:'Chongqing hotpot restaurant dining room',language_status:'no_text',
+    asset_kind:'documentary_photo',analysis_status:'ready',analysis_version:'media-analysis-2',
+    original_sha256:photoHash,local_photo_audit:{status:'eligible',sha256:photoHash}},
+  {...common,id:'card',alt_text:'Chongqing hotpot restaurant menu guide',
+    caption_text:'Chongqing hotpot restaurant menu guide',language_status:'chinese',
+    asset_kind:'editorial_infographic',analysis_status:'ready',analysis_version:'media-analysis-2',
+    reader_text_present:true,text_regions:[{region_id:'menu',role:'editorial_text',language:'zh',
+      text:'重庆火锅菜单',readable:true,preserve:false}]}];
+  const output=normalizeVisuals([],{title:'Chongqing food guide',body_markdown:'Chongqing hotpot restaurant menu guide',
+    strategy_version:'3.9'},{destination_slug:'chongqing'},assets,{visuals:{target:2,maximum:5}});
+  assert.deepEqual(new Set(output.map((visual)=>visual.source_asset_id)),new Set(['photo','card']));
+  assert.equal(output.find((visual)=>visual.source_asset_id==='photo').acquisition_strategy,'use_authorized_source_image');
+  assert.equal(output.find((visual)=>visual.source_asset_id==='card').acquisition_strategy,'recompose_editorial_card');
+  assert.equal(output.find((visual)=>visual.source_asset_id==='card').status,'planned');
+});
+
 test("an equal-count media plan repairs only the stale source slot and preserves successful metadata",()=>{
   const current=[
     {source_asset_id:"card",image_type:"real_world_photo",image_subject:"Chongqing route card",placement:"hero",

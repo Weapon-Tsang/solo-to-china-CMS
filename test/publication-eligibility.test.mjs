@@ -7,6 +7,7 @@ import { repositoryFixture } from '../test-support/repository-fixture.mjs';
 import { freezeRequiredMediaManifest, evaluatePublicationEligibility } from '../src/publication-eligibility.mjs';
 import { assertPublicationEligibility } from '../src/publication-eligibility.mjs';
 import { WordPressDraftAdapter } from '../src/wordpress.mjs';
+import { recoverLegacyVisualReceipts } from '../src/services/legacy-visual-receipts.mjs';
 
 function seed(t, count = 3) {
   const { db, directory, repository } = repositoryFixture(t);
@@ -68,6 +69,42 @@ test('a cached article payload cannot bypass the latest database gate at WordPre
   adapter.deliveryGuard=(draftId,options)=>assertPublicationEligibility(db,draftId,options);
   await assert.rejects(adapter.upsertDraft(cached,null,{draftId:'draft'}),{code:'MEDIA_MANIFEST_MISSING_OR_STALE'});
   assert.equal(remoteCalls,0);
+});
+
+test('legacy successful image bytes and independent QA are rebound by SHA without another provider call', (t) => {
+  const {db,directory}=seed(t,1);
+  const bytes=fs.readFileSync(path.join(directory,'image-1.png'));
+  const hash=crypto.createHash('sha256').update(bytes).digest('hex');
+  const recovered=path.join(directory,'draft-01-stored.png');
+  fs.writeFileSync(recovered,bytes);
+  const qa=Object.fromEntries(['language','completeness','style','semantic']
+    .map((field)=>[field,{status:'passed',reason:'Independent historical QA passed.'}]));
+  db.prepare("UPDATE article_visuals SET media_path=NULL,status='planned',media_metadata_json=? WHERE id='visual-1'")
+    .run(JSON.stringify({binary_qa:{status:'passed',sha256:hash},quality_qa:qa}));
+  freezeRequiredMediaManifest(db,'draft');
+  assert.equal(evaluatePublicationEligibility(db,'draft').passed,false);
+  assert.deepEqual(recoverLegacyVisualReceipts(db,'draft',directory).map(({id})=>id),['visual-1']);
+  assert.equal(recoverLegacyVisualReceipts(db,'draft',directory).length,0);
+  assert.equal(evaluatePublicationEligibility(db,'draft').passed,true);
+  const row=db.prepare("SELECT status,media_path,media_metadata_json FROM article_visuals WHERE id='visual-1'").get();
+  assert.equal(row.status,'generated');
+  assert.equal(row.media_path,recovered);
+  assert.equal(JSON.parse(row.media_metadata_json).quality_qa.file_hash,hash);
+});
+
+test('legacy image recovery refuses failed and changed-plan visuals', (t) => {
+  const {db,directory}=seed(t,1);
+  const bytes=fs.readFileSync(path.join(directory,'image-1.png'));
+  const hash=crypto.createHash('sha256').update(bytes).digest('hex');
+  fs.writeFileSync(path.join(directory,'draft-01-stored.png'),bytes);
+  const qa=Object.fromEntries(['language','completeness','style','semantic']
+    .map((field)=>[field,{status:'passed'}]));
+  db.prepare("UPDATE article_visuals SET media_path=NULL,status='failed',media_metadata_json=? WHERE id='visual-1'")
+    .run(JSON.stringify({binary_qa:{status:'passed',sha256:hash},quality_qa:qa}));
+  freezeRequiredMediaManifest(db,'draft');
+  assert.equal(recoverLegacyVisualReceipts(db,'draft',directory).length,0);
+  db.prepare("UPDATE article_visuals SET status='planned',asset_fingerprint='changed' WHERE id='visual-1'").run();
+  assert.equal(recoverLegacyVisualReceipts(db,'draft',directory).length,0);
 });
 
 test('a strategy 3.9 source photo requires its authoritative local audit, not visual metadata', (t) => {

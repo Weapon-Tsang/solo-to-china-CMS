@@ -38,6 +38,7 @@ import { persistCaptureAssets } from "./source-media-store.mjs";
 import { dependencyHash, semanticMaterial, PIPELINE_CONTRACT_VERSION } from './pipeline-contract.mjs';
 import { stepIdentity, readStepReceipt, saveStepReceipt } from './repositories/pipeline-step-receipts.mjs';
 import { mediaManifestForDraft } from './publication-eligibility.mjs';
+import { recoverLegacyVisualReceipts } from './services/legacy-visual-receipts.mjs';
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
 
@@ -6052,7 +6053,14 @@ export class Repository {
     return {...plan,mode:'apply',queued};
   }
 
-  prepareMediaRepair(draftId) { return this.ensureAuthorizedSourceVisuals(draftId); }
+  prepareMediaRepair(draftId) {
+    this.recoverLegacyVisualReceipts(draftId);
+    return this.ensureAuthorizedSourceVisuals(draftId);
+  }
+
+  recoverLegacyVisualReceipts(draftId) {
+    return recoverLegacyVisualReceipts(this.db,draftId,this.contentConfig.generatedMediaDir);
+  }
 
   replaceDraftVisuals(draftId, visuals, strategyVersion) {
     const timestamp = now();
@@ -9589,7 +9597,7 @@ export function contentPolicyFor(brief, facts = []) {
     faq: { required: false, allowed: faqSupported, minimum: 0, maximum: faqSupported ? 4 : 0 },
     visuals: { minimum: 0,
       target: substantialEvidence ? Math.min(12, Math.max(baseVisuals, Math.ceil(substantialEvidence / 2))) : 0,
-      maximum: type === "food_guide" ? 14 : 12, count_mode: "relevant_qualified_originals_up_to_cap" },
+      maximum: type === "food_guide" ? 14 : 12, count_mode: "relevant_originals_and_localized_information_up_to_cap" },
   };
 }
 
@@ -9923,24 +9931,30 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
   if (!freeOriginalPolicy && normalized.length >= target) return normalized;
   const fallbackAssets = [...unusedAssets.values()]
     .filter((asset)=>!unsafeAttractionAssetIds.has(asset.id))
-    .filter((asset)=>!freeOriginalPolicy || (asset.local_photo_audit?.status === 'eligible'
-      && asset.local_photo_audit.sha256 === asset.original_sha256))
-    .map((asset) => ({ asset, score: articleAssetMatchScore(draft, brief, asset) }))
+    .map((asset) => {
+      const subject=readerVisualAlt(asset,"",brief.destination_slug);
+      const decision=decideVisualAsset(asset,{image_subject:subject,purpose:`Evidence-linked view supporting ${draft.title}`});
+      const freeOriginal=decision.action === 'retain' && asset.local_photo_audit?.status === 'eligible'
+        && asset.local_photo_audit.sha256 === asset.original_sha256;
+      const usefulTranslation=decision.action === 'localize' && asset.analysis_status === 'ready'
+        && (decision.translateRegionIds?.length > 0 || /^(?:zh|chinese|mixed)/i.test(asset.language_status || ''));
+      return {asset,decision,score:articleAssetMatchScore(draft,brief,asset),
+        usable:!freeOriginalPolicy || freeOriginal || usefulTranslation};
+    })
+    .filter((entry)=>entry.usable)
     .filter((entry) => entry.score >= articleFallbackMinimum)
     .sort((left, right) => right.score - left.score || Number(right.asset.width || 0) * Number(right.asset.height || 0)
       - Number(left.asset.width || 0) * Number(left.asset.height || 0));
   const photoTarget = freeOriginalPolicy ? Math.min(maximum, normalized.length + fallbackAssets.length) : target;
   const usedOriginalHashes=new Set(normalized.map((visual)=>authorizedSourceAssets
     .find((asset)=>asset.id===visual.source_asset_id)?.original_sha256).filter(Boolean));
-  for (const { asset } of fallbackAssets) {
+  for (const { asset,decision } of fallbackAssets) {
     if (normalized.length >= photoTarget) break;
     if (asset.original_sha256 && usedOriginalHashes.has(asset.original_sha256)) continue;
     const index = normalized.length;
     const subject = readerVisualAlt(asset, "", brief.destination_slug);
     if (!subject) continue;
     const purpose=truncateText(`Evidence-linked view supporting ${draft.title}`,300);
-    const decision = decideVisualAsset(asset, { image_subject:subject, purpose });
-    if (freeOriginalPolicy && decision.action !== 'retain') continue;
     if (decision.action === "reject") continue;
     const needsWork = ["localize","analyze"].includes(decision.action);
     const acquisitionStrategy=visualAcquisitionStrategy(decision);

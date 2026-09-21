@@ -64,6 +64,7 @@ export function createApplication(config = loadConfig()) {
   const repository = new Repository(db, {
     ...config.content, ...config.extraction, contentStrategy: config.contentStrategy,
     sourceUploadsDir: config.manualSources.uploadDir,
+    generatedMediaDir: config.generatedMediaDir,
     sourceComplexityRouting: config.extraction.sourceComplexityRouting === true,
     searchConsoleMinimumImpressions: config.searchConsole.minimumImpressions,
     affiliateOpportunityThreshold: config.commercial.opportunityThreshold,

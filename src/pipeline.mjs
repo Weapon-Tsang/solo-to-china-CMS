@@ -860,6 +860,7 @@ export class Pipeline {
         }
         case "generate_visuals": {
           if (!this.visuals?.enabled) throw new Error("Visual generation is not configured.");
+          this.repository.recoverLegacyVisualReceipts?.(job.entity_id);
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           const analysisVisuals=this.repository.plannedVisuals(job.entity_id)
@@ -894,6 +895,7 @@ export class Pipeline {
             this.repository.prepareMediaRepair(job.entity_id);
           }
           freezeRequiredMediaManifest(this.repository.db, job.entity_id);
+          this.repository.recoverLegacyVisualReceipts?.(job.entity_id);
           contentPackage = this.repository.getDraftPackage(job.entity_id);
           const requiredGaps=this.repository.blockedRequiredVisuals?.(job.entity_id) || [];
           if (requiredGaps.length) throw Object.assign(new Error("Required factual visual has no relevant retained authorized source."),{
