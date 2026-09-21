@@ -5943,15 +5943,17 @@ export class Repository {
       const transform=visual.acquisition_strategy;
       const requiresModel=["analyze_source_image","localize_source_image","localize_photo_overlay","recompose_editorial_card",
         "recompose_collage","recompose_map_or_route","generate_illustration"].includes(transform);
+      const requiresGeneratedFile=requiresModel && transform!=="analyze_source_image";
+      const generatedFileMissing=requiresGeneratedFile && (!existing?.media_path || !fs.existsSync(existing.media_path));
       const needsQualityQa=requiresModel && transform !== "analyze_source_image" && transform !== "generate_illustration";
       const requiredGap=visual.media_metadata?.required_visual_gap || null;
       const repair=changed || ["planned","failed"].includes(existing?.status)
-        || binary === "failed" || (needsQualityQa && qa !== "passed");
+        || binary === "failed" || generatedFileMissing || (needsQualityQa && qa !== "passed");
       return { visual_id:existing?.id || null,slot:index+1,source_asset_id:visual.source_asset_id || null,
         old_media_url:existing?.wordpress_media_url || existing?.media_url || null,
         old_media_sha256:metadata.binary_qa?.sha256 || metadata.pixel_qa?.sha256 || null,
         disposition:requiredGap ? "blocked" : repair ? "repair" : "retain",
-        reason:requiredGap ? `required_visual_${requiredGap.reason}` : changed ? "visual_fingerprint_changed" : existing?.status === "failed" ? "visual_failed"
+        reason:requiredGap ? `required_visual_${requiredGap.reason}` : changed ? "visual_fingerprint_changed" : generatedFileMissing ? "generated_file_missing" : existing?.status === "failed" ? "visual_failed"
           : existing?.status === "planned" ? "visual_incomplete" : binary === "failed" ? "binary_qa_failed"
             : needsQualityQa && qa !== "passed" ? `quality_qa_${qa}` : "qualified_visual_retained",
         acquisition_strategy:transform,requires_model:!requiredGap && repair && requiresModel,
@@ -5992,7 +5994,8 @@ export class Repository {
       else if (media.slots.some((slot)=>slot.disposition==='blocked')) {disposition='blocked';reason='required_photo_needs_review';}
       else if (postId && (!Number.isFinite(inventoryAge) || inventoryAge<0 || inventoryAge>600_000)) {
         disposition='blocked';reason='wordpress_inventory_stale';
-      } else if (postId && inventory?.status !== (draft.status==='published' ? 'publish' : 'draft')) {
+      } else if (postId && draft.status!=='needs_review'
+        && inventory?.status !== (draft.status==='published' ? 'publish' : 'draft')) {
         disposition='blocked';reason='wordpress_status_mismatch';
       }
       return {draft_id:draftId,title:draft.title,revision:draft.revision,
@@ -6067,7 +6070,9 @@ export class Repository {
           image_role=excluded.image_role, image_subject=excluded.image_subject,
           acquisition_strategy=excluded.acquisition_strategy, factual_image_required=excluded.factual_image_required,
           source_asset_id=excluded.source_asset_id, source_remote_url=excluded.source_remote_url,
-          status=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.status ELSE excluded.status END,
+          status=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint
+            AND NOT (excluded.status='planned' AND article_visuals.status='generated')
+            THEN article_visuals.status ELSE excluded.status END,
           media_path=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_path ELSE NULL END,
           media_url=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_url ELSE excluded.media_url END,
           wordpress_media_id=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.wordpress_media_id ELSE NULL END,
@@ -6084,10 +6089,17 @@ export class Repository {
       `);
       visuals.forEach((visual, index) => {
         const fingerprint = visualFingerprint(visual);
+        const prior=existing.get(index + 1);
+        const needsGeneratedFile=["localize_source_image","localize_photo_overlay","recompose_editorial_card",
+          "recompose_collage","recompose_map_or_route","generate_illustration"].includes(visual.acquisition_strategy);
+        const missingGeneratedFile=needsGeneratedFile && (!prior?.media_path || !fs.existsSync(prior.media_path));
+        const sameFingerprint=prior?.asset_fingerprint===fingerprint;
+        const plannedStatus=needsGeneratedFile && (missingGeneratedFile || !sameFingerprint)
+          ? 'planned' : sameFingerprint ? prior.status : visual.status || 'planned';
         upsert.run(existing.get(index + 1)?.id || id("visual"), draftId, index + 1, visual.placement, visual.purpose,
         visual.alt_text, visual.caption, visual.generation_prompt, visual.aspect_ratio, strategyVersion, visual.image_type,
         visual.image_role, visual.image_subject, visual.acquisition_strategy, visual.factual_image_required ? 1 : 0,
-        visual.source_asset_id || null, visual.source_remote_url || null, visual.status || "planned", visual.media_url || null,
+        visual.source_asset_id || null, visual.source_remote_url || null, plannedStatus, visual.media_url || null,
         visual.provider || null, visual.model || null, timestamp, timestamp, fingerprint, JSON.stringify(visual.media_metadata || {}));
       });
       this.db.prepare("DELETE FROM article_visuals WHERE draft_id=? AND slot>?").run(draftId, visuals.length);

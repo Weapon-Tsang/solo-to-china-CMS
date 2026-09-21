@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.54 - Unreleased
+
+- Treat a generated visual whose local bytes are absent as incomplete even when its old row says `generated`. Replan that slot without discarding successful article text or other valid images.
+- Allow photo repair on a remotely published WordPress post while its CMS draft is in `needs_review`; the review blocker still prevents delivery until current visual and article gates pass.
+
 ## 2.0.53 - Unreleased
 
 - Show the last observed WordPress publish or draft state beside the CMS production blocker in Content list and detail. Keep `needs_review` as an independent delivery gate so a published post with a new media problem is visibly published and visibly blocked.

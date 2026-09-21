@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
 import { repositoryFixture } from '../test-support/repository-fixture.mjs';
+import { png } from '../test-support/media-fixtures.mjs';
 import { dependencyHash, stageConfiguration } from '../src/pipeline-contract.mjs';
 import { sourceProcessingProfile } from '../src/source-processing-profile.mjs';
 import { Pipeline } from '../src/pipeline.mjs';
@@ -125,7 +128,7 @@ test('authorized visual seeding is frozen before the page artifact input snapsho
 });
 
 test('page composition preserves an existing generated visual plan instead of reseeding it', async t => {
-  const {repository,db}=repositoryFixture(t);
+  const {repository,db,directory}=repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
     VALUES ('topic-visual-preserve','chongqing','visual-preserve','Ciqikou guide','fixture',80,0,0,'drafted','now','now')`).run();
   db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
@@ -137,6 +140,10 @@ test('page composition preserves an existing generated visual plan instead of re
     aspect_ratio:'16:9',image_type:'editorial_card',image_role:'hero',image_subject:'Ciqikou food',
     acquisition_strategy:'recompose_editorial_card',factual_image_required:true,status:'generated',
   }],'3.8');
+  const generatedPath=path.join(directory,'visual-preserve.png');
+  fs.writeFileSync(generatedPath,png);
+  db.prepare("UPDATE article_visuals SET media_path=?,status='generated' WHERE draft_id='draft-visual-preserve'")
+    .run(generatedPath);
   const before=repository.listDraftVisuals('draft-visual-preserve')[0];
   let reseedCalls=0;
   repository.ensureAuthorizedSourceVisuals=()=>{ reseedCalls++; repository.replaceDraftVisuals('draft-visual-preserve',[{
@@ -160,7 +167,7 @@ test('page composition preserves an existing generated visual plan instead of re
 });
 
 test('bounded prose revision preserves qualified visuals and continues with page composition', async t => {
-  const {repository,db}=repositoryFixture(t);
+  const {repository,db,directory}=repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
     VALUES ('topic-revision-visual','chongqing','revision-visual','Ciqikou guide','fixture',80,0,0,'drafted','now','now')`).run();
   db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
@@ -174,6 +181,10 @@ test('bounded prose revision preserves qualified visuals and continues with page
     acquisition_strategy:'recompose_editorial_card',factual_image_required:true,status:'generated',media_url:'/media/qualified.png',
     media_metadata:{quality_qa:{language:{status:'passed'},completeness:{status:'passed'},style:{status:'passed'},semantic:{status:'passed'}}},
   }],'3.8');
+  const qualifiedPath=path.join(directory,'qualified.png');
+  fs.writeFileSync(qualifiedPath,png);
+  db.prepare("UPDATE article_visuals SET media_path=?,status='generated' WHERE draft_id='draft-revision-visual'")
+    .run(qualifiedPath);
   const before=repository.listDraftVisuals('draft-revision-visual')[0];
   db.prepare('DELETE FROM jobs').run();
   const contentEngine={enabled:true,config:{provider:'fixture',model:'fixture'},async repairDraft(contentPackage){
