@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.56 - Unreleased
+
+- Mark a historical photo refresh as blocked when its live required-media manifest or file/QA gate fails, even if normalized planning proposes no visual change. Surface the exact media gate in the dry-run result instead of reporting a misleading no-op.
+- Persist article-bound analysis of a saved historical source image when the Source has since been recaptured; reject a failed checkpoint instead of marking the image Job successful and leaving its required slot planned.
+
 ## 2.0.55 - Unreleased
 
 - Fill remaining article visual slots with relevant analyzed Chinese information graphics as well as qualified original photographs. Graphics still require English localization and independent image QA; qualified originals use no Provider request.

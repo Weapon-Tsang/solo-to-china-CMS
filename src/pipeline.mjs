@@ -880,9 +880,13 @@ export class Pipeline {
             // subsequent image fail with JOB_LEASE_LOST.  Keep each analysis
             // durable, then finish the stage only after every slot below has
             // been classified and processed.
-            const saveAnalysis=()=>this.repository.saveSourceAssetAnalysis(visual.source_asset_id,analyzed.result,{
-              provider:analyzed.method,model:analyzed.model,
-            });
+            const saveAnalysis=()=>{
+              if (!this.repository.saveSourceAssetAnalysis(visual.source_asset_id,analyzed.result,{
+                provider:analyzed.method,model:analyzed.model,forVisualId:visual.id,
+              })) throw Object.assign(new Error('Image analysis could not be bound to its current article visual.'),{
+                code:'MEDIA_ANALYSIS_CHECKPOINT_REJECTED',retryable:false,
+              });
+            };
             if (typeof this.repository.checkpointPipelineStage === "function") {
               this.repository.checkpointPipelineStage(job,pipelineArtifact,saveAnalysis);
             } else saveAnalysis();

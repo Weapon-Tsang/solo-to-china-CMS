@@ -87,7 +87,7 @@ The 2026-09-21 production snapshot also passed a full isolated restore drill: 1,
 | M29 | PARTIAL | Existing telemetry tests; all listed provider failure modes not replayed here. |
 | M30 | PARTIAL | Existing schema/role tests; unknown stage and v2/v3 historical report cases incomplete. |
 | M31 | PARTIAL | Existing source batch/coverage tests; full Golden Source batch replay untested. |
-| M32 | PARTIAL | Schema-69 and latest schema-73 snapshot migrations preserve old IDs/content; full media and recovery compatibility still pending. |
+| M32 | PARTIAL | Current production schema 73-to-78 migration, backup/restore rehearsal and full ID/content fingerprint check passed; full media and recovery compatibility remains incomplete. |
 | M33 | PARTIAL | Draft-only adapter and previous-post handling tested locally. |
 | M34 | PARTIAL | Local browser recovery changed counts and displayed the persisted target; full worker completion and production-like corpus untested. |
 | M35 | PARTIAL | Follow-up 2.0.48 local media-stage replay covers two 429 responses, exhaustion, grant, fresh executor and only-missing-image recovery with unchanged body/first-image hash. Full bundle-to-independent-QA-to-mock-WordPress chain remains NOT TESTED. |
@@ -97,7 +97,7 @@ The 2026-09-21 production snapshot also passed a full isolated restore drill: 1,
 | B03 | PARTIAL | Account/view/page/filter key; role-switch and credential persistence audit incomplete. |
 | B04 | PARTIAL | 20/50 SQL pages for primary lists; full commercial sublists still broad. |
 | B05 | PARTIAL | Source/Knowledge SQL filters; deep-page needs-review filter case incomplete. |
-| B06 | PARTIAL | Bounded list SQL; Content still 95 SQL executions per 20 rows. |
+| B06 | PARTIAL | On the same production snapshot, Content list fell from 119 to 25 executed SQL statements per 20 rows; nested detail and other broad lists remain open. |
 | B07 | PARTIAL | Keyset Source/Knowledge; offset page mutation policy incomplete. |
 | B08 | PARTIAL | Playwright observed one page-2 prefetch and one page-3 prefetch after navigation; hidden/no-loop edge tests pending. |
 | B09 | PARTIAL | Foreground navigation and mutation abort prefetch; slow-network race test pending. |
@@ -111,15 +111,15 @@ The 2026-09-21 production snapshot also passed a full isolated restore drill: 1,
 | B17 | LOCAL | Second SQLite connection invalidates summary before TTL. |
 | B18 | PARTIAL | Read-only local HTTP routes; zero paid calls by fixture; all GET side effects not audited. |
 | B19 | LOCAL | API and worker run in two actual processes against one test DB. |
-| B20 | NOT TESTED | No active rebuild/image workload response/lag measurement. |
+| B20 | NOT TESTED | 217 live requests were measured with the separate production Worker process up; a simultaneous active image transform and browser menu/paint run is still missing. |
 | B21 | PARTIAL | Shared-lock and migration tests; active lease/restart scenario incomplete. |
 | B22 | PARTIAL | Single visible view; render profiling and mobile duplicate-tree audit incomplete. |
 | B23 | PARTIAL | Vite build passes; split/chunk and original-image preload audit incomplete. |
 | B24 | PARTIAL | Summary TTL and data-version invalidation; broader query single-flight test incomplete. |
 | B25 | PARTIAL | Existing bulk semantics tests; cross-page browser selection untested. |
-| B26 | PARTIAL | Same-fixture local cold/warm report; active worker baseline and several before fields null. |
+| B26 | PARTIAL | Same-snapshot cold/warm P50/P95, bytes, SQL and loopback client event-loop report exists; live 217-request samples are recorded, but busy-worker before/after was not controlled. |
 | B27 | PARTIAL | Server routes measured; agreed network/browser target measurement unavailable. |
-| B28 | PARTIAL | No Redis added; Content N+1 and current-production load remain open. |
+| B28 | PARTIAL | No Redis added; Content SQL count improved to 25 per 20-row local response, while live Content P95 remains variable and a busy-worker browser profile is open. |
 | X01 | NOT TESTED | Complete two-worker/browser/model failure chain not run. |
 | X02 | NOT TESTED | Menus and pages under media 429 load not run. |
 | X03 | PARTIAL | Local stale payload reached the WordPress adapter after Draft revision changed and was blocked before any remote request; browser race not run. |
@@ -127,8 +127,12 @@ The 2026-09-21 production snapshot also passed a full isolated restore drill: 1,
 | X05 | PARTIAL | Local mock WP delivery; exact multi-image final chain missing. |
 | X06 | NOT TESTED | Concurrent recovery, stale poll and prefetch chain not run. |
 | X07 | PARTIAL | Lease and unknown-result rules tested separately; combined race not run. |
-| X08 | PARTIAL | Historical migration and old/new pipeline tests; current-data rollback replay unavailable. |
+| X08 | PARTIAL | Current-data backup, schema migration rehearsal, 2.0.55 twelve-row repair rehearsal and restore-copy fingerprint passed; an actual live rollback and complete historical pipeline replay were not executed. |
 
 ## Next development work before claiming v2.0 complete
 
-Verify next-page prefetch priority with Playwright, paginate commercial opportunity/queue and nested detail lists, reduce Content's 95 SQL executions per page, expose a versioned status summary, then execute M35/X01–X07 fault injection with an isolated current-production copy and Playwright. A separately authorized, bounded real Provider canary is required for schema acceptance and semantic quality. Repeat cold/hot and active-worker measurements in the same environment, record browser timing and compare the new article output against the existing quality corpus before proposing release.
+The original 72-item ledger retains conservative statuses: 12 LOCAL, 55 PARTIAL and 5 NOT TESTED before the row-note updates above. A local pass has not been converted to end-to-end production PASS without its corresponding real flow. The current release and same-snapshot/live measurements are detailed in `CMS_2.0.49_PERFORMANCE_AND_MEDIA_2026-09-22.md`. Separate API and Worker containers now run against one production SQLite volume; the historical photo audit imported 229 SHA-bound local receipts without Provider calls, and 2.0.55 rebound 12 successful visual QA/file receipts after an exact production-copy rehearsal. The production WordPress inventory has two published and ten draft posts. A remotely published post can simultaneously carry a CMS `needs_review` blocker. Real image generation/localization and independent image QA were observed, including quality failures and a durable unknown outcome, while the article-bundle native schema canary received HTTP 429 before generation. The unfinished acceptance cases remain PARTIAL or NOT TESTED.
+
+Production replay exposed two additional invariant failures addressed by 2.0.56: a missing required-media slot could be reported as a photo-refresh no-op, and a historical source image analysis could be rejected by the current-capture guard while the visual Job still succeeded. Regression tests now require a blocked media-gate result and an explicit article-bound historical analysis checkpoint. These fixes need the final production rollout and replay before they can be marked production verified.
+
+Verify next-page prefetch priority with Playwright, paginate commercial opportunity/queue and nested detail lists, profile Content's remaining detail queries, expose a versioned status summary, then execute M35/X01–X07 fault injection with an isolated current-production copy and Playwright. A separately authorized, bounded real Provider canary is required for schema acceptance and semantic quality. Repeat cold/hot and active-worker measurements in the same environment, record browser timing and compare the new article output against the existing quality corpus before proposing release.

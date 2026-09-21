@@ -37,7 +37,7 @@ import { insertCommercialEvent, listCommercialPerformance } from "./repositories
 import { persistCaptureAssets } from "./source-media-store.mjs";
 import { dependencyHash, semanticMaterial, PIPELINE_CONTRACT_VERSION } from './pipeline-contract.mjs';
 import { stepIdentity, readStepReceipt, saveStepReceipt } from './repositories/pipeline-step-receipts.mjs';
-import { mediaManifestForDraft } from './publication-eligibility.mjs';
+import { evaluatePublicationEligibility, mediaManifestForDraft } from './publication-eligibility.mjs';
 import { recoverLegacyVisualReceipts } from './services/legacy-visual-receipts.mjs';
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
@@ -2832,10 +2832,15 @@ export class Repository {
     return {articleRevision:draft?.revision??null,sourceRunId:source?`${source.id}:${source.capture_version}`:null};
   }
 
-  saveSourceAssetAnalysis(assetId, analysis = {}, { provider = "", model = "", withinTransaction = false } = {}) {
+  saveSourceAssetAnalysis(assetId, analysis = {}, { provider = "", model = "", withinTransaction = false,
+    forVisualId = null } = {}) {
     const asset=this.db.prepare(`SELECT sa.id,sa.source_id,sa.capture_version,sa.original_sha256,sa.stored_sha256,
       s.capture_version AS current_capture_version FROM source_assets sa JOIN sources s ON s.id=sa.source_id WHERE sa.id=?`).get(assetId);
-    if (!asset || asset.capture_version !== asset.current_capture_version) return false;
+    if (!asset) return false;
+    if (asset.capture_version !== asset.current_capture_version
+      && !(forVisualId && this.db.prepare(`SELECT 1 FROM article_visuals av
+        JOIN article_drafts ad ON ad.id=av.draft_id
+        WHERE av.id=? AND av.source_asset_id=? AND av.status='planned' LIMIT 1`).get(forVisualId,assetId))) return false;
     const normalized=normalizeSourceAssetAnalysis(analysis,asset);
     const write=()=>this.db.prepare(`INSERT INTO source_asset_analyses(asset_id,source_id,source_sha256,capture_version,
       analysis_status,asset_kind,text_regions_json,photo_regions_json,entities_json,editor_ui_regions_json,
@@ -5987,11 +5992,15 @@ export class Repository {
       const sync=postId ? this.getWordPressSyncState(siteUrl) : null;
       const inventoryAge=sync?.last_succeeded_at ? Date.now()-Date.parse(sync.last_succeeded_at) : Infinity;
       const media=this.mediaRepairPlan(draftId,{strategyVersion:'3.9',contentPackage});
+      const mediaGate=evaluatePublicationEligibility(this.db,draftId);
       const active=this.db.prepare("SELECT 1 FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1").get(draftId);
       let disposition='eligible'; let reason='local_photo_refresh';
       if (!review?.passed) {disposition='blocked';reason='independent_article_qa_missing';}
       else if (active) {disposition='blocked';reason='active_article_job';}
-      else if (!media.slots.some((slot)=>['repair','remove'].includes(slot.disposition))) {disposition='noop';reason='no_photo_change';}
+      else if (!media.slots.some((slot)=>['repair','remove'].includes(slot.disposition))) {
+        disposition=mediaGate.passed ? 'noop' : 'blocked';
+        reason=mediaGate.passed ? 'no_photo_change' : `media_gate_${String(mediaGate.code).toLowerCase()}`;
+      }
       else if (media.slots.some((slot)=>slot.disposition==='blocked')) {disposition='blocked';reason='required_photo_needs_review';}
       else if (postId && (!Number.isFinite(inventoryAge) || inventoryAge<0 || inventoryAge>600_000)) {
         disposition='blocked';reason='wordpress_inventory_stale';
@@ -6002,7 +6011,7 @@ export class Repository {
       return {draft_id:draftId,title:draft.title,revision:draft.revision,
         strategy_version:draft.strategy_version,status:draft.status,post_id:postId || null,
         wordpress_status:inventory?.status || null,review_id:review?.id || null,
-        disposition,reason,media};
+        disposition,reason,media_gate:mediaGate,media};
     });
     const confirmation=sha256(JSON.stringify(items.map(({draft_id,revision,strategy_version,status,post_id,
       wordpress_status,review_id,disposition,reason,media})=>({draft_id,revision,strategy_version,status,

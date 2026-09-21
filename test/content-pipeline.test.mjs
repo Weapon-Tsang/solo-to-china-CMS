@@ -320,6 +320,16 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   assert.equal(db.prepare("SELECT strategy_version FROM wordpress_publications WHERE draft_id=?").get(content[0].draft_id).strategy_version, CONTENT_STRATEGY.version);
   assert.equal(JSON.stringify(repository.getTopicPackage(content[0].id)).includes("Trip.com"), false);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status='failed'").get().count, 0);
+  db.exec('SAVEPOINT missing_manifest_refresh_plan');
+  try {
+    db.prepare('DELETE FROM required_media_manifests WHERE draft_id=? AND revision=?')
+      .run(content[0].draft_id,generatedPackage.draft.revision);
+    const missingManifest=repository.planArticlePhotoRefresh([content[0].draft_id]).items[0];
+    assert.equal(missingManifest.disposition,'blocked');
+    assert.equal(missingManifest.reason,'media_gate_media_manifest_missing_or_stale');
+  } finally {
+    db.exec('ROLLBACK TO missing_manifest_refresh_plan; RELEASE missing_manifest_refresh_plan');
+  }
   db.exec('SAVEPOINT published_review_blocker');
   try {
     const publication=db.prepare('SELECT site_url,post_id,post_url FROM wordpress_publications WHERE draft_id=?')
