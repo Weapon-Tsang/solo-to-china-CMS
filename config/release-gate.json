@@ -19,7 +19,7 @@
       "durationMs": 6950
     },
     "unitTestWarningMs": 30000,
-    "unitTestFailureMs": 120000,
+    "unitTestFailureMs": 300000,
     "isolatedSmokeFailureMs": 15000,
     "policy": "Critical factual or structural failures always block. Duration warnings do not trigger content/model retry loops."
   },

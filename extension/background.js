@@ -1,6 +1,6 @@
 import {
   applyIdentityBatch, applySettingsToSession, AsyncSemaphore, classifyCaptureApiError, classifyTaskDisposition, compactSessionState, createSession,
-  hasUnresolvedFailures, initialConcurrency, isFavoritesAlbumOverviewUrl, leaseNextTask, normalizeSettings, reconcileStrandedTasks,
+  hasUnresolvedFailures, initialConcurrency, isFavoritesAlbumOverviewUrl, leaseNextTask, mediaIdentitiesToRepair, normalizeSettings, reconcileStrandedTasks,
   recoverSession, retryDelayMs, scopeFromUrl, shouldStopDiscovery, transitionTask, updateSessionConcurrency,
   prepareSessionCompletion, prepareSessionResume,
 } from "./sync-core.js";
@@ -264,8 +264,7 @@ async function acquireTask(sessionId, taskId, slot, workerId, leaseId) {
     extracted = result.capture;
     await mediaJournal.put(captureJournalKey, { capture: extracted, savedAt: new Date().toISOString() });
     }
-    const onlyMediaIdentities = task.sourceId && Array.isArray(task.repairMediaIdentities)
-      ? new Set(task.repairMediaIdentities) : null;
+    const onlyMediaIdentities = mediaIdentitiesToRepair(task);
     await submitCapture({ ...extracted, completeness: { ...extracted.completeness,
       images: { ...extracted.completeness?.images, complete: false }, overall: 'partial_retryable' } }, controller.signal);
     const persisted = await persistCaptureMedia(extracted, async () => {
@@ -774,7 +773,29 @@ async function ensureDiscoveryTab(session) { try { return await chrome.tabs.get(
 async function closeWorkerTabs(session) { const ids = new Set([...(session.workerTabs || []), ...(session.workerSlots || []).map((slot) => slot?.tabId)].filter(Boolean)); for (const id of ids) await chrome.tabs.remove(id).catch(() => null); if (session.automatic && session.discoveryTabId) await chrome.tabs.remove(session.discoveryTabId).catch(() => null); }
 async function openXiaohongshu() { const session = await loadState(); const url = session?.scopeUrl || "https://www.xiaohongshu.com/"; const tab = await chrome.tabs.create({ url, active: true }); return { ok: true, tabId: tab.id }; }
 async function injectExtractor(tabId) { await chrome.scripting.executeScript({ target: { tabId }, files: ["capture-utils.js", "page-extractor.js"] }); }
-async function execute(tabId, func, args) { const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func, args: args === undefined ? [] : [args] }); return result; }
+async function execute(tabId, func, args) {
+  const script = { target: { tabId }, func, args: args === undefined ? [] : [args] };
+  try {
+    const [{ result }] = await chrome.scripting.executeScript(script);
+    return result;
+  } catch (error) {
+    // Xiaohongshu can replace its main frame after tabs.status becomes complete.
+    // One bounded reinjection avoids consuming a whole task attempt for that
+    // navigation race; persistent failures still use the normal retry budget.
+    if (!/Frame with ID \d+ was removed|frame was removed/i.test(String(error?.message || ""))) throw error;
+    await waitForTab(tabId, 30_000);
+    await injectExtractor(tabId);
+    try {
+      const [{ result }] = await chrome.scripting.executeScript(script);
+      return result;
+    } catch (retryError) {
+      if (/Frame with ID \d+ was removed|frame was removed/i.test(String(retryError?.message || ""))) {
+        throw syncError("NAVIGATION_INTERRUPTED", "Xiaohongshu replaced the note frame during capture; the worker will reopen it.", true);
+      }
+      throw retryError;
+    }
+  }
+}
 async function waitForTab(tabId, timeoutMs) {
   let current;
   try { current = await chrome.tabs.get(tabId); }
@@ -870,4 +891,4 @@ function retryAfterMs(value) {
 async function hashBytes(bytes) { const digest = await crypto.subtle.digest("SHA-256", bytes); return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join(""); }
 function bytesToBase64(bytes) { let output = ""; const block = 0x8000; for (let index = 0; index < bytes.length; index += block) output += String.fromCharCode(...bytes.subarray(index, index + block)); return btoa(output); }
 
-export { handleMessage, restoreAfterRestart, watchdog, persistCaptureMedia, apiJson };
+export { handleMessage, restoreAfterRestart, watchdog, persistCaptureMedia, apiJson, execute };

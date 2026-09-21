@@ -26,6 +26,15 @@ export const TASK_STATES = Object.freeze([
   "retry_wait", "failed", "paused_login_required", "paused_verification_required", "paused_capture_unauthorized", "cancelled",
 ]);
 
+export function mediaIdentitiesToRepair(task) {
+  // A text/DOM recapture creates a new source version. Its discovered media
+  // must all be persisted for that version, even when the old version's
+  // originals are already durable and missingOriginals is empty.
+  if (!task?.sourceId || task.repairActions?.includes("RECAPTURE_TEXT_DOM")
+    || !Array.isArray(task.repairMediaIdentities)) return null;
+  return new Set(task.repairMediaIdentities);
+}
+
 export const HUMAN_PAUSE_STATES = Object.freeze([
   "paused_login_required", "paused_verification_required", "paused_capture_unauthorized", "paused_by_user",
 ]);

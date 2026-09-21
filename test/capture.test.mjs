@@ -228,6 +228,31 @@ test("partial capture is persisted but blocked from extraction and can upgrade t
   assert.equal(fixture.repository.getSource(first.id).capture_versions.length, 2);
 });
 
+test('complete recapture of a partial image note stores originals in its new version before extraction',t=>{
+  const fixture=repositoryFixture(t);
+  const base64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+  const image={url:'https://sns-img.xhscdn.com/photo.png',mediaIdentity:'photo-1',mimeType:'image/png',
+    originalSha256:createHash('sha256').update(Buffer.from(base64,'base64')).digest('hex'),
+    originalDataUrl:`data:image/png;base64,${base64}`};
+  const base={url:'https://www.xiaohongshu.com/explore/partial-with-image',title:'Partial image note',
+    text:'A complete route description with one original photograph and local evidence.',images:[image],videos:[]};
+  const parts=(imagesComplete)=>({text:{complete:imagesComplete},dom:{complete:imagesComplete},
+    images:{expected:1,captured:1,complete:imagesComplete,traversed:true},
+    videos:{expected:0,captured:0,complete:true,traversed:true},overall:imagesComplete?'complete':'partial_retryable'});
+  const first=fixture.repository.saveCapture(normalizeXiaohongshuCapture({...base,completeness:parts(false)}));
+  assert.equal(first.extractionQueued,false);
+  assert.equal(fixture.db.prepare('SELECT COUNT(*) count FROM current_source_assets WHERE source_id=? AND durability_status=?').get(first.id,'ORIGINAL_STORED').count,1);
+  const repair=fixture.repository.checkCaptureIdentities([{externalId:'partial-with-image',url:base.url}])[0];
+  assert.ok(repair.requiredActions.includes('RECAPTURE_TEXT_DOM'));
+  assert.equal(repair.repairMedia.missingOriginals.length,0);
+  const second=fixture.repository.saveCapture(normalizeXiaohongshuCapture({...base,completeness:parts(true)}));
+  assert.equal(second.id,first.id);
+  assert.equal(second.captureVersion,2);
+  assert.equal(second.extractionQueued,true);
+  assert.equal(second.mediaDurabilityComplete,true);
+  assert.equal(fixture.db.prepare('SELECT COUNT(*) count FROM current_source_assets WHERE source_id=? AND durability_status=?').get(first.id,'ORIGINAL_STORED').count,1);
+});
+
 test("batch identity lookup returns known and unknown notes in one query-sized request", (t) => {
   const fixture = repositoryFixture(t);
   const capture = normalizeXiaohongshuCapture({ url: "https://www.xiaohongshu.com/explore/known-batch", title: "Known",
