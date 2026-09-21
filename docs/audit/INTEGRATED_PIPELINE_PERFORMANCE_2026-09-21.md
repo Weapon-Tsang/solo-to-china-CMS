@@ -24,11 +24,19 @@ Command: `node scripts/benchmark-admin-http.mjs --isolated-fixture`. The script 
 
 Total: 217 requests, zero HTTP errors, 2,224,560 response bytes across the seven routes, event-loop delay P95 31.72 ms and max 33.23 ms. The Knowledge query rewrite was measured on the same synthetic fixture earlier in this development session: hot P95 fell from 94.88 ms to 31.60 ms, though those runs were separate and subject to normal timing variation. The earlier Content repository projection measured 122 rows at 1,056,296 bytes and 736 prepares versus its compact 50-row projection at 46,672 bytes and 227 prepares; these are repository measurements, not a same-route HTTP before/after. Cold/after figures for the other routes have no comparable before measurement, so their before P50/P95, SQL executions, max and error rate are `null`. Active production load P50/P95, menu feedback latency, login-to-first-screen latency and real network transfer timing are also `null` / NOT TESTED.
 
-Local Playwright exercised source page 1→2, a source detail request, Knowledge directory→subject detail and Content directory→production detail against the disposable API database. After the next-page prefetch was added, the browser fetched page 2 once in the background; clicking Next showed `Benchmark source 379` without another page-2 request and then fetched page 3 once. Detail endpoints fired only on selection. Six-menu navigation, mobile rendering, needs-review recovery and an active production worker during browser interaction remain NOT TESTED.
+Local Playwright exercised source page 1→2, a source detail request, Knowledge directory→subject detail and Content directory→production detail against the disposable API database. After the next-page prefetch was added, the browser fetched page 2 once in the background; clicking Next showed `Benchmark source 379` without another page-2 request and then fetched page 3 once. Detail endpoints fired only on selection. At that point, six-menu navigation, mobile rendering, needs-review recovery and active production worker behavior were not tested.
+
+Follow-up local Playwright run on 2026-09-22 opened all six menus on the disposable fixture, selected Source page size 50, reached page 2 (`Benchmark source 349`), and confirmed the Content `needs_review` count changed from 19 to 18 while `producing` changed from 0 to 1 after the user-visible recovery action. The detail showed the saved media-assembly recovery target. The browser console had no errors. The observed session included a single page-2 prefetch. This is a functional browser check; it is not a timed active-production-load benchmark.
 
 ## Migration, compatibility and rollback
 
 `node scripts/rehearse-v2-migration.mjs --isolated-baseline` copied the repository's historical schema-69 production baseline to a disposable work database. Schema 76 migration and repeat open passed SQLite integrity. Source 74, Claim 5,147, Draft 7 and Visual 2 counts and sorted ID hashes were unchanged; WordPress publication rows were 0 in this baseline. The baseline stayed at schema 69. This baseline predates the current production database, so the rehearsal does not establish current-data compatibility. Schema 74 introduces revision-bound required manifests, 75 a persisted media lane and quota receipts, and 76 a Job pipeline version. Existing Drafts have no backfilled manifest and fail closed until an explicit recovery creates a current manifest. Old API binaries reject schema 76; rollback needs a paired pre-upgrade database restore, not merely old code. Preserve the current WAL and media for diagnosis and retain successful remote drafts.
+
+Follow-up migration rehearsal on 2026-09-22 used the complete 2026-09-21 production snapshot database as a read-only source. The gzip stream passed CRC validation and the 2,291,630,080-byte baseline matched the snapshot manifest SHA-256. A disposable local copy migrated schema 73 to 76 and passed SQLite integrity, repeat open, and old-column content and ID hashes for 78 Sources, 156 captures, 1,407 assets, 2,275 segments, 5,147 Claims, 8,292 evidence spans, 13 Drafts, 27 Visuals, 12 WordPress publications and 16,190 Jobs. The baseline remained schema 73. This verifies schema/data compatibility on the latest snapshot; it does not exercise live queue recovery, provider transport or WordPress delivery.
+
+A separate disposable production-copy recovery replay found one failed production record. It requested `retry_failed_stage` twice with the same key, received one Job both times, resolved to `generate_visuals`, kept the earlier stages, and preserved all protected entity counts. Model calls and WordPress writes were both zero. This is bounded business-state coverage, not a full cross-stage replay.
+
+The 2026-09-21 production snapshot also passed a full isolated restore drill: 1,207 files, 1,423 verified media references, 1,407 source evidence previews opened, 16 draft media files opened, and one mock delivery probe passed with no external model or WordPress calls. A separate 2.0.46 extension hotfix reached `main` and production during this review. The v2 candidate must be integrated with that mainline and retested before deployment.
 
 ## Verification level
 
@@ -36,7 +44,7 @@ Local Playwright exercised source page 1→2, a source detail request, Knowledge
 |---|---|---|
 | L1 targeted tests | PASS | Bundle, publication gate, media quota, commercial pagination and summary invalidation |
 | L2 module regression | PASS | Full local Node suite: 770 passed, 0 failed |
-| L3 production DB replay | PARTIAL | Historical schema-69 baseline migration only; current production copy unavailable |
+| L3 production DB replay | PARTIAL | Latest schema-73 snapshot migration, content identity and one idempotent failed-record recovery passed; broader state corpus pending |
 | L4 browser E2E | PARTIAL | Local Playwright list/detail navigation only |
 | L5 real Provider canary | NOT TESTED | Paid calls not authorized |
 | L6 full production-like replay | NOT TESTED | No complete cross-stage failure chain with a live production-like corpus |
@@ -79,12 +87,12 @@ Local Playwright exercised source page 1→2, a source detail request, Knowledge
 | M29 | PARTIAL | Existing telemetry tests; all listed provider failure modes not replayed here. |
 | M30 | PARTIAL | Existing schema/role tests; unknown stage and v2/v3 historical report cases incomplete. |
 | M31 | PARTIAL | Existing source batch/coverage tests; full Golden Source batch replay untested. |
-| M32 | PARTIAL | Schema-69 historical copy preserves IDs; current production copy unavailable. |
+| M32 | PARTIAL | Schema-69 and latest schema-73 snapshot migrations preserve old IDs/content; full media and recovery compatibility still pending. |
 | M33 | PARTIAL | Draft-only adapter and previous-post handling tested locally. |
-| M34 | NOT TESTED | Browser needs-review action and recovery detail scenario. |
+| M34 | PARTIAL | Local browser recovery changed counts and displayed the persisted target; full worker completion and production-like corpus untested. |
 | M35 | NOT TESTED | Full bundle→429 exhaustion→restart→grant→mock WP chain. |
 | M36 | NOT TESTED | Side-by-side semantic quality review of old/new model output. |
-| B01 | PARTIAL | Local browser exercised three menus; six-menu timed navigation incomplete. |
+| B01 | PARTIAL | Local browser opened all six menus; timed navigation with active production Worker incomplete. |
 | B02 | PARTIAL | Scoped 30-second display cache; precise no-fetch and stale refresh assertions incomplete. |
 | B03 | PARTIAL | Account/view/page/filter key; role-switch and credential persistence audit incomplete. |
 | B04 | PARTIAL | 20/50 SQL pages for primary lists; full commercial sublists still broad. |
