@@ -901,7 +901,7 @@ export class Pipeline {
               if (error?.code === 'MEDIA_RATE_WAIT') throw error;
               const failed = this.repository.failVisual(visual.id, error);
                if (failed.retryable || visual.factual_image_required || visual.required_in_article
-                 || visual.media_metadata?.required_visual_obligation?.required) throw error;
+                 || parseStoredJson(visual.media_metadata_json)?.required_visual_obligation?.required) throw error;
               this.logger.warn("pipeline.optional_visual_skipped", { visualId: visual.id, draftId: job.entity_id, error });
             }
           }

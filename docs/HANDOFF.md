@@ -2,6 +2,8 @@
 
 App/Extension version `2.0.48`, schema migration `77`, and Content Strategy `3.8` describe this unmerged release candidate. Content Production Strategy 3.8 remains declared by `config/content-strategy.json`.
 
+The media-stage regression uncovered an omitted check on the persisted required-image obligation: raw SQLite visual rows carry `media_metadata_json`, not `media_metadata`. A failed required visual now blocks `generate_visuals` and leaves the Draft in `needs_review`. A local 429 exhaustion and grant replay retained the completed first image hash and article body while generating only the missing second image through a new executor. This does not establish the full bundle-to-WordPress failure chain.
+
 This candidate is still on `codex/integrated-pipeline-v2-release`, unmerged and undeployed. Version 2.0.48 adds schema 77 for append-only media budget grants. The authenticated Content detail exposes the persisted spent/granted limit and lets an operator approve a bounded increment for the current failed image step, recording actor, reason and idempotency key. It cannot clear an unknown dispatch or the shared cooldown. Local API and two-process quota tests and a disposable 2026-09-21 snapshot migration from schema 73 to 77 passed, preserving 16,190 Job IDs and old content. The full bundle/429/restart/grant/recovery/mock WordPress chain, real Provider canary, fresh pre-deployment migration, and active production load remain release gates. See `docs/audit/CMS_RELEASE_READINESS_2.0.48_2026-09-22.md` for the current decision. The 2.0.47 notes below record the earlier review and are historical.
 
 ## Earlier 2.0.47 review

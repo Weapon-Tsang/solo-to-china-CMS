@@ -4,6 +4,7 @@
 
 - Add schema 77's append-only, idempotent media budget grants with an authenticated article action. A grant increases one exhausted image step by 1–4 attempts (up to 12 cumulative extra attempts), preserves every prior dispatch and cannot override unknown outcomes or persistent cooldown.
 - Expose actual spent and granted counts in article detail and test API authorization, repeated grants and shared SQLite pacing across processes. Full failure-to-delivery replay and real Provider validation remain pending.
+- Keep a required image failure blocking when its obligation is persisted in `media_metadata_json`; a regression replays 429 exhaustion, a fresh executor and only-missing-image recovery without changing the body or the completed image hash.
 
 ## 2.0.47 - Unreleased
 

@@ -82,6 +82,18 @@ test('explicit grant is durable, idempotent and retains cumulative spent and quo
   assert.equal(first.prepare('SELECT COUNT(*) AS n FROM media_budget_grants').get().n,2);
 });
 
+test('an unknown exhausted dispatch cannot be unlocked by an operator grant',t=>{
+  const {first,second}=setup(t);
+  const executor=createMediaRequestExecutor(first,{maxDispatches:1});
+  const params={provider:'vertex',model:'image-model',accountScope:'project',visualId:'unknown-visual',substage:'generate_visual'};
+  executor.acquire(params).finish({error:{code:'NETWORK_TIMEOUT'},responseReceived:false});
+  const afterRestart=createMediaRequestExecutor(second,{maxDispatches:1});
+  assert.equal(afterRestart.budget(params).unknown,1);
+  assert.throws(()=>afterRestart.grant({...params,additionalDispatches:1,actor:'editor',reason:'Attempted override',
+    idempotencyKey:'unknown-grant'}),{statusCode:409});
+  assert.equal(second.prepare('SELECT COUNT(*) AS n FROM media_budget_grants').get().n,0);
+});
+
 test('two real processes sharing one SQLite file never own the visual lane together', async (t) => {
   const { first } = setup(t);
   const filename = first.location || first.filename;

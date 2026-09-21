@@ -90,7 +90,7 @@ The 2026-09-21 production snapshot also passed a full isolated restore drill: 1,
 | M32 | PARTIAL | Schema-69 and latest schema-73 snapshot migrations preserve old IDs/content; full media and recovery compatibility still pending. |
 | M33 | PARTIAL | Draft-only adapter and previous-post handling tested locally. |
 | M34 | PARTIAL | Local browser recovery changed counts and displayed the persisted target; full worker completion and production-like corpus untested. |
-| M35 | NOT TESTED | Full bundle→429 exhaustion→restart→grant→mock WP chain. |
+| M35 | PARTIAL | Follow-up 2.0.48 local media-stage replay covers two 429 responses, exhaustion, grant, fresh executor and only-missing-image recovery with unchanged body/first-image hash. Full bundle-to-independent-QA-to-mock-WordPress chain remains NOT TESTED. |
 | M36 | NOT TESTED | Side-by-side semantic quality review of old/new model output. |
 | B01 | PARTIAL | Local browser opened all six menus; timed navigation with active production Worker incomplete. |
 | B02 | PARTIAL | Scoped 30-second display cache; precise no-fetch and stale refresh assertions incomplete. |
