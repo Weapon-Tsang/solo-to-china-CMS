@@ -11,7 +11,14 @@ cleanup() {
     printf '::error title=Runtime image smoke failed::Phase %s exited %s\n' "$PHASE" "$code" >&2
     for container in "$NAME" "$NAME-api" "$NAME-worker"; do
       if docker inspect "$container" >/dev/null 2>&1; then
-        docker logs --tail 30 "$container" >&2 || true
+        local status details
+        status="$(docker inspect --format '{{.State.Status}}/{{.State.ExitCode}}' "$container" 2>/dev/null || true)"
+        details="$(docker logs --tail 12 "$container" 2>&1 || true)"
+        printf '%s: %s\n%s\n' "$container" "$status" "$details" >&2
+        details="$(printf '%s' "$details" | tail -c 1800 | tr '\r\n' '  ')"
+        details="${details//'%'/'%25'}"
+        details="${details//':'/'%3A'}"
+        printf '::error title=Runtime image %s (%s)::%s\n' "$container" "$status" "$details" >&2
       fi
     done
   fi
