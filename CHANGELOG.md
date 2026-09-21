@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.53 - Unreleased
+
+- Show the last observed WordPress publish or draft state beside the CMS production blocker in Content list and detail. Keep `needs_review` as an independent delivery gate so a published post with a new media problem is visibly published and visibly blocked.
+
 ## 2.0.52 - Unreleased
 
 - Replace per-photo correlated claim/evidence scans with one bounded evidence lookup for the selected source assets. Keep image subjects and evidence text tied to the same source and deduplicate repeated span references.

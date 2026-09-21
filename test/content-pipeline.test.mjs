@@ -306,6 +306,24 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   assert.equal(db.prepare("SELECT strategy_version FROM wordpress_publications WHERE draft_id=?").get(content[0].draft_id).strategy_version, CONTENT_STRATEGY.version);
   assert.equal(JSON.stringify(repository.getTopicPackage(content[0].id)).includes("Trip.com"), false);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status='failed'").get().count, 0);
+  db.exec('SAVEPOINT published_review_blocker');
+  try {
+    const publication=db.prepare('SELECT site_url,post_id,post_url FROM wordpress_publications WHERE draft_id=?')
+      .get(content[0].draft_id);
+    repository.replaceWordPressInventory(publication.site_url,[{postId:publication.post_id,
+      slug:'published-review-blocker',title:generatedPackage.draft.title,status:'publish',
+      postUrl:publication.post_url,modifiedAt:new Date().toISOString()}]);
+    db.prepare("UPDATE article_drafts SET status='needs_review' WHERE id=?").run(content[0].draft_id);
+    const blocked=repository.getDraftPackage(content[0].draft_id);
+    assert.equal(blocked.draft.status,'needs_review');
+    assert.equal(blocked.publication.remote_status,'publish');
+    const compact=repository.listContentWorkspace({productionOnly:true,compact:true,limit:20}).items
+      .find((item)=>item.draft_id===content[0].draft_id);
+    assert.equal(compact.wordpress_remote_status,'publish',
+      'a media review blocker cannot hide the observed WordPress publication');
+  } finally {
+    db.exec('ROLLBACK TO published_review_blocker; RELEASE published_review_blocker');
+  }
   if (pipelineMode === 'legacy') assert.ok(stageCalls.indexOf("compose_frontend_page") < stageCalls.indexOf("review_draft"),
     `page composition must precede QA: ${stageCalls.join(" -> ")}`);
   else {

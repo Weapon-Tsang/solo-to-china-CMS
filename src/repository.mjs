@@ -5796,7 +5796,11 @@ export class Repository {
       .get(draftId, draft.revision, draft.content_hash, currentEvidenceHash) || null;
     const reviewHistory = this.db.prepare(`SELECT * FROM quality_reviews
       WHERE draft_id=? ORDER BY created_at DESC,id DESC LIMIT 6`).all(draftId).map(hydrateReview);
-    const publication = this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id = ?").get(draftId) || null;
+    const storedPublication = this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id = ?").get(draftId) || null;
+    const remotePublication = storedPublication?.post_id ? this.db.prepare(`SELECT status,synced_at
+      FROM wordpress_content_inventory WHERE site_url=? AND post_id=?`).get(storedPublication.site_url,storedPublication.post_id) : null;
+    const publication = storedPublication ? {...storedPublication,
+      remote_status:remotePublication?.status || null,remote_synced_at:remotePublication?.synced_at || null} : null;
     const compositionRow = this.db.prepare(`SELECT * FROM commercial_compositions
       WHERE draft_id=? AND draft_revision=? AND draft_content_hash=?`).get(draftId, draft.revision, draft.content_hash) || null;
     const operation = this.listContent({
@@ -6458,6 +6462,7 @@ export class Repository {
         wpub.post_id AS wordpress_post_id, wpub.post_url AS wordpress_post_url,
         wpub.preview_url AS wordpress_preview_url, wpub.edit_url AS wordpress_edit_url,
         wpub.status AS wordpress_status, wpub.updated_at AS wordpress_updated_at,
+        wi.status AS wordpress_remote_status, wi.synced_at AS wordpress_remote_synced_at,
         cc.status AS commercial_status, cc.outcome AS commercial_outcome, cc.reason_code AS commercial_reason_code,
         cc.refresh_required AS commercial_refresh_required, cc.refresh_reason AS commercial_refresh_reason,
         cc.draft_revision AS commercial_draft_revision, cc.draft_content_hash AS commercial_draft_content_hash,
@@ -6486,6 +6491,7 @@ export class Repository {
       LEFT JOIN frontend_page_compositions fpc ON fpc.id=(SELECT latest_fpc.id FROM frontend_page_compositions latest_fpc WHERE latest_fpc.draft_id=ad.id ORDER BY latest_fpc.updated_at DESC LIMIT 1)
       LEFT JOIN frontend_publish_compositions pub ON pub.id=(SELECT latest_pub.id FROM frontend_publish_compositions latest_pub WHERE latest_pub.draft_id=ad.id ORDER BY latest_pub.updated_at DESC LIMIT 1)
       LEFT JOIN wordpress_publications wpub ON wpub.draft_id = ad.id
+      LEFT JOIN wordpress_content_inventory wi ON wi.site_url=wpub.site_url AND wi.post_id=wpub.post_id
       LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
       LEFT JOIN (SELECT draft_id,COUNT(*) AS visual_total,
         SUM(CASE WHEN status IN ('planned','queued','generating') THEN 1 ELSE 0 END) AS visual_pending,
@@ -6506,6 +6512,7 @@ export class Repository {
         ad.title AS draft_title, ad.revision, qr.passed AS qa_passed, qr.score AS qa_score, qr.created_at AS qa_created_at,
         wp.post_id AS wordpress_post_id, wp.post_url AS wordpress_post_url, wp.preview_url AS wordpress_preview_url,
         wp.edit_url AS wordpress_edit_url, wp.status AS wordpress_status,
+        wi.status AS wordpress_remote_status, wi.synced_at AS wordpress_remote_synced_at,
         cc.status AS commercial_status, cc.outcome AS commercial_outcome, cc.reason_code AS commercial_reason_code,
         json_array_length(COALESCE(cc.asset_ids_json, '[]')) AS commercial_offer_count,
         pc.status AS publish_composition_status, co.id AS opportunity_id, co.approved_at,
@@ -6518,6 +6525,7 @@ export class Repository {
         SELECT id FROM quality_reviews WHERE draft_id = ad.id AND draft_revision=ad.revision
           AND draft_content_hash=ad.content_hash ORDER BY created_at DESC LIMIT 1)
       LEFT JOIN wordpress_publications wp ON wp.draft_id = ad.id
+      LEFT JOIN wordpress_content_inventory wi ON wi.site_url=wp.site_url AND wi.post_id=wp.post_id
       LEFT JOIN commercial_compositions cc ON cc.draft_id = ad.id
       LEFT JOIN frontend_publish_compositions pc ON pc.draft_id = ad.id
       WHERE (? IS NULL OR tc.id=?)
@@ -6656,6 +6664,8 @@ export class Repository {
         id: row.id, opportunity_id: row.opportunity_id, candidate_id: row.candidate_id,
         title: row.title, proposed_title: row.proposed_title, draft_title: row.draft_title,
         draft_id: row.draft_id, revision: row.revision,
+        wordpress_remote_status:row.wordpress_remote_status,
+        wordpress_remote_synced_at:row.wordpress_remote_synced_at,
         production_state: Object.fromEntries([
           'lifecycle', 'disposition', 'readiness', 'stage_status', 'headline', 'explanation', 'progress', 'current_stage_label',
           'next_stage_label', 'recovery_target_label', 'auto_continue', 'needs_human',
@@ -6677,6 +6687,8 @@ export class Repository {
       page_preview: buildPageCompositionPreview(item),
       publication: item.wordpress_status ? {
         status: item.wordpress_status,
+        remote_status:item.wordpress_remote_status,
+        remote_synced_at:item.wordpress_remote_synced_at,
         post_id: item.wordpress_post_id,
         post_url: item.wordpress_post_url,
         preview_url: item.wordpress_preview_url,
