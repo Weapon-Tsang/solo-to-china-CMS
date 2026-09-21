@@ -758,7 +758,36 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "GET" && productionDetailMatch) {
         authorizeAdmin(request, config.adminToken, auth);
         const detail = repository.getContentProductionDetail(decodeURIComponent(productionDetailMatch[1]));
-        return detail ? sendJson(response, 200, detail) : sendJson(response, 404, { error: "Content production record not found." });
+        if (!detail) return sendJson(response, 404, { error: "Content production record not found." });
+        const blocker=unresolvedMediaBudgetFailure(db,detail);
+        const budgets = detail.draft_id ? db.prepare(`SELECT DISTINCT md.visual_id,md.substage FROM media_dispatches md
+          JOIN article_visuals av ON av.id=md.visual_id WHERE av.draft_id=? ORDER BY md.visual_id,md.substage`)
+          .all(detail.draft_id).map((row) => {
+            return {...mediaRequestExecutor.budget({visualId:row.visual_id,substage:row.substage}),
+              grantable:Boolean(blocker && (!blocker.visual_id || blocker.visual_id===row.visual_id)
+                && (!blocker.substage || blocker.substage===row.substage))};
+          }) : [];
+        return sendJson(response, 200, {...detail,media_budgets:budgets});
+      }
+      const mediaGrantMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/media-budget-grants$/);
+      if (request.method === "POST" && mediaGrantMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const detail = repository.getContentProductionDetail(decodeURIComponent(mediaGrantMatch[1]));
+        if (!detail) return sendJson(response, 404, {error:"Content production record not found."});
+        const payload = await readJson(request, 4_000);
+        const visualId = String(payload.visualId || '');
+        const substage = String(payload.substage || '');
+        const visual = db.prepare('SELECT id,status FROM article_visuals WHERE id=? AND draft_id=?').get(visualId,detail.draft_id);
+        const blocker=unresolvedMediaBudgetFailure(db,detail);
+        if (!visual || !['planned','failed'].includes(visual.status)
+          || !blocker || blocker.visual_id && blocker.visual_id!==visualId
+          || blocker?.substage && blocker.substage!==substage) {
+          return sendJson(response, 409, {error:'Media grant requires the current failed visual and exact exhausted substage.'});
+        }
+        const result = mediaRequestExecutor.grant({visualId,substage,
+          additionalDispatches:payload.additionalDispatches,actor:auth.status(request).username || 'administrator',
+          reason:payload.reason,idempotencyKey:request.headers['idempotency-key'] || payload.idempotencyKey});
+        return sendJson(response, 200, {...result,opportunity_id:detail.opportunity_id});
       }
       const productionHistoryMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/history$/);
       if (request.method === "GET" && productionHistoryMatch) {
@@ -1516,6 +1545,23 @@ function sendJson(response, status, value) {
     : Array.isArray(value) ? value.length : null;
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
   response.end(body);
+}
+
+function unresolvedMediaBudgetFailure(db, detail) {
+  if (!detail.draft_id || detail.draft_status !== 'needs_review'
+    || !detail.production_state?.timeline?.some((step) => step.key === 'generate_visuals')) return null;
+  const failed = db.prepare(`SELECT failed.id FROM jobs failed WHERE failed.entity_id=?
+    AND failed.production_owner_opportunity_id=? AND failed.type='generate_visuals'
+    AND failed.status='failed' AND failed.last_failure_code='MEDIA_BUDGET_EXHAUSTED'
+    AND NOT EXISTS (SELECT 1 FROM jobs next WHERE next.entity_id=failed.entity_id
+      AND next.production_owner_opportunity_id=failed.production_owner_opportunity_id
+      AND next.type='generate_visuals' AND next.id<>failed.id
+      AND (next.status IN ('queued','running') OR (next.status='succeeded' AND next.updated_at>=failed.updated_at)))
+    ORDER BY failed.updated_at DESC LIMIT 1`).get(detail.draft_id,detail.opportunity_id);
+  if (!failed) return null;
+  const call=db.prepare(`SELECT visual_id,substage FROM model_call_metrics WHERE run_id=?
+    AND error_code='MEDIA_BUDGET_EXHAUSTED' ORDER BY created_at DESC,id DESC LIMIT 1`).get(failed.id);
+  return {...failed,visual_id:call?.visual_id || null,substage:call?.substage || null};
 }
 
 function sourceForApi(source) {

@@ -26,6 +26,44 @@ export function createMediaRequestExecutor(db, { rpm = 2, windowMs = 60_000, saf
     throw new TypeError('Media RPM and dispatch budget must be positive integers.');
   }
   const paceMs = Math.ceil(windowMs / rpm) + safetyMarginMs;
+  function budget({ visualId, substage }) {
+    const spent = db.prepare('SELECT COUNT(*) AS n FROM media_dispatches WHERE visual_id=? AND substage=?')
+      .get(visualId, substage).n;
+    const granted = db.prepare('SELECT COALESCE(SUM(additional_dispatches),0) AS n FROM media_budget_grants WHERE visual_id=? AND substage=?')
+      .get(visualId, substage).n;
+    return { visualId, substage, spent, granted, limit:maxDispatches + granted,
+      unknown:db.prepare(`SELECT COUNT(*) AS n FROM media_dispatches WHERE visual_id=? AND substage=?
+        AND state IN ('dispatch_started','outcome_unknown')`).get(visualId, substage).n };
+  }
+  function grant({ visualId, substage, additionalDispatches, actor, reason, idempotencyKey }) {
+    if (!visualId || !substage || !/^[a-z][a-z0-9_]{2,79}$/.test(substage)
+      || !Number.isInteger(additionalDispatches) || additionalDispatches < 1 || additionalDispatches > 4
+      || !String(actor || '').trim() || !String(reason || '').trim() || String(reason).length > 500
+      || !String(idempotencyKey || '').trim() || String(idempotencyKey).length > 160) {
+      throw Object.assign(new Error('A bounded media grant requires a stage, 1-4 dispatches, actor, reason and idempotency key.'), {statusCode:400});
+    }
+    return transaction(db, () => {
+      const prior = db.prepare('SELECT * FROM media_budget_grants WHERE idempotency_key=?').get(idempotencyKey);
+      if (prior) {
+        if (prior.visual_id !== visualId || prior.substage !== substage || prior.additional_dispatches !== additionalDispatches) {
+          throw Object.assign(new Error('Idempotency key belongs to another media grant.'), {statusCode:409});
+        }
+        return { ...budget({visualId,substage}), grantId:prior.id, idempotent:true };
+      }
+      const before = budget({visualId,substage});
+      if (before.spent < before.limit || before.unknown) {
+        throw Object.assign(new Error('Resolve unknown requests and exhaust the current budget before granting more.'), {statusCode:409});
+      }
+      if (before.granted + additionalDispatches > 12) {
+        throw Object.assign(new Error('The total explicit media allowance cannot exceed 12 extra dispatches per step.'), {statusCode:409});
+      }
+      const grantId = crypto.randomUUID();
+      db.prepare(`INSERT INTO media_budget_grants(id,visual_id,substage,additional_dispatches,actor,reason,
+        spent_at_grant,idempotency_key,created_at) VALUES(?,?,?,?,?,?,?,?,?)`)
+        .run(grantId,visualId,substage,additionalDispatches,actor,reason,before.spent,idempotencyKey,iso(clock()));
+      return { ...budget({visualId,substage}), grantId, idempotent:false };
+    });
+  }
   function acquire({ provider, model, accountScope, visualId, substage }) {
     if (!visualId || !substage) throw new TypeError('Media dispatch requires visual and substage identity.');
     const scopeKey = mediaQuotaScope({ provider, model, accountScope });
@@ -35,9 +73,8 @@ export function createMediaRequestExecutor(db, { rpm = 2, windowMs = 60_000, saf
       const unknown = db.prepare(`SELECT id FROM media_dispatches WHERE visual_id=? AND substage=?
         AND state IN ('dispatch_started','outcome_unknown') LIMIT 1`).get(visualId, substage);
       if (unknown) return { error: blocked('MEDIA_OUTCOME_UNKNOWN', 'A prior media request has an unknown outcome.') };
-      const spent = db.prepare('SELECT COUNT(*) AS n FROM media_dispatches WHERE visual_id=? AND substage=?')
-        .get(visualId, substage).n;
-      if (spent >= maxDispatches) return { error: blocked('MEDIA_BUDGET_EXHAUSTED', 'Media dispatch budget is exhausted.') };
+      const allowance = budget({visualId,substage});
+      if (allowance.spent >= allowance.limit) return { error: blocked('MEDIA_BUDGET_EXHAUSTED', 'Media dispatch budget is exhausted.') };
       const lane = db.prepare('SELECT owner_token,lease_until_ms FROM media_visual_lane WHERE id=1').get();
       if (lane.owner_token && lane.lease_until_ms > nowMs) {
         return { error: blocked('MEDIA_RATE_WAIT', 'Another media request owns the visual lane.', Math.min(lane.lease_until_ms, nowMs + 2_000)) };
@@ -85,5 +122,5 @@ export function createMediaRequestExecutor(db, { rpm = 2, windowMs = 60_000, saf
     });
     return { ...outcome, heartbeat, finish };
   }
-  return { acquire };
+  return { acquire, budget, grant };
 }

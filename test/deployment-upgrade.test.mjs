@@ -116,9 +116,9 @@ test('deployment helpers validate the supplied release version instead of a hard
     assert.doesNotMatch(script, /version!==["']\d+\.\d+\.\d+/);
   }
   const resume = fs.readFileSync(path.join(app, 'deployment/gce', 'resume-verified-upgrade.sh'), 'utf8');
-  assert.match(resume, /result\['schema'\]==76/);
+  assert.match(resume, new RegExp(`result\\['schema'\\]==${SCHEMA_VERSION}`));
   assert.match(resume, /h\.contentStrategy\.version!=="3\.8"/);
-  assert.match(resume, /MAX\(version\).*==76/);
+  assert.match(resume, new RegExp(`MAX\\(version\\).*==${SCHEMA_VERSION}`));
   for (const filename of ['upgrade-existing.sh', 'resume-verified-upgrade.sh']) {
     const script = fs.readFileSync(path.join(app, 'deployment/gce', filename), 'utf8');
     assert.match(script, /CMS_PROCESS_ROLE=api/);

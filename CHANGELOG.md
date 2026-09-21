@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.48 - Unreleased
+
+- Add schema 77's append-only, idempotent media budget grants with an authenticated article action. A grant increases one exhausted image step by 1–4 attempts (up to 12 cumulative extra attempts), preserves every prior dispatch and cannot override unknown outcomes or persistent cooldown.
+- Expose actual spent and granted counts in article detail and test API authorization, repeated grants and shared SQLite pacing across processes. Full failure-to-delivery replay and real Provider validation remain pending.
+
 ## 2.0.47 - Unreleased
 
 - Add a revision-bound required-media manifest and enforce delivery eligibility at the pipeline and WordPress adapter boundaries.

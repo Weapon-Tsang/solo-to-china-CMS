@@ -16,7 +16,7 @@ python3 - "$RELEASE" <<'PY'
 import json, pathlib, sqlite3, sys
 release=pathlib.Path(sys.argv[1]); report=release/'migrate.json'; gate=release/'opportunity-audit.json'
 result=json.loads(report.read_text())
-assert result['schema']==76 and result['integrity']=='ok'
+assert result['schema']==77 and result['integrity']=='ok'
 assert result['foreignKeyErrors']==0 and result['preservedContentFingerprints'] is True
 audit=json.loads(gate.read_text())
 assert audit['enforcement']['passed'] is True and audit['enforcement']['hardViolationCount']==0
@@ -25,7 +25,7 @@ assert dbpath.stat().st_mtime_ns <= gate.stat().st_mtime_ns
 wal=pathlib.Path(str(dbpath)+'-wal')
 assert not wal.exists() or wal.stat().st_size==0, 'Unverified WAL writes exist'
 db=sqlite3.connect('file:'+str(dbpath)+'?mode=ro',uri=True)
-assert db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0]==76
+assert db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0]==77
 db.close()
 PY
 TOKEN="$(curl --fail --silent --header 'Metadata-Flavor: Google' \

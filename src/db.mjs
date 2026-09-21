@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 76;
+export const SCHEMA_VERSION = 77;
 
 export function openDatabase(filename, { migrate: shouldMigrate = true } = {}) {
   if (shouldMigrate) fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -104,6 +104,25 @@ function migrate(db) {
   if (current < 74) migrationSeventyFour(db);
   if (current < 75) migrationSeventyFive(db);
   if (current < 76) migrationSeventySix(db);
+  if (current < 77) migrationSeventySeven(db);
+}
+
+function migrationSeventySeven(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE media_budget_grants (
+      id TEXT PRIMARY KEY,
+      visual_id TEXT NOT NULL,
+      substage TEXT NOT NULL,
+      additional_dispatches INTEGER NOT NULL CHECK(additional_dispatches BETWEEN 1 AND 4),
+      actor TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      spent_at_grant INTEGER NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_media_budget_grants_visual_stage ON media_budget_grants(visual_id,substage);
+    INSERT INTO schema_migrations(version, applied_at) VALUES (77, datetime('now'));
+  `));
 }
 
 function migrationSeventySix(db) {

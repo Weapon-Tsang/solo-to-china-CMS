@@ -57,6 +57,31 @@ test('429 cooldown and unknown outcomes persist through a new executor', (t) => 
   assert.equal(retryAfterDelayMs(new Date(120_000).toUTCString(), 0), 120_000);
 });
 
+test('explicit grant is durable, idempotent and retains cumulative spent and quota cooldown', (t) => {
+  const {first,second} = setup(t);
+  let time=100_000;
+  const config={rpm:2,maxDispatches:2,clock:()=>time};
+  const params={provider:'vertex',model:'image-model',accountScope:'project',visualId:'visual-a',substage:'generate_visual'};
+  const a=createMediaRequestExecutor(first,config);
+  const b=createMediaRequestExecutor(second,config);
+  a.acquire(params).finish({error:{status:429,code:'RESOURCE_EXHAUSTED'},responseReceived:true});
+  time+=61_000;
+  b.acquire(params).finish({error:{status:429,code:'RESOURCE_EXHAUSTED'},responseReceived:true});
+  assert.throws(()=>a.acquire(params),{code:'MEDIA_BUDGET_EXHAUSTED'});
+  const approved=a.grant({...params,additionalDispatches:1,actor:'editor',reason:'Reviewed failed image',idempotencyKey:'grant-1'});
+  assert.deepEqual([approved.spent,approved.granted,approved.limit,approved.unknown],[2,1,3,0]);
+  assert.equal(b.grant({...params,additionalDispatches:1,actor:'editor',reason:'Reviewed failed image',idempotencyKey:'grant-1'}).idempotent,true);
+  assert.throws(()=>b.grant({...params,additionalDispatches:1,actor:'editor',reason:'Again',idempotencyKey:'grant-2'}),{statusCode:409});
+  assert.throws(()=>b.acquire(params),{code:'MEDIA_RATE_WAIT'});
+  time+=120_000;
+  b.acquire(params).finish();
+  assert.deepEqual([a.budget(params).spent,a.budget(params).granted],[3,1]);
+  assert.throws(()=>a.acquire(params),{code:'MEDIA_BUDGET_EXHAUSTED'});
+  const next=b.grant({...params,additionalDispatches:2,actor:'editor',reason:'QA needs more attempts',idempotencyKey:'grant-2'});
+  assert.equal(next.limit,5);
+  assert.equal(first.prepare('SELECT COUNT(*) AS n FROM media_budget_grants').get().n,2);
+});
+
 test('two real processes sharing one SQLite file never own the visual lane together', async (t) => {
   const { first } = setup(t);
   const filename = first.location || first.filename;

@@ -26,6 +26,26 @@ function fixture(t, contentConfig = {}) {
   return {db,repository};
 }
 
+test('exhausted media budget retains the body and a diagnostic even with other missing stages',t=>{
+  const {db,repository}=fixture(t);
+  const before=db.prepare("SELECT body_markdown,content_hash FROM article_drafts WHERE id='draft-r'").get();
+  db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,status,created_at,updated_at)
+    VALUES ('budget-missing','draft-r',1,'hero','Test','Test','Test','failed','now','now')`).run();
+  repository.saveReview('draft-r',{passed:true,score:95,checks:[],issues:[],unsupported_claims:[]},'independent-review',
+    {revision:1,contentHash:'hash-1',productionOwnerOpportunityId:'opportunity-r'});
+  const jobId=repository.enqueue('generate_visuals','draft-r',{
+    dedupeKey:'budget-exhaustion',productionOwnerOpportunityId:'opportunity-r'});
+  const job=repository.claimJob();
+  assert.equal(job.id,jobId);
+  repository.failJob(job,Object.assign(new Error('Media dispatch budget is exhausted.'),{
+    code:'MEDIA_BUDGET_EXHAUSTED',retryable:false}));
+  assert.equal(db.prepare("SELECT status FROM article_drafts WHERE id='draft-r'").get().status,'needs_review');
+  const after=db.prepare("SELECT body_markdown,content_hash FROM article_drafts WHERE id='draft-r'").get();
+  assert.deepEqual(after,before);
+  const state=repository.getContentProductionDetail('opportunity-r').production_state;
+  assert.equal(state.latest_historical_error?.code,'MEDIA_BUDGET_EXHAUSTED');
+});
+
 test('draft detail reuses its evidence hash without rebuilding the entire content workspace', t=>{
   const {db,repository}=fixture(t);
   repository.saveReview('draft-r',{passed:false,score:30,issues:[],checks:[],unsupported_claims:[]},'fixture');
