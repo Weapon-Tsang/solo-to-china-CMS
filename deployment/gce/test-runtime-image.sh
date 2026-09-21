@@ -6,11 +6,21 @@ NAME="stc-runtime-smoke-$$-$RANDOM"
 DATA="$NAME-data"
 OPS="$NAME-ops"
 cleanup() {
+  local code=$?
+  if [[ "$code" != 0 ]]; then
+    printf '::error title=Runtime image smoke failed::Phase %s exited %s\n' "$PHASE" "$code" >&2
+    for container in "$NAME" "$NAME-api" "$NAME-worker"; do
+      if docker inspect "$container" >/dev/null 2>&1; then
+        docker logs --tail 30 "$container" >&2 || true
+      fi
+    done
+  fi
   docker rm -f "$NAME" "$NAME-api" "$NAME-worker" >/dev/null 2>&1 || true
   docker volume rm "$DATA" "$OPS" >/dev/null 2>&1 || true
   docker network rm "$NAME-net" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+PHASE=initial-start
 docker volume create "$DATA" >/dev/null
 docker volume create "$OPS" >/dev/null
 MOUNTS=(--volume "$DATA:/var/lib/solo-to-china" --volume "$OPS:/ops"
@@ -36,11 +46,13 @@ for ((attempt=0; attempt<30; attempt++)); do
 done
 [[ "$READY" == 1 ]]
 docker network create --internal "$NAME-net" >/dev/null
+PHASE=network-handoff
 docker network disconnect none "$NAME"
 docker network connect "$NAME-net" "$NAME"
 docker exec "$NAME" node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready");if(!r.ok)process.exit(1);console.log("Runtime network handoff passed")'
 docker stop --time 5 "$NAME" >/dev/null
 docker rm "$NAME" >/dev/null
+PHASE=split-role-start
 docker run --detach --name "$NAME-api" --network none "${MOUNTS[@]}" \
   --env CAPTURE_TOKEN=runtime-smoke-capture-token-only \
   --env ADMIN_TOKEN=runtime-smoke-admin-token-only \
@@ -61,6 +73,7 @@ docker run --detach --name "$NAME-worker" --network none "${MOUNTS[@]}" \
   --env SOURCE_UPLOADS_DIR=/var/lib/solo-to-china/source-uploads \
   --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media "$IMAGE" >/dev/null
 ROLES_READY=0
+PHASE=split-role-readiness
 for ((attempt=0; attempt<30; attempt++)); do
   if docker exec "$NAME-api" node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready");if(!r.ok||!(await r.json()).ready)process.exit(1)' >/dev/null 2>&1 \
     && [[ "$(docker inspect --format '{{.State.Running}}' "$NAME-worker")" == true ]] \
@@ -72,7 +85,9 @@ done
 [[ "$ROLES_READY" == 1 ]]
 docker stop --time 5 "$NAME-api" "$NAME-worker" >/dev/null
 docker rm "$NAME-api" "$NAME-worker" >/dev/null
+PHASE=backup
 docker run --rm --network none "${MOUNTS[@]}" "$IMAGE" node /ops/verify-upgrade.mjs backup
+PHASE=rollback-probe
 docker run --rm --network none "${MOUNTS[@]}" "$IMAGE" node -e 'const {DatabaseSync}=require("node:sqlite");const d=new DatabaseSync("/var/lib/solo-to-china/solo-to-china.sqlite");d.exec("PRAGMA user_version=99");d.close()'
 # Data and operations are separate Docker mounts, as in production. A rename to
 # /ops would fail EXDEV; rollback must retain its failed DB inside the data mount.
