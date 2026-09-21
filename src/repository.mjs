@@ -3319,6 +3319,12 @@ export class Repository {
   }
 
   reconcileRecommendationInbox(destinationSlug = null) {
+    // Historical approvals can retain an ACTIONABLE inbox flag after the
+    // lifecycle moves to Content. Clear that stale projection before grouping
+    // new recommendations, so the same intent can have one current proposal.
+    this.db.prepare(`UPDATE content_opportunities SET inbox_state='INTERNAL',primary_opportunity_id=NULL
+      WHERE lifecycle_state NOT IN ('recommended','recommended_again','deferred')
+        AND inbox_state IN ('ACTIONABLE','MERGED')`).run();
     const clauses=["o.lifecycle_state IN ('recommended','recommended_again','deferred')"];
     const values=[];
     if (destinationSlug) {

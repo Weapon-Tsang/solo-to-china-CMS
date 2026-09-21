@@ -30,7 +30,7 @@ function saveRecommendation(repository,sourceId) {
 }
 
 test("recommendation inbox separates processing gaps from approvable evidence gaps", (t) => {
-  const {repository}=repositoryFixture(t);
+  const {db,repository}=repositoryFixture(t);
   const sourceId=saveSource(repository);
   let opportunity=saveRecommendation(repository,sourceId);
   assert.equal(opportunity.processing_state,"PROCESSING_GAP");
@@ -44,6 +44,12 @@ test("recommendation inbox separates processing gaps from approvable evidence ga
   assert.equal(inbox[0].displayStatus,"等待关键证据");
   const approved=repository.decideOpportunity(inbox[0].id,"approve");
   assert.equal(approved.needsEvidence,true);
+  assert.equal(repository.listRecommendationInbox().some((item)=>item.id===inbox[0].id),false);
+  db.prepare(`UPDATE content_opportunities SET lifecycle_state='finished',status='wordpress_draft',
+    strategy_version='3.8',inbox_state='ACTIONABLE' WHERE id=?`).run(inbox[0].id);
+  assert.equal(repository.listRecommendationInbox().some((item)=>item.id===inbox[0].id),false,
+    'a historical finished article cannot remain in the proposal inbox');
+  assert.equal(db.prepare('SELECT inbox_state FROM content_opportunities WHERE id=?').get(inbox[0].id).inbox_state,'INTERNAL');
   assert.deepEqual(repository.listProductionContentOpportunities(),[]);
   const workbench=repository.listContent({productionOnly:true});
   assert.equal(workbench.length,1);
