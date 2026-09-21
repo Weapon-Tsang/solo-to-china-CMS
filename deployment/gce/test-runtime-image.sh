@@ -42,7 +42,7 @@ docker run --detach --name "$NAME" --network none "${MOUNTS[@]}" \
   --env SOURCE_UPLOADS_DIR=/var/lib/solo-to-china/source-uploads \
   --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media "$IMAGE" >/dev/null
 READY=0
-for ((attempt=0; attempt<30; attempt++)); do
+for ((attempt=0; attempt<60; attempt++)); do
   if docker exec "$NAME" node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready"); if(!r.ok||!(await r.json()).ready)process.exit(1)' >/dev/null 2>&1; then
     READY=1; break
   fi
@@ -81,10 +81,10 @@ docker run --detach --name "$NAME-worker" --network none "${MOUNTS[@]}" \
   --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media "$IMAGE" >/dev/null
 ROLES_READY=0
 PHASE=split-role-readiness
-for ((attempt=0; attempt<30; attempt++)); do
+for ((attempt=0; attempt<60; attempt++)); do
   if docker exec "$NAME-api" node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready");if(!r.ok||!(await r.json()).ready)process.exit(1)' >/dev/null 2>&1 \
     && [[ "$(docker inspect --format '{{.State.Running}}' "$NAME-worker")" == true ]] \
-    && docker logs "$NAME-worker" 2>&1 | grep -q 'worker.ready'; then
+    && docker logs "$NAME-worker" 2>&1 | grep -F 'worker.ready' >/dev/null; then
     ROLES_READY=1; break
   fi
   sleep 1

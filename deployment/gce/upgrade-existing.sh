@@ -223,7 +223,7 @@ docker run --detach --name engine-worker --restart unless-stopped --network solo
 WORKER_READY=0
 for ((attempt=0; attempt<30; attempt++)); do
   if [[ "$(docker inspect --format '{{.State.Running}}' engine-worker)" != true ]]; then break; fi
-  if docker logs engine-worker 2>&1 | grep -q 'worker.ready'; then WORKER_READY=1; break; fi
+  if docker logs engine-worker 2>&1 | grep -F 'worker.ready' >/dev/null; then WORKER_READY=1; break; fi
   sleep 2
 done
 [[ "$WORKER_READY" == 1 ]]

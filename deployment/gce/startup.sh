@@ -249,7 +249,7 @@ if [[ "$CLOUDFLARED_STATE" != 'running' ]]; then
   exit 1
 fi
 WORKER_STATE="$(docker inspect --format '{{.State.Status}}' engine-worker)"
-if [[ "$WORKER_STATE" != 'running' ]] || ! docker logs engine-worker 2>&1 | grep -q 'worker.ready'; then
+if [[ "$WORKER_STATE" != 'running' ]] || ! docker logs engine-worker 2>&1 | grep -F 'worker.ready' >/dev/null; then
   log 'Worker did not become ready. Recent diagnostic output follows:'
   docker logs --tail 100 engine-worker >&2 || true
   exit 1
