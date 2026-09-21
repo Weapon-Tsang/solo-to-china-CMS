@@ -5,7 +5,7 @@ import { parseMediaMetadata, validateMediaDelivery } from './media-delivery.mjs'
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
 export function mediaManifestForDraft(db, draftId) {
-  const draft = db.prepare('SELECT id,revision,content_hash FROM article_drafts WHERE id=?').get(draftId);
+  const draft = db.prepare('SELECT id,revision,content_hash,strategy_version FROM article_drafts WHERE id=?').get(draftId);
   if (!draft) return null;
   const row = db.prepare('SELECT * FROM required_media_manifests WHERE draft_id=? AND revision=?')
     .get(draftId, draft.revision);
@@ -20,7 +20,7 @@ export function mediaManifestForDraft(db, draftId) {
 export function freezeRequiredMediaManifest(db, draftId, { approvedNoImage = false } = {}) {
   const current = mediaManifestForDraft(db, draftId);
   if (current) return current;
-  const draft = db.prepare('SELECT id,revision,content_hash FROM article_drafts WHERE id=?').get(draftId);
+  const draft = db.prepare('SELECT id,revision,content_hash,strategy_version FROM article_drafts WHERE id=?').get(draftId);
   if (!draft) throw new Error(`Draft ${draftId} does not exist.`);
   const rows = db.prepare(`SELECT id,slot,asset_fingerprint,factual_image_required,source_asset_id,
     acquisition_strategy FROM article_visuals WHERE draft_id=? ORDER BY slot`).all(draftId);
@@ -39,7 +39,7 @@ export function freezeRequiredMediaManifest(db, draftId, { approvedNoImage = fal
 }
 
 export function evaluatePublicationEligibility(db, draftId, { phase = 'local', pagePayload = null } = {}) {
-  const draft = db.prepare('SELECT id,revision,content_hash FROM article_drafts WHERE id=?').get(draftId);
+  const draft = db.prepare('SELECT id,revision,content_hash,strategy_version FROM article_drafts WHERE id=?').get(draftId);
   const manifest = draft && mediaManifestForDraft(db, draftId);
   if (!draft || !manifest || manifest.contentHash !== draft.content_hash) {
     return { passed: false, code: 'MEDIA_MANIFEST_MISSING_OR_STALE', missing: [],
@@ -49,7 +49,8 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     return { passed: false, code: 'EMPTY_MEDIA_MANIFEST_NOT_APPROVED', missing: [], required: 0, ready: 0 };
   }
   const visualRows = db.prepare(`SELECT av.*,sa.local_path AS source_asset_local_path,
-    sa.original_bytes_status,sa.durability_status,sa.original_sha256 AS source_original_sha256
+    sa.original_bytes_status,sa.durability_status,sa.original_sha256 AS source_original_sha256,
+    sa.local_photo_audit_json AS source_local_photo_audit_json
     FROM article_visuals av
     LEFT JOIN source_assets sa ON sa.id=av.source_asset_id WHERE av.draft_id=?`).all(draftId);
   const byId = new Map(visualRows.map((row) => [row.id, row]));
@@ -70,14 +71,19 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     const metadata = parseMediaMetadata(row?.media_metadata_json);
     const checkedHash = metadata.binary_qa?.sha256 || metadata.pixel_qa?.sha256 || metadata.sha256;
     const sourceAnalysis=metadata.source_analysis || {};
+    let localPhotoAudit={};
+    try { localPhotoAudit=JSON.parse(row?.source_local_photo_audit_json || '{}'); } catch { /* invalid audit fails closed */ }
+    const localPhotoQualified=localPhotoAudit.status === 'eligible'
+      && localPhotoAudit.sha256 === fileHash && Number(localPhotoAudit.providerCalls) === 0;
     const retainedPhoto=Boolean(row?.acquisition_strategy === 'use_authorized_source_image'
       && row?.source_asset_id && row.original_bytes_status === 'saved_original'
       && row.durability_status === 'ORIGINAL_STORED'
       && row.source_original_sha256 === fileHash
-      && sourceAnalysis.analysis_status === 'ready'
-      && sourceAnalysis.asset_kind === 'documentary_photo'
-      && sourceAnalysis.reader_text_present === false
-      && !(sourceAnalysis.editor_ui_regions || []).length
+      && (draft.strategy_version === '3.9' ? localPhotoQualified
+        : (sourceAnalysis.analysis_status === 'ready'
+          && sourceAnalysis.asset_kind === 'documentary_photo'
+          && sourceAnalysis.reader_text_present === false
+          && !(sourceAnalysis.editor_ui_regions || []).length))
       && metadata.visual_decision?.action === 'retain'
       && Number(metadata.authorized_asset_match?.score || 0) >= 0.34);
     if ((!checkedHash || checkedHash !== fileHash) && !retainedPhoto) failures.push('file_hash_unverified');

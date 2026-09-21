@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import fs from 'node:fs';
 import path from 'node:path';
 import test from "node:test";
+import sharp from 'sharp';
+import { auditSourcePhoto, closeLocalPhotoAudit } from '../src/local-photo-audit.mjs';
 import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { Pipeline } from "../src/pipeline.mjs";
 import { CONTENT_STRATEGY } from "../src/content-strategy.mjs";
@@ -13,6 +15,7 @@ import { defaultComponents, frontendContractFixture } from "../test-support/fron
 import { pageBlockSignature } from "../src/repository.mjs";
 
 for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval drives ${pipelineMode} to QA and WordPress draft delivery`, async (t) => {
+  t.after(closeLocalPhotoAudit);
   const { db, repository, directory } = repositoryFixture(t);
   const commercialComponent = {
     id: "affiliate_booking_card", category: "commercial", purpose: "Approved affiliate booking resource.", status: "stable", variants: ["default"],
@@ -174,14 +177,17 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   });
 
   for (const [externalId, title] of [["autoA", "Source A"], ["autoB", "Source B"]]) {
+    const pixels=Buffer.alloc(1200*800*3);
+    for (let i=0;i<pixels.length;i++) pixels[i]=(i*73+(i>>4)*29) & 255;
+    const sourceBytes=await sharp(pixels,{raw:{width:1200,height:800,channels:3}}).png().toBuffer();
     repository.saveCapture(normalizeXiaohongshuCapture({
       url: `https://www.xiaohongshu.com/explore/${externalId}`, title,
       text: externalId === "autoA"
         ? "Beijing orientation: Central Beijing. Use the metro. Reserve timed attractions. Carry a working mobile payment method. Plan admission and transit costs."
         : "Beijing booking: Central Beijing. Use the metro. Reserve timed attractions. Carry a working mobile payment method. Plan admission and transit costs. Passport checks, museum entry, ticket windows, weekend crowds, airport arrival, luggage storage, hotel check-in, translation, local etiquette, and emergency contacts are reviewed independently.",
       images: [{ url: `https://ci.xhscdn.com/${externalId}.jpg`, alt: `${title} real-world travel scene`,
-        originalDataUrl: `data:image/png;base64,${Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),Buffer.from(externalId)]).toString("base64")}`,
-        originalSha256: createHash("sha256").update(Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),Buffer.from(externalId)])).digest("hex") }],
+        originalDataUrl: `data:image/png;base64,${sourceBytes.toString('base64')}`,
+        originalSha256: createHash('sha256').update(sourceBytes).digest('hex') }],
     }));
   }
   db.prepare("UPDATE sources SET authority_level=1, verified_at='2026-09-07T00:00:00.000Z'").run();
@@ -310,6 +316,43 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   const mismatched = structuredClone(generatedPackage.publish_composition.publish_package);
   mismatched.contract.contractChecksum = "f".repeat(64);
   assert.equal(frontendContracts.validatePublishPackage(mismatched).errors.some((item) => item.code === "CONTRACT_VERSION_MISMATCH"), true);
+
+  db.exec('SAVEPOINT historical_photo_refresh');
+  try {
+    db.prepare('DELETE FROM wordpress_publications WHERE draft_id=?').run(content[0].draft_id);
+    db.prepare('DELETE FROM article_visuals WHERE draft_id=? AND slot=2').run(content[0].draft_id);
+    db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,alt_text,position,local_path,mime_type,
+      storage_status,original_bytes_status,durability_status,original_sha256,capture_version,local_photo_audit_json)
+      SELECT 'extra-photo',source_id,kind,'https://ci.xhscdn.com/extra-photo.jpg',
+        'Central Beijing metro transport orientation photograph',position+10,local_path,mime_type,
+        storage_status,original_bytes_status,durability_status,original_sha256,capture_version,local_photo_audit_json
+      FROM source_assets WHERE id=?`).run(generatedPackage.draft.visuals[0].source_asset_id);
+    const secondPixels=Buffer.alloc(1200*800*3);
+    for (let i=0;i<secondPixels.length;i++) secondPixels[i]=(i*59+(i>>6)*37+17)&255;
+    const secondBytes=await sharp(secondPixels,{raw:{width:1200,height:800,channels:3}}).png().toBuffer();
+    const secondPath=path.join(directory,'extra-photo.png');
+    fs.writeFileSync(secondPath,secondBytes);
+    const secondAudit=await auditSourcePhoto(secondPath);
+    assert.equal(secondAudit.status,'eligible');
+    db.prepare(`UPDATE source_assets SET local_path=?,original_sha256=?,local_photo_audit_json=? WHERE id='extra-photo'`)
+      .run(secondPath,secondAudit.sha256,JSON.stringify(secondAudit));
+    db.prepare("UPDATE article_drafts SET strategy_version='3.8' WHERE id=?").run(content[0].draft_id);
+    const plan=repository.planArticlePhotoRefresh([content[0].draft_id]);
+    assert.equal(plan.items[0].disposition,'eligible',JSON.stringify(plan.items[0]));
+    const body=repository.getDraftPackage(content[0].draft_id).draft.body_markdown;
+    const calls=db.prepare('SELECT COUNT(*) AS count FROM model_call_metrics').get().count;
+    const applied=repository.applyArticlePhotoRefresh([content[0].draft_id],plan.confirmation);
+    assert.equal(applied.queued.length,1);
+    const refreshed=repository.getDraftPackage(content[0].draft_id);
+    assert.equal(refreshed.draft.body_markdown,body);
+    assert.equal(refreshed.draft.strategy_version,'3.9');
+    assert.equal(refreshed.review?.passed,true,'the independent unchanged-text QA remains current');
+    assert.equal(refreshed.draft.visuals.length,2);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM model_call_metrics').get().count,calls,
+      'reusing audited originals must not call a Provider');
+  } finally {
+    db.exec('ROLLBACK TO historical_photo_refresh; RELEASE historical_photo_refresh');
+  }
 
   const deliveryError = Object.assign(new Error("Published posts cannot be overwritten."), { code: "POST_NOT_DRAFT" });
   repository.failWordPressPublication(content[0].draft_id, deliveryError);

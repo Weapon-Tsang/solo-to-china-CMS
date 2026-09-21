@@ -262,7 +262,7 @@ export function applyIdentityBatch(sessionInput, cardsInput, identityResults = [
     const repairActions = Array.isArray(identity.requiredActions) ? identity.requiredActions : [];
     const needsBrowserCapture = Boolean(identity.sourceExists && repairActions.some((action) =>
       ["BROWSER_MEDIA_REPAIR", "RECAPTURE_TEXT_DOM"].includes(action)));
-    const shouldQueue = session.mode === "repair" ? needsBrowserCapture
+    const shouldQueue = identity.deleted ? false : session.mode === "repair" ? needsBrowserCapture
       : session.mode === "full" ? (!identity.sourceExists || needsBrowserCapture)
         : !identity.known;
     if (!shouldQueue) {

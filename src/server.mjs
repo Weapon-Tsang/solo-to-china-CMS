@@ -605,6 +605,33 @@ export function createApplication(config = loadConfig()) {
           snapshotAssetCount:assetSnapshots.length});
       }
       const sourceMatch = url.pathname.match(/^\/api\/sources\/([^/]+)$/);
+      if (request.method === "DELETE" && sourceMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const deleted = repository.deleteSource(decodeURIComponent(sourceMatch[1]),
+          auth.status(request)?.username || 'administrator');
+        return deleted ? sendJson(response, 200, deleted) : sendJson(response, 404, { error: 'Source not found.' });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/backfills/source-photo-audit') {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 20_000);
+        const dryRun = payload.dryRun !== false;
+        const assetIds = repository.enqueueSourcePhotoAudits(payload.sourceId || null,
+          { limit: Math.min(2000, Math.max(1, Number(payload.limit || 100))), dryRun });
+        if (!dryRun && assetIds.length) runQueued();
+        return sendJson(response, dryRun ? 200 : 202,
+          { dryRun, queued: dryRun ? 0 : assetIds.length, candidateCount:assetIds.length,
+            assetIds:dryRun ? assetIds : undefined });
+      }
+      if (request.method === 'POST' && url.pathname === '/api/backfills/article-photo-refresh') {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = await readJson(request, 30_000);
+        const draftIds = Array.isArray(payload.draftIds) ? payload.draftIds : [];
+        const result = payload.apply === true
+          ? repository.applyArticlePhotoRefresh(draftIds, String(payload.confirmation || ''), auth?.subject || 'administrator')
+          : repository.planArticlePhotoRefresh(draftIds);
+        if (result.mode === 'apply' && result.queued.length) runQueued();
+        return sendJson(response, result.mode === 'apply' ? 202 : 200, result);
+      }
       if (request.method === "GET" && sourceMatch) {
         if (captureOnly) authorizeCapture(request, config.captureToken);
         const source = repository.getSource(sourceMatch[1]);
@@ -838,7 +865,15 @@ export function createApplication(config = loadConfig()) {
         const pageSize=Math.min(100,limit(url.searchParams.get("limit") || '20'));
         const offset=Math.max(0,Number.parseInt(url.searchParams.get("cursor") || "0",10) || 0);
         const inbox = repository.listRecommendationInbox(pageSize + 1,{reconcile:false,cursor:offset});
-        const items=inbox.slice(0,pageSize);
+        const items=inbox.slice(0,pageSize).map((item) => ({
+          id:item.id,title:item.title,destination_name:item.destination_name,destination_slug:item.destination_slug,
+          source_id:item.source_id,source_title:item.source_title,content_type:item.content_type,
+          status:item.status,lifecycle_state:item.lifecycle_state,processing_state:item.processing_state,
+          seo_action:item.seo_action,readiness_score:item.readiness_score,
+          readiness:{ready:Boolean(item.readiness?.ready),blockingRequirements:item.readiness?.blockingRequirements || []},
+          displayStatus:item.displayStatus,productionTypeLabel:item.productionTypeLabel,
+          recommendationReason:item.recommendationReason,previousFailureSummary:item.previousFailureSummary,
+        }));
         return sendJson(response, 200, { items,
           comparisonGroups: groupProposals(inbox),
           nextCursor:inbox.length>pageSize ? String(offset+pageSize) : null,
@@ -1279,6 +1314,26 @@ export function createApplication(config = loadConfig()) {
         repository.enqueue("compose_commercial", wordpressMatch[1]);
         runQueued();
         return sendJson(response, 202, { queued: true });
+      }
+      const publishMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/publish$/);
+      if (request.method === 'POST' && publishMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        if (!wordpress.enabled) return sendJson(response, 409, { error: 'WordPress is not configured.' });
+        const draftId = decodeURIComponent(publishMatch[1]);
+        const content = repository.getDraftPackage(draftId);
+        if (!content) return sendJson(response, 404, { error: 'Draft not found.' });
+        if (content.draft.status === 'published') return sendJson(response, 200, { published: true });
+        if (!content.publication?.post_id || content.publication.status !== 'synced'
+          || !content.review?.passed || !content.commercial_composition?.current
+          || content.publish_composition?.status !== 'delivered') {
+          return sendJson(response, 409, { error: 'Current QA and complete WordPress draft delivery are required.',
+            code: 'PUBLICATION_NOT_READY' });
+        }
+        assertPublicationEligibility(db, draftId, { phase: 'delivery',
+          pagePayload: content.publish_composition?.publish_package?.page || null });
+        const jobId = repository.enqueue('publish_wordpress_post', draftId);
+        runQueued();
+        return sendJson(response, 202, { queued: true, jobId });
       }
       if (request.method === "POST" && url.pathname === "/api/delivery-refresh") {
         authorizeAdmin(request, config.adminToken, auth);

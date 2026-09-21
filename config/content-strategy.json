@@ -1,13 +1,25 @@
 {
   "name": "SoloToChina 内容生产策略",
-  "current_version": "3.8",
-  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.8.md",
+  "current_version": "3.9",
+  "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.9.md",
   "status": "active",
   "history": [
     {
+      "version": "3.9",
+      "effective_date": "2026-09-22",
+      "status": "active",
+      "summary": "Use many relevant high-quality original photographs with zero-Provider direct reuse while continuing valuable information-graphic translation and necessary image generation.",
+      "changes": [
+        "Audit retained source photos locally for resolution, focus, image detail and dense Chinese text; persist checks by original SHA-256 and reuse results without Provider requests.",
+        "Use as many relevant eligible originals as the reader and page contract support, with accurate alt text, provenance and no unrelated filler; direct reuse adds zero model or image API calls.",
+        "Keep useful Chinese information graphics and route maps for complete English translation and independent visual QA, and generate new illustrations when needed under the existing durable paid-call budget.",
+        "Historical draft and published-article image refresh preserves frozen prose and prior successful assets, re-runs only missing media and delivery stages, and requires current QA and publication gates."
+      ]
+    },
+    {
       "version": "3.8",
       "effective_date": "2026-09-19",
-      "status": "active",
+      "status": "superseded",
       "summary": "Explicit reader-promise planning, source-role mapping, evidence plans, translation checkpoints, and neutral commercial-language QA.",
       "changes": [
         "Content Briefs carry a working title, why-this-article rationale, reader promise, source-role map, and section-level evidence plan into writing and bounded repair.",

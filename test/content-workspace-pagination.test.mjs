@@ -68,6 +68,12 @@ test("nonempty production-shaped workspace pages in SQL and omits heavy detail p
   db.prepare=(...args)=>{prepared+=1;return originalPrepare(...args);};
   const firstBefore=repository.listContentWorkspace({productionOnly:true,limit:50,offset:0,compact:true});
   const beforeStatements=prepared;
+  assert.ok(beforeStatements <= 30, `compact status projection used ${beforeStatements} SQL statements`);
+  const detailed=repository.listContent({productionOnly:true,limit:1,offset:0,compact:false})[0];
+  const summary=repository.listContent({productionOnly:true,limit:1,offset:0,compact:true})[0].production_state;
+  for (const key of ['lifecycle','stage_status','current_stage','completed_stages','latest_error','available_actions']) {
+    assert.deepEqual(summary[key],detailed.production_state[key],`compact ${key} differs from detail`);
+  }
   const beforeBytes=Buffer.byteLength(JSON.stringify(firstBefore));
   db.exec("BEGIN IMMEDIATE");
   for(let index=0;index<200;index+=1){

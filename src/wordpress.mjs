@@ -57,6 +57,36 @@ export class WordPressDraftAdapter {
     return inventory;
   }
 
+  async getPost(postId, options = {}) {
+    if (!this.enabled || !Number.isSafeInteger(Number(postId)) || Number(postId) <= 0) {
+      throw new WordPressApiError('INVALID_POST_ID', 'A configured WordPress post ID is required.', { status: 400 });
+    }
+    assertSafeSiteUrl(this.config.siteUrl);
+    return this.request(`/wp-json/wp/v2/posts/${Number(postId)}?context=edit`,
+      { method: 'GET', signal: options.signal });
+  }
+
+  async getCmsArticleReceipt(postId, options = {}) {
+    if (!this.enabled || !Number.isSafeInteger(Number(postId)) || Number(postId) <= 0) {
+      throw new WordPressApiError('INVALID_POST_ID', 'A configured WordPress post ID is required.', { status: 400 });
+    }
+    assertSafeSiteUrl(this.config.siteUrl);
+    return this.request(`/wp-json/stc/v1/cms-articles/${Number(postId)}/receipt`,
+      { method:'GET', signal:options.signal });
+  }
+
+  async publishPost(postId, options = {}) {
+    const result = await this.request(`/wp-json/wp/v2/posts/${Number(postId)}`, {
+      method: 'POST', body: JSON.stringify({ status: 'publish' }), signal: options.signal,
+      idempotencyKey: options.idempotencyKey,
+    });
+    if (Number(result.id) !== Number(postId) || result.status !== 'publish') {
+      throw new WordPressApiError('WORDPRESS_PUBLISH_UNCONFIRMED',
+        'WordPress did not confirm the requested post as published.', { status: 502 });
+    }
+    return result;
+  }
+
   async upsertDraft(draft, existingPostId = null, options = {}) {
     if (!this.enabled) throw new Error("WordPress draft delivery is not configured.");
     this.deliveryGuard?.(options.draftId, { phase: 'delivery' });
@@ -116,6 +146,11 @@ export class WordPressDraftAdapter {
       throw new WordPressApiError("UNSAFE_CMS_ARTICLE_ENDPOINT", "The CMS Article endpoint must use the configured WordPress origin.", { status: 400 });
     }
     const existingPostId = Number.parseInt(publishPackage?.publication?.existing_post_id || "", 10);
+    const expectedStatus = publishPackage?.publication?.status === 'publish' ? 'publish' : 'draft';
+    if (expectedStatus === 'publish' && !(Number.isInteger(existingPostId) && existingPostId > 0)) {
+      throw new WordPressApiError('PUBLISHED_REFRESH_TARGET_MISSING',
+        'A published media refresh requires an existing post ID.', { status:409 });
+    }
     if (Number.isInteger(existingPostId) && existingPostId > 0) url.pathname = `${url.pathname.replace(/\/$/, "")}/${existingPostId}`;
     const serializedPackage = JSON.stringify(publishPackage);
     if (Buffer.byteLength(serializedPackage, "utf8") > 1024 * 1024) {
@@ -139,8 +174,8 @@ export class WordPressDraftAdapter {
         status: response.status, details: body?.data || null,
       });
     }
-    if (body?.status !== "draft" || !Number.isInteger(body?.post_id)) {
-      throw new WordPressApiError("INVALID_WORDPRESS_RESPONSE", "WordPress did not confirm a draft post and post_id.", { status: 502, details: body });
+    if (body?.status !== expectedStatus || !Number.isInteger(body?.post_id)) {
+      throw new WordPressApiError("INVALID_WORDPRESS_RESPONSE", "WordPress did not confirm the requested post status and post_id.", { status: 502, details: body });
     }
     const expectedSlots = (publishPackage?.page?.blocks || []).filter((block) => String(block?.type || "").startsWith("affiliate_"))
       .map((block) => ({ slot_key:block.data?.slot_key, affiliate_asset_id:block.data?.affiliate_asset_id,

@@ -59,28 +59,68 @@ export function productionStageActivityLabel(value, status) {
   return pair ? pair[status === "running" ? 1 : 0] : `${productionStageLabel(value)} · ${status === "running" ? "执行中" : "排队中"}`;
 }
 
+export function prefetchProductionStates(db, rows) {
+  const entityIds=[...new Set(rows.flatMap((row)=>[row.candidate_id,row.brief_id,row.draft_id]).filter(Boolean))];
+  const opportunityIds=[...new Set(rows.map((row)=>row.opportunity_id).filter(Boolean))];
+  const jobs=entityIds.length ? db.prepare(`SELECT * FROM jobs WHERE entity_id IN (${placeholders(entityIds)})
+    AND type IN (${placeholders(PRODUCTION_JOB_TYPES)}) ORDER BY updated_at,created_at,id`)
+    .all(...entityIds,...PRODUCTION_JOB_TYPES) : [];
+  const jobIds=jobs.map((job)=>job.id);
+  const receipts=jobIds.length ? db.prepare(`SELECT stage,entity_id,job_id,created_at FROM pipeline_step_receipts
+    WHERE job_id IN (${placeholders(jobIds)}) AND stage IN (${placeholders(PRODUCTION_JOB_TYPES)})
+    ORDER BY created_at`).all(...jobIds,...PRODUCTION_JOB_TYPES) : [];
+  const artifacts=entityIds.length ? db.prepare(`SELECT * FROM pipeline_artifacts
+    WHERE entity_id IN (${placeholders(entityIds)}) AND stage IN (${placeholders(PRODUCTION_JOB_TYPES)})
+    ORDER BY updated_at,created_at,id`).all(...entityIds,...PRODUCTION_JOB_TYPES) : [];
+  const modelCalls=jobIds.length ? db.prepare(`SELECT id,stage,entity_id,run_id,model,provider,request_kind,cache_hit,status,
+    attempt_number,error_code,input_tokens,output_tokens,request_started_at,request_completed_at,created_at,
+    visual_id,source_asset_id,substage,http_status,provider_code,provider_request_id,dispatch_state,evidence_basis,endpoint_id,
+    retry_after_ms,provider_usage_json FROM model_call_metrics WHERE run_id IN (${placeholders(jobIds)})
+    ORDER BY created_at,id`).all(...jobIds) : [];
+  const scopeResets=new Map(opportunityIds.length ? db.prepare(`SELECT opportunity_id,MAX(created_at) AS created_at
+    FROM content_operation_history WHERE opportunity_id IN (${placeholders(opportunityIds)})
+    AND action='correct_destination' AND status='completed' GROUP BY opportunity_id`).all(...opportunityIds)
+    .map((row)=>[row.opportunity_id,row.created_at]) : []);
+  const controls=new Map(opportunityIds.length ? db.prepare(`SELECT * FROM production_record_controls
+    WHERE opportunity_id IN (${placeholders(opportunityIds)})`).all(...opportunityIds)
+    .map((row)=>[row.opportunity_id,row]) : []);
+  const archiveIds=new Set(opportunityIds.length ? db.prepare(`SELECT DISTINCT opportunity_id FROM production_attempt_archives
+    WHERE opportunity_id IN (${placeholders(opportunityIds)})`).all(...opportunityIds).map((row)=>row.opportunity_id) : []);
+  const auditIds=new Set(opportunityIds.length ? db.prepare(`SELECT DISTINCT opportunity_id FROM production_record_audit
+    WHERE opportunity_id IN (${placeholders(opportunityIds)})`).all(...opportunityIds).map((row)=>row.opportunity_id) : []);
+  const frontendContractActive=Boolean(db.prepare('SELECT 1 FROM frontend_contract_state WHERE singleton=1 AND active_snapshot_id IS NOT NULL').get());
+  return {jobs,receipts,artifacts,modelCalls,scopeResets,controls,archiveIds,auditIds,frontendContractActive};
+}
+
 export function buildProductionState(db, row, options = {}) {
+  const batch=options.batch || null;
   const capabilities = resolveCapabilities(db, row, options);
-  const registry = PRODUCTION_STAGE_REGISTRY.filter((item) => stageEnabled(item, capabilities, db, row));
+  const registry = PRODUCTION_STAGE_REGISTRY.filter((item) => stageEnabled(item, capabilities, db, row,batch));
   const entityIds = [row.candidate_id, row.brief_id, row.draft_id].filter(Boolean);
   const legacyOwnerIsUnique = Boolean(row.approved_at && Number(row.approved_owner_count || 0) === 1);
-  const jobs = entityIds.length ? db.prepare(`SELECT * FROM jobs WHERE entity_id IN (${placeholders(entityIds)})
+  const jobs = batch ? batch.jobs.filter((job)=>entityIds.includes(job.entity_id)
+    && (job.production_owner_opportunity_id===row.opportunity_id
+      || job.production_owner_opportunity_id==null && legacyOwnerIsUnique))
+    : entityIds.length ? db.prepare(`SELECT * FROM jobs WHERE entity_id IN (${placeholders(entityIds)})
     AND type IN (${placeholders(PRODUCTION_JOB_TYPES)})
     AND (production_owner_opportunity_id=? OR (production_owner_opportunity_id IS NULL AND ?=1))
     ORDER BY updated_at,created_at,id`).all(...entityIds, ...PRODUCTION_JOB_TYPES, row.opportunity_id, legacyOwnerIsUnique ? 1 : 0) : [];
-  const scopeResetAt=db.prepare(`SELECT created_at FROM content_operation_history WHERE opportunity_id=?
+  const scopeResetAt=batch ? batch.scopeResets.get(row.opportunity_id) || null : db.prepare(`SELECT created_at FROM content_operation_history WHERE opportunity_id=?
     AND action='correct_destination' AND status='completed' ORDER BY created_at DESC,id DESC LIMIT 1`).get(row.opportunity_id)?.created_at || null;
   const currentJobs=scopeResetAt ? jobs.filter((item)=>String(item.updated_at)>String(scopeResetAt)) : jobs;
   const jobIds=currentJobs.map((item)=>item.id);
-  const receipts = jobIds.length ? db.prepare(`SELECT stage,entity_id,job_id,created_at FROM pipeline_step_receipts
+  const receipts = batch ? batch.receipts.filter((item)=>jobIds.includes(item.job_id)) : jobIds.length ? db.prepare(`SELECT stage,entity_id,job_id,created_at FROM pipeline_step_receipts
     WHERE job_id IN (${placeholders(jobIds)}) AND stage IN (${placeholders(PRODUCTION_JOB_TYPES)})
     ORDER BY created_at`).all(...jobIds,...PRODUCTION_JOB_TYPES) : [];
-  const artifacts = entityIds.length && currentJobs.length ? db.prepare(`SELECT * FROM pipeline_artifacts
+  const artifacts = batch ? batch.artifacts.filter((artifact)=>entityIds.includes(artifact.entity_id)
+    && currentJobs.some((job)=>job.type===artifact.stage && job.entity_id===artifact.entity_id))
+    : entityIds.length && currentJobs.length ? db.prepare(`SELECT * FROM pipeline_artifacts
     WHERE entity_id IN (${placeholders(entityIds)}) AND stage IN (${placeholders(PRODUCTION_JOB_TYPES)})
     ORDER BY updated_at,created_at,id`).all(...entityIds,...PRODUCTION_JOB_TYPES)
     .filter((artifact)=>currentJobs.some((job)=>job.type===artifact.stage && job.entity_id===artifact.entity_id)) : [];
   const allJobIds=jobs.map((item)=>item.id);
-  const allModelCalls = allJobIds.length ? db.prepare(`SELECT id,stage,entity_id,run_id,model,provider,request_kind,cache_hit,status,
+  const allModelCalls = batch ? batch.modelCalls.filter((item)=>allJobIds.includes(item.run_id))
+    : allJobIds.length ? db.prepare(`SELECT id,stage,entity_id,run_id,model,provider,request_kind,cache_hit,status,
     attempt_number,error_code,input_tokens,output_tokens,request_started_at,request_completed_at,created_at,
     visual_id,source_asset_id,substage,http_status,provider_code,provider_request_id,dispatch_state,evidence_basis,endpoint_id,
     retry_after_ms,provider_usage_json
@@ -136,11 +176,11 @@ export function buildProductionState(db, row, options = {}) {
   const failed = dependencyBrokenFailure ? null : unresolvedFailure;
   const firstPending = entries.find((item) => item.status !== "succeeded" && item.key !== "revise_draft") || null;
   const completed = completedStages.length;
-  const total = registry.filter((item) => item.key !== "revise_draft" || stageEnabled(item, capabilities, db, row)).length;
+  const total = registry.filter((item) => item.key !== "revise_draft" || stageEnabled(item, capabilities, db, row,batch)).length;
   const progress = { completed, total, percent: total ? Math.min(100, Math.round(completed / total * 100)) : 0 };
   const readinessValue = parse(row.readiness_json, row.readiness || {});
   const readiness = row.approved_at ? (readinessValue.ready ? "ready" : "waiting_for_evidence") : "not_applicable";
-  const control = controlState(db, row.opportunity_id);
+  const control = batch ? batch.controls.get(row.opportunity_id) || null : controlState(db, row.opportunity_id);
   const lastAttemptAt = newestTimestamp([
     row.opportunity_updated_at, row.brief_updated_at, row.draft_updated_at,
     ...jobs.map((item) => item.updated_at), ...artifacts.map((item) => item.updated_at), control?.updated_at,
@@ -161,13 +201,16 @@ export function buildProductionState(db, row, options = {}) {
   } : null;
   const graceMs = Math.max(60_000, Number(options.continuityGraceMs || 15 * 60_000));
   const beyondGrace = Number.isFinite(ageBase) && ageBase > 0 && nowMs - ageBase >= graceMs;
+  const hasArchive=batch ? batch.archiveIds.has(row.opportunity_id)
+    : Boolean(db.prepare("SELECT 1 FROM production_attempt_archives WHERE opportunity_id=? LIMIT 1").get(row.opportunity_id));
+  const hasAudit=batch ? batch.auditIds.has(row.opportunity_id)
+    : Boolean(db.prepare("SELECT 1 FROM production_record_audit WHERE opportunity_id=? LIMIT 1").get(row.opportunity_id));
   const hasLineage = Boolean(row.approved_at || row.editorial_assembly_id || row.brief_id || row.narrative_plan_id
     || row.writing_packet_id || row.frontend_plan_status || row.draft_id || row.wordpress_status || jobs.length || artifacts.length
-    || control || db.prepare("SELECT 1 FROM production_attempt_archives WHERE opportunity_id=? LIMIT 1").get(row.opportunity_id)
-    || db.prepare("SELECT 1 FROM production_record_audit WHERE opportunity_id=? LIMIT 1").get(row.opportunity_id));
+    || control || hasArchive || hasAudit);
   const hasExecutionEvidence=Boolean(row.editorial_assembly_id || row.brief_id || row.narrative_plan_id
     || row.writing_packet_id || row.frontend_plan_status || row.draft_id || row.wordpress_status || jobs.length || artifacts.length
-    || db.prepare("SELECT 1 FROM production_attempt_archives WHERE opportunity_id=? LIMIT 1").get(row.opportunity_id));
+    || hasArchive);
   const scopeConfirmationRequired=row.suppression_reason === "destination_recovery_requires_confirmation" && currentJobs.length === 0;
 
   let lifecycle = "pending_start";
@@ -259,6 +302,14 @@ export function buildProductionState(db, row, options = {}) {
     autoContinue = false;
     needsHuman = true;
     recoverable = true;
+  } else if (row.draft_status === 'published') {
+    lifecycle = 'completed';
+    stageStatus = 'succeeded';
+    currentStage = 'publish_wordpress_post';
+    currentStageLabel = 'WordPress 发布';
+    headline = '文章已在 WordPress 发布';
+    explanation = '发布状态已与 WordPress 文章 ID 核对。';
+    autoContinue = false;
   } else if (failed) {
     const explained = explainOperationalFailure(failed);
     lifecycle = "needs_attention";
@@ -458,17 +509,21 @@ function buildStageEntry(definition, jobs, artifacts, receipts, modelCalls, evid
 
 function resolveCapabilities(db, row, options) {
   const configured = options.capabilities || {};
-  const hasVisualWork = Boolean(Number(row.visual_total || 0) || (row.draft_id && db.prepare(`SELECT 1 FROM jobs
-    WHERE entity_id=? AND type='generate_visuals' AND production_owner_opportunity_id=? LIMIT 1`).get(row.draft_id,row.opportunity_id)));
+  const hasVisualWork = Boolean(Number(row.visual_total || 0) || (row.draft_id && (options.batch
+    ? options.batch.jobs.some((job)=>job.entity_id===row.draft_id && job.type==='generate_visuals'
+      && job.production_owner_opportunity_id===row.opportunity_id)
+    : db.prepare(`SELECT 1 FROM jobs WHERE entity_id=? AND type='generate_visuals'
+      AND production_owner_opportunity_id=? LIMIT 1`).get(row.draft_id,row.opportunity_id))));
   return {
     frontendContract: configured.frontendContract ?? Boolean(row.frontend_plan_status || row.frontend_page_status || row.publish_composition_status
-      || db.prepare("SELECT 1 FROM frontend_contract_state WHERE singleton=1 AND active_snapshot_id IS NOT NULL").get()),
+      || (options.batch ? options.batch.frontendContractActive
+        : db.prepare("SELECT 1 FROM frontend_contract_state WHERE singleton=1 AND active_snapshot_id IS NOT NULL").get())),
     visuals: configured.visuals === false ? false : hasVisualWork,
     wordpress: configured.wordpress ?? Boolean(row.wordpress_status || row.publish_composition_status),
   };
 }
 
-function stageEnabled(definition, capabilities, db, row) {
+function stageEnabled(definition, capabilities, db, row, batch = null) {
   if (definition.required === "always") return true;
   if (definition.required === "frontendContract") return capabilities.frontendContract;
   if (definition.required === "visuals") return capabilities.visuals;
@@ -478,8 +533,11 @@ function stageEnabled(definition, capabilities, db, row) {
     const report = parse(row.draft_quality_report_json, {});
     const qualityRepair = row.qa_passed != null && !Boolean(row.qa_passed)
       ? qualityRepairStage(normalizeQualityReviewIssues(report.issues)) : null;
-    return qualityRepair === "revise_draft" || Boolean(row.draft_id && db.prepare(`SELECT 1 FROM jobs
-      WHERE entity_id=? AND type='revise_draft' AND production_owner_opportunity_id=? LIMIT 1`).get(row.draft_id,row.opportunity_id));
+    return qualityRepair === "revise_draft" || Boolean(row.draft_id && (batch
+      ? batch.jobs.some((job)=>job.entity_id===row.draft_id && job.type==='revise_draft'
+        && job.production_owner_opportunity_id===row.opportunity_id)
+      : db.prepare(`SELECT 1 FROM jobs WHERE entity_id=? AND type='revise_draft'
+        AND production_owner_opportunity_id=? LIMIT 1`).get(row.draft_id,row.opportunity_id)));
   }
   return false;
 }

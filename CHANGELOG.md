@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.49 - Unreleased
+
+- Activate Content Production Strategy 3.9: locally audit source photos for quality and dense Chinese text, reuse relevant qualified originals without provider calls, and retain paid English infographic translation and necessary image generation with independent visual QA.
+- Add durable source deletion tombstones and file cleanup, prevent extension recapture, reconcile WordPress publication status by exact post ID, and provide an authenticated CMS publish action and guarded published media refresh with unknown-result receipts.
+- Preserve article prose and independent text QA across historical media-only revision updates; persist refresh plans and resume only missing visual and delivery steps.
+- Improve source-list SQL on the latest production-shaped snapshot, retain 20/50 true pages, and include OCR data and its Apache-2.0 license in the runtime image.
+
 ## 2.0.48 - Unreleased
 
 - Add schema 77's append-only, idempotent media budget grants with an authenticated article action. A grant increases one exhausted image step by 1–4 attempts (up to 12 cumulative extra attempts), preserves every prior dispatch and cannot override unknown outcomes or persistent cooldown.

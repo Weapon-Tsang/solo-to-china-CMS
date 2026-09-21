@@ -6,7 +6,7 @@ import test from "node:test";
 import sharp from "sharp";
 import { decideVisualAsset, normalizeVisuals, visualQualityQaStatus } from "../src/repository.mjs";
 
-const draft = { title: "A Practical Beijing Guide", body_markdown: "Useful body text." };
+const draft = { title: "A Practical Beijing Guide", body_markdown: "Useful body text.", strategy_version:"3.8" };
 const brief = { destination_slug: "beijing" };
 const policy = { visuals: { minimum: 3, target: 4, maximum: 5 } };
 
@@ -60,7 +60,7 @@ test("authorized fallback photos never expose raw Claim keys as reader alt text"
     language_status:"no_text",width:1600,height:900,storage_status:"saved",
     original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED" }];
   const output = normalizeVisuals([], {
-    title:"Chongqing Landmarks",body_markdown:"Visit Guotai Arts Center on a Chongqing landmarks route.",
+    title:"Chongqing Landmarks",body_markdown:"Visit Guotai Arts Center on a Chongqing landmarks route.",strategy_version:"3.8",
   }, { destination_slug:"chongqing" }, assets, policy);
   assert.equal(output.length,1);
   assert.equal(output[0].alt_text,"Photo of Guotai Arts Center in Chongqing.");
@@ -218,7 +218,7 @@ test("an obsolete qualified fallback releases assets displaced by its superseded
       authorized_asset_match:{version:"visual-match-2",mode:"article_fallback",score:0.30,
         request_hash:"obsolete-selection",displaced_asset_ids:[focused.id]}}}];
   const output=normalizeVisuals(requested,{title:"Ciqikou Ancient Town: A Practical Guide for Independent Travelers",
-    body_markdown:"Walk Ciqikou Ancient Town's old lanes."},{destination_slug:"chongqing",topic:"Ciqikou Ancient Town"},
+    body_markdown:"Walk Ciqikou Ancient Town's old lanes.",strategy_version:"3.8"},{destination_slug:"chongqing",topic:"Ciqikou Ancient Town"},
     [broad,focused],{visuals:{target:1,maximum:5}});
   assert.equal(output.length,1);
   assert.equal(output[0].source_asset_id,focused.id);
@@ -333,7 +333,7 @@ test("an attraction guide may use an image whose own subject identifies the attr
     entities:["Huguang Guild Hall"],storage_status:"saved",original_bytes_status:"saved_original",
     durability_status:"ORIGINAL_STORED"};
   const output=normalizeVisuals([],{title:"Huguang Guild Hall Chongqing: Independent Visitor Guide",
-    body_markdown:"Visit the yellow-walled Huguang Guild Hall."},
+    body_markdown:"Visit the yellow-walled Huguang Guild Hall.",strategy_version:"3.8"},
     {destination_slug:"chongqing",topic:"Huguang Guild Hall: A Practical Guide"},[asset],
     {content_type:"attraction_guide",visuals:{target:1,maximum:5}});
   assert.equal(output.length,1);
@@ -367,6 +367,47 @@ test("a complex itinerary classified as an editorial infographic is routed as a 
   assert.equal(decision.visualClass,"map_or_route");
   assert.equal(decision.transformKind,"MAP_OR_ROUTE");
   assert.equal(decision.reason,"route_structure_requires_map_recomposition");
+});
+
+test("strategy 3.9 combines free audited photos with paid Chinese infographic translation",()=>{
+  const infographic={id:"chinese-map",remote_url:"https://media.example/map.webp",mime_type:"image/webp",
+    alt_text:"Beijing metro transfer station route map",asset_kind:"editorial_infographic",
+    analysis_status:"ready",analysis_version:"media-analysis-2",reader_text_present:true,
+    language_status:"chinese",primary_subjects:["Beijing metro transfer station route map"],
+    text_regions:[{region_id:"route",text:"换乘路线",role:"editorial_text",language:"zh",readable:true,preserve:false}],
+    original_sha256:"map-hash",local_photo_audit:{status:"needs_review",sha256:"map-hash"},
+    storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"};
+  const photograph={id:"station-photo",remote_url:"https://media.example/station.webp",mime_type:"image/webp",
+    alt_text:"Beijing metro transfer station ticket entrance photograph",asset_kind:"documentary_photo",
+    analysis_status:"ready",analysis_version:"media-analysis-2",reader_text_present:false,
+    language_status:"no_text",original_sha256:"photo-hash",
+    local_photo_audit:{status:"eligible",sha256:"photo-hash",providerCalls:0},
+    storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"};
+  const visuals=normalizeVisuals([{source_asset_id:infographic.id,image_type:"infographic",image_role:"support",
+    placement:"mid_article",image_subject:"Beijing metro transfer station route map",purpose:"Explain the station route",
+    required_in_article:true,status:"planned"}],
+    {title:"Beijing metro transfer station guide",body_markdown:"Use the metro transfer station route and ticket entrance.",strategy_version:"3.9"},
+    {destination_slug:"beijing",topic:"Metro transfer station"},[infographic,photograph],
+    {content_type:"transport_guide",visuals:{target:2,maximum:5}});
+  assert.equal(visuals.length,2);
+  assert.equal(visuals[0].source_asset_id,"chinese-map");
+  assert.notEqual(visuals[0].acquisition_strategy,"use_authorized_source_image");
+  assert.equal(visuals[0].status,"planned");
+  assert.equal(visuals[1].source_asset_id,"station-photo");
+  assert.equal(visuals[1].acquisition_strategy,"use_authorized_source_image");
+  assert.equal(visuals[1].media_metadata.local_photo_audit.providerCalls,0);
+});
+
+test('audited source photo can reuse a prior English image subject as alt without a new model call',()=>{
+  const photograph={id:'old-street',alt_text:'洪崖洞街景',caption_text:'重庆夜景',
+    primary_subjects:['Hongyadong street stairs at night'],asset_kind:'documentary_photo',
+    original_sha256:'street-hash',local_photo_audit:{status:'eligible',sha256:'street-hash',providerCalls:0},
+    storage_status:'saved',original_bytes_status:'saved_original',durability_status:'ORIGINAL_STORED'};
+  const visuals=normalizeVisuals([], {title:'Hongyadong Street Guide',body_markdown:'Climb the Hongyadong street stairs at night.',
+    strategy_version:'3.9'}, {destination_slug:'chongqing'},[photograph],{visuals:{target:1,maximum:12}});
+  assert.equal(visuals.length,1);
+  assert.equal(visuals[0].alt_text,'Hongyadong street stairs at night');
+  assert.equal(visuals[0].acquisition_strategy,'use_authorized_source_image');
 });
 
 test("the shared visual decision blocks unclassified text while preserving authentic signs", () => {
@@ -522,7 +563,7 @@ test("relevant food media beyond the former first-24 candidate window can be sel
   const assets=Array.from({length:30},(_,index)=>({id:`asset-${index}`,remote_url:`https://media.test/${index}.jpg`,mime_type:"image/jpeg",
     alt_text:index===29 ? "Chongqing hotpot meal" : `Unrelated generic view ${index}`,caption_text:"",nearby_text:"",evidence_text:"",
     language_status:"no_text",width:1600,height:900,storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"}));
-  const output=normalizeVisuals([],{title:"Chongqing food guide",body_markdown:"Choose a Chongqing hotpot meal."},
+  const output=normalizeVisuals([],{title:"Chongqing food guide",body_markdown:"Choose a Chongqing hotpot meal.",strategy_version:"3.8"},
     {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
   assert.equal(output[0].source_asset_id,"asset-29");
 });

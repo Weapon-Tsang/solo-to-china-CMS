@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import crypto from "node:crypto";
 import { canonicalizeUrl, id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
@@ -30,7 +31,8 @@ export { pageBlockSignature } from "./evidence-validator.mjs";
 import { buildContentTaskCard, normalizeWorkspaceQuery, paginateWorkspace } from "./services/operations-workspace.mjs";
 import { freezeProposal, proposalFingerprint, proposalForOpportunity } from "./services/editorial-proposal.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./services/content-recovery-policy.mjs";
-import { buildPageCompositionPreview, buildProductionState, summarizeProductionSections } from "./services/production-state.mjs";
+import { buildPageCompositionPreview, buildProductionState, prefetchProductionStates,
+  summarizeProductionSections } from "./services/production-state.mjs";
 import { insertCommercialEvent, listCommercialPerformance } from "./repositories/commercial-events.mjs";
 import { persistCaptureAssets } from "./source-media-store.mjs";
 import { dependencyHash, semanticMaterial, PIPELINE_CONTRACT_VERSION } from './pipeline-contract.mjs';
@@ -46,7 +48,7 @@ const REUSABLE_PIPELINE_STAGES = new Set([
 ]);
 const PRODUCTION_JOB_TYPES = new Set(["assemble_editorial","plan_content","plan_narrative","assemble_writing_packet",
   "compose_frontend_page_plan","generate_draft","generate_visuals","compose_frontend_page","review_draft","revise_draft",
-  "compose_commercial","compose_publish_page","push_wordpress_draft"]);
+  "compose_commercial","compose_publish_page","push_wordpress_draft","publish_wordpress_post"]);
 const TRACKED_DELIVERY_STAGES = new Set(['compose_commercial','compose_publish_page','push_wordpress_draft']);
 // Intake schema and decision instructions have been stable since Strategy 3.0.
 // A later strategy label alone must not purchase the same diagnostic again.
@@ -58,6 +60,7 @@ const COMPATIBLE_DIAGNOSTIC_STRATEGIES = new Map([
   ["3.6", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6"])],
   ["3.7", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7"])],
   ["3.8", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8"])],
+  ["3.9", new Set(["3.0", "3.1", "3.2", "3.3", "3.4", "3.5", "3.6", "3.7", "3.8", "3.9"])],
 ]);
 
 function isReusableDiagnosticStrategy(previous, current) {
@@ -797,6 +800,12 @@ export class Repository {
   }
 
   saveCapture(capture) {
+    // Check before persisting any supplied bytes. A deleted source may never be
+    // silently restored by the extension, a direct API client, or a manual upload.
+    if (this.isDeletedCaptureIdentity(capture)) {
+      const error = new Error('This source was deleted and cannot be captured again.');
+      error.code = 'SOURCE_DELETED'; error.statusCode = 410; throw error;
+    }
     capture = persistCaptureAssets(capture, this.contentConfig.sourceUploadsDir);
     const timestamp = now();
     const contentHash = captureContentHash(capture);
@@ -1056,6 +1065,86 @@ export class Repository {
     });
   }
 
+  deletedCaptureIdentityHashes({ adapter = 'xiaohongshu', externalId, canonicalUrl, submittedUrl } = {}) {
+    const values = [];
+    if (externalId) values.push(`external:${String(externalId).trim()}`);
+    for (const candidate of [canonicalUrl, submittedUrl]) {
+      if (!candidate) continue;
+      try { values.push(`url:${canonicalizeUrl(String(candidate))}`); } catch { /* ignore invalid aliases */ }
+    }
+    return [...new Set(values)].map((value) => sha256(`${adapter}:${value}`));
+  }
+
+  isDeletedCaptureIdentity(capture) {
+    const hashes = this.deletedCaptureIdentityHashes(capture);
+    return hashes.some((hash) => Boolean(this.db.prepare(
+      'SELECT 1 FROM deleted_source_identities WHERE identity_hash=?').get(hash)));
+  }
+
+  deleteSource(sourceId, actor = 'administrator') {
+    const root = this.contentConfig.sourceUploadsDir && path.resolve(this.contentConfig.sourceUploadsDir);
+    const result = transaction(this.db, () => {
+      const source = this.db.prepare('SELECT * FROM sources WHERE id=?').get(sourceId);
+      if (!source) return null;
+      const hashes = this.deletedCaptureIdentityHashes({ adapter: source.adapter, externalId: source.external_id,
+        canonicalUrl: source.canonical_url, submittedUrl: source.submitted_url });
+      if (!hashes.length) throw conflictError('Source has no durable identity to suppress future capture.');
+      const timestamp = now();
+      const insertIdentity = this.db.prepare('INSERT OR IGNORE INTO deleted_source_identities(identity_hash,deleted_at,actor) VALUES (?,?,?)');
+      for (const hash of hashes) insertIdentity.run(hash, timestamp, String(actor).slice(0, 120));
+      const assets = this.db.prepare(`SELECT sa.id,sa.local_path,sr.original_storage_ref,sr.derivative_storage_ref
+        FROM source_assets sa LEFT JOIN source_asset_storage_refs sr ON sr.asset_id=sa.id WHERE sa.source_id=?`).all(sourceId);
+      const files = this.db.prepare('SELECT storage_path FROM source_files WHERE source_id=?').all(sourceId);
+      const assetIds = assets.map((row) => row.id);
+      const segmentIds = this.db.prepare('SELECT id FROM source_segments WHERE source_id=?').all(sourceId).map((row) => row.id);
+      const mediaBatchIds = this.db.prepare('SELECT id FROM media_extraction_batches WHERE source_id=?').all(sourceId).map((row) => row.id);
+      const entityIds = [sourceId, ...assetIds, ...segmentIds, ...mediaBatchIds];
+      const affectedDrafts = assetIds.length ? this.db.prepare(`SELECT DISTINCT draft_id FROM article_visuals
+        WHERE source_asset_id IN (${assetIds.map(() => '?').join(',')})`).all(...assetIds).map((row) => row.draft_id) : [];
+      if (assetIds.length) this.db.prepare(`UPDATE article_visuals SET source_asset_id=NULL,source_remote_url=NULL,
+        media_path='',status='failed' WHERE source_asset_id IN (${assetIds.map(() => '?').join(',')})`).run(...assetIds);
+      for (const draftId of affectedDrafts) {
+        this.db.prepare("UPDATE article_drafts SET status='needs_review',updated_at=? WHERE id=?")
+          .run(timestamp, draftId);
+        this.db.prepare("UPDATE frontend_page_compositions SET status='stale_contract',updated_at=? WHERE draft_id=?")
+          .run(timestamp, draftId);
+        this.db.prepare("UPDATE frontend_publish_compositions SET status='stale_contract',updated_at=? WHERE draft_id=?")
+          .run(timestamp, draftId);
+      }
+      if (entityIds.length) this.db.prepare(`UPDATE jobs SET status='failed',last_error='SOURCE_DELETED',
+        updated_at=? WHERE status IN ('queued','running') AND entity_id IN (${entityIds.map(() => '?').join(',')})`)
+        .run(timestamp, ...entityIds);
+      if (root) {
+        const queue = this.db.prepare('INSERT OR IGNORE INTO source_delete_file_queue(path,queued_at) VALUES (?,?)');
+        for (const candidate of [...assets.flatMap((row) => [row.local_path, row.original_storage_ref,
+          row.derivative_storage_ref]), ...files.map((row) => row.storage_path)]) {
+          if (!candidate) continue;
+          const absolute = path.resolve(root, candidate);
+          if (absolute.startsWith(`${root}${path.sep}`)) queue.run(absolute, timestamp);
+        }
+      }
+      this.db.prepare('DELETE FROM sources WHERE id=?').run(sourceId);
+      return { id: sourceId, deleted: true, affectedDrafts, removedAssets: assets.length, removedFiles: files.length };
+    });
+    if (result) this.cleanupDeletedSourceFiles();
+    return result;
+  }
+
+  cleanupDeletedSourceFiles() {
+    const root = this.contentConfig.sourceUploadsDir && path.resolve(this.contentConfig.sourceUploadsDir);
+    if (!root) return;
+    for (const row of this.db.prepare('SELECT path FROM source_delete_file_queue').all()) {
+      if (!path.resolve(row.path).startsWith(`${root}${path.sep}`)) continue;
+      const shared = this.db.prepare(`SELECT 1 FROM source_assets WHERE local_path=? UNION
+        SELECT 1 FROM source_files WHERE storage_path=? UNION SELECT 1 FROM article_visuals WHERE media_path=? LIMIT 1`)
+        .get(row.path, row.path, row.path);
+      if (shared) { this.db.prepare('DELETE FROM source_delete_file_queue WHERE path=?').run(row.path); continue; }
+      try { fs.unlinkSync(row.path); }
+      catch (error) { if (error.code !== 'ENOENT') continue; }
+      this.db.prepare('DELETE FROM source_delete_file_queue WHERE path=?').run(row.path);
+    }
+  }
+
   checkCaptureIdentities(items = []) {
     const normalized = items.slice(0, 100).map((item) => {
       const externalId = String(item?.externalId || "").trim().slice(0, 300);
@@ -1074,6 +1163,11 @@ export class Repository {
     const byExternalId = new Map(rows.filter((row) => row.external_id).map((row) => [row.external_id, row]));
     const byUrl = new Map(rows.map((row) => [row.canonical_url, row]));
     return normalized.map((item) => {
+      if (this.isDeletedCaptureIdentity({ adapter: 'xiaohongshu', externalId: item.externalId,
+        canonicalUrl: item.canonicalUrl })) {
+        return { externalId: item.externalId || null, canonicalUrl: item.canonicalUrl || null,
+          known: true, deleted: true, sourceExists: false, needsRecapture: false, requiredActions: [] };
+      }
       const row = (item.externalId && byExternalId.get(item.externalId)) || (item.canonicalUrl && byUrl.get(item.canonicalUrl));
       const complete = row?.completeness_status === "complete" && row?.source_availability === "available";
       if (row) {
@@ -2428,7 +2522,7 @@ export class Repository {
     const type = String(job.type || "");
     let candidateId = ["assemble_editorial","plan_content"].includes(type) ? job.entity_id : null;
     let briefId = ["plan_narrative","assemble_writing_packet","compose_frontend_page_plan","generate_draft"].includes(type) ? job.entity_id : null;
-    let draftId = ["generate_visuals","compose_frontend_page","review_draft","revise_draft","compose_commercial","compose_publish_page","push_wordpress_draft"].includes(type) ? job.entity_id : null;
+    let draftId = ["generate_visuals","compose_frontend_page","review_draft","revise_draft","compose_commercial","compose_publish_page","push_wordpress_draft","publish_wordpress_post"].includes(type) ? job.entity_id : null;
     if (draftId && !briefId) briefId = this.db.prepare("SELECT brief_id FROM article_drafts WHERE id=?").get(draftId)?.brief_id || null;
     if (briefId && !candidateId) candidateId = this.db.prepare("SELECT candidate_id FROM content_briefs WHERE id=?").get(briefId)?.candidate_id || null;
     const opportunity = job.production_owner_opportunity_id
@@ -2770,6 +2864,31 @@ export class Repository {
       saa.analysis_version,saa.prompt_version,saa.source_sha256 AS analysis_source_sha256
       FROM source_assets sa LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id WHERE sa.id=?`).get(assetId);
     return row ? hydrateSourceAssetAnalysis(row) : null;
+  }
+
+  enqueueSourcePhotoAudits(sourceId = null, { limit = 2000, dryRun = false } = {}) {
+    const rows = this.db.prepare(`SELECT sa.id FROM current_source_assets sa
+      WHERE sa.kind='image' AND sa.durability_status='ORIGINAL_STORED'
+        AND sa.original_bytes_status='saved_original' AND sa.local_path<>''
+        AND (? IS NULL OR sa.source_id=?)
+        AND (json_extract(sa.local_photo_audit_json,'$.sha256') IS NULL
+          OR json_extract(sa.local_photo_audit_json,'$.sha256')<>sa.original_sha256)
+      ORDER BY sa.source_id,sa.position LIMIT ?`).all(sourceId,sourceId,Math.max(1,Math.min(5000,limit)));
+    if (dryRun) return rows.map((row) => row.id);
+    return rows.map((row) => this.enqueue('audit_source_photo', row.id,
+      { dedupeKey:`audit_source_photo:${row.id}`,priority:10,
+        workloadClass:sourceId ? 'background_enrichment' : 'historical_recovery' }));
+  }
+
+  saveLocalPhotoAudit(assetId, audit) {
+    const asset = this.db.prepare('SELECT id,original_sha256 FROM source_assets WHERE id=?').get(assetId);
+    if (!asset || !asset.original_sha256 || asset.original_sha256 !== audit?.sha256) {
+      const error = conflictError('Source photo changed during local quality audit.');
+      error.code = 'SOURCE_PHOTO_CHANGED'; throw error;
+    }
+    this.db.prepare('UPDATE source_assets SET local_photo_audit_json=? WHERE id=?')
+      .run(JSON.stringify(audit),assetId);
+    return audit;
   }
 
   getSegmentCoveragePackage(segmentId, { extraction = null, retry = false } = {}) {
@@ -3793,14 +3912,19 @@ export class Repository {
         s.completeness_status,s.completeness_json,
         ss.destination_name, ss.summary, ss.extraction_method,
         (SELECT COUNT(*) FROM claims c WHERE c.source_id = s.id) AS claim_count,
-        (SELECT COUNT(*) FROM current_source_files sf WHERE sf.source_id = s.id) AS file_count,
-        (SELECT COUNT(*) FROM current_source_segments sg WHERE sg.source_id = s.id) AS segment_count,
-        (SELECT COUNT(*) FROM segment_extractions se JOIN current_source_segments csg ON csg.id=se.segment_id WHERE se.source_id = s.id) AS extracted_segment_count,
-        (SELECT COUNT(*) FROM current_extraction_coverage ec WHERE ec.source_id = s.id AND ec.audited_at IS NOT NULL) AS audited_segment_count
-        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id) AS discovered_media_count
-        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.durability_status='ORIGINAL_STORED') AS stored_original_count
-        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.repair_status='browser_repair_required') AS browser_repair_count
-        ,(SELECT COUNT(*) FROM current_source_assets sa WHERE sa.source_id=s.id AND sa.repair_status IN ('server_recovery_pending','server_recovery_running')) AS server_repair_count
+        (SELECT COUNT(*) FROM source_files sf WHERE sf.source_id=s.id AND sf.capture_version=s.capture_version) AS file_count,
+        (SELECT COUNT(*) FROM source_segments sg WHERE sg.source_id=s.id AND sg.capture_version=s.capture_version) AS segment_count,
+        (SELECT COUNT(*) FROM segment_extractions se JOIN source_segments sg ON sg.id=se.segment_id
+          WHERE se.source_id=s.id AND sg.capture_version=s.capture_version) AS extracted_segment_count,
+        (SELECT COUNT(*) FROM extraction_coverage ec JOIN source_segments sg ON sg.id=ec.segment_id
+          WHERE ec.source_id=s.id AND sg.capture_version=s.capture_version AND ec.audited_at IS NOT NULL) AS audited_segment_count,
+        (SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.capture_version=s.capture_version) AS discovered_media_count,
+        (SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.capture_version=s.capture_version
+          AND sa.durability_status='ORIGINAL_STORED') AS stored_original_count,
+        (SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.capture_version=s.capture_version
+          AND sa.repair_status='browser_repair_required') AS browser_repair_count,
+        (SELECT COUNT(*) FROM source_assets sa WHERE sa.source_id=s.id AND sa.capture_version=s.capture_version
+          AND sa.repair_status IN ('server_recovery_pending','server_recovery_running')) AS server_repair_count
         ,(SELECT status FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version ORDER BY er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_status
         ,(SELECT degraded FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version ORDER BY er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_degraded
       FROM sources s LEFT JOIN structured_sources ss ON ss.source_id = s.id
@@ -5301,6 +5425,7 @@ export class Repository {
           language_by_region:asset.language_by_region,reader_text_present:asset.reader_text_present,
           analysis_confidence:asset.analysis_confidence,analysis_version:asset.analysis_version,
           width:dimensions.width,height:dimensions.height,
+          local_photo_audit_status:asset.local_photo_audit?.status || 'pending',
           mime_type: asset.mime_type, preview_url: `/api/source-assets/${asset.id}/preview`,
         };
       }),
@@ -5753,7 +5878,7 @@ export class Repository {
     }));
   }
 
-  ensureAuthorizedSourceVisuals(draftId) {
+  ensureAuthorizedSourceVisuals(draftId, { strategyVersion = null } = {}) {
     const current=this.listDraftVisuals(draftId);
     const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
@@ -5762,16 +5887,20 @@ export class Repository {
     const currentSourceIds=new Set(current.map((visual)=>visual.source_asset_id).filter(Boolean));
     const failedSourceIds=new Set(this.db.prepare(`SELECT DISTINCT source_asset_id FROM visual_candidates
       WHERE draft_id=? AND status='qa_failed' AND source_asset_id IS NOT NULL`).all(draftId).map((item)=>item.source_asset_id));
-    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null})
+    const visualSourceIds=this.db.prepare(`SELECT DISTINCT sa.source_id FROM article_visuals av
+      JOIN source_assets sa ON sa.id=av.source_asset_id WHERE av.draft_id=?`).all(draftId).map((item)=>item.source_id);
+    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null,
+      additionalSourceIds:visualSourceIds})
       .filter((asset)=>currentSourceIds.has(asset.id) || !failedSourceIds.has(asset.id));
     const policy=contentPolicyFor(row,contentPackage?.facts || []);
-    const visuals=normalizeVisuals(current,row,row,assets,policy);
-    this.replaceDraftVisuals(draftId,visuals,row.strategy_version || this.strategyVersion);
+    const effectiveDraft={...row,strategy_version:strategyVersion || row.strategy_version || this.strategyVersion};
+    const visuals=normalizeVisuals(current,effectiveDraft,row,assets,policy);
+    this.replaceDraftVisuals(draftId,visuals,effectiveDraft.strategy_version);
     this.refreshDraftSchema(draftId);
     return this.listDraftVisuals(draftId);
   }
 
-  mediaRepairPlan(draftId) {
+  mediaRepairPlan(draftId, { strategyVersion = null } = {}) {
     const current=this.listDraftVisuals(draftId);
     const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
@@ -5780,11 +5909,23 @@ export class Repository {
     const currentSourceIds=new Set(current.map((visual)=>visual.source_asset_id).filter(Boolean));
     const failedSourceIds=new Set(this.db.prepare(`SELECT DISTINCT source_asset_id FROM visual_candidates
       WHERE draft_id=? AND status='qa_failed' AND source_asset_id IS NOT NULL`).all(draftId).map((item)=>item.source_asset_id));
-    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null})
+    const visualSourceIds=this.db.prepare(`SELECT DISTINCT sa.source_id FROM article_visuals av
+      JOIN source_assets sa ON sa.id=av.source_asset_id WHERE av.draft_id=?`).all(draftId).map((item)=>item.source_id);
+    const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null,
+      additionalSourceIds:visualSourceIds})
       .filter((asset)=>currentSourceIds.has(asset.id) || !failedSourceIds.has(asset.id));
-    const proposed=normalizeVisuals(current,row,row,assets,contentPolicyFor(row,contentPackage?.facts || []));
-    const slots=proposed.map((visual,index)=>{
+    const effectiveDraft={...row,strategy_version:strategyVersion || row.strategy_version || this.strategyVersion};
+    const proposed=normalizeVisuals(current,effectiveDraft,row,assets,contentPolicyFor(row,contentPackage?.facts || []));
+    const slots=Array.from({length:Math.max(current.length,proposed.length)},(_,index)=>{
+      const visual=proposed[index] || null;
       const existing=current[index] || null;
+      if (!visual) return {visual_id:existing?.id || null,slot:index+1,
+        source_asset_id:existing?.source_asset_id || null,
+        old_media_url:existing?.wordpress_media_url || existing?.media_url || null,
+        old_media_sha256:existing?.media_metadata?.binary_qa?.sha256 || null,
+        disposition:'remove',reason:'visual_not_qualified_under_current_strategy',
+        acquisition_strategy:null,requires_model:false,max_model_calls:0,
+        required_visual_gap:null,proposed_fingerprint:null};
       const changed=!existing || existing.asset_fingerprint !== visualFingerprint(visual);
       const metadata=existing?.media_metadata || {};
       const qa=visualQualityQaStatus(metadata.quality_qa);
@@ -5810,6 +5951,85 @@ export class Repository {
     });
     return { plan_hash:sha256(JSON.stringify(slots.map((slot)=>({slot:slot.slot,source:slot.source_asset_id,
       disposition:slot.disposition,reason:slot.reason,fingerprint:slot.proposed_fingerprint})))),slots };
+  }
+
+  planArticlePhotoRefresh(draftIds = []) {
+    const ids=[...new Set(draftIds.map(String).filter(Boolean))];
+    if (!ids.length || ids.length>20) throw conflictError('Select 1-20 article draft IDs for photo refresh.');
+    const items=ids.map((draftId)=>{
+      const pkg=this.getDraftPackage(draftId);
+      if (!pkg?.draft) return {draft_id:draftId,disposition:'blocked',reason:'draft_missing'};
+      const publication=pkg.publication;
+      const postId=Number(publication?.post_id || 0);
+      const siteUrl=publication?.site_url || '';
+      const inventory=postId ? this.db.prepare('SELECT * FROM wordpress_content_inventory WHERE site_url=? AND post_id=?')
+        .get(siteUrl,postId) : null;
+      const sync=postId ? this.getWordPressSyncState(siteUrl) : null;
+      const inventoryAge=sync?.last_succeeded_at ? Date.now()-Date.parse(sync.last_succeeded_at) : Infinity;
+      const media=this.mediaRepairPlan(draftId,{strategyVersion:'3.9'});
+      const active=this.db.prepare("SELECT 1 FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1").get(draftId);
+      let disposition='eligible'; let reason='local_photo_refresh';
+      if (!pkg.review?.passed) {disposition='blocked';reason='independent_article_qa_missing';}
+      else if (active) {disposition='blocked';reason='active_article_job';}
+      else if (!media.slots.some((slot)=>['repair','remove'].includes(slot.disposition))) {disposition='noop';reason='no_photo_change';}
+      else if (media.slots.some((slot)=>slot.disposition==='blocked')) {disposition='blocked';reason='required_photo_needs_review';}
+      else if (postId && (!Number.isFinite(inventoryAge) || inventoryAge<0 || inventoryAge>600_000)) {
+        disposition='blocked';reason='wordpress_inventory_stale';
+      } else if (postId && inventory?.status !== (pkg.draft.status==='published' ? 'publish' : 'draft')) {
+        disposition='blocked';reason='wordpress_status_mismatch';
+      }
+      return {draft_id:draftId,title:pkg.draft.title,revision:pkg.draft.revision,
+        strategy_version:pkg.draft.strategy_version,status:pkg.draft.status,post_id:postId || null,
+        wordpress_status:inventory?.status || null,review_id:pkg.review?.id || null,
+        disposition,reason,media};
+    });
+    const confirmation=sha256(JSON.stringify(items.map(({draft_id,revision,strategy_version,status,post_id,
+      wordpress_status,review_id,disposition,reason,media})=>({draft_id,revision,strategy_version,status,
+      post_id,wordpress_status,review_id,disposition,reason,plan_hash:media?.plan_hash}))));
+    return {mode:'dry_run',strategy_version:'3.9',confirmation,items,
+      summary:Object.fromEntries(['eligible','blocked','noop'].map((status)=>[status,items.filter((item)=>item.disposition===status).length]))};
+  }
+
+  applyArticlePhotoRefresh(draftIds = [], confirmation = '', actor = 'administrator') {
+    const plan=this.planArticlePhotoRefresh(draftIds);
+    if (!confirmation || confirmation!==plan.confirmation) throw conflictError('Article photo refresh plan changed; inspect a fresh dry run.');
+    if (plan.items.some((item)=>item.disposition!=='eligible')) throw conflictError('Every selected article must be eligible for photo refresh.');
+    const queued=transaction(this.db,()=>plan.items.map((item)=>{
+      const pkg=this.getDraftPackage(item.draft_id);
+      const fromRevision=Number(pkg.draft.revision);
+      const priorReview=this.db.prepare('SELECT * FROM quality_reviews WHERE id=?').get(item.review_id);
+      if (!priorReview?.passed || pkg.draft.content_hash!==priorReview.draft_content_hash
+        || pkg.evidence_hash!==priorReview.evidence_hash) throw conflictError('Independent article QA changed during photo refresh.');
+      const previousVisuals=this.db.prepare('SELECT * FROM article_visuals WHERE draft_id=? ORDER BY slot').all(item.draft_id);
+      const timestamp=now();
+      const refreshId=id('photo_refresh');
+      this.db.prepare(`INSERT INTO article_photo_refreshes(id,draft_id,from_revision,to_revision,
+        previous_strategy_version,previous_visuals_json,reused_review_id,plan_hash,actor,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`).run(refreshId,item.draft_id,fromRevision,fromRevision+1,
+          pkg.draft.strategy_version || '',JSON.stringify(previousVisuals),priorReview.id,item.media.plan_hash,
+          String(actor).slice(0,120),timestamp);
+      this.db.prepare("UPDATE article_drafts SET revision=revision+1,strategy_version='3.9',updated_at=? WHERE id=? AND revision=?")
+        .run(timestamp,item.draft_id,fromRevision);
+      this.db.prepare(`INSERT INTO quality_reviews(id,draft_id,passed,score,checks_json,issues_json,
+        unsupported_claims_json,reviewer,strategy_version,created_at,draft_revision,draft_content_hash,evidence_hash)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id('review'),item.draft_id,priorReview.passed,priorReview.score,
+          priorReview.checks_json,priorReview.issues_json,priorReview.unsupported_claims_json,
+          `reused_unchanged_text:${priorReview.id}`,'3.9',timestamp,fromRevision+1,
+          priorReview.draft_content_hash,priorReview.evidence_hash);
+      this.ensureAuthorizedSourceVisuals(item.draft_id,{strategyVersion:'3.9'});
+      const actual=this.mediaRepairPlan(item.draft_id,{strategyVersion:'3.9'});
+      if (actual.slots.some((slot)=>slot.disposition==='blocked'))
+        throw conflictError('Photo plan became incomplete during application.');
+      this.db.prepare("UPDATE frontend_page_compositions SET status='stale_contract',updated_at=? WHERE draft_id=?")
+        .run(timestamp,item.draft_id);
+      this.db.prepare("UPDATE frontend_publish_compositions SET status='stale_contract',updated_at=? WHERE draft_id=?")
+        .run(timestamp,item.draft_id);
+      const jobId=this.enqueue('generate_visuals',item.draft_id,{dedupeKey:`delivery-refresh:media:${item.draft_id}:r${fromRevision+1}:${refreshId}`,
+        workloadClass:'historical_recovery',recoveryRunId:refreshId,pipelineVersion:'article_bundle_v1'});
+      return {draft_id:item.draft_id,from_revision:fromRevision,to_revision:fromRevision+1,
+        job_id:jobId,refresh_id:refreshId,body_hash:pkg.draft.content_hash};
+    }));
+    return {...plan,mode:'apply',queued};
   }
 
   prepareMediaRepair(draftId) { return this.ensureAuthorizedSourceVisuals(draftId); }
@@ -6077,8 +6297,8 @@ export class Repository {
     const timestamp = now();
     const existing = this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id = ?").get(draftId);
     if (existing) {
-      this.db.prepare("UPDATE wordpress_publications SET status='queued', last_error=NULL, error_code=NULL, delivery_mode=?, updated_at=? WHERE draft_id=?")
-        .run(deliveryMode, timestamp, draftId);
+      this.db.prepare("UPDATE wordpress_publications SET status=CASE WHEN status='synced' AND EXISTS(SELECT 1 FROM article_drafts WHERE id=? AND status='published') THEN 'synced' ELSE 'queued' END, last_error=NULL, error_code=NULL, delivery_mode=?, updated_at=? WHERE draft_id=?")
+        .run(draftId, deliveryMode, timestamp, draftId);
       return this.db.prepare("SELECT * FROM wordpress_publications WHERE draft_id=?").get(draftId);
     }
     const publication = { id: id("wp"), draft_id: draftId, site_url: siteUrl, post_id: null };
@@ -6097,10 +6317,86 @@ export class Repository {
       JSON.stringify(result), JSON.stringify(result.deliveryManifest || {}), now(), draftId);
     for (const visual of result.visuals || []) this.saveWordPressVisual(visual.visualId, visual);
     this.markFrontendPublishComposition(draftId, "delivered", result.postId);
-    this.db.prepare("UPDATE article_drafts SET status='wordpress_draft', updated_at=? WHERE id=?").run(now(), draftId);
+    this.db.prepare("UPDATE article_drafts SET status=?, updated_at=? WHERE id=?")
+      .run(result.status === 'publish' ? 'published' : 'wordpress_draft', now(), draftId);
     this.db.prepare(`UPDATE content_opportunities SET status='wordpress_draft',lifecycle_state='finished',updated_at=? WHERE id=COALESCE(?,(
       SELECT MIN(co.id) FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
       JOIN article_drafts ad ON ad.brief_id=cb.id WHERE ad.id=? AND co.approved_at IS NOT NULL HAVING COUNT(*)=1))`).run(now(),opportunityId,draftId);
+  }
+
+  beginWordPressMediaRefreshAttempt(draftId, postId, jobId, pageHash) {
+    return transaction(this.db, () => {
+      const previous = this.db.prepare('SELECT * FROM wordpress_media_refresh_attempts WHERE draft_id=?').get(draftId);
+      if (previous && previous.state !== 'completed') {
+        const error = conflictError('A previous published media refresh has an unknown result; reconcile before resend.');
+        error.code = 'WORDPRESS_MEDIA_REFRESH_OUTCOME_UNKNOWN'; error.retryable = false; throw error;
+      }
+      this.db.prepare(`INSERT INTO wordpress_media_refresh_attempts(draft_id,post_id,job_id,page_hash,state,started_at)
+        VALUES (?,?,?,?,'dispatch_started',?) ON CONFLICT(draft_id) DO UPDATE SET
+        post_id=excluded.post_id,job_id=excluded.job_id,page_hash=excluded.page_hash,
+        state='dispatch_started',started_at=excluded.started_at,completed_at=NULL`)
+        .run(draftId,postId,jobId,pageHash,now());
+      return true;
+    });
+  }
+
+  wordPressMediaRefreshAttempt(draftId) {
+    return this.db.prepare('SELECT * FROM wordpress_media_refresh_attempts WHERE draft_id=?').get(draftId) || null;
+  }
+
+  markWordPressMediaRefreshUnknown(draftId) {
+    this.db.prepare("UPDATE wordpress_media_refresh_attempts SET state='outcome_unknown' WHERE draft_id=? AND state='dispatch_started'")
+      .run(draftId);
+  }
+
+  completeWordPressMediaRefresh(draftId, pageHash) {
+    this.db.prepare(`UPDATE wordpress_media_refresh_attempts SET state='completed',completed_at=?
+      WHERE draft_id=? AND page_hash=?`).run(now(),draftId,pageHash);
+  }
+
+  beginWordPressPublishAttempt(draftId, postId, jobId) {
+    return transaction(this.db, () => {
+      const previous = this.db.prepare('SELECT * FROM wordpress_publish_attempts WHERE draft_id=?').get(draftId);
+      if (previous && previous.post_id === postId && previous.state === 'completed') {
+        this.db.prepare(`UPDATE wordpress_publish_attempts SET job_id=?,state='dispatch_started',started_at=?,completed_at=NULL
+          WHERE draft_id=?`).run(jobId,now(),draftId);
+        return true;
+      }
+      if (previous && previous.state !== 'completed') {
+        const error = conflictError('An earlier WordPress publish request has an unknown outcome; reconcile it before sending again.');
+        error.code = 'WORDPRESS_PUBLISH_OUTCOME_UNKNOWN'; throw error;
+      }
+      this.db.prepare(`INSERT INTO wordpress_publish_attempts(draft_id,post_id,job_id,state,started_at)
+        VALUES (?,?,?,'dispatch_started',?)`).run(draftId,postId,jobId,now());
+      return true;
+    });
+  }
+
+  markWordPressPublishUnknown(draftId) {
+    this.db.prepare("UPDATE wordpress_publish_attempts SET state='outcome_unknown' WHERE draft_id=? AND state='dispatch_started'")
+      .run(draftId);
+  }
+
+  completeWordPressPublish(draftId, remote) {
+    const timestamp = now();
+    transaction(this.db, () => {
+      const publication = this.db.prepare('SELECT * FROM wordpress_publications WHERE draft_id=?').get(draftId);
+      if (!publication || Number(publication.post_id) !== Number(remote.id) || remote.status !== 'publish') {
+        throw conflictError('WordPress publication identity or status did not match the CMS draft.');
+      }
+      this.db.prepare("UPDATE article_drafts SET status='published',updated_at=? WHERE id=?").run(timestamp,draftId);
+      this.db.prepare('UPDATE wordpress_publications SET post_url=?,updated_at=? WHERE draft_id=?')
+        .run(remote.link || publication.post_url,timestamp,draftId);
+      this.db.prepare(`INSERT INTO wordpress_content_inventory(id,site_url,post_id,slug,title,status,post_url,modified_at,synced_at)
+        VALUES (?,?,?,?,?,'publish',?,?,?) ON CONFLICT(site_url,post_id) DO UPDATE SET
+        slug=excluded.slug,title=excluded.title,status='publish',post_url=excluded.post_url,
+        modified_at=excluded.modified_at,synced_at=excluded.synced_at`)
+        .run(`wpi_${sha256(`${publication.site_url}:${remote.id}`).slice(0,24)}`,publication.site_url,remote.id,
+          remote.slug || '',remote.title?.raw || remote.title?.rendered || '',remote.link || publication.post_url,
+          remote.modified_gmt || remote.modified || timestamp,timestamp);
+      this.db.prepare("UPDATE wordpress_publish_attempts SET state='completed',completed_at=? WHERE draft_id=?")
+        .run(timestamp,draftId);
+    });
   }
 
   failWordPressPublication(draftId, error, { opportunityId = null } = {}) {
@@ -6131,7 +6427,8 @@ export class Repository {
         ad.content_hash AS draft_content_hash, ad.quality_report_json AS draft_quality_report_json,
         ad.created_at AS draft_created_at, ad.updated_at AS draft_updated_at,
         qr.passed AS qa_passed, qr.score AS qa_score, qr.created_at AS qa_created_at,
-        ea.id AS editorial_assembly_id,
+        qr.evidence_hash AS qa_evidence_hash,
+        ea.id AS editorial_assembly_id, ea.selected_fact_keys_json AS assembly_selected_fact_keys_json,
         np.id AS narrative_plan_id, wpkt.id AS writing_packet_id,
         fpp.status AS frontend_plan_status, fpp.plan_json AS frontend_page_plan_json,
         fpp.validation_json AS frontend_plan_validation_json, fpp.contract_version AS frontend_plan_contract_version,
@@ -6218,6 +6515,38 @@ export class Repository {
     if (!draftIds.length) return rows.map((row) => ({ ...row, workflow_status: row.candidate_status || row.opportunity_status,
       production_state: buildProductionState(this.db, row, { capabilities:this.productionCapabilities }) }));
     if (compact && productionOnly) {
+      // Recheck only reviewed rows. A list summary must not display a passing
+      // review whose evidence changed since that independent QA run.
+      const factsByDestination=new Map();
+      const selectedByDestination=new Map();
+      for (const row of rows) {
+        if (row.qa_passed == null) continue;
+        const selection=selectedByDestination.get(row.destination_slug) || {keys:new Set(),all:false};
+        const assemblyKeys=json(row.assembly_selected_fact_keys_json,[]);
+        const coverage=json(row.coverage_json,{});
+        const keys=assemblyKeys.length ? assemblyKeys : coverage.selectedFactKeys || [];
+        if (!keys.length) selection.all=true;
+        else for (const key of keys) selection.keys.add(key);
+        selectedByDestination.set(row.destination_slug,selection);
+      }
+      for (const row of rows) {
+        if (row.qa_passed == null) continue;
+        const selection=selectedByDestination.get(row.destination_slug);
+        if (!factsByDestination.has(row.destination_slug)) factsByDestination.set(row.destination_slug,
+          currentPublicationFacts(this.knowledgeForDestination(row.destination_slug,
+            {normalizedKeys:selection.all ? null : [...selection.keys]})));
+        const destinationFacts=factsByDestination.get(row.destination_slug);
+        const coverage=json(row.coverage_json,{});
+        const assemblyKeys=json(row.assembly_selected_fact_keys_json,[]);
+        const selectedKeys=new Set(assemblyKeys.length ? assemblyKeys : coverage.selectedFactKeys || []);
+        const scoped=selectedKeys.size
+          ? withScopedCoverageLimitations(destinationFacts.filter((fact)=>selectedKeys.has(fact.normalized_key)),
+            topicTokens(`${row.topic_key || ''} ${row.proposed_title || ''}`))
+          : scopeFactsForOpportunity(destinationFacts,{destinationSlug:row.destination_slug,
+            title:row.proposed_title,topic_key:row.topic_key});
+        if (evidenceHashForFacts(scoped)!==row.qa_evidence_hash) {row.qa_passed=null;row.qa_score=null;}
+      }
+      const stateBatch=prefetchProductionStates(this.db,rows);
       const active = this.db.prepare("SELECT entity_id,type,status,production_owner_opportunity_id FROM jobs WHERE status IN ('queued','running') ORDER BY created_at").all();
       const activeByOwner = new Map();
       for (const job of active) {
@@ -6229,7 +6558,8 @@ export class Repository {
           [row.candidate_id || row.id,row.brief_id,row.draft_id].includes(item.entity_id));
         return { ...row, workflow_status: job ? `${job.type}_${job.status}`
           : row.draft_status === "qa_queued" ? "awaiting_review" : row.draft_status || row.brief_status || row.candidate_status || row.opportunity_status,
-          production_state: buildProductionState(this.db, row, { capabilities:this.productionCapabilities }) };
+          production_state: buildProductionState(this.db, row, { capabilities:this.productionCapabilities,
+            batch:stateBatch }) };
       });
     }
     const placeholders = draftIds.map(() => "?").join(",");
@@ -7619,6 +7949,16 @@ export class Repository {
         insert.run(`wpi_${sha256(`${siteUrl}:${item.postId}`).slice(0, 24)}`, siteUrl, item.postId,
           item.slug, item.title, item.status, item.postUrl, item.modifiedAt, timestamp);
       }
+      // WordPress is authoritative for the remote lifecycle. Match by site and
+      // numeric post ID only; title/slug matches can belong to another article.
+      this.db.prepare(`UPDATE article_drafts SET status='published',updated_at=? WHERE id IN (
+        SELECT wp.draft_id FROM wordpress_publications wp JOIN wordpress_content_inventory wi
+          ON wi.site_url=wp.site_url AND wi.post_id=wp.post_id
+        WHERE wi.status='publish') AND status NOT IN ('published','needs_review')`).run(timestamp);
+      this.db.prepare(`UPDATE article_drafts SET status='wordpress_draft',updated_at=? WHERE id IN (
+        SELECT wp.draft_id FROM wordpress_publications wp JOIN wordpress_content_inventory wi
+          ON wi.site_url=wp.site_url AND wi.post_id=wp.post_id
+        WHERE wi.status='draft') AND status='published'`).run(timestamp);
       this.db.prepare(`
         INSERT INTO integration_sync_state(sync_key, status, last_started_at, last_succeeded_at, item_count, updated_at)
         VALUES (?, 'succeeded', ?, ?, ?, ?)
@@ -7674,8 +8014,10 @@ export class Repository {
       SELECT ad.id AS draft_id, ad.title, ad.status AS draft_status, ad.updated_at,
         qr.passed AS qa_passed, cc.status AS commercial_status, pc.status AS publish_composition_status,
         wp.status AS wordpress_status, wp.post_id, wp.post_url, wp.preview_url, wp.edit_url,
-        wp.last_error, wp.error_code, wp.delivery_mode,
+        wp.last_error, wp.error_code, wp.delivery_mode, wi.status AS remote_status,
         CASE
+          WHEN ad.status='needs_review' THEN 'needs_review'
+          WHEN ad.status='published' THEN 'published'
           WHEN wp.status='synced' AND wp.post_id IS NOT NULL THEN 'wordpress_draft'
           WHEN wp.status='failed' THEN 'delivery_failed'
           WHEN wp.status='queued' THEN 'queued'
@@ -7688,6 +8030,7 @@ export class Repository {
       LEFT JOIN commercial_compositions cc ON cc.draft_id=ad.id
       LEFT JOIN frontend_publish_compositions pc ON pc.draft_id=ad.id
       LEFT JOIN wordpress_publications wp ON wp.draft_id=ad.id
+      LEFT JOIN wordpress_content_inventory wi ON wi.site_url=wp.site_url AND wi.post_id=wp.post_id
       ORDER BY ad.updated_at DESC
     `).all();
   }
@@ -7825,14 +8168,18 @@ export class Repository {
     return rows.length;
   }
 
-  knowledgeForDestination(destinationSlug) {
+  knowledgeForDestination(destinationSlug, { normalizedKeys = null } = {}) {
+    if (Array.isArray(normalizedKeys) && !normalizedKeys.length) return [];
+    const keyWhere=Array.isArray(normalizedKeys)
+      ? `AND k.normalized_key IN (${normalizedKeys.map(()=>'?').join(',')})` : '';
     return this.db.prepare(`
       SELECT k.*, kr.status AS resolution_status, kr.preferred_value AS resolved_value, kr.note AS resolution_note,
         kr.resolved_at AS resolution_resolved_at
       FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
       LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
-      WHERE d.slug=? AND k.visibility_status='visible' ORDER BY k.consensus_status='conflicted' DESC, k.support_count DESC, k.normalized_key
-    `).all(destinationSlug).map((row) => ({
+      WHERE d.slug=? AND k.visibility_status='visible' ${keyWhere}
+      ORDER BY k.consensus_status='conflicted' DESC, k.support_count DESC, k.normalized_key
+    `).all(destinationSlug,...(normalizedKeys || [])).map((row) => ({
       normalized_key: row.normalized_key, subject: row.subject, predicate: row.predicate,
       entity_key: row.entity_key || null,
       canonical_subject: row.canonical_subject || row.subject,
@@ -7883,14 +8230,14 @@ export class Repository {
     return { factId, action, status: hidden ? "hidden" : "visible", destinationSlug: fact.destination_slug };
   }
 
-  authorizedSourceAssetsForBrief(brief, { packet = null } = {}) {
+  authorizedSourceAssetsForBrief(brief, { packet = null, additionalSourceIds = [] } = {}) {
     const claimKeys = json(brief.evidence_ledger_json, []);
     const supportingFacts = this.knowledgeForDestination(brief.destination_slug)
       .filter((fact) => !claimKeys.length || claimKeys.includes(fact.normalized_key));
-    const sourceIds = [...new Set(supportingFacts
+    const sourceIds = [...new Set([...supportingFacts
       .flatMap((fact) => fact.evidence || [])
       .map((evidence) => evidence.source_id)
-      .filter(Boolean))];
+      .filter(Boolean),...additionalSourceIds.filter(Boolean)])];
     const selectedAssetIds=packet?.context?.version===2
       ? uniqueStrings((packet.context.authorized_source_assets || []).map(asset=>asset.id || asset.source_asset_id),100) : [];
     if (!sourceIds.length && !selectedAssetIds.length) return [];
@@ -7908,7 +8255,7 @@ export class Repository {
     return this.db.prepare(`
       SELECT sa.id, sa.source_id, sa.remote_url, sa.local_path, sa.mime_type, sa.alt_text, sa.position,
         sa.width,sa.height,sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
-        sa.original_sha256,sa.capture_version,saa.analysis_status,saa.asset_kind,saa.text_regions_json,saa.photo_regions_json,
+        sa.original_sha256,sa.capture_version,sa.local_photo_audit_json,saa.analysis_status,saa.asset_kind,saa.text_regions_json,saa.photo_regions_json,
         saa.entities_json,saa.editor_ui_regions_json,saa.primary_subjects_json,saa.language_by_region_json,
         saa.reader_text_present,saa.confidence AS analysis_confidence,saa.analysis_version,saa.prompt_version,
         saa.source_sha256 AS analysis_source_sha256,
@@ -8904,7 +9251,7 @@ function jobPriority(type) {
   if (["finalize_source_extraction","rebuild_knowledge","audit_segment_coverage"].includes(type)) return 15;
   if (["preflight_source","segment_source","extract_segment_claims","retry_segment_extraction"].includes(type)) return 20;
   if (["extract_source_experience","analyze_source_diagnostic","resolve_entities","rebuild_topic_clusters","build_coverage_matrix","rebuild_content_opportunities","reconcile_approved_opportunities",
-    "assemble_editorial","plan_content","plan_narrative","assemble_writing_packet","compose_frontend_page_plan","generate_draft","generate_visuals","review_draft","revise_draft","compose_frontend_page","compose_commercial","compose_publish_page","push_wordpress_draft"].includes(type)) return 30;
+    "assemble_editorial","plan_content","plan_narrative","assemble_writing_packet","compose_frontend_page_plan","generate_draft","generate_visuals","review_draft","revise_draft","compose_frontend_page","compose_commercial","compose_publish_page","push_wordpress_draft","publish_wordpress_post"].includes(type)) return 30;
   if (type==="backfill_media_asset") return 70;
   return 60;
 }
@@ -9180,7 +9527,7 @@ export function contentPolicyFor(brief, facts = []) {
     .test(`${brief?.topic || ""} ${brief?.search_intent || ""} ${canonical.primary_query || ""}`);
   const faqSupported = questionIntent && substantialEvidence >= 3;
   return {
-    version: "content-policy-1.1",
+    version: "content-policy-1.2",
     content_type: type,
     minimum_words: minimumWords,
     minimum_words_mode: "soft_editorial_guidance",
@@ -9190,8 +9537,8 @@ export function contentPolicyFor(brief, facts = []) {
     seo: { title_suggested_max: 60, description_suggested_max: 160, length_mode: "soft_editorial_guidance" },
     faq: { required: false, allowed: faqSupported, minimum: 0, maximum: faqSupported ? 4 : 0 },
     visuals: { minimum: 0,
-      target: substantialEvidence ? Math.min(baseVisuals, Math.max(type === "food_guide" ? 5 : 1, Math.ceil(substantialEvidence / 4))) : 0,
-      maximum: type === "food_guide" ? 8 : baseVisuals + 1, count_mode: "soft_editorial_guidance" },
+      target: substantialEvidence ? Math.min(12, Math.max(baseVisuals, Math.ceil(substantialEvidence / 2))) : 0,
+      maximum: type === "food_guide" ? 14 : 12, count_mode: "relevant_qualified_originals_up_to_cap" },
   };
 }
 
@@ -9361,6 +9708,7 @@ function legacyBlockRecord(block, signature) {
 
 export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], policy = {}) {
   const maximum = policy.visuals?.maximum ?? 5;
+  const freeOriginalPolicy = String(draft.strategy_version || CONTENT_STRATEGY.version) === '3.9';
   const articleFallbackMinimum = 0.34;
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
   const allowedRatios = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"];
@@ -9463,6 +9811,11 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       displacedAssetIds.add(exact.id);
     }
     const decision = decideVisualAsset(asset, visual);
+    if (freeOriginalPolicy && visual.image_type === 'real_world_photo' && decision.action === 'retain'
+      && (asset.local_photo_audit?.status !== 'eligible'
+        || asset.local_photo_audit.sha256 !== asset.original_sha256)) {
+      return requiredVisualGap(visual,'original_photo_needs_local_quality_review');
+    }
     if (decision.action === "reject") {
       displacedAssetIds.add(asset.id);
       return requiredVisualGap(visual,"source_not_deliverable");
@@ -9494,7 +9847,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
         language_status: asset.language_status, visual_decision:decision,source_sha256:asset.original_sha256 || "",
         capture_version:asset.capture_version || null,analysis_version:asset.analysis_version || "",
         transform_version:"visual-transform-2",style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
-        source_analysis:sourceAnalysisSnapshot(asset),
+        source_analysis:sourceAnalysisSnapshot(asset),local_photo_audit:asset.local_photo_audit || null,
         authorized_asset_match:{version:"visual-match-2",request_hash:selectionRequestHash,score:match.score,
           mode:scopedRoute ? "section_route" : priorAssetMatch.mode || "visual_subject",
           displaced_asset_ids:[...displacedAssetIds].sort()},
@@ -9516,19 +9869,27 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     }
   }
   const target = Math.min(maximum, Math.max(normalized.length, Number(policy.visuals?.target || 0)));
-  if (normalized.length >= target) return normalized;
+  if (!freeOriginalPolicy && normalized.length >= target) return normalized;
   const fallbackAssets = [...unusedAssets.values()]
     .filter((asset)=>!unsafeAttractionAssetIds.has(asset.id))
+    .filter((asset)=>!freeOriginalPolicy || (asset.local_photo_audit?.status === 'eligible'
+      && asset.local_photo_audit.sha256 === asset.original_sha256))
     .map((asset) => ({ asset, score: articleAssetMatchScore(draft, brief, asset) }))
     .filter((entry) => entry.score >= articleFallbackMinimum)
     .sort((left, right) => right.score - left.score || Number(right.asset.width || 0) * Number(right.asset.height || 0)
       - Number(left.asset.width || 0) * Number(left.asset.height || 0));
-  for (const { asset } of fallbackAssets.slice(0, target - normalized.length)) {
+  const photoTarget = freeOriginalPolicy ? Math.min(maximum, normalized.length + fallbackAssets.length) : target;
+  const usedOriginalHashes=new Set(normalized.map((visual)=>authorizedSourceAssets
+    .find((asset)=>asset.id===visual.source_asset_id)?.original_sha256).filter(Boolean));
+  for (const { asset } of fallbackAssets) {
+    if (normalized.length >= photoTarget) break;
+    if (asset.original_sha256 && usedOriginalHashes.has(asset.original_sha256)) continue;
     const index = normalized.length;
     const subject = readerVisualAlt(asset, "", brief.destination_slug);
     if (!subject) continue;
     const purpose=truncateText(`Evidence-linked view supporting ${draft.title}`,300);
     const decision = decideVisualAsset(asset, { image_subject:subject, purpose });
+    if (freeOriginalPolicy && decision.action !== 'retain') continue;
     if (decision.action === "reject") continue;
     const needsWork = ["localize","analyze"].includes(decision.action);
     const acquisitionStrategy=visualAcquisitionStrategy(decision);
@@ -9547,13 +9908,14 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
         source_sha256:asset.original_sha256 || "",capture_version:asset.capture_version || null,
         analysis_version:asset.analysis_version || "",transform_version:"visual-transform-2",
         style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
-        source_analysis:sourceAnalysisSnapshot(asset),
+        source_analysis:sourceAnalysisSnapshot(asset),local_photo_audit:asset.local_photo_audit || null,
         authorized_asset_match:{version:"visual-match-2",request_hash:sha256(`${subject}\n${purpose}`),
           score:articleAssetMatchScore(draft,brief,asset),mode:"article_fallback",
           displaced_asset_ids:[...displacedAssetIds].sort()},
         authorization_policy:"project_source_media_full_authorization",source_provenance:{source_asset_id:asset.id,
           original_stored:true,project_owner_confirmed:true}},
     });
+    if (asset.original_sha256) usedOriginalHashes.add(asset.original_sha256);
     unusedAssets.delete(asset.id);
   }
   return normalized;
@@ -9599,9 +9961,15 @@ export function decideVisualAsset(asset = {}, request = {}) {
     asset.reader_text_present,Array.isArray(asset.text_regions) ? asset.text_regions : [],asset.analysis_version)
     ? "needs_review" : storedAnalysisStatus;
   const common={language,authenticityCritical,preserveRegionIds,translateRegionIds};
+  const localAudit=asset.local_photo_audit || json(asset.local_photo_audit_json,{});
+  const locallyQualified=localAudit.status==='eligible' && localAudit.sha256
+    && localAudit.sha256===asset.original_sha256;
   if (["low_quality","editor_ui","editor_interface","unreadable"].includes(visualClass)) return {
     visualClass,...common,action:"reject", reason:"insufficient_delivery_quality",
   };
+  if (locallyQualified && ['unknown','documentary_photo','real_world_photo'].includes(visualClass)
+    && !(asset.editor_ui_regions || []).length) return {visualClass:'documentary_photo',...common,
+    action:'retain',transformKind:'PHOTO_RETAIN',reason:'local_original_photo_quality_passed'};
   if (!explicit || analysisStatus !== "ready") {
     if (language === "no_text" && analysisStatus !== "needs_review" && asset.reader_text_present !== true) return {visualClass:"documentary_photo",...common,action:"retain",
       transformKind:"PHOTO_RETAIN",reason:"legacy_image_level_no_text_evidence"};
@@ -9705,9 +10073,11 @@ function scopedRouteFit(asset,visual,draft) {
 
 function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
   const clean = (value) => String(value || "").replace(/\s+/g," ").trim();
-  const isEditorial = (value) => value && !/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/i.test(value)
+  const isEditorial = (value) => value && !/[\u3400-\u9fff]/u.test(value)
+    && !/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/i.test(value)
     && !/\b(?:claim|source|asset|fact|draft)_[a-f0-9]{8,}\b/i.test(value);
-  for (const value of [asset?.alt_text, asset?.caption_text, fallback].map(clean)) {
+  for (const value of [asset?.alt_text, asset?.caption_text,
+    ...(Array.isArray(asset?.primary_subjects) ? asset.primary_subjects : []), fallback].map(clean)) {
     if (isEditorial(value)) return truncateText(value,220);
   }
   const subject = clean(asset?.evidence_subject);
@@ -9918,6 +10288,7 @@ function hydrateSourceAssetAnalysis(row) {
     analysisStatus="needs_review";
   }
   return {...row,
+    local_photo_audit:json(row.local_photo_audit_json,{}),
     analysis_status:analysisStatus,asset_kind:assetKind,
     text_regions:textRegions,photo_regions:json(row.photo_regions_json,[]),entities:json(row.entities_json,[]),
     editor_ui_regions:json(row.editor_ui_regions_json,[]),primary_subjects:json(row.primary_subjects_json,[]),

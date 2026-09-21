@@ -9,12 +9,13 @@ import { assertPublicationEligibility, freezeRequiredMediaManifest, mediaManifes
 import { inheritJobContext, isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
 import { recoverRemoteOriginal } from "./source-media-store.mjs";
+import { auditSourcePhoto } from './local-photo-audit.mjs';
 import { stageConfiguration } from './pipeline-contract.mjs';
 import { sourceProcessingProfile } from './source-processing-profile.mjs';
 import { runNodeJsonProcess } from './process-runner.mjs';
 import { normalizeFrontendPageForDelivery } from "./content-taxonomy.mjs";
 import { remapBlockProvenanceForDelivery } from "./evidence-validator.mjs";
-import { deliveryRefreshContinuation } from "./services/delivery-refresh.mjs";
+import { deliveryRefreshContinuation, deliveryRefreshScopeForJob } from "./services/delivery-refresh.mjs";
 
 const ISOLATED_REPOSITORY_TASK=fileURLToPath(new URL('../scripts/run-isolated-repository-task.mjs',import.meta.url));
 
@@ -405,6 +406,15 @@ export class Pipeline {
         return true;
       }
       switch (job.type) {
+        case 'audit_source_photo': {
+          const asset = this.repository.sourceAssetDecisionDto(job.entity_id);
+          if (!asset || asset.durability_status !== 'ORIGINAL_STORED'
+            || asset.original_bytes_status !== 'saved_original') break;
+          const audit = await guarded(() => auditSourcePhoto(asset.local_path,
+            { assetKind: asset.asset_kind || 'unknown' }));
+          commitStage(() => this.repository.saveLocalPhotoAudit(asset.id, audit));
+          break;
+        }
         case "backfill_media_asset":
         case "repair_media_asset": {
           const asset = this.repository.getMediaRecoveryAsset(job.entity_id);
@@ -482,6 +492,7 @@ export class Pipeline {
           commitStage(() => {
             const segments = this.repository.prepareSourceSegments(job.entity_id);
             const mediaBatches = this.repository.prepareMediaExtractionBatches(job.entity_id);
+            this.repository.enqueueSourcePhotoAudits(job.entity_id, { limit: 2000 });
             const batchedSegmentIds = new Set(mediaBatches.flatMap((batch) => batch.segmentIds));
             for (const batch of mediaBatches) this.enqueueChild(job,"extract_media_batch", batch.id,
               { executionRoute: 'realtime', priority: Number(job.priority || 5) });
@@ -1104,12 +1115,52 @@ export class Pipeline {
           }
           const publication = this.repository.prepareWordPressPublication(job.entity_id, this.wordpress.config.siteUrl,
             this.frontendContracts?.configured ? "contract" : "legacy");
+          const publishedMediaRefresh = contentPackage.draft.status === 'published'
+            && deliveryRefreshScopeForJob(this.repository, job) === 'media';
           try {
             let result;
             if (this.frontendContracts?.configured) {
               const publishPackage = structuredClone(contentPackage.publish_composition.publish_package);
               publishPackage.publication.existing_post_id = publication.post_id || publishPackage.publication.existing_post_id || null;
-              result = await guarded((signal) => this.wordpress.upsertContractDraft(publishPackage, { signal, idempotencyKey: job.id,
+              if (publishedMediaRefresh) {
+                if (!publication.post_id) throw new Error('Published media refresh has no WordPress post ID.');
+                publishPackage.publication.status = 'publish';
+                const pageHash = crypto.createHash('sha256').update(JSON.stringify(publishPackage.page)).digest('hex');
+                const receipt = await guarded((signal) => this.wordpress.getCmsArticleReceipt(publication.post_id, { signal }));
+                if (receipt.status !== 'publish' || receipt.cms_draft_id !== job.entity_id) {
+                  throw Object.assign(new Error('Published WordPress identity or status changed.'),
+                    {code:'WORDPRESS_MEDIA_REFRESH_IDENTITY_MISMATCH',retryable:false});
+                }
+                const prior = this.repository.wordPressMediaRefreshAttempt(job.entity_id);
+                if (prior && prior.state !== 'completed') {
+                  if (prior.page_hash !== pageHash || receipt.page_payload_hash !== pageHash) {
+                    throw Object.assign(new Error('Published media refresh outcome is unknown; operator reconciliation is required.'),
+                      {code:'WORDPRESS_MEDIA_REFRESH_OUTCOME_UNKNOWN',retryable:false});
+                  }
+                  result = {postId:publication.post_id,postUrl:publication.post_url,status:'publish',
+                    deliveryManifest:{page_payload_hash:pageHash},visuals:[]};
+                  this.repository.completeWordPressMediaRefresh(job.entity_id,pageHash);
+                } else {
+                  assertLease();
+                  this.repository.beginWordPressMediaRefreshAttempt(job.entity_id,publication.post_id,job.id,pageHash);
+                  try {
+                    result = await guarded((signal) => this.wordpress.upsertContractDraft(publishPackage, { signal,
+                      idempotencyKey:job.id,draftId:job.entity_id,pagePayload:publishPackage.page }));
+                    this.repository.completeWordPressMediaRefresh(job.entity_id,pageHash);
+                  } catch (error) {
+                    const verified = await this.wordpress.getCmsArticleReceipt(publication.post_id).catch(() => null);
+                    if (verified?.status === 'publish' && verified.cms_draft_id === job.entity_id
+                      && verified.page_payload_hash === pageHash) {
+                      result = {postId:publication.post_id,postUrl:publication.post_url,status:'publish',
+                        deliveryManifest:{page_payload_hash:pageHash},visuals:[]};
+                      this.repository.completeWordPressMediaRefresh(job.entity_id,pageHash);
+                    } else {
+                      this.repository.markWordPressMediaRefreshUnknown(job.entity_id);
+                      throw Object.assign(error,{code:'WORDPRESS_MEDIA_REFRESH_OUTCOME_UNKNOWN',retryable:false});
+                    }
+                  }
+                }
+              } else result = await guarded((signal) => this.wordpress.upsertContractDraft(publishPackage, { signal, idempotencyKey: job.id,
                 draftId: job.entity_id, pagePayload: publishPackage.page }));
             } else {
               const publishableDraft = {
@@ -1134,6 +1185,40 @@ export class Pipeline {
               this.repository.enqueue("sync_frontend_contract", "default");
             }
             throw error;
+          }
+          break;
+        }
+        case "publish_wordpress_post": {
+          if (!this.wordpress?.enabled) throw new Error('WordPress publishing is not configured.');
+          const content = this.repository.getDraftPackage(job.entity_id);
+          const postId = Number(content?.publication?.post_id);
+          if (!postId || content.publication.status !== 'synced') throw new Error('No delivered WordPress draft exists.');
+          const current = await guarded((signal) => this.wordpress.getPost(postId, { signal }));
+          if (current.status === 'publish') {
+            this.repository.completeWordPressPublish(job.entity_id, current);
+            break;
+          }
+          if (current.status !== 'draft') throw new Error(`WordPress post is ${current.status}; publication requires a draft.`);
+          if (!content.review?.passed || !content.commercial_composition?.current
+            || content.publish_composition?.status !== 'delivered') {
+            throw new Error('Current QA and final page delivery are required before publishing.');
+          }
+          assertPublicationEligibility(this.repository.db, job.entity_id, { phase: 'delivery',
+            pagePayload: content.publish_composition?.publish_package?.page || null });
+          this.repository.beginWordPressPublishAttempt(job.entity_id, postId, job.id);
+          try {
+            const published = await guarded((signal) => this.wordpress.publishPost(postId,
+              { signal, idempotencyKey: job.id }));
+            this.repository.completeWordPressPublish(job.entity_id, published);
+          } catch (error) {
+            // A timed out write may already have committed remotely. Read once;
+            // never blindly send the same publish transition again.
+            const verified = await this.wordpress.getPost(postId).catch(() => null);
+            if (verified?.status === 'publish') this.repository.completeWordPressPublish(job.entity_id, verified);
+            else {
+              this.repository.markWordPressPublishUnknown(job.entity_id);
+              throw Object.assign(error, { code: 'WORDPRESS_PUBLISH_OUTCOME_UNKNOWN', retryable: false });
+            }
           }
           break;
         }

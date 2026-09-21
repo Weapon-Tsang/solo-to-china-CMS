@@ -9,7 +9,7 @@ import { assertPublicationEligibility } from '../src/publication-eligibility.mjs
 import { WordPressDraftAdapter } from '../src/wordpress.mjs';
 
 function seed(t, count = 3) {
-  const { db, directory } = repositoryFixture(t);
+  const { db, directory, repository } = repositoryFixture(t);
   db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at)
     VALUES ('brief','beijing','Guide','travelers','informational','ready','2026-01-01','2026-01-01')`).run();
   db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
@@ -29,7 +29,7 @@ function seed(t, count = 3) {
       `plan-${index}`, JSON.stringify(metadata));
     db.prepare('UPDATE article_visuals SET media_path=? WHERE id=?').run(file, `visual-${index}`);
   }
-  return { db, directory };
+  return { db, directory, repository };
 }
 
 test('required nonfactual images keep the text and block delivery when two of three slots are missing', (t) => {
@@ -68,4 +68,52 @@ test('a cached article payload cannot bypass the latest database gate at WordPre
   adapter.deliveryGuard=(draftId,options)=>assertPublicationEligibility(db,draftId,options);
   await assert.rejects(adapter.upsertDraft(cached,null,{draftId:'draft'}),{code:'MEDIA_MANIFEST_MISSING_OR_STALE'});
   assert.equal(remoteCalls,0);
+});
+
+test('a strategy 3.9 source photo requires its authoritative local audit, not visual metadata', (t) => {
+  const { db, directory } = seed(t, 1);
+  const file = path.join(directory, 'image-1.png');
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  db.prepare(`INSERT INTO sources(id,adapter,canonical_url,captured_at,raw_text,raw_html,
+    raw_payload_json,content_hash,created_at,updated_at)
+    VALUES ('source','manual','https://example.test/source','now','text','html','{}','hash','now','now')`).run();
+  db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,position,local_path,
+    original_bytes_status,durability_status,original_sha256)
+    VALUES ('asset','source','image','https://example.test/photo',0,?,'saved_original','ORIGINAL_STORED',?)`)
+    .run(file, hash);
+  db.prepare("UPDATE article_drafts SET strategy_version='3.9' WHERE id='draft'").run();
+  const metadata = { local_photo_audit:{status:'eligible',sha256:hash,providerCalls:0},
+    visual_decision:{action:'retain'},authorized_asset_match:{score:1} };
+  db.prepare(`UPDATE article_visuals SET source_asset_id='asset',acquisition_strategy='use_authorized_source_image',
+    factual_image_required=1,media_metadata_json=? WHERE id='visual-1'`).run(JSON.stringify(metadata));
+  freezeRequiredMediaManifest(db, 'draft');
+  assert.equal(evaluatePublicationEligibility(db, 'draft').passed, false);
+  const audit = {status:'eligible',sha256:hash,providerCalls:0};
+  db.prepare('UPDATE source_assets SET local_photo_audit_json=? WHERE id=?').run(JSON.stringify(audit),'asset');
+  assert.equal(evaluatePublicationEligibility(db, 'draft').passed, true,
+    JSON.stringify(evaluatePublicationEligibility(db, 'draft')));
+  db.prepare("UPDATE source_assets SET local_photo_audit_json='{}' WHERE id='asset'").run();
+  assert.equal(evaluatePublicationEligibility(db, 'draft').passed, false);
+});
+
+test('historical refresh plans removal of an optional original that fails the new audit', (t) => {
+  const { db, directory, repository }=seed(t,1);
+  const file=path.join(directory,'image-1.png');
+  const hash=crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  db.prepare(`INSERT INTO sources(id,adapter,canonical_url,captured_at,raw_text,raw_html,
+    raw_payload_json,content_hash,created_at,updated_at)
+    VALUES ('old-source','manual','https://example.test/old','now','text','html','{}','hash','now','now')`).run();
+  db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,position,local_path,
+    original_bytes_status,durability_status,original_sha256,local_photo_audit_json)
+    VALUES ('old-photo','old-source','image','https://example.test/old-photo',0,?,
+    'saved_original','ORIGINAL_STORED',?,?)`).run(file,hash,
+      JSON.stringify({status:'needs_review',sha256:hash,reasons:['chinese_text_dense']}));
+  db.prepare("UPDATE article_drafts SET strategy_version='3.8' WHERE id='draft'").run();
+  db.prepare(`UPDATE article_visuals SET source_asset_id='old-photo',image_type='real_world_photo',
+    acquisition_strategy='use_authorized_source_image',status='generated',factual_image_required=0
+    WHERE id='visual-1'`).run();
+  const plan=repository.mediaRepairPlan('draft',{strategyVersion:'3.9'});
+  assert.equal(plan.slots.length,1);
+  assert.equal(plan.slots[0].disposition,'remove');
+  assert.equal(plan.slots[0].reason,'visual_not_qualified_under_current_strategy');
 });

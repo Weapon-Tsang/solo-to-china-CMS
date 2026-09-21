@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Weapon-Tsang/solo-to-china
-          ref: 293ea96623da674b7d7ea9b8adcdb83f23878d75
+          ref: b231b1d54915ceef6a7f52b907ba5d7c1d79463d
           path: frontend
 
       - name: Use Node 24

@@ -462,6 +462,11 @@ function providerRequestLabel(value) {
 }
 
 function SourceDetail({ source, actionBusy, onAction, onClose }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const removeSource = async () => {
+    if (await onAction(`/api/sources/${encodeURIComponent(source.id)}`, { method: 'DELETE' },
+      '来源及其本地文本、图片已删除，扩展不会再次采集该身份')) onClose();
+  };
   const retry = async () => { if (await onAction(`/api/sources/${source.id}/retry`, { method: "POST" }, "已重新加入提取队列")) onClose(); };
   const processingEstimate = source.submission_metadata?.processingEstimate;
   const blockedByHardLimit = processingEstimate?.processingClass === "blocked_hard_limit";
@@ -471,6 +476,14 @@ function SourceDetail({ source, actionBusy, onAction, onClose }) {
   }, decision === "verified" ? "证据核验结果已保存，相关知识和内容机会正在重建。" : "证据可信状态已更新。");
   const originalUrl = /^https?:\/\//.test(source.submitted_url || "") ? source.submitted_url : /^https?:\/\//.test(source.canonical_url || "") ? source.canonical_url : "";
   return <>
+    <div className="mb-3 rounded-lg border border-slate-200 p-2 text-xs">
+      <Button size="sm" variant="outline" disabled={actionBusy} onClick={() => setConfirmDelete(true)}>删除来源</Button>
+      {confirmDelete && <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-800">
+        <p>删除后清除该来源的文本和本地图片，并永久阻止扩展重新采集同一身份。引用此来源图片的文章需要重新配图。</p>
+        <div className="mt-2 flex gap-2"><Button size="sm" disabled={actionBusy} onClick={removeSource}>确认删除</Button>
+          <Button size="sm" variant="outline" onClick={() => setConfirmDelete(false)}>取消</Button></div>
+      </div>}
+    </div>
     <DialogHeader><Badge variant="info" className="w-max"><FileText className="size-3" /> 来源详情</Badge><DialogTitle>{source.title || "未命名来源"}</DialogTitle><DialogDescription>原始证据、上传文件来源、结构化提取、信息主张和编辑模式均可追溯到当前来源。</DialogDescription></DialogHeader>
     <div className="mb-4 flex flex-wrap items-center gap-2">{originalUrl && <Button variant="secondary" size="sm" asChild><a href={originalUrl} target="_blank" rel="noreferrer"><ExternalLink /> 打开原文</a></Button>}<Button size="sm" disabled={actionBusy || blockedByHardLimit} onClick={retry}><RefreshCw className={cn(actionBusy && "animate-spin")} /> 重新提取</Button><Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => reviewEvidence("verified", 1)}><CheckCircle2 /> 核验为官方来源</Button><Button size="sm" variant="outline" disabled={actionBusy} onClick={() => reviewEvidence("unverified", 4)}>标记为未核验</Button><StatusPill status={source.status} /><Badge variant={source.verified_at ? "success" : "warning"}>权威等级 L{source.authority_level || 4} · {source.verified_at ? "已核验" : "未核验"}</Badge></div>
     {source.last_error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><strong>处理失败</strong><p className="mt-1 leading-relaxed">{friendlyError(source.last_error)}</p><small>请先修正访问权限、模型配置或来源内容问题，再重新执行提取。</small></div>}
@@ -489,6 +502,7 @@ function DraftDetail({ item, health, actionBusy, onAction, onClose }) {
   const titleLength = [...seoTitle].length;
   const descriptionLength = [...seoDescription].length;
   const push = async () => { if (await onAction(`/api/drafts/${draft.id}/wordpress`, { method: "POST" }, "草稿已加入 WordPress 投递队列")) onClose(); };
+  const publish = async () => { if (await onAction(`/api/drafts/${draft.id}/publish`, { method: "POST" }, "文章已加入发布队列")) onClose(); };
   const saveSeo = async () => {
     if (await onAction(`/api/drafts/${draft.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: seoTitle, meta_description: seoDescription }) }, "SEO 标题与描述已保存，最终检查已重新排队")) onClose();
   };
@@ -496,6 +510,12 @@ function DraftDetail({ item, health, actionBusy, onAction, onClose }) {
     if (await onAction(retry.endpoint, { method: "POST" }, `已只重试失败阶段：${retry.stage}`)) onClose();
   };
   return <>
+    {draft.status === "wordpress_draft" && review?.passed && composition?.current && publishComposition?.status === "delivered" &&
+      <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
+        <span>最终页面已存入 WordPress。预览并确认后可从 CMS 发布。</span>
+        <Button className="ml-2" size="sm" disabled={actionBusy} onClick={publish}>发布文章</Button>
+      </div>}
+
     <DialogHeader><Badge variant="info" className="w-max"><Layers3 className="size-3" /> 文章草稿 · 修订版 {draft.revision}</Badge><DialogTitle>{draft.title}</DialogTitle><DialogDescription>面向读者的正文与内部证据台账、商业内容层保持分离。</DialogDescription></DialogHeader>
     <div className="mb-4 flex flex-wrap items-center gap-2"><StatusPill status={draft.status} /><Badge>质量审核 {review ? `${Math.round(review.score)} / 100` : "待处理"}</Badge>{review?.passed && health?.wordpressConfigured && draft.status === "ready_for_wordpress" && <Button size="sm" disabled={actionBusy} onClick={push}><Send /> 发送到 WordPress 草稿箱</Button>}<FinalPreviewAction draftId={draft.id} available={Boolean(publication?.preview_url)} complete={Boolean(composition?.current && publishComposition?.status === "delivered")} />{publication?.edit_url && <Button size="sm" variant="outline" asChild><a href={publication.edit_url} target="_blank" rel="noreferrer"><ExternalLink />在 WordPress 编辑</a></Button>}</div>
     <ContentRecovery candidateId={item.candidate?.id} onAction={onAction} actionBusy={actionBusy} />

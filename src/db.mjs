@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 77;
+export const SCHEMA_VERSION = 78;
 
 export function openDatabase(filename, { migrate: shouldMigrate = true } = {}) {
   if (shouldMigrate) fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -105,6 +105,55 @@ function migrate(db) {
   if (current < 75) migrationSeventyFive(db);
   if (current < 76) migrationSeventySix(db);
   if (current < 77) migrationSeventySeven(db);
+  if (current < 78) migrationSeventyEight(db);
+}
+
+function migrationSeventyEight(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE source_assets ADD COLUMN local_photo_audit_json TEXT NOT NULL DEFAULT '{}';
+    CREATE INDEX idx_source_assets_summary ON source_assets(source_id,capture_version,durability_status,repair_status);
+    CREATE INDEX idx_source_segments_summary ON source_segments(source_id,capture_version,id);
+    CREATE TABLE deleted_source_identities (
+      identity_hash TEXT PRIMARY KEY,
+      deleted_at TEXT NOT NULL,
+      actor TEXT NOT NULL
+    );
+    CREATE TABLE source_delete_file_queue (
+      path TEXT PRIMARY KEY,
+      queued_at TEXT NOT NULL
+    );
+    CREATE TABLE wordpress_publish_attempts (
+      draft_id TEXT PRIMARY KEY REFERENCES article_drafts(id) ON DELETE CASCADE,
+      post_id INTEGER NOT NULL,
+      job_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('dispatch_started','completed','outcome_unknown')),
+      started_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    CREATE TABLE wordpress_media_refresh_attempts (
+      draft_id TEXT PRIMARY KEY REFERENCES article_drafts(id) ON DELETE CASCADE,
+      post_id INTEGER NOT NULL,
+      job_id TEXT NOT NULL,
+      page_hash TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('dispatch_started','completed','outcome_unknown')),
+      started_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    CREATE TABLE article_photo_refreshes (
+      id TEXT PRIMARY KEY,
+      draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+      from_revision INTEGER NOT NULL,
+      to_revision INTEGER NOT NULL,
+      previous_strategy_version TEXT NOT NULL,
+      previous_visuals_json TEXT NOT NULL,
+      reused_review_id TEXT NOT NULL,
+      plan_hash TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(draft_id,to_revision)
+    );
+    INSERT INTO schema_migrations(version, applied_at) VALUES (78, datetime('now'));
+  `));
 }
 
 function migrationSeventySeven(db) {

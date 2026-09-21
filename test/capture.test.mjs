@@ -52,6 +52,39 @@ test("capture storage is idempotent and preserves content revisions", (t) => {
   assert.equal(queued, 1);
 });
 
+test('deleted source removes evidence and suppresses the same extension identity', (t) => {
+  const fixture = repositoryFixture(t);
+  const capture = normalizeXiaohongshuCapture({
+    url: 'https://www.xiaohongshu.com/explore/deleted-note',
+    title: 'Deleted note', text: 'A complete note that the editor has removed.',
+    images: [{ url: 'https://sns-img.xhscdn.com/deleted-note.jpg', alt: 'Removed image' }],
+  });
+  const saved = fixture.repository.saveCapture(capture);
+  const assetId = fixture.db.prepare('SELECT id FROM source_assets WHERE source_id=?').get(saved.id).id;
+  fixture.db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('delete-topic','beijing','delete','Delete','fixture',80,1,0,'drafted','now','now')`).run();
+  fixture.db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('delete-brief','beijing','Delete','[]','informational','drafted','now','now','delete-topic')`).run();
+  fixture.db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('delete-draft','delete-brief','Delete','delete','Body.','{}','exception','now','now',1,'hash-delete')`).run();
+  fixture.db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,created_at,updated_at,source_asset_id)
+    VALUES ('delete-visual','delete-draft',0,'hero','Removed image','Removed image','','now','now',?)`).run(assetId);
+  const removed = fixture.repository.deleteSource(saved.id, 'test-editor');
+  assert.equal(removed.deleted, true);
+  assert.deepEqual(removed.affectedDrafts, ['delete-draft']);
+  assert.equal(fixture.db.prepare('SELECT source_asset_id,status FROM article_visuals WHERE id=?').get('delete-visual').source_asset_id, null);
+  assert.equal(fixture.db.prepare('SELECT status FROM article_drafts WHERE id=?').get('delete-draft').status, 'needs_review');
+  assert.equal(fixture.repository.getSource(saved.id), null);
+  assert.equal(fixture.db.prepare('SELECT COUNT(*) count FROM capture_versions WHERE source_id=?').get(saved.id).count, 0);
+  const identity = fixture.repository.checkCaptureIdentities([
+    { externalId: capture.externalId, url: capture.canonicalUrl },
+  ])[0];
+  assert.equal(identity.deleted, true);
+  assert.equal(identity.known, true);
+  assert.deepEqual(identity.requiredActions, []);
+  assert.throws(() => fixture.repository.saveCapture(capture), { code: 'SOURCE_DELETED', statusCode: 410 });
+});
+
 test("duplicate recapture restores authorized image bytes without creating a content revision", (t) => {
   const fixture = repositoryFixture(t);
   const originalSha256 = "a".repeat(64);

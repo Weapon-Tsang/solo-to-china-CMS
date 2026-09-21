@@ -12,10 +12,10 @@ const app = process.env.STC_PROBE_APP || '/app';
 const tables = ['sources', 'capture_versions', 'source_assets', 'source_files', 'source_segments',
   'claims', 'evidence_spans', 'extraction_coverage', 'article_drafts', 'article_visuals'];
 const mode = process.argv[2];
-const fingerprint = (db) => Object.fromEntries(tables.filter(table =>
+const fingerprint = (db, baseline = null) => Object.fromEntries(tables.filter(table =>
   db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)
 ).map(table => {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map(row => row.name)
+  const columns = baseline?.[table]?.columns || db.prepare(`PRAGMA table_info(${table})`).all().map(row => row.name)
     .filter(column => !(['source_assets', 'source_files'].includes(table) && column === 'capture_version'));
   // Stable old columns and IDs must survive migration, including source content.
   const hash = crypto.createHash('sha256');
@@ -23,7 +23,7 @@ const fingerprint = (db) => Object.fromEntries(tables.filter(table =>
   for (const row of db.prepare(`SELECT ${columns.map(c => `"${c}"`).join(',')} FROM ${table} ORDER BY rowid`).iterate()) {
     hash.update(JSON.stringify(row) + '\n'); count++;
   }
-  return [table, { count, sha256: hash.digest('hex') }];
+  return [table, { count, sha256: hash.digest('hex'), columns }];
 }));
 const check = db => {
   assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
@@ -63,7 +63,7 @@ if (mode === 'backup') {
   const start = performance.now();
   const db = openDatabase(target);
   check(db);
-  const actual = fingerprint(db);
+  const actual = fingerprint(db, baseline);
   assert.deepEqual(actual, baseline, 'Migration changed existing content, IDs or row counts');
   const schema = db.prepare('SELECT MAX(version) AS n FROM schema_migrations').get().n;
   assert.equal(schema, SCHEMA_VERSION);

@@ -1,3 +1,11 @@
+# 2.0.49 integrated release candidate handoff
+
+App/Extension version `2.0.49`, schema migration `78`, and Content Strategy `3.9` describe the current candidate. Content Production Strategy 3.9 is declared by `config/content-strategy.json`. The compatible Frontend Parent Theme 0.33.8 is committed at `b231b1d54915ceef6a7f52b907ba5d7c1d79463d`; CMS release and production migration remain pending at this handoff revision.
+
+The user clarified that relevant high-quality original photographs should be used extensively without new image/model API calls, while useful Chinese information graphics still need English translation and independent image QA, and missing illustrations still need generation. The local photo audit persists SHA-bound focus, quality and OCR findings. A draft or published article refresh preserves prose, existing successful media and independent text review, then queues only affected media and delivery stages. Source deletion stores capture identity tombstones and removes source text and uploaded files; affected articles enter `needs_review`. WordPress inventory status sync uses exact post ID and does not clear a local review blocker.
+
+The 2026-09-22 fresh production read-only baseline has schema 73, 78 Sources, 1,505 assets, 13 article Drafts and 16,378 Jobs. A disposable schema 73-to-78 migration, 229 linked-photo audits, historical media plans and same-database admin benchmark are documented in `docs/audit/CMS_2.0.49_PERFORMANCE_AND_MEDIA_2026-09-22.md`. The offline release gate, real Provider canary, production workload browser check and actual deployment status must be recorded there before calling the release complete. The notes below are historical.
+
 # 2.0.48 integrated release candidate handoff
 
 App/Extension version `2.0.48`, schema migration `77`, and Content Strategy `3.8` describe this unmerged release candidate. Content Production Strategy 3.8 remains declared by `config/content-strategy.json`.

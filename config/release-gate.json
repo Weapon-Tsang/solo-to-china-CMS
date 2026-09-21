@@ -3,7 +3,7 @@
   "nodeMajor": 24,
   "frontend": {
     "repository": "https://github.com/Weapon-Tsang/solo-to-china",
-    "commitSha": "293ea96623da674b7d7ea9b8adcdb83f23878d75",
+    "commitSha": "b231b1d54915ceef6a7f52b907ba5d7c1d79463d",
     "contractVersion": "1.4.1"
   },
   "testDiscovery": {
