@@ -183,24 +183,29 @@ test("WordPress inventory sync reads every page without changing posts", async (
   const requests = [];
   const fetchStub = async (url, options) => {
     requests.push({ url, options });
-    const page = new URL(url).searchParams.get("page");
-    const body = page === "1"
+    const params = new URL(url).searchParams;
+    const published = params.get("context") === "view";
+    const body = published
       ? [{ id: 7, slug: "beijing-guide", status: "publish", link: "https://site.test/beijing-guide", modified: "2026-08-01T00:00:00", title: { rendered: "Beijing &amp; Solo Guide" } }]
-      : [{ id: 8, slug: "draft-guide", status: "draft", link: "https://site.test/?p=8", modified: "2026-08-02T00:00:00", title: { raw: "Draft <em>Guide</em>" } }];
+      : params.get("page") === "1"
+        ? [{ id: 8, slug: "draft-guide", status: "draft", link: "https://site.test/?p=8", modified: "2026-08-02T00:00:00", title: { raw: "Draft <em>Guide</em>" } }]
+        : [{ id: 9, slug: "pending-guide", status: "pending", link: "https://site.test/?p=9", modified: "2026-08-03T00:00:00", title: { raw: "Pending Guide" } }];
     return new Response(JSON.stringify(body), {
       status: 200,
-      headers: { "content-type": "application/json", "x-wp-totalpages": "2" },
+      headers: { "content-type": "application/json", "x-wp-totalpages": published ? "1" : "2" },
     });
   };
   const adapter = new WordPressDraftAdapter({
     siteUrl: "https://site.test", username: "editor", applicationPassword: "app password",
   }, fetchStub);
   const inventory = await adapter.listContentInventory();
-  assert.equal(inventory.length, 2);
+  assert.equal(inventory.length, 3);
   assert.equal(inventory[0].title, "Beijing & Solo Guide");
   assert.equal(inventory[1].title, "Draft Guide");
+  assert.equal(inventory[2].status, "pending");
   assert.ok(requests.every((request) => request.options.method === "GET"));
-  assert.match(requests[0].url, /status=publish%2Cdraft%2Cpending%2Cprivate%2Cfuture/);
+  assert.match(requests[0].url, /context=view&status=publish/);
+  assert.match(requests[1].url, /context=edit&status=draft%2Cpending%2Cprivate%2Cfuture/);
 });
 
 test("markdown renderer escapes HTML before adding supported formatting", () => {

@@ -8944,11 +8944,7 @@ export class Repository {
     const claimReviews = Number(this.db.prepare("SELECT COUNT(*) AS count FROM claim_review_cases WHERE status='pending'").get().count || 0);
     const entityReviews = this.listEntityMergeCandidates("pending").length;
     const sourceExceptions = Number(this.db.prepare("SELECT COUNT(*) AS count FROM sources WHERE status='exception'").get().count || 0);
-    const failedJobs = this.db.prepare(`SELECT j.type,j.last_failure_code,j.last_error FROM jobs j
-      WHERE j.status='failed' AND NOT EXISTS (SELECT 1 FROM jobs recovered
-        WHERE recovered.type=j.type AND recovered.entity_id=j.entity_id
-          AND recovered.status='succeeded' AND recovered.updated_at>=j.updated_at)`)
-      .all().filter((row) => isSystemLevelFailure(row.last_failure_code,row.last_error)).length;
+    const failedJobs = this.unrecoveredSystemJobFailureCount();
     const pendingRecommendations = Number(this.db.prepare("SELECT COUNT(*) AS count FROM content_opportunities WHERE inbox_state='ACTIONABLE' AND lifecycle_state IN ('recommended','recommended_again','deferred')").get().count || 0);
     const contentPipelineItems = Number(this.db.prepare(`SELECT COUNT(DISTINCT candidate_id) AS count FROM content_opportunities
       WHERE candidate_id IS NOT NULL AND lifecycle_state IN ('producing','finished')
@@ -9012,12 +9008,24 @@ export class Repository {
 
   systemHealthIssueCount() {
     const sourceExceptions = Number(this.db.prepare("SELECT COUNT(*) AS count FROM sources WHERE status='exception'").get().count || 0);
-    const failedJobs = this.db.prepare(`SELECT j.type,j.last_failure_code,j.last_error FROM jobs j
-      WHERE j.status='failed' AND NOT EXISTS (SELECT 1 FROM jobs recovered
-        WHERE recovered.type=j.type AND recovered.entity_id=j.entity_id
-          AND recovered.status='succeeded' AND recovered.updated_at>=j.updated_at)`)
-      .all().filter((row) => isSystemLevelFailure(row.last_failure_code,row.last_error)).length;
-    return sourceExceptions + failedJobs;
+    return sourceExceptions + this.unrecoveredSystemJobFailureCount();
+  }
+
+  unrecoveredSystemJobFailureCount() {
+    // A correlated NOT EXISTS scans the historical jobs table for every failure.
+    // Read each status once so Settings and Dashboard stay responsive as history grows.
+    const successful = this.db.prepare(`SELECT type,entity_id,MAX(updated_at) AS updated_at
+      FROM jobs WHERE status='succeeded' AND entity_id IS NOT NULL GROUP BY type,entity_id`).all();
+    const latestSuccess = new Map(successful.map((row) =>
+      [JSON.stringify([row.type,row.entity_id]),row.updated_at]));
+    const failed = this.db.prepare(`SELECT type,entity_id,updated_at,last_failure_code,last_error
+      FROM jobs WHERE status='failed'`).all();
+    return failed.filter((row) => {
+      if (!isSystemLevelFailure(row.last_failure_code,row.last_error)) return false;
+      if (row.entity_id == null) return true;
+      const recoveredAt = latestSuccess.get(JSON.stringify([row.type,row.entity_id]));
+      return recoveredAt == null || recoveredAt < row.updated_at;
+    }).length;
   }
 
   recordModelCall(metric) {

@@ -33,26 +33,32 @@ export async function auditSourcePhoto(filename, { assetKind = 'unknown' } = {})
   const height = Number(dimensions.height || 0);
   const stats = await sharp(bytes).resize({ width: 1600, height: 1600, fit: 'inside',
     withoutEnlargement: true }).toBuffer().then((image) => sharp(image).stats());
-  const ocrInput = await sharp(bytes).resize({ width: 1280, height: 1280, fit: 'inside',
-    withoutEnlargement: true }).png().toBuffer();
-  const worker = await ocrWorker();
-  const { data } = await worker.recognize(ocrInput);
-  const recognized = String(data?.text || '').replace(/\s+/g, '');
-  const chineseChars = (recognized.match(/[\u3400-\u9fff]/gu) || []).length;
-  const textChars = [...recognized].length;
   const reasons = [];
   if (width < 900 || height < 600) reasons.push('resolution_low');
   if (!Number.isFinite(stats.sharpness) || stats.sharpness < 1) reasons.push('focus_low');
   if (!Number.isFinite(stats.entropy) || stats.entropy < 4) reasons.push('detail_low');
-  if (chineseChars > 35 || (chineseChars > 12 && chineseChars / Math.max(1, textChars) > 0.18))
-    reasons.push('chinese_text_dense');
-  if (textChars > 400) reasons.push('text_dense');
   if (assetKind && !['unknown', 'documentary_photo', 'real_world_photo'].includes(assetKind))
     reasons.push('not_documentary_photo');
+  // OCR is expensive and cannot change an already rejected photo candidate.
+  // Infographics keep their separate translation path regardless of this audit.
+  let chineseChars = null;
+  let textChars = null;
+  if (!reasons.length) {
+    const ocrInput = await sharp(bytes).resize({ width: 1280, height: 1280, fit: 'inside',
+      withoutEnlargement: true }).png().toBuffer();
+    const worker = await ocrWorker();
+    const { data } = await worker.recognize(ocrInput);
+    const recognized = String(data?.text || '').replace(/\s+/g, '');
+    chineseChars = (recognized.match(/[\u3400-\u9fff]/gu) || []).length;
+    textChars = [...recognized].length;
+    if (chineseChars > 35 || (chineseChars > 12 && chineseChars / Math.max(1, textChars) > 0.18))
+      reasons.push('chinese_text_dense');
+    if (textChars > 400) reasons.push('text_dense');
+  }
   return {
     version: 'local-photo-audit-1', sha256, width, height,
     sharpness: Number(stats.sharpness.toFixed(2)), entropy: Number(stats.entropy.toFixed(2)),
     chineseChars, textChars, status: reasons.length ? 'needs_review' : 'eligible', reasons,
-    checkedAt: new Date().toISOString(), method: 'sharp+tesseract_local', providerCalls: 0,
+    checkedAt: new Date().toISOString(), method: textChars === null ? 'sharp_local' : 'sharp+tesseract_local', providerCalls: 0,
   };
 }

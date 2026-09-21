@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.50 - Unreleased
+
+- Read WordPress published inventory through its public view and editorial states through authenticated edit context, then merge by post ID; this recovers two live published articles omitted by the site's edit-context response.
+- Replace repeated historical-job correlation scans in Settings and Dashboard with a linear recovered-job summary.
+- Skip local OCR when size, focus, detail or asset type already rejects a photo candidate; infographic translation and necessary generation remain available.
+
 ## 2.0.49 - Unreleased
 
 - Activate Content Production Strategy 3.9: locally audit source photos for quality and dense Chinese text, reuse relevant qualified originals without provider calls, and retain paid English infographic translation and necessary image generation with independent visual QA.

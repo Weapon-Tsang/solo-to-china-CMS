@@ -30,31 +30,36 @@ export class WordPressDraftAdapter {
   async listContentInventory(options = {}) {
     if (!this.enabled) throw new Error("WordPress inventory sync is not configured.");
     assertSafeSiteUrl(this.config.siteUrl);
-    const inventory = [];
-    let page = 1;
-    let totalPages = 1;
-    do {
-      const params = new URLSearchParams({
-        context: "edit",
-        status: "publish,draft,pending,private,future",
-        per_page: "100",
-        page: String(page),
-        _fields: "id,slug,status,link,modified,modified_gmt,title",
-      });
-      const { body, response } = await this.requestWithResponse(`/wp-json/wp/v2/posts?${params}`, { method: "GET", signal: options.signal });
-      if (!Array.isArray(body)) throw new Error("WordPress inventory response must be an array.");
-      inventory.push(...body.map((post) => ({
-        postId: post.id,
-        slug: String(post.slug || ""),
-        title: plainText(post.title?.raw || post.title?.rendered || ""),
-        status: String(post.status || ""),
-        postUrl: post.link || null,
-        modifiedAt: post.modified_gmt ? `${String(post.modified_gmt).replace(/Z$/i, "")}Z` : post.modified || null,
-      })));
-      totalPages = Math.max(1, Number.parseInt(response.headers.get("x-wp-totalpages") || "1", 10) || 1);
-      page += 1;
-    } while (page <= totalPages);
-    return inventory;
+    const inventory = new Map();
+    // Some WordPress installations report published posts in an edit-context
+    // collection's total while omitting them from its body. Read public posts
+    // through view context and private editorial states through edit context.
+    for (const { context, status } of [
+      { context: "view", status: "publish" },
+      { context: "edit", status: "draft,pending,private,future" },
+    ]) {
+      let page = 1;
+      let totalPages = 1;
+      do {
+        const params = new URLSearchParams({
+          context, status, per_page: "100", page: String(page),
+          _fields: "id,slug,status,link,modified,modified_gmt,title",
+        });
+        const { body, response } = await this.requestWithResponse(`/wp-json/wp/v2/posts?${params}`, { method: "GET", signal: options.signal });
+        if (!Array.isArray(body)) throw new Error("WordPress inventory response must be an array.");
+        for (const post of body) inventory.set(Number(post.id), {
+          postId: post.id,
+          slug: String(post.slug || ""),
+          title: plainText(post.title?.raw || post.title?.rendered || ""),
+          status: String(post.status || ""),
+          postUrl: post.link || null,
+          modifiedAt: post.modified_gmt ? `${String(post.modified_gmt).replace(/Z$/i, "")}Z` : post.modified || null,
+        });
+        totalPages = Math.max(1, Number.parseInt(response.headers.get("x-wp-totalpages") || "1", 10) || 1);
+        page += 1;
+      } while (page <= totalPages);
+    }
+    return [...inventory.values()];
   }
 
   async getPost(postId, options = {}) {

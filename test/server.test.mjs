@@ -64,6 +64,9 @@ test("settings defaults to counts and lazily bounds system-health detail", async
   for (let index = 0; index < 105; index += 1) app.repository.enqueue("rebuild_topic_clusters", `settings-fixture-${index}`);
   app.repository.db.prepare(`UPDATE jobs SET status='failed',last_failure_code='AI_PROVIDER_AUTH',
     last_error='Authentication credentials rejected',updated_at='2026-09-11T00:00:00.000Z'`).run();
+  const recoveredJob = app.repository.enqueue("rebuild_topic_clusters", "settings-fixture-0");
+  app.repository.db.prepare("UPDATE jobs SET status='succeeded',updated_at='2026-09-12T00:00:00.000Z' WHERE id=?")
+    .run(recoveredJob);
   await app.start();
   t.after(async () => {
     await app.stop();
@@ -71,10 +74,10 @@ test("settings defaults to counts and lazily bounds system-health detail", async
   });
   const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
   const settings = await (await fetch(`${baseUrl}/api/settings`)).json();
-  assert.equal(settings.operations.counts.systemHealth, 105);
+  assert.equal(settings.operations.counts.systemHealth, 104);
   assert.equal(settings.operations.exceptions, undefined);
   const health = await (await fetch(`${baseUrl}/api/settings/system-health?limit=100`)).json();
-  assert.equal(health.totalCount, 105);
+  assert.equal(health.totalCount, 104);
   assert.equal(health.items.length, 100);
 });
 

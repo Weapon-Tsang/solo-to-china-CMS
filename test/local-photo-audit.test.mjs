@@ -32,6 +32,8 @@ test('source photo audit runs locally in a persisted worker job and rejects flat
   assert.equal(audit.providerCalls, 0);
   assert.equal(audit.sha256, sha256);
   assert.ok(audit.reasons.includes('detail_low'));
+  assert.equal(audit.method, 'sharp_local');
+  assert.equal(audit.textChars, null);
   assert.equal((await auditSourcePhoto(file)).status, 'needs_review');
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM model_call_metrics').get().count, 0);
 });
