@@ -31,7 +31,7 @@ if [[ -f "$RELEASE/started" ]]; then
   exit 1
 fi
 [[ -f "$APP/.env.production" ]]
-MODEL_CREDENTIAL_ENCRYPTION_KEY="$(sed -n 's/^MODEL_CREDENTIAL_ENCRYPTION_KEY=//p' "$APP/.env.production" | tail -1)"
+MODEL_CREDENTIAL_ENCRYPTION_KEY="$(sed -n 's/^MODEL_CREDENTIAL_ENCRYPTION_KEY=//p' "$APP/.env.production" | tr -d '\r' | tail -1)"
 python3 - "$MODEL_CREDENTIAL_ENCRYPTION_KEY" <<'PY'
 import base64,re,sys
 value=sys.argv[1]
