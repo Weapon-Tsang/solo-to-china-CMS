@@ -1,6 +1,6 @@
 # 2.0.47 integrated release candidate handoff
 
-App/Extension version `2.0.47`, schema migration `76`, and Content Strategy `3.8` describe this unmerged release candidate. Content Production Strategy 3.8 remains declared by `config/content-strategy.json`.
+App/Extension version `2.0.47`, schema migration `76`, and Content Strategy `3.8` describe this unmerged release candidate. Content Production Strategy 3.8 remains declared by `config/content-strategy.json`. The integrated 2.0.47 offline gate and actual runtime-image smoke passed in CI run `35628980357`.
 
 The integrated pipeline candidate now includes the 2.0.46 extension capture hotfix from `main` while preserving its required-media gate, persisted quota lane, API/Worker split and bounded admin pages. Schema target is 76; Content Strategy remains 3.8. The production engine was independently updated to 2.0.46 during this review. The 2026-09-21 production snapshot passed full restore drill, local schema 73-to-76 migration and one bounded idempotent content recovery replay. The candidate has not been merged into `main` or deployed. Real Provider compatibility, the complete failure/recovery chain, active production-load browser timings and remaining v2.0 acceptance items are still open. See `docs/audit/CMS_RELEASE_READINESS_2.0.47_2026-09-22.md` for the current go/no-go record.
 
