@@ -5,6 +5,7 @@
 - Recover complete Xiaohongshu image notes when lazy-loaded images have no browser dimensions, excluding unrelated live-video chrome from the note media count while preserving actual video checks.
 - Retry one transient extension frame replacement and persist every discovered original again when a text/DOM repair creates a new capture version.
 - Clarify in CMS settings that selecting a DeepSeek model does not activate the extraction route; partial captures must first be repaired. No schema migration or historical content rewrite.
+- Allow the full release suite up to five minutes on shared CI runners; keep the 30-second performance warning so slow tests remain visible.
 
 ## 2.0.44 - Unreleased
 
