@@ -410,6 +410,9 @@ export class Pipeline {
           const asset = this.repository.sourceAssetDecisionDto(job.entity_id);
           if (!asset || asset.durability_status !== 'ORIGINAL_STORED'
             || asset.original_bytes_status !== 'saved_original') break;
+          if (asset.local_photo_audit?.version === 'local-photo-audit-1'
+            && asset.local_photo_audit.sha256 === asset.original_sha256
+            && ['eligible','needs_review'].includes(asset.local_photo_audit.status)) break;
           const audit = await guarded(() => auditSourcePhoto(asset.local_path,
             { assetKind: asset.asset_kind || 'unknown' }));
           commitStage(() => this.repository.saveLocalPhotoAudit(asset.id, audit));

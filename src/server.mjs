@@ -616,7 +616,7 @@ export function createApplication(config = loadConfig()) {
         const payload = await readJson(request, 20_000);
         const dryRun = payload.dryRun !== false;
         const assetIds = repository.enqueueSourcePhotoAudits(payload.sourceId || null,
-          { limit: Math.min(2000, Math.max(1, Number(payload.limit || 100))), dryRun });
+          { limit: Math.min(2000, Math.max(1, Number(payload.limit || 100))), dryRun, priority:70 });
         if (!dryRun && assetIds.length) runQueued();
         return sendJson(response, dryRun ? 200 : 202,
           { dryRun, queued: dryRun ? 0 : assetIds.length, candidateCount:assetIds.length,

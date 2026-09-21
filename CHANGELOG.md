@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.51 - Unreleased
+
+- Restrict Settings and Dashboard recovery checks to system-level failures before probing successful jobs; the live read-only query fell from a multi-second all-success scan to about 252 ms under photo-audit load.
+- Place operator-requested historical photo audits behind operational jobs and reuse current SHA-bound audit receipts instead of repeating OCR.
+
 ## 2.0.50 - Unreleased
 
 - Read WordPress published inventory through its public view and editorial states through authenticated edit context, then merge by post ID; this recovers two live published articles omitted by the site's edit-context response.

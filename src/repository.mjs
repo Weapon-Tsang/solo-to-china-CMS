@@ -2866,7 +2866,7 @@ export class Repository {
     return row ? hydrateSourceAssetAnalysis(row) : null;
   }
 
-  enqueueSourcePhotoAudits(sourceId = null, { limit = 2000, dryRun = false } = {}) {
+  enqueueSourcePhotoAudits(sourceId = null, { limit = 2000, dryRun = false, priority = 10 } = {}) {
     const rows = this.db.prepare(`SELECT sa.id FROM current_source_assets sa
       WHERE sa.kind='image' AND sa.durability_status='ORIGINAL_STORED'
         AND sa.original_bytes_status='saved_original' AND sa.local_path<>''
@@ -2876,7 +2876,7 @@ export class Repository {
       ORDER BY sa.source_id,sa.position LIMIT ?`).all(sourceId,sourceId,Math.max(1,Math.min(5000,limit)));
     if (dryRun) return rows.map((row) => row.id);
     return rows.map((row) => this.enqueue('audit_source_photo', row.id,
-      { dedupeKey:`audit_source_photo:${row.id}`,priority:10,
+      { dedupeKey:`audit_source_photo:${row.id}`,priority:Math.max(1,Math.min(90,Number(priority)||10)),
         workloadClass:sourceId ? 'background_enrichment' : 'historical_recovery' }));
   }
 
@@ -9012,20 +9012,15 @@ export class Repository {
   }
 
   unrecoveredSystemJobFailureCount() {
-    // A correlated NOT EXISTS scans the historical jobs table for every failure.
-    // Read each status once so Settings and Dashboard stay responsive as history grows.
-    const successful = this.db.prepare(`SELECT type,entity_id,MAX(updated_at) AS updated_at
-      FROM jobs WHERE status='succeeded' AND entity_id IS NOT NULL GROUP BY type,entity_id`).all();
-    const latestSuccess = new Map(successful.map((row) =>
-      [JSON.stringify([row.type,row.entity_id]),row.updated_at]));
+    // The production database is large enough that grouping every successful
+    // historical job is slower than checking the few system-level failures.
     const failed = this.db.prepare(`SELECT type,entity_id,updated_at,last_failure_code,last_error
-      FROM jobs WHERE status='failed'`).all();
-    return failed.filter((row) => {
-      if (!isSystemLevelFailure(row.last_failure_code,row.last_error)) return false;
-      if (row.entity_id == null) return true;
-      const recoveredAt = latestSuccess.get(JSON.stringify([row.type,row.entity_id]));
-      return recoveredAt == null || recoveredAt < row.updated_at;
-    }).length;
+      FROM jobs WHERE status='failed'`).all()
+      .filter((row) => isSystemLevelFailure(row.last_failure_code,row.last_error));
+    const recovered = this.db.prepare(`SELECT 1 FROM jobs WHERE type=? AND entity_id=?
+      AND status='succeeded' AND updated_at>=? LIMIT 1`);
+    return failed.filter((row) => row.entity_id == null
+      || !recovered.get(row.type,row.entity_id,row.updated_at)).length;
   }
 
   recordModelCall(metric) {

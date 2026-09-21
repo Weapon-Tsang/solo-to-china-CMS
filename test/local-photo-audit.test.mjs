@@ -23,7 +23,8 @@ test('source photo audit runs locally in a persisted worker job and rejects flat
     original_bytes_status,durability_status,original_sha256)
     VALUES ('asset','source','image','https://example.test/photo',0,?,'saved_original','ORIGINAL_STORED',?)`)
     .run(file, sha256);
-  const jobId = repository.enqueue('audit_source_photo', 'asset');
+  const [jobId] = repository.enqueueSourcePhotoAudits('source', { priority:70 });
+  assert.equal(db.prepare('SELECT priority FROM jobs WHERE id=?').get(jobId).priority, 70);
   const pipeline = new Pipeline(repository, {config:{}}, {visuals:null,contentEngine:null});
   assert.equal(await pipeline.runOne(), true);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status, 'succeeded');
@@ -34,6 +35,10 @@ test('source photo audit runs locally in a persisted worker job and rejects flat
   assert.ok(audit.reasons.includes('detail_low'));
   assert.equal(audit.method, 'sharp_local');
   assert.equal(audit.textChars, null);
+  const repeated = repository.enqueue('audit_source_photo', 'asset', { dedupeKey:'repeat-photo-audit' });
+  assert.equal(await pipeline.runOne(), true);
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(repeated).status, 'succeeded');
+  assert.deepEqual(JSON.parse(db.prepare('SELECT local_photo_audit_json FROM source_assets WHERE id=?').get('asset').local_photo_audit_json), audit);
   assert.equal((await auditSourcePhoto(file)).status, 'needs_review');
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM model_call_metrics').get().count, 0);
 });
