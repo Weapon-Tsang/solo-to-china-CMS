@@ -2,7 +2,7 @@
 
 Use one Google Compute Engine VM, a persistent Docker volume, and one Cloudflare Tunnel. The API container and the production Worker run as separate processes against the same SQLite volume. The durable queue, media quota and delivery gates remain database-backed; a stateless Cloud Run revision is not a safe replacement without a database redesign.
 
-## 2.0.45 schema 73 to 76 release candidate
+## 2.0.47 schema 73 to 76 release candidate
 
 This is a `DATA_MIGRATION_RELEASE`. The upgrade helper stops the existing single-process engine, creates and drills a verified paired backup, rehearses schema 73 to 76 on an isolated copy, checks old-column fingerprints and opportunity admission, and then migrates the stopped production database. After isolated API readiness, it connects the API container to Cloudflare and starts `engine-worker` with `CMS_PROCESS_ROLE=worker` on the same data and legacy-media mounts. The API uses `CMS_PROCESS_ROLE=api`; it does not run jobs. A successful startup marker requires the Worker ready log as well as API readiness. The paired old container remains available for rollback before public exposure.
 

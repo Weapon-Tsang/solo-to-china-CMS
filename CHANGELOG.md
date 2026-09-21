@@ -1,11 +1,18 @@
 # Changelog
 
-## 2.0.45 - Unreleased
+## 2.0.47 - Unreleased
 
 - Add a revision-bound required-media manifest and enforce delivery eligibility at the pipeline and WordPress adapter boundaries.
 - Persist shared image-request pacing, cooldown, dispatch outcomes and per-job budgets; resume saved article bundles, image candidates, reviews and media receipts.
 - Add bounded SQL administration pages and scoped display caching, and support separate API and worker process roles against one SQLite database.
-- Preserve capture repairs already in the working tree and add local migration, process, quota, publication and browser regression coverage. Production Provider and full recovery-chain acceptance remain pending.
+- Include the 2.0.46 extension capture repairs and add local migration, process, quota, publication and browser regression coverage. Production Provider and full recovery-chain acceptance remain pending.
+
+## 2.0.46 - Unreleased
+
+- Recover complete Xiaohongshu image notes when lazy-loaded images have no browser dimensions, excluding unrelated live-video chrome from the note media count while preserving actual video checks.
+- Retry one transient extension frame replacement and persist every discovered original again when a text/DOM repair creates a new capture version.
+- Clarify in CMS settings that selecting a DeepSeek model does not activate the extraction route; partial captures must first be repaired. No schema migration or historical content rewrite.
+- Allow the full release suite up to five minutes on shared CI runners; keep the 30-second performance warning so slow tests remain visible.
 
 ## 2.0.44 - Unreleased
 

@@ -83,7 +83,7 @@ test('frame replacement during execute reinjects once and preserves the task ret
   let calls=0;
   let injections=0;
   globalThis.chrome={
-    runtime:{onInstalled:listener(),onStartup:listener(),onMessage:listener(),getManifest:()=>({version:'2.0.45'})},
+    runtime:{onInstalled:listener(),onStartup:listener(),onMessage:listener(),getManifest:()=>({version:'2.0.47'})},
     alarms:{onAlarm:listener(),create:async()=>{},clear:async()=>true},
     storage:{local:{get:async(defaults)=>defaults,set:async()=>{}}},
     tabs:{get:async(id)=>({id,status:'complete'}),onUpdated:listener(),onRemoved:listener()},
