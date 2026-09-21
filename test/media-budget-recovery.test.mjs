@@ -6,6 +6,7 @@ import test from 'node:test';
 import {repositoryFixture} from '../test-support/repository-fixture.mjs';
 import {createMediaRequestExecutor} from '../src/media-request-executor.mjs';
 import {Pipeline} from '../src/pipeline.mjs';
+import {evaluatePublicationEligibility} from '../src/publication-eligibility.mjs';
 
 test('exhausted image step resumes only missing visual after an explicit durable grant',async t=>{
   const {db,repository,directory}=repositoryFixture(t);
@@ -45,8 +46,11 @@ test('exhausted image step resumes only missing visual after an explicit durable
       permit.finish();
     }
     const mediaPath=path.join(directory,`visual-${visual.slot}.png`);
-    fs.writeFileSync(mediaPath,Buffer.from(`fixture-${visual.slot}`));
-    return {mediaPath,mediaUrl:`https://example.test/visual-${visual.slot}.png`,provider:'mock',model:'offline'};
+    const bytes=Buffer.from(`fixture-${visual.slot}`);
+    fs.writeFileSync(mediaPath,bytes);
+    const hash=createHash('sha256').update(bytes).digest('hex');
+    return {mediaPath,mediaUrl:`https://example.test/visual-${visual.slot}.png`,provider:'mock',model:'offline',
+      metadata:{binary_qa:{status:'passed',sha256:hash},quality_qa:{status:'passed',file_hash:hash}}};
   }};
   const pipeline=new Pipeline(repository,{config:{}},{visuals});
   const firstJob=repository.enqueue('generate_visuals','media-draft',{
@@ -65,6 +69,7 @@ test('exhausted image step resumes only missing visual after an explicit durable
   const saved=db.prepare("SELECT id,media_path FROM article_visuals WHERE draft_id='media-draft' AND slot=1").get();
   const firstHash=createHash('sha256').update(fs.readFileSync(saved.media_path)).digest('hex');
   assert.equal(db.prepare("SELECT status FROM article_drafts WHERE id='media-draft'").get().status,'needs_review');
+  assert.equal(evaluatePublicationEligibility(db,'media-draft').code,'MEDIA_INCOMPLETE');
   assert.equal(db.prepare("SELECT body_markdown FROM article_drafts WHERE id='media-draft'").get().body_markdown,
     'Preserved evidence-led body.');
   const missing=db.prepare("SELECT id FROM article_visuals WHERE draft_id='media-draft' AND slot=2").get();
@@ -80,6 +85,7 @@ test('exhausted image step resumes only missing visual after an explicit durable
     dedupeKey:'manual-grant-recovery',productionOwnerOpportunityId:'media-owner'});
   assert.equal(await pipeline.runOne(),true);
   assert.equal(db.prepare("SELECT status FROM article_visuals WHERE id=?").get(missing.id).status,'generated');
+  assert.equal(evaluatePublicationEligibility(db,'media-draft').passed,true);
   assert.equal(restart.budget({visualId:missing.id,substage:'generate_visual'}).spent,3);
   assert.equal(db.prepare("SELECT media_path FROM article_visuals WHERE id=?").get(saved.id).media_path,saved.media_path);
   assert.equal(createHash('sha256').update(fs.readFileSync(saved.media_path)).digest('hex'),firstHash);
