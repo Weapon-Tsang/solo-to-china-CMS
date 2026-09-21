@@ -2,13 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 73;
+export const SCHEMA_VERSION = 76;
 
-export function openDatabase(filename) {
-  fs.mkdirSync(path.dirname(filename), { recursive: true });
+export function openDatabase(filename, { migrate: shouldMigrate = true } = {}) {
+  if (shouldMigrate) fs.mkdirSync(path.dirname(filename), { recursive: true });
+  else if (!fs.existsSync(filename)) throw new Error('API database is missing; initialize it with the worker/migration role first.');
   const db = new DatabaseSync(filename);
   db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-  try { migrate(db); } catch (error) { db.close(); throw error; }
+  try {
+    if (shouldMigrate) migrate(db);
+    else {
+      const version = db.prepare('SELECT COALESCE(MAX(version),0) AS version FROM schema_migrations').get().version;
+      if (version !== SCHEMA_VERSION) throw new Error(`API requires schema ${SCHEMA_VERSION}; found ${version}.`);
+    }
+  } catch (error) { db.close(); throw error; }
   return db;
 }
 
@@ -94,6 +101,67 @@ function migrate(db) {
   if (current < 71) migrationSeventyOne(db);
   if (current < 72) migrationSeventyTwo(db);
   if (current < 73) migrationSeventyThree(db);
+  if (current < 74) migrationSeventyFour(db);
+  if (current < 75) migrationSeventyFive(db);
+  if (current < 76) migrationSeventySix(db);
+}
+
+function migrationSeventySix(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE jobs ADD COLUMN pipeline_version TEXT NOT NULL DEFAULT 'legacy';
+    INSERT INTO schema_migrations(version, applied_at) VALUES (76, datetime('now'));
+  `));
+}
+
+function migrationSeventyFive(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE media_quota_scopes (
+      scope_key TEXT PRIMARY KEY,
+      next_spacing_at_ms INTEGER NOT NULL DEFAULT 0,
+      cooldown_until_ms INTEGER NOT NULL DEFAULT 0,
+      pressure_streak INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE media_dispatches (
+      id TEXT PRIMARY KEY,
+      scope_key TEXT NOT NULL,
+      visual_id TEXT NOT NULL,
+      substage TEXT NOT NULL,
+      started_at_ms INTEGER NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('dispatch_started','completed','failed','outcome_unknown')),
+      http_status INTEGER,
+      error_code TEXT,
+      completed_at_ms INTEGER,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_media_dispatch_scope_window ON media_dispatches(scope_key,started_at_ms);
+    CREATE INDEX idx_media_dispatch_visual_stage ON media_dispatches(visual_id,substage,started_at_ms);
+    CREATE TABLE media_visual_lane (
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      owner_token TEXT,
+      lease_until_ms INTEGER NOT NULL DEFAULT 0,
+      heartbeat_at_ms INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO media_visual_lane(id) VALUES(1);
+    INSERT INTO schema_migrations(version,applied_at) VALUES(75,datetime('now'));
+  `));
+}
+
+function migrationSeventyFour(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE required_media_manifests (
+      draft_id TEXT NOT NULL REFERENCES article_drafts(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL,
+      content_hash TEXT NOT NULL,
+      manifest_hash TEXT NOT NULL,
+      minimum_required INTEGER NOT NULL CHECK(minimum_required>=0),
+      approved_no_image INTEGER NOT NULL DEFAULT 0 CHECK(approved_no_image IN (0,1)),
+      slots_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(draft_id,revision)
+    );
+    INSERT INTO schema_migrations(version,applied_at) VALUES(74,datetime('now'));
+  `));
 }
 
 function migrationSeventyThree(db) {

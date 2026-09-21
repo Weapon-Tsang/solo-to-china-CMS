@@ -4,6 +4,7 @@ services:
     restart: unless-stopped
     env_file: .env.production
     environment:
+      CMS_PROCESS_ROLE: api
       HOST: 0.0.0.0
       PORT: 8080
       DATABASE_PATH: /var/lib/solo-to-china/solo-to-china.sqlite
@@ -12,8 +13,25 @@ services:
       SOURCE_UPLOADS_DIR: /var/lib/solo-to-china/source-uploads
     volumes:
       - solo_to_china_data:/var/lib/solo-to-china
+      - solo_to_china_app_data:/app/data
     expose:
       - "8080"
+
+  engine-worker:
+    image: ${ENGINE_IMAGE}
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      CMS_PROCESS_ROLE: worker
+      DATABASE_PATH: /var/lib/solo-to-china/solo-to-china.sqlite
+      BACKUP_DIR: /var/lib/solo-to-china/backups
+      GENERATED_MEDIA_DIR: /var/lib/solo-to-china/generated-media
+      SOURCE_UPLOADS_DIR: /var/lib/solo-to-china/source-uploads
+    volumes:
+      - solo_to_china_data:/var/lib/solo-to-china
+      - solo_to_china_app_data:/app/data
+    depends_on:
+      - engine
 
   cloudflared:
     image: cloudflare/cloudflared:2026.8.2
@@ -24,3 +42,4 @@ services:
 
 volumes:
   solo_to_china_data:
+  solo_to_china_app_data:

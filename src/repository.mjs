@@ -35,6 +35,7 @@ import { insertCommercialEvent, listCommercialPerformance } from "./repositories
 import { persistCaptureAssets } from "./source-media-store.mjs";
 import { dependencyHash, semanticMaterial, PIPELINE_CONTRACT_VERSION } from './pipeline-contract.mjs';
 import { stepIdentity, readStepReceipt, saveStepReceipt } from './repositories/pipeline-step-receipts.mjs';
+import { mediaManifestForDraft } from './publication-eligibility.mjs';
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
 
@@ -1781,7 +1782,8 @@ export class Repository {
 
   enqueue(type, entityId, { dedupeKey = null, priority = jobPriority(type), productionAttemptId = null,
     executionRoute = 'auto', workloadClass = "", parentJobId = null, recoveryRunId = null, interactive = false,
-    productionOwnerOpportunityId = null, modelRole = "", modelProfile = null, modelRoutingRevision = null } = {}) {
+    productionOwnerOpportunityId = null, modelRole = "", modelProfile = null, modelRoutingRevision = null,
+    pipelineVersion = 'legacy' } = {}) {
     const timestamp = this.jobTimestamp();
     const resolvedWorkloadClass = workloadClassForJob(type, workloadClass);
     const resolvedOwnerId=productionOwnerOpportunityId || this.resolveProductionOwnerOpportunityId(type,entityId);
@@ -1808,11 +1810,11 @@ export class Repository {
     try {
       this.db.prepare(`
         INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at, dedupe_key,priority,production_attempt_id,execution_route,
-          workload_class,parent_job_id,recovery_run_id,interactive,production_owner_opportunity_id,model_role,model_profile_json,model_routing_revision)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          workload_class,parent_job_id,recovery_run_id,interactive,production_owner_opportunity_id,model_role,model_profile_json,model_routing_revision,pipeline_version,max_attempts)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(jobId, type, entityId, timestamp, timestamp, timestamp, resolvedDedupeKey, priority, productionAttemptId, executionRoute,
         resolvedWorkloadClass,parentJobId,recoveryRunId,interactive ? 1 : 0,resolvedOwnerId,resolvedModelRole,
-        JSON.stringify(resolvedModelProfile || {}),resolvedRoutingRevision);
+        JSON.stringify(resolvedModelProfile || {}),resolvedRoutingRevision,pipelineVersion,type === 'generate_visuals' ? 4 : 3);
       return jobId;
     } catch (error) {
       const raced = this.db.prepare("SELECT id FROM jobs WHERE dedupe_key=? AND status IN ('queued','running') LIMIT 1").get(resolvedDedupeKey);
@@ -2264,6 +2266,14 @@ export class Repository {
     `).run(timestamp, durationMs, timestamp, jobId, ownerId, generation, generation).changes === 1;
   }
 
+  deferJobWithoutAttempt(job, availableAt) {
+    const timestamp = this.jobTimestamp();
+    return this.db.prepare(`UPDATE jobs SET status='queued',attempts=MAX(0,attempts-1),
+      available_at=?,next_eligible_at=?,locked_by=NULL,lease_expires_at=NULL,heartbeat_at=NULL,updated_at=?
+      WHERE id=? AND status='running' AND locked_by=? AND lease_generation=?`)
+      .run(availableAt, availableAt, timestamp, job.id, job.locked_by, job.lease_generation).changes === 1;
+  }
+
   failJob(job, error) {
     const providerPressure = isProviderPressure(error);
     const retry = error?.retryable !== false && job.attempts < job.max_attempts;
@@ -2327,6 +2337,13 @@ export class Repository {
       this.db.prepare("UPDATE article_drafts SET status='exception', updated_at=? WHERE id=?").run(now(), job.entity_id);
     }
     if (!retry && PRODUCTION_JOB_TYPES.has(job.type)) this.handleTerminalProductionFailure(job, error);
+    if (!retry && (job.type === 'generate_visuals'
+      || ['compose_frontend_page','compose_publish_page','push_wordpress_draft'].includes(job.type)
+        && /MEDIA_|VISUAL_|IMAGE_|429|RESOURCE_EXHAUSTED/i.test(`${failureCode} ${message}`))) {
+      const draftId = job.type === 'generate_visuals' ? job.entity_id : this.productionContext(job)?.draft_id;
+      if (draftId) this.db.prepare("UPDATE article_drafts SET status='needs_review',updated_at=? WHERE id=?")
+        .run(now(), draftId);
+    }
     if (!retry && ["generate_visuals", "compose_frontend_page"].includes(job.type)) this.reconcileDeferredQualityRepair(job);
     if (!retry && job.type === "extract_source_experience") this.refreshExperienceBackfillRuns();
     if (!retry && job.type === "analyze_source_diagnostic") this.refreshRecommendationBackfillRuns();
@@ -3766,7 +3783,10 @@ export class Repository {
     return results;
   }
 
-  listSources(limit = 100) {
+  listSources(limit = 100, { ids = null } = {}) {
+    const selectedIds = Array.isArray(ids) ? [...new Set(ids.map(String))].slice(0, 100) : null;
+    if (selectedIds && !selectedIds.length) return [];
+    const idWhere = selectedIds ? `WHERE s.id IN (${selectedIds.map(() => '?').join(',')})` : '';
     const sources = this.db.prepare(`
       SELECT s.id, s.adapter, s.external_id, s.title, s.author_name, s.canonical_url, s.submitted_url, s.source_kind,
         s.status, s.last_error, s.captured_at, s.updated_at, s.capture_version, s.authority_level, s.verified_at,
@@ -3784,8 +3804,11 @@ export class Repository {
         ,(SELECT status FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version ORDER BY er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_status
         ,(SELECT degraded FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version ORDER BY er.updated_at DESC,er.created_at DESC LIMIT 1) AS experience_degraded
       FROM sources s LEFT JOIN structured_sources ss ON ss.source_id = s.id
+      ${idWhere}
       ORDER BY s.captured_at DESC, s.id DESC LIMIT ?
-    `).all(limit);
+    `).all(...(selectedIds || []), limit);
+    if (!sources.length) return [];
+    const pageIds = sources.map((source) => source.id);
     const queueJobs = this.db.prepare(`
       SELECT j.id,j.type,j.entity_id,j.status,j.attempts,j.max_attempts,j.available_at,j.next_eligible_at,j.created_at,j.started_at,j.updated_at,j.last_error,
         j.execution_route,j.failure_class,j.batch_attempts,j.last_failure_code,
@@ -3796,7 +3819,8 @@ export class Repository {
         'extract_media_batch','audit_segment_coverage','retry_segment_extraction','finalize_source_extraction')
         AND j.status IN ('queued','running','failed')
         AND (sg.source_id IS NOT NULL OR mb.source_id IS NOT NULL OR EXISTS (SELECT 1 FROM sources direct_source WHERE direct_source.id=j.entity_id))
-    `).all();
+        AND COALESCE(sg.source_id,mb.source_id,j.entity_id) IN (${pageIds.map(() => '?').join(',')})
+    `).all(...pageIds);
     const queueStates = sourceQueueStates(queueJobs);
     return sources.map((source, index) => {
       const queue = queueStates.get(source.id) || null;
@@ -3808,6 +3832,41 @@ export class Repository {
           : Number(source.browser_repair_count) ? "BROWSER_REPAIR_REQUIRED" : "INCOMPLETE",
         queue: source.status === "processed" && queue?.state === "failed" ? null : queue };
     });
+  }
+
+  listSourcesPage({ limit = 20, cursor = '', status = '', search = '' } = {}) {
+    const pageSize = Math.min(100, Math.max(1, Math.trunc(Number(limit) || 20)));
+    const safeStatus = String(status || '').trim();
+    const safeSearch = String(search || '').trim().slice(0, 120);
+    const filterKey = sha256(JSON.stringify({ status:safeStatus, search:safeSearch }));
+    let after = null;
+    let offset = null;
+    if (cursor && /^\d+$/.test(cursor)) offset = Math.min(1_000_000, Number(cursor));
+    else if (cursor) {
+      try {
+        after = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+        if (after.filterKey !== filterKey || !after.capturedAt || !after.id) throw new Error('Invalid cursor.');
+      } catch { throw Object.assign(new Error('Invalid source cursor.'), { statusCode:400 }); }
+    }
+    const clauses = [];
+    const args = [];
+    if (safeStatus) { clauses.push('status=?'); args.push(safeStatus); }
+    if (safeSearch) { clauses.push('(title LIKE ? OR canonical_url LIKE ?)'); args.push(`%${safeSearch}%`, `%${safeSearch}%`); }
+    const filterWhere = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const pageWhere = after ? `${filterWhere ? 'AND' : 'WHERE'} (captured_at<? OR (captured_at=? AND id<?))` : '';
+    const pageArgs = after ? [after.capturedAt, after.capturedAt, after.id] : [];
+    const selected = this.db.prepare(`SELECT id,captured_at FROM sources ${filterWhere} ${pageWhere}
+      ORDER BY captured_at DESC,id DESC LIMIT ? ${offset !== null ? 'OFFSET ?' : ''}`)
+      .all(...args, ...pageArgs, pageSize + 1, ...(offset !== null ? [offset] : []));
+    const hasMore = selected.length > pageSize;
+    const pageIds = selected.slice(0, pageSize).map((row) => row.id);
+    const items = this.listSources(pageSize, { ids:pageIds });
+    const last = selected[Math.min(pageSize, selected.length) - 1];
+    const nextCursor = hasMore && last ? Buffer.from(JSON.stringify({ capturedAt:last.captured_at,
+      id:last.id, filterKey })).toString('base64url') : null;
+    const totalCount = this.db.prepare(`SELECT COUNT(*) AS n FROM sources ${filterWhere}`).get(...args).n;
+    return { items, page:{page_size:pageSize,has_more:hasMore,next_cursor:nextCursor},
+      nextCursor, summary:{scope:'all_filtered',totalCount,computedAt:now()} };
   }
 
   listSourceStatusProjection({limit=100,ids=[]}={}) {
@@ -3827,7 +3886,7 @@ export class Repository {
         EXISTS(SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded' AND er.capture_version<>s.capture_version) AS stale_experience
       FROM sources s ${where} ORDER BY s.updated_at DESC,s.id LIMIT ?`).all(...sourceIds,Math.max(1,Math.min(500,Number(limit)||100)));
     if(!rows.length)return [];
-    const wanted=new Set(rows.map((row)=>row.id));
+    const wanted=rows.map((row)=>row.id);
     const jobs=this.db.prepare(`SELECT j.id,j.type,j.status,j.attempts,j.max_attempts,j.available_at,j.started_at,j.updated_at,j.last_error,
         j.execution_route,j.workload_class,j.recovery_run_id,j.last_failure_code,COALESCE(sg.source_id,mb.source_id,direct.id) AS source_id
       FROM jobs j
@@ -3836,8 +3895,9 @@ export class Repository {
       LEFT JOIN sources direct ON direct.id=j.entity_id
       WHERE j.status IN ('queued','running','failed')
         AND j.type IN ('extract_source','preflight_source','segment_source','extract_segment_claims','extract_media_batch',
-          'audit_segment_coverage','retry_segment_extraction','finalize_source_extraction') ORDER BY j.updated_at DESC`).all()
-      .filter((job)=>wanted.has(job.source_id));
+          'audit_segment_coverage','retry_segment_extraction','finalize_source_extraction')
+        AND COALESCE(sg.source_id,mb.source_id,direct.id) IN (${wanted.map(()=>'?').join(',')})
+      ORDER BY j.updated_at DESC`).all(...wanted);
     const states=sourceQueueStates(jobs);
     return rows.map((row)=>{
       const queue=states.get(row.id)||null;
@@ -5031,6 +5091,7 @@ export class Repository {
     // queue action while the new semantic boundary remains mandatory.
     const ownerId = opportunityId || approved?.id || null;
     this.enqueue("plan_content", candidateId, { productionOwnerOpportunityId: ownerId,
+      pipelineVersion: 'article_bundle_v1',
       dedupeKey: `plan_content:${ownerId || candidateId}:${candidateId}` });
     return true;
   }
@@ -5152,7 +5213,26 @@ export class Repository {
   }
 
   getPlanningPackage(candidateId, { opportunityId = null } = {}) {
-    return boundedPlanningPackage(this.getTopicPackage(candidateId, { opportunityId }));
+    const topic=this.getTopicPackage(candidateId, { opportunityId });
+    const bounded=boundedPlanningPackage(topic);
+    if (!bounded) return null;
+    const selection={destination_slug:topic.candidate.destination_slug,
+      evidence_ledger_json:JSON.stringify(bounded.facts.map((fact)=>fact.normalized_key))};
+    bounded.authorized_source_assets=this.authorizedSourceAssetsForBrief(selection).slice(0,12)
+      .map((asset)=>({id:asset.id,source_id:asset.source_id,asset_kind:asset.asset_kind,
+        mime_type:asset.mime_type,preview_url:`/api/source-assets/${asset.id}/preview`,
+        alt_text:truncateText(asset.alt_text,180),caption_text:truncateText(asset.caption_text,180),
+        nearby_text:truncateText(asset.nearby_text,300),
+        primary_subjects:(asset.primary_subjects || []).slice(0,6),entities:(asset.entities || []).slice(0,6),
+        width:asset.width,height:asset.height,analysis_status:asset.analysis_status}));
+    while (bounded.authorized_source_assets.length
+      && Buffer.byteLength(JSON.stringify(bounded)) > PLANNING_INPUT_BUDGET.maxInputBytes) {
+      bounded.authorized_source_assets.pop();
+    }
+    bounded.planning_input_manifest.authorized_asset_count=bounded.authorized_source_assets.length;
+    bounded.planning_input_manifest.input_bytes=Buffer.byteLength(JSON.stringify(bounded));
+    bounded.planning_input_manifest.estimated_tokens=Math.ceil(bounded.planning_input_manifest.input_bytes/4);
+    return bounded;
   }
 
   saveBrief(candidateId, plan, model, { deferDraft = false, opportunityId = null } = {}) {
@@ -5395,6 +5475,8 @@ export class Repository {
     if (!retainedVisuals.length) {
       this.replaceDraftVisuals(draftId, metadata.visuals, brief.strategy_version || this.strategyVersion);
     }
+    // Source analysis may still refine the visual plan. Freeze just before the
+    // first media dispatch, after that deterministic planning work completes.
     this.recordDraftRevision(draftId, model || "unknown");
     this.db.prepare("UPDATE topic_candidates SET status='drafted', updated_at=? WHERE id=?").run(timestamp, brief.candidate_id);
     this.db.prepare("UPDATE content_briefs SET status='drafted', updated_at=? WHERE id=?").run(timestamp, briefId);
@@ -5600,6 +5682,7 @@ export class Repository {
       schema_jsonld: json(draft.schema_jsonld, {}),
       content_blocks: json(draft.content_blocks_json, []),
       visuals,
+      required_media_manifest: mediaManifestForDraft(this.db, draftId),
       seo_preview: buildSeoPreview({ ...draft, seo: json(draft.seo_json, {}) }),
     };
     const currentAst = buildContentAst({ draft: hydratedDraft, brief: briefPackage.brief,
@@ -5917,7 +6000,8 @@ export class Repository {
       deterministic_recovery:Number(metadata.recovery_budget?.deterministic_recovery || 0)};
     budget[lane]+=1;
     metadata.recovery_budget=budget;
-    const retryable=error?.retryable !== false && ![401,403].includes(status) && budget[lane]<3;
+    const retryable=error?.retryable !== false && ![401,403].includes(status)
+      && budget[lane] < (lane === 'provider_retry' ? 4 : 3);
     const backoff=Math.min(300_000,Math.max(1_000 * (2 ** Math.min(budget[lane],8)),
       lane==="provider_retry" ? Number(error?.retryAfterMs || 0) : 0));
     const retryAt=retryable ? new Date(Date.now()+backoff).toISOString() : null;
@@ -6533,19 +6617,26 @@ export class Repository {
     return row ? { ...row, embed_config: json(row.embed_config_json, {}) } : null;
   }
 
-  listAffiliateAssets({ activeOnly = false, providerAccountId = null } = {}) {
+  listAffiliateAssets({ activeOnly = false, providerAccountId = null, lifecycleState = null,
+    statusFilter = 'all', limit = null, cursor = 0 } = {}) {
     const clauses = [];
     const values = [];
     if (activeOnly) { clauses.push("active=1 AND lifecycle_state='operational' AND (valid_from IS NULL OR valid_from<=?) AND (valid_until IS NULL OR valid_until>?)"); values.push(now(), now()); }
     if (providerAccountId) { clauses.push("provider_account_id=?"); values.push(providerAccountId); }
+    if (lifecycleState) { clauses.push("lifecycle_state=?"); values.push(lifecycleState); }
+    if (statusFilter === 'active') clauses.push("active=1");
+    if (statusFilter === 'inactive') clauses.push("active=0");
+    if (statusFilter === 'expired') { clauses.push("valid_until IS NOT NULL AND valid_until<?"); values.push(now()); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const pagination = limit == null ? '' : ' LIMIT ? OFFSET ?';
+    if (limit != null) values.push(Math.min(101,Math.max(1,Number(limit)||20)), Math.max(0,Number(cursor)||0));
     return this.db.prepare(`SELECT a.*,
       (SELECT COUNT(DISTINCT cs.draft_id) FROM commercial_slots cs WHERE cs.affiliate_asset_id=a.id) AS adopted_article_count,
       (SELECT COUNT(DISTINCT cs.draft_id) FROM commercial_slots cs JOIN wordpress_publications wp ON wp.draft_id=cs.draft_id
         WHERE cs.affiliate_asset_id=a.id AND wp.status='synced') AS delivered_article_count,
       (SELECT COUNT(*) FROM commercial_slots cs WHERE cs.affiliate_asset_id=a.id) AS slot_count
       FROM affiliate_assets a ${where ? where.replaceAll(/\b(active|provider_account_id|lifecycle_state|valid_from|valid_until)\b/g,"a.$1") : ""}
-      ORDER BY a.provider, a.active DESC, a.priority DESC, a.product_category, a.title`)
+      ORDER BY a.provider, a.active DESC, a.priority DESC, a.product_category, a.title, a.id${pagination}`)
       .all(...values).map((row) => ({ ...row, embed_config: json(row.embed_config_json, {}) }));
   }
 
@@ -8230,20 +8321,23 @@ export class Repository {
     if (search) { clauses.push("lower(COALESCE(NULLIF(k.canonical_subject,''),k.subject)) LIKE ?"); values.push(`%${search.toLowerCase()}%`); }
     const pageSize = Math.max(1, Math.min(100, Number(limit) || 50));
     const offset = Math.max(0, Number.parseInt(cursor, 10) || 0);
-    const rows = this.db.prepare(`SELECT d.slug AS destination_slug,d.name AS destination_name,
-      CASE WHEN k.entity_key<>'' THEN 'entity:'||k.entity_key
-        ELSE 'subject:'||lower(trim(COALESCE(NULLIF(k.canonical_subject,''),k.subject))) END AS subject_key,
-      COALESCE(NULLIF(k.canonical_subject,''),k.subject) AS subject,k.entity_type,k.granularity,
-      COUNT(*) AS fact_count,MAX(k.updated_at) AS updated_at,
-      SUM(CASE WHEN k.consensus_status='conflicted' AND COALESCE(kr.status,'')<>'resolved' THEN 1 ELSE 0 END) AS conflict_count,
-      SUM(CASE WHEN ${knowledgeThemeSql("k")}='planning' THEN 1 ELSE 0 END) AS planning_count,
-      SUM(CASE WHEN ${knowledgeThemeSql("k")}='transport' THEN 1 ELSE 0 END) AS transport_count,
-      SUM(CASE WHEN ${knowledgeThemeSql("k")}='cost' THEN 1 ELSE 0 END) AS cost_count,
-      SUM(CASE WHEN ${knowledgeThemeSql("k")}='experience' THEN 1 ELSE 0 END) AS experience_count
+    const rows = this.db.prepare(`WITH tagged AS MATERIALIZED (
+      SELECT d.id AS destination_id,d.slug AS destination_slug,d.name AS destination_name,
+        CASE WHEN k.entity_key<>'' THEN 'entity:'||k.entity_key
+          ELSE 'subject:'||lower(trim(COALESCE(NULLIF(k.canonical_subject,''),k.subject))) END AS subject_key,
+        COALESCE(NULLIF(k.canonical_subject,''),k.subject) AS subject,k.entity_type,k.granularity,
+        k.updated_at,k.consensus_status,kr.status AS resolution_status,
+        ${knowledgeThemeSql("k")} AS theme
       FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
       LEFT JOIN knowledge_resolutions kr ON kr.destination_slug=d.slug AND kr.normalized_key=k.normalized_key
       WHERE ${clauses.join(" AND ")}
-      GROUP BY d.id,subject_key ORDER BY conflict_count DESC,updated_at DESC,subject LIMIT ? OFFSET ?`)
+    ) SELECT destination_slug,destination_name,subject_key,subject,entity_type,granularity,
+      COUNT(*) AS fact_count,MAX(updated_at) AS updated_at,
+      SUM(CASE WHEN consensus_status='conflicted' AND COALESCE(resolution_status,'')<>'resolved' THEN 1 ELSE 0 END) AS conflict_count,
+      SUM(theme='planning') AS planning_count,SUM(theme='transport') AS transport_count,
+      SUM(theme='cost') AS cost_count,SUM(theme='experience') AS experience_count
+      FROM tagged GROUP BY destination_id,subject_key
+      ORDER BY conflict_count DESC,updated_at DESC,subject LIMIT ? OFFSET ?`)
       .all(...values, pageSize + 1, offset);
     const page = rows.slice(0, pageSize).map((row) => ({ ...row,
       themes: ["planning", "transport", "cost", "experience"].filter((theme) => Number(row[`${theme}_count`] || 0) > 0) }));
@@ -9294,7 +9388,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
   // visual obligation. Keep source order so a late required item retains its
   // article position; if obligations alone exceed the limit, preserve all of
   // them for a truthful delivery/manifest failure rather than deleting one.
-  const isRequired=(item)=>item?.image_type !== "illustration" && (item?.required_in_article === true
+  const isRequired=(item)=>(item?.required === true || item?.required_in_article === true
     || item?.media_metadata?.required_visual_obligation?.required === true);
   const obligations=eligible.filter(isRequired).length;
   let optionalCount=0;
@@ -9320,6 +9414,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     .map((asset) => [asset.id, asset]));
   for (const assetId of displacedAssetIds) unusedAssets.delete(assetId);
   const normalized = visuals.map((visual) => {
+    if (['infographic','map_or_route'].includes(visual.image_type) && !visual.source_asset_id)
+      return requiredVisualGap(visual,'no_relevant_authorized_source');
     if (!visual.source_asset_id && !visual.factual_image_required
       && (visual.image_type !== "real_world_photo" || visual.acquisition_strategy === "generate_illustration")) return visual;
     const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
@@ -9464,7 +9560,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
 }
 
 function requiredVisualGap(visual,reason) {
-  if (!visual.factual_image_required || visual.media_metadata?.required_visual_obligation?.required !== true) return null;
+  if (visual.media_metadata?.required_visual_obligation?.required !== true) return null;
   const prior=visual.media_metadata || {};
   return {...visual,status:"failed",acquisition_strategy:"await_authorized_source_image",
     source_asset_id:null,source_remote_url:null,media_url:"",alt_text:"",caption:"",provider:null,model:null,
@@ -9743,10 +9839,9 @@ function normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRa
     : imageType === "real_world_photo" ? "search_real_image"
     : imageType === "infographic" ? "render_infographic"
       : imageType === "map_or_route" ? "render_map" : "generate_illustration";
-  const requiredInArticle=imageType!=="illustration" && (item?.required_in_article === true
+  const requiredInArticle=(item?.required === true || item?.required_in_article === true
     || item?.media_metadata?.required_visual_obligation?.required === true);
-  const factualRequired = imageType === "real_world_photo" || Boolean(item?.factual_image_required)
-    || requiredInArticle;
+  const factualRequired = imageType === "real_world_photo" || Boolean(item?.factual_image_required);
   return {
     placement: allowedPlacements.includes(item?.placement) ? item.placement : defaultPlacement(index),
     purpose: truncateText(item?.purpose || `Orient readers to ${draft.title}`, 300),

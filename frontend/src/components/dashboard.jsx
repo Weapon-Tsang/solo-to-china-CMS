@@ -184,7 +184,7 @@ export function TableShell({ children, className }) {
 export function StatusPill({ status }) {
   const normalized = String(status || "").toLowerCase();
   const variant = ["processed", "corroborated", "resolved", "succeeded", "publish", "active", "ready", "configured", "ready_for_wordpress"].includes(normalized)
-    ? "success" : ["exception", "conflicted", "blocker", "failed"].includes(normalized)
+    ? "success" : ["exception", "conflicted", "blocker", "failed", "needs_review"].includes(normalized)
       ? "destructive" : ["warning", "needs_ai", "pending", "retry", "time_sensitive"].includes(normalized)
         ? "warning" : ["candidate", "queued", "running", "single_source"].includes(normalized) ? "info" : "default";
   return <Badge variant={variant}>{label(status || "unknown")}</Badge>;

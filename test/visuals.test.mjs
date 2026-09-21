@@ -44,6 +44,7 @@ test("Vertex Imagen stores a generated visual in the configured media directory"
   const rendered=await pngBytes();
   const fetchStub = async (url) => {
     if (String(url).includes("metadata.google.internal")) return Response.json({ access_token: "metadata-token", expires_in: 300 });
+    if (String(url).includes('gemini-3.8-flash')) return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(passedQa())}]}}]});
     return Response.json({ predictions: [{ bytesBase64Encoded: rendered.toString("base64"), mimeType: "image/png" }] });
   };
   const client = new VertexImagen({ enabled: true, provider: "vertex_imagen", projectId: "project", location: "us-central1", model: "imagen-4.0-generate-001", coverQuality: "1K", inlineQuality: "1K", mediaDir: directory, publicBaseUrl: "https://engine.example.com", requestTimeoutMs: 5_000 }, fetchStub);
@@ -65,6 +66,7 @@ test("Gemini 3.1 Flash Image stores an inline image from the global Gemini endpo
   let request;
   const fetchStub = async (url, options = {}) => {
     if (String(url).includes("metadata.google.internal")) return Response.json({ access_token: "metadata-token", expires_in: 300 });
+    if (String(url).includes('gemini-3.8-flash')) return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(passedQa())}]}}]});
     request = { url: String(url), options };
     return Response.json({ candidates: [{ content: { parts: [{ text: "Illustration created." }, { inlineData: { data: rendered.toString("base64"), mimeType: "image/png" } }] } }] });
   };

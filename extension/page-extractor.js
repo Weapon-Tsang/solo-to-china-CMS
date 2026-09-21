@@ -111,20 +111,19 @@
     const description = textOf(SELECTORS.description, root) || meta("description");
     const authorElement = first(SELECTORS.authorLink, root) || first(SELECTORS.authorLink);
     const authorName = authorElement?.innerText?.trim() || textOf(["[class*='author']", "[class*='username']"], root);
-    const contentClone = root.cloneNode(true);
-    contentClone.querySelectorAll("script,style,noscript,svg,iframe,button,input,textarea,[class*='comment'],[class*='recommend'],nav").forEach((node) => node.remove());
+    const contentClone = cloneNoteContent(root);
     const bodyText = contentClone.innerText?.trim() || contentClone.textContent?.trim() || "";
     if (bodyText.length < 20) return error("SELECTOR_MISMATCH", "The detail page rendered but the complete note text selector returned no usable content.", false);
 
-    const clone = contentClone;
-    clone.querySelectorAll("script, style, noscript, svg, iframe, button, input, textarea").forEach((node) => node.remove());
-    const html = clone.innerHTML;
+    const html = contentClone.innerHTML;
     const images = mergeMedia(traversal.images, collectImages(root));
     const videos = mergeMedia(traversal.videos, collectVideos(root));
     const imageExpected = traversal.imageExpected == null ? null : Math.max(traversal.imageExpected, images.length);
     const videoExpected = traversal.videoExpected;
-    const imagesComplete = traversal.finished && imageExpected != null && images.length >= imageExpected
-      && images.every((image) => image.width > 0 && image.height > 0);
+    // Browser image dimensions are often absent for lazy-loaded slides even when
+    // their HTTPS originals are discoverable and later durably uploaded. The
+    // server's media-durability gate, not naturalWidth, verifies those bytes.
+    const imagesComplete = traversal.finished && imageExpected != null && images.length >= imageExpected;
     const videosComplete = traversal.finished && videoExpected != null && videos.length >= videoExpected;
     const text = [title, bodyText || description].filter(Boolean).join("\n\n");
     const textHash = await hash(text);
@@ -196,7 +195,7 @@
       finished,
       imageExpected: indicators ? Math.max(0, indicators - videos.length)
         : root.querySelector(SELECTORS.carouselNext.join(",")) ? null : images.length,
-      videoExpected: Math.max(videos.length, root.querySelectorAll(SELECTORS.mediaVideos.join(",")).length),
+      videoExpected: Math.max(videos.length, relevantVideoElements(root).length),
       imageMethod: indicators ? "carousel_indicator_media_traversal" : "stable_carousel_dom_traversal",
       videoMethod: "video_element_traversal",
       images,
@@ -206,19 +205,32 @@
 
   async function settleDom(root, deadline) {
     let stable = 0;
-    let previous = -1;
+    let previous = null;
     while (stable < 3 && Date.now() < deadline) {
       root.scrollTo?.({ top: root.scrollHeight, behavior: "instant" });
       window.scrollTo({ top: Math.min(document.documentElement.scrollHeight, root.getBoundingClientRect().bottom + window.scrollY), behavior: "instant" });
-      const changed = await waitForMutation(root, 700);
-      const current = root.scrollHeight;
-      const pendingImages = [...root.querySelectorAll('img')].filter(image => !image.closest("[class*='comment'],[class*='recommend'],[class*='author'],nav"))
-        .some(image => (image.src || image.dataset?.src) && !(image.complete && image.naturalWidth > 0 && image.naturalHeight > 0));
-      const loading = [...root.querySelectorAll("[aria-busy='true'],[class*='loading']")].some(visible);
-      stable = current === previous && !changed && !pendingImages && !loading ? stable + 1 : 0;
+      await wait(700);
+      const current = JSON.stringify({
+        text: cloneNoteContent(root).textContent?.replace(/\s+/g, " ").trim() || "",
+        images: collectImages(root).map((item) => item.mediaIdentity),
+        videos: collectVideos(root).map((item) => item.mediaIdentity),
+      });
+      stable = current === previous ? stable + 1 : 0;
       previous = current;
     }
     return stable >= 3;
+  }
+
+  function cloneNoteContent(root) {
+    const clone = root.cloneNode(true);
+    clone.querySelectorAll("script,style,noscript,svg,iframe,button,input,textarea,[class*='comment'],[class*='recommend'],[class*='live-video'],nav")
+      .forEach((node) => node.remove());
+    return clone;
+  }
+
+  function relevantVideoElements(root) {
+    return [...root.querySelectorAll(SELECTORS.mediaVideos.join(","))]
+      .filter((video) => !video.closest("[class*='comment'],[class*='recommend'],[class*='live-video'],nav"));
   }
 
   function mergeMedia(...groups) {
@@ -248,7 +260,7 @@
 
   function collectVideos(root) {
     const output = new Map();
-    for (const video of root.querySelectorAll(SELECTORS.mediaVideos.join(","))) {
+    for (const video of relevantVideoElements(root)) {
       const urls = [video.currentSrc, video.src, ...[...video.querySelectorAll("source")].map((source) => source.src)].filter(Boolean);
       for (const url of urls) {
         if (!/^https:\/\//.test(url)) continue;

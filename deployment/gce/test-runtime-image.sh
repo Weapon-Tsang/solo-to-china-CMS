@@ -6,7 +6,7 @@ NAME="stc-runtime-smoke-$$-$RANDOM"
 DATA="$NAME-data"
 OPS="$NAME-ops"
 cleanup() {
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker rm -f "$NAME" "$NAME-api" "$NAME-worker" >/dev/null 2>&1 || true
   docker volume rm "$DATA" "$OPS" >/dev/null 2>&1 || true
   docker network rm "$NAME-net" >/dev/null 2>&1 || true
 }
@@ -40,6 +40,38 @@ docker network disconnect none "$NAME"
 docker network connect "$NAME-net" "$NAME"
 docker exec "$NAME" node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready");if(!r.ok)process.exit(1);console.log("Runtime network handoff passed")'
 docker stop --time 5 "$NAME" >/dev/null
+docker rm "$NAME" >/dev/null
+docker run --detach --name "$NAME-api" --network none "${MOUNTS[@]}" \
+  --env CAPTURE_TOKEN=runtime-smoke-capture-token-only \
+  --env ADMIN_TOKEN=runtime-smoke-admin-token-only \
+  --env ADMIN_PASSWORD=runtime-smoke-password-only \
+  --env SESSION_SECRET=runtime-smoke-session-secret-only \
+  --env CMS_PROCESS_ROLE=api \
+  --env HOST=127.0.0.1 --env PORT=8080 \
+  --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
+  --env SOURCE_UPLOADS_DIR=/var/lib/solo-to-china/source-uploads \
+  --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media "$IMAGE" >/dev/null
+docker run --detach --name "$NAME-worker" --network none "${MOUNTS[@]}" \
+  --env CAPTURE_TOKEN=runtime-smoke-capture-token-only \
+  --env ADMIN_TOKEN=runtime-smoke-admin-token-only \
+  --env ADMIN_PASSWORD=runtime-smoke-password-only \
+  --env SESSION_SECRET=runtime-smoke-session-secret-only \
+  --env CMS_PROCESS_ROLE=worker \
+  --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
+  --env SOURCE_UPLOADS_DIR=/var/lib/solo-to-china/source-uploads \
+  --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media "$IMAGE" >/dev/null
+ROLES_READY=0
+for ((attempt=0; attempt<30; attempt++)); do
+  if docker exec "$NAME-api" node -e 'const r=await fetch("http://127.0.0.1:8080/api/ready");if(!r.ok||!(await r.json()).ready)process.exit(1)' >/dev/null 2>&1 \
+    && [[ "$(docker inspect --format '{{.State.Running}}' "$NAME-worker")" == true ]] \
+    && docker logs "$NAME-worker" 2>&1 | grep -q 'worker.ready'; then
+    ROLES_READY=1; break
+  fi
+  sleep 1
+done
+[[ "$ROLES_READY" == 1 ]]
+docker stop --time 5 "$NAME-api" "$NAME-worker" >/dev/null
+docker rm "$NAME-api" "$NAME-worker" >/dev/null
 docker run --rm --network none "${MOUNTS[@]}" "$IMAGE" node /ops/verify-upgrade.mjs backup
 docker run --rm --network none "${MOUNTS[@]}" "$IMAGE" node -e 'const {DatabaseSync}=require("node:sqlite");const d=new DatabaseSync("/var/lib/solo-to-china/solo-to-china.sqlite");d.exec("PRAGMA user_version=99");d.close()'
 # Data and operations are separate Docker mounts, as in production. A rename to

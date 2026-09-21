@@ -19,8 +19,7 @@ test("migration 73 adds routing state without replaying or relabeling historical
   const jobsBefore=db.prepare("SELECT COUNT(*) n FROM jobs").get().n;
   const callsBefore=db.prepare("SELECT COUNT(*) n FROM model_call_metrics").get().n;
   db.close();db=openDatabase(filename);
-  assert.equal(SCHEMA_VERSION,73);
-  assert.equal(db.prepare("SELECT MAX(version) v FROM schema_migrations").get().v,73);
+  assert.equal(db.prepare("SELECT MAX(version) v FROM schema_migrations").get().v,SCHEMA_VERSION);
   assert.deepEqual({...db.prepare("SELECT model_role,model_profile_json,model_routing_revision FROM jobs WHERE id='old-job'").get()},
     {model_role:"unassigned",model_profile_json:"{}",model_routing_revision:null});
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,jobsBefore);

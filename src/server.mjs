@@ -23,6 +23,8 @@ import {
   normalizeAffiliateProviderAccount, normalizeCommercialEvent, normalizeCommercialOffer, normalizeCommissionRule,
 } from "./commercial.mjs";
 import { MaintenanceScheduler } from "./maintenance.mjs";
+import { assertPublicationEligibility } from './publication-eligibility.mjs';
+import { createMediaRequestExecutor } from './media-request-executor.mjs';
 import { createLogger } from "./logger.mjs";
 import { ExceptionNotifier } from "./notifications.mjs";
 import { createAuth } from "./auth.mjs";
@@ -55,7 +57,8 @@ export function createApplication(config = loadConfig()) {
   }
   assertProductionDatabaseConfiguration(config);
   const logger = createLogger(config.logging);
-  const db = openDatabase(config.databasePath);
+  const processRole = config.processRole || 'all';
+  const db = openDatabase(config.databasePath, { migrate: processRole !== 'api' });
   const auth = createAuth(db, config.auth);
   const loginThrottle = createLoginThrottle(config.auth.loginThrottle, { logger: logger.child({ component: "auth" }) });
   const repository = new Repository(db, {
@@ -87,8 +90,13 @@ export function createApplication(config = loadConfig()) {
     return legacyAi;
   };
   const selectedVisual = repository.getVisualSettings(config.visuals.defaultModel);
+  const mediaRequestExecutor = createMediaRequestExecutor(db, {
+    rpm: config.visuals.quotaRpm, windowMs: config.visuals.quotaWindowMs,
+    safetyMarginMs: config.visuals.quotaSafetyMarginMs,
+    maxDispatches: config.visuals.maxDispatchesPerStep,
+  });
   const activeVisuals = { ...config.visuals, ...selectedVisual,
-    beforeRequest: createRequestGate(config.extraction.requestSpacingMs),
+    mediaRequestExecutor,
     onModelCallStart: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)),
     onModelCall: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)),
     findVisualCandidate: (query) => repository.findReusableVisualCandidate(query),
@@ -105,9 +113,10 @@ export function createApplication(config = loadConfig()) {
   const dashboardSummaryCache = createSummaryCache();
   const extractor = new ExtractionRouter({ currentProfile: () => repository.modelProfileForRole("extraction"), resolveConfig: resolveExtractionConfig });
   const contentEngine = new ContentEngine(writingAi);
-  const visualReviewer = new KimiExtractor({ ...writingAi, role: "visual_review" });
+  const visualReviewer = new KimiExtractor({ ...writingAi, role: "visual_review", mediaRequestExecutor });
   const visuals = new VertexImagen(activeVisuals);
   const wordpress = new WordPressDraftAdapter(config.wordpress);
+  wordpress.deliveryGuard = (draftId, options) => assertPublicationEligibility(db, draftId, options);
   repository.configureProductionCapabilities({
     frontendContract: frontendContracts.configured,
     visuals: visuals.enabled,
@@ -121,6 +130,7 @@ export function createApplication(config = loadConfig()) {
     databasePath:config.databasePath,processIsolationEnabled:config.extraction.processIsolationEnabled,
     logger: logger.child({ component: "pipeline" }),
   });
+  const runQueued = () => { if (processRole === 'all') void pipeline.runOne(); };
   const notifier = new ExceptionNotifier(repository, config.notifications);
   const maintenance = new MaintenanceScheduler(
     repository,
@@ -129,17 +139,17 @@ export function createApplication(config = loadConfig()) {
     config.wordpress,
     { notifier, searchConsoleConfig: config.searchConsole, logger: logger.child({ component: "maintenance" }) },
   );
-  if (wordpress.enabled) {
+  if (processRole !== 'api' && wordpress.enabled) {
     repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours);
   }
-  if (searchConsole.enabled) {
+  if (processRole !== 'api' && searchConsole.enabled) {
     repository.enqueueSearchConsoleSync(searchConsole.config.siteUrl, searchConsole.config.syncHours);
   }
-  repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled, contractAware: frontendContracts.configured });
+  if (processRole !== 'api') repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled, contractAware: frontendContracts.configured });
   // Legacy heavy-source gates are converted into a deterministic recovery manifest.
   // Execution remains opt-in; startup never enqueues historical work by itself.
-  repository.createLegacySourceRecoveryManifest({execute:false});
-  if (frontendContracts.configured) repository.enqueue("sync_frontend_contract", "default");
+  if (processRole !== 'api') repository.createLegacySourceRecoveryManifest({execute:false});
+  if (processRole !== 'api' && frontendContracts.configured) repository.enqueue("sync_frontend_contract", "default");
   const publicDir = path.join(config.root, "dist");
 
   const server = http.createServer(async (request, response) => {
@@ -346,7 +356,7 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         if (!frontendContracts.configured) return sendJson(response, 409, { error: "Frontend Contract sources are not configured." });
         const jobId = repository.enqueue("sync_frontend_contract", "default");
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, { queued: true, jobId });
       }
       const frontendContractAcceptMatch = url.pathname.match(/^\/api\/frontend-contract\/snapshots\/([^/]+)\/accept$/);
@@ -438,7 +448,7 @@ export function createApplication(config = loadConfig()) {
         authorizeCapture(request, config.captureToken);
         const capture = await prepareCaptureMedia(normalizeXiaohongshuCapture(await readJson(request, 4_000_000)), config.manualSources.uploadDir);
         const saved = repository.saveCapture(capture);
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, saved.duplicate ? 200 : 202, saved);
       }
       if (request.method === "POST" && url.pathname === "/api/capture-uploads") {
@@ -459,7 +469,7 @@ export function createApplication(config = loadConfig()) {
         try {
           const capture = await prepareCaptureMedia(normalizeXiaohongshuCapture(assembled.payload), config.manualSources.uploadDir);
           const saved = repository.saveCapture(capture);
-          void pipeline.runOne();
+          runQueued();
           return sendJson(response, saved.duplicate ? 200 : 202, saved);
         } finally { assembled.cleanup(); }
       }
@@ -475,7 +485,7 @@ export function createApplication(config = loadConfig()) {
           throw error;
         }
         if (saved.duplicate) prepared.cleanup();
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, saved.duplicate ? 200 : 202, {
           ...saved,
           sourceKind: prepared.capture.sourceKind,
@@ -502,7 +512,7 @@ export function createApplication(config = loadConfig()) {
         let saved;
         try { saved = repository.saveCapture(prepared.capture); } catch (error) { prepared.cleanup(); throw error; }
         if (saved.duplicate) prepared.cleanup();
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, saved.duplicate ? 200 : 202, { ...saved, sourceKind: "video", warnings: prepared.warnings,
           message: saved.duplicate ? "该来源已存在，未重复排队。" : "视频已完整保存并进入 Strategy 1.4 分段提取流程。" });
       }
@@ -514,14 +524,17 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 200, dashboard);
       }
       if (request.method === "GET" && url.pathname === "/api/dashboard/summary") {
-        const dashboard = dashboardSummaryCache.read(() => repository.dashboardSummary());
+        const dashboard = dashboardSummaryCache.read(() => repository.dashboardSummary(),
+          db.prepare('PRAGMA data_version').get().data_version);
         const contractStatus = frontendContracts.diagnostics().status;
         dashboard.actionCounts.settings = (extractor.enabled ? 0 : 1)
           + (["major_mismatch", "invalid"].includes(contractStatus) ? 1 : 0);
         return sendJson(response, 200, dashboard);
       }
       if (request.method === "GET" && url.pathname === "/api/sources") {
-        return sendJson(response, 200, { items: repository.listSources(limit(url.searchParams.get("limit"))) });
+        return sendJson(response, 200, repository.listSourcesPage({ limit:limit(url.searchParams.get('limit') || '20'),
+          cursor:url.searchParams.get('cursor') || '', status:url.searchParams.get('status') || '',
+          search:url.searchParams.get('search') || '' }));
       }
       if (request.method === "GET" && url.pathname === "/api/sources/status") {
         const ids=String(url.searchParams.get("ids")||"").split(",").map((value)=>value.trim()).filter(Boolean);
@@ -531,7 +544,7 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 20_000);
         const result = repository.enqueueMediaDurabilityBackfill({ dryRun: payload.dryRun !== false });
-        if (!result.dryRun && result.queued) void pipeline.runOne();
+        if (!result.dryRun && result.queued) runQueued();
         return sendJson(response, result.dryRun ? 200 : 202, result);
       }
       const systemBackfillMatch = url.pathname.match(/^\/api\/backfills\/(experience|recommendations|failed-production-cleanup|knowledge-resolution)$/);
@@ -543,14 +556,14 @@ export function createApplication(config = loadConfig()) {
           : systemBackfillMatch[1] === "recommendations" ? repository.runRecommendationReconciliationBackfill(options)
             : systemBackfillMatch[1] === "knowledge-resolution" ? repository.runKnowledgeResolutionBackfill(options)
               : repository.runFailedProductionCleanupBackfill(options);
-        if (!result.dryRun && result.queued) void pipeline.runOne();
+        if (!result.dryRun && result.queued) runQueued();
         return sendJson(response,result.dryRun ? 200 : 202,result);
       }
       if(request.method==="POST"&&url.pathname==="/api/backfills/processing-gaps"){
         authorizeAdmin(request,config.adminToken,auth);
         const payload=await readJson(request,20_000);
         const result=repository.runSourceProcessingGapRecovery({dryRun:payload.dryRun!==false,approvedFromRunId:payload.approvedFromRunId||null});
-        if(!result.dryRun&&result.queued)void pipeline.runOne();
+        if(!result.dryRun&&result.queued)runQueued();
         return sendJson(response,result.dryRun?200:202,result);
       }
       if(request.method==="GET"&&url.pathname==="/api/knowledge/resolution-status"){
@@ -618,7 +631,7 @@ export function createApplication(config = loadConfig()) {
           { decision: String(payload.decision || ""), note: payload.note || "", operator: auth.status(request).username || "administrator" },
         );
         if (!result) return sendJson(response, 404, { error: "Source segment or coverage review was not found." });
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, result);
       }
       const sourceEvidenceReviewMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/evidence-review$/);
@@ -633,7 +646,7 @@ export function createApplication(config = loadConfig()) {
           operator: auth.status(request).username || "administrator",
         });
         if (!result) return sendJson(response, 404, { error: "Source not found." });
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, result);
       }
       const sourceEvidenceHistoryMatch = url.pathname.match(/^\/api\/sources\/([^/]+)\/evidence-reviews$/);
@@ -646,7 +659,7 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         const retried = repository.retrySource(retryMatch[1]);
         if (!retried) return sendJson(response, 404, { error: "Source not found." });
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, { queued: true });
       }
       if (request.method === "GET" && url.pathname === "/api/knowledge") {
@@ -681,7 +694,7 @@ export function createApplication(config = loadConfig()) {
         const payload = await readJson(request, 20_000);
         const destination = String(payload.destinationSlug || "").trim();
         const queued = destination ? Boolean(repository.enqueue("resolve_entities", destination)) : repository.enqueueEntityResolutionForAllDestinations() > 0;
-        if (queued) void pipeline.runOne();
+        if (queued) runQueued();
         return sendJson(response, 202, { queued, destinationSlug: destination || null });
       }
       const entityCandidateDecisionMatch = url.pathname.match(/^\/api\/knowledge\/entity-aliases\/candidates\/([^/]+)\/decision$/);
@@ -692,7 +705,7 @@ export function createApplication(config = loadConfig()) {
           relationType: payload.relationType, reason: payload.reason, operator: payload.operator || "administrator",
         });
         if (!result) return sendJson(response, 404, { error: "Entity alias candidate not found or already decided." });
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 200, result);
       }
       const entityMergeUndoMatch = url.pathname.match(/^\/api\/knowledge\/entity-merges\/([^/]+)\/undo$/);
@@ -700,7 +713,7 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         const result = repository.undoEntityMerge(decodeURIComponent(entityMergeUndoMatch[1]));
         if (!result) return sendJson(response, 404, { error: "Active entity merge history not found." });
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 200, result);
       }
       const claimReviewDecisionMatch = url.pathname.match(/^\/api\/knowledge\/claim-reviews\/([^/]+)\/decision$/);
@@ -739,7 +752,7 @@ export function createApplication(config = loadConfig()) {
         const cursor = url.searchParams.get("cursor") || "0";
         if (!/^(0|[1-9]\d{0,8})$/.test(cursor)) return sendJson(response, 400, { error: "Invalid content cursor." });
         return sendJson(response, 200, repository.listContentWorkspace({ productionOnly: true,
-          limit: Math.min(100, limit(url.searchParams.get("limit") || "50")), offset: Number(cursor), compact: true }));
+          limit: Math.min(100, limit(url.searchParams.get("limit") || "20")), offset: Number(cursor), compact: true }));
       }
       const productionDetailMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/production-state$/);
       if (request.method === "GET" && productionDetailMatch) {
@@ -759,7 +772,7 @@ export function createApplication(config = loadConfig()) {
         const payload = await readJson(request, 50_000);
         const result = executeContentRecovery(repository, decodeURIComponent(productionRecoverMatch[1]), payload,
           auth.status(request).username || "administrator");
-        if (result?.queued) void pipeline.runOne();
+        if (result?.queued) runQueued();
         return result ? sendJson(response, result.queued ? 202 : 200, result) : sendJson(response, 404, { error: "Content production record not found." });
       }
       const productionArchiveMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/archive$/);
@@ -793,7 +806,7 @@ export function createApplication(config = loadConfig()) {
         return result ? sendJson(response, 200, result) : sendJson(response, 404, { error: "Content production record not found." });
       }
       if (request.method === "GET" && url.pathname === "/api/recommendations") {
-        const pageSize=limit(url.searchParams.get("limit"));
+        const pageSize=Math.min(100,limit(url.searchParams.get("limit") || '20'));
         const offset=Math.max(0,Number.parseInt(url.searchParams.get("cursor") || "0",10) || 0);
         const inbox = repository.listRecommendationInbox(pageSize + 1,{reconcile:false,cursor:offset});
         const items=inbox.slice(0,pageSize);
@@ -821,7 +834,7 @@ export function createApplication(config = loadConfig()) {
         const payload = await readJson(request, 20_000);
         const result = repository.decideOpportunity(decodeURIComponent(opportunityDecisionMatch[1]), String(payload.decision || ""), payload.note || "");
         if (!result) return sendJson(response, 404, { error: "Content opportunity not found." });
-        if (result.queued) void pipeline.runOne();
+        if (result.queued) runQueued();
         return sendJson(response, result.queued ? 202 : 200, result);
       }
       if (request.method === "POST" && url.pathname === "/api/opportunities/bulk-decision") {
@@ -834,7 +847,7 @@ export function createApplication(config = loadConfig()) {
           catch (error) { return { ok:false,opportunityId,error:error.message }; }
         });
         const queued = results.filter((item) => item.queued).length;
-        if (queued) void pipeline.runOne();
+        if (queued) runQueued();
         return sendJson(response, 200, { processed:results.filter((item) => item.ok).length,failed:results.filter((item) => !item.ok).length,queued,results });
       }
       const opportunityLifecycleMatch = url.pathname.match(/^\/api\/opportunities\/([^/]+)\/lifecycle$/);
@@ -862,7 +875,7 @@ export function createApplication(config = loadConfig()) {
       if (request.method === "POST" && url.pathname === "/api/recommendations/bulk-decision") {
         authorizeAdmin(request, config.adminToken, auth);
         const result = decideRecommendationsBulk(repository, await readJson(request, 100_000));
-        if (result.queued) void pipeline.runOne();
+        if (result.queued) runQueued();
         return sendJson(response, 200, result);
       }
       const recommendationDecisionMatch = url.pathname.match(/^\/api\/recommendations\/([^/]+)\/decision$/);
@@ -872,7 +885,7 @@ export function createApplication(config = loadConfig()) {
         const result = decideRecommendationCommand(repository, {recommendationId:recommendationDecisionMatch[1],decision:String(payload.decision || ""),
           note:payload.note || "",opportunityId:payload.opportunityId || null,updatedAt:payload.updatedAt,proposalFingerprint:payload.proposalFingerprint});
         if (!result) return sendJson(response, 404, { error: "Recommendation not found." });
-        if (result.queued) void pipeline.runOne();
+        if (result.queued) runQueued();
         return sendJson(response, 202, result);
       }
       if (request.method === "GET" && url.pathname === "/api/exceptions") {
@@ -898,6 +911,7 @@ export function createApplication(config = loadConfig()) {
         });
       }
       if (request.method === "POST" && url.pathname === "/api/maintenance/run") {
+        if (processRole !== 'all') return sendJson(response, 409, { error:'Inline maintenance is disabled for the API role.' });
         authorizeAdmin(request, config.adminToken, auth);
         return sendJson(response, 200, await maintenance.runDue({ force: true }));
       }
@@ -906,7 +920,7 @@ export function createApplication(config = loadConfig()) {
         const payload = await readJson(request, 20_000);
         if (payload.confirmation !== "RESET_DERIVED_RESEARCH") return sendJson(response, 400, { error: "Confirmation phrase is required." });
         const result = repository.resetDerivedResearchAndRequeue();
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, result);
       }
       const claimLifecycleMatch = url.pathname.match(/^\/api\/claims\/([^/]+)\/(exclude|restore)$/);
@@ -915,7 +929,7 @@ export function createApplication(config = loadConfig()) {
         const payload = await readJson(request, 20_000);
         const result = repository.setClaimLifecycle(claimLifecycleMatch[1], claimLifecycleMatch[2], payload.reason || "", auth.status(request).username || "admin");
         if (!result) return sendJson(response, 404, { error: "Claim not found." });
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, result);
       }
       const knowledgeVisibilityMatch = url.pathname.match(/^\/api\/knowledge\/([^/]+)\/(hide|restore)$/);
@@ -931,7 +945,7 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         const retried = repository.retryOperationalException(decodeURIComponent(exceptionRetryMatch[1]), { contractAware: frontendContracts.configured });
         if (!retried) return sendJson(response, 409, { error: "Exception is not retryable or no longer exists." });
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, { queued: true });
       }
       if (request.method === "GET" && url.pathname === "/api/wordpress/inventory") {
@@ -945,7 +959,7 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         if (!wordpress.enabled) return sendJson(response, 409, { error: "WordPress inventory sync is not configured." });
         const jobId = repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours, true);
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, { queued: true, jobId });
       }
       if (request.method === "GET" && url.pathname === "/api/search-console") {
@@ -959,13 +973,21 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         if (!searchConsole.enabled) return sendJson(response, 409, { error: "Search Console sync is not configured." });
         const jobId = repository.enqueueSearchConsoleSync(searchConsole.config.siteUrl, searchConsole.config.syncHours, true);
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, { queued: true, jobId });
       }
       if (request.method === "GET" && url.pathname === "/api/commercial") {
+        const pageSize=Math.min(100,limit(url.searchParams.get('limit') || '20'));
+        const offset=Math.max(0,Number.parseInt(url.searchParams.get('cursor') || '0',10) || 0);
+        const assetFilter=['all','active','inactive','expired'].includes(url.searchParams.get('filter'))
+          ? url.searchParams.get('filter') : 'all';
+        const assets=repository.listAffiliateAssets({lifecycleState:'operational',statusFilter:assetFilter,
+          limit:pageSize+1,cursor:offset});
         return sendJson(response, 200, {
           providers: repository.listAffiliateProviderAccounts().filter((item) => item.status==='CONFIGURED'),
-          items: repository.listAffiliateAssets().filter((item)=>item.lifecycle_state==='operational'),
+          items: assets.slice(0,pageSize),nextCursor:assets.length>pageSize ? String(offset+pageSize) : null,
+          totalAssets:repository.db.prepare(`SELECT COUNT(*) AS count FROM affiliate_assets WHERE lifecycle_state='operational'`).get().count,
+          assetFilter,
           mappings: repository.listAffiliateAssetMappings({activeOnly:true}), opportunities: repository.listAffiliateOpportunities().filter((item) => Number(item.score)>=0.75),
           queue: repository.listAffiliateQueueTasks({status:'ACTIVE'}), performance: repository.commercialPerformance(), commissionRules: repository.listCommissionRules(),
         });
@@ -1125,7 +1147,7 @@ export function createApplication(config = loadConfig()) {
         for (const destination of new Set(normalized.map((offer) => offer.destinationSlug))) {
           repository.enqueueCommercialForDestination(destination);
         }
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 200, { items });
       }
       const generateMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/generate$/);
@@ -1139,7 +1161,7 @@ export function createApplication(config = loadConfig()) {
         const candidateId = decodeURIComponent(recoveryMatch[1]);
         const result = request.method === "GET" ? contentRecoveryReport(repository, candidateId)
           : executeContentRecovery(repository, candidateId, await readJson(request, 500_000), auth.status(request).username || "administrator");
-        if (result?.queued) void pipeline.runOne();
+        if (result?.queued) runQueued();
         return sendJson(response, result ? (result.queued ? 202 : 200) : 404, result || { error: "Content task not found." });
       }
       const retryContentMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/retry$/);
@@ -1148,7 +1170,7 @@ export function createApplication(config = loadConfig()) {
         if (!contentEngine.enabled) return sendJson(response, 409, { error: "KIMI_API_KEY is required for content production." });
         const jobType = repository.retryContent(retryContentMatch[1], { contractAware: frontendContracts.configured });
         if (!jobType) return sendJson(response, 409, { error: "Nothing retryable was found for this topic." });
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, { queued: true, jobType });
       }
       const contentActionPreviewMatch = url.pathname.match(/^\/api\/topics\/([^/]+)\/action-preview$/);
@@ -1202,7 +1224,7 @@ export function createApplication(config = loadConfig()) {
           targetRevision:Number(payload.target_revision),expectedCurrentRevision:Number(payload.expected_current_revision),
           expectedContentHash:String(payload.expected_content_hash || ""),actor:auth.status(request).username || "administrator",
         });
-        if (result?.job_id) void pipeline.runOne();
+        if (result?.job_id) runQueued();
         return result ? sendJson(response,202,result) : sendJson(response,404,{error:"Draft not found."});
       }
       const draftFeedbackMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/editorial-feedback$/);
@@ -1226,7 +1248,7 @@ export function createApplication(config = loadConfig()) {
         const draft = repository.getDraftPackage(wordpressMatch[1]);
         if (!draft?.review?.passed) return sendJson(response, 409, { error: "Draft must pass QA before WordPress delivery." });
         repository.enqueue("compose_commercial", wordpressMatch[1]);
-        void pipeline.runOne();
+        runQueued();
         return sendJson(response, 202, { queued: true });
       }
       if (request.method === "POST" && url.pathname === "/api/delivery-refresh") {
@@ -1235,7 +1257,7 @@ export function createApplication(config = loadConfig()) {
         const result = payload.apply
           ? applyDeliveryRefresh(repository,payload,auth.status(request).username || "administrator")
           : planDeliveryRefresh(repository,payload);
-        if (payload.apply && result.queued.length) void pipeline.runOne();
+        if (payload.apply && result.queued.length) runQueued();
         return sendJson(response,payload.apply ? 202 : 200,result);
       }
       const finalPreviewMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/final-preview$/);
@@ -1273,6 +1295,7 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "POST" && url.pathname === "/api/pipeline/run-one") {
         authorizeAdmin(request, config.adminToken, auth);
+        if (processRole !== 'all') return sendJson(response, 409, { error:'Direct pipeline execution is disabled for the API role.' });
         const worked = await pipeline.runOne();
         return sendJson(response, 200, { worked });
       }
@@ -1313,17 +1336,21 @@ export function createApplication(config = loadConfig()) {
         server.once("error", onError);
         server.listen(config.port, config.host, () => {
           server.off("error", onError);
-          pipeline.start();
-          maintenance.start();
+          if (processRole === 'all') { pipeline.start(); maintenance.start(); }
           logger.info("server.started", { host: config.host, port: server.address().port, version: VERSION });
           resolve();
         });
       });
     },
+    startWorker() {
+      if (processRole !== 'worker') throw new Error('startWorker requires CMS_PROCESS_ROLE=worker.');
+      pipeline.start();
+      maintenance.start();
+    },
     async stop() {
       maintenance.stop();
       pipeline.stop();
-      await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      if (server.listening) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
       db.close();
       logger.info("server.stopped", { version: VERSION });
     },
@@ -1589,8 +1616,13 @@ function workspaceQuery(url, defaultLimit = 100) {
 if (import.meta.main) {
   const config = loadConfig();
   const app = createApplication(config);
-  await app.start();
-  app.logger.info("preview.ready", { url: `http://${config.host}:${config.port}` });
+  if (config.processRole === 'worker') {
+    app.startWorker();
+    app.logger.info('worker.ready', { databasePath:config.databasePath });
+  } else {
+    await app.start();
+    app.logger.info("preview.ready", { url: `http://${config.host}:${config.port}` });
+  }
   const shutdown = async () => {
     await app.stop();
     process.exit(0);

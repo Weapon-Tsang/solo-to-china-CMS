@@ -70,7 +70,7 @@ export class FrontendContractConsumer {
     };
   }
 
-  resolveForArticle({ canonical = {}, draft = {} } = {}) {
+  resolveForArticle({ canonical = {}, draft = {}, includeAllEditorial = false } = {}) {
     const semanticText = [
       canonical.content_type, canonical.content_intent, canonical.quick_answer,
       ...(canonical.warnings || []), ...(canonical.transport || []), ...(canonical.faq || []).map((item) => item.question),
@@ -82,7 +82,7 @@ export class FrontendContractConsumer {
     const components = uniqueComponents([...base, ...matched.components]);
     return {
       ...all,
-      components: (components.length ? components : all.components).slice(0, 24),
+      components: (includeAllEditorial ? all.components : components.length ? components : all.components).slice(0, 24),
       presentationComponents: all.presentationComponents,
     };
   }

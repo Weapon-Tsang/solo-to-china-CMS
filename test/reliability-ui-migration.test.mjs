@@ -18,6 +18,25 @@ test('summary TTL coalesces repeated reads and mutations invalidate immediately'
   cache.invalidate(); assert.equal(cache.read(compute),3);
 });
 
+test('summary cache sees writes from a second SQLite connection before TTL expires', (t) => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'stc-summary-revision-'));
+  const filename=path.join(directory,'db.sqlite');
+  const api=openDatabase(filename),worker=openDatabase(filename);
+  t.after(()=>{api.close();worker.close();fs.rmSync(directory,{recursive:true,force:true});});
+  let computations=0;
+  const cache=createSummaryCache({ttlMs:60_000});
+  const read=()=>cache.read(()=>{computations++;return api.prepare('SELECT COUNT(*) n FROM sources').get().n;},
+    api.prepare('PRAGMA data_version').get().data_version);
+  assert.equal(read(),0);
+  assert.equal(read(),0);
+  assert.equal(computations,1);
+  worker.prepare(`INSERT INTO sources(id,adapter,canonical_url,title,captured_at,raw_text,raw_html,
+    raw_payload_json,content_hash,created_at,updated_at)
+    VALUES ('worker-source','manual','https://example.test/worker','Worker','2026-09-21','','','{}','hash','2026-09-21','2026-09-21')`).run();
+  assert.equal(read(),1);
+  assert.equal(computations,2);
+});
+
 test('status polling backs off when hidden, refreshes on return, and never overlaps or resumes after disposal', async () => {
   const timers=new Map(), listeners=new Map(); let sequence=0,calls=0,resolve;
   const document={hidden:false,addEventListener:(k,v)=>listeners.set(k,v),removeEventListener:k=>listeners.delete(k)};

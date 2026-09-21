@@ -85,6 +85,7 @@ export function inheritJobContext(parent = {}, overrides = {}) {
     modelRole: overrides.modelRole ?? parent.model_role ?? "unassigned",
     modelProfile: overrides.modelProfile ?? parent.model_profile_json ?? null,
     modelRoutingRevision: overrides.modelRoutingRevision ?? parent.model_routing_revision ?? null,
+    pipelineVersion: overrides.pipelineVersion ?? parent.pipeline_version ?? 'legacy',
   };
 }
 

@@ -13,13 +13,14 @@ ATTEMPT="${STC_UPGRADE_ATTEMPT:-}"
 [[ -z "$ATTEMPT" || "$ATTEMPT" =~ ^[0-9]+$ ]]
 RELEASE="$APP/upgrades/$REVISION${ATTEMPT:+-attempt-$ATTEMPT}"
 OLD="engine-before-${REVISION:0:7}"
+OLD_WORKER="engine-worker-before-${REVISION:0:7}"
 log() { printf '[stc-upgrade] %s\n' "$*"; }
 systemctl start docker
 install -d -m 0700 "$RELEASE"
 exec 9>"$RELEASE/lock"
 flock -n 9 || exit 0
 if [[ -f "$RELEASE/complete" ]]; then
-  docker start engine cloudflared >/dev/null
+  docker start engine engine-worker cloudflared >/dev/null
   log "Already completed $REVISION; existing services started."
   exit 0
 fi
@@ -44,6 +45,8 @@ PY
 unset MODEL_CREDENTIAL_ENCRYPTION_KEY
 docker inspect engine >/dev/null
 docker inspect cloudflared >/dev/null
+WORKER_PRESENT=0
+if docker inspect engine-worker >/dev/null 2>&1; then WORKER_PRESENT=1; fi
 docker volume inspect solo_to_china_data >/dev/null
 docker network inspect solo-to-china >/dev/null
 DATA="$(docker volume inspect --format '{{.Mountpoint}}' solo_to_china_data)"
@@ -72,6 +75,8 @@ sha256sum "$APP/.env.production" >"$RELEASE/env.sha256"
 touch "$RELEASE/started"
 STOPPED=0
 RENAMED=0
+WORKER_RENAMED=0
+WORKER_STOPPED=0
 MIGRATED=0
 EXPOSED=0
 PHASE=legacy-copy
@@ -111,6 +116,14 @@ recover() {
     docker network connect solo-to-china engine >/dev/null 2>&1 || true
     docker update --restart unless-stopped engine >/dev/null
     docker start engine >/dev/null
+    if [[ "$WORKER_RENAMED" == 1 ]]; then
+      docker rename "$OLD_WORKER" engine-worker
+      docker update --restart unless-stopped engine-worker >/dev/null
+      docker start engine-worker >/dev/null
+    elif [[ "$WORKER_STOPPED" == 1 ]]; then
+      docker update --restart unless-stopped engine-worker >/dev/null
+      docker start engine-worker >/dev/null
+    fi
     log 'Previous engine restored; failed attempt and all originals retained.'
   fi
   exit "$code"
@@ -120,6 +133,13 @@ log "Stopping engine gracefully; old image=$OLD_IMAGE"
 docker stop --time 120 engine >/dev/null
 STOPPED=1
 docker update --restart no engine >/dev/null
+if [[ "$WORKER_PRESENT" == 1 ]]; then
+  docker stop --time 120 engine-worker >/dev/null
+  WORKER_STOPPED=1
+  docker update --restart no engine-worker >/dev/null
+  docker rename engine-worker "$OLD_WORKER"
+  WORKER_RENAMED=1
+fi
 mkdir "$RELEASE/legacy-app-data"
 # Container-layer capture chunks were not mounted by earlier releases. Preserve the
 # complete directory and mount it at its original path in the replacement engine.
@@ -168,6 +188,7 @@ RENAMED=1
 docker run --detach --name engine --restart unless-stopped --network none \
   --env-file "$APP/.env.production" \
   --env "ENGINE_IMAGE=$IMAGE" --env "APP_REVISION=$REVISION" \
+  --env CMS_PROCESS_ROLE=api \
   --env HOST=0.0.0.0 --env PORT=8080 \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
   --env BACKUP_DIR=/var/lib/solo-to-china/backups \
@@ -188,10 +209,28 @@ docker network disconnect none engine
 docker network connect solo-to-china engine
 EXPOSED=1
 docker start cloudflared >/dev/null
+PHASE=worker-start
+docker run --detach --name engine-worker --restart unless-stopped --network solo-to-china \
+  --env-file "$APP/.env.production" \
+  --env "ENGINE_IMAGE=$IMAGE" --env "APP_REVISION=$REVISION" \
+  --env CMS_PROCESS_ROLE=worker \
+  --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
+  --env BACKUP_DIR=/var/lib/solo-to-china/backups \
+  --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media \
+  --env SOURCE_UPLOADS_DIR=/var/lib/solo-to-china/source-uploads \
+  --volume solo_to_china_data:/var/lib/solo-to-china \
+  --volume "$RELEASE/legacy-app-data:/app/data" "$IMAGE" >"$RELEASE/worker-container-id"
+WORKER_READY=0
+for ((attempt=0; attempt<30; attempt++)); do
+  if [[ "$(docker inspect --format '{{.State.Running}}' engine-worker)" != true ]]; then break; fi
+  if docker logs engine-worker 2>&1 | grep -q 'worker.ready'; then WORKER_READY=1; break; fi
+  sleep 2
+done
+[[ "$WORKER_READY" == 1 ]]
 date --utc --iso-8601=seconds >"$RELEASE/complete"
 find "$APP/upgrades" -type f \( -name 'rehearsal.sqlite' -o -name 'rehearsal.sqlite-wal' -o -name 'rehearsal.sqlite-shm' \) -delete
-for stale in $(docker ps -a --format '{{.Names}}' | grep -E '^engine-(before|failed)-' || true); do
-  if [[ "$stale" != "$OLD" ]]; then docker rm --force "$stale" >/dev/null; fi
+for stale in $(docker ps -a --format '{{.Names}}' | grep -E '^engine(-worker)?-(before|failed)-' || true); do
+  if [[ "$stale" != "$OLD" && "$stale" != "$OLD_WORKER" ]]; then docker rm --force "$stale" >/dev/null; fi
 done
 docker image prune --all --force >"$RELEASE/image-prune.log"
-log "COMPLETE revision=$REVISION image=$IMAGE rollback_container=$OLD records=$RELEASE"
+log "COMPLETE revision=$REVISION image=$IMAGE rollback_container=$OLD rollback_worker=$OLD_WORKER records=$RELEASE"

@@ -59,6 +59,7 @@ export class WordPressDraftAdapter {
 
   async upsertDraft(draft, existingPostId = null, options = {}) {
     if (!this.enabled) throw new Error("WordPress draft delivery is not configured.");
+    this.deliveryGuard?.(options.draftId, { phase: 'delivery' });
     assertSafeSiteUrl(this.config.siteUrl);
     if (existingPostId) {
       const current = await this.request(`/wp-json/wp/v2/posts/${existingPostId}?context=edit`, { method: "GET", signal: options.signal });
@@ -105,6 +106,7 @@ export class WordPressDraftAdapter {
 
   async upsertContractDraft(publishPackage, options = {}) {
     if (!this.enabled) throw new Error("WordPress draft delivery is not configured.");
+    this.deliveryGuard?.(options.draftId, { phase: 'delivery', pagePayload: options.pagePayload || publishPackage?.page });
     assertSafeSiteUrl(this.config.siteUrl);
     const configuredEndpoint = String(this.config.cmsArticleEndpoint || "").trim();
     const endpoint = configuredEndpoint || `${this.config.siteUrl}/wp-json/stc/v1/cms-articles`;

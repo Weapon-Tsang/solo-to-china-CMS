@@ -65,6 +65,7 @@ export function loadConfig(env = process.env) {
     host: env.HOST || "127.0.0.1",
     port: integer(env.PORT, 4310),
     databasePath,
+    processRole: choice(env.CMS_PROCESS_ROLE, ['all','api','worker'], 'all'),
     captureToken: env.CAPTURE_TOKEN || "",
     adminToken: env.ADMIN_TOKEN || "",
     auth: {
@@ -196,6 +197,10 @@ export function loadConfig(env = process.env) {
       publicBaseUrl: (env.PUBLIC_BASE_URL || "").replace(/\/$/, ""),
       accessToken: env.VERTEX_AI_ACCESS_TOKEN || "",
       requestTimeoutMs: integer(env.VERTEX_IMAGE_TIMEOUT_MS, 120_000),
+      quotaRpm: integer(env.VISUAL_MODEL_RPM, 2),
+      quotaWindowMs: integer(env.VISUAL_MODEL_WINDOW_MS, 60_000),
+      quotaSafetyMarginMs: integer(env.VISUAL_MODEL_SAFETY_MARGIN_MS, 1_000),
+      maxDispatchesPerStep: integer(env.VISUAL_MODEL_MAX_DISPATCHES_PER_STEP, 4),
     },
     content: {
       minFacts: integer(env.AUTO_CONTENT_MIN_FACTS, 5),

@@ -256,10 +256,11 @@ export function renderContentAstMarkdown(ast) {
 
 export function composePageFromAst(ast, capabilities = {}, pageSchema = {}, pagePlan = null, pageIdentity = null) {
   const atomic = composeAtomicPageFromAst(ast, capabilities, pageSchema, pagePlan, pageIdentity);
-  return atomic || composeLegacyFirstTimeGuideFromAst(ast, capabilities, pageSchema, pageIdentity);
+  return atomic || composeArticleSectionsFromAst(ast, capabilities, pageSchema, pageIdentity);
 }
 
 export function composeFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema = {}) {
+  if (ast?.content_type !== 'first_time_guide') return null;
   return composePageFromAst(ast, capabilities, pageSchema);
 }
 
@@ -419,39 +420,61 @@ function addReadingPresentation(metadata, ast, pageSchema) {
   };
 }
 
-function composeLegacyFirstTimeGuideFromAst(ast, capabilities = {}, pageSchema = {}, pageIdentity = null) {
-  if (ast?.content_type !== "first_time_guide") return null;
+function composeArticleSectionsFromAst(ast, capabilities = {}, pageSchema = {}, pageIdentity = null) {
   const component = (capabilities.components || []).find((item) => item.id === "articleSection" && item.status !== "deprecated");
   if (!component || !component.schema?.properties?.heading || !component.schema?.properties?.body) return null;
+  const imageComponent = (capabilities.components || []).find((item) => item.id === 'image'
+    && item.status !== 'deprecated' && item.schema?.properties?.media_id);
   const faqComponent = (capabilities.components || []).find((item) => ["faq", "faqList"].includes(item.id)
     && item.status !== "deprecated" && item.schema?.properties?.items);
   const sections = [];
+  const leadingMedia = [];
   for (const node of ast.nodes || []) {
     if (node.type === "heading" && Number(node.level || 2) === 2) sections.push({ heading: node, content: [] });
+    else if (node.type === 'media' && !sections.length) leadingMedia.push(node);
     else if (sections.length) sections.at(-1).content.push(node);
   }
   if (!sections.length) return null;
   const variants = component.variants || [];
   const variant = variants.includes("answer-first") ? "answer-first" : variants[0];
-  const blocks = sections.map((section) => {
+  const blocks = [];
+  const provenance = [];
+  const append = (block,nodes) => {
+    const index=blocks.length;
+    blocks.push(block);
+    provenance.push({ blockIndex:index,blockSignature:pageBlockSignature(block),
+      contentNodeId:nodes.find((node)=>node.type!=='heading')?.id || nodes[0]?.id || null,
+      sourceSectionIds:[...new Set(nodes.flatMap((node)=>node.source_section_ids || []))],
+      claimKeys:[...new Set(nodes.flatMap((node)=>node.fact_refs || []))],
+      factuality:nodes.some((node)=>node.fact_refs?.length) ? 'factual' : 'non_factual' });
+  };
+  const appendMedia=(node) => {
+    if (!imageComponent || !Number.isInteger(Number(node.media_id)) || Number(node.media_id)<=0 || !node.alt) return;
+    const role=node.role==='hero' ? 'featured' : 'context';
+    const data={media_id:Number(node.media_id),alt:node.alt,role};
+    if (imageComponent.schema.properties.caption) data.caption=node.caption || '';
+    append({type:imageComponent.id,variant:preferredVariant(imageComponent,role),data},[node]);
+  };
+  for (const node of leadingMedia) appendMedia(node);
+  for (const section of sections) {
+    const mediaNodes=section.content.filter((node)=>node.type==='media');
+    const textNodes=section.content.filter((node)=>node.type!=='media');
     if (faqComponent && ast.faq?.length && /frequently asked questions|^faq$/i.test(section.heading.visible_text)) {
       const faqVariant = faqComponent.variants?.[0];
-      return { type: faqComponent.id, ...(faqVariant ? { variant: faqVariant } : {}),
-        data: { items: ast.faq.map((item) => ({ question: item.question, answer: item.answer })) } };
+      append({ type: faqComponent.id, ...(faqVariant ? { variant: faqVariant } : {}),
+        data: { items: ast.faq.map((item) => ({ question: item.question, answer: item.answer })) } },
+        [section.heading,...textNodes]);
+      for (const node of mediaNodes) appendMedia(node);
+      continue;
     }
-    const contentNodes = section.content;
-    const body = contentNodes.map((node) => node.type === "list"
+    const body = textNodes.map((node) => node.type === "list"
       ? (node.items || []).map((item) => `- ${item}`).join("\n") : node.visible_text).join("\n\n");
-    return { type: component.id, ...(variant ? { variant } : {}), data: { heading: section.heading.visible_text, body } };
-  });
+    if (body.trim()) append({ type: component.id, ...(variant ? { variant } : {}),
+      data: { heading: section.heading.visible_text, body } },[section.heading,...textNodes]);
+    for (const node of mediaNodes) appendMedia(node);
+  }
+  if (!blocks.length) return null;
   const metadata = pageMetadata(ast, pageSchema, pageIdentity);
-  const provenance = blocks.map((block, index) => {
-    const section = sections[index];
-    const nodes = [section.heading, ...section.content];
-    return { blockIndex: index, blockSignature: pageBlockSignature(block), contentNodeId: section.content[0]?.id || section.heading.id,
-      sourceSectionIds: [...new Set(nodes.flatMap((node) => node.source_section_ids))],
-      claimKeys: [...new Set(nodes.flatMap((node) => node.fact_refs))], factuality: nodes.some((node) => node.fact_refs.length) ? "factual" : "non_factual" };
-  });
   return { output: { metadata, blocks }, model: "deterministic-content-ast-compat-1", provenance: {
     version: "content-ast-compat-1", valid: true, errors: [], entries: provenance,
   } };

@@ -24,7 +24,7 @@ export function label(value) {
     verified: "已核验", unverified: "未核验", partial: "部分完成", complete: "已完整保存", completed: "已完成",
     retrying: "重试中", retry_required: "等待定向重试", manual_review: "需要人工检查", extracted: "已提取，等待审计",
     waiting: "等待中", interrupted: "流程中断", blocked: "已阻塞", pending_start: "等待开始", in_progress: "生产中",
-    needs_attention: "需要处理", history: "历史记录", record_operation: "生产记录操作", failed_attempt: "失败尝试",
+    needs_attention: "需要处理", needs_review: "需要处理", history: "历史记录", record_operation: "生产记录操作", failed_attempt: "失败尝试",
     failure_lesson: "失败经验", archive: "归档", restore_archive: "恢复归档", delete_production_record: "删除生产记录",
     page_plan: "页面规划", frontend_page_payload: "页面编排", publish_package: "发布包", unavailable: "尚未生成",
     paragraph_group: "段落组", image: "图片", video: "视频", text: "文本", document: "文档",

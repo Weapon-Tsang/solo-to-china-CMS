@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 
 export function resolveStagePolicy(stage, config = {}) {
   const catalog = config.stagePolicy || { version: "legacy", stages: {} };
-  const reasoningStage = new Set(["content_brief", "article_draft_v2", "quality_review_v2", "frontend_page_plan",
+  const reasoningStage = new Set(["content_brief", "article_draft_v2", "article_bundle_v1", "quality_review_v2", "quality_review_v3", "frontend_page_plan",
     "frontend_page_payload", "bounded_draft_repair"]).has(stage);
   const selected = catalog.stages?.[stage] || {
     class: "general", requires: ["structured_output"],

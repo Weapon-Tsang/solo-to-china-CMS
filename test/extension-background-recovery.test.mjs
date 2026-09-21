@@ -2,7 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { indexedDB } from 'fake-indexeddb';
 import { mediaJournal } from '../extension/media-journal.js';
-import { applyIdentityBatch, createSession, transitionTask } from "../extension/sync-core.js";
+import { applyIdentityBatch, createSession, mediaIdentitiesToRepair, transitionTask } from "../extension/sync-core.js";
+
+test('text/DOM recapture re-persists all media for the new capture version',()=>{
+  assert.equal(mediaIdentitiesToRepair({sourceId:'existing',repairActions:['RECAPTURE_TEXT_DOM'],repairMediaIdentities:[]}),null);
+  assert.deepEqual([...mediaIdentitiesToRepair({sourceId:'existing',repairActions:['BROWSER_MEDIA_REPAIR'],repairMediaIdentities:['image-2']})],['image-2']);
+  assert.equal(mediaIdentitiesToRepair({sourceId:null,repairMediaIdentities:[]}),null);
+  let session=createSession({scope:{key:'scope:repair',url:'https://www.xiaohongshu.com/user/profile/test?tab=fav'},mode:'repair'});
+  session=applyIdentityBatch(session,[{externalId:'existing-note',url:'https://www.xiaohongshu.com/explore/existing-note'}],[{
+    externalId:'existing-note',known:false,sourceExists:true,sourceId:'existing',requiredActions:['RECAPTURE_TEXT_DOM'],
+    repairMedia:{missingOriginals:[]},
+  }]);
+  assert.equal(session.queue.length,1);
+  assert.equal(mediaIdentitiesToRepair(session.queue[0]),null);
+});
 
 test("MV3 module restart automatically requeues and drives an in-flight task without popup Resume", async () => {
   mediaJournal.factory = indexedDB;
@@ -63,4 +76,26 @@ test("MV3 module restart automatically requeues and drives an in-flight task wit
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('frame replacement during execute reinjects once and preserves the task retry budget',async()=>{
+  const listener=()=>({addListener(){},removeListener(){}});
+  let calls=0;
+  let injections=0;
+  globalThis.chrome={
+    runtime:{onInstalled:listener(),onStartup:listener(),onMessage:listener(),getManifest:()=>({version:'2.0.45'})},
+    alarms:{onAlarm:listener(),create:async()=>{},clear:async()=>true},
+    storage:{local:{get:async(defaults)=>defaults,set:async()=>{}}},
+    tabs:{get:async(id)=>({id,status:'complete'}),onUpdated:listener(),onRemoved:listener()},
+    scripting:{executeScript:async(options)=>{
+      if(options.files){injections++;return [];}
+      calls++;
+      if(calls===1)throw new Error('Frame with ID 0 was removed.');
+      return [{result:{ok:true}}];
+    }},
+  };
+  const background=await import(`../extension/background.js?frame=${Date.now()}`);
+  assert.equal((await background.execute(7,()=>42)).ok,true);
+  assert.equal(calls,2);
+  assert.equal(injections,1);
 });

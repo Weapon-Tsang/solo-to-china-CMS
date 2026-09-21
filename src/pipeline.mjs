@@ -5,6 +5,7 @@ import { buildContentAst, composePageFromAst, markdownToContentBlocks } from "./
 import { validatePlanningDestination } from "./destination-consistency.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, reconcileCommercialDelivery, validateFinalPageArtifact } from "./publish-page.mjs";
 import { validateMediaDelivery } from "./media-delivery.mjs";
+import { assertPublicationEligibility, freezeRequiredMediaManifest, mediaManifestForDraft } from "./publication-eligibility.mjs";
 import { inheritJobContext, isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
 import { recoverRemoteOriginal } from "./source-media-store.mjs";
@@ -379,7 +380,8 @@ export class Pipeline {
           && !(this.repository.listDraftVisuals?.(job.entity_id) || []).length) {
         this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
       }
-      const artifactConfigHash = stageConfiguration(this, job.type);
+      const artifactConfigHash = stageConfiguration(this, job.pipeline_version === 'article_bundle_v1'
+        && job.type === 'plan_content' ? 'article_bundle_v1' : job.type);
       pipelineArtifact = this.repository.preparePipelineArtifact?.(job, artifactConfigHash) || null;
       const modelStep = async (key, input, operation, configurationStage = job.type) => {
         if (!this.repository.pipelineStepIdentity) return guarded(operation);
@@ -725,6 +727,27 @@ export class Pipeline {
         case "plan_content": {
           this.requireContentEngine();
           const ownerId = job.production_owner_opportunity_id || null;
+          if (job.pipeline_version === 'article_bundle_v1') {
+            const contentPackage = this.repository.getPlanningPackage(job.entity_id, { opportunityId:ownerId });
+            if (!contentPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
+            const destinationValidation = validatePlanningDestination(contentPackage);
+            if (!destinationValidation.valid) throw Object.assign(new Error(`${destinationValidation.code}: ${destinationValidation.message}`),
+              { code:destinationValidation.code,retryable:false,details:destinationValidation });
+            const bundle = await guarded((signal) => this.contentEngine.articleBundle(contentPackage,
+              { signal, telemetryContext }));
+            const plannedEvidence = validatePlannedEvidence(bundle.output.brief, contentPackage);
+            if (!plannedEvidence.valid) throw Object.assign(new Error('ARTICLE_BUNDLE_EVIDENCE_INVALID'),
+              { code:'ARTICLE_BUNDLE_EVIDENCE_INVALID',retryable:false,details:plannedEvidence });
+            commitStage(() => {
+              const briefId = this.repository.saveBrief(job.entity_id, bundle.output.brief, bundle.model,
+                { deferDraft:true, opportunityId:ownerId });
+              const draftId = this.repository.saveDraft(briefId, bundle.output.draft, bundle.model,
+                { deferReview:this.canComposeFrontendPage, opportunityId:ownerId });
+              if (this.visuals?.enabled) this.enqueueChild(job,'generate_visuals',draftId);
+              else if (this.canComposeFrontendPage) this.enqueueChild(job,'compose_frontend_page',draftId);
+            });
+            break;
+          }
           if (!this.repository.getEditorialAssembly(job.entity_id)) {
             const assemblyPackage = this.repository.getEditorialAssemblyPackage(job.entity_id, { opportunityId:ownerId });
             if (!assemblyPackage) throw new Error(`Topic candidate ${job.entity_id} no longer exists.`);
@@ -835,7 +858,7 @@ export class Pipeline {
             }
             const asset=this.repository.sourceAssetDecisionDto(visual.source_asset_id);
             const analyzed=await guarded((signal)=>this.visualReviewer.analyzeMediaAsset(asset,{signal,
-              telemetryContext:{...telemetryContext,entityId:visual.source_asset_id}}));
+              telemetryContext:{...telemetryContext,entityId:visual.source_asset_id,visualId:visual.id}}));
             // One source analysis is an intermediate checkpoint, not the
             // completion of the generate_visuals stage.  Completing the stage
             // here releases the Job lease after the first image and makes every
@@ -853,7 +876,10 @@ export class Pipeline {
           // input. Re-run planning only when this attempt added new source
           // analysis; otherwise a second pass is redundant and historically
           // allowed an unstable plan to flip assets inside one Job attempt.
-          if (analysisVisuals.length) this.repository.prepareMediaRepair(job.entity_id);
+          if (analysisVisuals.length && !mediaManifestForDraft(this.repository.db, job.entity_id)) {
+            this.repository.prepareMediaRepair(job.entity_id);
+          }
+          freezeRequiredMediaManifest(this.repository.db, job.entity_id);
           contentPackage = this.repository.getDraftPackage(job.entity_id);
           const requiredGaps=this.repository.blockedRequiredVisuals?.(job.entity_id) || [];
           if (requiredGaps.length) throw Object.assign(new Error("Required factual visual has no relevant retained authorized source."),{
@@ -872,8 +898,10 @@ export class Pipeline {
               this.repository.saveGeneratedVisual(visual.id, result,{expectedFingerprint:visual.asset_fingerprint});
             } catch (error) {
               if (isJobLeaseLost(error)) throw error;
+              if (error?.code === 'MEDIA_RATE_WAIT') throw error;
               const failed = this.repository.failVisual(visual.id, error);
-              if (failed.retryable || visual.factual_image_required) throw error;
+               if (failed.retryable || visual.factual_image_required || visual.required_in_article
+                 || visual.media_metadata?.required_visual_obligation?.required) throw error;
               this.logger.warn("pipeline.optional_visual_skipped", { visualId: visual.id, draftId: job.entity_id, error });
             }
           }
@@ -887,7 +915,8 @@ export class Pipeline {
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
-          const capabilities = this.frontendContracts.resolveForArticle({ canonical: contentPackage.brief?.canonical || {}, draft: contentPackage.draft || {} });
+          const capabilities = this.frontendContracts.resolveForArticle({ canonical: contentPackage.brief?.canonical || {},
+            draft: contentPackage.draft || {},includeAllEditorial:job.pipeline_version === 'article_bundle_v1' });
           if (!capabilities.components.length) {
             this.repository.createFrontendCapabilityRequest({ draftId: job.entity_id, briefId: contentPackage.brief?.id || null, semanticNeed: "article-page-payload", useCase: contentPackage.draft?.title || "Article draft", reason: "The active Frontend Contract exposes no stable components for the final page payload." });
             throw new Error("MISSING_FRONTEND_CAPABILITY: no stable Frontend component can express this page.");
@@ -896,7 +925,12 @@ export class Pipeline {
             visuals: contentPackage.draft.visuals || [], facts: contentPackage.facts || [] });
           const existingPageId = contentPackage.frontend_page?.payload?.metadata?.pageId || null;
           const composed = composePageFromAst(currentAst, capabilities, contract.pageSchema.schema, contentPackage.frontend_page_plan?.plan, existingPageId)
-            || await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext }));
+            || (job.pipeline_version === 'article_bundle_v1'
+              ? null : await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext })));
+          if (!composed) throw Object.assign(new Error('Deterministic page composition requires supported Frontend Contract blocks.'),
+            { code:'FRONTEND_CONTRACT_UNSUPPORTED',retryable:false,
+              details:{contentType:currentAst?.content_type,nodeCount:currentAst?.nodes?.length || 0,
+                components:capabilities.components.map((item)=>item.id)} });
           if (existingPageId && composed.output?.metadata) composed.output.metadata.pageId = existingPageId;
           const validation = this.frontendContracts.validatePagePayload(composed.output);
           const savedPage = commitStage(() => {
@@ -908,7 +942,8 @@ export class Pipeline {
             }
             return saved;
           }, { acceptResult: saved => saved.validation.valid });
-          if (!savedPage.validation.valid) throw new Error(`Frontend page payload is invalid: ${savedPage.validation.errors.map((item) => item.code).join(", ")}`);
+          if (!savedPage.validation.valid) throw Object.assign(new Error(`Frontend page payload is invalid: ${savedPage.validation.errors.map((item) => `${item.code}:${item.path || ''}:${item.message || ''}`).join(", ")}`),
+            {code:'FRONTEND_PAGE_INVALID',retryable:false,details:savedPage.validation.errors});
           break;
         }
         case "review_draft": {
@@ -1016,6 +1051,7 @@ export class Pipeline {
             publishFailureContext({job,contentPackage,contract,page:finalPage,phase:"final_page_qa"}));
           await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
+          assertPublicationEligibility(this.repository.db, job.entity_id, { phase: 'delivery', pagePayload: finalPage });
           const mediaValidation = validateMediaDelivery(contentPackage.draft.visuals, { requireMetadata: true, pagePayload:finalPage });
           if (!mediaValidation.valid) throw invalidPublishPage("MEDIA_DELIVERY_INVALID", mediaValidation,
             publishFailureContext({job,contentPackage,contract,page:finalPage,phase:"media_delivery"}));
@@ -1048,6 +1084,8 @@ export class Pipeline {
         case "push_wordpress_draft": {
           if (!this.wordpress?.enabled) throw new Error("WordPress draft delivery is not configured.");
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
+          assertPublicationEligibility(this.repository.db, job.entity_id, { phase: 'delivery',
+            pagePayload: contentPackage?.publish_composition?.publish_package?.page || null });
           if (!contentPackage?.review?.passed) throw new Error("Only a QA-passed draft can be sent to WordPress.");
           if (!contentPackage.commercial_composition) throw new Error("Commercial composition stage must complete before WordPress delivery.");
           // Once a Frontend Contract source is configured, a publishable article must carry
@@ -1071,7 +1109,8 @@ export class Pipeline {
             if (this.frontendContracts?.configured) {
               const publishPackage = structuredClone(contentPackage.publish_composition.publish_package);
               publishPackage.publication.existing_post_id = publication.post_id || publishPackage.publication.existing_post_id || null;
-              result = await guarded((signal) => this.wordpress.upsertContractDraft(publishPackage, { signal, idempotencyKey: job.id }));
+              result = await guarded((signal) => this.wordpress.upsertContractDraft(publishPackage, { signal, idempotencyKey: job.id,
+                draftId: job.entity_id, pagePayload: publishPackage.page }));
             } else {
               const publishableDraft = {
                 ...contentPackage.draft,
@@ -1082,7 +1121,8 @@ export class Pipeline {
                   ? contentPackage.commercial_composition.content_blocks
                   : markdownToContentBlocks(contentPackage.commercial_composition.publishable_body_markdown),
               };
-              result = await guarded((signal) => this.wordpress.upsertDraft(publishableDraft, publication.post_id, { signal, idempotencyKey: job.id }));
+              result = await guarded((signal) => this.wordpress.upsertDraft(publishableDraft, publication.post_id, { signal, idempotencyKey: job.id,
+                draftId: job.entity_id }));
             }
             commitStage(() => this.repository.completeWordPressPublication(job.entity_id, result,{opportunityId:job.production_owner_opportunity_id || null}));
           } catch (error) {
@@ -1112,6 +1152,8 @@ export class Pipeline {
       if (job) {
         if (isJobLeaseLost(error)) {
           this.logger.warn("pipeline.job_lease_lost", { jobId: job.id, jobType: job.type, entityId: job.entity_id });
+        } else if (error?.code === 'MEDIA_RATE_WAIT' && error.availableAt) {
+          this.repository.deferJobWithoutAttempt(job, error.availableAt);
         } else {
           this.repository.failPipelineArtifact?.(pipelineArtifact, error);
           this.recordExtractionOutcome(job, { ok: false, error });
@@ -1184,7 +1226,16 @@ export class Pipeline {
       case 'assemble_editorial': next('plan_content'); break;
       case 'plan_content': {
         const brief = repository.db.prepare('SELECT id FROM content_briefs WHERE candidate_id=?').get(entity);
-        if (brief) next('plan_narrative', brief.id);
+        if (brief) {
+          if (job.pipeline_version === 'article_bundle_v1') {
+            const draft = repository.db.prepare('SELECT id FROM article_drafts WHERE brief_id=?').get(brief.id);
+            if (draft) {
+              if (this.visuals?.enabled) next('generate_visuals',draft.id);
+              else if (this.canComposeFrontendPage) next('compose_frontend_page',draft.id);
+              else next('review_draft',draft.id);
+            }
+          } else next('plan_narrative', brief.id);
+        }
         break;
       }
       case 'plan_narrative': next('assemble_writing_packet'); break;
@@ -1258,6 +1309,8 @@ export class Pipeline {
 
   async uploadVisualMedia(contentPackage, options = {}) {
     if (!this.wordpress?.enabled || typeof this.wordpress.resolveVisualMedia !== "function") return [];
+    freezeRequiredMediaManifest(this.repository.db, contentPackage.draft?.id);
+    assertPublicationEligibility(this.repository.db, contentPackage.draft?.id, { phase: 'local' });
     const deliveryVisuals = this.repository.listDraftVisualsForDelivery?.(contentPackage.draft?.id)
       || contentPackage.draft?.visuals || [];
     const uploaded = await this.wordpress.resolveVisualMedia(deliveryVisuals, (visual) => {

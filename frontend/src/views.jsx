@@ -40,6 +40,9 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
   }, "手动连接测试完成；测试不会激活模型或重跑任务。");
   const selectedCredential = data?.credentials?.[provider] || {};
   return <div className="grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(16rem,.72fr)]">
+    {data && (data.activeProvider !== provider || data.activationState !== "active") && <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-950 xl:col-span-3">
+      当前采集提取路由仍为 {data.activeModel || data.activeProvider || "legacy"}。下方勾选仅表示准备配置的模型；需保存凭据并点击“激活新采集路由”，刷新后确认“当前激活”才会影响新的提取任务。已采集但不完整的笔记仍需先修复采集。
+    </div>}
     <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">来源采集与结构化提取</div><p className="mt-1 text-xs leading-relaxed text-slate-500">DeepSeek 为推荐默认；GPT-5.6 Luna 可手动切换，也可在 Knowledge 中按次发起局部争议复核。切换只影响新任务。</p></div><StatusPill status={data?.activeProvider === provider && data?.activationState === "active" ? "ready" : "pending"} /></div>
       <div className="mt-4 space-y-2 sm:mt-5">{(data?.extractionModels || []).map((item) => <label key={item.provider} className={cn("flex cursor-pointer gap-3 rounded-xl border p-3 transition", provider === item.provider ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300")}><input className="mt-1 accent-slate-900" type="radio" name="extraction-provider" value={item.provider} checked={provider === item.provider} onChange={() => { setProvider(item.provider); setApiKey(""); }} /><span><span className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-slate-900">{item.label}{item.recommended && <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] text-blue-700">推荐默认</span>}{data?.activeProvider === item.provider && <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] text-emerald-700">当前激活</span>}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{item.description}</span></span></label>)}</div>
       <label className="mt-4 block text-[11px] font-medium text-slate-700">{provider === "openai" ? "OpenAI API key" : "DeepSeek API key"}<input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-slate-500" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="new-password" placeholder={selectedCredential.configured ? `已配置 ····${selectedCredential.maskedSuffix || "（环境变量）"}；留空保持不变` : "输入后将由服务器加密保存"} /></label>
@@ -764,22 +767,20 @@ function WordPressView({ data, onGuide }) {
   return <>{summary}<TableShell><Table><TableHeader><TableRow><TableHead>文章</TableHead><TableHead>状态</TableHead><TableHead className="hidden md:table-cell">固定链接</TableHead><TableHead className="hidden lg:table-cell">修改时间</TableHead></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell><div className="flex items-center gap-1.5 font-medium text-slate-900">{item.post_url ? <a className="inline-flex items-center gap-1 hover:text-blue-600" href={item.post_url} target="_blank" rel="noreferrer">{item.title || "未命名文章"}<ExternalLink className="size-3" /></a> : item.title || "未命名文章"}</div><div className="mt-1 text-[10px] text-slate-400">WordPress #{item.post_id}</div></TableCell><TableCell><StatusPill status={item.status} /></TableCell><TableCell className="hidden md:table-cell">{item.slug}</TableCell><TableCell className="hidden whitespace-nowrap lg:table-cell">{formatDate(item.modified_at)}</TableCell></TableRow>)}</TableBody></Table></TableShell></>;
 }
 
-function CommercialView({ data, onGuide, onAction, actionBusy }) {
+function CommercialView({ data, onGuide, onAction, actionBusy, commercialFilter='all', onCommercialFilter }) {
   const items = data?.items || [];
   const providers = data?.providers || [];
   const opportunities = data?.opportunities || [];
   const queue = data?.queue || [];
   const performance = data?.performance || [];
   const commissionRules = data?.commissionRules || [];
-  const [assetFilter,setAssetFilter]=useState("all");
   const [selectedAsset,setSelectedAsset]=useState(null);
   const [assetForm,setAssetForm]=useState(null);
   const [assetUsage,setAssetUsage]=useState(null);
   const [assetVersions,setAssetVersions]=useState([]);
   const [assetLoading,setAssetLoading]=useState(false);
   const [refreshPlan,setRefreshPlan]=useState(null);
-  const visibleAssets=items.filter((item)=>assetFilter === "all" || (assetFilter === "active" && item.active)
-    || (assetFilter === "inactive" && !item.active) || (assetFilter === "expired" && item.valid_until && Date.parse(item.valid_until)<Date.now()));
+  const visibleAssets=items;
   const openAsset=async(item)=>{
     setSelectedAsset(item);setAssetForm(assetEditForm(item));setAssetLoading(true);
     try {
@@ -814,11 +815,11 @@ function CommercialView({ data, onGuide, onAction, actionBusy }) {
     if (result) setRefreshPlan(null);
   };
   return <>
-    <SummaryBar title={`${providers.length} 个提供商 · ${items.length} 个资产`}><span>{opportunities.length} 个高价值 联盟营销机会</span><span>{queue.length} 个建链任务</span><span>{performance.length} 组归因指标 · {commissionRules.length} 条可维护佣金规则</span></SummaryBar>
+    <SummaryBar title={`${providers.length} 个提供商 · ${data?.totalAssets ?? items.length} 个资产`}><span>{opportunities.length} 个高价值 联盟营销机会</span><span>{queue.length} 个建链任务</span><span>{performance.length} 组归因指标 · {commissionRules.length} 条可维护佣金规则</span></SummaryBar>
     <SectionTitle title="联盟营销提供商" description="V1 使用人工模式；账号凭证和登录态不进入 CMS" />
     <TableShell><Table><TableHeader><TableRow><TableHead>提供商</TableHead><TableHead>连接方式</TableHead><TableHead>站点 / 语言</TableHead><TableHead>活跃资产</TableHead><TableHead>状态</TableHead></TableRow></TableHeader><TableBody>{providers.map((item) => <TableRow key={item.id}><TableCell><div className="font-medium text-slate-900">{item.display_name}</div><div className="mt-1 text-[10px] text-slate-400">{item.provider_key}</div></TableCell><TableCell>{label(item.connection_mode)}</TableCell><TableCell>{item.site_name || "—"} · {item.default_language || "en"}</TableCell><TableCell className="tabular-nums">{item.active_asset_count || 0}</TableCell><TableCell><StatusPill status={item.status || "configured"} /></TableCell></TableRow>)}</TableBody></Table></TableShell>
     <SectionTitle title="已有联盟资产" description="链接资产按目的地、区域、路线或实体范围复用，不绑定到单篇文章" />
-    <div className="mb-3 flex flex-wrap gap-2">{[["all","全部"],["active","启用"],["inactive","停用"],["expired","已过期"]].map(([key,text])=><Button key={key} size="sm" variant={assetFilter===key ? "default" : "outline"} onClick={()=>setAssetFilter(key)}>{text}</Button>)}</div>
+    <div className="mb-3 flex flex-wrap gap-2">{[["all","全部"],["active","启用"],["inactive","停用"],["expired","已过期"]].map(([key,text])=><Button key={key} size="sm" variant={commercialFilter===key ? "default" : "outline"} onClick={()=>onCommercialFilter?.(key)}>{text}</Button>)}</div>
     <TableShell><Table><TableHeader><TableRow><TableHead>资产</TableHead><TableHead>范围</TableHead><TableHead>展示类型</TableHead><TableHead>商品类别</TableHead><TableHead>使用情况</TableHead><TableHead>状态 / 操作</TableHead></TableRow></TableHeader><TableBody>{visibleAssets.map((item) => <TableRow key={item.id}><TableCell><div className="font-medium text-slate-900">{item.title || item.id}</div><div className="mt-1 break-all text-[10px] text-slate-400">v{item.revision || 1} · {item.target_url || "无目标链接"}</div></TableCell><TableCell>{label(item.scope_type)}<div className="mt-1 text-[10px] text-slate-400">{item.scope_key || item.destination_slug || "global"}</div></TableCell><TableCell>{label(item.asset_type)}</TableCell><TableCell>{label(item.product_category)}</TableCell><TableCell><span>{item.adopted_article_count || 0} 篇采用</span><div className="text-[10px] text-slate-400">{item.delivered_article_count || 0} 篇已交付 · {item.slot_count || 0} 个槽位</div></TableCell><TableCell><StatusPill status={item.active ? "active" : "inactive"} /><div className="mt-2 flex flex-wrap gap-1"><Button size="sm" variant="outline" onClick={()=>openAsset(item)}>编辑 / 使用文章</Button>{item.target_url && <Button size="sm" variant="ghost" onClick={()=>navigator.clipboard?.writeText(item.target_url)}>复制链接</Button>}</div></TableCell></TableRow>)}</TableBody></Table></TableShell>
     {selectedAsset && assetForm && <AffiliateAssetEditor asset={selectedAsset} form={assetForm} setForm={setAssetForm}
       providers={providers} usage={assetUsage} versions={assetVersions} loading={assetLoading} busy={actionBusy} onSave={saveAsset} refreshPlan={refreshPlan}

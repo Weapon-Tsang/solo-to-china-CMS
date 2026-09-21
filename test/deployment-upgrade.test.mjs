@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { CONTENT_STRATEGY } from '../src/content-strategy.mjs';
+import { SCHEMA_VERSION } from '../src/db.mjs';
 
 const app = fileURLToPath(new URL('..', import.meta.url));
 async function fixture(t) {
@@ -33,7 +34,7 @@ async function fixture(t) {
   });
   return { root, work, filename, original, run };
 }
-test('deployment probe rehearses schema 59 to 73, preserves cited IDs and rolls back paired DB without deleting originals', async t => {
+test('deployment probe rehearses schema 59 to current, preserves cited IDs and rolls back paired DB without deleting originals', async t => {
   const f = await fixture(t);
   for (const mode of ['backup', 'rehearse', 'migrate']) {
     const result = f.run(mode);
@@ -41,7 +42,7 @@ test('deployment probe rehearses schema 59 to 73, preserves cited IDs and rolls 
     assert.doesNotMatch(result.stdout, /PRIVATE original evidence|original bytes/);
   }
   let db = new DatabaseSync(f.filename);
-  assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 73);
+  assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, SCHEMA_VERSION);
   assert.equal(db.prepare('SELECT capture_version FROM source_assets').get().capture_version, 3);
   db.close();
   const restored = f.run('restore'); assert.equal(restored.status, 0, restored.stderr);
@@ -115,10 +116,15 @@ test('deployment helpers validate the supplied release version instead of a hard
     assert.doesNotMatch(script, /version!==["']\d+\.\d+\.\d+/);
   }
   const resume = fs.readFileSync(path.join(app, 'deployment/gce', 'resume-verified-upgrade.sh'), 'utf8');
-  assert.match(resume, /result\['schema'\]==73/);
-  assert.match(resume, /h\.contentStrategy\.version!=="3\.7"/);
-  assert.doesNotMatch(resume, /h\.contentStrategy\.version!=="3\.6"/);
-  assert.match(resume, /MAX\(version\).*==73/);
+  assert.match(resume, /result\['schema'\]==76/);
+  assert.match(resume, /h\.contentStrategy\.version!=="3\.8"/);
+  assert.match(resume, /MAX\(version\).*==76/);
+  for (const filename of ['upgrade-existing.sh', 'resume-verified-upgrade.sh']) {
+    const script = fs.readFileSync(path.join(app, 'deployment/gce', filename), 'utf8');
+    assert.match(script, /CMS_PROCESS_ROLE=api/);
+    assert.match(script, /CMS_PROCESS_ROLE=worker/);
+    assert.match(script, /--name engine-worker/);
+  }
 });
 
 test('runtime image smoke explicitly authorizes only its disposable database bootstrap', () => {

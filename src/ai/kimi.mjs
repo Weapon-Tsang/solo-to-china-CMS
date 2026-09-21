@@ -87,10 +87,18 @@ export class KimiExtractor {
     if (!this.enabled) throw Object.assign(new Error("Image analysis provider is not configured."),{code:"MEDIA_ANALYSIS_NOT_CONFIGURED",retryable:false});
     const images=await this.client.imageParts([{...asset,kind:"image"}]);
     if (!images.parts.length) throw Object.assign(new Error("Stored source image bytes are unavailable for analysis."),{code:"SOURCE_IMAGE_BYTES_MISSING",retryable:false});
-    const completion=await this.client.completeJson({name:"source_asset_media_analysis",schema:MEDIA_ANALYSIS_SCHEMA,
-      instructions:MEDIA_ANALYSIS_PROMPT,content:[{type:"text",text:JSON.stringify({assetId:asset.id,
-        sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",altText:asset.alt_text || "",nearbyText:asset.nearby_text || ""})},
-        ...images.parts],signal,telemetryContext,validateOutput:validateMediaAnalysisOutput});
+    const permit=this.config.mediaRequestExecutor?.acquire({provider:this.config.provider || 'vertex',
+      model:this.config.model || 'unknown',accountScope:`${this.config.projectId || 'default'}:${this.config.location || 'global'}`,
+      visualId:telemetryContext?.visualId || asset.id,substage:'analyze_source_image'});
+    let completion;
+    try {
+      completion=await this.client.completeJson({name:"source_asset_media_analysis",schema:MEDIA_ANALYSIS_SCHEMA,
+        instructions:MEDIA_ANALYSIS_PROMPT,content:[{type:"text",text:JSON.stringify({assetId:asset.id,
+          sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",altText:asset.alt_text || "",nearbyText:asset.nearby_text || ""})},
+          ...images.parts],signal,telemetryContext,validateOutput:validateMediaAnalysisOutput});
+      permit?.finish();
+    } catch (error) { permit?.finish({error,responseReceived:error?.status != null
+      || ['LOCAL_OUTPUT_INVALID','MODEL_OUTPUT_INVALID'].includes(error?.code)}); throw error; }
     return {result:sanitizeMediaAnalysis({...completion.output,asset_id:asset.id,
       source_sha256:asset.original_sha256 || asset.stored_sha256 || completion.output?.source_sha256 || ""}),
       method:this.config.provider || "vertex",model:completion.model};

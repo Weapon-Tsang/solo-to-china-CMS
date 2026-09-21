@@ -62,7 +62,7 @@ test("migration 71 is additive and does not enqueue or rewrite source assets",as
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"stc-migration-71-"));
   t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
   const source=fs.readFileSync(new URL("../src/db.mjs",import.meta.url),"utf8")
-    .replace(/^  if \(current < (?:71|72|73)\).*$/gm,"");
+    .replace(/^  if \(current < (\d+)\).*$/gm,(line,version)=>Number(version)>=71?'':line);
   const legacyPath=path.join(directory,"db-v70.mjs");fs.writeFileSync(legacyPath,source);
   const {openDatabase:openV70}=await import(`${pathToFileURL(legacyPath).href}?schema=70`);
   const filename=path.join(directory,"migration.sqlite");let db=openV70(filename);

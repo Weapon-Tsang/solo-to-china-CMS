@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.45 - Unreleased
+
+- Add a revision-bound required-media manifest and enforce delivery eligibility at the pipeline and WordPress adapter boundaries.
+- Persist shared image-request pacing, cooldown, dispatch outcomes and per-job budgets; resume saved article bundles, image candidates, reviews and media receipts.
+- Add bounded SQL administration pages and scoped display caching, and support separate API and worker process roles against one SQLite database.
+- Preserve capture repairs already in the working tree and add local migration, process, quota, publication and browser regression coverage. Production Provider and full recovery-chain acceptance remain pending.
+
 ## 2.0.44 - Unreleased
 
 - Align CMS commercial fallback copy with the Frontend commercial B ticket presentation, normalizing exact historical generated title/filler templates without overwriting manual copy.

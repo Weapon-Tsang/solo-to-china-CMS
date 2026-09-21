@@ -170,6 +170,17 @@ const DRAFT_SCHEMA = objectSchema(
   },
 );
 
+const ARTICLE_BUNDLE_SCHEMA = objectSchema(['brief','draft'], {
+  brief: BRIEF_SCHEMA,
+  draft: DRAFT_SCHEMA,
+});
+
+const ARTICLE_BUNDLE_PROMPT = `Produce one complete, evidence-grounded English article bundle for the approved SoloToChina topic.
+Return exactly a brief and a draft in one structured response. The brief is an editorial plan and the draft is the finished article.
+Use only the supplied source facts and experience. Every evidence ledger claim key must appear in the matching brief outline section and refer to an input fact. Preserve numbers, qualifiers, dates, uncertainty and source provenance. Do not invent first-person travel experience or source media.
+Plan a useful narrative, reader decisions, SEO metadata, FAQ and required image slots. The draft must contain each evidence-bearing brief heading and must include accurate alt text. A factual image must reference a relevant authorized source; illustration does not replace factual evidence. Do not claim that any generated image passed visual QA.
+The output is production input, not a review. A separate independent reviewer will audit it.`;
+
 const DRAFT_REPAIR_SCHEMA = objectSchema(
   ["base_content_hash", "replacement_sections"],
   {
@@ -294,6 +305,31 @@ export class ContentEngine {
       instructions: briefPrompt(this.contentStrategy.version),
       input: JSON.stringify(research), options,
     });
+  }
+
+  async articleBundle(research, options = {}) {
+    const facts = (research?.facts || []).map((fact) => ({ ...fact,
+      evidence: compactFactEvidence(fact.evidence) }));
+    const allowedFactKeys = facts.map((fact) => fact.normalized_key);
+    const result = await this.respond({
+      name: 'article_bundle_v1', schema: ARTICLE_BUNDLE_SCHEMA,
+      instructions: ARTICLE_BUNDLE_PROMPT,
+      input: JSON.stringify({ ...research, facts }),
+      options: { ...options, validateOutput: (output) => {
+        const outline = output.brief?.outline || [];
+        const sectionIds = outline.map((section) => section.section_id).filter(Boolean);
+        const sectionFactKeys = Object.fromEntries(outline.map((section) => [section.section_id, section.claim_keys || []]));
+        const required = outline.filter((section) => section.claim_keys?.length).map((section) => section.section_id);
+        output.draft.body_markdown = normalizeDraftHeadingHierarchy(output.draft.body_markdown,
+          output.draft.title, outline.map((section) => section.heading).filter(Boolean));
+        validateGeneratedDraftEvidence(output.draft, allowedFactKeys, sectionIds, required, sectionFactKeys);
+        validateGeneratedDraftProtectedValues(output.draft, facts);
+        normalizeGeneratedDraftEvidenceSources(output.draft, facts, outline);
+        validateGeneratedDraftStructure(output.draft, outline);
+      } },
+    });
+    result.output.draft.slug = slugify(result.output.draft.slug || result.output.draft.title);
+    return result;
   }
 
   async analyzeIntake(research, options = {}) {
@@ -508,10 +544,11 @@ export class ContentEngine {
       extract_source_experience: ['experience_extraction', EXPERIENCE_SCHEMA, EXPERIENCE_PROMPT],
       assemble_editorial: ['editorial_assembly', ASSEMBLY_SCHEMA, ASSEMBLY_PROMPT],
       plan_content: ['content_brief', BRIEF_SCHEMA, briefPrompt(this.contentStrategy.version)],
+      article_bundle_v1: ['article_bundle_v1', ARTICLE_BUNDLE_SCHEMA, ARTICLE_BUNDLE_PROMPT],
       plan_narrative: ['narrative_plan', NARRATIVE_SCHEMA, NARRATIVE_PROMPT],
       generate_draft: ['article_draft_v2', DRAFT_SCHEMA, draftPrompt.toString()],
       revise_draft: ['bounded_draft_repair', DRAFT_REPAIR_SCHEMA, DRAFT_REPAIR_PROMPT],
-      review_draft: ['quality_review_v2', REVIEW_SCHEMA, REVIEW_PROMPT],
+      review_draft: [Number.parseFloat(String(this.contentStrategy.version || '0')) >= 3.8 ? 'quality_review_v3' : 'quality_review_v2', REVIEW_SCHEMA, REVIEW_PROMPT],
       resolve_entities: ['destination_entity_resolution', ENTITY_RESOLUTION_SCHEMA, ENTITY_RESOLUTION_PROMPT],
       compose_frontend_page_plan: ['frontend_page_plan', PAGE_PLAN_SCHEMA, pagePlanPrompt.toString()],
       compose_frontend_page: ['frontend_page_payload', null, pagePayloadPrompt.toString()],

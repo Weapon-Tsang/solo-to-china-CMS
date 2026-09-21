@@ -10,7 +10,7 @@ const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/i
 const MAX_INLINE_VIDEO_BYTES = 14 * 1024 * 1024;
 const MAX_REMOTE_VIDEO_BYTES = 256 * 1024 * 1024;
 const SUPPORTED_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/quicktime", "video/mpeg", "video/webm", "video/avi", "video/wmv", "video/flv", "video/3gpp"]);
-const REASONING_STAGES = new Set(["content_brief", "article_draft_v2", "quality_review_v2", "frontend_page_plan", "frontend_page_payload"]);
+const REASONING_STAGES = new Set(["content_brief", "article_draft_v2", "article_bundle_v1", "quality_review_v2", "quality_review_v3", "frontend_page_plan", "frontend_page_payload"]);
 
 export class VertexGeminiClient {
   constructor(config, fetchImpl = fetch) {

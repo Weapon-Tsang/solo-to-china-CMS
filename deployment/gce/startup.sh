@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PROJECT_ID="project-4bcb9146-c37b-43b0-b11"
-IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:2.0.44"
+IMAGE="asia-east1-docker.pkg.dev/${PROJECT_ID}/solo-to-china/engine:2.0.45"
 APP_DIR="/opt/solo-to-china"
 METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 
@@ -140,6 +140,7 @@ services:
     restart: unless-stopped
     env_file: .env.production
     environment:
+      CMS_PROCESS_ROLE: api
       HOST: 0.0.0.0
       PORT: 8080
       DATABASE_PATH: /var/lib/solo-to-china/solo-to-china.sqlite
@@ -148,8 +149,25 @@ services:
       SOURCE_UPLOADS_DIR: /var/lib/solo-to-china/source-uploads
     volumes:
       - solo_to_china_data:/var/lib/solo-to-china
+      - solo_to_china_app_data:/app/data
     expose:
       - "8080"
+
+  engine-worker:
+    image: ${ENGINE_IMAGE}
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      CMS_PROCESS_ROLE: worker
+      DATABASE_PATH: /var/lib/solo-to-china/solo-to-china.sqlite
+      BACKUP_DIR: /var/lib/solo-to-china/backups
+      GENERATED_MEDIA_DIR: /var/lib/solo-to-china/generated-media
+      SOURCE_UPLOADS_DIR: /var/lib/solo-to-china/source-uploads
+    volumes:
+      - solo_to_china_data:/var/lib/solo-to-china
+      - solo_to_china_app_data:/app/data
+    depends_on:
+      - engine
 
   cloudflared:
     image: cloudflare/cloudflared:2026.8.2
@@ -160,6 +178,7 @@ services:
 
 volumes:
   solo_to_china_data:
+  solo_to_china_app_data:
 EOF
 
 log 'Authenticating to Artifact Registry and starting services.'
@@ -169,21 +188,27 @@ docker pull "$IMAGE"
 docker pull cloudflare/cloudflared:2026.8.2
 docker network inspect solo-to-china >/dev/null 2>&1 || docker network create solo-to-china >/dev/null
 docker volume inspect solo_to_china_data >/dev/null 2>&1 || docker volume create solo_to_china_data >/dev/null
+docker volume inspect solo_to_china_app_data >/dev/null 2>&1 || docker volume create solo_to_china_app_data >/dev/null
 if docker inspect engine >/dev/null 2>&1; then
   log 'Creating a verified database-and-content snapshot in the persistent volume before replacing the engine container.'
   docker exec --env BACKUP_REASON=pre-upgrade engine node src/backup.mjs \
     /var/lib/solo-to-china/solo-to-china.sqlite \
     /var/lib/solo-to-china/backups >/dev/null
 fi
-for container_name in engine cloudflared; do
+for container_name in engine engine-worker cloudflared; do
   if docker inspect "$container_name" >/dev/null 2>&1; then
     docker stop --time 30 "$container_name" >/dev/null
   fi
 done
-docker rm engine cloudflared >/dev/null 2>&1 || true
+docker rm engine engine-worker cloudflared >/dev/null 2>&1 || true
+docker run --rm --network none \
+  --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
+  --volume solo_to_china_data:/var/lib/solo-to-china \
+  "$IMAGE" node --input-type=module -e 'import { openDatabase } from "./src/db.mjs"; const db = openDatabase(process.env.DATABASE_PATH); db.close();' >/dev/null
 docker run --detach --name engine --restart unless-stopped \
   --network solo-to-china \
   --env-file "${APP_DIR}/.env.production" \
+  --env CMS_PROCESS_ROLE=api \
   --env HOST=0.0.0.0 \
   --env PORT=8080 \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
@@ -191,6 +216,18 @@ docker run --detach --name engine --restart unless-stopped \
   --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media \
   --env SOURCE_UPLOADS_DIR=/var/lib/solo-to-china/source-uploads \
   --volume solo_to_china_data:/var/lib/solo-to-china \
+  --volume solo_to_china_app_data:/app/data \
+  "$IMAGE" >/dev/null
+docker run --detach --name engine-worker --restart unless-stopped \
+  --network solo-to-china \
+  --env-file "${APP_DIR}/.env.production" \
+  --env CMS_PROCESS_ROLE=worker \
+  --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
+  --env BACKUP_DIR=/var/lib/solo-to-china/backups \
+  --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media \
+  --env SOURCE_UPLOADS_DIR=/var/lib/solo-to-china/source-uploads \
+  --volume solo_to_china_data:/var/lib/solo-to-china \
+  --volume solo_to_china_app_data:/app/data \
   "$IMAGE" >/dev/null
 docker run --detach --name cloudflared --restart unless-stopped \
   --network solo-to-china \
@@ -209,6 +246,12 @@ CLOUDFLARED_STATE="$(docker inspect --format '{{.State.Status}}' cloudflared)"
 if [[ "$CLOUDFLARED_STATE" != 'running' ]]; then
   log 'Cloudflared did not remain running. Recent diagnostic output follows:'
   docker logs --tail 100 cloudflared >&2 || true
+  exit 1
+fi
+WORKER_STATE="$(docker inspect --format '{{.State.Status}}' engine-worker)"
+if [[ "$WORKER_STATE" != 'running' ]] || ! docker logs engine-worker 2>&1 | grep -q 'worker.ready'; then
+  log 'Worker did not become ready. Recent diagnostic output follows:'
+  docker logs --tail 100 engine-worker >&2 || true
   exit 1
 fi
 log 'Deployment completed successfully.'

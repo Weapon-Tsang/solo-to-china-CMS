@@ -32,6 +32,11 @@ export default function App() {
   const [totals, setTotals] = useState({});
   const [actionCounts, setActionCounts] = useState({});
   const [viewCache, setViewCache] = useState({});
+  const [paging, setPaging] = useState({
+    sources:{cursor:'',history:[],pageSize:20}, recommendations:{cursor:'0',history:[],pageSize:20},
+    content:{cursor:'0',history:[],pageSize:20}, knowledge:{cursor:'',history:[],pageSize:20},
+    commercial:{cursor:'0',history:[],pageSize:20,filter:'all'},
+  });
   const [pendingActionView, setPendingActionView] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -44,10 +49,15 @@ export default function App() {
   const viewCacheRef = useRef({});
   const overviewRequests = useRef(createInFlightRequestCoordinator());
   const viewRequests = useRef(createInFlightRequestCoordinator());
+  const prefetchAbortRef = useRef(null);
   const detailRequests = useRef(createLatestRequestCoordinator());
-  const viewData = viewCache[activeView]?.data || null;
+  const authScope = auth?.authenticated ? `${auth.username || 'local'}:${auth.role || 'admin'}` : 'anonymous';
+  const keyFor = (view) => JSON.stringify([authScope,view,paging[view]?.cursor || '',paging[view]?.pageSize || null,paging[view]?.filter || '']);
+  const activeKey = keyFor(activeView);
+  const viewData = viewCache[activeKey]?.data || null;
 
   useEffect(() => { viewCacheRef.current = viewCache; }, [viewCache]);
+  useEffect(() => { viewRequests.current.invalidate(); detailRequests.current.invalidate(); setViewCache({}); }, [authScope]);
 
   const showToast = useCallback((message, isError = false) => {
     setToast({ message, error: isError });
@@ -69,61 +79,98 @@ export default function App() {
   const loadStatusSummary = useCallback(() => overviewRequests.current.run("status", async ({ signal }) => {
     const [nextHealth,dashboard,sourceStatus] = await Promise.all([
       api("/api/health",{signal}),api("/api/dashboard/summary", { signal }),
-      activeView==="sources"?api("/api/sources/status?limit=100",{signal}):Promise.resolve(null),
+      activeView==="sources" ? (() => {
+        const ids = (viewCacheRef.current[keyFor('sources')]?.data?.items || []).map((item) => item.id);
+        return ids.length ? api(`/api/sources/status?ids=${encodeURIComponent(ids.join(','))}`,{signal}) : Promise.resolve(null);
+      })() : Promise.resolve(null),
     ]);
     setTotals(dashboard.totals || {});
     setActionCounts(dashboard.actionCounts || {});
     setHealth(nextHealth);
     if(sourceStatus?.items)setViewCache((current)=>{
-      const cached=current.sources?.data;if(!cached?.items)return current;
+      const key=keyFor('sources');const cached=current[key]?.data;if(!cached?.items)return current;
       const updates=new Map(sourceStatus.items.map((item)=>[item.id,item]));
-      return {...current,sources:{...current.sources,data:{...cached,items:cached.items.map((item)=>updates.has(item.id)?{...item,...updates.get(item.id)}:item)}}};
+      return {...current,[key]:{...current[key],data:{...cached,items:cached.items.map((item)=>updates.has(item.id)?{...item,...updates.get(item.id)}:item)}}};
     });
-  }), [activeView]);
+  }), [activeView, authScope, paging.sources]);
 
   const loadAuth = useCallback(async () => setAuth(await api("/api/auth/status")), []);
 
-  const loadView = useCallback((view, { quiet = false, force = false } = {}) => viewRequests.current.run(view, async ({ signal }) => {
-    const cached = viewCacheRef.current[view];
+  const loadView = useCallback((view, { quiet = false, force = false } = {}) => viewRequests.current.run(keyFor(view), async ({ signal }) => {
+    const key = keyFor(view);
+    const cached = viewCacheRef.current[key];
     if (!force && cached?.data && Date.now() - cached.loadedAt < 30_000) return { ok: true, cached: true };
     const sequence = ++requestSequence.current;
-    if (!quiet && !viewCacheRef.current[view]?.data) setLoading(true);
+    if (!quiet && !cached?.data) setLoading(true);
     try {
       const data = view === "knowledge"
-        ? await Promise.all([api("/api/knowledge/summary", { signal }), api("/api/knowledge/subjects?limit=50", { signal })])
+        ? await Promise.all([api("/api/knowledge/summary", { signal }),
+          api(`/api/knowledge/subjects?limit=${paging.knowledge.pageSize}&cursor=${encodeURIComponent(paging.knowledge.cursor)}`, { signal })])
           .then(([summary, subjects]) => ({ summary, subjects: subjects.items || [], nextCursor: subjects.nextCursor || null }))
-        : await api(endpoints[view], { signal });
+        : await api(paging[view] ? `${endpoints[view]}?limit=${paging[view].pageSize}&cursor=${encodeURIComponent(paging[view].cursor)}${view==='commercial' ? `&filter=${encodeURIComponent(paging.commercial.filter)}` : ''}` : endpoints[view], { signal });
       if (sequence !== requestSequence.current) return { ok: false, stale: true };
-      setViewCache((current) => ({ ...current, [view]: { data: { ...data, _loadedView: view }, loadedAt: Date.now() } }));
+      setViewCache((current) => {
+        const entries=Object.entries(current).slice(-23);
+        return { ...Object.fromEntries(entries), [key]: { data: { ...data, _loadedView: view }, loadedAt: Date.now() } };
+      });
       setError("");
       return { ok: true, stale: false };
     } catch (caught) {
-      if (sequence !== requestSequence.current) return { ok: false, stale: true, error: caught };
+      if (sequence !== requestSequence.current || caught.name === 'AbortError') return { ok: false, stale: true, error: caught };
       setError(caught.message);
       return { ok: false, stale: false, error: caught };
     } finally {
       if (sequence === requestSequence.current) setLoading(false);
     }
-  }), []);
+  }), [authScope, paging]);
 
-  const loadMoreContent = useCallback(async () => {
-    const cursor = viewCacheRef.current.content?.data?.nextCursor;
-    if (!cursor || contentPagingBusy) return;
-    setContentPagingBusy(true);
-    try {
-      const page = await api(`/api/content?cursor=${encodeURIComponent(cursor)}`);
-      setViewCache((current) => {
-        const previous = current.content;
-        if (previous?.data?.nextCursor !== cursor) return current;
-        const sections = { ...previous.data.sections };
-        for (const [key, value] of Object.entries(page.sections || {})) sections[key] = (sections[key] || 0) + value;
-        return { ...current, content: { ...previous, data: { ...previous.data,
-          items: [...(previous.data.items || []), ...(page.items || [])], sections,
-          nextCursor: page.nextCursor } } };
-      });
-    } catch (caught) { showToast(caught.message, true); }
-    finally { setContentPagingBusy(false); }
-  }, [contentPagingBusy, showToast]);
+  useEffect(() => {
+    if (!auth?.authenticated || auth.mustChangePassword || !paging[activeView] || !viewData?.nextCursor || document.hidden) return undefined;
+    const nextCursor=String(viewData.nextCursor);
+    const page=paging[activeView];
+    const nextKey=JSON.stringify([authScope,activeView,nextCursor,page.pageSize,page.filter || '']);
+    if (viewCacheRef.current[nextKey]?.data) return undefined;
+    const controller=new AbortController();
+    prefetchAbortRef.current=controller;
+    const timer=setTimeout(async()=>{
+      if (controller.signal.aborted || document.hidden) return;
+      try {
+        const next=activeView==='knowledge'
+          ? await api(`/api/knowledge/subjects?limit=${page.pageSize}&cursor=${encodeURIComponent(nextCursor)}`,{signal:controller.signal})
+            .then((subjects)=>({summary:viewData.summary,subjects:subjects.items || [],nextCursor:subjects.nextCursor || null}))
+          : await api(`${endpoints[activeView]}?limit=${page.pageSize}&cursor=${encodeURIComponent(nextCursor)}${activeView==='commercial' ? `&filter=${encodeURIComponent(page.filter)}` : ''}`,
+            {signal:controller.signal});
+        if (controller.signal.aborted) return;
+        const loadedAt=Date.now();
+        setViewCache((current)=>{
+          if (current[nextKey]?.loadedAt) return current;
+          return {...Object.fromEntries(Object.entries(current).slice(-23)),
+            [nextKey]:{data:{...next,_loadedView:activeView},loadedAt}};
+        });
+      } catch (error) {
+        if (error.name!=='AbortError') prefetchAbortRef.current=null;
+      }
+    },250);
+    const cancel=()=>controller.abort();
+    document.addEventListener('visibilitychange',cancel);
+    return ()=>{clearTimeout(timer);controller.abort();document.removeEventListener('visibilitychange',cancel);
+      if(prefetchAbortRef.current===controller)prefetchAbortRef.current=null;};
+  },[activeKey,activeView,auth?.authenticated,auth?.mustChangePassword,authScope,viewData?.nextCursor,viewData?.summary,paging]);
+
+  const nextPage = useCallback((view) => {
+    const next=viewCacheRef.current[keyFor(view)]?.data?.nextCursor;
+    if (!next) return;
+    prefetchAbortRef.current?.abort();
+    setPaging((current)=>({...current,[view]:{...current[view],history:[...current[view].history,current[view].cursor],cursor:next}}));
+  }, [authScope,paging]);
+  const previousPage = useCallback((view) => setPaging((current) => {
+    const previous=current[view]; if (!previous?.history.length) return current;
+    return {...current,[view]:{...previous,cursor:previous.history.at(-1),history:previous.history.slice(0,-1)}};
+  }), []);
+  const changePageSize = useCallback((view,size) => setPaging((current)=>({ ...current,
+    [view]:{...current[view],cursor:['sources','knowledge'].includes(view)?'':'0',history:[],pageSize:Number(size)} })), []);
+  const changeCommercialFilter=useCallback((filter)=>setPaging((current)=>({...current,
+    commercial:{...current.commercial,cursor:'0',history:[],filter}})),[]);
 
   useEffect(() => {
     void loadAuth().catch((caught) => setError(caught.message));
@@ -131,8 +178,13 @@ export default function App() {
 
   useEffect(() => {
     if (!auth?.authenticated || auth.mustChangePassword) return;
-    void Promise.all([loadOverview(), loadView(activeView)]).catch((caught) => setError(caught.message));
-  }, [activeView, auth, loadOverview, loadView]);
+    void loadOverview().catch((caught) => setError(caught.message));
+  }, [auth?.authenticated, auth?.mustChangePassword, authScope, loadOverview]);
+
+  useEffect(() => {
+    if (!auth?.authenticated || auth.mustChangePassword) return;
+    void loadView(activeView).catch((caught) => setError(caught.message));
+  }, [activeView, activeKey, auth?.authenticated, auth?.mustChangePassword, loadView]);
 
   useEffect(() => {
     if (!auth?.authenticated || auth.mustChangePassword) return undefined;
@@ -155,9 +207,17 @@ export default function App() {
   const runAction = useCallback(async (url, options, successMessage) => {
     setActionBusy(true);
     try {
+      prefetchAbortRef.current?.abort();
       const result = await api(url, options);
       showToast(typeof successMessage === "function" ? successMessage(result) : successMessage);
-      await refresh(false);
+      const changedId=result?.article_id || result?.opportunity_id || result?.source_id || result?.id;
+      if (changedId) setViewCache((current)=>{
+        const currentPage=current[activeKey]; if (!currentPage?.data?.items) return current;
+        return {...current,[activeKey]:{...currentPage,data:{...currentPage.data,items:currentPage.data.items.map((item)=>
+          [item.id,item.opportunity_id,item.candidate_id].includes(changedId) ? {...item,...result} : item)}}};
+      });
+      void loadView(activeView,{quiet:true,force:true});
+      void loadOverview();
       return result || true;
     } catch (caught) {
       showToast(caught.message, true);
@@ -165,7 +225,7 @@ export default function App() {
     } finally {
       setActionBusy(false);
     }
-  }, [refresh, showToast]);
+  }, [activeKey, activeView, loadOverview, loadView, showToast]);
 
   const submitManualSource = useCallback(async (payload, onProgress) => {
     setActionBusy(true);
@@ -195,7 +255,8 @@ export default function App() {
       }
       onProgress?.({ phase: "queued", percent: 100, label: "已入库，等待分段提取" });
       showToast(result.message || "来源已进入处理流程");
-      await refresh(false);
+       void loadView('sources',{quiet:true,force:true});
+       void loadOverview();
       return result;
     } catch (caught) {
       showToast(caught.message, true);
@@ -203,7 +264,7 @@ export default function App() {
     } finally {
       setActionBusy(false);
     }
-  }, [refresh, showToast]);
+  }, [loadOverview, loadView, showToast]);
 
   const closeDetail = useCallback(() => {
     detailRequests.current.invalidate();
@@ -283,7 +344,7 @@ export default function App() {
         </Tabs>
         {health && !health.aiConfigured && <AiAlert onConfigure={() => openGuide("ai")} />}
         <section aria-live="polite">
-          {loading && !viewData ? <LoadingView /> : error && !viewData ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <ViewRenderer view={activeView} data={viewData} reviewRequest={pendingActionView?.view === "knowledge" ? pendingActionView.requestedAt : null} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onOpenProduction={(id) => openPackage("production", id)} onAction={runAction} onSubmitManualSource={submitManualSource} onLoadMoreContent={loadMoreContent} contentPagingBusy={contentPagingBusy} actionBusy={actionBusy} />}
+          {loading && !viewData ? <LoadingView /> : error && !viewData ? <EmptyState icon="offline" title="无法加载此页面" description={error} action={() => refresh(true)} actionLabel="重新尝试" /> : <><ViewRenderer view={activeView} data={viewData} commercialFilter={paging.commercial.filter} onCommercialFilter={changeCommercialFilter} reviewRequest={pendingActionView?.view === "knowledge" ? pendingActionView.requestedAt : null} health={health} auth={auth} onAuthRefresh={loadAuth} onNavigate={setActiveView} onGuide={openGuide} onOpenSource={(id) => openPackage("source", id)} onOpenDraft={(id) => openPackage("draft", id)} onOpenProduction={(id) => openPackage("production", id)} onAction={runAction} onSubmitManualSource={submitManualSource} onLoadMoreContent={() => nextPage('content')} contentPagingBusy={contentPagingBusy} actionBusy={actionBusy} />{paging[activeView] && <nav aria-label="列表分页" className="mt-3 flex items-center gap-2"><Button variant="outline" disabled={!paging[activeView].history.length} onClick={() => previousPage(activeView)}>上一页</Button><span className="text-xs text-slate-500">第 {paging[activeView].history.length+1} 页</span>{activeView!=='content' && <Button variant="outline" disabled={!viewData?.nextCursor} onClick={() => nextPage(activeView)}>下一页</Button>}<label className="text-xs text-slate-500">每页 <select value={paging[activeView].pageSize} onChange={(event)=>changePageSize(activeView,event.target.value)}><option value="20">20</option><option value="50">50</option></select> 条</label></nav>}</>}
         </section>
         <footer className="flex flex-col gap-1 border-t border-slate-200/70 pt-4 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:pt-5"><span>SoloToChina 内容研究引擎</span><span>应用 v{health?.version || "—"} · 策略 v{health?.contentStrategy?.version || "—"} · 仅处理人工选定来源</span></footer>
       </main>

@@ -230,7 +230,7 @@ export class VertexImagen {
     const telemetry=options.telemetryContext || {};
     const saved=await this.config.saveVisualCandidate?.({
       visualId:visual.id,draftId:draft.id,jobId:telemetry.runId || null,jobAttempt:telemetry.jobAttempt || 0,
-      recoveryRunId:telemetry.recoveryRunId || null,sourceHash:hashBytes(source.bytes),transformInputHash,outputHash,
+      recoveryRunId:telemetry.recoveryRunId || null,sourceHash:source?.bytes ? hashBytes(source.bytes) : '',transformInputHash,outputHash,
       mediaPath,mimeType:normalizedMime,byteSize:outputBytes.length,provider,model,
       expectedFingerprint:options.expectedFingerprint || visual.asset_fingerprint || null,
     });
@@ -262,32 +262,43 @@ export class VertexImagen {
     const context=options.telemetryContext || {};
     const startedAt=new Date().toISOString();
     const startedMs=Date.now();
+    let permit;
     try {
-      await this.config.beforeRequest?.({provider,model,stage,attempt:1});
+      if (this.config.mediaRequestExecutor) permit = this.config.mediaRequestExecutor.acquire({
+        provider, model, accountScope:`${this.config.projectId || 'default'}:${this.config.location || 'global'}`,
+        visualId:visual.id, substage:stage,
+      });
+      else await this.config.beforeRequest?.({provider,model,stage,attempt:1});
     } catch (error) {
       await this.recordVisualCall({provider,model,stage,visual,context,startedAt,startedMs,status:"failed",
         error,requestKind:"local_gate",dispatchState:"not_attempted",evidenceBasis:"before_request_gate",endpoint});
       throw error;
     }
     const callId=`visualcall_${crypto.randomUUID()}`;
-    if (this.config.onModelCallStart) await this.recordVisualCall({callId,telemetryPhase:"started",provider,model,stage,visual,context,
-      startedAt,startedMs,status:"failed",requestKind:"provider",attemptStatus:"started",dispatchState:"dispatch_started",
-      evidenceBasis:"dispatch_intent_persisted",endpoint});
+    const heartbeat = permit ? setInterval(() => permit.heartbeat(), 30_000) : null;
+    heartbeat?.unref();
     try {
+      if (this.config.onModelCallStart) await this.recordVisualCall({callId,telemetryPhase:"started",provider,model,stage,visual,context,
+        startedAt,startedMs,status:"failed",requestKind:"provider",attemptStatus:"started",dispatchState:"dispatch_started",
+        evidenceBasis:"dispatch_intent_persisted",endpoint});
       const result=await operation();
+      permit?.finish();
       await this.recordVisualCall({callId,provider,model,stage,visual,context,startedAt,startedMs,status:"succeeded",
         requestKind:"provider",dispatchState:"completed",evidenceBasis:"provider_response_completed",httpStatus:200,endpoint});
       return result;
     } catch (error) {
-      const responded=Number.isFinite(Number(error?.status)) || error?.responseReceived === true;
+      const responded=(error?.status != null && Number.isFinite(Number(error.status))) || error?.responseReceived === true;
+      permit?.finish({error,responseReceived:responded});
       await this.recordVisualCall({callId,provider,model,stage,visual,context,startedAt,startedMs,status:"failed",error,
         requestKind:"provider",dispatchState:responded ? "response_received" : "dispatch_started",
         evidenceBasis:responded ? "provider_error_response" : "dispatch_started_outcome_unknown",
-        httpStatus:Number.isFinite(Number(error?.status)) ? Number(error.status) : responded ? 200 : null,endpoint});
+        httpStatus:error?.status != null && Number.isFinite(Number(error.status)) ? Number(error.status) : responded ? 200 : null,endpoint});
       // Pass the exact persisted attempt through failJob; the job may contain
       // older calls from translation, generation or a previous recovery run.
       error.causalModelCallId=callId;
       throw error;
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
     }
   }
 
@@ -311,6 +322,9 @@ export class VertexImagen {
   }
 
   async generateImagenImage(visual, draft, options = {}) {
+    const identity=this.illustrationInputHash(visual);
+    const resumed=await this.config.findVisualCandidate?.({visualId:visual.id,transformInputHash:identity});
+    if (resumed) return this.promoteIllustrationCandidate(resumed,visual,draft,options);
     const accessToken = await this.accessToken();
     const endpoint = `https://${this.config.location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(this.config.location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:predict`;
     const prediction=await this.trackedRequest({provider:"vertex_imagen",model:this.config.model,stage:"generate_visual",
@@ -336,17 +350,16 @@ export class VertexImagen {
       if (!output) throw imageOutputError("Vertex Imagen",payload);
       return output;
     });
-    return await this.storeImage({
-      base64: prediction.bytesBase64Encoded,
-      mimeType: prediction.mimeType,
-      visual,
-      draft,
-      provider: "vertex_imagen",
-      model: this.config.model,
-    });
+    const candidate=await this.persistCandidate({visual,draft,source:null,
+      outputBytes:Buffer.from(prediction.bytesBase64Encoded,'base64'),mimeType:prediction.mimeType,
+      provider:'vertex_imagen',model:this.config.model,transformInputHash:identity,options});
+    return this.promoteIllustrationCandidate(candidate,visual,draft,options);
   }
 
   async generateGeminiImage(visual, draft, options = {}) {
+    const identity=this.illustrationInputHash(visual);
+    const resumed=await this.config.findVisualCandidate?.({visualId:visual.id,transformInputHash:identity});
+    if (resumed) return this.promoteIllustrationCandidate(resumed,visual,draft,options);
     const accessToken = await this.accessToken();
     const location = this.config.location || "global";
     const host = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
@@ -372,14 +385,60 @@ export class VertexImagen {
       if (!output) throw imageOutputError("Gemini 3.1 Flash Image", payload);
       return output;
     });
-    return await this.storeImage({
-      base64: part.inlineData.data,
-      mimeType: part.inlineData.mimeType,
-      visual,
-      draft,
-      provider: "vertex_gemini",
-      model: this.config.model,
+    const candidate=await this.persistCandidate({visual,draft,source:null,
+      outputBytes:Buffer.from(part.inlineData.data,'base64'),mimeType:part.inlineData.mimeType,
+      provider:'vertex_gemini',model:this.config.model,transformInputHash:identity,options});
+    return this.promoteIllustrationCandidate(candidate,visual,draft,options);
+  }
+
+  illustrationInputHash(visual) {
+    return hashBytes(Buffer.from(JSON.stringify({visualId:visual.id,fingerprint:visual.asset_fingerprint,
+      prompt:visual.generation_prompt,ratio:visual.aspect_ratio,model:this.config.model,version:'illustration-qa-1'})));
+  }
+
+  async promoteIllustrationCandidate(candidate, visual, draft, options = {}) {
+    const outputBytes=fs.readFileSync(candidate.media_path);
+    if (hashBytes(outputBytes)!==candidate.output_hash) throw Object.assign(new Error('Visual candidate hash mismatch.'),
+      {code:'CANDIDATE_HASH_MISMATCH',retryable:false});
+    let qualityQa=candidate.qa || safeJson(candidate.qa_json);
+    const passed=qualityQa?.status==='passed' || ['language','completeness','style','semantic']
+      .every((field)=>qualityQa?.[field]?.status==='passed');
+    if (!passed) {
+      try { qualityQa=await this.reviewIllustration({visual,outputBytes,mimeType:candidate.mime_type,options}); }
+      catch(error) {
+        if(candidate.id) await this.config.updateVisualCandidate?.(candidate.id,{status:error?.code==='VISUAL_QUALITY_QA_FAILED'?'qa_failed':'pending_qa',
+          qa:error?.qualityQa || null,error:{code:error?.code || null,message:String(error?.message || error)}});
+        throw error;
+      }
+      if(candidate.id) await this.config.updateVisualCandidate?.(candidate.id,{status:'promoted',qa:qualityQa});
+    }
+    return this.storeImage({base64:outputBytes.toString('base64'),mimeType:candidate.mime_type,visual,draft,
+      provider:candidate.provider,model:candidate.model,qualityQa});
+  }
+
+  async reviewIllustration({visual,outputBytes,mimeType,options}) {
+    const token=await this.accessToken();
+    const location=this.config.location || 'global';
+    const host=location==='global'?'https://aiplatform.googleapis.com':`https://${location}-aiplatform.googleapis.com`;
+    const model=this.config.qualityModel || 'gemini-3.8-flash';
+    const endpoint=`${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+    const payload=await this.trackedRequest({provider:'vertex_gemini',model,stage:'visual_quality_qa',endpoint,visual,options},async()=>{
+      const response=await providerFetch(this.fetch,endpoint,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},
+        body:JSON.stringify({contents:{role:'USER',parts:[{text:`Review this generated editorial illustration for its approved subject, readable composition, accurate alt text, no fabricated documentary scene, no logos or misleading text. Subject: ${visual.image_subject}. Alt: ${visual.alt_text}. Return all four quality fields.`},
+          {inlineData:{mimeType:normalizeMime(mimeType),data:outputBytes.toString('base64')}}]},
+          generationConfig:{responseModalities:['TEXT'],responseMimeType:'application/json',responseSchema:VISUAL_QA_SCHEMA}}),
+        signal:combinedSignal(options.signal,this.config.requestTimeoutMs)},'vertex_gemini',options.signal);
+      const body=await response.json().catch(()=>({}));
+      if(!response.ok)throw new ProviderRequestError('Illustration QA',response.status,body?.error?.message || response.statusText,
+        {...(body?.error || {}),retryAfter:response.headers.get('retry-after')});
+      return body;
     });
+    const raw=payload?.candidates?.flatMap((candidate)=>candidate?.content?.parts || []).find((item)=>item?.text)?.text || '';
+    let qa;try{qa=JSON.parse(raw);}catch{throw Object.assign(new Error('Illustration QA returned invalid JSON.'),{code:'VISUAL_QUALITY_QA_INVALID',retryable:true});}
+    const normalized=normalizeVisualQa(qa);
+    if(Object.entries(normalized).some(([key,value])=>key!=='notes' && value.status!=='passed'))
+      throw Object.assign(new Error('Illustration quality QA did not pass.'),{code:'VISUAL_QUALITY_QA_FAILED',retryable:true,qualityQa:normalized});
+    return normalized;
   }
 
   async storeImage({ base64, mimeType: suppliedMimeType, visual, draft, provider, model, sourceDimensions = null,
@@ -413,7 +472,8 @@ export class VertexImagen {
       mimeType,
       metadata: { binary_qa: { status: "passed", ...inspection, expected_ratio: expectedRatio || null,
         source_dimensions: sourceDimensions },pixel_qa:{status:"passed",...inspection,expected_ratio:expectedRatio || null,
-        source_dimensions:sourceDimensions,adaptive_text_height:adaptiveTextCard},quality_qa:qualityQa,
+        source_dimensions:sourceDimensions,adaptive_text_height:adaptiveTextCard},quality_qa:{...qualityQa,
+          file_hash:inspection.sha256},
         ...(layoutTelemetry ? {layout_telemetry:layoutTelemetry} : {}) },
     };
   }

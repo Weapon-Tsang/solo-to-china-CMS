@@ -29,7 +29,8 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true, pa
     const mediaId = positiveInteger(visual.wordpress_media_id || visual.media_id || visual.id);
     const path = `$.media[${index}]`;
     if (!mediaId) {
-      const optionalFailure = visual.status === "failed" && !Boolean(visual.factual_image_required);
+      const optionalFailure = visual.status === "failed" && !Boolean(visual.required_in_article || visual.required
+        || visual.media_metadata?.required_visual_obligation?.required || visual.factual_image_required);
       if (!optionalFailure) errors.push({ code:"MEDIA_REQUIRED_MANIFEST_MISSING", path, visual_id:visual.id || null });
       continue;
     }
@@ -90,6 +91,8 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true, pa
   if (pagePayload) {
     const pageIds = new Set((pagePayload.blocks || []).filter((block) => ["image", "annotated_image", "place_info_card"].includes(block?.type))
       .map((block) => positiveInteger(block?.data?.media_id)).filter(Boolean));
+    const featuredId = positiveInteger(pagePayload.metadata?.featuredMediaId || pagePayload.metadata?.featured_media_id);
+    if (featuredId) pageIds.add(featuredId);
     for (const mediaId of deliveredIds) if (!pageIds.has(mediaId)) errors.push({ code:"MEDIA_MISSING_FROM_FINAL_PAGE", path:"$.page.blocks", media_id:mediaId });
     for (const mediaId of pageIds) if (!deliveredIds.has(mediaId)) errors.push({ code:"PAGE_REFERENCES_UNDELIVERED_MEDIA", path:"$.page.blocks", media_id:mediaId });
   }

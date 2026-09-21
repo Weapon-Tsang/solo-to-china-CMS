@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from 'node:fs';
+import path from 'node:path';
 import test from "node:test";
 import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { Pipeline } from "../src/pipeline.mjs";
@@ -10,8 +12,8 @@ import { FrontendContractConsumer } from "../src/frontend-contract.mjs";
 import { defaultComponents, frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
 import { pageBlockSignature } from "../src/repository.mjs";
 
-test("human approval drives recommendation, brief, draft, QA, and WordPress draft delivery", async (t) => {
-  const { db, repository } = repositoryFixture(t);
+for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval drives ${pipelineMode} to QA and WordPress draft delivery`, async (t) => {
+  const { db, repository, directory } = repositoryFixture(t);
   const commercialComponent = {
     id: "affiliate_booking_card", category: "commercial", purpose: "Approved affiliate booking resource.", status: "stable", variants: ["default"],
     schema: { type: "object", additionalProperties: false,
@@ -72,6 +74,11 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   const stageCalls = [];
   const contentEngine = {
     enabled: true,
+    async articleBundle(research) {
+      stageCalls.push('article_bundle_v1');
+      const [brief,draft]=await Promise.all([this.plan(research),this.draft(research)]);
+      return {model:'bundle-model',output:{brief:brief.output,draft:draft.output}};
+    },
     async analyzeIntake() {
       return { model: "intake-model", output: {
         classification: "ARTICLE_CANDIDATE", production_mode: "TOPIC_FEATURE",
@@ -146,7 +153,7 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
       const uploaded = visuals.map((visual, index) => ({ visualId:visual.id, id:100 + index,
         url:`https://example.test/uploads/${visual.id}.png`, metadata:{
           url:`https://example.test/uploads/${visual.id}.png`, width:1200, height:800, mime:"image/png", bytes:1024 + index,
-          sha256:createHash("sha256").update(visual.id).digest("hex"), derivatives:[],
+           sha256:createHash("sha256").update(fs.readFileSync(visual.media_path || visual.source_asset_local_path)).digest("hex"), derivatives:[],
           source_provenance:visual.source_asset_id ? { source_asset_id:visual.source_asset_id, original_stored:true,
             project_owner_confirmed:true } : undefined,
           authorization_policy:visual.source_asset_id ? "project_source_media_full_authorization" : undefined,
@@ -211,17 +218,41 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(dashboardAfterApproval.totals.pendingRecommendations, pendingRecommendationCount - 1);
   assert.equal(dashboardAfterApproval.totals.contentPipelineItems, 1, JSON.stringify(approval));
   assert.equal(approval.queued, true, JSON.stringify(approval));
-  for (let index = 0; index < 60; index += 1) await pipeline.runOne();
+  assert.equal(db.prepare("SELECT pipeline_version FROM jobs WHERE type='plan_content' AND status='queued'").get().pipeline_version,
+    'article_bundle_v1');
+  // Exercise the historical job path; newly approved jobs use article_bundle_v1.
+  if (pipelineMode === 'legacy') db.prepare("UPDATE jobs SET pipeline_version='legacy' WHERE type='plan_content' AND status='queued'").run();
+  let mediaReady = false;
+  for (let index = 0; index < 60; index += 1) {
+    if (!mediaReady) {
+      const draft = db.prepare('SELECT id FROM article_drafts LIMIT 1').get();
+      if (draft) {
+        for (const visual of repository.listDraftVisualsForDelivery(draft.id)) {
+          const file = visual.media_path || visual.source_asset_local_path
+            || path.join(directory, `${visual.id}.png`);
+          if (!fs.existsSync(file)) fs.writeFileSync(file, Buffer.from(`illustration-${visual.id}`));
+          const hash = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          const metadata = { ...visual.media_metadata, binary_qa:{status:'passed',sha256:hash},
+            quality_qa:{status:'passed',file_hash:hash} };
+          db.prepare("UPDATE article_visuals SET status='generated',media_path=?,media_metadata_json=? WHERE id=?")
+            .run(file, JSON.stringify(metadata), visual.id);
+        }
+        mediaReady = true;
+      }
+    }
+    await pipeline.runOne();
+  }
 
   const content = repository.listContent();
   assert.equal(content.length, 1);
   assert.equal(repository.listContent({ approvedOnly: true }).length, 1);
   assert.equal(content[0].draft_status, "wordpress_draft", JSON.stringify({ exceptions: repository.listOperationalExceptions(),
-    jobs: repository.db.prepare('SELECT type,last_error FROM jobs WHERE last_error IS NOT NULL').all() }));
+    jobs: repository.db.prepare('SELECT type,last_error,failure_details_json FROM jobs WHERE last_error IS NOT NULL').all() }));
   assert.equal(content[0].qa_passed, 1);
   assert.equal(content[0].wordpress_post_id, 42);
   assert.equal(wordpress.calls.length, 1);
-  assert.equal(wordpress.calls[0].publishPackage.page.blocks[0].type, "articleSection");
+  assert.equal(wordpress.calls[0].publishPackage.page.blocks[0].type,
+    pipelineMode === 'legacy' ? 'articleSection' : 'image');
   const deliveredCommercial = wordpress.calls[0].publishPackage.page.blocks.find((block)=>block.type === "affiliate_booking_card");
   assert.equal(deliveredCommercial.type, "affiliate_booking_card");
   assert.equal(deliveredCommercial.data.disclosure, "Affiliate disclosure.");
@@ -254,8 +285,9 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   }
   assert.equal(generatedPackage.draft.schema_jsonld["@context"], "https://schema.org");
   assert.equal(generatedPackage.draft.strategy_version, CONTENT_STRATEGY.version);
-  assert.equal(generatedPackage.frontend_page_plan.plan.blocks[0].type, "articleSection");
-  assert.equal(generatedPackage.frontend_page.payload.blocks[0].type, "articleSection");
+  if (pipelineMode === 'legacy') assert.equal(generatedPackage.frontend_page_plan.plan.blocks[0].type, "articleSection");
+  assert.equal(generatedPackage.frontend_page.payload.blocks[0].type,
+    pipelineMode === 'legacy' ? 'articleSection' : 'image');
   assert.equal(generatedPackage.frontend_page.validation.valid, true);
   assert.equal(generatedPackage.publish_composition.validation.valid, true);
   assert.match(generatedPackage.publish_composition.page_content_hash, /^[a-f0-9]{64}$/);
@@ -268,8 +300,12 @@ test("human approval drives recommendation, brief, draft, QA, and WordPress draf
   assert.equal(db.prepare("SELECT strategy_version FROM wordpress_publications WHERE draft_id=?").get(content[0].draft_id).strategy_version, CONTENT_STRATEGY.version);
   assert.equal(JSON.stringify(repository.getTopicPackage(content[0].id)).includes("Trip.com"), false);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status='failed'").get().count, 0);
-  assert.ok(stageCalls.indexOf("compose_frontend_page") < stageCalls.indexOf("review_draft"),
+  if (pipelineMode === 'legacy') assert.ok(stageCalls.indexOf("compose_frontend_page") < stageCalls.indexOf("review_draft"),
     `page composition must precede QA: ${stageCalls.join(" -> ")}`);
+  else {
+    assert.equal(stageCalls.filter((stage)=>stage==='article_bundle_v1').length,1);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type IN ('assemble_editorial','plan_narrative','compose_frontend_page_plan','generate_draft')").get().n,0);
+  }
 
   const mismatched = structuredClone(generatedPackage.publish_composition.publish_package);
   mismatched.contract.contractChecksum = "f".repeat(64);
