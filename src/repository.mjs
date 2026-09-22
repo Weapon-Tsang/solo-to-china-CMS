@@ -5947,6 +5947,12 @@ export class Repository {
   // Discovery is only for an empty plan. Source prose and filenames rank which
   // stored originals to inspect first, but never establish image relevance.
   // The analyzed pixels must still pass normalizeVisuals before any slot exists.
+  sourceMediaAnalysisProviderCalls(jobId) {
+    return this.db.prepare(`SELECT COUNT(*) AS calls FROM model_call_metrics
+      WHERE run_id=? AND stage='source_asset_media_analysis' AND request_kind='provider'`)
+      .get(jobId).calls;
+  }
+
   sourceVisualDiscoveryCandidates(draftId, { limit = 3 } = {}) {
     if (this.listDraftVisuals(draftId).length || mediaManifestForDraft(this.db,draftId)?.approvedNoImage) return [];
     const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*

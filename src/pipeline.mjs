@@ -885,12 +885,12 @@ export class Pipeline {
             else saveAnalysis();
           }
           if (staleCardAnalyses.length) this.repository.prepareMediaRepair(job.entity_id);
-          // An empty historical/writer plan used to bypass image analysis
-          // entirely. Inspect at most three durable originals, stopping as
-          // soon as pixel-level evidence yields a relevant, usable visual.
-          // Ready analyses and local photo audits are durable and shared by
-          // later articles, so retries do not buy the same analysis again.
-          const discoveryIds=this.repository.sourceVisualDiscoveryCandidates?.(job.entity_id) || [];
+          // The three-call limit is per durable Job, not per runOne invocation:
+          // media RPM waits and provider retries resume the same Job and must
+          // never expand discovery into an unbounded paid scan of old sources.
+          const discoveryLimit=Math.max(0,3-(this.repository.sourceMediaAnalysisProviderCalls?.(job.id) || 0));
+          const discoveryIds=this.repository.sourceVisualDiscoveryCandidates?.(job.entity_id,
+            {limit:discoveryLimit}) || [];
           let discoveryCount=0;
           for (const assetId of discoveryIds) {
             if (typeof this.visualReviewer?.analyzeMediaAsset !== "function") {
@@ -936,6 +936,7 @@ export class Pipeline {
               : 'No pixel-verified relevant source image was found for this article.'),{
               code:exhausted ? 'MEDIA_DISCOVERY_BUDGET_EXHAUSTED' : 'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE',retryable:false,
               details:{substage:'source_media_discovery',analyzed_assets:discoveryCount,
+                provider_dispatches:this.repository.sourceMediaAnalysisProviderCalls?.(job.id) || 0,
                 remaining_candidates:remainingDiscovery.length},
             });
           }

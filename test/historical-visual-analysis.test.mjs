@@ -158,4 +158,27 @@ test('an empty historical article plan discovers a frozen original once and uses
     'MEDIA_DISCOVERY_BUDGET_EXHAUSTED');
   assert.equal(analyses,4,'one earlier analysis and only three new calls are permitted in this run');
   assert.equal(repository.sourceVisualDiscoveryCandidates('other-draft').length,1);
+  const extraId='uninspected-after-rate-wait';
+  const extraBytes=await sharp({create:{width:1,height:1,channels:3,
+    background:{r:222,g:33,b:44}}}).png().toBuffer();
+  const extraPath=path.join(directory,`${extraId}.png`);
+  fs.writeFileSync(extraPath,extraBytes);
+  db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,position,local_path,mime_type,
+    capture_version,storage_status,original_bytes_status,durability_status,original_sha256,width,height)
+    VALUES (?,'source','image',?,?,?,'image/png',1,'saved','saved_original','ORIGINAL_STORED',?,1200,800)`)
+    .run(extraId,`https://example.test/${extraId}.png`,9,extraPath,
+      createHash('sha256').update(extraBytes).digest('hex'));
+  db.prepare('UPDATE writing_packets SET context_json=? WHERE id=?').run(JSON.stringify({version:2,
+    authorized_source_assets:[{id:'frozen-photo'},...newIds.map(id=>({id})),{id:extraId}],
+    content_policy:{visuals:{minimum:0,target:1,maximum:3}}}),'other-packet');
+  const resumedJob=repository.enqueue('generate_visuals','other-draft',{dedupeKey:'resumed-bounded-discovery'});
+  for (const id of newIds.slice(0,2)) repository.recordModelCall({stage:'source_asset_media_analysis',
+    provider:'vertex',model:'test',runId:resumedJob,entityId:id,requestKind:'provider',status:'succeeded'});
+  assert.equal(repository.sourceMediaAnalysisProviderCalls(resumedJob),2);
+  assert.equal(repository.sourceVisualDiscoveryCandidates('other-draft').length,2);
+  assert.equal(await pipeline.runOne(),false);
+  assert.equal(db.prepare('SELECT last_failure_code FROM jobs WHERE id=?').get(resumedJob).last_failure_code,
+    'MEDIA_DISCOVERY_BUDGET_EXHAUSTED');
+  assert.equal(analyses,5,'a resumed Job may inspect only the one remaining budgeted source');
+  assert.equal(repository.sourceVisualDiscoveryCandidates('other-draft').length,1);
 });
