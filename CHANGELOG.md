@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.58 - Unreleased
+
+- Fix the Content workbench blank screen caused by an undefined WordPress status badge component, and render both published and draft rows in a permanent regression test.
+
 ## 2.0.57 - Unreleased
 
 - Require the live media manifest, file hashes and independent image QA to pass before a visual Job can succeed or enqueue page composition. A skipped required slot now leaves the article in `needs_review` with an explicit `MEDIA_INCOMPLETE` failure and preserved body/media.
