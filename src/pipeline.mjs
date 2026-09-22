@@ -1476,6 +1476,12 @@ export class Pipeline {
 
   enqueueSourceSemanticDownstream(sourceId,parentJob=null) {
     const source=this.repository.getSource(sourceId);
+    if (source?.status === 'media_only'
+      || source?.submission_metadata?.editorialMediaOnly === true
+      || source?.acquisition_origin === 'user_supplied_editorial_media') {
+      this.logger.info('pipeline.editorial_media_downstream_skipped', { sourceId });
+      return;
+    }
     const destination=source?.structured?.destination_slug;
     if(destination)this.enqueueChild(parentJob||{},"resolve_entities",destination,{workloadClass:"semantic"});
     this.enqueueChild(parentJob||{},"analyze_source_family",sourceId,{workloadClass:"background_enrichment",priority:40});

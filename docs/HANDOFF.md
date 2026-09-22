@@ -1,3 +1,7 @@
+# 2.0.65 editorial-media-only fan-out hotfix
+
+App/Extension version `2.0.65`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. This release keeps user-supplied media imported solely for an existing approved article out of general Source AI enrichment, even when the article stores a small structured route-evidence packet. Both startup reconciliation and semantic downstream fan-out enforce the boundary. A guarded reconciliation retains the original provider diagnostics and cost telemetry while clearing the three non-applicable current Job failures created from the three-day Chongqing route collages. No schema migration is required.
+
 # 2.0.64 frozen Writing Packet authority candidate
 
 App/Extension version `2.0.64`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. This release makes a frozen Writing Packet authoritative for Draft persistence, QA evidence hashing, page composition and historical photo refresh. It prevents article-specific evidence such as the user-confirmed Day 2 route from being replaced downstream by older destination Knowledge with the same normalized key. The release retains the 2.0.63 fail-closed media relevance, guarded WordPress receipt, exact recovery target, and production replay protections.

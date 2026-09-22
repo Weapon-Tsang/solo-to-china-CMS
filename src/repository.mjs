@@ -4088,7 +4088,11 @@ export class Repository {
 
   saveExtraction(sourceId, result, method, model = null, { deferDownstream = false } = {}) {
     const timestamp = now();
-    const sourceEvidence = this.db.prepare("SELECT raw_text,published_at FROM sources WHERE id=?").get(sourceId) || { raw_text: "", published_at: null };
+    const sourceEvidence = this.db.prepare(`SELECT raw_text,published_at,status,acquisition_origin,submission_metadata_json
+      FROM sources WHERE id=?`).get(sourceId) || { raw_text: "", published_at: null };
+    const editorialMediaOnly = sourceEvidence.status === 'media_only'
+      || sourceEvidence.acquisition_origin === 'user_supplied_editorial_media'
+      || json(sourceEvidence.submission_metadata_json, {}).editorialMediaOnly === true;
     transaction(this.db, () => {
       const previousRevision = this.db.prepare("SELECT COALESCE(MAX(revision), 0) AS revision FROM extraction_runs WHERE source_id=?").get(sourceId).revision;
       const extractionRevision = previousRevision + 1;
@@ -4183,9 +4187,17 @@ export class Repository {
         JSON.stringify(result.blueprint.sections), JSON.stringify(result.blueprint.strengths),
         JSON.stringify(result.blueprint.gaps), timestamp,
       );
-      this.db.prepare("UPDATE sources SET status = ?, last_error = NULL, updated_at = ? WHERE id = ?")
+      // Operator-supplied media can carry a small structured evidence packet for
+      // one existing article without becoming a general research Source. Keep
+      // that boundary durable even after saveExtraction writes the packet.
+      this.db.prepare(`UPDATE sources SET status = CASE
+          WHEN status='media_only'
+            OR COALESCE(json_extract(submission_metadata_json,'$.editorialMediaOnly'),0)=1
+            OR acquisition_origin='user_supplied_editorial_media'
+          THEN 'media_only' ELSE ? END,
+        last_error = NULL, updated_at = ? WHERE id = ?`)
         .run(method === "heuristic" ? "needs_ai" : "processed", timestamp, sourceId);
-      if (!deferDownstream) {
+      if (!deferDownstream && !editorialMediaOnly) {
         this.enqueue("resolve_entities", result.source.destination_slug);
         this.enqueue("rebuild_editorial", "global");
       }
@@ -7833,6 +7845,8 @@ export class Repository {
         EXISTS(SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.status='succeeded') AS has_experience,
         EXISTS(SELECT 1 FROM content_intake_analyses cia WHERE cia.source_id=s.id) AS has_diagnostic
       FROM sources s JOIN structured_sources ss ON ss.source_id=s.id WHERE s.status='processed'
+        AND COALESCE(json_extract(s.submission_metadata_json,'$.editorialMediaOnly'),0)<>1
+        AND s.acquisition_origin<>'user_supplied_editorial_media'
       ORDER BY s.captured_at ASC`).all()) {
       if (!row.has_experience) this.enqueue("extract_source_experience", row.id);
       else if (!row.has_diagnostic) this.enqueue("analyze_source_diagnostic", row.id);

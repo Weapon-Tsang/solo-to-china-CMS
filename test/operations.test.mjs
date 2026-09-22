@@ -68,6 +68,44 @@ test("downstream diagnostics do not make a completed source look queued", (t) =>
   assert.equal(repository.sourceTimeline(source.id).some((event)=>event.stage==="analyze_source_diagnostic"&&event.status==="queued"),true);
 });
 
+test("editorial-media-only evidence never fans out into general source AI jobs", (t) => {
+  const {db,repository}=repositoryFixture(t);
+  const source=repository.saveCapture({
+    adapter:"manual",externalId:"editorial-media-only",sourceIdentity:"editorial-media-only",
+    sourceVersionIdentity:"editorial-media-only-v1",canonicalUrl:"manual-source://editorial-media-only",
+    submittedUrl:"",originalUrl:"",finalUrl:"",sourceKind:"images",title:"Existing article route maps",
+    authorName:"User-supplied editorial source",authorUrl:"",sourcePublisher:"User-supplied editorial source",
+    submittedBy:"administrator",publishedAt:null,capturedAt:new Date().toISOString(),rawHtml:"",
+    rawText:"Day 1 route order supplied for an existing approved article.",
+    acquisitionOrigin:"user_supplied_editorial_media",
+    submissionMetadata:{editorialMediaOnly:true,terminalReason:"Existing article visual evidence only."},
+    completeness:{overall:"complete"},rights:{authorizationStatus:"owner_confirmed",commercialUseAllowed:true,
+      editingAllowed:true,redistributionAllowed:true,publishable:true,authorizationOrigin:"project_source_media_full_authorization",
+      licenseScope:["editorial","production"]},assets:[],files:[],
+  });
+  db.prepare("DELETE FROM jobs WHERE entity_id=?").run(source.id);
+  db.prepare("UPDATE sources SET status='media_only' WHERE id=?").run(source.id);
+  repository.saveExtraction(source.id,{
+    source:{language:"en",summary:"Article-specific route evidence",destination_name:"Chongqing",
+      destination_slug:"chongqing",traveler_fit:[],practical_tips:[],warnings:[],confidence:1},
+    claims:[{key:"itinerary.chongqing.day1_sequence",subject:"Chongqing Day 1",predicate:"route_sequence",
+      value:"A -> B",qualifiers:["Day 1"],source_quote:"Day 1 route order",confidence:1,
+      claim_role:"editorial_metadata",knowledge_eligible:false}],
+    blueprint:{format:"route collage",hook:"",angle:"",sections:[],strengths:[],gaps:[]},
+  },"operator_assisted_editorial","user-supplied-route");
+
+  assert.equal(db.prepare("SELECT status FROM sources WHERE id=?").get(source.id).status,"media_only");
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,0);
+  repository.enqueueStartupReconciliation();
+  assert.equal(db.prepare(`SELECT COUNT(*) n FROM jobs WHERE entity_id=? AND type IN
+    ('extract_source_experience','analyze_source_diagnostic','analyze_source_blueprint')`).get(source.id).n,0);
+
+  db.prepare("DELETE FROM jobs").run();
+  const pipeline=new Pipeline(repository,{analyzeBlueprint(){}},{sourceEngine:{enabled:true}});
+  pipeline.enqueueSourceSemanticDownstream(source.id);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs").get().n,0);
+});
+
 test("successful retry clears its previous error text", (t) => {
   const {db,repository}=repositoryFixture(t);
   repository.enqueue("rebuild_editorial","global");
