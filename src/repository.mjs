@@ -6709,7 +6709,7 @@ export class Repository {
   getContentProductionDetail(opportunityOrCandidateId) {
     const item = this.listContent({ candidateId: opportunityOrCandidateId, productionOnly: true })[0];
     if (!item) return null;
-    const history = this.listProductionRecordHistory(item.opportunity_id);
+    const history = this.listProductionRecordHistorySummary(item.opportunity_id);
     return {
       ...item,
       production_state: buildProductionState(this.db, item, { capabilities:this.productionCapabilities }),
@@ -6724,8 +6724,32 @@ export class Repository {
         edit_url: item.wordpress_edit_url,
       } : null,
       draft: item.draft_id ? this.getDraftPackage(item.draft_id) : null,
-      history,
+      history:history.items,
+      history_has_more:history.hasMore,
     };
+  }
+
+  listProductionRecordHistorySummary(opportunityId, limit = 40) {
+    const opportunity = this.db.prepare('SELECT candidate_id FROM content_opportunities WHERE id=?').get(opportunityId);
+    if (!opportunity) return { items: [], hasMore: false };
+    const take = Math.max(1, Math.min(100, Number(limit) || 40)) + 1;
+    const audit = this.db.prepare(`SELECT id,action,status,created_at,'record_operation' AS kind
+      FROM production_record_audit WHERE opportunity_id=? ORDER BY created_at DESC,id DESC LIMIT ?`).all(opportunityId,take);
+    const operations = this.db.prepare(`SELECT id,action,status,created_at,'content_operation' AS kind
+      FROM content_operation_history WHERE opportunity_id=? OR (opportunity_id IS NULL AND candidate_id=? AND
+        (SELECT COUNT(*) FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL)=1)
+      ORDER BY created_at DESC,id DESC LIMIT ?`).all(opportunityId,opportunity.candidate_id,opportunity.candidate_id,take);
+    const attempts = this.db.prepare(`SELECT id,failing_stage,failure_code,created_at,'failed_attempt' AS kind
+      FROM production_attempt_archives WHERE opportunity_id=? ORDER BY created_at DESC,id DESC LIMIT ?`).all(opportunityId,take);
+    const lessons = this.db.prepare(`SELECT id,failing_stage,failure_code,status,created_at,'failure_lesson' AS kind
+      FROM failure_lessons WHERE opportunity_id=? ORDER BY created_at DESC,id DESC LIMIT ?`).all(opportunityId,take);
+    const diagnostics = this.db.prepare(`SELECT pfd.id,pfd.stage AS failing_stage,pfd.error_code AS failure_code,
+        pfd.created_at,'failure_diagnostic' AS kind FROM production_failure_diagnostics pfd
+      JOIN jobs j ON j.id=pfd.job_id WHERE j.production_owner_opportunity_id=?
+      ORDER BY pfd.created_at DESC,pfd.id DESC LIMIT ?`).all(opportunityId,take);
+    const rows = [...audit,...operations,...attempts,...lessons,...diagnostics]
+      .sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+    return { items: rows.slice(0,take-1), hasMore: rows.length >= take };
   }
 
   listProductionRecordHistory(opportunityId) {

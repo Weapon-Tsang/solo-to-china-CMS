@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.59 - Unreleased
+
+- Keep Content detail responsive when historical production attempts contain large snapshots: return the latest 40 projected audit summaries while retaining full evidence in the explicit history endpoint.
+
 ## 2.0.58 - Unreleased
 
 - Fix the Content workbench blank screen caused by an undefined WordPress status badge component, and render both published and draft rows in a permanent regression test.

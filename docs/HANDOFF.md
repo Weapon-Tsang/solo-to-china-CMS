@@ -1,3 +1,7 @@
+# 2.0.59 Content detail incident handoff
+
+App/Extension version `2.0.59`, schema migration `78`, and Content Strategy `3.9` are current. The 2.0.58 UI fix restored the Content list, but a live article detail request still returned 19,765,341 bytes, including 17,909,633 bytes of historical audit snapshots. Content detail now projects at most 40 recent audit entries without loading the snapshot JSON; the explicit history endpoint retains full evidence. The bounded regression inserts a 1 MB historical snapshot and verifies it stays out of the detail response while remaining in full history. On the read-only September 22 production database clone, the affected opportunity now yields 1,859,000 bytes, including 7,728 bytes of history, in 2,793 ms. This is a code-only database query change with no schema or Provider change.
+
 # 2.0.58 Content workbench incident handoff
 
 App/Extension version `2.0.58`, schema migration `78`, and Content Strategy `3.9` are current. Content Production Strategy 3.9 remains declared by `config/content-strategy.json`. A production browser crash on the Content menu was traced to an undefined `Badge` JSX reference in `frontend/src/views.jsx`; the component is now imported and both remote WordPress status variants are rendered by a server-side regression test. This is a code-only UI hotfix with no database or Provider changes. The 2.0.57 production follow-up and historical media blockers remain below.

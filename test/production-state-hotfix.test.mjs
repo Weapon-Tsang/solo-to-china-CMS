@@ -22,6 +22,25 @@ function opportunity(db,id,{candidateId="shared-candidate",approved=false,ready=
       approved ? ready ? "approved_ready" : "approved_waiting_for_evidence" : "recommended",approved ? "2026-09-13" : null,approved ? "approved" : "recommended");
 }
 
+test("Content detail bounds audit history while the full history endpoint retains evidence",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,"history-owner",{approved:true});
+  const snapshot="x".repeat(1_000_000);
+  db.prepare(`INSERT INTO production_attempt_archives(id,opportunity_id,failing_job_id,failing_stage,snapshot_json,failure_code,created_at)
+    VALUES ('large-attempt','history-owner','large-job','generate_visuals',?,'MEDIA_FAILURE','2026-09-22T00:00:00Z')`)
+    .run(JSON.stringify({blob:snapshot}));
+  for (let index=0;index<45;index++) {
+    db.prepare(`INSERT INTO production_record_audit(id,opportunity_id,action,status,actor,idempotency_key,detail_json,created_at)
+      VALUES (?,?, 'review','completed','tester',?,'{}',?)`)
+      .run(`history-${index}`,'history-owner',`history-key-${index}`,`2026-09-22T00:${String(index).padStart(2,'0')}:00Z`);
+  }
+  const detail=repository.getContentProductionDetail('history-owner');
+  assert.equal(detail.history.length,40);
+  assert.equal(detail.history_has_more,true);
+  assert.ok(Buffer.byteLength(JSON.stringify(detail))<100_000);
+  const full=repository.listProductionRecordHistory('history-owner');
+  assert.equal(full.find((row)=>row.id==='large-attempt').detail.blob,snapshot);
+});
+
 test("unapproved Candidate and shared unapproved Opportunities never enter Content Workbench",(t)=>{
   const {db,repository}=repositoryFixture(t); candidate(db);
   opportunity(db,"unapproved-a"); opportunity(db,"unapproved-b");
