@@ -782,7 +782,7 @@ function validateGeneratedDraftStructure(output, outline = []) {
   });
 }
 
-function draftInputDto(contentPackage) {
+export function draftInputDto(contentPackage) {
   const selectedKeys = new Set(contentPackage.writing_packet?.selected_fact_keys || contentPackage.brief?.evidence_ledger || []);
   const frozenFacts = contentPackage.writing_packet?.evidence_ledger?.map(entry => entry.fact_snapshot);
   const context = contentPackage.writing_packet?.context;
@@ -828,7 +828,19 @@ function draftInputDto(contentPackage) {
         coverage_limitations: (item.coverage_limitations || []).slice(0, 8).map((value) => truncate(value, 240)) })),
     })),
     reader_sources: (context?.version === 2 ? context.reader_sources : contentPackage.reader_sources) || [],
-    authorized_source_assets: (context?.version === 2 ? context.authorized_source_assets : contentPackage.authorized_source_assets) || [],
+    // The writing packet persists the full media inventory for deterministic
+    // matching. The writer only needs concise image-level descriptions; do
+    // not resend binary previews, provenance blobs and nearby source prose.
+    authorized_source_assets: ((context?.version === 2 ? context.authorized_source_assets : contentPackage.authorized_source_assets) || [])
+      .map((asset) => ({ id:asset.id || asset.source_asset_id,source_id:asset.source_id,
+        asset_kind:asset.asset_kind,alt_text:truncate(asset.alt_text,180),
+        primary_subjects:(Array.isArray(asset.primary_subjects) ? asset.primary_subjects : []).slice(0,5)
+          .map((value)=>truncate(value,120)),
+        entities:(Array.isArray(asset.entities) ? asset.entities : []).slice(0,6)
+          .map((entry)=>truncate(typeof entry === "string" ? entry : entry?.name || entry?.label || "",100)),
+        language_status:asset.language_status,original_stored:asset.original_bytes_status === "saved_original"
+          && asset.durability_status === "ORIGINAL_STORED",
+        locally_audited_photo:asset.local_photo_audit?.status === "eligible" })),
     internal_link_inventory: (context?.version === 2 ? context.internal_link_inventory : contentPackage.internal_link_inventory) || [],
     frontend_page_plan: safeFrontendPlan(contentPackage.frontend_page_plan?.plan, validFactKeys),
   };

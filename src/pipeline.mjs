@@ -644,7 +644,7 @@ export class Pipeline {
           let cursor = null;
           const resolutions = [];
           do {
-            const entityPackage = this.repository.getEntityResolutionPackage(job.entity_id, 300, cursor);
+            const entityPackage = this.repository.getEntityResolutionPackage(job.entity_id, 80, cursor);
             if ((this.sourceEngine?.enabledFor?.({ telemetryContext }) ?? this.sourceEngine?.enabled)
               && typeof this.sourceEngine?.resolveEntities === "function" && entityPackage.claims.length) {
               try {
@@ -863,6 +863,82 @@ export class Pipeline {
           this.repository.recoverLegacyVisualReceipts?.(job.entity_id);
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
+          const staleCardAnalyses=this.repository.sourceVisualReanalysisCandidates?.(job.entity_id) || [];
+          for (const {visual_id:visualId,source_asset_id:assetId} of staleCardAnalyses) {
+            if (typeof this.visualReviewer?.analyzeMediaAsset !== "function") {
+              throw Object.assign(new Error("Image analysis provider is not configured for historical card verification."),{
+                code:"MEDIA_ANALYSIS_NOT_CONFIGURED",retryable:false,
+              });
+            }
+            const asset=this.repository.sourceAssetDecisionDto(assetId);
+            const analyzed=await guarded((signal)=>this.visualReviewer.analyzeMediaAsset(asset,{signal,
+              telemetryContext:{...telemetryContext,entityId:assetId,visualId}}));
+            const saveAnalysis=()=>{
+              if (!this.repository.saveSourceAssetAnalysis(assetId,analyzed.result,{
+                provider:analyzed.method,model:analyzed.model,forDraftId:job.entity_id,forVisualId:visualId,
+              })) throw Object.assign(new Error('Historical source analysis could not be bound to this article.'),{
+                code:'MEDIA_ANALYSIS_CHECKPOINT_REJECTED',retryable:false,
+              });
+            };
+            if (typeof this.repository.checkpointPipelineStage === 'function')
+              this.repository.checkpointPipelineStage(job,pipelineArtifact,saveAnalysis);
+            else saveAnalysis();
+          }
+          if (staleCardAnalyses.length) this.repository.prepareMediaRepair(job.entity_id);
+          // An empty historical/writer plan used to bypass image analysis
+          // entirely. Inspect at most three durable originals, stopping as
+          // soon as pixel-level evidence yields a relevant, usable visual.
+          // Ready analyses and local photo audits are durable and shared by
+          // later articles, so retries do not buy the same analysis again.
+          const discoveryIds=this.repository.sourceVisualDiscoveryCandidates?.(job.entity_id) || [];
+          let discoveryCount=0;
+          for (const assetId of discoveryIds) {
+            if (typeof this.visualReviewer?.analyzeMediaAsset !== "function") {
+              throw Object.assign(new Error("Image analysis provider is not configured for media discovery."),{
+                code:"MEDIA_ANALYSIS_NOT_CONFIGURED",retryable:false,
+              });
+            }
+            const asset=this.repository.sourceAssetDecisionDto(assetId);
+            const analyzed=await guarded((signal)=>this.visualReviewer.analyzeMediaAsset(asset,{signal,
+              telemetryContext:{...telemetryContext,entityId:assetId,visualId:`discovery:${job.entity_id}:${assetId}`}}));
+            discoveryCount+=1;
+            const saveAnalysis=()=>{
+              if (!this.repository.saveSourceAssetAnalysis(assetId,analyzed.result,{
+                provider:analyzed.method,model:analyzed.model,forDraftId:job.entity_id,
+              })) throw Object.assign(new Error('Discovered source analysis could not be bound to this article.'),{
+                code:'MEDIA_ANALYSIS_CHECKPOINT_REJECTED',retryable:false,
+              });
+            };
+            if (typeof this.repository.checkpointPipelineStage === 'function')
+              this.repository.checkpointPipelineStage(job,pipelineArtifact,saveAnalysis);
+            else saveAnalysis();
+            const analyzedAsset=this.repository.sourceAssetDecisionDto(assetId);
+            if (analyzedAsset?.analysis_status === 'ready'
+              && analyzedAsset.asset_kind === 'documentary_photo'
+              && analyzedAsset.local_photo_audit?.sha256 !== analyzedAsset.original_sha256) {
+              const audit=await guarded(()=>auditSourcePhoto(analyzedAsset.local_path,
+                {assetKind:analyzedAsset.asset_kind}));
+              const saveAudit=()=>this.repository.saveLocalPhotoAudit(assetId,audit);
+              if (typeof this.repository.checkpointPipelineStage === 'function')
+                this.repository.checkpointPipelineStage(job,pipelineArtifact,saveAudit);
+              else saveAudit();
+            }
+            this.repository.prepareMediaRepair(job.entity_id);
+            if (this.repository.listDraftVisuals(job.entity_id).some((visual)=>
+              visual.acquisition_strategy === 'use_authorized_source_image' && visual.status === 'generated')) break;
+          }
+          const remainingDiscovery=this.repository.sourceVisualDiscoveryCandidates?.(job.entity_id) || [];
+          if (!this.repository.listDraftVisuals(job.entity_id).length
+            && !mediaManifestForDraft(this.repository.db,job.entity_id)?.approvedNoImage) {
+            const exhausted=remainingDiscovery.length>0;
+            throw Object.assign(new Error(exhausted
+              ? 'The bounded media discovery found no relevant image; more stored originals remain uninspected.'
+              : 'No pixel-verified relevant source image was found for this article.'),{
+              code:exhausted ? 'MEDIA_DISCOVERY_BUDGET_EXHAUSTED' : 'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE',retryable:false,
+              details:{substage:'source_media_discovery',analyzed_assets:discoveryCount,
+                remaining_candidates:remainingDiscovery.length},
+            });
+          }
           const analysisVisuals=this.repository.plannedVisuals(job.entity_id)
             .filter((item)=>item.acquisition_strategy === "analyze_source_image");
           for (const visual of analysisVisuals) {

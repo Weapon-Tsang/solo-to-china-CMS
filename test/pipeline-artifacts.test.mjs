@@ -48,6 +48,20 @@ test("entity resolution pages through the entire claim set instead of truncating
   assert.equal(second.claims.length, 5);
   assert.equal(second.nextCursor, null);
   assert.equal(new Set([...first.claims, ...second.claims].map((claim) => claim.id)).size, 305);
+  const pageSubject=repository.getEntityResolutionPackage('chongqing',80).claims[0].subject;
+  const pageAlias=pageSubject.toLowerCase().replace(/\s+/g,'');
+  repository.upsertEntityAlias('chongqing',pageAlias,
+    {entityKey:'place:page',canonicalSubject:pageSubject,aliases:[pageSubject]},'derived',0.55);
+  repository.upsertEntityAlias('chongqing','alternatepageplace',
+    {entityKey:'place:page',canonicalSubject:pageSubject,aliases:[pageSubject]},'derived',0.55);
+  for(let index=0;index<200;index++) repository.upsertEntityAlias('chongqing',`unrelated${index}`,
+    {entityKey:`unrelated:${index}`,canonicalSubject:`Unrelated ${index}`},'derived',0.55);
+  const bounded=repository.getEntityResolutionPackage('chongqing',80);
+  assert.equal(bounded.claims.length,80);
+  assert.ok(bounded.known_aliases.some((alias)=>alias.alias_normalized===pageAlias));
+  assert.ok(bounded.known_aliases.some((alias)=>alias.alias_normalized==='alternatepageplace'));
+  assert.ok(!bounded.known_aliases.some((alias)=>alias.alias_normalized==='unrelated199'));
+  assert.ok(bounded.known_aliases.length<=160);
 });
 
 test("queue policy exposes age, keeps interactive Research ahead of production, and reports only measured percentiles", (t) => {

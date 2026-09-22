@@ -92,6 +92,30 @@ export function explainOperationalFailure(job) {
   const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
   const details = operatorSafeDetails(message);
   const normalizedIssueCode = code.toLowerCase();
+  if (code === 'MEDIA_OUTCOME_UNKNOWN') return {
+    category:'media',headline:'上次图片请求结果未确认',
+    reason:'系统无法证明上次请求是否已经完成或扣费。再次点击失败步骤重试仍会被相同的请求账本拦截，以免重复生图和付费。',
+    action:{id:null,label:'先核对图片请求账本与候选文件',why:'确认供应商结果、已留存候选图及对应 visual/substage，再决定是否允许一次新的请求。'},
+    technicalDetail:details,
+  };
+  if (code === 'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE') return {
+    category:'media',headline:'没有找到与文章相符的来源原图',
+    reason:'已检查有限数量的已保存原图，但图像内容不足以支持本文配图；系统不会把无关图片或周边文案伪装成文章照片。',
+    action:{id:null,label:'核对或补充相关原图',why:'先修复来源图片及其描述，再重新运行图片步骤；原样重试不会改变结果。'},
+    technicalDetail:details,
+  };
+  if (code === 'MEDIA_DISCOVERY_BUDGET_EXHAUSTED') return {
+    category:'media',headline:'本轮来源图片检查达到调用上限',
+    reason:'本轮只分析了有限数量的原图，尚有未检查的候选图；没有找到可确认与文章相符的图片，也没有使用无关图。',
+    action:{id:'generate_visuals',label:'继续检查剩余候选图',why:'每次只检查有限数量，已保存的分析结果会复用；也可以先人工核对素材以节省调用。'},
+    technicalDetail:details,
+  };
+  if (['MEDIA_INCOMPLETE','MEDIA_MANIFEST_MISSING_OR_STALE'].includes(code)) return {
+    category:'media',headline:'必需图片未通过交付校验',
+    reason:'至少一个图片槽位缺少可用文件、匹配的哈希或有效的质量校验；重复页面编排不会补齐图片。查看技术详情中的缺失槽位与原因。',
+    action:{id:'generate_visuals',label:'先修复图片槽位',why:'仅修复未完成的图片及其校验，成功后再继续页面编排；无需重写正文。'},
+    technicalDetail:details,
+  };
   if (code === 'EDITORIAL_CARD_TEXT_OVERFLOW') return {
     category:'media',headline:'图片上的文字超出安全排版范围',
     reason:'本地排版容量检查未通过；这不是模型配额或网络限流。已保存的译文、候选图、正文和证据仍可复用。',

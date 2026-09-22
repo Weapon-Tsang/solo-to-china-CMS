@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { explainQualityIssue, qualityRepairStage, recoveryDiagnosis } from '../src/services/content-recovery-policy.mjs';
+import { explainOperationalFailure, explainQualityIssue, qualityRepairStage, recoveryDiagnosis } from '../src/services/content-recovery-policy.mjs';
 import { buildContentTaskCard } from '../src/services/operations-workspace.mjs';
 import { isDynamicFact, protectedFactTokens } from '../src/evidence-validator.mjs';
 import { repositoryFixture } from '../test-support/repository-fixture.mjs';
@@ -44,6 +44,34 @@ test('exhausted media budget retains the body and a diagnostic even with other m
   assert.deepEqual(after,before);
   const state=repository.getContentProductionDetail('opportunity-r').production_state;
   assert.equal(state.latest_historical_error?.code,'MEDIA_BUDGET_EXHAUSTED');
+});
+
+test('an unknown prior media outcome cannot be blindly redispatched by stage retry',t=>{
+  const {db,repository}=fixture(t);
+  db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,status,created_at,updated_at)
+    VALUES ('unknown-visual','draft-r',1,'hero','Guide','Guide','','failed','now','now')`).run();
+  db.prepare("INSERT INTO media_quota_scopes(scope_key,updated_at) VALUES ('vertex:project:model','now')").run();
+  db.prepare(`INSERT INTO media_dispatches(id,scope_key,visual_id,substage,started_at_ms,state,created_at)
+    VALUES ('unknown-dispatch','vertex:project:model','unknown-visual','generate_visual',1,'outcome_unknown','now')`).run();
+  assert.throws(()=>executeContentRecovery(repository,'opportunity-r',
+    {action:'generate_visuals',revision:1}),/未确认的供应商结果/);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='generate_visuals'").get().n,0);
+});
+
+test('an exhausted image discovery gives a concrete reason and refuses an unchanged retry',t=>{
+  const {db,repository}=fixture(t);
+  const jobId=repository.enqueue('generate_visuals','draft-r',{
+    dedupeKey:'media-discovery',productionOwnerOpportunityId:'opportunity-r'});
+  const job=repository.claimJob();
+  assert.equal(job.id,jobId);
+  repository.failJob(job,Object.assign(new Error('No pixel-verified relevant source image was found for this article.'),{
+    code:'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE',retryable:false}));
+  const failed=db.prepare('SELECT type,last_error,last_failure_code FROM jobs WHERE id=?').get(jobId);
+  assert.equal(failed.last_failure_code,'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE');
+  assert.equal(explainOperationalFailure(failed).action.id,null);
+  assert.throws(()=>executeContentRecovery(repository,'opportunity-r',
+    {action:'generate_visuals',revision:1}),/重复执行不会产生新配图/);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='generate_visuals'").get().n,1);
 });
 
 test('draft detail reuses its evidence hash without rebuilding the entire content workspace', t=>{

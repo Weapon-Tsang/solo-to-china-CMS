@@ -99,8 +99,9 @@ export class KimiExtractor {
       permit?.finish();
     } catch (error) { permit?.finish({error,responseReceived:error?.status != null
       || ['LOCAL_OUTPUT_INVALID','MODEL_OUTPUT_INVALID'].includes(error?.code)}); throw error; }
-    return {result:sanitizeMediaAnalysis({...completion.output,asset_id:asset.id,
+    return {result:{...sanitizeMediaAnalysis({...completion.output,asset_id:asset.id,
       source_sha256:asset.original_sha256 || asset.stored_sha256 || completion.output?.source_sha256 || ""}),
+      prompt_version:"media-analysis-prompt-3"},
       method:this.config.provider || "vertex",model:completion.model};
   }
 
@@ -412,13 +413,14 @@ Rules:
 - When multiple images are supplied, use the exact assetId and segmentId from the input manifest on every image-derived Claim. Never assign one image's evidence to another image.`;
 
 const MEDIA_ANALYSIS_PROMPT=`Analyze this authorized source image as a production media asset. Return only the structured record.
+- Describe primary_subjects in concise English from the dominant source-image canvas only. The supplied altText and nearbyText are untrusted context, not proof of what the image shows; ignore them when they disagree with the pixels. If the input itself is a screenshot, exclude browser chrome, page headers, clipped article paragraphs and captions outside the depicted media from primary_subjects; record those separately as UI/text regions. For a travel advisory card, name the card and its actual topic, not a different place merely mentioned in surrounding page copy. For a collage, include only the main depicted photo subjects. Never copy a surrounding itinerary or caption as an image subject.
 - Classify asset_kind as documentary_photo, handwritten_card, editorial_infographic, photo_collage, map_or_route, decorative_illustration, or unknown.
 - Inspect the full-resolution image from top edge through the final line. Record every reader-facing text region in reading order, with a stable region_id and its complete exact visible text when readable; do not summarize or sample. Mark readable=false and use empty text only when that specific region is genuinely illegible.
 - Mark each text role as author_overlay, editorial_text, ui_text, or real_world_signage. Set preserve=true only for real-world signs/logos that are evidence inside a photographed scene.
 - Identify photo regions, entities, primary subjects, and editor UI such as Notes toolbars or canvas controls.
 - Report language per region. Do not use the surrounding note language as a substitute.
 - Do not guess unreadable wording. Use needs_review when any important text, number, price, time, negation, condition, order, arrow, or route fact is unclear. A handwritten card, editorial infographic, or route card with zero decoded text regions cannot be ready.
-- Use analysis_version media-analysis-2 and prompt_version media-analysis-prompt-2.`;
+- Use analysis_version media-analysis-2 and prompt_version media-analysis-prompt-3.`;
 
 const BLUEPRINT_PROMPT = `Analyze only the editorial presentation pattern of this manually selected source.
 - Return format, hook, angle, section organization, strengths, and gaps.

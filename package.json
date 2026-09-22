@@ -1,6 +1,6 @@
 {
   "name": "solo-to-china-research-engine",
-  "version": "2.0.59",
+  "version": "2.0.60",
   "private": true,
   "description": "Human-selected research capture and content intelligence engine for SoloToChina.",
   "type": "module",
@@ -31,6 +31,7 @@
     "test:production-content-canary": "node scripts/test-production-content-canary.mjs",
     "test:production-wordpress-canary": "node scripts/test-production-wordpress-canary.mjs",
     "audit:prod-replay": "node scripts/audit-production-content-recovery.mjs",
+    "audit:production-visuals": "node scripts/audit-production-visuals.mjs",
     "repair:delivery": "node scripts/repair-content-delivery.mjs",
     "test:commercial-replay": "node scripts/audit-commercial-replay.mjs",
     "boundaries:check": "node scripts/check-service-boundaries.mjs",

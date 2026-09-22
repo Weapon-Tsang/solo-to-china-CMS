@@ -1,6 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ContentEngine } from "../src/ai/content-engine.mjs";
+import { ContentEngine, draftInputDto } from "../src/ai/content-engine.mjs";
+
+test("writer receives bounded image subjects without resending full media and source context",()=>{
+  const asset={id:"photo-1",source_id:"source-1",asset_kind:"documentary_photo",
+    alt_text:"Chongqing street",primary_subjects:["Chongqing street"],
+    original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED",
+    local_photo_audit:{status:"eligible"},nearby_text:"unrelated context ".repeat(3000),
+    preview_url:"data:image/png;base64,"+"x".repeat(10000),source_provenance:{opaque:"y".repeat(10000)}};
+  const result=draftInputDto({brief:{plan:{outline:[]}},writing_packet:{selected_fact_keys:[],
+    evidence_ledger:[],context:{version:2,authorized_source_assets:[asset]}},facts:[]});
+  assert.equal(result.authorized_source_assets[0].id,"photo-1");
+  assert.equal(result.authorized_source_assets[0].locally_audited_photo,true);
+  assert.equal(result.authorized_source_assets[0].original_stored,true);
+  assert.equal(JSON.stringify(result.authorized_source_assets).includes("unrelated context"),false);
+  assert.ok(JSON.stringify(result.authorized_source_assets).length<500);
+});
 import { pageBlockSignature } from "../src/evidence-validator.mjs";
 
 test("Kimi-backed independent QA cannot approve deterministic evidence or commercial violations", async () => {

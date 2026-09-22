@@ -817,6 +817,22 @@ export function createApplication(config = loadConfig()) {
           reason:payload.reason,idempotencyKey:request.headers['idempotency-key'] || payload.idempotencyKey});
         return sendJson(response, 200, {...result,opportunity_id:detail.opportunity_id});
       }
+      const qaReconcileMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/visual-qa-reconciliation$/);
+      if (request.method === 'POST' && qaReconcileMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const detail = repository.getContentProductionDetail(decodeURIComponent(qaReconcileMatch[1]));
+        if (!detail?.draft_id || !detail?.opportunity_id) {
+          return sendJson(response, 404, {error:'Content production record was not found.'});
+        }
+        const payload=await readJson(request,4_000);
+        const result=mediaRequestExecutor.reconcileUnknownQa({opportunityId:detail.opportunity_id,
+          visualId:String(payload.visualId || ''),candidateId:String(payload.candidateId || ''),
+          candidateHash:String(payload.candidateHash || ''),dispatchId:String(payload.dispatchId || ''),
+          actor:auth.status(request).username || 'administrator',reason:String(payload.reason || ''),
+          idempotencyKey:request.headers['idempotency-key'] || payload.idempotencyKey});
+        return sendJson(response,200,{...result,opportunity_id:detail.opportunity_id,
+          next_action:'retry_failed_stage',stage:'generate_visuals'});
+      }
       const productionHistoryMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/history$/);
       if (request.method === "GET" && productionHistoryMatch) {
         authorizeAdmin(request, config.adminToken, auth);
@@ -1358,7 +1374,17 @@ export function createApplication(config = loadConfig()) {
         }
         const preview = safeWordPressPreviewUrl(content.publication.preview_url, config.wordpress.siteUrl);
         if (!preview) return sendJson(response, 409, { error:"The stored preview URL is not bound to the configured WordPress site.", code:"FINAL_PREVIEW_IDENTITY_MISMATCH" });
+        const inventory=db.prepare(`SELECT status,post_url FROM wordpress_content_inventory
+          WHERE site_url=? AND post_id=?`).get(content.publication.site_url,content.publication.post_id);
+        const publicUrl=inventory?.status==='publish'
+          ? safeWordPressPreviewUrl(inventory.post_url,config.wordpress.siteUrl) : null;
+        if (publicUrl) {
+          response.setHeader("cache-control", "no-store, private");
+          return sendJson(response,200,{mode:"published_page",url:publicUrl,
+            postId:content.publication.post_id,draftId:content.draft.id,revision:content.draft.revision});
+        }
         const deliveryManifest=safeJsonObject(content.publication.delivery_manifest_json);
+        let ticketFailureStatus = null;
         try {
           const ticket=await wordpress.createScopedPreviewTicket({postId:content.publication.post_id,draftId:content.draft.id,
             revision:content.draft.revision,pagePayloadHash:deliveryManifest.page_payload_hash || ""});
@@ -1367,7 +1393,12 @@ export function createApplication(config = loadConfig()) {
           response.setHeader("x-robots-tag", "noindex, nofollow, noarchive");
           return sendJson(response,200,ticket);
         } catch (error) {
-          if (![404,501].includes(error?.statusCode)) throw error;
+          // A scoped ticket is an enhancement, not the only route to a draft
+          // preview. Some existing WordPress installations reject the ticket
+          // endpoint for the CMS application password even though an editor
+          // can authenticate interactively and preview the same post.
+          if (![401,403,404,501].includes(error?.statusCode)) throw error;
+          ticketFailureStatus = error.statusCode;
         }
         const login = new URL("/wp-login.php", config.wordpress.siteUrl);
         login.searchParams.set("redirect_to", preview);
@@ -1376,7 +1407,9 @@ export function createApplication(config = loadConfig()) {
         response.setHeader("x-robots-tag", "noindex, nofollow, noarchive");
         return sendJson(response, 200, { mode:"wordpress_login_required", url:login.toString(), postId:content.publication.post_id,
           draftId:content.draft.id, revision:content.draft.revision,
-          message:"WordPress login is required because no scoped final-preview capability is configured." });
+          message:ticketFailureStatus === 401 || ticketFailureStatus === 403
+            ? "WordPress rejected the scoped preview ticket. Sign in with an editor account to preview this post; check the CMS WordPress credentials and ticket permission separately."
+            : "WordPress login is required because no scoped final-preview capability is configured." });
       }
       if (request.method === "POST" && url.pathname === "/api/pipeline/run-one") {
         authorizeAdmin(request, config.adminToken, auth);

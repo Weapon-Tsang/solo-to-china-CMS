@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.60 - Unreleased
+
+- Repair historical photo planning from verified source pixels, quarantine unrelated editorial cards, and reopen zero-image drafts for bounded original-photo discovery without rewriting article text.
+- Re-analyze legacy multi-place cards under the pixel-only media prompt once per source asset during historical repair; prior caption or nearby prose no longer establishes the image subject.
+- Reconcile hash-verified unknown visual QA outcomes without another image-generation call; keep generation/localization ambiguity blocked and classify provider-returned local SQLite receipt failures correctly.
+- Route legacy page-composition `MEDIA_INCOMPLETE` retries back through visual repair, including zero-image drafts and missing manifest slots.
+- Route published articles to their public WordPress URL instead of requesting a draft preview ticket; retain editor-login guidance for genuinely private previews.
+- Reduce entity-resolution context with 80-claim pages and directly relevant alias clusters, preserving complete pagination and durable step recovery.
+- Add a read-only production visual audit and regression coverage for the screenshot failures.
+- Add a code-only API/worker switch with isolated readiness and retained prior containers for rollback.
+
 ## 2.0.59 - Unreleased
 
 - Keep Content detail responsive when historical production attempts contain large snapshots: return the latest 40 projected audit summaries while retaining full evidence in the explicit history endpoint.

@@ -277,22 +277,30 @@ export class VertexImagen {
     const callId=`visualcall_${crypto.randomUUID()}`;
     const heartbeat = permit ? setInterval(() => permit.heartbeat(), 30_000) : null;
     heartbeat?.unref();
+    let providerReturned=false;
+    let requestStarted=false;
     try {
       if (this.config.onModelCallStart) await this.recordVisualCall({callId,telemetryPhase:"started",provider,model,stage,visual,context,
         startedAt,startedMs,status:"failed",requestKind:"provider",attemptStatus:"started",dispatchState:"dispatch_started",
         evidenceBasis:"dispatch_intent_persisted",endpoint});
+      requestStarted=true;
       const result=await operation();
-      permit?.finish();
-      await this.recordVisualCall({callId,provider,model,stage,visual,context,startedAt,startedMs,status:"succeeded",
-        requestKind:"provider",dispatchState:"completed",evidenceBasis:"provider_response_completed",httpStatus:200,endpoint});
+      providerReturned=true;
+      await retryLocalReceipt(()=>permit?.finish());
+      await retryLocalReceipt(()=>this.recordVisualCall({callId,provider,model,stage,visual,context,startedAt,startedMs,status:"succeeded",
+        requestKind:"provider",dispatchState:"completed",evidenceBasis:"provider_response_completed",httpStatus:200,endpoint}));
       return result;
     } catch (error) {
-      const responded=(error?.status != null && Number.isFinite(Number(error.status))) || error?.responseReceived === true;
-      permit?.finish({error,responseReceived:responded});
-      await this.recordVisualCall({callId,provider,model,stage,visual,context,startedAt,startedMs,status:"failed",error,
-        requestKind:"provider",dispatchState:responded ? "response_received" : "dispatch_started",
-        evidenceBasis:responded ? "provider_error_response" : "dispatch_started_outcome_unknown",
-        httpStatus:error?.status != null && Number.isFinite(Number(error.status)) ? Number(error.status) : responded ? 200 : null,endpoint});
+      const responded=providerReturned || !requestStarted
+        || (error?.status != null && Number.isFinite(Number(error.status))) || error?.responseReceived === true;
+      try { await retryLocalReceipt(()=>permit?.finish({error,responseReceived:responded})); }
+      catch (receiptError) { error.receiptError=receiptError; }
+      try { await retryLocalReceipt(()=>this.recordVisualCall({callId,provider,model,stage,visual,context,startedAt,startedMs,status:"failed",error,
+        requestKind:requestStarted ? "provider" : "local_gate",dispatchState:responded ? "response_received" : "dispatch_started",
+        evidenceBasis:providerReturned ? "provider_response_local_receipt_failed" : !requestStarted ? "before_provider_dispatch"
+          : responded ? "provider_error_response" : "dispatch_started_outcome_unknown",
+        httpStatus:error?.status != null && Number.isFinite(Number(error.status)) ? Number(error.status) : providerReturned ? 200 : null,endpoint})); }
+      catch (receiptError) { error.receiptError ||= receiptError; }
       // Pass the exact persisted attempt through failJob; the job may contain
       // older calls from translation, generation or a previous recovery run.
       error.causalModelCallId=callId;
@@ -674,7 +682,7 @@ function escapeXml(value) {
 }
 
 function visualQaPrompt(visual,metadata={}) {
-  return `The first image is the authorized source and the second is its proposed English derivative. Independently audit the derivative for delivery. Check language (all required author/editorial Chinese localized; preserved real-world signs allowed), completeness (all readable facts, numbers, currency, times, negations, exceptions, arrows and ordering preserved with no crop), style (warm-white/light-blue editorial treatment for recomposed cards, no Notes/editor UI, while documentary photos keep natural colors), and semantic fidelity (same subjects, places, photographs, route geometry and meaning; no fabricated content). Return failed or needs_review if uncertain. Strategy: ${visual.acquisition_strategy}. Manifest: ${JSON.stringify(metadata.source_analysis || {})}`;
+  return `The first image is the authorized source and the second is its proposed English derivative. Independently audit the derivative for delivery. Check language (all required author/editorial Chinese localized; preserved real-world signs allowed), completeness (all readable facts, numbers, currency, times, negations, exceptions, arrows and ordering preserved with no crop), style (warm-white/light-blue editorial treatment for recomposed cards, no Notes/editor UI, while documentary photos keep natural colors), and semantic fidelity (same subjects, places, photographs, route geometry and meaning; no fabricated content). The semantic check must ALSO compare the actual visible image with the intended article subject, alt text and caption. A place-name match inside an unrelated guide card, or a caption describing a different street/venue/route, is a failure even if source and derivative match each other. Do not infer a scene from nearby prose or a legacy caption. Return failed or needs_review if uncertain. Strategy: ${visual.acquisition_strategy}. Subject: ${String(visual.image_subject || '').slice(0,240)}. Alt: ${String(visual.alt_text || '').slice(0,220)}. Caption: ${String(visual.caption || '').slice(0,300)}. Manifest: ${JSON.stringify(metadata.source_analysis || {})}`;
 }
 
 function normalizeVisualQa(value={}) {
@@ -757,6 +765,17 @@ function parseAspectRatio(value) {
 
 function hashBytes(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+async function retryLocalReceipt(operation) {
+  for (let attempt=0; ; attempt++) {
+    try { return await operation(); }
+    catch (error) {
+      if (attempt>=3 || !((error?.errcode===5 || error?.code==='SQLITE_BUSY')
+        || (error?.code==='ERR_SQLITE_ERROR' && /database is locked/i.test(String(error?.message || ''))))) throw error;
+      await new Promise((resolve)=>setTimeout(resolve,100*2**attempt));
+    }
+  }
 }
 
 function invalidImage(message) {

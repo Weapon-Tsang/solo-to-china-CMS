@@ -100,7 +100,7 @@ for (const stopAfter of [1,2]) test(`real process termination after entity page 
     fs.appendFileSync(callsFile,JSON.stringify(pack.claims.length)+'\n');return output;
   }};
   assert.equal(await new Pipeline(repository,{enabled:false,config:{}},{contentEngine:engine}).runOne(),true);
-  assert.deepEqual(fs.readFileSync(callsFile,'utf8').trim().split('\n').map(Number),[300,5]);
+  assert.deepEqual(fs.readFileSync(callsFile,'utf8').trim().split('\n').map(Number),[80,80,80,65]);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status,'succeeded');
   assert.ok(db.prepare('SELECT COUNT(*) n FROM entity_aliases').get().n>0);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='rebuild_knowledge'").get().n,1);

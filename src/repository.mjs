@@ -2833,11 +2833,17 @@ export class Repository {
   }
 
   saveSourceAssetAnalysis(assetId, analysis = {}, { provider = "", model = "", withinTransaction = false,
-    forVisualId = null } = {}) {
+    forVisualId = null, forDraftId = null } = {}) {
     const asset=this.db.prepare(`SELECT sa.id,sa.source_id,sa.capture_version,sa.original_sha256,sa.stored_sha256,
       s.capture_version AS current_capture_version FROM source_assets sa JOIN sources s ON s.id=sa.source_id WHERE sa.id=?`).get(assetId);
     if (!asset) return false;
-    if (asset.capture_version !== asset.current_capture_version
+    const frozenDraftAsset=forDraftId && this.db.prepare(`SELECT 1 FROM article_drafts ad
+      JOIN writing_packets wp ON wp.brief_id=ad.brief_id
+      JOIN json_each(wp.context_json, '$.authorized_source_assets') selected
+      WHERE ad.id=? AND json_extract(selected.value, '$.id')=? LIMIT 1`).get(forDraftId,assetId);
+    const existingDraftVisual=forDraftId && this.db.prepare(`SELECT 1 FROM article_visuals
+      WHERE draft_id=? AND source_asset_id=? LIMIT 1`).get(forDraftId,assetId);
+    if (asset.capture_version !== asset.current_capture_version && !frozenDraftAsset && !existingDraftVisual
       && !(forVisualId && this.db.prepare(`SELECT 1 FROM article_visuals av
         JOIN article_drafts ad ON ad.id=av.draft_id
         WHERE av.id=? AND av.source_asset_id=? AND av.status='planned' LIMIT 1`).get(forVisualId,assetId))) return false;
@@ -4198,8 +4204,8 @@ export class Repository {
     return this.db.prepare("SELECT * FROM source_blueprints WHERE source_id=?").get(sourceId);
   }
 
-  getEntityResolutionPackage(destinationSlug, limit = 300, cursor = null) {
-    const pageSize = Math.max(1, Math.min(1_000, Number(limit || 300)));
+  getEntityResolutionPackage(destinationSlug, limit = 80, cursor = null) {
+    const pageSize = Math.max(1, Math.min(300, Number(limit || 80)));
     const rows = this.db.prepare(`
       SELECT c.id, c.normalized_key, c.original_normalized_key, c.subject, c.predicate, c.value_text,
         c.source_quote, c.confidence, c.entity_key, c.canonical_subject, c.entity_aliases_json,
@@ -4213,6 +4219,26 @@ export class Repository {
     `).all(destinationSlug, cursor, cursor, pageSize + 1);
     const page = rows.slice(0, pageSize);
     const destination = this.db.prepare("SELECT name FROM destinations WHERE slug=?").get(destinationSlug);
+    const claimNames=new Set(page.flatMap((row)=>{
+      const aliases=json(row.entity_aliases_json,[]);
+      return [row.subject,row.canonical_subject,...(Array.isArray(aliases) ? aliases : [])];
+    }).map(normalizeEntityAlias).filter(Boolean));
+    const aliasCatalog=this.listEntityAliases(destinationSlug);
+    const directAliases=aliasCatalog.filter((alias)=>claimNames.has(alias.alias_normalized)
+      || claimNames.has(normalizeEntityAlias(alias.canonical_subject)));
+    const matchedKeys=new Set(directAliases.map((alias)=>alias.entity_key).filter(Boolean));
+    const knownAliases=[...directAliases.slice(0,160)];
+    const included=new Set(knownAliases.map((alias)=>alias.id));
+    const aliasesPerEntity=new Map();
+    for (const alias of knownAliases) aliasesPerEntity.set(alias.entity_key,(aliasesPerEntity.get(alias.entity_key)||0)+1);
+    for (const alias of aliasCatalog) {
+      if (knownAliases.length>=160) break;
+      if (included.has(alias.id) || !matchedKeys.has(alias.entity_key)
+        || (aliasesPerEntity.get(alias.entity_key)||0)>=4) continue;
+      included.add(alias.id);
+      knownAliases.push(alias);
+      aliasesPerEntity.set(alias.entity_key,(aliasesPerEntity.get(alias.entity_key)||0)+1);
+    }
     return {
       destination: { slug: destinationSlug, name: destination?.name || destinationSlug },
       claims: page.map((row) => ({
@@ -4223,7 +4249,7 @@ export class Repository {
         entity_type: row.entity_type, granularity: row.granularity, location: json(row.entity_location_json, {}),
         captured_at: row.captured_at, source_title: row.source_title,
       })),
-      known_aliases: this.listEntityAliases(destinationSlug),
+      known_aliases: knownAliases,
       nextCursor: rows.length > pageSize ? page.at(-1)?.id || null : null,
     };
   }
@@ -5908,12 +5934,54 @@ export class Repository {
     const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null,
       additionalSourceIds:visualSourceIds})
       .filter((asset)=>currentSourceIds.has(asset.id) || !failedSourceIds.has(asset.id));
-    const policy=contentPolicyFor(row,contentPackage?.facts || []);
+    const frozenPolicy=contentPackage?.writing_packet?.context?.content_policy;
+    const policy=contentPackage?.writing_packet?.context?.version === 2 && frozenPolicy?.visuals
+      ? frozenPolicy : contentPolicyFor(row,contentPackage?.facts || []);
     const effectiveDraft={...row,strategy_version:strategyVersion || row.strategy_version || this.strategyVersion};
     const visuals=normalizeVisuals(current,effectiveDraft,row,assets,policy);
     this.replaceDraftVisuals(draftId,visuals,effectiveDraft.strategy_version);
     this.refreshDraftSchema(draftId);
     return this.listDraftVisuals(draftId);
+  }
+
+  // Discovery is only for an empty plan. Source prose and filenames rank which
+  // stored originals to inspect first, but never establish image relevance.
+  // The analyzed pixels must still pass normalizeVisuals before any slot exists.
+  sourceVisualDiscoveryCandidates(draftId, { limit = 3 } = {}) {
+    if (this.listDraftVisuals(draftId).length || mediaManifestForDraft(this.db,draftId)?.approvedNoImage) return [];
+    const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
+      FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
+    if (!row) return [];
+    const packet=this.getWritingPacket(row.brief_id);
+    const frozenIds=new Set((packet?.context?.authorized_source_assets || [])
+      .map((asset)=>asset.id || asset.source_asset_id).filter(Boolean));
+    const seenHashes=new Set();
+    return this.authorizedSourceAssetsForBrief(row,{packet})
+      .filter((asset)=>asset.analysis_status === 'not_analyzed'
+        && (asset.capture_version === asset.source_capture_version || frozenIds.has(asset.id))
+        && asset.local_path && fs.existsSync(asset.local_path))
+      .map((asset)=>({asset,priority:articleAssetMatchScore(row,row,asset),
+        pixels:Number(asset.width || 0)*Number(asset.height || 0)}))
+      .sort((left,right)=>right.priority-left.priority || right.pixels-left.pixels
+        || String(left.asset.id).localeCompare(String(right.asset.id)))
+      .filter(({asset})=>{
+        const key=asset.original_sha256 || asset.id;
+        if (seenHashes.has(key)) return false;
+        seenHashes.add(key);
+        return true;
+      })
+      .slice(0,Math.max(0,Math.min(3,Number(limit) || 0)))
+      .map(({asset})=>asset.id);
+  }
+
+  sourceVisualReanalysisCandidates(draftId) {
+    // Older prompts could copy nearby article prose into a card's depicted
+    // subjects. A historical refresh must not reuse that analysis as proof.
+    return this.db.prepare(`SELECT DISTINCT av.id AS visual_id,av.source_asset_id
+      FROM article_visuals av JOIN source_asset_analyses saa ON saa.asset_id=av.source_asset_id
+      WHERE av.draft_id=? AND saa.asset_kind IN ('photo_collage','editorial_infographic','map_or_route','handwritten_card')
+        AND COALESCE(saa.prompt_version,'')<>'media-analysis-prompt-3'
+      ORDER BY av.slot LIMIT 3`).all(draftId);
   }
 
   mediaRepairPlan(draftId, { strategyVersion = null, contentPackage = null } = {}) {
@@ -5931,7 +5999,10 @@ export class Repository {
       additionalSourceIds:visualSourceIds})
       .filter((asset)=>currentSourceIds.has(asset.id) || !failedSourceIds.has(asset.id));
     const effectiveDraft={...row,strategy_version:strategyVersion || row.strategy_version || this.strategyVersion};
-    const proposed=normalizeVisuals(current,effectiveDraft,row,assets,contentPolicyFor(row,contentPackage?.facts || []));
+    const frozenPolicy=contentPackage?.writing_packet?.context?.content_policy;
+    const policy=contentPackage?.writing_packet?.context?.version === 2 && frozenPolicy?.visuals
+      ? frozenPolicy : contentPolicyFor(row,contentPackage?.facts || []);
+    const proposed=normalizeVisuals(current,effectiveDraft,row,assets,policy);
     const slots=Array.from({length:Math.max(current.length,proposed.length)},(_,index)=>{
       const visual=proposed[index] || null;
       const existing=current[index] || null;
@@ -5953,22 +6024,26 @@ export class Repository {
       const generatedFileMissing=requiresGeneratedFile && (!existing?.media_path || !fs.existsSync(existing.media_path));
       const needsQualityQa=requiresModel && transform !== "analyze_source_image" && transform !== "generate_illustration";
       const requiredGap=visual.media_metadata?.required_visual_gap || null;
-      const repair=changed || ["planned","failed"].includes(existing?.status)
+      const descriptionChanged=Boolean(existing) && (existing.alt_text !== visual.alt_text || existing.caption !== visual.caption);
+      const mediaRepair=changed || ["planned","failed"].includes(existing?.status)
         || binary === "failed" || generatedFileMissing || (needsQualityQa && qa !== "passed");
+      const repair=mediaRepair || descriptionChanged;
       return { visual_id:existing?.id || null,slot:index+1,source_asset_id:visual.source_asset_id || null,
         old_media_url:existing?.wordpress_media_url || existing?.media_url || null,
         old_media_sha256:metadata.binary_qa?.sha256 || metadata.pixel_qa?.sha256 || null,
         disposition:requiredGap ? "blocked" : repair ? "repair" : "retain",
-        reason:requiredGap ? `required_visual_${requiredGap.reason}` : changed ? "visual_fingerprint_changed" : generatedFileMissing ? "generated_file_missing" : existing?.status === "failed" ? "visual_failed"
+        reason:requiredGap ? `required_visual_${requiredGap.reason}` : changed ? "visual_fingerprint_changed" : descriptionChanged ? "visual_description_stale" : generatedFileMissing ? "generated_file_missing" : existing?.status === "failed" ? "visual_failed"
           : existing?.status === "planned" ? "visual_incomplete" : binary === "failed" ? "binary_qa_failed"
             : needsQualityQa && qa !== "passed" ? `quality_qa_${qa}` : "qualified_visual_retained",
-        acquisition_strategy:transform,requires_model:!requiredGap && repair && requiresModel,
-        max_model_calls:!requiredGap && repair && requiresModel ? (transform === "analyze_source_image" ? 1 : 2) : 0,
+        acquisition_strategy:transform,requires_model:!requiredGap && mediaRepair && requiresModel,
+        max_model_calls:!requiredGap && mediaRepair && requiresModel ? (transform === "analyze_source_image" ? 1 : 2) : 0,
         required_visual_gap:requiredGap,
+        proposed_description_hash:sha256(`${visual.alt_text || ''}\n${visual.caption || ''}`),
         proposed_fingerprint:visualFingerprint(visual) };
     });
     return { plan_hash:sha256(JSON.stringify(slots.map((slot)=>({slot:slot.slot,source:slot.source_asset_id,
-      disposition:slot.disposition,reason:slot.reason,fingerprint:slot.proposed_fingerprint})))),slots };
+      disposition:slot.disposition,reason:slot.reason,fingerprint:slot.proposed_fingerprint,
+      description:slot.proposed_description_hash})))),slots };
   }
 
   planArticlePhotoRefresh(draftIds = []) {
@@ -5992,12 +6067,13 @@ export class Repository {
       const sync=postId ? this.getWordPressSyncState(siteUrl) : null;
       const inventoryAge=sync?.last_succeeded_at ? Date.now()-Date.parse(sync.last_succeeded_at) : Infinity;
       const media=this.mediaRepairPlan(draftId,{strategyVersion:'3.9',contentPackage});
+      const discoveryCandidates=!media.slots.length ? this.sourceVisualDiscoveryCandidates(draftId) : [];
       const mediaGate=evaluatePublicationEligibility(this.db,draftId);
       const active=this.db.prepare("SELECT 1 FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1").get(draftId);
       let disposition='eligible'; let reason='local_photo_refresh';
       if (!review?.passed) {disposition='blocked';reason='independent_article_qa_missing';}
       else if (active) {disposition='blocked';reason='active_article_job';}
-      else if (!media.slots.some((slot)=>['repair','remove'].includes(slot.disposition))) {
+      else if (!discoveryCandidates.length && !media.slots.some((slot)=>['repair','remove'].includes(slot.disposition))) {
         disposition=mediaGate.passed ? 'noop' : 'blocked';
         reason=mediaGate.passed ? 'no_photo_change' : `media_gate_${String(mediaGate.code).toLowerCase()}`;
       }
@@ -6008,14 +6084,16 @@ export class Repository {
         && inventory?.status !== (draft.status==='published' ? 'publish' : 'draft')) {
         disposition='blocked';reason='wordpress_status_mismatch';
       }
+      if (disposition==='eligible' && discoveryCandidates.length) reason='source_original_discovery';
       return {draft_id:draftId,title:draft.title,revision:draft.revision,
         strategy_version:draft.strategy_version,status:draft.status,post_id:postId || null,
         wordpress_status:inventory?.status || null,review_id:review?.id || null,
-        disposition,reason,media_gate:mediaGate,media};
+        disposition,reason,
+        discovery_candidate_ids:discoveryCandidates,media_gate:mediaGate,media};
     });
     const confirmation=sha256(JSON.stringify(items.map(({draft_id,revision,strategy_version,status,post_id,
-      wordpress_status,review_id,disposition,reason,media})=>({draft_id,revision,strategy_version,status,
-      post_id,wordpress_status,review_id,disposition,reason,plan_hash:media?.plan_hash}))));
+      wordpress_status,review_id,disposition,reason,discovery_candidate_ids,media})=>({draft_id,revision,strategy_version,status,
+      post_id,wordpress_status,review_id,disposition,reason,discovery_candidate_ids,plan_hash:media?.plan_hash}))));
     return {mode:'dry_run',strategy_version:'3.9',confirmation,items,
       summary:Object.fromEntries(['eligible','blocked','noop'].map((status)=>[status,items.filter((item)=>item.disposition===status).length]))};
   }
@@ -8338,7 +8416,8 @@ export class Repository {
         saa.reader_text_present,saa.confidence AS analysis_confidence,saa.analysis_version,saa.prompt_version,
         saa.source_sha256 AS analysis_source_sha256,
         sa.authorization_status AS asset_authorization_status,sa.publishable AS asset_publishable,
-        s.title AS source_title,s.authorization_status AS source_authorization_status,s.publishable AS source_publishable
+        s.title AS source_title,s.capture_version AS source_capture_version,
+        s.authorization_status AS source_authorization_status,s.publishable AS source_publishable
       FROM source_assets sa JOIN sources s ON s.id=sa.source_id
       LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id
       WHERE sa.kind='image' AND sa.storage_status='saved' AND sa.local_path<>''
@@ -9872,6 +9951,10 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const ranked = [...unusedAssets.values()].map((asset) => ({ asset, score: visualAssetMatchScore(visual, asset) }))
       .sort((left, right) => right.score - left.score);
     const exactScore=exact ? visualAssetMatchScore(visual,exact) : 0;
+    const exactHasPixelSubjects=Boolean(exact && ['ready','needs_review'].includes(exact.analysis_status)
+      && (exact.primary_subjects || []).length);
+    const pixelMatchFloor=(asset)=>['photo_collage','editorial_infographic','map_or_route','handwritten_card']
+      .includes(asset?.asset_kind) ? 0.30 : 0.34;
     const selectionRequestHash=sha256(`${visual.image_subject || ""}\n${visual.purpose || ""}`);
     const stabilizedSelection=visual.media_metadata?.authorized_asset_match?.version === "visual-match-2"
       && visual.media_metadata.authorized_asset_match.request_hash === selectionRequestHash;
@@ -9883,12 +9966,16 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     // however, must converge on the highest-scoring authorized asset instead
     // of preferring whichever asset happened to occupy the slot last. Exact-id
     // preference made repeated normalization oscillate between two plans.
-    const match = (qualifiedExisting || stabilizedSelection) && exact ? {asset:exact,score:exactScore}
+    const match = (qualifiedExisting || stabilizedSelection) && exact
+      && (!exactHasPixelSubjects || exactScore >= pixelMatchFloor(exact)) ? {asset:exact,score:exactScore}
       : coherentExisting && exact && exactScore >= 0.34
         ? {asset:exact,score:exactScore} : ranked[0];
     // Asset ownership is insufficient: a factual photo is reusable only when its
     // own alt/evidence metadata matches the planned subject.
-    if (!match || (!qualifiedExisting && !stabilizedSelection && match.score < 0.34)) {
+    const matchHasPixelSubjects=Boolean(match?.asset && ['ready','needs_review'].includes(match.asset.analysis_status)
+      && (match.asset.primary_subjects || []).length);
+    if (!match || (matchHasPixelSubjects ? match.score < pixelMatchFloor(match.asset)
+      : !qualifiedExisting && !stabilizedSelection && match.score < 0.34)) {
       // A writer-selected id is evidence of intent, not evidence of semantic
       // relevance. Do not silently re-select the same rejected asset later as an
       // article-level fallback during this normalization pass.
@@ -9897,6 +9984,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       return requiredVisualGap(visual,"no_relevant_authorized_source");
     }
     const asset = match.asset;
+    const keepQualified=qualifiedExisting && exact?.id===asset.id
+      && (!exactHasPixelSubjects || exactScore >= pixelMatchFloor(exact));
     unusedAssets.delete(asset.id);
     if (exact && exact.id !== asset.id) {
       unusedAssets.delete(exact.id);
@@ -9920,17 +10009,21 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       purpose: truncateText(visual.purpose || `Evidence-linked view for ${draft.title}`, 300),
       alt_text: scopedRoute ? truncateText(`Map of ${visual.image_subject}.`,220)
         : readerVisualAlt(asset, visual.alt_text || visual.image_subject, brief.destination_slug),
+      // Source captions and the writer's planned caption are not pixel-level
+      // descriptions. In particular, a city guide card can carry a caption
+      // about an entirely different street. Bind the reader caption to the
+      // selected asset's image-level description instead.
       caption: scopedRoute ? truncateText(`Route map: ${visual.image_subject}.`,300)
-        : truncateText(asset.caption_text || visual.caption || readerVisualAlt(asset, visual.image_subject, brief.destination_slug), 300),
+        : readerVisualAlt(asset, "", brief.destination_slug),
       generation_prompt: "",
-      aspect_ratio:needsWork && !qualifiedExisting ? sourceAssetAspectRatio(asset) : visual.aspect_ratio,
+      aspect_ratio:needsWork && !keepQualified ? sourceAssetAspectRatio(asset) : visual.aspect_ratio,
       image_type:visualImageType(decision,visual.image_type),
       acquisition_strategy: acquisitionStrategy,
       factual_image_required: true,
       source_asset_id: asset.id,
       source_remote_url: asset.remote_url,
-      status: qualifiedExisting ? "generated" : needsWork ? "planned" : "generated",
-      media_url: qualifiedExisting ? visual.media_url : needsWork ? "" : `/api/source-assets/${asset.id}/preview`,
+      status: keepQualified ? "generated" : needsWork ? "planned" : "generated",
+      media_url: keepQualified ? visual.media_url : needsWork ? "" : `/api/source-assets/${asset.id}/preview`,
       provider: "authorized_xiaohongshu_source",
       model: "user-authorized-source-image",
       media_metadata: { ...(visual.media_metadata || {}),source_mime_type: asset.mime_type, storage_status: asset.storage_status,
@@ -9994,7 +10087,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     normalized.push({
       placement: defaultPlacement(index), purpose,
       alt_text:subject,
-      caption:truncateText(asset.caption_text || subject,300),
+      caption:subject,
       generation_prompt:"",aspect_ratio:sourceAssetAspectRatio(asset),image_type:visualImageType(decision,"real_world_photo"),
       image_role:index===0 ? "hero" : "support",image_subject:subject,
       acquisition_strategy:acquisitionStrategy,factual_image_required:true,
@@ -10067,7 +10160,7 @@ export function decideVisualAsset(asset = {}, request = {}) {
   };
   if (locallyQualified && ['unknown','documentary_photo','real_world_photo'].includes(visualClass)
     && !(asset.editor_ui_regions || []).length) return {visualClass:'documentary_photo',...common,
-    action:'retain',transformKind:'PHOTO_RETAIN',reason:'local_original_photo_quality_passed'};
+      action:'retain',transformKind:'PHOTO_RETAIN',reason:'local_original_photo_quality_passed'};
   if (!explicit || analysisStatus !== "ready") {
     if (language === "no_text" && analysisStatus !== "needs_review" && asset.reader_text_present !== true) return {visualClass:"documentary_photo",...common,action:"retain",
       transformKind:"PHOTO_RETAIN",reason:"legacy_image_level_no_text_evidence"};
@@ -10136,10 +10229,12 @@ function assetUnsafeForFocusedAttraction(asset = {}, brief = {}, policy = {}) {
   const focusTokens = topicTokens(focus);
   for (const token of topicTokens(brief.destination_slug || "")) focusTokens.delete(token);
   const multiPlaceKind=["photo_collage","editorial_infographic","map_or_route"].includes(String(asset.asset_kind || ""));
+  const hasPixelSubjects=['ready','needs_review'].includes(asset.analysis_status)
+    && (asset.primary_subjects || []).length > 0;
   const imageLevelTokens = topicTokens([
     // A legacy caption can repeat the desired place even when its pixels show
     // several unrelated places; only source analysis can establish the subject.
-    ...(multiPlaceKind ? [] : [asset.alt_text,asset.caption_text,asset.evidence_subject]),
+    ...(multiPlaceKind || hasPixelSubjects ? [] : [asset.alt_text,asset.caption_text,asset.evidence_subject]),
     ...(Array.isArray(asset.primary_subjects) ? asset.primary_subjects : []),
   ].filter(Boolean).join(" "));
   if (focusTokens.size && [...focusTokens].filter((token) => imageLevelTokens.has(token)).length
@@ -10174,8 +10269,9 @@ function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
   const isEditorial = (value) => value && !/[\u3400-\u9fff]/u.test(value)
     && !/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/i.test(value)
     && !/\b(?:claim|source|asset|fact|draft)_[a-f0-9]{8,}\b/i.test(value);
-  for (const value of [asset?.alt_text, asset?.caption_text,
-    ...(Array.isArray(asset?.primary_subjects) ? asset.primary_subjects : []), fallback].map(clean)) {
+  for (const value of [
+    ...(Array.isArray(asset?.primary_subjects) ? asset.primary_subjects : []),
+    asset?.alt_text, fallback].map(clean)) {
     if (isEditorial(value)) return truncateText(value,220);
   }
   const subject = clean(asset?.evidence_subject);
@@ -10189,7 +10285,9 @@ function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
 function articleAssetMatchScore(draft, brief, asset) {
   const article = topicTokens(`${draft?.title || ""} ${draft?.body_markdown || ""}`);
   for (const token of topicTokens(brief?.destination_slug || "")) article.delete(token);
-  const described = topicTokens(`${assetTopicText(asset)} ${asset.evidence_subject || ""}`);
+  const pixelDescribed=['ready','needs_review'].includes(asset.analysis_status)
+    && (asset.primary_subjects || []).length > 0;
+  const described = topicTokens(`${assetTopicText(asset)} ${pixelDescribed ? "" : asset.evidence_subject || ""}`);
   if (!article.size || !described.size) return 0;
   const overlapping=[...described].filter((token) => article.has(token));
   const overlap = overlapping.length;
@@ -10202,7 +10300,17 @@ function articleAssetMatchScore(draft, brief, asset) {
   const titleAnchors=topicTokens(draft?.title || "");
   for (const token of topicTokens(brief?.destination_slug || "")) titleAnchors.delete(token);
   for (const token of generic) titleAnchors.delete(token);
-  if (titleAnchors.size && ![...titleAnchors].some((token)=>described.has(token))) return 0;
+  const broadItinerary=brief?.content_type === 'itinerary'
+    || /\b(?:itinerary|route|city\s*walk)\b/i.test(draft?.title || '');
+  if (broadItinerary) {
+    // A route article may legitimately illustrate one named stop rather than
+    // the words "three-day itinerary". Require that stop in the article body
+    // and in the image's own analyzed subjects, never surrounding source text.
+    if (!['ready','needs_review'].includes(asset.analysis_status) || !(asset.primary_subjects || []).length) return 0;
+    const primary=topicTokens(asset.primary_subjects.join(' '));
+    const body=topicTokens(draft?.body_markdown || '');
+    if (![...primary].some((token)=>!generic.has(token) && body.has(token))) return 0;
+  } else if (titleAnchors.size && ![...titleAnchors].some((token)=>described.has(token))) return 0;
   return overlap / Math.max(1, Math.min(article.size, described.size));
 }
 
@@ -10260,7 +10368,10 @@ function visualAssetMatchScore(visual, asset) {
   const requested = topicTokens(`${visual.image_subject || ""} ${visual.purpose || ""}`);
   const described = topicTokens(assetTopicText(asset));
   if (!requested.size || !described.size) return 0;
-  const overlap = [...requested].filter((token) => described.has(token)).length;
+  const overlapping=[...requested].filter((token)=>described.has(token));
+  const generic=new Set(['chongqing','travel','guide','photo','image','city','street','person','route','food','area','landmark','view']);
+  if (!overlapping.some((token)=>!generic.has(token))) return 0;
+  const overlap = overlapping.length;
   // Cover the requested subject, rather than rewarding a broad asset merely
   // because one place name appears somewhere in a long itinerary or collage.
   return overlap / Math.max(1, requested.size);
@@ -10270,9 +10381,14 @@ function assetTopicText(asset={}) {
   // Claim evidence may mention one place inside a broad itinerary/card. It is
   // useful for article-level discovery, but is not asset-level proof that the
   // pixels depict a requested scene.
-  const values=[asset.alt_text,asset.caption_text,asset.nearby_text,
+  const pixelDescribed=['ready','needs_review'].includes(asset.analysis_status)
+    && Array.isArray(asset.primary_subjects)
+    && asset.primary_subjects.length > 0;
+  // A described card cannot borrow a place from surrounding prose or its old
+  // caption. Photo metadata remains available for the legacy fallback path.
+  const values=[...(pixelDescribed ? [] : [asset.alt_text,asset.caption_text,asset.nearby_text]),
     ...(Array.isArray(asset.primary_subjects) ? asset.primary_subjects : []),
-    ...(Array.isArray(asset.entities) ? asset.entities.map((entry)=>typeof entry === "string" ? entry
+    ...(!pixelDescribed && Array.isArray(asset.entities) ? asset.entities.map((entry)=>typeof entry === "string" ? entry
       : entry?.name || entry?.label || entry?.value || "") : [])];
   return values.filter(Boolean).join(" ");
 }
@@ -11692,7 +11808,9 @@ function structuredFailureDiagnostic(job,error) {
     "EDITORIAL_PAGE_INVALID","FINAL_PAGE_INVALID","FINAL_PAGE_QA_FAILED","MEDIA_DELIVERY_INVALID",
     "PUBLISH_PACKAGE_INVALID","COMMERCIAL_DELIVERY_MISMATCH","CONTRACT_VERSION_MISMATCH",
     "PROTECTED_EVIDENCE_MISMATCH","DESTINATION_TOPIC_MISMATCH","FROZEN_WRITING_SCOPE_INVALID",
-    "EDITORIAL_CARD_TEXT_OVERFLOW",
+    "EDITORIAL_CARD_TEXT_OVERFLOW","MEDIA_INCOMPLETE","MEDIA_MANIFEST_MISSING_OR_STALE",
+    "EMPTY_MEDIA_MANIFEST_NOT_APPROVED","MEDIA_REQUIRED_MANIFEST_MISSING",
+    "MEDIA_DISCOVERY_NO_RELEVANT_IMAGE","MEDIA_DISCOVERY_BUDGET_EXHAUSTED",
   ]);
   const hasProviderEvidence=Boolean(error?.provider || error?.status || error?.details?.http_status
     || error?.details?.provider_request_id || /^PROVIDER_/.test(code));

@@ -49,6 +49,7 @@ export function label(value) {
 
 export function friendlyError(value, context = {}) {
   const text = String(value || "").trim();
+  if (/Change the initial password before using the dashboard/i.test(text)) return "请先修改 CMS 初始密码，再预览文章。";
   if (context.code === "MODEL_CREDENTIAL_ENCRYPTION_KEY_REQUIRED") return "服务器尚未配置 API key 加密根密钥，暂时不能保存新凭据。";
   if (context.code === "MODEL_CREDENTIAL_ENCRYPTION_KEY_INVALID") return "服务器的 API key 加密根密钥格式无效，需要运维修正后才能保存新凭据。";
   if (text.startsWith("Coverage audit still found material evidence without Claims after one targeted retry.")) {

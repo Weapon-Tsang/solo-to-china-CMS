@@ -6,6 +6,38 @@ import test from "node:test";
 import sharp from "sharp";
 import { decideVisualAsset, normalizeVisuals, visualQualityQaStatus } from "../src/repository.mjs";
 
+test("a source guide card cannot lend an unrelated legacy caption to a travel article",()=>{
+  const asset={id:"chongqing-card",asset_kind:"editorial_infographic",analysis_status:"ready",
+    analysis_version:"media-analysis-2",reader_text_present:true,language_status:"chinese",
+    alt_text:"Chongqing accommodation options",caption_text:"Guanyinqiao pedestrian avenues and cultural spots",
+    primary_subjects:["Chongqing accommodation options"],
+    text_regions:[{region_id:"copy",text:"住宿选择",role:"editorial_text",language:"zh",readable:true,preserve:false}],
+    storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"};
+  const selected=normalizeVisuals([{source_asset_id:asset.id,image_type:"infographic",
+    image_subject:"Chongqing accommodation options",purpose:"Compare accommodation options",
+    caption:"Guanyinqiao offers broad pedestrian avenues"}],
+    {title:"Chongqing accommodation guide",body_markdown:"Compare accommodation options."},
+    {destination_slug:"chongqing"},[asset],{visuals:{target:1,maximum:5}});
+  assert.equal(selected.length,1);
+  assert.equal(selected[0].caption,"Chongqing accommodation options");
+  assert.doesNotMatch(selected[0].caption,/Guanyinqiao/);
+});
+
+test("an analyzed Chongqing advisory card cannot match a Hong Kong scene through nearby prose",()=>{
+  const asset={id:"travel-advisory",asset_kind:"editorial_infographic",analysis_status:"ready",
+    analysis_version:"media-analysis-2",reader_text_present:true,language_status:"chinese",
+    alt_text:"Hong Kong street",caption_text:"Hong Kong streetscape",nearby_text:"Hong Kong street towers",
+    evidence_subject:"Hong Kong street towers",primary_subjects:["Chongqing travel advisory tips"],
+    entities:["Hong Kong street towers","Chongqing"],
+    text_regions:[{region_id:"copy",text:"重庆旅行提示",role:"editorial_text",language:"zh",readable:true,preserve:false}],
+    storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"};
+  const result=normalizeVisuals([{source_asset_id:asset.id,image_type:"real_world_photo",
+    image_subject:"Hong Kong street towers",purpose:"Show Hong Kong street towers"}],
+    {title:"Hong Kong walking guide",body_markdown:"Walk below Hong Kong towers."},
+    {destination_slug:"hong-kong"},[asset],{visuals:{target:1,maximum:5}});
+  assert.deepEqual(result,[]);
+});
+
 const draft = { title: "A Practical Beijing Guide", body_markdown: "Useful body text.", strategy_version:"3.8" };
 const brief = { destination_slug: "beijing" };
 const policy = { visuals: { minimum: 3, target: 4, maximum: 5 } };
@@ -226,7 +258,7 @@ test("an obsolete qualified fallback releases assets displaced by its superseded
   assert.deepEqual(output[0].media_metadata.authorized_asset_match.displaced_asset_ids,[broad.id]);
 });
 
-test("a generated visual with passing independent QA remains immutable despite a weak text match",()=>{
+test("derivative QA cannot override a source card that depicts an unrelated place",()=>{
   const asset={id:"qualified-source",remote_url:"https://media.example/qualified.webp",mime_type:"image/webp",
     alt_text:"General Chongqing visitor notes",primary_subjects:["Chongqing visitor notes"],analysis_status:"ready",
     asset_kind:"editorial_infographic",analysis_version:"media-analysis-2",reader_text_present:true,language_status:"english",
@@ -238,8 +270,7 @@ test("a generated visual with passing independent QA remains immutable despite a
       semantic:{status:"passed"}}}}];
   const output=normalizeVisuals(requested,{title:"Ciqikou Ancient Town",body_markdown:"Walk the old lanes."},
     {destination_slug:"chongqing"},[asset],{visuals:{target:1,maximum:5}});
-  assert.equal(output[0].source_asset_id,asset.id);
-  assert.equal(output[0].status,"generated");
+  assert.deepEqual(output,[]);
 });
 
 test("a focused attraction guide rejects previously qualified multi-place visuals and does not reselect them as fallback",()=>{
@@ -526,7 +557,7 @@ test("an equal-count media plan repairs only the stale source slot and preserves
     original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED",analysis_status:"ready",
     asset_kind:"editorial_infographic",reader_text_present:true,language_status:"chinese",
     language_by_region:[{region_id:"body",language:"zh-CN",role:"author_overlay"}],text_regions:[{region_id:"body",text:"09:00–17:00",role:"author_overlay"}],
-    editor_ui_regions:[],photo_regions:[],entities:[],primary_subjects:["route"],analysis_version:"media-analysis-1",
+    editor_ui_regions:[],photo_regions:[],entities:[],primary_subjects:["Chongqing route card"],analysis_version:"media-analysis-1",
     original_sha256:"abc",capture_version:2,width:1200,height:1600}];
   const output=normalizeVisuals(current,{title:"Chongqing route",body_markdown:"A Chongqing route card."},{destination_slug:"chongqing"},assets,
     {visuals:{target:2,maximum:5}});
@@ -589,4 +620,75 @@ test("relevant food media beyond the former first-24 candidate window can be sel
   const output=normalizeVisuals([],{title:"Chongqing food guide",body_markdown:"Choose a Chongqing hotpot meal.",strategy_version:"3.8"},
     {destination_slug:"chongqing"},assets,{visuals:{target:1,maximum:5}});
   assert.equal(output[0].source_asset_id,"asset-29");
+});
+
+test('a previously QA-passed guide card cannot remain a Guanyinqiao street photo',()=>{
+  const passed=Object.fromEntries(['language','completeness','style','semantic']
+    .map((field)=>[field,{status:'passed',reason:'derivative matches its source'}]));
+  const base={remote_url:'https://media.test/source.png',mime_type:'image/png',storage_status:'saved',
+    original_bytes_status:'saved_original',durability_status:'ORIGINAL_STORED',language_status:'no_text',
+    analysis_status:'ready',analysis_version:'media-analysis-2',width:1200,height:800};
+  const assets=[{...base,id:'old-card',asset_kind:'handwritten_card',
+    primary_subjects:['Travel','Chongqing','Accommodation'],alt_text:'Guanyinqiao pedestrian avenue',
+    caption_text:'Guanyinqiao pedestrian avenue'},
+  {...base,id:'actual-street',asset_kind:'documentary_photo',
+    primary_subjects:['Guanyinqiao pedestrian avenue in Chongqing'],
+    alt_text:'Guanyinqiao pedestrian avenue in Chongqing'}];
+  const existing=[{id:'visual',source_asset_id:'old-card',image_type:'infographic',image_role:'hero',
+    image_subject:'Guanyinqiao pedestrian avenue',purpose:'Show the Guanyinqiao pedestrian avenue',
+    placement:'hero',acquisition_strategy:'recompose_editorial_card',status:'generated',
+    media_url:'https://media.test/old-card.png',media_metadata:{quality_qa:passed,binary_qa:{status:'passed'}}}];
+  const output=normalizeVisuals(existing,{title:'Chongqing walking itinerary',
+    body_markdown:'Walk along the Guanyinqiao pedestrian avenue.'},{destination_slug:'chongqing'},assets,
+    {visuals:{target:1,maximum:3}});
+  assert.equal(output.length,1);
+  assert.equal(output[0].source_asset_id,'actual-street');
+  assert.match(output[0].caption,/Guanyinqiao pedestrian avenue/);
+  assert.notEqual(output[0].media_url,'https://media.test/old-card.png');
+});
+
+test('a QA-passed travel-preparation card cannot remain a Chongqing public-bus photo',()=>{
+  const quality_qa=Object.fromEntries(['language','completeness','style','semantic']
+    .map((field)=>[field,{status:'passed',reason:'derivative matches its source'}]));
+  const asset={id:'preparation-card',asset_kind:'editorial_infographic',analysis_status:'needs_review',
+    primary_subjects:['Travel preparation guide for Chongqing'],alt_text:'Photo of Chongqing Public Bus',
+    caption_text:'Photo of Chongqing Public Bus',remote_url:'https://media.test/preparation.webp',
+    mime_type:'image/webp',storage_status:'saved',original_bytes_status:'saved_original',
+    durability_status:'ORIGINAL_STORED',language_status:'english',width:1200,height:800};
+  const current=[{source_asset_id:asset.id,image_type:'infographic',image_role:'hero',placement:'hero',
+    image_subject:'Photo of Chongqing Public Bus',purpose:'Show a Chongqing public bus in use',
+    status:'generated',media_url:'https://media.test/old-bus.png',media_metadata:{quality_qa}}];
+  const output=normalizeVisuals(current,{title:'Chongqing 3-Day Route',body_markdown:'Use local buses for the route.'},
+    {destination_slug:'chongqing'},[asset],{visuals:{target:1,maximum:3}});
+  assert.ok(output.every((visual)=>visual.status!=='generated' || visual.media_url!=='https://media.test/old-bus.png'));
+});
+
+test('a QA-passed person photo cannot masquerade as Eling Second Factory',()=>{
+  const quality_qa=Object.fromEntries(['language','completeness','style','semantic']
+    .map((field)=>[field,{status:'passed',reason:'derivative matches its source'}]));
+  const asset={id:'person-photo',asset_kind:'documentary_photo',analysis_status:'ready',
+    primary_subjects:['person','street art / pavement marking'],alt_text:'Eling Second Factory',
+    remote_url:'https://media.test/person.webp',mime_type:'image/webp',storage_status:'saved',
+    original_bytes_status:'saved_original',durability_status:'ORIGINAL_STORED',language_status:'no_text',
+    local_photo_audit:{status:'eligible',sha256:'hash'},original_sha256:'hash',width:1200,height:800};
+  const current=[{source_asset_id:asset.id,image_type:'real_world_photo',image_role:'hero',placement:'hero',
+    image_subject:'Photo of Eling Second Factory in Chongqing',purpose:'Show Eling Second Factory',
+    status:'generated',media_url:'https://media.test/old-eling.png',media_metadata:{quality_qa}}];
+  const output=normalizeVisuals(current,{title:'Eling Second Factory visitor guide',strategy_version:'3.9',
+    body_markdown:'Visit Eling Second Factory.'},{destination_slug:'chongqing'},[asset],
+    {visuals:{target:1,maximum:3}});
+  assert.ok(output.every((visual)=>visual.status!=='generated' || visual.media_url!=='https://media.test/old-eling.png'));
+});
+
+test('a broad walking itinerary may use a pixel-verified photo of a named stop',()=>{
+  const asset={id:'raffles-photo',asset_kind:'documentary_photo',analysis_status:'ready',
+    primary_subjects:['Raffles City Chongqing','cityscape'],alt_text:'Raffles City Chongqing',
+    remote_url:'https://media.test/raffles.webp',mime_type:'image/webp',storage_status:'saved',
+    original_bytes_status:'saved_original',durability_status:'ORIGINAL_STORED',language_status:'no_text',
+    local_photo_audit:{status:'eligible',sha256:'raffles-hash'},original_sha256:'raffles-hash',width:1200,height:800};
+  const output=normalizeVisuals([],{title:'Chongqing 3-Day Walking Itinerary',strategy_version:'3.9',
+    body_markdown:'The walking route includes Raffles City Chongqing and its cityscape.'},
+    {destination_slug:'chongqing',content_type:'itinerary'},[asset],{visuals:{target:1,maximum:3}});
+  assert.equal(output[0]?.source_asset_id,asset.id);
+  assert.match(output[0].caption,/Raffles City/);
 });

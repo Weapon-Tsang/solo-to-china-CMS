@@ -66,8 +66,8 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
           ].map(([key, subject, predicate, value]) => ({ key, subject, predicate, value,
             qualifiers: [], confidence: 0.85, source_quote: value })),
           media_analysis:(source.assets || []).map((asset)=>({asset_id:asset.id,analysis_status:"ready",
-            asset_kind:"documentary_photo",text_regions:[],photo_regions:[{region_id:"photo",subject:"Beijing travel scene"}],
-            entities:["Beijing"],editor_ui_regions:[],primary_subjects:["Beijing travel scene"],language_by_region:[],
+            asset_kind:"documentary_photo",text_regions:[],photo_regions:[{region_id:"photo",subject:"Central Beijing metro entrance"}],
+            entities:["Beijing"],editor_ui_regions:[],primary_subjects:["Central Beijing metro entrance"],language_by_region:[],
             reader_text_present:false,confidence:0.95,analysis_version:"media-analysis-1",prompt_version:"media-analysis-prompt-1"})),
           blueprint: { format: "guide", hook: "First trip", angle: "solo first visit", sections: [], strengths: ["specific"], gaps: [] },
         },
@@ -119,7 +119,7 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
         evidence_ledger: [{ section_id: "section_plan", section: "Plan", content_node_ids: ["node_plan"], claim_keys: ["beijing.orientation.location", "beijing.transport.metro"], source_ids: sourceIds }],
         unresolved_conflicts: [],
         visuals: [
-          { placement: "hero", purpose: "Show Source A real-world travel scene", alt_text: "Source A real-world travel scene", caption: "Beijing orientation", generation_prompt: "", aspect_ratio: "16:9", image_type: "real_world_photo", image_role: "hero", image_subject: "Source A real-world travel scene", factual_image_required: true },
+          { placement: "hero", purpose: "Show the Central Beijing metro entrance", alt_text: "Central Beijing metro entrance", caption: "Central Beijing metro entrance", generation_prompt: "", aspect_ratio: "16:9", image_type: "real_world_photo", image_role: "hero", image_subject: "Central Beijing metro entrance", factual_image_required: true },
           { placement: "mid_article", purpose: "Explain planning", alt_text: "Beijing trip planning illustration", caption: "Planning overview", generation_prompt: "Editorial illustration of Beijing trip planning, no text or logos", aspect_ratio: "3:2", image_type: "illustration", image_role: "support", image_subject: "Beijing planning", factual_image_required: false },
         ],
       } };
@@ -320,6 +320,16 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   assert.equal(db.prepare("SELECT strategy_version FROM wordpress_publications WHERE draft_id=?").get(content[0].draft_id).strategy_version, CONTENT_STRATEGY.version);
   assert.equal(JSON.stringify(repository.getTopicPackage(content[0].id)).includes("Trip.com"), false);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status='failed'").get().count, 0);
+  db.exec('SAVEPOINT stale_visual_caption');
+  try {
+    const sourceVisual=generatedPackage.draft.visuals.find((visual)=>visual.source_asset_id);
+    db.prepare("UPDATE article_visuals SET caption='Unrelated Guanyinqiao walking streets' WHERE id=?").run(sourceVisual.id);
+    const description=repository.mediaRepairPlan(content[0].draft_id).slots.find((slot)=>slot.visual_id===sourceVisual.id);
+    assert.equal(description.reason,'visual_description_stale');
+    assert.equal(description.max_model_calls,0,'a caption correction must not regenerate a qualified source visual');
+  } finally {
+    db.exec('ROLLBACK TO stale_visual_caption; RELEASE stale_visual_caption');
+  }
   db.exec('SAVEPOINT missing_manifest_refresh_plan');
   try {
     db.prepare('DELETE FROM required_media_manifests WHERE draft_id=? AND revision=?')

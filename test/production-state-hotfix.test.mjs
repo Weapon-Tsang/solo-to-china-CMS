@@ -536,6 +536,20 @@ test("a missing delivery manifest recovers from visual generation without rewrit
   assert.match(explanation.action.why,/不重新写作正文/);
 });
 
+test("legacy media failures expose the actual repair stage and do not invite blind redispatch",()=>{
+  const incomplete={type:"compose_publish_page",last_failure_code:"MEDIA_INCOMPLETE",
+    last_error:"MEDIA_INCOMPLETE: required media remains incomplete"};
+  assert.equal(decorateDeliveryFailure(incomplete).recovery_type,"generate_visuals");
+  assert.equal(decorateDeliveryFailure({...incomplete,type:"compose_frontend_page"}).recovery_type,"generate_visuals");
+  assert.equal(decorateDeliveryFailure({...incomplete,type:"compose_frontend_page",
+    last_failure_code:"MEDIA_MANIFEST_MISSING_OR_STALE"}).recovery_type,"generate_visuals");
+  assert.equal(explainOperationalFailure(incomplete).action.id,"generate_visuals");
+  const unknown=explainOperationalFailure({type:"generate_visuals",last_failure_code:"MEDIA_OUTCOME_UNKNOWN",
+    last_error:"A prior media request has an unknown outcome."});
+  assert.equal(unknown.action.id,null);
+  assert.match(unknown.reason,/重复生图/);
+});
+
 test("visual and provider failure codes receive distinct minimal recovery guidance",()=>{
   const pending=explainOperationalFailure({type:"generate_visuals",last_failure_code:"VISUAL_CANDIDATE_PENDING_QA",
     last_error:"quality QA returned HTTP 429 after candidate persistence"});

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { transaction } from './db.mjs';
 
 const iso = (milliseconds) => new Date(milliseconds).toISOString();
@@ -64,6 +65,56 @@ export function createMediaRequestExecutor(db, { rpm = 2, windowMs = 60_000, saf
       return { ...budget({visualId,substage}), grantId, idempotent:false };
     });
   }
+  // Visual QA is a read-only judgment of an already persisted image. An
+  // operator may reconcile an unknown QA dispatch after verifying that exact
+  // candidate's bytes; generation and localization dispatches stay blocked.
+  function reconcileUnknownQa({ opportunityId, visualId, candidateId, candidateHash,
+    dispatchId, actor, reason, idempotencyKey }) {
+    if (![opportunityId,visualId,candidateId,candidateHash,dispatchId,actor,reason,idempotencyKey]
+      .every((value)=>String(value || '').trim()) || String(reason).length > 500
+      || String(idempotencyKey).length > 160) {
+      throw Object.assign(new Error('Exact QA dispatch, candidate hash, actor, reason and idempotency key are required.'),{statusCode:400});
+    }
+    return transaction(db,()=>{
+      const prior=db.prepare('SELECT * FROM production_record_audit WHERE idempotency_key=?').get(idempotencyKey);
+      if (prior) {
+        const detail=JSON.parse(prior.detail_json || '{}');
+        if (prior.action !== 'reconcile_unknown_visual_qa' || prior.opportunity_id !== opportunityId
+          || detail.dispatch_id !== dispatchId || detail.candidate_hash !== candidateHash) {
+          throw Object.assign(new Error('Idempotency key belongs to another reconciliation.'),{statusCode:409});
+        }
+        return {dispatchId,candidateId,candidateHash,idempotent:true};
+      }
+      const candidate=db.prepare(`SELECT vc.*,av.draft_id,av.status AS visual_status FROM visual_candidates vc
+        JOIN article_visuals av ON av.id=vc.visual_id WHERE vc.id=? AND vc.visual_id=?`).get(candidateId,visualId);
+      if (!candidate || candidate.status !== 'pending_qa' || !['planned','failed'].includes(candidate.visual_status)
+        || candidate.output_hash !== candidateHash || !candidate.media_path || !fs.existsSync(candidate.media_path)
+        || crypto.createHash('sha256').update(fs.readFileSync(candidate.media_path)).digest('hex') !== candidateHash) {
+        throw Object.assign(new Error('The pending visual QA candidate is missing, changed or no longer recoverable.'),{statusCode:409});
+      }
+      const owner=db.prepare(`SELECT 1 FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
+        JOIN article_drafts ad ON ad.brief_id=cb.id WHERE co.id=? AND ad.id=? AND co.approved_at IS NOT NULL`)
+        .get(opportunityId,candidate.draft_id);
+      const active=db.prepare("SELECT 1 FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1")
+        .get(candidate.draft_id);
+      const dispatch=db.prepare(`SELECT * FROM media_dispatches WHERE id=? AND visual_id=? AND substage='visual_quality_qa'`)
+        .get(dispatchId,visualId);
+      const latest=db.prepare(`SELECT id FROM media_dispatches WHERE visual_id=? AND substage='visual_quality_qa'
+        ORDER BY started_at_ms DESC LIMIT 1`).get(visualId);
+      if (!owner || active || !dispatch || dispatch.state !== 'outcome_unknown' || latest?.id !== dispatchId
+        || clock()-dispatch.started_at_ms < 2*60_000) {
+        throw Object.assign(new Error('Only the latest settled unknown QA dispatch of an idle approved article can be reconciled.'),{statusCode:409});
+      }
+      db.prepare("UPDATE media_dispatches SET state='failed',error_code='QA_OUTCOME_RECONCILED' WHERE id=? AND state='outcome_unknown'")
+        .run(dispatchId);
+      db.prepare(`INSERT INTO production_record_audit(id,opportunity_id,action,status,actor,idempotency_key,detail_json,created_at)
+        VALUES (? ,? ,'reconcile_unknown_visual_qa','completed',?,?,?,?)`).run(
+          crypto.randomUUID(),opportunityId,String(actor).slice(0,120),idempotencyKey,
+          JSON.stringify({dispatch_id:dispatchId,visual_id:visualId,candidate_id:candidateId,
+            candidate_hash:candidateHash,original_error_code:dispatch.error_code,reason:String(reason)}),iso(clock()));
+      return {dispatchId,candidateId,candidateHash,idempotent:false};
+    });
+  }
   function acquire({ provider, model, accountScope, visualId, substage }) {
     if (!visualId || !substage) throw new TypeError('Media dispatch requires visual and substage identity.');
     const scopeKey = mediaQuotaScope({ provider, model, accountScope });
@@ -122,5 +173,5 @@ export function createMediaRequestExecutor(db, { rpm = 2, windowMs = 60_000, saf
     });
     return { ...outcome, heartbeat, finish };
   }
-  return { acquire, budget, grant };
+  return { acquire, budget, grant, reconcileUnknownQa };
 }

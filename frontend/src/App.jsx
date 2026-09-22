@@ -542,7 +542,9 @@ function FinalPreviewAction({ draftId, available, complete = false }) {
     try {
       const result = await api(`/api/drafts/${encodeURIComponent(draftId)}/final-preview`, { method:"POST" });
       popup.location.replace(result.url);
-      if (result.mode === "wordpress_login_required") setMessage("需要先登录 WordPress；登录后会进入这篇草稿的最终预览。");
+      if (result.mode === "wordpress_login_required") setMessage(result.message?.includes("rejected")
+        ? "WordPress 拒绝了预览票据。请用有编辑权限的账号登录；同时检查 CMS 的 WordPress 凭据及预览票据权限。"
+        : "需要先登录 WordPress；登录后会进入这篇草稿的最终预览。");
     } catch (caught) {
       popup.close();
       setMessage(friendlyError(caught));

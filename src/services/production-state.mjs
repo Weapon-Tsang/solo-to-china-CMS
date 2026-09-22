@@ -323,6 +323,10 @@ export function buildProductionState(db, row, options = {}) {
     recoverable = !["APPROVED_SCOPE_INVALID", "EVIDENCE_SCOPE_INVALID", "DESTINATION_TOPIC_MISMATCH",
       "EDITORIAL_ASSEMBLY_INPUT_BUDGET_EXCEEDED", "PLAN_INPUT_BUDGET_EXCEEDED"]
       .includes(String(failed.last_failure_code || ""));
+    if (failed.last_failure_code === "MEDIA_OUTCOME_UNKNOWN" && row.draft_id) {
+      recoverable = !Boolean(db.prepare(`SELECT 1 FROM media_dispatches md JOIN article_visuals av ON av.id=md.visual_id
+        WHERE av.draft_id=? AND md.state IN ('dispatch_started','outcome_unknown') LIMIT 1`).get(row.draft_id));
+    }
     latestError = failureAttribution(failed, modelCalls, { explanation:explained });
   } else if (row.wordpress_status === "synced") {
     lifecycle = "completed";
@@ -572,6 +576,10 @@ export function decorateDeliveryFailure(failure) {
   if (!failure) return null;
   const code = String(failure.last_failure_code || failure.code || "").toUpperCase();
   if (code === "COMMERCIAL_OVERLAY_STALE") return { ...failure, recovery_type:"compose_commercial" };
+  if (["compose_frontend_page","compose_publish_page"].includes(failure.type)
+      && ["MEDIA_INCOMPLETE","MEDIA_REQUIRED_MANIFEST_MISSING","MEDIA_MANIFEST_MISSING_OR_STALE"].includes(code)) {
+    return { ...failure, recovery_type:"generate_visuals" };
+  }
   if (failure.type === "compose_publish_page" && code === "MEDIA_DELIVERY_INVALID"
       && /MEDIA_REQUIRED_MANIFEST_MISSING/i.test(String(failure.last_error || failure.error || ""))) {
     return { ...failure, recovery_type:"generate_visuals" };

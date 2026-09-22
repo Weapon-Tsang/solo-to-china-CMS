@@ -147,6 +147,9 @@ test("Chinese source-image localization sends the retained original and forbids 
   assert.match(requests[0].url,/models\/gemini-3\.1-flash-image:generateContent$/);
   assert.match(requests[1].url,/models\/gemini-3\.8-flash:generateContent$/,
     "quality QA must use the structured multimodal reviewer, not the image-generation model");
+  const qaBody=JSON.parse(requests[1].options.body);
+  assert.match(qaBody.contents.parts[0].text,/actual visible image with the intended article subject/i);
+  assert.match(qaBody.contents.parts[0].text,/caption describing a different street/i);
   assert.equal(body.contents.parts[1].inlineData.data, sourceBytes.toString("base64"));
   assert.match(body.contents.parts[0].text, /Preserve the documentary photograph exactly/i);
   assert.match(body.contents.parts[0].text, /scene, people, buildings, food/i);
@@ -509,6 +512,20 @@ test("visual call evidence distinguishes local rejection, provider responses, an
   assert.equal(unknown[0].dispatchState,"dispatch_started");
   assert.equal(unknown[0].httpStatus,null);
   assert.equal(unknown[0].evidenceBasis,"dispatch_started_outcome_unknown");
+});
+
+test('SQLite receipt contention after a QA response retries locally without another provider call',async()=>{
+  let providerCalls=0;let finishCalls=0;const ledger=[];
+  const client=new VertexImagen({enabled:true,provider:'vertex_gemini',projectId:'project',location:'global',
+    model:'image-model',accessToken:'token',mediaRequestExecutor:{acquire:()=>({heartbeat:()=>true,
+      finish:()=>{finishCalls+=1;if(finishCalls===1)throw Object.assign(new Error('database is locked'),{code:'ERR_SQLITE_ERROR',errcode:5});}})},
+    onModelCall:(entry)=>ledger.push(entry)},async()=>Response.json({}));
+  const result=await client.trackedRequest({provider:'vertex_gemini',model:'qa-model',stage:'visual_quality_qa',
+    endpoint:'https://example.invalid',visual:{id:'qa-visual'}},async()=>{providerCalls+=1;return {passed:true};});
+  assert.deepEqual(result,{passed:true});
+  assert.equal(providerCalls,1);
+  assert.equal(finishCalls,2);
+  assert.equal(ledger.at(-1).evidenceBasis,'provider_response_completed');
 });
 
 test("a transform error never creates a fake resumable candidate",async()=>{

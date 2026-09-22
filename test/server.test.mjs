@@ -10,6 +10,50 @@ import { createApplication } from "../src/server.mjs";
 import { VERSION } from "../src/version.mjs";
 import { frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
 
+test("final preview falls back to editor login when WordPress rejects a scoped ticket", async (t)=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"stc-preview-auth-test-"));
+  const config=loadConfig({HOST:"127.0.0.1",PORT:"0",DATABASE_PATH:path.join(directory,"api.sqlite"),
+    ADMIN_TOKEN:"preview-admin",MAINTENANCE_ENABLED:"false",LOG_LEVEL:"error",
+    WORDPRESS_SITE_URL:"https://site.test",WORDPRESS_USERNAME:"cms-editor",
+    WORDPRESS_APPLICATION_PASSWORD:"test-password"});
+  const nativeFetch=globalThis.fetch;
+  let ticketRequests=0;
+  globalThis.fetch=(url,options)=>{
+    if (String(url).startsWith("https://site.test/")) {
+      if (String(url).endsWith("/preview-ticket")) {
+        ticketRequests++;
+        return Promise.resolve(Response.json({code:"rest_forbidden",message:"Not allowed"},{status:403}));
+      }
+      return Promise.resolve(Response.json([]));
+    }
+    return nativeFetch(url,options);
+  };
+  const app=createApplication(config);
+  app.repository.getDraftPackage=()=>({draft:{id:"draft-preview",revision:4},
+    publication:{post_id:71,site_url:"https://site.test",preview_url:"https://site.test/?p=71&preview=true",
+      delivery_manifest_json:JSON.stringify({page_payload_hash:"a".repeat(64)})},
+    commercial_composition:{current:true},publish_composition:{status:"delivered"}});
+  await app.start();
+  t.after(async()=>{await app.stop();globalThis.fetch=nativeFetch;fs.rmSync(directory,{recursive:true,force:true});});
+  const response=await nativeFetch(`http://127.0.0.1:${app.server.address().port}/api/drafts/draft-preview/final-preview`,
+    {method:"POST",headers:{authorization:"Bearer preview-admin"}});
+  assert.equal(response.status,200);
+  const result=await response.json();
+  assert.equal(result.mode,"wordpress_login_required");
+  assert.equal(ticketRequests,1);
+  assert.equal(new URL(result.url).origin,"https://site.test");
+  assert.equal(new URL(result.url).searchParams.get("redirect_to"),"https://site.test/?p=71&preview=true");
+  assert.match(result.message,/rejected the scoped preview ticket/);
+  app.repository.db.prepare(`INSERT INTO wordpress_content_inventory(id,site_url,post_id,slug,title,status,post_url,modified_at,synced_at)
+    VALUES ('published-preview','https://site.test',71,'guide','Guide','publish',
+      'https://site.test/guide/','now','now')`).run();
+  const published=await nativeFetch(`http://127.0.0.1:${app.server.address().port}/api/drafts/draft-preview/final-preview`,
+    {method:'POST',headers:{authorization:'Bearer preview-admin'}});
+  assert.equal(published.status,200);
+  assert.deepEqual((await published.json()).mode,'published_page');
+  assert.equal(ticketRequests,1,'a public article must not request an editor-only preview ticket');
+});
+
 test("HTTP API accepts a manual capture and exposes pipeline state", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-api-test-"));
   const config = loadConfig({

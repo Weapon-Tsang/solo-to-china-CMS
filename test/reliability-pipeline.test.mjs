@@ -23,12 +23,12 @@ test('paged entity resolution keeps one input revision and commits all pages wit
   let calls=0;
   const engine={enabled:true,config:{model:'fixture'},resolveEntities:async pack=>{
     calls++;assert.equal(db.prepare('SELECT COUNT(*) n FROM entity_aliases').get().n,0,'no earlier page is applied during the next model call');
-    assert.equal(pack.claims.length,calls===1?300:5);
+    assert.equal(pack.claims.length,[80,80,80,65][calls-1]);
     return {output:{entities:[],claim_updates:[],candidates:[]},model:'fixture'};
   }};
   const pipeline=new Pipeline(repository,{enabled:false,config:{}},{contentEngine:engine});
   const jobId=repository.enqueue('resolve_entities','chongqing');
-  assert.equal(await pipeline.runOne(),true);assert.equal(calls,2);
+  assert.equal(await pipeline.runOne(),true);assert.equal(calls,4);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status,'succeeded');
   assert.ok(db.prepare('SELECT COUNT(*) n FROM entity_aliases').get().n>0);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='rebuild_knowledge' AND status='queued'").get().n,1);

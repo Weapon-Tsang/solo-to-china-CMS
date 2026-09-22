@@ -237,7 +237,18 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       const stage = requestedAction === 'retry_failed_stage' ? productionState?.recovery_target || productionState?.latest_error?.stage || ctx.activeJobs[0]?.type
         : requestedAction === 'recover_next_stage' ? productionState?.recovery_target || productionState?.next_stage || ctx.activeJobs[0]?.type : requestedAction;
       const definition = PRODUCTION_STAGE_REGISTRY.find((item) => item.key === stage);
+      if (stage === 'generate_visuals' && ctx.draft && repo.db.prepare(`SELECT 1 FROM media_dispatches md
+        JOIN article_visuals av ON av.id=md.visual_id WHERE av.draft_id=?
+        AND md.state IN ('dispatch_started','outcome_unknown') LIMIT 1`).get(ctx.draft.id)) {
+        conflict('图片请求仍有未确认的供应商结果；先核对请求账本及候选文件，不能重复生图或扣费。');
+      }
       if (!definition) conflict('没有可恢复的准确生产步骤。');
+      if (stage === 'generate_visuals' && ctx.draft
+        && ctx.failedJob?.last_failure_code === 'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE'
+        && !repo.listDraftVisuals(ctx.draft.id).length
+        && !repo.sourceVisualDiscoveryCandidates(ctx.draft.id).length) {
+        conflict('已保存的来源图片没有可确认与本文相关的候选图；请补充相关原图或修复素材记录后再重试，重复执行不会产生新配图。');
+      }
       if (requestedAction === 'retry_failed_stage' && productionState?.stage_status !== 'failed'
         && !ctx.activeJobs.some((job)=>job.type===stage)) conflict(productionState?.stage_status === 'interrupted'
           ? `生产状态已经更新：请刷新后从“${productionState?.recovery_target_label || productionStageLabel(stage)}”继续。`

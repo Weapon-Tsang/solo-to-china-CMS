@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,8 +14,44 @@ function setup(t) {
   const first = openDatabase(filename);
   const second = openDatabase(filename);
   t.after(() => { first.close(); second.close(); fs.rmSync(directory, { recursive:true, force:true }); });
-  return { first, second };
+  return { first, second, directory };
 }
+
+test('only a hash-verified pending QA candidate can reconcile an unknown dispatch',t=>{
+  const {first,second,directory}=setup(t);
+  first.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('qa-topic','beijing','qa','QA test','fixture',80,0,0,'drafted','now','now')`).run();
+  first.prepare(`INSERT INTO content_opportunities(id,destination_slug,topic_key,strategy_version,candidate_id,title,
+    readiness_score,readiness_json,status,approved_at,created_at,updated_at,lifecycle_state)
+    VALUES ('qa-owner','beijing','qa','3.9','qa-topic','QA test',100,'{"ready":true}',
+      'producing','now','now','now','producing')`).run();
+  first.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('qa-brief','beijing','Test','[]','informational','drafted','now','now','qa-topic')`).run();
+  first.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at)
+    VALUES ('qa-draft','qa-brief','Test','test','Preserved body','{}','needs_review','now','now')`).run();
+  first.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,status,created_at,updated_at)
+    VALUES ('qa-visual','qa-draft',1,'hero','Test','Test','Test','failed','now','now')`).run();
+  const bytes=Buffer.from('persisted candidate bytes');
+  const candidateHash=crypto.createHash('sha256').update(bytes).digest('hex');
+  const mediaPath=path.join(directory,'candidate.png');fs.writeFileSync(mediaPath,bytes);
+  first.prepare(`INSERT INTO visual_candidates(id,visual_id,draft_id,transform_input_hash,output_hash,media_path,mime_type,byte_size,
+    provider,model,status,created_at,updated_at) VALUES ('qa-candidate','qa-visual','qa-draft','transform',?,?,
+      'image/png',?,'vertex','model','pending_qa','now','now')`).run(candidateHash,mediaPath,bytes.length);
+  first.prepare(`INSERT INTO media_dispatches(id,scope_key,visual_id,substage,started_at_ms,state,error_code,created_at)
+    VALUES ('qa-dispatch','vertex:project:model','qa-visual','visual_quality_qa',?,'outcome_unknown','PROVIDER_TIMEOUT','now')`)
+    .run(Date.now()-300_000);
+  const executor=createMediaRequestExecutor(second);
+  const request={opportunityId:'qa-owner',visualId:'qa-visual',candidateId:'qa-candidate',candidateHash,
+    dispatchId:'qa-dispatch',actor:'editor',reason:'Verified saved candidate and timeout',idempotencyKey:'qa-reconcile-1'};
+  assert.throws(()=>executor.reconcileUnknownQa({...request,candidateHash:'wrong'}),{statusCode:409});
+  assert.equal(executor.reconcileUnknownQa(request).idempotent,false);
+  assert.equal(executor.reconcileUnknownQa(request).idempotent,true);
+  assert.equal(first.prepare('SELECT state FROM media_dispatches WHERE id=?').get('qa-dispatch').state,'failed');
+  assert.equal(first.prepare("SELECT COUNT(*) AS n FROM production_record_audit WHERE action='reconcile_unknown_visual_qa'").get().n,1);
+  assert.throws(()=>executor.reconcileUnknownQa({...request,idempotencyKey:'qa-reconcile-2'}),{statusCode:409});
+  first.prepare("UPDATE media_dispatches SET state='outcome_unknown',substage='generate_visual' WHERE id='qa-dispatch'").run();
+  assert.throws(()=>executor.reconcileUnknownQa({...request,idempotencyKey:'qa-reconcile-3'}),{statusCode:409});
+});
 
 test('shared SQLite enforces 2 RPM pacing without an initial burst', (t) => {
   const { first, second } = setup(t);
