@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.65 - Unreleased
+
+- Keep user-supplied `editorialMediaOnly` assets outside general Source AI enrichment even when an existing article stores a small structured evidence packet for them.
+- Guard both startup reconciliation and semantic downstream fan-out, preventing unnecessary Experience, entity-resolution, blueprint, and diagnostic model calls.
+- Add a confirmation-hash-guarded reconciliation for the three non-applicable Jobs created from the three-day route collages while retaining all nine provider failure diagnostics and model-call telemetry.
+
 ## 2.0.64 - Unreleased
 
 - Make the frozen Writing Packet authoritative for downstream Draft persistence, QA evidence hashing, page composition, and historical photo refresh so a newer article-specific route cannot be replaced by older destination Knowledge sharing the same normalized key.
