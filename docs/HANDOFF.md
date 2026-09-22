@@ -1,6 +1,6 @@
-# 2.0.65 editorial-media-only fan-out hotfix
+# 2.0.66 non-evidence ledger delivery hotfix
 
-App/Extension version `2.0.65`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. This release keeps user-supplied media imported solely for an existing approved article out of general Source AI enrichment, even when the article stores a small structured route-evidence packet. Both startup reconciliation and semantic downstream fan-out enforce the boundary. A guarded reconciliation retains the original provider diagnostics and cost telemetry while clearing the three non-applicable current Job failures created from the three-day Chongqing route collages. No schema migration is required.
+App/Extension version `2.0.66`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. The final-page gate now distinguishes an explicit, fully empty Content-AST row for a non-evidence prose section from a partially populated evidence row. Partial evidence remains fail-closed. This allows the already reviewed three-day Chongqing route to resume at deterministic publish composition without another paid model review. The `2.0.65` editorial-media-only fan-out boundary and guarded production reconciliation remain included. No schema migration is required.
 
 # 2.0.64 frozen Writing Packet authority candidate
 

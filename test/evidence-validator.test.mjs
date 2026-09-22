@@ -218,6 +218,22 @@ test("the final artifact gate consumes the semantic evidence validator", () => {
   assert.ok(codes(validateFinalPageArtifact(page, contentPackage)).includes("BLOCK_PROVENANCE_MISSING"));
 });
 
+test("the final artifact gate accepts explicit non-evidence sections but rejects partial evidence rows", () => {
+  const page = { metadata: { title: "Guide" }, blocks: [goodBlock] };
+  const contentPackage = packageFor(goodBlock);
+  contentPackage.draft.title = "Guide";
+  contentPackage.draft.evidence_ledger.push({
+    section_id: "solo-dining-pacing", section: "Solo dining and pacing",
+    content_node_ids: [], claim_keys: [], source_ids: [],
+  });
+  assert.equal(validateFinalPageArtifact(page, contentPackage).valid, true);
+
+  contentPackage.draft.evidence_ledger[1].claim_keys = ["route.unsourced.claim"];
+  const partial = validateFinalPageArtifact(page, contentPackage);
+  assert.equal(partial.valid, false);
+  assert.ok(codes(partial).includes("INCOMPLETE_EVIDENCE_LEDGER"));
+});
+
 test("the final artifact gate rejects reader-visible raw Markdown formatting", () => {
   const page = { metadata: { title: "Guide" }, blocks: [goodBlock] };
   const contentPackage = packageFor(goodBlock);

@@ -1,6 +1,10 @@
 # Changelog
 
-## 2.0.65 - Unreleased
+## 2.0.66 - Unreleased
+
+- Treat an all-empty Content-AST evidence ledger row as an explicit non-evidence section during final-page validation, while continuing to reject every partially populated evidence row. This fixes the three-day Chongqing route's deterministic final packaging failure without bypassing factual evidence checks or re-running its passed model review.
+
+## 2.0.65 - 2026-09-23
 
 - Keep user-supplied `editorialMediaOnly` assets outside general Source AI enrichment even when an existing article stores a small structured evidence packet for them.
 - Guard both startup reconciliation and semantic downstream fan-out, preventing unnecessary Experience, entity-resolution, blueprint, and diagnostic model calls.
