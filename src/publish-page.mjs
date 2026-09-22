@@ -93,7 +93,15 @@ export function validateFinalPageArtifact(page, contentPackage) {
     errors.push({ code: "TITLE_MISMATCH", path: "$.metadata.title" });
   }
   for (const [index, entry] of (contentPackage?.draft?.evidence_ledger || []).entries()) {
-    if (!entry?.section || !entry?.claim_keys?.length || !entry?.source_ids?.length) {
+    const claimCount = Array.isArray(entry?.claim_keys) ? entry.claim_keys.length : 0;
+    const sourceCount = Array.isArray(entry?.source_ids) ? entry.source_ids.length : 0;
+    const nodeCount = Array.isArray(entry?.content_node_ids) ? entry.content_node_ids.length : 0;
+    const evidenceBearing = claimCount > 0 || sourceCount > 0 || nodeCount > 0;
+    // Content-AST reconciliation deliberately leaves an all-empty row for a
+    // planned prose section that asserts no selected fact. It is a section
+    // marker, not partial evidence. Keep fail-closed behavior for every row
+    // that carries any evidence field so a claim/source cannot be orphaned.
+    if (evidenceBearing && (!entry?.section || !claimCount || !sourceCount)) {
       errors.push({ code: "INCOMPLETE_EVIDENCE_LEDGER", path: `$.draft.evidence_ledger[${index}]` });
     }
   }
