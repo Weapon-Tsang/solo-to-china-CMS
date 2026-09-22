@@ -1,6 +1,6 @@
-# 2.0.63 editorial media and recovery candidate
+# 2.0.64 frozen Writing Packet authority candidate
 
-App/Extension version `2.0.63`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. This release fails closed on unrelated historical media, permits only draft-specific, source-recorded user verification of on-site originals, and protects already published WordPress posts during a guarded editorial refresh with a receipt fingerprint. A disposable production-copy replay prepared the three user-supplied English day-route collages for published post #69 and two verified original photos for the Eling Second Factory draft. The replay passed local media and page gates without new model calls or WordPress writes. Production application, Provider review, remote media delivery and post-publication verification remain separate release steps. `CONTRACT_VERSION_MISMATCH` now points recovery to editorial page recomposition rather than repeating the failed final-package step.
+App/Extension version `2.0.64`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. This release makes a frozen Writing Packet authoritative for Draft persistence, QA evidence hashing, page composition and historical photo refresh. It prevents article-specific evidence such as the user-confirmed Day 2 route from being replaced downstream by older destination Knowledge with the same normalized key. The release retains the 2.0.63 fail-closed media relevance, guarded WordPress receipt, exact recovery target, and production replay protections.
 
 # 2.0.62 historical photo-refresh strategy consistency
 

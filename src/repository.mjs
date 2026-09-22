@@ -5434,7 +5434,16 @@ export class Repository {
     const brief = this.db.prepare("SELECT * FROM content_briefs WHERE id = ?").get(briefId);
     if (!brief) return null;
     const topicPackage = this.getTopicPackage(brief.candidate_id);
-    const contentPolicy = contentPolicyFor(brief, topicPackage?.facts || []);
+    const writingPacket = this.getWritingPacket(briefId);
+    const packetSnapshots = (writingPacket?.evidence_ledger || []).map((entry) => entry?.fact_snapshot);
+    // Once a Writing Packet freezes its evidence, every downstream stage must
+    // use those exact snapshots. Falling back to live destination Knowledge at
+    // save/review time can silently replace an article-specific route with an
+    // older fact sharing the same normalized key, then strip the honest Draft
+    // ledger as "unsupported" even though the writer used the frozen packet.
+    const facts = packetSnapshots.length && packetSnapshots.every(Boolean)
+      ? packetSnapshots : topicPackage?.facts || [];
+    const contentPolicy = contentPolicyFor(brief, facts);
     const publishedInventory = this.listWordPressInventory();
     const syncState = publishedInventory[0]?.site_url ? this.getWordPressSyncState(publishedInventory[0].site_url) : null;
     const linkInventory = selectInternalLinks(publishedInventory, {
@@ -5443,15 +5452,16 @@ export class Repository {
       entities: [brief.destination_slug, ...(topicPackage?.approved_proposal?.targetEntities || [])],
     });
     return {
+      ...topicPackage,
       brief: {
         ...brief, plan: json(brief.plan_json, {}), canonical: json(brief.canonical_json, {}),
         evidence_ledger: json(brief.evidence_ledger_json, []),
       },
       frontend_page_plan: this.getFrontendPagePlan(briefId),
       narrative_plan: this.getNarrativePlan(briefId),
-      writing_packet: this.getWritingPacket(briefId),
+      writing_packet: writingPacket,
       content_policy: contentPolicy,
-      reader_sources: readerSources(topicPackage?.facts || []),
+      reader_sources: readerSources(facts),
       authorized_source_assets: this.authorizedSourceAssetsForBrief(brief).map((asset) => {
         const dimensions=sourceAssetDimensions(asset);
         return {
@@ -5473,7 +5483,7 @@ export class Repository {
       duplicate_content_risks: duplicateContentRisks(publishedInventory, {
         title: brief.topic, entities: [brief.destination_slug],
       }),
-      ...topicPackage,
+      facts,
     };
   }
 
@@ -6064,8 +6074,7 @@ export class Repository {
         draft_id:draftId,disposition:'blocked',reason:'article_brief_strategy_mismatch',
         strategy_version:draft.strategy_version,brief_strategy_version:brief?.strategy_version || null,
       };
-      const contentPackage={facts:this.getTopicPackage(brief.candidate_id)?.facts || [],
-        writing_packet:this.getWritingPacket(brief.id)};
+      const contentPackage=this.getBriefPackage(brief.id);
       const evidenceHash=evidenceHashForFacts(contentPackage?.facts || []);
       const review=this.db.prepare(`SELECT * FROM quality_reviews
         WHERE draft_id=? AND draft_revision=? AND draft_content_hash=? AND evidence_hash=?

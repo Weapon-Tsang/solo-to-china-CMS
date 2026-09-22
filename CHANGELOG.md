@@ -1,6 +1,11 @@
 # Changelog
 
-## 2.0.63 - Unreleased
+## 2.0.64 - Unreleased
+
+- Make the frozen Writing Packet authoritative for downstream Draft persistence, QA evidence hashing, page composition, and historical photo refresh so a newer article-specific route cannot be replaced by older destination Knowledge sharing the same normalized key.
+- Add a production regression for the three-day Chongqing route packet and its user-supplied Day 2 sequence.
+
+## 2.0.63
 
 - Reject source/subject mismatches and infographic-as-photo captions; retain low-lexical-match on-site photos only when their source record has a draft-specific user verification.
 - Guard a published WordPress editorial refresh with an immutable remote receipt fingerprint, preserving published status and stopping on external edits or uncertain delivery outcomes.
