@@ -9948,8 +9948,10 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
     const priorAssetMatch=visual.media_metadata?.authorized_asset_match || {};
     const obsoleteFallbackSelection=obsoleteFallback(visual);
+    const pixelMatchFloor=(asset)=>['photo_collage','editorial_infographic','map_or_route','handwritten_card']
+      .includes(asset?.asset_kind) ? 0.30 : 0.34;
     const reverifiedFallback=obsoleteFallbackSelection && exact?.prompt_version === 'media-analysis-prompt-3'
-      && visualAssetMatchScore(visual,exact)>=0.34
+      && visualAssetMatchScore(visual,exact)>=pixelMatchFloor(exact)
       && articleAssetMatchScore(draft,brief,exact)>=articleFallbackMinimum;
     if (obsoleteFallbackSelection && exact && !reverifiedFallback) {
       // A broad article-level fallback can manufacture a self-reinforcing
@@ -9964,8 +9966,6 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const exactScore=exact ? visualAssetMatchScore(visual,exact) : 0;
     const exactHasPixelSubjects=Boolean(exact && ['ready','needs_review'].includes(exact.analysis_status)
       && (exact.primary_subjects || []).length);
-    const pixelMatchFloor=(asset)=>['photo_collage','editorial_infographic','map_or_route','handwritten_card']
-      .includes(asset?.asset_kind) ? 0.30 : 0.34;
     const selectionRequestHash=sha256(`${visual.image_subject || ""}\n${visual.purpose || ""}`);
     const stabilizedSelection=visual.media_metadata?.authorized_asset_match?.version === "visual-match-2"
       && visual.media_metadata.authorized_asset_match.request_hash === selectionRequestHash;
