@@ -2,11 +2,15 @@
 
 Chongqing rewards slow, deliberate exploration. This three-day route follows the three illustrated day maps below: the layered Yuzhong riverfront on Day 1, the south-bank hillside and a short ferry experience on Day 2, then Eling, Liziba and the city's cultural and Jiangbei districts on Day 3. The arrows in the maps show a suggested order, not guaranteed point-to-point travel times. Hills, stairs, traffic, opening hours and river conditions can all change the plan.
 
-## Before You Set Out: Read the City in Three Dimensions
+## Navigating the 3D Mountain City: Maps and Stair Traps
 
-A destination that appears close on a map may be separated by several road levels. Check the exact entrance and street level before committing to a staircase, and allow extra time around the riverfront. Use the metro for longer transfers; consider a taxi or ride-hailing car when a steep connection would make the day needlessly tiring. Check current fares and the final stop shown on the platform rather than relying on a fixed fare or time estimate in an old itinerary.
+A destination that appears close on a map may be separated by several road levels, pedestrian bridges or underpasses. Check the exact entrance and street level before committing to a staircase, and allow extra time around the riverfront. If you do not read Chinese, save each stop in Chinese characters and show it to station staff, a driver or a shopkeeper when a 2D map points to the wrong level.
 
 Wear shoes with good grip, keep water with you, and treat each day as a menu of stops. If the full circuit feels too long, skip a stop rather than rushing or crossing the city just to match a picture.
+
+## Transit Tactics: Metro for Distance, Taxis for Steep Connections
+
+Use the metro for longer transfers. Before boarding, compare the terminal station shown on the platform with the direction you need; Chongqing stations can have split platforms and multiple vertical levels. For a short connection that would otherwise involve a punishing climb, a taxi or ride-hailing car is often the better energy-saving choice. The earlier source material uses **20–30 RMB** as a practical intra-district benchmark, but live fares vary with distance, traffic and demand, so check the app or meter before relying on that range.
 
 ## Day 1: Mountain City Trail to the Riverfront
 
@@ -44,6 +48,6 @@ Travel to the People's Great Hall and Three Gorges Museum. They face the same ci
 
 *Day 3 visual route, translated from the user-supplied Chinese itinerary. Confirm train direction and venue hours locally.*
 
-## Pacing and Practical Decisions
+## Solo Dining, Pacing and Practical Decisions
 
-This is a route framework, not an obligation to complete every stop. Keep the hillside walking on Day 2 flexible, allow extra time at major stations, and book no tight onward connection immediately after a ferry. To ask for less heat when ordering, show the phrase “微微辣” (very mildly spicy); spice levels still vary by kitchen. For current ferry operations, transit fares and venue hours, rely on the operator or venue on your travel day rather than on the figures printed in a saved image.
+This is a route framework, not an obligation to complete every stop. Keep the hillside walking on Day 2 flexible, allow extra time at major stations, and book no tight onward connection immediately after a ferry. Chongqing's standard **微辣** (“mild spicy”) is commonly hotter than the mild setting elsewhere in China. If you are sensitive to heat, show the phrase **微微辣** (“extra mild”); spice levels still vary by kitchen. For current ferry operations, transit fares and venue hours, rely on the operator or venue on your travel day rather than on the figures printed in a saved image.
