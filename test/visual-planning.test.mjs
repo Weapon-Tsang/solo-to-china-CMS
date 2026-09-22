@@ -702,6 +702,27 @@ test('a QA-passed person photo cannot masquerade as Eling Second Factory',()=>{
   assert.ok(output.every((visual)=>visual.status!=='generated' || visual.media_url!=='https://media.test/old-eling.png'));
 });
 
+test('an administrator-confirmed on-site Eling photo is retained only for its verified draft',()=>{
+  const asset={id:'eling-photo',asset_kind:'documentary_photo',analysis_status:'ready',
+    primary_subjects:['person','street art / pavement marking'],alt_text:'person on painted pavement',
+    remote_url:'https://media.test/eling.webp',mime_type:'image/webp',storage_status:'saved',
+    original_bytes_status:'saved_original',durability_status:'ORIGINAL_STORED',language_status:'no_text',
+    local_photo_audit:{status:'eligible',sha256:'hash'},original_sha256:'hash',width:1080,height:1620,
+    provenance:{editorialLocationVerification:{status:'confirmed',draftId:'eling-draft',
+      evidence:'User explicitly identified this source photograph as taken at Eling Second Factory.'}}};
+  const request={source_asset_id:asset.id,image_type:'real_world_photo',image_role:'inline',placement:'mid_article',
+    image_subject:'Eling Second Factory visitor scene',purpose:'Show the on-site street art and visitor atmosphere',
+    required_in_article:true};
+  const brief={destination_slug:'chongqing',content_type:'attraction_guide'};
+  const policy={visuals:{target:1,maximum:3}};
+  const selected=normalizeVisuals([request],{id:'eling-draft',title:'Eling Second Factory',
+    body_markdown:'Visit Eling Second Factory.'},brief,[asset],policy);
+  assert.equal(selected[0]?.source_asset_id,asset.id);
+  const unrelated=normalizeVisuals([request],{id:'other-draft',title:'Eling Second Factory',
+    body_markdown:'Visit Eling Second Factory.'},brief,[asset],policy);
+  assert.ok(unrelated.every((visual)=>visual.source_asset_id!==asset.id));
+});
+
 test('a broad walking itinerary may use a pixel-verified photo of a named stop',()=>{
   const asset={id:'raffles-photo',asset_kind:'documentary_photo',analysis_status:'ready',
     primary_subjects:['Raffles City Chongqing','cityscape'],alt_text:'Raffles City Chongqing',

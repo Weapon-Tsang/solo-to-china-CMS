@@ -92,6 +92,13 @@ export function explainOperationalFailure(job) {
   const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
   const details = operatorSafeDetails(message);
   const normalizedIssueCode = code.toLowerCase();
+  if (code === 'CONTRACT_VERSION_MISMATCH') return {
+    category:'page',headline:'页面所用的前端契约已更新',
+    reason:'已保存的页面仍指向旧契约。直接重试最终发布页面只会再次失败；正文与已通过的媒体不会因此被重写。',
+    action:{id:'compose_frontend_page',label:'按当前契约重新编排页面',
+      why:'先重建编辑页面及其下游发布包，再恢复投递；保留文章正文和已核验的图片。'},
+    technicalDetail:details,
+  };
   if (code === 'MEDIA_OUTCOME_UNKNOWN') return {
     category:'media',headline:'上次图片请求结果未确认',
     reason:'系统无法证明上次请求是否已经完成或扣费。再次点击失败步骤重试仍会被相同的请求账本拦截，以免重复生图和付费。',

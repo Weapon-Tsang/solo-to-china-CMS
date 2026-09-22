@@ -85,6 +85,27 @@ test('a QA note identifying a place-name typo blocks publication despite four pa
   assert.ok(state.missing[0].reasons.includes('quality_qa_missing_or_stale'));
 });
 
+test('a near-zero factual source match cannot pass merely because image QA says passed', (t) => {
+  const { db } = seed(t, 1);
+  const metadata = JSON.parse(db.prepare("SELECT media_metadata_json FROM article_visuals WHERE id='visual-1'").get().media_metadata_json);
+  metadata.authorized_asset_match = { score: 0.0625, mode: 'visual_subject' };
+  db.prepare("UPDATE article_visuals SET factual_image_required=1, media_metadata_json=? WHERE id='visual-1'")
+    .run(JSON.stringify(metadata));
+  freezeRequiredMediaManifest(db, 'draft');
+  const result = evaluatePublicationEligibility(db, 'draft');
+  assert.equal(result.passed, false);
+  assert.ok(result.missing[0].reasons.includes('source_subject_mismatch'));
+});
+
+test('an infographic cannot be captioned as a photograph even when image QA passed', (t) => {
+  const { db } = seed(t, 1);
+  db.prepare("UPDATE article_visuals SET image_type='infographic',caption='Photo of Longmenhao Old Street' WHERE id='visual-1'").run();
+  freezeRequiredMediaManifest(db, 'draft');
+  const result = evaluatePublicationEligibility(db, 'draft');
+  assert.equal(result.passed, false);
+  assert.ok(result.missing[0].reasons.includes('infographic_caption_mislabels_media'));
+});
+
 test('legacy successful image bytes and independent QA are rebound by SHA without another provider call', (t) => {
   const {db,directory}=seed(t,1);
   const bytes=fs.readFileSync(path.join(directory,'image-1.png'));
@@ -145,6 +166,39 @@ test('a strategy 3.9 source photo requires its authoritative local audit, not vi
     JSON.stringify(evaluatePublicationEligibility(db, 'draft')));
   db.prepare("UPDATE source_assets SET local_photo_audit_json='{}' WHERE id='asset'").run();
   assert.equal(evaluatePublicationEligibility(db, 'draft').passed, false);
+});
+
+test('low lexical match is allowed only by a source-recorded confirmation for this draft', (t) => {
+  const {db,directory}=seed(t,1);
+  const file=path.join(directory,'image-1.png');
+  const hash=crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  db.prepare(`INSERT INTO sources(id,adapter,canonical_url,captured_at,raw_text,raw_html,
+    raw_payload_json,content_hash,created_at,updated_at)
+    VALUES ('source','manual','https://example.test/eling','now','text','html','{}','hash','now','now')`).run();
+  db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,position,local_path,
+    original_bytes_status,durability_status,original_sha256,local_photo_audit_json)
+    VALUES ('asset','source','image','https://example.test/eling.webp',0,?,
+      'saved_original','ORIGINAL_STORED',?,?)`).run(file,hash,
+      JSON.stringify({status:'eligible',sha256:hash,providerCalls:0}));
+  db.prepare(`UPDATE article_visuals SET source_asset_id='asset',acquisition_strategy='use_authorized_source_image',
+    factual_image_required=1,media_metadata_json=? WHERE id='visual-1'`).run(JSON.stringify({
+      source_analysis:{analysis_status:'ready',asset_kind:'documentary_photo',reader_text_present:true},
+      visual_decision:{action:'retain'},authorized_asset_match:{score:0.15},
+      editorial_location_verification:{status:'confirmed',source_asset_id:'asset',evidence:'untrusted visual metadata'},
+    }));
+  freezeRequiredMediaManifest(db,'draft');
+  assert.equal(evaluatePublicationEligibility(db,'draft').passed,false,
+    'visual metadata alone cannot self-assert a location');
+  db.prepare("UPDATE source_assets SET provenance_json=? WHERE id='asset'").run(JSON.stringify({
+    editorialLocationVerification:{status:'confirmed',draftId:'draft',
+      evidence:'User explicitly confirmed the original was photographed at this location.'},
+  }));
+  assert.equal(evaluatePublicationEligibility(db,'draft').passed,true,
+    JSON.stringify(evaluatePublicationEligibility(db,'draft')));
+  db.prepare("UPDATE source_assets SET provenance_json=? WHERE id='asset'").run(JSON.stringify({
+    editorialLocationVerification:{status:'confirmed',draftId:'other-draft',evidence:'different article'},
+  }));
+  assert.equal(evaluatePublicationEligibility(db,'draft').passed,false);
 });
 
 test('an older brief accepts an audited documentary original with authentic place signage after a prose revision', (t) => {

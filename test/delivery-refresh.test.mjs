@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyDeliveryRefresh, deliveryRefreshContinuation, deliveryRefreshScopeForJob, planDeliveryRefresh } from "../src/services/delivery-refresh.mjs";
+import { applyDeliveryRefresh, assertWordPressDeliveryScope, deliveryRefreshContinuation, deliveryRefreshScopeForJob, editorialRefreshBaselineForJob, planDeliveryRefresh, wordpressReceiptFingerprint } from "../src/services/delivery-refresh.mjs";
 
 function fixture({ modifiedAt="2026-09-15T06:36:52Z", status="draft" } = {}) {
   const commands=[];
@@ -78,4 +78,34 @@ test("media and presentation refresh descendants bypass text QA and preserve the
   assert.equal(deliveryRefreshContinuation(repository,mediaPage,"compose_frontend_page"),"compose_commercial");
   assert.equal(deliveryRefreshContinuation(repository,rows.get("root-presentation"),"compose_frontend_page"),"compose_commercial");
   assert.equal(deliveryRefreshContinuation(repository,{dedupe_key:"ordinary-production"},"compose_frontend_page"),null);
+});
+
+test("a published editorial refresh carries the immutable WordPress baseline through child jobs",()=>{
+  const receipt={modified_gmt:"2026-09-22 14:01:00",page_payload_hash:"f".repeat(64)};
+  const baseline=wordpressReceiptFingerprint(receipt);
+  const rows=new Map([
+    ["root",{id:"root",dedupe_key:`delivery-refresh:editorial:draft-1:r5:${baseline}`,parent_job_id:null}],
+    ["page",{id:"page",dedupe_key:"compose_frontend_page:draft-1",parent_job_id:"root"}],
+    ["review",{id:"review",dedupe_key:"review_draft:draft-1",parent_job_id:"page"}],
+  ]);
+  const repository={db:{prepare:()=>({get:(id)=>rows.get(id)})}};
+  assert.equal(deliveryRefreshScopeForJob(repository,rows.get("review")),"editorial");
+  assert.equal(editorialRefreshBaselineForJob(repository,rows.get("review")),baseline);
+  assert.equal(deliveryRefreshContinuation(repository,rows.get("page"),"compose_frontend_page"),null);
+  assert.notEqual(wordpressReceiptFingerprint({...receipt,modified_gmt:"2026-09-22 14:02:00"}),baseline);
+  assert.equal(editorialRefreshBaselineForJob(repository,{dedupe_key:"ordinary-production"}),null);
+});
+
+test("published WordPress posts reject ordinary retries and require a matching guarded scope",()=>{
+  const published={status:'publish',cms_draft_id:'draft-1'};
+  assert.throws(()=>assertWordPressDeliveryScope(published,'draft-1',null),
+    (error)=>error.code==='WORDPRESS_PUBLISHED_REFRESH_SCOPE_REQUIRED');
+  assert.throws(()=>assertWordPressDeliveryScope(published,'draft-2','editorial'),
+    (error)=>error.code==='WORDPRESS_REFRESH_IDENTITY_MISMATCH');
+  assert.throws(()=>assertWordPressDeliveryScope(null,'draft-1','editorial'),
+    (error)=>error.code==='WORDPRESS_EDITORIAL_REFRESH_TARGET_CHANGED');
+  assert.throws(()=>assertWordPressDeliveryScope({status:'draft',cms_draft_id:'draft-1'},'draft-1','editorial'),
+    (error)=>error.code==='WORDPRESS_EDITORIAL_REFRESH_TARGET_CHANGED');
+  assert.doesNotThrow(()=>assertWordPressDeliveryScope(published,'draft-1','editorial'));
+  assert.doesNotThrow(()=>assertWordPressDeliveryScope(published,'draft-1','media'));
 });

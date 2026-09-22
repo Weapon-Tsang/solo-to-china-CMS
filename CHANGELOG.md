@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.63 - Unreleased
+
+- Reject source/subject mismatches and infographic-as-photo captions; retain low-lexical-match on-site photos only when their source record has a draft-specific user verification.
+- Guard a published WordPress editorial refresh with an immutable remote receipt fingerprint, preserving published status and stopping on external edits or uncertain delivery outcomes.
+- Add guarded, hash-verified repairs for the three translated Chongqing route maps and two Eling Second Factory originals, rehearsed on an isolated production database copy.
+- Route stale Frontend Contract recovery through editorial page recomposition instead of repeating a guaranteed-to-fail publish composition.
+- Refuse an ordinary WordPress retry against a remotely published post unless an explicitly scoped, identity-checked published refresh is in progress.
+
 ## 2.0.62 - Unreleased
 
 - Keep the canonical article brief, draft, and independent QA strategy aligned during historical photo refresh; block a mismatch instead of silently rewriting only the draft to strategy 3.9 and buying unnecessary review calls.

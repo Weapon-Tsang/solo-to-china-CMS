@@ -152,6 +152,9 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
     enabled: true,
     config: { siteUrl: "https://example.test" },
     calls: [],
+    async getCmsArticleReceipt(postId) {
+      return {post_id:postId,status:'draft',cms_draft_id:content[0]?.draft_id || null};
+    },
     async resolveVisualMedia(visuals, onProgress) {
       const uploaded = visuals.map((visual, index) => ({ visualId:visual.id, id:100 + index,
         url:`https://example.test/uploads/${visual.id}.png`, metadata:{

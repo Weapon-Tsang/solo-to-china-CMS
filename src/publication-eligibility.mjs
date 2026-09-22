@@ -51,6 +51,7 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
   }
   const visualRows = db.prepare(`SELECT av.*,sa.local_path AS source_asset_local_path,
     sa.original_bytes_status,sa.durability_status,sa.original_sha256 AS source_original_sha256,
+    sa.provenance_json AS source_provenance_json,
     sa.local_photo_audit_json AS source_local_photo_audit_json
     FROM article_visuals av
     LEFT JOIN source_assets sa ON sa.id=av.source_asset_id WHERE av.draft_id=?`).all(draftId);
@@ -70,6 +71,24 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     try { if (filePath) fileHash = digest(fs.readFileSync(filePath)); } catch { /* keep the missing file explicit */ }
     if (!fileHash) failures.push('local_file_missing');
     const metadata = parseMediaMetadata(row?.media_metadata_json);
+    // A model's generic "QA passed" must not overrule a near-zero source/subject
+    // match. This caught a Chongqing itinerary illustrated with an unrelated
+    // preparation/bus card. A location claim may be explicitly verified by an
+    // editor when a documentary photo is genuinely taken on site.
+    const matchScore = Number(metadata.authorized_asset_match?.score);
+    const sourceProvenance = parseMediaMetadata(row?.source_provenance_json);
+    const verifiedLocation = sourceProvenance.editorialLocationVerification;
+    const editorVerified = verifiedLocation?.status === 'confirmed'
+      && verifiedLocation.draftId === draftId && Boolean(verifiedLocation.evidence);
+    const matchFloor = ['photo_collage','editorial_infographic','map_or_route','handwritten_card']
+      .includes(metadata.source_analysis?.asset_kind) ? 0.30 : 0.34;
+    if (row?.factual_image_required && metadata.authorized_asset_match
+      && (!Number.isFinite(matchScore) || matchScore < matchFloor) && !editorVerified) {
+      failures.push('source_subject_mismatch');
+    }
+    if (row?.image_type === 'infographic' && /^\s*photo of\b/i.test(String(row.caption || ''))) {
+      failures.push('infographic_caption_mislabels_media');
+    }
     const checkedHash = metadata.binary_qa?.sha256 || metadata.pixel_qa?.sha256 || metadata.sha256;
     const sourceAnalysis=metadata.source_analysis || {};
     let localPhotoAudit={};
@@ -86,7 +105,7 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
           && sourceAnalysis.reader_text_present === false
           && !(sourceAnalysis.editor_ui_regions || []).length))
       && metadata.visual_decision?.action === 'retain'
-      && Number(metadata.authorized_asset_match?.score || 0) >= 0.34);
+      && (Number(metadata.authorized_asset_match?.score || 0) >= 0.34 || editorVerified));
     if ((!checkedHash || checkedHash !== fileHash) && !retainedPhoto) failures.push('file_hash_unverified');
     if (metadata.binary_qa?.status !== 'passed' && metadata.pixel_qa?.status !== 'passed'
       && !retainedPhoto) failures.push('binary_qa_missing');
