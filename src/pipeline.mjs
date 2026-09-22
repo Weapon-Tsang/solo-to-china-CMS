@@ -1077,7 +1077,10 @@ export class Pipeline {
             { deferReview: job.dedupe_key?.startsWith("manual-stage:") || contractAware,
               opportunityId:job.production_owner_opportunity_id || null,preserveVisuals:true });
           if (!job.dedupe_key?.startsWith("manual-stage:")) {
-            if (this.visuals?.enabled && this.repository.plannedVisuals(draftId).length) this.enqueueChild(job,"generate_visuals",draftId);
+            // A prose revision invalidates the revision-scoped media manifest even
+            // when every retained original is already generated. The visual stage
+            // must freeze a new manifest before page composition can run.
+            if (this.visuals?.enabled) this.enqueueChild(job,"generate_visuals",draftId);
             else if (contractAware) this.enqueueChild(job,"compose_frontend_page",draftId);
           }
           });
@@ -1430,7 +1433,11 @@ export class Pipeline {
           recoveryRunId:job.recovery_run_id || null });
         break;
       }
-      case 'revise_draft': next('review_draft'); if (this.canComposeFrontendPage) next('compose_frontend_page'); break;
+      case 'revise_draft':
+        if (this.visuals?.enabled) next('generate_visuals');
+        else if (this.canComposeFrontendPage) next('compose_frontend_page');
+        else next('review_draft');
+        break;
     }
   }
 

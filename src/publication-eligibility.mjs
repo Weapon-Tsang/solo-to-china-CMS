@@ -80,8 +80,8 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
       && row?.source_asset_id && row.original_bytes_status === 'saved_original'
       && row.durability_status === 'ORIGINAL_STORED'
       && row.source_original_sha256 === fileHash
-      && (draft.strategy_version === '3.9' ? localPhotoQualified
-        : (sourceAnalysis.analysis_status === 'ready'
+      && (localPhotoQualified
+        || (sourceAnalysis.analysis_status === 'ready'
           && sourceAnalysis.asset_kind === 'documentary_photo'
           && sourceAnalysis.reader_text_present === false
           && !(sourceAnalysis.editor_ui_regions || []).length))

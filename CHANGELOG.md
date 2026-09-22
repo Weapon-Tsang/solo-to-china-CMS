@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.61 - Unreleased
+
+- Preserve article and brief strategy alignment when importing operator-confirmed editorial originals, including the Ciqikou Yinglongmen archway, Huguang Guild Hall collage, and three Liangjiang Xiao Ferry photos.
+- Re-enter the visual stage after a prose revision even when every retained original is already marked generated, so the new revision receives its required media manifest before page composition.
+- Accept a SHA-matched, locally audited documentary original with authentic place signage under older article strategies; keep missing audits, mismatched bytes, weak relevance, and unsafe derivatives blocked.
+- Add guarded production-copy rehearsal and narrowly targeted queue repair for the three affected articles, with a single cooled-down review retry after a provider 429.
+
 ## 2.0.60 - Unreleased
 
 - Repair historical photo planning from verified source pixels, quarantine unrelated editorial cards, and reopen zero-image drafts for bounded original-photo discovery without rewriting article text.
