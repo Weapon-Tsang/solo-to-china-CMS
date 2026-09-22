@@ -416,14 +416,23 @@ test("a persisted transform candidate resumes only quality QA after a transient 
   const sourceBytes=await pngBytes(1200,800,"source");
   const localizedBytes=await pngBytes(1200,800,"localized");
   fs.writeFileSync(sourcePath,sourceBytes);
-  let candidate=null,transformCalls=0,qaCalls=0;
+  let candidate=null,transformCalls=0,qaCalls=0,sourceHashFallbacks=0;
   const ledger=[];const states=[];
   const makeClient=()=>new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
     model:"gemini-image-model-a",qualityModel:"gemini-qa-model-b",accessToken:"token",mediaDir:directory,
     publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,onModelCall:(entry)=>ledger.push(entry),
-    findVisualCandidate:()=>candidate,
+    findVisualCandidate:(query)=>{
+      if (!candidate) return null;
+      if (query.transformInputHash===candidate.transformInputHash) return candidate;
+      if (query.allowQaRecheck && query.sourceHash===candidate.sourceHash) {
+        sourceHashFallbacks++;
+        return candidate;
+      }
+      return null;
+    },
     saveVisualCandidate:(entry)=>{candidate={id:"candidate-1",media_path:entry.mediaPath,mime_type:entry.mimeType,
-      output_hash:entry.outputHash,provider:entry.provider,model:entry.model,created_at:"now"};return candidate;},
+      output_hash:entry.outputHash,provider:entry.provider,model:entry.model,created_at:"now",
+      sourceHash:entry.sourceHash,transformInputHash:entry.transformInputHash};return candidate;},
     updateVisualCandidate:(id,update)=>{states.push(update.status);candidate={...candidate,status:update.status};return candidate;},
   },async(url,options)=>{
     const body=JSON.parse(options.body);
@@ -444,8 +453,11 @@ test("a persisted transform candidate resumes only quality QA after a transient 
     && error.details.candidateHash===candidate.output_hash && error.details.generationCheckpoint==="persisted_pending_qa"
     && error.causalModelCallId===ledger[1].callId);
   assert.deepEqual(states,["pending_qa"]);
+  visual.asset_fingerprint="fp-v12";
+  options.expectedFingerprint="fp-v12";
   const result=await makeClient().localizeSourceImage(visual,{id:"draft-v11"},options);
   assert.equal(transformCalls,1,"the successful transform must not be purchased twice");
+  assert.equal(sourceHashFallbacks,1,"a changed caption/fingerprint rechecks the same-source candidate before generation");
   assert.equal(qaCalls,2);
   assert.equal(result.candidateHash,candidate.output_hash);
   assert.deepEqual(states,["pending_qa","promoted"]);

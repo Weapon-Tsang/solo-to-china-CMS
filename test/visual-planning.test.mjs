@@ -234,6 +234,25 @@ test("a weak article fallback cannot bootstrap its own relevance on retry",()=>{
   assert.deepEqual(output,[],"a broad failed fallback must be removed instead of becoming relevant through its own alt text");
 });
 
+test("fresh pixel analysis preserves a recoverable visual and its pending QA candidate identity",()=>{
+  const asset={id:"baixiangju-card",remote_url:"https://media.example/baixiangju.webp",mime_type:"image/webp",
+    alt_text:"Old generic visitor card",primary_subjects:["Baixiangju residential complex architecture and staircases in Chongqing"],
+    analysis_status:"ready",asset_kind:"handwritten_card",analysis_version:"media-analysis-2",
+    prompt_version:"media-analysis-prompt-3",reader_text_present:true,language_status:"chinese",
+    text_regions:[{region_id:"copy",text:"Baixiangju",role:"author_overlay",language:"zh",readable:true,preserve:false}],
+    storage_status:"saved",original_bytes_status:"saved_original",durability_status:"ORIGINAL_STORED"};
+  const requested=[{source_asset_id:asset.id,image_type:"infographic",image_role:"hero",status:"failed",
+    image_subject:"Baixiangju residential complex architecture",purpose:"Show Baixiangju staircases",
+    media_metadata:{authorized_asset_match:{version:"visual-match-2",mode:"article_fallback",score:0.18,
+      request_hash:"legacy-low-coverage"}}}];
+  const output=normalizeVisuals(requested,{title:"Baixiangju: Practical Visitor Guide",
+    body_markdown:"Explore Baixiangju residential complex architecture and staircases."},
+    {destination_slug:"chongqing",topic:"Baixiangju visitor guide"},[asset],{visuals:{target:1,maximum:5}});
+  assert.equal(output.length,1);
+  assert.equal(output[0].source_asset_id,asset.id);
+  assert.ok(output[0].media_metadata.authorized_asset_match.score>=0.34);
+});
+
 test("an obsolete qualified fallback releases assets displaced by its superseded decision",()=>{
   const common={remote_url:"https://media.example/source.webp",mime_type:"image/webp",analysis_status:"ready",
     asset_kind:"editorial_infographic",analysis_version:"media-analysis-2",reader_text_present:true,

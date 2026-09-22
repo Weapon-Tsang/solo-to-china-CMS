@@ -185,10 +185,16 @@ test("visual candidate reuse fails closed for missing or altered bytes",(t)=>{
   /input changed/);
   const file=path.join(directory,"candidate.png");const bytes=Buffer.from("immutable candidate bytes");fs.writeFileSync(file,bytes);
   const outputHash=crypto.createHash("sha256").update(bytes).digest("hex");
+  const sourceHash=crypto.createHash("sha256").update("unchanged source bytes").digest("hex");
   repository.saveVisualCandidate({visualId:"candidate-visual",draftId:"candidate-draft",transformInputHash:"transform-1",
-    outputHash,mediaPath:file,mimeType:"image/png",byteSize:bytes.length,provider:"vertex_gemini",model:"image-model",
+    sourceHash,outputHash,mediaPath:file,mimeType:"image/png",byteSize:bytes.length,provider:"vertex_gemini",model:"image-model",
     expectedFingerprint:"fingerprint"});
   assert.equal(repository.findReusableVisualCandidate({visualId:"candidate-visual",transformInputHash:"transform-1"}).output_hash,outputHash);
+  assert.equal(repository.findReusableVisualCandidate({visualId:"candidate-visual",transformInputHash:"new-subject",
+    sourceHash,allowQaRecheck:true}).output_hash,outputHash,
+  "a pending derivative of identical source bytes can be re-reviewed against corrected alt text without re-generation");
+  assert.equal(repository.findReusableVisualCandidate({visualId:"candidate-visual",transformInputHash:"new-subject",
+    sourceHash:"0".repeat(64),allowQaRecheck:true}),null);
   const candidateId=repository.listVisualCandidates("candidate-visual")[0].id;
   repository.updateVisualCandidate(candidateId,{status:"qa_failed",qa:{semantic:{status:"failed",reason:"wrong meaning"}}});
   assert.equal(repository.findReusableVisualCandidate({visualId:"candidate-visual",transformInputHash:"transform-1"}),null,

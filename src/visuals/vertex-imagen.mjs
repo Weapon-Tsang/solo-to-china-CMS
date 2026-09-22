@@ -202,7 +202,8 @@ export class VertexImagen {
   }
 
   async resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata={},accessToken=null}) {
-    const candidate=await this.config.findVisualCandidate?.({visualId:visual.id,transformInputHash});
+    const candidate=await this.config.findVisualCandidate?.({visualId:visual.id,transformInputHash,
+      sourceHash:source?.bytes ? hashBytes(source.bytes) : null,allowQaRecheck:Boolean(source?.bytes)});
     if (!candidate) return null;
     const outputBytes=fs.readFileSync(candidate.media_path);
     const persistedQa=normalizeVisualQa(candidate.qa);

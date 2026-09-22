@@ -6222,10 +6222,18 @@ export class Repository {
         gap:json(row.media_metadata_json,{}).required_visual_gap || null}));
   }
 
-  findReusableVisualCandidate({visualId,transformInputHash}) {
-    const row=this.db.prepare(`SELECT * FROM visual_candidates WHERE visual_id=? AND transform_input_hash=?
+  findReusableVisualCandidate({visualId,transformInputHash,sourceHash=null,allowQaRecheck=false}) {
+    let row=this.db.prepare(`SELECT * FROM visual_candidates WHERE visual_id=? AND transform_input_hash=?
       AND status IN ('pending_qa','promoted')
       ORDER BY CASE status WHEN 'promoted' THEN 0 ELSE 1 END, updated_at DESC LIMIT 1`).get(visualId,transformInputHash);
+    // A corrected image subject may change the visual fingerprint even though
+    // the exact source bytes and already paid-for derivative are unchanged.
+    // Reuse those bytes only as an unapproved QA candidate; the current
+    // subject/alt/caption must pass a fresh independent visual review.
+    if (!row && allowQaRecheck && /^[a-f0-9]{64}$/i.test(String(sourceHash || ''))) {
+      row=this.db.prepare(`SELECT * FROM visual_candidates WHERE visual_id=? AND source_hash=?
+        AND status='pending_qa' ORDER BY updated_at DESC LIMIT 1`).get(visualId,sourceHash);
+    }
     if (!row) return null;
     if (!row.media_path || !fs.existsSync(row.media_path)) {
       this.db.prepare("UPDATE visual_candidates SET status='missing',updated_at=? WHERE id=?").run(now(),row.id);
@@ -9940,7 +9948,10 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
     const priorAssetMatch=visual.media_metadata?.authorized_asset_match || {};
     const obsoleteFallbackSelection=obsoleteFallback(visual);
-    if (obsoleteFallbackSelection && exact) {
+    const reverifiedFallback=obsoleteFallbackSelection && exact?.prompt_version === 'media-analysis-prompt-3'
+      && visualAssetMatchScore(visual,exact)>=0.34
+      && articleAssetMatchScore(draft,brief,exact)>=articleFallbackMinimum;
+    if (obsoleteFallbackSelection && exact && !reverifiedFallback) {
       // A broad article-level fallback can manufacture a self-reinforcing
       // visual subject after its first pass. Retire the weak original decision
       // instead of treating the generated alt text as new relevance evidence.

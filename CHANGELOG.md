@@ -5,6 +5,7 @@
 - Repair historical photo planning from verified source pixels, quarantine unrelated editorial cards, and reopen zero-image drafts for bounded original-photo discovery without rewriting article text.
 - Re-analyze legacy multi-place cards under the pixel-only media prompt once per source asset during historical repair; prior caption or nearby prose no longer establishes the image subject.
 - Reconcile hash-verified unknown visual QA outcomes without another image-generation call; keep generation/localization ambiguity blocked and classify provider-returned local SQLite receipt failures correctly.
+- Preserve a pixel-reverified visual slot and re-review an exact-source, hash-verified pending derivative when corrected analysis changes the visual fingerprint; never buy the same transform before the existing candidate receives semantic QA.
 - Route legacy page-composition `MEDIA_INCOMPLETE` retries back through visual repair, including zero-image drafts and missing manifest slots.
 - Route published articles to their public WordPress URL instead of requesting a draft preview ticket; retain editor-login guidance for genuinely private previews.
 - Reduce entity-resolution context with 80-claim pages and directly relevant alias clusters, preserving complete pagination and durable step recovery.
