@@ -6069,11 +6069,20 @@ export class Repository {
       const media=this.mediaRepairPlan(draftId,{strategyVersion:'3.9',contentPackage});
       const discoveryCandidates=!media.slots.length ? this.sourceVisualDiscoveryCandidates(draftId) : [];
       const mediaGate=evaluatePublicationEligibility(this.db,draftId);
+      const staleManifestRebase=Boolean(this.db.prepare(
+        'SELECT 1 FROM required_media_manifests WHERE draft_id=? AND revision=?').get(draftId,draft.revision))
+        && media.slots.length>0 && media.slots.every((slot)=>slot.disposition==='retain')
+        && mediaGate.code==='MEDIA_INCOMPLETE' && mediaGate.missing.length>0
+        && mediaGate.missing.every((slot)=>slot.reasons.includes('stale_or_missing_slot'));
+      const allVisualsRemoved=!discoveryCandidates.length && media.slots.length>0
+        && media.slots.every((slot)=>slot.disposition==='remove');
       const active=this.db.prepare("SELECT 1 FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1").get(draftId);
       let disposition='eligible'; let reason='local_photo_refresh';
       if (!review?.passed) {disposition='blocked';reason='independent_article_qa_missing';}
       else if (active) {disposition='blocked';reason='active_article_job';}
-      else if (!discoveryCandidates.length && !media.slots.some((slot)=>['repair','remove'].includes(slot.disposition))) {
+      else if (allVisualsRemoved) {disposition='blocked';reason='no_relevant_replacement_image';}
+      else if (!staleManifestRebase && !discoveryCandidates.length
+        && !media.slots.some((slot)=>['repair','remove'].includes(slot.disposition))) {
         disposition=mediaGate.passed ? 'noop' : 'blocked';
         reason=mediaGate.passed ? 'no_photo_change' : `media_gate_${String(mediaGate.code).toLowerCase()}`;
       }
@@ -6085,6 +6094,7 @@ export class Repository {
         disposition='blocked';reason='wordpress_status_mismatch';
       }
       if (disposition==='eligible' && discoveryCandidates.length) reason='source_original_discovery';
+      else if (disposition==='eligible' && staleManifestRebase) reason='stale_media_manifest_rebase';
       return {draft_id:draftId,title:draft.title,revision:draft.revision,
         strategy_version:draft.strategy_version,status:draft.status,post_id:postId || null,
         wordpress_status:inventory?.status || null,review_id:review?.id || null,

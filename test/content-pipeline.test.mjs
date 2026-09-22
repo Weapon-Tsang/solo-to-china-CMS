@@ -340,6 +340,36 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   } finally {
     db.exec('ROLLBACK TO missing_manifest_refresh_plan; RELEASE missing_manifest_refresh_plan');
   }
+  db.exec('SAVEPOINT stale_manifest_refresh_plan');
+  try {
+    const draftId=content[0].draft_id;
+    const manifest=repository.getDraftPackage(draftId).draft.required_media_manifest;
+    db.prepare('DELETE FROM wordpress_publications WHERE draft_id=?').run(draftId);
+    db.prepare('UPDATE required_media_manifests SET slots_json=? WHERE draft_id=? AND revision=?')
+      .run(JSON.stringify(manifest.slots.map((slot,index)=>({...slot,slotId:`stale-visual-${index}`}))),
+        draftId,generatedPackage.draft.revision);
+    const plan=repository.planArticlePhotoRefresh([draftId]);
+    assert.equal(plan.items[0].disposition,'eligible',JSON.stringify(plan.items[0]));
+    assert.equal(plan.items[0].reason,'stale_media_manifest_rebase');
+    const bodyHash=repository.getDraftPackage(draftId).draft.content_hash;
+    const applied=repository.applyArticlePhotoRefresh([draftId],plan.confirmation);
+    assert.equal(applied.queued.length,1);
+    const refreshed=repository.getDraftPackage(draftId);
+    assert.equal(refreshed.draft.revision,generatedPackage.draft.revision+1);
+    assert.equal(refreshed.draft.content_hash,bodyHash);
+    assert.equal(refreshed.review?.passed,true);
+  } finally {
+    db.exec('ROLLBACK TO stale_manifest_refresh_plan; RELEASE stale_manifest_refresh_plan');
+  }
+  const originalMediaRepairPlan=repository.mediaRepairPlan;
+  try {
+    repository.mediaRepairPlan=()=>({plan_hash:'all-removed',slots:[{disposition:'remove'}]});
+    const plan=repository.planArticlePhotoRefresh([content[0].draft_id]);
+    assert.equal(plan.items[0].disposition,'blocked');
+    assert.equal(plan.items[0].reason,'no_relevant_replacement_image');
+  } finally {
+    repository.mediaRepairPlan=originalMediaRepairPlan;
+  }
   db.exec('SAVEPOINT published_review_blocker');
   try {
     const publication=db.prepare('SELECT site_url,post_id,post_url FROM wordpress_publications WHERE draft_id=?')
