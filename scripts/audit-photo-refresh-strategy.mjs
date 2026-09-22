@@ -24,6 +24,18 @@ try {
     FROM article_drafts d JOIN content_briefs b ON b.id=d.brief_id
     WHERE d.strategy_version != b.strategy_version ORDER BY d.created_at`).all();
   for (const mismatch of mismatches) {
+    mismatch.refresh_chain = db.prepare(`SELECT f.from_revision,f.to_revision,f.previous_strategy_version,
+      f.reused_review_id,q.reviewer,q.strategy_version AS reused_review_strategy,
+      cq.reviewer AS current_reviewer,cq.strategy_version AS current_review_strategy,
+      cq.passed AS current_review_passed,cq.draft_content_hash AS current_review_hash,
+      d.content_hash AS draft_content_hash
+      FROM article_photo_refreshes f JOIN article_drafts d ON d.id=f.draft_id
+      LEFT JOIN quality_reviews q ON q.id=f.reused_review_id
+      LEFT JOIN quality_reviews cq ON cq.draft_id=f.draft_id AND cq.draft_revision=f.to_revision
+        AND cq.reviewer=('reused_unchanged_text:' || f.reused_review_id)
+      WHERE f.draft_id=? ORDER BY f.from_revision`).all(mismatch.id);
+    mismatch.active_jobs = db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE entity_id=? AND status IN ('queued','running')")
+      .get(mismatch.id).n;
     const plan = plans.find((item) => item.draft_id === mismatch.id);
     if (plan?.reason !== 'article_brief_strategy_mismatch' || plan.disposition !== 'blocked') {
       throw new Error(`Unblocked canonical strategy mismatch: ${mismatch.id}`);
@@ -31,7 +43,6 @@ try {
   }
   console.log(JSON.stringify({
     database: path.basename(databasePath),
-    quick_check: db.prepare('PRAGMA quick_check').get().quick_check,
     drafts: drafts.length,
     strategy_mismatches: mismatches,
     plan_dispositions: Object.fromEntries(['eligible','blocked','noop'].map((status) => [

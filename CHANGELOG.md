@@ -4,6 +4,7 @@
 
 - Keep the canonical article brief, draft, and independent QA strategy aligned during historical photo refresh; block a mismatch instead of silently rewriting only the draft to strategy 3.9 and buying unnecessary review calls.
 - Preserve the guarded operational scripts and concise chain, WordPress, and secure-preview audits used to complete and verify the three user-supplied-photo articles.
+- Add a provenance- and hash-guarded one-time repair for four older drafts whose prior photo refreshes incorrectly relabeled unchanged article text and cloned QA; rehearsal on a disposable production copy changed four drafts and seven cloned QA rows with zero model calls.
 
 ## 2.0.61 - Unreleased
 
