@@ -10,7 +10,7 @@ Wear shoes with good grip, keep water with you, and treat each day as a menu of 
 
 ## Transit Tactics: Metro for Distance, Taxis for Steep Connections
 
-Use the metro for longer transfers. Before boarding, compare the terminal station shown on the platform with the direction you need; Chongqing stations can have split platforms and multiple vertical levels. For a short connection that would otherwise involve a punishing climb, a taxi or ride-hailing car is often the better energy-saving choice. The earlier source material uses **20–30 RMB** as a practical intra-district benchmark, but live fares vary with distance, traffic and demand, so check the app or meter before relying on that range.
+Use the metro for longer transfers. Pay attention not to board the train in the wrong direction: before boarding, compare the terminal station shown on the platform with the direction you need. Chongqing stations can have split platforms and multiple vertical levels. For a short connection that would otherwise involve a punishing climb, a taxi or ride-hailing car is often the better energy-saving choice. The earlier source material uses **20–30 RMB** as a practical intra-district benchmark, but live fares vary with distance, traffic and demand, so check the app or meter before relying on that range.
 
 ## Day 1: Mountain City Trail to the Riverfront
 
