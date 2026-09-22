@@ -36,6 +36,14 @@ docker inspect --format '{{.Image}}' engine >"$RELEASE/old-api-image-id"
 docker inspect --format '{{.Image}}' engine-worker >"$RELEASE/old-worker-image-id"
 
 docker pull "$IMAGE" >"$RELEASE/image-pull.log" 2>&1
+# The API role never creates a database. Initialize only the throwaway
+# canary volume before checking the image; the production volume is untouched.
+docker run --rm --network none --env-file "$ENV_FILE" \
+  --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
+  --volume "$RELEASE/canary-data:/var/lib/solo-to-china" "$IMAGE" \
+  node --input-type=module -e \
+    'import {openDatabase} from "./src/db.mjs";const db=openDatabase(process.env.DATABASE_PATH);db.close()' \
+  >"$RELEASE/canary-bootstrap.log" 2>&1
 docker run --detach --name "engine-canary-$SHORT" --restart no --network none \
   --env-file "$ENV_FILE" --env CMS_PROCESS_ROLE=api \
   --env "ENGINE_IMAGE=$IMAGE" --env "APP_REVISION=$REVISION" \
