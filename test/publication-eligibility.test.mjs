@@ -71,6 +71,20 @@ test('a cached article payload cannot bypass the latest database gate at WordPre
   assert.equal(remoteCalls,0);
 });
 
+test('a QA note identifying a place-name typo blocks publication despite four passed scores', (t) => {
+  const { db } = seed(t, 1);
+  freezeRequiredMediaManifest(db, 'draft');
+  assert.equal(evaluatePublicationEligibility(db, 'draft').passed, true);
+  const row = db.prepare("SELECT media_metadata_json FROM article_visuals WHERE id='visual-1'").get();
+  const metadata = JSON.parse(row.media_metadata_json);
+  metadata.quality_qa.notes = 'Jiafangbei contains a minor pinyin typo for Jiefangbei.';
+  db.prepare("UPDATE article_visuals SET media_metadata_json=? WHERE id='visual-1'")
+    .run(JSON.stringify(metadata));
+  const state = evaluatePublicationEligibility(db, 'draft');
+  assert.equal(state.passed, false);
+  assert.ok(state.missing[0].reasons.includes('quality_qa_missing_or_stale'));
+});
+
 test('legacy successful image bytes and independent QA are rebound by SHA without another provider call', (t) => {
   const {db,directory}=seed(t,1);
   const bytes=fs.readFileSync(path.join(directory,'image-1.png'));

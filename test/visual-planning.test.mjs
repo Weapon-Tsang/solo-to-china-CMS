@@ -526,6 +526,8 @@ test("four-field visual QA is aggregated instead of trusting a cosmetic top-leve
   const passed=Object.fromEntries(["language","completeness","style","semantic"].map((field)=>[field,{status:"passed",reason:"ok"}]));
   assert.equal(visualQualityQaStatus(passed),"passed");
   assert.equal(visualQualityQaStatus({...passed,semantic:{status:"failed",reason:"omitted a stop"}}),"failed");
+  assert.equal(visualQualityQaStatus({...passed,notes:"Jiafangbei contains a minor pinyin typo for Jiefangbei."}),"needs_review");
+  assert.equal(visualQualityQaStatus({...passed,notes:"No typos or misspellings were detected."}),"passed");
   assert.equal(visualQualityQaStatus({status:"not_tested"}),"not_tested");
 });
 

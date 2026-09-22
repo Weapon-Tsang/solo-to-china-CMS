@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { parseMediaMetadata, validateMediaDelivery } from './media-delivery.mjs';
+import { visualQaMentionsSpellingError } from './visual-qa.mjs';
 
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
@@ -90,8 +91,9 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     if (metadata.binary_qa?.status !== 'passed' && metadata.pixel_qa?.status !== 'passed'
       && !retainedPhoto) failures.push('binary_qa_missing');
     const quality = metadata.quality_qa || {};
-    const qaPassed = quality.status === 'passed' || ['language','completeness','style','semantic']
-      .every((field) => quality[field]?.status === 'passed');
+    const qaPassed = !visualQaMentionsSpellingError(quality)
+      && (quality.status === 'passed' || ['language','completeness','style','semantic']
+        .every((field) => quality[field]?.status === 'passed'));
     if ((!qaPassed || quality.file_hash !== fileHash) && !retainedPhoto) {
       failures.push('quality_qa_missing_or_stale');
     }

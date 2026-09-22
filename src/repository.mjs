@@ -38,6 +38,7 @@ import { persistCaptureAssets } from "./source-media-store.mjs";
 import { dependencyHash, semanticMaterial, PIPELINE_CONTRACT_VERSION } from './pipeline-contract.mjs';
 import { stepIdentity, readStepReceipt, saveStepReceipt } from './repositories/pipeline-step-receipts.mjs';
 import { evaluatePublicationEligibility, mediaManifestForDraft } from './publication-eligibility.mjs';
+import { visualQaMentionsSpellingError } from './visual-qa.mjs';
 import { recoverLegacyVisualReceipts } from './services/legacy-visual-receipts.mjs';
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
@@ -10556,6 +10557,7 @@ function normalizedAssetKindForAnalysis(value="") {
 }
 
 export function visualQualityQaStatus(value={}) {
+  if (visualQaMentionsSpellingError(value)) return 'needs_review';
   if (value?.status) return String(value.status);
   const fields=["language","completeness","style","semantic"].map((field)=>value?.[field]?.status || "not_tested");
   if (fields.every((status)=>status === "passed")) return "passed";
