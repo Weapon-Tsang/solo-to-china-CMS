@@ -166,7 +166,7 @@ test('page composition preserves an existing generated visual plan instead of re
   assert.equal(after.image_subject,'Ciqikou food');
 });
 
-test('bounded prose revision preserves qualified visuals and continues with page composition', async t => {
+test('bounded prose revision preserves qualified visuals and refreshes its media manifest before page composition', async t => {
   const {repository,db,directory}=repositoryFixture(t);
   db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
     VALUES ('topic-revision-visual','chongqing','revision-visual','Ciqikou guide','fixture',80,0,0,'drafted','now','now')`).run();
@@ -203,8 +203,8 @@ test('bounded prose revision preserves qualified visuals and continues with page
   assert.equal(after.asset_fingerprint,before.asset_fingerprint);
   assert.equal(after.status,'generated');
   assert.equal(after.image_subject,'Ciqikou food');
-  assert.equal(db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='generate_visuals'").get().count,0);
-  assert.equal(db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='compose_frontend_page' AND status='queued'").get().count,1);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='generate_visuals' AND status='queued'").get().count,1);
+  assert.equal(db.prepare("SELECT COUNT(*) count FROM jobs WHERE type='compose_frontend_page' AND status='queued'").get().count,0);
 });
 
 test('multi-image analysis keeps the visual Job lease until every slot is processed', async t => {

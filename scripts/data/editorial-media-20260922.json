@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "purpose": "User-supplied authorized editorial photos for three existing WordPress drafts",
+  "articles": [
+    {
+      "draftId": "draft_63924329268349768c466fea688d3e3a",
+      "opportunityId": "opportunity_c7fcd3accb7d587723fa5a52",
+      "expectedRevision": 4,
+      "images": ["IMG_3018.jpeg", "IMG_3019.jpeg"]
+    },
+    {
+      "draftId": "draft_0ff3fa83e3c844fc807f8c8f1e1ffe88",
+      "opportunityId": "opportunity_054ccf6fa01c3d17a367c9d1",
+      "expectedRevision": 1,
+      "images": ["IMG_3023.jpeg", "IMG_3021.jpeg"]
+    },
+    {
+      "draftId": "draft_d48d54a4cac54f05b5e287f87fac6e00",
+      "opportunityId": "opportunity_30f91487afa50918408966bd",
+      "expectedRevision": 1,
+      "images": ["IMG_3024.jpeg", "IMG_3025.jpeg", "IMG_3026.jpeg"]
+    }
+  ],
+  "images": [
+    {
+      "filename": "IMG_3018.jpeg",
+      "sha256": "53c2b06ee962081ce5187bb87f4f75ba78bb80ac852e66947fa912a2a046513f",
+      "watermarkAccount": "158714736",
+      "subject": "Ciqikou Ancient Town Yinglongmen archway and nearby old-town buildings at dusk",
+      "caption": "Ciqikou's Yinglongmen archway at dusk. Photo: Xiaohongshu account 158714736.",
+      "kind": "documentary_photo",
+      "useInArticle": true
+    },
+    {
+      "filename": "IMG_3019.jpeg",
+      "sha256": "4fc7e073efef50abd891412c371369895f6505aafca4d8fa2dde0f6dfbcb2c71",
+      "watermarkAccount": "109750631",
+      "subject": "Ciqikou Ancient Town entrance gate lit by lanterns at night",
+      "caption": "A lantern-lit entrance to Ciqikou Ancient Town. Photo: Xiaohongshu account 109750631.",
+      "kind": "documentary_photo",
+      "useInArticle": true
+    },
+    {
+      "filename": "IMG_3021.jpeg",
+      "sha256": "bf500da5a2fba4bcfbc2b77d956ff91fcbf64c5569166b2bba81dc574cbb304b",
+      "watermarkAccount": "1621955729",
+      "subject": "Four-view editorial photo collage of Huguang Guild Hall Chongqing",
+      "caption": "A multi-view collage of Huguang Guild Hall, including its tiled roofs and stairway. Source collage: Xiaohongshu account 1621955729.",
+      "kind": "photo_collage",
+      "useInArticle": true
+    },
+    {
+      "filename": "IMG_3022.jpeg",
+      "sha256": "ef3e3e5545373d80e1943288b11cc69c6d5ea856a8b4c30c3098a39b1b4716fb",
+      "watermarkAccount": "26537133631",
+      "subject": "Huguang Guild Hall roofline and yellow walls in a portrait overview",
+      "caption": "The yellow walls and tiled roofs of Huguang Guild Hall. Photo: Xiaohongshu account 26537133631.",
+      "kind": "documentary_photo",
+      "useInArticle": false,
+      "reason": "Original is 750 by 1000 pixels and fails the existing 900-pixel width quality floor; the same view is available at higher resolution in IMG_3023.jpeg."
+    },
+    {
+      "filename": "IMG_3023.jpeg",
+      "sha256": "78033a7debb1aba6ae78ec9e1572c43bf82d9688766cc1f8f882f6235d29a053",
+      "watermarkAccount": "26537133631",
+      "subject": "Huguang Guild Hall entrance with plaque, yellow walls, and tiled roofs",
+      "caption": "The yellow walls and tiled roofs of Huguang Guild Hall. Photo: Xiaohongshu account 26537133631.",
+      "kind": "documentary_photo",
+      "useInArticle": true
+    },
+    {
+      "filename": "IMG_3024.jpeg",
+      "sha256": "edc371ca8cb1a54c8032a96e13540f44058607ace8dd3cbab14b815cd0edcaa1",
+      "watermarkAccount": "670502100",
+      "subject": "Liangjiang Xiao Ferry passenger cabin looking toward Raffles City across the river",
+      "caption": "The river view toward Raffles City from a Liangjiang Xiao Ferry boat. Photo: Xiaohongshu account 670502100; service identity confirmed by the user.",
+      "identityConfirmation": "user_confirmed_2026-09-22",
+      "kind": "documentary_photo",
+      "useInArticle": true
+    },
+    {
+      "filename": "IMG_3025.jpeg",
+      "sha256": "25be002bd9465431e5c5fba3799ee70090baf347d8a7eac99f035bddf262e4e5",
+      "watermarkAccount": "670502100",
+      "subject": "Liangjiang Xiao Ferry boat moored in Chongqing at sunset with a bridge in the distance",
+      "caption": "A Liangjiang Xiao Ferry boat moored in Chongqing at sunset. Photo: Xiaohongshu account 670502100; service identity confirmed by the user.",
+      "identityConfirmation": "user_confirmed_2026-09-22",
+      "kind": "documentary_photo",
+      "useInArticle": true
+    },
+    {
+      "filename": "IMG_3026.jpeg",
+      "sha256": "d364b2fe8715ff1c4624a92ae3519d06c5bcd2764a781a5ea70165231a2dc9b9",
+      "watermarkAccount": "670502100",
+      "subject": "View from a Liangjiang Xiao Ferry boat toward a red bridge at twilight",
+      "caption": "A bridge and riverfront seen from a Liangjiang Xiao Ferry boat at twilight. Photo: Xiaohongshu account 670502100; service identity confirmed by the user.",
+      "identityConfirmation": "user_confirmed_2026-09-22",
+      "kind": "documentary_photo",
+      "useInArticle": true
+    }
+  ]
+}
