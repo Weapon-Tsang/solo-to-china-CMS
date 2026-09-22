@@ -421,6 +421,13 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
     db.prepare(`UPDATE source_assets SET local_path=?,original_sha256=?,local_photo_audit_json=? WHERE id='extra-photo'`)
       .run(secondPath,secondAudit.sha256,JSON.stringify(secondAudit));
     db.prepare("UPDATE article_drafts SET strategy_version='3.8' WHERE id=?").run(content[0].draft_id);
+    const mismatched=repository.planArticlePhotoRefresh([content[0].draft_id]);
+    assert.equal(mismatched.items[0].disposition,'blocked');
+    assert.equal(mismatched.items[0].reason,'article_brief_strategy_mismatch');
+    db.prepare("UPDATE content_briefs SET strategy_version='3.8' WHERE id=?")
+      .run(generatedPackage.draft.brief_id);
+    db.prepare("UPDATE quality_reviews SET strategy_version='3.8' WHERE draft_id=? AND draft_revision=?")
+      .run(content[0].draft_id,generatedPackage.draft.revision);
     const plan=repository.planArticlePhotoRefresh([content[0].draft_id]);
     assert.equal(plan.items[0].disposition,'eligible',JSON.stringify(plan.items[0]));
     const body=repository.getDraftPackage(content[0].draft_id).draft.body_markdown;
@@ -429,7 +436,9 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
     assert.equal(applied.queued.length,1);
     const refreshed=repository.getDraftPackage(content[0].draft_id);
     assert.equal(refreshed.draft.body_markdown,body);
-    assert.equal(refreshed.draft.strategy_version,'3.9');
+    assert.equal(refreshed.draft.strategy_version,'3.8');
+    assert.equal(refreshed.brief.strategy_version,'3.8');
+    assert.equal(refreshed.review?.strategy_version,'3.8');
     assert.equal(refreshed.review?.passed,true,'the independent unchanged-text QA remains current');
     assert.equal(refreshed.draft.visuals.length,2);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM model_call_metrics').get().count,calls,

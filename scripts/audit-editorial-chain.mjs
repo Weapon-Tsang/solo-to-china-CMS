@@ -27,9 +27,17 @@ try {
           source_filename: metadata?.editorial_source_filename || null,
           required_visual_gap: metadata?.required_visual_gap || null,
           quality_qa: metadata?.quality_qa || null,
-          source_analysis: metadata?.source_analysis || null,
+          source_analysis: metadata?.source_analysis ? {
+            analysis_status: metadata.source_analysis.analysis_status,
+            asset_kind: metadata.source_analysis.asset_kind,
+            reader_text_present: metadata.source_analysis.reader_text_present,
+            editor_ui_regions: metadata.source_analysis.editor_ui_regions,
+          } : null,
           visual_decision: metadata?.visual_decision || null,
-          authorized_asset_match: metadata?.authorized_asset_match || null,
+          authorized_asset_match: metadata?.authorized_asset_match ? {
+            score: metadata.authorized_asset_match.score,
+            mode: metadata.authorized_asset_match.mode,
+          } : null,
           binary_qa: metadata?.binary_qa || null };
       });
     const jobs = db.prepare(`SELECT id,type,status,attempts,max_attempts,last_error,last_failure_code,
