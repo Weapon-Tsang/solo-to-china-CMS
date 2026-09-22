@@ -7660,8 +7660,10 @@ export class Repository {
       ORDER BY updated_at DESC LIMIT 1`).get(row.draft_id);
     if (failed) {
       if (!isOperationalFailureRetryable(failed)) return null;
-      this.enqueue(failed.type,row.draft_id,{dedupeKey:`manual-stage:${opportunity?.id}:${failed.type}:${row.draft_id}`,productionOwnerOpportunityId:opportunity?.id || null});
-      return failed.type;
+      const stage = String(failed.last_failure_code || '').toUpperCase() === 'CONTRACT_VERSION_MISMATCH'
+        ? 'compose_frontend_page' : failed.type;
+      this.enqueue(stage,row.draft_id,{dedupeKey:`manual-stage:${opportunity?.id}:${stage}:${row.draft_id}`,productionOwnerOpportunityId:opportunity?.id || null});
+      return stage;
     }
     if (!row.brief_id) {
       const stage = this.retryContentStage(candidateId) || "assemble_editorial";
@@ -8449,7 +8451,7 @@ export class Repository {
     const assets=this.db.prepare(`
       SELECT sa.id, sa.source_id, sa.remote_url, sa.local_path, sa.mime_type, sa.alt_text, sa.position,
         sa.width,sa.height,sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
-        sa.original_sha256,sa.capture_version,sa.local_photo_audit_json,saa.analysis_status,saa.asset_kind,saa.text_regions_json,saa.photo_regions_json,
+        sa.original_sha256,sa.capture_version,sa.local_photo_audit_json,sa.provenance_json,saa.analysis_status,saa.asset_kind,saa.text_regions_json,saa.photo_regions_json,
         saa.entities_json,saa.editor_ui_regions_json,saa.primary_subjects_json,saa.language_by_region_json,
         saa.reader_text_present,saa.confidence AS analysis_confidence,saa.analysis_version,saa.prompt_version,
         saa.source_sha256 AS analysis_source_sha256,
@@ -9976,6 +9978,9 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     if (!visual.source_asset_id && !visual.factual_image_required
       && (visual.image_type !== "real_world_photo" || visual.acquisition_strategy === "generate_illustration")) return visual;
     const exact=visual.source_asset_id ? unusedAssets.get(visual.source_asset_id) : null;
+    const editorialVerification=exact?.provenance?.editorialLocationVerification;
+    const editorVerifiedExact=Boolean(exact && editorialVerification?.status === 'confirmed'
+      && editorialVerification.draftId === draft.id && editorialVerification.evidence);
     const priorAssetMatch=visual.media_metadata?.authorized_asset_match || {};
     const obsoleteFallbackSelection=obsoleteFallback(visual);
     const pixelMatchFloor=(asset)=>['photo_collage','editorial_infographic','map_or_route','handwritten_card']
@@ -10007,7 +10012,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     // however, must converge on the highest-scoring authorized asset instead
     // of preferring whichever asset happened to occupy the slot last. Exact-id
     // preference made repeated normalization oscillate between two plans.
-    const match = (qualifiedExisting || stabilizedSelection) && exact
+    const match = editorVerifiedExact ? {asset:exact,score:exactScore}
+      : (qualifiedExisting || stabilizedSelection) && exact
       && (!exactHasPixelSubjects || exactScore >= pixelMatchFloor(exact)) ? {asset:exact,score:exactScore}
       : coherentExisting && exact && exactScore >= 0.34
         ? {asset:exact,score:exactScore} : ranked[0];
@@ -10015,8 +10021,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     // own alt/evidence metadata matches the planned subject.
     const matchHasPixelSubjects=Boolean(match?.asset && ['ready','needs_review'].includes(match.asset.analysis_status)
       && (match.asset.primary_subjects || []).length);
-    if (!match || (matchHasPixelSubjects ? match.score < pixelMatchFloor(match.asset)
-      : !qualifiedExisting && !stabilizedSelection && match.score < 0.34)) {
+    if (!match || (!editorVerifiedExact && (matchHasPixelSubjects ? match.score < pixelMatchFloor(match.asset)
+      : !qualifiedExisting && !stabilizedSelection && match.score < 0.34))) {
       // A writer-selected id is evidence of intent, not evidence of semantic
       // relevance. Do not silently re-select the same rejected asset later as an
       // article-level fallback during this normalization pass.
@@ -10026,7 +10032,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     }
     const asset = match.asset;
     const keepQualified=qualifiedExisting && exact?.id===asset.id
-      && (!exactHasPixelSubjects || exactScore >= pixelMatchFloor(exact));
+      && (editorVerifiedExact || !exactHasPixelSubjects || exactScore >= pixelMatchFloor(exact));
     unusedAssets.delete(asset.id);
     if (exact && exact.id !== asset.id) {
       unusedAssets.delete(exact.id);
@@ -10543,6 +10549,7 @@ function hydrateSourceAssetAnalysis(row) {
     analysisStatus="needs_review";
   }
   return {...row,
+    provenance:json(row.provenance_json,{}),
     local_photo_audit:json(row.local_photo_audit_json,{}),
     analysis_status:analysisStatus,asset_kind:assetKind,
     text_regions:textRegions,photo_regions:json(row.photo_regions_json,[]),entities:json(row.entities_json,[]),

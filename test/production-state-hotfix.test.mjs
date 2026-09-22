@@ -515,6 +515,16 @@ test("a WordPress taxonomy rejection recovers by rebuilding the publish package"
   assert.match(explanation.action.why,/不会重新写作或重跑前置步骤/);
 });
 
+test("a stale Frontend Contract rebuilds the editorial page before publish retry",()=>{
+  const failure={type:'compose_publish_page',last_failure_code:'CONTRACT_VERSION_MISMATCH',
+    last_error:'Editorial Page Payload provenance does not match the active Frontend Contract.'};
+  assert.equal(decorateDeliveryFailure(failure).recovery_type,'compose_frontend_page');
+  const explanation=explainOperationalFailure(failure);
+  assert.equal(explanation.category,'page');
+  assert.equal(explanation.action.id,'compose_frontend_page');
+  assert.match(explanation.reason,/重试最终发布页面只会再次失败/);
+});
+
 test("a WordPress inline-content rejection also rebuilds only the publish package",()=>{
   const explanation=explainOperationalFailure({
     type:"push_wordpress_draft",last_failure_code:"INVALID_COMPONENT_DATA",

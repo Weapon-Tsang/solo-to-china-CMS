@@ -576,6 +576,7 @@ export function decorateDeliveryFailure(failure) {
   if (!failure) return null;
   const code = String(failure.last_failure_code || failure.code || "").toUpperCase();
   if (code === "COMMERCIAL_OVERLAY_STALE") return { ...failure, recovery_type:"compose_commercial" };
+  if (code === "CONTRACT_VERSION_MISMATCH") return { ...failure, recovery_type:"compose_frontend_page" };
   if (["compose_frontend_page","compose_publish_page"].includes(failure.type)
       && ["MEDIA_INCOMPLETE","MEDIA_REQUIRED_MANIFEST_MISSING","MEDIA_MANIFEST_MISSING_OR_STALE"].includes(code)) {
     return { ...failure, recovery_type:"generate_visuals" };

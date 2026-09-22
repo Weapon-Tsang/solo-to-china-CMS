@@ -15,7 +15,7 @@ import { sourceProcessingProfile } from './source-processing-profile.mjs';
 import { runNodeJsonProcess } from './process-runner.mjs';
 import { normalizeFrontendPageForDelivery } from "./content-taxonomy.mjs";
 import { remapBlockProvenanceForDelivery } from "./evidence-validator.mjs";
-import { deliveryRefreshContinuation, deliveryRefreshScopeForJob } from "./services/delivery-refresh.mjs";
+import { deliveryRefreshContinuation, deliveryRefreshScopeForJob, editorialRefreshBaselineForJob, wordpressReceiptFingerprint, assertWordPressDeliveryScope } from "./services/delivery-refresh.mjs";
 
 const ISOLATED_REPOSITORY_TASK=fileURLToPath(new URL('../scripts/run-isolated-repository-task.mjs',import.meta.url));
 
@@ -1188,6 +1188,11 @@ export class Pipeline {
         case "push_wordpress_draft": {
           if (!this.wordpress?.enabled) throw new Error("WordPress draft delivery is not configured.");
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
+          const refreshScope = deliveryRefreshScopeForJob(this.repository, job);
+          const existingPostId = Number(contentPackage?.publication?.post_id || 0);
+          const existingReceipt = existingPostId > 0
+            ? await guarded((signal) => this.wordpress.getCmsArticleReceipt(existingPostId, { signal })) : null;
+          assertWordPressDeliveryScope(existingReceipt, job.entity_id, refreshScope);
           assertPublicationEligibility(this.repository.db, job.entity_id, { phase: 'delivery',
             pagePayload: contentPackage?.publish_composition?.publish_package?.page || null });
           if (!contentPackage?.review?.passed) throw new Error("Only a QA-passed draft can be sent to WordPress.");
@@ -1208,8 +1213,8 @@ export class Pipeline {
           }
           const publication = this.repository.prepareWordPressPublication(job.entity_id, this.wordpress.config.siteUrl,
             this.frontendContracts?.configured ? "contract" : "legacy");
-          const publishedMediaRefresh = contentPackage.draft.status === 'published'
-            && deliveryRefreshScopeForJob(this.repository, job) === 'media';
+          const publishedMediaRefresh = existingReceipt?.status === 'publish'
+            && ['media','editorial'].includes(refreshScope);
           try {
             let result;
             if (this.frontendContracts?.configured) {
@@ -1220,11 +1225,21 @@ export class Pipeline {
                 publishPackage.publication.status = 'publish';
                 const pageHash = crypto.createHash('sha256').update(JSON.stringify(publishPackage.page)).digest('hex');
                 const receipt = await guarded((signal) => this.wordpress.getCmsArticleReceipt(publication.post_id, { signal }));
+                const prior = this.repository.wordPressMediaRefreshAttempt(job.entity_id);
                 if (receipt.status !== 'publish' || receipt.cms_draft_id !== job.entity_id) {
                   throw Object.assign(new Error('Published WordPress identity or status changed.'),
                     {code:'WORDPRESS_MEDIA_REFRESH_IDENTITY_MISMATCH',retryable:false});
                 }
-                const prior = this.repository.wordPressMediaRefreshAttempt(job.entity_id);
+                if (refreshScope === 'editorial') {
+                  const expectedBaseline = editorialRefreshBaselineForJob(this.repository, job);
+                  const reconciledPriorOutcome = prior && prior.state !== 'completed'
+                    && prior.page_hash === pageHash && receipt.page_payload_hash === pageHash;
+                  if (!expectedBaseline || (wordpressReceiptFingerprint(receipt) !== expectedBaseline
+                    && !reconciledPriorOutcome)) {
+                    throw Object.assign(new Error('Published WordPress article changed after the editorial refresh was planned.'),
+                      {code:'WORDPRESS_EDITORIAL_REFRESH_BASELINE_CHANGED',retryable:false});
+                  }
+                }
                 if (prior && prior.state !== 'completed') {
                   if (prior.page_hash !== pageHash || receipt.page_payload_hash !== pageHash) {
                     throw Object.assign(new Error('Published media refresh outcome is unknown; operator reconciliation is required.'),

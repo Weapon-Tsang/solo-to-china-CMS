@@ -20,7 +20,7 @@ export function deliveryRefreshScopeForJob(repository, job) {
   let current = job || null;
   const seen = new Set();
   for (let depth = 0; current && depth < 32; depth += 1) {
-    const match = String(current.dedupe_key || "").match(/^delivery-refresh:(presentation|commercial|media):/);
+    const match = String(current.dedupe_key || "").match(/^delivery-refresh:(presentation|commercial|media|editorial):/);
     if (match) return match[1];
     const parentId = current.parent_job_id;
     if (!parentId || seen.has(parentId)) break;
@@ -28,6 +28,49 @@ export function deliveryRefreshScopeForJob(repository, job) {
     current = repository?.db?.prepare("SELECT id,dedupe_key,parent_job_id FROM jobs WHERE id=?").get(parentId) || null;
   }
   return null;
+}
+
+// Editorial refreshes of an already published post are intentionally not exposed
+// through the draft-only refresh endpoint. A guarded operator migration supplies
+// the original WordPress receipt fingerprint in the root Job key; descendants
+// inherit it through parent_job_id so the final delivery can fail closed if the
+// published page changed in the meantime.
+export function editorialRefreshBaselineForJob(repository, job) {
+  let current = job || null;
+  const seen = new Set();
+  for (let depth = 0; current && depth < 32; depth += 1) {
+    const match = String(current.dedupe_key || "").match(/^delivery-refresh:editorial:[^:]+:r\d+:([a-f0-9]{64})$/);
+    if (match) return match[1];
+    const parentId = current.parent_job_id;
+    if (!parentId || seen.has(parentId)) break;
+    seen.add(parentId);
+    current = repository?.db?.prepare("SELECT id,dedupe_key,parent_job_id FROM jobs WHERE id=?").get(parentId) || null;
+  }
+  return null;
+}
+
+export function wordpressReceiptFingerprint(receipt) {
+  return crypto.createHash('sha256').update(`${String(receipt?.modified_gmt || '')}|${String(receipt?.page_payload_hash || '')}`).digest('hex');
+}
+
+export function assertWordPressDeliveryScope(receipt, draftId, scope) {
+  if (scope === 'editorial' && !receipt) {
+    throw Object.assign(new Error('The guarded editorial refresh has no existing WordPress receipt.'),
+      {code:'WORDPRESS_EDITORIAL_REFRESH_TARGET_CHANGED',retryable:false});
+  }
+  if (!receipt) return;
+  if (receipt.cms_draft_id && receipt.cms_draft_id !== draftId) {
+    throw Object.assign(new Error('Existing WordPress post belongs to another CMS draft.'),
+      {code:'WORDPRESS_REFRESH_IDENTITY_MISMATCH',retryable:false});
+  }
+  if (receipt.status === 'publish' && !['media','editorial'].includes(scope)) {
+    throw Object.assign(new Error('A published WordPress post requires a guarded, explicitly scoped refresh.'),
+      {code:'WORDPRESS_PUBLISHED_REFRESH_SCOPE_REQUIRED',retryable:false});
+  }
+  if (scope === 'editorial' && receipt.status !== 'publish') {
+    throw Object.assign(new Error('The guarded editorial refresh no longer targets a published post.'),
+      {code:'WORDPRESS_EDITORIAL_REFRESH_TARGET_CHANGED',retryable:false});
+  }
 }
 
 export function deliveryRefreshContinuation(repository, job, completedStage) {
