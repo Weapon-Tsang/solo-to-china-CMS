@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.62 - Unreleased
+
+- Keep the canonical article brief, draft, and independent QA strategy aligned during historical photo refresh; block a mismatch instead of silently rewriting only the draft to strategy 3.9 and buying unnecessary review calls.
+- Preserve the guarded operational scripts and concise chain, WordPress, and secure-preview audits used to complete and verify the three user-supplied-photo articles.
+
 ## 2.0.61 - Unreleased
 
 - Preserve article and brief strategy alignment when importing operator-confirmed editorial originals, including the Ciqikou Yinglongmen archway, Huguang Guild Hall collage, and three Liangjiang Xiao Ferry photos.

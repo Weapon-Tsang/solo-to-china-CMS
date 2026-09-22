@@ -6060,6 +6060,10 @@ export class Repository {
       const draft=this.db.prepare('SELECT * FROM article_drafts WHERE id=?').get(draftId);
       if (!draft) return {draft_id:draftId,disposition:'blocked',reason:'draft_missing'};
       const brief=this.db.prepare('SELECT * FROM content_briefs WHERE id=?').get(draft.brief_id);
+      if (!brief || draft.strategy_version!==brief.strategy_version) return {
+        draft_id:draftId,disposition:'blocked',reason:'article_brief_strategy_mismatch',
+        strategy_version:draft.strategy_version,brief_strategy_version:brief?.strategy_version || null,
+      };
       const contentPackage={facts:this.getTopicPackage(brief.candidate_id)?.facts || [],
         writing_packet:this.getWritingPacket(brief.id)};
       const evidenceHash=evidenceHashForFacts(contentPackage?.facts || []);
@@ -6085,7 +6089,9 @@ export class Repository {
         && media.slots.every((slot)=>slot.disposition==='remove');
       const active=this.db.prepare("SELECT 1 FROM jobs WHERE entity_id=? AND status IN ('queued','running') LIMIT 1").get(draftId);
       let disposition='eligible'; let reason='local_photo_refresh';
-      if (!review?.passed) {disposition='blocked';reason='independent_article_qa_missing';}
+      if (!review?.passed || review.strategy_version!==brief.strategy_version) {
+        disposition='blocked';reason='independent_article_qa_missing';
+      }
       else if (active) {disposition='blocked';reason='active_article_job';}
       else if (allVisualsRemoved) {disposition='blocked';reason='no_relevant_replacement_image';}
       else if (!staleManifestRebase && !discoveryCandidates.length
@@ -6124,7 +6130,11 @@ export class Repository {
       const fromRevision=Number(pkg.draft.revision);
       const priorReview=this.db.prepare('SELECT * FROM quality_reviews WHERE id=?').get(item.review_id);
       if (!priorReview?.passed || pkg.draft.content_hash!==priorReview.draft_content_hash
-        || pkg.evidence_hash!==priorReview.evidence_hash) throw conflictError('Independent article QA changed during photo refresh.');
+        || pkg.evidence_hash!==priorReview.evidence_hash
+        || pkg.draft.strategy_version!==pkg.brief.strategy_version
+        || priorReview.strategy_version!==pkg.brief.strategy_version) {
+        throw conflictError('Independent article QA or canonical strategy changed during photo refresh.');
+      }
       const previousVisuals=this.db.prepare('SELECT * FROM article_visuals WHERE draft_id=? ORDER BY slot').all(item.draft_id);
       const timestamp=now();
       const refreshId=id('photo_refresh');
@@ -6133,13 +6143,16 @@ export class Repository {
         VALUES (?,?,?,?,?,?,?,?,?,?)`).run(refreshId,item.draft_id,fromRevision,fromRevision+1,
           pkg.draft.strategy_version || '',JSON.stringify(previousVisuals),priorReview.id,item.media.plan_hash,
           String(actor).slice(0,120),timestamp);
-      this.db.prepare("UPDATE article_drafts SET revision=revision+1,strategy_version='3.9',updated_at=? WHERE id=? AND revision=?")
+      // Photo policy 3.9 governs visual selection, not the already approved
+      // editorial brief. Rewriting only the Draft's strategy makes unchanged
+      // prose fail independent QA and triggers avoidable paid revisions.
+      this.db.prepare('UPDATE article_drafts SET revision=revision+1,updated_at=? WHERE id=? AND revision=?')
         .run(timestamp,item.draft_id,fromRevision);
       this.db.prepare(`INSERT INTO quality_reviews(id,draft_id,passed,score,checks_json,issues_json,
         unsupported_claims_json,reviewer,strategy_version,created_at,draft_revision,draft_content_hash,evidence_hash)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id('review'),item.draft_id,priorReview.passed,priorReview.score,
           priorReview.checks_json,priorReview.issues_json,priorReview.unsupported_claims_json,
-          `reused_unchanged_text:${priorReview.id}`,'3.9',timestamp,fromRevision+1,
+          `reused_unchanged_text:${priorReview.id}`,priorReview.strategy_version,timestamp,fromRevision+1,
           priorReview.draft_content_hash,priorReview.evidence_hash);
       this.ensureAuthorizedSourceVisuals(item.draft_id,{strategyVersion:'3.9'});
       const actual=this.mediaRepairPlan(item.draft_id,{strategyVersion:'3.9'});
