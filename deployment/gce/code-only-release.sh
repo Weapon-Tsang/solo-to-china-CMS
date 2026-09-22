@@ -77,6 +77,7 @@ NEW_WORKER=0
 rollback() {
   local status=$?
   trap - ERR
+  rm -f -- "$RELEASE/complete"
   if [[ "$SWITCH_STARTED" == 1 ]]; then
     if [[ "$NEW_WORKER" == 1 ]]; then
       docker update --restart no engine-worker >/dev/null 2>&1 || true
@@ -177,8 +178,8 @@ assert health['version']==sys.argv[3]
 assert health['contentStrategy']['version']=='3.9'
 assert ready['ready'] is True and ready['database']=='ready' and ready['version']==sys.argv[3]
 PY
-python3 "$APP/upgrades/8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303/pin-runtime-image.py" "$RELEASE" "$IMAGE" >"$RELEASE/image-pin.log"
 date --utc --iso-8601=seconds >"$RELEASE/complete"
+python3 "$APP/upgrades/8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303/pin-runtime-image.py" "$RELEASE" "$IMAGE" >"$RELEASE/image-pin.log"
 trap - ERR
 printf 'CODE_ONLY_RELEASE complete revision=%s image=%s rollback_api=%s rollback_worker=%s\n' \
   "$REVISION" "$IMAGE" "$OLD_API" "$OLD_WORKER"
