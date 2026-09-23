@@ -519,7 +519,8 @@ export class Repository {
       return { role, provider: legacy.provider, model: legacy.model, legacy: true, routingRevision: routing.revision, policyVersion: routing.policyVersion };
     }
     const selected = EXTRACTION_MODELS.find((item) => item.provider === routing.activeProvider);
-    return { role, provider: selected.provider, model: selected.model, routingRevision: routing.revision, policyVersion: routing.policyVersion };
+    return { role, provider: selected.provider, model: routing.activeModel || selected.model,
+      routingRevision: routing.revision, policyVersion: routing.policyVersion };
   }
 
   getVisualSettings(defaultModel) {
@@ -2727,6 +2728,12 @@ export class Repository {
     const pack=this.getMediaBatchExtractionPackage(batchId);
     if(!pack||pack.staleCaptureVersion)return [];
     const claims=Array.isArray(extraction?.result?.claims)?extraction.result.claims:[];
+    if(pack.segments.length>1 && claims.some((claim)=>{
+      const matches=pack.segments.filter((segment)=>claim.segment_id===segment.id||claim.asset_id===segment.asset_id);
+      return matches.length!==1 || (claim.segment_id && claim.asset_id
+        && (matches[0]?.id!==claim.segment_id || matches[0]?.asset_id!==claim.asset_id));
+    })) throw Object.assign(new Error("Media batch contains claims without one unambiguous source image."),
+      {code:"MEDIA_CLAIM_ATTRIBUTION_MISSING",retryable:true});
     return transaction(this.db,()=>{
       const saved=[];
       for(const segment of pack.segments){
@@ -2752,19 +2759,76 @@ export class Repository {
     });
   }
 
+  splitMediaExtractionBatch(batchId) {
+    const pack=this.getMediaBatchExtractionPackage(batchId);
+    if(!pack||pack.staleCaptureVersion||pack.segments.length<2)return {batches:[],segments:[]};
+    if(pack.segments.length===2)return {batches:[],segments:this.fallbackMediaBatchToSegments(batchId)};
+    return transaction(this.db,()=>{
+      const midpoint=Math.ceil(pack.segments.length/2);
+      const groups=[pack.segments.slice(0,midpoint),pack.segments.slice(midpoint)];
+      let sequence=this.db.prepare("SELECT COALESCE(MAX(sequence),-1) AS value FROM media_extraction_batches WHERE source_id=? AND capture_version=?")
+        .get(pack.batch.source_id,pack.batch.capture_version).value;
+      const timestamp=now();
+      const insert=this.db.prepare(`INSERT INTO media_extraction_batches(id,source_id,capture_version,sequence,
+        segment_ids_json,asset_ids_json,classification,status,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,'pending',?,?)`);
+      const batches=[];
+      const segments=[];
+      for(const group of groups){
+        const pending=group.filter((segment)=>!this.db.prepare("SELECT 1 FROM segment_extractions WHERE segment_id=?").get(segment.id));
+        if(pending.length===1){segments.push(pending[0].id);continue;}
+        if(!pending.length)continue;
+        const assets=pending.map((segment)=>segment.asset_id);
+        const id=`media_batch_${sha256(`${pack.batch.source_id}:${pack.batch.capture_version}:${assets.join(":")}`).slice(0,24)}`;
+        insert.run(id,pack.batch.source_id,pack.batch.capture_version,++sequence,
+          JSON.stringify(pending.map((segment)=>segment.id)),JSON.stringify(assets),pack.batch.classification,timestamp,timestamp);
+        batches.push(id);
+      }
+      this.db.prepare("UPDATE media_extraction_batches SET status='complete',updated_at=? WHERE id=?")
+        .run(timestamp,batchId);
+      return {batches,segments};
+    });
+  }
+
   recoverFailedMediaBatchOutputLimits(limit=20) {
     const failed=this.db.prepare(`SELECT j.* FROM jobs j
       JOIN media_extraction_batches mb ON mb.id=j.entity_id
       JOIN sources s ON s.id=mb.source_id AND s.capture_version=mb.capture_version
-      WHERE j.type='extract_media_batch' AND j.status='failed' AND j.last_failure_code='MODEL_OUTPUT_LIMIT'
+      WHERE j.type='extract_media_batch' AND j.status='failed'
+        AND j.last_failure_code IN ('MODEL_OUTPUT_LIMIT','INVALID_MODEL_OUTPUT')
         AND mb.status='pending'
       ORDER BY j.updated_at LIMIT ?`).all(Math.max(1,Math.min(100,Number(limit)||20)));
     let recovered=0;
     for(const job of failed)transaction(this.db,()=>{
-      const ids=this.fallbackMediaBatchToSegments(job.entity_id);
-      if(!ids.length)return;
-      for(const segmentId of ids)this.enqueue('extract_segment_claims',segmentId,
+      const split=this.splitMediaExtractionBatch(job.entity_id);
+      if(!split.batches.length&&!split.segments.length)return;
+      for(const batchId of split.batches)this.enqueue('extract_media_batch',batchId,
+        inheritJobContext(job,{type:'extract_media_batch',executionRoute:'realtime'}));
+      for(const segmentId of split.segments)this.enqueue('extract_segment_claims',segmentId,
         inheritJobContext(job,{type:'extract_segment_claims',executionRoute:'realtime'}));
+      recovered+=1;
+    });
+    return recovered;
+  }
+
+  recoverFailedImageExtractionJobs(limit=20) {
+    const failed=this.db.prepare(`SELECT j.* FROM jobs j
+      JOIN source_segments ss ON ss.id=j.entity_id AND ss.asset_id IS NOT NULL
+      JOIN sources s ON s.id=ss.source_id AND s.capture_version=ss.capture_version
+      WHERE j.type='extract_segment_claims' AND j.status='failed'
+        AND j.last_failure_code IN ('MODEL_OUTPUT_LIMIT','INVALID_MODEL_OUTPUT')
+        AND NOT EXISTS (SELECT 1 FROM segment_extractions se WHERE se.segment_id=ss.id)
+        AND NOT EXISTS (SELECT 1 FROM jobs active WHERE active.type='extract_segment_claims'
+          AND active.entity_id=ss.id AND active.status IN ('queued','running'))
+        AND NOT EXISTS (SELECT 1 FROM jobs retried WHERE retried.dedupe_key='extract_segment_claims:'||ss.id||':image-schema-v2')
+      ORDER BY j.updated_at DESC LIMIT ?`).all(Math.max(1,Math.min(20,Number(limit)||20)));
+    let recovered=0;
+    for(const job of failed)transaction(this.db,()=>{
+      const dedupeKey=`extract_segment_claims:${job.entity_id}:image-schema-v2`;
+      if(this.db.prepare('SELECT 1 FROM jobs WHERE dedupe_key=? LIMIT 1').get(dedupeKey))return;
+      this.enqueue('extract_segment_claims',job.entity_id,{
+        ...inheritJobContext(job,{type:'extract_segment_claims',executionRoute:'realtime'}),dedupeKey,
+      });
       recovered+=1;
     });
     return recovered;

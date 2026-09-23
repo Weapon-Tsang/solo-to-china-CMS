@@ -9,9 +9,11 @@ export class DeepSeekClient extends KimiClient {
     if (!this.enabled) throw Object.assign(new Error("DeepSeek API key is not configured."), { code: "AI_NOT_CONFIGURED", retryable: false });
     const policy = resolveStagePolicy(name, this.config);
     const identity = callIdentity(name, schema, instructions, content);
-    const messages = [{ role: "system", content: `${instructions}\nReturn JSON only. Match this JSON shape and do not omit required evidence: ${JSON.stringify(schemaExample(schema))}` },
+    const hasImages = Array.isArray(content) && content.some((part) => part?.type === "image_url");
+    const messages = [{ role: "system", content: `${instructions}\nReturn JSON only. Every object in an array must have the fields shown in this shape. Values are placeholders, not evidence: ${JSON.stringify(schemaExample(schema,{includeMediaAnalysis:hasImages && name==="source_research_extraction"}))}` },
       { role: "user", content }];
     const startedAt = Date.now();
+    let lastIssues = [];
     for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
       const gateAt = Date.now();
       await this.config.beforeRequest?.({ provider: "deepseek", model: this.config.model, stage: name, attempt: attempt + 1 });
@@ -22,7 +24,8 @@ export class DeepSeekClient extends KimiClient {
           method: "POST",
           headers: { authorization: `Bearer ${this.config.apiKey}`, "content-type": "application/json" },
           body: JSON.stringify({ model: this.config.model, messages, max_tokens: policy.maxOutputTokens,
-            response_format: { type: "json_object" }, ...providerReasoningOptions("deepseek", policy.thinking) }),
+            response_format: { type: "json_object" },
+            ...providerReasoningOptions("deepseek", hasImages && name === "source_research_extraction" ? "NONE" : policy.thinking) }),
           signal: combinedSignal(signal, timeoutMs || policy.timeoutMs),
         });
       } catch (error) {
@@ -41,37 +44,61 @@ export class DeepSeekClient extends KimiClient {
           { ...(payload?.error || {}), requestId, retryAfter: response.headers.get("retry-after") });
       }
       const choice = payload?.choices?.[0];
-      if (["length", "max_tokens"].includes(choice?.finish_reason)) throw Object.assign(new Error("DeepSeek output reached its token limit."), {
+      if (["length", "max_tokens"].includes(choice?.finish_reason)) {
+        this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
+          status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", usage: payload?.usage, model: payload?.model,
+          httpStatus: response.status, requestId, finishReason: choice.finish_reason, dispatchState: "response_received" }));
+        throw Object.assign(new Error("DeepSeek output reached its token or context limit."), {
         code: "MODEL_OUTPUT_LIMIT", provider: "deepseek", retryable: true,
       });
+      }
       const output = choice?.message?.content;
       let parsed;
       try { parsed = typeof output === "string" && output.trim() ? JSON.parse(output) : null; } catch { parsed = null; }
+      const downgradedClaims = parsed && hasImages && name === "source_research_extraction"
+        ? downgradeUnknownClaimRoles(parsed) : 0;
       const errors = parsed == null ? [{ path: "$", message: "invalid or empty JSON" }] : validateJsonSchema(parsed, schema);
+      lastIssues = errors.slice(0, 5).map((item) => String(item.path || "$"));
       if (!errors.length) {
         this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
           status: "succeeded", usage: payload?.usage, model: payload?.model, httpStatus: response.status,
           requestId, dispatchState: "completed" }));
-        return { output: parsed, model: payload?.model || this.config.model, usage: payload?.usage || null };
+        return { output: parsed, model: payload?.model || this.config.model, usage: payload?.usage || null,
+          downgradedClaims };
       }
       this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
         status: "failed", errorCode: "INVALID_MODEL_OUTPUT", usage: payload?.usage, httpStatus: response.status,
-        requestId, dispatchState: "response_received", retryReason: "structured_repair" }));
+        requestId, finishReason: choice?.finish_reason, dispatchState: "response_received",
+        retryReason: `structured_repair:${lastIssues.join(",")}` }));
       messages.push({ role: "assistant", content: typeof output === "string" ? output : "" },
         { role: "user", content: `Correct the JSON and return the complete object only. Errors: ${JSON.stringify(errors.slice(0, 20))}` });
     }
-    throw Object.assign(new Error("DeepSeek returned invalid structured output after bounded repair."), {
+    throw Object.assign(new Error(`DeepSeek returned invalid structured output after bounded repair (${lastIssues.join(",") || "invalid JSON"}).`), {
       code: "INVALID_MODEL_OUTPUT", provider: "deepseek", retryable: true,
     });
   }
 }
 
-function schemaExample(schema) {
+function downgradeUnknownClaimRoles(output) {
+  if (!Array.isArray(output?.claims)) return 0;
+  const roles = new Set(["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"]);
+  let count = 0;
+  for (const claim of output.claims) {
+    if (!claim || typeof claim !== "object" || claim.claim_role == null || roles.has(claim.claim_role)) continue;
+    delete claim.claim_role;
+    claim.knowledge_eligible = false;
+    count += 1;
+  }
+  return count;
+}
+
+function schemaExample(schema,{includeMediaAnalysis=false}={}) {
   if (!schema || typeof schema !== "object") return null;
   const type = Array.isArray(schema.type) ? schema.type.find((item) => item !== "null") : schema.type;
   if (type === "object" || schema.properties) return Object.fromEntries(Object.entries(schema.properties || {})
-    .filter(([key]) => (schema.required || []).includes(key)).map(([key, child]) => [key, schemaExample(child)]));
-  if (type === "array") return [];
+    .filter(([key]) => (schema.required || []).includes(key) || (includeMediaAnalysis && key === "media_analysis"))
+    .map(([key, child]) => [key, schemaExample(child)]));
+  if (type === "array") return schema.items ? [schemaExample(schema.items)] : [];
   if (schema.enum?.length) return schema.enum[0];
   if (type === "boolean") return false;
   if (["number", "integer"].includes(type)) return 0;
@@ -79,12 +106,13 @@ function schemaExample(schema) {
 }
 
 function metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt, status, errorCode = null,
-  retryReason = null, usage = null, model = null, httpStatus = null, requestId = null, dispatchState }) {
+  retryReason = null, usage = null, model = null, httpStatus = null, requestId = null, finishReason = null, dispatchState }) {
   return { ...identity, provider: "deepseek", model: model || policy.model,
     role: telemetryContext?.role || "extraction", requestedModel: policy.model, returnedModel: model || null,
     inputTokens: usage?.prompt_tokens ?? null, outputTokens: usage?.completion_tokens ?? null,
     cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? usage?.prompt_cache_hit_tokens ?? null,
-    thinkingTokens: usage?.completion_tokens_details?.reasoning_tokens ?? null, providerUsage: usage || null,
+    thinkingTokens: usage?.completion_tokens_details?.reasoning_tokens ?? null,
+    providerUsage: usage || finishReason ? { ...(usage || {}), finish_reason: finishReason } : null,
     latencyMs: Date.now() - attemptAt, attempts: attempt + 1, attemptNumber: attempt + 1,
     status: status === "succeeded" ? "succeeded" : "failed", attemptStatus: status, errorCode, retryReason,
     requestKind: "provider", policyVersion: policy.version, configHash: policy.configHash,

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAiClient } from "../src/ai/client.mjs";
+import { KimiExtractor } from "../src/ai/kimi.mjs";
 import { decodeOpenAiWire, openAiWireSchema, providerReasoningOptions } from "../src/ai/provider-schema.mjs";
 import { Repository } from "../src/repository.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
@@ -29,6 +30,7 @@ test("encrypted extraction routing is optimistic and freezes each new Job profil
   const activated=repository.updateModelRouting({provider:"deepseek",apiKey:"ds-secret-value",activate:true,expectedRevision:initial.revision});
   assert.equal(activated.activeProvider,"deepseek");
   assert.equal(activated.credentials.deepseek.maskedSuffix,"alue");
+  assert.deepEqual(initial.extractionModels.map((item)=>item.provider),["deepseek","gemini","openai"]);
   assert.doesNotMatch(JSON.stringify(activated),/ds-secret-value/);
   const stored=db.prepare("SELECT * FROM model_credentials WHERE provider='deepseek'").get();
   assert.notEqual(stored.encrypted_secret,"ds-secret-value");
@@ -42,11 +44,16 @@ test("encrypted extraction routing is optimistic and freezes each new Job profil
   const writingJob=repository.enqueue("generate_draft","brief-new");
   assert.equal(JSON.parse(db.prepare("SELECT model_profile_json FROM jobs WHERE id=?").get(oldJob).model_profile_json).provider,"deepseek");
   assert.equal(JSON.parse(db.prepare("SELECT model_profile_json FROM jobs WHERE id=?").get(newJob).model_profile_json).provider,"openai");
+  const gemini=repository.updateModelRouting({provider:"gemini",apiKey:"google-secret-value",activate:true,expectedRevision:switched.revision});
+  assert.equal(gemini.activeModel,"gemini-3.8-flash");
+  assert.equal(repository.readModelCredential("gemini"),"google-secret-value");
+  const geminiJob=repository.enqueue("analyze_intake","source-gemini");
+  assert.equal(JSON.parse(db.prepare("SELECT model_profile_json FROM jobs WHERE id=?").get(geminiJob).model_profile_json).provider,"gemini");
   assert.deepEqual(JSON.parse(db.prepare("SELECT model_profile_json FROM jobs WHERE id=?").get(writingJob).model_profile_json),{
     role:"writing",provider:"vertex",model:"gemini-3.8-flash",policyVersion:"model-routing-policy-1.1.0"});
   assert.throws(()=>repository.updateModelRouting({provider:"deepseek",expectedRevision:activated.revision}),error=>error.code==="MODEL_ROUTING_REVISION_CONFLICT");
   assert.equal(switched.revision,activated.revision+1);
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM model_routing_audit").get().n,2);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM model_routing_audit").get().n,3);
 });
 
 test("activation requires credentials and settings do not create business work",(t)=>{
@@ -83,6 +90,80 @@ test("DeepSeek uses explicit JSON and thinking controls while retaining provider
   assert.equal(requestBody.thinking.type,"enabled");
   assert.equal(requestBody.reasoning_effort,"low");
   assert.equal(metrics[0].httpStatus,200);assert.equal(metrics[0].providerRequestId,"ds-header");assert.equal(metrics[0].role,"extraction");
+});
+
+test("DeepSeek image extraction disables thinking and records bounded output failures",async()=>{
+  const metrics=[];let requestBody;
+  const client=createAiClient({provider:"deepseek",apiKey:"test",model:"deepseek-flash",baseUrl:"https://example.test",
+    stagePolicy:policy,onModelCall:(m)=>metrics.push(m)},async(_url,init)=>{
+    requestBody=JSON.parse(init.body);
+    return Response.json({model:"deepseek-flash",choices:[{finish_reason:"length",message:{content:'{"source":'}}],
+      usage:{prompt_tokens:120,completion_tokens:16000,completion_tokens_details:{reasoning_tokens:9000}}});
+  });
+  await assert.rejects(()=>client.completeJson({name:"source_research_extraction",schema:answerSchema,
+    instructions:"Return JSON",content:[{type:"text",text:"test"},{type:"image_url",image_url:{url:"data:image/png;base64,AA=="}}]}),
+  error=>error.code==="MODEL_OUTPUT_LIMIT");
+  assert.equal(requestBody.thinking.type,"disabled");
+  assert.equal(metrics.length,1);
+  assert.equal(metrics[0].outputTokens,16000);
+  assert.equal(metrics[0].thinkingTokens,9000);
+  assert.equal(metrics[0].providerUsage.finish_reason,"length");
+});
+
+test("DeepSeek records schema failure paths without source content",async()=>{
+  const metrics=[];
+  const client=createAiClient({provider:"deepseek",apiKey:"test",model:"deepseek-flash",baseUrl:"https://example.test",
+    stagePolicy:{version:"test",stages:{test_stage:{maxAttempts:1,maxOutputTokens:1000,timeoutMs:5000}}},
+    onModelCall:(m)=>metrics.push(m)},async()=>Response.json({choices:[{finish_reason:"stop",message:{content:'{}'}}],
+      usage:{prompt_tokens:10,completion_tokens:2}}));
+  await assert.rejects(()=>client.completeJson({name:"test_stage",schema:answerSchema,instructions:"Return JSON",content:"private source text"}),
+    error=>error.code==="INVALID_MODEL_OUTPUT"&&error.message.includes("$.answer"));
+  assert.match(metrics[0].retryReason,/\$\.answer/);
+  assert.doesNotMatch(metrics[0].retryReason,/private source text/);
+});
+
+test("DeepSeek image evidence extraction defers incomplete visual analysis explicitly",async()=>{
+  let request;
+  const output={source:{language:"zh-CN",summary:"Route note",destination_name:"Chongqing",destination_slug:"chongqing",
+    traveler_fit:[],practical_tips:[],warnings:[],confidence:0.8},claims:[{key:"route.stop",subject:"Stop",
+      predicate:"has_name",value:"A",qualifiers:[],confidence:0.8,source_quote:"A",
+      claim_role:"unrecognized_role",knowledge_eligible:true}]};
+  const extractor=new KimiExtractor({provider:"deepseek",apiKey:"test",model:"deepseek-flash",baseUrl:"https://example.test",
+    stagePolicy:{version:"test",stages:{source_research_extraction:{maxAttempts:1,maxOutputTokens:4000,timeoutMs:5000}}}},
+  async(url,init)=>{
+    if(String(url).includes("example.test")){
+      request=JSON.parse(init.body);
+      return Response.json({model:"deepseek-flash",choices:[{finish_reason:"stop",message:{content:JSON.stringify(output)}}]});
+    }
+    return new Response(new Uint8Array([1,2,3]),{status:200,headers:{"content-type":"image/jpeg"}});
+  });
+  const result=await extractor.extract({title:"Route",raw_text:"Image evidence",assets:[{id:"asset-1",kind:"image",
+    remote_url:"https://sns-img.xhscdn.com/route.jpg",segment_id:"segment-1"}]});
+  assert.equal(request.response_format.type,"json_object");
+  assert.doesNotMatch(request.messages[0].content,/For every supplied image return one media_analysis record/);
+  assert.match(request.messages[0].content,/claim_role MUST be exactly one of fact, recommendation/);
+  assert.match(request.messages[0].content,/asset_id=asset-1 and segment_id=segment-1/);
+  assert.match(request.messages[1].content[0].text,/"segmentId":"segment-1"/);
+  assert.equal(result.result.media_analysis[0].asset_id,"asset-1");
+  assert.equal(result.result.media_analysis[0].analysis_status,"needs_review");
+  assert.equal(result.result.media_analysis[0].reader_text_present,true);
+  assert.equal(result.result.media_analysis[0].confidence,0);
+  assert.match(result.result.source.warnings[0],/requires separate review/);
+  assert.equal(result.result.claims[0].claim_role,undefined);
+  assert.equal(result.result.claims[0].knowledge_eligible,false);
+  assert.equal(result.result.claims[0].asset_id,"asset-1");
+  assert.equal(result.result.claims[0].segment_id,"segment-1");
+  assert.match(result.result.source.warnings[1],/1 claims had unrecognized roles/);
+});
+
+test("missing image bytes fail before a paid extraction request",async()=>{
+  let modelCalls=0;
+  const extractor=new KimiExtractor({provider:"deepseek",apiKey:"test",model:"deepseek-flash",baseUrl:"https://example.test",
+    sourceUploadsDir:"/trusted/uploads"},async()=>{modelCalls++;throw new Error("unexpected request");});
+  await assert.rejects(()=>extractor.extract({title:"Missing image",raw_text:"Source text",assets:[{
+    id:"asset-missing",kind:"image",local_path:"/outside/missing.webp",mime_type:"image/webp"}]}),
+  error=>error.code==="SOURCE_IMAGE_BYTES_UNAVAILABLE");
+  assert.equal(modelCalls,0);
 });
 
 test("OpenAI Responses disables storage/tools and validates strict canonical output",async()=>{

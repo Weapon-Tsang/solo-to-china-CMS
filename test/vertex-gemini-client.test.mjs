@@ -25,6 +25,31 @@ test("Vertex Gemini uses the configured model and structured JSON response", asy
   assert.equal(body.systemInstruction.parts[0].text, "Be precise.");
 });
 
+test("Gemini API key extraction uses Developer API without project metadata", async () => {
+  const requests = [];
+  const metrics = [];
+  const client = createAiClient({ provider: "gemini", apiKey: "google-test-key", model: "gemini-3.8-flash",
+    batchEnabled: false, onModelCall: (metric) => metrics.push(metric) }, async (url, options) => {
+    requests.push({ url: String(url), options });
+    return Response.json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: '{"ok":true}' }] } }],
+      usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 4, thoughtsTokenCount: 2 } });
+  });
+  const result = await client.completeJson({ name: "manual_provider_image_test",
+    schema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+    instructions: "Inspect image.", content: [{ type: "text", text: "image" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,YWJj" } }] });
+  assert.equal(result.output.ok, true);
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-3\.8-flash:generateContent$/);
+  assert.equal(requests[0].options.headers["x-goog-api-key"], "google-test-key");
+  assert.equal(requests[0].options.headers.authorization, undefined);
+  assert.equal(JSON.parse(requests[0].options.body).contents[0].parts[1].inlineData.mimeType, "image/png");
+  assert.equal(metrics[0].provider, "gemini");
+  assert.equal(metrics[0].inputTokens, 12);
+  assert.equal(metrics[0].outputTokens, 4);
+  assert.equal(client.batchEnabled, false);
+});
+
 test("Vertex transport failures remain provider-attributed and retryable", async () => {
   const metrics=[];
   const client=new VertexGeminiClient({projectId:"test-project",location:"global",model:"gemini-3.8-flash",

@@ -28,14 +28,18 @@ export function ViewRenderer(props) {
 }
 
 function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy }) {
-  const [provider, setProvider] = useState(data?.selectedProvider === "openai" ? "openai" : "deepseek");
+  const [provider, setProvider] = useState(data?.selectedProvider === "legacy" ? "deepseek" : data?.selectedProvider || "deepseek");
   const [apiKey, setApiKey] = useState("");
-  useEffect(() => setProvider(data?.selectedProvider === "openai" ? "openai" : "deepseek"), [data?.selectedProvider]);
-  const updateExtraction = (activate = false) => onAction("/api/settings/ai", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider, apiKey: apiKey || undefined, activate, expectedRevision: data?.revision }),
-  }, activate ? "新采集任务的提取模型已激活；旧任务与旧成果保持原路由。" : "候选提取模型与凭据已保存，尚未影响任务路由。");
+  useEffect(() => setProvider(data?.selectedProvider === "legacy" ? "deepseek" : data?.selectedProvider || "deepseek"), [data?.selectedProvider]);
+  const updateExtraction = async (activate = false) => {
+    const saved = await onAction("/api/settings/ai", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider, apiKey: apiKey || undefined, activate, expectedRevision: data?.revision }),
+    }, activate ? "新采集任务的提取模型已激活；旧任务与旧成果保持原路由。" : "候选提取模型与凭据已保存，尚未影响任务路由。");
+    if (saved) setApiKey("");
+    return saved;
+  };
   const testExtraction = () => onAction("/api/settings/ai/test-connection", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ provider }),
   }, "手动连接测试完成；测试不会激活模型或重跑任务。");
@@ -44,9 +48,9 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
     {data && (data.activeProvider !== provider || data.activationState !== "active") && <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-950 xl:col-span-3">
       当前采集提取路由仍为 {data.activeModel || data.activeProvider || "legacy"}。下方勾选仅表示准备配置的模型；需保存凭据并点击“激活新采集路由”，刷新后确认“当前激活”才会影响新的提取任务。已采集但不完整的笔记仍需先修复采集。
     </div>}
-    <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">来源采集与结构化提取</div><p className="mt-1 text-xs leading-relaxed text-slate-500">DeepSeek 为推荐默认；GPT-5.6 Luna 可手动切换，也可在 Knowledge 中按次发起局部争议复核。切换只影响新任务。</p></div><StatusPill status={data?.activeProvider === provider && data?.activationState === "active" ? "ready" : "pending"} /></div>
+    <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><div className="text-sm font-semibold text-slate-900">来源采集与结构化提取</div><p className="mt-1 text-xs leading-relaxed text-slate-500">DeepSeek 为推荐默认；Gemini 3.8 Flash 和 GPT-6 Luna 均可手动切换。切换只影响新任务。</p></div><StatusPill status={data?.activeProvider === provider && data?.activationState === "active" ? "ready" : "pending"} /></div>
       <div className="mt-4 space-y-2 sm:mt-5">{(data?.extractionModels || []).map((item) => <label key={item.provider} className={cn("flex cursor-pointer gap-3 rounded-xl border p-3 transition", provider === item.provider ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300")}><input className="mt-1 accent-slate-900" type="radio" name="extraction-provider" value={item.provider} checked={provider === item.provider} onChange={() => { setProvider(item.provider); setApiKey(""); }} /><span><span className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-slate-900">{item.label}{item.recommended && <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] text-blue-700">推荐默认</span>}{data?.activeProvider === item.provider && <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] text-emerald-700">当前激活</span>}</span><span className="mt-0.5 block text-[11px] leading-relaxed text-slate-500">{item.description}</span></span></label>)}</div>
-      <label className="mt-4 block text-[11px] font-medium text-slate-700">{provider === "openai" ? "OpenAI API key" : "DeepSeek API key"}<input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-slate-500" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="new-password" placeholder={selectedCredential.configured ? `已配置 ····${selectedCredential.maskedSuffix || "（环境变量）"}；留空保持不变` : "输入后将由服务器加密保存"} /></label>
+      <label className="mt-4 block text-[11px] font-medium text-slate-700">{provider === "openai" ? "OpenAI API key" : provider === "gemini" ? "Google Gemini API key" : "DeepSeek API key"}<input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-slate-500" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="new-password" placeholder={selectedCredential.configured ? `已配置 ····${selectedCredential.maskedSuffix || "（环境变量）"}；留空保持不变` : "输入后将由服务器加密保存"} /></label>
       {!data?.encryptionReady && !selectedCredential.configured && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-800">{data?.encryptionErrorCode === "MODEL_CREDENTIAL_ENCRYPTION_KEY_INVALID" ? "服务器的独立凭据加密根密钥格式无效，修正前不能保存新 API key。" : "服务器尚未配置独立凭据加密根密钥，当前不能把新 API key 写入数据库。"}</p>}
       <div className="mt-4 flex flex-wrap items-center gap-2"><Button size="sm" variant="outline" disabled={actionBusy || (!apiKey && provider === data?.selectedProvider)} onClick={() => updateExtraction(false)}>保存候选</Button><Button size="sm" variant="outline" disabled={actionBusy || !selectedCredential.configured} onClick={testExtraction}>手动测试</Button><Button size="sm" disabled={actionBusy || (!apiKey && !selectedCredential.configured)} onClick={() => updateExtraction(true)}><CheckCircle2 />激活新任务路由</Button></div>
       <p className="mt-3 text-[10px] leading-relaxed text-slate-400">候选：{data?.selectedProvider || "—"} · 激活：{data?.activeProvider || "legacy"} · 路由修订 {data?.revision || "—"}。局部 Luna 复核默认绝不自动调用。</p>

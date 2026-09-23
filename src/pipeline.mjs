@@ -64,6 +64,8 @@ export class Pipeline {
     if (recoveredBatches) this.logger.warn("pipeline.vertex_batch_preparation_recovered", { count: recoveredBatches });
     const recoveredMediaBatches = this.repository.recoverFailedMediaBatchOutputLimits?.() || 0;
     if (recoveredMediaBatches) this.logger.warn("pipeline.media_batch_output_limits_recovered", { count: recoveredMediaBatches });
+    const recoveredImages = this.repository.recoverFailedImageExtractionJobs?.() || 0;
+    if (recoveredImages) this.logger.warn("pipeline.failed_image_extractions_recovered", { count: recoveredImages });
     this.nextRecoveryAt = Date.now() + this.recoveryIntervalMs;
     this.timer = setInterval(() => this.pump(), this.pollMs);
     if (!keepAlive) this.timer.unref();
@@ -500,14 +502,18 @@ export class Pipeline {
         case "segment_source": {
           commitStage(() => {
             const segments = this.repository.prepareSourceSegments(job.entity_id);
-            const mediaBatches = this.repository.prepareMediaExtractionBatches(job.entity_id);
+            const extractionProvider=this.extractor?.configFor?.({telemetryContext})?.provider
+              || this.extractor?.config?.provider || telemetryContext.modelProfile?.provider;
+            const mediaBatches = ['deepseek','gemini'].includes(extractionProvider) ? []
+              : this.repository.prepareMediaExtractionBatches(job.entity_id);
             this.repository.enqueueSourcePhotoAudits(job.entity_id, { limit: 2000 });
             const batchedSegmentIds = new Set(mediaBatches.flatMap((batch) => batch.segmentIds));
             for (const batch of mediaBatches) this.enqueueChild(job,"extract_media_batch", batch.id,
               { executionRoute: 'realtime', priority: Number(job.priority || 5) });
             for (const segment of segments.filter((item) => !batchedSegmentIds.has(item.id))) {
               this.enqueueChild(job,"extract_segment_claims", segment.id,
-                { executionRoute: Number(job.priority || 0) >= 50 ? 'batch' : 'realtime', priority: Number(job.priority || 5) });
+                { executionRoute: ['deepseek','gemini'].includes(extractionProvider) && segment.asset_id ? 'realtime'
+                  : Number(job.priority || 0) >= 50 ? 'batch' : 'realtime', priority: Number(job.priority || 5) });
             }
           });
           break;
@@ -524,14 +530,16 @@ export class Pipeline {
               }
             });
           } catch (error) {
-            if(!isModelOutputLimit(error)||pack.segments.length<2)throw error;
-            const segmentIds=commitStage(()=>{
-              const ids=this.repository.fallbackMediaBatchToSegments(job.entity_id);
-              for(const id of ids)this.enqueueChild(job,"extract_segment_claims",id,{executionRoute:'realtime'});
-              return ids;
+            if(!["MODEL_OUTPUT_LIMIT","INVALID_MODEL_OUTPUT","MEDIA_CLAIM_ATTRIBUTION_MISSING"].includes(error?.code)
+              ||pack.segments.length<2)throw error;
+            const split=commitStage(()=>{
+              const result=this.repository.splitMediaExtractionBatch(job.entity_id);
+              for(const id of result.batches)this.enqueueChild(job,"extract_media_batch",id,{executionRoute:'realtime'});
+              for(const id of result.segments)this.enqueueChild(job,"extract_segment_claims",id,{executionRoute:'realtime'});
+              return result;
             });
             this.logger.warn("pipeline.media_batch_fell_back_to_segments",{
-              batchId:job.entity_id,segmentCount:segmentIds.length,reason:error.code||"MODEL_OUTPUT_LIMIT",
+              batchId:job.entity_id,batchCount:split.batches.length,segmentCount:split.segments.length,reason:error.code,
             });
           }
           break;

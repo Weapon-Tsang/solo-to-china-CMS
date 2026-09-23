@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 78;
+export const SCHEMA_VERSION = 79;
 
 export function openDatabase(filename, { migrate: shouldMigrate = true } = {}) {
   if (shouldMigrate) fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -106,6 +106,42 @@ function migrate(db) {
   if (current < 76) migrationSeventySix(db);
   if (current < 77) migrationSeventySeven(db);
   if (current < 78) migrationSeventyEight(db);
+  if (current < 79) migrationSeventyNine(db);
+}
+
+function migrationSeventyNine(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE model_credentials_next (
+      provider TEXT PRIMARY KEY CHECK (provider IN ('deepseek','gemini','openai')),
+      encrypted_secret TEXT NOT NULL, iv TEXT NOT NULL, auth_tag TEXT NOT NULL,
+      key_version INTEGER NOT NULL DEFAULT 1, masked_suffix TEXT NOT NULL DEFAULT '',
+      validation_status TEXT NOT NULL DEFAULT 'untested'
+        CHECK (validation_status IN ('untested','text_verified','multimodal_verified','failed')),
+      validation_detail_json TEXT NOT NULL DEFAULT '{}', validated_at TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    INSERT INTO model_credentials_next SELECT * FROM model_credentials;
+    DROP TABLE model_credentials;
+    ALTER TABLE model_credentials_next RENAME TO model_credentials;
+
+    CREATE TABLE model_routing_settings_next (
+      singleton INTEGER PRIMARY KEY CHECK (singleton=1),
+      selected_provider TEXT NOT NULL DEFAULT 'deepseek'
+        CHECK (selected_provider IN ('legacy','deepseek','gemini','openai')),
+      active_provider TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (active_provider IN ('legacy','deepseek','gemini','openai')),
+      active_model TEXT NOT NULL DEFAULT '',
+      activation_state TEXT NOT NULL DEFAULT 'candidate'
+        CHECK (activation_state IN ('candidate','active','legacy')),
+      revision INTEGER NOT NULL DEFAULT 1,
+      policy_version TEXT NOT NULL DEFAULT 'model-routing-policy-1.1.0',
+      activated_at TEXT, updated_at TEXT NOT NULL
+    );
+    INSERT INTO model_routing_settings_next SELECT * FROM model_routing_settings;
+    DROP TABLE model_routing_settings;
+    ALTER TABLE model_routing_settings_next RENAME TO model_routing_settings;
+    INSERT INTO schema_migrations(version, applied_at) VALUES (79, datetime('now'));
+  `));
 }
 
 function migrationSeventyEight(db) {
