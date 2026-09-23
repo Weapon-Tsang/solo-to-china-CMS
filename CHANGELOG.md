@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.69 - Unreleased
+
+- Keep active Xiaohongshu browser tasks leased while note extraction is waiting on page content; recover only expired leases to avoid duplicate workers and repeated note-tab opens.
+- Make explicit CMS refreshes replace an older same-view request so the newest source statuses are fetched and displayed.
+- Add regression coverage for watchdog lease handling and forced refresh request replacement.
+
 ## 2.0.68 - Unreleased
 
 - Discover notes in new Xiaohongshu Favorites boards using `/board/{boardId}/{noteId}` links.

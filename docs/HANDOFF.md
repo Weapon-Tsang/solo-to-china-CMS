@@ -1,4 +1,10 @@
-# 2.0.68 Xiaohongshu Favorites collection hang fix
+# 2.0.69 Xiaohongshu sync and source refresh hotfix
+
+App/Extension version `2.0.69`, schema migration `78`, and Content Strategy `3.9` are the release baseline. Active capture tasks now renew their leases while browser extraction is waiting for Xiaohongshu content; the watchdog only requeues tasks whose durable leases have expired. This avoids duplicating live work and repeatedly reopening note tabs. Explicit CMS refresh replaces an older pending request for the same view so fresh source statuses can render. No schema migration, production data mutation, or provider change is required. Real signed-in Xiaohongshu browser E2E remains for manual confirmation.
+
+## Previous release
+
+### 2.0.68 Xiaohongshu Favorites collection hang fix
 
 App/Extension version `2.0.68`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. This code-only release recognizes note links in new Xiaohongshu Favorites boards, retains collection-end observations across reinjection, and pauses discovery with a resumable error instead of retrying a selector failure forever. No schema migration or historical-data change is required.
 
