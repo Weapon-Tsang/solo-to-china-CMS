@@ -1,6 +1,10 @@
+# 2.0.68 Xiaohongshu Favorites collection hang fix
+
+App/Extension version `2.0.68`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. This code-only release recognizes note links in new Xiaohongshu Favorites boards, retains collection-end observations across reinjection, and pauses discovery with a resumable error instead of retrying a selector failure forever. No schema migration or historical-data change is required.
+
 # 2.0.67 production queue recovery
 
-App/Extension version `2.0.67`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. This code-only release preserves already verified legacy photos during recovery, displays newer published-refresh failures despite older success receipts, and adds a fingerprint-guarded editorial refresh for legacy published WordPress posts. The 2026-09-23 production-copy replay projects two actionable published-refresh failures out of 13 records; direct WordPress read-back confirmed the published posts and unchanged receipts before the guarded continuation. No schema migration is required.
+App/Extension version `2.0.67`, schema migration `78`, and Content Strategy `3.9` were the previous candidate baseline. This code-only release preserves already verified legacy photos during recovery, displays newer published-refresh failures despite older success receipts, and adds a fingerprint-guarded editorial refresh for legacy published WordPress posts. The 2026-09-23 production-copy replay projects two actionable published-refresh failures out of 13 records; direct WordPress read-back confirmed the published posts and unchanged receipts before the guarded continuation. No schema migration was required.
 
 # 2.0.66 non-evidence ledger delivery hotfix
 

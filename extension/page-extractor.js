@@ -4,7 +4,7 @@
     title: ["#detail-title", "[class*='title']", "h1"],
     description: ["#detail-desc", "[class*='desc']", "article"],
     authorLink: ["[class*='author'] a", "[class*='user'] a", "a[href*='/user/profile/']"],
-    favoriteCards: ["a[href*='/explore/']", "a[href*='/discovery/item/']"],
+    favoriteCards: ["a[href*='/explore/']", "a[href*='/discovery/item/']", "a[href*='/board/']"],
     carouselNext: ["button[aria-label*='next' i]", "[class*='swiper-button-next']", "[class*='carousel'] button[class*='next']"],
     carouselIndicators: ["[class*='swiper-pagination'] [class*='bullet']", "[class*='carousel'] [role='tab']", "[class*='indicator']"],
     mediaImages: ["img"],
@@ -12,7 +12,12 @@
   });
 
   const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-  const discoveryObservation = { identities: new Set(), stableRounds: 0 };
+  // The background worker reinjects this file for each discovery pass. Keep the
+  // end-of-list observation in the page so an unchanged collection can finish.
+  const discoveryPageUrl = `${location.origin}${location.pathname}${location.search}`;
+  const previousObservation = globalThis.SoloToChinaXhs?.discoveryObservation;
+  const discoveryObservation = previousObservation?.pageUrl === discoveryPageUrl
+    ? previousObservation : { pageUrl: discoveryPageUrl, identities: new Set(), stableRounds: 0 };
   const first = (selectors, root = document) => selectors.map((selector) => root.querySelector(selector)).find(Boolean) || null;
   const textOf = (selectors, root = document) => {
     for (const selector of selectors) {
@@ -33,7 +38,8 @@
       for (const anchor of document.querySelectorAll(selector)) {
         let url;
         try { url = new URL(anchor.href, location.href); } catch { continue; }
-        const externalId = url.pathname.match(/\/(?:explore|discovery\/item)\/([A-Za-z0-9]+)/)?.[1];
+        const externalId = url.pathname.match(/\/(?:explore|discovery\/item)\/([A-Za-z0-9]+)/)?.[1]
+          || url.pathname.match(/^\/board\/[A-Za-z0-9]+\/([A-Za-z0-9]+)\/?$/)?.[1];
         if (!externalId || seen.has(externalId)) continue;
         seen.add(externalId);
         const card = anchor.closest("section,article,li,[class*='note-item'],[class*='card']") || anchor;
@@ -60,7 +66,7 @@
 
   function discoveryResult(cards) {
     const height = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
-    const collectionEnd = explicitCollectionEnd();
+    const collectionEnd = explicitCollectionEnd() || discoveryObservation.stableRounds >= 4;
     return { cards, scrollY: window.scrollY, scrollHeight: height, collectionEnd, pageUrl: location.href };
   }
 
@@ -71,7 +77,8 @@
     const after = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
     let newIdentities = 0;
     for (const node of document.querySelectorAll(SELECTORS.favoriteCards.join(","))) {
-      const identity = node.href?.match(/\/(?:explore|discovery\/item)\/([A-Za-z0-9]+)/)?.[1];
+      const identity = node.href?.match(/\/(?:explore|discovery\/item)\/([A-Za-z0-9]+)/)?.[1]
+        || node.href?.match(/\/board\/[A-Za-z0-9]+\/([A-Za-z0-9]+)(?:[/?#]|$)/)?.[1];
       if (identity && !discoveryObservation.identities.has(identity)) { discoveryObservation.identities.add(identity); newIdentities++; }
     }
     const loading = [...document.querySelectorAll("[aria-busy='true'],[class*='loading']")].some(visible);
@@ -344,5 +351,5 @@
     return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join("");
   }
 
-  globalThis.SoloToChinaXhs = { scanFavorites, scrollFavoritesWindow, prepareAndExtract };
+  globalThis.SoloToChinaXhs = { scanFavorites, scrollFavoritesWindow, prepareAndExtract, discoveryObservation };
 })();

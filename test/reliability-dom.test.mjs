@@ -19,7 +19,9 @@ function fixture(body, delayed) {
     setTimeout:(callback,delay)=>setImmediate(()=>{elapsed+=delay;delayed?.({document,window,elapsed});callback();}),clearTimeout:clearImmediate,
     chrome:{runtime:{getManifest:()=>({version:'2.0.6'})}}};
   vm.runInNewContext(extractor,context);
-  return {api:context.SoloToChinaXhs,document,elapsed:()=>elapsed};
+  return {api:context.SoloToChinaXhs,document,elapsed:()=>elapsed,
+    reinject:()=>{vm.runInNewContext(extractor,context);return context.SoloToChinaXhs;},
+    navigate:(url)=>{context.location=new URL(url);vm.runInNewContext(extractor,context);return context.SoloToChinaXhs;}};
 }
 const note=media=>`<main id="noteContainer"><h1 id="detail-title">A useful travel note</h1><p id="detail-desc">A complete route through two places with clear timing and choices.</p>${media}</main>`;
 const ready=image=>{for(const[key,value]of Object.entries({complete:true,naturalWidth:640,naturalHeight:480}))Object.defineProperty(image,key,{value,configurable:true});};
@@ -77,6 +79,28 @@ test('virtualized Favorites enumerate new identities after old cards disappear; 
   assert.equal((await api.scrollFavoritesWindow()).collectionEnd,false);
   document.body.insertAdjacentHTML('beforeend','<div class="no-more">没有更多</div>');
   assert.equal(api.scanFavorites().collectionEnd,true);
+});
+test('a new Favorites board discovers note links without treating the board link as a note',()=>{
+  const {api}=fixture('<a href="/board/board123">Collection</a><section class="note-item"><a href="/board/board123/note456?xsec_token=temporary"><img src="https://media.example/cover.jpg"></a></section>');
+  const result=api.scanFavorites();
+  assert.equal(result.cards.length,1);
+  assert.equal(result.cards[0].externalId,'note456');
+  assert.match(result.cards[0].navigationUrl,/\/board\/board123\/note456\?xsec_token=temporary/);
+});
+test('reinjecting the extractor does not reset stable end detection on an empty collection',async()=>{
+  const page=fixture('<main>Empty collection</main>');
+  let api=page.api;
+  for(let pass=0;pass<5;pass++){
+    assert.equal(api.scanFavorites().cards.length,0);
+    const scroll=await api.scrollFavoritesWindow();
+    assert.equal(scroll.collectionEnd,pass>=3);
+    api=page.reinject();
+  }
+  assert.equal(api.scanFavorites().collectionEnd,true);
+  assert.equal(api.discoveryObservation.stableRounds,5);
+  api=page.navigate('https://www.xiaohongshu.com/board/another123');
+  assert.equal(api.discoveryObservation.stableRounds,0);
+  assert.equal(api.scanFavorites().collectionEnd,false);
 });
 test('legacy captures retain an unverified grade and explicit unknown media counts are not upgraded',()=>{
   const input={url:'https://www.xiaohongshu.com/explore/legacy123',text:'A valid original capture body with meaningful details.'};
