@@ -2740,6 +2740,36 @@ export class Repository {
     });
   }
 
+  fallbackMediaBatchToSegments(batchId) {
+    const pack=this.getMediaBatchExtractionPackage(batchId);
+    if(!pack||pack.staleCaptureVersion||pack.segments.length<2)return [];
+    return transaction(this.db,()=>{
+      // The batch has finished routing; each image now owns its own extraction job.
+      this.db.prepare("UPDATE media_extraction_batches SET status='complete',updated_at=? WHERE id=?")
+        .run(now(),batchId);
+      return pack.segments.filter((segment)=>!this.db.prepare("SELECT 1 FROM segment_extractions WHERE segment_id=?").get(segment.id))
+        .map((segment)=>segment.id);
+    });
+  }
+
+  recoverFailedMediaBatchOutputLimits(limit=20) {
+    const failed=this.db.prepare(`SELECT j.* FROM jobs j
+      JOIN media_extraction_batches mb ON mb.id=j.entity_id
+      JOIN sources s ON s.id=mb.source_id AND s.capture_version=mb.capture_version
+      WHERE j.type='extract_media_batch' AND j.status='failed' AND j.last_failure_code='MODEL_OUTPUT_LIMIT'
+        AND mb.status='pending'
+      ORDER BY j.updated_at LIMIT ?`).all(Math.max(1,Math.min(100,Number(limit)||20)));
+    let recovered=0;
+    for(const job of failed)transaction(this.db,()=>{
+      const ids=this.fallbackMediaBatchToSegments(job.entity_id);
+      if(!ids.length)return;
+      for(const segmentId of ids)this.enqueue('extract_segment_claims',segmentId,
+        inheritJobContext(job,{type:'extract_segment_claims',executionRoute:'realtime'}));
+      recovered+=1;
+    });
+    return recovered;
+  }
+
   splitSourceSegmentForRetry(segmentId) {
     const segment = this.db.prepare("SELECT * FROM source_segments WHERE id=?").get(segmentId);
     if (!segment || segment.asset_id || String(segment.raw_text || "").length < 800) return [];

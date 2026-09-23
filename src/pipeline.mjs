@@ -62,6 +62,8 @@ export class Pipeline {
     if (recovered) this.logger.warn("pipeline.expired_jobs_recovered", { count: recovered });
     const recoveredBatches = this.repository.recoverPreparingVertexBatches?.() || 0;
     if (recoveredBatches) this.logger.warn("pipeline.vertex_batch_preparation_recovered", { count: recoveredBatches });
+    const recoveredMediaBatches = this.repository.recoverFailedMediaBatchOutputLimits?.() || 0;
+    if (recoveredMediaBatches) this.logger.warn("pipeline.media_batch_output_limits_recovered", { count: recoveredMediaBatches });
     this.nextRecoveryAt = Date.now() + this.recoveryIntervalMs;
     this.timer = setInterval(() => this.pump(), this.pollMs);
     if (!keepAlive) this.timer.unref();
@@ -514,12 +516,24 @@ export class Pipeline {
           const pack=this.repository.getMediaBatchExtractionPackage(job.entity_id);
           if(!pack)throw new Error(`Media batch ${job.entity_id} no longer exists.`);
           if(pack.staleCaptureVersion)break;
-          const extraction=await guarded((signal)=>this.extractor.extract(pack.source,{signal,telemetryContext}));
-          commitStage(()=>{
-            for(const segmentId of this.repository.saveMediaBatchExtraction(job.entity_id,extraction)) {
-              this.enqueueChild(job,"audit_segment_coverage",segmentId,{executionRoute:'realtime'});
-            }
-          });
+          try {
+            const extraction=await guarded((signal)=>this.extractor.extract(pack.source,{signal,telemetryContext}));
+            commitStage(()=>{
+              for(const segmentId of this.repository.saveMediaBatchExtraction(job.entity_id,extraction)) {
+                this.enqueueChild(job,"audit_segment_coverage",segmentId,{executionRoute:'realtime'});
+              }
+            });
+          } catch (error) {
+            if(!isModelOutputLimit(error)||pack.segments.length<2)throw error;
+            const segmentIds=commitStage(()=>{
+              const ids=this.repository.fallbackMediaBatchToSegments(job.entity_id);
+              for(const id of ids)this.enqueueChild(job,"extract_segment_claims",id,{executionRoute:'realtime'});
+              return ids;
+            });
+            this.logger.warn("pipeline.media_batch_fell_back_to_segments",{
+              batchId:job.entity_id,segmentCount:segmentIds.length,reason:error.code||"MODEL_OUTPUT_LIMIT",
+            });
+          }
           break;
         }
         case "extract_segment_claims": {
