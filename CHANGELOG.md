@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.68 - Unreleased
+
+- Discover notes in new Xiaohongshu Favorites boards using `/board/{boardId}/{noteId}` links.
+- Preserve end-of-collection observations across extractor reinjection and reset them when navigating to a different board.
+- Pause with a visible, resumable error when Favorites discovery exhausts its retry budget instead of retrying indefinitely.
+
 ## 2.0.67 - Unreleased
 
 - Preserve verified legacy source photos when retrying a media-blocked composition instead of buying a new visual plan.

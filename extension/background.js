@@ -708,7 +708,12 @@ async function handleDriverError(caught) {
     if (!current || current.status !== "running") return current;
     const disposition = classifyTaskDisposition(error, current.driverAttempts || 0, current.config.maxRetries);
     if (disposition.action === "pause") current.status = disposition.status;
-    else {
+    else if (disposition.action === "fail") {
+      // A collection selector or repeatedly failing discovery cannot be
+      // retried forever; leave the session resumable with a visible error.
+      current.status = "paused_error";
+      current.driveRetryAt = null;
+    } else {
       current.driverAttempts = Number(current.driverAttempts || 0) + 1;
       current.driveRetryAt = new Date(Date.now() + retryDelayMs(current.driverAttempts, {
         baseMs: current.config.retryBaseMs, maxMs: current.config.retryMaxMs,
@@ -891,4 +896,4 @@ function retryAfterMs(value) {
 async function hashBytes(bytes) { const digest = await crypto.subtle.digest("SHA-256", bytes); return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join(""); }
 function bytesToBase64(bytes) { let output = ""; const block = 0x8000; for (let index = 0; index < bytes.length; index += block) output += String.fromCharCode(...bytes.subarray(index, index + block)); return btoa(output); }
 
-export { handleMessage, restoreAfterRestart, watchdog, persistCaptureMedia, apiJson, execute };
+export { handleMessage, restoreAfterRestart, watchdog, persistCaptureMedia, apiJson, execute, handleDriverError };

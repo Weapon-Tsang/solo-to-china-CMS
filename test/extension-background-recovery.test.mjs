@@ -99,3 +99,21 @@ test('frame replacement during execute reinjects once and preserves the task ret
   assert.equal(calls,2);
   assert.equal(injections,1);
 });
+
+test('an unsupported Favorites layout pauses discovery with an actionable error',async()=>{
+  const listener=()=>({addListener(){},removeListener(){}});
+  const scope={key:'scope:board',url:'https://www.xiaohongshu.com/board/board123',label:'Favorites'};
+  const storage={};
+  globalThis.chrome={
+    runtime:{onInstalled:listener(),onStartup:listener(),onMessage:listener(),getManifest:()=>({version:'2.0.68'})},
+    alarms:{onAlarm:listener(),create:async()=>{},clear:async()=>true},
+    storage:{local:{get:async(defaults)=>Object.fromEntries(Object.entries(defaults).map(([key,value])=>[key,storage[key]??value])),
+      set:async(values)=>Object.assign(storage,values)}},
+  };
+  const background=await import(`../extension/background.js?driver=${Date.now()}`);
+  storage.favoritesSyncState=createSession({scope});
+  await background.handleDriverError({code:'SELECTOR_MISMATCH',message:'No note cards recognized.',retryable:false});
+  assert.equal(storage.favoritesSyncState.status,'paused_error');
+  assert.equal(storage.favoritesSyncState.lastError.code,'SELECTOR_MISMATCH');
+  assert.equal(storage.favoritesSyncState.driveRetryAt,null);
+});
