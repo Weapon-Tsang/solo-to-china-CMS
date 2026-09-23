@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
+import { Pipeline } from "../src/pipeline.mjs";
 
 test("ordinary image segments form traceable 4-8 item model batches while maps stay individual", (t) => {
   const {repository,db}=repositoryFixture(t);
@@ -37,6 +38,51 @@ test("ordinary image segments form traceable 4-8 item model batches while maps s
   assert.equal(savedSegments.length,batches[0].segmentIds.length);
   const results=db.prepare(`SELECT segment_id,result_json FROM segment_extractions WHERE segment_id IN (${savedSegments.map(()=>"?").join(",")})`).all(...savedSegments);
   assert.equal(results.reduce((sum,row)=>sum+JSON.parse(row.result_json).claims.length,0),1);
+});
+
+test("media batch output limit routes every image into an individual extraction job", async (t) => {
+  const {repository,db}=repositoryFixture(t);
+  const saved=repository.saveCapture(normalizeXiaohongshuCapture({
+    url:"https://www.xiaohongshu.com/explore/media-output-limit",title:"Seven image guide",
+    text:"A complete paragraph of source evidence accompanies the images.",
+    images:Array.from({length:7},(_,index)=>({url:`https://sns-img.xhscdn.com/limit-${index}.jpg`,alt:`travel photo ${index}`})),
+  }));
+  db.prepare("DELETE FROM jobs").run();
+  repository.prepareSourceSegments(saved.id);
+  repository.contentConfig.mediaImageBatchSize=8;
+  const [batch]=repository.prepareMediaExtractionBatches(saved.id);
+  assert.equal(batch.segmentIds.length,7);
+  repository.enqueue("extract_media_batch",batch.id);
+  const pipeline=new Pipeline(repository,{async extract(source){
+    if(source.assets.length>1)throw Object.assign(new Error("output token limit"),{code:"MODEL_OUTPUT_LIMIT",retryable:true});
+    return {method:"fixture",model:"fixture",result:{source:{},claims:[]}};
+  }},{maxConcurrent:1});
+  assert.equal(await pipeline.runOne(),true);
+  assert.equal(db.prepare("SELECT status FROM media_extraction_batches WHERE id=?").get(batch.id).status,"complete");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='extract_segment_claims' AND status='queued'").get().count,7);
+  for(let index=0;index<30&&db.prepare("SELECT COUNT(*) AS count FROM segment_extractions WHERE source_id=?").get(saved.id).count<7;index++)
+    assert.equal(await pipeline.runOne(),true);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM segment_extractions WHERE source_id=?").get(saved.id).count,7);
+  assert.equal(repository.prepareMediaExtractionBatches(saved.id).length,0);
+});
+
+test("existing failed media batches recover once into single-image jobs", (t) => {
+  const {repository,db}=repositoryFixture(t);
+  const saved=repository.saveCapture(normalizeXiaohongshuCapture({
+    url:"https://www.xiaohongshu.com/explore/failed-media-output-limit",title:"Failed image guide",
+    text:"Source text with seven image assets.",
+    images:Array.from({length:7},(_,index)=>({url:`https://sns-img.xhscdn.com/recover-${index}.jpg`,alt:`photo ${index}`})),
+  }));
+  db.prepare("DELETE FROM jobs").run();
+  repository.prepareSourceSegments(saved.id);
+  repository.contentConfig.mediaImageBatchSize=8;
+  const [batch]=repository.prepareMediaExtractionBatches(saved.id);
+  const jobId=repository.enqueue("extract_media_batch",batch.id);
+  db.prepare("UPDATE jobs SET status='failed',attempts=3,last_failure_code='MODEL_OUTPUT_LIMIT' WHERE id=?").run(jobId);
+  assert.equal(repository.recoverFailedMediaBatchOutputLimits(),1);
+  assert.equal(repository.recoverFailedMediaBatchOutputLimits(),0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE type='extract_segment_claims' AND status='queued'").get().count,7);
+  assert.equal(db.prepare("SELECT status FROM media_extraction_batches WHERE id=?").get(batch.id).status,"complete");
 });
 
 test("processing-gap recovery is dry-run by default and execution requires the exact reviewed fingerprint", (t) => {

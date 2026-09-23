@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.70 - Unreleased
+
+- Fall back from oversized multi-image extraction batches to traceable single-image jobs and recover existing failed batches on worker startup.
+- Add regression coverage for output-limit recovery so complete Xiaohongshu captures do not remain stuck with pending image segments.
+
 ## 2.0.69 - Unreleased
 
 - Keep active Xiaohongshu browser tasks leased while note extraction is waiting on page content; recover only expired leases to avoid duplicate workers and repeated note-tab opens.

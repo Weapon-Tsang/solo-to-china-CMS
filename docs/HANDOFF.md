@@ -1,6 +1,6 @@
-# 2.0.69 Xiaohongshu sync and source refresh hotfix
+# 2.0.70 Xiaohongshu media extraction recovery hotfix
 
-App/Extension version `2.0.69`, schema migration `78`, and Content Strategy `3.9` are the release baseline. Active capture tasks now renew their leases while browser extraction is waiting for Xiaohongshu content; the watchdog only requeues tasks whose durable leases have expired. This avoids duplicating live work and repeatedly reopening note tabs. Explicit CMS refresh replaces an older pending request for the same view so fresh source statuses can render. No schema migration, production data mutation, or provider change is required. Real signed-in Xiaohongshu browser E2E remains for manual confirmation.
+App/Extension version `2.0.70`, schema migration `78`, and Content Strategy `3.9` are the release baseline. Active capture tasks renew their leases while browser extraction waits for Xiaohongshu content; explicit CMS refresh replaces an older pending request for the same view. Oversized multi-image extraction batches now fall back to traceable single-image jobs, including recovery of existing failed batches. No schema migration, production data mutation, or provider change is required. Real signed-in Xiaohongshu browser E2E remains for manual confirmation.
 
 ## Previous release
 
