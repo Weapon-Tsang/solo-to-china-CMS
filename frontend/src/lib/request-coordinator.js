@@ -20,9 +20,9 @@ export function createLatestRequestCoordinator() {
 export function createInFlightRequestCoordinator() {
   let active = null;
   return {
-    run(key, task) {
+    run(key, task, { replace = false } = {}) {
       const normalizedKey = String(key);
-      if (active?.key === normalizedKey) return active.promise;
+      if (active?.key === normalizedKey && !replace) return active.promise;
       active?.controller.abort();
       const controller = new AbortController();
       let promise;

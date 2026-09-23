@@ -240,6 +240,11 @@ async function acquireTask(sessionId, taskId, slot, workerId, leaseId) {
   const task = session.queue.find((item) => item.taskId === taskId);
   const metric = { startedAt: Date.now(), result: "failed", mediaCount: 0, mediaBytes: 0 };
   const controller = new AbortController();
+  // Extraction can spend up to two minutes waiting for XHS media/DOM to settle.
+  // Keep the durable lease alive during those browser-only stages as well as
+  // during media upload, otherwise the watchdog can start a duplicate worker.
+  const heartbeatEveryMs = Math.max(5_000, Math.min(30_000, Math.floor(session.config.taskLeaseMs / 3)));
+  const heartbeatTimer = setInterval(() => { void heartbeatTask(sessionId, taskId, leaseId).catch(() => null); }, heartbeatEveryMs);
   taskRequests.set(leaseId, { sessionId, controller });
   const captureJournalKey = `capture:${sessionId}:${taskId}`;
   try {
@@ -297,7 +302,7 @@ async function acquireTask(sessionId, taskId, slot, workerId, leaseId) {
     metric.totalMs = Date.now() - metric.startedAt;
     await handleTaskError(sessionId, taskId, leaseId, caught, metric);
     return null;
-  } finally { controller.abort(); taskRequests.delete(leaseId); }
+  } finally { clearInterval(heartbeatTimer); controller.abort(); taskRequests.delete(leaseId); }
 }
 
 async function handleTaskError(sessionId, taskId, leaseId, caught, metric = {}) {
@@ -691,8 +696,10 @@ async function ensureAlarms() { await chrome.alarms.create(TICK_ALARM, { periodI
 async function watchdog() {
   const session = await mutateState(null, (current) => {
     if (!current || current.status !== "running") return current;
-    const stalled = Date.now() - Date.parse(current.lastProgressAt || current.updatedAt || 0) >= current.config.watchdogStallMs;
-    const reconciled = reconcileStrandedTasks(current, { force: stalled });
+    // Recover only expired task leases. A quiet extraction is not necessarily
+    // stuck: forcing every in-flight task back into the queue duplicated notes
+    // and opened fresh XHS tabs while the original worker was still running.
+    const reconciled = reconcileStrandedTasks(current);
     return reconciled.session;
   });
   if (session?.status === "running") {

@@ -105,7 +105,7 @@ test('an unsupported Favorites layout pauses discovery with an actionable error'
   const scope={key:'scope:board',url:'https://www.xiaohongshu.com/board/board123',label:'Favorites'};
   const storage={};
   globalThis.chrome={
-    runtime:{onInstalled:listener(),onStartup:listener(),onMessage:listener(),getManifest:()=>({version:'2.0.68'})},
+    runtime:{onInstalled:listener(),onStartup:listener(),onMessage:listener(),getManifest:()=>({version:'2.0.69'})},
     alarms:{onAlarm:listener(),create:async()=>{},clear:async()=>true},
     storage:{local:{get:async(defaults)=>Object.fromEntries(Object.entries(defaults).map(([key,value])=>[key,storage[key]??value])),
       set:async(values)=>Object.assign(storage,values)}},
@@ -116,4 +116,33 @@ test('an unsupported Favorites layout pauses discovery with an actionable error'
   assert.equal(storage.favoritesSyncState.status,'paused_error');
   assert.equal(storage.favoritesSyncState.lastError.code,'SELECTOR_MISMATCH');
   assert.equal(storage.favoritesSyncState.driveRetryAt,null);
+});
+
+test('watchdog does not requeue an active browser task just because the session has been quiet',async()=>{
+  const listener=()=>({addListener(){},removeListener(){}});
+  const storage={};
+  globalThis.chrome={
+    runtime:{onInstalled:listener(),onStartup:listener(),onMessage:listener(),getManifest:()=>({version:'2.0.69'})},
+    alarms:{onAlarm:listener(),create:async()=>{},clear:async()=>true},
+    storage:{local:{get:async(defaults)=>Object.fromEntries(Object.entries(defaults).map(([key,value])=>[key,storage[key]??value])),
+      set:async(values)=>Object.assign(storage,values)}},
+    tabs:{query:async()=>[],get:async(id)=>({id,status:'complete'}),onUpdated:listener(),onRemoved:listener()},
+  };
+  const background=await import(`../extension/background.js?watchdog=${Date.now()}`);
+  const scope={key:'scope:watchdog',url:'https://www.xiaohongshu.com/board/board123',label:'Favorites'};
+  let session=createSession({scope,settings:{concurrencyMode:'custom',customConcurrency:1,taskLeaseMs:180_000}});
+  session.phase='acquisition';
+  session.discoveryComplete=true;
+  session=applyIdentityBatch(session,[{externalId:'slow-note',url:'https://www.xiaohongshu.com/explore/slow-note'}],[{externalId:'slow-note',known:false}]);
+  const task=session.queue[0];
+  session=transitionTask(session,task.taskId,'extracting',{leaseId:'live-lease',workerId:'worker-1',
+    leaseStartedAt:new Date(Date.now()-150_000).toISOString(),leaseExpiresAt:new Date(Date.now()+30_000).toISOString(),
+    updatedAt:new Date(Date.now()-150_000).toISOString()});
+  session.lastProgressAt=new Date(Date.now()-150_000).toISOString();
+  storage.favoritesSyncState=session;
+
+  await background.watchdog();
+
+  assert.equal(storage.favoritesSyncState.queue[0].status,'extracting');
+  assert.equal(storage.favoritesSyncState.queue[0].leaseId,'live-lease');
 });

@@ -50,6 +50,26 @@ test("polling reuses an in-flight request for the same view", async () => {
   assert.equal(await coordinator.run("content", () => Promise.resolve("fresh")), "fresh");
 });
 
+test("explicit refresh replaces an older in-flight request for the same view", async () => {
+  const coordinator = createInFlightRequestCoordinator();
+  let oldSignal;
+  let calls = 0;
+  const oldRequest = coordinator.run("sources", ({ signal }) => {
+    oldSignal = signal;
+    calls += 1;
+    return new Promise((resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+  });
+  await Promise.resolve();
+  const refresh = coordinator.run("sources", () => {
+    calls += 1;
+    return Promise.resolve("fresh source statuses");
+  }, { replace: true });
+  assert.equal(oldSignal.aborted, true);
+  await assert.rejects(oldRequest, /aborted/);
+  assert.equal(await refresh, "fresh source statuses");
+  assert.equal(calls, 2);
+});
+
 test("switching views aborts the obsolete in-flight request", async () => {
   const coordinator = createInFlightRequestCoordinator();
   let contentSignal;

@@ -122,7 +122,7 @@ export default function App() {
     } finally {
       if (sequence === requestSequence.current) setLoading(false);
     }
-  }), [authScope, paging]);
+  }, { replace: force }), [authScope, paging]);
 
   useEffect(() => {
     if (!auth?.authenticated || auth.mustChangePassword || !paging[activeView] || !viewData?.nextCursor || document.hidden) return undefined;
