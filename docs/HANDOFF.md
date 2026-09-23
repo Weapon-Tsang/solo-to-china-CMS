@@ -1,6 +1,6 @@
 # 2.0.70 Xiaohongshu media extraction recovery hotfix
 
-App/Extension version `2.0.70`, schema migration `78`, and Content Strategy `3.9` are the release baseline. Active capture tasks renew their leases while browser extraction waits for Xiaohongshu content; explicit CMS refresh replaces an older pending request for the same view. Oversized multi-image extraction batches now fall back to traceable single-image jobs, including recovery of existing failed batches. No schema migration, production data mutation, or provider change is required. Real signed-in Xiaohongshu browser E2E remains for manual confirmation.
+App/Extension version `2.0.70`, schema migration `79`, and Content Strategy `3.9` are the release baseline. Source extraction supports separately encrypted API-key routing for DeepSeek V4.1 Flash, Gemini 3.8 Flash, and GPT-6 Luna while frozen jobs retain their original route. Image evidence is sent one image per extraction for DeepSeek and Gemini after paired real-provider canaries showed multi-image attribution failures; DeepSeek visual analysis remains explicitly deferred for review. Migration 79 adds the Gemini credential route. Production deployment requires the migration release workflow. Real Gemini API-key and GPT-6 Luna canaries remain untested until credentials are configured.
 
 ## Previous release
 

@@ -239,7 +239,7 @@ export class KimiExtractor {
     let model = null;
     for (const batch of batches) {
       const images = await this.client.imageParts(batch.images);
-      if (batch.images.length && !images.parts.length) throw Object.assign(
+      if (batches.length === 1 && batch.images.length && !images.parts.length) throw Object.assign(
         new Error("No captured image bytes could be sent to the extraction model."),
         {code:"SOURCE_IMAGE_BYTES_UNAVAILABLE",retryable:true});
       const videos = await prepareVideoParts({ ...source, assets: batch.videos }, this.config.provider, this.client);
