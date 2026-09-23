@@ -113,7 +113,7 @@ function providerClient(config, fetchImpl) {
   // Provider-less configs are the pre-routing local/test contract and remain
   // Kimi-compatible. Any explicit, unrecognized provider fails closed.
   if (!config.provider) return new KimiClient(config, fetchImpl);
-  if (config.provider === "vertex") return new VertexGeminiClient(config, fetchImpl);
+  if (config.provider === "vertex" || config.provider === "gemini") return new VertexGeminiClient(config, fetchImpl);
   if (config.provider === "kimi") return new KimiClient(config, fetchImpl);
   if (config.provider === "deepseek") return new DeepSeekClient(config, fetchImpl);
   if (config.provider === "openai") return new OpenAIResponsesClient(config, fetchImpl);

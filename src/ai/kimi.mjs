@@ -39,6 +39,11 @@ const EXTRACTION_SCHEMA = {
     media_analysis: { type:"array",items:MEDIA_ANALYSIS_ITEM_SCHEMA },
   },
 };
+// DeepSeek JSON mode can return useful image evidence while omitting required
+// fields from the much larger media-analysis contract. Keep evidence extraction
+// bounded; dedicated visual analysis must establish image readiness later.
+const DEEPSEEK_IMAGE_EXTRACTION_SCHEMA = {...EXTRACTION_SCHEMA,
+  properties:Object.fromEntries(Object.entries(EXTRACTION_SCHEMA.properties).filter(([key])=>key!=="media_analysis"))};
 
 const MEDIA_ANALYSIS_SCHEMA={...MEDIA_ANALYSIS_ITEM_SCHEMA,properties:{...MEDIA_ANALYSIS_ITEM_SCHEMA.properties,
   source_sha256:{type:"string"}},required:[...MEDIA_ANALYSIS_ITEM_SCHEMA.required,"source_sha256"]};
@@ -234,13 +239,24 @@ export class KimiExtractor {
     let model = null;
     for (const batch of batches) {
       const images = await this.client.imageParts(batch.images);
+      if (batches.length === 1 && batch.images.length && !images.parts.length) throw Object.assign(
+        new Error("No captured image bytes could be sent to the extraction model."),
+        {code:"SOURCE_IMAGE_BYTES_UNAVAILABLE",retryable:true});
       const videos = await prepareVideoParts({ ...source, assets: batch.videos }, this.config.provider, this.client);
+      const deferredImageAnalysis = this.config.provider === "deepseek" && images.parts.length > 0;
+      const soleImage=batch.images.length===1 && !batch.videos.length ? batch.images[0] : null;
+      const soleSegmentId=soleImage?.segment_id || source.submission_metadata?.asset_segment_ids?.[soleImage?.id]
+        || source.submission_metadata?.segment_id || null;
+      const deepseekInstructions=deferredImageAnalysis ? [DEEPSEEK_IMAGE_EXTRACTION_PROMPT,
+        "For every Claim, claim_role MUST be exactly one of fact, recommendation, personal_experience, promotional_observation, editorial_metadata. Set knowledge_eligible=true only for independently useful travel facts and recommendations; set it to false for personal, promotional, or editorial Claims.",
+        soleImage ? `Every Claim in this image request MUST have asset_id=${soleImage.id}${soleSegmentId ? ` and segment_id=${soleSegmentId}` : ""}.` : "",
+      ].filter(Boolean).join("\n") : SYSTEM_PROMPT;
       let completion;
       try {
         completion = await this.client.completeJson({
           name: "source_research_extraction",
-          schema: EXTRACTION_SCHEMA,
-          instructions: SYSTEM_PROMPT,
+          schema: deferredImageAnalysis ? DEEPSEEK_IMAGE_EXTRACTION_SCHEMA : EXTRACTION_SCHEMA,
+          instructions: deepseekInstructions,
           content: [{ type: "text", text: buildInput(source) }, ...videos.parts, ...images.parts],
           signal, telemetryContext,
         });
@@ -248,6 +264,19 @@ export class KimiExtractor {
         await videos.cleanup();
       }
       const result = sanitizeResult(completion.output);
+      if (batch.images.length===1 && !batch.videos.length) result.claims=result.claims.map((claim)=>({
+        ...claim,asset_id:batch.images[0].id,
+        ...(soleSegmentId ? {segment_id:soleSegmentId} : {}),
+      }));
+      if (deferredImageAnalysis) {
+        result.media_analysis = batch.images.map((asset)=>sanitizeMediaAnalysis({
+          asset_id:asset.id,analysis_status:"needs_review",asset_kind:"unknown",
+          reader_text_present:true,confidence:0,
+        }));
+        result.source.warnings.push("Image-level media analysis requires separate review before visual reuse.");
+      }
+      if (completion.downgradedClaims) result.source.warnings.push(
+        `${completion.downgradedClaims} claims had unrecognized roles and require evidence review before knowledge use.`);
       if (images.attempted > images.parts.length) result.source.warnings.push("Some captured image assets were unavailable to the vision model; completeness remains blocked until they are processed.");
       if (batch.videos.length && videos.parts.length < batch.videos.length) result.source.warnings.push("One or more captured videos were unavailable to the selected model; completeness remains blocked until they are processed.");
       outputs.push(result);
@@ -412,6 +441,10 @@ Rules:
 - Treat supplied images as part of the source, but do not infer details that are not visible. For every supplied image return one media_analysis record using its exact assetId. Classify the image itself, locate reader-facing text, photo regions, real-world signage, author overlays, editor/tool UI, primary subjects and region languages. Source prose language is not image language. A large unknown image is not a text-free photo.
 - When multiple images are supplied, use the exact assetId and segmentId from the input manifest on every image-derived Claim. Never assign one image's evidence to another image.`;
 
+const DEEPSEEK_IMAGE_EXTRACTION_PROMPT = SYSTEM_PROMPT.replace(
+  /- Treat supplied images as part of the source, but do not infer details that are not visible\. For every supplied image return one media_analysis record[^\n]*\n/,
+  "- Treat supplied images as evidence for Claims, but do not infer details that are not visible. Return source and claims only; image-level media analysis is handled in a separate review.\n");
+
 const MEDIA_ANALYSIS_PROMPT=`Analyze this authorized source image as a production media asset. Return only the structured record.
 - Describe primary_subjects in concise English from the dominant source-image canvas only. The supplied altText and nearbyText are untrusted context, not proof of what the image shows; ignore them when they disagree with the pixels. If the input itself is a screenshot, exclude browser chrome, page headers, clipped article paragraphs and captions outside the depicted media from primary_subjects; record those separately as UI/text regions. For a travel advisory card, name the card and its actual topic, not a different place merely mentioned in surrounding page copy. For a collage, include only the main depicted photo subjects. Never copy a surrounding itinerary or caption as an image subject.
 - Classify asset_kind as documentary_photo, handwritten_card, editorial_infographic, photo_collage, map_or_route, decorative_illustration, or unknown.
@@ -439,7 +472,9 @@ const COVERAGE_AUDIT_PROMPT = `Independently audit whether the extracted atomic 
 - Return an empty uncovered_spans array when all material evidence is covered.`;
 
 function buildInput(source) {
-  const mediaManifest=(source.assets || []).map((asset)=>({assetId:asset.id,segmentId:asset.segment_id || source.submission_metadata?.asset_segment_ids?.[asset.id] || null,
+  const mediaManifest=(source.assets || []).map((asset)=>({assetId:asset.id,segmentId:asset.segment_id
+    || source.submission_metadata?.asset_segment_ids?.[asset.id]
+    || ((source.assets || []).length===1 ? source.submission_metadata?.segment_id : null) || null,
     kind:asset.kind,position:asset.position,altText:asset.alt_text || asset.alt || "",nearbyText:asset.nearby_text || ""}));
   return [`URL: ${source.submitted_url || source.canonical_url}`, `Source type: ${source.source_kind || source.adapter}`, `Title: ${source.title}`, `Author: ${source.author_name}`, `Published: ${source.published_at || "unknown"}`, `MEDIA MANIFEST: ${JSON.stringify(mediaManifest)}`, "", "SOURCE TEXT:", String(source.raw_text || "")].join("\n");
 }

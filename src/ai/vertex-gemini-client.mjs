@@ -21,20 +21,24 @@ export class VertexGeminiClient {
     this.assetClient = new KimiClient({ ...config, apiKey: "asset-loader" }, fetchImpl);
   }
 
-  get enabled() { return Boolean(this.config.projectId && this.config.model); }
+  get enabled() { return Boolean(this.config.model && (this.config.provider === "gemini" ? this.config.apiKey : this.config.projectId)); }
 
   get batchEnabled() {
-    return this.enabled && this.config.batchEnabled !== false
+    return this.config.provider !== "gemini" && this.enabled && this.config.batchEnabled !== false
       && /^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/.test(String(this.config.batchBucket || "").trim())
       && String(this.config.location || "global") === "global";
   }
 
   async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null }) {
-    if (!this.enabled) throw new Error("Vertex AI requires GOOGLE_CLOUD_PROJECT and a selected Gemini model.");
-    const accessToken = await this.accessToken();
+    if (!this.enabled) throw new Error(this.config.provider === "gemini"
+      ? "Gemini API requires an API key and a selected model."
+      : "Vertex AI requires GOOGLE_CLOUD_PROJECT and a selected Gemini model.");
+    const accessToken = this.config.provider === "gemini" ? null : await this.accessToken();
     const location = this.config.location || "us-central1";
     const apiHost = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
-    const endpoint = `https://${apiHost}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
+    const endpoint = this.config.provider === "gemini"
+      ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.config.model)}:generateContent`
+      : `https://${apiHost}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const parts = normalizeVertexParts(content);
     const policy = resolveStagePolicy(name, this.config);
     const effectiveTimeoutMs = timeoutMs || policy.timeoutMs;
@@ -63,7 +67,7 @@ export class VertexGeminiClient {
       requestAttempt += 1;
       requestBody.contents[0].parts = correction ? [...parts, { text: correction }] : parts;
       const requestGateStartedAt = Date.now();
-      await this.config.beforeRequest?.({ provider: "vertex", model: this.config.model, stage: name, attempt: requestAttempt, schemaMode });
+      await this.config.beforeRequest?.({ provider: this.config.provider || "vertex", model: this.config.model, stage: name, attempt: requestAttempt, schemaMode });
       const attemptStartedAt = Date.now();
       telemetryContext.retryWaitMs = Math.max(0, attemptStartedAt - requestGateStartedAt);
       const requestStartedAt = new Date(attemptStartedAt).toISOString();
@@ -71,12 +75,14 @@ export class VertexGeminiClient {
       try {
         response = await this.fetch(endpoint, {
         method: "POST",
-        headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+        headers: this.config.provider === "gemini"
+          ? { "x-goog-api-key": this.config.apiKey, "content-type": "application/json" }
+          : { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
         body: JSON.stringify(requestBody),
         signal: combinedSignal(signal, effectiveTimeoutMs),
         });
       } catch (error) {
-        const requestError = signal?.aborted ? error : providerTransportError("vertex", error);
+        const requestError = signal?.aborted ? error : providerTransportError(this.config.provider || "vertex", error);
         this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: signal?.aborted ? "cancelled" : "failed",
           errorCode: requestError?.code || requestError?.name || "REQUEST_FAILED", retryReason: attempt ? "request_retry" : null }));
@@ -97,7 +103,7 @@ export class VertexGeminiClient {
         this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
           status: "failed", errorCode: String(payload?.error?.code || response.status), retryReason: attempt ? "provider_retry" : null,
           usage: payload?.usageMetadata }));
-        throw new ProviderRequestError("Vertex Gemini", response.status, message,
+        throw new ProviderRequestError(this.config.provider === "gemini" ? "Gemini API" : "Vertex Gemini", response.status, message,
           { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
       }
       const candidate = payload?.candidates?.[0];
@@ -292,7 +298,7 @@ export class VertexGeminiClient {
   }
 
   emitModelCall(metric) {
-    try { this.config.onModelCall?.(metric); } catch { /* telemetry must never fail production */ }
+    try { this.config.onModelCall?.({ ...metric, provider: this.config.provider || "vertex" }); } catch { /* telemetry must never fail production */ }
   }
 
   async imageParts(assets) {

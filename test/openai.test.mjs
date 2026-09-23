@@ -35,8 +35,8 @@ test("Kimi adapter sends trusted image evidence as base64 input and requests str
   const output = await extractor.extract({
     canonical_url: "https://www.xiaohongshu.com/explore/test", title: "Title", author_name: "Author",
     published_at: null, raw_text: "A sufficiently detailed note.",
-    assets: [{ id: "image-ok", original_sha256: "a".repeat(64), remote_url: "https://sns-img.xhscdn.com/image.jpg" },
-      { id: "image-failed", original_sha256: "b".repeat(64), remote_url: "https://untrusted.example/ignored.jpg" }],
+    assets: [{ id: "image-ok", kind: "image", original_sha256: "a".repeat(64), remote_url: "https://sns-img.xhscdn.com/image.jpg" },
+      { id: "image-failed", kind: "image", original_sha256: "b".repeat(64), remote_url: "https://untrusted.example/ignored.jpg" }],
   });
 
   assert.equal(requests[0].url, "https://api.example.test/v1/chat/completions");

@@ -21,8 +21,10 @@ export const KIMI_MODELS = AI_MODELS.filter((item) => item.provider === "kimi").
 export const EXTRACTION_MODELS = Object.freeze([
   { id: "deepseek-v4.1-flash", provider: "deepseek", model: "deepseek-flash", endpoint: "https://api.deepseek.com/chat/completions",
     baseUrl: "https://api.deepseek.com", label: "DeepSeek-V4.1-Flash", description: "推荐默认；用于新来源的图文理解、事实提取与来源语义处理。", supportsImages: true, recommended: true },
-  { id: "openai-gpt-5.6-luna", provider: "openai", model: "gpt-5.6-luna", endpoint: "https://api.openai.com/v1/responses",
-    baseUrl: "https://api.openai.com/v1", label: "GPT-5.6 Luna", description: "可手动切换为新来源提取主力；也支持显式、局部的争议证据复核。", supportsImages: true },
+  { id: "gemini-3.8-flash", provider: "gemini", model: "gemini-3.8-flash", endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+    label: "Gemini 3.8 Flash", description: "使用 Google Gemini API key 处理来源图片与结构化提取。", supportsImages: true },
+  { id: "openai-gpt-6-luna", provider: "openai", model: "gpt-6-luna", endpoint: "https://api.openai.com/v1/responses",
+    baseUrl: "https://api.openai.com/v1", label: "GPT-6 Luna", description: "使用 OpenAI API key 处理来源图片与结构化提取。", supportsImages: true },
 ]);
 
 export const VISUAL_MODELS = [
@@ -104,13 +106,23 @@ export function loadConfig(env = process.env) {
       batchEnabled: false,
     },
     openai: {
-      provider: "openai", apiKey: env.OPENAI_API_KEY || "", model: "gpt-5.6-luna",
+      provider: "openai", apiKey: env.OPENAI_API_KEY || "", model: "gpt-6-luna",
       baseUrl: "https://api.openai.com/v1",
       maxImages: integer(env.AI_IMAGE_BATCH_SIZE || env.OPENAI_MAX_IMAGES, 8),
       imageBatchSize: Math.min(8, Math.max(4, integer(env.AI_IMAGE_BATCH_SIZE || env.OPENAI_MAX_IMAGES, 8))),
       maxCompletionTokens: integer(env.OPENAI_MAX_COMPLETION_TOKENS, 16_000),
       requestTimeoutMs: integer(env.OPENAI_REQUEST_TIMEOUT_MS, 360_000),
       imageTimeoutMs: integer(env.OPENAI_IMAGE_TIMEOUT_MS, 20_000), sourceUploadsDir,
+      batchEnabled: false,
+    },
+    gemini: {
+      provider: "gemini", apiKey: env.GEMINI_API_KEY || "", model: "gemini-3.8-flash",
+      requestTimeoutMs: integer(env.GEMINI_REQUEST_TIMEOUT_MS, 360_000),
+      imageTimeoutMs: integer(env.GEMINI_IMAGE_TIMEOUT_MS, 20_000),
+      maxImages: integer(env.AI_IMAGE_BATCH_SIZE || env.GEMINI_MAX_IMAGES, 8),
+      imageBatchSize: Math.min(8, Math.max(4, integer(env.AI_IMAGE_BATCH_SIZE || env.GEMINI_MAX_IMAGES, 8))),
+      maxCompletionTokens: integer(env.GEMINI_MAX_COMPLETION_TOKENS, 16_000),
+      thinkingLevel: "LOW", reasoningThinkingLevel: "MEDIUM", sourceUploadsDir,
       batchEnabled: false,
     },
     kimi: {

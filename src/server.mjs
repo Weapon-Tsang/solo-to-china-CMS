@@ -2,7 +2,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig } from "./config.mjs";
+import { EXTRACTION_MODELS, loadConfig } from "./config.mjs";
 import { openDatabase } from "./db.mjs";
 import { normalizeXiaohongshuCapture, ValidationError } from "./adapters/xiaohongshu.mjs";
 import { ManualSourceError, ManualSourceIngestor } from "./adapters/manual-source.mjs";
@@ -70,7 +70,7 @@ export function createApplication(config = loadConfig()) {
     affiliateOpportunityThreshold: config.commercial.opportunityThreshold,
     affiliateLinkTaskThreshold: config.commercial.linkTaskThreshold,
     modelCredentialEncryptionKey: config.modelCredentials.encryptionKey,
-    environmentCredentialProviders: [config.deepseek.apiKey && "deepseek", config.openai.apiKey && "openai"].filter(Boolean),
+    environmentCredentialProviders: [config.deepseek.apiKey && "deepseek", config.gemini.apiKey && "gemini", config.openai.apiKey && "openai"].filter(Boolean),
   });
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
   const aiRequestGate = createRequestGate(config.extraction.requestSpacingMs);
@@ -83,10 +83,16 @@ export function createApplication(config = loadConfig()) {
     stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing, beforeRequest: aiRequestGate, onModelCall: modelCallTelemetry };
   const resolveExtractionConfig = (profile = {}) => {
     if (profile.provider === "deepseek") return { ...config.deepseek,
+      model: profile.model || config.deepseek.model,
       apiKey: repository.readModelCredential("deepseek") || config.deepseek.apiKey, role: "extraction",
       stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing, beforeRequest: aiRequestGate, onModelCall: modelCallTelemetry };
     if (profile.provider === "openai") return { ...config.openai,
+      model: profile.model || config.openai.model,
       apiKey: repository.readModelCredential("openai") || config.openai.apiKey, role: profile.role || "extraction",
+      stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing, beforeRequest: aiRequestGate, onModelCall: modelCallTelemetry };
+    if (profile.provider === "gemini") return { ...config.gemini,
+      model: profile.model || config.gemini.model,
+      apiKey: repository.readModelCredential("gemini") || config.gemini.apiKey, role: "extraction",
       stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing, beforeRequest: aiRequestGate, onModelCall: modelCallTelemetry };
     return legacyAi;
   };
@@ -383,8 +389,8 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request,config.adminToken,auth);
         const payload=await readJson(request,20_000);
         const provider=String(payload.provider || repository.getModelRoutingSettings().selectedProvider || "");
-        if(!["deepseek","openai"].includes(provider))return sendJson(response,400,{error:"Select DeepSeek or GPT-5.6 Luna for a manual connection test."});
-        const profile={role:"extraction",provider,model:provider==="deepseek"?"deepseek-flash":"gpt-5.6-luna"};
+        if(!["deepseek","gemini","openai"].includes(provider))return sendJson(response,400,{error:"Select an extraction model for a manual connection test."});
+        const profile={role:"extraction",provider,model:EXTRACTION_MODELS.find((item)=>item.provider===provider).model};
         try {
           const textResult=await extractor.testConnection({modelProfile:profile,telemetryContext:{role:"extraction"}});
           repository.recordModelCredentialValidation(provider,textResult.ok?"text_verified":"failed",{model:textResult.model,latencyMs:textResult.latencyMs});

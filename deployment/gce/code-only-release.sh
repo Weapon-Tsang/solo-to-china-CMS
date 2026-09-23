@@ -68,7 +68,7 @@ docker rm "engine-canary-$SHORT" >/dev/null
 [[ "$CANARY_READY" == 1 ]]
 
 docker exec engine node --input-type=module -e \
-  'const {DatabaseSync}=await import("node:sqlite");const d=new DatabaseSync("/var/lib/solo-to-china/solo-to-china.sqlite",{readOnly:true});const schema=d.prepare("SELECT MAX(version) n FROM schema_migrations").get().n;const active=d.prepare("SELECT COUNT(*) n FROM jobs WHERE status=?").get("running").n;console.log(JSON.stringify({schema,active}));if(schema!==78||active)process.exit(1);d.close()' \
+  'const {DatabaseSync}=await import("node:sqlite");const d=new DatabaseSync("/var/lib/solo-to-china/solo-to-china.sqlite",{readOnly:true});const schema=d.prepare("SELECT MAX(version) n FROM schema_migrations").get().n;const active=d.prepare("SELECT COUNT(*) n FROM jobs WHERE status=?").get("running").n;console.log(JSON.stringify({schema,active}));if(schema!==79||active)process.exit(1);d.close()' \
   >"$RELEASE/pre-switch-database.json"
 
 SWITCH_STARTED=0
