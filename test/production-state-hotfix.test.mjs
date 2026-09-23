@@ -6,7 +6,7 @@ import { boundedEditorialAssemblyPackage, EDITORIAL_ASSEMBLY_INPUT_BUDGET,
   boundedPlanningPackage, PLANNING_INPUT_BUDGET } from "../src/repository.mjs";
 import { contentRecoveryReport, executeContentRecovery } from "../src/services/content-recovery.mjs";
 import { explainOperationalFailure } from "../src/services/content-recovery-policy.mjs";
-import { decorateDeliveryFailure } from "../src/services/production-state.mjs";
+import { decorateDeliveryFailure, latestUnresolvedFailure } from "../src/services/production-state.mjs";
 import { validatePlanningDestination } from "../src/destination-consistency.mjs";
 
 function candidate(db,id="shared-candidate") {
@@ -72,6 +72,33 @@ test("an approved ready instance without a Job is the only interrupted sibling a
   assert.equal(workspace.sections.needs_attention,1);
   assert.equal(workspace.items[0].production_state.stage_status,"interrupted");
   assert.equal(workspace.items[0].production_state.recovery_target,"assemble_editorial");
+});
+
+test("a failed published refresh is not hidden by an older synced WordPress receipt",()=>{
+  const jobs=[{id:'old',type:'push_wordpress_draft',status:'succeeded',updated_at:'2026-09-13T01:00:00Z'},
+    {id:'failed',type:'push_wordpress_draft',status:'failed',updated_at:'2026-09-13T02:00:00Z'}];
+  assert.equal(latestUnresolvedFailure(jobs,{push_wordpress_draft:true},
+    {wordpressUpdatedAt:'2026-09-13T01:00:00Z'})?.id,'failed');
+  assert.equal(latestUnresolvedFailure(jobs,{push_wordpress_draft:true},
+    {wordpressUpdatedAt:'2026-09-13T03:00:00Z'}),null);
+});
+
+test("a published Draft still exposes its newer failed WordPress refresh",(t)=>{
+  const {db,repository}=repositoryFixture(t); candidate(db); opportunity(db,'published-owner',{approved:true});
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('published-brief','beijing','Published guide','[]','informational','drafted','2026-09-13','2026-09-13','shared-candidate')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('published-draft','published-brief','Published guide','published-guide','Body.','{}','published','2026-09-13','2026-09-13',1,'published-hash')`).run();
+  db.prepare(`INSERT INTO wordpress_publications(id,draft_id,site_url,post_id,status,created_at,updated_at)
+    VALUES ('published-wp','published-draft','https://site.test',42,'synced','2026-09-13T01:00:00Z','2026-09-13T01:00:00Z')`).run();
+  const jobId=repository.enqueue('push_wordpress_draft','published-draft',{
+    dedupeKey:'published-refresh-failure',productionOwnerOpportunityId:'published-owner'});
+  db.prepare(`UPDATE jobs SET status='failed',attempts=1,failure_class='permanent_input',
+    last_failure_code='WORDPRESS_PUBLISHED_REFRESH_SCOPE_REQUIRED',last_error='Scope required',
+    updated_at='2026-09-13T02:00:00Z' WHERE id=?`).run(jobId);
+  const state=repository.listContentWorkspace({productionOnly:true}).items[0].production_state;
+  assert.equal(state.stage_status,'failed');
+  assert.equal(state.latest_error?.job_id,jobId);
 });
 
 test("a planned visual remains pending in production state instead of appearing complete",(t)=>{

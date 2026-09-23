@@ -141,7 +141,8 @@ export function buildProductionState(db, row, options = {}) {
   const frozenScopeFailure = frozenProductionScopeFailure(db,row);
   const truncatedDraftFailure = historicalDraftStructureFailure(db,row,currentJobs);
   const supersededRegenerationFailure = latestRegenerationSupersededRepair(currentJobs);
-  const latestJobFailure=decorateDeliveryFailure(latestUnresolvedFailure(currentJobs, evidence));
+  const latestJobFailure=decorateDeliveryFailure(latestUnresolvedFailure(currentJobs, evidence,
+    {wordpressUpdatedAt:row.wordpress_updated_at}));
   // A current passing review proves that its exact Draft revision, content hash,
   // evidence hash and Frontend Page made it through the quality gate. Older
   // failures in that same quality chain are audit history, even when no later
@@ -165,7 +166,12 @@ export function buildProductionState(db, row, options = {}) {
   const unresolvedDefinition = registry.find((item) => item.key === unresolvedFailure?.type) || null;
   const initiallyCompleted = new Set(initialEntries.filter((item) => item.status === "succeeded").map((item) => item.key));
   const missingFailureDependencies = unresolvedDefinition?.dependencies.filter((dependency) => !initiallyCompleted.has(dependency)) || [];
-  const dependencyBrokenFailure = !scopeFailure && unresolvedFailure
+  // An already published post has an existing delivery baseline. A later
+  // failed guarded refresh is actionable even when old prerequisite receipts
+  // are absent; treating it as a broken historical chain hides the failure.
+  const publishedRefreshFailure = row.draft_status === 'published'
+    && unresolvedFailure?.type === 'push_wordpress_draft';
+  const dependencyBrokenFailure = !scopeFailure && unresolvedFailure && !publishedRefreshFailure
     && (!unresolvedDefinition || missingFailureDependencies.length) ? unresolvedFailure : null;
   const entries = dependencyBrokenFailure ? initialEntries.map((entry) => entry.key === dependencyBrokenFailure.type
     ? { ...entry, status:"waiting", historical_failure:entry.error, error:null, blocks_current_flow:false }
@@ -302,7 +308,7 @@ export function buildProductionState(db, row, options = {}) {
     autoContinue = false;
     needsHuman = true;
     recoverable = true;
-  } else if (row.draft_status === 'published') {
+  } else if (row.draft_status === 'published' && !failed) {
     lifecycle = 'completed';
     stageStatus = 'succeeded';
     currentStage = 'publish_wordpress_post';
@@ -557,13 +563,20 @@ function latestActiveJob(jobs, nowValue) {
   };
 }
 
-function latestUnresolvedFailure(jobs, evidence = {}) {
+export function latestUnresolvedFailure(jobs, evidence = {}, {wordpressUpdatedAt = null} = {}) {
   const failures = jobs.filter((item) => item.status === "failed").reverse();
-  return failures.find((failure) => evidence[failure.type] !== true
+  return failures.find((failure) => {
+    const receiptTime=Date.parse(wordpressUpdatedAt || '');
+    const failureTime=Date.parse(failure.updated_at || '');
+    const supersededByEvidence=evidence[failure.type] === true
+      && (failure.type !== 'push_wordpress_draft'
+        || (Number.isFinite(receiptTime) && Number.isFinite(failureTime) && receiptTime >= failureTime));
+    return !supersededByEvidence
     && !jobs.some((item) => item.type === failure.type && item.status === "succeeded"
     && String(item.updated_at) >= String(failure.updated_at))
     && !(failure.type === "revise_draft" && jobs.some((item) => item.type === "generate_draft" && item.status === "succeeded"
-      && String(item.updated_at) >= String(failure.updated_at)))) || null;
+      && String(item.updated_at) >= String(failure.updated_at)));
+  }) || null;
 }
 
 function latestRegenerationSupersededRepair(jobs) {

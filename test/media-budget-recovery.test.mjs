@@ -6,7 +6,53 @@ import test from 'node:test';
 import {repositoryFixture} from '../test-support/repository-fixture.mjs';
 import {createMediaRequestExecutor} from '../src/media-request-executor.mjs';
 import {Pipeline} from '../src/pipeline.mjs';
-import {evaluatePublicationEligibility} from '../src/publication-eligibility.mjs';
+import {evaluatePublicationEligibility,freezeRequiredMediaManifest} from '../src/publication-eligibility.mjs';
+import {executeContentRecovery} from '../src/services/content-recovery.mjs';
+
+test('a repaired media gate skips visual re-planning and routes a stale failure to composition',async t=>{
+  const {db,repository,directory}=repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,coverage_score,evidence_count,conflict_count,status,created_at,updated_at)
+    VALUES ('repaired-topic','beijing','repaired','Repaired media','fixture',80,0,0,'drafted','now','now')`).run();
+  db.prepare(`INSERT INTO content_opportunities(id,destination_slug,topic_key,strategy_version,candidate_id,title,
+    readiness_score,readiness_json,status,approved_at,created_at,updated_at,lifecycle_state)
+    VALUES ('repaired-owner','beijing','repaired','3.9','repaired-topic','Repaired media',100,'{"ready":true}',
+      'producing','now','now','now','producing')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('repaired-brief','beijing','Repaired','[]','informational','drafted','now','now','repaired-topic')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+    VALUES ('repaired-draft','repaired-brief','Repaired','repaired','Preserved body','{}','needs_review','now','now',1,'frozen-hash')`).run();
+  const file=path.join(directory,'verified.png'),bytes=Buffer.from('verified-existing-image');
+  fs.writeFileSync(file,bytes);const fileHash=createHash('sha256').update(bytes).digest('hex');
+  db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,aspect_ratio,status,
+    created_at,updated_at,asset_fingerprint,image_type,image_role,acquisition_strategy,factual_image_required,
+    media_path,media_metadata_json) VALUES ('verified-visual','repaired-draft',1,'hero','Existing verified image',
+    'Verified image','','16:9','generated','now','now','frozen-visual','illustration','support',
+    'generate_illustration',0,?,?)`).run(file,JSON.stringify({binary_qa:{status:'passed',sha256:fileHash},
+      quality_qa:{status:'passed',file_hash:fileHash}}));
+  freezeRequiredMediaManifest(db,'repaired-draft');
+  assert.equal(evaluatePublicationEligibility(db,'repaired-draft').passed,true);
+  const failed=repository.enqueue('compose_frontend_page','repaired-draft',{
+    dedupeKey:'stale-media-failure',productionOwnerOpportunityId:'repaired-owner'});
+  db.prepare(`UPDATE jobs SET status='failed',last_failure_code='MEDIA_INCOMPLETE',
+    last_error='MEDIA_INCOMPLETE: old media gate',updated_at='2026-01-01T00:00:00Z' WHERE id=?`).run(failed);
+  const productionState={stage_status:'failed',recovery_target:'generate_visuals',
+    latest_error:{stage:'compose_frontend_page',code:'MEDIA_INCOMPLETE'},completed_stages:['generate_draft']};
+  repository.listContent=()=>[{opportunity_id:'repaired-owner',draft_id:'repaired-draft',production_state:productionState}];
+  repository.getContentProductionDetail=()=>({opportunity_id:'repaired-owner',draft_id:'repaired-draft',production_state:productionState});
+  const recovery=executeContentRecovery(repository,'repaired-owner',{
+    action:'retry_failed_stage',revision:1,idempotencyKey:'repaired-media-retry'});
+  assert.equal(recovery.resolvedStage,'compose_frontend_page');
+  assert.equal(db.prepare('SELECT type FROM jobs WHERE id=?').get(recovery.jobId).type,'compose_frontend_page');
+  db.prepare("UPDATE jobs SET status='failed' WHERE id=?").run(recovery.jobId);
+  let seeded=0,generated=0;
+  repository.ensureAuthorizedSourceVisuals=()=>{seeded++;throw new Error('Must not replace verified media');};
+  const pipeline=new Pipeline(repository,{config:{}},{visuals:{enabled:true,async generate(){generated++;throw new Error('Must not generate');}}});
+  repository.enqueue('generate_visuals','repaired-draft',{dedupeKey:'legacy-retry',productionOwnerOpportunityId:'repaired-owner'});
+  assert.equal(await pipeline.runOne(),true);
+  assert.equal(seeded,0);assert.equal(generated,0);
+  assert.equal(db.prepare("SELECT status FROM article_visuals WHERE id='verified-visual'").get().status,'generated');
+  assert.equal(evaluatePublicationEligibility(db,'repaired-draft').passed,true);
+});
 
 test('exhausted image step resumes only missing visual after an explicit durable grant',async t=>{
   const {db,repository,directory}=repositoryFixture(t);

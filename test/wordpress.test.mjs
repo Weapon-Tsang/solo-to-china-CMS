@@ -282,6 +282,24 @@ test("Contract-aware adapter uses explicit PUT and surfaces non-retryable Fronte
   assert.deepEqual(methods[0], ["https://site.test/wp-json/stc/v1/cms-articles/71", "PUT"]);
 });
 
+test('published editorial replacement requires and transmits exact baseline and body hashes',async()=>{
+  let sent=null;
+  const adapter=new WordPressDraftAdapter({siteUrl:'https://site.test',username:'editor',applicationPassword:'app-password'},
+    async(url,options)=>{sent={url:String(url),options};return Response.json({post_id:71,status:'publish',
+      page_payload_hash:'a'.repeat(64)},{status:200});});
+  const pkg={page:{metadata:{pageId:'page-1',slug:'guide'},blocks:[]},media:[],
+    publication:{status:'publish',existing_post_id:71,cms_draft_id:'draft-1'}};
+  await assert.rejects(()=>adapter.upsertContractDraft(pkg,{refreshScope:'editorial'}),
+    {code:'EDITORIAL_REFRESH_PREFLIGHT_MISSING'});
+  assert.equal(sent,null);
+  const result=await adapter.upsertContractDraft(pkg,{refreshScope:'editorial',
+    receiptFingerprint:'b'.repeat(64),priorContentHash:'c'.repeat(64)});
+  assert.equal(result.status,'publish');
+  assert.equal(sent.options.headers['x-stc-refresh-scope'],'editorial');
+  assert.equal(sent.options.headers['x-stc-receipt-fingerprint'],'b'.repeat(64));
+  assert.equal(sent.options.headers['x-stc-prior-content-sha256'],'c'.repeat(64));
+});
+
 test("scoped final preview tickets stay on the configured WordPress origin and bind the delivered page", async () => {
   let request;
   const adapter=new WordPressDraftAdapter({siteUrl:"https://site.test",username:"editor",applicationPassword:"password"},async(url,options)=>{

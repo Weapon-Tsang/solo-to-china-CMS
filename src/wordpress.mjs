@@ -152,6 +152,13 @@ export class WordPressDraftAdapter {
     }
     const existingPostId = Number.parseInt(publishPackage?.publication?.existing_post_id || "", 10);
     const expectedStatus = publishPackage?.publication?.status === 'publish' ? 'publish' : 'draft';
+    const editorialRefresh = options.refreshScope === 'editorial';
+    if (editorialRefresh && (expectedStatus !== 'publish'
+      || !/^[a-f0-9]{64}$/.test(String(options.receiptFingerprint || ''))
+      || !/^[a-f0-9]{64}$/.test(String(options.priorContentHash || '')))) {
+      throw new WordPressApiError('EDITORIAL_REFRESH_PREFLIGHT_MISSING',
+        'A published editorial refresh requires the exact receipt and current content fingerprints.', {status:409});
+    }
     if (expectedStatus === 'publish' && !(Number.isInteger(existingPostId) && existingPostId > 0)) {
       throw new WordPressApiError('PUBLISHED_REFRESH_TARGET_MISSING',
         'A published media refresh requires an existing post ID.', { status:409 });
@@ -168,6 +175,11 @@ export class WordPressDraftAdapter {
         "content-type": "application/json",
         accept: "application/json",
         ...(options.idempotencyKey ? { "idempotency-key": options.idempotencyKey } : {}),
+        ...(editorialRefresh ? {
+          'x-stc-refresh-scope':'editorial',
+          'x-stc-receipt-fingerprint':options.receiptFingerprint,
+          'x-stc-prior-content-sha256':options.priorContentHash,
+        } : {}),
       },
       body: serializedPackage,
       signal: combinedSignal(options.signal, 60_000),

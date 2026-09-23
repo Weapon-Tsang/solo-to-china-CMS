@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.67 - Unreleased
+
+- Preserve verified legacy source photos when retrying a media-blocked composition instead of buying a new visual plan.
+- Surface a failed published WordPress refresh even when an older synced receipt and published Draft remain present.
+- Require exact remote receipt and body fingerprints for a scoped editorial refresh; clear a definite rejected dispatch while retaining its failed Job audit.
+
 ## 2.0.66 - Unreleased
 
 - Treat an all-empty Content-AST evidence ledger row as an explicit non-evidence section during final-page validation, while continuing to reject every partially populated evidence row. This fixes the three-day Chongqing route's deterministic final packaging failure without bypassing factual evidence checks or re-running its passed model review.

@@ -1,3 +1,7 @@
+# 2.0.67 production queue recovery
+
+App/Extension version `2.0.67`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. This code-only release preserves already verified legacy photos during recovery, displays newer published-refresh failures despite older success receipts, and adds a fingerprint-guarded editorial refresh for legacy published WordPress posts. The 2026-09-23 production-copy replay projects two actionable published-refresh failures out of 13 records; direct WordPress read-back confirmed the published posts and unchanged receipts before the guarded continuation. No schema migration is required.
+
 # 2.0.66 non-evidence ledger delivery hotfix
 
 App/Extension version `2.0.66`, schema migration `78`, and Content Strategy `3.9` are the current candidate baseline. The final-page gate now distinguishes an explicit, fully empty Content-AST row for a non-evidence prose section from a partially populated evidence row. Partial evidence remains fail-closed. This allows the already reviewed three-day Chongqing route to resume at deterministic publish composition without another paid model review. The `2.0.65` editorial-media-only fan-out boundary and guarded production reconciliation remain included. No schema migration is required.

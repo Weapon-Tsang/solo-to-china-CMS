@@ -376,7 +376,11 @@ export class Pipeline {
       // is bound to that plan's fingerprint and reseeding here can silently
       // replace a completed visual immediately before delivery.
       if (job.type === "generate_visuals") {
-        this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
+        // A legacy MEDIA_INCOMPLETE failure may have been repaired in place.
+        // Never re-plan and clear already delivered visuals on that recovery.
+        if (!evaluatePublicationEligibility(this.repository.db, job.entity_id).passed) {
+          this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
+        }
       } else if (job.type === "compose_frontend_page"
           && !(this.repository.listDraftVisuals?.(job.entity_id) || []).length) {
         this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
@@ -861,6 +865,10 @@ export class Pipeline {
         case "generate_visuals": {
           if (!this.visuals?.enabled) throw new Error("Visual generation is not configured.");
           this.repository.recoverLegacyVisualReceipts?.(job.entity_id);
+          if (evaluatePublicationEligibility(this.repository.db, job.entity_id).passed) {
+            if (this.canComposeFrontendPage) this.enqueueChild(job,"compose_frontend_page",job.entity_id);
+            break;
+          }
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
           const staleCardAnalyses=this.repository.sourceVisualReanalysisCandidates?.(job.entity_id) || [];
@@ -1226,6 +1234,7 @@ export class Pipeline {
                 const pageHash = crypto.createHash('sha256').update(JSON.stringify(publishPackage.page)).digest('hex');
                 const receipt = await guarded((signal) => this.wordpress.getCmsArticleReceipt(publication.post_id, { signal }));
                 const prior = this.repository.wordPressMediaRefreshAttempt(job.entity_id);
+                let priorContentHash = null;
                 if (receipt.status !== 'publish' || receipt.cms_draft_id !== job.entity_id) {
                   throw Object.assign(new Error('Published WordPress identity or status changed.'),
                     {code:'WORDPRESS_MEDIA_REFRESH_IDENTITY_MISMATCH',retryable:false});
@@ -1239,6 +1248,13 @@ export class Pipeline {
                     throw Object.assign(new Error('Published WordPress article changed after the editorial refresh was planned.'),
                       {code:'WORDPRESS_EDITORIAL_REFRESH_BASELINE_CHANGED',retryable:false});
                   }
+                  const currentPost=await guarded((signal)=>this.wordpress.getPost(publication.post_id,{signal}));
+                  if (Number(currentPost?.id)!==publication.post_id || currentPost?.status!=='publish'
+                    || typeof currentPost?.content?.raw!=='string') {
+                    throw Object.assign(new Error('Published WordPress content could not be verified before editorial replacement.'),
+                      {code:'WORDPRESS_EDITORIAL_CONTENT_PREFLIGHT_FAILED',retryable:false});
+                  }
+                  priorContentHash=crypto.createHash('sha256').update(currentPost.content.raw).digest('hex');
                 }
                 if (prior && prior.state !== 'completed') {
                   if (prior.page_hash !== pageHash || receipt.page_payload_hash !== pageHash) {
@@ -1253,7 +1269,9 @@ export class Pipeline {
                   this.repository.beginWordPressMediaRefreshAttempt(job.entity_id,publication.post_id,job.id,pageHash);
                   try {
                     result = await guarded((signal) => this.wordpress.upsertContractDraft(publishPackage, { signal,
-                      idempotencyKey:job.id,draftId:job.entity_id,pagePayload:publishPackage.page }));
+                      idempotencyKey:job.id,draftId:job.entity_id,pagePayload:publishPackage.page,
+                      refreshScope,receiptFingerprint:refreshScope==='editorial' ? wordpressReceiptFingerprint(receipt) : null,
+                      priorContentHash }));
                     this.repository.completeWordPressMediaRefresh(job.entity_id,pageHash);
                   } catch (error) {
                     const verified = await this.wordpress.getCmsArticleReceipt(publication.post_id).catch(() => null);
@@ -1263,6 +1281,12 @@ export class Pipeline {
                         deliveryManifest:{page_payload_hash:pageHash},visuals:[]};
                       this.repository.completeWordPressMediaRefresh(job.entity_id,pageHash);
                     } else {
+                      const definiteRejection=Number(error?.statusCode)>=400 && Number(error?.statusCode)<500
+                        && ![408,429].includes(Number(error?.statusCode))
+                        && verified?.status==='publish' && verified.cms_draft_id===job.entity_id
+                        && wordpressReceiptFingerprint(verified)===wordpressReceiptFingerprint(receipt);
+                      if (definiteRejection && this.repository.clearRejectedWordPressMediaRefreshAttempt(
+                        job.entity_id,job.id,pageHash)) throw error;
                       this.repository.markWordPressMediaRefreshUnknown(job.entity_id);
                       throw Object.assign(error,{code:'WORDPRESS_MEDIA_REFRESH_OUTCOME_UNKNOWN',retryable:false});
                     }

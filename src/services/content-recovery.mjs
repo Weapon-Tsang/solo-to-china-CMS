@@ -7,6 +7,7 @@ import { validatePageEvidence } from '../evidence-validator.mjs';
 import { evaluateCoverage } from '../research-strategy.mjs';
 import { recoveryDiagnosis } from './content-recovery-policy.mjs';
 import { PRODUCTION_STAGE_REGISTRY, productionStageLabel } from './production-state.mjs';
+import { evaluatePublicationEligibility } from '../publication-eligibility.mjs';
 
 function conflict(message) { throw Object.assign(new Error(message), { statusCode: 409 }); }
 
@@ -234,8 +235,17 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       const stateRow = ctx.opportunity ? repo.listContent({ candidateId:ctx.opportunity.id,productionOnly:true })[0] : null;
       const productionState = stateRow?.production_state || null;
       const requestedAction = String(input.action || '');
-      const stage = requestedAction === 'retry_failed_stage' ? productionState?.recovery_target || productionState?.latest_error?.stage || ctx.activeJobs[0]?.type
+      let stage = requestedAction === 'retry_failed_stage' ? productionState?.recovery_target || productionState?.latest_error?.stage || ctx.activeJobs[0]?.type
         : requestedAction === 'recover_next_stage' ? productionState?.recovery_target || productionState?.next_stage || ctx.activeJobs[0]?.type : requestedAction;
+      // The stored failure describes the state at failure time. If an operator
+      // has since verified the original images, retry the failed composition,
+      // not an obsolete visual repair plan that would replace those images.
+      if (stage === 'generate_visuals' && ctx.draft
+        && ['compose_frontend_page','compose_publish_page'].includes(productionState?.latest_error?.stage)
+        && productionState?.latest_error?.code === 'MEDIA_INCOMPLETE'
+        && evaluatePublicationEligibility(repo.db, ctx.draft.id).passed) {
+        stage = productionState.latest_error.stage;
+      }
       const definition = PRODUCTION_STAGE_REGISTRY.find((item) => item.key === stage);
       if (stage === 'generate_visuals' && ctx.draft && repo.db.prepare(`SELECT 1 FROM media_dispatches md
         JOIN article_visuals av ON av.id=md.visual_id WHERE av.draft_id=?

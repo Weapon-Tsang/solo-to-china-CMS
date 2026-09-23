@@ -6532,6 +6532,14 @@ export class Repository {
       .run(draftId);
   }
 
+  clearRejectedWordPressMediaRefreshAttempt(draftId, jobId, pageHash) {
+    // A definitive non-retryable WordPress 4xx plus an unchanged read-back
+    // proves this dispatch did not write. The failed Job remains the audit log.
+    return this.db.prepare(`DELETE FROM wordpress_media_refresh_attempts
+      WHERE draft_id=? AND job_id=? AND page_hash=? AND state='dispatch_started'`)
+      .run(draftId,jobId,pageHash).changes === 1;
+  }
+
   completeWordPressMediaRefresh(draftId, pageHash) {
     this.db.prepare(`UPDATE wordpress_media_refresh_attempts SET state='completed',completed_at=?
       WHERE draft_id=? AND page_hash=?`).run(now(),draftId,pageHash);
