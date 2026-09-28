@@ -436,24 +436,32 @@ test("snapshot resolves content-addressed legacy capture paths from the current 
   const digest = mediaHash(bytes);
   const relative = `media/${digest.slice(0, 2)}/${digest}.webp`;
   const current = path.join(fixture.uploadsDir, relative);
+  const derivativeRelative = `.derived/${digest.slice(0, 2)}/${digest}.webp`;
+  const derivative = path.join(fixture.uploadsDir, derivativeRelative);
   fs.mkdirSync(path.dirname(current), { recursive: true });
+  fs.mkdirSync(path.dirname(derivative), { recursive: true });
   fs.writeFileSync(current, bytes);
+  fs.writeFileSync(derivative, bytes);
   const db = openDatabase(fixture.databasePath, { migrate: false });
   db.prepare("UPDATE sources SET raw_payload_json=? WHERE id='source-1'")
-    .run(JSON.stringify({ assets: [{ localPath: relative, derivativeStorageRef: `/app/${relative}` }] }));
+    .run(JSON.stringify({ assets: [{ localPath: relative, originalStorageRef: `/app/${relative}`,
+      derivativeStorageRef: derivativeRelative }], variants: [{ derivativeStorageRef: `/app/${derivativeRelative}` }] }));
   db.close();
   const snapshot = createBackup({ databasePath: fixture.databasePath, backupDir: fixture.backupDir,
     sourceUploadsDir: fixture.uploadsDir, generatedMediaDir: fixture.mediaDir });
   const refs = verifyBackup(snapshot.backupPath).manifest.databaseReferences.filter(item => item.category === 'capture_history');
-  assert.equal(refs.length, 2);
-  assert.ok(refs.every(item => item.originalPath === current && item.sha256 === digest));
+  assert.equal(refs.length, 4);
+  assert.ok(refs.every(item => [current, derivative].includes(item.originalPath) && item.sha256 === digest));
   assert.equal(drillBackup(snapshot.backupPath).drill, 'passed');
   const restored = restoreBackup(snapshot.backupPath, path.join(fixture.directory, 'legacy-capture-restored'));
   const recovered = openDatabase(restored.databasePath, { migrate: false });
   try {
-    const asset = JSON.parse(recovered.prepare("SELECT raw_payload_json FROM sources WHERE id='source-1'").get().raw_payload_json).assets[0];
-    assert.equal(asset.localPath, asset.derivativeStorageRef);
+    const payload = JSON.parse(recovered.prepare("SELECT raw_payload_json FROM sources WHERE id='source-1'").get().raw_payload_json);
+    const asset = payload.assets[0];
+    assert.equal(asset.localPath, asset.originalStorageRef);
     assert.equal(sha256(asset.localPath), digest);
+    assert.equal(sha256(asset.derivativeStorageRef), digest);
+    assert.equal(asset.derivativeStorageRef, payload.variants[0].derivativeStorageRef);
   } finally { recovered.close(); }
 });
 

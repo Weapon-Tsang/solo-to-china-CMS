@@ -822,8 +822,9 @@ function referenceKey(reference) {
 function resolveStoredPath(value, category, sourceUploadsDir) {
   const stored = String(value);
   if (category === "capture_history" && sourceUploadsDir) {
-    const legacy = stored.startsWith("/app/media/") ? stored.slice("/app/".length) : stored;
-    if (/^media\/[a-f0-9]{2}\/[a-f0-9]{64}\.[a-z0-9]+$/i.test(legacy)) {
+    const legacy = stored.startsWith("/app/media/") || stored.startsWith("/app/.derived/")
+      ? stored.slice("/app/".length) : stored;
+    if (/^(?:media|\.derived)\/[a-f0-9]{2}\/[a-f0-9]{64}\.[a-z0-9]+$/i.test(legacy)) {
       const oldPath = path.resolve(projectRoot, legacy);
       const currentPath = path.resolve(sourceUploadsDir, legacy);
       const expectedHash = path.posix.basename(legacy).split(".")[0].toLowerCase();
