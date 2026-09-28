@@ -1,3 +1,15 @@
+# 2026-09-29 当前：LOCAL_DEVELOPMENT / EXISTING_CLOUD_PRODUCTION — BLOCKED / ROLLED_BACK
+
+CMS 代码已提交、推送并经 PR 15/16/17 合并；候选 `a11bcf1711c6b31b52725cdc925c4817629037f3` / 2.0.71 镜像构建成功。3 次 Cloud Build 上限已用完。完整云端备份、隔离恢复与 schema79→83 迁移均通过，但最终业务审计发现 6 条 Knowledge Opportunity 来源族计数不一致，公开切换前停止并回滚。**新版未上线；原云端 2.0.70/schema79 的 API 与 Worker 已恢复，原后台地址仍可使用。**
+
+真实来源 84、媒体 1,454、Claims 5,465、草稿 12 保留，原 startup metadata 已恢复；原 Worker 已恢复领取任务，其新增调度和失败模型遥测计入[本轮唯一交付记录](acceptance/phase-04-cloud-release.md)。没有新模型测试、WordPress 写入或测试对象；未跳过审计、未批量修复历史数据。新版浏览器 E2E、真实 Provider、完整生产链均未验收；封面/正文独立刷新仍门控。扩展 2.0.71 包已产出，用户浏览器待自行更新/重载。
+
+旧本机生产迁移方案 **DEFERRED**；云端仍是唯一生产，本机仅开发测试。以下“执行中/未授权/旧 STOPPED”等均为历史记录，不覆盖本段当前结论。后续需针对 6 条计数差异做定向修复与回归，再安排新的有限发布窗口。
+
+current_authorized_step=NONE；phase_end_stop=true。
+
+---
+
 # 2026-09-28 阶段04发布链路修正：PASS_LOCAL_CANDIDATE / STOPPED
 
 已完成本轮完整输入要求的本地修正与实际制品：[当前交接报告](acceptance/phase-04-fixes.md)。原04.0 PASS_LOCAL及历史证据保留。schema81云端辅助脚本退出83候选计划，现有完整恢复入口/旧78迁移/未来84拒绝已复验。CI原b231b1d固定值正确，真实字节就是9154dc…；历史缓存误标为0c4b327，现已记录真实差异，未重写缓存。新增严格组合SHA校验及篡改回归，workflow原值保留。
@@ -368,7 +380,7 @@ B_LOCAL_ACCEPTED（限定本地范围）。缓存原件绑定、回执复核及�
 - 2026-09-27 FIN01 v1.1 续修：已把完整提示词保存为 [`phases/phase-01-closeout-v1.1.txt`](phases/phase-01-closeout-v1.1.txt)，在原 [`acceptance/phase-01-closeout.md`](acceptance/phase-01-closeout.md) 追加 FIN01-01～10、原 T01/C01/PERF 映射和原始证据。非空来源与实际图片字节经真实 Worker 到 `processed`，26/26 Job 成功；checkpoint 后换进程恢复、重复唤醒、migration-review 零消费、本地 HTTP 响应丢失保护通过。实际浏览器验证来源恢复与分页，修复重复提取停在 `processing` 和知识库筛选切菜单丢失。真实 Worker 期间 5 条 API 与 Chrome 三菜单各 30 样本达到原 P95 阈值；原始样本保存在 `evidence/phase-01/fin01-*`。全量 `npm test` 889/889，最后 UI 细修后定向 6/6、`npm run check`、`git diff --check` 通过。历史 7 个 review 的逐段原始原因和真实 unknown/review 页面仍未补齐，原 T01 其他 `PARTIAL` 门槛未改判；阶段 01 本地为 `EVIDENCE_MISSING`，阶段 02 `NOT_READY`，生产 `NOT_AUTHORIZED / NOT_READY`。原坏快照保留无效，修复副本本地可恢复，未知实时分析继续隔离。本轮不提交、推送、部署或新增真实模型请求。`current_authorized_step=NONE`、`phase_end_stop=true`。
 
 - 2026-09-27 FIN01 v1.2 当前态校准：完整提示词已原样保存为 [`phases/phase-01-closeout-v1.2.txt`](phases/phase-01-closeout-v1.2.txt)。真实本地 Worker 生成正常来源与一次定向重试后进入 `manual_review` 的材料不足来源；真实媒体请求执行器生成并跨 API 重启保持 `outcome_unknown`，预算维持 `spent=1/granted=0/limit=1/unknown=1`，UI 明确显示待核、隔离、不自动重发。系统健康列表已改为数据库侧分页，105 条回归验证 20/50 边界，真实浏览器第二个 50 条页面仅返回 6 条并显示 unknown。定向 50/50、全量 `npm test` 890/890、`npm run check`、`git diff --check` 全部 PASS。L3 当前生产副本回放 `NOT TESTED`，真实 Provider/WordPress `NOT REQUIRED/NOT RUN`。当前分层结论为：本地 `PASS_LOCAL`，原快照 `INVALID_PRESERVED`，修复快照 `VERIFIED_LOCAL_RESTORE`，历史 review `HISTORICAL_DETAIL_NOT_RETRIEVED`，真实 unknown `QUARANTINED_UNRESOLVED`，阶段 02 隔离开发 `READY_FOR_NEW_THREAD`，生产 `NOT_AUTHORIZED / NOT_READY`。详见 [`acceptance/phase-01-closeout.md`](acceptance/phase-01-closeout.md) 与 [`evidence/phase-01/v12-local-closeout-20260927.md`](evidence/phase-01/v12-local-closeout-20260927.md)。`current_authorized_step=NONE`、`phase_end_stop=true`。
-# 2026-09-29 云端原地升级执行中：LOCAL_DEVELOPMENT / EXISTING_CLOUD_PRODUCTION
+# 2026-09-29 云端原地升级执行中（历史检查点，已由文件顶部回滚结论替代）
 
 本轮用户完整授权保留原云端生产、提交推送并原地部署；旧本地生产迁移方案改为 DEFERRED，以下旧 STOPPED/未授权记录仅为历史。原云端 `solo-to-china-engine` 与 `https://engine.solotochina.com` 已只读确认，实际库 schema79，候选代码 schema83/app2.0.71；未把本机副本写入云端。当前正在完成发布检查、固定提交、备份演练及云端替换。新封面/正文限定刷新仍须真实接收器能力，未通过的功能保持门控。执行结果以本轮[云端交付记录](acceptance/phase-04-cloud-release.md)为准。
 
