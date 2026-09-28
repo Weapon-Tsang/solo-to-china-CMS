@@ -309,7 +309,10 @@ test("admin mutations require ADMIN_TOKEN and responses include security headers
   assert.equal(maintenance.notifications.configured, false);
   assert.equal(maintenance.searchConsoleSync, null);
   const searchConsole = await (await fetch(`${baseUrl}/api/search-console`)).json();
-  assert.deepEqual(searchConsole, { configured: false, sync: null, items: [] });
+  assert.equal(searchConsole.configured, false);
+  assert.equal(searchConsole.sync, null);
+  assert.deepEqual(searchConsole.items, []);
+  assert.equal(searchConsole.observation.status, 'not_configured');
   const exceptions = await (await fetch(`${baseUrl}/api/exceptions`)).json();
   assert.deepEqual(exceptions.items, []);
   app.repository.db.prepare("INSERT INTO destinations(id, slug, name, created_at, updated_at) VALUES ('dst-api', 'chongqing', 'Chongqing', 'now', 'now')").run();

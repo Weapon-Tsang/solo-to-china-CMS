@@ -24,7 +24,7 @@ export async function closeLocalPhotoAudit() {
 
 // The OCR engine and image statistics run locally. No image or extracted text
 // is sent to a Provider, and only counts/quality evidence are persisted.
-export async function auditSourcePhoto(filename, { assetKind = 'unknown' } = {}) {
+export async function auditSourcePhoto(filename, { assetKind = 'unknown',alwaysCheckText=false } = {}) {
   const bytes = await fs.readFile(filename);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   const metadata = await sharp(bytes).metadata();
@@ -43,7 +43,7 @@ export async function auditSourcePhoto(filename, { assetKind = 'unknown' } = {})
   // Infographics keep their separate translation path regardless of this audit.
   let chineseChars = null;
   let textChars = null;
-  if (!reasons.length) {
+  if (!reasons.length || alwaysCheckText) {
     const ocrInput = await sharp(bytes).resize({ width: 1280, height: 1280, fit: 'inside',
       withoutEnlargement: true }).png().toBuffer();
     const worker = await ocrWorker();

@@ -11,6 +11,10 @@ export const mediaError = (code, message, statusCode = 400) => Object.assign(new
 
 export function safeMediaPath(root, relative) {
   root = path.resolve(root);
+  for(let ancestor=root;;ancestor=path.dirname(ancestor)){
+    if(fs.existsSync(ancestor)&&fs.lstatSync(ancestor).isSymbolicLink())throw mediaError('INVALID_MEDIA_PATH','媒体存储根目录不得经过符号链接。');
+    if(path.dirname(ancestor)===ancestor)break;
+  }
   const resolved = path.resolve(root, relative);
   if (resolved !== root && !resolved.startsWith(root + path.sep)) throw mediaError('INVALID_MEDIA_PATH', '媒体路径超出存储目录。');
   let current = root;

@@ -581,3 +581,39 @@ test('route transformation sends approved names/topology and stores the independ
 function passedQa(){return {language:{status:"passed",reason:"English overlays are readable."},
   completeness:{status:"passed",reason:"All source facts are present."},style:{status:"passed",reason:"Style matches the requested path."},
   semantic:{status:"passed",reason:"Source meaning and imagery are unchanged."},notes:""};}
+
+test('route panel transformation sends actual cropped pixels to localization and independent QA, preserving original',async t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'cms-b-panel-'));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const original=await sharp({create:{width:2400,height:800,channels:3,background:'blue'}})
+    .composite([{input:await pngBytes(1200,800),left:0,top:0}]).png().toBuffer();
+  const sourcePath=path.join(directory,'original.png');fs.writeFileSync(sourcePath,original);
+  const digest=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
+  const contract={compatible:true,semantic_compatible:true,requires_panel_derivative:true,approved_route_hash:'route-hash',
+    transform:'crop_then_revalidate',target:{days:[],stops:[],legs:[]},panel_scope:{valid:true,source_sha256:digest(original),
+      crop:{x:0,y:0,width:0.5,height:1},panel_id:'left',scope_hash:'scope-hash'}};
+  let imageInput,reviewInput,failQa=false;
+  const output=await pngBytes(1200,800,'localized');
+  const client=new VertexImagen({enabled:true,provider:'vertex_gemini',projectId:'fixture',model:'controlled-image',
+    accessToken:'fixture',mediaDir:directory,publicBaseUrl:'http://127.0.0.1:9999',requestTimeoutMs:5000},async(url,init)=>{
+    const request=JSON.parse(init.body);
+    if(request.generationConfig.responseModalities.includes('IMAGE')) {
+      imageInput=Buffer.from(request.contents.parts[1].inlineData.data,'base64');
+      return Response.json({candidates:[{content:{parts:[{inlineData:{data:output.toString('base64'),mimeType:'image/png'}}]}}]});
+    }
+    reviewInput=Buffer.from(request.contents.parts[1].inlineData.data,'base64');
+    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({...passedQa(),route_audit:{
+      approved_route_hash:'route-hash',checked:true,passed:!failQa,differences:failQa?['Wrong arrow direction']:[]}})}]}}]});
+  });
+  const visual={id:'panel',slot:1,image_type:'map_or_route',acquisition_strategy:'localize_source_image',
+    source_asset_id:'source',source_asset_local_path:sourcePath,source_asset_mime_type:'image/png',aspect_ratio:'3:2',
+    media_metadata:{route_contract:contract,source_analysis:{text_regions:[{text:'outside panel must not be requested'}]}}};
+  const result=await client.localizeSourceImage(visual,{id:'draft'});
+  assert.equal((await sharp(imageInput).metadata()).width,1200);assert.deepEqual(imageInput,reviewInput);
+  assert.notEqual(digest(imageInput),digest(original));assert.equal(digest(fs.readFileSync(sourcePath)),digest(original));
+  assert.equal(result.metadata.route_panel_derivative.sha256,digest(imageInput));
+  assert.equal(result.metadata.quality_qa.file_hash,digest(output));
+  failQa=true;await assert.rejects(client.localizeSourceImage(visual,{id:'draft'}),{code:'ROUTE_VISUAL_QA_FAILED'});
+  contract.panel_scope.source_sha256='stale';
+  await assert.rejects(client.localizeSourceImage(visual,{id:'draft'}),{code:'ROUTE_PANEL_INVALID'});
+});

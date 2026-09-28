@@ -14,6 +14,7 @@ test('migration 79 preserves configured credentials and routes while adding Gemi
     .replace(/^  if \(current < 79\) migrationSeventyNine\(db\);$/m, '')
     .replace(/^  if \(current < 81\) migrationEightyOne\(db\);$/m, '')
     .replace(/^  if \(current < 82\) migrationEightyTwo\(db\);$/m, '')
+    .replace(/^  if \(current < 83\) migrationEightyThree\(db\);$/m, '')
     .replace(/^  if \(current < 80\) migrationEighty\(db\);$/m, '');
   const oldPath = path.join(directory, 'db-v78.mjs');
   fs.writeFileSync(oldPath, source);

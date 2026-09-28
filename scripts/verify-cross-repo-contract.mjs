@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { openDatabase } from "../src/db.mjs";
 import { Repository } from "../src/repository.mjs";
 import { FrontendContractConsumer } from "../src/frontend-contract.mjs";
+import { assertFixedContractIdentity } from './fixed-contract-identity.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const frontend = path.resolve(process.env.FRONTEND_REPOSITORY_PATH || path.join(root, "..", "solo-to-china"));
@@ -45,6 +46,7 @@ if (declaredRegistryChecksum && sha256(registryText) !== declaredRegistryChecksu
   const distributedRegistryText = `${registryText.replace(/\r?\n$/, "")}\r\n`;
   if (sha256(distributedRegistryText) === declaredRegistryChecksum) fs.writeFileSync(files.registry.target, distributedRegistryText, "utf8");
 }
+assertFixedContractIdentity(Object.values(files).map(file=>JSON.parse(fs.readFileSync(file.target,'utf8'))),releaseGate.frontend.artifactSha256);
 database = openDatabase(path.join(temporary, "contract.sqlite"));
   const repository = new Repository(database);
   const consumer = new FrontendContractConsumer(repository, {
@@ -56,6 +58,7 @@ database = openDatabase(path.join(temporary, "contract.sqlite"));
   });
   await consumer.sync();
   const active = consumer.active;
+  if (active.artifact_checksum !== releaseGate.frontend.artifactSha256) throw new Error(`Fixed Frontend artifact SHA256 mismatch: ${active.artifact_checksum}.`);
   if (active.contractVersion !== releaseGate.frontend.contractVersion) throw new Error(`Expected Frontend Contract ${releaseGate.frontend.contractVersion}, received ${active.contractVersion}.`);
   const paragraph = active.componentsById.get("paragraph");
   const payload = {

@@ -24,10 +24,11 @@ export async function resolveMediaTarget(value, lookup = dns.lookup) {
 
 // DNS is resolved once per hop and pinned into the actual TLS connection.
 // Keep the original hostname for certificate verification and SNI.
-export async function openMediaResponse(value, { signal, lookup = dns.lookup, requestImpl = https.request, idleTimeoutMs = 15_000, maxRedirects = 5 } = {}) {
+export async function openMediaResponse(value, { signal, lookup = dns.lookup, requestImpl = https.request, idleTimeoutMs = 15_000, maxRedirects = 5, validateTarget = null } = {}) {
   let target = value;
   for (let hop = 0; hop <= maxRedirects; hop++) {
     signal?.throwIfAborted();
+    if (validateTarget) await validateTarget(new URL(target));
     const { url, addresses } = await abortableResolution(target, lookup, signal);
     const response = await new Promise((resolve, reject) => {
       const request = requestImpl(url, { signal, agent: false, headers: { 'user-agent': 'SoloToChina-Media-Recovery/2.0' },
@@ -49,7 +50,7 @@ export async function openMediaResponse(value, { signal, lookup = dns.lookup, re
       target = new URL(response.headers.location, url);
       continue;
     }
-    return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode,
+    return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, url: url.href,
       headers: { get: key => response.headers[key.toLowerCase()] || null }, body: response, cancel: () => response.destroy() };
   }
 }

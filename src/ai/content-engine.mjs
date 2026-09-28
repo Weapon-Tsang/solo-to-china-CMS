@@ -8,6 +8,7 @@ import { normalizeFrontendPageForDelivery } from "../content-taxonomy.mjs";
 import { mediaAvailabilitySnapshot } from '../media-availability.mjs';
 import { ROUTE_FRAGMENTS_SCHEMA, ROUTE_EXTRACTION_PROMPT, ROUTE_WRITING_PROMPT, ROUTE_REVIEW_PROMPT, ROUTE_AUDIT_SCHEMA } from './route-contract.mjs';
 import { assertFrozenRoute, routeError, routeReadableMarkdown, validateRouteDraft } from '../route-bundle.mjs';
+import { routeSchematicVisual } from '../visuals/route-schematic.mjs';
 
 const BRIEF_SCHEMA = objectSchema(
   ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions", "canonical"],
@@ -146,6 +147,7 @@ const DRAFT_SCHEMA = objectSchema(
   ["title", "slug", "meta_description", "body_markdown", "evidence_ledger", "unresolved_conflicts", "verification_notes", "seo", "faqs", "visuals"],
   {
     title: { type: "string" }, slug: { type: "string" }, meta_description: { type: "string" }, body_markdown: { type: "string" },
+    card_title: { type: 'string', maxLength: 100 }, deck: { type: 'string', maxLength: 240 },
     evidence_ledger: {
       type: "array",
       items: objectSchema(["section_id", "section", "content_node_ids", "claim_keys", "source_ids"], {
@@ -181,6 +183,7 @@ const ARTICLE_BUNDLE_SCHEMA = objectSchema(['brief','draft'], {
 
 const ARTICLE_BUNDLE_PROMPT = `Produce one complete, evidence-grounded English article bundle for the approved SoloToChina topic.
 Return exactly a brief and a draft in one structured response. The brief is an editorial plan and the draft is the finished article.
+Optionally include draft.card_title (up to 100 characters) and draft.deck (up to 240 characters) for a compact listing card, using the same facts. They never replace title, meta_description, SEO or body. Do not add a separate generation call for these fields.
 Use only the supplied source facts and experience. Every evidence ledger claim key must appear in the matching brief outline section and refer to an input fact. Preserve numbers, qualifiers, dates, uncertainty and source provenance. Do not invent first-person travel experience or source media.
 Plan a useful narrative, reader decisions, SEO metadata, FAQ and required image slots. The draft must contain each evidence-bearing brief heading and must include accurate alt text. A factual image must reference a relevant authorized source; illustration does not replace factual evidence. Do not claim that any generated image passed visual QA.
 Plan all useful visual types: include as many distinct, relevant, high-quality real-world originals from authorized_source_assets as the article can use well, and retain valuable Chinese information graphics or route maps for complete English translation. Generate an original illustration where it genuinely helps. Do not select an unrelated image to fill a quota. Reusing an eligible retained original is a local zero-Provider operation; translation, generation and their independent visual QA are separately budgeted. Preserve source IDs, specific subjects, accurate English alt text and useful placement.
@@ -1441,7 +1444,8 @@ export function applyDeterministicGates(review, contentPackage) {
     }
     if (visual.image_type === "infographic") return visual.acquisition_strategy === "render_infographic"
       || (["recompose_editorial_card", "recompose_collage"].includes(visual.acquisition_strategy) && Boolean(visual.source_asset_id));
-    if (visual.image_type === "map_or_route") return visual.acquisition_strategy === "render_map"
+    if (visual.image_type === "map_or_route") return approvedLocalRouteSchematic(visual,contentPackage.route_bundle)
+      || visual.acquisition_strategy === "render_map"
       || (visual.acquisition_strategy === "recompose_map_or_route" && Boolean(visual.source_asset_id));
     return visual.image_type === "illustration" && visual.acquisition_strategy === "generate_illustration" && !visual.factual_image_required;
   });
@@ -1527,6 +1531,20 @@ function normalizeReviewIssue(issue = {}) {
 // Persisted reviews can outlive the release that produced them. Keep the
 // operator-facing classification compatible at read time without rewriting
 // audit history or pretending that an old provider response was re-run.
+// This permits a deterministic plan, not an image QA/delivery receipt. Actual
+// file, renderer and review freshness remain publication-eligibility checks.
+function approvedLocalRouteSchematic(visual,bundle) {
+  if(visual.acquisition_strategy!=='render_route_schematic' || visual.factual_image_required || !bundle)return false;
+  try {
+    const metadata=visual.media_metadata || JSON.parse(visual.media_metadata_json || '{}');
+    const expected=routeSchematicVisual(bundle,{altVersion:metadata.route_summary?.alt_version ?? 1});
+    const contract=metadata.route_contract;
+    return contract?.route_id===bundle.route_id && contract.revision===bundle.revision
+      && contract.approved_route_hash===bundle.approved_route_hash && contract.source_route_hash===bundle.source_route_hash
+      && visual.caption===expected.caption && visual.alt_text===expected.alt_text;
+  }catch{return false;}
+}
+
 export function normalizeQualityReviewIssues(issues = []) {
   return uniqueBy((Array.isArray(issues) ? issues : [])
     .map(normalizeReviewIssue)

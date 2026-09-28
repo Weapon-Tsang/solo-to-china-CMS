@@ -5,6 +5,7 @@ import sharp from "sharp";
 import { ProviderRequestError, providerTransportError } from "../ai/provider-schema.mjs";
 import { createGoogleAccessTokenProvider } from "../google-access-token.mjs";
 import { publishMediaBytes } from "../atomic-media-file.mjs";
+import { cropRoutePanel } from './route-panel.mjs';
 
 const VISUAL_QA_SCHEMA={type:"object",additionalProperties:false,
   required:["language","completeness","style","semantic","notes"],properties:{
@@ -33,6 +34,19 @@ export class VertexImagen {
 
   async generate(visual, draft, options = {}) {
     if (!this.enabled) throw new Error("Visual generation is not configured.");
+    const cover=safeJson(visual.media_metadata_json).cover_generation || visual.media_metadata?.cover_generation;
+    if(cover) {
+      if(cover.authorized!==true)throw Object.assign(new Error('Cover generation is waiting for explicit provider authorization.'),{code:'COVER_GENERATION_WAITING_AUTH',retryable:false});
+      const history=await this.config.coverCandidateHistory?.(visual.id);
+      if(!history || !['travel_preparation','payments','packing'].includes(cover.abstract_topic) || visual.aspect_ratio!=='16:9')
+        throw Object.assign(new Error('Cover illustrations require an approved abstract topic and durable candidate history.'),{code:'COVER_ILLUSTRATION_SCOPE_INVALID',retryable:false});
+      visual={...visual,generation_prompt:`${visual.generation_prompt}\n16:9 editorial illustration. No text, dates, authors, logos, promotions or documentary landmarks. Keep the complete subject away from all edges.${cover.qa_feedback?`\nCorrection: ${cover.qa_feedback}`:''}`};
+      const reusable=await this.config.findVisualCandidate?.({visualId:visual.id,transformInputHash:this.illustrationInputHash(visual)});
+      if(reusable)return this.promoteIllustrationCandidate(reusable,visual,draft,options);
+      const candidates=new Set(history.map(item=>item.output_hash));
+      if(candidates.size>=2 || (candidates.size===1 && (!cover.qa_feedback || !history.some(item=>item.status==='qa_failed'))))
+        throw Object.assign(new Error('A cover permits one initial candidate and one explicit QA correction.'),{code:'COVER_CANDIDATE_LIMIT',retryable:false});
+    }
     if (visual.image_type !== "illustration" || visual.acquisition_strategy !== "generate_illustration" || visual.factual_image_required) {
       throw new Error("The visual generator may generate only non-factual illustrations, never real-world photos, maps, or infographics.");
     }
@@ -42,6 +56,18 @@ export class VertexImagen {
   }
 
   async localizeSourceImage(visual, draft, options = {}) {
+    const metadata=safeJson(visual.media_metadata_json || visual.media_metadata);
+    if(!metadata.route_contract?.requires_panel_derivative)return this.localizePreparedSourceImage(visual,draft,options);
+    const panel=await cropRoutePanel(readSourceImage(visual),metadata.route_contract,this.config.mediaDir);
+    const scopedMetadata={...metadata,source_analysis:{asset_kind:'map_or_route',scope:'approved_panel',
+      note:'Read all facts from the attached cropped panel; the full-source analysis is retained in CMS, not a manifest for this crop.'}};
+    const prepared={...visual,source_asset_local_path:panel.receipt.localPath,source_asset_mime_type:'image/png',
+      media_metadata:scopedMetadata,media_metadata_json:JSON.stringify(scopedMetadata)};
+    const result=await this.localizePreparedSourceImage(prepared,draft,options);
+    return {...result,metadata:{...result.metadata,route_panel_derivative:panel.receipt}};
+  }
+
+  async localizePreparedSourceImage(visual, draft, options = {}) {
     if (!this.enabled || this.config.provider !== "vertex_gemini") {
       throw Object.assign(new Error("中文图片翻译需要已配置的 Vertex Gemini 图片模型。"), { retryable: false, code: "IMAGE_LOCALIZATION_NOT_CONFIGURED" });
     }

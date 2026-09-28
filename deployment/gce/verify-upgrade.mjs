@@ -40,7 +40,9 @@ if (mode === 'backup') {
   write('baseline.json', baseline);
   const result = createBackup({ databasePath: `${root}/solo-to-china.sqlite`,
     backupDir: `${root}/backups`, sourceUploadsDir: `${root}/source-uploads`,
-    generatedMediaDir: `${root}/generated-media`, retention: 1,
+    generatedMediaDir: `${root}/generated-media`,
+    captureUploadsDir: '/app/data/capture-uploads', captureMediaUploadsDir: '/app/data/capture-media-uploads',
+    retention: 1, prune: false,
     codeRevision: process.env.OLD_IMAGE,
     reason: `pre-${process.env.NEW_VERSION || 'unknown'}-verified-upgrade`
   });

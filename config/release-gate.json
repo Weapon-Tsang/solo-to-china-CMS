@@ -4,6 +4,7 @@
   "frontend": {
     "repository": "https://github.com/Weapon-Tsang/solo-to-china",
     "commitSha": "b231b1d54915ceef6a7f52b907ba5d7c1d79463d",
+    "artifactSha256": "9154dc68540d9922c11109e4cfe00aee871d850e61124fd7edb624ee20b2c422",
     "contractVersion": "1.4.1"
   },
   "testDiscovery": {

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { prepareWebMedia, mediaHash } from './web-media.mjs';
 import { markdownToContentBlocks } from "./content-blocks.mjs";
 import { parseMediaMetadata, responsiveImageAttributes, wordpressMediaMetadata } from "./media-delivery.mjs";
 
@@ -288,9 +289,31 @@ export class WordPressDraftAdapter {
   }
 
   async uploadMedia(visual, options = {}) {
-    const asset = visual.media_path
+    let asset = visual.media_path
       ? { filename: path.basename(visual.media_path), contentType: mimeForFilename(visual.media_path), bytes: fs.readFileSync(visual.media_path) }
       : storedAuthorizedSourceAsset(visual) || await this.downloadAuthorizedSourceAsset(visual, options);
+    const masterMetadata = parseMediaMetadata(visual.media_metadata || visual.media_metadata_json);
+    let web = null;
+    if (this.config.mediaDir) {
+      const eligibility = this.masterGuard?.(visual);
+      const quality = masterMetadata.quality_qa;
+      const qaPassed = quality?.status === 'passed' || ['language','completeness','style','semantic']
+        .every(field => quality?.[field]?.status === 'passed');
+      const qa = eligibility?.passed ? {status:'passed',file_hash:mediaHash(asset.bytes)}
+        : qaPassed ? {status:'passed',file_hash:quality.file_hash} : null;
+      web = await prepareWebMedia({ ...asset, outputDir:this.config.mediaDir, qa,
+        originalHash:masterMetadata.source_sha256 || masterMetadata.source_provenance?.original_sha256 || null,
+        approvedRouteHash:masterMetadata.route_contract?.approved_route_hash || null,
+        quality:this.config.webMediaQuality ?? 82,
+        kind:visual.image_type === 'real_world_photo' && masterMetadata.source_analysis?.reader_text_present !== true
+          ? 'photo' : 'text', purpose:masterMetadata.media_purpose || 'body' });
+      asset = web;
+      // Recheck after asynchronous decoding and immediately before the side effect.
+      this.masterGuard?.(visual);
+      if(visual.media_path && mediaHash(fs.readFileSync(visual.media_path))!==web.receipt.parent_hash)
+        throw Object.assign(new Error('Master bytes changed during optimization.'),{code:'STALE_VISUAL_RESULT',retryable:false});
+      options.assertLease?.();
+    }
     const response = await this.fetch(`${this.config.siteUrl}/wp-json/wp/v2/media`, {
       method: "POST",
       headers: {
@@ -301,16 +324,34 @@ export class WordPressDraftAdapter {
       },
       body: asset.bytes,
       signal: combinedSignal(options.signal, 60_000),
+    }).catch(error=>{
+      if(!web)throw error;
+      throw Object.assign(new Error('Media upload receipt was lost; reconcile before another upload.'),
+        {code:'MEDIA_UPLOAD_OUTCOME_UNKNOWN',retryable:false,cause:error,
+          details:{upload_bytes_hash:web.receipt.sha256,substage:'wordpress_media_reconciliation'}});
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok || !body.id) throw new Error(`WordPress media upload failed (${response.status}): ${body?.message || response.statusText}`);
+    if (!response.ok || !body.id) {
+      if(web)throw Object.assign(new Error(`Media upload has no confirmed attachment (${response.status}); reconcile before retrying.`),
+        {code:'MEDIA_UPLOAD_OUTCOME_UNKNOWN',retryable:false,details:{http_status:response.status,attachment_id:body.id || null,
+          upload_bytes_hash:web.receipt.sha256,substage:'wordpress_media_reconciliation'}});
+      throw new Error(`WordPress media upload failed (${response.status}): ${body?.message || response.statusText}`);
+    }
     // WordPress owns the public derivative metadata, but it does not know the
     // CMS Source lineage. Preserve the authoritative input metadata so a media
     // upload cannot erase authorization, original-byte, or localization proof.
     const metadata = {
       ...parseMediaMetadata(visual.media_metadata || visual.media_metadata_json),
       ...wordpressMediaMetadata(body, asset),
+      ...(web ? {web_derivative:web.receipt,master_hash:web.receipt.parent_hash,
+        editorial_master:{sha256:web.receipt.parent_hash,parent_hash:web.receipt.original_hash,
+          qa_file_hash:web.receipt.parent_hash,qa_basis:this.masterGuard?'authoritative_publication_gate':'stored_master_qa'},
+        optimization_warning:web.receipt.warning} : {}),
     };
+    if(web && (!Number.isInteger(body.id) || body.id<=0 || !metadata.reusable
+      || !/^image\/(jpeg|png|webp|avif|gif)$/.test(String(body.mime_type || ''))))
+      throw Object.assign(new Error('WordPress upload returned an invalid receipt; reconcile the attachment before retrying.'),
+        {code:'MEDIA_UPLOAD_OUTCOME_UNKNOWN',retryable:false,details:{attachment_id:body.id,receipt:body}});
     return { id: body.id, url: metadata.url || "", metadata };
   }
 

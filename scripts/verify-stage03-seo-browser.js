@@ -1,0 +1,36 @@
+async (page) => {
+  await page.unrouteAll(); page.removeAllListeners('request'); page.removeAllListeners('pageerror');
+  const errors=[], requests=[];
+  page.on('pageerror',e=>errors.push(String(e)));
+  page.on('request',r=>{if(r.url().includes('/seo-inspection'))requests.push({method:r.method(),url:r.url().replace(/^https?:\/\/[^/]+/,'')});});
+  if(await page.getByRole('dialog').count())await page.getByRole('button',{name:'关闭',exact:true}).click();
+  await page.getByRole('tab',{name:'内容',exact:true}).click();
+  await page.getByRole('button',{name:/Cover selection fixture Draft/}).click();
+  await page.getByText('展开 Draft 正文、质量与商业层详情',{exact:true}).click();
+  const panel=page.getByTestId('seo-inspection');
+  async function inspect(name,keyboard=false){const response=page.waitForResponse(r=>r.url().endsWith('/seo-inspection')&&r.request().method()==='POST');
+    const button=panel.getByRole('button',{name,exact:true});if(keyboard){await button.focus();await page.keyboard.press('Enter');}else await button.click();
+    await response;await page.waitForFunction(()=>document.querySelector('[data-testid="seo-inspection"]').getAttribute('aria-busy')==='false');}
+  await inspect('检查公开页面');
+  await panel.getByText('需修复：HTML_ARTICLE_SCHEMA_MISSING · $.structured_data',{exact:true}).waitFor();
+  if(!await panel.getByText(/provided_artifact/).count())throw new Error('Fixture was mislabeled as real network evidence');
+  await inspect('检查公开页面');
+  await inspect('重新抓取检查',true);
+  await panel.getByText('需修复：HTML_ARTICLE_SCHEMA_MISSING · $.structured_data',{exact:true}).waitFor();
+  const sizes=[];
+  for(const width of [320,768,1024,1440]){await page.setViewportSize({width,height:1000});sizes.push({width,overflow:await panel.evaluate(el=>el.scrollWidth>el.clientWidth+1)});}
+  await panel.scrollIntoViewIfNeeded();await page.screenshot({path:'output/playwright/phase03-seo-final.png'});
+  await page.getByRole('button',{name:'关闭',exact:true}).click();
+  const states=[];
+  for(const [state,label] of [['not_configured','未配置'],['not_observed','尚未同步'],['no_data','已同步，暂无数据'],['available','有已保存数据'],['request_failed','最近同步失败'],['stale','数据已过期']]){
+    await page.route('**/api/search-console',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({observation:{status:state,hasSnapshot:['no_data','available','request_failed','stale'].includes(state),rowCount:state==='no_data'?0:1,lastSucceededAt:'2026-09-28T00:00:00Z'}})}));
+    await page.getByRole('tab',{name:/^设置/}).click();await page.getByTestId('search-observation').getByText(label,{exact:true}).waitFor();
+    states.push({state,label});
+    if(state==='stale'){await page.getByTestId('search-observation').scrollIntoViewIfNeeded();await page.screenshot({path:'output/playwright/phase03-search-stale.png'});}
+    await page.getByRole('tab',{name:'内容',exact:true}).click();await page.unroute('**/api/search-console');
+  }
+  await page.getByRole('button',{name:/Cover selection fixture Draft/}).click();await page.getByText('展开 Draft 正文、质量与商业层详情',{exact:true}).click();
+  await page.getByTestId('seo-inspection').getByText('需修复：HTML_ARTICLE_SCHEMA_MISSING · $.structured_data',{exact:true}).waitFor();
+  if(requests.filter(r=>r.method==='POST').length!==3||errors.length||sizes.some(s=>s.overflow))throw new Error(JSON.stringify({errors,requests,sizes}));
+  return {status:'PASS',scope:'real browser and local persistence; SEO reader fixture and six explicit GSC UI response fixtures; no Google request',errors,requests,sizes,states};
+}

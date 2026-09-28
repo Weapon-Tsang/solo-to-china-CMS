@@ -155,6 +155,33 @@ test('real Worker route page composition can upload before text QA, while final 
     assert.equal(evaluatePublicationEligibility(copy,draft.id,{phase:'delivery'}).passed,true);
     assert.equal(copy.prepare("SELECT count(*) n FROM jobs WHERE status='running'").get().n,0);
   }finally{copy.close();}
+  db.exec('SAVEPOINT byte_only_refresh');
+  const image=db.prepare('SELECT * FROM article_visuals WHERE draft_id=? ORDER BY slot LIMIT 1').get(draft.id);
+  const metadata=JSON.parse(image.media_metadata_json);
+  db.prepare('UPDATE article_visuals SET media_metadata_json=? WHERE id=?')
+    .run(JSON.stringify({...metadata,binary_qa:{...metadata.binary_qa,sha256:'e'.repeat(64)}}),image.id);
+  assert.notEqual(routeMediaDependencyHash(db,draft.id),expected.mediaDependencyHash);
+  assert.equal(evaluatePublicationEligibility(db,draft.id,{phase:'delivery'}).code,'ROUTE_PAGE_MISSING_OR_STALE',
+    'byte replacement reuses unchanged independent text review, but needs fresh image/page receipts');
+  assert.equal(db.prepare('SELECT count(*) n FROM quality_reviews WHERE draft_id=?').get(draft.id).n,1);
+  const storedReview=db.prepare("SELECT id,receipt_json FROM route_artifacts WHERE artifact_kind='text_review'").get();
+  const legacyReview=JSON.parse(storedReview.receipt_json);
+  delete legacyReview.dependency_version;delete legacyReview.text_media_dependency_hash;delete legacyReview.text_page_dependency_hash;
+  db.prepare('UPDATE route_artifacts SET receipt_json=? WHERE id=?').run(JSON.stringify(legacyReview),storedReview.id);
+  assert.equal(evaluatePublicationEligibility(db,draft.id,{phase:'delivery'}).code,'ROUTE_REVIEW_MISSING_OR_STALE',
+    'legacy review receipts keep their original strict dependencies');
+  db.exec('ROLLBACK TO byte_only_refresh; RELEASE byte_only_refresh');
+  db.exec('SAVEPOINT attachment_only_refresh');
+  const page=JSON.parse(db.prepare('SELECT payload_json FROM frontend_page_compositions WHERE draft_id=?').get(draft.id).payload_json);
+  const imageBlock=page.blocks.find(block=>block.type==='image');assert.ok(imageBlock);
+  imageBlock.data.media_id+=100;
+  db.prepare('UPDATE frontend_page_compositions SET payload_json=? WHERE draft_id=?').run(JSON.stringify(page),draft.id);
+  assert.equal(evaluatePublicationEligibility(db,draft.id,{phase:'delivery'}).code,'ROUTE_PAGE_MISSING_OR_STALE');
+  imageBlock.data.caption='A different route after independent review';
+  db.prepare('UPDATE frontend_page_compositions SET payload_json=? WHERE draft_id=?').run(JSON.stringify(page),draft.id);
+  assert.equal(evaluatePublicationEligibility(db,draft.id,{phase:'delivery'}).code,'ROUTE_REVIEW_MISSING_OR_STALE',
+    'caption/meaning changes still invalidate text QA');
+  db.exec('ROLLBACK TO attachment_only_refresh; RELEASE attachment_only_refresh');
   db.exec('SAVEPOINT page_receipt_checks');
   db.prepare("UPDATE frontend_page_compositions SET contract_checksum='changed-after-QA' WHERE draft_id=?").run(draft.id);
   assert.equal(evaluatePublicationEligibility(db,draft.id,{phase:'delivery'}).code,'ROUTE_REVIEW_MISSING_OR_STALE');

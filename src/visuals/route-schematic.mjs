@@ -7,10 +7,12 @@ import { publishMediaBytes } from '../atomic-media-file.mjs';
 
 const escape=value=>String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
-export function routeSchematicVisual(bundle) {
+export function routeSchematicVisual(bundle,{altVersion=2}={}) {
+  if(![1,2].includes(altVersion))throw routeError('ROUTE_RENDER_MISMATCH',{field:'alt_version'});
   const input=routeRenderInput(bundle);
   const summary=input.days.map(day=>`${day.label}: ${day.stops.map(s=>s.label).join(' → ')}`).join('; ');
-  return {placement:'mid_article',purpose:'Approved route sequence',alt_text:summary,
+  const alt=altVersion===1?summary:`Route sequence schematic for ${input.days.length} ${input.days.length===1?'day':'days'}. Stop order is given in the caption.`;
+  return {placement:'mid_article',purpose:'Approved route sequence',alt_text:alt,
     caption:`${summary}. Not to scale; source assertions, not live navigation.`,generation_prompt:'',aspect_ratio:'auto',
     image_type:'map_or_route',image_role:'support',image_subject:'Approved route sequence',
     acquisition_strategy:'render_route_schematic',factual_image_required:false,status:'planned',
@@ -18,7 +20,7 @@ export function routeSchematicVisual(bundle) {
       required:bundle.media_obligations.some(o=>o.required && o.kind==='schematic' && o.use==='route_overview'),
       basis:'approved_route_media_obligations'},route_contract:{route_id:bundle.route_id,revision:bundle.revision,
       approved_route_hash:bundle.approved_route_hash,source_route_hash:bundle.source_route_hash},
-    route_summary:{approved_route_hash:bundle.approved_route_hash,text:summary},transform_version:'local-route-svg-sharp-1'}};
+    route_summary:{approved_route_hash:bundle.approved_route_hash,text:summary,...(altVersion===1?{}:{alt_version:2})},transform_version:'local-route-svg-sharp-1'}};
 }
 export function routeRenderInput(bundle) {
   assertFrozenRoute(bundle);
@@ -105,7 +107,7 @@ export function verifyStoredRouteVisual(db,bundle,visual,metadata) {
   const artifact=db.prepare(`SELECT * FROM route_artifacts WHERE id=? AND route_id=? AND route_revision=?
     AND approved_route_hash=? AND artifact_kind='schematic'`).get(metadata.route_render_artifact_id || '',
     bundle.route_id,bundle.revision,bundle.approved_route_hash);
-  const expected=routeSchematicVisual(bundle),input=routeRenderInput(bundle),draw=drawRoute(input);
+  const expected=routeSchematicVisual(bundle,{altVersion:metadata.route_summary?.alt_version ?? 1}),input=routeRenderInput(bundle),draw=drawRoute(input);
   const manifest=metadata.route_render_manifest;
   if(!artifact || !manifest || artifact.media_path!==visual.media_path
     || canonicalRouteJson(JSON.parse(artifact.receipt_json))!==canonicalRouteJson(manifest)

@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { panelReceiptValid } from './visuals/route-panel.mjs';
+import { accessibleMediaCaption } from './media-delivery.mjs';
+import { editorialSeoContext } from './services/editorial-seo-context.mjs';
+import { articleTimeEvidence } from './services/article-time-evidence.mjs';
 import { canonicalizeUrl, id, json, now, sha256, slugify } from "./utils.mjs";
 import { transaction } from "./db.mjs";
 import { AI_MODELS, EXTRACTION_MODELS, VISUAL_MODELS } from "./config.mjs";
@@ -38,7 +42,7 @@ import { insertCommercialEvent, listCommercialPerformance } from "./repositories
 import { persistCaptureAssets } from "./source-media-store.mjs";
 import { dependencyHash, semanticMaterial, PIPELINE_CONTRACT_VERSION } from './pipeline-contract.mjs';
 import { stepIdentity, readStepReceipt, saveStepReceipt } from './repositories/pipeline-step-receipts.mjs';
-import { evaluatePublicationEligibility, mediaManifestForDraft, routeMediaDependencyHash, routePageDependencyHash } from './publication-eligibility.mjs';
+import { evaluatePublicationEligibility, mediaManifestForDraft, routeMediaDependencyHash, routePageDependencyHash, routeReviewMediaDependencyHash, routeReviewPageDependencyHash } from './publication-eligibility.mjs';
 import { visualQaMentionsSpellingError } from './visual-qa.mjs';
 import { recoverLegacyVisualReceipts } from './services/legacy-visual-receipts.mjs';
 import { withMediaFileLease } from './media-file-lease.mjs';
@@ -1181,8 +1185,10 @@ export class Repository {
       if (!path.resolve(row.path).startsWith(`${root}${path.sep}`)) continue;
       const shared = this.db.prepare(`SELECT 1 FROM source_assets WHERE local_path=? UNION
         SELECT 1 FROM source_files WHERE storage_path=? UNION SELECT 1 FROM article_visuals WHERE media_path=?
-        UNION SELECT 1 FROM visual_candidates WHERE media_path=? LIMIT 1`)
-        .get(row.path, row.path, row.path, row.path);
+        UNION SELECT 1 FROM visual_candidates WHERE media_path=?
+        UNION SELECT 1 FROM article_visuals av,json_tree(av.media_metadata_json) j
+          WHERE j.key='localPath' AND j.value=? LIMIT 1`)
+        .get(row.path, row.path, row.path, row.path, row.path);
       if (shared) { this.db.prepare('DELETE FROM source_delete_file_queue WHERE path=?').run(row.path); continue; }
       try { fs.unlinkSync(row.path); }
       catch (error) { if (error.code !== 'ENOENT') continue; }
@@ -5818,7 +5824,7 @@ export class Repository {
     const manifest=json(artifact.receipt_json,{});
     await verifyRouteRender(bundle,{filename:artifact.media_path,manifest});
     this.assertCurrentRoute(bundle);
-    const expected=routeSchematicVisual(bundle);
+    const expected=routeSchematicVisual(bundle,{altVersion:metadata.route_summary?.alt_version ?? 1});
     if(visual.caption!==expected.caption || visual.alt_text!==expected.alt_text)
       throw routeError('ROUTE_RENDER_MISMATCH',{field:'caption/summary',visual_id:visual.id});
     return {mediaPath:artifact.media_path,mediaUrl:`/media/${path.basename(artifact.media_path)}`,
@@ -5886,11 +5892,10 @@ export class Repository {
     const contentPolicy = contentPolicyFor(brief, facts);
     const publishedInventory = this.listWordPressInventory();
     const syncState = publishedInventory[0]?.site_url ? this.getWordPressSyncState(publishedInventory[0].site_url) : null;
-    const linkInventory = selectInternalLinks(publishedInventory, {
-      siteUrl: this.contentConfig.publicSiteUrl,
-      topic: brief.topic,
-      entities: [brief.destination_slug, ...(topicPackage?.approved_proposal?.targetEntities || [])],
-    });
+    const editorialSeo=editorialSeoContext(this.db,{inventory:publishedInventory,siteUrl:this.contentConfig.publicSiteUrl,
+      topic:brief.topic,destination:brief.destination_slug,proposal:topicPackage?.approved_proposal,
+      plan:json(brief.plan_json,{}),facts,candidateId:brief.candidate_id});
+    const linkInventory = editorialSeo.links;
     const availableAssets=this.authorizedSourceAssetsForBrief(brief,{packet:writingPacket});
     const inventoryPage=this.authorizedSourceAssetsForBrief(brief,{packet:writingPacket,includeUnavailable:true});
     const mediaInventory=[...new Map([...availableAssets,...inventoryPage].map(asset=>[asset.id,asset])).values()];
@@ -5930,6 +5935,7 @@ export class Repository {
         };
       }),
       internal_link_inventory: linkInventory,
+      editorial_seo: editorialSeo,
       internal_link_inventory_version: inventoryVersion(publishedInventory, syncState?.last_succeeded_at),
       duplicate_content_risks: duplicateContentRisks(publishedInventory, {
         title: brief.topic, entities: [brief.destination_slug],
@@ -6106,6 +6112,8 @@ export class Repository {
         JSON.stringify(draft.verification_notes || []), model, JSON.stringify(metadata.seo), JSON.stringify(metadata.schema),
         JSON.stringify(metadata.blocks), JSON.stringify(metadata.contentAst), brief.strategy_version || this.strategyVersion, contentHash);
     }
+    this.db.prepare('UPDATE article_drafts SET card_title=?,deck=? WHERE id=?').run(
+      String(draft.card_title || '').trim().slice(0,100),String(draft.deck || '').trim().slice(0,240),draftId);
     this.invalidateDraftDependents(draftId, timestamp);
     if (!retainedVisuals.length) {
       this.replaceDraftVisuals(draftId, metadata.visuals, brief.strategy_version || this.strategyVersion);
@@ -6124,17 +6132,19 @@ export class Repository {
     return draftId;
   }
 
-  updateDraftMetadata(draftId, { title = null, metaDescription = null } = {}) {
+  updateDraftMetadata(draftId, { title = null, seoTitle = null, metaDescription = null } = {}) {
     const contentPackage = this.getDraftPackage(draftId);
     if (!contentPackage) throw new Error(`Article draft ${draftId} not found.`);
     const draft = contentPackage.draft;
     const nextTitle = title == null ? draft.title : String(title).trim();
     if (!nextTitle) throw new Error("Draft title cannot be empty.");
+    const nextSeoTitle = seoTitle == null ? (title == null ? draft.seo?.meta_title || draft.title : nextTitle) : String(seoTitle).trim();
+    if (!nextSeoTitle) throw new Error("SEO title cannot be empty.");
     const next = {
       ...draft,
       title: nextTitle,
       meta_description: metaDescription == null ? draft.meta_description : String(metaDescription).trim(),
-      seo: { ...(draft.seo || {}), meta_title: nextTitle },
+      seo: { ...(draft.seo || {}), meta_title: nextSeoTitle, seo_title: nextSeoTitle },
       faqs: draft.seo?.faqs || [],
     };
     const savedId = this.saveDraft(draft.brief_id, next, "manual_metadata_edit", { deferReview: true });
@@ -6325,6 +6335,8 @@ export class Repository {
       visuals,
       required_media_manifest: mediaManifestForDraft(this.db, draftId),
       seo_preview: buildSeoPreview({ ...draft, seo: json(draft.seo_json, {}) }),
+      time_evidence:articleTimeEvidence({publication:storedPublication,visuals,facts:briefPackage.facts || [],
+        revisions:this.db.prepare('SELECT revision,snapshot_json,created_at FROM draft_revisions WHERE draft_id=? ORDER BY revision').all(draftId)}),
     };
     const currentAst = buildContentAst({ draft: hydratedDraft, brief: briefPackage.brief,
       visuals, facts: briefPackage.facts || [] });
@@ -6367,7 +6379,7 @@ export class Repository {
   }
 
   listDraftVisuals(draftId) {
-    return this.db.prepare("SELECT * FROM article_visuals WHERE draft_id=? ORDER BY slot").all(draftId)
+    return this.db.prepare("SELECT * FROM article_visuals WHERE draft_id=? AND COALESCE(json_extract(media_metadata_json,'$.media_purpose'),'body')<>'cover' ORDER BY slot").all(draftId)
       .map((row) => ({ ...row, media_metadata: json(row.media_metadata_json, {}) }));
   }
 
@@ -6375,6 +6387,7 @@ export class Repository {
     if (!draftId) return [];
     return this.db.prepare(`
       SELECT av.*, sa.local_path AS source_asset_local_path,
+        sa.original_sha256 AS source_asset_original_sha256,
         sa.ai_derivative_data_url AS source_asset_data_url,
         sa.mime_type AS source_asset_mime_type,
         sa.storage_status AS source_asset_storage_status,
@@ -6386,7 +6399,7 @@ export class Repository {
         s.publishable AS source_publishable
       FROM article_visuals av LEFT JOIN source_assets sa ON sa.id=av.source_asset_id
       LEFT JOIN sources s ON s.id=sa.source_id
-      WHERE av.draft_id=? ORDER BY av.slot
+      WHERE av.draft_id=? AND COALESCE(json_extract(av.media_metadata_json,'$.media_purpose'),'body')<>'cover' ORDER BY av.slot
     `).all(draftId).map((row) => ({
       ...row,
       media_path: row.media_path || row.source_asset_local_path || "",
@@ -6697,6 +6710,7 @@ export class Repository {
       visuals.forEach((visual, index) => {
         const fingerprint = visualFingerprint(visual);
         const prior=existing.get(index + 1);
+        if(json(prior?.media_metadata_json,{}).manual_article_selection?.locked || json(prior?.media_metadata_json,{}).media_purpose==='cover')return;
         const priorBudget=json(prior?.media_metadata_json,{}).recovery_budget;
         const visualMetadata={...(visual.media_metadata || {}),...(priorBudget ? {recovery_budget:priorBudget} : {})};
         if(visualMetadata.route_omission) visualMetadata.route_omission={...visualMetadata.route_omission,plan_fingerprint:fingerprint};
@@ -6712,7 +6726,7 @@ export class Repository {
         visual.source_asset_id || null, visual.source_remote_url || null, plannedStatus, visual.media_url || null,
         visual.provider || null, visual.model || null, timestamp, timestamp, fingerprint, JSON.stringify(visualMetadata));
       });
-      this.db.prepare("DELETE FROM article_visuals WHERE draft_id=? AND slot>?").run(draftId, visuals.length);
+      this.db.prepare("DELETE FROM article_visuals WHERE draft_id=? AND slot>? AND COALESCE(json_extract(media_metadata_json,'$.manual_article_selection.locked'),0)<>1 AND COALESCE(json_extract(media_metadata_json,'$.media_purpose'),'body')<>'cover'").run(draftId, visuals.length);
     });
   }
 
@@ -6836,7 +6850,12 @@ export class Repository {
     const current = this.db.prepare(`SELECT *
       FROM article_visuals WHERE id=?`).get(visualId);
     const routeContract=json(current?.media_metadata_json,{}).route_contract;
+    if (json(current?.media_metadata_json,{}).manual_article_selection?.locked)
+      throw Object.assign(new Error('Manual article selection is locked; late generation cannot replace it.'),{code:'MANUAL_MEDIA_LOCKED',retryable:false});
     if(routeContract) {
+      if(routeContract.requires_panel_derivative && !panelReceiptValid(routeContract,result.metadata?.route_panel_derivative,
+        this.db.prepare('SELECT original_sha256 FROM source_assets WHERE id=?').get(current.source_asset_id)?.original_sha256))
+        throw routeError('ROUTE_PANEL_INVALID',{visual_id:visualId});
       const row=this.db.prepare('SELECT bundle_json FROM route_bundles WHERE route_id=? ORDER BY revision DESC LIMIT 1').get(routeContract.route_id);
       const route=json(row?.bundle_json,null);
       if(!route || route.revision!==routeContract.revision || route.approved_route_hash!==routeContract.approved_route_hash)
@@ -6861,15 +6880,17 @@ export class Repository {
       throw Object.assign(new Error("A late visual result cannot overwrite the current media plan."),{code:"STALE_VISUAL_RESULT",retryable:false});
     }
     this.db.prepare(`
-      UPDATE article_visuals SET status='generated', media_path=?, media_url=?, provider=?, model=?,
+      UPDATE article_visuals SET status='generated', media_path=?, media_url=?, provider=?, model=?, caption=?,
         media_metadata_json=?,last_error=NULL, retry_at=NULL, updated_at=?
       WHERE id=?
-    `).run(result.mediaPath, result.mediaUrl, result.provider, result.model, JSON.stringify(metadata), now(), visualId);
+    `).run(result.mediaPath, result.mediaUrl, result.provider, result.model,
+      accessibleMediaCaption({...current,media_metadata:metadata}),JSON.stringify(metadata), now(), visualId);
     if (current) this.refreshDraftSchema(current.draft_id);
   }
 
   failVisual(visualId, error) {
-    const row = this.db.prepare("SELECT attempt_count,media_metadata_json FROM article_visuals WHERE id=?").get(visualId);
+    const row = this.db.prepare("SELECT attempt_count,media_metadata_json,status FROM article_visuals WHERE id=?").get(visualId);
+    if(json(row?.media_metadata_json,{}).manual_article_selection?.locked)return {retryable:false,status:row.status,budget:json(row.media_metadata_json,{}).recovery_budget || {},code:'MANUAL_MEDIA_LOCKED'};
     const attempts = (row?.attempt_count || 0) + 1;
     const metadata={...json(row?.media_metadata_json,{})};
     const code=String(error?.code || "").toUpperCase();
@@ -6908,6 +6929,9 @@ export class Repository {
       SELECT av.draft_id, av.media_url AS previous_media_url,av.source_asset_id,av.media_metadata_json,ad.seo_json
       FROM article_visuals av JOIN article_drafts ad ON ad.id=av.draft_id WHERE av.id=?
     `).get(visualId);
+    const currentManual=json(before?.media_metadata_json,{}).manual_article_selection;
+    if(currentManual?.locked && media.metadata?.manual_article_selection?.id!==currentManual.id)
+      throw Object.assign(new Error('A late WordPress attachment cannot replace the manually selected media.'),{code:'STALE_VISUAL_RESULT',retryable:false});
     const metadata = { ...json(before?.media_metadata_json, {}), ...(media.metadata || {}),
       wordpress_uploaded: Boolean(media.id && media.url), wordpress_media_id: media.id || null };
     this.db.prepare("UPDATE article_visuals SET wordpress_media_id=?, wordpress_media_url=?, media_url=?, media_metadata_json=?, updated_at=? WHERE id=?")
@@ -6973,6 +6997,8 @@ export class Repository {
       .run(JSON.stringify(review), review.passed ? "ready_for_wordpress" : "qa_failed", timestamp, draftId);
     if(route) saveRouteArtifact(this.db,{bundle:route,kind:'text_review',contentHash:draft.content_hash,
       receipt:{draft_id:draftId,reviewer,passed:review.passed,audit:review.route_audit,
+        dependency_version:'route-review-dependencies-v2',text_media_dependency_hash:routeReviewMediaDependencyHash(this.db,draftId),
+        text_page_dependency_hash:routeReviewPageDependencyHash(this.db,draftId),
         media_dependency_hash:routeMediaDependencyHash(this.db,draftId),page_dependency_hash:routePageDependencyHash(this.db,draftId)}});
     this.db.prepare(`UPDATE content_opportunities SET status=?,updated_at=? WHERE id=COALESCE(?,(
       SELECT MIN(co.id) FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
@@ -11346,6 +11372,7 @@ function deliveryVisualMetadata(row) {
     authorization_policy: "project_source_media_full_authorization",
     source_provenance: {
       ...(stored.source_provenance || {}),
+      original_sha256: row.source_asset_original_sha256 || stored.source_provenance?.original_sha256 || null,
       source_asset_id: row.source_asset_id,
       original_stored: row.source_asset_durability_status === "ORIGINAL_STORED"
         && row.source_asset_original_bytes_status === "saved_original"

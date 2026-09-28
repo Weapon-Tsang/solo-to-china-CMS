@@ -12,13 +12,28 @@ export function wordpressMediaMetadata(body = {}, asset = {}) {
     name, url: publicMediaUrl(item?.source_url), width: positiveInteger(item?.width),
     height: positiveInteger(item?.height), mime: String(item?.mime_type || mime).toLowerCase(),
   })).filter((item) => item.url && item.width && item.height).sort((a, b) => a.width - b.width);
-  return { url: sourceUrl, width, height, mime, bytes, sha256, derivatives,
+  return { url: sourceUrl, width, height, mime, bytes, sha256,
+    upload_bytes_hash:sha256,upload_bytes:bytes,upload_mime:asset.contentType || null,
+    served_asset_hash:null,served_hash_status:'unknown_not_read',
+    expected_sizes_missing:[480,768,1200].filter(size=>!derivatives.some(item=>item.width===size)),
+    external_dependencies:[480,768,1200].some(size=>!derivatives.some(item=>item.width===size))?['EXT-SIZES']:[],
+    derivatives,
     reusable: Boolean(sourceUrl && width && height && mime && bytes && sha256) };
 }
 
 export function parseMediaMetadata(value) {
   if (value && typeof value === "object" && !Array.isArray(value)) return value;
   try { return JSON.parse(value || "{}"); } catch { return {}; }
+}
+
+// Reuse already translated text; never OCR again or invent missing labels.
+export function accessibleMediaCaption(visual) {
+  const caption=String(visual.caption || '').trim();
+  const metadata=parseMediaMetadata(visual.media_metadata || visual.media_metadata_json);
+  const artifact=metadata.translation_artifact;
+  if(artifact?.status!=='translated' || !Array.isArray(artifact.regions))return caption;
+  const parts=[...new Set(artifact.regions.map(r=>String(r.english_text || '').trim()).filter(Boolean))];
+  return [caption,...parts.filter(text=>!caption.includes(text))].filter(Boolean).join(' — ');
 }
 
 export function validateMediaDelivery(visuals = [], { requireMetadata = true, pagePayload = null } = {}) {
@@ -104,7 +119,14 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true, pa
 
 export function responsiveImageAttributes(metadataValue, { featured = false } = {}) {
   const metadata = parseMediaMetadata(metadataValue);
-  const derivatives = (metadata.derivatives || []).filter((item) => publicMediaUrl(item.url) && positiveInteger(item.width));
+  const ratio=metadata.width/metadata.height;
+  const seen=new Set();
+  const derivatives = (metadata.derivatives || []).filter((item) => {
+    if(!publicMediaUrl(item.url) || !positiveInteger(item.width) || !positiveInteger(item.height)
+      || !Number.isFinite(ratio) || item.width>metadata.width
+      || Math.abs(item.width/item.height-ratio)/ratio>0.01 || seen.has(item.width))return false;
+    seen.add(item.width);return true;
+  });
   return {
     ...(positiveInteger(metadata.width) ? { width: metadata.width } : {}),
     ...(positiveInteger(metadata.height) ? { height: metadata.height } : {}),
@@ -117,8 +139,12 @@ export function responsiveImageAttributes(metadataValue, { featured = false } = 
 export function publicMediaUrl(value) {
   try {
     const url = new URL(String(value || ""));
+    const host=url.hostname.toLowerCase().replace(/^\[|\]$/g,'');
     if (!/^https?:$/.test(url.protocol) || url.username || url.password
-      || /(?:^|[?&])(?:token|signature|x-amz-|x-goog-)/i.test(url.search)) return null;
+      || /^(localhost|0\.0\.0\.0|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::|f[cd][\da-f]{2}:|fe80:)/i.test(host)
+      || host.endsWith('.localhost') || host.endsWith('.local')
+      || host.endsWith('.internal') || (!host.includes('.') && !host.includes(':'))
+      || /(?:^|[?&])(?:token|signature|expires|x-amz-|x-goog-)/i.test(url.search)) return null;
     return url.toString();
   } catch { return null; }
 }

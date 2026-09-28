@@ -4,6 +4,8 @@ import { parseMediaMetadata, validateMediaDelivery } from './media-delivery.mjs'
 import { visualQaMentionsSpellingError } from './visual-qa.mjs';
 import { readMediaBindings, readMediaBindingIssues, bindingBlocksPhoto } from './repositories/media-bindings.mjs';
 import { verifyStoredRouteVisual } from './visuals/route-schematic.mjs';
+import { panelReceiptValid } from './visuals/route-panel.mjs';
+import { coverDeliveryBlocker } from './services/cover-selection.mjs';
 
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
@@ -22,9 +24,34 @@ export function routeMediaDependencyHash(db,draftId) {
     })));
 }
 
+// Independent text review depends on words, placement and route meaning. Image
+// bytes and receiver attachment identities have their own QA/delivery receipts.
+export function routeReviewMediaDependencyHash(db,draftId) {
+  return digest(JSON.stringify(db.prepare(`SELECT id,slot,caption,alt_text,media_metadata_json
+    FROM article_visuals WHERE draft_id=? ORDER BY slot`).all(draftId).map(({media_metadata_json,...row})=>{
+      const metadata=parseMediaMetadata(media_metadata_json);
+      return {...row,route_contract:metadata.route_contract || null,route_omission:metadata.route_omission || null};
+    })));
+}
+export function routeReviewPageDependencyHash(db,draftId) {
+  const page=db.prepare(`SELECT payload_json,status,contract_checksum,draft_revision,draft_content_hash
+    FROM frontend_page_compositions WHERE draft_id=?`).get(draftId);
+  if(!page)return null;
+  const payload=JSON.parse(page.payload_json);
+  for(const block of payload.blocks || [])if(block.type==='image'&&block.data) {
+    for(const key of ['media_id','src','url','width','height'])delete block.data[key];
+  }
+  if(payload.metadata)delete payload.metadata.featuredMediaId;
+  return digest(JSON.stringify({...page,payload_json:JSON.stringify(payload)}));
+}
+
 export function mediaManifestForDraft(db, draftId) {
   const draft = db.prepare('SELECT id,revision,content_hash,strategy_version FROM article_drafts WHERE id=?').get(draftId);
   if (!draft) return null;
+  if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='article_media_revisions'").get()) {
+    const manual=db.prepare('SELECT manifest_json FROM article_media_revisions WHERE draft_id=? AND draft_revision=? ORDER BY media_revision DESC LIMIT 1').get(draftId,draft.revision);
+    if(manual)return JSON.parse(manual.manifest_json);
+  }
   const row = db.prepare('SELECT * FROM required_media_manifests WHERE draft_id=? AND revision=?')
     .get(draftId, draft.revision);
   if (!row) return null;
@@ -41,7 +68,7 @@ export function freezeRequiredMediaManifest(db, draftId, { approvedNoImage = fal
   const draft = db.prepare('SELECT id,revision,content_hash,strategy_version FROM article_drafts WHERE id=?').get(draftId);
   if (!draft) throw new Error(`Draft ${draftId} does not exist.`);
   const rows = db.prepare(`SELECT id,slot,asset_fingerprint,factual_image_required,source_asset_id,
-    acquisition_strategy,media_metadata_json FROM article_visuals WHERE draft_id=? ORDER BY slot`).all(draftId);
+    acquisition_strategy,media_metadata_json FROM article_visuals WHERE draft_id=? AND COALESCE(json_extract(media_metadata_json,'$.media_purpose'),'body')<>'cover' ORDER BY slot`).all(draftId);
   if (!rows.length && !approvedNoImage) return null;
   const slots = rows.map((row) => ({ slotId: row.id, slot: row.slot,
     required:row.acquisition_strategy==='render_route_schematic'
@@ -63,6 +90,10 @@ export function freezeRequiredMediaManifest(db, draftId, { approvedNoImage = fal
 }
 
 export function evaluatePublicationEligibility(db, draftId, { phase = 'local', pagePayload = null, requireRouteReview = true } = {}) {
+  if(phase==='delivery') {
+    const coverBlocker=coverDeliveryBlocker(db,draftId);
+    if(coverBlocker)return {passed:false,code:coverBlocker.code,missing:[coverBlocker],required:null,ready:0};
+  }
   let routeBundle=null;
   const draft = db.prepare('SELECT id,revision,content_hash,strategy_version FROM article_drafts WHERE id=?').get(draftId);
   if(draft) {
@@ -79,8 +110,11 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
       const hasReview=receipts.some(r=>{const receipt=JSON.parse(r.receipt_json);return r.artifact_kind==='text_review'
         && receipt.draft_id===draftId && receipt.passed && receipt.audit?.checked && receipt.audit?.passed
         && !receipt.audit.differences?.length && receipt.audit.approved_route_hash===route.approved_route_hash
-        && receipt.media_dependency_hash===routeMediaDependencyHash(db,draftId)
-        && (receipt.page_dependency_hash || null)===routePageDependencyHash(db,draftId);});
+        && (receipt.dependency_version==='route-review-dependencies-v2'
+          ? receipt.text_media_dependency_hash===routeReviewMediaDependencyHash(db,draftId)
+            && (receipt.text_page_dependency_hash || null)===routeReviewPageDependencyHash(db,draftId)
+          : receipt.media_dependency_hash===routeMediaDependencyHash(db,draftId)
+            && (receipt.page_dependency_hash || null)===routePageDependencyHash(db,draftId));});
       if(route.status!=='FROZEN' || sourceStale || !hasDraft || ((requireRouteReview || phase==='delivery') && !hasReview)) return {passed:false,
         code:'ROUTE_REVIEW_MISSING_OR_STALE',missing:[{sourceStale,hasDraft,hasReview}],required:null,ready:0};
       const pageHash=routePageDependencyHash(db,draftId);
@@ -125,6 +159,8 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     if (!fileHash) failures.push('local_file_missing');
     const metadata = parseMediaMetadata(row?.media_metadata_json);
     if(metadata.route_contract?.compatible===false) failures.push('route_media_conflict');
+    if(!panelReceiptValid(metadata.route_contract,metadata.route_panel_derivative,row?.source_original_sha256))
+      failures.push('route_panel_bytes_missing_or_stale');
     if(slot.routeContract && JSON.stringify(slot.routeContract)!==JSON.stringify(metadata.route_contract))
       failures.push('route_manifest_dependency_changed');
     const boundIds=metadata.authorized_asset_match?.source_binding_ids || [];
@@ -159,7 +195,18 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     try { localPhotoAudit=JSON.parse(row?.source_local_photo_audit_json || '{}'); } catch { /* invalid audit fails closed */ }
     const localPhotoQualified=localPhotoAudit.status === 'eligible'
       && localPhotoAudit.sha256 === fileHash && Number(localPhotoAudit.providerCalls) === 0;
-    const retainedPhoto=Boolean(row?.acquisition_strategy === 'use_authorized_source_image'
+    const manual=metadata.manual_article_selection,manualReceipt=metadata.manual_local_receipt;
+    const manualPhoto=Boolean(manual?.locked && manual.local_photo && !manual.route_blocked
+      && manual.asset_id===row?.source_asset_id && manual.draft_revision===draft.revision
+      && manual.original_hash===fileHash && manualReceipt?.original_hash===fileHash
+      && manualReceipt.selection_id===manual.id && manualReceipt.provider_calls===0
+      && manualReceipt.photo_audit?.sha256===fileHash && Number.isFinite(manualReceipt.photo_audit.textChars)
+      && !manualReceipt.photo_audit.reasons?.some(reason=>!['resolution_low','focus_low','detail_low'].includes(reason))
+      && (!manualReceipt.photo_audit.reasons?.length || manual.quality_confirmed)
+      && row.original_bytes_status==='saved_original' && row.durability_status==='ORIGINAL_STORED'
+      && row.source_original_sha256===fileHash
+      && row?.acquisition_strategy==='manual_article_selection');
+    const retainedPhoto=manualPhoto || Boolean(row?.acquisition_strategy === 'use_authorized_source_image'
       && row?.source_asset_id && row.original_bytes_status === 'saved_original'
       && row.durability_status === 'ORIGINAL_STORED'
       && row.source_original_sha256 === fileHash
@@ -188,7 +235,16 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     }
     if (!String(row?.alt_text || '').trim()) failures.push('alt_missing');
     if (phase === 'delivery' && (!row?.wordpress_media_id || !row?.wordpress_media_url)) failures.push('wordpress_media_missing');
-    if (phase === 'delivery' && metadata.sha256 !== fileHash) failures.push('wordpress_media_hash_mismatch');
+    if (phase === 'delivery') {
+      if(metadata.web_derivative) {
+        const web=metadata.web_derivative;
+        let webHash=null;
+        try { webHash=digest(fs.readFileSync(web.localPath)); } catch { /* fail closed */ }
+        if(web.parent_hash!==fileHash || web.sha256!==webHash || web.sha256!==metadata.upload_bytes_hash
+          || metadata.master_hash!==fileHash || web.verification!=='decoded_and_lineage_verified')
+          failures.push('wordpress_media_lineage_mismatch');
+      } else if(metadata.sha256 !== fileHash) failures.push('wordpress_media_hash_mismatch');
+    }
     if (failures.length) missing.push({ slotId: slot.slotId, slot: slot.slot, reasons: failures });
   }
   if (manifest.slots.length < manifest.minimumRequired || new Set(manifest.slots.map((item) => item.slotId)).size !== manifest.slots.length) {

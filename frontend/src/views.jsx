@@ -13,6 +13,7 @@ import { ContentRecovery } from "@/workspaces/content-recovery";
 import { ContentQualityStatus } from "@/workspaces/content-quality-status";
 import { ConfirmAction } from "@/components/confirm-action";
 import { api } from "@/lib/api";
+import { SearchObservation } from '@/workspaces/seo-inspection';
 
 export function ViewRenderer(props) {
   const components = {
@@ -63,6 +64,7 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
     <FrontendContractSettingsCard contract={data?.frontendContract} onAction={onAction} actionBusy={actionBusy} />
     <SystemHealthPanel count={data?.operations?.counts?.systemHealth} />
     <SettingsOperationsLight data={data} onAction={onAction} actionBusy={actionBusy} />
+    <div className="min-w-0 xl:col-span-3"><SearchObservation /></div>
   </div>;
 }
 

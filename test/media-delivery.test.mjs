@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { responsiveImageAttributes, validateMediaDelivery, wordpressMediaMetadata } from "../src/media-delivery.mjs";
+import { accessibleMediaCaption, responsiveImageAttributes, validateMediaDelivery, wordpressMediaMetadata } from "../src/media-delivery.mjs";
 import { markdownToSafeHtml, WordPressDraftAdapter } from "../src/wordpress.mjs";
 
 const bytes = Buffer.from("a stable image fixture");
+
+test('accessible captions reuse translated regions without losing source attribution or repeating existing text',()=>{
+  const visual={caption:'East Hall. Source: authorized note.',media_metadata:{translation_artifact:{status:'translated',regions:[
+    {english_text:'East Hall'},{english_text:'Last entry 16:30'},{english_text:'Closed Mondays'},{english_text:'Closed Mondays'}]}}};
+  assert.equal(accessibleMediaCaption(visual),'East Hall. Source: authorized note. — Last entry 16:30 — Closed Mondays');
+  visual.media_metadata.translation_artifact.status='pending';assert.equal(accessibleMediaCaption(visual),visual.caption);
+});
 const wpBody = {
   id: 71, source_url: "https://site.test/uploads/guide.jpg", mime_type: "image/jpeg",
   media_details: { width: 1200, height: 800, sizes: {

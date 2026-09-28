@@ -28,7 +28,8 @@ export function constrainRouteVisuals(visuals, bundle, assets, gap) {
       decision=compareRouteMedia(bundle,{use,day_id:metadata.route_day_id,stop_ids:metadata.route_stop_ids,route:sourceRoute});
       if(panel) {
         decision={...decision,panel_scope:panel,semantic_compatible:decision.compatible,
-          compatible:false,transform:panel.valid?'crop_then_revalidate':'recomposition',
+          compatible:Boolean(panel.valid && decision.compatible),requires_panel_derivative:true,
+          transform:panel.valid?'crop_then_revalidate':'recomposition',
           differences:[...decision.differences,{field:'panel_derivative',expected:'actual cropped bytes with lineage and independent QA',actual:'not_produced'}]};
       }
     } else {
@@ -42,6 +43,9 @@ export function constrainRouteVisuals(visuals, bundle, assets, gap) {
     const contract={...decision,route_id:bundle.route_id,revision:bundle.revision,approved_route_hash:bundle.approved_route_hash,
       use,day_id:metadata.route_day_id || null,target:decision.target || routeSemantics(bundle)};
     const result={...visual,media_metadata:{...metadata,route_contract:contract}};
+    if(decision.compatible && decision.requires_panel_derivative) {
+      return {...result,status:'planned',acquisition_strategy:'localize_source_image'};
+    }
     if(!decision.compatible) {
       if((diagram || !visual.factual_image_required) && !metadata.required_visual_obligation?.required)
         return {...result,status:'skipped',factual_image_required:false,media_url:'',media_metadata:{...result.media_metadata,

@@ -4,6 +4,7 @@ import { validatePlannedEvidence } from "./services/editorial-proposal.mjs";
 import { buildContentAst, composePageFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
 import { validatePlanningDestination } from "./destination-consistency.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, reconcileCommercialDelivery, validateFinalPageArtifact } from "./publish-page.mjs";
+import { coverDeliveryBlocker } from './services/cover-selection.mjs';
 import { validateMediaDelivery } from "./media-delivery.mjs";
 import { assertPublicationEligibility, evaluatePublicationEligibility, freezeRequiredMediaManifest, mediaManifestForDraft, routeMediaDependencyHash, routePageDependencyHash } from "./publication-eligibility.mjs";
 import { inheritJobContext, isAiJobType, isProviderPressure } from "./job-policy.mjs";
@@ -1645,6 +1646,8 @@ export class Pipeline {
   async uploadVisualMedia(contentPackage, options = {}) {
     this.repository.assertDraftRouteCurrent?.(contentPackage.draft?.id);
     if (!this.wordpress?.enabled || typeof this.wordpress.resolveVisualMedia !== "function") return [];
+    const coverBlocker=coverDeliveryBlocker(this.repository.db,contentPackage.draft?.id);
+    if(coverBlocker)throw Object.assign(new Error(coverBlocker.message),{...coverBlocker,retryable:false});
     freezeRequiredMediaManifest(this.repository.db, contentPackage.draft?.id);
     assertPublicationEligibility(this.repository.db, contentPackage.draft?.id, { phase: 'local',requireRouteReview:!options.beforeTextReview });
     const deliveryVisuals = this.repository.listDraftVisualsForDelivery?.(contentPackage.draft?.id)

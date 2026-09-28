@@ -16,8 +16,15 @@ import { Repository } from "./repository.mjs";
 import { decideRecommendationCommand, decideRecommendationsBulk } from "./services/recommendation-bulk.mjs";
 import { groupProposals } from "./services/editorial-proposal.mjs";
 import { contentRecoveryReport, executeContentRecovery } from "./services/content-recovery.mjs";
+import { auditDraftCover } from './services/cover-audit.mjs';
+import { ArticleMediaService } from './services/article-media.mjs';
+import {coverInventory,importCoverSource,planCoverIllustration} from './services/cover-inventory.mjs';
+import {coverDeliveryPlan} from './services/cover-delivery.mjs';
+import {articleMediaDeliveryPlan} from './services/article-media-delivery.mjs';
+import {closeLocalPhotoAudit} from './local-photo-audit.mjs';
+import { previewCoverSelection,saveCoverSelection,readCoverSelection } from './services/cover-selection.mjs';
 import { WordPressDraftAdapter } from "./wordpress.mjs";
-import { SearchConsoleAdapter } from "./search-console.mjs";
+import { SearchConsoleAdapter, searchConsoleObservation } from "./search-console.mjs";
 import {
   CommercialComposer, CommercialValidationError, normalizeAffiliateAsset,
   normalizeAffiliateProviderAccount, normalizeCommercialEvent, normalizeCommercialOffer, normalizeCommissionRule,
@@ -40,6 +47,7 @@ import { prepareCaptureMedia } from './source-media-store.mjs';
 import { applyDeliveryRefresh, planDeliveryRefresh } from './services/delivery-refresh.mjs';
 import { acquireLocalRuntimeLease, assertLocalCredentialReadiness, assertLocalRuntime, consumeLocalRuntimeStopRequest, localLogPath, markLocalDataRoot } from './local-runtime.mjs';
 import { createGoogleAccessTokenProvider } from './google-access-token.mjs';
+import { createDraftSeoInspection } from './services/draft-seo-inspection.mjs';
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -53,7 +61,7 @@ const MIME = {
   ".ico": "image/x-icon",
 };
 
-export function createApplication(config = loadConfig()) {
+export function createApplication(config = loadConfig(), { seoInspector } = {}) {
   assertLocalRuntime(config);
   if (!isLoopbackHost(config.host) && (!config.captureToken || !config.adminToken || !config.auth.password || !config.auth.sessionSecret)) {
     throw new Error("Non-loopback HOST requires CAPTURE_TOKEN, ADMIN_TOKEN, ADMIN_PASSWORD, and SESSION_SECRET.");
@@ -94,6 +102,7 @@ export function createApplication(config = loadConfig()) {
     assertLocalCredentialReadiness(config, processRole, repository.getModelRoutingSettings());
   }
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
+  const draftSeo = createDraftSeoInspection(db, { siteUrl: config.content.publicSiteUrl, inspector: seoInspector });
   const googleAccessTokenProvider = createGoogleAccessTokenProvider(config.vertex);
   const aiRequestGate = createRequestGate(config.extraction.requestSpacingMs);
   const modelCallTelemetry = (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing));
@@ -129,6 +138,7 @@ export function createApplication(config = loadConfig()) {
     onModelCallStart: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)),
     onModelCall: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)),
     findVisualCandidate: (query) => repository.findReusableVisualCandidate(query),
+    coverCandidateHistory:visualId=>db.prepare('SELECT output_hash,status FROM visual_candidates WHERE visual_id=?').all(visualId),
     saveVisualCandidate: (candidate) => repository.saveVisualCandidate(candidate),
     updateVisualCandidate: (candidateId,update) => repository.updateVisualCandidate(candidateId,update),
     findVisualTranslationArtifact: (query) => repository.findVisualTranslationArtifact(query),
@@ -139,12 +149,21 @@ export function createApplication(config = loadConfig()) {
   const chunkedUploads = new ChunkedUploadManager(config.manualSources);
   const captureUploads = new CaptureUploadManager(config.captureUploads);
   const captureMediaUploads = new CaptureMediaUploadManager(config.captureMediaUploads);
+  const articleMedia=new ArticleMediaService(repository,{...config,mediaDir:config.visuals.mediaDir});
   const dashboardSummaryCache = createSummaryCache();
   const extractor = new ExtractionRouter({ currentProfile: () => repository.modelProfileForRole("extraction"), resolveConfig: resolveExtractionConfig });
   const contentEngine = new ContentEngine(writingAi);
   const visualReviewer = new KimiExtractor({ ...writingAi, role: "visual_review", mediaRequestExecutor });
   const visuals = new VertexImagen(activeVisuals);
+  articleMedia.provider=visuals;
   const wordpress = new WordPressDraftAdapter(config.wordpress);
+  wordpress.masterGuard = (visual) => {
+    const current=db.prepare('SELECT asset_fingerprint,media_path,media_metadata_json FROM article_visuals WHERE id=?').get(visual.id);
+    if(!current || current.asset_fingerprint!==visual.asset_fingerprint || (current.media_path && current.media_path!==visual.media_path))
+      throw Object.assign(new Error('Media changed before upload.'),{code:'STALE_VISUAL_RESULT',retryable:false});
+    repository.assertDraftRouteCurrent(visual.draft_id);
+    return assertPublicationEligibility(db, visual.draft_id, { phase: 'local', requireRouteReview: false });
+  };
   wordpress.deliveryGuard = (draftId, options) => {
     repository.assertDraftRouteCurrent(draftId);
     return assertPublicationEligibility(db, draftId, options);
@@ -171,17 +190,21 @@ export function createApplication(config = loadConfig()) {
     config.wordpress,
     { notifier, searchConsoleConfig: config.searchConsole, logger: logger.child({ component: "maintenance" }) },
   );
-  if (processRole !== 'api' && wordpress.enabled) {
+  if (processRole !== 'api' && config.startupReconciliationEnabled !== false && wordpress.enabled) {
     repository.enqueueWordPressInventorySync(wordpress.config.siteUrl, wordpress.config.inventorySyncHours);
   }
-  if (processRole !== 'api' && searchConsole.enabled) {
+  if (processRole !== 'api' && config.startupReconciliationEnabled !== false && searchConsole.enabled) {
     repository.enqueueSearchConsoleSync(searchConsole.config.siteUrl, searchConsole.config.syncHours);
   }
-  if (processRole !== 'api') repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled, contractAware: frontendContracts.configured });
+  if (processRole !== 'api' && config.startupReconciliationEnabled !== false) {
+    repository.enqueueStartupReconciliation({ wordpressEnabled: wordpress.enabled, contractAware: frontendContracts.configured });
+  }
   // Legacy heavy-source gates are converted into a deterministic recovery manifest.
   // Execution remains opt-in; startup never enqueues historical work by itself.
-  if (processRole !== 'api') repository.createLegacySourceRecoveryManifest({execute:false});
-  if (processRole !== 'api' && frontendContracts.configured) repository.enqueue("sync_frontend_contract", "default");
+  if (processRole !== 'api' && config.startupReconciliationEnabled !== false) {
+    repository.createLegacySourceRecoveryManifest({execute:false});
+    if (frontendContracts.configured) repository.enqueue("sync_frontend_contract", "default");
+  }
   const publicDir = path.join(config.root, "dist");
 
   const server = http.createServer(async (request, response) => {
@@ -289,6 +312,8 @@ export function createApplication(config = loadConfig()) {
       }
       if (request.method === "GET" && url.pathname.startsWith("/media/")) {
         if (!captureOnly) auth.require(request);
+        if(url.pathname.startsWith('/media/cover-derivatives/'))
+          return serveMedia(path.join(config.visuals.mediaDir,'cover-derivatives'),url.pathname.slice('/media/cover-derivatives/'.length),response);
         return serveMedia(config.visuals.mediaDir, url.pathname.slice("/media/".length), response);
       }
       if (request.method === "GET" && url.pathname === "/api/ready") {
@@ -880,6 +905,65 @@ export function createApplication(config = loadConfig()) {
           return sendJson(response,200,result);
         }
       }
+      const articleMediaMatch=url.pathname.match(/^\/api\/drafts\/([^/]+)\/article-media(?:\/(.*))?$/);
+      if(articleMediaMatch) {
+        authorizeAdmin(request,config.adminToken,auth);
+        if(request.headers.origin && new URL(request.headers.origin).host!==request.headers.host)
+          return sendJson(response,403,{code:'ARTICLE_MEDIA_ORIGIN_MISMATCH',error:'Article media requires same-origin administration.'});
+        if(request.headers['sec-fetch-site']==='cross-site')return sendJson(response,403,{code:'ARTICLE_MEDIA_CSRF',error:'Cross-site article media requests are refused.'});
+        const draftId=decodeURIComponent(articleMediaMatch[1]),action=articleMediaMatch[2] || '',actor=auth.status(request).username || 'administrator';
+        if(request.method==='GET'&&!action)return sendJson(response,200,articleMedia.list(draftId,actor,{offset:Number(url.searchParams.get('offset') || 0)}));
+        if(request.method==='GET'&&action==='delivery-plan')return sendJson(response,200,articleMediaDeliveryPlan(db,draftId));
+        if(request.method==='POST'&&action==='uploads')return sendJson(response,201,await articleMedia.create(draftId,await readJson(request,20000),actor));
+        if(request.method==='POST'&&['plan','confirm','revoke'].includes(action))return sendJson(response,200,await articleMedia[action](draftId,await readJson(request,2*1024*1024),actor));
+        const session=action.match(/^uploads\/([a-f0-9-]{36})(?:\/(complete|pause|resume|cancel|preview|chunks\/\d+))?$/);
+        if(session){const [,id,step]=session;
+          if(request.method==='GET'&&!step)return sendJson(response,200,await articleMedia.status(draftId,id,actor));
+          if(request.method==='GET'&&step==='preview'){
+            const bytes=await articleMedia.previewBytes(draftId,id,actor);
+            response.writeHead(200,{'Content-Type':'image/webp','Content-Length':bytes.length,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'});return response.end(bytes);
+          }
+          if(request.method==='POST'&&step==='complete')return sendJson(response,200,await articleMedia.complete(draftId,id,actor));
+          if(request.method==='POST'&&['pause','cancel','resume'].includes(step))return sendJson(response,200,articleMedia.state(draftId,id,actor,step==='pause'?'paused':step==='cancel'?'cancelled':'uploading'));
+          if(request.method==='PUT'&&step?.startsWith('chunks/'))return sendJson(response,200,await articleMedia.chunk(draftId,id,Number(step.split('/')[1]),await readBytes(request,8*1024*1024),actor,request.headers['x-chunk-sha256']));
+        }
+        const resume=action.match(/^recoveries\/([a-f0-9-]{36})\/resume$/);
+        if(request.method==='POST'&&resume)return sendJson(response,200,await articleMedia.resume(draftId,resume[1],actor));
+        return sendJson(response,404,{error:'Unknown article media action.'});
+      }
+      const coverDeliveryMatch=url.pathname.match(/^\/api\/drafts\/([^/]+)\/cover-delivery$/);
+      if(request.method==='GET'&&coverDeliveryMatch){authorizeAdmin(request,config.adminToken,auth);return sendJson(response,200,coverDeliveryPlan(db,decodeURIComponent(coverDeliveryMatch[1])));}
+      const coverIllustrationMatch=url.pathname.match(/^\/api\/drafts\/([^/]+)\/cover-illustration$/);
+      if(request.method==='POST'&&coverIllustrationMatch){authorizeAdmin(request,config.adminToken,auth);return sendJson(response,200,planCoverIllustration(db,decodeURIComponent(coverIllustrationMatch[1]),await readJson(request,20000),auth.status(request).username || 'administrator'));}
+      const coverInventoryMatch=url.pathname.match(/^\/api\/drafts\/([^/]+)\/cover-inventory$/);
+      if(coverInventoryMatch && ['GET','POST'].includes(request.method)){
+        authorizeAdmin(request,config.adminToken,auth);const draftId=decodeURIComponent(coverInventoryMatch[1]);
+        return sendJson(response,200,request.method==='GET'?coverInventory(db,draftId,{offset:Number(url.searchParams.get('offset') || 0)}):
+          importCoverSource(db,draftId,await readJson(request,20000),auth.status(request).username || 'administrator'));
+      }
+      const coverAuditMatch=url.pathname.match(/^\/api\/drafts\/([^/]+)\/cover-audit$/);
+      if(request.method==='GET' && coverAuditMatch) {
+        authorizeAdmin(request,config.adminToken,auth);
+        const revision=url.searchParams.get('revision');
+        return sendJson(response,200,await auditDraftCover(db,decodeURIComponent(coverAuditMatch[1]),
+          {expectedRevision:revision===null?null:Number(revision),offset:Number(url.searchParams.get('offset') || 0)}));
+      }
+      const coverSelectionMatch=url.pathname.match(/^\/api\/drafts\/([^/]+)\/cover(?:\/(preview))?$/);
+      if(coverSelectionMatch && ['GET','POST'].includes(request.method)) {
+        authorizeAdmin(request,config.adminToken,auth);
+        const draftId=decodeURIComponent(coverSelectionMatch[1]);
+        if(request.method==='GET')return sendJson(response,200,{selection:readCoverSelection(db,draftId)});
+        const payload=await readJson(request,32_000);
+        const options={outputDir:config.visuals.mediaDir,quality:config.wordpress.webMediaQuality,
+          actor:auth.status(request).username || 'administrator'};
+        const result=await (coverSelectionMatch[2]?previewCoverSelection:saveCoverSelection)(db,draftId,payload,options);
+        if(!coverSelectionMatch[2]) {
+          const pending=db.prepare('SELECT id,actor,receipt_json FROM article_media_revisions WHERE draft_id=? AND draft_revision=? ORDER BY media_revision DESC LIMIT 1').get(draftId,result.revision);
+          if(pending?.actor===options.actor&&JSON.parse(pending.receipt_json).plan?.selections.some(s=>s.purpose==='cover'&&s.slot_id===result.visual_id))
+            await articleMedia.resume(draftId,pending.id,options.actor);
+        }
+        return sendJson(response,200,result);
+      }
       const productionDetailMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/production-state$/);
       if (request.method === "GET" && productionDetailMatch) {
         authorizeAdmin(request, config.adminToken, auth);
@@ -1142,10 +1226,12 @@ export function createApplication(config = loadConfig()) {
         return sendJson(response, 202, { queued: true, jobId });
       }
       if (request.method === "GET" && url.pathname === "/api/search-console") {
+        const sync = repository.getSearchConsoleSyncState(searchConsole.config.siteUrl);
+        const items = repository.listSearchConsoleInventory(searchConsole.config.siteUrl || null, limit(url.searchParams.get("limit")));
         return sendJson(response, 200, {
           configured: searchConsole.enabled,
-          sync: repository.getSearchConsoleSyncState(searchConsole.config.siteUrl),
-          items: repository.listSearchConsoleInventory(searchConsole.config.siteUrl || null, limit(url.searchParams.get("limit"))),
+          sync, items,
+          observation: searchConsoleObservation({ configured: searchConsole.enabled, sync, items }),
         });
       }
       if (request.method === "POST" && url.pathname === "/api/search-console/sync") {
@@ -1370,6 +1456,19 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         return sendJson(response, 200, { items: repository.listContentOperationHistory(decodeURIComponent(contentHistoryMatch[1])) });
       }
+      const draftSeoMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)\/seo-inspection$/);
+      if (draftSeoMatch && ['GET', 'POST'].includes(request.method)) {
+        authorizeAdmin(request, config.adminToken, auth);
+        if (request.method === 'POST' && ((request.headers.origin && new URL(request.headers.origin).host !== request.headers.host)
+          || request.headers['sec-fetch-site'] === 'cross-site'))
+          return sendJson(response, 403, { code: 'SEO_INSPECTION_CSRF', error: 'Page inspection requires same-origin administration.' });
+        const draftId = decodeURIComponent(draftSeoMatch[1]);
+        if (request.method === 'GET') return sendJson(response, 200, draftSeo.read(draftId));
+        const input = await readJson(request, 8_000);
+        return sendJson(response, 200, await draftSeo.inspect(draftId, {
+          expected_revision: input.expected_revision, input_fingerprint: input.input_fingerprint, refresh: input.refresh === true,
+        }));
+      }
       const draftMatch = url.pathname.match(/^\/api\/drafts\/([^/]+)$/);
       if (request.method === "GET" && draftMatch) {
         const draft = repository.getDraftPackage(draftMatch[1]);
@@ -1379,7 +1478,7 @@ export function createApplication(config = loadConfig()) {
         authorizeAdmin(request, config.adminToken, auth);
         const payload = await readJson(request, 50_000);
         const draft = repository.updateDraftMetadata(draftMatch[1], {
-          title: payload.title ?? null, metaDescription: payload.meta_description ?? null,
+          title: payload.title ?? null, seoTitle: payload.seo_title ?? null, metaDescription: payload.meta_description ?? null,
         });
         return sendJson(response, 200, { draft, queued: "review_draft" });
       }
@@ -1575,6 +1674,7 @@ export function createApplication(config = loadConfig()) {
         maintenance.stop();
         pipeline.stop();
         if (server.listening) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+        await closeLocalPhotoAudit();
         db.close();
         logger.info("server.stopped", { version: VERSION });
       } finally {

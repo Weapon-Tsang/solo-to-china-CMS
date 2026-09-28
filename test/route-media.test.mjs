@@ -41,8 +41,10 @@ test('actual normalization retains panel crop semantics but never delivers the u
   const normalize=()=>normalizeVisuals([f.visual],{id:'draft',title:'East Hall',strategy_version:'3.8'},
     {topic:'East Hall',route_bundle:f.bundle},[f.asset],{visuals:{maximum:1,target:1}})[0];
   const result=normalize(),contract=result.media_metadata.route_contract;
-  assert.equal(result.status,'failed');assert.equal(result.source_asset_id,null);
-  assert.equal(contract.semantic_compatible,true);assert.equal(contract.compatible,false);
+  assert.equal(result.status,'planned');assert.equal(result.source_asset_id,f.asset.id);
+  assert.equal(contract.semantic_compatible,true);assert.equal(contract.compatible,true);
+  assert.equal(contract.requires_panel_derivative,true);
+  assert.equal(result.acquisition_strategy,'localize_source_image');
   assert.equal(contract.target.stops.length,2);assert.equal(contract.panel_scope.valid,true);
   assert.equal(contract.panel_scope.status,'crop_bytes_and_qa_pending');
   assert.equal(contract.panel_scope.source_sha256,'bytes');

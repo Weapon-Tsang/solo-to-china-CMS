@@ -62,3 +62,19 @@ test("Search Console inventory runs through the durable job pipeline", async (t)
   assert.equal(repository.listSearchConsoleInventory().length, 1);
   assert.equal(repository.getSearchConsoleSyncState(searchConsole.config.siteUrl).status, "succeeded");
 });
+
+test('T03-21/22 saved search observations distinguish absent, empty, failed and stale data without invented outcomes', async () => {
+  const { searchConsoleObservation } = await import('../src/search-console.mjs');
+  const now = Date.parse('2026-09-28T10:00:00Z');
+  const sync = { status: 'succeeded', last_succeeded_at: '2026-09-28T09:00:00Z', item_count: 0 };
+  const inspect = options => searchConsoleObservation({ now, ...options });
+  assert.equal(inspect({}).status, 'not_configured');
+  assert.equal(inspect({ configured: true }).status, 'not_observed');
+  assert.equal(inspect({ configured: true, sync }).status, 'no_data');
+  assert.equal(inspect({ configured: true, sync: { ...sync, status: 'failed' } }).status, 'request_failed');
+  assert.equal(inspect({ configured: true, sync: { ...sync, last_succeeded_at: '2026-09-20T09:00:00Z' } }).status, 'stale');
+  const observed = inspect({ configured: true, sync: { ...sync, item_count: 1 }, items: [{ position: 7, clicks: 1 }] });
+  assert.equal(observed.status, 'available');
+  for (const field of ['indexing', 'aiReferrals', 'aiCitations', 'conversions', 'additionalReports']) assert.equal(observed[field].status, 'unknown');
+  assert.equal(inspect({}).rowCount, null);
+});

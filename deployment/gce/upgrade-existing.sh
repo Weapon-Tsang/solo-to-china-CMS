@@ -111,7 +111,7 @@ recover() {
       docker stop --time 30 engine >/dev/null || true
       docker rename engine "engine-failed-${REVISION:0:7}" || true
     fi
-    if [[ "$MIGRATED" == 1 ]]; then offline "$OLD_IMAGE" restore || { log 'Restore failed; old engine remains stopped.'; exit "$code"; }; fi
+    if [[ "$MIGRATED" == 1 ]]; then offline "$IMAGE" restore || { log 'Restore failed; old engine remains stopped.'; exit "$code"; }; fi
     if [[ "$RENAMED" == 1 ]]; then docker rename "$OLD" engine; fi
     docker network connect solo-to-china engine >/dev/null 2>&1 || true
     docker update --restart unless-stopped engine >/dev/null
@@ -156,23 +156,18 @@ for directory in "$DATA/source-uploads" "$DATA/generated-media"; do
 done
 find "${CONTENT_ROOTS[@]}" -type f -print0 \
   | sort -z | xargs -0 -r sha256sum >"$RELEASE/originals.sha256"
-offline "$OLD_IMAGE" backup
+offline "$IMAGE" backup
 offline "$IMAGE" rehearse
 MIGRATED=1
 offline "$IMAGE" migrate
-PHASE=opportunity-reconcile
-docker run --rm --network none --volume solo_to_china_data:/var/lib/solo-to-china \
-  "$IMAGE" node /app/scripts/reconcile-opportunity-qualification.mjs \
-  /var/lib/solo-to-china/solo-to-china.sqlite >"$RELEASE/opportunity-reconcile.json" 2>"$RELEASE/opportunity-reconcile.log"
 PHASE=opportunity-audit
 docker run --rm --network none --volume solo_to_china_data:/var/lib/solo-to-china \
   "$IMAGE" node /app/scripts/audit-opportunity-qualification.mjs \
   /var/lib/solo-to-china/solo-to-china.sqlite --enforce >"$RELEASE/opportunity-audit.json" 2>"$RELEASE/opportunity-audit.log"
-OPPORTUNITY_SUMMARY="$(python3 - "$RELEASE/opportunity-reconcile.json" "$RELEASE/opportunity-audit.json" <<'PY'
+OPPORTUNITY_SUMMARY="$(python3 - "$RELEASE/opportunity-audit.json" <<'PY'
 import json,sys
-reconcile=json.load(open(sys.argv[1])); audit=json.load(open(sys.argv[2]))
-print(json.dumps({'stage':'opportunity-gate','durationMs':reconcile['durationMs'],
-  'before':reconcile['before']['actionable'],'after':reconcile['after']['actionable'],
+audit=json.load(open(sys.argv[1]))
+print(json.dumps({'stage':'opportunity-gate','reconciliation':'not-run',
   'ready':audit['counts']['actionableReadiness']['ready'],
   'evidenceGap':audit['counts']['actionableReadiness']['evidenceGap'],
   'hardViolations':audit['enforcement']['hardViolationCount']}))
@@ -214,6 +209,7 @@ docker run --detach --name engine-worker --restart unless-stopped --network solo
   --env-file "$APP/.env.production" \
   --env "ENGINE_IMAGE=$IMAGE" --env "APP_REVISION=$REVISION" \
   --env CMS_PROCESS_ROLE=worker \
+  --env CMS_STARTUP_RECONCILIATION_ENABLED=false \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
   --env BACKUP_DIR=/var/lib/solo-to-china/backups \
   --env GENERATED_MEDIA_DIR=/var/lib/solo-to-china/generated-media \
@@ -228,9 +224,5 @@ for ((attempt=0; attempt<30; attempt++)); do
 done
 [[ "$WORKER_READY" == 1 ]]
 date --utc --iso-8601=seconds >"$RELEASE/complete"
-find "$APP/upgrades" -type f \( -name 'rehearsal.sqlite' -o -name 'rehearsal.sqlite-wal' -o -name 'rehearsal.sqlite-shm' \) -delete
-for stale in $(docker ps -a --format '{{.Names}}' | grep -E '^engine(-worker)?-(before|failed)-' || true); do
-  if [[ "$stale" != "$OLD" && "$stale" != "$OLD_WORKER" ]]; then docker rm --force "$stale" >/dev/null; fi
-done
-docker image prune --all --force >"$RELEASE/image-prune.log"
+# Keep prior containers, images, backups and rehearsal evidence for this release.
 log "COMPLETE revision=$REVISION image=$IMAGE rollback_container=$OLD rollback_worker=$OLD_WORKER records=$RELEASE"

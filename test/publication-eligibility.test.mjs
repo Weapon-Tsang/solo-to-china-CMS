@@ -8,6 +8,38 @@ import { freezeRequiredMediaManifest, evaluatePublicationEligibility } from '../
 import { assertPublicationEligibility } from '../src/publication-eligibility.mjs';
 import { WordPressDraftAdapter } from '../src/wordpress.mjs';
 import { recoverLegacyVisualReceipts } from '../src/services/legacy-visual-receipts.mjs';
+import sharp from 'sharp';
+import { Pipeline } from '../src/pipeline.mjs';
+
+test('real Pipeline uploads qualified web bytes, persists lineage and rejects tampered derivatives without rewriting the master',async t=>{
+  const {db,directory,repository}=seed(t,1);
+  const bytes=await sharp({create:{width:1800,height:900,channels:3,background:'#886622'}}).png().toBuffer();
+  const file=path.join(directory,'master.png');fs.writeFileSync(file,bytes);
+  const hash=crypto.createHash('sha256').update(bytes).digest('hex');
+  const metadata={binary_qa:{status:'passed',sha256:hash},quality_qa:{status:'passed',file_hash:hash}};
+  db.prepare("UPDATE article_visuals SET media_path=?,media_metadata_json=? WHERE id='visual-1'").run(file,JSON.stringify(metadata));
+  let uploads=0;
+  const adapter=new WordPressDraftAdapter({siteUrl:'https://receiver.test',username:'x',applicationPassword:'x',mediaDir:directory},async(url,init)=>{
+    uploads++;const info=await sharp(init.body).metadata();
+    return Response.json({id:88,source_url:'https://receiver.test/media/88',mime_type:`image/${info.format}`,
+      media_details:{width:info.width,height:info.height}},{status:201});
+  });
+  adapter.masterGuard=v=>assertPublicationEligibility(db,v.draft_id,{requireRouteReview:false});
+  const pipeline=new Pipeline(repository,{enabled:false},{wordpress:adapter});
+  const draftBefore=db.prepare("SELECT body_markdown,revision,content_hash FROM article_drafts WHERE id='draft'").get();
+  await pipeline.uploadVisualMedia({draft:{id:'draft'}},{beforeTextReview:true});
+  assert.equal(uploads,1);
+  const saved=repository.listDraftVisuals('draft')[0].media_metadata;
+  assert.equal(saved.quality_qa.file_hash,hash);assert.equal(saved.web_derivative.parent_hash,hash);
+  assert.equal(evaluatePublicationEligibility(db,'draft',{phase:'delivery'}).passed,true);
+  await pipeline.uploadVisualMedia({draft:{id:'draft'}},{beforeTextReview:true});
+  assert.equal(uploads,1);
+  fs.appendFileSync(saved.web_derivative.localPath,'corrupt');
+  assert.ok(evaluatePublicationEligibility(db,'draft',{phase:'delivery'}).missing[0].reasons.includes('wordpress_media_lineage_mismatch'));
+  assert.deepEqual(db.prepare("SELECT body_markdown,revision,content_hash FROM article_drafts WHERE id='draft'").get(),draftBefore);
+  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),hash);
+  assert.equal(db.prepare('SELECT count(*) n FROM model_call_metrics').get().n,0);
+});
 
 function seed(t, count = 3) {
   const { db, directory, repository } = repositoryFixture(t);

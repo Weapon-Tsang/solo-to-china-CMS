@@ -1,0 +1,13 @@
+async (page) => {
+  const panel=page.getByTestId('article-media'),start=Date.now();
+  await panel.getByLabel('补图文件',{exact:true}).setInputFiles(Array.from({length:100},()=> 'C:/Users/Mloong/AppData/Local/Temp/cms-c-cover-browser-tYSlha/media/cover-test-master.png'));
+  await panel.getByText('已存会话 101 · 媒体版本 1',{exact:true}).waitFor({timeout:60000});
+  const result=await page.evaluate(async()=>{const ids=[],counts=[],latency=[];for(let offset=0;offset<101;offset+=25){const r=await(await fetch(`/api/drafts/cover-draft/article-media?offset=${offset}`)).json();ids.push(...r.items.map(x=>x.id));counts.push(r.items.length);}
+    for(let i=0;i<30;i++){const start=performance.now();const response=await(await fetch('/api/drafts/cover-draft/article-media')).json();if(response.total!==101)throw new Error('Lost upload');latency.push(performance.now()-start);}
+    latency.sort((a,b)=>a-b);return {unique:new Set(ids).size,pages:counts,p50_ms:latency[14],p95_ms:latency[28],samples:30,heap:performance.memory?.usedJSHeapSize || null};});
+  if(result.unique!==101)throw new Error('101 session assertion failed');
+  await panel.getByRole('button',{name:'下一页',exact:true}).click();await panel.getByRole('button',{name:'上一页',exact:true}).waitFor();
+  const layouts=[];for(const width of [390,768,1440]){await page.setViewportSize({width,height:1000});await panel.scrollIntoViewIfNeeded();const overflow=await page.getByRole('dialog').evaluate(el=>el.scrollWidth>el.clientWidth+1);if(overflow)throw new Error(`Overflow at ${width}`);layouts.push({width,overflow});if(width===390)await page.screenshot({path:'output/playwright/d-manual-101-mobile.png'});}
+  await page.screenshot({path:'output/playwright/d-manual-101-desktop.png'});
+  return {status:'PASS',...result,layouts,elapsed_ms:Date.now()-start,actual_uploads:100,prior_uploads:1,provider_calls:0};
+}

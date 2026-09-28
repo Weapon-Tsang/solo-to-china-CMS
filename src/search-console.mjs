@@ -4,6 +4,24 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const API_ROOT = "https://searchconsole.googleapis.com/webmasters/v3";
 const READONLY_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 
+// A projection of saved query+page observations, never an API request or an
+// inference about indexing, crawler visits, AI citations or conversions.
+export function searchConsoleObservation({ configured = false, sync = null, items = [], now = Date.now(), staleAfterMs = 48 * 60 * 60 * 1000 } = {}) {
+  const succeeded = Date.parse(sync?.last_succeeded_at || '');
+  const hasSnapshot = Number.isFinite(succeeded);
+  const stale = hasSnapshot && (Number(now) - succeeded > staleAfterMs || succeeded > Number(now));
+  const state = !configured ? 'not_configured' : sync?.status === 'failed' ? 'request_failed'
+    : !hasSnapshot ? 'not_observed' : stale ? 'stale' : items.length ? 'available' : 'no_data';
+  return { status: state, source: 'saved_gsc_query_page', lastSucceededAt: hasSnapshot ? sync.last_succeeded_at : null,
+    hasSnapshot, stale, rowCount: hasSnapshot ? (sync?.item_count ?? items.length) : null,
+    metrics: state === 'available' ? ['clicks', 'impressions', 'ctr', 'position'] : [],
+    indexing: { status: 'unknown', source: null },
+    aiReferrals: { status: 'unknown', reason: 'No attributed referrer evidence supplied.' },
+    aiCitations: { status: 'unknown', reason: 'Crawler visits and search queries do not measure citations.' },
+    conversions: { status: 'unknown', source: null },
+    additionalReports: { status: 'unknown', reason: 'No authorized account capability evidence.' } };
+}
+
 export class SearchConsoleAdapter {
   constructor(config = {}, fetchImpl = fetch) {
     this.config = config;
