@@ -77,5 +77,3 @@ export async function receiverFixture(t, initial, contract, behavior) {
     }};
   return {state,receiver,root};
 }
-
-\n
