@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# HISTORICAL schema81 helper only. Retired from the schema83 candidate plan.
+# Use the application's complete snapshot restore in an isolated migration-review
+# root; production activation requires a separately verified target-specific plan.
 # Resume after an image-only startup failure, using a freshly verified, stopped DB.
 # No migration, restore, cleanup, or old-code fallback is performed by this helper.
 set -Eeuo pipefail

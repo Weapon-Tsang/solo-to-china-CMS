@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.71 - Unreleased
+
+- Retain local development and the existing cloud CMS as the sole production system while preparing the schema 79 to 83 release.
+- Preserve previous backups, containers, images and rehearsal evidence during the bounded upgrade; remove automatic production opportunity reconciliation.
+- Pin the already verified Frontend artifact bytes and preserve the existing capture endpoint and extension state.
+
 ## 2.0.70 - Unreleased
 
 - Fall back from oversized multi-image extraction batches to traceable single-image jobs and recover existing failed batches on worker startup.

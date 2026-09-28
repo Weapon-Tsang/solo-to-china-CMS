@@ -1,6 +1,6 @@
 {
   "name": "solo-to-china-research-engine",
-  "version": "2.0.70",
+  "version": "2.0.71",
   "private": true,
   "description": "Human-selected research capture and content intelligence engine for SoloToChina.",
   "type": "module",
@@ -56,10 +56,12 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "google-auth-library": "^10.9.1",
+    "linkedom": "^0.18.13",
     "lucide-react": "^1.33.0",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "saxes": "5.0.1",
     "sharp": "^0.35.4",
     "tailwind-merge": "^3.6.0",
     "tesseract.js": "^7.0.0",
@@ -69,7 +71,6 @@
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.0",
     "fake-indexeddb": "^6.2.5",
-    "linkedom": "^0.18.13",
     "tailwindcss": "^4.3.3",
     "vite": "^8.2.2"
   }

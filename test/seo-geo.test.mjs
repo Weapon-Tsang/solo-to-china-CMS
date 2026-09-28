@@ -4,7 +4,7 @@ import { buildPublishPackage, synchronizeSchemaWithPage } from "../src/publish-p
 import {
   affectedInternalLinkBlocks, buildSeoPreview, duplicateContentRisks, inventoryTargetChanges,
   inventoryVersion, resolveCanonicalUrl, selectInternalLinks,
-  synchronizeSeoMetadata, titlePromiseRisks, validateSeoGeoArtifact,
+  synchronizeSeoMetadata, titlePromiseRisks, validateSeoGeoArtifact, suggestContentDisposition,
 } from "../src/seo-geo.mjs";
 
 const canonical = "https://solotochina.com/chongqing-night-guide/";
@@ -91,7 +91,7 @@ test("FAQ schema is optional and must exactly match the visible FAQ when present
 
 test("internal links use only relevant public inventory and invalid targets fail final checks", () => {
   const inventory = [
-    { post_id: 7, status: "publish", title: "Chongqing transport", slug: "chongqing-transport", post_url: "https://solotochina.com/chongqing-transport", modified_at: "2026-01-01" },
+    { post_id: 7, status: "publish", title: "Chongqing transport", slug: "chongqing-transport", post_url: "https://solotochina.com/chongqing-transport/", modified_at: "2026-01-01" },
     { post_id: 8, status: "draft", title: "Chongqing draft", slug: "chongqing-draft", post_url: "https://solotochina.com/?p=8&preview=true" },
     { post_id: 9, status: "publish", title: "Beijing food", slug: "beijing-food", post_url: "https://solotochina.com/beijing-food" },
   ];
@@ -105,7 +105,7 @@ test("internal links use only relevant public inventory and invalid targets fail
     data: { content: '<a href="https://solotochina.com/missing/">Wrong target</a>' } }] }, baseDraft);
   assert.ok(validateSeoGeoArtifact({ page, draft: baseDraft,
     schema: synchronizeSchemaWithPage({ "@context": "https://schema.org", "@graph": [{ "@type": "Article" }] }, page, baseDraft),
-    internalLinks: links }).errors.some((item) => item.code === "UNVERIFIED_INTERNAL_LINK"));
+    internalLinks: links }).warnings.some((item) => item.code === "UNVERIFIED_INTERNAL_LINK"));
 
   const badAnchorPage = synchronizeSeoMetadata({ ...basePage, blocks: [{ type: "paragraph", variant: "default",
     data: { content: '<a href="https://solotochina.com/chongqing-transport/">click here</a>' } }] }, baseDraft);
@@ -140,4 +140,76 @@ test("Publish Package overwrites conflicting model metadata from one determinist
   assert.equal(pkg.page.metadata.seo.title, baseDraft.seo.meta_title);
   assert.equal(pkg.page.metadata.seo.canonicalUrl, canonical);
   assert.equal(pkg.schema_jsonld["@graph"].some((node) => node["@type"] === "FAQPage"), false);
+});
+
+test('T03-12 visible FAQ is valid without optional markup, later conflicting markup fails', () => {
+  const page = synchronizeSeoMetadata({ ...basePage, blocks: [{ type: 'faq', data: { items: [{ question: 'When?', answer: 'At sunset.' }] } }] }, baseDraft);
+  const schema = [{ '@type': 'Article', headline: baseDraft.title }];
+  assert.equal(validateSeoGeoArtifact({ page, draft: baseDraft, schema }).valid, true);
+  const faq = { '@type': 'FAQPage', mainEntity: [{ name: 'When?', acceptedAnswer: { text: 'At sunset.' } }] };
+  assert.equal(validateSeoGeoArtifact({ page, draft: baseDraft, schema: [...schema, faq] }).valid, true);
+  assert.ok(validateSeoGeoArtifact({ page, draft: baseDraft, schema: [...schema, faq, { ...faq, mainEntity: [] }] }).errors.some(item => item.code === 'FAQ_SCHEMA_VISIBLE_MISMATCH'));
+});
+
+test('T03-08/10/13 query identities, later Article and local anchors remain distinct', () => {
+  assert.equal(resolveCanonicalUrl({ siteUrl: 'https://solotochina.com', publishedStatus: 'publish', publishedUrl: 'https://solotochina.com/?p=73&page=2' }).url, 'https://solotochina.com/?p=73&page=2');
+  const page = synchronizeSeoMetadata({ ...basePage, blocks: [{ type: 'paragraph', data: { content: '<a href="#transport">Transport</a>' } }] }, baseDraft);
+  const schema = [{ '@type': 'Article', headline: baseDraft.title }];
+  assert.equal(validateSeoGeoArtifact({ page, draft: baseDraft, schema }).valid, true);
+  assert.ok(validateSeoGeoArtifact({ page, draft: baseDraft, schema: [...schema, { '@type': 'Article', headline: 'False' }] }).errors.some(item => item.code === 'SCHEMA_HEADLINE_MISMATCH'));
+});
+
+test('T03-13 unknown links are pending diagnostics, confirmed broken targets fail, contextual Read guide is valid', () => {
+  const target = { post_id: 1, status: 'publish', title: 'Chongqing transport', url: 'https://solotochina.com/transport/', public_accessibility: 'confirmed' };
+  const run = (content, inventory) => {
+    const page = synchronizeSeoMetadata({ ...basePage, blocks: [{ type: 'paragraph', data: { content } }] }, baseDraft);
+    return validateSeoGeoArtifact({ page, draft: baseDraft, schema: [{ '@type': 'Article', headline: baseDraft.title }], internalLinks: inventory });
+  };
+  assert.equal(run('<section><h2>Chongqing transport</h2><a href=/transport/>Read guide</a></section>', [target]).valid, true);
+  assert.ok(run('<a href=/transport/>Read guide</a>', [target]).errors.some(item => item.code === 'INTERNAL_LINK_ANCHOR_MISMATCH'));
+  const pending = run('<a href=/unknown/>Another guide</a>', []);
+  assert.equal(pending.valid, true);
+  assert.ok(pending.warnings.some(item => item.code === 'UNVERIFIED_INTERNAL_LINK'));
+  assert.ok(run('<a href=/transport/>Chongqing transport</a>', [{ ...target, public_accessibility: 'broken' }]).errors.some(item => item.code === 'INTERNAL_LINK_TARGET_UNAVAILABLE'));
+});
+
+test('T03-13 entity identity ranks above title overlap and explicit unknown access is not selected', () => {
+  const inventory = [
+    { post_id: 1, status: 'publish', title: 'Airport rail', entities: ['airport-ckg'], post_url: 'https://solotochina.com/rail/' },
+    { post_id: 2, status: 'publish', title: 'Chongqing transport route', post_url: 'https://solotochina.com/route/' },
+    { post_id: 3, status: 'publish', title: 'Chongqing transport route', entities: ['airport-ckg'], public_accessibility: 'unknown', post_url: 'https://solotochina.com/unknown/' },
+  ];
+  const result = selectInternalLinks(inventory, { siteUrl: 'https://solotochina.com', topic: 'Chongqing transport route', entities: ['airport-ckg'] });
+  assert.deepEqual(result.map(item => item.post_id), [1, 2]);
+  assert.deepEqual(result[0].relationship.entity_ids, ['airport-ckg']);
+});
+
+test('T03-14 entity plus independent question controls advisory new/update/merge/claim decisions', () => {
+  const article = { post_id: 1, status: 'publish', title: 'Almost identical title', entities: ['entity-1'], question: 'How to book?', post_url: canonical };
+  const context = { entities: ['entity-1'], question: 'How to book?' };
+  assert.equal(suggestContentDisposition([article], context).action, 'update');
+  assert.equal(suggestContentDisposition([article, { ...article, post_id: 2 }], context).action, 'merge');
+  assert.equal(suggestContentDisposition([article], { ...context, question: 'How to get there?' }).action, 'new');
+  assert.equal(suggestContentDisposition([article], { ...context, evidenceSufficient: false }).action, 'keep-as-claim');
+  assert.equal(suggestContentDisposition([article], { ...context, question: '' }).action, 'needs-review');
+  assert.equal(suggestContentDisposition([article], context).automatic, false);
+});
+
+test('T03-08/15 internal CMS origins and private literal addresses cannot become public canonical metadata', () => {
+  for (const siteUrl of ['http://localhost:3000', 'https://127.0.0.1', 'https://[::1]', 'https://10.1.2.3', 'https://cms.internal']) {
+    assert.equal(resolveCanonicalUrl({ siteUrl, slug: 'guide' }).url, null, siteUrl);
+  }
+});
+
+test('T03-09/10 schema arrays and nested BlogPosting consume CMS metadata without inventing author or time',()=>{
+  const page=synchronizeSeoMetadata(basePage,baseDraft);
+  const schema=synchronizeSchemaWithPage([{ '@graph':[{ '@type':['BlogPosting','Article'],'@id':'https://wrong.test/#article',headline:'Wrong',url:'https://wrong.test/' },
+    {'@type':'WebPage','@id':'https://wrong.test/','mainEntity':{'@id':'https://wrong.test/#article'}}] },
+    {'@type':'Organization','@id':'https://solotochina.com/#organization',name:'SoloToChina'}],page,baseDraft);
+  const article=schema['@graph'][0]['@graph'][0];
+  assert.equal(article.headline,baseDraft.title);assert.equal(article.url,canonical);
+  assert.equal(article.author,undefined);assert.equal(article.datePublished,undefined);assert.equal(article.dateModified,undefined);
+  assert.equal(schema['@graph'][0]['@graph'][1].mainEntity['@id'],`${canonical}#article`);
+  assert.equal(schema['@graph'][1].name,'SoloToChina');
+  assert.equal(validateSeoGeoArtifact({page,draft:baseDraft,schema}).valid,true);
 });

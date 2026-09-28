@@ -493,6 +493,11 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   });
   assert.equal(edited.body_markdown, bodyBeforeMetadataEdit, "metadata editing does not invoke or replace writer output");
   assert.equal(edited.model, "manual_metadata_edit");
+  const seoOnly = repository.updateDraftMetadata(content[0].draft_id, { seoTitle: 'Beijing travel | SoloToChina' });
+  assert.equal(seoOnly.title, edited.title, 'T03-03 SEO-only edits preserve the approved H1');
+  assert.equal(seoOnly.seo.meta_title, 'Beijing travel | SoloToChina');
+  assert.equal(seoOnly.body_markdown, bodyBeforeMetadataEdit);
+  assert.equal(seoOnly.slug, edited.slug);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM segment_extractions").get().count, extractionCount,
     "metadata editing does not rerun evidence extraction");
   assert.deepEqual(db.prepare("SELECT type FROM jobs WHERE entity_id=? AND status='queued' ORDER BY type").all(content[0].draft_id).map((row) => row.type),

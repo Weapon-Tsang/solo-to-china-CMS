@@ -6,16 +6,17 @@ const argumentsMap = new Map(process.argv.slice(2).flatMap((value, index, values
 const origin = normalizeOrigin(argumentsMap.get("--origin"));
 const tokenFile = argumentsMap.get("--token-file");
 const captureToken = readCaptureToken(tokenFile);
+const preserveStoredToken = process.argv.includes('--preserve-stored-token');
 const output = path.resolve(argumentsMap.get("--out") || "output/extension-cloud");
 
-if (!origin || !captureToken) {
-  console.error("Usage: node scripts/package-extension-cloud.mjs --origin https://capture.example.com --token-file output/deployment-tokens.env [--out output/extension-cloud]");
+if (!origin || (!captureToken && !preserveStoredToken)) {
+  console.error("Usage: node scripts/package-extension-cloud.mjs --origin https://capture.example.com (--token-file <private-file> | --preserve-stored-token) --out <new-directory>");
   process.exit(1);
 }
 
 const root = path.resolve("extension");
-fs.rmSync(output, { recursive: true, force: true });
-fs.cpSync(root, output, { recursive: true });
+if (fs.existsSync(output)) throw new Error(`Extension package target already exists: ${output}`);
+fs.cpSync(root, output, { recursive: true, errorOnExist: true });
 const manifestPath = path.join(output, "manifest.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 manifest.host_permissions = [
@@ -26,17 +27,19 @@ manifest.name = "保存到 SoloToChina";
 fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 const popupPath = path.join(output, "popup.js");
 const originalPopup = fs.readFileSync(popupPath, "utf8");
-const popup = originalPopup
-  .replace('const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";', `const DEFAULT_ENDPOINT = ${JSON.stringify(origin)};`)
-  .replace('const DEFAULT_CAPTURE_TOKEN = "";', `const DEFAULT_CAPTURE_TOKEN = ${JSON.stringify(captureToken)};`)
-  .replace("const CLOUD_CONFIGURED = false;", "const CLOUD_CONFIGURED = true;");
-if (popup === originalPopup) throw new Error("Extension default endpoint marker was not found.");
-fs.writeFileSync(popupPath, popup);
+if (!preserveStoredToken) {
+  const popup = originalPopup
+    .replace('const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";', `const DEFAULT_ENDPOINT = ${JSON.stringify(origin)};`)
+    .replace('const DEFAULT_CAPTURE_TOKEN = "";', `const DEFAULT_CAPTURE_TOKEN = ${JSON.stringify(captureToken)};`)
+    .replace("const CLOUD_CONFIGURED = false;", "const CLOUD_CONFIGURED = true;");
+  if (popup === originalPopup) throw new Error("Extension default endpoint marker was not found.");
+  fs.writeFileSync(popupPath, popup);
+}
 const backgroundPath = path.join(output, "background.js");
 const originalBackground = fs.readFileSync(backgroundPath, "utf8");
 const background = originalBackground
   .replace('const DEFAULT_ENDPOINT = "http://127.0.0.1:4310";', `const DEFAULT_ENDPOINT = ${JSON.stringify(origin)};`)
-  .replace('const DEFAULT_CAPTURE_TOKEN = "";', `const DEFAULT_CAPTURE_TOKEN = ${JSON.stringify(captureToken)};`);
+  .replace('const DEFAULT_CAPTURE_TOKEN = "";', `const DEFAULT_CAPTURE_TOKEN = ${JSON.stringify(preserveStoredToken ? '' : captureToken)};`);
 if (background === originalBackground) throw new Error("Extension background endpoint marker was not found.");
 fs.writeFileSync(backgroundPath, background);
 console.log(`Cloud extension package created at ${output}`);

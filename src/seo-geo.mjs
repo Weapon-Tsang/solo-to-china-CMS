@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { isPublicArtifactUrl, normalizeObservedUrl, structuredDataNodes } from './seo-observation.mjs';
+import { parseSeoHtml, visibleText } from './seo-html.mjs';
 
 const PROMISE_TERMS = ["ultimate", "complete", "comprehensive", "all-inclusive", "cheapest", "secret", "hidden"];
 
@@ -56,6 +58,7 @@ export function synchronizeSeoMetadata(pagePayload, draft, { supportedMetadataFi
 
 export function validateSeoGeoArtifact({ page, draft, schema, internalLinks = [] } = {}) {
   const errors = [];
+  const warnings = [];
   const title = String(draft?.title || "").trim();
   const metaTitle = String(draft?.seo?.meta_title || title).trim();
   const description = String(draft?.meta_description || "").trim();
@@ -76,11 +79,11 @@ export function validateSeoGeoArtifact({ page, draft, schema, internalLinks = []
     errors.push({ code: "CANONICAL_NOT_PUBLIC", path: "$.page.metadata.canonicalUrl" });
   }
   errors.push(...validateStructuredData(schema, page, draft));
-  errors.push(...validateInternalLinks(page, internalLinks));
-  return { valid: errors.length === 0, errors };
+  errors.push(...validateInternalLinks(page, internalLinks, warnings));
+  return { valid: errors.length === 0, errors, warnings };
 }
 
-export function selectInternalLinks(inventory = [], { siteUrl = "", topic = "", entities = [], limit = 12 } = {}) {
+export function selectInternalLinks(inventory = [], { siteUrl = "", topic = "", entities = [], question = '', articleType = '', limit = 12 } = {}) {
   const site = safePublicUrl(siteUrl);
   if (!site) return [];
   const contextTokens = tokens(`${topic} ${(entities || []).join(" ")}`);
@@ -89,11 +92,16 @@ export function selectInternalLinks(inventory = [], { siteUrl = "", topic = "", 
     if (!isPublicInventoryItem(item) || !url || isPreviewUrl(url)) return null;
     const itemTokens = tokens(`${item.title || ""} ${item.slug || ""}`);
     const overlap = [...itemTokens].filter((token) => contextTokens.has(token));
-    if (!overlap.length) return null;
-    return { post_id: Number(item.post_id || item.postId), status: "publish", public_accessibility: "inventory_confirmed",
+    const sharedEntities = entityIds(item.entities || item.entity_ids).filter(id => entityIds(entities).includes(id));
+    const sameQuestion = Boolean(question && normalize(item.question || item.reader_question) === normalize(question));
+    if (!overlap.length && !sharedEntities.length) return null;
+    return { post_id: Number(item.post_id || item.postId), status: "publish", public_accessibility: item.public_accessibility || 'inventory_confirmed',
       title: String(item.title || ""), url: canonicalPageUrl(url),
       slug: String(item.slug || ""), modified_at: item.modified_at || item.modifiedAt || null,
-      relationship: overlap.slice(0, 5), score: overlap.length / Math.max(1, Math.min(itemTokens.size, contextTokens.size)) };
+      relationship: { entity_ids: sharedEntities, same_question: sameQuestion,
+        article_type: articleType && articleType === item.article_type ? articleType : null, candidate_terms: overlap.slice(0, 5) },
+      score: sharedEntities.length * 4 + Number(sameQuestion) * 3 + Number(Boolean(articleType && articleType === item.article_type))
+        + overlap.length / Math.max(1, Math.min(itemTokens.size, contextTokens.size)) };
   }).filter(Boolean).sort((a, b) => b.score - a.score || a.post_id - b.post_id).slice(0, limit);
 }
 
@@ -138,9 +146,9 @@ export function duplicateContentRisks(inventory = [], { title = "", entities = [
 function validateStructuredData(schema, page, draft) {
   const errors = [];
   const nodes = schemaNodes(schema);
-  const article = nodes.find((node) => types(node).some((type) => ["Article", "BlogPosting"].includes(type)));
-  if (!article) errors.push({ code: "ARTICLE_SCHEMA_MISSING", path: "$.schema_jsonld" });
-  else if (String(article.headline || "").trim() !== String(page?.metadata?.title || "").trim()) {
+  const articles = nodes.filter((node) => types(node).some((type) => ["Article", "BlogPosting"].includes(type)));
+  if (!articles.length) errors.push({ code: "ARTICLE_SCHEMA_MISSING", path: "$.schema_jsonld" });
+  for (const article of articles) if (String(article.headline || "").trim() !== String(page?.metadata?.title || "").trim()) {
     errors.push({ code: "SCHEMA_HEADLINE_MISMATCH", path: "$.schema_jsonld.headline" });
   }
   if (nodes.some((node) => types(node).some((type) => ["Product", "QAPage"].includes(type)))) {
@@ -148,40 +156,48 @@ function validateStructuredData(schema, page, draft) {
   }
   const visibleFaq = (page?.blocks || []).filter((block) => ["faq", "faqList"].includes(block?.type))
     .flatMap((block) => block.data?.items || []).map((item) => [normalize(item.question), normalize(stripHtml(item.answer))]);
-  const faqNode = nodes.find((node) => types(node).includes("FAQPage"));
-  const schemaFaq = (faqNode?.mainEntity || []).map((item) => [normalize(item.name), normalize(stripHtml(item.acceptedAnswer?.text))]);
-  if (JSON.stringify(visibleFaq) !== JSON.stringify(schemaFaq)) errors.push({ code: "FAQ_SCHEMA_VISIBLE_MISMATCH", path: "$.schema_jsonld" });
+  for (const faqNode of nodes.filter((node) => types(node).includes("FAQPage"))) {
+    const schemaFaq = (Array.isArray(faqNode.mainEntity) ? faqNode.mainEntity : [faqNode.mainEntity].filter(Boolean))
+      .map((item) => [normalize(item.name), normalize(stripHtml(item.acceptedAnswer?.text))]);
+    if (JSON.stringify(visibleFaq) !== JSON.stringify(schemaFaq)) errors.push({ code: "FAQ_SCHEMA_VISIBLE_MISMATCH", path: "$.schema_jsonld" });
+  }
   if (draft?.published_at == null && nodes.some((node) => node.datePublished)) errors.push({ code: "DRAFT_DATE_PUBLISHED_FORGED", path: "$.schema_jsonld.datePublished" });
   return errors;
 }
 
-function validateInternalLinks(page, inventory) {
+function validateInternalLinks(page, inventory, warnings = []) {
   const allowed = new Map((inventory || []).filter(isPublicInventoryItem)
     .map((item) => [canonicalPageUrl(item.url || item.post_url), item]));
   const pageOrigin = safePublicUrl(page?.metadata?.canonicalUrl || page?.metadata?.seo?.canonicalUrl)?.origin;
   const origins = new Set([...allowed.keys()].map((url) => safePublicUrl(url)?.origin).filter(Boolean));
   if (pageOrigin) origins.add(pageOrigin);
   const links = [];
-  visitStrings(page?.blocks || [], (text) => {
-    for (const match of text.matchAll(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
-      links.push({ href: match[1], anchor: stripHtml(match[2]) });
-    }
+  for (const block of page?.blocks || []) visitStrings(block, text => {
+    for (const node of parseSeoHtml(text).querySelectorAll('a[href]')) links.push({
+      href: node.getAttribute('href'), anchor: visibleText(node), template: Boolean(node.closest('nav')), context: visibleText(node.parentElement),
+    });
   });
   const errors = [];
   const anchorCounts = new Map();
-  for (const { href, anchor } of links) {
-    const url = safePublicUrl(href) || (pageOrigin ? safePublicUrl(new URL(href, pageOrigin)) : null);
+  for (const { href, anchor, template, context } of links) {
+    if (/^(?:#|mailto:|tel:)/i.test(href)) continue;
+    let url = safePublicUrl(href);
+    try { url ||= pageOrigin ? safePublicUrl(new URL(href, pageOrigin)) : null; } catch { /* Report invalid link below. */ }
+    if (!url) { errors.push({ code: "INVALID_INTERNAL_LINK", path: "$.page.blocks", url: href }); continue; }
     if (!url || !origins.has(url.origin)) continue;
     const canonical = canonicalPageUrl(url);
     const target = allowed.get(canonical);
     if (!target) {
-      errors.push({ code: "UNVERIFIED_INTERNAL_LINK", path: "$.page.blocks", url: canonical });
+      const known = inventory.find(item => canonicalPageUrl(item.url || item.post_url) === canonical);
+      (known && ['broken', '404', 'private', 'redirect', 'unavailable'].includes(known.public_accessibility) ? errors : warnings)
+        .push({ code: known ? 'INTERNAL_LINK_TARGET_UNAVAILABLE' : 'UNVERIFIED_INTERNAL_LINK', path: '$.page.blocks', url: canonical, status: known?.public_accessibility || 'unknown' });
       continue;
     }
     const anchorTokens = tokens(anchor);
     const targetTokens = tokens(`${target.title || ""} ${target.slug || ""}`);
     const relevant = [...anchorTokens].some((token) => targetTokens.has(token));
-    if (!anchor || !relevant || /^(?:click here|read more|learn more)$/i.test(anchor.trim())) {
+    const contextualGuide = /^read guide$/i.test(anchor.trim()) && normalize(context).includes(normalize(target.title)) && Boolean(target.title);
+    if (!anchor || (!template && !contextualGuide && (!relevant || /^(?:click here|read more|learn more|read guide)$/i.test(anchor.trim())))) {
       errors.push({ code: "INTERNAL_LINK_ANCHOR_MISMATCH", path: "$.page.blocks", url: canonical, anchor });
     }
     const key = normalize(anchor);
@@ -195,7 +211,27 @@ function validateInternalLinks(page, inventory) {
 
 function isPublicInventoryItem(item) {
   const accessibility = String(item?.public_accessibility || item?.accessibility || "").toLowerCase();
-  return item?.status === "publish" && !["404", "broken", "cancelled", "canceled", "redirect", "private", "unavailable"].includes(accessibility);
+  return item?.status === "publish" && !["unknown", "pending", "404", "broken", "cancelled", "canceled", "redirect", "private", "unavailable"].includes(accessibility);
+}
+
+function entityIds(values = []) {
+  return [...new Set((Array.isArray(values) ? values : []).map(value => typeof value === 'string' ? value : value?.entity_id || value?.id).filter(Boolean))];
+}
+
+// Advisory only; approval and all historical edits remain in the existing workflow.
+export function suggestContentDisposition(inventory = [], { entities = [], question = '', evidenceSufficient = true, currentPostId = null } = {}) {
+  if (!evidenceSufficient) return { action: 'keep-as-claim', candidates: [], reason: 'Evidence does not support a standalone reader promise.', automatic: false };
+  const ids = entityIds(entities);
+  if (!ids.length || !question.trim()) return { action: 'needs-review', candidates: [], reason: 'Core entity or independent reader question is unknown.', automatic: false };
+  const unknown = inventory.filter(item=>item.status==='publish'&&Number(item.post_id)!==Number(currentPostId)
+    && (!entityIds(item.entities || item.entity_ids).length || !String(item.question || item.reader_question || '').trim()));
+  const candidates = inventory.filter(item => item.status === 'publish' && Number(item.post_id) !== Number(currentPostId)
+    && entityIds(item.entities || item.entity_ids).some(id => ids.includes(id))
+    && normalize(item.question || item.reader_question) === normalize(question)).map(item => ({ post_id: item.post_id,
+    url: item.post_url, entity_ids: entityIds(item.entities || item.entity_ids), question: item.question || item.reader_question }));
+  return { action: candidates.length > 1 ? 'merge' : candidates.length ? 'update' : unknown.length ? 'needs-review' : 'new', candidates,
+    unknown_candidates:unknown.map(item=>({post_id:item.post_id,url:item.post_url})),
+    reason: candidates.length ? 'Published articles address the same entity and reader question; editorial approval is required.' : unknown.length ? 'Published inventory lacks saved entity or reader-question identity; a new article is not yet established.' : 'No confirmed match for this entity and independent question.', automatic: false };
 }
 
 function schemaCanonicalUrls(schema) {
@@ -205,8 +241,7 @@ function schemaCanonicalUrls(schema) {
 }
 
 function schemaNodes(schema) {
-  if (!schema || typeof schema !== "object") return [];
-  return [...(Array.isArray(schema["@graph"]) ? schema["@graph"] : []), ...(schema["@type"] ? [schema] : [])];
+  return structuredDataNodes(schema);
 }
 
 function types(node) { return (Array.isArray(node?.["@type"]) ? node["@type"] : [node?.["@type"]]).filter(Boolean); }
@@ -214,11 +249,11 @@ function stripHtml(value) { return String(value || "").replace(/<[^>]+>/g, " ").
 function normalize(value) { return stripHtml(value).normalize("NFKC").toLocaleLowerCase("en-US").replace(/[^\p{L}\p{N}]+/gu, " ").trim(); }
 function tokens(value) { return new Set(normalize(value).split(" ").filter((token) => token.length > 2 && !["the", "and", "for", "guide", "travel", "china"].includes(token))); }
 function isPreviewUrl(value) { const url = value instanceof URL ? value : safePublicUrl(value); return Boolean(url && (/preview=true/i.test(url.search) || /(?:^|\/)(?:preview|wp-admin)(?:\/|$)/i.test(url.pathname))); }
-function canonicalPageUrl(value) { const url = value instanceof URL ? new URL(value) : safePublicUrl(value); if (!url) return ""; url.hash = ""; url.search = ""; url.pathname = url.pathname.replace(/\/+$/, "") + "/"; return url.toString(); }
+function canonicalPageUrl(value) { return normalizeObservedUrl(value); }
 function safePublicUrl(value, requiredOrigin = null) {
   try {
     const url = value instanceof URL ? new URL(value) : new URL(String(value || ""));
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || (requiredOrigin && url.origin !== requiredOrigin)) return null;
+    if (!isPublicArtifactUrl(url) || (requiredOrigin && url.origin !== requiredOrigin)) return null;
     return url;
   } catch { return null; }
 }

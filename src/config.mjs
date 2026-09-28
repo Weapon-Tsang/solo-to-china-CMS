@@ -75,6 +75,8 @@ export function loadConfig(env = process.env) {
     databasePath,
     generatedMediaDir,
     processRole: choice(env.CMS_PROCESS_ROLE, ['all','api','worker'], 'all'),
+    startupReconciliationEnabled: boolean(env.CMS_STARTUP_RECONCILIATION_ENABLED, true),
+    manualMediaProviderRecoveryEnabled:boolean(env.MANUAL_MEDIA_PROVIDER_RECOVERY_ENABLED,false),
     captureToken: env.CAPTURE_TOKEN || "",
     adminToken: env.ADMIN_TOKEN || "",
     auth: {
@@ -187,6 +189,7 @@ export function loadConfig(env = process.env) {
       storageDir: sourceUploadsDir,
       maxBytes: integer(env.CAPTURE_MEDIA_MAX_BYTES, 512 * 1024 * 1024),
       chunkBytes: integer(env.CAPTURE_MEDIA_CHUNK_BYTES, 4 * 1024 * 1024),
+      articleChunkBytes: integer(env.ARTICLE_MEDIA_CHUNK_BYTES, 8 * 1024 * 1024),
     },
     extraction: {
       processIsolationEnabled: boolean(env.PROCESS_ISOLATION_ENABLED,!(env.NODE_TEST_CONTEXT||process.env.NODE_TEST_CONTEXT)),
@@ -245,6 +248,8 @@ export function loadConfig(env = process.env) {
       syncHours: integer(env.FRONTEND_CONTRACT_SYNC_HOURS, 6),
     },
     wordpress: {
+      mediaDir: generatedMediaDir,
+      webMediaQuality: integer(env.WEB_MEDIA_QUALITY, 82),
       siteUrl: (env.WORDPRESS_SITE_URL || "").replace(/\/$/, ""),
       username: env.WORDPRESS_USERNAME || "",
       applicationPassword: env.WORDPRESS_APPLICATION_PASSWORD || "",

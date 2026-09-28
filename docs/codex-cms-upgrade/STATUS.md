@@ -1,3 +1,170 @@
+# 2026-09-28 阶段04发布链路修正：PASS_LOCAL_CANDIDATE / STOPPED
+
+已完成本轮完整输入要求的本地修正与实际制品：[当前交接报告](acceptance/phase-04-fixes.md)。原04.0 PASS_LOCAL及历史证据保留。schema81云端辅助脚本退出83候选计划，现有完整恢复入口/旧78迁移/未来84拒绝已复验。CI原b231b1d固定值正确，真实字节就是9154dc…；历史缓存误标为0c4b327，现已记录真实差异，未重写缓存。新增严格组合SHA校验及篡改回归，workflow原值保留。
+
+最终Windows可运行候选 `D:\cms-phase04-candidate-20260928-final`，锁定依赖已安装，独立合成根API/health/Sharp/停止及review恢复通过；172文件ZIP及实际解压hash通过。[制品路径/hash](evidence/phase-04-fixes/archive.json)、[逐文件manifest](evidence/phase-04-fixes/candidate.json)。不是Linux容器/生产部署制品。新封面/正文刷新生产adapter未接线属于CMS_CODE_GAP；真实receiver仍UNKNOWN，门禁保持。
+
+58项模块回归、27项恢复/身份增量、最终身份1项（重叠不累加）、check/build及真实固定Git合同入口PASS；本轮无新生产DB回放/Provider/完整生产链。详见报告分层覆盖。下一步可选择只提交、提交并推送或指定位置发布；生产技术只读/备份/迁移/Worker/WP/费用分别未授权。没有commit/push/deploy/生产私有读写/付费，自己的API均停止。current_authorized_step=NONE；phase_end_stop=true。
+
+---
+
+# 2026-09-28 阶段04.0：PASS_LOCAL(CMS_ONLY) / 整个04后续待规格和授权
+
+完成本地发布迁移预检、可配置人工上传分块、81项相关回归、构建、旧副本12稿事务回放及真实浏览器1 MiB分块上传。完整需求/9用例/分层测试见[04.0验收](acceptance/phase-04-0.md)，[迁移与精确授权计划](evidence/phase-04-0/release-migration-plan.md)，[制品清单](evidence/phase-04-0/artifact-manifest.json)。main/490dd7464d4beb46d3f89a578337c253917fbf7a；app2.0.70/schema83；保留阶段02/03未提交成果。
+
+用户要求整个04开发；现仅提供04.0完整输入，04.1～04.5未提供完整规格，不能宣称完成。后续生产schema/真实WP/Provider/完整生产回放未测；旧恢复脚本schema81不可用于83，CI固定合同SHA不同待统一复验。真实发布/迁移/启用/媒体修复/停云/删除均WAITING_AUTH，未执行。
+
+L1/L2/L3限定旧work副本/L4：PASS；L5/L6：NOT TESTED；相邻本地回归通过、发布准备发现项已登记。没有commit/push/deploy/付费/生产私有读写/公开前端修改。current_authorized_step=NONE；phase_end_stop=true。自建API与浏览器已停止，清理见final-state.json。下一步在同CMS工作区基于本报告提供所选后续关卡规格，或明确授权精确外部核实范围；不自动跨关卡。
+
+---
+
+# 2026-09-28 阶段03 resume-04：PASS_LOCAL (CMS_ONLY) / STOPPED
+
+本阶段允许范围内的开发与本地验收完成。DEVELOPMENT；main / HEAD `490dd7464d4beb46d3f89a578337c253917fbf7a`，保留既有未提交成果。[30项需求、44个用例逐项验收及限制](evidence/phase-03/resume-04/checkpoint.md)。下方历史BLOCKED记录保留，由本轮对应证据覆盖其本地缺口。
+
+已完成冲突图保留原件并按批准骨架重编、SEO/GEO后台接线、四类时间证据、路线审核依赖与媒体局部续跑、封面/正文独立交付回执及恢复矩阵。189项相关模块、最终增量回归、check、12稿既有历史work副本回滚、浏览器实际操作和独立HTTP字节/HTML链通过。组间测试重叠，不累加。30样本菜单冷/热P95：idle 147/90ms，上传及渲染负载211/145ms。
+
+L1/L2/L3限定副本/L4：PASS；相邻审计：PASS（本地范围）。L5真实Provider、L6完整生产回放：NOT TESTED。真实WordPress PENDING_ENV；真实接收器能力、SEO head和图片加载等外部依赖仍待验，生产外送门禁保留；HTTP fixture不代表真实WP或已部署适配器。没有生产效果或真实模型质量通过结论。
+
+未commit/push/部署/Cloud Build/生产写入/付费调用。自建测试服务和两组浏览器已关闭，见[清理证据](evidence/phase-03/resume-04/cleanup.json)。current_authorized_step=NONE；phase_end_stop=true。下一建议仅阶段04-0预检，须用户新对话明确启动；本轮不执行。
+
+---
+
+# 2026-09-28 阶段03续作 resume-03：BLOCKED / PARTIAL_IMPLEMENTATION / STOPPED
+
+已修复路线详情cover-audit空QA导致500；新增实际队列组合测试又修复本地路线示意被误判为非法图片策略、三日循环路线alt误触关键词堆砌。新alt使用内部v2，旧回执兼容渲染、无历史批量改写。59项pipeline相关回归、16项封面/人工媒体回归、check通过；12篇既有历史work副本封面审计/事务回滚通过。固定合同1.4.1三种路线模式走到真实WebP/本地HTTP/draft回执/HTML，不是真实WordPress。
+
+标准非空30样本：空闲冷/热菜单P95 150/90ms，上传/hash/finish＋本地路线渲染180/133ms，API最高P95 46.973ms；峰值RSS约279MiB。上轮cover-audit500的浏览器定向复验已通过，不能据此宣布整个阶段完成。
+
+**仍未完成阶段03，不进入04**：冲突图可执行替代、同链实拍/封面/人工补图完整矩阵、部分SEO/GEO接线、三种变更的完整恢复待做。真实WP PENDING_ENV、真实Provider未测，外部门禁保持。[最新检查点、范围、证据与接续](evidence/phase-03/resume-03/checkpoint.md)。[完整30需求/44用例台账](acceptance/phase-03.md)保留。
+
+DEVELOPMENT；无commit/push/部署/生产操作/付费调用。current_authorized_step=NONE；phase_end_stop=true。以下历史记录保留。
+
+---
+
+# 2026-09-28 阶段03续作 resume-02：BLOCKED / PARTIAL_IMPLEMENTATION / STOPPED
+
+本轮接通公开页面九维检查与持久缓存、SEO title独立编辑、GSC六状态后台、路线站点照片/Day冲突确认与持久恢复；补真实HTTP接收器的字节上传/HTML/丢回执/部分回执。最终9项关键回归、71项直接模块、73项相邻模块和check通过（测试组重叠不相加）；历史84来源/1454媒体/5334claims/12稿work副本事务回滚通过。标准非空30样本空闲及Worker菜单/API通过，但上传/渲染负载缺口仍在。
+
+**阶段03尚未完成，不得进入04**。停止时日志发现路线稿`cover-audit`空值读取status导致500，尚未修复，L4页面整体FAIL；下次优先修复并加强同源HTTP错误断言。路线三类全链、冲突图可执行替代、部分SEO/GEO矩阵、完整变更恢复及负载内存验收待完成。[最新检查点、命令、覆盖与下一步](evidence/phase-03/resume-02/checkpoint.md)。原[30需求/44测试矩阵](acceptance/phase-03.md)保留。
+
+DEVELOPMENT；无提交推送/部署/生产操作/付费模型。current_authorized_step=NONE；phase_end_stop=true。以下历史记录保留。
+
+---
+
+# 2026-09-28 阶段03续作 resume-01：BLOCKED / PARTIAL_IMPLEMENTATION / STOPPED
+
+本轮新增DOM可见性/FAQ/图谱证据校验、内部URL拦截、有界sitemap检查服务、实体内链排序与纯建议、GSC API状态分层。106项直接模块＋39项相邻回归通过，npm run check通过；三个匿名公开GET有界留证。阶段03仍未完成：后台接线、GEO完整矩阵、路线/补图浏览器与接收器全链、快照恢复及PERF-005。不得进入04。
+
+[本轮实施、逐项增量、命令/hash、限制和接续](evidence/phase-03/resume-01/checkpoint.md)。[完整30需求/44测试矩阵](acceptance/phase-03.md)保留，不以测试数量冒充阶段通过。
+
+DEVELOPMENT；无提交推送、部署、生产私有操作或付费模型。current_authorized_step=NONE；phase_end_stop=true。以下历史记录保留。
+
+---
+
+# 2026-09-28 阶段03开发检查点：BLOCKED / PARTIAL_IMPLEMENTATION / STOPPED
+
+完整v1.4输入已保存为[phase-03.txt](phases/phase-03.txt)。前置01/02最新本地验收保持；本轮实现SEO确定性校验和受限reader首批修复，89/89相关回归、npm run check、diff检查PASS。**尚未完成阶段03验收**：后台接入、GEO规则全矩阵、人工补图/路线全链、完整恢复/30样本性能等本地硬要求未完成；真实WP/Provider仍未测。不得进入04。
+
+[30需求/44用例完整台账、代码身份/hash、命令及接续项](acceptance/phase-03.md)。本轮无提交推送、部署、生产操作或付费调用；保留所有阶段02未提交成果。当前仍DEVELOPMENT。current_authorized_step=NONE；phase_end_stop=true。
+
+以下历史记录原样保留。
+
+---
+
+# 2026-09-28 阶段02本地收口：PASS_LOCAL(CMS_ONLY) / STOPPED
+
+A2/B/C/D本地范围已验收。此前MUP-013的浏览器大图续传、413/磁盘/解码故障注入和101项非空冷/热菜单缺口已补齐；[最终证据与未测范围](evidence/phase-02/cd/local-acceptance.md)。最终模块回归93/93、npm run check均PASS。前台菜单在两张23 MB有效图并发上传时30次P95为82 ms；同篇上传中切菜单91 ms，返回后从已存块续传。原件和修订持久化不依赖浏览器回执。
+
+current_authorized_step=NONE；phase_end_stop=true。仍为DEVELOPMENT；未commit/push/部署/生产操作/付费模型。真实WordPress限定媒体刷新、真实Provider Canary、历史缺失26母图像素与全生产链NOT TESTED，门禁保持。阶段03未自动进入；以下为完整历史记录，旧检查点状态不代表当前结论。
+
+---
+
+# 2026-09-28 当前状态：阶段02 C/D 本地验收完成，外部交付门禁保持
+
+用户已授权继续至 D。A2_LOCAL_ACCEPTED、B_LOCAL_ACCEPTED 保持；本轮 C_LOCAL_ACCEPTED、D_LOCAL_ACCEPTED 仅指 CMS 本地流程和受控接收器协议。阶段02的真实 WordPress/真实模型/完整生产链没有执行，不能把本地验收写成生产已完成。current_authorized_step=NONE；phase_end_stop=true；下一阶段03未授权。
+
+[本轮验收和逐组测试范围](evidence/phase-02/cd/local-acceptance.md)：相关93/93、上游60/60、最终加固32/32、npm run check、真实浏览器101次上传与三档宽度、有效23,079,275字节图片、128/512MiB传输夹具、既有获准副本12篇事务回放均有证据。历史26张原图不可达，像素语义NOT TESTED。schema83只在隔离夹具及回滚事务使用；无生产迁移、commit、push、部署、付费模型。旧记录和全部未提交成果原样保留。
+
+外部接收端真实能力 `EXT-PURPOSE`、`EXT-REFRESH`、`EXT-BODY-MEDIA-REFRESH`，以及真实Provider Canary仍为门禁；当前代码不因本地确认直接写线上文章。阶段03/04需要先核对schema83全量快照、恢复与旧版不兼容策略，不能自动接管。
+
+以下为执行期间和更早检查点的历史记录，原状态字段不代表当前状态。
+
+---
+
+# 2026-09-28 当前执行：阶段02 C / D 本地实现中
+
+用户最新明确授权“继续不要停。直至D也完成”。current_authorized_step=PHASE_02_C_D；phase_end_stop=false。此前STOPPED、D未授权记录仅为历史，不再代表当前范围。
+
+保留A2_LOCAL_ACCEPTED、B_LOCAL_ACCEPTED与全部未提交成果。正在完成C合同/封面及D文章补图。新增本地schema83（尚未迁移任何历史副本或生产），文章上传、确认和局部媒体版本实现正在测试，尚未宣称C/D验收通过。
+
+约束保持：DEVELOPMENT，不commit/push/部署/生产操作/付费模型，不进入阶段03。历史验证仅既有获准副本、只读及事务回滚；历史26母图缺失限制保持。
+
+以下保留历史记录。
+
+---
+# 2026-09-28 当前检查点：C封面本地选择已实现 / C_PARTIAL
+
+B_LOCAL_ACCEPTED保持。C已新增独立16:9真实裁剪、母图保全、预览确认、版本/并发保护、单封面锁定与追加历史、CMS操作界面、跨目录恢复及接收能力门控。
+
+- 本轮42/42相关回归PASS；备份组29/29 PASS（重叠不相加）；check/build、真实浏览器选图→预览→确认→刷新回读PASS，四种宽度无横向溢出。
+- 既有获准副本12稿/26候选只读回放及事务回滚PASS，9保护表不变。26历史母图不可达，历史像素/选择完整组合NOT TESTED。真实WP/Provider和全链仍未验。
+- 固定缓存1.4.1/commit 0c4b327287c016aee138f735a8a13eb2baa74542组合hash校验PASS：支持featuredMediaId，不支持cardTitle/deck。**当前选择封面的外部交付关闭**，不会借本地确认覆盖生产。
+- C整体仍未完成：支持接收端的封面上传/显式替换回执、card bundle字段、同实体库存/插画有界预算、必需封面门禁及分批审计待做。[逐项验收和接续](evidence/phase-02/c-selection/checkpoint.md)。不是C_LOCAL_ACCEPTED。
+- app2.0.70/schema82/HEAD保持；全部未提交成果和历史证据保留。无提交、推送、部署、生产操作或付费调用。自建API/浏览器已停止。
+- current_authorized_step=NONE
+- phase_end_stop=true
+
+下一步继续C已获授权的本地工作；无需重新确认，不进入D/阶段03。
+
+以下保留历史记录。
+
+---
+
+# 2026-09-28 当前检查点：B_LOCAL_ACCEPTED / C_PARTIAL
+
+B补充验收已完成，34/34相关回归及check/build PASS；见 [B补充验收](evidence/phase-02/b-resume/local-acceptance.md)。按用户“B完成后进入下一阶段”授权，已进入C并实现封面资格/裁剪规划与管理员只读dry-run API；C整体未完成。
+
+- C定向5/5、相关模块29/29、check/build PASS；真实回环HTTP鉴权/版本冲突已验。
+- 既有获准副本12稿/26候选只读审计PASS，事务回滚和9张保护表不变。26历史母图不可达，像素验收NOT TESTED；真实WP/Provider/浏览器C编辑流程未验。
+- [C逐项状态、限制与接续点](evidence/phase-02/c/checkpoint.md)。后续继续C已获授权本地工作，不需要重复确认；尚未实现完整封面制作、选择和合同交付，不进入D/阶段03。
+- 所有历史/未提交成果保留，app/schema/HEAD不变，无提交、推送、部署、生产操作或付费调用。自建测试服务已关闭。
+- current_authorized_step=NONE
+- phase_end_stop=true
+
+以下保留历史记录。
+
+---
+
+# 2026-09-28 B 补充验收 / C 已获授权
+
+B_LOCAL_ACCEPTED（限定本地范围）。缓存原件绑定、回执复核及安全裁剪增量34/34 PASS，check/build PASS。历史像素/真实WP/Provider限制保持；见 [B补充验收](evidence/phase-02/b-resume/local-acceptance.md)。此前证据保留。
+
+用户明确“B完成后进入下一阶段”，当前进入C封面与合同，D未授权；不提交、不部署、不操作生产、不调用付费模型。
+- current_authorized_step=PHASE_02_C
+- phase_end_stop=false
+
+---
+
+# 当前状态：阶段02 B 本地媒体能力验收（2026-09-28）
+
+**B_LOCAL_ACCEPTED（限定本地范围） / STOPPED**。以 [B验收与完整限制](evidence/phase-02/b/local-acceptance.md) 为准。起点A2_LOCAL_ACCEPTED保持，未重做A1/A2；未进入C/D，阶段02整体未完成。
+
+- 已接通原件/母图/网页衍生谱系、Sharp按类型转码、缓存与回退、真实panel裁剪和既有独立QA、WordPress上传字节身份与实际尺寸消费、可读翻译图注、备份恢复及清理引用保护。
+- 150/150相关模块PASS；最后小图/清理增量34/34相关回归及原子/预算5/5 PASS（重叠子集不相加）。check/build、diff检查、真实本地浏览器恢复/PNG预览、回环HTTP受控接收器PASS。
+- L3历史副本仅元数据兼容/投影和事务回滚PASS：84 Sources/1,454 assets/12 Drafts/26 Visuals，保护表不变。**26个历史媒体路径本机不可访问，历史像素转码NOT TESTED，Post-Fix Audit为ISSUES FOUND（已存在的可达性限制）**；无新生产读取或复制大库。
+- L5真实Provider与L6完整链NOT TESTED。真实WordPress、C封面/合同及D采用锁/outbox/续跑未验；不使用整体阶段成功句式。
+- 本轮入口实际HEAD为`490dd7464d4beb46d3f89a578337c253917fbf7a`且工作树干净，与旧报告HEAD差异已记录；不回退。现有成果及历史证据保留，当前本轮修改均未提交。app2.0.70/schema82不变。
+- 无commit/push/部署/生产操作/付费调用。自建服务PID22880及浏览器bmedia已停止，未停止用户服务。
+- current_authorized_step=NONE
+- phase_end_stop=true
+
+下一步在同一CMS目录的新授权对话进入C，沿用B媒体身份与回执；不得把此状态理解为生产授权或自动进入C/D。
+
+以下为保留的历史状态。
+
+---
+
 # 当前状态：A2 独立本地能力验收完成（2026-09-28）
 
 **A2_LOCAL_ACCEPTED / READY_FOR_B_NEW_THREAD / STOPPED**。以 [A2本地验收报告](evidence/phase-02/a2-local-acceptance.md) 为准；含文件前后身份、ROUTE-001～012与T02-71～90独立/组合矩阵、命令、限制和B/C/D接口。阶段02整体尚未完成。
@@ -201,3 +368,10 @@
 - 2026-09-27 FIN01 v1.1 续修：已把完整提示词保存为 [`phases/phase-01-closeout-v1.1.txt`](phases/phase-01-closeout-v1.1.txt)，在原 [`acceptance/phase-01-closeout.md`](acceptance/phase-01-closeout.md) 追加 FIN01-01～10、原 T01/C01/PERF 映射和原始证据。非空来源与实际图片字节经真实 Worker 到 `processed`，26/26 Job 成功；checkpoint 后换进程恢复、重复唤醒、migration-review 零消费、本地 HTTP 响应丢失保护通过。实际浏览器验证来源恢复与分页，修复重复提取停在 `processing` 和知识库筛选切菜单丢失。真实 Worker 期间 5 条 API 与 Chrome 三菜单各 30 样本达到原 P95 阈值；原始样本保存在 `evidence/phase-01/fin01-*`。全量 `npm test` 889/889，最后 UI 细修后定向 6/6、`npm run check`、`git diff --check` 通过。历史 7 个 review 的逐段原始原因和真实 unknown/review 页面仍未补齐，原 T01 其他 `PARTIAL` 门槛未改判；阶段 01 本地为 `EVIDENCE_MISSING`，阶段 02 `NOT_READY`，生产 `NOT_AUTHORIZED / NOT_READY`。原坏快照保留无效，修复副本本地可恢复，未知实时分析继续隔离。本轮不提交、推送、部署或新增真实模型请求。`current_authorized_step=NONE`、`phase_end_stop=true`。
 
 - 2026-09-27 FIN01 v1.2 当前态校准：完整提示词已原样保存为 [`phases/phase-01-closeout-v1.2.txt`](phases/phase-01-closeout-v1.2.txt)。真实本地 Worker 生成正常来源与一次定向重试后进入 `manual_review` 的材料不足来源；真实媒体请求执行器生成并跨 API 重启保持 `outcome_unknown`，预算维持 `spent=1/granted=0/limit=1/unknown=1`，UI 明确显示待核、隔离、不自动重发。系统健康列表已改为数据库侧分页，105 条回归验证 20/50 边界，真实浏览器第二个 50 条页面仅返回 6 条并显示 unknown。定向 50/50、全量 `npm test` 890/890、`npm run check`、`git diff --check` 全部 PASS。L3 当前生产副本回放 `NOT TESTED`，真实 Provider/WordPress `NOT REQUIRED/NOT RUN`。当前分层结论为：本地 `PASS_LOCAL`，原快照 `INVALID_PRESERVED`，修复快照 `VERIFIED_LOCAL_RESTORE`，历史 review `HISTORICAL_DETAIL_NOT_RETRIEVED`，真实 unknown `QUARANTINED_UNRESOLVED`，阶段 02 隔离开发 `READY_FOR_NEW_THREAD`，生产 `NOT_AUTHORIZED / NOT_READY`。详见 [`acceptance/phase-01-closeout.md`](acceptance/phase-01-closeout.md) 与 [`evidence/phase-01/v12-local-closeout-20260927.md`](evidence/phase-01/v12-local-closeout-20260927.md)。`current_authorized_step=NONE`、`phase_end_stop=true`。
+# 2026-09-29 云端原地升级执行中：LOCAL_DEVELOPMENT / EXISTING_CLOUD_PRODUCTION
+
+本轮用户完整授权保留原云端生产、提交推送并原地部署；旧本地生产迁移方案改为 DEFERRED，以下旧 STOPPED/未授权记录仅为历史。原云端 `solo-to-china-engine` 与 `https://engine.solotochina.com` 已只读确认，实际库 schema79，候选代码 schema83/app2.0.71；未把本机副本写入云端。当前正在完成发布检查、固定提交、备份演练及云端替换。新封面/正文限定刷新仍须真实接收器能力，未通过的功能保持门控。执行结果以本轮[云端交付记录](acceptance/phase-04-cloud-release.md)为准。
+
+current_authorized_step=CLOUD_RELEASE_IN_PROGRESS；phase_end_stop=false。
+
+---

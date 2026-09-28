@@ -19,6 +19,7 @@ const p = (values, fraction) => [...values].sort((a, b) => a - b)[Math.ceil(valu
 let app;
 let worker;
 let loadProcess;
+let mediaLoad;
 const awaitChildOutput = (child, pattern, label) => new Promise((resolve, reject) => {
   let output = "";
   const timer = setTimeout(() => reject(new Error(`${label} startup timed out: ${output}`)), 15_000);
@@ -110,6 +111,10 @@ try {
     });
     await awaitMessage(loadProcess, "ready", "synthetic load process");
   }
+  if(process.argv.includes('--media-load')) {
+    const {startMediaLoad}=await import('./stage03-benchmark-media-load.mjs');
+    mediaLoad=await startMediaLoad(app,directory);
+  }
   if (process.argv.includes("--browser-hold")) {
     const stopFile = path.join(directory, ".browser-stop");
     console.log(JSON.stringify({ event: "browser_fixture_ready",
@@ -179,6 +184,7 @@ try {
     if (worker.exitCode === null) await new Promise((resolve) => worker.once("exit", resolve));
     worker = null;
   }
+  const mediaLoadMetrics=mediaLoad?await mediaLoad.stop():null;mediaLoad=null;
   const report = { format: "cms-phase01-benchmark-1", createdAt: new Date().toISOString(),
     machine: { platform: process.platform, arch: process.arch, node: process.version,
       cpus: os.cpus().length, totalMemoryBytes: os.totalmem() },
@@ -186,6 +192,7 @@ try {
       failedJobs: 50, type: "synthetic fixture" },
     mode: "development", workerLoad: withWorkerLoad ? "cms_worker_plus_synthetic_read_cpu" : "idle",
     syntheticLoad: loadMetrics ? { queries: loadMetrics.queries, cycles: loadMetrics.cycles } : null,
+    mediaLoad:mediaLoadMetrics,
     network: "loopback", warmupPerRoute: 1,
     validSamplesPerRoute: 30, percentileMethod: "nearest-rank", eventLoopDelayP95Ms: Number((eventLoop.percentile(95) / 1e6).toFixed(3)),
     queryPlans, results };
@@ -195,6 +202,7 @@ try {
   }
   console.log(JSON.stringify({ ...report, results: results.map(({ samples, ...summary }) => summary) }, null, 2));
 } finally {
+  if(mediaLoad)await mediaLoad.stop();
   if (loadProcess && loadProcess.exitCode === null) {
     if (loadProcess.connected) loadProcess.send("stop");
     else loadProcess.kill();

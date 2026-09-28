@@ -254,6 +254,24 @@ test("API and Worker applications coordinate before database open and release le
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("release Worker can resume existing queue without startup reconciliation", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cms-release-worker-"));
+  const databasePath = path.join(root, "solo-to-china.sqlite");
+  try {
+    const config = loadConfig({ CMS_RUN_MODE: "development", CMS_DATA_ROOT: root,
+      DATABASE_PATH: databasePath, CMS_PROCESS_ROLE: "worker", MAINTENANCE_ENABLED: "false",
+      CMS_STARTUP_RECONCILIATION_ENABLED: "false", NODE_TEST_CONTEXT: "1" });
+    markLocalDataRoot(config, "development");
+    openDatabase(databasePath).close();
+    const app = createApplication(config);
+    await app.stop();
+    const db = openDatabase(databasePath);
+    try {
+      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM runtime_settings WHERE setting_key='claim_resolution'").get().n, 0);
+    } finally { db.close(); }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("a port conflict reports EADDRINUSE and releases only the failed application's lease", async () => {
   const firstRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cms-port-first-"));
   const secondRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cms-port-second-"));

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 82;
+export const SCHEMA_VERSION = 83;
 
 export function openDatabase(filename, { migrate: shouldMigrate = true } = {}) {
   if (shouldMigrate) fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -110,6 +110,33 @@ export function migrate(db) {
   if (current < 80) migrationEighty(db);
   if (current < 81) migrationEightyOne(db);
   if (current < 82) migrationEightyTwo(db);
+  if (current < 83) migrationEightyThree(db);
+}
+
+function migrationEightyThree(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE article_drafts ADD COLUMN card_title TEXT NOT NULL DEFAULT '';
+    ALTER TABLE article_drafts ADD COLUMN deck TEXT NOT NULL DEFAULT '';
+    CREATE TABLE article_media_uploads (
+      id TEXT PRIMARY KEY, draft_id TEXT NOT NULL REFERENCES article_drafts(id),
+      draft_revision INTEGER NOT NULL, actor TEXT NOT NULL, state TEXT NOT NULL,
+      filename TEXT NOT NULL, upload_json TEXT NOT NULL, receipt_json TEXT NOT NULL DEFAULT '{}',
+      asset_id TEXT REFERENCES source_assets(id), error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX article_media_uploads_draft ON article_media_uploads(draft_id,created_at,id);
+    CREATE TABLE article_media_revisions (
+      id TEXT PRIMARY KEY, draft_id TEXT NOT NULL REFERENCES article_drafts(id), draft_revision INTEGER NOT NULL,
+      media_revision INTEGER NOT NULL, plan_hash TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE,
+      actor TEXT NOT NULL, manifest_json TEXT NOT NULL, receipt_json TEXT NOT NULL,
+      state TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(draft_id,draft_revision,media_revision)
+    );
+    CREATE TABLE cover_delivery_attempts (
+      id TEXT PRIMARY KEY, draft_id TEXT NOT NULL REFERENCES article_drafts(id), selection_id TEXT NOT NULL,
+      state TEXT NOT NULL, request_json TEXT NOT NULL, receipt_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL,
+      UNIQUE(draft_id,selection_id)
+    );
+    INSERT INTO schema_migrations(version,applied_at) VALUES (83,datetime('now'));
+  `));
 }
 
 function migrationEightyTwo(db) {

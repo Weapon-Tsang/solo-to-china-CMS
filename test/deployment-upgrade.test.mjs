@@ -116,9 +116,17 @@ test('deployment helpers validate the supplied release version instead of a hard
     assert.doesNotMatch(script, /version!==["']\d+\.\d+\.\d+/);
   }
   const resume = fs.readFileSync(path.join(app, 'deployment/gce', 'resume-verified-upgrade.sh'), 'utf8');
-  assert.match(resume, new RegExp(`result\\['schema'\\]==${SCHEMA_VERSION}`));
+  assert.match(resume, /HISTORICAL schema81 helper only/);
+  assert.match(resume, /result\['schema'\]==81/);
   assert.match(resume, new RegExp(`h\\.contentStrategy\\.version!=="${CONTENT_STRATEGY.version.replace('.', '\\.')}"`));
-  assert.match(resume, new RegExp(`MAX\\(version\\).*==${SCHEMA_VERSION}`));
+  assert.match(resume, /MAX\(version\).*==81/);
+  const current = fs.readFileSync(path.join(app, 'deployment/gce/upgrade-existing.sh'), 'utf8');
+  const probe = fs.readFileSync(path.join(app, 'deployment/gce/verify-upgrade.mjs'), 'utf8');
+  assert.match(current, /offline "\$IMAGE" backup/);
+  assert.doesNotMatch(current, /docker image prune|docker rm --force/);
+  assert.doesNotMatch(current, /reconcile-opportunity-qualification/);
+  assert.match(probe, /prune: false/);
+  assert.match(probe, /assert\.equal\(schema, SCHEMA_VERSION\)/);
   for (const filename of ['upgrade-existing.sh', 'resume-verified-upgrade.sh']) {
     const script = fs.readFileSync(path.join(app, 'deployment/gce', filename), 'utf8');
     assert.match(script, /CMS_PROCESS_ROLE=api/);

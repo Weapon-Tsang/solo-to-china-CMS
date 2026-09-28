@@ -12,6 +12,7 @@ test('migration 80 indexes exception source rows and recovered jobs without chan
   const source = fs.readFileSync(new URL('../src/db.mjs', import.meta.url), 'utf8')
     .replace(/^  if \(current < 81\) migrationEightyOne\(db\);$/m, '')
     .replace(/^  if \(current < 82\) migrationEightyTwo\(db\);$/m, '')
+    .replace(/^  if \(current < 83\) migrationEightyThree\(db\);$/m, '')
     .replace(/^  if \(current < 80\) migrationEighty\(db\);$/m, '');
   const oldModule = path.join(directory, 'db-v79.mjs');
   fs.writeFileSync(oldModule, source);

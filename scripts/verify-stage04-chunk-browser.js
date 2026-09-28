@@ -1,0 +1,28 @@
+async page => {
+  const origin=page.url().match(/^https?:\/\/[^/]+/)[0],chunks=[],errors=[],outbound=[];
+  let totalBytes=0;
+  await page.route('**/*',route=>{
+    if(!route.request().url().startsWith(origin+'/')){outbound.push(route.request().url());return route.abort();}
+    return route.continue();
+  });
+  page.on('pageerror',error=>errors.push(String(error)));
+  page.on('request',request=>{
+    if(request.method()==='POST'&&request.url().endsWith('/article-media/uploads'))totalBytes=request.postDataJSON().size;
+    if(request.method()==='PUT'&&request.url().includes('/chunks/'))chunks.push({
+      path:request.url().slice(origin.length).split('?')[0],bytes:request.postDataBuffer()?.length});
+  });
+  const panel=page.getByTestId('article-media');
+  await panel.getByLabel('补图文件',{exact:true}).setInputFiles('output/playwright/phase04-noise.png');
+  await panel.getByText('已保存，待确认采用',{exact:true}).waitFor({timeout:30000});
+  if(totalBytes<=2097152||chunks.length!==Math.ceil(totalBytes/1048576)||chunks.some(chunk=>chunk.bytes>1048576)||chunks.reduce((n,c)=>n+c.bytes,0)!==totalBytes)
+    throw new Error('Wrong actual chunk requests: '+JSON.stringify(chunks));
+  await page.getByRole('button',{name:'关闭',exact:true}).click();
+  await page.getByRole('button',{name:/Cover selection fixture Draft/}).click();
+  if(!await panel.evaluate(el=>el.open))await panel.getByText('上传图片补齐',{exact:true}).click();
+  await panel.getByText('已保存，待确认采用',{exact:true}).waitFor();
+  await panel.getByText('已保存，待确认采用',{exact:true}).scrollIntoViewIfNeeded();
+  await page.screenshot({path:'output/playwright/phase04-chunk-upload.png',fullPage:true});
+  if(errors.length||outbound.length)throw new Error(JSON.stringify({errors,outbound}));
+  return {status:'PASS',chunks,total_bytes:totalBytes,reopened:true,errors,outbound,
+    scope:'synthetic noise image upload only; no adoption, models or WordPress'};
+}

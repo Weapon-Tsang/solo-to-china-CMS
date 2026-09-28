@@ -1,6 +1,7 @@
 import { validatePageEvidence } from "./evidence-validator.mjs";
 import { synchronizeSeoMetadata, validateSeoGeoArtifact } from "./seo-geo.mjs";
 import { normalizeFrontendPageForDelivery } from "./content-taxonomy.mjs";
+import { structuredDataNodes } from './seo-observation.mjs';
 
 const COMMERCIAL_VARIANTS = {
   affiliate_booking_card: () => "default",
@@ -51,7 +52,7 @@ export function mergeCommercialOverlay(pagePayload, commercialComposition) {
   return { ...page, blocks };
 }
 
-export function buildPublishPackage({ pagePayload, draft, contract, publication = null, media = [] }) {
+export function buildPublishPackage({ pagePayload, draft, contract, publication = null, media = [], selectedCover = null }) {
   if (!contract?.contractVersion || !contract?.checksum) {
     throw new PublishCompositionError("NO_VALID_FRONTEND_CONTRACT", "A valid active Frontend Contract is required.");
   }
@@ -66,6 +67,16 @@ export function buildPublishPackage({ pagePayload, draft, contract, publication 
   const featured = manifest.find((item) => item.role === "featured");
   if (featured && page.metadata && (supportedMetadataFields == null || supportedMetadataFields.has("featuredMediaId"))
     && page.metadata.featuredMediaId == null) page.metadata.featuredMediaId = featured.media_id;
+  if(selectedCover) {
+    if(!supportedMetadataFields?.has('featuredMediaId') || !Number.isInteger(selectedCover.media_id) || selectedCover.media_id<1
+      || selectedCover.draft_id!==draft.id || selectedCover.draft_revision!==draft.revision
+      || !manifest.some(item=>item.media_id===selectedCover.media_id))
+      throw new PublishCompositionError('COVER_DELIVERY_IDENTITY_MISMATCH','Selected cover must match the current draft and uploaded media manifest.');
+    page.metadata.featuredMediaId=selectedCover.media_id;
+  }
+  for(const [internal,external] of [['card_title','cardTitle'],['deck','deck']]) {
+    if(supportedMetadataFields?.has(external) && typeof draft[internal]==='string' && draft[internal].trim())page.metadata[external]=draft[internal].trim();
+  }
   return {
     contract: {
       componentContractVersion: contract.contractVersion,
@@ -172,15 +183,32 @@ function rawPresentationErrors(value, path) {
 }
 
 export function synchronizeSchemaWithPage(sourceSchema, page, draft = {}) {
-  const schema = isObject(sourceSchema) ? structuredClone(sourceSchema) : { "@context": "https://schema.org", "@graph": [] };
+  const schema = Array.isArray(sourceSchema)?{"@context":"https://schema.org","@graph":structuredClone(sourceSchema)}:
+    isObject(sourceSchema) ? structuredClone(sourceSchema) : { "@context": "https://schema.org", "@graph": [] };
   schema["@context"] ||= "https://schema.org";
   const graph = Array.isArray(schema["@graph"]) ? schema["@graph"] : [];
   const title = String(page?.metadata?.title || draft?.title || "").trim();
   const description = String(draft?.meta_description || "").trim();
   const canonicalUrl = String(page?.metadata?.canonicalUrl || page?.metadata?.seo?.canonicalUrl || draft?.seo?.canonical_url || "").trim();
-  for (const node of [...graph, ...(schema["@type"] ? [schema] : [])]) {
+  const idChanges=new Map();
+  if(canonicalUrl)for(const node of structuredDataNodes(schema)) {
+    const types=[node?.['@type']].flat();
+    const target=types.some(t=>['Article','BlogPosting'].includes(t))?`${canonicalUrl}#article`:
+      types.includes('WebPage')?canonicalUrl:types.includes('BreadcrumbList')?`${canonicalUrl}#breadcrumb`:null;
+    if(target&&node['@id'])idChanges.set(node['@id'],target);
+  }
+  function relink(value) {
+    if(Array.isArray(value)){value.forEach(relink);return;}
+    if(!isObject(value))return;
+    for(const [key,item] of Object.entries(value)) {
+      if(['@id','mainEntity','mainEntityOfPage','isPartOf','breadcrumb'].includes(key)&&typeof item==='string'&&idChanges.has(item))value[key]=idChanges.get(item);
+      else if(item&&typeof item==='object')relink(item);
+    }
+  }
+  relink(schema);
+  for (const node of structuredDataNodes(schema)) {
     const types = Array.isArray(node?.["@type"]) ? node["@type"] : [node?.["@type"]];
-    if (types.includes("Article")) {
+    if (types.includes("Article") || types.includes("BlogPosting")) {
       node.headline = title;
       if (description) node.description = description;
       if (canonicalUrl) {
@@ -293,7 +321,9 @@ function semanticSeo(draft) {
 }
 
 function buildMediaManifest(items) {
-  return items.slice(0, 200).map((item) => compact({
+  if(items.length>200)throw new PublishCompositionError('MEDIA_CONTRACT_CAPACITY_EXCEEDED',
+    'The existing publish contract accepts 200 displayed media items. Originals remain stored; select an explicit subset.',{selected:items.length,capacity:200,excess:items.length-200});
+  return items.map((item) => compact({
     media_id: positiveInteger(item.media_id || item.id),
     url: safeUrl(item.url),
     alt: String(item.alt || "").slice(0, 500),

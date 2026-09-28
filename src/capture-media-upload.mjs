@@ -17,6 +17,7 @@ export class CaptureMediaUploadManager {
     this.locks = new Map();
     this.finalizers = new AsyncSemaphore(2);
     this.retentionMs = Math.max(30 * 86400_000, Number(config.retentionMs || 0));
+    this.retainChunks=config.retainChunks===true;
   }
   async create(input = {}) {
     const size = Number(input.size), sha256 = String(input.sha256 || '').toLowerCase();
@@ -93,7 +94,7 @@ export class CaptureMediaUploadManager {
       }
       try {
         await fsp.rm(temporary, { force: true });
-        const verifier=mediaStreamVerifier(metadata);
+        const verifier=mediaStreamVerifier({...metadata,maxBytes:this.maxBytes});
         await pipeline(Readable.from(chunks()), verifier, fs.createWriteStream(temporary, { flags: 'wx' }));
         const receipt = { ...verifier.receipt, storageRef: reference };
         try { await fsp.link(temporary, target); }
@@ -104,7 +105,7 @@ export class CaptureMediaUploadManager {
         const receiptPath = path.join(this.directory(uploadId), 'receipt.json');
         await fsp.writeFile(receiptPath + '.tmp', JSON.stringify(receipt));
         await fsp.rename(receiptPath + '.tmp', receiptPath);
-        for (let index = 0; index < metadata.chunkCount; index++) await fsp.rm(this.chunkPath(uploadId, index), { force: true });
+        if(!this.retainChunks)for (let index = 0; index < metadata.chunkCount; index++) await fsp.rm(this.chunkPath(uploadId, index), { force: true });
         return receipt;
       } finally { await fsp.rm(temporary, { force: true }); }
     }));

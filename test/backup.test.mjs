@@ -7,6 +7,49 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { createBackup, drillBackup, restoreBackup, verifyBackup } from "../src/backup.mjs";
 import { openDatabase, SCHEMA_VERSION } from "../src/db.mjs";
+import { prepareWebMedia, mediaHash } from '../src/web-media.mjs';
+import { Repository } from '../src/repository.mjs';
+
+test('source cleanup preserves nested web/crop references and snapshots remain independent',async t=>{
+  const fixture=backupFixture(t),file=path.join(fixture.uploadsDir,'panel.png');fs.writeFileSync(file,PNG_BYTES);
+  const db=openDatabase(fixture.databasePath,{migrate:false});
+  try {
+    const repository=new Repository(db,{sourceUploadsDir:fixture.uploadsDir});
+    db.prepare("UPDATE article_visuals SET media_metadata_json=? WHERE id='visual-1'")
+      .run(JSON.stringify({route_panel_derivative:{localPath:file,sha256:mediaHash(PNG_BYTES)}}));
+    db.prepare('INSERT INTO source_delete_file_queue(path,queued_at) VALUES (?,?)').run(file,'now');
+    repository.cleanupDeletedSourceFiles();
+    assert.equal(fs.existsSync(file),true);
+    assert.equal(db.prepare('SELECT count(*) n FROM source_delete_file_queue').get().n,0);
+  } finally {db.close();}
+  const backup=createBackup({databasePath:fixture.databasePath,backupDir:fixture.backupDir,
+    sourceUploadsDir:fixture.uploadsDir,generatedMediaDir:fixture.mediaDir});
+  fs.unlinkSync(file);
+  assert.equal(verifyBackup(backup.backupPath).manifest.databaseReferences.some(r=>r.jsonPath?.includes('route_panel_derivative')),true);
+});
+
+test('web derivative lineage and exact bytes restore across directories in migration review',async t=>{
+  const fixture=backupFixture(t);
+  const web=await prepareWebMedia({bytes:PNG_BYTES,contentType:'image/png',outputDir:fixture.mediaDir,kind:'text',
+    qa:{status:'passed',file_hash:mediaHash(PNG_BYTES)}});
+  const db=openDatabase(fixture.databasePath,{migrate:false});
+  db.prepare("UPDATE article_visuals SET media_metadata_json=? WHERE id='visual-1'").run(JSON.stringify({
+    web_derivative:web.receipt,master_hash:mediaHash(PNG_BYTES),upload_bytes_hash:web.receipt.sha256,
+    quality_qa:{status:'passed',file_hash:mediaHash(PNG_BYTES)}}));db.close();
+  const backup=createBackup({databasePath:fixture.databasePath,backupDir:fixture.backupDir,
+    sourceUploadsDir:fixture.uploadsDir,generatedMediaDir:fixture.mediaDir});
+  const restored=restoreBackup(backup.backupPath,path.join(fixture.directory,'web-restored'));
+  const target=openDatabase(restored.databasePath,{migrate:false});
+  try {
+    const row=target.prepare("SELECT media_path,media_metadata_json FROM article_visuals WHERE id='visual-1'").get();
+    const metadata=JSON.parse(row.media_metadata_json);
+    assert.notEqual(metadata.web_derivative.localPath,web.receipt.localPath);
+    assert.equal(mediaHash(fs.readFileSync(metadata.web_derivative.localPath)),web.receipt.sha256);
+    assert.equal(mediaHash(fs.readFileSync(row.media_path)),metadata.master_hash);
+    assert.equal(metadata.quality_qa.file_hash,metadata.master_hash);
+    assert.equal(target.prepare("SELECT count(*) n FROM jobs WHERE status='running'").get().n,0);
+  } finally {target.close();}
+});
 
 const JPEG_BYTES = Buffer.from("/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AJXAIf/Z", "base64");
 const PNG_BYTES = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWNgZGIGAAAOAAeCcsnOAAAAAElFTkSuQmCC", "base64");
@@ -115,8 +158,13 @@ test("restore refuses a snapshot from a newer schema before creating a target", 
   entry.sha256 = crypto.createHash("sha256").update(fs.readFileSync(databaseFile)).digest("hex");
   fs.writeFileSync(snapshot.manifestPath, JSON.stringify(manifest));
   const target = path.join(fixture.directory, "future-restore");
+  const beforeDatabase = crypto.createHash('sha256').update(fs.readFileSync(databaseFile)).digest('hex');
+  const beforeManifest = fs.readFileSync(snapshot.manifestPath, 'utf8');
   assert.throws(() => restoreBackup(snapshot.backupPath, target), /newer than supported schema/);
   assert.equal(fs.existsSync(target), false);
+  assert.equal(fs.existsSync(`${target}.incomplete`), false);
+  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(databaseFile)).digest('hex'), beforeDatabase);
+  assert.equal(fs.readFileSync(snapshot.manifestPath, 'utf8'), beforeManifest);
 });
 
 test("restore refuses insufficient free space before creating target or staging", (t) => {
@@ -167,32 +215,43 @@ test("an interrupted restore resumes only the same snapshot and repairs partial 
   assert.equal(verifyBackup(first.backupPath).integrity, "ok");
 });
 
-test("restore migrates an older snapshot only inside the isolated target", async (t) => {
+for (const oldVersion of [78, 79]) test(`restore migrates schema ${oldVersion} only inside the isolated target`, async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cms-old-restore-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const source = fs.readFileSync(new URL("../src/db.mjs", import.meta.url), "utf8")
-    .replace(/^  if \(current < 79\) migrationSeventyNine\(db\);$/m, "")
+    .replace(/^  if \(current < 79\) migrationSeventyNine\(db\);$/m, oldVersion === 78 ? "" : '$&')
     .replace(/^  if \(current < 81\) migrationEightyOne\(db\);$/m, '')
     .replace(/^  if \(current < 82\) migrationEightyTwo\(db\);$/m, '')
+    .replace(/^  if \(current < 83\) migrationEightyThree\(db\);$/m, '')
     .replace(/^  if \(current < 80\) migrationEighty\(db\);$/m, "");
-  const oldModule = path.join(directory, "db-v78.mjs");
+  const oldModule = path.join(directory, `db-v${oldVersion}.mjs`);
   fs.writeFileSync(oldModule, source);
-  const { openDatabase: openV78 } = await import(pathToFileURL(oldModule).href);
+  const { openDatabase: openOld } = await import(pathToFileURL(oldModule).href);
   const databasePath = path.join(directory, "original.sqlite");
-  openV78(databasePath).close();
+  openOld(databasePath).close();
   const snapshot = createBackup({ databasePath, backupDir: path.join(directory, "backups"),
     clock: () => new Date("2026-08-24T14:00:00.000Z") });
-  assert.equal(snapshot.schemaVersion, 78);
+  assert.equal(snapshot.schemaVersion, oldVersion);
   const target = path.join(directory, "restored");
   const result = restoreBackup(snapshot.backupPath, target);
-  assert.equal(result.schemaVersionFrom, 78);
+  assert.equal(result.schemaVersionFrom, oldVersion);
   assert.equal(result.schemaVersionTo, SCHEMA_VERSION);
   const restored = openDatabase(result.databasePath, { migrate: false });
   try { assert.equal(restored.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, SCHEMA_VERSION); }
   finally { restored.close(); }
-  const sourceDb = openV78(databasePath);
-  try { assert.equal(sourceDb.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 78); }
+  const sourceDb = openOld(databasePath);
+  try { assert.equal(sourceDb.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, oldVersion); }
   finally { sourceDb.close(); }
+});
+
+test('deployment backup preserves older snapshots when pruning is disabled', t => {
+  const f=backupFixture(t);
+  const first=createBackup({databasePath:f.databasePath,backupDir:f.backupDir,sourceUploadsDir:f.uploadsDir,
+    generatedMediaDir:f.mediaDir,retention:1,prune:false,clock:()=>new Date('2026-08-24T12:00:00Z')});
+  const second=createBackup({databasePath:f.databasePath,backupDir:f.backupDir,sourceUploadsDir:f.uploadsDir,
+    generatedMediaDir:f.mediaDir,retention:1,prune:false,clock:()=>new Date('2026-08-24T13:00:00Z')});
+  assert.equal(verifyBackup(first.backupPath).integrity,'ok');
+  assert.equal(verifyBackup(second.backupPath).integrity,'ok');
 });
 
 test("snapshot verification compares manifest hashes rather than only file sizes", (t) => {

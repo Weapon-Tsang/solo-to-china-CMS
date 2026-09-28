@@ -60,6 +60,19 @@ test('self-reported route hash cannot hide changed Day/order/mode or mutated bun
   assert.throws(()=>assertFrozenRoute(forged),{code:'ROUTE_VERSION_STALE'});
 });
 
+test('T03-38 similar Huangjueya and Huangjueping labels cannot substitute for the approved entity occurrence',()=>{
+  const {options}=routeFixture();
+  const named=JSON.parse(JSON.stringify(options).replaceAll('East Hall','Huangjueya Old Street').replaceAll('West Hall','Huangjueping'));
+  for(const fragment of named.fragments)for(const stop of fragment.stops)
+    stop.name_zh=stop.entity_id==='east'?'黄桷垭老街':'黄桷坪';
+  const bundle=compileRouteBundle(named);assertFrozenRoute(bundle);
+  const body=routeReadableMarkdown(bundle);validateRouteDraft(bundle,{body_markdown:body});
+  assert.throws(()=>validateRouteDraft(bundle,{body_markdown:body.replaceAll('Huangjueya Old Street','Huangjueping'),
+    approved_route_hash:bundle.approved_route_hash}),{code:'ROUTE_TEXT_MISMATCH'});
+  const claims=structuredClone(routeSemantics(bundle));claims.stops[0].entity_id='west';
+  assert.equal(compareRouteMedia(bundle,{use:'route_overview',route:claims,approved_route_hash:bundle.approved_route_hash}).compatible,false);
+});
+
 test('actual renderer decodes PNG and rejects missing stop, reversed arrow, old manifest and changed bytes',async()=>{
   const {bundle}=routeFixture();const directory=fs.mkdtempSync(path.join(os.tmpdir(),'cms-a2-render-'));
   const rendered=await renderRouteSchematic(bundle,directory);

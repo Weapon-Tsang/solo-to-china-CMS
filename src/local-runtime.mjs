@@ -94,6 +94,9 @@ export function inspectLocalHandoffState(db) {
     unresolvedWordPressPublishes: count("wordpress_publish_attempts", "state IN ('dispatch_started','outcome_unknown')"),
     unresolvedWordPressMediaRefreshes: count("wordpress_media_refresh_attempts", "state IN ('dispatch_started','outcome_unknown')"),
     unresolvedMediaDispatches: count("media_dispatches", "state IN ('dispatch_started','outcome_unknown')"),
+    pendingArticleMedia: count('article_media_revisions',"state NOT IN ('local_ready','revoked')"),
+    unresolvedCoverDeliveries: count('cover_delivery_attempts',"state IN ('dispatch_started','outcome_unknown','needs_review')"),
+    unresolvedManualMediaDeliveries:count('article_media_revisions',"json_extract(receipt_json,'$.delivery_attempt.state') IN ('dispatch_started','outcome_unknown','needs_review')"),
   };
   return { handoff, reconciliationRequired: Object.entries(handoff)
     .filter(([key, value]) => key !== "queuedJobs" && value !== null && value > 0).map(([key]) => key) };

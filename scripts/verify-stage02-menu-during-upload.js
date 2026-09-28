@@ -1,0 +1,35 @@
+async (page) => {
+  await page.goto('http://127.0.0.1:62502');
+  await page.getByRole('textbox',{name:'用户名',exact:true}).fill('cover-test');
+  await page.getByRole('textbox',{name:'密码',exact:true}).fill('cover-local-test-only');
+  await page.getByRole('button',{name:'登录',exact:true}).click();
+  await page.getByRole('tab',{name:'内容',exact:true}).click();
+  await page.getByRole('button',{name:'Cover selection fixture Draft'}).click();
+  await page.getByText('上传图片补齐',{exact:true}).click();
+  let saved,release;const first=new Promise(resolve=>saved=resolve),gate=new Promise(resolve=>release=resolve);
+  await page.route('**/article-media/uploads/*/chunks/0',async route=>{const response=await route.fetch();saved();await gate;await route.fulfill({response});},{times:1});
+  const filename='C:/Users/Mloong/AppData/Local/Temp/cms-c-cover-browser-I5npp0/menu-switch-accepted.png';
+  await page.getByTestId('article-media').getByLabel('补图文件',{exact:true}).setInputFiles(filename);
+  await first;
+  await page.getByRole('button',{name:'关闭',exact:true}).click();
+  const start=Date.now();await page.getByRole('tab',{name:'来源',exact:true}).click();
+  await page.getByRole('heading',{name:'研究来源'}).first().waitFor();const menuMs=Date.now()-start;
+  release();
+  let state;for(let i=0;i<30;i++){
+    const list=await page.evaluate(async()=>await(await fetch('/api/drafts/cover-draft/article-media?offset=0',{cache:'no-store'})).json());
+    state=list.items.find(x=>x.filename==='menu-switch-accepted.png');
+    if(state?.state==='paused')break;await page.waitForTimeout(100);
+  }
+  if(state?.state!=='paused')throw new Error(`Switch did not pause upload: ${state?.state}`);
+  await page.getByRole('tab',{name:'内容',exact:true}).click();
+  await page.getByRole('button',{name:'Cover selection fixture Draft'}).click();
+  await page.getByText('上传图片补齐',{exact:true}).click();
+  const panel=page.getByTestId('article-media');
+  await panel.locator('article').filter({hasText:'menu-switch-accepted.png'}).getByLabel('重新选择此原件以续传').setInputFiles(filename);
+  await panel.locator('article').filter({hasText:'menu-switch-accepted.png'}).getByText('已保存，待确认采用',{exact:true}).waitFor({timeout:60000});
+  const after=await page.evaluate(async()=>await(await fetch('/api/drafts/cover-draft/article-media?offset=0',{cache:'no-store'})).json());
+  const item=after.items.filter(x=>x.filename==='menu-switch-accepted.png');
+  if(item.length!==1||item[0].id!==state.id||!item[0].asset_id)throw new Error('Menu switch duplicate or lost original.');
+  return {status:'PASS',menu_switch_ms:menuMs,within_200ms:menuMs<=200,paused_after_switch:true,resumed_after_return:true,
+    stable_upload_id:item[0].id,bytes:item[0].upload.size,duplicates:0};
+}

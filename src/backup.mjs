@@ -26,6 +26,10 @@ const REFERENCED_FILE_COLUMNS = Object.freeze([
   { table: "visual_candidates", id: "id", column: "media_path", category: "visual_candidate" },
 ]);
 const REFERENCED_JSON_FILE_COLUMNS = Object.freeze([
+  { table: "article_media_uploads", id: "id", column: "upload_json" },
+  { table: "article_media_uploads", id: "id", column: "receipt_json" },
+  { table: "article_media_revisions", id: "id", column: "receipt_json" },
+  { table: "article_visuals", id: "id", column: "media_metadata_json" },
   { table: "sources", id: "id", column: "raw_payload_json" },
   { table: "capture_versions", id: "id", column: "raw_payload_json" },
   { table: "capture_versions", id: "id", column: "assets_json" },
@@ -66,6 +70,7 @@ export function createBackup({
   captureUploadsDir = null,
   captureMediaUploadsDir = null,
   retention = 1,
+  prune = true,
   offsiteLocation = "",
   offsiteRetentionDays = 0,
   codeRevision = "",
@@ -73,12 +78,12 @@ export function createBackup({
   clock = () => new Date(),
 }) {
   return withMediaFileLease(databasePath, () => createBackupLocked({ databasePath, backupDir, sourceUploadsDir,
-    generatedMediaDir, captureUploadsDir, captureMediaUploadsDir, retention, offsiteLocation,
+    generatedMediaDir, captureUploadsDir, captureMediaUploadsDir, retention, prune, offsiteLocation,
     offsiteRetentionDays, codeRevision, reason, clock }));
 }
 
 function createBackupLocked({ databasePath, backupDir, sourceUploadsDir, generatedMediaDir,
-  captureUploadsDir, captureMediaUploadsDir, retention, offsiteLocation, offsiteRetentionDays,
+  captureUploadsDir, captureMediaUploadsDir, retention, prune, offsiteLocation, offsiteRetentionDays,
   codeRevision, reason, clock }) {
   const source = path.resolve(databasePath);
   const destinationDir = path.resolve(backupDir);
@@ -205,7 +210,7 @@ function createBackupLocked({ databasePath, backupDir, sourceUploadsDir, generat
     verifyBackup(stagingPath);
     fs.renameSync(stagingPath, snapshotPath);
     const verification = verifyBackup(snapshotPath);
-    pruneBackups(destinationDir, retention);
+    if (prune) pruneBackups(destinationDir, retention);
     return {
       backupPath: snapshotPath,
       databaseBackupPath: path.join(snapshotPath, databaseArchivePath),
