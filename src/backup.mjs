@@ -820,14 +820,26 @@ function referenceKey(reference) {
 }
 
 function resolveStoredPath(value, category, sourceUploadsDir) {
-  if (path.isAbsolute(String(value))) return path.resolve(String(value));
+  const stored = String(value);
+  if (category === "capture_history" && sourceUploadsDir) {
+    const legacy = stored.startsWith("/app/media/") ? stored.slice("/app/".length) : stored;
+    if (/^media\/[a-f0-9]{2}\/[a-f0-9]{64}\.[a-z0-9]+$/i.test(legacy)) {
+      const oldPath = path.resolve(projectRoot, legacy);
+      const currentPath = path.resolve(sourceUploadsDir, legacy);
+      const expectedHash = path.posix.basename(legacy).split(".")[0].toLowerCase();
+      if (!fs.existsSync(oldPath) && fs.existsSync(currentPath) && hashFile(currentPath) === expectedHash) {
+        return currentPath;
+      }
+    }
+  }
+  if (path.isAbsolute(stored)) return path.resolve(stored);
   if (["source_original", "source_derivative"].includes(category)) {
-    if (!sourceUploadsDir || !/^(?:media|\.derived)\/[a-f0-9]{2}\/[a-f0-9]{64}\.[a-z0-9]+$/i.test(String(value))) {
+    if (!sourceUploadsDir || !/^(?:media|\.derived)\/[a-f0-9]{2}\/[a-f0-9]{64}\.[a-z0-9]+$/i.test(stored)) {
       throw new Error(`Unsafe source media reference: ${value}`);
     }
-    return path.resolve(sourceUploadsDir, String(value));
+    return path.resolve(sourceUploadsDir, stored);
   }
-  return path.resolve(projectRoot, String(value));
+  return path.resolve(projectRoot, stored);
 }
 
 function legacyV2ReferencedFile(reference, filesByArchive, filesByOriginal) {

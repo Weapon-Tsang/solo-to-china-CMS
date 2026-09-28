@@ -430,6 +430,49 @@ test("snapshot preserves and remaps file paths nested in historical capture JSON
   } finally { recovered.close(); }
 });
 
+test("snapshot resolves content-addressed legacy capture paths from the current source store", (t) => {
+  const fixture = backupFixture(t);
+  const bytes = Buffer.from('authorized archived capture bytes');
+  const digest = mediaHash(bytes);
+  const relative = `media/${digest.slice(0, 2)}/${digest}.webp`;
+  const current = path.join(fixture.uploadsDir, relative);
+  fs.mkdirSync(path.dirname(current), { recursive: true });
+  fs.writeFileSync(current, bytes);
+  const db = openDatabase(fixture.databasePath, { migrate: false });
+  db.prepare("UPDATE sources SET raw_payload_json=? WHERE id='source-1'")
+    .run(JSON.stringify({ assets: [{ localPath: relative, derivativeStorageRef: `/app/${relative}` }] }));
+  db.close();
+  const snapshot = createBackup({ databasePath: fixture.databasePath, backupDir: fixture.backupDir,
+    sourceUploadsDir: fixture.uploadsDir, generatedMediaDir: fixture.mediaDir });
+  const refs = verifyBackup(snapshot.backupPath).manifest.databaseReferences.filter(item => item.category === 'capture_history');
+  assert.equal(refs.length, 2);
+  assert.ok(refs.every(item => item.originalPath === current && item.sha256 === digest));
+  assert.equal(drillBackup(snapshot.backupPath).drill, 'passed');
+  const restored = restoreBackup(snapshot.backupPath, path.join(fixture.directory, 'legacy-capture-restored'));
+  const recovered = openDatabase(restored.databasePath, { migrate: false });
+  try {
+    const asset = JSON.parse(recovered.prepare("SELECT raw_payload_json FROM sources WHERE id='source-1'").get().raw_payload_json).assets[0];
+    assert.equal(asset.localPath, asset.derivativeStorageRef);
+    assert.equal(sha256(asset.localPath), digest);
+  } finally { recovered.close(); }
+});
+
+test("snapshot rejects a legacy capture alias when its current bytes do not match the content hash", (t) => {
+  const fixture = backupFixture(t);
+  const expected = mediaHash(Buffer.from('expected bytes'));
+  const relative = `media/${expected.slice(0, 2)}/${expected}.webp`;
+  const current = path.join(fixture.uploadsDir, relative);
+  fs.mkdirSync(path.dirname(current), { recursive: true });
+  fs.writeFileSync(current, 'unrelated bytes');
+  const db = openDatabase(fixture.databasePath, { migrate: false });
+  db.prepare("UPDATE sources SET raw_payload_json=? WHERE id='source-1'")
+    .run(JSON.stringify({ assets: [{ localPath: relative }] }));
+  db.close();
+  assert.throws(() => createBackup({ databasePath: fixture.databasePath, backupDir: fixture.backupDir,
+    sourceUploadsDir: fixture.uploadsDir, generatedMediaDir: fixture.mediaDir }),
+  /Database references missing capture_history file/);
+});
+
 test("snapshot rejects a missing file referenced only by historical capture JSON", (t) => {
   const fixture = backupFixture(t);
   const missing = path.join(fixture.directory, "lost-history.bin");
