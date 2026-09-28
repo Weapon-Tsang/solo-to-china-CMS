@@ -1,0 +1,1015 @@
+{
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "spec_sha256": "d4c223aac6b29b0c6b65fda7d70d8925ef37bfa6faf038f75d2dffe5c37b39c1",
+  "preexisting_modified_files": {
+    ".env.example": "8595c2e5186f340e3fdaa8b36a7be1842a9ef15b0ec6afa895457ea3732fee82",
+    ".gitignore": "1f5e8101f6101998deeeedbe39178d3b1cb0210cd94550d0c4dd49ea1a9012a6",
+    "deployment/gce/code-only-release.sh": "e7d808b160da54f8577e91dc143a192ce8c0fd18c224f881f17035122f190a31",
+    "deployment/gce/resume-verified-upgrade.sh": "35e9ae16a045fbaa0ba6c8cf83d4d14928ae6b3149006c46e5026a762421121c",
+    "frontend/src/App.jsx": "79b8def382aa03ef499faca2693731804bd649480e10471f522cd0d4ba78df91",
+    "frontend/src/views.jsx": "076d30074bf7d879da6879592ececceb5756060de04e6f704d0b51b98daed50d",
+    "package-lock.json": "fef61f67df0948fbd019324ef75047da0cb690de88c309e897c1c89e28c58274",
+    "package.json": "9a03559debf2f7dc333538cfb0482676e6a45a9554aded5ba94eff903628690e",
+    "src/adapters/manual-source.mjs": "c2ac57466c27033af036d5c4565279832cceaf7beec921a2d680a77a0da3fead",
+    "src/ai/extraction-router.mjs": "ecdcff4e6d03aa2b8b0dec7391d6465cae28f3a069dd673920a49bb1c03335bc",
+    "src/ai/kimi.mjs": "9c8b6e1896105f94153f41e1c7d21a4fd404e5ad64482da8db05aa376ccf0366",
+    "src/ai/vertex-gemini-client.mjs": "a9c4c444b1704b77f59b17de4553b9ac5e8d95eac4737fd47e9e74025efe0744",
+    "src/backup.mjs": "1ca1d63fd65f68aca7f19ea6a56613c862bf011d918995caa2a59d38c881b123",
+    "src/capture-upload.mjs": "ee50a68d11c1f5d5ff2890986c2b2ce46b9e27b0d29cc5ad80c00e84b9d3158d",
+    "src/chunked-upload.mjs": "8269fc1153d13020e249ef353b9f7b5f9a04de428868bcba0b12a83d1508f699",
+    "src/config.mjs": "753143c112f14dbfeef35fbd4eb1d089f0af29036230374c566acb9898c77496",
+    "src/db.mjs": "07a235b5304ee6d489ebfd7ff01c9969f0c9f8a5bbfbeaa79bb6c2627e70c92b",
+    "src/maintenance.mjs": "a729b914e122509e85d2c5e6a4809b8ff09bc21d5ca875fdff994a6c84cc6440",
+    "src/pipeline.mjs": "bd6ce7f760e87c3b47b945077c06bbe969b72b6d97824096fd5455b74b1a8d92",
+    "src/repository.mjs": "a23749a61e17853b9e732277403486c6e3e2564e75c6d6f469556d58b4642f39",
+    "src/server.mjs": "191ff31d0ad850985f8271dbc6d8fbffc7408105d96625bbfb94a01174d990fd",
+    "src/services/operations-workspace.mjs": "2b95223a5266850e416fefede084dfe0c2ee6936c7e0e99f467e0caf9dbf1aa0",
+    "src/source-media-store.mjs": "ed3d681b626ba0ba673a14b59333ec14c35e93559355ceafd75dbca45c74c6b1",
+    "src/visuals/vertex-imagen.mjs": "f4cf70aca841df4df84e9264b4038dcd154c1ae682ce392375214a2f085cb096",
+    "test/backup.test.mjs": "21a60b64e252cf029c2327a97f00e473089f1f7fcd0ee8f75087b1fa1f6cdd98",
+    "test/capture-upload.test.mjs": "71f416f65c579a56c08c80344fa39f7c9c0928e4ac85157d03fe3c70e0fa448e",
+    "test/capture.test.mjs": "f460b108607f0ab7261e52eab130eb722260ba0601c71f833c43254e477a3e0c",
+    "test/frontend-localization.test.mjs": "58739094f64b0587bd7a58a1043bd9efbde6b99b205e21078594b507e775d613",
+    "test/media-request-executor.test.mjs": "b265dc37638023bb7d2a9c0b3ea34f8e9bd1992bf74590a04c7f8c35b576f84e",
+    "test/migration-seventy-nine.test.mjs": "dbdb0d4fd9e51f0ee7ae529de5ec7f3216ec81c5918d4343a44f538b43309308",
+    "test/model-routing-v11.test.mjs": "8d26044bea85c9d591da91da143e98df9d4407d922eeb53d8d753afcf5a66452",
+    "test/pipeline.test.mjs": "46b0a971a5861085444afe17ea0f491c53e24183a5e171d53ef087611799f8bd",
+    "test/server.test.mjs": "ff81989afa7e0311895957d81409bf308ed7225b9c52e2d62dc7ccbfb20a9968",
+    "test/vertex-batch-pipeline.test.mjs": "ca9e6a2f894d87b40b133004d259856d10b60c5e82893e4a714f091a28a23201",
+    "test/vertex-gemini-client.test.mjs": "442d7e61ced6579260442f0dd16e5d2cf9747821e50013645f15e8c08f099182"
+  },
+  "requirements": [
+    {
+      "id": "PIPE-001",
+      "title": "真实调用图与一次主生成【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "PIPE-002",
+      "title": "保留独立审核和来源处理解耦【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "PIPE-003",
+      "title": "冻结图片需求和权威门禁【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "PIPE-004",
+      "title": "媒体跨任务单飞与共享配额【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "PIPE-005",
+      "title": "预算、退避与根失败持久化【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "PIPE-006",
+      "title": "逐图断点与未知结果保护【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "PIPE-007",
+      "title": "成本记录不虚构【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-001",
+      "title": "可复现审计与缺图原因分层【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-002",
+      "title": "来源上下文包与稳定的图文位置【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-003",
+      "title": "实时、批量和补分析统一图文输入契约【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-004",
+      "title": "画面观察与来源关联分开保存【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-005",
+      "title": "轻量关系索引与实体别名归一【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-006",
+      "title": "扩大合理召回而非全库无差别扫描【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-007",
+      "title": "匹配按证据与用途，移除像素单一命名门槛【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-008",
+      "title": "在冻结图片需求前给写作提供真实素材能力【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-009",
+      "title": "分开缓存画面分析与上下文关联【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-010",
+      "title": "历史关系修复先本地dry-run再有界补分析【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-011",
+      "title": "PDF和其他文档的视觉输入不冒充独立素材【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "BIND-012",
+      "title": "数据迁移、备份和可观察性在本阶段同步补齐【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-001",
+      "title": "识别路线内容并选择来源约束模式【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-002",
+      "title": "提取来源的有序路线，不靠照片排序猜交通【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-003",
+      "title": "持久化可验证的route bundle及版本【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-004",
+      "title": "先检查关键路线事实和基本可行性，再冻结【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-005",
+      "title": "写作前冻结路线与媒体能力，避免额外付费链【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-006",
+      "title": "整日路线图与单点实拍采用不同匹配规则【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-007",
+      "title": "原路线图转译与新路线重编分别处理【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-008",
+      "title": "正文、路线图、图注从同一批准骨架派生【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-009",
+      "title": "字段级一致性校验与真正独立审核【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-010",
+      "title": "人工补图仍为最高采用优先，但不覆写路线真相【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-011",
+      "title": "已有正文与历史文章修复的默认决策【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "ROUTE-012",
+      "title": "幂等恢复、版本传播、备份与可观察性【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MEDIA-001",
+      "title": "媒体分层且原件不覆盖【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MEDIA-002",
+      "title": "确定性转码流水线【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MEDIA-003",
+      "title": "按图像类型而非统一质量压缩【硬要求＋软参数】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MEDIA-004",
+      "title": "既有WordPress子尺寸消费与单一生成方【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MEDIA-005",
+      "title": "缓存身份与原子、幂等保存【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MEDIA-006",
+      "title": "QA和优化失败分类【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MEDIA-007",
+      "title": "CMS媒体上传与真实文件身份【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MEDIA-008",
+      "title": "图像SEO和文本可用性【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MEDIA-009",
+      "title": "R2明确暂缓【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "COVER-001",
+      "title": "独立封面用途与安全兼容门控【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "COVER-002",
+      "title": "密集文字和界面截图硬排除【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "COVER-003",
+      "title": "选择优先级与可解释结果【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "COVER-004",
+      "title": "横幅裁剪与主体安全【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "COVER-005",
+      "title": "AI封面只用于合适情形【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "COVER-006",
+      "title": "低调用成本与失败处理【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "COVER-007",
+      "title": "封面母图尺寸与体积软目标【硬要求＋软目标】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "CONTRACT-001",
+      "title": "内部字段与已支持交付字段分开【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "CONTRACT-002",
+      "title": "CMS显式封面替换与回执对账【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "CONTRACT-003",
+      "title": "可选卡片短文案内部生成与兼容输出【硬要求＋编辑目标】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "CONTRACT-004",
+      "title": "历史封面CMS dry-run与版本保护【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "CONTRACT-005",
+      "title": "固定合同制品与前端外部依赖记录【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-001",
+      "title": "所有媒体阻塞及意外无图均有就地入口【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-002",
+      "title": "按文章与槽位上传，多文件无需重复填表【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-003",
+      "title": "不设张数、单文件或批次总量的业务硬上限【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-004",
+      "title": "分块流式上传、断点恢复与链路限制诊断【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-005",
+      "title": "原件持久化后才算上传完成并刷新确认【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-006",
+      "title": "独立人工来源入库与最优先的采用选择【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-007",
+      "title": "人工确认优先不等于跳过真实性和质量【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-008",
+      "title": "一次确认采用并继续，原子更新媒体修订【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-009",
+      "title": "从失败环节往后继续，保全正文与预算【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-010",
+      "title": "部分补齐、意外无图与普通无图分别处理【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-011",
+      "title": "WordPress交付确认与已发布版本保护【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-012",
+      "title": "安全传输、原件隐私和清理【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-013",
+      "title": "管理员界面可用性和服务端状态一致【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-014",
+      "title": "权限边界与按钮的真实业务语义【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-015",
+      "title": "新增文件与记录完整备份，恢复不丢人工决定【硬要求】",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "MUP-016",
+      "title": "验收产物与操作说明【硬要求】",
+      "status": "NOT_TESTED"
+    }
+  ],
+  "tests": [
+    {
+      "id": "T02-01",
+      "input": "正常article bundle路径与调用计数",
+      "expected": "1主生成+1独立文本审核；SEO/卡片文案不另调模型；媒体另计",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-02",
+      "input": "已有来源复用、长输出不足、旧文章无卡片字段",
+      "expected": "不重复采集/重写；容量问题显式处理；旧内容正常回退",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-03",
+      "input": "必需媒体失败、空visuals、插画required但非factual",
+      "expected": "均按冻结清单判断；不因factual=false绕过必需图",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-04",
+      "input": "旧QA/旧revision、直接WordPress写入口尝试",
+      "expected": "权威门禁拒绝，不覆盖已有版本",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-05",
+      "input": "多文章多Worker并发媒体请求，低配额2RPM虚拟时钟",
+      "expected": "maxConcurrent=1且滑窗/间隔正确；文本非全部串行",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-06",
+      "input": "Retry-After较长、400/401/403、429后冷却",
+      "expected": "尊重服务端时间；等待不耗尝试；永久错误不盲重试",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-07",
+      "input": "重启/手动恢复/新Job、usage缺失",
+      "expected": "累计预算不清零；根失败可追溯；unknown费用保留",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-08",
+      "input": "生图完成QA失败、翻译完成排版失败、上传结果未知",
+      "expected": "仅恢复正确子阶段；未知结果先对账，不重新写正文",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-09",
+      "input": "JPG/PNG/WebP输入、EXIF旋转、透明图",
+      "expected": "真实转码/方向/透明正确；原始hash不变",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-10",
+      "input": "母图QA后生成衍生图",
+      "expected": "母图与衍生图不同hash、可验证谱系；不伪QA绑定",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-11",
+      "input": "坏图片、MIME不符、巨像素、动画、低分辨率",
+      "expected": "可诊断拒绝/适当原格式；不静默丢帧/放大/改扩展名",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-12",
+      "input": "细字长图及优化失败",
+      "expected": "文字可读或保留原格式；只重试优化，不跳内容QA",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-13",
+      "input": "1200/768/小图封面；WordPress只返回部分既有尺寸",
+      "expected": "真实16:9母图；无伪尺寸或放大；缺期望档位只记录外部依赖",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-14",
+      "input": "受控HTTP接收器返回上传/二次变换回执；可选真实WP",
+      "expected": "CMS验证附件/URL/MIME/hash分层；未跑真实WP明确待验",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-15",
+      "input": "同key并发重复优化/新策略版本/清理任务",
+      "expected": "原子复用；新版本不覆盖旧引用；快照引用保护",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-16",
+      "input": "优化失败原格式回退但源QA失败",
+      "expected": "合格母图仅优化告警；QA失败仍阻断，不偷换规则",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-17",
+      "input": "测试接收器独立媒体/可选固定WP，关闭CMS后读取",
+      "expected": "公开副本独立；无local/private/过期URL；层级不混淆",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-18",
+      "input": "同一来源多地点图、图注/alt与正文图信息",
+      "expected": "实体绑定准确、无堆词；重要图中文字有可读对应说明",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-19",
+      "input": "检查新增依赖/配置/外部写日志",
+      "expected": "无R2/动态图像订阅/公网设置新增",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-20",
+      "input": "支持与不支持cover-only的两种接收能力fixture",
+      "expected": "支持时无需正文重复；不支持时明确门控；正文必需图仍严格校验",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-21",
+      "input": "cover/body/social与旧严格合同",
+      "expected": "只发允许字段；不能伪造schema放行；缺能力记录而非丢内容",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-22",
+      "input": "密集交通说明/清单型信息图/多宫格/错地点/不确定实景",
+      "expected": "封面拒绝理由明确；不误删正文素材",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-23",
+      "input": "城市夜景实拍中的自然招牌与全文字海报",
+      "expected": "自然文字不一票否决；文字主体海报被排除",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-24",
+      "input": "合格与不合格人工锁定、邻近相似封面",
+      "expected": "尊重合格锁定；不合格提示处理；不为去重选错实体",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-25",
+      "input": "横竖图焦点裁剪、小图、主体在边缘",
+      "expected": "16:9且主体保留；无母图覆盖/伪放大/越界坐标",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-26",
+      "input": "AI抽象主题/具体景点、连续质量失败",
+      "expected": "无文字编辑插画；不伪实景；最多2候选且预算共用",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-27",
+      "input": "无合格封面、旧已发布文章修复dry-run",
+      "expected": "新交付受门禁；旧文章保持；dry-run零写零付费",
+      "layer": "本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-28",
+      "input": "新旧card title/deck及严格additionalProperties",
+      "expected": "支持则映射；不支持仅内部保存；不改正式title/SEO/excerpt",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-29",
+      "input": "已有特色图替换、stale/人工修改/不支持刷新接口",
+      "expected": "CMS发送显式ID并对账；冲突/不支持阻断，不改PHP或全篇覆盖",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-30",
+      "input": "封面刷新影响Hero/OG的fixture及已验证固定制品",
+      "expected": "只在用途兼容时更新；结果未知保护；母图/正文不被错误裁剪",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-31",
+      "input": "没有前端源码；固定合同不包含新展示字段",
+      "expected": "CMS本地流程可运行；内部字段保留；外发字段严格合法，无前端写",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-32",
+      "input": "仅拿到前端UI完成说明，线上合同/刷新能力未确认",
+      "expected": "不能当全能力通过；准确记录依赖和生产门控，不越界改前端",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-33",
+      "input": "庭院像素仅generic描述，图注明确“图2：湖广会馆庭院”",
+      "expected": "来源绑定可用于对应槽位；primary_subjects不必硬写专名；新增分析不降低已验证关系",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-34",
+      "input": "ready/needs_review的primary_subjects非空；旧自动排除记录",
+      "expected": "正确区分观察与绑定；有证据的实体/人工关系不被旧token阈值或排除表屏蔽",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-35",
+      "input": "小红书轮播无邻文，独立正文有图号引用",
+      "expected": "实际实时/批量/补分析mock请求都带正确ID、caption、关联片段和定位",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-36",
+      "input": "多地点笔记无图号；邻文提到景点的信息图",
+      "expected": "不按顺序/标题给所有图确认地点；mentions不冒充depicts",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-37",
+      "input": "中英文别名、同图不同来源出现、同source多图",
+      "expected": "标准实体归一；occurrence和来源证据独立且可回溯",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-38",
+      "input": "长文超过上下文预算、模型漏图/错图ID",
+      "expected": "遗漏显式待补，有界回读；不以空raw_text伪装无关联，不串图",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-39",
+      "input": "泛泛轮渡图、路线拍摄明确说明、精确码头槽位",
+      "expected": "一般用途/来源路线关系与精确码头证明分开；unknown不当反证",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-40",
+      "input": "相关照片在未贡献本篇Claim的另一来源",
+      "expected": "实体素材查询能召回，零虚构Claim，关系仍校验",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-41",
+      "input": "相关图排在旧160/12候选上限之后",
+      "expected": "正确按关系分页和排名；显式确认ID不受截断；候选预算未知不报一定无图",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-42",
+      "input": "字节不变图注改动、旧ready图片绑定缺失",
+      "expected": "只补绑定，不重买视觉/正文；旧无依据实体不自动confirmed",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-43",
+      "input": "同图两篇笔记有矛盾；修改来源版本；恶意来源指令",
+      "expected": "分别保留冲突/过期关系，缓存精确失效，不执行来源指令",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-44",
+      "input": "主生成计划一个库里不存在的特定入口实拍",
+      "expected": "冻结前可用性检查发现缺口；冻结后不删必需图以通过",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-45",
+      "input": "已存无绑定/未召回/真的缺文件等失败及dry-run",
+      "expected": "各原因计数可下钻；修复有版本，仅影响相关媒体，不全库付费",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-46",
+      "input": "PDF内图能被模型读取但没有独立文件",
+      "expected": "能按结构提取则留PDF页码/区域；不支持时明确原因和人工补图，不伪JPG",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-47",
+      "input": "各种已知/未知媒体缺失、analysis/检索/预算错误",
+      "expected": "队列、异常、媒体详情都有绑定本篇的可用上传入口；原错误保留",
+      "layer": "浏览器＋API",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-48",
+      "input": "旧完成文章意外0图；合法预批准无图",
+      "expected": "前者给修复动作，后者可选添加不假报失败；两者不丢原文字",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-49",
+      "input": "多选/拖拽/追加101个文件、切菜单、单项失败",
+      "expected": "不因数量截断；分页预览，成功项保留，无逐图重复填文章信息",
+      "layer": "浏览器＋API",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-50",
+      "input": "人工source没有Claim且自动候选认为不相关",
+      "expected": "确认后按显式ID进入本篇候选/计划并锁定，不能被sourceIds/词分拒绝",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-51",
+      "input": "101个有效图片；有效单图超过现有旧业务上限",
+      "expected": "入口/schema/会话/回读/采用不截断；无固定业务张数或体积拒绝",
+      "layer": "浏览器＋API",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-52",
+      "input": "大文件分块和大offset；128MiB与512MiB流式传输夹具",
+      "expected": "传输/验证分层；记录有界内存与反压，64位偏移不溢出；传输夹具不冒充有效图片QA",
+      "layer": "本地传输",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-53",
+      "input": "中途断网、重复块、坏块、缺块finish、浏览器重开",
+      "expected": "正确续传/幂等；缺坏块不成功；需要重选文件时提示且不重传已确认块",
+      "layer": "浏览器＋API",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-54",
+      "input": "代理413/超时、磁盘不足、解码资源不足",
+      "expected": "指出具体层，可下调块或安全暂停；不关全站限制、不丢已上传文件",
+      "layer": "本地故障注入",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-55",
+      "input": "进度100%但未入库、提交完成后缓存仍旧",
+      "expected": "verifying与stored区分，回执后定向刷新真实状态；无盲目清错",
+      "layer": "浏览器＋API",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-56",
+      "input": "finish回执丢失、确认时draft revision过期",
+      "expected": "可查已存资产；版本冲突展示最新差异，不覆盖新状态或重复上传",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-57",
+      "input": "人工确认湖广会馆庭院，模型只能写传统建筑",
+      "expected": "纯名字识别不足不阻塞；按本篇关系采用；明显反证单独提示",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-58",
+      "input": "确认采用→恢复，保存前后正文hash、调用与队列",
+      "expected": "只新增一次媒体修订/恢复事件，不重写正文、不重买其他成功图、不清预算",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-59",
+      "input": "人工普通实拍、中文信息图、AI插画声称实拍",
+      "expected": "实拍本地路径；中文必要内容完整处理与QA；AI不冒充factual实拍",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-60",
+      "input": "双击确认、旧Worker晚到、并发换图及outcome_unknown",
+      "expected": "CAS/幂等/版本保护有效；人工锁不被覆盖；先对账",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-61",
+      "input": "缺3图补1图、全部上传但只选2图、选用超合同容量",
+      "expected": "部分状态准确，其他候选保留；选用不静默截断或全插正文",
+      "layer": "浏览器＋API",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-62",
+      "input": "生图预算用尽后改人工原图；必要QA无剩余额度",
+      "expected": "纯本地路径继续；需付费处真实等待/增额，不靠新Job/revision清零",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-63",
+      "input": "快照/清理并发、手动原件和暂停块恢复到review",
+      "expected": "原件/确认/关系/修订不丢；块策略可验证，review零自动续跑",
+      "layer": "本地恢复",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-64",
+      "input": "旧无图计划主动新增slot和正文媒体锚点",
+      "expected": "新清单版本保留历史，正文文字不变，角色和位置可核对",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-65",
+      "input": "CMS上传成功、WP上传/更新失败、未知回执重试",
+      "expected": "只显示相应层成功；既有附件复用、线上旧版不变，明确最终落位",
+      "layer": "HTTP接收器；真实WP另列",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-66",
+      "input": "接收端仅支持封面刷新，用户要已发布正文补图",
+      "expected": "不改PHP或全篇覆盖，EXT-BODY-MEDIA-REFRESH；草稿/公开发布权限不混用",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-67",
+      "input": "390/768/1440后台＋101项＋有上传/转码负载",
+      "expected": "操作与可读性正常；30次非空后台指标、内存/请求证据，无全库刷新",
+      "layer": "浏览器＋性能",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-68",
+      "input": "伪MIME/路径穿越/越权upload ID/恶意压缩/会话到期",
+      "expected": "安全拒绝且原因清楚；保护业务数据，不能从上传中执行代码",
+      "layer": "安全测试",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-69",
+      "input": "development/review/global pause与正常有权管理员确认",
+      "expected": "禁止模式不外联；正常一次业务确认自动续跑允许步骤，不逐步重复审批",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-70",
+      "input": "新旧schema完整快照、跨目录恢复、人工决定和预算核对",
+      "expected": "回归T01关键恢复测试；新旧记录兼容，明确未验真实环境；阶段结束停止",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-71",
+      "input": "单来源分天笔记、知识说明与混合文",
+      "expected": "route模式按内容区分；已有来源骨架先于正文请求；知识说明不被强制要求整日图",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-72",
+      "input": "图片箭头与阅读顺序不同，回程重复同地点",
+      "expected": "按有向关系提取并保存day/stop occurrence/leg证据；不依OCR行序或实体去重丢回程",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-73",
+      "input": "多来源同路线不同时间/方向，某连接仅推测",
+      "expected": "逐字段来源/约数/未知状态保留，核心冲突不进入无约束写作",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-74",
+      "input": "原Day2图与正文只部分站点重合或次序颠倒",
+      "expected": "整日图拒绝匹配并报告差异；不能只改标题或依token重合通过",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-75",
+      "input": "人工图与现有Day2冲突，但一个panel是正确单点",
+      "expected": "完整原件保存；受控子图/合法用途可用；不自动重排正文或残留错误箭头",
+      "layer": "CMS本地＋媒体",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-76",
+      "input": "有效路线证据但部分stop无照片；核心连接证据缺失对照",
+      "expected": "前者按已批准媒体义务生产，不强制逐站图；后者标路线证据缺口而非缺原图",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-77",
+      "input": "没有完全相同原路线图，已有批准路线与若干相关实拍",
+      "expected": "本地生成该路线示意并用既有图说明站点；不购买假实拍，不虚构坐标/导航",
+      "layer": "CMS本地＋真实渲染",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-78",
+      "input": "普通单点照片来自来源另一Day，无相冲突文字",
+      "expected": "符合实体/用途可复用；全日图仍严格；不能宣称本作者同日亲自拍摄",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-79",
+      "input": "新稿核心路线未知、required媒体缺失、已确认稿收到不符图",
+      "expected": "三种原因/状态/动作分开；不统一重写全文或批量删天数",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-80",
+      "input": "faithful_localization与recomposition两个输入",
+      "expected": "原图/目标路线hash分开；只有前者保持原路线，新示意标正确谱系与目标",
+      "layer": "CMS本地＋媒体",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-81",
+      "input": "黄桷垭与黄桷坪、正确字词但错误Day/箭头/约数",
+      "expected": "按规范实体/关系识别差异，整图QA与正文审核检查不同层面，不凭拼写正确通过",
+      "layer": "CMS本地；AI为mock",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-82",
+      "input": "已有完整route fragments走一次主生成路径",
+      "expected": "route计划/SEO/卡片文案无默认额外模型链；一次独立文本审核保留，必要媒体另计",
+      "layer": "调用计数",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-83",
+      "input": "骨架改版时旧模型/图片/审核回执晚到；metadata自报新hash但正文错序",
+      "expected": "版本校验拒绝旧结果；语义负例被发现；hash标记不是事实证明",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-84",
+      "input": "已发布三日行程与新3张Day图不同，只有媒体修复许可",
+      "expected": "保留正文/路线身份，仅兼容图方案；正文改写提案待另批，0越权写",
+      "layer": "CMS本地fixture",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-85",
+      "input": "含路线、人工关系、源/目标图与暂停任务的快照恢复",
+      "expected": "全部route/media/QA依赖和文件hash可核对；review不自动处理；旧schema不伪迁入",
+      "layer": "本地恢复",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-86",
+      "input": "正常人工stop照片确认及冲突路线图确认的后台流程",
+      "expected": "前者一次确认续跑；后者保留上传并展示字段差异/替代动作；不自动批准route变更",
+      "layer": "浏览器＋API",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-87",
+      "input": "实际路线renderer/视觉QA输入漏一个站、反箭头、混用旧图",
+      "expected": "负例必须发现，输出检查不只测helper；局部修复图不重写正文",
+      "layer": "CMS本地＋渲染",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-88",
+      "input": "可选路线图缺失与required事实入口实拍缺失",
+      "expected": "前者不平添硬门槛；后者不能被示意图/通用景观替代，不删required",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-89",
+      "input": "模型输出相同route IDs但实际正文改Day/交通；独立审核被删",
+      "expected": "真实语义违例/审核缺失不通过；按原预算局部修复，不以自报字段通过",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    },
+    {
+      "id": "T02-90",
+      "input": "来源路线有过时/矛盾限制，或仅图片能证明场景",
+      "expected": "不把一致性等于可行性；明确时间/证据缺口和后续许可，保留事实审核",
+      "layer": "CMS本地",
+      "status": "NOT_TESTED"
+    }
+  ]
+}

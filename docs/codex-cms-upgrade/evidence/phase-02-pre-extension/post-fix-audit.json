@@ -1,0 +1,165 @@
+{
+  "status": "PASS",
+  "scope": "Read-only audit of synthetic browser fixture only",
+  "database": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-0gblCF\\solo-to-china.sqlite",
+  "sources": [
+    {
+      "id": "src_75069cc0f78a4bf7aaa003c8b58f17d2",
+      "external_id": "fixture001",
+      "status": "captured",
+      "capture_version": 2
+    },
+    {
+      "id": "src_3932ea5a20b84235ae7bb582859cc262",
+      "external_id": "fixture002",
+      "status": "captured",
+      "capture_version": 2
+    },
+    {
+      "id": "src_7e4225d023174717846dc6b301c76bdb",
+      "external_id": "fixture004",
+      "status": "captured",
+      "capture_version": 2
+    },
+    {
+      "id": "src_8e6dc881c8a7406faa14d64538d59541",
+      "external_id": "fixture005",
+      "status": "captured",
+      "capture_version": 2
+    }
+  ],
+  "assets": [
+    {
+      "source_id": "src_3932ea5a20b84235ae7bb582859cc262",
+      "media_identity": "https://sns-img.xhscdn.com/fixture1.png",
+      "position": 0,
+      "caption_text": "Lake pavilion",
+      "nearby_text": "Lake pavilion",
+      "original_sha256": "ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8",
+      "local_path": "source-uploads\\media\\ec\\ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8.png",
+      "stored_size_bytes": 3995,
+      "original_bytes_status": "saved_original",
+      "durability_status": "ORIGINAL_STORED",
+      "hashVerified": true
+    },
+    {
+      "source_id": "src_3932ea5a20b84235ae7bb582859cc262",
+      "media_identity": "https://sns-img.xhscdn.com/fixture2.png",
+      "position": 1,
+      "caption_text": "Garden path",
+      "nearby_text": "Garden path",
+      "original_sha256": "ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8",
+      "local_path": "source-uploads\\media\\ec\\ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8.png",
+      "stored_size_bytes": 3995,
+      "original_bytes_status": "saved_original",
+      "durability_status": "ORIGINAL_STORED",
+      "hashVerified": true
+    },
+    {
+      "source_id": "src_75069cc0f78a4bf7aaa003c8b58f17d2",
+      "media_identity": "https://sns-img.xhscdn.com/fixture1.png",
+      "position": 0,
+      "caption_text": "Lake pavilion",
+      "nearby_text": "Lake pavilion",
+      "original_sha256": "ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8",
+      "local_path": "source-uploads\\media\\ec\\ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8.png",
+      "stored_size_bytes": 3995,
+      "original_bytes_status": "saved_original",
+      "durability_status": "ORIGINAL_STORED",
+      "hashVerified": true
+    },
+    {
+      "source_id": "src_75069cc0f78a4bf7aaa003c8b58f17d2",
+      "media_identity": "https://sns-img.xhscdn.com/fixture2.png",
+      "position": 1,
+      "caption_text": "Garden path",
+      "nearby_text": "Garden path",
+      "original_sha256": "ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8",
+      "local_path": "source-uploads\\media\\ec\\ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8.png",
+      "stored_size_bytes": 3995,
+      "original_bytes_status": "saved_original",
+      "durability_status": "ORIGINAL_STORED",
+      "hashVerified": true
+    },
+    {
+      "source_id": "src_7e4225d023174717846dc6b301c76bdb",
+      "media_identity": "https://sns-img.xhscdn.com/chunked.png",
+      "position": 0,
+      "caption_text": "Lake pavilion",
+      "nearby_text": "Lake pavilion",
+      "original_sha256": "aed66bb157cc8f00273787979f2259f2167ce58f427028335489dc5d8f1fa7b8",
+      "local_path": "source-uploads\\media\\ae\\aed66bb157cc8f00273787979f2259f2167ce58f427028335489dc5d8f1fa7b8.png",
+      "stored_size_bytes": 5080362,
+      "original_bytes_status": "saved_original",
+      "durability_status": "ORIGINAL_STORED",
+      "hashVerified": true
+    },
+    {
+      "source_id": "src_7e4225d023174717846dc6b301c76bdb",
+      "media_identity": "https://sns-img.xhscdn.com/fixture2.png",
+      "position": 1,
+      "caption_text": "Garden path",
+      "nearby_text": "Garden path",
+      "original_sha256": "ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8",
+      "local_path": "source-uploads\\media\\ec\\ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8.png",
+      "stored_size_bytes": 3995,
+      "original_bytes_status": "saved_original",
+      "durability_status": "ORIGINAL_STORED",
+      "hashVerified": true
+    },
+    {
+      "source_id": "src_8e6dc881c8a7406faa14d64538d59541",
+      "media_identity": "https://sns-img.xhscdn.com/fixture1.png",
+      "position": 0,
+      "caption_text": "Lake pavilion",
+      "nearby_text": "Lake pavilion",
+      "original_sha256": "ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8",
+      "local_path": "source-uploads\\media\\ec\\ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8.png",
+      "stored_size_bytes": 3995,
+      "original_bytes_status": "saved_original",
+      "durability_status": "ORIGINAL_STORED",
+      "hashVerified": true
+    },
+    {
+      "source_id": "src_8e6dc881c8a7406faa14d64538d59541",
+      "media_identity": "https://sns-img.xhscdn.com/fixture2.png",
+      "position": 1,
+      "caption_text": "Garden path",
+      "nearby_text": "Garden path",
+      "original_sha256": "ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8",
+      "local_path": "source-uploads\\media\\ec\\ec7becde67edd453dec97b591c7bb2b4530b4d7d0c08c81af36c16fc30678af8.png",
+      "stored_size_bytes": 3995,
+      "original_bytes_status": "saved_original",
+      "durability_status": "ORIGINAL_STORED",
+      "hashVerified": true
+    }
+  ],
+  "jobs": [
+    {
+      "entity_id": "src_3932ea5a20b84235ae7bb582859cc262",
+      "type": "extract_source",
+      "status": "queued",
+      "n": 1
+    },
+    {
+      "entity_id": "src_75069cc0f78a4bf7aaa003c8b58f17d2",
+      "type": "extract_source",
+      "status": "queued",
+      "n": 1
+    },
+    {
+      "entity_id": "src_7e4225d023174717846dc6b301c76bdb",
+      "type": "extract_source",
+      "status": "queued",
+      "n": 1
+    },
+    {
+      "entity_id": "src_8e6dc881c8a7406faa14d64538d59541",
+      "type": "extract_source",
+      "status": "queued",
+      "n": 1
+    }
+  ],
+  "foreignKeyViolations": 0,
+  "note": "Exactly one queued extract_source per captured source. Queued is expected: no model Worker was started. Historical provisional assets are not confused with current capture version."
+}

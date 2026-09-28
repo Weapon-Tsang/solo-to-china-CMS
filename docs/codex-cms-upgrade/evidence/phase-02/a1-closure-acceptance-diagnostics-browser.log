@@ -1,0 +1,29 @@
+### Result
+{"rows":[{"width":320,"pdfCapability":true,"fallbackTruthful":true,"overflow":false},{"width":390,"pdfCapability":true,"fallbackTruthful":true,"overflow":false},{"width":768,"pdfCapability":true,"fallbackTruthful":true,"overflow":false},{"width":1024,"pdfCapability":true,"fallbackTruthful":true,"overflow":false},{"width":1440,"pdfCapability":true,"fallbackTruthful":true,"overflow":false}],"realLocalApi":true,"missingOriginal":true,"modelCalls":0}
+### Ran Playwright code
+```js
+await (async page => {
+  const dialog=page.getByRole('dialog');
+  const area=dialog.getByRole('region',{name:'鏉ユ簮鍏崇郴淇'});
+  const rows=[];
+  for(const width of [320,390,768,1024,1440]) {
+    await page.setViewportSize({width,height:1000});
+    await area.getByRole('button',{name:'妫€鏌ユ枃浠朵笌缂哄浘鍘熷洜'}).click();
+    const diagnostics=area.locator('[aria-label="濯掍綋璇婃柇"]');
+    await diagnostics.getByText(/褰撳墠涓嶆敮鎸佸彲闈犳媶鍑虹嫭绔嬪浘鐗?).waitFor();
+    if(await area.getByRole('button',{name:'涓婁紶鍥剧墖琛ラ綈'}).count()) throw new Error('Unimplemented D upload advertised');
+    if(await dialog.evaluate(element=>element.scrollWidth>element.clientWidth+1)) throw new Error(`Overflow ${width}`);
+    await diagnostics.scrollIntoViewIfNeeded();
+    await page.screenshot({path:`output/playwright/phase02-media-diagnostics-${width}.png`});
+    rows.push({width,pdfCapability:true,fallbackTruthful:true,overflow:false});
+  }
+  await dialog.getByRole('button',{name:'涓婁竴缁勫浘鐗?}).click();
+  await dialog.getByRole('button',{name:'鍥剧墖 1',exact:true}).click();
+  await area.getByRole('button',{name:'妫€鏌ユ枃浠朵笌缂哄浘鍘熷洜'}).click();
+  const diagnostics=area.locator('[aria-label="濯掍綋璇婃柇"]');
+  await diagnostics.getByText(/娌℃湁鏈湴鍘熶欢寮曠敤/).waitFor();
+  if(await diagnostics.getByText(/褰撳墠涓嶆敮鎸佸彲闈犳媶鍑虹嫭绔嬪浘鐗?).count()) throw new Error('Old PDF diagnosis leaked to next image');
+  return {rows,realLocalApi:true,missingOriginal:true,modelCalls:0};
+}
+)(page);
+```

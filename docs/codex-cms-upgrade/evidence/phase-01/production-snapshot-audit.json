@@ -1,0 +1,51 @@
+{
+  "version": "stage01-production-snapshot-audit-1",
+  "readOnly": true,
+  "snapshotManifestVersion": 2,
+  "quickCheck": "ok",
+  "schemaVersion": 78,
+  "counts": {
+    "sources": 84,
+    "jobs": 18415,
+    "claims": 5334,
+    "knowledge_facts": 4404,
+    "content_opportunities": 1425,
+    "article_drafts": 12,
+    "source_assets": 1454,
+    "vertex_batch_runs": 13
+  },
+  "sourceStatuses": {
+    "media_only": 6,
+    "processed": 77,
+    "processing": 1
+  },
+  "jobStatuses": {
+    "failed": 1205,
+    "queued": 5,
+    "succeeded": 17205
+  },
+  "processingSourcesWithoutActiveSourceJob": 1,
+  "orphanParentJobs": 0,
+  "productionJobsMissingOwner": 0,
+  "failedJobsWithoutFailureClass": 66,
+  "batchStatuses": {
+    "failed": 11,
+    "succeeded": 2
+  },
+  "unresolvedMediaDispatches": 1,
+  "unresolvedMediaDispatchSubstages": {
+    "analyze_source_image": 1
+  },
+  "archivedReferenceCoverage": {
+    "original_storage_ref": {
+      "present": 99
+    },
+    "derivative_storage_ref": {
+      "present": 46,
+      "missing": 5
+    },
+    "visual_candidates.media_path": {
+      "present": 10
+    }
+  }
+}

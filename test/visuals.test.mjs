@@ -553,6 +553,31 @@ test("a transform error never creates a fake resumable candidate",async()=>{
   assert.equal(ledger[0].httpStatus,429);
 });
 
+test('route transformation sends approved names/topology and stores the independent pixel audit with actual bytes',async t=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'route-transform-'));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const sourcePath=path.join(directory,'source.png'),sourceBytes=await pngBytes(1200,800,'route-source');
+  const outputBytes=await pngBytes(1200,800,'route-translated');fs.writeFileSync(sourcePath,sourceBytes);
+  const requests=[],contract={compatible:true,transform:'faithful_localization',approved_route_hash:'approved-fixture',
+    source_route_hash:'source-fixture',target_route_hash:'approved-fixture',target:{days:[{label:'Day 1'}],
+      stops:[{entity_id:'huangjueya',name_zh:'黄桷垭老街'}],legs:[]}};
+  const client=new VertexImagen({enabled:true,provider:'vertex_gemini',projectId:'fixture',model:'controlled-image',
+    accessToken:'test',mediaDir:directory,publicBaseUrl:'http://127.0.0.1:9999',requestTimeoutMs:5000},async(url,options)=>{
+      const request=JSON.parse(options.body);requests.push(request);
+      if(requests.length===1)return Response.json({candidates:[{content:{parts:[{inlineData:{data:outputBytes.toString('base64'),mimeType:'image/png'}}]}}]});
+      return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({...passedQa(),route_audit:{
+        approved_route_hash:'approved-fixture',checked:true,passed:true,differences:[]}})}]}}]});
+    });
+  const result=await client.localizeSourceImage({id:'route-transform',slot:1,image_type:'map_or_route',
+    acquisition_strategy:'recompose_map_or_route',source_asset_id:'source',source_asset_local_path:sourcePath,
+    source_asset_mime_type:'image/png',aspect_ratio:'3:2',media_metadata:{route_contract:contract}},{id:'draft'});
+  assert.equal(requests.length,2);assert.match(requests[0].contents.parts[0].text,/黄桷垭老街/);
+  assert.ok(requests[0].contents.parts[0].text.includes('source-fixture'));
+  assert.equal(requests[0].contents.parts[1].inlineData.data,sourceBytes.toString('base64'));
+  assert.equal(result.metadata.quality_qa.semantic.route_audit.approved_route_hash,'approved-fixture');
+  assert.deepEqual(fs.readFileSync(result.mediaPath),outputBytes);
+});
+
 function passedQa(){return {language:{status:"passed",reason:"English overlays are readable."},
   completeness:{status:"passed",reason:"All source facts are present."},style:{status:"passed",reason:"Style matches the requested path."},
   semantic:{status:"passed",reason:"Source meaning and imagery are unchanged."},notes:""};}

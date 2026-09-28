@@ -1,0 +1,65 @@
+{
+  "scope": "Final files touched by this continuation; several already contained earlier uncommitted work",
+  "files": [
+    {
+      "path": "src/media-context.mjs",
+      "sha256": "d8a231789454e57cfb14bf3d298e50fa67647438c1a900ce9580f40760fd250a",
+      "bytes": 9624
+    },
+    {
+      "path": "src/repositories/media-bindings.mjs",
+      "sha256": "98b90cb03a2fd09803ecf41806674aae6d99f20195a0d5279f0a67e0ccdc5587",
+      "bytes": 11146
+    },
+    {
+      "path": "src/repository.mjs",
+      "sha256": "6f59dbd8b6950ec2ac6757fc26f183ab5722afd69895e51c57f033f3a65caa98",
+      "bytes": 858993
+    },
+    {
+      "path": "src/server.mjs",
+      "sha256": "cd663625662f8caa9cbd1e704f4304663dfced73e2f35f4fcaf99d9225454697",
+      "bytes": 118213
+    },
+    {
+      "path": "frontend/src/App.jsx",
+      "sha256": "19952a2236c361002346c875f0aedc21118172b78e5b8be6b7ce232d896b6dde",
+      "bytes": 69575
+    },
+    {
+      "path": "frontend/src/workspaces/source-media-context.jsx",
+      "sha256": "576db89bae2fc432c7d1d0be553832aa8b7f27da346a5490ae6d5482d84a2964",
+      "bytes": 5325
+    },
+    {
+      "path": "test/media-context.test.mjs",
+      "sha256": "91d2107da1a8fbac326ee2a0de05656760252a8595ee3690f50d919481c1266b",
+      "bytes": 12778
+    },
+    {
+      "path": "test/media-context-api.test.mjs",
+      "sha256": "a453d8b8509ca2f5e9faab946a2ca8818c1b71a14565baeb4a960b0d62581bc9",
+      "bytes": 3036
+    },
+    {
+      "path": "test/media-bindings.test.mjs",
+      "sha256": "b10a491d5e7076765a60895c612f66ef1df64e38eb05a0e7d346d187b080f236",
+      "bytes": 17844
+    },
+    {
+      "path": "scripts/stage02-context-browser-fixture.mjs",
+      "sha256": "3f40b710c8c6f5964570cd02979ea0ee09ed3eb4f0f2eb5854402ec96cf1c33e",
+      "bytes": 1995
+    },
+    {
+      "path": "scripts/verify-stage02-context-browser.js",
+      "sha256": "b25fc56da36a4d3ad2d8e82ecbe662836d02b1d64c2b75ab3e87fb669f8a1557",
+      "bytes": 3038
+    },
+    {
+      "path": "scripts/stage02-binding-read-audit.mjs",
+      "sha256": "99c4ea7bfefd8a0fe55e7a654fd7f1115972afcf5b269dbc19f82969263bf1de",
+      "bytes": 2379
+    }
+  ]
+}

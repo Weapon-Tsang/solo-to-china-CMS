@@ -1,0 +1,56 @@
+### Result
+{"scope":"Local synthetic source binding preview/apply UI, no adoption or provider","report":[{"width":320,"preview":true,"apply":true,"keyboard":true,"overflow":false},{"width":390,"preview":true,"apply":true,"keyboard":true,"overflow":false},{"width":768,"preview":true,"apply":true,"keyboard":true,"overflow":false},{"width":1024,"preview":true,"apply":true,"keyboard":true,"overflow":false},{"width":1440,"preview":true,"apply":true,"keyboard":true,"overflow":false}],"staleErrorInjection":true,"reloadRecovery":true,"pdfNotMaterialized":true,"requests":[{"method":"GET","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"POST","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"GET","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"POST","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"GET","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"POST","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"GET","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"POST","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"GET","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"POST","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"GET","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"POST","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"GET","path":"source-assets/asset_9dddd39223504b85b938aa0ce70365cc/binding-repair"},{"method":"GET","path":"source-assets/asset_677c2793732c4b2cb2f975783b62d4af/binding-repair"}],"pageErrors":[]}
+### Ran Playwright code
+```js
+await (async page => {
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  const requests=[];page.on('request',request=>{
+    if (request.url().includes('/binding-repair')) requests.push({method:request.method(),path:request.url().split('/api/')[1]});
+  });
+  await page.getByRole('button',{name:'1.Context readback fixture'}).click();
+  const dialog=page.getByRole('dialog');
+  await dialog.getByRole('button',{name:'鍥剧墖 1',exact:true}).click();
+  const area=dialog.getByRole('region',{name:'鏉ユ簮鍏崇郴淇'});
+  const report=[];
+  for (const width of [320,390,768,1024,1440]) {
+    await page.setViewportSize({width,height:1000});
+    const inspect=area.getByRole('button',{name:'妫€鏌ユ潵婧愬叧绯?});
+    await inspect.focus();await page.keyboard.press('Enter');
+    await area.getByText('Huguang Guild Hall',{exact:true}).waitFor();
+    await area.getByRole('button',{name:'鎸夋棰勮淇鍏崇郴'}).click();
+    await area.getByRole('status').filter({hasText:'鏉ユ簮鍏崇郴宸蹭慨澶?}).waitFor();
+    if (await area.getByRole('button',{name:'鎸夋棰勮淇鍏崇郴'}).isEnabled()) throw new Error('Completed action remained enabled');
+    const overflow=await dialog.evaluate(element=>element.scrollWidth>element.clientWidth+1);
+    if (overflow) throw new Error(`Overflow at ${width}`);
+    await area.scrollIntoViewIfNeeded();
+    await page.screenshot({path:`output/playwright/phase02-binding-repair-${width}.png`});
+    report.push({width,preview:true,apply:true,keyboard:true,overflow:false});
+  }
+  // Only browser error rendering is injected; DB stale-CAS is a real HTTP test.
+  await area.getByRole('button',{name:'妫€鏌ユ潵婧愬叧绯?}).click();
+  await area.getByRole('button',{name:'鎸夋棰勮淇鍏崇郴'}).waitFor();
+  await page.route('**/api/source-assets/*/binding-repair',route=>route.request().method()==='POST'
+    ? route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({code:'CONTEXT_STALE',error:'Preview stale'})}) : route.continue());
+  await area.getByRole('button',{name:'鎸夋棰勮淇鍏崇郴'}).click();
+  await area.getByRole('alert').filter({hasText:'鍏崇郴棰勮宸茶繃鏈?}).waitFor();
+  if (await area.getByRole('button',{name:'鎸夋棰勮淇鍏崇郴'}).count()) throw new Error('Stale preview remained actionable');
+  await page.unroute('**/api/source-assets/*/binding-repair');
+  await area.getByRole('button',{name:'妫€鏌ユ潵婧愬叧绯?}).click();
+  await area.getByText('Huguang Guild Hall',{exact:true}).waitFor();
+  await dialog.getByRole('button',{name:'涓嬩竴缁勫浘鐗?}).click();
+  await dialog.getByRole('button',{name:'鍥剧墖 13',exact:true}).click();
+  await area.getByRole('button',{name:'妫€鏌ユ潵婧愬叧绯?}).click();
+  await area.getByRole('alert').filter({hasText:'姝ら」鏄?PDF 椤甸潰璇佹嵁'}).waitFor();
+  if (await area.getByRole('button',{name:'鎸夋棰勮淇鍏崇郴'}).count()) throw new Error('PDF was offered photo repair');
+  if (errors.length) throw new Error(JSON.stringify(errors));
+  return {scope:'Local synthetic source binding preview/apply UI, no adoption or provider',report,
+    staleErrorInjection:true,reloadRecovery:true,pdfNotMaterialized:true,requests,pageErrors:errors};
+}
+)(page);
+```
+### Page
+- Page URL: http://127.0.0.1:63021/
+- Page Title: SoloToChina Research Engine
+- Console: 2 errors, 0 warnings
+### Events
+- New console entries: .playwright-cli\console-2026-09-27T13-40-29-389Z.log#L1-L2

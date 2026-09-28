@@ -1,0 +1,376 @@
+{
+  "at": "2026-09-27T04:42:53.332Z",
+  "source": {
+    "id": "src_33607a357811426c9357cb1f0f8e5189",
+    "status": "processed",
+    "last_error": null
+  },
+  "jobs": [
+    {
+      "id": "job_fcc1540ca6704a30aa7c1eee82f9fac6",
+      "type": "extract_source",
+      "entity_id": "src_33607a357811426c9357cb1f0f8e5189",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:41.809Z",
+      "updated_at": "2026-09-27T04:41:49.241Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_6af7c6bc8f4d4b6bb349b76368d3195b",
+      "type": "preflight_source",
+      "entity_id": "src_33607a357811426c9357cb1f0f8e5189",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:49.240Z",
+      "updated_at": "2026-09-27T04:41:50.010Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_34a5fb2eb3754cd7993e11a685d69333",
+      "type": "segment_source",
+      "entity_id": "src_33607a357811426c9357cb1f0f8e5189",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:50.008Z",
+      "updated_at": "2026-09-27T04:41:50.771Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_ca7913b282844bd69e68da23659e9837",
+      "type": "audit_source_photo",
+      "entity_id": "asset_5f96c9285fc34fb69e2a1be0f5e62f63",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:50.769Z",
+      "updated_at": "2026-09-27T04:41:59.882Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_8ae38e35020943f89ce2a83edfa10840",
+      "type": "extract_media_batch",
+      "entity_id": "media_batch_9eb43756c22befbdfb147883",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:50.770Z",
+      "updated_at": "2026-09-27T04:41:51.640Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_b99226fafcbe488ba0d425c4017771df",
+      "type": "extract_segment_claims",
+      "entity_id": "segment_3d28382d22440a7b8e97cd8e",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:50.771Z",
+      "updated_at": "2026-09-27T04:41:53.143Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_9fa3679f29fa464abc0dcd27f131f053",
+      "type": "audit_segment_coverage",
+      "entity_id": "segment_347adef8d8f9117790912934",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:51.639Z",
+      "updated_at": "2026-09-27T04:41:52.286Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_59763ffa5ef7417fb7c33618ebbd557f",
+      "type": "audit_segment_coverage",
+      "entity_id": "segment_3d28382d22440a7b8e97cd8e",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:53.143Z",
+      "updated_at": "2026-09-27T04:41:53.800Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_18b0f15175934cea84aeacccf1c91df3",
+      "type": "finalize_source_extraction",
+      "entity_id": "src_33607a357811426c9357cb1f0f8e5189",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:53.800Z",
+      "updated_at": "2026-09-27T04:41:54.568Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_0746dbda486e40598322afe317cda4ee",
+      "type": "analyze_source_blueprint",
+      "entity_id": "src_33607a357811426c9357cb1f0f8e5189",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:54.568Z",
+      "updated_at": "2026-09-27T04:42:01.387Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_0a633be1fd6b492bb488378920627fd1",
+      "type": "resolve_entities",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:54.568Z",
+      "updated_at": "2026-09-27T04:41:55.320Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_7b57b1f60c4b4925b9c9a3c68a9f0e9a",
+      "type": "analyze_source_family",
+      "entity_id": "src_33607a357811426c9357cb1f0f8e5189",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:54.568Z",
+      "updated_at": "2026-09-27T04:42:00.626Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_8d69f36c218a418d8a59291008aa2124",
+      "type": "rebuild_knowledge",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:55.319Z",
+      "updated_at": "2026-09-27T04:41:56.082Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_0b23fc053acf4d7299d443122f391802",
+      "type": "rebuild_topic_clusters",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:56.081Z",
+      "updated_at": "2026-09-27T04:41:56.829Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_3c2e71c7df524506adc0a2f510f94287",
+      "type": "build_coverage_matrix",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:56.827Z",
+      "updated_at": "2026-09-27T04:41:57.587Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_f0c0359e22244a98b7b65d0457203db6",
+      "type": "rebuild_content_opportunities",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:57.583Z",
+      "updated_at": "2026-09-27T04:41:58.343Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_96f8050c57e34a35b2fec379fe4fae17",
+      "type": "reconcile_approved_opportunities",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:41:58.341Z",
+      "updated_at": "2026-09-27T04:41:59.101Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_edfdefe91dc84f49ba3b3b1882a6b177",
+      "type": "resolve_entities",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:42:00.623Z",
+      "updated_at": "2026-09-27T04:42:02.140Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_4b5aec905bdd4de6b825aa738713ab53",
+      "type": "rebuild_editorial",
+      "entity_id": "global",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:42:01.387Z",
+      "updated_at": "2026-09-27T04:42:03.657Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_56b9b470a70b4279852d23198382c81f",
+      "type": "rebuild_knowledge",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:42:02.140Z",
+      "updated_at": "2026-09-27T04:42:02.901Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_b444b1520fb041c0b5c9662be6f0a9d9",
+      "type": "rebuild_topic_clusters",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:42:02.900Z",
+      "updated_at": "2026-09-27T04:42:04.431Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_3149f1a3cd7b40c9a5fe7c0f6f7ad2be",
+      "type": "build_coverage_matrix",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:42:04.428Z",
+      "updated_at": "2026-09-27T04:42:05.188Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_b7ad0a2f934d41a891e15aedd1cbe230",
+      "type": "rebuild_content_opportunities",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:42:05.186Z",
+      "updated_at": "2026-09-27T04:42:05.943Z",
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_579b59fda2bc4d48b8f1ca7fcdd339ef",
+      "type": "reconcile_approved_opportunities",
+      "entity_id": "fixture-city",
+      "status": "succeeded",
+      "attempts": 1,
+      "created_at": "2026-09-27T04:42:05.941Z",
+      "updated_at": "2026-09-27T04:42:06.702Z",
+      "last_failure_code": ""
+    }
+  ],
+  "coverage": [
+    {
+      "segment_id": "segment_347adef8d8f9117790912934",
+      "status": "passed",
+      "publication_usability": "non_material",
+      "claim_count": 0
+    },
+    {
+      "segment_id": "segment_3d28382d22440a7b8e97cd8e",
+      "status": "passed",
+      "publication_usability": "usable",
+      "claim_count": 1
+    }
+  ],
+  "claims": [
+    {
+      "id": "claim_c7e752d4069e4c4da175e31987b7add1",
+      "source_id": "src_33607a357811426c9357cb1f0f8e5189",
+      "normalized_key": "fixture.route.metro",
+      "value_text": "Metro Line 2",
+      "source_quote": "Take Metro Line 2 to the riverside entrance."
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "artifact_8cf62a00e33d40c8afa51e65c014bd78",
+      "stage": "extract_media_batch",
+      "entity_id": "media_batch_9eb43756c22befbdfb147883",
+      "input_hash": "30ddc4db06c64d06c535304db5c76734037176d86dd1985cc6c39c1ee5c9c760",
+      "output_hash": "1a306b7a6a617656215772204f03aa74eda57da3a041637070873cfa3ad682ba",
+      "config_hash": "5324b87e0e77b6f40cedb969295a68eadba9979e52248459e829a0b01c11242d",
+      "status": "succeeded",
+      "error_class": null,
+      "started_at": "2026-09-27T04:41:51.524Z",
+      "completed_at": "2026-09-27T04:41:51.640Z",
+      "created_at": "2026-09-27T04:41:51.524Z",
+      "updated_at": "2026-09-27T04:41:51.640Z"
+    },
+    {
+      "id": "artifact_445f2e8a9d4a4e5ba467d2075f347fa3",
+      "stage": "audit_segment_coverage",
+      "entity_id": "segment_347adef8d8f9117790912934",
+      "input_hash": "fa5f1025972827c35b71afff76592664ad29e636673602ed6bd257b9e3a80f95",
+      "output_hash": "5bc090164c898a406d87e9da98ed66d642dcb4766780daeaade327906c25b440",
+      "config_hash": "69976802bfe85485f7e909dd19fa19ea4e1e022e4dc287ca27767bab6398dfa5",
+      "status": "succeeded",
+      "error_class": null,
+      "started_at": "2026-09-27T04:41:52.280Z",
+      "completed_at": "2026-09-27T04:41:52.286Z",
+      "created_at": "2026-09-27T04:41:52.280Z",
+      "updated_at": "2026-09-27T04:41:52.286Z"
+    },
+    {
+      "id": "artifact_fa30916c2d00429980f05d01d8034828",
+      "stage": "extract_segment_claims",
+      "entity_id": "segment_3d28382d22440a7b8e97cd8e",
+      "input_hash": "10a7382e03f9adc38b96c78842fb9522f29d26d5b8d46f3d25de3ffa7cb42948",
+      "output_hash": "b17fb0d114cf166d6150d073fcbf9f2e6186881c304ebab2f1dd4c35c3c81cc9",
+      "config_hash": "401dffcba891f8301d101e765eb2993c2751615abaf3b96a19af194b40e70c41",
+      "status": "succeeded",
+      "error_class": null,
+      "started_at": "2026-09-27T04:41:53.035Z",
+      "completed_at": "2026-09-27T04:41:53.143Z",
+      "created_at": "2026-09-27T04:41:53.035Z",
+      "updated_at": "2026-09-27T04:41:53.143Z"
+    },
+    {
+      "id": "artifact_264fac9fae224a7aadf62af82500bbca",
+      "stage": "audit_segment_coverage",
+      "entity_id": "segment_3d28382d22440a7b8e97cd8e",
+      "input_hash": "cf7fdc44a158a1390531dd9d8250a3547ccfe4a07ad012ec2452dd8172bca4fa",
+      "output_hash": "f505642321ee548b6ef5211aeac95ceae873859f1570db9afd2a8eb093a6e049",
+      "config_hash": "69976802bfe85485f7e909dd19fa19ea4e1e022e4dc287ca27767bab6398dfa5",
+      "status": "succeeded",
+      "error_class": null,
+      "started_at": "2026-09-27T04:41:53.796Z",
+      "completed_at": "2026-09-27T04:41:53.800Z",
+      "created_at": "2026-09-27T04:41:53.796Z",
+      "updated_at": "2026-09-27T04:41:53.800Z"
+    },
+    {
+      "id": "artifact_68ba30e730244f14b37bc86e5073597d",
+      "stage": "resolve_entities",
+      "entity_id": "fixture-city",
+      "input_hash": "3a80ac7dae16fcaa73c4666f353a68ed593aef4da7111d018deb587b723c1169",
+      "output_hash": "b1f50ba734141fa7cb33c72abea80cad3c44d9b40e2c0b29a0111eeaedd0654a",
+      "config_hash": "0e1b86e262112bfb24d223fc2647c3941e0b5b2e4b47f82a9db909faf01d4f82",
+      "status": "succeeded",
+      "error_class": null,
+      "started_at": "2026-09-27T04:41:55.308Z",
+      "completed_at": "2026-09-27T04:41:55.321Z",
+      "created_at": "2026-09-27T04:41:55.308Z",
+      "updated_at": "2026-09-27T04:41:55.321Z"
+    },
+    {
+      "id": "artifact_1d027029c80e43188b50b2052c68cd70",
+      "stage": "analyze_source_blueprint",
+      "entity_id": "src_33607a357811426c9357cb1f0f8e5189",
+      "input_hash": "672e7592c64b773ef2d2a9b422b8e23078ae9b909362e80acbc3582e0b13110a",
+      "output_hash": "6de1584d7c44a39014441c86bcf7cf88f25399115181071e5b91018faaa995c1",
+      "config_hash": "92670fb916e448af0ea4479ae4125de98ee6c68befc1cdbe05e827ab1436c576",
+      "status": "succeeded",
+      "error_class": null,
+      "started_at": "2026-09-27T04:42:01.377Z",
+      "completed_at": "2026-09-27T04:42:01.388Z",
+      "created_at": "2026-09-27T04:42:01.377Z",
+      "updated_at": "2026-09-27T04:42:01.388Z"
+    },
+    {
+      "id": "artifact_b4b05b6d46c14b299a750005dab5ccc5",
+      "stage": "resolve_entities",
+      "entity_id": "fixture-city",
+      "input_hash": "1beb10eca00c427c4f0ecbf7367a56b9d4c25940050612afe6983f03bb490744",
+      "output_hash": "b1f50ba734141fa7cb33c72abea80cad3c44d9b40e2c0b29a0111eeaedd0654a",
+      "config_hash": "0e1b86e262112bfb24d223fc2647c3941e0b5b2e4b47f82a9db909faf01d4f82",
+      "status": "succeeded",
+      "error_class": null,
+      "started_at": "2026-09-27T04:42:02.138Z",
+      "completed_at": "2026-09-27T04:42:02.140Z",
+      "created_at": "2026-09-27T04:42:02.138Z",
+      "updated_at": "2026-09-27T04:42:02.140Z"
+    }
+  ],
+  "modelCalls": 0,
+  "mediaDispatches": 0,
+  "foreignKeyViolations": 0
+}

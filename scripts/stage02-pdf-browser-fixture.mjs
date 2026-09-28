@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import sharp from 'sharp';
+import { pdfFixture } from '../test-support/pdf-supplement-fixture.mjs';
+const fixture=await pdfFixture();
+const image=path.join(fixture.directory,'supplement.png');
+await sharp({create:{width:640,height:480,channels:3,background:'#aabbaa'}}).png().toFile(image);
+const stopFile=path.join(fixture.directory,'STOP');
+console.log(JSON.stringify({url:fixture.url,image,stopFile,directory:fixture.directory,parent:fixture.parent,source:fixture.source.id}));
+let stopped=false;
+const stop=async()=>{if(stopped)return;stopped=true;clearInterval(poll);clearTimeout(deadline);await fixture.app.stop();};
+const poll=setInterval(()=>{if(fs.existsSync(stopFile))void stop();},500);
+const deadline=setTimeout(()=>void stop(),30*60*1000);
+process.on('SIGINT',()=>void stop());process.on('SIGTERM',()=>void stop());

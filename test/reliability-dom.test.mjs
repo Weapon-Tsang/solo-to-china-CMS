@@ -15,7 +15,7 @@ function fixture(body, delayed) {
   window.HTMLElement.prototype.getBoundingClientRect=()=>({width:600,height:500,bottom:800});
   const viewport={scrollY:0,innerHeight:800,scrollTo({top}){this.scrollY=top;}};
   const context={document,window:viewport,location:new URL('https://www.xiaohongshu.com/explore/fixture123'),navigator:{language:'en'},
-    Date:Clock,crypto:webcrypto,TextEncoder,Uint8Array,URL,MutationObserver:window.MutationObserver,
+    Date:Clock,crypto:webcrypto,TextEncoder,Uint8Array,URL,AbortController,MutationObserver:window.MutationObserver,
     setTimeout:(callback,delay)=>setImmediate(()=>{elapsed+=delay;delayed?.({document,window,elapsed});callback();}),clearTimeout:clearImmediate,
     chrome:{runtime:{getManifest:()=>({version:'2.0.6'})}}};
   vm.runInNewContext(extractor,context);
@@ -87,16 +87,16 @@ test('a new Favorites board discovers note links without treating the board link
   assert.equal(result.cards[0].externalId,'note456');
   assert.match(result.cards[0].navigationUrl,/\/board\/board123\/note456\?xsec_token=temporary/);
 });
-test('reinjecting the extractor does not reset stable end detection on an empty collection',async()=>{
+test('XP-12: reinjection preserves no-progress observation but never infers collection end from stillness',async()=>{
   const page=fixture('<main>Empty collection</main>');
   let api=page.api;
   for(let pass=0;pass<5;pass++){
     assert.equal(api.scanFavorites().cards.length,0);
     const scroll=await api.scrollFavoritesWindow();
-    assert.equal(scroll.collectionEnd,pass>=3);
+    assert.equal(scroll.collectionEnd,false);
     api=page.reinject();
   }
-  assert.equal(api.scanFavorites().collectionEnd,true);
+  assert.equal(api.scanFavorites().collectionEnd,false);
   assert.equal(api.discoveryObservation.stableRounds,5);
   api=page.navigate('https://www.xiaohongshu.com/board/another123');
   assert.equal(api.discoveryObservation.stableRounds,0);

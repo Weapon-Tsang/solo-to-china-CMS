@@ -28,7 +28,8 @@ import {
   inventoryVersion, resolveCanonicalUrl, selectInternalLinks,
 } from "./seo-geo.mjs";
 export { pageBlockSignature } from "./evidence-validator.mjs";
-import { buildContentTaskCard, normalizeWorkspaceQuery, paginateWorkspace } from "./services/operations-workspace.mjs";
+import { buildContentTaskCard, normalizeWorkspaceQuery, paginateWorkspace,
+  workspaceCursorForOffset, workspaceCursorOffset } from "./services/operations-workspace.mjs";
 import { freezeProposal, proposalFingerprint, proposalForOpportunity } from "./services/editorial-proposal.mjs";
 import { explainOperationalFailure, qualityRepairStage } from "./services/content-recovery-policy.mjs";
 import { buildPageCompositionPreview, buildProductionState, prefetchProductionStates,
@@ -37,9 +38,19 @@ import { insertCommercialEvent, listCommercialPerformance } from "./repositories
 import { persistCaptureAssets } from "./source-media-store.mjs";
 import { dependencyHash, semanticMaterial, PIPELINE_CONTRACT_VERSION } from './pipeline-contract.mjs';
 import { stepIdentity, readStepReceipt, saveStepReceipt } from './repositories/pipeline-step-receipts.mjs';
-import { evaluatePublicationEligibility, mediaManifestForDraft } from './publication-eligibility.mjs';
+import { evaluatePublicationEligibility, mediaManifestForDraft, routeMediaDependencyHash, routePageDependencyHash } from './publication-eligibility.mjs';
 import { visualQaMentionsSpellingError } from './visual-qa.mjs';
 import { recoverLegacyVisualReceipts } from './services/legacy-visual-receipts.mjs';
+import { withMediaFileLease } from './media-file-lease.mjs';
+import { buildMediaContext, supplementMediaContext, readMediaContextRange } from './media-context.mjs';
+import { refreshSourceMediaBindings, readMediaBindings, readMediaBindingIssues, bindingSupportsPhoto, bindingBlocksPhoto, mediaEntityKeys } from './repositories/media-bindings.mjs';
+import { repairMediaBinding } from './repositories/media-binding-repair.mjs';
+import { mediaAvailabilitySnapshot } from './media-availability.mjs';
+import { normalizeRouteFragments, routeContentKind, assertFrozenRoute, routeError, routeHash, validateRouteDraft } from './route-bundle.mjs';
+import { currentRouteBundle, persistRouteBundle, saveRouteArtifact } from './repositories/route-bundles.mjs';
+import { renderRouteSchematic, verifyRouteRender, routeSchematicVisual, verifyStoredRouteVisual } from './visuals/route-schematic.mjs';
+import { constrainRouteVisuals } from './route-media.mjs';
+import { routeDecisionState, proposeRouteRevision, decideRouteRevision } from './repositories/route-decisions.mjs';
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
 
@@ -412,9 +423,16 @@ export class Repository {
   }
 
   decryptModelCredential(row) {
-    const decipher = crypto.createDecipheriv("aes-256-gcm", this.modelCredentialKey(), Buffer.from(row.iv, "base64"));
-    decipher.setAuthTag(Buffer.from(row.auth_tag, "base64"));
-    return Buffer.concat([decipher.update(Buffer.from(row.encrypted_secret, "base64")), decipher.final()]).toString("utf8");
+    try {
+      const decipher = crypto.createDecipheriv("aes-256-gcm", this.modelCredentialKey(), Buffer.from(row.iv, "base64"));
+      decipher.setAuthTag(Buffer.from(row.auth_tag, "base64"));
+      return Buffer.concat([decipher.update(Buffer.from(row.encrypted_secret, "base64")), decipher.final()]).toString("utf8");
+    } catch (error) {
+      if (error.code?.startsWith("MODEL_CREDENTIAL_ENCRYPTION_KEY_")) throw error;
+      throw Object.assign(new Error("Stored model credential cannot be decrypted; verify MODEL_CREDENTIAL_ENCRYPTION_KEY before processing jobs."), {
+        code: "MODEL_CREDENTIAL_DECRYPT_FAILED", statusCode: 409, cause: error,
+      });
+    }
   }
 
   hasModelCredential(provider) {
@@ -449,6 +467,16 @@ export class Repository {
       };
     }
     const encryption = this.modelCredentialEncryptionStatus();
+    if (encryption.ready) {
+      const sample = this.db.prepare("SELECT * FROM model_credentials ORDER BY provider LIMIT 1").get();
+      if (sample) {
+        try { this.decryptModelCredential(sample); }
+        catch (error) {
+          encryption.ready = false;
+          encryption.code = error.code || "MODEL_CREDENTIAL_DECRYPT_FAILED";
+        }
+      }
+    }
     return {
       selectedProvider: row.selected_provider, activeProvider: row.active_provider, activeModel: row.active_model,
       activationState: row.activation_state, revision: Number(row.revision || 1), policyVersion: row.policy_version,
@@ -654,6 +682,9 @@ export class Repository {
   }
 
   saveFrontendPageComposition(draftId, planId, snapshot, payload, validation, model = null, expectedVersion = null, explicitProvenance = null) {
+    this.assertDraftRouteCurrent(draftId);
+    if(expectedVersion?.mediaDependencyHash && expectedVersion.mediaDependencyHash!==routeMediaDependencyHash(this.db,draftId))
+      throw routeError('ROUTE_VERSION_STALE',{draft_id:draftId,field:'page_media_dependencies'});
     const timestamp = now();
     const draft = this.db.prepare("SELECT revision, content_hash FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) throw new Error(`Article draft ${draftId} not found.`);
@@ -700,6 +731,10 @@ export class Repository {
       snapshot.checksum, JSON.stringify(payload), JSON.stringify(validationRecord), validationRecord.valid ? "valid" : "invalid", model, timestamp, timestamp,
       draft.revision, draft.content_hash);
     const pageHash = sha256(JSON.stringify(payload));
+    const route=this.getBriefPackage(draftRow?.brief_id)?.route_bundle;
+    if(route && validationRecord.valid) saveRouteArtifact(this.db,{bundle:route,kind:'page',contentHash:draft.content_hash,
+      receipt:{draft_id:draftId,page_dependency_hash:routePageDependencyHash(this.db,draftId),
+        media_dependency_hash:routeMediaDependencyHash(this.db,draftId)}});
     this.db.prepare(`UPDATE commercial_compositions SET refresh_required=1,refresh_reason='editorial_page_recomposed',updated_at=?
       WHERE draft_id=? AND editorial_page_hash<>?`).run(timestamp,draftId,pageHash);
     return this.getFrontendPageComposition(draftId);
@@ -1136,11 +1171,18 @@ export class Repository {
   cleanupDeletedSourceFiles() {
     const root = this.contentConfig.sourceUploadsDir && path.resolve(this.contentConfig.sourceUploadsDir);
     if (!root) return;
+    const databasePath = this.db.prepare("PRAGMA database_list").all().find((entry) => entry.name === "main")?.file;
+    if (!databasePath) return;
+    return withMediaFileLease(databasePath, () => this.cleanupDeletedSourceFilesUnderLease(root), { skipIfBusy: true });
+  }
+
+  cleanupDeletedSourceFilesUnderLease(root) {
     for (const row of this.db.prepare('SELECT path FROM source_delete_file_queue').all()) {
       if (!path.resolve(row.path).startsWith(`${root}${path.sep}`)) continue;
       const shared = this.db.prepare(`SELECT 1 FROM source_assets WHERE local_path=? UNION
-        SELECT 1 FROM source_files WHERE storage_path=? UNION SELECT 1 FROM article_visuals WHERE media_path=? LIMIT 1`)
-        .get(row.path, row.path, row.path);
+        SELECT 1 FROM source_files WHERE storage_path=? UNION SELECT 1 FROM article_visuals WHERE media_path=?
+        UNION SELECT 1 FROM visual_candidates WHERE media_path=? LIMIT 1`)
+        .get(row.path, row.path, row.path, row.path);
       if (shared) { this.db.prepare('DELETE FROM source_delete_file_queue WHERE path=?').run(row.path); continue; }
       try { fs.unlinkSync(row.path); }
       catch (error) { if (error.code !== 'ENOENT') continue; }
@@ -1775,12 +1817,23 @@ export class Repository {
   saveExperienceExtraction(sourceId, extraction, model = null, packageValue = null) {
     const input = packageValue || this.getExperienceExtractionPackage(sourceId);
     if (!input) throw new Error(`Source ${sourceId} is not ready for Experience extraction.`);
+    const routeFragments=extraction.route_fragments?.length ? normalizeRouteFragments(extraction.route_fragments,input) : [];
+    const currentCapture=this.db.prepare('SELECT capture_version FROM sources WHERE id=?').get(sourceId);
+    if(routeFragments.length && currentCapture?.capture_version!==input.source.capture_version)
+      throw routeError('ROUTE_VERSION_STALE',{source_id:sourceId});
     const reconcileSourceOpportunities = () => {
       const destination = this.db.prepare("SELECT destination_slug FROM structured_sources WHERE source_id=?").get(sourceId);
       if (destination?.destination_slug) this.reconcileRecommendationInbox(destination.destination_slug);
     };
     const existing = this.db.prepare(`SELECT * FROM experience_extraction_runs WHERE source_id=? AND input_hash=?`).get(sourceId, input.input_hash);
     if (existing?.status === "succeeded") {
+      // A bounded source re-extraction may add this newer contract to an
+      // otherwise reusable Experience run. Preserve block identities and do
+      // not purchase or enqueue any additional work here.
+      if(Object.hasOwn(extraction,'route_fragments') && routeHash(routeFragments)!==routeHash(json(existing.route_fragments_json,[]))) {
+        this.db.prepare('UPDATE experience_extraction_runs SET route_fragments_json=?,updated_at=? WHERE id=?')
+          .run(JSON.stringify(routeFragments),now(),existing.id);
+      }
       this.refreshExperienceBackfillRuns();
       reconcileSourceOpportunities();
       return { runId: existing.id, reused: true, blocks: this.listExperienceBlocks(sourceId) };
@@ -1808,6 +1861,7 @@ export class Repository {
         VALUES (?,?,?,?,?,'succeeded',?,?,NULL,?,?) ON CONFLICT(source_id,input_hash) DO UPDATE SET status='succeeded',
         degraded=excluded.degraded,model=excluded.model,error=NULL,updated_at=excluded.updated_at`)
         .run(runId,sourceId,input.extraction_run_id,input.source.capture_version,input.input_hash,input.degraded?1:0,model,timestamp,timestamp);
+      this.db.prepare('UPDATE experience_extraction_runs SET route_fragments_json=? WHERE id=?').run(JSON.stringify(routeFragments),runId);
       this.db.prepare("DELETE FROM experience_blocks WHERE extraction_run_id=?").run(runId);
       const insert = this.db.prepare(`INSERT INTO experience_blocks(id,source_id,extraction_run_id,segment_ids_json,type,title,traveler_goal,
         sequence_json,decision_logic_json,conditions_json,tradeoffs_json,warnings_json,alternatives_json,supporting_claim_ids_json,
@@ -1921,12 +1975,20 @@ export class Repository {
   }
 
   recoverPreparingVertexBatches() {
-    const runs = this.db.prepare(`SELECT id FROM vertex_batch_runs WHERE status='preparing'
+    const runs = this.db.prepare(`SELECT id,provider_state,provider_job_name FROM vertex_batch_runs WHERE status='preparing'
       AND preparation_lease_expires_at IS NOT NULL AND preparation_lease_expires_at<=?`).all(this.jobTimestamp());
     if (!runs.length) return 0;
     const timestamp = this.jobTimestamp();
     transaction(this.db, () => {
       for (const run of runs) {
+        if (run.provider_state === 'SUBMISSION_DISPATCH_STARTED' || run.provider_state === 'SUBMISSION_OUTCOME_UNKNOWN'
+          || run.provider_job_name) {
+          this.db.prepare(`UPDATE vertex_batch_runs SET provider_state='SUBMISSION_OUTCOME_UNKNOWN',
+            preparation_lease_expires_at=NULL,next_poll_at=?,last_error='Batch submission outcome needs provider reconciliation.',
+            updated_at=? WHERE id=? AND status='preparing'`)
+            .run(timestamp, timestamp, run.id);
+          continue;
+        }
         this.db.prepare(`UPDATE vertex_batch_items SET status='failed',last_error='Batch preparation was interrupted; returned to the realtime queue.',completed_at=?
           WHERE run_id=? AND status='preparing'`).run(timestamp, run.id);
         this.db.prepare(`UPDATE vertex_batch_runs SET status='failed',last_error='Batch preparation was interrupted during process restart.',
@@ -2019,14 +2081,57 @@ export class Repository {
       .run(normalized.receivedModality, JSON.stringify(normalized), transportKey, requestFingerprint, runId, jobId).changes === 1;
   }
 
+  markVertexBatchSubmissionDispatch(runId, dispatch, lease = null) {
+    const timestamp = this.jobTimestamp();
+    const owner = lease?.preparation_owner || lease?.preparationOwner || this.workerId;
+    const generation = Number(lease?.preparation_generation || lease?.preparationGeneration || 1);
+    return this.db.prepare(`UPDATE vertex_batch_runs SET provider_state='SUBMISSION_DISPATCH_STARTED',
+      input_uri=?,output_uri_prefix=?,updated_at=? WHERE id=? AND status='preparing'
+      AND preparation_owner=? AND preparation_generation=? AND preparation_lease_expires_at>?`)
+      .run(String(dispatch.inputUri || ''), String(dispatch.outputUriPrefix || ''), timestamp,
+        runId, owner, generation, timestamp).changes === 1;
+  }
+
+  recordVertexBatchProviderJob(runId, batch) {
+    return this.db.prepare(`UPDATE vertex_batch_runs SET provider_job_name=?,updated_at=?
+      WHERE id=? AND status='preparing' AND provider_state IN ('SUBMISSION_DISPATCH_STARTED','SUBMISSION_OUTCOME_UNKNOWN')`)
+      .run(String(batch.name || ''), this.jobTimestamp(), runId).changes === 1;
+  }
+
+  vertexBatchDispatchStarted(runId) {
+    const run = this.db.prepare('SELECT provider_state,provider_job_name FROM vertex_batch_runs WHERE id=?').get(runId);
+    return Boolean(run && (run.provider_state === 'SUBMISSION_DISPATCH_STARTED'
+      || run.provider_state === 'SUBMISSION_OUTCOME_UNKNOWN' || run.provider_job_name));
+  }
+
+  markVertexBatchOutcomeUnknown(runId, error) {
+    const timestamp = this.jobTimestamp();
+    return this.db.prepare(`UPDATE vertex_batch_runs SET provider_state='SUBMISSION_OUTCOME_UNKNOWN',
+      preparation_lease_expires_at=NULL,next_poll_at=?,last_error=?,updated_at=?
+      WHERE id=? AND status='preparing' AND (provider_state='SUBMISSION_DISPATCH_STARTED'
+        OR provider_state='SUBMISSION_OUTCOME_UNKNOWN' OR provider_job_name<>'')`)
+      .run(timestamp, String(error?.message || error || 'Batch submission outcome is unknown.').slice(0, 4_000),
+        timestamp, runId).changes === 1;
+  }
+
+  deferVertexBatchSubmissionReconciliation(runId, error, delayMs = 60_000) {
+    const timestamp = this.jobTimestamp();
+    return this.db.prepare(`UPDATE vertex_batch_runs SET next_poll_at=?,last_error=?,updated_at=?
+      WHERE id=? AND status='preparing' AND provider_state='SUBMISSION_OUTCOME_UNKNOWN'`)
+      .run(new Date(this.clock().getTime() + delayMs).toISOString(),
+        String(error?.message || error || 'Provider reconciliation pending.').slice(0, 4_000),
+        timestamp, runId).changes === 1;
+  }
+
   activateVertexBatch(runId, batch, lease = null) {
     const timestamp = this.jobTimestamp();
     return transaction(this.db, () => {
       const owner = lease?.preparation_owner || lease?.preparationOwner || this.workerId;
       const generation = Number(lease?.preparation_generation || lease?.preparationGeneration || 1);
-      const live = this.db.prepare(`SELECT 1 FROM vertex_batch_runs WHERE id=? AND status='preparing'
-        AND preparation_owner=? AND preparation_generation=? AND preparation_lease_expires_at>?`)
-        .get(runId, owner, generation, timestamp);
+      const live = this.db.prepare(`SELECT 1 FROM vertex_batch_runs WHERE id=? AND status='preparing' AND (
+        (preparation_owner=? AND preparation_generation=? AND preparation_lease_expires_at>?)
+        OR (provider_state='SUBMISSION_OUTCOME_UNKNOWN' AND provider_job_name=?))`)
+        .get(runId, owner, generation, timestamp, String(batch.name || ''));
       if (!live) return false;
       const submittedIds = new Set(batch.itemIds || []);
       const items = this.db.prepare("SELECT * FROM vertex_batch_items WHERE run_id=? AND status='preparing'").all(runId);
@@ -2049,9 +2154,9 @@ export class Repository {
       }
       this.db.prepare(`UPDATE vertex_batch_runs SET provider_job_name=?,input_uri=?,output_uri_prefix=?,status='submitted',
         provider_state=?,submitted_count=?,next_poll_at=?,preparation_lease_expires_at=NULL,updated_at=?
-        WHERE id=? AND status='preparing' AND preparation_owner=? AND preparation_generation=?`)
+        WHERE id=? AND status='preparing'`)
         .run(batch.name, batch.inputUri, batch.outputUriPrefix, batch.state || 'JOB_STATE_PENDING', submittedIds.size,
-          new Date(this.clock().getTime() + Number(batch.pollMs || 60_000)).toISOString(), timestamp, runId, owner, generation);
+          new Date(this.clock().getTime() + Number(batch.pollMs || 60_000)).toISOString(), timestamp, runId);
       return true;
     });
   }
@@ -2068,6 +2173,11 @@ export class Repository {
     const cleanup = this.db.prepare(`SELECT * FROM vertex_batch_runs WHERE status='succeeded' AND result_state='ready_cleanup'
       AND cleanup_eligible_at IS NOT NULL AND cleanup_eligible_at<=? ORDER BY completed_at LIMIT 1`).get(this.jobTimestamp());
     if (cleanup) return { ...cleanup, cleanupOnly: true, items: [] };
+    const reconcile = this.db.prepare(`SELECT * FROM vertex_batch_runs WHERE status='preparing'
+      AND provider_state='SUBMISSION_OUTCOME_UNKNOWN' AND input_uri<>'' AND next_poll_at<=?
+      ORDER BY created_at LIMIT 1`).get(this.jobTimestamp());
+    if (reconcile) return { ...reconcile, reconcileOnly: true, items: this.db.prepare(`SELECT * FROM vertex_batch_items
+      WHERE run_id=? AND status='preparing' ORDER BY rowid`).all(reconcile.id) };
     const run = this.db.prepare(`SELECT * FROM vertex_batch_runs WHERE status='submitted' AND next_poll_at<=?
       ORDER BY created_at LIMIT 1`).get(this.jobTimestamp());
     if (!run) return null;
@@ -2663,6 +2773,7 @@ export class Repository {
       new Error(`Source ${sourceId} is ${source.completeness_status}; complete capture evidence is required before extraction.`),
       { code: "SOURCE_CAPTURE_PARTIAL", retryable: false },
     );
+    refreshSourceMediaBindings(this.db,sourceId,{dryRun:false});
     const stored = this.db.prepare("SELECT * FROM source_segments WHERE source_id=? AND capture_version=? ORDER BY sequence")
       .all(sourceId, source.capture_version);
     if (stored.length) return stored.filter((item) => !["complete", "extracted"].includes(item.status));
@@ -2720,7 +2831,8 @@ export class Repository {
     const segments=this.db.prepare(`SELECT * FROM source_segments WHERE id IN (${batch.segmentIds.map(()=>"?").join(",")}) ORDER BY sequence`).all(...batch.segmentIds);
     const segmentByAsset=Object.fromEntries(segments.map((segment)=>[segment.asset_id,segment.id]));
     const assets=source.assets.filter((asset)=>batch.assetIds.includes(asset.id)).map((asset)=>({...asset,segment_id:segmentByAsset[asset.id]}));
-    return {batch,segments,source:{...source,raw_text:"",assets,title:`${source.title} · media batch ${row.sequence+1}`,
+    const mediaContext=supplementMediaContext(source,assets);
+    return {batch,segments,source:{...source,raw_text:mediaContext.blocks.map(block=>block.text).join('\n'),media_context:mediaContext,assets,title:`${source.title} · media batch ${row.sequence+1}`,
       submission_metadata:{...source.submission_metadata,media_batch_id:row.id,asset_segment_ids:segmentByAsset}}};
   }
 
@@ -2880,7 +2992,8 @@ export class Repository {
     const asset = segment.asset_id ? source.assets.find((item) => item.id === segment.asset_id) : null;
     return {
       sourceId: source.id, segment,
-      source: { ...source, raw_text: segment.raw_text, assets: asset ? [asset] : [], title: segment.title || source.title,
+      source: { ...source, raw_text: segment.raw_text, assets: asset ? [{...asset,segment_id:segment.id}] : [],
+        ...(asset ? {media_context:supplementMediaContext(source,[{...asset,segment_id:segment.id}])} : {}), title: segment.title || source.title,
         submission_metadata: { ...source.submission_metadata, segment_id: segment.id, segment_sequence: segment.sequence } },
     };
   }
@@ -2970,7 +3083,46 @@ export class Repository {
       saa.language_by_region_json,saa.reader_text_present,saa.confidence AS analysis_confidence,
       saa.analysis_version,saa.prompt_version,saa.source_sha256 AS analysis_source_sha256
       FROM source_assets sa LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id WHERE sa.id=?`).get(assetId);
-    return row ? hydrateSourceAssetAnalysis(row) : null;
+    if (!row) return null;
+    const capture=this.mediaContextSource(row);
+    // A retained historical image must never borrow the current capture's text.
+    const mediaContext=supplementMediaContext({id:row.source_id,capture_version:row.capture_version,raw_text:capture?.raw_text || ''},[row]);
+    return {...hydrateSourceAssetAnalysis(row),media_context:mediaContext,source_bindings:readMediaBindings(this.db,assetId),
+      source_binding_issues:readMediaBindingIssues(this.db,assetId)};
+  }
+
+  mediaContextSource(asset) {
+    const current=this.db.prepare('SELECT id,capture_version,raw_text FROM sources WHERE id=?').get(asset.source_id);
+    if (current?.capture_version === asset.capture_version) return current;
+    const capture=this.db.prepare('SELECT raw_text FROM capture_versions WHERE source_id=? AND capture_version=?')
+      .get(asset.source_id,asset.capture_version);
+    if (!capture) throw Object.assign(new Error('Retained capture context is unavailable.'),{code:'CONTEXT_MISSING',statusCode:409});
+    return {id:asset.source_id,capture_version:asset.capture_version,raw_text:capture.raw_text};
+  }
+
+  readSourceMediaContext(assetId, range = null) {
+    const asset=this.db.prepare("SELECT * FROM source_assets WHERE id=? AND kind='image'").get(assetId);
+    if (!asset) return null;
+    const source=this.mediaContextSource(asset);
+    return range ? readMediaContextRange(source,asset,range) : buildMediaContext(source,[asset]);
+  }
+
+  refreshSourceMediaBindings(sourceId, options = {}) {
+    return refreshSourceMediaBindings(this.db,sourceId,options);
+  }
+
+  repairMediaBinding(assetId, options = {}) {
+    return repairMediaBinding(this.db,assetId,options);
+  }
+
+  refreshKnownMediaBindings(destinationSlug) {
+    // Only sources already indexed by the current source-processing path.
+    // Historical unindexed sources require a scoped dry-run/repair operation.
+    const rows=this.db.prepare(`SELECT DISTINCT mo.source_id FROM media_occurrences mo
+      JOIN sources s ON s.id=mo.source_id AND s.capture_version=mo.capture_version
+      JOIN structured_sources ss ON ss.source_id=s.id WHERE ss.destination_slug=? ORDER BY mo.source_id`).all(destinationSlug);
+    for(const row of rows)refreshSourceMediaBindings(this.db,row.source_id,{dryRun:false});
+    return {sources:rows.length,modelCalls:0};
   }
 
   enqueueSourcePhotoAudits(sourceId = null, { limit = 2000, dryRun = false, priority = 10 } = {}) {
@@ -4435,6 +4587,7 @@ export class Repository {
         }
       }
     });
+    this.refreshKnownMediaBindings(destinationSlug);
     return rows.length;
   }
 
@@ -5481,30 +5634,211 @@ export class Repository {
     };
   }
 
-  getPlanningPackage(candidateId, { opportunityId = null } = {}) {
+  getPlanningPackage(candidateId, { opportunityId = null, explicitAssetIds = [] } = {}) {
     const topic=this.getTopicPackage(candidateId, { opportunityId });
     const bounded=boundedPlanningPackage(topic);
     if (!bounded) return null;
-    const selection={destination_slug:topic.candidate.destination_slug,
+    const selection={destination_slug:topic.candidate.destination_slug,topic:topic.candidate.proposed_title,
+      target_entities:topic.approved_proposal?.targetEntities || [],
       evidence_ledger_json:JSON.stringify(bounded.facts.map((fact)=>fact.normalized_key))};
-    bounded.authorized_source_assets=this.authorizedSourceAssetsForBrief(selection).slice(0,12)
+    const retrievalOptions={explicitAssetIds,additionalSourceIds:topic.editorial_assembly?.selected_source_ids || []};
+    const availableAssets=this.authorizedSourceAssetsForBrief(selection,retrievalOptions);
+    const inventoryPage=this.authorizedSourceAssetsForBrief(selection,{...retrievalOptions,includeUnavailable:true});
+    const inventory=[...new Map([...availableAssets,...inventoryPage].map(asset=>[asset.id,asset])).values()];
+    inventory.retrieval=inventoryPage.retrieval;
+    const explicit=new Set(explicitAssetIds);
+    bounded.authorized_source_assets=availableAssets.filter((asset,index)=>explicit.has(asset.id) || index<12)
       .map((asset)=>({id:asset.id,source_id:asset.source_id,asset_kind:asset.asset_kind,
         mime_type:asset.mime_type,preview_url:`/api/source-assets/${asset.id}/preview`,
         alt_text:truncateText(asset.alt_text,180),caption_text:truncateText(asset.caption_text,180),
         nearby_text:truncateText(asset.nearby_text,300),
         primary_subjects:(asset.primary_subjects || []).slice(0,6),entities:(asset.entities || []).slice(0,6),
+        source_bindings:(asset.source_bindings || []).map(binding=>({id:binding.id,entity_key:binding.entity_key,
+          canonical_subject:binding.canonical_subject,relation_type:binding.relation_type,allowed_uses:binding.allowed_uses,
+          prohibited_inferences:binding.prohibited_inferences,context_hash:binding.context_hash})),
         width:asset.width,height:asset.height,analysis_status:asset.analysis_status}));
+    const updateMediaSnapshot=()=>{
+      bounded.planning_input_manifest.authorized_asset_count=bounded.authorized_source_assets.length;
+      bounded.planning_input_manifest.media_retrieval={...availableAssets.retrieval,
+        has_more:Boolean(availableAssets.retrieval?.has_more || availableAssets.length>bounded.authorized_source_assets.length),
+        planning_selected_count:bounded.authorized_source_assets.length};
+      const selectedIds=new Set(bounded.authorized_source_assets.map(asset=>asset.id));
+      const unseen=inventory.filter(asset=>!selectedIds.has(asset.id) && !explicit.has(asset.id));
+      const diagnosticIds=new Set(unseen.slice(0,12).map(asset=>asset.id));
+      bounded.media_availability=mediaAvailabilitySnapshot(
+        inventory.filter(asset=>explicit.has(asset.id) || selectedIds.has(asset.id) || diagnosticIds.has(asset.id)),
+        {...bounded.planning_input_manifest.media_retrieval,scope:'bounded_entity_and_source_inventory',
+          inventory_has_more:Boolean(inventory.retrieval?.has_more || inventory.retrieval?.inventory_aliases_has_more || unseen.length>12),selected_asset_ids:[...selectedIds]});
+    };
+    updateMediaSnapshot();
+    bounded.route_bundle=this.prepareRouteForPlanning(topic,{opportunityId,mediaAvailability:bounded.media_availability});
     while (bounded.authorized_source_assets.length
       && Buffer.byteLength(JSON.stringify(bounded)) > PLANNING_INPUT_BUDGET.maxInputBytes) {
-      bounded.authorized_source_assets.pop();
+      const removable=bounded.authorized_source_assets.findLastIndex(asset=>!explicit.has(asset.id));
+      if(removable<0) {
+        throw Object.assign(new Error('Explicit media selections exceed the planning input budget; retain selections and reduce other input before retrying.'),
+          {code:'EXPLICIT_MEDIA_INPUT_BUDGET',statusCode:409});
+      }
+      bounded.authorized_source_assets.splice(removable,1);
+      updateMediaSnapshot();
     }
-    bounded.planning_input_manifest.authorized_asset_count=bounded.authorized_source_assets.length;
     bounded.planning_input_manifest.input_bytes=Buffer.byteLength(JSON.stringify(bounded));
+    if(bounded.planning_input_manifest.input_bytes>PLANNING_INPUT_BUDGET.maxInputBytes)
+      throw routeError('ROUTE_INPUT_BUDGET_EXCEEDED',{bytes:bounded.planning_input_manifest.input_bytes,
+        action:'Reduce selected supporting evidence; do not truncate the approved route.'});
     bounded.planning_input_manifest.estimated_tokens=Math.ceil(bounded.planning_input_manifest.input_bytes/4);
     return bounded;
   }
 
-  saveBrief(candidateId, plan, model, { deferDraft = false, opportunityId = null } = {}) {
+  routeDecisionState(ownerId) { return routeDecisionState(this,ownerId); }
+  proposeRouteRevision(ownerId,payload,actor) { return proposeRouteRevision(this,ownerId,payload,actor); }
+  decideRouteRevision(ownerId,proposalId,payload,actor) { return decideRouteRevision(this,ownerId,proposalId,payload,actor); }
+
+  currentRouteFragments(topic) {
+    // Explicitly approved route evidence may belong to a source whose ordinary
+    // knowledge claim lost consensus. Do not silently discard that source and
+    // hide the field conflict before compiling the approved composition.
+    const selectedIds=topic.approved_proposal?.route_scope?.fragment_ids;
+    const selectedSources=Array.isArray(selectedIds) && selectedIds.length<=120 && selectedIds.every(id=>typeof id==='string')
+      ? this.db.prepare(`SELECT DISTINCT er.source_id FROM experience_extraction_runs er,json_each(er.route_fragments_json) fragment
+          WHERE json_extract(fragment.value,'$.fragment_id') IN (${selectedIds.map(()=>'?').join(',') || 'NULL'})`)
+        .all(...selectedIds).map(row=>row.source_id) : [];
+    const ids=[...new Set([topic.source_reference?.id,...(topic.editorial_assembly?.selected_source_ids || []),
+      ...selectedSources,...(topic.experiences || []).map(x=>x.source_id)].filter(Boolean))];
+    const fragments=ids.flatMap(sourceId=>{
+      const input=this.getExperienceExtractionPackage(sourceId);
+      if(!input) return [];
+      const row=this.db.prepare(`SELECT er.route_fragments_json FROM experience_extraction_runs er
+        JOIN sources s ON s.id=er.source_id AND s.capture_version=er.capture_version
+        WHERE er.source_id=? AND er.input_hash=? AND er.status='succeeded' ORDER BY er.created_at DESC LIMIT 1`)
+        .get(sourceId,input.input_hash);
+      return json(row?.route_fragments_json,[]);
+    });
+    for(const fragment of fragments) for(const stop of fragment.stops) {
+      const names=[stop.name_zh,stop.name_en].filter(Boolean);
+      const keys=names.map(name=>mediaEntityKeys(this.db,topic.candidate.destination_slug,name));
+      const supported=keys.length && keys.every(k=>k.length===1 && k[0]===stop.entity_id);
+      if(supported) stop.identity_status='confirmed';
+    }
+    return fragments;
+  }
+
+  prepareRouteForPlanning(topic,{opportunityId=null,mediaAvailability=null}={}) {
+    const candidateId=topic.candidate.id;
+    const owner=opportunityId
+      ? this.db.prepare('SELECT * FROM content_opportunities WHERE id=? AND candidate_id=? AND approved_at IS NOT NULL').get(opportunityId,candidateId)
+      : this.db.prepare('SELECT * FROM content_opportunities WHERE candidate_id=? AND approved_at IS NOT NULL').all(candidateId);
+    const approved=Array.isArray(owner) ? (owner.length===1?owner[0]:null) : owner;
+    const fragments=this.currentRouteFragments(topic);
+    const coverage=json(approved?.coverage_json,{});
+    const scope=coverage.approval?.proposal || topic.approved_proposal;
+    if(routeContentKind({...topic,approved_proposal:scope,route_fragments:fragments})==='knowledge') return null;
+    if(!approved) throw routeError('ROUTE_EVIDENCE_PENDING',{field:'production_owner_approval'});
+    const bundle=persistRouteBundle(this.db,{candidateId,ownerId:approved.id,fragments,
+      approval:{record_id:`${approved.id}:${approved.approved_at}:${routeHash(coverage.approval || {})}`,
+        scope},mediaAvailability,mediaObligations:coverage.approval?.route_media_obligations || []});
+    return assertFrozenRoute(bundle);
+  }
+
+  routeForCandidate(candidateId) {
+    const rows=this.db.prepare(`SELECT owner_id FROM route_bundles WHERE candidate_id=? GROUP BY owner_id`).all(candidateId);
+    if(rows.length>1) throw routeError('ROUTE_OWNER_AMBIGUOUS',{candidate_id:candidateId});
+    return rows.length ? currentRouteBundle(this.db,rows[0].owner_id) : null;
+  }
+
+  assertCurrentRoute(bundle) {
+    assertFrozenRoute(bundle);
+    const row=this.db.prepare('SELECT content_hash FROM route_bundles WHERE route_id=? ORDER BY revision DESC LIMIT 1').get(bundle.route_id);
+    if(row?.content_hash!==bundle.content_hash) throw routeError('ROUTE_VERSION_STALE',{route_id:bundle.route_id});
+    for(const source of bundle.source_snapshot) {
+      const current=this.db.prepare('SELECT capture_version FROM sources WHERE id=?').get(source.source_id);
+      if(current?.capture_version!==source.capture_version) throw routeError('ROUTE_VERSION_STALE',{source_id:source.source_id});
+      if(source.source_input_hash && this.getExperienceExtractionPackage(source.source_id)?.input_hash!==source.source_input_hash)
+        throw routeError('ROUTE_VERSION_STALE',{source_id:source.source_id,field:'source_evidence'});
+      const run=this.db.prepare(`SELECT route_fragments_json FROM experience_extraction_runs WHERE source_id=? AND input_hash=? AND status='succeeded'`)
+        .get(source.source_id,source.source_input_hash);
+      const currentFragment=json(run?.route_fragments_json,[]).find(f=>f.fragment_id===source.fragment_id);
+      const semanticFragment=fragment=>({...fragment,stops:fragment.stops.map(({identity_status,...stop})=>stop)});
+      if(!currentFragment || routeHash(semanticFragment(currentFragment))!==routeHash(semanticFragment(source)))
+        throw routeError('ROUTE_VERSION_STALE',{source_id:source.source_id,field:'source_route_fragment'});
+    }
+    for(const obligation of bundle.media_obligations.filter(x=>x.required)) {
+      if(obligation.kind==='schematic' && obligation.use==='route_overview') continue;
+      const asset=this.db.prepare('SELECT original_bytes_status,durability_status FROM source_assets WHERE id=?').get(obligation.asset_id);
+      const valid=asset?.original_bytes_status==='saved_original' && asset.durability_status==='ORIGINAL_STORED'
+        && readMediaBindings(this.db,obligation.asset_id).some(b=>b.entity_key===obligation.entity_id && b.allowed_uses.includes(obligation.use));
+      if(!valid) throw routeError('REQUIRED_ROUTE_MEDIA_MISSING',{slot_id:obligation.slot_id,asset_id:obligation.asset_id});
+    }
+  }
+
+  assertDraftRouteCurrent(draftId) {
+    const draft=this.db.prepare('SELECT brief_id,content_hash FROM article_drafts WHERE id=?').get(draftId);
+    if(!draft) return;
+    const bundle=this.getBriefPackage(draft.brief_id)?.route_bundle;
+    if(!bundle) return;
+    this.assertCurrentRoute(bundle);
+    const matches=this.db.prepare(`SELECT receipt_json FROM route_artifacts WHERE route_id=? AND route_revision=?
+      AND artifact_kind='draft' AND content_hash=?`).all(bundle.route_id,bundle.revision,draft.content_hash)
+      .some(r=>json(r.receipt_json,{}).draft_id===draftId);
+    if(!matches) throw routeError('ROUTE_VERSION_STALE',{draft_id:draftId,field:'draft_route_receipt'});
+  }
+
+  async ensureRouteSchematic(bundle) {
+    if(!bundle) return null;
+    this.assertCurrentRoute(bundle);
+    const existing=this.db.prepare(`SELECT * FROM route_artifacts WHERE route_id=? AND route_revision=? AND artifact_kind='schematic' ORDER BY created_at DESC LIMIT 1`)
+      .get(bundle.route_id,bundle.revision);
+    if(existing && fs.existsSync(existing.media_path)) {
+      await verifyRouteRender(bundle,{filename:existing.media_path,manifest:json(existing.receipt_json,{})});
+      return existing.id;
+    }
+    if(!this.contentConfig.generatedMediaDir) throw routeError('ROUTE_RENDER_STORAGE_MISSING',{action:'Configure isolated generatedMediaDir.'});
+    const rendered=await renderRouteSchematic(bundle,existing?.media_path ? path.dirname(existing.media_path) : this.contentConfig.generatedMediaDir);
+    this.assertCurrentRoute(bundle);
+    return saveRouteArtifact(this.db,{bundle,kind:'schematic',contentHash:bundle.content_hash,receipt:rendered.manifest,
+      mediaPath:rendered.filename,fileHash:rendered.manifest.file_sha256});
+  }
+
+  async renderDraftRouteVisual(visual) {
+    const contract=json(visual.media_metadata_json,{}).route_contract;
+    const pkg=this.getDraftPackage(visual.draft_id);
+    const bundle=pkg?.route_bundle;
+    if(!bundle || contract?.approved_route_hash!==bundle.approved_route_hash || contract?.revision!==bundle.revision)
+      throw routeError('ROUTE_VERSION_STALE',{visual_id:visual.id});
+    this.assertCurrentRoute(bundle);
+    const draftReceipt=this.db.prepare(`SELECT receipt_json FROM route_artifacts WHERE route_id=? AND route_revision=?
+      AND artifact_kind='draft' AND content_hash=?`).all(bundle.route_id,bundle.revision,pkg.draft.content_hash)
+      .some(row=>json(row.receipt_json,{}).draft_id===visual.draft_id);
+    if(!draftReceipt) throw routeError('ROUTE_VERSION_STALE',{field:'draft_route',visual_id:visual.id});
+    const metadata=json(visual.media_metadata_json,{});
+    if(Number(metadata.recovery_budget?.deterministic_recovery || 0)>=3)
+      throw Object.assign(new Error('ROUTE_RENDER_BUDGET_EXHAUSTED'),{code:'ROUTE_RENDER_BUDGET_EXHAUSTED',retryable:false});
+    const artifactId=await this.ensureRouteSchematic(bundle);
+    const artifact=this.db.prepare('SELECT * FROM route_artifacts WHERE id=?').get(artifactId);
+    const manifest=json(artifact.receipt_json,{});
+    await verifyRouteRender(bundle,{filename:artifact.media_path,manifest});
+    this.assertCurrentRoute(bundle);
+    const expected=routeSchematicVisual(bundle);
+    if(visual.caption!==expected.caption || visual.alt_text!==expected.alt_text)
+      throw routeError('ROUTE_RENDER_MISMATCH',{field:'caption/summary',visual_id:visual.id});
+    return {mediaPath:artifact.media_path,mediaUrl:`/media/${path.basename(artifact.media_path)}`,
+      provider:'local',model:'local-route-svg-sharp-1',metadata:{route_render_manifest:manifest,
+        route_render_artifact_id:artifactId,binary_qa:{status:'passed',sha256:manifest.file_sha256},
+        local_route_qa:{status:'passed',file_hash:manifest.file_sha256,input_hash:manifest.input_hash,
+          approved_route_hash:bundle.approved_route_hash,method:'deterministic_renderer_verification'}}};
+  }
+
+  routeRenderPreview(ownerId) {
+    const bundle=currentRouteBundle(this.db,ownerId);
+    if(!bundle) return null;
+    const artifact=this.db.prepare(`SELECT * FROM route_artifacts WHERE route_id=? AND route_revision=? AND approved_route_hash=?
+      AND artifact_kind='schematic' ORDER BY created_at DESC LIMIT 1`).get(bundle.route_id,bundle.revision,bundle.approved_route_hash);
+    if(!artifact?.media_path || !fs.existsSync(artifact.media_path)) return null;
+    return {id:artifact.id,url:`/media/${path.basename(artifact.media_path)}`,manifest:json(artifact.receipt_json,{})};
+  }
+
+  saveBrief(candidateId, plan, model, { deferDraft = false, opportunityId = null, routeBundle = null } = {}) {
+    if(routeBundle) this.assertCurrentRoute(routeBundle);
     const candidate = this.db.prepare("SELECT * FROM topic_candidates WHERE id = ?").get(candidateId);
     if (!candidate) throw new Error(`Topic candidate ${candidateId} not found.`);
     plan = normalizeBriefPlan(plan);
@@ -5557,6 +5891,9 @@ export class Repository {
       topic: brief.topic,
       entities: [brief.destination_slug, ...(topicPackage?.approved_proposal?.targetEntities || [])],
     });
+    const availableAssets=this.authorizedSourceAssetsForBrief(brief,{packet:writingPacket});
+    const inventoryPage=this.authorizedSourceAssetsForBrief(brief,{packet:writingPacket,includeUnavailable:true});
+    const mediaInventory=[...new Map([...availableAssets,...inventoryPage].map(asset=>[asset.id,asset])).values()];
     return {
       ...topicPackage,
       brief: {
@@ -5566,12 +5903,19 @@ export class Repository {
       frontend_page_plan: this.getFrontendPagePlan(briefId),
       narrative_plan: this.getNarrativePlan(briefId),
       writing_packet: writingPacket,
+      route_bundle:writingPacket?.context?.route_bundle || this.routeForCandidate(brief.candidate_id),
       content_policy: contentPolicy,
       reader_sources: readerSources(facts),
-      authorized_source_assets: this.authorizedSourceAssetsForBrief(brief).map((asset) => {
+      media_availability:mediaAvailabilitySnapshot(mediaInventory,{...inventoryPage.retrieval,
+        has_more:Boolean(inventoryPage.retrieval?.has_more || availableAssets.retrieval?.has_more),
+        selected_asset_ids:availableAssets.map(asset=>asset.id)}),
+      authorized_source_assets: availableAssets.map((asset) => {
         const dimensions=sourceAssetDimensions(asset);
         return {
           id: asset.id, source_id: asset.source_id, alt_text: asset.alt_text,
+          original_sha256:asset.original_sha256,capture_version:asset.capture_version,
+          original_bytes_status:asset.original_bytes_status,durability_status:asset.durability_status,
+          local_photo_audit:asset.local_photo_audit,
           nearby_text: asset.nearby_text, caption_text: asset.caption_text,
           evidence_text: asset.evidence_text, language_status: asset.language_status,
           analysis_status:asset.analysis_status,asset_kind:asset.asset_kind,
@@ -5579,6 +5923,7 @@ export class Repository {
           editor_ui_regions:asset.editor_ui_regions,primary_subjects:asset.primary_subjects,
           language_by_region:asset.language_by_region,reader_text_present:asset.reader_text_present,
           analysis_confidence:asset.analysis_confidence,analysis_version:asset.analysis_version,
+          source_bindings:asset.source_bindings || [],source_binding_issues:asset.source_binding_issues || [],
           width:dimensions.width,height:dimensions.height,
           local_photo_audit_status:asset.local_photo_audit?.status || 'pending',
           mime_type: asset.mime_type, preview_url: `/api/source-assets/${asset.id}/preview`,
@@ -5594,7 +5939,9 @@ export class Repository {
   }
 
   getNarrativePlanningPackage(briefId) {
-    return boundedNarrativePackage(this.getBriefPackage(briefId));
+    const contentPackage=this.getBriefPackage(briefId);
+    const bounded=boundedNarrativePackage(contentPackage);
+    return bounded ? {...bounded,route_bundle:contentPackage.route_bundle || null} : null;
   }
 
   saveNarrativePlan(briefId, plan, model = null) {
@@ -5690,8 +6037,10 @@ export class Repository {
     ];
     const packetText = lines.join("\n").trim();
     const context = semanticMaterial({ version:2, narrative_plan:narrative,
+      route_bundle:contentPackage.route_bundle,
       content_policy:contentPackage.content_policy, reader_sources:contentPackage.reader_sources,
-      authorized_source_assets:contentPackage.authorized_source_assets, internal_link_inventory:contentPackage.internal_link_inventory,
+      authorized_source_assets:contentPackage.authorized_source_assets,media_availability:contentPackage.media_availability,
+      internal_link_inventory:contentPackage.internal_link_inventory,
       experiences });
     const timestamp = now();
     const packetId = `packet_${sha256(briefId).slice(0,24)}`;
@@ -5711,7 +6060,7 @@ export class Repository {
       selected_experience_block_ids:json(row.selected_experience_block_ids_json,[]) } : null;
   }
 
-  saveDraft(briefId, draft, model, { deferReview = false, opportunityId = null, preserveVisuals = false } = {}) {
+  saveDraft(briefId, draft, model, { deferReview = false, opportunityId = null, preserveVisuals = false, routeBundle = null } = {}) {
     const brief = this.db.prepare("SELECT * FROM content_briefs WHERE id = ?").get(briefId);
     if (!brief) throw new Error(`Content brief ${briefId} not found.`);
     draft.evidence_ledger = normalizeDraftLedger(draft.evidence_ledger, json(brief.plan_json, {}));
@@ -5721,11 +6070,17 @@ export class Repository {
     const timestamp = now();
     const packet = this.getWritingPacket(briefId);
     const briefPackage = this.getBriefPackage(briefId);
+    const frozenRoute=briefPackage?.route_bundle;
+    if(frozenRoute) {
+      this.assertCurrentRoute(routeBundle || frozenRoute);
+      if(routeBundle && routeBundle.content_hash!==frozenRoute.content_hash) throw routeError('ROUTE_VERSION_STALE',{brief_id:briefId});
+      validateRouteDraft(frozenRoute,draft);
+    }
     const facts = briefPackage?.facts || [];
     const authorizedSourceAssets = this.authorizedSourceAssetsForBrief(brief, { packet });
     const policy = packet?.context?.version === 2 ? packet.context.content_policy
       : contentPolicyFor(brief, facts);
-    const metadata = draftMetadata(draft, brief, this.contentConfig, authorizedSourceAssets, policy, facts,
+    const metadata = draftMetadata(draft, {...brief,route_bundle:frozenRoute}, this.contentConfig, authorizedSourceAssets, policy, facts,
       retainedVisuals.length ? retainedVisuals : null);
     draft.evidence_ledger = metadata.evidenceLedger;
     const contentHash = draftContentHash(draft, metadata, brief);
@@ -5758,6 +6113,8 @@ export class Repository {
     // Source analysis may still refine the visual plan. Freeze just before the
     // first media dispatch, after that deterministic planning work completes.
     this.recordDraftRevision(draftId, model || "unknown");
+    if(frozenRoute) saveRouteArtifact(this.db,{bundle:frozenRoute,kind:'draft',contentHash,
+      receipt:{draft_id:draftId,model,route_revision:frozenRoute.revision}});
     this.db.prepare("UPDATE topic_candidates SET status='drafted', updated_at=? WHERE id=?").run(timestamp, brief.candidate_id);
     this.db.prepare("UPDATE content_briefs SET status='drafted', updated_at=? WHERE id=?").run(timestamp, briefId);
     this.db.prepare(`UPDATE content_opportunities SET status='drafted',lifecycle_state='producing',updated_at=?
@@ -6039,6 +6396,14 @@ export class Repository {
 
   ensureAuthorizedSourceVisuals(draftId, { strategyVersion = null } = {}) {
     const current=this.listDraftVisuals(draftId);
+    // A frozen media plan must survive image-only recovery without reselection.
+    if(current.some(v=>v.acquisition_strategy==='render_route_schematic') && mediaManifestForDraft(this.db,draftId)) {
+      for(const visual of current.filter(v=>v.acquisition_strategy==='render_route_schematic' && v.status==='generated')) {
+        if(!visual.media_path || !fs.existsSync(visual.media_path)) this.db.prepare(`UPDATE article_visuals
+          SET status='planned',last_error='ROUTE_RENDER_FILE_MISSING',updated_at=? WHERE id=?`).run(now(),visual.id);
+      }
+      return this.listDraftVisuals(draftId);
+    }
     const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
     if (!row) return current;
@@ -6049,13 +6414,15 @@ export class Repository {
     const visualSourceIds=this.db.prepare(`SELECT DISTINCT sa.source_id FROM article_visuals av
       JOIN source_assets sa ON sa.id=av.source_asset_id WHERE av.draft_id=?`).all(draftId).map((item)=>item.source_id);
     const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null,
-      additionalSourceIds:visualSourceIds})
+      additionalSourceIds:visualSourceIds,explicitAssetIds:[...currentSourceIds]})
       .filter((asset)=>currentSourceIds.has(asset.id) || !failedSourceIds.has(asset.id));
     const frozenPolicy=contentPackage?.writing_packet?.context?.content_policy;
     const policy=contentPackage?.writing_packet?.context?.version === 2 && frozenPolicy?.visuals
       ? frozenPolicy : contentPolicyFor(row,contentPackage?.facts || []);
     const effectiveDraft={...row,strategy_version:strategyVersion || row.strategy_version || this.strategyVersion};
-    const visuals=normalizeVisuals(current,effectiveDraft,row,assets,policy);
+    const localRoute=current.filter(v=>v.acquisition_strategy==='render_route_schematic');
+    const visuals=normalizeVisuals(current.filter(v=>v.acquisition_strategy!=='render_route_schematic'),effectiveDraft,{...row,route_bundle:contentPackage?.route_bundle},assets,policy);
+    visuals.push(...localRoute.map(v=>({...v,model:null})));
     this.replaceDraftVisuals(draftId,visuals,effectiveDraft.strategy_version);
     this.refreshDraftSchema(draftId);
     return this.listDraftVisuals(draftId);
@@ -6119,13 +6486,13 @@ export class Repository {
     const visualSourceIds=this.db.prepare(`SELECT DISTINCT sa.source_id FROM article_visuals av
       JOIN source_assets sa ON sa.id=av.source_asset_id WHERE av.draft_id=?`).all(draftId).map((item)=>item.source_id);
     const assets=this.authorizedSourceAssetsForBrief(row,{packet:contentPackage?.writing_packet || null,
-      additionalSourceIds:visualSourceIds})
+      additionalSourceIds:visualSourceIds,explicitAssetIds:[...currentSourceIds]})
       .filter((asset)=>currentSourceIds.has(asset.id) || !failedSourceIds.has(asset.id));
     const effectiveDraft={...row,strategy_version:strategyVersion || row.strategy_version || this.strategyVersion};
     const frozenPolicy=contentPackage?.writing_packet?.context?.content_policy;
     const policy=contentPackage?.writing_packet?.context?.version === 2 && frozenPolicy?.visuals
       ? frozenPolicy : contentPolicyFor(row,contentPackage?.facts || []);
-    const proposed=normalizeVisuals(current,effectiveDraft,row,assets,policy);
+    const proposed=normalizeVisuals(current,effectiveDraft,{...row,route_bundle:contentPackage?.route_bundle},assets,policy);
     const slots=Array.from({length:Math.max(current.length,proposed.length)},(_,index)=>{
       const visual=proposed[index] || null;
       const existing=current[index] || null;
@@ -6310,7 +6677,7 @@ export class Repository {
           image_role=excluded.image_role, image_subject=excluded.image_subject,
           acquisition_strategy=excluded.acquisition_strategy, factual_image_required=excluded.factual_image_required,
           source_asset_id=excluded.source_asset_id, source_remote_url=excluded.source_remote_url,
-          status=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint
+          status=CASE WHEN excluded.status='skipped' THEN 'skipped' WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint
             AND NOT (excluded.status='planned' AND article_visuals.status='generated')
             THEN article_visuals.status ELSE excluded.status END,
           media_path=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.media_path ELSE NULL END,
@@ -6323,24 +6690,27 @@ export class Repository {
           provider=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.provider ELSE excluded.provider END,
           model=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.model ELSE excluded.model END,
           last_error=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.last_error ELSE NULL END,
-          attempt_count=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.attempt_count ELSE 0 END,
+          attempt_count=article_visuals.attempt_count,
           retry_at=CASE WHEN article_visuals.asset_fingerprint=excluded.asset_fingerprint THEN article_visuals.retry_at ELSE NULL END,
           asset_fingerprint=excluded.asset_fingerprint, updated_at=excluded.updated_at
       `);
       visuals.forEach((visual, index) => {
         const fingerprint = visualFingerprint(visual);
         const prior=existing.get(index + 1);
+        const priorBudget=json(prior?.media_metadata_json,{}).recovery_budget;
+        const visualMetadata={...(visual.media_metadata || {}),...(priorBudget ? {recovery_budget:priorBudget} : {})};
+        if(visualMetadata.route_omission) visualMetadata.route_omission={...visualMetadata.route_omission,plan_fingerprint:fingerprint};
         const needsGeneratedFile=["localize_source_image","localize_photo_overlay","recompose_editorial_card",
-          "recompose_collage","recompose_map_or_route","generate_illustration"].includes(visual.acquisition_strategy);
+          "recompose_collage","recompose_map_or_route","generate_illustration","render_route_schematic"].includes(visual.acquisition_strategy);
         const missingGeneratedFile=needsGeneratedFile && (!prior?.media_path || !fs.existsSync(prior.media_path));
         const sameFingerprint=prior?.asset_fingerprint===fingerprint;
-        const plannedStatus=needsGeneratedFile && (missingGeneratedFile || !sameFingerprint)
+        const plannedStatus=visual.status==='skipped' ? 'skipped' : needsGeneratedFile && (missingGeneratedFile || !sameFingerprint)
           ? 'planned' : sameFingerprint ? prior.status : visual.status || 'planned';
         upsert.run(existing.get(index + 1)?.id || id("visual"), draftId, index + 1, visual.placement, visual.purpose,
         visual.alt_text, visual.caption, visual.generation_prompt, visual.aspect_ratio, strategyVersion, visual.image_type,
         visual.image_role, visual.image_subject, visual.acquisition_strategy, visual.factual_image_required ? 1 : 0,
         visual.source_asset_id || null, visual.source_remote_url || null, plannedStatus, visual.media_url || null,
-        visual.provider || null, visual.model || null, timestamp, timestamp, fingerprint, JSON.stringify(visual.media_metadata || {}));
+        visual.provider || null, visual.model || null, timestamp, timestamp, fingerprint, JSON.stringify(visualMetadata));
       });
       this.db.prepare("DELETE FROM article_visuals WHERE draft_id=? AND slot>?").run(draftId, visuals.length);
     });
@@ -6353,7 +6723,7 @@ export class Repository {
       FROM article_visuals av LEFT JOIN source_assets sa ON sa.id=av.source_asset_id
       WHERE av.draft_id=? AND av.status IN ('planned','failed')
         AND av.acquisition_strategy IN ('generate_illustration','analyze_source_image','localize_source_image','localize_photo_overlay',
-          'recompose_editorial_card','recompose_collage','recompose_map_or_route')
+          'recompose_editorial_card','recompose_collage','recompose_map_or_route','render_route_schematic')
         AND (retry_at IS NULL OR retry_at<=?)
       ORDER BY av.slot
     `).all(draftId, now());
@@ -6463,8 +6833,22 @@ export class Repository {
   }
 
   saveGeneratedVisual(visualId, result, { expectedFingerprint = null } = {}) {
-    const current = this.db.prepare(`SELECT draft_id,acquisition_strategy,source_asset_id,media_metadata_json
+    const current = this.db.prepare(`SELECT *
       FROM article_visuals WHERE id=?`).get(visualId);
+    const routeContract=json(current?.media_metadata_json,{}).route_contract;
+    if(routeContract) {
+      const row=this.db.prepare('SELECT bundle_json FROM route_bundles WHERE route_id=? ORDER BY revision DESC LIMIT 1').get(routeContract.route_id);
+      const route=json(row?.bundle_json,null);
+      if(!route || route.revision!==routeContract.revision || route.approved_route_hash!==routeContract.approved_route_hash)
+        throw routeError('ROUTE_VERSION_STALE',{visual_id:visualId});
+      this.assertCurrentRoute(route);
+      const audit=result.metadata?.quality_qa?.semantic?.route_audit;
+      const localVerified=current.acquisition_strategy==='render_route_schematic'
+        && verifyStoredRouteVisual(this.db,route,{...current,media_path:result.mediaPath},
+          {...json(current.media_metadata_json,{}),...result.metadata});
+      if(!localVerified && (!audit?.checked || !audit.passed || audit.approved_route_hash!==route.approved_route_hash || audit.differences?.length!==0))
+        throw routeError('ROUTE_VISUAL_QA_FAILED',{visual_id:visualId});
+    }
     const metadata = {
       ...json(current?.media_metadata_json, {}),
       ...(result.metadata || {}),
@@ -6509,6 +6893,16 @@ export class Repository {
     return { retryable, status: retryable ? "planned" : "failed",budgetLane:lane,budget };
   }
 
+  omitOptionalRouteVisual(visualId,error) {
+    const visual=this.db.prepare('SELECT * FROM article_visuals WHERE id=?').get(visualId);
+    const slot=visual && mediaManifestForDraft(this.db,visual.draft_id)?.slots.find(s=>s.slotId===visualId);
+    if(!slot || slot.required || visual.factual_image_required) throw routeError('REQUIRED_ROUTE_MEDIA_MISSING',{visual_id:visualId});
+    const metadata={...json(visual.media_metadata_json,{}),route_omission:{code:error.code || 'ROUTE_RENDER_FAILED',
+      reason:String(error.message),plan_fingerprint:slot.planFingerprint,at:now()}};
+    this.db.prepare(`UPDATE article_visuals SET status='skipped',retry_at=NULL,media_url=NULL,
+      media_metadata_json=?,updated_at=? WHERE id=?`).run(JSON.stringify(metadata),now(),visualId);
+  }
+
   saveWordPressVisual(visualId, media) {
     const before = this.db.prepare(`
       SELECT av.draft_id, av.media_url AS previous_media_url,av.source_asset_id,av.media_metadata_json,ad.seo_json
@@ -6545,9 +6939,23 @@ export class Repository {
   }
 
   saveReview(draftId, review, reviewer, expectedVersion = null) {
+    this.assertDraftRouteCurrent(draftId);
     const timestamp = now();
     const draft = this.db.prepare("SELECT revision, content_hash, strategy_version, brief_id FROM article_drafts WHERE id=?").get(draftId);
     if (!draft) throw new Error(`Article draft ${draftId} not found.`);
+    const route=this.getBriefPackage(draft.brief_id)?.route_bundle;
+    if(route) {
+      this.assertCurrentRoute(route);
+      if(expectedVersion?.mediaDependencyHash && expectedVersion.mediaDependencyHash!==routeMediaDependencyHash(this.db,draftId))
+        throw routeError('ROUTE_VERSION_STALE',{draft_id:draftId,field:'review_media_dependencies'});
+      if(expectedVersion && Object.hasOwn(expectedVersion,'pageDependencyHash')
+        && expectedVersion.pageDependencyHash!==routePageDependencyHash(this.db,draftId))
+        throw routeError('ROUTE_VERSION_STALE',{draft_id:draftId,field:'review_page_dependencies'});
+      if(expectedVersion?.routeHash!==route.approved_route_hash || !review.route_audit?.checked
+        || review.route_audit.approved_route_hash!==route.approved_route_hash)
+        throw routeError('ROUTE_REVIEW_MISSING',{draft_id:draftId});
+      if(!review.route_audit.passed || review.route_audit.differences?.length) review={...review,passed:false};
+    }
     if (expectedVersion && (draft.revision !== expectedVersion.revision || draft.content_hash !== expectedVersion.contentHash)) {
       throw Object.assign(new Error("STALE_DRAFT_VERSION: QA input changed before the review could be saved."), { retryable: false });
     }
@@ -6563,6 +6971,9 @@ export class Repository {
       draft.revision, draft.content_hash, evidenceHash);
     this.db.prepare("UPDATE article_drafts SET quality_report_json=?, status=?, updated_at=? WHERE id=?")
       .run(JSON.stringify(review), review.passed ? "ready_for_wordpress" : "qa_failed", timestamp, draftId);
+    if(route) saveRouteArtifact(this.db,{bundle:route,kind:'text_review',contentHash:draft.content_hash,
+      receipt:{draft_id:draftId,reviewer,passed:review.passed,audit:review.route_audit,
+        media_dependency_hash:routeMediaDependencyHash(this.db,draftId),page_dependency_hash:routePageDependencyHash(this.db,draftId)}});
     this.db.prepare(`UPDATE content_opportunities SET status=?,updated_at=? WHERE id=COALESCE(?,(
       SELECT MIN(co.id) FROM content_opportunities co JOIN content_briefs cb ON cb.candidate_id=co.candidate_id
       JOIN article_drafts ad ON ad.brief_id=cb.id WHERE ad.id=? AND co.approved_at IS NOT NULL HAVING COUNT(*)=1))`)
@@ -6952,6 +7363,8 @@ export class Repository {
     return {
       ...item,
       production_state: buildProductionState(this.db, item, { capabilities:this.productionCapabilities }),
+      route_bundle:currentRouteBundle(this.db,item.opportunity_id),
+      route_render:this.routeRenderPreview(item.opportunity_id),
       page_preview: buildPageCompositionPreview(item),
       publication: item.wordpress_status ? {
         status: item.wordpress_status,
@@ -8551,7 +8964,7 @@ export class Repository {
     return { factId, action, status: hidden ? "hidden" : "visible", destinationSlug: fact.destination_slug };
   }
 
-  authorizedSourceAssetsForBrief(brief, { packet = null, additionalSourceIds = [] } = {}) {
+  authorizedSourceAssetsForBrief(brief, { packet = null, additionalSourceIds = [], explicitAssetIds = [], includeUnavailable = false, limit = 160, offset = 0 } = {}) {
     const claimKeys = json(brief.evidence_ledger_json, []);
     const supportingFacts = this.knowledgeForDestination(brief.destination_slug)
       .filter((fact) => !claimKeys.length || claimKeys.includes(fact.normalized_key));
@@ -8559,21 +8972,38 @@ export class Repository {
       .flatMap((fact) => fact.evidence || [])
       .map((evidence) => evidence.source_id)
       .filter(Boolean),...additionalSourceIds.filter(Boolean)])];
-    const selectedAssetIds=packet?.context?.version===2
-      ? uniqueStrings((packet.context.authorized_source_assets || []).map(asset=>asset.id || asset.source_asset_id),100) : [];
-    if (!sourceIds.length && !selectedAssetIds.length) return [];
+    const selectedAssetIds=[...new Set([...explicitAssetIds,...(packet?.context?.version===2
+      ? (packet.context.authorized_source_assets || []).map(asset=>asset.id || asset.source_asset_id).filter(Boolean) : [])])];
+    const entityKeys=[...new Set([brief.entity_key,...supportingFacts.map(fact=>fact.entity_key),
+      ...mediaEntityKeys(this.db,brief.destination_slug,[brief.topic,...(brief.target_entities || [])].join(' '))].filter(Boolean))];
+    if (!sourceIds.length && !selectedAssetIds.length && !entityKeys.length) return [];
     const scopes=[];
     const parameters=[];
-    if (selectedAssetIds.length) {
-      scopes.push(`sa.id IN (${selectedAssetIds.map(() => "?").join(",")})`);
-      parameters.push(...selectedAssetIds);
+    // Read-only discovery of retained but unindexed local captions. This is
+    // scoped by requested canonical entities; mention alone never confirms it.
+    const inventoryNames=includeUnavailable && entityKeys.length ? [...new Set(this.db.prepare(`
+      SELECT canonical_subject,aliases_json FROM entity_aliases WHERE destination_slug=?
+      AND entity_key IN (${entityKeys.map(()=>'?').join(',')}) ORDER BY entity_key,id`).all(brief.destination_slug,...entityKeys)
+      .flatMap(row=>[row.canonical_subject,...json(row.aliases_json,[])])
+      .map(name=>String(name).toLowerCase()).filter(name=>name.length>=2))] : [];
+    if(inventoryNames.length) {
+      scopes.push(`(sa.capture_version=s.capture_version AND (${inventoryNames.slice(0,32)
+        .map(()=>"instr(lower(sa.caption_text),?)>0 OR instr(lower(sa.nearby_text),?)>0").join(' OR ')}))`);
+      parameters.push(...inventoryNames.slice(0,32).flatMap(name=>[name,name]));
+    }
+    if (entityKeys.length) {
+      scopes.push(`sa.id IN (SELECT mb.asset_id FROM media_bindings mb JOIN media_occurrences mo ON mo.id=mb.occurrence_id
+        JOIN current_source_assets current ON current.id=mb.asset_id
+        WHERE mb.destination_slug=? AND mb.entity_key IN (${entityKeys.map(()=>'?').join(',')})
+          AND ${includeUnavailable ? "mb.status<>'stale'" : "mb.status='confirmed'"} AND mo.status<>'stale')`);
+      parameters.push(brief.destination_slug,...entityKeys);
     }
     if (sourceIds.length) {
       scopes.push(`sa.id IN (SELECT current.id FROM current_source_assets current
         WHERE current.source_id IN (${sourceIds.map(() => "?").join(",")}))`);
       parameters.push(...sourceIds);
     }
-    const assets=this.db.prepare(`
+    const query=`
       SELECT sa.id, sa.source_id, sa.remote_url, sa.local_path, sa.mime_type, sa.alt_text, sa.position,
         sa.width,sa.height,sa.storage_status,sa.original_bytes_status,sa.durability_status,sa.language_status,sa.nearby_text,sa.caption_text,
         sa.original_sha256,sa.capture_version,sa.local_photo_audit_json,sa.provenance_json,saa.analysis_status,saa.asset_kind,saa.text_regions_json,saa.photo_regions_json,
@@ -8585,33 +9015,69 @@ export class Repository {
         s.authorization_status AS source_authorization_status,s.publishable AS source_publishable
       FROM source_assets sa JOIN sources s ON s.id=sa.source_id
       LEFT JOIN source_asset_analyses saa ON saa.asset_id=sa.id
-      WHERE sa.kind='image' AND sa.storage_status='saved' AND sa.local_path<>''
-        AND sa.original_bytes_status='saved_original' AND sa.durability_status='ORIGINAL_STORED'
-        AND (${scopes.join(" OR ")})
-      ORDER BY s.captured_at DESC, sa.position ASC
-      LIMIT 160
-    `).all(...parameters);
-    if (!assets.length) return [];
+      WHERE sa.kind='image' ${includeUnavailable ? '' : `AND sa.storage_status='saved' AND sa.local_path<>''
+        AND sa.original_bytes_status='saved_original' AND sa.durability_status='ORIGINAL_STORED'`}
+    `;
+    const pageSize=Math.max(1,Math.min(1000,Number(limit)||160));
+    const pageOffset=Math.max(0,Math.floor(Number(offset)||0));
+    const selected=[];
+    // Frozen explicit IDs bypass the automatic candidate budget, in bounded SQL batches.
+    for(let index=0;index<selectedAssetIds.length;index+=200){
+      const ids=selectedAssetIds.slice(index,index+200);
+      selected.push(...this.db.prepare(`${query} AND sa.id IN (${ids.map(()=>'?').join(',')}) ORDER BY sa.id`).all(...ids));
+    }
+    const relationOrder=entityKeys.length ? `CASE WHEN sa.id IN
+      (SELECT mb.asset_id FROM media_bindings mb JOIN media_occurrences mo ON mo.id=mb.occurrence_id
+        WHERE mb.destination_slug=? AND mb.entity_key IN (${entityKeys.map(()=>'?').join(',')})
+          AND mb.status='confirmed' AND mo.status<>'stale') THEN 0 ELSE 1 END,` : '';
+    const orderParameters=entityKeys.length ? [brief.destination_slug,...entityKeys] : [];
+    const automatic=scopes.length ? this.db.prepare(`${query} AND (${scopes.join(' OR ')})
+      ORDER BY ${relationOrder} s.captured_at DESC,sa.position ASC,sa.id ASC LIMIT ? OFFSET ?`)
+      .all(...parameters,...orderParameters,pageSize+1,pageOffset) : [];
+    const hasMore=automatic.length>pageSize;
+    const assets=[...new Map([...selected,...automatic.slice(0,pageSize)].map(asset=>[asset.id,asset])).values()];
     const byId=new Map(assets.map((asset)=>[asset.id,{asset,claims:new Map()}]));
     const evidenceSourceIds=[...new Set(assets.map((asset)=>asset.source_id))];
-    const evidence=this.db.prepare(`SELECT c.id,c.source_id,c.created_at,c.canonical_subject,c.subject,
+    const evidence=assets.length ? this.db.prepare(`SELECT c.id,c.source_id,c.created_at,c.canonical_subject,c.subject,
         c.predicate,c.value_text,es.asset_id FROM claims c
       JOIN json_each(c.evidence_span_ids_json) ids
       JOIN evidence_spans es ON es.id=ids.value
       WHERE c.source_id IN (${evidenceSourceIds.map(()=>'?').join(',')})
         AND es.asset_id IN (${assets.map(()=>'?').join(',')})
-      ORDER BY c.created_at ASC,c.id ASC`).all(...evidenceSourceIds,...assets.map((asset)=>asset.id));
+      ORDER BY c.created_at ASC,c.id ASC`).all(...evidenceSourceIds,...assets.map((asset)=>asset.id)) : [];
     for (const claim of evidence) {
       const entry=byId.get(claim.asset_id);
       if (entry?.asset.source_id===claim.source_id) entry.claims.set(claim.id,claim);
     }
-    return assets.map((asset)=>{
+    const routeSources=new Map();
+    // Load only current extraction evidence for the small set of retrieved
+    // sources. Writer-supplied route metadata is never evidence for an image.
+    for(const sourceId of new Set(assets.filter(asset=>['map_or_route','photo_collage','editorial_infographic'].includes(asset.asset_kind))
+      .map(asset=>asset.source_id))) {
+      const hasFragments=this.db.prepare(`SELECT 1 FROM experience_extraction_runs er JOIN sources s
+        ON s.id=er.source_id AND s.capture_version=er.capture_version
+        WHERE er.source_id=? AND er.status='succeeded' AND er.route_fragments_json<>'[]' LIMIT 1`).get(sourceId);
+      if(!hasFragments)continue;
+      const currentInput=this.getExperienceExtractionPackage(sourceId);
+      const row=currentInput && this.db.prepare(`SELECT route_fragments_json FROM experience_extraction_runs
+        WHERE source_id=? AND input_hash=? AND status='succeeded' ORDER BY created_at DESC LIMIT 1`).get(sourceId,currentInput.input_hash);
+      routeSources.set(sourceId,json(row?.route_fragments_json,[]));
+    }
+    const result=assets.map((asset)=>{
       const claims=[...byId.get(asset.id).claims.values()];
-      return hydrateSourceAssetAnalysis({...asset,
+      return {...hydrateSourceAssetAnalysis({...asset,
         evidence_subject:claims.length ? (claims[0].canonical_subject || claims[0].subject || '') : '',
         evidence_text:claims.map((claim)=>[claim.canonical_subject,claim.subject,
-          claim.predicate,claim.value_text].join(' ')).join(' ')});
+          claim.predicate,claim.value_text].join(' ')).join(' ')}),source_bindings:readMediaBindings(this.db,asset.id),
+        source_binding_issues:readMediaBindingIssues(this.db,asset.id),
+        route_source_fragments:asset.capture_version===asset.source_capture_version ? routeSources.get(asset.source_id) : []};
     });
+    result.retrieval={has_more:hasMore,offset:pageOffset,next_offset:hasMore ? pageOffset+pageSize : null,
+      automatic_limit:pageSize,explicit_count:selected.length,returned_count:result.length,
+      inventory_aliases_has_more:inventoryNames.length>32,
+      scope:'bounded_entity_and_source_inventory',entity_keys:entityKeys,source_ids:sourceIds,
+      missing_explicit_ids:selectedAssetIds.filter(id=>!selected.some(asset=>asset.id===id))};
+    return result;
   }
 
   retrySource(sourceId) {
@@ -8646,7 +9112,7 @@ export class Repository {
       const failure = explainOperationalFailure({ ...row, type: "extract_source" });
       items.push(exceptionItem("source", row.id, "blocker", failure.headline, row.title || row.id, failureDetail(failure), true, row.updated_at));
     }
-    for (const row of this.db.prepare(`
+    const failedJobRows = this.db.prepare(`
       SELECT jobs.id, jobs.type, jobs.entity_id, jobs.last_error, jobs.updated_at, jobs.failure_class,
         jobs.last_failure_code, jobs.attempts, jobs.max_attempts,
         media.durability_status AS media_durability_status, media.repair_status AS media_repair_status
@@ -8661,7 +9127,22 @@ export class Repository {
         WHERE recovered.type=jobs.type AND recovered.entity_id=jobs.entity_id
           AND recovered.status='succeeded' AND recovered.updated_at>=jobs.updated_at
       )
-    `).all()) {
+    `).all();
+    const ownerByEntityId = new Map();
+    for (let offset = 0; offset < failedJobRows.length; offset += 300) {
+      const ids = [...new Set(failedJobRows.slice(offset, offset + 300).map((row) => row.entity_id))];
+      if (!ids.length) continue;
+      const placeholders = ids.map(() => "?").join(",");
+      for (const owner of this.db.prepare(`SELECT tc.id AS candidate_id, cb.id AS brief_id, ad.id AS draft_id
+        FROM topic_candidates tc LEFT JOIN content_briefs cb ON cb.candidate_id=tc.id
+        LEFT JOIN article_drafts ad ON ad.brief_id=cb.id
+        WHERE tc.id IN (${placeholders}) OR cb.id IN (${placeholders}) OR ad.id IN (${placeholders})`).all(...ids, ...ids, ...ids)) {
+        for (const id of [owner.candidate_id, owner.brief_id, owner.draft_id]) {
+          if (id && !ownerByEntityId.has(id)) ownerByEntityId.set(id, owner.candidate_id);
+        }
+      }
+    }
+    for (const row of failedJobRows) {
       // A later browser capture can make an old recovery failure obsolete. Keep
       // browser-repair-required assets visible until those original bytes are
       // actually stored; the operator still needs to act on each repair item.
@@ -8673,11 +9154,8 @@ export class Repository {
         const mediaPending = this.db.prepare("SELECT 1 FROM article_drafts WHERE id=? AND status='media_pending'").get(row.entity_id);
         if (learned || mediaPending) continue;
       }
-      const owner = this.db.prepare(`SELECT tc.id FROM topic_candidates tc
-        LEFT JOIN content_briefs cb ON cb.candidate_id=tc.id LEFT JOIN article_drafts ad ON ad.brief_id=cb.id
-        WHERE tc.id=? OR cb.id=? OR ad.id=? LIMIT 1`).get(row.entity_id,row.entity_id,row.entity_id);
       const failure = explainOperationalFailure(row);
-      items.push({ ...exceptionItem("job", row.id, "blocker", failure.headline, row.entity_id, failureDetail(failure), isOperationalFailureRetryable(row), row.updated_at),candidateId:owner?.id || null });
+      items.push({ ...exceptionItem("job", row.id, "blocker", failure.headline, row.entity_id, failureDetail(failure), isOperationalFailureRetryable(row), row.updated_at),candidateId:ownerByEntityId.get(row.entity_id) || null });
     }
     for (const row of this.db.prepare(`
       SELECT k.*, d.slug AS destination_slug, kr.status AS resolution_status, kr.preferred_value AS resolved_value,
@@ -8806,20 +9284,38 @@ export class Repository {
   }
 
   listSystemHealthIssues(operationalItems = null) {
-    return (operationalItems || this.listOperationalExceptions()).filter((item) => {
+    const items = operationalItems || this.listOperationalExceptions();
+    const fetchByIds = (ids, sql) => {
+      const rows = [];
+      const unique = [...new Set(ids)];
+      for (let offset = 0; offset < unique.length; offset += 300) {
+        const batch = unique.slice(offset, offset + 300);
+        rows.push(...this.db.prepare(sql.replace("__IDS__", batch.map(() => "?").join(","))).all(...batch));
+      }
+      return rows;
+    };
+    const sources = new Map(fetchByIds(items.filter((item) => item.kind === "source").map((item) => item.entityId),
+      "SELECT id,last_error FROM sources WHERE id IN (__IDS__)").map((row) => [row.id, row]));
+    const jobs = new Map(fetchByIds(items.filter((item) => item.kind === "job").map((item) => item.entityId),
+      "SELECT id,type,last_failure_code,last_error FROM jobs WHERE id IN (__IDS__)").map((row) => [row.id, row]));
+    const contentJobs = new Map();
+    for (const row of fetchByIds(items.filter((item) => ["brief", "draft"].includes(item.kind)).map((item) => item.entityId),
+      "SELECT entity_id,type,last_failure_code,last_error,updated_at FROM jobs WHERE status='failed' AND entity_id IN (__IDS__) ORDER BY updated_at DESC")) {
+      if (!contentJobs.has(row.entity_id)) contentJobs.set(row.entity_id, row);
+    }
+    return items.filter((item) => {
       if (["sync","wordpress"].includes(item.kind)) return true;
       if (item.kind === "source") {
-        const row=this.db.prepare("SELECT last_error FROM sources WHERE id=?").get(item.entityId);
+        const row=sources.get(item.entityId);
         return Boolean(row && isSystemLevelFailure("extract_source",row.last_error));
       }
       if (item.kind === "job") {
-        const row=this.db.prepare("SELECT type,last_failure_code,last_error FROM jobs WHERE id=?").get(item.entityId);
+        const row=jobs.get(item.entityId);
         return Boolean(row && !["backfill_media_asset","repair_media_asset"].includes(row.type)
           && isSystemLevelFailure(row.last_failure_code,row.last_error));
       }
       if (["brief","draft"].includes(item.kind)) {
-        const row=this.db.prepare(`SELECT type,last_failure_code,last_error FROM jobs
-          WHERE entity_id=? AND status='failed' ORDER BY updated_at DESC LIMIT 1`).get(item.entityId);
+        const row=contentJobs.get(item.entityId);
         return Boolean(row && isSystemLevelFailure(row.last_failure_code,row.last_error));
       }
       return false;
@@ -8827,13 +9323,110 @@ export class Repository {
   }
 
   listSystemHealthWorkspace(input = {}) {
-    const all=this.listSystemHealthIssues();
-    const page=paginateWorkspace(all,input,{
-      searchable:(item) => `${item.key} ${item.title} ${item.subject} ${item.detail} ${item.kind}`,
-      statusOf:(item) => item.severity,
+    const query = normalizeWorkspaceQuery(input);
+    const offset = workspaceCursorOffset(query.cursor);
+    const failureSql = (code, message) => {
+      const value = `lower(coalesce(${code},'') || ' ' || coalesce(${message},''))`;
+      return `(${[
+        "auth", "credential", "database_corrupt", "database_corruption", "database_unavailable", "database_locked",
+        "database_ioerr", "sqlite_corrupt", "sqlite_cantopen", "sqlite_ioerr", "sqlite_full", "frontend_contract",
+        "schema_mismatch", "ai_provider", "quota", "rate_limit", "timeout", "network", "pipeline_shutdown", "job_lease",
+      ].map((term) => `${value} LIKE '%${term}%'`).join(" OR ")})`;
+    };
+    const candidatesSql = `WITH system_health_candidates AS (
+      SELECT 'source' AS kind,s.id AS entity_id,'blocker' AS severity,s.updated_at,s.title AS subject,
+        'extract_source' AS failure_type,'' AS failure_class,'' AS last_failure_code,s.last_error,
+        0 AS attempts,0 AS max_attempts,NULL AS candidate_id,'' AS scope_key,'' AS substage,'' AS state
+      FROM sources s WHERE s.status='exception' AND ${failureSql("''", "s.last_error")}
+      UNION ALL
+      SELECT 'job',j.id,'blocker',j.updated_at,j.entity_id,j.type,j.failure_class,j.last_failure_code,j.last_error,
+        j.attempts,j.max_attempts,NULL,'','',''
+      FROM jobs j WHERE j.status='failed'
+        AND j.type NOT IN ('extract_source','sync_wordpress_inventory','sync_search_console','push_wordpress_draft',
+          'backfill_media_asset','repair_media_asset')
+        AND NOT EXISTS (SELECT 1 FROM jobs recovered WHERE recovered.type=j.type AND recovered.entity_id=j.entity_id
+          AND recovered.status='succeeded' AND recovered.updated_at>=j.updated_at)
+        AND ${failureSql("j.last_failure_code", "j.last_error")}
+      UNION ALL
+      SELECT 'sync',s.sync_key,'blocker',s.updated_at,s.sync_key,
+        CASE WHEN s.sync_key LIKE 'wordpress%' THEN 'sync_wordpress_inventory'
+          WHEN s.sync_key LIKE 'search_console%' THEN 'sync_search_console' ELSE 'integration_sync' END,
+        '','',s.last_error,0,0,NULL,'','',''
+      FROM integration_sync_state s WHERE s.status='failed'
+      UNION ALL
+      SELECT 'brief',b.id,'blocker',b.updated_at,b.topic,j.type,j.failure_class,j.last_failure_code,j.last_error,
+        j.attempts,j.max_attempts,b.candidate_id,'','',''
+      FROM content_briefs b JOIN jobs j ON j.id=(SELECT latest.id FROM jobs latest
+        WHERE latest.status='failed' AND latest.entity_id=b.id ORDER BY latest.updated_at DESC,latest.id DESC LIMIT 1)
+      WHERE b.status='exception' AND ${failureSql("j.last_failure_code", "j.last_error")}
+      UNION ALL
+      SELECT 'draft',d.id,'blocker',d.updated_at,d.title,j.type,j.failure_class,j.last_failure_code,j.last_error,
+        j.attempts,j.max_attempts,b.candidate_id,'','',''
+      FROM article_drafts d JOIN content_briefs b ON b.id=d.brief_id
+      JOIN jobs j ON j.id=(SELECT latest.id FROM jobs latest WHERE latest.status='failed' AND latest.entity_id=d.id
+        ORDER BY latest.updated_at DESC,latest.id DESC LIMIT 1)
+      WHERE (d.status='exception' OR (d.status='qa_failed' AND d.revision>=2))
+        AND ${failureSql("j.last_failure_code", "j.last_error")}
+      UNION ALL
+      SELECT 'wordpress',w.draft_id,'blocker',w.updated_at,d.title,'push_wordpress_draft','','',w.last_error,
+        0,0,b.candidate_id,'','',''
+      FROM wordpress_publications w JOIN article_drafts d ON d.id=w.draft_id JOIN content_briefs b ON b.id=d.brief_id
+      WHERE w.status='failed'
+      UNION ALL
+      SELECT 'media_dispatch',m.id,'warning',m.created_at,m.visual_id,m.substage,'',m.error_code,'',
+        1,1,NULL,m.scope_key,m.substage,m.state
+      FROM media_dispatches m WHERE m.state IN ('dispatch_started','outcome_unknown')
+    )`;
+    const filters = [];
+    const values = [];
+    if (query.search) {
+      filters.push(`lower(kind || ':' || entity_id || ' ' || coalesce(subject,'') || ' ' || coalesce(failure_type,'')
+        || ' ' || coalesce(last_failure_code,'') || ' ' || coalesce(last_error,'') || ' ' || coalesce(scope_key,'')) LIKE ?`);
+      values.push(`%${query.search}%`);
+    }
+    if (query.status) { filters.push("severity=?"); values.push(query.status); }
+    const where = filters.length ? ` WHERE ${filters.join(" AND ")}` : "";
+    const counts = this.db.prepare(`${candidatesSql} SELECT COUNT(*) AS total,
+      SUM(severity='blocker') AS blockers,SUM(severity='warning') AS warnings FROM system_health_candidates${where}`)
+      .get(...values);
+    const rows = this.db.prepare(`${candidatesSql} SELECT * FROM system_health_candidates${where}
+      ORDER BY CASE severity WHEN 'blocker' THEN 0 ELSE 1 END,updated_at DESC,kind,entity_id LIMIT ? OFFSET ?`)
+      .all(...values, query.limit, offset);
+    const jobEntityIds = [...new Set(rows.filter((row) => row.kind === "job").map((row) => row.subject).filter(Boolean))];
+    const ownerByEntityId = new Map();
+    for (let index = 0; index < jobEntityIds.length; index += 300) {
+      const ids = jobEntityIds.slice(index, index + 300);
+      const placeholders = ids.map(() => "?").join(",");
+      for (const owner of this.db.prepare(`SELECT tc.id AS candidate_id,cb.id AS brief_id,ad.id AS draft_id
+        FROM topic_candidates tc LEFT JOIN content_briefs cb ON cb.candidate_id=tc.id
+        LEFT JOIN article_drafts ad ON ad.brief_id=cb.id
+        WHERE tc.id IN (${placeholders}) OR cb.id IN (${placeholders}) OR ad.id IN (${placeholders})`).all(...ids, ...ids, ...ids)) {
+        for (const entityId of [owner.candidate_id, owner.brief_id, owner.draft_id]) {
+          if (entityId && !ownerByEntityId.has(entityId)) ownerByEntityId.set(entityId, owner.candidate_id);
+        }
+      }
+    }
+    const items = rows.map((row) => {
+      if (row.kind === "media_dispatch") return {
+        ...exceptionItem("media_dispatch", row.entity_id, "warning", "媒体请求结果待核，已隔离",
+          `${row.subject} · ${row.substage}`, "供应商结果尚未确认。系统不会自动重发、增加预算或把它显示为成功/失败。",
+          false, row.updated_at), systemHealthIssue: true, outcomeState: row.state, scopeKey: row.scope_key,
+      };
+      const failureRow = { type: row.failure_type, failure_class: row.failure_class,
+        last_failure_code: row.last_failure_code, last_error: row.last_error, attempts: row.attempts,
+        max_attempts: row.max_attempts };
+      const failure = explainOperationalFailure(failureRow);
+      const retryable = row.kind === "job" ? isOperationalFailureRetryable(failureRow)
+        : row.kind === "draft" ? isOperationalFailureRetryable(failureRow) : true;
+      return { ...exceptionItem(row.kind, row.entity_id, "blocker", failure.headline, row.subject,
+        failureDetail(failure), retryable, row.updated_at),
+        candidateId: row.candidate_id || ownerByEntityId.get(row.subject) || null, systemHealthIssue: true };
     });
-    return {...page,summary:{blockers:all.filter((item) => item.severity==="blocker").length,
-      warnings:all.filter((item) => item.severity==="warning").length}};
+    const totalCount = Number(counts.total || 0);
+    const nextOffset = offset + items.length;
+    return { items, totalCount, nextCursor: nextOffset < totalCount ? workspaceCursorForOffset(nextOffset) : null,
+      query: { search: query.search, status: query.status, limit: query.limit },
+      summary: { blockers: Number(counts.blockers || 0), warnings: Number(counts.warnings || 0) } };
   }
 
   maintenanceOverview({reconciliation=null}={}) {
@@ -9334,8 +9927,7 @@ export class Repository {
   }
 
   systemHealthIssueCount() {
-    const sourceExceptions = Number(this.db.prepare("SELECT COUNT(*) AS count FROM sources WHERE status='exception'").get().count || 0);
-    return sourceExceptions + this.unrecoveredSystemJobFailureCount();
+    return this.listSystemHealthWorkspace({ limit: 1 }).totalCount;
   }
 
   unrecoveredSystemJobFailureCount() {
@@ -9830,6 +10422,7 @@ function draftMetadata(draft, brief, config, authorizedSourceAssets = [], policy
       : [],
   };
   const visuals = retainedVisuals || normalizeVisuals(draft.visuals, draft, brief, authorizedSourceAssets, policy);
+  if(brief.route_bundle && !retainedVisuals) visuals.push(routeSchematicVisual(brief.route_bundle));
   const firstGenerated = visuals.find((visual) => visual.status === "generated" && visual.media_url);
   if (firstGenerated) seo.og_image = firstGenerated.media_url;
   const contentAst = buildContentAst({ draft: { ...draft, seo }, brief: { ...brief, canonical }, visuals, facts });
@@ -10092,6 +10685,10 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     return asset && unsafeAttractionAssetIds.has(asset.id) && scopedRouteFit(asset,visual,draft);
   }).map((visual)=>visual.source_asset_id));
   for (const assetId of scopedRouteAssetIds) displacedAssetIds.delete(assetId);
+  for (const visual of visuals) {
+    const asset=authorizedSourceAssets.find(candidate=>candidate.id===visual.source_asset_id);
+    if (asset && bindingSupportsPhoto(asset,visual)) displacedAssetIds.delete(asset.id);
+  }
   for (const assetId of unsafeAttractionAssetIds) if (!scopedRouteAssetIds.has(assetId)) displacedAssetIds.add(assetId);
   const unusedAssets = new Map(authorizedSourceAssets
     .filter((asset) => !unsafeAttractionAssetIds.has(asset.id) || scopedRouteAssetIds.has(asset.id))
@@ -10110,7 +10707,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const obsoleteFallbackSelection=obsoleteFallback(visual);
     const pixelMatchFloor=(asset)=>['photo_collage','editorial_infographic','map_or_route','handwritten_card']
       .includes(asset?.asset_kind) ? 0.30 : 0.34;
-    const reverifiedFallback=obsoleteFallbackSelection && exact?.prompt_version === 'media-analysis-prompt-3'
+    const reverifiedFallback=obsoleteFallbackSelection && (bindingSupportsPhoto(exact || {},visual)
+      || ['media-analysis-prompt-3','media-analysis-prompt-4'].includes(exact?.prompt_version))
       && visualAssetMatchScore(visual,exact)>=pixelMatchFloor(exact)
       && articleAssetMatchScore(draft,brief,exact)>=articleFallbackMinimum;
     if (obsoleteFallbackSelection && exact && !reverifiedFallback) {
@@ -10206,6 +10804,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
         transform_version:"visual-transform-2",style_version:"stc-light-editorial-v2",qa_version:"visual-qa-3",
         source_analysis:sourceAnalysisSnapshot(asset),local_photo_audit:asset.local_photo_audit || null,
         authorized_asset_match:{version:"visual-match-2",request_hash:selectionRequestHash,score:match.score,
+          source_binding_ids:bindingSupportsPhoto(asset,visual)
+            ? asset.source_bindings.filter(binding=>bindingSupportsPhoto({...asset,source_bindings:[binding]},visual)).map(binding=>binding.id) : [],
           mode:scopedRoute ? "section_route" : priorAssetMatch.mode || "visual_subject",
           displaced_asset_ids:[...displacedAssetIds].sort()},
         authorization_policy:"project_source_media_full_authorization",
@@ -10226,7 +10826,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     }
   }
   const target = Math.min(maximum, Math.max(normalized.length, Number(policy.visuals?.target || 0)));
-  if (!freeOriginalPolicy && normalized.length >= target) return normalized;
+  if (!freeOriginalPolicy && normalized.length >= target) return constrainRouteVisuals(normalized,brief.route_bundle,authorizedSourceAssets,requiredVisualGap);
   const fallbackAssets = [...unusedAssets.values()]
     .filter((asset)=>!unsafeAttractionAssetIds.has(asset.id))
     .map((asset) => {
@@ -10281,7 +10881,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     if (asset.original_sha256) usedOriginalHashes.add(asset.original_sha256);
     unusedAssets.delete(asset.id);
   }
-  return normalized;
+  return constrainRouteVisuals(normalized,brief.route_bundle,authorizedSourceAssets,requiredVisualGap);
 }
 
 function requiredVisualGap(visual,reason) {
@@ -10394,7 +10994,9 @@ function sourceAnalysisSnapshot(asset={}) {
 }
 
 function assetUnsafeForFocusedAttraction(asset = {}, brief = {}, policy = {}) {
+  if(bindingBlocksPhoto(asset,brief)) return true;
   if (policy.content_type !== "attraction_guide") return false;
+  if (bindingSupportsPhoto(asset,brief)) return false;
   // A destination-wide note may mention the attraction only as one route stop;
   // nearby prose and a list of recognized entities are not pixel-level proof.
   const focus = String(brief.topic || "").split(":", 1)[0];
@@ -10455,6 +11057,8 @@ function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
 }
 
 function articleAssetMatchScore(draft, brief, asset) {
+  if(bindingBlocksPhoto(asset,{...brief,purpose:draft?.title})) return 0;
+  if (bindingSupportsPhoto(asset,{...brief,purpose:draft?.title})) return 1;
   const article = topicTokens(`${draft?.title || ""} ${draft?.body_markdown || ""}`);
   for (const token of topicTokens(brief?.destination_slug || "")) article.delete(token);
   const pixelDescribed=['ready','needs_review'].includes(asset.analysis_status)
@@ -10537,6 +11141,8 @@ function sourceAssetAspectRatio(asset) {
 }
 
 function visualAssetMatchScore(visual, asset) {
+  if(bindingBlocksPhoto(asset,visual)) return 0;
+  if (bindingSupportsPhoto(asset,visual)) return 1;
   const requested = topicTokens(`${visual.image_subject || ""} ${visual.purpose || ""}`);
   const described = topicTokens(assetTopicText(asset));
   if (!requested.size || !described.size) return 0;
@@ -10633,6 +11239,7 @@ function visualFingerprint(visual) {
     source_sha256: visual.source_sha256 || visual.media_metadata?.source_sha256 || null,
     capture_version: visual.capture_version || visual.media_metadata?.capture_version || null,
     crop: visual.crop || visual.media_metadata?.crop || null,
+    route_contract:visual.media_metadata?.route_contract || null,
     locale: visual.locale || visual.media_metadata?.locale || "en",
     transform_version: visual.transform_version || visual.media_metadata?.transform_version || "visual-transform-1",
     model: visual.model || null,
@@ -11614,6 +12221,8 @@ function normalizeExtractionInputManifest(value) {
     receivedModality: normalizeInputModality(value.receivedModality),
     provider: String(value.provider || "").slice(0, 100),
     model: String(value.model || "").slice(0, 200),
+    ...(value.mediaContext?.version === 'media-context-1' ? {mediaContext:value.mediaContext} : {}),
+    ...(Array.isArray(value.mediaContexts) ? {mediaContexts:value.mediaContexts.filter(packet=>packet?.version === 'media-context-1')} : {}),
     capabilities: value.capabilities && typeof value.capabilities === "object" ? {
       text: Boolean(value.capabilities.text), image: Boolean(value.capabilities.image),
       video: Boolean(value.capabilities.video), batch: Boolean(value.capabilities.batch),

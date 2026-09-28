@@ -1,0 +1,15 @@
+(node:3992) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?T02-40/41/44: real planning retrieves claim-free entity media and retains explicit IDs beyond preview (832.6084ms)
+鉁?T02-44: capability snapshot is versioned, exposes pagination and never promotes photo to precise entrance (0.3746ms)
+鉁?T02-44: actual legacy writer request retains frozen source relationship and cannot borrow a later live snapshot (2.5619ms)
+鉁?T02-44: repository freezes availability with the writing packet and carries original receipt fields (516.8956ms)
+鉁?T02-41/44: actual article-bundle request includes bounded candidate availability and explicit has_more (505.9737ms)
+鈩?tests 5
+鈩?suites 0
+鈩?pass 5
+鈩?fail 0
+鈩?cancelled 0
+鈩?skipped 0
+鈩?todo 0
+鈩?duration_ms 2134.2705

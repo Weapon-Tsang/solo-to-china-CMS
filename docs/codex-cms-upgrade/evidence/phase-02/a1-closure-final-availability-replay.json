@@ -1,0 +1,8 @@
+{
+  "scope": "Read-only historical brief packages and writer DTO, no generation or media semantic audit",
+  "packages": 12,
+  "frozenPackets": 12,
+  "liveCandidateEntries": 1748,
+  "passed": true,
+  "modelCalls": 0
+}

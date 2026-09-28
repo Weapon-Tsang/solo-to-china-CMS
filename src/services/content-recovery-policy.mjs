@@ -92,6 +92,15 @@ export function explainOperationalFailure(job) {
   const status = Number(job.status_code || job.http_status || message.match(/\b(?:HTTP\s*)?(\d{3})\b/i)?.[1] || 0);
   const details = operatorSafeDetails(message);
   const normalizedIssueCode = code.toLowerCase();
+  if(code.startsWith('ROUTE_RENDER_')) return {
+    category:'media',headline:code==='ROUTE_RENDER_BUDGET_EXHAUSTED' ? '路线示意图恢复预算已用尽' : '本地路线示意图未完成',
+    reason:code==='ROUTE_RENDER_STORAGE_MISSING' ? '本地示意图输出目录尚未配置。已保存的正文、批准路线和成功图片保持不变。'
+      : code==='ROUTE_RENDER_BUDGET_EXHAUSTED' ? '这个图片槽位已用完三次本地失败恢复预算；重新建立任务不会重置预算。'
+      : '路线示意图的文件、标签或渲染回执未通过核对，原正文保持不变。',
+    action:{id:code==='ROUTE_RENDER_BUDGET_EXHAUSTED' ? null : 'generate_visuals',
+      label:code==='ROUTE_RENDER_BUDGET_EXHAUSTED' ? '检查图片错误与预算记录' : '修复渲染条件后仅恢复图片',
+      why:'保留原正文及累计尝试记录，不重新提取来源或调用正文生成。'},technicalDetail:details,
+  };
   if (code === 'CONTRACT_VERSION_MISMATCH') return {
     category:'page',headline:'页面所用的前端契约已更新',
     reason:'已保存的页面仍指向旧契约。直接重试最终发布页面只会再次失败；正文与已通过的媒体不会因此被重写。',

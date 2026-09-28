@@ -1,0 +1,991 @@
+{
+  "calls": [
+    {
+      "name": "article_bundle_v1",
+      "input": {
+        "candidate": {
+          "id": "route-candidate",
+          "destination_slug": "beijing",
+          "topic_key": "a2-route",
+          "proposed_title": "Beijing one-day itinerary",
+          "rationale": "fixture",
+          "coverage_score": 1,
+          "evidence_count": 1,
+          "conflict_count": 0,
+          "status": "candidate",
+          "created_at": "now",
+          "updated_at": "now",
+          "suppression_reason": null,
+          "stale_fact_count": 0,
+          "verification_fact_count": 0,
+          "strategy_version": null,
+          "opportunity_id": null,
+          "recommendation_id": null
+        },
+        "approved_proposal": {
+          "content_type": "itinerary",
+          "title": "Beijing one-day itinerary"
+        },
+        "facts": [
+          {
+            "normalized_key": "beijing.route.sequence",
+            "subject": "Beijing route",
+            "predicate": "route sequence",
+            "preferred_value": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+            "consensus_status": "single_source",
+            "consensus_method": "SINGLE_SOURCE_LATEST",
+            "freshness_state": "stale",
+            "support_count": 1,
+            "evidence": [
+              {
+                "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                "source_title": "Beijing one-day route",
+                "claim_id": "claim_da550ae0c19147bf86c1db3179efdce6",
+                "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                "value": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                "confidence": 0.9,
+                "captured_at": "2026-09-27T17:00:46.762Z",
+                "verified_at": null,
+                "final_url": "https://www.xiaohongshu.com/explore/a2-route-fixture"
+              }
+            ]
+          }
+        ],
+        "production_mode": "source_adaptation",
+        "source_reference": {
+          "id": "src_bc33601ed30f4a0281504adc40f49ca3",
+          "title": "Beijing one-day route",
+          "summary": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+          "authorization_status": "owner_confirmed",
+          "editing_allowed": true,
+          "blueprint": {
+            "format": "itinerary",
+            "hook": "Route",
+            "angle": "Route",
+            "sections": [],
+            "strengths": []
+          }
+        },
+        "editorial_assembly": null,
+        "experiences": [],
+        "editorial_patterns": [],
+        "constraints": {
+          "research_only": true,
+          "audience": [
+            "solo travelers",
+            "first-time China visitors",
+            "non-Chinese-speaking visitors"
+          ],
+          "commercial_layer_allowed": false
+        },
+        "planning_input_manifest": {
+          "version": 1,
+          "selected_by": "editorial_assembly_materiality",
+          "destination_fact_count": 1,
+          "source_fact_count": 1,
+          "fact_count": 1,
+          "evidence_snippet_count": 1,
+          "input_bytes": 12315,
+          "estimated_tokens": 3079,
+          "budget": {
+            "maxFacts": 32,
+            "maxEvidenceSnippets": 64,
+            "maxInputBytes": 98304,
+            "maxEstimatedTokens": 24000
+          },
+          "deterministic_compression": false,
+          "authorized_asset_count": 0,
+          "media_retrieval": {
+            "has_more": false,
+            "offset": 0,
+            "next_offset": null,
+            "automatic_limit": 160,
+            "explicit_count": 0,
+            "returned_count": 0,
+            "inventory_aliases_has_more": false,
+            "scope": "bounded_entity_and_source_inventory",
+            "entity_keys": [
+              "subject.beijing.route"
+            ],
+            "source_ids": [
+              "src_bc33601ed30f4a0281504adc40f49ca3"
+            ],
+            "missing_explicit_ids": [],
+            "planning_selected_count": 0
+          }
+        },
+        "authorized_source_assets": [],
+        "media_availability": {
+          "version": 2,
+          "scope": "bounded_entity_and_source_inventory",
+          "assets": [],
+          "reason_counts": {},
+          "count_unit": "unique asset IDs per reason; categories overlap",
+          "retrieval": {
+            "has_more": false,
+            "offset": 0,
+            "next_offset": null,
+            "missing_explicit_ids": [],
+            "unchecked": "outside returned entity/source page; bytes are not inspected"
+          },
+          "constraints": [
+            "No precise entrance, route connection or viewpoint without matching evidence.",
+            "Candidate photos do not verify route feasibility; A2 must validate the route bundle.",
+            "This snapshot never removes required media or creates an adoption revision."
+          ],
+          "snapshot_hash": "899f0c8b3ab2d240401bd643b1c612c2c94af0b72cc78bae30b265b6dce7c864"
+        },
+        "route_bundle": {
+          "policy": "route-bundle-1",
+          "route_id": "route_ae32e2f497ba96ef9d0df3b4",
+          "revision": 1,
+          "mode": "source_route_adaptation",
+          "approval": {
+            "record_id": "route-owner:2026-09-28:4da29b99b22abb032f9311f668a6da166f22bb3dda7ae3a07a579ed8b97e93bf",
+            "scope": {
+              "content_type": "itinerary",
+              "title": "Beijing one-day itinerary"
+            }
+          },
+          "days": [
+            {
+              "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+              "source_key": "1",
+              "label": "Day 1",
+              "sequence": 1,
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            }
+          ],
+          "stops": [
+            {
+              "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:a",
+              "source_key": "a",
+              "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+              "sequence": 1,
+              "entity_id": "east",
+              "name_zh": null,
+              "name_en": "East Hall",
+              "identity_status": "confirmed",
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            },
+            {
+              "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+              "source_key": "b",
+              "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+              "sequence": 2,
+              "entity_id": "west",
+              "name_zh": null,
+              "name_en": "West Hall",
+              "identity_status": "confirmed",
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            },
+            {
+              "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:c",
+              "source_key": "c",
+              "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+              "sequence": 3,
+              "entity_id": "east",
+              "name_zh": null,
+              "name_en": "East Hall",
+              "identity_status": "confirmed",
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            }
+          ],
+          "legs": [
+            {
+              "leg_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:leg:ab",
+              "from_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:a",
+              "to_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+              "mode": "walk",
+              "duration": {
+                "value": 15,
+                "unit": "minutes",
+                "approximate": true
+              },
+              "conditions": [],
+              "uncertainty": "source_assertion",
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            },
+            {
+              "leg_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:leg:bc",
+              "from_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+              "to_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:c",
+              "mode": "bus",
+              "duration": null,
+              "conditions": [],
+              "uncertainty": "source_assertion",
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            }
+          ],
+          "branches": [],
+          "source_snapshot": [
+            {
+              "fragment_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk",
+              "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+              "capture_version": 1,
+              "source_input_hash": "b0f5193e15dc7352f76bdca23ee779d024f62d5172175ba4f65e1d99d3c859f1",
+              "basis": "explicit_route",
+              "days": [
+                {
+                  "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+                  "source_key": "1",
+                  "label": "Day 1",
+                  "sequence": 1,
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                }
+              ],
+              "stops": [
+                {
+                  "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:a",
+                  "source_key": "a",
+                  "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+                  "sequence": 1,
+                  "entity_id": "east",
+                  "name_zh": null,
+                  "name_en": "East Hall",
+                  "identity_status": "confirmed",
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                },
+                {
+                  "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+                  "source_key": "b",
+                  "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+                  "sequence": 2,
+                  "entity_id": "west",
+                  "name_zh": null,
+                  "name_en": "West Hall",
+                  "identity_status": "confirmed",
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                },
+                {
+                  "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:c",
+                  "source_key": "c",
+                  "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+                  "sequence": 3,
+                  "entity_id": "east",
+                  "name_zh": null,
+                  "name_en": "East Hall",
+                  "identity_status": "confirmed",
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                }
+              ],
+              "legs": [
+                {
+                  "leg_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:leg:ab",
+                  "from_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:a",
+                  "to_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+                  "mode": "walk",
+                  "duration": {
+                    "value": 15,
+                    "unit": "minutes",
+                    "approximate": true
+                  },
+                  "conditions": [],
+                  "uncertainty": "source_assertion",
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                },
+                {
+                  "leg_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:leg:bc",
+                  "from_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+                  "to_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:c",
+                  "mode": "bus",
+                  "duration": null,
+                  "conditions": [],
+                  "uncertainty": "source_assertion",
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                }
+              ],
+              "branches": [],
+              "evidence_status": "source_assertion_not_live_verified"
+            }
+          ],
+          "source_route_hash": "f7486211c84e38eca5595a476d9af433ac8ef700d81fb5f265ab47e525d87c83",
+          "media_availability": {
+            "version": 2,
+            "scope": "bounded_entity_and_source_inventory",
+            "assets": [],
+            "reason_counts": {},
+            "count_unit": "unique asset IDs per reason; categories overlap",
+            "retrieval": {
+              "has_more": false,
+              "offset": 0,
+              "next_offset": null,
+              "missing_explicit_ids": [],
+              "unchecked": "outside returned entity/source page; bytes are not inspected"
+            },
+            "constraints": [
+              "No precise entrance, route connection or viewpoint without matching evidence.",
+              "Candidate photos do not verify route feasibility; A2 must validate the route bundle.",
+              "This snapshot never removes required media or creates an adoption revision."
+            ],
+            "snapshot_hash": "899f0c8b3ab2d240401bd643b1c612c2c94af0b72cc78bae30b265b6dce7c864"
+          },
+          "media_obligations": [],
+          "reality_verification": "NOT_VERIFIED",
+          "diagnostics": [],
+          "status": "FROZEN",
+          "approved_route_hash": "dd6b5074a69dde410af4e9af5a5e75b4d4fbc8313c58e0d32bb8bdd4c6f76d88",
+          "content_hash": "f83e0ef8b6b5082f3c9358fdd561a6d689fc55d48d9e2752eb6f51c9f084554a"
+        },
+        "approved_route_table": "### Day 1\n| Stop | Next connection |\n| --- | --- |\n| East Hall | West Hall; walk; about 15 minutes |\n| West Hall | East Hall; bus |\n| East Hall | End of day |"
+      }
+    },
+    {
+      "name": "quality_review_v3",
+      "input": {
+        "route_bundle": {
+          "policy": "route-bundle-1",
+          "route_id": "route_ae32e2f497ba96ef9d0df3b4",
+          "revision": 1,
+          "mode": "source_route_adaptation",
+          "approval": {
+            "record_id": "route-owner:2026-09-28:4da29b99b22abb032f9311f668a6da166f22bb3dda7ae3a07a579ed8b97e93bf",
+            "scope": {
+              "content_type": "itinerary",
+              "title": "Beijing one-day itinerary"
+            }
+          },
+          "days": [
+            {
+              "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+              "source_key": "1",
+              "label": "Day 1",
+              "sequence": 1,
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            }
+          ],
+          "stops": [
+            {
+              "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:a",
+              "source_key": "a",
+              "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+              "sequence": 1,
+              "entity_id": "east",
+              "name_zh": null,
+              "name_en": "East Hall",
+              "identity_status": "confirmed",
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            },
+            {
+              "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+              "source_key": "b",
+              "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+              "sequence": 2,
+              "entity_id": "west",
+              "name_zh": null,
+              "name_en": "West Hall",
+              "identity_status": "confirmed",
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            },
+            {
+              "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:c",
+              "source_key": "c",
+              "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+              "sequence": 3,
+              "entity_id": "east",
+              "name_zh": null,
+              "name_en": "East Hall",
+              "identity_status": "confirmed",
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            }
+          ],
+          "legs": [
+            {
+              "leg_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:leg:ab",
+              "from_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:a",
+              "to_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+              "mode": "walk",
+              "duration": {
+                "value": 15,
+                "unit": "minutes",
+                "approximate": true
+              },
+              "conditions": [],
+              "uncertainty": "source_assertion",
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            },
+            {
+              "leg_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:leg:bc",
+              "from_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+              "to_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:c",
+              "mode": "bus",
+              "duration": null,
+              "conditions": [],
+              "uncertainty": "source_assertion",
+              "evidence": [
+                {
+                  "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                  "capture_version": 1,
+                  "span_id": "span_22e4951c2332ca6f2042e724",
+                  "segment_id": "segment_e796607dfc850136bf598752",
+                  "asset_id": null,
+                  "locator_type": "text",
+                  "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                  "start_offset": 0,
+                  "end_offset": 92
+                }
+              ]
+            }
+          ],
+          "branches": [],
+          "source_snapshot": [
+            {
+              "fragment_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk",
+              "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+              "capture_version": 1,
+              "source_input_hash": "b0f5193e15dc7352f76bdca23ee779d024f62d5172175ba4f65e1d99d3c859f1",
+              "basis": "explicit_route",
+              "days": [
+                {
+                  "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+                  "source_key": "1",
+                  "label": "Day 1",
+                  "sequence": 1,
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                }
+              ],
+              "stops": [
+                {
+                  "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:a",
+                  "source_key": "a",
+                  "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+                  "sequence": 1,
+                  "entity_id": "east",
+                  "name_zh": null,
+                  "name_en": "East Hall",
+                  "identity_status": "confirmed",
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                },
+                {
+                  "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+                  "source_key": "b",
+                  "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+                  "sequence": 2,
+                  "entity_id": "west",
+                  "name_zh": null,
+                  "name_en": "West Hall",
+                  "identity_status": "confirmed",
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                },
+                {
+                  "stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:c",
+                  "source_key": "c",
+                  "day_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:day:1",
+                  "sequence": 3,
+                  "entity_id": "east",
+                  "name_zh": null,
+                  "name_en": "East Hall",
+                  "identity_status": "confirmed",
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                }
+              ],
+              "legs": [
+                {
+                  "leg_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:leg:ab",
+                  "from_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:a",
+                  "to_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+                  "mode": "walk",
+                  "duration": {
+                    "value": 15,
+                    "unit": "minutes",
+                    "approximate": true
+                  },
+                  "conditions": [],
+                  "uncertainty": "source_assertion",
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                },
+                {
+                  "leg_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:leg:bc",
+                  "from_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:b",
+                  "to_stop_id": "src_bc33601ed30f4a0281504adc40f49ca3:1:walk:stop:c",
+                  "mode": "bus",
+                  "duration": null,
+                  "conditions": [],
+                  "uncertainty": "source_assertion",
+                  "evidence": [
+                    {
+                      "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                      "capture_version": 1,
+                      "span_id": "span_22e4951c2332ca6f2042e724",
+                      "segment_id": "segment_e796607dfc850136bf598752",
+                      "asset_id": null,
+                      "locator_type": "text",
+                      "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                      "start_offset": 0,
+                      "end_offset": 92
+                    }
+                  ]
+                }
+              ],
+              "branches": [],
+              "evidence_status": "source_assertion_not_live_verified"
+            }
+          ],
+          "source_route_hash": "f7486211c84e38eca5595a476d9af433ac8ef700d81fb5f265ab47e525d87c83",
+          "media_availability": {
+            "version": 2,
+            "scope": "bounded_entity_and_source_inventory",
+            "assets": [],
+            "reason_counts": {},
+            "count_unit": "unique asset IDs per reason; categories overlap",
+            "retrieval": {
+              "has_more": false,
+              "offset": 0,
+              "next_offset": null,
+              "missing_explicit_ids": [],
+              "unchecked": "outside returned entity/source page; bytes are not inspected"
+            },
+            "constraints": [
+              "No precise entrance, route connection or viewpoint without matching evidence.",
+              "Candidate photos do not verify route feasibility; A2 must validate the route bundle.",
+              "This snapshot never removes required media or creates an adoption revision."
+            ],
+            "snapshot_hash": "899f0c8b3ab2d240401bd643b1c612c2c94af0b72cc78bae30b265b6dce7c864"
+          },
+          "media_obligations": [],
+          "reality_verification": "NOT_VERIFIED",
+          "diagnostics": [],
+          "status": "FROZEN",
+          "approved_route_hash": "dd6b5074a69dde410af4e9af5a5e75b4d4fbc8313c58e0d32bb8bdd4c6f76d88",
+          "content_hash": "f83e0ef8b6b5082f3c9358fdd561a6d689fc55d48d9e2752eb6f51c9f084554a"
+        },
+        "brief": {
+          "strategy_version": "3.9",
+          "title": "Beijing one-day itinerary",
+          "primary_keyword": "Beijing route",
+          "search_intent": "informational",
+          "audience": [
+            "solo"
+          ],
+          "angle": "Follow the source",
+          "reader_promise": "Follow the supported route",
+          "working_title": "Beijing one-day itinerary",
+          "why_this_article": "Follow the supported route",
+          "source_role_map": [],
+          "evidence_plan": [
+            {
+              "section_id": "route",
+              "claim_keys": [
+                "beijing.route.sequence"
+              ],
+              "reader_job": "Follow the route"
+            }
+          ],
+          "content_type": "first_time_guide",
+          "adaptation_requirements": [],
+          "conflict_instructions": [],
+          "verification_instructions": [],
+          "outline": [
+            {
+              "section_id": "route",
+              "heading": "Route",
+              "purpose": "Follow the route",
+              "claim_keys": [
+                "beijing.route.sequence"
+              ]
+            }
+          ]
+        },
+        "canonical": {
+          "content_type": "first_time_guide",
+          "quick_answer": "Follow the supported route",
+          "secondary_queries": [],
+          "warnings": [],
+          "faq": [],
+          "seo": {
+            "primary_keyword": "Beijing route",
+            "secondary_keywords": [],
+            "search_intent": "informational"
+          }
+        },
+        "mandatory_requirements": [
+          {
+            "id": "brief-reader-promise",
+            "kind": "reader_promise",
+            "requirement": "Follow the supported route"
+          },
+          {
+            "id": "brief-reader-job-1",
+            "kind": "reader_job",
+            "requirement": "Follow the route (section route; approved claim keys: beijing.route.sequence)"
+          }
+        ],
+        "content_policy": {
+          "version": "content-policy-1.2",
+          "content_type": "first_time_guide",
+          "minimum_words": 350,
+          "minimum_words_mode": "soft_editorial_guidance",
+          "target_words": 350,
+          "maximum_words": 1400,
+          "required_visible_sections": [],
+          "seo": {
+            "title_suggested_max": 60,
+            "description_suggested_max": 160,
+            "length_mode": "soft_editorial_guidance"
+          },
+          "faq": {
+            "required": false,
+            "allowed": false,
+            "minimum": 0,
+            "maximum": 0
+          },
+          "visuals": {
+            "minimum": 0,
+            "target": 3,
+            "maximum": 12,
+            "count_mode": "relevant_originals_and_localized_information_up_to_cap"
+          }
+        },
+        "facts": [
+          {
+            "normalized_key": "beijing.route.sequence",
+            "subject": "Beijing route",
+            "predicate": "route sequence",
+            "preferred_value": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+            "consensus_status": "single_source",
+            "freshness_state": "stale",
+            "validity_state": "unknown",
+            "evidence": [
+              {
+                "source_id": "src_bc33601ed30f4a0281504adc40f49ca3",
+                "value": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                "quote": "Day 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+                "qualifiers": [],
+                "coverage_limitations": [],
+                "published_at": null,
+                "observed_at": null,
+                "verified_at": null,
+                "valid_from": null,
+                "valid_to": null,
+                "publication_usability": "usable"
+              }
+            ]
+          }
+        ],
+        "reader_sources": [
+          {
+            "label": "Beijing one-day route",
+            "url": "https://www.xiaohongshu.com/explore/a2-route-fixture",
+            "published_at": null,
+            "verified_at": null,
+            "authority_level": 4
+          }
+        ],
+        "draft": {
+          "title": "Beijing one-day itinerary",
+          "slug": "beijing-route",
+          "meta_description": "Follow the supported sequence.",
+          "body_markdown": "## Route\n\n### Day 1\n| Stop | Next connection |\n| --- | --- |\n| East Hall | West Hall; walk; about 15 minutes |\n| West Hall | East Hall; bus |\n| East Hall | End of day |\n\nDay 1: East Hall → West Hall → East Hall. Walk about 15 minutes to West Hall; return by bus.",
+          "evidence_ledger": [
+            {
+              "section_id": "route",
+              "section": "Route",
+              "content_node_ids": [
+                "node_9fa3c48b538915d205c4"
+              ],
+              "claim_keys": [
+                "beijing.route.sequence"
+              ],
+              "source_ids": [
+                "src_bc33601ed30f4a0281504adc40f49ca3"
+              ]
+            }
+          ],
+          "unresolved_conflicts": [],
+          "verification_notes": [],
+          "seo": {
+            "primary_keyword": "Beijing route",
+            "secondary_keywords": [],
+            "search_intent": "informational",
+            "seo_title": "Beijing route",
+            "meta_title": "Beijing route",
+            "focus_keyword": "Beijing route",
+            "meta_description": "Follow the supported sequence.",
+            "slug": "beijing-route",
+            "canonical_url": null,
+            "canonical_status": "unverified",
+            "canonical_reason": "PUBLIC_CONTENT_SITE_URL is not a valid public HTTP(S) origin.",
+            "robots": "noindex,nofollow",
+            "og_title": "Beijing route",
+            "og_description": "Follow the supported sequence.",
+            "og_image": null,
+            "key_takeaways": [],
+            "faqs": []
+          },
+          "faqs": [],
+          "visuals": []
+        },
+        "frontend_page": null
+      }
+    }
+  ],
+  "actualExternalRequests": 0,
+  "mainRequests": 1,
+  "independentReviews": 1,
+  "diagramRequests": 0,
+  "routeArtifactId": "route_artifact_bb9f17acf870483ba85be8fbcbb00a68"
+}

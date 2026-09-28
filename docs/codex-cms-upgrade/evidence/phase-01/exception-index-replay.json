@@ -1,0 +1,19 @@
+{
+  "version": "stage01-exception-index-replay-1",
+  "dataset": "disposable production snapshot work database",
+  "productionDatabaseWritten": false,
+  "baselineSchemaVersion": 79,
+  "migratedSchemaVersion": 80,
+  "baselineSystemHealthItems": 7,
+  "migratedSystemHealthItems": 7,
+  "baselinePageBuildMs": 1469,
+  "afterIndexExperimentPageBuildMs": 42,
+  "afterMigrationPageBuildMs": 44,
+  "afterMigrationQuickCheck": "ok",
+  "afterMigrationForeignKeyViolations": 0,
+  "indexes": [
+    "idx_jobs_recovery_lookup",
+    "idx_sources_exception_list"
+  ],
+  "measurementNote": "Single local process timings from the same disposable work database. These demonstrate the query bottleneck and improvement; they are not a 30-sample production latency benchmark."
+}

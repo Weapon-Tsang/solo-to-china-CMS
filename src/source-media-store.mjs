@@ -7,6 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { trustedMediaRecord, safeMediaPath, inspectMediaFile, recordVerifiedMedia, mediaStreamVerifier } from './media-storage.mjs';
 import { openMediaResponse } from './safe-media-http.mjs';
 import { AsyncSemaphore } from '../extension/sync-core.js';
+import { publishMediaBytes } from './atomic-media-file.mjs';
 const mediaInspections = new AsyncSemaphore(2);
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -62,7 +63,7 @@ function persistAsset(asset, root) {
   const filename = safeMediaPath(root, reference);
   const directory = path.dirname(filename);
   fs.mkdirSync(directory, { recursive: true });
-  if (!fs.existsSync(filename)) fs.writeFileSync(filename, bytes, { flag: "wx" });
+  publishMediaBytes(filename, bytes);
   const explicitDerivativeRef = originalBytes ? derivativeReference(asset, root) : reference;
   return withoutEmbeddedMedia({
     ...asset,
@@ -98,7 +99,7 @@ function derivativeReference(asset, root) {
   const reference = `.derived/${hash.slice(0, 2)}/${hash}${MIME_EXTENSIONS[mime]}`;
   const filename = safeMediaPath(root, reference);
   fs.mkdirSync(path.dirname(filename), { recursive: true });
-  if (!fs.existsSync(filename)) fs.writeFileSync(filename, bytes, { flag: "wx" });
+  publishMediaBytes(filename, bytes);
   return reference;
 }
 

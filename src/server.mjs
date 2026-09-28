@@ -38,6 +38,8 @@ import { CaptureMediaUploadManager } from "./capture-media-upload.mjs";
 import { createSummaryCache } from './services/summary-cache.mjs';
 import { prepareCaptureMedia } from './source-media-store.mjs';
 import { applyDeliveryRefresh, planDeliveryRefresh } from './services/delivery-refresh.mjs';
+import { acquireLocalRuntimeLease, assertLocalCredentialReadiness, assertLocalRuntime, consumeLocalRuntimeStopRequest, localLogPath, markLocalDataRoot } from './local-runtime.mjs';
+import { createGoogleAccessTokenProvider } from './google-access-token.mjs';
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -52,13 +54,29 @@ const MIME = {
 };
 
 export function createApplication(config = loadConfig()) {
+  assertLocalRuntime(config);
   if (!isLoopbackHost(config.host) && (!config.captureToken || !config.adminToken || !config.auth.password || !config.auth.sessionSecret)) {
     throw new Error("Non-loopback HOST requires CAPTURE_TOKEN, ADMIN_TOKEN, ADMIN_PASSWORD, and SESSION_SECRET.");
   }
   assertProductionDatabaseConfiguration(config);
-  const logger = createLogger(config.logging);
+  if (config.deployment?.runMode === 'development') markLocalDataRoot(config, 'development');
+  const releaseRuntimeLease = acquireLocalRuntimeLease(config);
+  let db;
+  let logStream;
+  try {
   const processRole = config.processRole || 'all';
-  const db = openDatabase(config.databasePath, { migrate: processRole !== 'api' });
+  if (config.deployment?.runMode) {
+    const filename = localLogPath(config, processRole, { create: true });
+    const descriptor = fs.openSync(filename, 'a', 0o600);
+    logStream = fs.createWriteStream(filename, { fd: descriptor, autoClose: true });
+    logStream.on('error', (error) => console.error(`Local CMS log write failed: ${error.code || error.message}`));
+  }
+  const logger = createLogger({ ...config.logging, sink: logStream ? (line, severity) => {
+    const method = severity === 'error' ? 'error' : severity === 'warn' ? 'warn' : 'log';
+    console[method](line);
+    logStream.write(`${line}\n`);
+  } : undefined });
+  db = openDatabase(config.databasePath, { migrate: processRole !== 'api' });
   const auth = createAuth(db, config.auth);
   const loginThrottle = createLoginThrottle(config.auth.loginThrottle, { logger: logger.child({ component: "auth" }) });
   const repository = new Repository(db, {
@@ -72,14 +90,18 @@ export function createApplication(config = loadConfig()) {
     modelCredentialEncryptionKey: config.modelCredentials.encryptionKey,
     environmentCredentialProviders: [config.deepseek.apiKey && "deepseek", config.gemini.apiKey && "gemini", config.openai.apiKey && "openai"].filter(Boolean),
   });
+  if (config.deployment?.runMode === 'local-production' && processRole !== 'api') {
+    assertLocalCredentialReadiness(config, processRole, repository.getModelRoutingSettings());
+  }
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
+  const googleAccessTokenProvider = createGoogleAccessTokenProvider(config.vertex);
   const aiRequestGate = createRequestGate(config.extraction.requestSpacingMs);
   const modelCallTelemetry = (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing));
-  const legacyAi = { ...config.kimi, ...config.vertex, ...selectedAi,
+  const legacyAi = { ...config.kimi, ...config.vertex, ...selectedAi, googleAccessTokenProvider,
     stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing,
     beforeRequest: aiRequestGate,
     onModelCall: modelCallTelemetry };
-  const writingAi = { ...config.vertex, provider: "vertex", model: "gemini-3.8-flash", role: "writing",
+  const writingAi = { ...config.vertex, googleAccessTokenProvider, provider: "vertex", model: "gemini-3.8-flash", role: "writing",
     stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing, beforeRequest: aiRequestGate, onModelCall: modelCallTelemetry };
   const resolveExtractionConfig = (profile = {}) => {
     if (profile.provider === "deepseek") return { ...config.deepseek,
@@ -102,7 +124,7 @@ export function createApplication(config = loadConfig()) {
     safetyMarginMs: config.visuals.quotaSafetyMarginMs,
     maxDispatches: config.visuals.maxDispatchesPerStep,
   });
-  const activeVisuals = { ...config.visuals, ...selectedVisual,
+  const activeVisuals = { ...config.visuals, ...selectedVisual, googleAccessTokenProvider,
     mediaRequestExecutor,
     onModelCallStart: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)),
     onModelCall: (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing)),
@@ -123,7 +145,10 @@ export function createApplication(config = loadConfig()) {
   const visualReviewer = new KimiExtractor({ ...writingAi, role: "visual_review", mediaRequestExecutor });
   const visuals = new VertexImagen(activeVisuals);
   const wordpress = new WordPressDraftAdapter(config.wordpress);
-  wordpress.deliveryGuard = (draftId, options) => assertPublicationEligibility(db, draftId, options);
+  wordpress.deliveryGuard = (draftId, options) => {
+    repository.assertDraftRouteCurrent(draftId);
+    return assertPublicationEligibility(db, draftId, options);
+  };
   repository.configureProductionCapabilities({
     frontendContract: frontendContracts.configured,
     visuals: visuals.enabled,
@@ -174,7 +199,10 @@ export function createApplication(config = loadConfig()) {
     });
     try {
       setSecurityHeaders(response);
-      setCors(request, response);
+      const originAllowed = setCors(request, response, config);
+      if (request.headers.origin && !originAllowed && !["GET", "HEAD"].includes(request.method)) {
+        return sendJson(response, 403, { error: "Request origin is not allowed." });
+      }
       if (request.method === "OPTIONS") return response.writeHead(204).end();
       const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
       const captureOnly = isCaptureHost(request, config.captureHost);
@@ -595,6 +623,57 @@ export function createApplication(config = loadConfig()) {
           action:verificationActionMatch[2],result:payload.result||{}});
         return result?sendJson(response,200,result):sendJson(response,404,{error:"Verification job not found."});
       }
+      const supplementUpload=url.pathname.match(/^\/api\/source-supplement-uploads(?:\/([^/]+)(?:\/(complete|chunks\/\d+))?)?$/);
+      if(supplementUpload) {
+        authorizeAdmin(request,config.adminToken,auth);
+        const [,uploadId,action]=supplementUpload;
+        if(request.method==='POST' && !uploadId) return sendJson(response,201,
+          await captureMediaUploads.create({...await readJson(request,20000),protocolVersion:2,kind:'image'}));
+        if(request.method==='GET' && uploadId && !action) return sendJson(response,200,
+          await captureMediaUploads.status(uploadId,request.headers['x-upload-token']));
+        if(request.method==='PUT' && action?.startsWith('chunks/')) return sendJson(response,200,
+          await captureMediaUploads.writeChunk(uploadId,Number(action.split('/')[1]),
+            await readBytes(request,config.captureMediaUploads.chunkBytes+1024),request.headers['x-upload-token']));
+        if(request.method==='POST' && action==='complete') return sendJson(response,200,
+          await captureMediaUploads.complete(uploadId,request.headers['x-upload-token']));
+      }
+      const pdfSupplement=url.pathname.match(/^\/api\/source-assets\/([^/]+)\/pdf-supplements(?:\/([^/]+)\/confirm)?$/);
+      if(pdfSupplement && ['GET','POST'].includes(request.method)) {
+        authorizeAdmin(request,config.adminToken,auth);
+        const {pdfSupplementContext,receivePdfSupplement,confirmPdfSupplement}=await import('./repositories/pdf-source-supplements.mjs');
+        const parent=decodeURIComponent(pdfSupplement[1]),root=config.manualSources.uploadDir;
+        if(request.method==='GET') return sendJson(response,200,await pdfSupplementContext(db,parent,root));
+        const payload=await readJson(request,20000),actor=auth.status(request)?.username || 'admin';
+        return sendJson(response,200,pdfSupplement[2]
+          ? await confirmPdfSupplement(repository,parent,decodeURIComponent(pdfSupplement[2]),payload,root,actor)
+          : await receivePdfSupplement(repository,parent,payload,root,actor));
+      }
+      const mediaDiagnosticsMatch=url.pathname.match(/^\/api\/source-assets\/([^/]+)\/media-diagnostics$/);
+      if(request.method==='GET' && mediaDiagnosticsMatch) {
+        authorizeAdmin(request,config.adminToken,auth);
+        const {diagnoseMediaAsset}=await import('./repositories/media-diagnostics.mjs');
+        return sendJson(response,200,await diagnoseMediaAsset(repository.db,decodeURIComponent(mediaDiagnosticsMatch[1])));
+      }
+      const sourceAssetBindingMatch = url.pathname.match(/^\/api\/source-assets\/([^/]+)\/binding-repair$/);
+      if (sourceAssetBindingMatch && ['GET','POST'].includes(request.method)) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const payload = request.method === 'POST' ? await readJson(request, 2000) : {};
+        if (request.method === 'POST' && (payload.apply !== true || typeof payload.expectedHash !== 'string')) {
+          return sendJson(response,400,{error:'Applying a repair requires its preview hash and apply=true.'});
+        }
+        return sendJson(response,200,repository.repairMediaBinding(decodeURIComponent(sourceAssetBindingMatch[1]),
+          {apply:request.method === 'POST',expectedHash:payload.expectedHash}));
+      }
+      const sourceAssetContextMatch = url.pathname.match(/^\/api\/source-assets\/([^/]+)\/context$/);
+      if (request.method === "GET" && sourceAssetContextMatch) {
+        authorizeAdmin(request, config.adminToken, auth);
+        const range=url.searchParams.has('field') ? {
+          field:url.searchParams.get('field'),contextHash:url.searchParams.get('contextHash'),
+          start:Number(url.searchParams.get('start') ?? 0),maxChars:Number(url.searchParams.get('maxChars') ?? 4000),
+        } : null;
+        const context=repository.readSourceMediaContext(decodeURIComponent(sourceAssetContextMatch[1]),range);
+        return context ? sendJson(response,200,context) : sendJson(response,404,{error:'Image asset not found.'});
+      }
       const sourceAssetPreviewMatch = url.pathname.match(/^\/api\/source-assets\/([^/]+)\/preview$/);
       if (request.method === "GET" && sourceAssetPreviewMatch) {
         const asset = repository.getSourceAssetPreview(decodeURIComponent(sourceAssetPreviewMatch[1]));
@@ -787,6 +866,19 @@ export function createApplication(config = loadConfig()) {
         if (!/^(0|[1-9]\d{0,8})$/.test(cursor)) return sendJson(response, 400, { error: "Invalid content cursor." });
         return sendJson(response, 200, repository.listContentWorkspace({ productionOnly: true,
           limit: Math.min(100, limit(url.searchParams.get("limit") || "20")), offset: Number(cursor), compact: true }));
+      }
+      const routeDecisionMatch=url.pathname.match(/^\/api\/content\/([^/]+)\/route-decisions(?:\/([^/]+))?$/);
+      if(routeDecisionMatch && ['GET','POST'].includes(request.method)) {
+        authorizeAdmin(request,config.adminToken,auth);
+        const ownerId=decodeURIComponent(routeDecisionMatch[1]);
+        if(request.method==='GET' && !routeDecisionMatch[2])return sendJson(response,200,repository.routeDecisionState(ownerId));
+        if(request.method==='POST') {
+          const payload=await readJson(request,64_000),actor=auth.status(request).username || 'administrator';
+          const result=routeDecisionMatch[2]
+            ? repository.decideRouteRevision(ownerId,decodeURIComponent(routeDecisionMatch[2]),payload,actor)
+            : repository.proposeRouteRevision(ownerId,payload,actor);
+          return sendJson(response,200,result);
+        }
       }
       const productionDetailMatch = url.pathname.match(/^\/api\/content\/([^/]+)\/production-state$/);
       if (request.method === "GET" && productionDetailMatch) {
@@ -1352,6 +1444,7 @@ export function createApplication(config = loadConfig()) {
           return sendJson(response, 409, { error: 'Current QA and complete WordPress draft delivery are required.',
             code: 'PUBLICATION_NOT_READY' });
         }
+        repository.assertDraftRouteCurrent(draftId);
         assertPublicationEligibility(db, draftId, { phase: 'delivery',
           pagePayload: content.publish_composition?.publish_package?.page || null });
         const jobId = repository.enqueue('publish_wordpress_post', draftId);
@@ -1446,9 +1539,11 @@ export function createApplication(config = loadConfig()) {
   server.keepAliveTimeout = 120_000;
   if ("keepAliveTimeoutBuffer" in server) server.keepAliveTimeoutBuffer = 5_000;
   server.headersTimeout = 130_000;
+  let stopped = false;
 
   return {
     server,
+    consumeLocalStopRequest: () => consumeLocalRuntimeStopRequest(config, releaseRuntimeLease),
     repository,
     pipeline,
     maintenance,
@@ -1456,7 +1551,7 @@ export function createApplication(config = loadConfig()) {
     logger,
     start() {
       return new Promise((resolve, reject) => {
-        const onError = (error) => reject(error);
+        const onError = (error) => { releaseRuntimeLease(); reject(error); };
         server.once("error", onError);
         server.listen(config.port, config.host, () => {
           server.off("error", onError);
@@ -1468,17 +1563,32 @@ export function createApplication(config = loadConfig()) {
     },
     startWorker() {
       if (processRole !== 'worker') throw new Error('startWorker requires CMS_PROCESS_ROLE=worker.');
-      pipeline.start({ keepAlive: true });
-      maintenance.start();
+      try {
+        pipeline.start({ keepAlive: true });
+        maintenance.start();
+      } catch (error) { releaseRuntimeLease(); throw error; }
     },
     async stop() {
-      maintenance.stop();
-      pipeline.stop();
-      if (server.listening) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-      db.close();
-      logger.info("server.stopped", { version: VERSION });
+      if (stopped) return;
+      stopped = true;
+      try {
+        maintenance.stop();
+        pipeline.stop();
+        if (server.listening) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+        db.close();
+        logger.info("server.stopped", { version: VERSION });
+      } finally {
+        if (logStream && !logStream.writableEnded) await new Promise((resolve) => logStream.end(resolve));
+        releaseRuntimeLease();
+      }
     },
   };
+  } catch (error) {
+    try { db?.close(); } catch { /* keep the startup error */ }
+    logStream?.end();
+    releaseRuntimeLease();
+    throw error;
+  }
 }
 
 function safeWordPressPreviewUrl(value, siteUrl) {
@@ -1590,15 +1700,24 @@ function setSecurityHeaders(response) {
   response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
 }
 
-function setCors(request, response) {
-  const origin = request.headers.origin || "";
-  if (origin.startsWith("chrome-extension://") || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+function setCors(request, response, config) {
+  const origin = String(request.headers.origin || "");
+  if (!origin) return true;
+  let sameOrigin = false;
+  try {
+    const parsed = new URL(origin);
+    sameOrigin = ["http:", "https:"].includes(parsed.protocol) && parsed.host === String(request.headers.host || "").toLowerCase()
+      && parsed.origin === origin;
+  } catch { /* invalid origins are refused */ }
+  const explicitlyAllowed = (config.captureAllowedOrigins || []).includes(origin);
+  if (sameOrigin || explicitlyAllowed) {
     response.setHeader("Access-Control-Allow-Origin", origin);
     response.setHeader("Vary", "Origin");
   }
   response.setHeader("Access-Control-Allow-Headers", "authorization, content-type, x-request-id, x-upload-token, idempotency-key");
   response.setHeader("Access-Control-Expose-Headers", "x-request-id");
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  return sameOrigin || explicitlyAllowed;
 }
 
 async function readJson(request, maxBytes) {
@@ -1764,10 +1883,17 @@ if (import.meta.main) {
     await app.start();
     app.logger.info("preview.ready", { url: `http://${config.host}:${config.port}` });
   }
+  let stopping = false;
   const shutdown = async () => {
+    if (stopping) return;
+    stopping = true;
+    if (stopPoller) clearInterval(stopPoller);
     await app.stop();
     process.exit(0);
   };
+  const stopPoller = config.deployment?.runMode && config.deployment.runMode !== 'migration-review'
+    ? setInterval(() => { if (app.consumeLocalStopRequest()) void shutdown(); }, 250) : null;
+  stopPoller?.unref();
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }

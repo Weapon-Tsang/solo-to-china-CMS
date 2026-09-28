@@ -46,6 +46,7 @@ const LOCAL_FAILURE_CODES = new Set([
 
 export function classifyCaptureApiError(status, payload = {}) {
   const serverMessage = typeof payload?.error === "string" ? payload.error.trim() : "";
+  if (/read.only|migration.review/i.test(`${payload.code || ''} ${serverMessage}`)) return { code: 'CAPTURE_READ_ONLY', retryable: false, message: 'CMS 为只读接收模式，采集已暂停。' };
   if (status === 401 || status === 403) return {
     code: "CAPTURE_UNAUTHORIZED", retryable: false,
     message: serverMessage || "Capture authorization failed.",
@@ -154,18 +155,9 @@ export function recoverSession(input, now = new Date().toISOString()) {
   const legacyNavigationKeys = new Set(session.queue
     .filter((task) => !["captured", "duplicate"].includes(task.status) && !task.navigationUrl)
     .map((task) => task.identityKey));
-  if (legacyNavigationKeys.size) {
-    session.queue = session.queue.filter((task) => !legacyNavigationKeys.has(task.identityKey));
-    session.seenIdentityKeys = (session.seenIdentityKeys || []).filter((key) => !legacyNavigationKeys.has(key));
-    session.phase = "discovery";
-    session.discoveryComplete = false;
-    session.cursor = { ...(session.cursor || {}), domOffset: 0, scrollY: 0, collectionEnd: false, collectionEndStreak: 0 };
-    session.scan = { ...(session.scan || {}), consecutiveKnown: 0, windowNew: 0 };
-    session.stats.discovered = Math.max(0, Number(session.stats.discovered || 0) - legacyNavigationKeys.size);
-    session.stats.new = Math.max(0, Number(session.stats.new || 0) - legacyNavigationKeys.size);
-    session.stats.failed = session.queue.filter((task) => task.status === "failed").length;
-    session.stats.retrying = 0;
-  }
+  // Keep legacy queue identities, receipts and cursors. A missing signed
+  // navigation URL must never delete a task during an extension upgrade.
+  for (const task of session.queue) if (legacyNavigationKeys.has(task.identityKey)) task.navigationRefreshRequired = true;
   const completed = new Set(session.queue.filter((task) => ["captured", "duplicate"].includes(task.status)).map((task) => task.identityKey));
   for (const task of session.queue) {
     if (!completed.has(task.identityKey) && IN_FLIGHT_TASK_STATES.has(task.status)) {
@@ -190,12 +182,11 @@ export function recoverSession(input, now = new Date().toISOString()) {
     session.phase = "completed";
     session.completedAt ||= now;
   } else if (!["completed", "completed_with_failures", "cancelled"].includes(session.status)
-    && !HUMAN_PAUSE_STATES.includes(session.status)) {
+    && !session.status?.startsWith('paused_')) {
     session.status = "running";
     session.completedAt = null;
     session.recoveryNoticeAt = now;
   }
-  session.lastProgressAt = now;
   session.updatedAt = now;
   return session;
 }
@@ -385,6 +376,8 @@ export function reconcileStrandedTasks(input, { now = new Date().toISOString(), 
 
 export function classifyTaskDisposition(error = {}, attempts = 0, maxRetries = SYNC_DEFAULTS.maxRetries) {
   const code = String(error.code || "NETWORK_ERROR");
+  if (code === 'WORKER_TAB_CLOSED' || code === 'CAPTURE_TAB_CLOSED') return { action: 'pause', status: 'paused_tab_closed' };
+  if (['DOM_TIMEOUT', 'INJECTION_TIMEOUT', 'TASK_DEADLINE', 'DISCOVERY_STALLED', 'CAPTURE_READ_ONLY'].includes(code)) return { action: 'pause', status: 'paused_error' };
   if (code === "NOT_LOGGED_IN") return { action: "pause", status: "paused_login_required" };
   if (code === "VERIFICATION_REQUIRED") return { action: "pause", status: "paused_verification_required" };
   if (code === "CAPTURE_UNAUTHORIZED" || code === "UNAUTHORIZED") return { action: "pause", status: "paused_capture_unauthorized" };

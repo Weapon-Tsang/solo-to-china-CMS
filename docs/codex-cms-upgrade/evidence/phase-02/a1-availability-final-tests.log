@@ -1,0 +1,20 @@
+✔ article bundle uses one structured request and keeps evidence scoped to the plan (7.6667ms)
+✔ article bundle rejects an unsupported claim before persistence (1.7496ms)
+✔ writer receives bounded image subjects without resending full media and source context (2.1059ms)
+✔ Kimi-backed independent QA cannot approve deterministic evidence or commercial violations (27.9017ms)
+✔ page composition extracts CMS node references before Frontend validation (1.5468ms)
+✔ page composition augments every oneOf component variant with CMS provenance (1.0393ms)
+(node:11700) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-44: capability snapshot is versioned, exposes pagination and never promotes photo to precise entrance (1.4074ms)
+✔ T02-44: actual legacy writer request retains frozen source relationship and cannot borrow a later live snapshot (2.2727ms)
+✔ T02-44: repository freezes availability with the writing packet and carries original receipt fields (562.966ms)
+✔ T02-41/44: actual article-bundle request includes bounded candidate availability and explicit has_more (536.8403ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1390.8876

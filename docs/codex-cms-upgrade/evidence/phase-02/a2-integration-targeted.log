@@ -1,0 +1,37 @@
+(node:8408) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ route classification, explicit locators and repeated entity occurrences are independent of photo/OCR order (4.0947ms)
+✔ critical evidence and required media are separate gates; ordinary missing stop photos do not block (4.0805ms)
+✔ same-entity other-day photos differ from whole-day route diagrams; wrong arrows and partial matches rejected (3.3271ms)
+✔ self-reported route hash cannot hide changed Day/order/mode or mutated bundle (4.6522ms)
+✔ actual renderer decodes PNG and rejects missing stop, reversed arrow, old manifest and changed bytes (76.3995ms)
+✔ real SQLite route revisions/artifacts survive backup review restore; stale results rejected without budget writes (876.7881ms)
+✔ unknown optional duration is omitted with evidence warning while core fields cannot be downgraded (8.6225ms)
+✔ multi-source same-scope field conflicts retain both locators; distinct scopes stay independent (5.1736ms)
+✔ stored selection chooses the approved source, never the source with more photographs (2.1825ms)
+✔ approved multi-source composition retains repeated visits and field evidence without adding model calls (3.5942ms)
+✔ cross-source connection uses supported entity endpoints and rejects similarly named substitutes (2.6222ms)
+✔ panel, asset and directed field provenance is preserved; invented regions and ambiguous arrows block (2.5779ms)
+✔ available city/bank/time and stale-condition evidence blocks conflicts without claiming live verification (5.6631ms)
+(node:7876) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ planning keeps knowledge source fragments as evidence and freezes an explicitly approved mixed section (627.91ms)
+✔ optional route renderer failure is omitted durably and continues to independent review without rewriting (750.7202ms)
+✔ real Worker route page composition can upload before text QA, while final delivery still rejects missing QA (1193.8228ms)
+✔ real planning, writer and independent review carry frozen route; no route/SEO/diagram model calls (664.03ms)
+✔ actual Worker separates successful writing from local schematic media stage (740.6947ms)
+✔ real Worker image-only recovery retains written draft, manifest and cumulative slot budget (1077.285ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ mixed media image-only recovery keeps the completed source photo bytes and receipt intact (2511.8395ms)
+✔ actual Worker blocks itinerary without source fragments before a writer/model call (562.3951ms)
+✔ new recovery jobs cannot reset the local route render budget (790.8081ms)
+✔ actual planning consumes stored composition scope and excludes old extraction inputs (605.1609ms)
+✔ route visual late results are rejected and changing a plan preserves its cumulative slot recovery budget (583.7259ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 10469.1809

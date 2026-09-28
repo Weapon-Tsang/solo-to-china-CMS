@@ -1,0 +1,22 @@
+### Result
+{"realBrowser":true,"realWorker":true,"status":"skipped","attempts":1,"omission":{"code":"ROUTE_RENDER_STORAGE_MISSING","reason":"ROUTE_RENDER_STORAGE_MISSING: {\"action\":\"Configure isolated generatedMediaDir.\"}","plan_fingerprint":"271180adc187b26a6c88e2d54c11700df8b796bb9b9b834191ba0740096eb175","at":"2026-09-27T18:52:59.711Z"},"bodyHash":"1d03b78d2db61d8781b89586c3c9936df18167826a0f915edd0e5dd83e78ecf1","stage":"review_draft","pageErrors":[],"realProviderRequests":0}
+### Ran Playwright code
+```js
+await (async (page) => {
+  const errors=[];page.on('pageerror',error=>errors.push(String(error)));
+  await page.getByText('查看省略原因',{exact:true}).click();
+  const feedback=page.getByLabel('批准路线',{exact:true});
+  const text=await feedback.innerText();
+  if(!text.includes('ROUTE_RENDER_STORAGE_MISSING') || !text.includes('已省略'))throw new Error('Missing actionable omission feedback');
+  const detail=await page.evaluate(async()=>await(await fetch('/api/content/route-owner/production-state')).json());
+  const visual=detail.draft.draft.visuals.find(v=>v.acquisition_strategy==='render_route_schematic');
+  if(visual.status!=='skipped' || visual.attempt_count!==1 || !visual.media_metadata.route_omission)
+    throw new Error('UI omission does not match persisted Worker result');
+  await page.screenshot({path:'output/playwright/a2-optional-route-feedback.png',fullPage:true});
+  if(errors.length)throw new Error(errors.join('\n'));
+  return {realBrowser:true,realWorker:true,status:visual.status,attempts:visual.attempt_count,
+    omission:visual.media_metadata.route_omission,bodyHash:detail.draft.draft.content_hash,
+    stage:detail.production_state.current_stage,pageErrors:errors,realProviderRequests:0};
+}
+)(page);
+```

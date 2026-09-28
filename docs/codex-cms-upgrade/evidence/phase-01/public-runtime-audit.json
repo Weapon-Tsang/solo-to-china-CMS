@@ -1,0 +1,57 @@
+{
+  "version": "stage01-public-runtime-audit-1",
+  "readOnly": true,
+  "site": "https://www.solotochina.com",
+  "wordpressRest": {
+    "postsStatus": 200,
+    "mediaStatus": 200,
+    "postFields": [
+      "excerpt",
+      "featured_media",
+      "id",
+      "link",
+      "slug",
+      "title"
+    ],
+    "sampleMediaCount": 10,
+    "observedMediaSizeNames": [
+      "1536x1536",
+      "full",
+      "large",
+      "medium",
+      "medium_large",
+      "stc-guide-card-2x",
+      "thumbnail"
+    ],
+    "featuredMediaPresent": true
+  },
+  "renderedPage": {
+    "status": 200,
+    "contentType": "text/html; charset=UTF-8",
+    "sample": "published article",
+    "canonical": true,
+    "jsonLdScripts": 1,
+    "hasDescription": true,
+    "hasOgTitle": true,
+    "hasOgImage": true,
+    "images": 4,
+    "withSrcset": 3,
+    "withSizes": 3,
+    "withAlt": 3,
+    "withLazyLoading": 4,
+    "withFetchPriority": 0
+  },
+  "robots": {
+    "status": 200,
+    "hasSitemapDirective": true
+  },
+  "sitemap": {
+    "status": 200,
+    "contentType": "text/xml; charset=UTF-8"
+  },
+  "unknown": [
+    "PHP runtime version",
+    "private frontend contract version",
+    "authenticated WordPress write compatibility"
+  ]
+}

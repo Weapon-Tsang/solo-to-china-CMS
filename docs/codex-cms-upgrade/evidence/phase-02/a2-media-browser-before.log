@@ -1,0 +1,4 @@
+### Ran Playwright code
+```js
+await (async page => { const p=await page.evaluate(async()=>await(await fetch('/api/content/route-owner/production-state')).json()); console.log(JSON.stringify({draft:p.draft.draft.id,hash:p.draft.draft.content_hash,body:p.draft.draft.body_markdown,visuals:p.draft.draft.visuals})); })(page);
+```

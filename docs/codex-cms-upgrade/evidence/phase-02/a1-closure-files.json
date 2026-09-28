@@ -1,0 +1,83 @@
+{
+  "generatedAt": "2026-09-27T14:53:41.883Z",
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "note": "Current byte fingerprints, not an assertion that entire files were authored in this continuation. Earlier dirty work is preserved.",
+  "files": [
+    {
+      "path": "src/repositories/media-bindings.mjs",
+      "sha256": "7ae6514fcbcab1443d19ca74e85245e6b59925437a48a4a4bc6334a29550ddf3"
+    },
+    {
+      "path": "src/repositories/media-diagnostics.mjs",
+      "sha256": "e58a7aabc6043b6575ec63146fcc121c22e8d6d4486cf1617b1bf4337bcfc059"
+    },
+    {
+      "path": "src/media-context.mjs",
+      "sha256": "de93a70e3cef636d07300741b50cd1c7a39ecf97bf2df8d81c4607c314924b37"
+    },
+    {
+      "path": "src/media-availability.mjs",
+      "sha256": "90904ca99948f9c77d817230887b5c733b3b579de4e81f32b3b1d5a0873d1717"
+    },
+    {
+      "path": "src/repository.mjs",
+      "sha256": "ae29c7f4912d9974e5e0d385859578ea044bddb7431b9f1cf3a1254344692157"
+    },
+    {
+      "path": "src/publication-eligibility.mjs",
+      "sha256": "171cb2d6fa8b0e1d781684948e5a7f0f028e4358419052c0a320771a9c9d4e30"
+    },
+    {
+      "path": "src/server.mjs",
+      "sha256": "de103737f641b747437d353575a1b8d0489053ea6e409f6d861c35663f6590e1"
+    },
+    {
+      "path": "frontend/src/workspaces/source-binding-repair.jsx",
+      "sha256": "e370cc54b3668379642e441636635c559363cde133ce027523eb74d3d2a4b75b"
+    },
+    {
+      "path": "test/media-bindings.test.mjs",
+      "sha256": "cb31256efa3702efb35daa94b6e748ccbfcea6c23f5a2a7af812b0cf028a1117"
+    },
+    {
+      "path": "test/media-context.test.mjs",
+      "sha256": "66165ea25849258bec54f3544ca74fc2ea24b883a5a9ebf46f0b11fc1ba6d4e1"
+    },
+    {
+      "path": "test/media-availability.test.mjs",
+      "sha256": "7f92652bcb62e3af6860ad7e521f83c8fbb223efcf638bd1efe26c5e7ffd0ed5"
+    },
+    {
+      "path": "test/media-context-api.test.mjs",
+      "sha256": "cf8e9ea637c7b10ab2007a9c527b196612f1035e4bccd4487efaa98053857198"
+    },
+    {
+      "path": "test/media-binding-repair.test.mjs",
+      "sha256": "219409f4088f49fdf7021dbd9114050d4da24f5cd77521e81767a2fbfba57883"
+    },
+    {
+      "path": "scripts/verify-stage02-media-diagnostics-browser.js",
+      "sha256": "816af7eb7b3522a6e66bf2fa2c5754d52a5d89e0e880b6c8fa8c0ddb567e71d4"
+    },
+    {
+      "path": "scripts/stage02-availability-read-audit.mjs",
+      "sha256": "e0a98e8bcebf8a5e6c22643e496749cdfca655bcc9d690791d6df058dc03020c"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/STATUS.md",
+      "sha256": "bc17c9a1f867c3e850a884d948721c07aec4348bdb1c35861c7c9c0c18bf7bb1"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/acceptance/phase-02.md",
+      "sha256": "092302b22f841f43f5c3a0c07ade36ee907fabc6409183f37653de8eead83a8c"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/phases/phase-02-a1-remaining-v1.0-20260927.txt",
+      "sha256": "7be71809f7a49aff9ac406c60c11ee21ed0d7e161d991f22fb5e43d7b379acc5"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/evidence/phase-02/a1-closure-checkpoint.md",
+      "sha256": "63b4ec26ac6a7557d365045dab2f9d2c7696b48d51c99c4da3f345936570f288"
+    }
+  ]
+}

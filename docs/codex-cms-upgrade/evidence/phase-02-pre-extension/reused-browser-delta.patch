@@ -1,0 +1,16 @@
+diff --git "a/C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-0gblCF\\extension\\background.js" b/extension/background.js
+index cbac735..d6bac21 100644
+--- "a/C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-0gblCF\\extension\\background.js"
++++ b/extension/background.js
+@@ -886,10 +886,10 @@ async function completeSession(session) {
+   // A slow tab close or telemetry request must never leave the popup in a
+   // permanent running/completed limbo.
+   await chrome.storage.local.set({ [SCOPES_KEY]: scopes });
++  void reportDetached(session);
+   await Promise.allSettled([
+     archiveSession(session),
+     closeWorkerTabs(session),
+-    reportSession(session),
+   ]);
+ }
+ 

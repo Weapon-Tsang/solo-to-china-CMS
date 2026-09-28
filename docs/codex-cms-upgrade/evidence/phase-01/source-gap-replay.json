@@ -1,0 +1,31 @@
+{
+  "version": "stage01-source-gap-replay-1",
+  "source": "disposable production snapshot copy",
+  "databaseWritten": "local disposable work database only",
+  "schemaVersion": 79,
+  "baselineCounts": {
+    "sources": 84,
+    "source_assets": 1454,
+    "claims": 5334,
+    "knowledge_facts": 4404,
+    "article_drafts": 12,
+    "wordpress_publications": 12,
+    "model_call_metrics": 6453
+  },
+  "jobsBefore": 18415,
+  "jobsAfter": 18427,
+  "gapCount": 7,
+  "actionableSources": 7,
+  "actionCount": 12,
+  "categoryCounts": {
+    "MISSING_SEGMENTS": 6,
+    "MISSING_EXTRACTION": 1
+  },
+  "actualQueued": 12,
+  "invariants": {
+    "protectedCountsPreserved": true,
+    "queueMatchesActions": true,
+    "noProviderCalls": true,
+    "noWordPressWrites": true
+  }
+}

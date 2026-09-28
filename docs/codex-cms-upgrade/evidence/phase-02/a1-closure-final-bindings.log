@@ -1,0 +1,38 @@
+(node:10280) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?T02-38: automatic local supplementation reads complete long captions and keeps exact locators (2.9886ms)
+鉁?T02-38: exhausted automatic reads retain omitted ranges and never hide pending context (6.0102ms)
+鉁?T02-43: changing image order changes the context fingerprint and cannot reuse old positional evidence (0.3471ms)
+鉁?T02-42/45: repair previews are read-only, apply is idempotent and stale preview cannot write (565.3145ms)
+鉁?T02-43: revocation survives context/policy revisions without restoring automatic adoption (534.6791ms)
+鉁?T02-38/45: evidence beyond the budget cannot produce a confirmed relation (522.3854ms)
+鉁?T02-38: unrelated omitted prose does not invalidate a complete direct image caption (537.7892ms)
+鉁?T02-46: PDF visual input with image kind cannot be repaired or matched as an independent photograph (518.8203ms)
+鉁?T02-45: affected slots are reported while draft and frozen manifest remain unchanged (523.6553ms)
+(node:23724) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?T02-36/39/43: typed evidence persists and only the supported use can match (588.4163ms)
+鉁?T02-43: explicit opposing source statements persist as conflict, never score away (505.2044ms)
+鉁?T02-43: same bytes retain a locatable opposing occurrence and invalidate a prior positive read (519.731ms)
+鉁?T02-43: unrelated negation is not an explicit contradiction of the named place (498.5888ms)
+鉁?T02-33/34/40: explicit source relation retrieves a generic photo with no Claims and survives focused-article matching (505.6203ms)
+鉁?T02-43: ambiguous cross-destination entities are separately retained and city-level names cannot confirm a stop (502.246ms)
+鉁?T02-43: publication gate rejects a revoked source binding even when an old matching score is high (519.3217ms)
+鉁?T02-42/43: a newly conflicting alias invalidates only the binding revision and preserves prior evidence (521.1092ms)
+鉁?T02-36/39: nearby mentions, uncertain captions and multi-place image references cannot certify a specific photo (528.3446ms)
+鉁?T02-41: explicit IDs beyond 160 are preserved; automatic paging reports a remaining range (627.2118ms)
+鉁?T02-42/43: only binding context changes, old relation remains stale, analysis and bytes are reused (525.7862ms)
+鉁?T02-63/70: snapshot and isolated review restore preserve context and binding fingerprints without jobs (754.3039ms)
+鉁?schema 81 is additive and does not backfill, buy analysis, or mutate old records (1038.5295ms)
+鉁?T02-42/43: reads reject text, caption and alias changes before a repair job without mutating records (525.0975ms)
+鉁?T02-42/43: reversible evidence edits restore the matching revision but never revive revoked decisions (522.4703ms)
+鉁?T02-39: entity identity cannot certify a different destination, uppercase entrance or whole-day diagram (0.2135ms)
+鉁?T02-43: alias cache observes another connection and never retains rolled-back evidence (518.4224ms)
+鈩?tests 26
+鈩?suites 0
+鈩?pass 26
+鈩?fail 0
+鈩?cancelled 0
+鈩?skipped 0
+鈩?todo 0
+鈩?duration_ms 9507.5605

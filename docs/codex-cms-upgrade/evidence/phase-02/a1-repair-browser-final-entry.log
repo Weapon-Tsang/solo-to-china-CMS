@@ -1,0 +1,183 @@
+### Page
+- Page URL: http://127.0.0.1:54556/
+- Page Title: SoloToChina Research Engine
+### Snapshot
+```yaml
+- generic [ref=f1e29]:
+  - banner [ref=f1e30]:
+    - generic [ref=f1e31]:
+      - link "SoloToChina 内容研究引擎" [ref=f1e32] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f1e38]: SoloToChina
+        - generic [ref=f1e39]: 内容研究引擎
+      - generic [ref=f1e40]:
+        - generic [ref=f1e41]: 服务就绪
+        - generic [ref=f1e46]: AI 未配置
+        - button "刷新最新状态" [ref=f1e48]:
+          - generic [ref=f1e49]: 刷新状态
+  - main [ref=f1e50]:
+    - generic [ref=f1e51]:
+      - generic [ref=f1e52]:
+        - generic [ref=f1e53]: 内容研究
+        - heading "研究来源" [level=1] [ref=f1e57]
+        - paragraph [ref=f1e58]: 查看并提交由你主动选择的旅行笔记、链接、文档、图片与视频。
+      - generic [ref=f1e59]:
+        - button "策略 v3.9 阅读" [ref=f1e60]:
+          - generic [ref=f1e64]: 策略 v3.9
+          - generic [ref=f1e65]: 阅读
+        - generic [ref=f1e66]: 采集服务就绪
+    - region "工作台总览" [ref=f1e69]:
+      - generic [ref=f1e70] [cursor=pointer]:
+        - button "查看来源已结构化" [ref=f1e71]
+        - generic [ref=f1e75]:
+          - paragraph [ref=f1e76]: 研究资产
+          - heading "来源已结构化" [level=2] [ref=f1e77]
+        - generic [ref=f1e82]:
+          - strong [ref=f1e83]: "0"
+          - generic [ref=f1e84]: 条知识事实
+        - paragraph [ref=f1e85]: 暂无事实冲突
+        - generic [ref=f1e86]:
+          - generic [ref=f1e87]: 1来源
+          - generic [ref=f1e88]: 0信息主张
+          - generic [ref=f1e89]: 点击查看
+      - generic [ref=f1e90] [cursor=pointer]:
+        - button "查看内容机会待决定" [ref=f1e91]
+        - generic [ref=f1e95]:
+          - paragraph [ref=f1e96]: 编辑决策
+          - heading "内容机会待决定" [level=2] [ref=f1e97]
+        - generic [ref=f1e103]:
+          - strong [ref=f1e104]: "0"
+          - generic [ref=f1e105]: 个可执行机会
+        - paragraph [ref=f1e106]: 每个创作方向独立批准、暂缓或忽略
+        - generic [ref=f1e107]:
+          - generic [ref=f1e108]: 0内容流程记录
+          - generic [ref=f1e109]: 0可用草稿
+          - generic [ref=f1e110]: 点击查看
+      - generic [ref=f1e111] [cursor=pointer]:
+        - button "查看联盟商品" [ref=f1e112]
+        - generic [ref=f1e116]:
+          - paragraph [ref=f1e117]: 商业图层
+          - heading "联盟商品" [level=2] [ref=f1e118]
+        - generic [ref=f1e123]:
+          - strong [ref=f1e124]: "0"
+          - generic [ref=f1e125]: 个可用商品
+        - paragraph [ref=f1e126]: 未配置也不影响研究与写作
+        - generic [ref=f1e127]:
+          - generic [ref=f1e128]: 0WordPress 库存
+          - generic [ref=f1e129]: 0待投递草稿
+          - generic [ref=f1e130]: 点击查看
+      - generic [ref=f1e131] [cursor=pointer]:
+        - button "查看运行正常" [ref=f1e132]
+        - generic [ref=f1e136]:
+          - paragraph [ref=f1e137]: 系统健康
+          - heading "运行正常" [level=2] [ref=f1e138]
+        - generic [ref=f1e142]:
+          - strong [ref=f1e143]: "0"
+          - generic [ref=f1e144]: 个系统故障
+        - paragraph [ref=f1e145]: 认证、数据库、网络与外部集成正常
+        - generic [ref=f1e146]:
+          - generic [ref=f1e147]: 0系统重算中
+          - generic [ref=f1e148]: 0内部机会
+          - generic [ref=f1e149]: 点击查看
+    - tablist "后台功能导航" [ref=f1e152]:
+      - tab "来源" [selected] [ref=f1e153]
+      - tab "建议" [ref=f1e158]
+      - tab "内容" [ref=f1e163]
+      - tab "知识库" [ref=f1e168]
+      - tab "商品" [ref=f1e172]
+      - tab "设置 1 项待处理" [ref=f1e177]:
+        - generic [ref=f1e181]: 设置
+        - generic "1 项待处理" [ref=f1e182]: "1"
+    - alert [ref=f1e183]:
+      - generic [ref=f1e186]:
+        - heading "AI 提取已暂停" [level=5] [ref=f1e187]
+        - generic [ref=f1e188]: 请在“设置”中配置 AI 模型后，系统才会处理排队中的图文提取、信息主张和编辑蓝图；已采集的来源不会丢失。
+      - button "前往设置" [ref=f1e189]
+    - generic [ref=f1e190]:
+      - generic [ref=f1e191]:
+        - generic [ref=f1e192]:
+          - generic [ref=f1e193]:
+            - generic [ref=f1e194]:
+              - generic [ref=f1e195]: 人工提交内容来源
+              - paragraph [ref=f1e199]: 提交后自动进入入库、内容提取、信息主张、知识整理、蓝图和创作建议流程。原文件会保存在持久化数据目录中。
+            - generic [ref=f1e200]: 统一生产流程
+          - generic [ref=f1e201]:
+            - generic [ref=f1e202]:
+              - generic [ref=f1e203]: 来源格式
+              - combobox "来源格式" [ref=f1e204]:
+                - option "自动识别链接" [selected]
+                - option "小红书笔记链接"
+                - option "微信公众号链接"
+                - option "视频链接"
+                - option "其他网页链接"
+                - option "PDF 文档"
+                - option "Word 文档（DOC/DOCX）"
+                - option "图片（可多选）"
+                - option "视频文件（最大 256 MB）"
+            - generic [ref=f1e205]:
+              - generic [ref=f1e206]: 公开链接
+              - textbox "公开链接" [ref=f1e210]:
+                - /placeholder: https://...
+            - generic [ref=f1e211]:
+              - generic [ref=f1e212]: 标题（选填）
+              - textbox "标题（选填）" [ref=f1e213]:
+                - /placeholder: 留空时尝试从网页或文件名识别
+            - generic [ref=f1e214]:
+              - generic [ref=f1e215]: 补充说明/正文（选填）
+              - textbox "补充说明/正文（选填）" [ref=f1e216]:
+                - /placeholder: 可补充来源背景、视频文字稿，或在链接无法直接读取时粘贴正文。
+            - generic [ref=f1e217]:
+              - button "提交并进入生产流程" [disabled]
+              - generic [ref=f1e218]: 链接只读取公开页面，不携带登录 Cookie；遇到反爬、登录墙、限流或空内容会明确返回原因。
+        - generic [ref=f1e219]:
+          - generic [ref=f1e220]: 也可以继续使用 Chrome 扩展采集已授权的小红书笔记。
+          - button "查看扩展采集说明" [ref=f1e221]
+        - generic [ref=f1e222]:
+          - strong [ref=f1e223]: 处理状态说明
+          - generic [ref=f1e224]:
+            - generic [ref=f1e225]: 处理中：来源已安全保存，系统正在进行多模态提取、结构化来源、信息主张和内容蓝图。
+            - generic [ref=f1e226]: 提取完成：结构化研究已可用，并不代表文章已生成。
+            - generic [ref=f1e227]: 需要处理：打开来源查看原因后可重新执行提取。
+        - table [ref=f1e231]:
+          - rowgroup [ref=f1e232]:
+            - row [ref=f1e233]:
+              - columnheader "来源 / 平台作者" [ref=f1e234]
+              - columnheader "采集状态" [ref=f1e235]
+              - columnheader "完整性" [ref=f1e236]
+              - columnheader "抽取状态" [ref=f1e237]
+              - columnheader "媒体耐久化" [ref=f1e238]
+              - columnheader "Experience" [ref=f1e239]
+              - columnheader "目的地" [ref=f1e240]
+              - columnheader "处理进度" [ref=f1e241]
+              - columnheader "采集时间" [ref=f1e242]
+          - rowgroup [ref=f1e243]:
+            - button [ref=f1e244] [cursor=pointer]:
+              - cell "1.Context readback fixture 未知作者 · XHS ID context · v1" [ref=f1e245]:
+                - generic [ref=f1e246]:
+                  - generic [ref=f1e247]: "1."
+                  - text: Context readback fixture
+                - generic [ref=f1e248]:
+                  - generic [ref=f1e249]: 未知作者 · XHS ID context
+                  - generic [ref=f1e250]: · v1
+              - cell "已采集" [ref=f1e251]
+              - cell "正文完整" [ref=f1e253]
+              - cell "—" [ref=f1e254]
+              - cell "媒体原件 0/13 · 系统后台恢复中" [ref=f1e255]
+              - cell "等待体验信息提取" [ref=f1e256]
+              - cell "—" [ref=f1e257]
+              - cell "0 条主张" [ref=f1e258]
+              - cell "2026年9月27日 20:47" [ref=f1e259]
+      - navigation "列表分页" [ref=f1e260]:
+        - button "上一页" [disabled]
+        - generic [ref=f1e261]: 第 1 页
+        - button "下一页" [disabled]
+        - generic [ref=f1e262]:
+          - text: 每页
+          - combobox "每页 条" [ref=f1e263]:
+            - option "20" [selected]
+            - option "50"
+          - text: 条
+    - generic [ref=f1e264]:
+      - generic [ref=f1e265]: SoloToChina 内容研究引擎
+      - generic [ref=f1e266]: 应用 v2.0.70 · 策略 v3.9 · 仅处理人工选定来源
+```

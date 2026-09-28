@@ -1,0 +1,449 @@
+{
+  "root": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-IaFC2d",
+  "extension": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-IaFC2d\\extension",
+  "profile": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-IaFC2d\\profile",
+  "version": "2.0.71",
+  "startedAt": "2026-09-27T11:11:54.922Z",
+  "buildDifference": "Only isolated manifest adds http://127.0.0.1/* for ephemeral CMS port; production code unchanged.",
+  "checks": [
+    {
+      "id": "XP-18",
+      "status": "PASS",
+      "captured": 1,
+      "assets": 4
+    },
+    {
+      "id": "XP-02",
+      "status": "PASS",
+      "kind": "discovery close",
+      "queue": 0
+    },
+    {
+      "id": "XP-01",
+      "status": "PASS",
+      "observationMs": 130193,
+      "watchdogTicks": 2
+    },
+    {
+      "id": "XP-04",
+      "status": "PASS",
+      "restart": "CDP closed worker; popup runtime woke extension"
+    }
+  ],
+  "tabEvents": [
+    {
+      "event": "created",
+      "at": 1790507516635
+    },
+    {
+      "event": "created",
+      "at": 1790507516727
+    },
+    {
+      "event": "created",
+      "at": 1790507518227
+    },
+    {
+      "event": "closed",
+      "at": 1790507521229
+    },
+    {
+      "event": "closed",
+      "at": 1790507521462
+    },
+    {
+      "event": "created",
+      "at": 1790507522027
+    },
+    {
+      "event": "closed",
+      "at": 1790507522145
+    },
+    {
+      "event": "created",
+      "at": 1790507652210
+    },
+    {
+      "event": "closed",
+      "at": 1790507653287
+    },
+    {
+      "event": "closed",
+      "at": 1790507653289
+    }
+  ],
+  "apiEvents": [
+    {
+      "at": 1790507516818,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507516837,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507521149,
+      "method": "POST",
+      "path": "/api/captures",
+      "status": 202
+    },
+    {
+      "at": 1790507521166,
+      "method": "POST",
+      "path": "/api/capture-media-uploads",
+      "status": 201
+    },
+    {
+      "at": 1790507521166,
+      "method": "POST",
+      "path": "/api/capture-media-uploads",
+      "status": 201
+    },
+    {
+      "at": 1790507521177,
+      "method": "PUT",
+      "path": "/api/capture-media-uploads/3aa748db-0eb1-46f9-a5e6-d064857e3353/chunks/0",
+      "status": 200
+    },
+    {
+      "at": 1790507521177,
+      "method": "PUT",
+      "path": "/api/capture-media-uploads/817c8625-c17d-4dfb-9278-7047aa287c57/chunks/0",
+      "status": 200
+    },
+    {
+      "at": 1790507521200,
+      "method": "POST",
+      "path": "/api/capture-media-uploads/3aa748db-0eb1-46f9-a5e6-d064857e3353/complete",
+      "status": 200
+    },
+    {
+      "at": 1790507521200,
+      "method": "POST",
+      "path": "/api/capture-media-uploads/817c8625-c17d-4dfb-9278-7047aa287c57/complete",
+      "status": 200
+    },
+    {
+      "at": 1790507521215,
+      "method": "POST",
+      "path": "/api/captures",
+      "status": 202
+    },
+    {
+      "at": 1790507521235,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790507521444,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507521476,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790507653269,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    }
+  ],
+  "blockedNetwork": [],
+  "networkBoundary": "All browser DNS maps to 127.0.0.1:57537; only fixture hosts served; no proxy; TLS test certificate ignored only in test browser.",
+  "browser": "153.0.8010.12",
+  "extensionId": "jelgmklkcfjfejmihghnpimgifkcnlfm",
+  "cms": {
+    "endpoint": "http://127.0.0.1:58789",
+    "database": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-IaFC2d\\solo-to-china.sqlite",
+    "role": "api"
+  },
+  "firstCapture": {
+    "activeTasks": [],
+    "automatic": false,
+    "browserIdentity": "aa32031c-65b6-435c-b46b-e4f0e09c8c44",
+    "checkpoint": {
+      "lastSuccessfulSyncAt": null,
+      "topIdentityKeys": []
+    },
+    "completedAt": "2026-09-27T11:12:01.224Z",
+    "concurrency": 1,
+    "concurrencyController": {
+      "lastChangeAt": null,
+      "reason": "settings"
+    },
+    "concurrencySamples": [
+      {
+        "cmsBackpressure": false,
+        "completedAt": "2026-09-27T11:12:01.220Z",
+        "errorClass": "",
+        "extractionMs": 2856,
+        "localFailure": false,
+        "loginRequired": false,
+        "mediaBytes": 7990,
+        "mediaCount": 2,
+        "mediaDownloadMs": 8,
+        "mediaUploadMs": 89,
+        "memoryPressure": false,
+        "noteLoadMs": 46,
+        "rateLimited": false,
+        "result": "succeeded",
+        "submitMs": 14,
+        "tabCrash": false,
+        "timeout": false,
+        "totalMs": 3044,
+        "verificationDetected": false
+      }
+    ],
+    "config": {
+      "autoMinIntervalHours": 12,
+      "concurrencyInitial": 4,
+      "concurrencyMax": 12,
+      "concurrencyMinSamples": 20,
+      "concurrencyMode": "custom",
+      "concurrencyWindowSize": 24,
+      "customConcurrency": 1,
+      "detailLoadTimeoutMs": 30000,
+      "discoveryBatchSize": 100,
+      "identityBatchSize": 50,
+      "maxRetries": 3,
+      "mediaConcurrency": 12,
+      "mediaMemoryBudgetBytes": 100663296,
+      "mediaUploadConcurrency": 6,
+      "queueHighWatermark": 500,
+      "retryBaseMs": 5000,
+      "retryMaxMs": 120000,
+      "stopAfterConsecutiveKnown": 12,
+      "taskLeaseMs": 180000,
+      "watchdogStallMs": 120000
+    },
+    "controlSchema": 1,
+    "currentTopIdentityKeys": [
+      "xiaohongshu:fixture001"
+    ],
+    "cursor": {
+      "collectionEnd": true,
+      "collectionEndStreak": 2,
+      "domOffset": 1,
+      "scannedWindows": 2,
+      "scrollY": 0
+    },
+    "discoveryComplete": true,
+    "discoveryTabId": 654380263,
+    "driveRetryAt": null,
+    "driverAttempts": 0,
+    "lastBusinessProgress": "submitting",
+    "lastError": null,
+    "lastProgressAt": "2026-09-27T11:12:01.220Z",
+    "mediaConcurrency": 12,
+    "mediaConcurrencyController": {
+      "lastChangeAt": null,
+      "reason": "settings"
+    },
+    "mode": "full",
+    "noProgressSince": null,
+    "phase": "completed",
+    "queue": [
+      {
+        "attempts": 1,
+        "author": "",
+        "canonicalUrl": "https://www.xiaohongshu.com/explore/fixture001",
+        "captureVersion": 2,
+        "coverUrl": "",
+        "error": null,
+        "externalId": "fixture001",
+        "identityKey": "xiaohongshu:fixture001",
+        "lastHeartbeatAt": "2026-09-27T11:12:01.204Z",
+        "leaseExpiresAt": null,
+        "leaseId": null,
+        "leaseStartedAt": null,
+        "navigationUrl": "https://www.xiaohongshu.com/explore/fixture001",
+        "position": 0,
+        "repairActions": [
+          "CAPTURE_NEW"
+        ],
+        "repairMediaIdentities": [],
+        "retryAt": null,
+        "sourceId": "src_11245a316cc445ffbcf06e3c14a8b40c",
+        "startedAt": "2026-09-27T11:11:58.173Z",
+        "status": "captured",
+        "tabId": null,
+        "taskId": "a7815655-d9e2-430d-8cc7-516c374e2878",
+        "title": "",
+        "updatedAt": "2026-09-27T11:12:01.220Z",
+        "workerId": null
+      }
+    ],
+    "recoveryNoticeAt": null,
+    "runRevision": 1,
+    "scan": {
+      "checkpointSeen": true,
+      "consecutiveKnown": 0,
+      "reliableCheckpoint": false,
+      "windowNew": 0
+    },
+    "scopeKey": "xhs_scope:https://www.xiaohongshu.com/board/fixture123",
+    "scopeLabel": "小红书收藏夹 · fixture1",
+    "scopeUrl": "https://www.xiaohongshu.com/board/fixture123",
+    "seenIdentityKeys": [
+      "xiaohongshu:fixture001"
+    ],
+    "sessionId": "f8f5e518-c3fd-434e-886d-e8fd96915868",
+    "stage": "submitting",
+    "stageStartedAt": "2026-09-27T11:12:01.205Z",
+    "startedAt": "2026-09-27T11:11:56.822Z",
+    "stats": {
+      "captured": 1,
+      "discovered": 1,
+      "duplicate": 0,
+      "failed": 0,
+      "known": 0,
+      "new": 1,
+      "repair": 0,
+      "retrying": 0,
+      "unavailable": 0
+    },
+    "status": "completed",
+    "stopAfterQueue": false,
+    "tabOwnership": {
+      "654380263": {
+        "owned": false,
+        "role": "discovery",
+        "tabId": 654380263,
+        "url": "https://www.xiaohongshu.com/board/fixture123",
+        "windowId": 654380260
+      },
+      "654380264": {
+        "owned": true,
+        "role": "worker",
+        "tabId": 654380264,
+        "url": "https://www.xiaohongshu.com/explore/fixture001",
+        "windowId": 654380260
+      }
+    },
+    "updatedAt": "2026-09-27T11:12:01.224Z",
+    "workerSlots": [
+      {
+        "tabId": 654380264,
+        "updatedAt": "2026-09-27T11:11:58.222Z",
+        "workerId": "note-worker-0-68093e97-d8db-407b-90ba-0a2c158d2d96"
+      }
+    ],
+    "workerTabs": [
+      654380264
+    ]
+  },
+  "durableSources": [
+    {
+      "id": "src_11245a316cc445ffbcf06e3c14a8b40c",
+      "textChars": 198,
+      "captureVersion": 2
+    }
+  ],
+  "durableAssets": [
+    {
+      "id": "asset_fd662315495c4fa0a10b914081a8e2ef",
+      "kind": "image"
+    },
+    {
+      "id": "asset_b88d3caea8ec4348a1b7c6fca9b4ff38",
+      "kind": "image"
+    },
+    {
+      "id": "asset_ea2738dadd73496dad2535d26c17f66f",
+      "kind": "image"
+    },
+    {
+      "id": "asset_08d0f3e3a84b4cc0a40683a44c4b6bf8",
+      "kind": "image"
+    }
+  ],
+  "diagnostics": [
+    {
+      "at": "2026-09-27T11:11:58.199Z",
+      "attempts": 0,
+      "event": "create-dispatched",
+      "revision": 1,
+      "role": "worker",
+      "scope": "session-scope",
+      "sessionId": "f8f5e518-c3fd-434e-886d-e8fd96915868",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:12:01.225Z",
+      "attempts": 0,
+      "event": "remove",
+      "revision": 1,
+      "role": "worker",
+      "scope": "session-scope",
+      "sessionId": "f8f5e518-c3fd-434e-886d-e8fd96915868",
+      "status": "completed",
+      "tabId": 654380264
+    },
+    {
+      "at": "2026-09-27T11:12:01.465Z",
+      "attempts": 0,
+      "event": "tab-removed",
+      "revision": 1,
+      "role": "associated",
+      "scope": "session-scope",
+      "sessionId": "fc8be168-2e59-454b-ad5a-8fef183bb5cb",
+      "status": "running",
+      "tabId": 654380263,
+      "windowClosing": false
+    },
+    {
+      "at": "2026-09-27T11:12:56.084Z",
+      "attempts": 1,
+      "event": "watchdog",
+      "revision": 2,
+      "role": "scheduler",
+      "scope": "session-scope",
+      "sessionId": "fc8be168-2e59-454b-ad5a-8fef183bb5cb",
+      "status": "paused_tab_closed",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:13:56.076Z",
+      "attempts": 1,
+      "event": "watchdog",
+      "revision": 2,
+      "role": "scheduler",
+      "scope": "session-scope",
+      "sessionId": "fc8be168-2e59-454b-ad5a-8fef183bb5cb",
+      "status": "paused_tab_closed",
+      "tabId": null
+    }
+  ],
+  "status": "FAIL",
+  "error": {
+    "message": "The expression evaluated to a falsy value:\n\n  assert.ok(resumed.every(r=>r.ok))\n",
+    "stack": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert.ok(resumed.every(r=>r.ok))\n\n    at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/scripts/verify-extension-pre-browser.mjs:118:10"
+  },
+  "finishedAt": "2026-09-27T11:14:13.574Z",
+  "sourceHashes": {
+    "background.js": "6e3da5fc4b8477ed05d9536ea0417409c9f76a73d87244c3488d44cadd00f2a9",
+    "capture-utils.js": "5e939730cbe61260808de933203eff52c30d65f7c18d58bad804dd2952d1efde",
+    "derivative-cache.js": "37ee6933154b13416c683b5692aac919ef1eb2c29279e38200e79ab8af34cc18",
+    "manifest.json": "a65027a4b4aa2f3c2f531f0ac91722acc86f0ccb7fef0dd7cc1d8f2659f1319d",
+    "media-contract.js": "fbc17791b20ec2d02fcae5ac53ff24345887b2de6a3fdda0a16ccacfc60b7002",
+    "media-journal.js": "1f5c06020169868e35823aa16605588469ef778632785903009382333dccf41f",
+    "page-extractor.js": "5c8a12979b0552c6b1f3b7651b7ea612018fced81fcf8c283cd6a491cfcda32d",
+    "popup-state.js": "0a75f3cbcd5b66f3122b8865dc4ba99894b01075ef3aa58324923c829d6e88e2",
+    "popup.html": "62f4bb7af68152fdca99ea7eab196013c5c059577a837c37c33a1008d4aff16f",
+    "popup.js": "9cd08f4bd0b07318dc06bf1b337c43024c81470735714a5351f8379203ff7426",
+    "run-control.js": "d4f32007333d48c6c147e058c51ee10c6958bfca6954e7e1cf8605753d3b7818",
+    "sync-core.js": "fbb2859d31cfba31bc4141426e04c4db34ccdc827949d67ab6db6fe42fd2be44",
+    "transport.js": "4115c589a6f7929e697889895e28bdc45865370128d5d64acc1402df69cb1d09"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "date": "2026-09-24",
+  "scope": "one fixed short-text source; no database, batch submission, image generation or WordPress write",
+  "provider": "Vertex Gemini",
+  "model": "gemini-3.8-flash",
+  "result": "PASS",
+  "providerReached": true,
+  "schemaAccepted": true,
+  "calls": 1,
+  "elapsedMs": 1796,
+  "semantics": {
+    "alwaysOpen": true,
+    "priceCny": 0
+  },
+  "usage": {
+    "inputTokens": 115,
+    "outputTokens": 12,
+    "thinkingTokens": null
+  },
+  "batchListReadOnlyCanary": "PASS",
+  "limitations": [
+    "No 5-image, 20-image, screenshot, multi-location, video or PDF canary was run.",
+    "The live Batch list endpoint was checked read-only; no live Batch was submitted for this test."
+  ]
+}

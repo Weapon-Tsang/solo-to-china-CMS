@@ -10,6 +10,30 @@ import { createApplication } from "../src/server.mjs";
 import { VERSION } from "../src/version.mjs";
 import { frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
 
+test("CORS accepts only same-origin or explicitly configured capture origins", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cms-cors-test-"));
+  const config = loadConfig({ HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "api.sqlite"),
+    CAPTURE_ALLOWED_ORIGINS: "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
+    MAINTENANCE_ENABLED: "false", LOG_LEVEL: "error" });
+  const app = createApplication(config);
+  await app.start();
+  t.after(async () => { await app.stop(); fs.rmSync(directory, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const exact = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
+  const denied = "chrome-extension://evilabcdefghijklmnopabcdefghijkl";
+  const allowedPreflight = await fetch(`${base}/api/captures`, { method: "OPTIONS", headers: { origin: exact } });
+  assert.equal(allowedPreflight.status, 204);
+  assert.equal(allowedPreflight.headers.get("access-control-allow-origin"), exact);
+  const deniedPreflight = await fetch(`${base}/api/captures`, { method: "OPTIONS", headers: { origin: denied } });
+  assert.equal(deniedPreflight.status, 403);
+  assert.equal(deniedPreflight.headers.get("access-control-allow-origin"), null);
+  const deniedWrite = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { origin: denied } });
+  assert.equal(deniedWrite.status, 403);
+  const sameOrigin = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { origin: base } });
+  assert.equal(sameOrigin.status, 409);
+  assert.equal(sameOrigin.headers.get("access-control-allow-origin"), base);
+});
+
 test("final preview falls back to editor login when WordPress rejects a scoped ticket", async (t)=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),"stc-preview-auth-test-"));
   const config=loadConfig({HOST:"127.0.0.1",PORT:"0",DATABASE_PATH:path.join(directory,"api.sqlite"),
@@ -98,7 +122,7 @@ test("HTTP API accepts a manual capture and exposes pipeline state", async (t) =
   assert.equal(sources.items[0].destination_name, "Chengdu");
 });
 
-test("settings defaults to counts and lazily bounds system-health detail", async (t) => {
+test("settings system health uses stable server pagination and exposes isolated unknown requests", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "solo-to-china-settings-preview-"));
   const config = loadConfig({
     HOST: "127.0.0.1", PORT: "0", DATABASE_PATH: path.join(directory, "api.sqlite"),
@@ -111,6 +135,9 @@ test("settings defaults to counts and lazily bounds system-health detail", async
   const recoveredJob = app.repository.enqueue("rebuild_topic_clusters", "settings-fixture-0");
   app.repository.db.prepare("UPDATE jobs SET status='succeeded',updated_at='2026-09-12T00:00:00.000Z' WHERE id=?")
     .run(recoveredJob);
+  app.repository.db.prepare(`INSERT INTO media_dispatches(id,scope_key,visual_id,substage,started_at_ms,state,error_code,created_at)
+    VALUES ('unknown-settings-dispatch','vertex:fixture:fixture-model','fixture-visual','analyze_source_image',1,
+      'outcome_unknown','PROVIDER_TIMEOUT','2026-09-10T00:00:00.000Z')`).run();
   await app.start();
   t.after(async () => {
     await app.stop();
@@ -118,11 +145,29 @@ test("settings defaults to counts and lazily bounds system-health detail", async
   });
   const baseUrl = `http://127.0.0.1:${app.server.address().port}`;
   const settings = await (await fetch(`${baseUrl}/api/settings`)).json();
-  assert.equal(settings.operations.counts.systemHealth, 104);
+  assert.equal(settings.operations.counts.systemHealth, 105);
   assert.equal(settings.operations.exceptions, undefined);
-  const health = await (await fetch(`${baseUrl}/api/settings/system-health?limit=100`)).json();
-  assert.equal(health.totalCount, 104);
-  assert.equal(health.items.length, 100);
+  const first20 = await (await fetch(`${baseUrl}/api/settings/system-health?limit=20`)).json();
+  assert.equal(first20.totalCount, 105);
+  assert.equal(first20.items.length, 20);
+  assert.ok(first20.nextCursor);
+  const second20 = await (await fetch(`${baseUrl}/api/settings/system-health?limit=20&cursor=${encodeURIComponent(first20.nextCursor)}`)).json();
+  assert.equal(second20.items.length, 20);
+  assert.equal(new Set([...first20.items, ...second20.items].map((item) => item.key)).size, 40);
+
+  const first50 = await (await fetch(`${baseUrl}/api/settings/system-health?limit=50`)).json();
+  const second50 = await (await fetch(`${baseUrl}/api/settings/system-health?limit=50&cursor=${encodeURIComponent(first50.nextCursor)}`)).json();
+  const final5 = await (await fetch(`${baseUrl}/api/settings/system-health?limit=50&cursor=${encodeURIComponent(second50.nextCursor)}`)).json();
+  assert.deepEqual([first50.items.length, second50.items.length, final5.items.length], [50, 50, 5]);
+  assert.equal(final5.nextCursor, null);
+  assert.equal(new Set([...first50.items, ...second50.items, ...final5.items].map((item) => item.key)).size, 105);
+
+  const warning = await (await fetch(`${baseUrl}/api/settings/system-health?limit=20&status=warning`)).json();
+  assert.equal(warning.totalCount, 1);
+  assert.equal(warning.items[0].key, "media_dispatch:unknown-settings-dispatch");
+  assert.equal(warning.items[0].outcomeState, "outcome_unknown");
+  assert.match(warning.items[0].title, /待核.*隔离/);
+  assert.equal(warning.items[0].retryable, false);
 });
 
 test("authenticated source evidence preview streams the stored review image", async (t) => {

@@ -1,0 +1,4563 @@
+{
+  "format": "stage01-fin01-api-benchmark-1",
+  "mode": "worker",
+  "startedAt": "2026-09-27T05:04:47.019Z",
+  "completedAt": "2026-09-27T05:04:47.734Z",
+  "node": "v24.14.0",
+  "machine": {
+    "platform": "win32",
+    "arch": "x64",
+    "cpus": 8,
+    "totalMemoryBytes": 17107996672
+  },
+  "dataset": {
+    "sources": 1200,
+    "claims": 10013,
+    "drafts": 300,
+    "mediaMetadata": 3200
+  },
+  "percentileMethod": "nearest-rank",
+  "definition": "client fetch start to full arrayBuffer completion; failures included",
+  "workerEvidence": {
+    "queueAtEnd": [
+      {
+        "status": "queued",
+        "n": 242
+      },
+      {
+        "status": "running",
+        "n": 1
+      },
+      {
+        "status": "succeeded",
+        "n": 120
+      }
+    ]
+  },
+  "results": [
+    {
+      "route": "/api/sources?limit=20",
+      "samples": [
+        {
+          "index": 0,
+          "startedAt": "2026-09-27T05:04:47.019Z",
+          "completedAt": "2026-09-27T05:04:47.025Z",
+          "elapsedMs": 6.06,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "startedAt": "2026-09-27T05:04:47.025Z",
+          "completedAt": "2026-09-27T05:04:47.030Z",
+          "elapsedMs": 5.081,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "startedAt": "2026-09-27T05:04:47.030Z",
+          "completedAt": "2026-09-27T05:04:47.034Z",
+          "elapsedMs": 3.27,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "startedAt": "2026-09-27T05:04:47.034Z",
+          "completedAt": "2026-09-27T05:04:47.037Z",
+          "elapsedMs": 3.007,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "startedAt": "2026-09-27T05:04:47.037Z",
+          "completedAt": "2026-09-27T05:04:47.040Z",
+          "elapsedMs": 2.84,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "startedAt": "2026-09-27T05:04:47.040Z",
+          "completedAt": "2026-09-27T05:04:47.045Z",
+          "elapsedMs": 4.505,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "startedAt": "2026-09-27T05:04:47.045Z",
+          "completedAt": "2026-09-27T05:04:47.048Z",
+          "elapsedMs": 3.294,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "startedAt": "2026-09-27T05:04:47.048Z",
+          "completedAt": "2026-09-27T05:04:47.051Z",
+          "elapsedMs": 3.056,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "startedAt": "2026-09-27T05:04:47.052Z",
+          "completedAt": "2026-09-27T05:04:47.055Z",
+          "elapsedMs": 3.174,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "startedAt": "2026-09-27T05:04:47.055Z",
+          "completedAt": "2026-09-27T05:04:47.058Z",
+          "elapsedMs": 3.433,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "startedAt": "2026-09-27T05:04:47.059Z",
+          "completedAt": "2026-09-27T05:04:47.062Z",
+          "elapsedMs": 3.669,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "startedAt": "2026-09-27T05:04:47.063Z",
+          "completedAt": "2026-09-27T05:04:47.066Z",
+          "elapsedMs": 2.772,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 12,
+          "startedAt": "2026-09-27T05:04:47.066Z",
+          "completedAt": "2026-09-27T05:04:47.068Z",
+          "elapsedMs": 2.713,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 13,
+          "startedAt": "2026-09-27T05:04:47.069Z",
+          "completedAt": "2026-09-27T05:04:47.071Z",
+          "elapsedMs": 2.523,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 14,
+          "startedAt": "2026-09-27T05:04:47.071Z",
+          "completedAt": "2026-09-27T05:04:47.074Z",
+          "elapsedMs": 2.292,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 15,
+          "startedAt": "2026-09-27T05:04:47.074Z",
+          "completedAt": "2026-09-27T05:04:47.078Z",
+          "elapsedMs": 3.845,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 16,
+          "startedAt": "2026-09-27T05:04:47.078Z",
+          "completedAt": "2026-09-27T05:04:47.081Z",
+          "elapsedMs": 3.126,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 17,
+          "startedAt": "2026-09-27T05:04:47.081Z",
+          "completedAt": "2026-09-27T05:04:47.084Z",
+          "elapsedMs": 2.483,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 18,
+          "startedAt": "2026-09-27T05:04:47.084Z",
+          "completedAt": "2026-09-27T05:04:47.087Z",
+          "elapsedMs": 2.591,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 19,
+          "startedAt": "2026-09-27T05:04:47.087Z",
+          "completedAt": "2026-09-27T05:04:47.089Z",
+          "elapsedMs": 2.431,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 20,
+          "startedAt": "2026-09-27T05:04:47.089Z",
+          "completedAt": "2026-09-27T05:04:47.093Z",
+          "elapsedMs": 4.061,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 21,
+          "startedAt": "2026-09-27T05:04:47.094Z",
+          "completedAt": "2026-09-27T05:04:47.097Z",
+          "elapsedMs": 2.872,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 22,
+          "startedAt": "2026-09-27T05:04:47.097Z",
+          "completedAt": "2026-09-27T05:04:47.099Z",
+          "elapsedMs": 2.512,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 23,
+          "startedAt": "2026-09-27T05:04:47.099Z",
+          "completedAt": "2026-09-27T05:04:47.102Z",
+          "elapsedMs": 2.319,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 24,
+          "startedAt": "2026-09-27T05:04:47.102Z",
+          "completedAt": "2026-09-27T05:04:47.104Z",
+          "elapsedMs": 2.285,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 25,
+          "startedAt": "2026-09-27T05:04:47.104Z",
+          "completedAt": "2026-09-27T05:04:47.107Z",
+          "elapsedMs": 2.382,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 26,
+          "startedAt": "2026-09-27T05:04:47.107Z",
+          "completedAt": "2026-09-27T05:04:47.112Z",
+          "elapsedMs": 4.543,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 27,
+          "startedAt": "2026-09-27T05:04:47.112Z",
+          "completedAt": "2026-09-27T05:04:47.115Z",
+          "elapsedMs": 2.813,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 28,
+          "startedAt": "2026-09-27T05:04:47.115Z",
+          "completedAt": "2026-09-27T05:04:47.117Z",
+          "elapsedMs": 2.426,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 29,
+          "startedAt": "2026-09-27T05:04:47.117Z",
+          "completedAt": "2026-09-27T05:04:47.120Z",
+          "elapsedMs": 2.327,
+          "status": 200,
+          "bytes": 50607,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        }
+      ],
+      "p50Ms": 2.84,
+      "p95Ms": 5.081,
+      "failed": 0,
+      "targetP95Ms": 300,
+      "targetMet": true
+    },
+    {
+      "route": "/api/knowledge/subjects?limit=20",
+      "samples": [
+        {
+          "index": 0,
+          "startedAt": "2026-09-27T05:04:47.129Z",
+          "completedAt": "2026-09-27T05:04:47.136Z",
+          "elapsedMs": 7.1,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "startedAt": "2026-09-27T05:04:47.136Z",
+          "completedAt": "2026-09-27T05:04:47.145Z",
+          "elapsedMs": 8.348,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "startedAt": "2026-09-27T05:04:47.145Z",
+          "completedAt": "2026-09-27T05:04:47.152Z",
+          "elapsedMs": 6.924,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "startedAt": "2026-09-27T05:04:47.152Z",
+          "completedAt": "2026-09-27T05:04:47.160Z",
+          "elapsedMs": 8.013,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "startedAt": "2026-09-27T05:04:47.160Z",
+          "completedAt": "2026-09-27T05:04:47.168Z",
+          "elapsedMs": 7.38,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "startedAt": "2026-09-27T05:04:47.168Z",
+          "completedAt": "2026-09-27T05:04:47.176Z",
+          "elapsedMs": 7.882,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "startedAt": "2026-09-27T05:04:47.176Z",
+          "completedAt": "2026-09-27T05:04:47.181Z",
+          "elapsedMs": 4.821,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "startedAt": "2026-09-27T05:04:47.181Z",
+          "completedAt": "2026-09-27T05:04:47.186Z",
+          "elapsedMs": 4.884,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "startedAt": "2026-09-27T05:04:47.186Z",
+          "completedAt": "2026-09-27T05:04:47.192Z",
+          "elapsedMs": 5.698,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "startedAt": "2026-09-27T05:04:47.192Z",
+          "completedAt": "2026-09-27T05:04:47.198Z",
+          "elapsedMs": 5.746,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "startedAt": "2026-09-27T05:04:47.198Z",
+          "completedAt": "2026-09-27T05:04:47.203Z",
+          "elapsedMs": 5.067,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "startedAt": "2026-09-27T05:04:47.203Z",
+          "completedAt": "2026-09-27T05:04:47.209Z",
+          "elapsedMs": 5.965,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 12,
+          "startedAt": "2026-09-27T05:04:47.210Z",
+          "completedAt": "2026-09-27T05:04:47.215Z",
+          "elapsedMs": 5.79,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 13,
+          "startedAt": "2026-09-27T05:04:47.216Z",
+          "completedAt": "2026-09-27T05:04:47.221Z",
+          "elapsedMs": 5.096,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 14,
+          "startedAt": "2026-09-27T05:04:47.221Z",
+          "completedAt": "2026-09-27T05:04:47.227Z",
+          "elapsedMs": 6.036,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 15,
+          "startedAt": "2026-09-27T05:04:47.227Z",
+          "completedAt": "2026-09-27T05:04:47.232Z",
+          "elapsedMs": 5.247,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 16,
+          "startedAt": "2026-09-27T05:04:47.233Z",
+          "completedAt": "2026-09-27T05:04:47.238Z",
+          "elapsedMs": 5.141,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 17,
+          "startedAt": "2026-09-27T05:04:47.238Z",
+          "completedAt": "2026-09-27T05:04:47.244Z",
+          "elapsedMs": 5.607,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 18,
+          "startedAt": "2026-09-27T05:04:47.244Z",
+          "completedAt": "2026-09-27T05:04:47.249Z",
+          "elapsedMs": 5.099,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 19,
+          "startedAt": "2026-09-27T05:04:47.249Z",
+          "completedAt": "2026-09-27T05:04:47.254Z",
+          "elapsedMs": 4.819,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 20,
+          "startedAt": "2026-09-27T05:04:47.254Z",
+          "completedAt": "2026-09-27T05:04:47.261Z",
+          "elapsedMs": 6.506,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 21,
+          "startedAt": "2026-09-27T05:04:47.261Z",
+          "completedAt": "2026-09-27T05:04:47.267Z",
+          "elapsedMs": 5.703,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 22,
+          "startedAt": "2026-09-27T05:04:47.267Z",
+          "completedAt": "2026-09-27T05:04:47.272Z",
+          "elapsedMs": 4.963,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 23,
+          "startedAt": "2026-09-27T05:04:47.272Z",
+          "completedAt": "2026-09-27T05:04:47.278Z",
+          "elapsedMs": 6.132,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 24,
+          "startedAt": "2026-09-27T05:04:47.278Z",
+          "completedAt": "2026-09-27T05:04:47.283Z",
+          "elapsedMs": 5.023,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 25,
+          "startedAt": "2026-09-27T05:04:47.283Z",
+          "completedAt": "2026-09-27T05:04:47.288Z",
+          "elapsedMs": 4.847,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 26,
+          "startedAt": "2026-09-27T05:04:47.288Z",
+          "completedAt": "2026-09-27T05:04:47.294Z",
+          "elapsedMs": 5.798,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 27,
+          "startedAt": "2026-09-27T05:04:47.294Z",
+          "completedAt": "2026-09-27T05:04:47.300Z",
+          "elapsedMs": 5.219,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 28,
+          "startedAt": "2026-09-27T05:04:47.300Z",
+          "completedAt": "2026-09-27T05:04:47.304Z",
+          "elapsedMs": 4.392,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 29,
+          "startedAt": "2026-09-27T05:04:47.304Z",
+          "completedAt": "2026-09-27T05:04:47.310Z",
+          "elapsedMs": 5.914,
+          "status": 200,
+          "bytes": 7177,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        }
+      ],
+      "p50Ms": 5.698,
+      "p95Ms": 8.013,
+      "failed": 0,
+      "targetP95Ms": 300,
+      "targetMet": true
+    },
+    {
+      "route": "/api/content?limit=20",
+      "samples": [
+        {
+          "index": 0,
+          "startedAt": "2026-09-27T05:04:47.321Z",
+          "completedAt": "2026-09-27T05:04:47.331Z",
+          "elapsedMs": 10.33,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "startedAt": "2026-09-27T05:04:47.331Z",
+          "completedAt": "2026-09-27T05:04:47.340Z",
+          "elapsedMs": 8.86,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "startedAt": "2026-09-27T05:04:47.340Z",
+          "completedAt": "2026-09-27T05:04:47.350Z",
+          "elapsedMs": 9.781,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "startedAt": "2026-09-27T05:04:47.350Z",
+          "completedAt": "2026-09-27T05:04:47.360Z",
+          "elapsedMs": 9.744,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "startedAt": "2026-09-27T05:04:47.360Z",
+          "completedAt": "2026-09-27T05:04:47.370Z",
+          "elapsedMs": 9.355,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "startedAt": "2026-09-27T05:04:47.370Z",
+          "completedAt": "2026-09-27T05:04:47.380Z",
+          "elapsedMs": 10.184,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "startedAt": "2026-09-27T05:04:47.380Z",
+          "completedAt": "2026-09-27T05:04:47.389Z",
+          "elapsedMs": 9.132,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "startedAt": "2026-09-27T05:04:47.390Z",
+          "completedAt": "2026-09-27T05:04:47.400Z",
+          "elapsedMs": 10.438,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "startedAt": "2026-09-27T05:04:47.400Z",
+          "completedAt": "2026-09-27T05:04:47.410Z",
+          "elapsedMs": 9.35,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "startedAt": "2026-09-27T05:04:47.410Z",
+          "completedAt": "2026-09-27T05:04:47.419Z",
+          "elapsedMs": 8.892,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "startedAt": "2026-09-27T05:04:47.419Z",
+          "completedAt": "2026-09-27T05:04:47.429Z",
+          "elapsedMs": 9.99,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "startedAt": "2026-09-27T05:04:47.429Z",
+          "completedAt": "2026-09-27T05:04:47.438Z",
+          "elapsedMs": 8.648,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 12,
+          "startedAt": "2026-09-27T05:04:47.438Z",
+          "completedAt": "2026-09-27T05:04:47.448Z",
+          "elapsedMs": 9.713,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 13,
+          "startedAt": "2026-09-27T05:04:47.448Z",
+          "completedAt": "2026-09-27T05:04:47.457Z",
+          "elapsedMs": 8.723,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 14,
+          "startedAt": "2026-09-27T05:04:47.457Z",
+          "completedAt": "2026-09-27T05:04:47.467Z",
+          "elapsedMs": 9.795,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 15,
+          "startedAt": "2026-09-27T05:04:47.467Z",
+          "completedAt": "2026-09-27T05:04:47.477Z",
+          "elapsedMs": 9.672,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 16,
+          "startedAt": "2026-09-27T05:04:47.477Z",
+          "completedAt": "2026-09-27T05:04:47.486Z",
+          "elapsedMs": 9.327,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 17,
+          "startedAt": "2026-09-27T05:04:47.486Z",
+          "completedAt": "2026-09-27T05:04:47.496Z",
+          "elapsedMs": 9.894,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 18,
+          "startedAt": "2026-09-27T05:04:47.497Z",
+          "completedAt": "2026-09-27T05:04:47.505Z",
+          "elapsedMs": 8.808,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 19,
+          "startedAt": "2026-09-27T05:04:47.506Z",
+          "completedAt": "2026-09-27T05:04:47.515Z",
+          "elapsedMs": 9.657,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 20,
+          "startedAt": "2026-09-27T05:04:47.515Z",
+          "completedAt": "2026-09-27T05:04:47.524Z",
+          "elapsedMs": 8.745,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 21,
+          "startedAt": "2026-09-27T05:04:47.525Z",
+          "completedAt": "2026-09-27T05:04:47.534Z",
+          "elapsedMs": 9.205,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 22,
+          "startedAt": "2026-09-27T05:04:47.535Z",
+          "completedAt": "2026-09-27T05:04:47.544Z",
+          "elapsedMs": 9.816,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 23,
+          "startedAt": "2026-09-27T05:04:47.545Z",
+          "completedAt": "2026-09-27T05:04:47.553Z",
+          "elapsedMs": 8.634,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 24,
+          "startedAt": "2026-09-27T05:04:47.553Z",
+          "completedAt": "2026-09-27T05:04:47.563Z",
+          "elapsedMs": 10,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 25,
+          "startedAt": "2026-09-27T05:04:47.564Z",
+          "completedAt": "2026-09-27T05:04:47.572Z",
+          "elapsedMs": 8.601,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 26,
+          "startedAt": "2026-09-27T05:04:47.572Z",
+          "completedAt": "2026-09-27T05:04:47.581Z",
+          "elapsedMs": 9.044,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 27,
+          "startedAt": "2026-09-27T05:04:47.582Z",
+          "completedAt": "2026-09-27T05:04:47.590Z",
+          "elapsedMs": 8.697,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 28,
+          "startedAt": "2026-09-27T05:04:47.590Z",
+          "completedAt": "2026-09-27T05:04:47.600Z",
+          "elapsedMs": 9.78,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 29,
+          "startedAt": "2026-09-27T05:04:47.600Z",
+          "completedAt": "2026-09-27T05:04:47.610Z",
+          "elapsedMs": 9.076,
+          "status": 200,
+          "bytes": 18740,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        }
+      ],
+      "p50Ms": 9.35,
+      "p95Ms": 10.33,
+      "failed": 0,
+      "targetP95Ms": 300,
+      "targetMet": true
+    },
+    {
+      "route": "/api/exceptions?limit=20",
+      "samples": [
+        {
+          "index": 0,
+          "startedAt": "2026-09-27T05:04:47.614Z",
+          "completedAt": "2026-09-27T05:04:47.616Z",
+          "elapsedMs": 2.09,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "startedAt": "2026-09-27T05:04:47.616Z",
+          "completedAt": "2026-09-27T05:04:47.618Z",
+          "elapsedMs": 1.884,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "startedAt": "2026-09-27T05:04:47.618Z",
+          "completedAt": "2026-09-27T05:04:47.620Z",
+          "elapsedMs": 2.029,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "startedAt": "2026-09-27T05:04:47.620Z",
+          "completedAt": "2026-09-27T05:04:47.622Z",
+          "elapsedMs": 2.004,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "startedAt": "2026-09-27T05:04:47.623Z",
+          "completedAt": "2026-09-27T05:04:47.625Z",
+          "elapsedMs": 2.626,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "startedAt": "2026-09-27T05:04:47.625Z",
+          "completedAt": "2026-09-27T05:04:47.629Z",
+          "elapsedMs": 3.099,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "startedAt": "2026-09-27T05:04:47.629Z",
+          "completedAt": "2026-09-27T05:04:47.631Z",
+          "elapsedMs": 2.54,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "startedAt": "2026-09-27T05:04:47.631Z",
+          "completedAt": "2026-09-27T05:04:47.634Z",
+          "elapsedMs": 2.139,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "startedAt": "2026-09-27T05:04:47.634Z",
+          "completedAt": "2026-09-27T05:04:47.636Z",
+          "elapsedMs": 2.08,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "startedAt": "2026-09-27T05:04:47.636Z",
+          "completedAt": "2026-09-27T05:04:47.638Z",
+          "elapsedMs": 1.958,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "startedAt": "2026-09-27T05:04:47.638Z",
+          "completedAt": "2026-09-27T05:04:47.640Z",
+          "elapsedMs": 2.07,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "startedAt": "2026-09-27T05:04:47.640Z",
+          "completedAt": "2026-09-27T05:04:47.643Z",
+          "elapsedMs": 2.834,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 12,
+          "startedAt": "2026-09-27T05:04:47.643Z",
+          "completedAt": "2026-09-27T05:04:47.646Z",
+          "elapsedMs": 2.534,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 13,
+          "startedAt": "2026-09-27T05:04:47.646Z",
+          "completedAt": "2026-09-27T05:04:47.648Z",
+          "elapsedMs": 2.288,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 14,
+          "startedAt": "2026-09-27T05:04:47.648Z",
+          "completedAt": "2026-09-27T05:04:47.650Z",
+          "elapsedMs": 1.989,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 15,
+          "startedAt": "2026-09-27T05:04:47.651Z",
+          "completedAt": "2026-09-27T05:04:47.653Z",
+          "elapsedMs": 1.914,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 16,
+          "startedAt": "2026-09-27T05:04:47.653Z",
+          "completedAt": "2026-09-27T05:04:47.655Z",
+          "elapsedMs": 1.978,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 17,
+          "startedAt": "2026-09-27T05:04:47.655Z",
+          "completedAt": "2026-09-27T05:04:47.657Z",
+          "elapsedMs": 1.885,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 18,
+          "startedAt": "2026-09-27T05:04:47.657Z",
+          "completedAt": "2026-09-27T05:04:47.660Z",
+          "elapsedMs": 3.265,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 19,
+          "startedAt": "2026-09-27T05:04:47.660Z",
+          "completedAt": "2026-09-27T05:04:47.663Z",
+          "elapsedMs": 2.713,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 20,
+          "startedAt": "2026-09-27T05:04:47.663Z",
+          "completedAt": "2026-09-27T05:04:47.666Z",
+          "elapsedMs": 2.366,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 21,
+          "startedAt": "2026-09-27T05:04:47.666Z",
+          "completedAt": "2026-09-27T05:04:47.668Z",
+          "elapsedMs": 2.171,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 22,
+          "startedAt": "2026-09-27T05:04:47.668Z",
+          "completedAt": "2026-09-27T05:04:47.670Z",
+          "elapsedMs": 1.889,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 23,
+          "startedAt": "2026-09-27T05:04:47.670Z",
+          "completedAt": "2026-09-27T05:04:47.672Z",
+          "elapsedMs": 1.91,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 24,
+          "startedAt": "2026-09-27T05:04:47.672Z",
+          "completedAt": "2026-09-27T05:04:47.674Z",
+          "elapsedMs": 1.911,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 25,
+          "startedAt": "2026-09-27T05:04:47.674Z",
+          "completedAt": "2026-09-27T05:04:47.678Z",
+          "elapsedMs": 3.463,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 26,
+          "startedAt": "2026-09-27T05:04:47.678Z",
+          "completedAt": "2026-09-27T05:04:47.680Z",
+          "elapsedMs": 2.406,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 27,
+          "startedAt": "2026-09-27T05:04:47.680Z",
+          "completedAt": "2026-09-27T05:04:47.682Z",
+          "elapsedMs": 2.034,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 28,
+          "startedAt": "2026-09-27T05:04:47.683Z",
+          "completedAt": "2026-09-27T05:04:47.685Z",
+          "elapsedMs": 1.91,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 29,
+          "startedAt": "2026-09-27T05:04:47.685Z",
+          "completedAt": "2026-09-27T05:04:47.687Z",
+          "elapsedMs": 1.869,
+          "status": 200,
+          "bytes": 9995,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        }
+      ],
+      "p50Ms": 2.07,
+      "p95Ms": 3.265,
+      "failed": 0,
+      "targetP95Ms": 300,
+      "targetMet": true
+    },
+    {
+      "route": "/api/dashboard/summary",
+      "samples": [
+        {
+          "index": 0,
+          "startedAt": "2026-09-27T05:04:47.693Z",
+          "completedAt": "2026-09-27T05:04:47.694Z",
+          "elapsedMs": 1.327,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "startedAt": "2026-09-27T05:04:47.695Z",
+          "completedAt": "2026-09-27T05:04:47.695Z",
+          "elapsedMs": 0.821,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "startedAt": "2026-09-27T05:04:47.696Z",
+          "completedAt": "2026-09-27T05:04:47.696Z",
+          "elapsedMs": 0.843,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "startedAt": "2026-09-27T05:04:47.697Z",
+          "completedAt": "2026-09-27T05:04:47.697Z",
+          "elapsedMs": 0.677,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "startedAt": "2026-09-27T05:04:47.697Z",
+          "completedAt": "2026-09-27T05:04:47.698Z",
+          "elapsedMs": 0.611,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 5,
+          "startedAt": "2026-09-27T05:04:47.698Z",
+          "completedAt": "2026-09-27T05:04:47.699Z",
+          "elapsedMs": 0.6,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 6,
+          "startedAt": "2026-09-27T05:04:47.699Z",
+          "completedAt": "2026-09-27T05:04:47.700Z",
+          "elapsedMs": 0.619,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 7,
+          "startedAt": "2026-09-27T05:04:47.700Z",
+          "completedAt": "2026-09-27T05:04:47.700Z",
+          "elapsedMs": 0.613,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 8,
+          "startedAt": "2026-09-27T05:04:47.700Z",
+          "completedAt": "2026-09-27T05:04:47.701Z",
+          "elapsedMs": 0.632,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 9,
+          "startedAt": "2026-09-27T05:04:47.701Z",
+          "completedAt": "2026-09-27T05:04:47.702Z",
+          "elapsedMs": 0.614,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 10,
+          "startedAt": "2026-09-27T05:04:47.702Z",
+          "completedAt": "2026-09-27T05:04:47.703Z",
+          "elapsedMs": 0.626,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 11,
+          "startedAt": "2026-09-27T05:04:47.703Z",
+          "completedAt": "2026-09-27T05:04:47.704Z",
+          "elapsedMs": 0.81,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 12,
+          "startedAt": "2026-09-27T05:04:47.704Z",
+          "completedAt": "2026-09-27T05:04:47.704Z",
+          "elapsedMs": 0.744,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 13,
+          "startedAt": "2026-09-27T05:04:47.705Z",
+          "completedAt": "2026-09-27T05:04:47.705Z",
+          "elapsedMs": 0.687,
+          "status": 200,
+          "bytes": 836,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 14,
+          "startedAt": "2026-09-27T05:04:47.705Z",
+          "completedAt": "2026-09-27T05:04:47.714Z",
+          "elapsedMs": 8.121,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 243
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 15,
+          "startedAt": "2026-09-27T05:04:47.714Z",
+          "completedAt": "2026-09-27T05:04:47.719Z",
+          "elapsedMs": 5.362,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 16,
+          "startedAt": "2026-09-27T05:04:47.719Z",
+          "completedAt": "2026-09-27T05:04:47.720Z",
+          "elapsedMs": 0.656,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 17,
+          "startedAt": "2026-09-27T05:04:47.720Z",
+          "completedAt": "2026-09-27T05:04:47.721Z",
+          "elapsedMs": 0.592,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 18,
+          "startedAt": "2026-09-27T05:04:47.721Z",
+          "completedAt": "2026-09-27T05:04:47.722Z",
+          "elapsedMs": 0.653,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 19,
+          "startedAt": "2026-09-27T05:04:47.722Z",
+          "completedAt": "2026-09-27T05:04:47.723Z",
+          "elapsedMs": 0.808,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 20,
+          "startedAt": "2026-09-27T05:04:47.723Z",
+          "completedAt": "2026-09-27T05:04:47.723Z",
+          "elapsedMs": 0.691,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 21,
+          "startedAt": "2026-09-27T05:04:47.724Z",
+          "completedAt": "2026-09-27T05:04:47.724Z",
+          "elapsedMs": 0.736,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 22,
+          "startedAt": "2026-09-27T05:04:47.725Z",
+          "completedAt": "2026-09-27T05:04:47.727Z",
+          "elapsedMs": 1.912,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 23,
+          "startedAt": "2026-09-27T05:04:47.727Z",
+          "completedAt": "2026-09-27T05:04:47.728Z",
+          "elapsedMs": 1.097,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 24,
+          "startedAt": "2026-09-27T05:04:47.728Z",
+          "completedAt": "2026-09-27T05:04:47.729Z",
+          "elapsedMs": 1.021,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 25,
+          "startedAt": "2026-09-27T05:04:47.729Z",
+          "completedAt": "2026-09-27T05:04:47.730Z",
+          "elapsedMs": 0.841,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 26,
+          "startedAt": "2026-09-27T05:04:47.730Z",
+          "completedAt": "2026-09-27T05:04:47.731Z",
+          "elapsedMs": 0.727,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 27,
+          "startedAt": "2026-09-27T05:04:47.731Z",
+          "completedAt": "2026-09-27T05:04:47.732Z",
+          "elapsedMs": 0.739,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 28,
+          "startedAt": "2026-09-27T05:04:47.732Z",
+          "completedAt": "2026-09-27T05:04:47.733Z",
+          "elapsedMs": 0.628,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        },
+        {
+          "index": 29,
+          "startedAt": "2026-09-27T05:04:47.733Z",
+          "completedAt": "2026-09-27T05:04:47.734Z",
+          "elapsedMs": 0.582,
+          "status": 200,
+          "bytes": 867,
+          "error": null,
+          "queueBefore": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ],
+          "queueAfter": [
+            {
+              "status": "queued",
+              "n": 242
+            },
+            {
+              "status": "running",
+              "n": 1
+            },
+            {
+              "status": "succeeded",
+              "n": 120
+            }
+          ]
+        }
+      ],
+      "p50Ms": 0.691,
+      "p95Ms": 5.362,
+      "failed": 0,
+      "targetP95Ms": 300,
+      "targetMet": true
+    }
+  ]
+}

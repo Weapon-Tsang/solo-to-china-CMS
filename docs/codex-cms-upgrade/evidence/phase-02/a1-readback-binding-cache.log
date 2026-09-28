@@ -1,0 +1,23 @@
+(node:4580) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-33/34/40: explicit source relation retrieves a generic photo with no Claims and survives focused-article matching (557.2129ms)
+✔ T02-43: ambiguous cross-destination entities are separately retained and city-level names cannot confirm a stop (537.0841ms)
+✔ T02-43: publication gate rejects a revoked source binding even when an old matching score is high (533.7531ms)
+✔ T02-42/43: a newly conflicting alias invalidates only the binding revision and preserves prior evidence (535.75ms)
+✔ T02-36/39: nearby mentions, uncertain captions and multi-place image references cannot certify a specific photo (533.9226ms)
+✔ T02-41: explicit IDs beyond 160 are preserved; automatic paging reports a remaining range (672.4332ms)
+✔ T02-42/43: only binding context changes, old relation remains stale, analysis and bytes are reused (525.3415ms)
+✔ T02-63/70: snapshot and isolated review restore preserve context and binding fingerprints without jobs (722.4995ms)
+✔ schema 81 is additive and does not backfill, buy analysis, or mutate old records (1028.3698ms)
+✔ T02-42/43: reads reject text, caption and alias changes before a repair job without mutating records (538.8301ms)
+✔ T02-42/43: reversible evidence edits restore the matching revision but never revive revoked decisions (527.6764ms)
+✔ T02-39: entity identity cannot certify a different destination, uppercase entrance or whole-day diagram (0.2739ms)
+✔ T02-43: alias cache observes another connection and never retains rolled-back evidence (537.7114ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7487.2607

@@ -1,0 +1,34 @@
+[
+  {
+    "path": "src/route-bundle.mjs",
+    "sha256": "d8f34a08bf8dc7b4d0cf9352b7afd6cc51e2c0c527e2ec182e7ee1b81638cccf"
+  },
+  {
+    "path": "src/route-composition.mjs",
+    "sha256": "6876da76033840028ff3a2763dd05177b14b197a87fb151ad88701f9895e1b18"
+  },
+  {
+    "path": "src/ai/route-contract.mjs",
+    "sha256": "a6e8166981067527ff2b58f0f90d6d573d29b92991b8e91c6b1c11d3244ded66"
+  },
+  {
+    "path": "src/pipeline.mjs",
+    "sha256": "59a8784e797cf75751b130376bb678e4c3adb029c4405a21d4b10dfb7fa82c7e"
+  },
+  {
+    "path": "src/repository.mjs",
+    "sha256": "5f0c13fdc63859b515032d0e1b1dbe6de5865d27f9c7fc52ad97170001674bbd"
+  },
+  {
+    "path": "test/route-production.test.mjs",
+    "sha256": "156a9998b523fc2225529134b0ece6c297b2eb98569ec1eec5288735c1ba75a4"
+  },
+  {
+    "path": "test-support/route-production-fixture.mjs",
+    "sha256": "703e588b40a3f04aa8f663df416b8a237b98e9ed0f4eea8d0286c705eb481a0f"
+  },
+  {
+    "path": "test/route-composition.test.mjs",
+    "sha256": "30e42474be0aba4d91122a798c77e335f9d8ab5ab5db261aa4d3fdbe70f56a78"
+  }
+]

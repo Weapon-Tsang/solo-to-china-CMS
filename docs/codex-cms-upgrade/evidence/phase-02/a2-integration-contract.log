@@ -1,0 +1,26 @@
+(node:19380) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ writer receives bounded image subjects without resending full media and source context (2.054ms)
+✔ Kimi-backed independent QA cannot approve deterministic evidence or commercial violations (28.6764ms)
+✔ page composition extracts CMS node references before Frontend validation (1.5883ms)
+✔ page composition augments every oneOf component variant with CMS provenance (1.3606ms)
+✔ Vertex uses full JSON Schema mode and has a loss-aware OpenAPI fallback (1.5029ms)
+✔ Vertex OpenAPI transport omits provider-rejected array bounds while local validation keeps them (0.1652ms)
+✔ provider errors classify permanent and transient HTTP failures (0.1896ms)
+(node:11644) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ historical article without route snapshot stays unknown and cannot be silently backfilled (664.8668ms)
+✔ malformed scopes and unresolved targets cannot create an approved route or mutate body/jobs (627.0852ms)
+✔ published three-day article: media-only permission cannot decide; explicit approval preserves body, publication, budget and jobs (645.7066ms)
+✔ Worker rejects approved route v2 with preserved article v1 before composition, QA or delivery (738.7025ms)
+✔ source change or another decision makes approval stale; rejection creates no route revision (627.0015ms)
+✔ pending proposal and approved decision survive real migration-review restore without starting work (845.1716ms)
+✔ actual HTTP: admin and origin guards, malformed requests, preview, proposal and reject are enforced (712.1014ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5248.4595

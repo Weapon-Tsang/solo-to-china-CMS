@@ -1,0 +1,21 @@
+{
+  "files": {
+    "test/route-media.test.mjs": "e4bc097511bdc2aa96095d183b235ac5e6dd9b703423c2b704c70565b909b6ea",
+    "test/route-production.test.mjs": "a9c4572d14cb86b9600b5f66d0510c4098337b1f73be0325c029da6eac104d0a",
+    "src/route-bundle.mjs": "089b1dc8f1c6e9f47387de929ef012d41573b0f35cb9973d75cd12c387becbee",
+    "test/historical-visual-analysis.test.mjs": "0daed59e7e5fba504ee8100283c1e3f88531f44fa1d95a8d780110bfb45916c4",
+    "src/repository.mjs": "add6fcde358b46bab89c8d8f1121747c50652aea277b8998149557c878b00f27",
+    "test/route-bundle.test.mjs": "951e5231bed26be42027d33cee8a49a4717a5961448733f4bd467f3477a79594",
+    "scripts/stage02-route-historical-replay.mjs": "f8961058f8f55b7baaef288e33952328911e9e72dd72deec252d01846b1155ca",
+    "test/route-composition.test.mjs": "30e42474be0aba4d91122a798c77e335f9d8ab5ab5db261aa4d3fdbe70f56a78",
+    "test/media-bindings.test.mjs": "8aac9355ea0b07cb78a8d3ef7770a7a84b2bff4a46d1dcc3ddd61a5752f9603c",
+    "src/visuals/vertex-imagen.mjs": "cac1266c83f90c0d56971f4c6d14e9726b1624a2ab494cbbbe65c9b86d76f7e7",
+    "src/route-composition.mjs": "6876da76033840028ff3a2763dd05177b14b197a87fb151ad88701f9895e1b18",
+    "src/route-media.mjs": "07d920ebda061ae2b21566e901bba0055b4e12090b59ac3df4fb17f0cc423277",
+    "docs/codex-cms-upgrade/phases/phase-02-a2.txt": "38c53e6c1ca21c5b8ea78087ea364937b035f3afea2ee568ab17f13a0e57010f",
+    "test/visuals.test.mjs": "576373668fc97f998dd1f9e7c292498e2e6cdcc87afa2c24192ddb05106cddb9",
+    "src/ai/route-contract.mjs": "a6e8166981067527ff2b58f0f90d6d573d29b92991b8e91c6b1c11d3244ded66"
+  },
+  "created_at": "2026-09-28T01:31:27.9215642+08:00",
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290"
+}

@@ -1,0 +1,48 @@
+✔ CMS detail and workflow controls remain localized in Chinese (3.0911ms)
+✔ manual review and unknown media states remain explicit and non-successful in the CMS (0.2225ms)
+✔ content workspace explains records, failures, and bounded automatic repair before opening details (3.4924ms)
+✔ shared status, category, and duration labels use Chinese display text (0.6192ms)
+✔ empty, string, and malformed QA issues always render actionable Chinese text (0.4121ms)
+✔ single-image analysis rejects a ready handwritten card with no decoded text (33.9729ms)
+✔ single-image analysis records the actual prompt revision, not the model's self-reported version (1.7987ms)
+(node:24356) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-38/43: authenticated HTTP context readback is bounded, versioned, read-only and escaped as JSON (741.2983ms)
+(node:14404) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ pipeline separates extraction, claims, semantic coexistence, and editorial patterns (891.529ms)
+✔ retrying a completed source reuses saved segments and still reaches a terminal state (900.7891ms)
+✔ a manual coverage segment does not fail its source before every segment settles (680.345ms)
+✔ coverage drops an untraceable text Claim without blocking supported evidence (607.7244ms)
+✔ coverage keeps one supported Claim usable without claiming full segment coverage (619.241ms)
+✔ zero-Claim media uses local materiality rules and never silently passes meaningful images (559.8723ms)
+✔ topic scoping carries relevant partial-coverage gaps but drops unrelated ones (1.3803ms)
+✔ coverage audit ignores and repairs legacy unsupported-Claim false positives (560.9666ms)
+✔ media segment coverage uses extraction metadata instead of a second model call (0.5292ms)
+✔ coverage trusts the persisted input manifest instead of guessing batch modality (555.3346ms)
+✔ entity resolution falls back deterministically when model structured output is invalid (1.3328ms)
+✔ re-extraction versions derived claims instead of erasing their audit history (555.8396ms)
+✔ editorial metadata and personal experience remain as claims but stay out of knowledge (559.9713ms)
+✔ equivalent reservation wording produces one corroborated canonical Knowledge fact (551.1284ms)
+(node:5068) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (647.6478ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (610.4983ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (619.0933ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (644.0671ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (586.1515ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (598.3076ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (561.7981ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (546.196ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (560.0366ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (550.4701ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (550.818ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (545.671ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7485.0417

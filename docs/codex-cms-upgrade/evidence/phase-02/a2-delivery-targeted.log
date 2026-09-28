@@ -1,0 +1,127 @@
+(node:22228) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives legacy to QA and WordPress draft delivery (6706.6263ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives article_bundle_v1 to QA and WordPress draft delivery (5779.5593ms)
+(node:22556) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ exhausted media budget retains the body and a diagnostic even with other missing stages (708.6305ms)
+✔ an unknown prior media outcome cannot be blindly redispatched by stage retry (621.271ms)
+✔ an exhausted image discovery gives a concrete reason and refuses an unchanged retry (605.2143ms)
+✔ draft detail reuses its evidence hash without rebuilding the entire content workspace (579.3049ms)
+✔ recovery report is read-only and targeted compose continues from the selected stage (575.5475ms)
+✔ recovery detail preserves the current independent review instead of inventing unaudited brief failures (557.19ms)
+✔ legacy provider aliases are normalized consistently in recovery detail and production state (546.3053ms)
+✔ a genuine traveler-decision issue remains distinct when it does not reference a Brief requirement (572.987ms)
+✔ recovery refuses stale revisions, unknown images and existing-brief destination mutation while allowing independent QA (536.7595ms)
+✔ manual correction preserves revisions and queues independent QA plus page composition (528.1566ms)
+✔ frozen revision rollback restores the exact passed body without replacing repaired media (541.0721ms)
+✔ old revision QA cannot masquerade as current QA on content list (536.5301ms)
+✔ a changed frontend page invalidates the reusable review artifact input (525.237ms)
+✔ image recovery returns its exact source link and binds only retained authorized data (544.4893ms)
+✔ nested transaction failure rolls back both child and parent writes (505.9614ms)
+✔ media/page blockers do not automatically rewrite otherwise valid text (0.3036ms)
+✔ global evidence-ledger evasion regenerates only the draft from its existing writing packet (505.3061ms)
+✔ quality regeneration feedback makes the failed review part of the reusable stage identity (522.1837ms)
+✔ legacy plan and frozen packet scope mismatch recovers from editorial assembly instead of rewriting the draft (520.3799ms)
+✔ automatic quality repair is deduplicated per revision and stops after two attempts (530.4149ms)
+✔ a new explicit recovery run receives a fresh bounded quality-repair budget (545.5092ms)
+✔ recovery diagnosis reports the current recovery run budget instead of historical attempts (553.1441ms)
+✔ a blocker repeated after one bounded repair escalates to full Draft regeneration (518.9953ms)
+✔ the running review job does not block its own targeted repair enqueue (513.6353ms)
+✔ a parallel page failure cannot overwrite failed QA and terminal reconciliation queues one repair (534.9146ms)
+✔ a parallel branch that finishes after failed QA releases the deferred repair join (519.3305ms)
+✔ a terminal parallel-branch failure also releases the deferred repair join (527.0966ms)
+✔ an explicit visual-stage retry includes a previously failed visual slot (511.9595ms)
+✔ photo-overlay generation persists derivative proof used by final media validation (521.8711ms)
+✔ strategy startup rechecks a historical failure only once per draft revision (511.7718ms)
+✔ strategy startup does not retry a media-only failure before retained bytes are restored (523.5615ms)
+✔ operator diagnosis is concise Chinese and hides long code lists behind technical detail (0.6498ms)
+✔ single-source stable photo descriptions do not require a fabricated as-of date (3.6304ms)
+✔ next action prioritizes blockers over length warnings (0.2306ms)
+✔ WordPress media metadata records a public final URL, dimensions, bytes, hash and derivatives (3.6268ms)
+✔ media delivery rejects private/signed routes, missing dimensions, bad alt roles and duplicate uploads (1.1569ms)
+✔ localized real photos require an original, authorization, a real localized file and WordPress upload (0.3659ms)
+✔ photo-overlay localization remains evidence media and requires the same derivative provenance (0.3328ms)
+✔ project-wide source authorization supersedes missing legacy per-item flags (0.2955ms)
+✔ a planned required visual cannot disappear from the delivery manifest (0.1375ms)
+✔ responsive HTML gives only the first image high priority and later images lazy loading (1.1806ms)
+✔ two placements of the same source asset reuse one WordPress media upload (24.5038ms)
+✔ different derivatives of one source asset keep independent WordPress identities (3.5ms)
+(node:26984) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (636.1544ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (613.5094ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (596.9874ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (576.1652ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (552.6832ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (549.1068ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (578.4256ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (550.2537ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (530.0723ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (532.1713ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (531.1269ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (528.7934ms)
+(node:26172) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ historical article without route snapshot stays unknown and cannot be silently backfilled (755.4942ms)
+✔ malformed scopes and unresolved targets cannot create an approved route or mutate body/jobs (709.489ms)
+✔ published three-day article: media-only permission cannot decide; explicit approval preserves body, publication, budget and jobs (691.8661ms)
+✔ source change or another decision makes approval stale; rejection creates no route revision (648.4309ms)
+✔ pending proposal and approved decision survive real migration-review restore without starting work (893.7542ms)
+✔ actual HTTP: admin and origin guards, malformed requests, preview, proposal and reject are enforced (754.4624ms)
+(node:25416) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ subroute use requires contiguous approved occurrences; a partial diagram cannot claim the full day (7.5699ms)
+✔ actual normalization retains panel crop semantics but never delivers the uncropped collage as a subroute (17.1383ms)
+✔ actual normalization accepts related other-day photo but blocks a mismatching full-day map with a durable gap (15.8601ms)
+✖ optional conflicting route map retains its source and explicit omission instead of vanishing (11.741ms)
+✔ actual independent visual QA request contains frozen topology and rejects missing/stale/wrong-arrow receipts (25.6708ms)
+(node:20260) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ optional route renderer failure is omitted durably and continues to independent review without rewriting (860.3572ms)
+✔ real Worker route page composition can upload before text QA, while final delivery still rejects missing QA (933.4513ms)
+✔ real planning, writer and independent review carry frozen route; no route/SEO/diagram model calls (734.5439ms)
+✔ actual Worker separates successful writing from local schematic media stage (724.774ms)
+✔ real Worker image-only recovery retains written draft, manifest and cumulative slot budget (1148.2519ms)
+✔ actual Worker blocks itinerary without source fragments before a writer/model call (617.1291ms)
+✔ new recovery jobs cannot reset the local route render budget (802.6511ms)
+✔ actual planning consumes stored composition scope and excludes old extraction inputs (583.9776ms)
+✔ route visual late results are rejected and changing a plan preserves its cumulative slot recovery budget (590.3945ms)
+ℹ tests 77
+ℹ suites 0
+ℹ pass 76
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16749.1998
+
+✖ failing tests:
+
+test at test\route-media.test.mjs:73:1
+✖ optional conflicting route map retains its source and explicit omission instead of vanishing (11.741ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(omitted)
+  
+      at TestContext.<anonymous> (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/test/route-media.test.mjs:79:10)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

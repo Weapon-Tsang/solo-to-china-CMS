@@ -3,8 +3,9 @@ import path from "node:path";
 import crypto from "node:crypto";
 import sharp from "sharp";
 import { ProviderRequestError, providerTransportError } from "../ai/provider-schema.mjs";
+import { createGoogleAccessTokenProvider } from "../google-access-token.mjs";
+import { publishMediaBytes } from "../atomic-media-file.mjs";
 
-const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 const VISUAL_QA_SCHEMA={type:"object",additionalProperties:false,
   required:["language","completeness","style","semantic","notes"],properties:{
     language:qaStatusSchema(),completeness:qaStatusSchema(),style:qaStatusSchema(),semantic:qaStatusSchema(),notes:{type:"string"},
@@ -23,8 +24,7 @@ export class VertexImagen {
   constructor(config, fetchImpl = fetch) {
     this.config = config;
     this.fetch = fetchImpl;
-    this.token = null;
-    this.tokenExpiresAt = 0;
+    this.googleAccessToken = config.googleAccessTokenProvider || createGoogleAccessTokenProvider(config, fetchImpl);
   }
 
   get enabled() {
@@ -55,6 +55,8 @@ export class VertexImagen {
     const host = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
     const endpoint = `${host}/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(this.config.model)}:generateContent`;
     const metadata=safeJson(visual.media_metadata_json || visual.media_metadata);
+    if(metadata.route_contract && !metadata.route_contract.compatible)
+      throw Object.assign(new Error('Route media conflicts with the approved route.'),{code:'ROUTE_MEDIA_CONFLICT',retryable:false});
     if (shouldRenderEditorialTextCard(visual,metadata)) {
       return this.renderEditorialTextCard({visual,draft,metadata,source,signal:options.signal,options});
     }
@@ -62,6 +64,7 @@ export class VertexImagen {
     const transformInputHash=hashBytes(Buffer.concat([source.bytes,Buffer.from(JSON.stringify({
       visual_id:visual.id,asset_fingerprint:options.expectedFingerprint || visual.asset_fingerprint || "",
       strategy:visual.acquisition_strategy,aspect_ratio:visual.aspect_ratio,model:this.config.model,
+      route_contract:metadata.route_contract || null,
     }))]));
     const resumed=await this.resumeCandidate({visual,draft,source,sourceInspection,transformInputHash,options,metadata});
     if (resumed) return resumed;
@@ -184,7 +187,7 @@ export class VertexImagen {
         body:JSON.stringify({contents:{role:"USER",parts:[{text:visualQaPrompt(visual,metadata)},
           {inlineData:{mimeType:source.mimeType,data:source.base64}},
           {inlineData:{mimeType:normalizeMime(outputMimeType),data:outputBytes.toString("base64")}}]},
-        generationConfig:{responseModalities:["TEXT"],responseMimeType:"application/json",responseSchema:VISUAL_QA_SCHEMA}}),
+        generationConfig:{responseModalities:["TEXT"],responseMimeType:"application/json",responseSchema:routeVisualQaSchema(metadata)}}),
         signal:combinedSignal(signal,this.config.requestTimeoutMs)},"vertex_gemini",signal);
       const body=await response.json().catch(()=>({}));
       if (!response.ok) throw new ProviderRequestError("Vertex Gemini visual quality QA",response.status,body?.error?.message || response.statusText,
@@ -195,6 +198,14 @@ export class VertexImagen {
     const raw=payload?.candidates?.flatMap((candidate)=>candidate?.content?.parts || []).find((item)=>item?.text)?.text || "";
     let qa; try { qa=JSON.parse(raw); } catch { throw Object.assign(new Error("Visual quality QA returned invalid JSON."),{code:"VISUAL_QUALITY_QA_INVALID",retryable:true}); }
     const normalized=normalizeVisualQa(qa);
+    if(metadata.route_contract) {
+      const audit=qa.route_audit;
+      if(audit?.approved_route_hash!==metadata.route_contract.approved_route_hash || audit.checked!==true
+        || audit.passed!==true || !Array.isArray(audit.differences) || audit.differences.length)
+        throw Object.assign(new Error('Independent route pixel audit is missing, stale or failed.'),
+          {code:'ROUTE_VISUAL_QA_FAILED',retryable:true,qualityQa:normalized,details:audit || null});
+      normalized.semantic.route_audit=audit;
+    }
     const failed=Object.entries(normalized).filter(([key,value])=>key !== "notes" && value.status !== "passed");
     if (failed.length) throw Object.assign(new Error(`Visual quality QA did not pass: ${failed.map(([key,value])=>`${key}=${value.status}`).join(", ")}`),
       {code:"VISUAL_QUALITY_QA_FAILED",retryable:true,qualityQa:normalized});
@@ -208,6 +219,9 @@ export class VertexImagen {
     const outputBytes=fs.readFileSync(candidate.media_path);
     const persistedQa=normalizeVisualQa(candidate.qa);
     const alreadyPassed=candidate.status === "promoted"
+      && (!metadata.route_contract || (persistedQa.semantic.route_audit?.approved_route_hash===metadata.route_contract.approved_route_hash
+        && persistedQa.semantic.route_audit?.passed===true && persistedQa.semantic.route_audit?.checked===true
+        && persistedQa.semantic.route_audit?.differences?.length===0))
       && Object.entries(persistedQa).every(([key,value])=>key === "notes" || value.status === "passed");
     if (alreadyPassed) {
       const result=await this.storeImage({base64:outputBytes.toString("base64"),mimeType:candidate.mime_type,visual,draft,
@@ -227,7 +241,7 @@ export class VertexImagen {
     const pendingDir=path.join(this.config.mediaDir,".pending");
     fs.mkdirSync(pendingDir,{recursive:true});
     const mediaPath=path.join(pendingDir,`${draft.id}-${visual.id}-${outputHash.slice(0,24)}.${extension}`);
-    if (!fs.existsSync(mediaPath)) fs.writeFileSync(mediaPath,outputBytes,{mode:0o640,flag:"wx"});
+    publishMediaBytes(mediaPath, outputBytes);
     const telemetry=options.telemetryContext || {};
     const saved=await this.config.saveVisualCandidate?.({
       visualId:visual.id,draftId:draft.id,jobId:telemetry.runId || null,jobAttempt:telemetry.jobAttempt || 0,
@@ -472,7 +486,7 @@ export class VertexImagen {
     const filename = `${draft.id}-${String(visual.slot).padStart(2, "0")}-${checksum}.${extension}`;
     fs.mkdirSync(this.config.mediaDir, { recursive: true });
     const mediaPath = path.join(this.config.mediaDir, filename);
-    if (!fs.existsSync(mediaPath)) fs.writeFileSync(mediaPath, bytes, { mode: 0o640,flag:"wx" });
+    publishMediaBytes(mediaPath, bytes);
     return {
       mediaPath,
       mediaUrl: `${this.config.publicBaseUrl}/media/${filename}`,
@@ -488,17 +502,7 @@ export class VertexImagen {
   }
 
   async accessToken() {
-    if (this.config.accessToken) return this.config.accessToken;
-    if (this.token && Date.now() < this.tokenExpiresAt) return this.token;
-    const response = await providerFetch(this.fetch, METADATA_TOKEN_URL, {
-      headers: { "Metadata-Flavor": "Google" },
-      signal: AbortSignal.timeout(5_000),
-    }, "vertex_gemini");
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload.access_token) throw new Error("Vertex Imagen could not obtain a Google Compute Engine service-account token.");
-    this.token = payload.access_token;
-    this.tokenExpiresAt = Date.now() + Math.max(60, Number(payload.expires_in || 300) - 60) * 1_000;
-    return this.token;
+    return this.googleAccessToken();
   }
 }
 
@@ -558,6 +562,7 @@ function transformPrompt(visual,metadata={}) {
   const requiredText=(analysis.text_regions || []).map((region)=>({region_id:region.region_id,text:region.text || "",
     role:region.role || "unknown",preserve:Boolean(region.preserve)}));
   const facts={required_text:requiredText,entities:analysis.entities || [],primary_subjects:analysis.primary_subjects || [],
+    approved_route:metadata.route_contract || null,
     editor_ui_regions:analysis.editor_ui_regions || [],preserve_region_ids:decision.preserveRegionIds || [],
     translate_region_ids:decision.translateRegionIds || []};
   const priorFailure=retryFeedback.length ? ` A previous derivative failed independent QA. Correct every listed defect and do not introduce a new omission or spelling error: ${JSON.stringify(retryFeedback)}. Proofread every English proper noun, transport mode, number, time, price, and final line against the source manifest before returning the image.` : "";
@@ -683,14 +688,27 @@ function escapeXml(value) {
 }
 
 function visualQaPrompt(visual,metadata={}) {
-  return `The first image is the authorized source and the second is its proposed English derivative. Independently audit the derivative for delivery. Check language (all required author/editorial Chinese localized; preserved real-world signs allowed), completeness (all readable facts, numbers, currency, times, negations, exceptions, arrows and ordering preserved with no crop), style (warm-white/light-blue editorial treatment for recomposed cards, no Notes/editor UI, while documentary photos keep natural colors), and semantic fidelity (same subjects, places, photographs, route geometry and meaning; no fabricated content). The semantic check must ALSO compare the actual visible image with the intended article subject, alt text and caption. A place-name match inside an unrelated guide card, or a caption describing a different street/venue/route, is a failure even if source and derivative match each other. Do not infer a scene from nearby prose or a legacy caption. Return failed or needs_review if uncertain. Strategy: ${visual.acquisition_strategy}. Subject: ${String(visual.image_subject || '').slice(0,240)}. Alt: ${String(visual.alt_text || '').slice(0,220)}. Caption: ${String(visual.caption || '').slice(0,300)}. Manifest: ${JSON.stringify(metadata.source_analysis || {})}`;
+  const routeInstructions=metadata.route_contract ? ` Independently read actual pixels against this approved route contract:
+    ${JSON.stringify(metadata.route_contract)}. Check actual Day labels, every stop occurrence, arrow direction, mode,
+    approximate duration and conditions, and the supported entity names. Do not trust hashes printed in the image.
+    Return route_audit with approved_route_hash, checked, passed and field-level differences naming day/stop/leg/region,
+    expected, actual and evidence. Photos do not prove same-day visits or transport. ` : '';
+  return routeInstructions + `The first image is the authorized source and the second is its proposed English derivative. Independently audit the derivative for delivery. Check language (all required author/editorial Chinese localized; preserved real-world signs allowed), completeness (all readable facts, numbers, currency, times, negations, exceptions, arrows and ordering preserved with no crop), style (warm-white/light-blue editorial treatment for recomposed cards, no Notes/editor UI, while documentary photos keep natural colors), and semantic fidelity (same subjects, places, photographs, route geometry and meaning; no fabricated content). The semantic check must ALSO compare the actual visible image with the intended article subject, alt text and caption. A place-name match inside an unrelated guide card, or a caption describing a different street/venue/route, is a failure even if source and derivative match each other. Do not infer a scene from nearby prose or a legacy caption. Return failed or needs_review if uncertain. Strategy: ${visual.acquisition_strategy}. Subject: ${String(visual.image_subject || '').slice(0,240)}. Alt: ${String(visual.alt_text || '').slice(0,220)}. Caption: ${String(visual.caption || '').slice(0,300)}. Manifest: ${JSON.stringify(metadata.source_analysis || {})}`;
 }
 
 function normalizeVisualQa(value={}) {
   const field=(name)=>({status:["passed","failed","needs_review","not_tested"].includes(value?.[name]?.status) ? value[name].status : "needs_review",
     reason:String(value?.[name]?.reason || "No reason supplied.").slice(0,1000)});
   return {language:field("language"),completeness:field("completeness"),style:field("style"),semantic:field("semantic"),
-    notes:String(value.notes || "").slice(0,2000)};
+    notes:String(value.notes || "").slice(0,2000),
+    ...(value.semantic?.route_audit ? {semantic:{...field('semantic'),route_audit:value.semantic.route_audit}}:{})};
+}
+
+function routeVisualQaSchema(metadata) {
+  if(!metadata.route_contract)return VISUAL_QA_SCHEMA;
+  return {...VISUAL_QA_SCHEMA,required:[...VISUAL_QA_SCHEMA.required,'route_audit'],properties:{...VISUAL_QA_SCHEMA.properties,
+    route_audit:{type:'object',additionalProperties:false,required:['approved_route_hash','checked','passed','differences'],properties:{
+      approved_route_hash:{type:'string'},checked:{type:'boolean'},passed:{type:'boolean'},differences:{type:'array',items:{type:'string'}}}}}};
 }
 
 function defaultVisualQa(){return {language:{status:"not_tested",reason:"Not a source-text transformation."},

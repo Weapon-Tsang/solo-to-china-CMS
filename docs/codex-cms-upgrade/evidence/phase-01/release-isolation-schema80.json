@@ -1,0 +1,14 @@
+{
+  "result": "PASS",
+  "sourceMovedBeforeStartup": true,
+  "healthStatus": 200,
+  "originalAppVersion": "2.0.70",
+  "updatedAppVersion": "2.0.70-stage01-smoke",
+  "sameDatasetAfterUpdate": true,
+  "schemaVersion": 80,
+  "oldApiAliveDuringNewPrepare": true,
+  "stop": "graceful",
+  "command": "node scripts/verify-local-release-isolation.mjs",
+  "date": "2026-09-27",
+  "environment": "local disposable synthetic data only"
+}

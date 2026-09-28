@@ -1,0 +1,55 @@
+### Result
+{"scope":"Synthetic local source context UI","report":[{"width":320,"caption":true,"prosePagination":true,"image13":true,"keyboardActivation":true,"dialogOverflow":false},{"width":390,"caption":true,"prosePagination":true,"image13":true,"keyboardActivation":true,"dialogOverflow":false},{"width":768,"caption":true,"prosePagination":true,"image13":true,"keyboardActivation":true,"dialogOverflow":false},{"width":1024,"caption":true,"prosePagination":true,"image13":true,"keyboardActivation":true,"dialogOverflow":false},{"width":1440,"caption":true,"prosePagination":true,"image13":true,"keyboardActivation":true,"dialogOverflow":false}],"staleErrorInjection":true,"reloadRecovery":true,"pageErrors":[]}
+### Ran Playwright code
+```js
+await (async page => {
+  const errors=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  const report=[];
+  await page.getByRole('button',{name:'1.Context readback fixture'}).click();
+  const dialog=page.getByRole('dialog');
+  await dialog.getByRole('heading',{name:'鍥剧墖涓庢潵婧愭枃瀛?}).waitFor();
+  for (const width of [320,390,768,1024,1440]) {
+    await page.setViewportSize({width,height:1000});
+    const previous=dialog.getByRole('button',{name:'涓婁竴缁勫浘鐗?});
+    if (await previous.isEnabled()) await previous.click();
+    await dialog.getByRole('button',{name:'鍥剧墖 1',exact:true}).click();
+    await dialog.getByText('瀛楃 0鈥?000 / 53000',{exact:true}).waitFor();
+    await dialog.getByRole('button',{name:'涓嬩竴娈佃瘉鎹?}).click();
+    await dialog.getByText('瀛楃 4000鈥?000 / 53000',{exact:true}).waitFor();
+    await dialog.getByRole('button',{name:'涓婁竴娈佃瘉鎹?}).click();
+    await dialog.getByText('瀛楃 0鈥?000 / 53000',{exact:true}).waitFor();
+    await dialog.getByRole('combobox',{name:'璇佹嵁绫诲瀷'}).selectOption('caption');
+    await dialog.getByText('Caption for image 1',{exact:true}).waitFor();
+    await dialog.getByRole('button',{name:'涓嬩竴缁勫浘鐗?}).click();
+    const thirteenth=dialog.getByRole('button',{name:'鍥剧墖 13',exact:true});
+    await thirteenth.focus();await page.keyboard.press('Enter');
+    await dialog.getByRole('combobox',{name:'璇佹嵁绫诲瀷'}).selectOption('caption');
+    await dialog.getByText('Caption for image 13',{exact:true}).waitFor();
+    const overflow=await dialog.evaluate(element=>element.scrollWidth>element.clientWidth+1);
+    if (overflow) throw new Error(`Dialog overflow at ${width}px`);
+    await dialog.getByRole('heading',{name:'鍥剧墖涓庢潵婧愭枃瀛?}).scrollIntoViewIfNeeded();
+    await page.screenshot({path:`output/playwright/phase02-context-${width}.png`});
+    report.push({width,caption:true,prosePagination:true,image13:true,keyboardActivation:true,dialogOverflow:false});
+  }
+  // Browser error display is fault-injected. Actual server staleness is tested
+  // separately by media-context-api.test.mjs against a changed database row.
+  await page.route('**/api/source-assets/*/context?*',route=>route.fulfill({status:409,contentType:'application/json',
+    body:JSON.stringify({error:'Source context changed',code:'CONTEXT_STALE'})}));
+  await dialog.getByRole('button',{name:'閲嶆柊璇诲彇涓婁笅鏂?}).click();
+  await dialog.getByRole('alert').filter({hasText:'鏉ユ簮鏂囧瓧宸叉洿鏂?}).waitFor();
+  if (await dialog.getByText('Caption for image 13',{exact:true}).count()) throw new Error('Stale excerpt remained visible');
+  await page.unroute('**/api/source-assets/*/context?*');
+  await dialog.getByRole('button',{name:'閲嶆柊璇诲彇涓婁笅鏂?}).click();
+  await dialog.getByText('Caption for image 13',{exact:true}).waitFor();
+  if (errors.length) throw new Error(JSON.stringify(errors));
+  return {scope:'Synthetic local source context UI',report,staleErrorInjection:true,reloadRecovery:true,pageErrors:errors};
+}
+)(page);
+```
+### Page
+- Page URL: http://127.0.0.1:54988/
+- Page Title: SoloToChina Research Engine
+- Console: 3 errors, 0 warnings
+### Events
+- New console entries: .playwright-cli\console-2026-09-27T12-01-32-153Z.log#L3

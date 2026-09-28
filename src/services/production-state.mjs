@@ -519,6 +519,8 @@ function buildStageEntry(definition, jobs, artifacts, receipts, modelCalls, evid
 
 function resolveCapabilities(db, row, options) {
   const configured = options.capabilities || {};
+  const hasLocalRouteWork=Boolean(row.draft_id && db.prepare(`SELECT 1 FROM article_visuals
+    WHERE draft_id=? AND acquisition_strategy='render_route_schematic' LIMIT 1`).get(row.draft_id));
   const hasVisualWork = Boolean(Number(row.visual_total || 0) || (row.draft_id && (options.batch
     ? options.batch.jobs.some((job)=>job.entity_id===row.draft_id && job.type==='generate_visuals'
       && job.production_owner_opportunity_id===row.opportunity_id)
@@ -528,7 +530,7 @@ function resolveCapabilities(db, row, options) {
     frontendContract: configured.frontendContract ?? Boolean(row.frontend_plan_status || row.frontend_page_status || row.publish_composition_status
       || (options.batch ? options.batch.frontendContractActive
         : db.prepare("SELECT 1 FROM frontend_contract_state WHERE singleton=1 AND active_snapshot_id IS NOT NULL").get())),
-    visuals: configured.visuals === false ? false : hasVisualWork,
+    visuals: hasLocalRouteWork || (configured.visuals === false ? false : hasVisualWork),
     wordpress: configured.wordpress ?? Boolean(row.wordpress_status || row.publish_composition_status),
   };
 }

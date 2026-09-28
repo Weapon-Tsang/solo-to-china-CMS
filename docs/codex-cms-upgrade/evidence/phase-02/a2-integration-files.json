@@ -1,0 +1,77 @@
+{
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "files": [
+    {
+      "path": "src/route-bundle.mjs",
+      "before": "d8f34a08bf8dc7b4d0cf9352b7afd6cc51e2c0c527e2ec182e7ee1b81638cccf",
+      "beforeBasis": "this turn baseline",
+      "after": "b2e337f062b3f8bc78822b9c22a3ef415d6b0bd51bc561a880d471b5a4a19a6e"
+    },
+    {
+      "path": "src/route-composition.mjs",
+      "before": "6876da76033840028ff3a2763dd05177b14b197a87fb151ad88701f9895e1b18",
+      "beforeBasis": "this turn baseline",
+      "after": "2851151248d212c469a4c9b3fbdb441ec8d2054eff15b30733fc4bc7e15fb965"
+    },
+    {
+      "path": "src/ai/route-contract.mjs",
+      "before": "a6e8166981067527ff2b58f0f90d6d573d29b92991b8e91c6b1c11d3244ded66",
+      "beforeBasis": "this turn baseline",
+      "after": "7abf441464d99eaeb839beecb3c6acea3427067e22b98e592efe415716028e66"
+    },
+    {
+      "path": "src/pipeline.mjs",
+      "before": "59a8784e797cf75751b130376bb678e4c3adb029c4405a21d4b10dfb7fa82c7e",
+      "beforeBasis": "this turn baseline",
+      "after": "59a8784e797cf75751b130376bb678e4c3adb029c4405a21d4b10dfb7fa82c7e"
+    },
+    {
+      "path": "src/repository.mjs",
+      "before": "5f0c13fdc63859b515032d0e1b1dbe6de5865d27f9c7fc52ad97170001674bbd",
+      "beforeBasis": "this turn baseline",
+      "after": "f559e74d901640020c3a69842a742fafa3dc451c73cb3a9c1b237d66124e01cb"
+    },
+    {
+      "path": "test/route-production.test.mjs",
+      "before": "156a9998b523fc2225529134b0ece6c297b2eb98569ec1eec5288735c1ba75a4",
+      "beforeBasis": "this turn baseline",
+      "after": "4d601d96931f7f98090d9f32cad1629fe90c91e13104fd013bc023048e2f24da"
+    },
+    {
+      "path": "test-support/route-production-fixture.mjs",
+      "before": "703e588b40a3f04aa8f663df416b8a237b98e9ed0f4eea8d0286c705eb481a0f",
+      "beforeBasis": "this turn baseline",
+      "after": "7cf272e0212019c713b164e71300d175da4346881efc36a082e1e4e0261f54e8"
+    },
+    {
+      "path": "test/route-composition.test.mjs",
+      "before": "30e42474be0aba4d91122a798c77e335f9d8ab5ab5db261aa4d3fdbe70f56a78",
+      "beforeBasis": "this turn baseline",
+      "after": "16cecf22d8bbad190d3cfa653f2c5b57d6e26e74cb639e10542b5750024ce5c7"
+    },
+    {
+      "path": "frontend/src/workspaces/route-preview.jsx",
+      "before": "ea2ae02eb6619630467f41c14ac557241f36cc800965015b77bb543fc34f311e",
+      "beforeBasis": "prior completed turn snapshot",
+      "after": "a0fdd53c036ee9a1d92608ccdfea0933a6fff1b54906b7eaf6fbc922fd67c346"
+    },
+    {
+      "path": "test/route-decisions.test.mjs",
+      "before": "b487dcae224a6dceb3f92e83a4a34461848847601fb9aed2408b662bcf8a8f28",
+      "beforeBasis": "prior completed turn snapshot",
+      "after": "d5b28e42b4c83dc2973c941531d22264a73b0be11216cd5ce7042e02b1b6598f"
+    },
+    {
+      "path": "scripts/stage02-route-media-browser-fixture.mjs",
+      "before": "59c645881283bb8f3de79c66bdac2de72762b14cd183401276075d5e2ed37d6c",
+      "beforeBasis": "prior completed turn snapshot",
+      "after": "2dd3a900c745873b51aeefa271d53567e14aa762127ebc61ff5a4f4ca93ce284"
+    },
+    {
+      "path": "scripts/verify-stage02-route-conditions-browser.js",
+      "before": null,
+      "beforeBasis": "new file",
+      "after": "bcd65fff8b92b4156aa74c338559bc0c49ae194b7b0e0657b2f5b576db96a60a"
+    }
+  ]
+}

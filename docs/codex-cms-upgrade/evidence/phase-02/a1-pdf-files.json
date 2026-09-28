@@ -1,0 +1,131 @@
+{
+  "scope": "Differences against this turn baseline only; prior dirty work preserved",
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "files": [
+    {
+      "path": "docs/codex-cms-upgrade/STATUS.md",
+      "before_sha256": "bc17c9a1f867c3e850a884d948721c07aec4348bdb1c35861c7c9c0c18bf7bb1",
+      "after_sha256": "878cb82fe485c8a949389ef0f8e8c979d9ebaa7f5208f6a4d5a0e72a289a9459"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/acceptance/phase-02.md",
+      "before_sha256": "092302b22f841f43f5c3a0c07ade36ee907fabc6409183f37653de8eead83a8c",
+      "after_sha256": "0f71fc73ae22e61d33135b5b5299e8ce6fc30c7c5de5de64773e7d33ecb37c08"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/evidence/phase-02/a1-pdf-baseline.json",
+      "before_sha256": null,
+      "after_sha256": "83ec3bee8a42ab1d90623c40a6a56cf0e17b54ff1e9d7cdfeccc82201dddc67f"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/evidence/phase-02/a1-pdf-historical-replay.json",
+      "before_sha256": null,
+      "after_sha256": "148962c1ee8ae3feefc5e939251f26fcd4d516d72d8d78fb92bd487130044af6"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/evidence/phase-02/a1-pdf-source-supplement.md",
+      "before_sha256": null,
+      "after_sha256": "425568bb01b0fe7b0c6746aea70ce548a11ec3c368c1fefba5525d0a6e97dc7e"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/phases/A1-PDF-source-supplement-v1.0-20260927.txt",
+      "before_sha256": null,
+      "after_sha256": "814ee1c6f5c4831a63f7170bfb15aeef4b667b2a7f3dbc48c1b7467930d1d573"
+    },
+    {
+      "path": "frontend/src/workspaces/pdf-source-supplement.jsx",
+      "before_sha256": null,
+      "after_sha256": "cef58cbb418b61f175d59c238a0fa6a211b7b6ef196f9719653eff1357cf5405"
+    },
+    {
+      "path": "frontend/src/workspaces/source-binding-repair.jsx",
+      "before_sha256": "e370cc54b3668379642e441636635c559363cde133ce027523eb74d3d2a4b75b",
+      "after_sha256": "d7ababdc528d179af80c8cc961fe27a89841b5569fed54ced41561ef29d7787c"
+    },
+    {
+      "path": "scripts/stage02-pdf-browser-fixture.mjs",
+      "before_sha256": null,
+      "after_sha256": "93e084f984e1348f3e1e223c1d9297fb21a359b3e30ed8c85c1d64c6b536fb60"
+    },
+    {
+      "path": "scripts/verify-stage02-media-diagnostics-browser.js",
+      "before_sha256": "816af7eb7b3522a6e66bf2fa2c5754d52a5d89e0e880b6c8fa8c0ddb567e71d4",
+      "after_sha256": "8a3d6f732ff7660bf1a154ed8b113e99125d3dafaebda5ad330b645b8a8f1a9e"
+    },
+    {
+      "path": "scripts/verify-stage02-pdf-supplement-browser.js",
+      "before_sha256": null,
+      "after_sha256": "bf463d7a7e2438e2bb86e8f225dacd2f23ce4d4acdf6f0aca9e33c67d21edcc2"
+    },
+    {
+      "path": "src/media-context.mjs",
+      "before_sha256": "de93a70e3cef636d07300741b50cd1c7a39ecf97bf2df8d81c4607c314924b37",
+      "after_sha256": "1a563cdaf7f1f5ea25048c63c4a2fa493525f0910a48cd571c9b53b8ee7564ba"
+    },
+    {
+      "path": "src/repositories/media-bindings.mjs",
+      "before_sha256": "7ae6514fcbcab1443d19ca74e85245e6b59925437a48a4a4bc6334a29550ddf3",
+      "after_sha256": "431b7c98f6408bd21317a6223fcec5f3000e636cd5e390a0734a96fd92ca200f"
+    },
+    {
+      "path": "src/repositories/media-diagnostics.mjs",
+      "before_sha256": "e58a7aabc6043b6575ec63146fcc121c22e8d6d4486cf1617b1bf4337bcfc059",
+      "after_sha256": "fee4c8f03be1b9adfcf0db64d3cffe438ef17a110ac66356868079cb4fdf6699"
+    },
+    {
+      "path": "src/repositories/pdf-source-supplements.mjs",
+      "before_sha256": null,
+      "after_sha256": "3592ab3a3794fbf8cd7500d5707760ee54a7af6a6d90afd093cb9537713a2d11"
+    },
+    {
+      "path": "test-support/pdf-supplement-fixture.mjs",
+      "before_sha256": null,
+      "after_sha256": "84d94b0d79206a146c9352aa26521360f1826497c560b566106447e4deb94d9f"
+    },
+    {
+      "path": "test/media-context-api.test.mjs",
+      "before_sha256": "cf8e9ea637c7b10ab2007a9c527b196612f1035e4bccd4487efaa98053857198",
+      "after_sha256": "51e85987a02d89a8c467f714818275d7acff910d3692cec27ca6d60d4c1042cf"
+    },
+    {
+      "path": "test/pdf-source-supplements.test.mjs",
+      "before_sha256": null,
+      "after_sha256": "9e21a923660c2940588a2b8cffb8bd48e09120772d95dbb7cf7b9ac8343efb5c"
+    },
+    {
+      "path": "src/server.mjs",
+      "before_sha256": "de103737f641b747437d353575a1b8d0489053ea6e409f6d861c35663f6590e1",
+      "after_sha256": "30cbe9fe6fbd1ac865939ec976a695ef475f95f05123931c034a4d2ef7f1fdda"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "docs/codex-cms-upgrade/evidence/phase-02/a1-pdf-module.log",
+      "sha256": "a9081b44487da6b81fa49a198b814346823e1532b69649fb391b54d673387780"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/evidence/phase-02/a1-pdf-check.log",
+      "sha256": "af3054991bcb72aef49dd1478e09006037f5628f81d92f7afc2aa0dd7e931ac7"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/evidence/phase-02/a1-pdf-browser.log",
+      "sha256": "c86dee69a06ccfeb5786e294d84b39849f06671ccf92cada49b4eb5de23e6fca"
+    },
+    {
+      "path": "output/playwright/a1-pdf-final-320.png",
+      "sha256": "9fdc483bfd62d7f60aad2a834b27d795a7cf9ca84c157ddb34a1f1712c84fd3d"
+    },
+    {
+      "path": "output/playwright/a1-pdf-final-768.png",
+      "sha256": "b660d0dcd228868dc967c8d75dda94a1fdcd28cd4ac5dcafd3968f8feb6b2a9f"
+    },
+    {
+      "path": "output/playwright/a1-pdf-final-1024.png",
+      "sha256": "191535751543bd44d1521a9df57b416bc4d2f74b693be0097b5c7819e0b0717d"
+    },
+    {
+      "path": "output/playwright/a1-pdf-final-1440.png",
+      "sha256": "afc4861787064624b31e9e10d2aff6923119813e9c10d83690c011bff72bd204"
+    }
+  ]
+}

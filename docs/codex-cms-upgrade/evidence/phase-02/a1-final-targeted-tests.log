@@ -1,0 +1,53 @@
+(node:18828) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?multilingual place aliases retain source claims while merging into one canonical knowledge entity (637.2946ms)
+鉁?uncertain multilingual aliases stay pending until an operator accepts or rejects them (513.6049ms)
+鉁?generic collections and claim-like phrases are related instead of entering identity review (520.5389ms)
+鉁?a model-suggested non-identity relation is retained without asking an editor to merge entities (516.0741ms)
+鉁?startup reconciliation converts legacy relation candidates without merging their identities (495.0148ms)
+鉁?manual entity merge is audited and can be undone without deleting claims (508.3245ms)
+(node:22368) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?T02-33/34/40: explicit source relation retrieves a generic photo with no Claims and survives focused-article matching (602.7118ms)
+鉁?T02-43: ambiguous cross-destination entities are separately retained and city-level names cannot confirm a stop (548.1511ms)
+鉁?T02-43: publication gate rejects a revoked source binding even when an old matching score is high (542.0281ms)
+鉁?T02-42/43: a newly conflicting alias invalidates only the binding revision and preserves prior evidence (586.0867ms)
+鉁?T02-36/39: nearby mentions, uncertain captions and multi-place image references cannot certify a specific photo (542.3261ms)
+鉁?T02-41: explicit IDs beyond 160 are preserved; automatic paging reports a remaining range (664.8643ms)
+鉁?T02-42/43: only binding context changes, old relation remains stale, analysis and bytes are reused (521.9688ms)
+鉁?T02-63/70: snapshot and isolated review restore preserve context and binding fingerprints without jobs (748.6796ms)
+鉁?schema 81 is additive and does not backfill, buy analysis, or mutate old records (1049.1047ms)
+(node:27164) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?T02-35: source image references, independent captions and occurrence IDs survive realtime, Batch and reanalysis requests (609.6681ms)
+鉁?T02-36/37: title and mention order do not become explicit bindings; equal bytes retain distinct occurrences (0.8129ms)
+鉁?T02-38: long source context prioritizes image references and exposes recoverable omitted offsets (1.8295ms)
+鉁?T02-38: image transport cannot silently change image-to-context order or accept unknown IDs (0.9371ms)
+鉁?T02-38: realtime rejects foreign image IDs before single-image normalization and flags missing analysis (0.8113ms)
+鉁?T02-38: Batch rejects missing image analysis against its persisted context manifest (0.6765ms)
+鉁?T02-43: reanalysis of a retained image uses its own capture, and caption changes invalidate context only (537.023ms)
+鉁?T02-37: identical claim text from two images retains both evidence identities (1.4465ms)
+(node:2440) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?pipeline separates extraction, claims, semantic coexistence, and editorial patterns (773.4045ms)
+鉁?retrying a completed source reuses saved segments and still reaches a terminal state (786.2308ms)
+鉁?a manual coverage segment does not fail its source before every segment settles (594.719ms)
+鉁?coverage drops an untraceable text Claim without blocking supported evidence (528.311ms)
+鉁?coverage keeps one supported Claim usable without claiming full segment coverage (531.3204ms)
+鉁?zero-Claim media uses local materiality rules and never silently passes meaningful images (524.394ms)
+鉁?topic scoping carries relevant partial-coverage gaps but drops unrelated ones (0.6427ms)
+鉁?coverage audit ignores and repairs legacy unsupported-Claim false positives (536.5946ms)
+鉁?media segment coverage uses extraction metadata instead of a second model call (0.6363ms)
+鉁?coverage trusts the persisted input manifest instead of guessing batch modality (521.9468ms)
+鉁?entity resolution falls back deterministically when model structured output is invalid (0.8705ms)
+鉁?re-extraction versions derived claims instead of erasing their audit history (526.0594ms)
+鉁?editorial metadata and personal experience remain as claims but stay out of knowledge (525.6622ms)
+鉁?equivalent reservation wording produces one corroborated canonical Knowledge fact (533.2916ms)
+鈩?tests 37
+鈩?suites 0
+鈩?pass 37
+鈩?fail 0
+鈩?cancelled 0
+鈩?skipped 0
+鈩?todo 0
+鈩?duration_ms 6774.8297

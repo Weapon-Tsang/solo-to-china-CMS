@@ -1,0 +1,650 @@
+{
+  "root": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-0ulIlq",
+  "extension": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-0ulIlq\\extension",
+  "profile": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-0ulIlq\\profile",
+  "version": "2.0.71",
+  "startedAt": "2026-09-27T11:15:14.892Z",
+  "buildDifference": "Only isolated manifest adds http://127.0.0.1/* for ephemeral CMS port; production code unchanged.",
+  "checks": [
+    {
+      "id": "XP-18",
+      "status": "PASS",
+      "captured": 1,
+      "assets": 4
+    },
+    {
+      "id": "XP-02",
+      "status": "PASS",
+      "kind": "discovery close",
+      "queue": 0
+    },
+    {
+      "id": "XP-01",
+      "status": "NOT_RUN",
+      "observationMs": 204,
+      "watchdogTicks": 0
+    },
+    {
+      "id": "XP-04",
+      "status": "PASS",
+      "restart": "CDP closed worker; popup runtime woke extension"
+    },
+    {
+      "id": "XP-05",
+      "status": "PASS"
+    },
+    {
+      "id": "XP-08",
+      "status": "PASS",
+      "pauseMs": 50
+    }
+  ],
+  "tabEvents": [
+    {
+      "event": "created",
+      "at": 1790507716455
+    },
+    {
+      "event": "created",
+      "at": 1790507716607
+    },
+    {
+      "event": "created",
+      "at": 1790507718057
+    },
+    {
+      "event": "closed",
+      "at": 1790507721026
+    },
+    {
+      "event": "closed",
+      "at": 1790507721298
+    },
+    {
+      "event": "created",
+      "at": 1790507721857
+    },
+    {
+      "event": "closed",
+      "at": 1790507722015
+    },
+    {
+      "event": "created",
+      "at": 1790507722055
+    },
+    {
+      "event": "created",
+      "at": 1790507723142
+    },
+    {
+      "event": "closed",
+      "at": 1790507723325
+    },
+    {
+      "event": "closed",
+      "at": 1790507723327
+    },
+    {
+      "event": "closed",
+      "at": 1790507723329
+    }
+  ],
+  "apiEvents": [
+    {
+      "at": 1790507716652,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507716673,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507720944,
+      "method": "POST",
+      "path": "/api/captures",
+      "status": 202
+    },
+    {
+      "at": 1790507720959,
+      "method": "POST",
+      "path": "/api/capture-media-uploads",
+      "status": 201
+    },
+    {
+      "at": 1790507720959,
+      "method": "POST",
+      "path": "/api/capture-media-uploads",
+      "status": 201
+    },
+    {
+      "at": 1790507720971,
+      "method": "PUT",
+      "path": "/api/capture-media-uploads/49103d3c-6ebf-452f-bff5-087b1c5ca5ee/chunks/0",
+      "status": 200
+    },
+    {
+      "at": 1790507720971,
+      "method": "PUT",
+      "path": "/api/capture-media-uploads/b5699ac2-ffd1-47be-a25e-2d021b8c8bfc/chunks/0",
+      "status": 200
+    },
+    {
+      "at": 1790507720996,
+      "method": "POST",
+      "path": "/api/capture-media-uploads/49103d3c-6ebf-452f-bff5-087b1c5ca5ee/complete",
+      "status": 200
+    },
+    {
+      "at": 1790507720997,
+      "method": "POST",
+      "path": "/api/capture-media-uploads/b5699ac2-ffd1-47be-a25e-2d021b8c8bfc/complete",
+      "status": 200
+    },
+    {
+      "at": 1790507721012,
+      "method": "POST",
+      "path": "/api/captures",
+      "status": 202
+    },
+    {
+      "at": 1790507721031,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790507721278,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507721311,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790507723111,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    }
+  ],
+  "blockedNetwork": [],
+  "networkBoundary": "All browser DNS maps to 127.0.0.1:62609; only fixture hosts served; no proxy; TLS test certificate ignored only in test browser.",
+  "browser": "153.0.8010.12",
+  "extensionId": "dbbcafpfpeclpempdflbcghefhmhpfhn",
+  "cms": {
+    "endpoint": "http://127.0.0.1:56668",
+    "database": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-0ulIlq\\solo-to-china.sqlite",
+    "role": "api"
+  },
+  "firstCapture": {
+    "activeTasks": [],
+    "automatic": false,
+    "browserIdentity": "dbceda72-9f32-48b8-99c3-706b0636ac3e",
+    "checkpoint": {
+      "lastSuccessfulSyncAt": null,
+      "topIdentityKeys": []
+    },
+    "completedAt": "2026-09-27T11:15:21.020Z",
+    "concurrency": 1,
+    "concurrencyController": {
+      "lastChangeAt": null,
+      "reason": "settings"
+    },
+    "concurrencySamples": [
+      {
+        "cmsBackpressure": false,
+        "completedAt": "2026-09-27T11:15:21.016Z",
+        "errorClass": "",
+        "extractionMs": 2842,
+        "localFailure": false,
+        "loginRequired": false,
+        "mediaBytes": 7990,
+        "mediaCount": 2,
+        "mediaDownloadMs": 8,
+        "mediaUploadMs": 93,
+        "memoryPressure": false,
+        "noteLoadMs": 26,
+        "rateLimited": false,
+        "result": "succeeded",
+        "submitMs": 14,
+        "tabCrash": false,
+        "timeout": false,
+        "totalMs": 3005,
+        "verificationDetected": false
+      }
+    ],
+    "config": {
+      "autoMinIntervalHours": 12,
+      "concurrencyInitial": 4,
+      "concurrencyMax": 12,
+      "concurrencyMinSamples": 20,
+      "concurrencyMode": "custom",
+      "concurrencyWindowSize": 24,
+      "customConcurrency": 1,
+      "detailLoadTimeoutMs": 30000,
+      "discoveryBatchSize": 100,
+      "identityBatchSize": 50,
+      "maxRetries": 3,
+      "mediaConcurrency": 12,
+      "mediaMemoryBudgetBytes": 100663296,
+      "mediaUploadConcurrency": 6,
+      "queueHighWatermark": 500,
+      "retryBaseMs": 5000,
+      "retryMaxMs": 120000,
+      "stopAfterConsecutiveKnown": 12,
+      "taskLeaseMs": 180000,
+      "watchdogStallMs": 120000
+    },
+    "controlSchema": 1,
+    "currentTopIdentityKeys": [
+      "xiaohongshu:fixture001"
+    ],
+    "cursor": {
+      "collectionEnd": true,
+      "collectionEndStreak": 2,
+      "domOffset": 1,
+      "scannedWindows": 2,
+      "scrollY": 0
+    },
+    "discoveryComplete": true,
+    "discoveryTabId": 831544520,
+    "driveRetryAt": null,
+    "driverAttempts": 0,
+    "lastBusinessProgress": "submitting",
+    "lastError": null,
+    "lastProgressAt": "2026-09-27T11:15:21.016Z",
+    "mediaConcurrency": 12,
+    "mediaConcurrencyController": {
+      "lastChangeAt": null,
+      "reason": "settings"
+    },
+    "mode": "full",
+    "noProgressSince": null,
+    "phase": "completed",
+    "queue": [
+      {
+        "attempts": 1,
+        "author": "",
+        "canonicalUrl": "https://www.xiaohongshu.com/explore/fixture001",
+        "captureVersion": 2,
+        "coverUrl": "",
+        "error": null,
+        "externalId": "fixture001",
+        "identityKey": "xiaohongshu:fixture001",
+        "lastHeartbeatAt": "2026-09-27T11:15:21.000Z",
+        "leaseExpiresAt": null,
+        "leaseId": null,
+        "leaseStartedAt": null,
+        "navigationUrl": "https://www.xiaohongshu.com/explore/fixture001",
+        "position": 0,
+        "repairActions": [
+          "CAPTURE_NEW"
+        ],
+        "repairMediaIdentities": [],
+        "retryAt": null,
+        "sourceId": "src_6cb1242fc7c34f229845abb4e98d381a",
+        "startedAt": "2026-09-27T11:15:18.010Z",
+        "status": "captured",
+        "tabId": null,
+        "taskId": "e8db1900-466a-4c04-b94c-5ac83b4ca1d6",
+        "title": "",
+        "updatedAt": "2026-09-27T11:15:21.016Z",
+        "workerId": null
+      }
+    ],
+    "recoveryNoticeAt": null,
+    "runRevision": 1,
+    "scan": {
+      "checkpointSeen": true,
+      "consecutiveKnown": 0,
+      "reliableCheckpoint": false,
+      "windowNew": 0
+    },
+    "scopeKey": "xhs_scope:https://www.xiaohongshu.com/board/fixture123",
+    "scopeLabel": "小红书收藏夹 · fixture1",
+    "scopeUrl": "https://www.xiaohongshu.com/board/fixture123",
+    "seenIdentityKeys": [
+      "xiaohongshu:fixture001"
+    ],
+    "sessionId": "71602d98-1dde-40a6-aaea-8bbd1d08aece",
+    "stage": "submitting",
+    "stageStartedAt": "2026-09-27T11:15:21.002Z",
+    "startedAt": "2026-09-27T11:15:16.655Z",
+    "stats": {
+      "captured": 1,
+      "discovered": 1,
+      "duplicate": 0,
+      "failed": 0,
+      "known": 0,
+      "new": 1,
+      "repair": 0,
+      "retrying": 0,
+      "unavailable": 0
+    },
+    "status": "completed",
+    "stopAfterQueue": false,
+    "tabOwnership": {
+      "831544520": {
+        "owned": false,
+        "role": "discovery",
+        "tabId": 831544520,
+        "url": "https://www.xiaohongshu.com/board/fixture123",
+        "windowId": 831544517
+      },
+      "831544521": {
+        "owned": true,
+        "role": "worker",
+        "tabId": 831544521,
+        "url": "https://www.xiaohongshu.com/explore/fixture001",
+        "windowId": 831544517
+      }
+    },
+    "updatedAt": "2026-09-27T11:15:21.021Z",
+    "workerSlots": [
+      {
+        "tabId": 831544521,
+        "updatedAt": "2026-09-27T11:15:18.053Z",
+        "workerId": "note-worker-0-52bd3dd1-92d9-4172-aa1f-1e60e2f944dd"
+      }
+    ],
+    "workerTabs": [
+      831544521
+    ]
+  },
+  "durableSources": [
+    {
+      "id": "src_6cb1242fc7c34f229845abb4e98d381a",
+      "textChars": 198,
+      "captureVersion": 2
+    }
+  ],
+  "durableAssets": [
+    {
+      "id": "asset_bf5555431cbb46779bfed30a4e3ecf1d",
+      "kind": "image"
+    },
+    {
+      "id": "asset_e9decb8d55a541f99d66d5c2b2ad76a3",
+      "kind": "image"
+    },
+    {
+      "id": "asset_bd15e2c61df24557a8afaccb927c08cd",
+      "kind": "image"
+    },
+    {
+      "id": "asset_8146e616d0af4f9a841867b05e58c37e",
+      "kind": "image"
+    }
+  ],
+  "diagnostics": [
+    {
+      "at": "2026-09-27T11:15:18.033Z",
+      "attempts": 0,
+      "event": "create-dispatched",
+      "revision": 1,
+      "role": "worker",
+      "scope": "session-scope",
+      "sessionId": "71602d98-1dde-40a6-aaea-8bbd1d08aece",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:15:21.022Z",
+      "attempts": 0,
+      "event": "remove",
+      "revision": 1,
+      "role": "worker",
+      "scope": "session-scope",
+      "sessionId": "71602d98-1dde-40a6-aaea-8bbd1d08aece",
+      "status": "completed",
+      "tabId": 831544521
+    },
+    {
+      "at": "2026-09-27T11:15:21.303Z",
+      "attempts": 0,
+      "event": "tab-removed",
+      "revision": 1,
+      "role": "associated",
+      "scope": "session-scope",
+      "sessionId": "48c87b3b-5d7f-44b8-ad17-9f21a1410fd3",
+      "status": "running",
+      "tabId": 831544520,
+      "windowClosing": false
+    }
+  ],
+  "resumed": [
+    {
+      "ok": true,
+      "session": {
+        "activeTasks": [],
+        "autoBlocked": false,
+        "automatic": false,
+        "browserIdentity": "dbceda72-9f32-48b8-99c3-706b0636ac3e",
+        "checkpoint": {
+          "lastSuccessfulSyncAt": "2026-09-27T11:15:21.020Z",
+          "topIdentityKeys": [
+            "xiaohongshu:fixture001"
+          ]
+        },
+        "concurrency": 1,
+        "concurrencyController": {
+          "lastChangeAt": null,
+          "reason": "warming_up"
+        },
+        "concurrencySamples": [],
+        "config": {
+          "identityBatchSize": 50,
+          "discoveryBatchSize": 100,
+          "stopAfterConsecutiveKnown": 12,
+          "queueHighWatermark": 500,
+          "maxRetries": 3,
+          "detailLoadTimeoutMs": 30000,
+          "autoMinIntervalHours": 12,
+          "concurrencyMode": "custom",
+          "concurrencyInitial": 4,
+          "concurrencyMax": 12,
+          "customConcurrency": 1,
+          "mediaConcurrency": 12,
+          "mediaUploadConcurrency": 6,
+          "mediaMemoryBudgetBytes": 100663296,
+          "taskLeaseMs": 180000,
+          "watchdogStallMs": 120000,
+          "retryBaseMs": 5000,
+          "retryMaxMs": 120000,
+          "concurrencyWindowSize": 24,
+          "concurrencyMinSamples": 20
+        },
+        "controlSchema": 1,
+        "cursor": {
+          "collectionEnd": false,
+          "collectionEndStreak": 0,
+          "scannedWindows": 0,
+          "scrollY": 0
+        },
+        "discoveryTabId": 831544520,
+        "driveRetryAt": "2026-09-27T11:15:26.235Z",
+        "driverAttempts": 1,
+        "lastError": null,
+        "lastProgressAt": "2026-09-27T11:15:21.282Z",
+        "mediaConcurrency": 12,
+        "mediaConcurrencyController": {
+          "lastChangeAt": null,
+          "reason": "settings"
+        },
+        "mode": "full",
+        "phase": "discovery",
+        "queue": [],
+        "recoveryNoticeAt": null,
+        "runRevision": 3,
+        "scan": {
+          "checkpointSeen": false,
+          "consecutiveKnown": 0,
+          "reliableCheckpoint": true
+        },
+        "scopeKey": "xhs_scope:https://www.xiaohongshu.com/board/fixture123",
+        "scopeLabel": "小红书收藏夹 · fixture1",
+        "scopeUrl": "https://www.xiaohongshu.com/board/fixture123",
+        "seenIdentityKeys": [],
+        "sessionId": "48c87b3b-5d7f-44b8-ad17-9f21a1410fd3",
+        "startedAt": "2026-09-27T11:15:21.282Z",
+        "stats": {
+          "unavailable": 0,
+          "captured": 0,
+          "discovered": 0,
+          "duplicate": 0,
+          "failed": 0,
+          "known": 0,
+          "new": 0,
+          "repair": 0,
+          "retrying": 0
+        },
+        "status": "running",
+        "stopAfterQueue": false,
+        "tabOwnership": {
+          "831544520": {
+            "owned": false,
+            "role": "discovery",
+            "tabId": 831544520,
+            "url": "https://www.xiaohongshu.com/board/fixture123",
+            "windowId": 831544517
+          }
+        },
+        "updatedAt": "2026-09-27T11:15:23.115Z",
+        "workerSlots": [],
+        "workerTabs": [],
+        "completedAt": null,
+        "resumePending": true,
+        "noProgressSince": null
+      }
+    },
+    {
+      "ok": true,
+      "session": {
+        "activeTasks": [],
+        "autoBlocked": false,
+        "automatic": false,
+        "browserIdentity": "dbceda72-9f32-48b8-99c3-706b0636ac3e",
+        "checkpoint": {
+          "lastSuccessfulSyncAt": "2026-09-27T11:15:21.020Z",
+          "topIdentityKeys": [
+            "xiaohongshu:fixture001"
+          ]
+        },
+        "concurrency": 1,
+        "concurrencyController": {
+          "lastChangeAt": null,
+          "reason": "warming_up"
+        },
+        "concurrencySamples": [],
+        "config": {
+          "identityBatchSize": 50,
+          "discoveryBatchSize": 100,
+          "stopAfterConsecutiveKnown": 12,
+          "queueHighWatermark": 500,
+          "maxRetries": 3,
+          "detailLoadTimeoutMs": 30000,
+          "autoMinIntervalHours": 12,
+          "concurrencyMode": "custom",
+          "concurrencyInitial": 4,
+          "concurrencyMax": 12,
+          "customConcurrency": 1,
+          "mediaConcurrency": 12,
+          "mediaUploadConcurrency": 6,
+          "mediaMemoryBudgetBytes": 100663296,
+          "taskLeaseMs": 180000,
+          "watchdogStallMs": 120000,
+          "retryBaseMs": 5000,
+          "retryMaxMs": 120000,
+          "concurrencyWindowSize": 24,
+          "concurrencyMinSamples": 20
+        },
+        "controlSchema": 1,
+        "cursor": {
+          "collectionEnd": false,
+          "collectionEndStreak": 0,
+          "scannedWindows": 0,
+          "scrollY": 0
+        },
+        "discoveryTabId": 831544520,
+        "driveRetryAt": "2026-09-27T11:15:26.235Z",
+        "driverAttempts": 1,
+        "lastError": null,
+        "lastProgressAt": "2026-09-27T11:15:21.282Z",
+        "mediaConcurrency": 12,
+        "mediaConcurrencyController": {
+          "lastChangeAt": null,
+          "reason": "settings"
+        },
+        "mode": "full",
+        "phase": "discovery",
+        "queue": [],
+        "recoveryNoticeAt": null,
+        "runRevision": 3,
+        "scan": {
+          "checkpointSeen": false,
+          "consecutiveKnown": 0,
+          "reliableCheckpoint": true
+        },
+        "scopeKey": "xhs_scope:https://www.xiaohongshu.com/board/fixture123",
+        "scopeLabel": "小红书收藏夹 · fixture1",
+        "scopeUrl": "https://www.xiaohongshu.com/board/fixture123",
+        "seenIdentityKeys": [],
+        "sessionId": "48c87b3b-5d7f-44b8-ad17-9f21a1410fd3",
+        "startedAt": "2026-09-27T11:15:21.282Z",
+        "stats": {
+          "unavailable": 0,
+          "captured": 0,
+          "discovered": 0,
+          "duplicate": 0,
+          "failed": 0,
+          "known": 0,
+          "new": 0,
+          "repair": 0,
+          "retrying": 0
+        },
+        "status": "running",
+        "stopAfterQueue": false,
+        "tabOwnership": {
+          "831544520": {
+            "owned": false,
+            "role": "discovery",
+            "tabId": 831544520,
+            "url": "https://www.xiaohongshu.com/board/fixture123",
+            "windowId": 831544517
+          }
+        },
+        "updatedAt": "2026-09-27T11:15:23.115Z",
+        "workerSlots": [],
+        "workerTabs": [],
+        "completedAt": null,
+        "resumePending": true,
+        "noProgressSince": null
+      }
+    }
+  ],
+  "status": "PASS",
+  "finishedAt": "2026-09-27T11:15:23.606Z",
+  "loadedHashes": {
+    "background.js": "3e63b4ab41188ab1687e35cdc1c847a82bd83623bdaf42f17a915cdd135ef412",
+    "capture-utils.js": "5e939730cbe61260808de933203eff52c30d65f7c18d58bad804dd2952d1efde",
+    "derivative-cache.js": "37ee6933154b13416c683b5692aac919ef1eb2c29279e38200e79ab8af34cc18",
+    "manifest.json": "6efaf860c1c005ec820737c9ce6284b6be4bb79e120a879c2afa9380fa58b055",
+    "media-contract.js": "fbc17791b20ec2d02fcae5ac53ff24345887b2de6a3fdda0a16ccacfc60b7002",
+    "media-journal.js": "1f5c06020169868e35823aa16605588469ef778632785903009382333dccf41f",
+    "page-extractor.js": "5c8a12979b0552c6b1f3b7651b7ea612018fced81fcf8c283cd6a491cfcda32d",
+    "popup-state.js": "0a75f3cbcd5b66f3122b8865dc4ba99894b01075ef3aa58324923c829d6e88e2",
+    "popup.html": "62f4bb7af68152fdca99ea7eab196013c5c059577a837c37c33a1008d4aff16f",
+    "popup.js": "9cd08f4bd0b07318dc06bf1b337c43024c81470735714a5351f8379203ff7426",
+    "run-control.js": "d4f32007333d48c6c147e058c51ee10c6958bfca6954e7e1cf8605753d3b7818",
+    "sync-core.js": "fbb2859d31cfba31bc4141426e04c4db34ccdc827949d67ab6db6fe42fd2be44",
+    "transport.js": "4115c589a6f7929e697889895e28bdc45865370128d5d64acc1402df69cb1d09"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "files": [
+    {
+      "path": "src/publication-eligibility.mjs",
+      "sha256": "CE77A884D4DBA860FB111257343921AFDFB857CBAE7CDEA62935E65A02E724A2"
+    },
+    {
+      "path": "src/pipeline.mjs",
+      "sha256": "FE9A0FDC5B51A1C88E46D957CA34799569274D452F56D4871A26DDA2AF1A12AB"
+    },
+    {
+      "path": "src/repository.mjs",
+      "sha256": "8CF3A4F603748B191777B546EC661EA04B4EF69E3AE096C610F0887C1B04491B"
+    },
+    {
+      "path": "src/route-bundle.mjs",
+      "sha256": "90C9B2C5B63E9D4EFD5FB0524FE89132C1F1095682C3DE1AFD6DD03DBD802EE9"
+    },
+    {
+      "path": "src/route-media.mjs",
+      "sha256": "8C9C5B2335D0D48FE6B1A283E37B7AEB9FEFD6530241AA188534323716A9065B"
+    },
+    {
+      "path": "src/visuals/route-schematic.mjs",
+      "sha256": "50CD0D746065AE6743C1C068C6CE6ECAAFD6BF58A53D1CFDA34CFE901338F8BF"
+    },
+    {
+      "path": "src/media-delivery.mjs",
+      "sha256": "027CA8325C313BC9D1425B25A0C25D1EFAA2919049DA9AC794AC795E98BC47E6"
+    },
+    {
+      "path": "src/services/production-state.mjs",
+      "sha256": "4A995A30942A41CC8F49A3A26586DDAA5017C7CDF8876065F25EFE82B7FEED4C"
+    },
+    {
+      "path": "frontend/src/workspaces/route-preview.jsx",
+      "sha256": "D2B48804814A4095C64E353E0D866D3E49BE0A9475A43F69E80106D2B41454B4"
+    },
+    {
+      "path": "test/route-production.test.mjs",
+      "sha256": "DDD827C03060032A4DC3637AB7B4B5AADC75F7131F884A929F2829E571B06CB7"
+    },
+    {
+      "path": "test-support/route-production-fixture.mjs",
+      "sha256": "077FD5384E84066E3C0C94191B1B69C65F79FCA3302A4961291B1E629502274A"
+    }
+  ],
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290"
+}

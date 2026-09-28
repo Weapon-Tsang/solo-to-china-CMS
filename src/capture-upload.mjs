@@ -34,7 +34,18 @@ export class CaptureUploadManager {
     const bytes = Buffer.from(value || []);
     const expected = chunkIndex === metadata.chunkCount - 1 ? metadata.size - chunkIndex * metadata.chunkBytes : metadata.chunkBytes;
     if (bytes.length !== expected) throw uploadError("INVALID_CHUNK_SIZE", `Capture chunk ${chunkIndex} has ${bytes.length} bytes; expected ${expected}.`, 400);
-    fs.writeFileSync(path.join(this.directory(uploadId), `${String(chunkIndex).padStart(6, "0")}.part`), bytes, { flag: "w" });
+    const filename = path.join(this.directory(uploadId), `${String(chunkIndex).padStart(6, "0")}.part`);
+    const temporary = `${filename}.${crypto.randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(temporary, bytes, { flag: "wx" });
+      try { fs.linkSync(temporary, filename); }
+      catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        if (!fs.readFileSync(filename).equals(bytes)) {
+          throw uploadError("CAPTURE_CHUNK_CONFLICT", `Capture chunk ${chunkIndex} was already uploaded with different bytes.`, 409);
+        }
+      }
+    } finally { fs.rmSync(temporary, { force: true }); }
     return { uploadId, index: chunkIndex, receivedBytes: bytes.length, chunkCount: metadata.chunkCount };
   }
 

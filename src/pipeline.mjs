@@ -5,7 +5,7 @@ import { buildContentAst, composePageFromAst, markdownToContentBlocks } from "./
 import { validatePlanningDestination } from "./destination-consistency.mjs";
 import { buildPublishPackage, mediaReferences, mergeCommercialOverlay, PublishCompositionError, reconcileCommercialDelivery, validateFinalPageArtifact } from "./publish-page.mjs";
 import { validateMediaDelivery } from "./media-delivery.mjs";
-import { assertPublicationEligibility, evaluatePublicationEligibility, freezeRequiredMediaManifest, mediaManifestForDraft } from "./publication-eligibility.mjs";
+import { assertPublicationEligibility, evaluatePublicationEligibility, freezeRequiredMediaManifest, mediaManifestForDraft, routeMediaDependencyHash, routePageDependencyHash } from "./publication-eligibility.mjs";
 import { inheritJobContext, isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
 import { recoverRemoteOriginal } from "./source-media-store.mjs";
@@ -110,6 +110,7 @@ export class Pipeline {
     try {
       const due = this.repository.dueVertexBatch?.();
       if (due?.cleanupOnly) return await this.cleanupVertexBatch(due);
+      if (due?.reconcileOnly) return await this.reconcileVertexBatchSubmission(due);
       if (due) return await this.pollVertexBatch(due);
       if (!this.extractor?.batchEnabled) return false;
       if (this.repository.activeVertexBatchCount?.()) return false;
@@ -178,6 +179,13 @@ export class Pipeline {
       try {
         const batch = await this.extractor.createExtractionBatch(prepared, {
           operation: run.jobType || "extract_segment_claims", runConfig: run, idempotencyKey: run.id,
+          onDispatch: (dispatch) => this.repository.markVertexBatchSubmissionDispatch(run.id, dispatch, run),
+          onSubmitted: (submitted) => {
+            if (!this.repository.recordVertexBatchProviderJob(run.id, submitted)) {
+              throw Object.assign(new Error('Vertex Batch provider receipt could not be stored.'),
+                { code: 'VERTEX_BATCH_RECEIPT_NOT_STORED' });
+            }
+          },
         });
         if (!this.repository.activateVertexBatch(run.id, batch, run)) {
           throw Object.assign(new Error("VERTEX_BATCH_PREPARATION_LEASE_LOST"), { code: "JOB_LEASE_LOST", retryable: false });
@@ -186,6 +194,10 @@ export class Pipeline {
           providerJobName: batch.name, itemCount: prepared.length, inputBytes: preparedBytes });
         return true;
       } catch (error) {
+        if (this.repository.vertexBatchDispatchStarted?.(run.id)) {
+          this.repository.markVertexBatchOutcomeUnknown(run.id, error);
+          throw error;
+        }
         if (isJobLeaseLost(error)) throw error;
         for (const item of run.items) this.repository.releaseVertexBatchItem(run.id, item.id, error, { phase: "submission" });
         this.repository.finishVertexBatch(run.id, "failed", "SUBMISSION_FAILED", error?.message || error);
@@ -193,6 +205,41 @@ export class Pipeline {
       }
     } finally {
       this.batchWorking = false;
+    }
+  }
+
+  async reconcileVertexBatchSubmission(run) {
+    try {
+      const remote = run.provider_job_name
+        ? await this.extractor.getExtractionBatch(run.provider_job_name, run)
+        : await this.extractor.findExtractionBatch(run.input_uri, run);
+      if (!remote?.name && !run.provider_job_name) {
+        this.repository.deferVertexBatchSubmissionReconciliation(run.id,
+          'The provider has not returned a matching Batch job yet.',
+          Math.max(300_000, Number(this.extractor.config?.batchPollMs || 60_000)));
+        return false;
+      }
+      const providerJobName = run.provider_job_name || remote.name;
+      if (!run.provider_job_name && !this.repository.recordVertexBatchProviderJob(run.id, { name: providerJobName })) {
+        throw new Error('The reconciled Vertex Batch job name could not be stored.');
+      }
+      const activated = this.repository.activateVertexBatch(run.id, {
+        name: providerJobName,
+        inputUri: run.input_uri,
+        outputUriPrefix: run.output_uri_prefix,
+        state: remote.state || 'JOB_STATE_PENDING',
+        itemIds: run.items.map((item) => item.batch_item_id),
+        pollMs: Number(this.extractor.config?.batchPollMs || 60_000),
+      }, run);
+      if (activated) this.logger.info('pipeline.vertex_batch_submission_reconciled', {
+        runId: run.id, providerJobName,
+      });
+      return activated;
+    } catch (error) {
+      this.repository.deferVertexBatchSubmissionReconciliation(run.id, error,
+        Number(this.extractor.config?.batchPollMs || 60_000));
+      this.logger.warn('pipeline.vertex_batch_submission_reconciliation_deferred', { runId: run.id, error });
+      return false;
     }
   }
 
@@ -374,6 +421,11 @@ export class Pipeline {
         // accepted Vertex structured-output transport instead of repeating a
         // known-invalid native Schema request on every worker attempt.
         structuredSchemaMode:this.repository.structuredSchemaModeForJob?.(job.id) || null };
+      // Check route/source dependencies before any downstream provider or upload.
+      if(['generate_visuals','compose_frontend_page','review_draft','revise_draft','compose_commercial',
+        'compose_publish_page','push_wordpress_draft','publish_wordpress_post'].includes(job.type))
+        this.repository.assertDraftRouteCurrent?.(job.entity_id);
+
       // Authorized-source visual seeding is deterministic prerequisite work for
       // visual processing. Page composition may seed an entirely empty legacy
       // Draft, but it must never re-normalize an existing plan: generated media
@@ -382,7 +434,7 @@ export class Pipeline {
       if (job.type === "generate_visuals") {
         // A legacy MEDIA_INCOMPLETE failure may have been repaired in place.
         // Never re-plan and clear already delivered visuals on that recovery.
-        if (!evaluatePublicationEligibility(this.repository.db, job.entity_id).passed) {
+        if (!evaluatePublicationEligibility(this.repository.db, job.entity_id,{requireRouteReview:false}).passed) {
           this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
         }
       } else if (job.type === "compose_frontend_page"
@@ -502,6 +554,13 @@ export class Pipeline {
         case "segment_source": {
           commitStage(() => {
             const segments = this.repository.prepareSourceSegments(job.entity_id);
+            // A same-capture retry may find every segment already committed.
+            // Reconcile the saved coverage and finish the source instead of
+            // leaving it in processing with no runnable child jobs.
+            if (!segments.length && this.repository.sourceCoverageReady(job.entity_id)) {
+              this.enqueueChild(job, "finalize_source_extraction", job.entity_id);
+              return;
+            }
             const extractionProvider=this.extractor?.configFor?.({telemetryContext})?.provider
               || this.extractor?.config?.provider || telemetryContext.modelProfile?.provider;
             const mediaBatches = ['deepseek','gemini'].includes(extractionProvider) ? []
@@ -780,10 +839,10 @@ export class Pipeline {
               { code:'ARTICLE_BUNDLE_EVIDENCE_INVALID',retryable:false,details:plannedEvidence });
             commitStage(() => {
               const briefId = this.repository.saveBrief(job.entity_id, bundle.output.brief, bundle.model,
-                { deferDraft:true, opportunityId:ownerId });
+                { deferDraft:true, opportunityId:ownerId, routeBundle:contentPackage.route_bundle });
               const draftId = this.repository.saveDraft(briefId, bundle.output.draft, bundle.model,
-                { deferReview:this.canComposeFrontendPage, opportunityId:ownerId });
-              if (this.visuals?.enabled) this.enqueueChild(job,'generate_visuals',draftId);
+                { deferReview:this.canComposeFrontendPage || Boolean(contentPackage.route_bundle), opportunityId:ownerId, routeBundle:contentPackage.route_bundle });
+              if (this.visuals?.enabled || contentPackage.route_bundle) this.enqueueChild(job,'generate_visuals',draftId);
               else if (this.canComposeFrontendPage) this.enqueueChild(job,'compose_frontend_page',draftId);
             });
             break;
@@ -878,14 +937,15 @@ export class Pipeline {
           commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
           const draftId = this.repository.saveDraft(job.entity_id, drafted.output, drafted.model,
-            {deferReview:contractAware,opportunityId:job.production_owner_opportunity_id || null});
-          if (this.visuals?.enabled) this.enqueueChild(job,"generate_visuals",draftId);
+            {deferReview:contractAware || Boolean(contentPackage.route_bundle),opportunityId:job.production_owner_opportunity_id || null,routeBundle:contentPackage.route_bundle});
+          if (this.visuals?.enabled || contentPackage.route_bundle) this.enqueueChild(job,"generate_visuals",draftId);
           else if (contractAware) this.enqueueChild(job,"compose_frontend_page",draftId);
           });
           break;
         }
         case "generate_visuals": {
-          if (!this.visuals?.enabled) throw new Error("Visual generation is not configured.");
+          if (!this.visuals?.enabled && !this.repository.listDraftVisuals(job.entity_id)
+            .some(v=>v.acquisition_strategy==='render_route_schematic')) throw new Error("Visual generation is not configured.");
           this.repository.recoverLegacyVisualReceipts?.(job.entity_id);
           if (evaluatePublicationEligibility(this.repository.db, job.entity_id).passed) {
             if (this.canComposeFrontendPage) this.enqueueChild(job,"compose_frontend_page",job.entity_id);
@@ -1017,6 +1077,11 @@ export class Pipeline {
           for (const visual of this.repository.plannedVisuals(job.entity_id)) {
             if (visual.acquisition_strategy === "analyze_source_image") continue;
             try {
+              if(visual.acquisition_strategy==='render_route_schematic') {
+                const result=await guarded(()=>this.repository.renderDraftRouteVisual(visual));
+                this.repository.saveGeneratedVisual(visual.id,result,{expectedFingerprint:visual.asset_fingerprint});
+                continue;
+              }
               const method = ["localize_source_image","localize_photo_overlay","recompose_editorial_card","recompose_collage","recompose_map_or_route"]
                 .includes(visual.acquisition_strategy) ? "localizeSourceImage" : "generate";
               const result = await guarded((signal) => this.visuals[method](visual, contentPackage.draft, { signal,
@@ -1026,17 +1091,25 @@ export class Pipeline {
             } catch (error) {
               if (isJobLeaseLost(error)) throw error;
               if (error?.code === 'MEDIA_RATE_WAIT') throw error;
+              if (error?.code === 'ROUTE_RENDER_BUDGET_EXHAUSTED') throw error;
               const failed = this.repository.failVisual(visual.id, error);
-               if (failed.retryable || visual.factual_image_required || visual.required_in_article
+              const slot=mediaManifestForDraft(this.repository.db,job.entity_id)?.slots.find(s=>s.slotId===visual.id);
+              if(visual.acquisition_strategy==='render_route_schematic' && slot?.required===false
+                && error?.code!=='ROUTE_VERSION_STALE' && error?.code!=='REQUIRED_ROUTE_MEDIA_MISSING') {
+                this.repository.omitOptionalRouteVisual(visual.id,error);
+                continue;
+              }
+               if (failed.retryable || visual.acquisition_strategy==='render_route_schematic' || visual.factual_image_required || visual.required_in_article
                  || parseStoredJson(visual.media_metadata_json)?.required_visual_obligation?.required) throw error;
               this.logger.warn("pipeline.optional_visual_skipped", { visualId: visual.id, draftId: job.entity_id, error });
             }
           }
-          const mediaGate=evaluatePublicationEligibility(this.repository.db,job.entity_id);
+          const mediaGate=evaluatePublicationEligibility(this.repository.db,job.entity_id,{requireRouteReview:false});
           if (!mediaGate.passed) throw Object.assign(new Error(`${mediaGate.code}: required media remains incomplete after the visual stage.`),{
             code:mediaGate.code,retryable:false,details:mediaGate,
           });
           if (this.canComposeFrontendPage) this.enqueueChild(job,"compose_frontend_page",job.entity_id);
+          else if(contentPackage.route_bundle) this.enqueueChild(job,"review_draft",job.entity_id);
           break;
         }
         case "compose_frontend_page": {
@@ -1044,7 +1117,7 @@ export class Pipeline {
           const contract = this.requireFrontendContract();
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
-          await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput }));
+          await guarded((signal) => this.uploadVisualMedia(contentPackage, { signal, idempotencyKey: job.id, assertLease: assertInput, beforeTextReview:true }));
           contentPackage = this.repository.getDraftPackage(job.entity_id);
           const capabilities = this.frontendContracts.resolveForArticle({ canonical: contentPackage.brief?.canonical || {},
             draft: contentPackage.draft || {},includeAllEditorial:job.pipeline_version === 'article_bundle_v1' });
@@ -1055,6 +1128,7 @@ export class Pipeline {
           const currentAst = buildContentAst({ draft: contentPackage.draft, brief: contentPackage.brief,
             visuals: contentPackage.draft.visuals || [], facts: contentPackage.facts || [] });
           const existingPageId = contentPackage.frontend_page?.payload?.metadata?.pageId || null;
+          const mediaDependencyHash=routeMediaDependencyHash(this.repository.db,job.entity_id);
           const composed = composePageFromAst(currentAst, capabilities, contract.pageSchema.schema, contentPackage.frontend_page_plan?.plan, existingPageId)
             || (job.pipeline_version === 'article_bundle_v1'
               ? null : await guarded((signal) => this.contentEngine.composeFrontendPage(contentPackage, capabilities, contract.pageSchema.schema, { signal, telemetryContext })));
@@ -1066,7 +1140,7 @@ export class Pipeline {
           const validation = this.frontendContracts.validatePagePayload(composed.output);
           const savedPage = commitStage(() => {
             const saved = this.repository.saveFrontendPageComposition(job.entity_id, contentPackage.frontend_page_plan?.id || null, contract, composed.output, validation, composed.model,
-              { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash }, composed.provenance);
+              { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash,mediaDependencyHash }, composed.provenance);
             if (saved.validation.valid && !job.dedupe_key?.startsWith("manual-stage:")) {
               const nextStage = deliveryRefreshContinuation(this.repository,job,"compose_frontend_page") || "review_draft";
               this.enqueueChild(job,nextStage,job.entity_id);
@@ -1081,10 +1155,13 @@ export class Pipeline {
           this.requireContentEngine();
           const contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
+          const mediaDependencyHash=routeMediaDependencyHash(this.repository.db,job.entity_id);
+          const pageDependencyHash=routePageDependencyHash(this.repository.db,job.entity_id);
           const reviewed = await guarded((signal) => this.contentEngine.review(contentPackage, { signal, telemetryContext }));
           commitStage(() => {
           const revision = this.repository.saveReview(job.entity_id, reviewed.output, reviewed.model,
             { revision: contentPackage.draft.revision, contentHash: contentPackage.draft.content_hash, evidenceHash:contentPackage.evidence_hash,
+              routeHash:contentPackage.route_bundle?.approved_route_hash,mediaDependencyHash,pageDependencyHash,
               productionOwnerOpportunityId:job.production_owner_opportunity_id || null });
           const pageReady = !this.canComposeFrontendPage || Boolean(contentPackage.frontend_page?.current);
           if (reviewed.output.passed && pageReady && !job.dedupe_key?.startsWith("manual-stage:")) this.enqueueChild(job,"compose_commercial",job.entity_id);
@@ -1104,13 +1181,13 @@ export class Pipeline {
           commitStage(() => {
           const contractAware = this.canComposeFrontendPage;
           const draftId = this.repository.saveDraft(contentPackage.draft.brief_id, drafted.output, drafted.model,
-            { deferReview: job.dedupe_key?.startsWith("manual-stage:") || contractAware,
-              opportunityId:job.production_owner_opportunity_id || null,preserveVisuals:true });
+            { deferReview: job.dedupe_key?.startsWith("manual-stage:") || contractAware || Boolean(contentPackage.route_bundle),
+              opportunityId:job.production_owner_opportunity_id || null,preserveVisuals:true,routeBundle:contentPackage.route_bundle });
           if (!job.dedupe_key?.startsWith("manual-stage:")) {
             // A prose revision invalidates the revision-scoped media manifest even
             // when every retained original is already generated. The visual stage
             // must freeze a new manifest before page composition can run.
-            if (this.visuals?.enabled) this.enqueueChild(job,"generate_visuals",draftId);
+            if (this.visuals?.enabled || contentPackage.route_bundle) this.enqueueChild(job,"generate_visuals",draftId);
             else if (contractAware) this.enqueueChild(job,"compose_frontend_page",draftId);
           }
           });
@@ -1469,7 +1546,7 @@ export class Pipeline {
           if (job.pipeline_version === 'article_bundle_v1') {
             const draft = repository.db.prepare('SELECT id FROM article_drafts WHERE brief_id=?').get(brief.id);
             if (draft) {
-              if (this.visuals?.enabled) next('generate_visuals',draft.id);
+              if (this.visuals?.enabled || repository.listDraftVisuals(draft.id).some(v=>v.acquisition_strategy==='render_route_schematic')) next('generate_visuals',draft.id);
               else if (this.canComposeFrontendPage) next('compose_frontend_page',draft.id);
               else next('review_draft',draft.id);
             }
@@ -1482,9 +1559,18 @@ export class Pipeline {
       case 'compose_frontend_page_plan': next('generate_draft'); break;
       case 'generate_draft': {
         const draft = repository.db.prepare('SELECT id FROM article_drafts WHERE brief_id=?').get(entity);
-        if (draft) { next('review_draft', draft.id); if (this.visuals?.enabled) next('generate_visuals', draft.id); else if (this.canComposeFrontendPage) next('compose_frontend_page', draft.id); }
+        if (draft) {
+          const localRoute=repository.listDraftVisuals(draft.id).some(v=>v.acquisition_strategy==='render_route_schematic');
+          if(!localRoute) next('review_draft',draft.id);
+          if(this.visuals?.enabled || localRoute) next('generate_visuals',draft.id);
+          else if(this.canComposeFrontendPage) next('compose_frontend_page',draft.id);
+        }
         break;
       }
+      case 'generate_visuals':
+        if(this.canComposeFrontendPage) next('compose_frontend_page');
+        else if(repository.listDraftVisuals(entity).some(v=>v.acquisition_strategy==='render_route_schematic')) next('review_draft');
+        break;
       case 'compose_frontend_page': next(deliveryRefreshContinuation(repository,job,'compose_frontend_page') || 'review_draft'); break;
       case 'review_draft': {
         const pack = repository.getDraftPackage(entity);
@@ -1557,9 +1643,10 @@ export class Pipeline {
   }
 
   async uploadVisualMedia(contentPackage, options = {}) {
+    this.repository.assertDraftRouteCurrent?.(contentPackage.draft?.id);
     if (!this.wordpress?.enabled || typeof this.wordpress.resolveVisualMedia !== "function") return [];
     freezeRequiredMediaManifest(this.repository.db, contentPackage.draft?.id);
-    assertPublicationEligibility(this.repository.db, contentPackage.draft?.id, { phase: 'local' });
+    assertPublicationEligibility(this.repository.db, contentPackage.draft?.id, { phase: 'local',requireRouteReview:!options.beforeTextReview });
     const deliveryVisuals = this.repository.listDraftVisualsForDelivery?.(contentPackage.draft?.id)
       || contentPackage.draft?.visuals || [];
     const uploaded = await this.wordpress.resolveVisualMedia(deliveryVisuals, (visual) => {

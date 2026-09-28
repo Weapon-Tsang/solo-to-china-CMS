@@ -3,6 +3,7 @@ import { slugify, truncate } from "../utils.mjs";
 import { createAiClient } from "./client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
+import { MEDIA_CONTEXT_INSTRUCTIONS, mediaContextForSource, contextualImageParts, assertMediaOutputIdentity } from '../media-context.mjs';
 
 const TEXT_REGION_SCHEMA={type:"object",additionalProperties:false,
   required:["region_id","text","role","language","readable","preserve"],properties:{
@@ -97,16 +98,18 @@ export class KimiExtractor {
       visualId:telemetryContext?.visualId || asset.id,substage:'analyze_source_image'});
     let completion;
     try {
+      const source={id:asset.source_id,capture_version:asset.capture_version,media_context:asset.media_context,assets:[asset]};
       completion=await this.client.completeJson({name:"source_asset_media_analysis",schema:MEDIA_ANALYSIS_SCHEMA,
-        instructions:MEDIA_ANALYSIS_PROMPT,content:[{type:"text",text:JSON.stringify({assetId:asset.id,
-          sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",altText:asset.alt_text || "",nearbyText:asset.nearby_text || ""})},
-          ...images.parts],signal,telemetryContext,validateOutput:validateMediaAnalysisOutput});
+        instructions:`${MEDIA_ANALYSIS_PROMPT}\n${MEDIA_CONTEXT_INSTRUCTIONS}`,content:[{type:"text",text:JSON.stringify({assetId:asset.id,
+          sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",media_context:mediaContextForSource(source)})},
+          ...contextualImageParts(source,[asset],images)],signal,telemetryContext,validateOutput:validateMediaAnalysisOutput});
+      assertMediaOutputIdentity({media_analysis:[completion.output]},[asset],{requireAll:true});
       permit?.finish();
     } catch (error) { permit?.finish({error,responseReceived:error?.status != null
       || ['LOCAL_OUTPUT_INVALID','MODEL_OUTPUT_INVALID'].includes(error?.code)}); throw error; }
     return {result:{...sanitizeMediaAnalysis({...completion.output,asset_id:asset.id,
       source_sha256:asset.original_sha256 || asset.stored_sha256 || completion.output?.source_sha256 || ""}),
-      prompt_version:"media-analysis-prompt-3"},
+      prompt_version:"media-analysis-prompt-4"},
       method:this.config.provider || "vertex",model:completion.model};
   }
 
@@ -124,8 +127,8 @@ export class KimiExtractor {
       location: this.config.location || "global",
       projectId: this.config.projectId || "",
       schemaHash: digest(JSON.stringify(coverage ? COVERAGE_AUDIT_SCHEMA : EXTRACTION_SCHEMA)),
-      promptHash: digest(coverage ? COVERAGE_AUDIT_PROMPT : SYSTEM_PROMPT),
-      configVersion: "batch-request-v1",
+      promptHash: digest(coverage ? COVERAGE_AUDIT_PROMPT : `${SYSTEM_PROMPT}\n${MEDIA_CONTEXT_INSTRUCTIONS}`),
+      configVersion: "batch-request-v2-media-context",
     };
     return { ...snapshot, configDigest: digest(JSON.stringify(snapshot)) };
   }
@@ -140,8 +143,8 @@ export class KimiExtractor {
       id: batchItemId,
       name: "source_research_extraction",
       schema: EXTRACTION_SCHEMA,
-      instructions: SYSTEM_PROMPT,
-      content: [{ type: "text", text: buildInput(source) }, ...images.parts],
+      instructions: `${SYSTEM_PROMPT}\n${MEDIA_CONTEXT_INSTRUCTIONS}`,
+      content: [{ type: "text", text: buildInput(source) }, ...contextualImageParts(source,source.assets || [],images)],
     }, runConfig);
     const provider = runConfig?.provider || "vertex";
     const model = runConfig?.model || this.config.model;
@@ -163,6 +166,7 @@ export class KimiExtractor {
 
   createExtractionBatch(requests, options = {}) { return this.client.createBatch(requests, options, options.runConfig); }
   getExtractionBatch(name, runConfig) { return this.client.getBatch(name, runConfig); }
+  findExtractionBatch(inputUri, runConfig) { return this.client.findBatchByInputUri(inputUri, runConfig); }
   readExtractionBatch(batch) { return this.client.readBatchOutput(batch, batch); }
   cleanupExtractionBatch(batch) { return this.client.cleanupBatch(batch, batch); }
 
@@ -178,6 +182,9 @@ export class KimiExtractor {
       throw Object.assign(new Error(`Vertex Batch returned invalid extraction JSON: ${JSON.stringify(errors.slice(0, 10))}`),
         { retryable: true, code: "INVALID_MODEL_OUTPUT" });
     }
+    const manifest=inputManifest || item?.inputManifest;
+    if (manifest?.mediaContext?.assets?.length) assertMediaOutputIdentity(item.output,
+      manifest.mediaContext.assets.map(asset=>({id:asset.asset_id,segment_id:asset.segment_id})),{requireAll:true});
     this.recordBatchAttempt("source_research_extraction", item, runConfig, context, "succeeded");
     return { result: sanitizeResult(item.output), method: "vertex_batch", model: runConfig?.model || this.config.model,
       inputManifest: inputManifest || item?.inputManifest || null };
@@ -242,6 +249,11 @@ export class KimiExtractor {
       if (batches.length === 1 && batch.images.length && !images.parts.length) throw Object.assign(
         new Error("No captured image bytes could be sent to the extraction model."),
         {code:"SOURCE_IMAGE_BYTES_UNAVAILABLE",retryable:true});
+      if (batch.images.length && !images.parts.length) {
+        inputManifests.push(extractionInputManifest({source:{...source,assets:batch.images},
+          provider:this.config.provider || 'kimi',model:this.config.model,batch:false,images}));
+        continue;
+      }
       const videos = await prepareVideoParts({ ...source, assets: batch.videos }, this.config.provider, this.client);
       const deferredImageAnalysis = this.config.provider === "deepseek" && images.parts.length > 0;
       const soleImage=batch.images.length===1 && !batch.videos.length ? batch.images[0] : null;
@@ -256,14 +268,23 @@ export class KimiExtractor {
         completion = await this.client.completeJson({
           name: "source_research_extraction",
           schema: deferredImageAnalysis ? DEEPSEEK_IMAGE_EXTRACTION_SCHEMA : EXTRACTION_SCHEMA,
-          instructions: deepseekInstructions,
-          content: [{ type: "text", text: buildInput(source) }, ...videos.parts, ...images.parts],
+          instructions: `${deepseekInstructions}\n${MEDIA_CONTEXT_INSTRUCTIONS}`,
+          content: [{ type: "text", text: buildInput({...source,assets:[...batch.images,...batch.videos]}) }, ...videos.parts,
+            ...contextualImageParts(source,batch.images,images)],
           signal, telemetryContext,
         });
       } finally {
         await videos.cleanup();
       }
+      if (batch.images.length) assertMediaOutputIdentity(completion.output,batch.images);
       const result = sanitizeResult(completion.output);
+      if (!deferredImageAnalysis) {
+        const returned=new Set(result.media_analysis.map(item=>item.asset_id));
+        for (const asset of batch.images) if (!returned.has(asset.id)) {
+          result.media_analysis.push(sanitizeMediaAnalysis({asset_id:asset.id,analysis_status:'needs_review',asset_kind:'unknown',reader_text_present:true}));
+          result.source.warnings.push(`MEDIA_ANALYSIS_MISSING: ${asset.id}; a missing record is not a negative source binding.`);
+        }
+      }
       if (batch.images.length===1 && !batch.videos.length) result.claims=result.claims.map((claim)=>({
         ...claim,asset_id:batch.images[0].id,
         ...(soleSegmentId ? {segment_id:soleSegmentId} : {}),
@@ -285,7 +306,12 @@ export class KimiExtractor {
       methods.add(videos.parts.length ? "video" : images.parts.length ? "multimodal" : "text");
       model ||= completion.model;
     }
-    return { result: mergeExtractionResults(outputs), method: `${this.config.provider || "kimi"}_${[...methods].join("+")}`, model,
+    if (!outputs.length) throw Object.assign(new Error('No captured image bytes could be sent to the extraction model.'),
+      {code:'SOURCE_IMAGE_BYTES_UNAVAILABLE',retryable:true});
+    const merged=mergeExtractionResults(outputs);
+    if(inputManifests.some(manifest=>manifest.assets.some(asset=>asset.status==='failed')))
+      merged.source.warnings.push('Some captured image assets were unavailable; no request was purchased for an empty image batch.');
+    return { result: merged, method: `${this.config.provider || "kimi"}_${[...methods].join("+")}`, model,
       inputManifest: mergeInputManifests(inputManifests) };
   }
 
@@ -356,6 +382,7 @@ function extractionInputManifest({ source, provider, model, batch, images = {}, 
     model,
     capabilities: { text: true, image: true, video: provider === "vertex", batch: Boolean(batch) },
     assets,
+    ...(expectedKinds.has('image') ? {mediaContext:mediaContextForSource(source)} : {}),
   };
 }
 
@@ -369,6 +396,7 @@ function mergeInputManifests(manifests) {
     expectedModality: manifestModality(expected),
     receivedModality: manifestModality(received),
     assets: values.flatMap((item) => item.assets || []),
+    mediaContexts: values.flatMap((item) => item.mediaContext ? [item.mediaContext] : []),
   };
 }
 
@@ -394,7 +422,7 @@ function mergeExtractionResults(results) {
   const claims = [];
   const seen = new Set();
   for (const claim of results.flatMap((item) => item.claims || [])) {
-    const key = [claim.key, claim.subject, claim.predicate, claim.value, claim.source_quote].join("\u0000").toLowerCase();
+    const key = [claim.asset_id, claim.segment_id, claim.key, claim.subject, claim.predicate, claim.value, claim.source_quote].join("\u0000").toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     claims.push(claim);
@@ -453,7 +481,7 @@ const MEDIA_ANALYSIS_PROMPT=`Analyze this authorized source image as a productio
 - Identify photo regions, entities, primary subjects, and editor UI such as Notes toolbars or canvas controls.
 - Report language per region. Do not use the surrounding note language as a substitute.
 - Do not guess unreadable wording. Use needs_review when any important text, number, price, time, negation, condition, order, arrow, or route fact is unclear. A handwritten card, editorial infographic, or route card with zero decoded text regions cannot be ready.
-- Use analysis_version media-analysis-2 and prompt_version media-analysis-prompt-3.`;
+- Use analysis_version media-analysis-2 and prompt_version media-analysis-prompt-4.`;
 
 const BLUEPRINT_PROMPT = `Analyze only the editorial presentation pattern of this manually selected source.
 - Return format, hook, angle, section organization, strengths, and gaps.
@@ -476,7 +504,9 @@ function buildInput(source) {
     || source.submission_metadata?.asset_segment_ids?.[asset.id]
     || ((source.assets || []).length===1 ? source.submission_metadata?.segment_id : null) || null,
     kind:asset.kind,position:asset.position,altText:asset.alt_text || asset.alt || "",nearbyText:asset.nearby_text || ""}));
-  return [`URL: ${source.submitted_url || source.canonical_url}`, `Source type: ${source.source_kind || source.adapter}`, `Title: ${source.title}`, `Author: ${source.author_name}`, `Published: ${source.published_at || "unknown"}`, `MEDIA MANIFEST: ${JSON.stringify(mediaManifest)}`, "", "SOURCE TEXT:", String(source.raw_text || "")].join("\n");
+  const hasImages=(source.assets || []).some(asset=>asset.kind!=='video');
+  return [`URL: ${source.submitted_url || source.canonical_url}`, `Source type: ${source.source_kind || source.adapter}`, `Title: ${source.title}`, `Author: ${source.author_name}`, `Published: ${source.published_at || "unknown"}`, `MEDIA MANIFEST: ${JSON.stringify(mediaManifest)}`, "",
+    hasImages ? `UNTRUSTED SOURCE CONTEXT: ${JSON.stringify(mediaContextForSource(source))}` : `SOURCE TEXT:\n${String(source.raw_text || "")}`].join("\n");
 }
 
 function buildCoverageInput(segment, extraction) {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { Pipeline } from "../src/pipeline.mjs";
 import { scopeFactsForOpportunity } from "../src/repository.mjs";
@@ -52,6 +53,46 @@ test("pipeline separates extraction, claims, semantic coexistence, and editorial
   assert.equal(dashboard.actionCounts.recommendations, 0);
   assert.equal(repository.getEditorialBlueprints()[0].sample_count, 2);
   assert.equal(repository.getKnowledge()[0].evidence.length, 2);
+});
+
+test("retrying a completed source reuses saved segments and still reaches a terminal state", async (t) => {
+  const { db, repository } = repositoryFixture(t);
+  const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  const source = repository.saveCapture(normalizeXiaohongshuCapture({
+    url: "https://www.xiaohongshu.com/explore/completed-source-retry",
+    title: "Riverside entrance route",
+    text: "Take Metro Line 2 to the riverside entrance. Follow the signed walking path from the station.",
+    images: [{ url: "https://example.test/divider.png", mimeType: "image/png",
+      originalSha256: createHash("sha256").update(bytes).digest("hex"),
+      originalDataUrl: `data:image/png;base64,${bytes.toString("base64")}`,
+      alt: "decorative logo divider", nearbyText: "Decorative divider" }],
+  }));
+  const extractor = {
+    config: { provider: "gemini", sourceUploadsDir: repository.contentConfig.sourceUploadsDir },
+    async extract(input) {
+      const image = (input.assets || []).length > 0;
+      return { method: "fixture", model: "fixture", inputManifest: { version: 1,
+        expectedModality: image ? "image" : "text", receivedModality: image ? "image" : "text",
+        provider: "fixture", model: "fixture", capabilities: { text: true, image: true, video: false, batch: false },
+        assets: (input.assets || []).map(asset => ({ assetId: asset.id, kind: "image", status: "submitted" })) },
+      result: { source: { language: "en", summary: "Route", destination_name: "Fixture City",
+        destination_slug: "fixture-city", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 },
+        claims: image ? [] : [{ key: "fixture.route.metro", subject: "Riverside entrance",
+          predicate: "transport route", value: "Metro Line 2", qualifiers: [], confidence: 0.9,
+          source_quote: "Take Metro Line 2 to the riverside entrance." }],
+        blueprint: { format: "guide", hook: "Route", angle: "first visit", sections: [], strengths: [], gaps: [] } } };
+    },
+    async auditCoverage() { return { output: { uncovered_spans: [] } }; },
+  };
+  const pipeline = new Pipeline(repository, extractor, { maxConcurrent: 1, processIsolationEnabled: false });
+  for (let i = 0; i < 80 && await pipeline.runOne(); i++) {}
+  assert.equal(db.prepare("SELECT status FROM sources WHERE id=?").get(source.id).status, "processed");
+  const claimsBefore = db.prepare("SELECT COUNT(*) AS n FROM claims WHERE source_id=?").get(source.id).n;
+  assert.equal(repository.retrySource(source.id), true);
+  for (let i = 0; i < 80 && await pipeline.runOne(); i++) {}
+  assert.equal(db.prepare("SELECT status FROM sources WHERE id=?").get(source.id).status, "processed");
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued','running')").get().n, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM claims WHERE source_id=?").get(source.id).n, claimsBefore);
 });
 
 test("a manual coverage segment does not fail its source before every segment settles", (t) => {

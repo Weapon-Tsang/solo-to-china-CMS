@@ -37,6 +37,22 @@ test("chunked capture upload rejects an incomplete or hash-mismatched manifest",
   assert.throws(() => manager.complete(manifest.uploadId), (error) => error.code === "CAPTURE_HASH_MISMATCH");
 });
 
+test("a committed capture chunk is immutable and an identical retry is accepted", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "stc-capture-upload-retry-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const manager = new CaptureUploadManager({ uploadDir: directory });
+  const bytes = Buffer.from(JSON.stringify({ title: "Retried capture" }));
+  const manifest = manager.create({ size: bytes.length, sha256: crypto.createHash("sha256").update(bytes).digest("hex") });
+  manager.writeChunk(manifest.uploadId, 0, bytes);
+  manager.writeChunk(manifest.uploadId, 0, bytes);
+  const changed = Buffer.from(bytes);
+  changed[changed.length - 2] ^= 1;
+  assert.throws(() => manager.writeChunk(manifest.uploadId, 0, changed),
+    (error) => error.code === "CAPTURE_CHUNK_CONFLICT" && error.statusCode === 409);
+  assert.deepEqual(manager.complete(manifest.uploadId).payload, { title: "Retried capture" });
+  assert.deepEqual(fs.readdirSync(path.join(directory, manifest.uploadId)).sort(), ["000000.part", "upload.json"]);
+});
+
 test("creating an upload removes abandoned sessions after the configured TTL", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "stc-capture-upload-ttl-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));

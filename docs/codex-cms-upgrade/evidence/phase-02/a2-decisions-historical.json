@@ -1,0 +1,122 @@
+{
+  "scope": "Existing authorized disposable historical DB; real migration in a rolled-back transaction; no production reads",
+  "schemaFrom": 81,
+  "baseline": {
+    "sources": {
+      "count": 84,
+      "sha256": "871777ff5a19c20082ee95cbe04735f37438f66891deddf6aa10e97c676c79a8"
+    },
+    "source_assets": {
+      "count": 1454,
+      "sha256": "916d82e5c530919c5076db615413beb08d9cf71ba0a065bf1c758c741b700a31"
+    },
+    "article_drafts": {
+      "count": 12,
+      "sha256": "166970bc4f006cf526ec819fb1056bc4ef07aba0f05130f92d0e9d8c307ffda8"
+    },
+    "article_visuals": {
+      "count": 26,
+      "sha256": "015d0384f3593d9ca5921c7e050851861241c5a45aa7ca1e5658776fe0277039"
+    },
+    "writing_packets": {
+      "count": 12,
+      "sha256": "ff5d245ed3d256bc342dcd4e12bdebfd81ce8b4646018b7ffc5d518590c899d1"
+    },
+    "jobs": {
+      "count": 18415,
+      "sha256": "ba57b229e03ab846891f9d47836697dd90c01c68f88b229b4c98168d9fd4cecf"
+    },
+    "model_call_metrics": {
+      "count": 6453,
+      "sha256": "efeeeec1697c3cb46f9d09d815fcac3e9c550f96cdd394675d70ea6cc6f500e1"
+    },
+    "wordpress_publications": {
+      "count": 12,
+      "sha256": "4534a75d7a5417e5a64ab82cb3165c3fce87c3b2dd2b44f74dcb5f08db367c2d"
+    },
+    "experience_extraction_runs": {
+      "count": 151,
+      "sha256": "dca517cb8dedc39723de312171f06088ac3daf2df47ad57faf857bb0d0f632d9"
+    }
+  },
+  "externalRequests": 0,
+  "routeDecisionReplay": [
+    {
+      "owner_id": "opportunity_054ccf6fa01c3d17a367c9d1",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_06ddfa67b53af0bd0ce464ca",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_2147a72065b016381a9c388b",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_24a5d6f2e8fc25941b477a92",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_29497fd1e70cd85b60f8b5e8",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_30f91487afa50918408966bd",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_330c863f063b8e4eb60e97bc",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_7c882eef78edb2ffb874e06a",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_870dc70e0b3956c91d79c6b9",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_b3037c5a4c18a00b87fa05c9",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_b9ec578018c96b44fccc9444",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_c7fcd3accb7d587723fa5a52",
+      "status": "unknown",
+      "can_propose": false
+    },
+    {
+      "owner_id": "opportunity_efea47622952958adaa1871e",
+      "status": "unknown",
+      "can_propose": false
+    }
+  ],
+  "mediaReadReplay": [],
+  "migration": "PASS",
+  "schemaTo": 82,
+  "legacyRoutes": "Remain unknown; not fabricated or backfilled",
+  "invariants": {
+    "protectedRowsUnchanged": true,
+    "noAutomaticJobs": true,
+    "noBudgetReset": true,
+    "noInventedHistoricalRoute": true,
+    "foreignKeysValid": true
+  },
+  "rollback": "PASS"
+}

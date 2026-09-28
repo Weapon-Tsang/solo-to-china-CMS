@@ -11,7 +11,10 @@ test('migration 79 preserves configured credentials and routes while adding Gemi
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'stc-migration-79-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const source = fs.readFileSync(new URL('../src/db.mjs', import.meta.url), 'utf8')
-    .replace(/^  if \(current < 79\) migrationSeventyNine\(db\);$/m, '');
+    .replace(/^  if \(current < 79\) migrationSeventyNine\(db\);$/m, '')
+    .replace(/^  if \(current < 81\) migrationEightyOne\(db\);$/m, '')
+    .replace(/^  if \(current < 82\) migrationEightyTwo\(db\);$/m, '')
+    .replace(/^  if \(current < 80\) migrationEighty\(db\);$/m, '');
   const oldPath = path.join(directory, 'db-v78.mjs');
   fs.writeFileSync(oldPath, source);
   const { openDatabase: openV78 } = await import(pathToFileURL(oldPath).href);

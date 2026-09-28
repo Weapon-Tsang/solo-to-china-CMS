@@ -32,7 +32,16 @@ export class ChunkedUploadManager {
     const body = Buffer.from(bytes || []);
     const expected = chunkIndex === expectedCount - 1 ? metadata.size - chunkIndex * metadata.chunkBytes : metadata.chunkBytes;
     if (body.length !== expected) throw uploadError("INVALID_CHUNK_SIZE", `Chunk ${chunkIndex + 1} has ${body.length} bytes; expected ${expected}.`, 400);
-    fs.writeFileSync(path.join(this.directory(uploadId), `${String(chunkIndex).padStart(6, "0")}.part`), body, { flag: "w" });
+    const filename = path.join(this.directory(uploadId), `${String(chunkIndex).padStart(6, "0")}.part`);
+    const temporary = `${filename}.${crypto.randomUUID()}.tmp`;
+    fs.writeFileSync(temporary, body, { flag: "wx" });
+    try {
+      try { fs.linkSync(temporary, filename); }
+      catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        if (!fs.readFileSync(filename).equals(body)) throw uploadError("CHUNK_CONFLICT", "Uploaded chunk differs from the existing chunk.", 409);
+      }
+    } finally { fs.rmSync(temporary, { force: true }); }
     return { uploadId, index: chunkIndex, receivedBytes: body.length, chunkCount: expectedCount };
   }
 
@@ -47,20 +56,21 @@ export class ChunkedUploadManager {
     fs.mkdirSync(finalDirectory, { recursive: true });
     const extension = safeVideoExtension(metadata.name, metadata.mimeType);
     const storagePath = path.join(finalDirectory, `01-${crypto.randomUUID()}${extension}`);
-    const output = fs.openSync(storagePath, "wx");
+    const temporaryPath = `${storagePath}.tmp`;
+    const output = fs.openSync(temporaryPath, "wx");
     try {
       for (const filename of parts) {
         const part = fs.readFileSync(filename);
         fs.writeSync(output, part);
       }
     } finally { fs.closeSync(output); }
-    const stat = fs.statSync(storagePath);
+    const stat = fs.statSync(temporaryPath);
     if (stat.size !== metadata.size) {
       fs.rmSync(finalDirectory, { recursive: true, force: true });
       throw uploadError("UPLOAD_SIZE_MISMATCH", "Completed upload size does not match the declared file size.", 400);
     }
     const signature = Buffer.alloc(16);
-    const signatureFd = fs.openSync(storagePath, "r");
+    const signatureFd = fs.openSync(temporaryPath, "r");
     let signatureBytes = 0;
     try { signatureBytes = fs.readSync(signatureFd, signature, 0, signature.length, 0); }
     finally { fs.closeSync(signatureFd); }
@@ -69,12 +79,13 @@ export class ChunkedUploadManager {
       throw uploadError("INVALID_VIDEO_FILE", "Video signature does not match its filename. Convert the file to a supported video format and retry.", 400);
     }
     const sha = crypto.createHash("sha256");
-    const fd = fs.openSync(storagePath, "r");
+    const fd = fs.openSync(temporaryPath, "r");
     try {
       const buffer = Buffer.allocUnsafe(1024 * 1024);
       let read;
       while ((read = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) sha.update(buffer.subarray(0, read));
     } finally { fs.closeSync(fd); }
+    fs.renameSync(temporaryPath, storagePath);
     fs.rmSync(directory, { recursive: true, force: true });
     const title = String(input.title || metadata.name).slice(0, 1_000);
     const notes = String(input.notes || "");
