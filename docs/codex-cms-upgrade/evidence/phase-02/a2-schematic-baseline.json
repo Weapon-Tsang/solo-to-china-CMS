@@ -1,0 +1,26 @@
+{
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "branch": "main",
+  "files": [
+    {
+      "sha256": "CB2234B710A29BF14E5E963E691CE1F8E765C5EC53D2D2979ABBABB0303F095E",
+      "path": "src/repository.mjs"
+    },
+    {
+      "sha256": "EC6B3178C5E9BA8EE334E94F8BCE6390EEC0453C0C92ED69D845B85F5909EBEE",
+      "path": "src/pipeline.mjs"
+    },
+    {
+      "sha256": "ABA81C5F73622E2C0536F5674BD9082AB2F03B6190A720FC72FA8833B07977AD",
+      "path": "src/publication-eligibility.mjs"
+    },
+    {
+      "sha256": "BF3529C9D128F75979121139A5A2423A6A5C4D7C503D4B45D0C148179EC8F936",
+      "path": "src/visuals/route-schematic.mjs"
+    },
+    {
+      "sha256": "A9C4572D14CB86B9600B5F66D0510C4098337B1F73BE0325C029DA6EAC104D0A",
+      "path": "test/route-production.test.mjs"
+    }
+  ]
+}

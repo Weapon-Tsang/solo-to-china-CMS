@@ -1,0 +1,15 @@
+✔ unknown optional duration is omitted with evidence warning while core fields cannot be downgraded (8.9793ms)
+✔ multi-source same-scope field conflicts retain both locators; distinct scopes stay independent (5.6293ms)
+✔ stored selection chooses the approved source, never the source with more photographs (2.0394ms)
+✔ approved multi-source composition retains repeated visits and field evidence without adding model calls (4.3272ms)
+✔ cross-source connection uses supported entity endpoints and rejects similarly named substitutes (2.4946ms)
+✔ panel, asset and directed field provenance is preserved; invented regions and ambiguous arrows block (2.0846ms)
+✔ available city/bank/time and stale-condition evidence blocks conflicts without claiming live verification (4.2321ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 128.9316

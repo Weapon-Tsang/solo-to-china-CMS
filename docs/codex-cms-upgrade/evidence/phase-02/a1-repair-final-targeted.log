@@ -1,0 +1,47 @@
+(node:13636) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-38: automatic local supplementation reads complete long captions and keeps exact locators (3.8643ms)
+✔ T02-38: exhausted automatic reads retain omitted ranges and never hide pending context (6.8661ms)
+✔ T02-43: changing image order changes the context fingerprint and cannot reuse old positional evidence (0.4181ms)
+✔ T02-42/45: repair previews are read-only, apply is idempotent and stale preview cannot write (594.6403ms)
+✔ T02-43: revocation survives context/policy revisions without restoring automatic adoption (600.2579ms)
+✔ T02-38/45: evidence beyond the budget cannot produce a confirmed relation (572.5473ms)
+✔ T02-45: affected slots are reported while draft and frozen manifest remain unchanged (530.7309ms)
+(node:22600) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-33/34/40: explicit source relation retrieves a generic photo with no Claims and survives focused-article matching (588.7125ms)
+✔ T02-43: ambiguous cross-destination entities are separately retained and city-level names cannot confirm a stop (593.0307ms)
+✔ T02-43: publication gate rejects a revoked source binding even when an old matching score is high (526.9939ms)
+✔ T02-42/43: a newly conflicting alias invalidates only the binding revision and preserves prior evidence (543.8447ms)
+✔ T02-36/39: nearby mentions, uncertain captions and multi-place image references cannot certify a specific photo (531.8421ms)
+✔ T02-41: explicit IDs beyond 160 are preserved; automatic paging reports a remaining range (674.0368ms)
+✔ T02-42/43: only binding context changes, old relation remains stale, analysis and bytes are reused (530.7825ms)
+✔ T02-63/70: snapshot and isolated review restore preserve context and binding fingerprints without jobs (750.8835ms)
+✔ schema 81 is additive and does not backfill, buy analysis, or mutate old records (1083.7829ms)
+✔ T02-42/43: reads reject text, caption and alias changes before a repair job without mutating records (524.6648ms)
+✔ T02-42/43: reversible evidence edits restore the matching revision but never revive revoked decisions (527.5252ms)
+✔ T02-39: entity identity cannot certify a different destination, uppercase entrance or whole-day diagram (0.1688ms)
+✔ T02-43: alias cache observes another connection and never retains rolled-back evidence (571.1206ms)
+(node:24080) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-38/43: authenticated HTTP context readback is bounded, versioned, read-only and escaped as JSON (681.9597ms)
+(node:860) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-35: source image references, independent captions and occurrence IDs survive realtime, Batch and reanalysis requests (606.626ms)
+✔ T02-36/37: title and mention order do not become explicit bindings; equal bytes retain distinct occurrences (1.1012ms)
+✔ T02-38: long source context prioritizes image references and exposes recoverable omitted offsets (3.042ms)
+✔ T02-38: image transport cannot silently change image-to-context order or accept unknown IDs (0.997ms)
+✔ T02-38: realtime rejects foreign image IDs before single-image normalization and flags missing analysis (0.7193ms)
+✔ T02-38: Batch rejects missing image analysis against its persisted context manifest (0.6612ms)
+✔ T02-43: reanalysis of a retained image uses its own capture, and caption changes invalidate context only (588.8278ms)
+✔ T02-37: identical claim text from two images retains both evidence identities (1.4424ms)
+✔ T02-38: bounded readback recovers omitted prose and metadata and rejects changed evidence (116.5761ms)
+✔ T02-38/43: repository readback pins the current or historical capture and never borrows a newer text (589.1434ms)
+ℹ tests 31
+ℹ suites 0
+ℹ pass 31
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7740.8676

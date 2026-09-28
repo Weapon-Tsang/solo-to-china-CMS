@@ -88,7 +88,8 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
         production_modes: ["TOPIC_FEATURE", "SOURCE_ADAPTATION", "MULTI_SOURCE_SYNTHESIS"],
         production_paths: [
           { mode: "TOPIC_FEATURE", content_type: "first_time_guide", title: "First-Time Beijing Solo Travel Guide", reader_promise: "Plan a bounded first visit", why_it_works: "The source contains practical planning evidence.", evidence_boundary: "Use the scoped facts only." },
-          { mode: "SOURCE_ADAPTATION", content_type: "itinerary", title: "Source A's Beijing Route", reader_promise: "Follow this author's route", why_it_works: "The authorized source contains a coherent route.", evidence_boundary: "Use this source only." },
+          // This fixture contains general preparation facts, no ordered route evidence.
+          { mode: "SOURCE_ADAPTATION", content_type: "first_time_guide", title: "Source A's Beijing Guide", reader_promise: "Use this author's preparation guide", why_it_works: "The authorized source contains practical preparation facts.", evidence_boundary: "Use this source only." },
           { mode: "MULTI_SOURCE_SYNTHESIS", content_type: "comparison", title: "Two Ways to Plan a Beijing First Visit", reader_promise: "Compare compatible approaches", why_it_works: "Two independent sources support useful alternatives.", evidence_boundary: "Use compatible destination facts." },
         ],
         confidence: 0.9, primary_topic: "First-Time Beijing", entities: ["Beijing"],

@@ -5,6 +5,9 @@ import { evidenceTextContains, pageBlockSignature, protectedFactTokens, validate
 import { titlePromiseRisks } from "../seo-geo.mjs";
 import { separateQualityResults } from "../services/content-recovery-policy.mjs";
 import { normalizeFrontendPageForDelivery } from "../content-taxonomy.mjs";
+import { mediaAvailabilitySnapshot } from '../media-availability.mjs';
+import { ROUTE_FRAGMENTS_SCHEMA, ROUTE_EXTRACTION_PROMPT, ROUTE_WRITING_PROMPT, ROUTE_REVIEW_PROMPT, ROUTE_AUDIT_SCHEMA } from './route-contract.mjs';
+import { assertFrozenRoute, routeError, routeReadableMarkdown, validateRouteDraft } from '../route-bundle.mjs';
 
 const BRIEF_SCHEMA = objectSchema(
   ["title", "primary_keyword", "search_intent", "audience", "angle", "reader_promise", "outline", "adaptation_requirements", "conflict_instructions", "verification_instructions", "canonical"],
@@ -79,6 +82,7 @@ const INTAKE_SCHEMA = objectSchema(
 );
 
 const EXPERIENCE_SCHEMA = objectSchema(["blocks"], {
+  route_fragments: ROUTE_FRAGMENTS_SCHEMA,
   // Keep the provider schema below Vertex's structured-output complexity
   // ceiling. The repository enforces the 20-block cap deterministically.
   blocks: { type: "array", items: objectSchema(
@@ -300,22 +304,24 @@ export class ContentEngine {
   }
 
   async plan(research, options = {}) {
+    if(research.route_bundle) assertFrozenRoute(research.route_bundle);
     return this.respond({
       name: "content_brief",
       schema: BRIEF_SCHEMA,
-      instructions: briefPrompt(this.contentStrategy.version),
+      instructions: briefPrompt(this.contentStrategy.version) + ROUTE_WRITING_PROMPT,
       input: JSON.stringify(research), options,
     });
   }
 
   async articleBundle(research, options = {}) {
+    if (research.route_bundle) assertFrozenRoute(research.route_bundle);
     const facts = (research?.facts || []).map((fact) => ({ ...fact,
       evidence: compactFactEvidence(fact.evidence) }));
     const allowedFactKeys = facts.map((fact) => fact.normalized_key);
     const result = await this.respond({
       name: 'article_bundle_v1', schema: ARTICLE_BUNDLE_SCHEMA,
-      instructions: ARTICLE_BUNDLE_PROMPT,
-      input: JSON.stringify({ ...research, facts }),
+      instructions: ARTICLE_BUNDLE_PROMPT + ROUTE_WRITING_PROMPT,
+      input: JSON.stringify({ ...research, facts,approved_route_table:research.route_bundle ? routeReadableMarkdown(research.route_bundle):null }),
       options: { ...options, validateOutput: (output) => {
         const outline = output.brief?.outline || [];
         const sectionIds = outline.map((section) => section.section_id).filter(Boolean);
@@ -327,6 +333,7 @@ export class ContentEngine {
         validateGeneratedDraftProtectedValues(output.draft, facts);
         normalizeGeneratedDraftEvidenceSources(output.draft, facts, outline);
         validateGeneratedDraftStructure(output.draft, outline);
+        validateRouteDraft(research.route_bundle,output.draft);
       } },
     });
     result.output.draft.slug = slugify(result.output.draft.slug || result.output.draft.title);
@@ -346,7 +353,7 @@ export class ContentEngine {
     return this.respond({
       name: "experience_extraction",
       schema: EXPERIENCE_SCHEMA,
-      instructions: EXPERIENCE_PROMPT,
+      instructions: EXPERIENCE_PROMPT + ROUTE_EXTRACTION_PROMPT,
       input: JSON.stringify(sourcePackage), options,
     });
   }
@@ -361,15 +368,17 @@ export class ContentEngine {
   }
 
   async planNarrative(contentPackage, options = {}) {
+    if(contentPackage.route_bundle) assertFrozenRoute(contentPackage.route_bundle);
     return this.respond({
       name: "narrative_plan",
       schema: NARRATIVE_SCHEMA,
-      instructions: NARRATIVE_PROMPT,
+      instructions: NARRATIVE_PROMPT + ROUTE_WRITING_PROMPT,
       input: JSON.stringify(contentPackage), options,
     });
   }
 
   async draft(contentPackage, revisionFeedback = null, options = {}) {
+    if(contentPackage.route_bundle) assertFrozenRoute(contentPackage.route_bundle);
     const context = contentPackage.writing_packet?.context;
     const policy = (context?.version === 2 ? context.content_policy : contentPackage.content_policy) || {};
     const input = draftInputDto(contentPackage);
@@ -396,11 +405,12 @@ export class ContentEngine {
       validateGeneratedDraftProtectedValues(output, input.evidence_ledger_facts);
       normalizeGeneratedDraftEvidenceSources(output, input.evidence_ledger_facts, outline);
       validateGeneratedDraftStructure(output, outline);
+      validateRouteDraft(contentPackage.route_bundle,output);
     };
     const request = (extraFeedback = revisionFeedback) => this.respond({
       name: "article_draft_v2",
       schema,
-      instructions: draftPrompt(policy),
+      instructions: draftPrompt(policy) + ROUTE_WRITING_PROMPT,
       input: JSON.stringify({ ...input, revision_feedback: extraFeedback }),
       options: { ...options, validateOutput: prepareAndValidate },
     });
@@ -438,14 +448,15 @@ export class ContentEngine {
     const request = (input) => this.respond({
       name: "bounded_draft_repair",
       schema,
-      instructions: DRAFT_REPAIR_PROMPT,
-      input: JSON.stringify(input), options,
+      instructions: DRAFT_REPAIR_PROMPT + ROUTE_WRITING_PROMPT,
+      input: JSON.stringify({...input,route_bundle:contentPackage.route_bundle || null}), options,
     });
     const apply = (result) => {
       result.output = applyBoundedDraftRepair(existing, result.output, repairIssues,
         { validFactKeys: factDtos(contentPackage).map((fact) => fact.normalized_key),
           sectionHeadings:(contentPackage.brief?.plan?.outline || contentPackage.brief?.outline || []).map((section)=>section.heading).filter(Boolean) });
       validateGeneratedDraftProtectedValues(result.output, factDtos(contentPackage));
+      validateRouteDraft(contentPackage.route_bundle,result.output);
       return result;
     };
     const first = await request(repairInput);
@@ -523,13 +534,23 @@ export class ContentEngine {
   }
 
   async review(contentPackage, options = {}) {
+    const route=contentPackage.route_bundle;
+    if(route) validateRouteDraft(route,contentPackage.draft);
     const goalAudit=Number.parseFloat(String(contentPackage.brief?.strategy_version || "0"))>=3.8;
     const modelReview = await this.respond({
       name: goalAudit ? "quality_review_v3" : "quality_review_v2",
-      schema: REVIEW_SCHEMA,
-      instructions: REVIEW_PROMPT,
+      schema: route ? {...REVIEW_SCHEMA,required:[...REVIEW_SCHEMA.required,'route_audit'],
+        properties:{...REVIEW_SCHEMA.properties,route_audit:ROUTE_AUDIT_SCHEMA}} : REVIEW_SCHEMA,
+      instructions: REVIEW_PROMPT + ROUTE_REVIEW_PROMPT,
       input: JSON.stringify(reviewInputDto(contentPackage)), options,
     });
+    if(route && (!modelReview.output.route_audit?.checked || modelReview.output.route_audit.approved_route_hash!==route.approved_route_hash))
+      throw routeError('ROUTE_REVIEW_MISSING',{route_id:route.route_id});
+    if(route && (!modelReview.output.route_audit.passed || modelReview.output.route_audit.differences.length)) {
+      modelReview.output.passed=false;
+      modelReview.output.issues=[...(modelReview.output.issues || []),{code:'ROUTE_TEXT_MISMATCH',severity:'blocker',
+        message:JSON.stringify(modelReview.output.route_audit.differences)}];
+    }
     return { ...modelReview, output: applyDeterministicGates(modelReview.output, contentPackage) };
   }
 
@@ -542,14 +563,15 @@ export class ContentEngine {
     const contracts = {
       analyze_intake: ['content_intake_analysis', INTAKE_SCHEMA, intakePrompt(this.contentStrategy.version)],
       analyze_source_diagnostic: ['content_intake_analysis', INTAKE_SCHEMA, intakePrompt(this.contentStrategy.version)],
-      extract_source_experience: ['experience_extraction', EXPERIENCE_SCHEMA, EXPERIENCE_PROMPT],
+      extract_source_experience: ['experience_extraction', EXPERIENCE_SCHEMA, EXPERIENCE_PROMPT + ROUTE_EXTRACTION_PROMPT],
       assemble_editorial: ['editorial_assembly', ASSEMBLY_SCHEMA, ASSEMBLY_PROMPT],
-      plan_content: ['content_brief', BRIEF_SCHEMA, briefPrompt(this.contentStrategy.version)],
-      article_bundle_v1: ['article_bundle_v1', ARTICLE_BUNDLE_SCHEMA, ARTICLE_BUNDLE_PROMPT],
-      plan_narrative: ['narrative_plan', NARRATIVE_SCHEMA, NARRATIVE_PROMPT],
-      generate_draft: ['article_draft_v2', DRAFT_SCHEMA, draftPrompt.toString()],
-      revise_draft: ['bounded_draft_repair', DRAFT_REPAIR_SCHEMA, DRAFT_REPAIR_PROMPT],
-      review_draft: [Number.parseFloat(String(this.contentStrategy.version || '0')) >= 3.8 ? 'quality_review_v3' : 'quality_review_v2', REVIEW_SCHEMA, REVIEW_PROMPT],
+      plan_content: ['content_brief', BRIEF_SCHEMA, briefPrompt(this.contentStrategy.version) + ROUTE_WRITING_PROMPT],
+      article_bundle_v1: ['article_bundle_v1', ARTICLE_BUNDLE_SCHEMA, ARTICLE_BUNDLE_PROMPT + ROUTE_WRITING_PROMPT],
+      plan_narrative: ['narrative_plan', NARRATIVE_SCHEMA, NARRATIVE_PROMPT + ROUTE_WRITING_PROMPT],
+      generate_draft: ['article_draft_v2', DRAFT_SCHEMA, draftPrompt.toString() + ROUTE_WRITING_PROMPT],
+      revise_draft: ['bounded_draft_repair', DRAFT_REPAIR_SCHEMA, DRAFT_REPAIR_PROMPT + ROUTE_WRITING_PROMPT],
+      review_draft: [Number.parseFloat(String(this.contentStrategy.version || '0')) >= 3.8 ? 'quality_review_v3' : 'quality_review_v2',
+        {...REVIEW_SCHEMA,properties:{...REVIEW_SCHEMA.properties,route_audit:ROUTE_AUDIT_SCHEMA}},REVIEW_PROMPT + ROUTE_REVIEW_PROMPT],
       resolve_entities: ['destination_entity_resolution', ENTITY_RESOLUTION_SCHEMA, ENTITY_RESOLUTION_PROMPT],
       compose_frontend_page_plan: ['frontend_page_plan', PAGE_PLAN_SCHEMA, pagePlanPrompt.toString()],
       compose_frontend_page: ['frontend_page_payload', null, pagePayloadPrompt.toString()],
@@ -793,6 +815,8 @@ export function draftInputDto(contentPackage) {
   const outline = contentPackage.brief?.plan?.outline || contentPackage.brief?.outline || [];
   const experiences = (context?.version === 2 ? context.experiences : contentPackage.experiences) || [];
   return {
+    route_bundle:context?.route_bundle || contentPackage.route_bundle || null,
+    approved_route_table:contentPackage.route_bundle ? routeReadableMarkdown(contentPackage.route_bundle):null,
     brief: safeDraftBrief(contentPackage.brief, validFactKeys),
     writing_packet: contentPackage.writing_packet ? {
       text: safeWritingDirective(contentPackage.brief, outline),
@@ -831,6 +855,9 @@ export function draftInputDto(contentPackage) {
     // The writing packet persists the full media inventory for deterministic
     // matching. The writer only needs concise image-level descriptions; do
     // not resend binary previews, provenance blobs and nearby source prose.
+    media_availability: context?.version === 2
+      ? (context.media_availability || mediaAvailabilitySnapshot(context.authorized_source_assets || []))
+      : (contentPackage.media_availability || mediaAvailabilitySnapshot(contentPackage.authorized_source_assets || [])),
     authorized_source_assets: ((context?.version === 2 ? context.authorized_source_assets : contentPackage.authorized_source_assets) || [])
       .map((asset) => ({ id:asset.id || asset.source_asset_id,source_id:asset.source_id,
         asset_kind:asset.asset_kind,alt_text:truncate(asset.alt_text,180),
@@ -840,7 +867,10 @@ export function draftInputDto(contentPackage) {
           .map((entry)=>truncate(typeof entry === "string" ? entry : entry?.name || entry?.label || "",100)),
         language_status:asset.language_status,original_stored:asset.original_bytes_status === "saved_original"
           && asset.durability_status === "ORIGINAL_STORED",
-        locally_audited_photo:asset.local_photo_audit?.status === "eligible" })),
+        locally_audited_photo:asset.local_photo_audit?.status === "eligible",
+        ...(asset.source_bindings?.length ? {source_bindings:asset.source_bindings.filter(row=>row.status==='confirmed')
+          .map(row=>({id:row.id,entity_key:row.entity_key,canonical_subject:row.canonical_subject,relation_type:row.relation_type,
+            context_hash:row.context_hash,allowed_uses:row.allowed_uses,prohibited_inferences:row.prohibited_inferences}))} : {}) })),
     internal_link_inventory: (context?.version === 2 ? context.internal_link_inventory : contentPackage.internal_link_inventory) || [],
     frontend_page_plan: safeFrontendPlan(contentPackage.frontend_page_plan?.plan, validFactKeys),
   };
@@ -1042,6 +1072,7 @@ function reviewInputDto(contentPackage) {
   const plan=contentPackage.brief?.plan || contentPackage.brief || {};
   const canonical=contentPackage.brief?.canonical || plan.canonical || {};
   return {
+    route_bundle:contentPackage.route_bundle || null,
     brief: safeDraftBrief(contentPackage.brief,factKeys),
     canonical: {
       content_type:canonical.content_type,
@@ -1065,7 +1096,7 @@ function reviewInputDto(contentPackage) {
       evidence_ledger:draft.evidence_ledger,unresolved_conflicts:draft.unresolved_conflicts,
       verification_notes:draft.verification_notes,seo:draft.seo,faqs:draft.faqs || draft.seo?.faqs || [],
       visuals:(draft.visuals || []).map((visual)=>({placement:visual.placement,purpose:visual.purpose,
-        alt_text:visual.alt_text,image_type:visual.image_type,image_role:visual.image_role,factual_image_required:visual.factual_image_required})),
+        alt_text:visual.alt_text,caption:visual.caption,image_type:visual.image_type,image_role:visual.image_role,factual_image_required:visual.factual_image_required})),
     },
     frontend_page: contentPackage.frontend_page ? {
       current: contentPackage.frontend_page.current,

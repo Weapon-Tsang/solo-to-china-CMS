@@ -22,6 +22,21 @@ test("model credential encryption readiness distinguishes missing, malformed, an
   assert.equal(valid.encryptionErrorCode,null);
 });
 
+test("a migrated encrypted credential remains intact when the root key is missing or wrong", (t) => {
+  const {db, repository} = repositoryFixture(t, {modelCredentialEncryptionKey: encryptionKey});
+  const initial = repository.getModelRoutingSettings();
+  repository.updateModelRouting({provider: "deepseek", apiKey: "migrated-secret", expectedRevision: initial.revision});
+  const before = db.prepare("SELECT encrypted_secret,iv,auth_tag,key_version FROM model_credentials WHERE provider='deepseek'").get();
+  const missing = new Repository(db, {modelCredentialEncryptionKey: ""});
+  assert.equal(missing.getModelRoutingSettings().encryptionErrorCode, "MODEL_CREDENTIAL_ENCRYPTION_KEY_REQUIRED");
+  assert.throws(() => missing.readModelCredential("deepseek"), (error) => error.code === "MODEL_CREDENTIAL_ENCRYPTION_KEY_REQUIRED");
+  const wrong = new Repository(db, {modelCredentialEncryptionKey: Buffer.alloc(32, 8).toString("base64")});
+  assert.equal(wrong.getModelRoutingSettings().encryptionErrorCode, "MODEL_CREDENTIAL_DECRYPT_FAILED");
+  assert.throws(() => wrong.readModelCredential("deepseek"), (error) => error.code === "MODEL_CREDENTIAL_DECRYPT_FAILED" && !error.message.includes("migrated-secret"));
+  assert.deepEqual(db.prepare("SELECT encrypted_secret,iv,auth_tag,key_version FROM model_credentials WHERE provider='deepseek'").get(), before);
+  assert.equal(repository.readModelCredential("deepseek"), "migrated-secret");
+});
+
 test("encrypted extraction routing is optimistic and freezes each new Job profile",(t)=>{
   const {db,repository}=repositoryFixture(t,{modelCredentialEncryptionKey:encryptionKey});
   const initial=repository.getModelRoutingSettings();

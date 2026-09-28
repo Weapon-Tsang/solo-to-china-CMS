@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-27T16:26:48.260Z",
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "input": "38c53e6c1ca21c5b8ea78087ea364937b035f3afea2ee568ab17f13a0e57010f",
+  "files": {
+    "src/db.mjs": "d08405a897c4723740c686ca139e8cc69358bb025b0228d62bb666261507480d",
+    "src/repository.mjs": "ae29c7f4912d9974e5e0d385859578ea044bddb7431b9f1cf3a1254344692157",
+    "src/pipeline.mjs": "bd6ce7f760e87c3b47b945077c06bbe969b72b6d97824096fd5455b74b1a8d92",
+    "src/ai/content-engine.mjs": "404580c8d2dc56e95b3305f23495b87d88e6e264fc3a5282999244a2cdeb266b",
+    "src/backup.mjs": "fee91268217c11a50df48a0e4886b3c91c154fc2d1f9894bd7e0bcb1c2ab73d1",
+    "src/server.mjs": "30cbe9fe6fbd1ac865939ec976a695ef475f95f05123931c034a4d2ef7f1fdda",
+    "frontend/src/views.jsx": "076d30074bf7d879da6879592ececceb5756060de04e6f704d0b51b98daed50d",
+    "src/publication-eligibility.mjs": "171cb2d6fa8b0e1d781684948e5a7f0f028e4358419052c0a320771a9c9d4e30"
+  }
+}

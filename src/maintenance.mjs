@@ -82,12 +82,14 @@ export class MaintenanceScheduler {
         const backup=this.config.processIsolationEnabled
           ? await this.processRunner(BACKUP_SCRIPT,[this.config.databasePath,this.config.backupDir],{timeoutMs:6*60*60_000,env:{
               SOURCE_UPLOADS_DIR:this.config.sourceUploadsDir,GENERATED_MEDIA_DIR:this.config.generatedMediaDir,
+              CAPTURE_UPLOADS_DIR:this.config.captureUploadsDir,CAPTURE_MEDIA_UPLOADS_DIR:this.config.captureMediaUploadsDir,
               BACKUP_RETENTION:String(this.config.backupRetention),BACKUP_OFFSITE_LOCATION:this.config.backupOffsiteLocation||"",
               BACKUP_OFFSITE_RETENTION_DAYS:String(this.config.backupOffsiteRetentionDays||0),
               APP_REVISION:this.config.codeRevision||"",BACKUP_REASON:"scheduled",
             }})
           : createBackup({databasePath:this.config.databasePath,backupDir:this.config.backupDir,
               sourceUploadsDir:this.config.sourceUploadsDir,generatedMediaDir:this.config.generatedMediaDir,
+              captureUploadsDir:this.config.captureUploadsDir,captureMediaUploadsDir:this.config.captureMediaUploadsDir,
               retention:this.config.backupRetention,offsiteLocation:this.config.backupOffsiteLocation,
               offsiteRetentionDays:this.config.backupOffsiteRetentionDays,codeRevision:this.config.codeRevision,reason:"scheduled"});
         return { itemCount: 1, metadata: { backup: backup.backup, bytes: backup.bytes, sha256: backup.sha256,

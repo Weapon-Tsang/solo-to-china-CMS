@@ -1,0 +1,133 @@
+ M .env.example
+ M .gitignore
+ M deployment/gce/code-only-release.sh
+ M deployment/gce/resume-verified-upgrade.sh
+ M extension/background.js
+ M extension/manifest.json
+ M extension/page-extractor.js
+ M extension/popup.js
+ M extension/sync-core.js
+ M frontend/src/App.jsx
+ M frontend/src/views.jsx
+ M package-lock.json
+ M package.json
+ M src/adapters/manual-source.mjs
+ M src/ai/content-engine.mjs
+ M src/ai/extraction-router.mjs
+ M src/ai/kimi.mjs
+ M src/ai/vertex-gemini-client.mjs
+ M src/backup.mjs
+ M src/capture-upload.mjs
+ M src/chunked-upload.mjs
+ M src/config.mjs
+ M src/db.mjs
+ M src/maintenance.mjs
+ M src/media-storage.mjs
+ M src/pipeline.mjs
+ M src/publication-eligibility.mjs
+ M src/repository.mjs
+ M src/server.mjs
+ M src/services/operations-workspace.mjs
+ M src/source-media-store.mjs
+ M src/visuals/vertex-imagen.mjs
+ M test/backup.test.mjs
+ M test/capture-upload.test.mjs
+ M test/capture.test.mjs
+ M test/content-pipeline.test.mjs
+ M test/extension-background-recovery.test.mjs
+ M test/favorites-sync.test.mjs
+ M test/frontend-localization.test.mjs
+ M test/historical-visual-analysis.test.mjs
+ M test/media-analysis.test.mjs
+ M test/media-request-executor.test.mjs
+ M test/migration-seventy-nine.test.mjs
+ M test/model-routing-v11.test.mjs
+ M test/openai.test.mjs
+ M test/pipeline.test.mjs
+ M test/reliability-dom.test.mjs
+ M test/server.test.mjs
+ M test/vertex-batch-pipeline.test.mjs
+ M test/vertex-gemini-client.test.mjs
+ M test/visuals.test.mjs
+?? docs/codex-cms-upgrade/
+?? extension/run-control.js
+?? frontend/src/workspaces/pdf-source-supplement.jsx
+?? frontend/src/workspaces/route-preview.jsx
+?? frontend/src/workspaces/source-binding-repair.jsx
+?? frontend/src/workspaces/source-media-context.jsx
+?? scripts/audit-extension-pre-fixture.mjs
+?? scripts/benchmark-local-stage01-browser.js
+?? scripts/benchmark-local-stage01-fin01-browser.js
+?? scripts/benchmark-local-stage01-load.mjs
+?? scripts/benchmark-local-stage01.mjs
+?? scripts/inspect-local-data.mjs
+?? scripts/local-runtime-status.mjs
+?? scripts/prepare-local-release.mjs
+?? scripts/promote-local-data.mjs
+?? scripts/stage01-audit-snapshot.py
+?? scripts/stage01-benchmark-exceptions.mjs
+?? scripts/stage01-cloud-audit.py
+?? scripts/stage01-extract-snapshot.py
+?? scripts/stage01-fetch-snapshot.py
+?? scripts/stage01-fin01-api-benchmark.mjs
+?? scripts/stage01-fin01-review-guard.mjs
+?? scripts/stage01-fin01-worker.mjs
+?? scripts/stage01-profile-exceptions.mjs
+?? scripts/stage01-public-runtime-audit.py
+?? scripts/stage01-repair-identical-derivative.py
+?? scripts/stage01-replay-source-gaps.mjs
+?? scripts/stage01-snapshot-readonly.mjs
+?? scripts/stage01-vertex-canary.mjs
+?? scripts/stage01-worker-replay.mjs
+?? scripts/stage02-availability-read-audit.mjs
+?? scripts/stage02-binding-read-audit.mjs
+?? scripts/stage02-binding-repair-replay.mjs
+?? scripts/stage02-context-browser-fixture.mjs
+?? scripts/stage02-media-binding-replay.mjs
+?? scripts/stage02-pdf-browser-fixture.mjs
+?? scripts/stage02-route-browser-fixture.mjs
+?? scripts/stage02-route-historical-replay.mjs
+?? scripts/verify-extension-pre-browser.mjs
+?? scripts/verify-local-release-isolation.mjs
+?? scripts/verify-stage02-binding-repair-browser.js
+?? scripts/verify-stage02-context-browser.js
+?? scripts/verify-stage02-media-diagnostics-browser.js
+?? scripts/verify-stage02-pdf-supplement-browser.js
+?? scripts/verify-stage02-route-browser.js
+?? src/ai/route-contract.mjs
+?? src/atomic-media-file.mjs
+?? src/google-access-token.mjs
+?? src/local-runtime.mjs
+?? src/media-availability.mjs
+?? src/media-context.mjs
+?? src/media-file-lease.mjs
+?? src/repositories/media-binding-repair.mjs
+?? src/repositories/media-bindings.mjs
+?? src/repositories/media-diagnostics.mjs
+?? src/repositories/pdf-source-supplements.mjs
+?? src/repositories/route-bundles.mjs
+?? src/route-bundle.mjs
+?? src/route-composition.mjs
+?? src/route-media.mjs
+?? src/visuals/route-schematic.mjs
+?? test-support/pdf-supplement-fixture.mjs
+?? test-support/route-fixture.mjs
+?? test-support/route-production-fixture.mjs
+?? test/atomic-media-file.test.mjs
+?? test/chunked-upload.test.mjs
+?? test/extension-run-control.test.mjs
+?? test/google-access-token.test.mjs
+?? test/local-delivery-receiver.test.mjs
+?? test/local-runtime.test.mjs
+?? test/media-availability.test.mjs
+?? test/media-binding-repair.test.mjs
+?? test/media-bindings.test.mjs
+?? test/media-context-api.test.mjs
+?? test/media-context.test.mjs
+?? test/media-receipt-race.test.mjs
+?? test/migration-eighty.test.mjs
+?? test/pdf-source-supplements.test.mjs
+?? test/route-bundle.test.mjs
+?? test/route-composition.test.mjs
+?? test/route-media.test.mjs
+?? test/route-production.test.mjs

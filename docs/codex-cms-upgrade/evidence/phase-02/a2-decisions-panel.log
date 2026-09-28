@@ -1,0 +1,22 @@
+(node:7444) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ route classification, explicit locators and repeated entity occurrences are independent of photo/OCR order (4.0095ms)
+✔ critical evidence and required media are separate gates; ordinary missing stop photos do not block (3.2398ms)
+✔ same-entity other-day photos differ from whole-day route diagrams; wrong arrows and partial matches rejected (3.4213ms)
+✔ self-reported route hash cannot hide changed Day/order/mode or mutated bundle (6.3289ms)
+✔ actual renderer decodes PNG and rejects missing stop, reversed arrow, old manifest and changed bytes (75.6589ms)
+✔ real SQLite route revisions/artifacts survive backup review restore; stale results rejected without budget writes (895.1862ms)
+(node:3720) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ subroute use requires contiguous approved occurrences; a partial diagram cannot claim the full day (7.6933ms)
+✔ actual normalization retains panel crop semantics but never delivers the uncropped collage as a subroute (7.0036ms)
+✔ actual normalization accepts related other-day photo but blocks a mismatching full-day map with a durable gap (6.5755ms)
+✔ actual independent visual QA request contains frozen topology and rejects missing/stale/wrong-arrow receipts (24.3011ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1162.1215

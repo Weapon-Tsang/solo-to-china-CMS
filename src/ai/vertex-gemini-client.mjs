@@ -5,8 +5,8 @@ import { KimiClient } from "./kimi-client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
 import { ProviderRequestError, providerReasoningOptions, providerTransportError, vertexStructuredOutput } from "./provider-schema.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
+import { createGoogleAccessTokenProvider } from "../google-access-token.mjs";
 
-const METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 const MAX_INLINE_VIDEO_BYTES = 14 * 1024 * 1024;
 const MAX_REMOTE_VIDEO_BYTES = 256 * 1024 * 1024;
 const SUPPORTED_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/quicktime", "video/mpeg", "video/webm", "video/avi", "video/wmv", "video/flv", "video/3gpp"]);
@@ -16,8 +16,7 @@ export class VertexGeminiClient {
   constructor(config, fetchImpl = fetch) {
     this.config = config;
     this.fetch = fetchImpl;
-    this.token = null;
-    this.tokenExpiresAt = 0;
+    this.googleAccessToken = config.googleAccessTokenProvider || createGoogleAccessTokenProvider(config, fetchImpl);
     this.assetClient = new KimiClient({ ...config, apiKey: "asset-loader" }, fetchImpl);
   }
 
@@ -167,7 +166,8 @@ export class VertexGeminiClient {
     return { id, transportKey: id, request };
   }
 
-  async createBatch(requests, { operation = "extract_segment_claims", idempotencyKey = "", signal = null } = {}) {
+  async createBatch(requests, { operation = "extract_segment_claims", idempotencyKey = "", signal = null,
+    onDispatch = null, onSubmitted = null } = {}) {
     if (!this.batchEnabled) throw new Error("Vertex Batch is not configured.");
     if (!Array.isArray(requests) || !requests.length) throw new Error("Vertex Batch requires at least one request.");
     const accessToken = await this.accessToken();
@@ -180,6 +180,11 @@ export class VertexGeminiClient {
     const maximumBytes = Number(this.config.batchMaxInputBytes || 900 * 1024 * 1024);
     if (Buffer.byteLength(input) > maximumBytes) throw new Error("Vertex Batch input exceeds the configured safe Cloud Storage limit.");
     await this.uploadObject(bucket, inputObject, input, "application/jsonl", accessToken);
+    const inputUri = `gs://${bucket}/${inputObject}`;
+    const outputUriPrefix = `gs://${bucket}/${outputObjectPrefix}`;
+    if (onDispatch && await onDispatch({ inputUri, outputUriPrefix }) === false) {
+      throw Object.assign(new Error('Vertex Batch preparation lease was lost before dispatch.'), { code: 'JOB_LEASE_LOST' });
+    }
     const endpoint = `https://aiplatform.googleapis.com/v1/projects/${encodeURIComponent(this.config.projectId)}/locations/global/batchPredictionJobs`;
     const response = await this.fetch(endpoint, {
       method: "POST",
@@ -199,9 +204,11 @@ export class VertexGeminiClient {
       throw new ProviderRequestError("Vertex Batch", response.status, payload?.error?.message || response.statusText,
         { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
     }
-    return { name: payload.name, state: payload.state || "JOB_STATE_PENDING", inputUri: `gs://${bucket}/${inputObject}`,
-      outputUriPrefix: `gs://${bucket}/${outputObjectPrefix}`, itemIds: requests.map((item) => item.id),
+    const batch = { name: payload.name, state: payload.state || "JOB_STATE_PENDING", inputUri,
+      outputUriPrefix, itemIds: requests.map((item) => item.id),
       pollMs: Number(this.config.batchPollMs || 60_000) };
+    if (onSubmitted) await onSubmitted(batch);
+    return batch;
   }
 
   async getBatch(name) {
@@ -213,6 +220,40 @@ export class VertexGeminiClient {
     if (!response.ok) throw new ProviderRequestError("Vertex Batch", response.status, payload?.error?.message || response.statusText,
       { ...(payload?.error || {}), retryAfter: response.headers.get("retry-after") });
     return payload;
+  }
+
+  async findBatchByInputUri(inputUri, run = {}) {
+    if (!/^gs:\/\/[^/]+\/vertex-batch\/[^/]+\/input\.jsonl$/.test(String(inputUri || ''))) {
+      throw new Error('A stored Vertex Batch input URI is required for reconciliation.');
+    }
+    const accessToken = await this.accessToken();
+    const projectId = String(run.project_id || this.config.projectId || '');
+    const location = String(run.location || this.config.location || 'global');
+    const endpoint = `https://aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(location)}/batchPredictionJobs`;
+    const createdAt = Date.parse(run.created_at || '');
+    const since = new Date(Math.max(0, (Number.isFinite(createdAt) ? createdAt : 0) - 600_000)).toISOString();
+    const matches = [];
+    let pageToken = '';
+    for (let page = 0; page < 20; page += 1) {
+      const query = new URLSearchParams({ pageSize: '100', filter: `createTime>="${since}"` });
+      if (pageToken) query.set('pageToken', pageToken);
+      const response = await this.fetch(`${endpoint}?${query}`, {
+        headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30_000),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new ProviderRequestError('Vertex Batch', response.status,
+        payload?.error?.message || response.statusText, payload?.error || {});
+      for (const item of payload.batchPredictionJobs || []) {
+        if (item.inputConfig?.gcsSource?.uris?.includes(inputUri)) matches.push(item);
+      }
+      pageToken = String(payload.nextPageToken || '');
+      if (!pageToken) break;
+      if (page === 19) throw Object.assign(new Error('Vertex Batch reconciliation did not scan every provider page.'),
+        { code: 'BATCH_RECONCILIATION_INCOMPLETE' });
+    }
+    if (matches.length > 1) throw Object.assign(new Error('Multiple Vertex Batch jobs use the same input URI.'),
+      { code: 'BATCH_RECONCILIATION_AMBIGUOUS' });
+    return matches[0] || null;
   }
 
   async readBatchOutput(batch) {
@@ -393,14 +434,7 @@ export class VertexGeminiClient {
   }
 
   async accessToken() {
-    if (this.config.accessToken) return this.config.accessToken;
-    if (this.token && Date.now() < this.tokenExpiresAt) return this.token;
-    const response = await this.fetch(METADATA_TOKEN_URL, { headers: { "Metadata-Flavor": "Google" }, signal: AbortSignal.timeout(5_000) });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload.access_token) throw new Error("Vertex Gemini could not obtain a Google Compute Engine service-account token.");
-    this.token = payload.access_token;
-    this.tokenExpiresAt = Date.now() + Math.max(60, Number(payload.expires_in || 300) - 60) * 1_000;
-    return this.token;
+    return this.googleAccessToken();
   }
 }
 

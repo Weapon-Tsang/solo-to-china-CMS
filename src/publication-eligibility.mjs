@@ -2,8 +2,25 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { parseMediaMetadata, validateMediaDelivery } from './media-delivery.mjs';
 import { visualQaMentionsSpellingError } from './visual-qa.mjs';
+import { readMediaBindings, readMediaBindingIssues, bindingBlocksPhoto } from './repositories/media-bindings.mjs';
+import { verifyStoredRouteVisual } from './visuals/route-schematic.mjs';
 
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
+
+export function routePageDependencyHash(db,draftId) {
+  const page=db.prepare(`SELECT payload_json,status,contract_checksum,draft_revision,draft_content_hash
+    FROM frontend_page_compositions WHERE draft_id=?`).get(draftId);
+  return page ? digest(JSON.stringify(page)) : null;
+}
+
+export function routeMediaDependencyHash(db,draftId) {
+  return digest(JSON.stringify(db.prepare(`SELECT id,slot,status,asset_fingerprint,caption,alt_text,media_metadata_json
+    FROM article_visuals WHERE draft_id=? ORDER BY slot`).all(draftId).map(({media_metadata_json,...row})=>{
+      const metadata=parseMediaMetadata(media_metadata_json);
+      return {...row,route_contract:metadata.route_contract || null,route_omission:metadata.route_omission || null,
+        file_hash:metadata.binary_qa?.sha256 || metadata.pixel_qa?.sha256 || metadata.sha256 || null};
+    })));
+}
 
 export function mediaManifestForDraft(db, draftId) {
   const draft = db.prepare('SELECT id,revision,content_hash,strategy_version FROM article_drafts WHERE id=?').get(draftId);
@@ -24,12 +41,18 @@ export function freezeRequiredMediaManifest(db, draftId, { approvedNoImage = fal
   const draft = db.prepare('SELECT id,revision,content_hash,strategy_version FROM article_drafts WHERE id=?').get(draftId);
   if (!draft) throw new Error(`Draft ${draftId} does not exist.`);
   const rows = db.prepare(`SELECT id,slot,asset_fingerprint,factual_image_required,source_asset_id,
-    acquisition_strategy FROM article_visuals WHERE draft_id=? ORDER BY slot`).all(draftId);
+    acquisition_strategy,media_metadata_json FROM article_visuals WHERE draft_id=? ORDER BY slot`).all(draftId);
   if (!rows.length && !approvedNoImage) return null;
-  const slots = rows.map((row) => ({ slotId: row.id, slot: row.slot, required: true,
+  const slots = rows.map((row) => ({ slotId: row.id, slot: row.slot,
+    required:row.acquisition_strategy==='render_route_schematic'
+      ? parseMediaMetadata(row.media_metadata_json).required_visual_obligation?.required===true
+      : !(parseMediaMetadata(row.media_metadata_json).route_omission && !row.factual_image_required
+        && !parseMediaMetadata(row.media_metadata_json).required_visual_obligation?.required),
     factualImageRequired: Boolean(row.factual_image_required), sourceAssetId: row.source_asset_id || null,
-    acquisitionStrategy: row.acquisition_strategy, planFingerprint: row.asset_fingerprint }));
-  const minimumRequired = slots.length;
+    acquisitionStrategy: row.acquisition_strategy, planFingerprint: row.asset_fingerprint,
+    ...(parseMediaMetadata(row.media_metadata_json).route_contract
+      ? {routeContract:parseMediaMetadata(row.media_metadata_json).route_contract} : {}) }));
+  const minimumRequired = slots.filter(slot=>slot.required).length;
   const manifestHash = digest(JSON.stringify({ draftId, revision: draft.revision,
     contentHash: draft.content_hash, minimumRequired, approvedNoImage, slots }));
   db.prepare(`INSERT OR IGNORE INTO required_media_manifests
@@ -39,8 +62,35 @@ export function freezeRequiredMediaManifest(db, draftId, { approvedNoImage = fal
   return mediaManifestForDraft(db, draftId);
 }
 
-export function evaluatePublicationEligibility(db, draftId, { phase = 'local', pagePayload = null } = {}) {
+export function evaluatePublicationEligibility(db, draftId, { phase = 'local', pagePayload = null, requireRouteReview = true } = {}) {
+  let routeBundle=null;
   const draft = db.prepare('SELECT id,revision,content_hash,strategy_version FROM article_drafts WHERE id=?').get(draftId);
+  if(draft) {
+    const route=db.prepare(`SELECT rb.* FROM route_bundles rb JOIN content_briefs cb ON cb.candidate_id=rb.candidate_id
+      JOIN article_drafts ad ON ad.brief_id=cb.id WHERE ad.id=? ORDER BY rb.revision DESC LIMIT 1`).get(draftId);
+    if(route) {
+      const bundle=JSON.parse(route.bundle_json);
+      routeBundle=bundle;
+      const sourceStale=bundle.source_snapshot.some(s=>db.prepare('SELECT capture_version FROM sources WHERE id=?').get(s.source_id)?.capture_version!==s.capture_version);
+      const receipts=db.prepare(`SELECT artifact_kind,receipt_json FROM route_artifacts WHERE route_id=? AND route_revision=?
+        AND approved_route_hash=? AND content_hash=? AND artifact_kind IN ('draft','text_review','page')`)
+        .all(route.route_id,route.revision,route.approved_route_hash,draft.content_hash);
+      const hasDraft=receipts.some(r=>r.artifact_kind==='draft' && JSON.parse(r.receipt_json).draft_id===draftId);
+      const hasReview=receipts.some(r=>{const receipt=JSON.parse(r.receipt_json);return r.artifact_kind==='text_review'
+        && receipt.draft_id===draftId && receipt.passed && receipt.audit?.checked && receipt.audit?.passed
+        && !receipt.audit.differences?.length && receipt.audit.approved_route_hash===route.approved_route_hash
+        && receipt.media_dependency_hash===routeMediaDependencyHash(db,draftId)
+        && (receipt.page_dependency_hash || null)===routePageDependencyHash(db,draftId);});
+      if(route.status!=='FROZEN' || sourceStale || !hasDraft || ((requireRouteReview || phase==='delivery') && !hasReview)) return {passed:false,
+        code:'ROUTE_REVIEW_MISSING_OR_STALE',missing:[{sourceStale,hasDraft,hasReview}],required:null,ready:0};
+      const pageHash=routePageDependencyHash(db,draftId);
+      if(phase==='delivery' && pageHash && !receipts.some(r=>{
+        const receipt=JSON.parse(r.receipt_json);
+        return r.artifact_kind==='page' && receipt.draft_id===draftId && receipt.page_dependency_hash===pageHash
+          && receipt.media_dependency_hash===routeMediaDependencyHash(db,draftId);
+      })) return {passed:false,code:'ROUTE_PAGE_MISSING_OR_STALE',missing:[{pageHash}],required:null,ready:0};
+    }
+  }
   const manifest = draft && mediaManifestForDraft(db, draftId);
   if (!draft || !manifest || manifest.contentHash !== draft.content_hash) {
     return { passed: false, code: 'MEDIA_MANIFEST_MISSING_OR_STALE', missing: [],
@@ -57,8 +107,11 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     LEFT JOIN source_assets sa ON sa.id=av.source_asset_id WHERE av.draft_id=?`).all(draftId);
   const byId = new Map(visualRows.map((row) => [row.id, row]));
   const missing = [];
-  for (const slot of manifest.slots.filter((item) => item.required)) {
+  for (const slot of manifest.slots) {
     const row = byId.get(slot.slotId);
+    if(!slot.required && row?.status==='skipped' && !row.factual_image_required && row.asset_fingerprint===slot.planFingerprint
+      && JSON.stringify(slot.routeContract)===JSON.stringify(parseMediaMetadata(row.media_metadata_json).route_contract)
+      && parseMediaMetadata(row.media_metadata_json).route_omission?.plan_fingerprint===slot.planFingerprint) continue;
     const failures = [];
     if (!row || row.slot !== slot.slot || row.asset_fingerprint !== slot.planFingerprint) failures.push('stale_or_missing_slot');
     if (row?.status !== 'generated') failures.push('not_generated');
@@ -71,6 +124,17 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     try { if (filePath) fileHash = digest(fs.readFileSync(filePath)); } catch { /* keep the missing file explicit */ }
     if (!fileHash) failures.push('local_file_missing');
     const metadata = parseMediaMetadata(row?.media_metadata_json);
+    if(metadata.route_contract?.compatible===false) failures.push('route_media_conflict');
+    if(slot.routeContract && JSON.stringify(slot.routeContract)!==JSON.stringify(metadata.route_contract))
+      failures.push('route_manifest_dependency_changed');
+    const boundIds=metadata.authorized_asset_match?.source_binding_ids || [];
+    if(row?.source_asset_id && bindingBlocksPhoto({source_binding_issues:readMediaBindingIssues(db,row.source_asset_id)},row)) {
+      failures.push('source_binding_stale_or_conflicted');
+    }
+    if(boundIds.length){
+      const current=new Set(readMediaBindings(db,row?.source_asset_id).map(binding=>binding.id));
+      if(!boundIds.every(id=>current.has(id)))failures.push('source_binding_stale_or_conflicted');
+    }
     // A model's generic "QA passed" must not overrule a near-zero source/subject
     // match. This caught a Chongqing itinerary illustrated with an unrelated
     // preparation/bus card. A location claim may be explicitly verified by an
@@ -110,10 +174,16 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     if (metadata.binary_qa?.status !== 'passed' && metadata.pixel_qa?.status !== 'passed'
       && !retainedPhoto) failures.push('binary_qa_missing');
     const quality = metadata.quality_qa || {};
+    let localRouteQualified=false;
+    if(row?.acquisition_strategy==='render_route_schematic') {
+      try { localRouteQualified=Boolean(routeBundle && verifyStoredRouteVisual(db,routeBundle,row,metadata)); }
+      catch { /* Invalid artifact, caption or bytes cannot be delivered. */ }
+      if(!localRouteQualified) failures.push('route_render_receipt_missing_or_stale');
+    }
     const qaPassed = !visualQaMentionsSpellingError(quality)
       && (quality.status === 'passed' || ['language','completeness','style','semantic']
         .every((field) => quality[field]?.status === 'passed'));
-    if ((!qaPassed || quality.file_hash !== fileHash) && !retainedPhoto) {
+    if ((!qaPassed || quality.file_hash !== fileHash) && !retainedPhoto && !localRouteQualified) {
       failures.push('quality_qa_missing_or_stale');
     }
     if (!String(row?.alt_text || '').trim()) failures.push('alt_missing');
@@ -123,10 +193,10 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
   }
   if (manifest.slots.length < manifest.minimumRequired || new Set(manifest.slots.map((item) => item.slotId)).size !== manifest.slots.length) {
     return { passed: false, code: 'MEDIA_MANIFEST_INVALID', missing, required: manifest.minimumRequired,
-      ready: manifest.minimumRequired - missing.length };
+      ready: Math.max(0, manifest.minimumRequired - missing.filter(item=>manifest.slots.some(slot=>slot.required && slot.slotId===item.slotId)).length) };
   }
   if (missing.length) return { passed: false, code: 'MEDIA_INCOMPLETE', missing,
-    required: manifest.minimumRequired, ready: manifest.minimumRequired - missing.length };
+    required: manifest.minimumRequired, ready: Math.max(0, manifest.minimumRequired - missing.filter(item=>manifest.slots.some(slot=>slot.required && slot.slotId===item.slotId)).length) };
   if (phase === 'delivery') {
     const delivered = validateMediaDelivery(visualRows.map((row) => ({ ...row,
       media_metadata: parseMediaMetadata(row.media_metadata_json) })), { requireMetadata: true, pagePayload });

@@ -26,5 +26,5 @@ test("single-image analysis records the actual prompt revision, not the model's 
     }));
   const analyzed=await extractor.analyzeMediaAsset({id:"asset-photo",original_sha256:"sha",
     ai_derivative_data_url:`data:image/png;base64,${Buffer.from("fixture").toString("base64")}`});
-  assert.equal(analyzed.result.prompt_version,"media-analysis-prompt-3");
+  assert.equal(analyzed.result.prompt_version,"media-analysis-prompt-4");
 });

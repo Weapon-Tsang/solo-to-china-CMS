@@ -46,7 +46,7 @@ test("Kimi adapter sends trusted image evidence as base64 input and requests str
   assert.match(image.image_url.url, /^data:image\/jpeg;base64,/);
   assert.equal(output.result.source.destination_slug, "beijing-city");
   assert.equal(output.result.claims[0].key, "attraction.entry.gate");
-  assert.equal(modelRequests, 2);
+  assert.equal(modelRequests, 1, 'unavailable image bytes must not purchase a text-only replacement call');
   assert.deepEqual(fetchedImages, ["https://sns-img.xhscdn.com/image.jpg"]);
   assert.equal(output.inputManifest.expectedModality, "image");
   assert.equal(output.inputManifest.receivedModality, "image");

@@ -322,6 +322,7 @@ test("Vertex Gemini stages a large uploaded video in Cloud Storage and deletes t
 
 test("Vertex Gemini submits, polls, reads, and cleans up a Cloud Storage batch", async () => {
   const calls = [];
+  const submissionEvents = [];
   const output = { batch_item_id: "batch_item_1", source: { language: "zh-CN", summary: "route", destination_name: "Chongqing", destination_slug: "chongqing", traveler_fit: [], practical_tips: [], warnings: [], confidence: 0.9 }, claims: [] };
   const client = new VertexGeminiClient({
     projectId: "fixture-project", location: "global", model: "gemini-3.8-flash", accessToken: "token",
@@ -330,7 +331,10 @@ test("Vertex Gemini submits, polls, reads, and cleans up a Cloud Storage batch",
     const target = String(url);
     calls.push({ target, options });
     if (target.includes("upload/storage/v1")) return new Response("{}", { status: 200 });
-    if (target.endsWith("/batchPredictionJobs") && options.method === "POST") return Response.json({ name: "projects/fixture-project/locations/global/batchPredictionJobs/job-1", state: "JOB_STATE_PENDING" });
+    if (target.endsWith("/batchPredictionJobs") && options.method === "POST") {
+      assert.deepEqual(submissionEvents, ['dispatch']);
+      return Response.json({ name: "projects/fixture-project/locations/global/batchPredictionJobs/job-1", state: "JOB_STATE_PENDING" });
+    }
     if (target.includes("batchPredictionJobs/job-1")) return Response.json({ state: "JOB_STATE_SUCCEEDED", outputInfo: { gcsOutputDirectory: "gs://fixture-bucket/vertex-batch/output/" } });
     if (target.includes("storage/v1/b/fixture-bucket/o?") && !target.includes("alt=media")) return Response.json({ items: [{ name: "vertex-batch/output/predictions.jsonl" }] });
     if (target.includes("predictions.jsonl") && target.includes("alt=media")) return new Response(`${JSON.stringify({ key: "batch_item_1", response: { candidates: [{ content: { parts: [{ text: JSON.stringify(output) }] }, finishReason: "STOP" }] } })}\n`);
@@ -340,7 +344,17 @@ test("Vertex Gemini submits, polls, reads, and cleans up a Cloud Storage batch",
   const request = client.prepareBatchRequest({ id: "batch_item_1", name: "source_research_extraction",
     schema: { type: "object", additionalProperties: false, required: ["source", "claims"], properties: { source: { type: "object" }, claims: { type: "array" } } },
     instructions: "Extract evidence.", content: "source" });
-  const created = await client.createBatch([request]);
+  const created = await client.createBatch([request], {
+    onDispatch: (dispatch) => {
+      assert.match(dispatch.inputUri, /input\.jsonl$/);
+      submissionEvents.push('dispatch');
+    },
+    onSubmitted: (batch) => {
+      assert.match(batch.name, /batchPredictionJobs\/job-1$/);
+      submissionEvents.push('submitted');
+    },
+  });
+  assert.deepEqual(submissionEvents, ['dispatch', 'submitted']);
   const status = await client.getBatch(created.name);
   const rows = await client.readBatchOutput(status);
   assert.equal(status.state, "JOB_STATE_SUCCEEDED");
@@ -353,6 +367,28 @@ test("Vertex Gemini submits, polls, reads, and cleans up a Cloud Storage batch",
   assert.deepEqual(createBody.instanceConfig, { instanceType: "object", keyField: "transport_key" });
   await client.cleanupBatch({ ...created, ...status });
   assert.ok(calls.some((call) => call.options.method === "DELETE"));
+});
+
+test("Vertex Batch reconciliation scans provider pages and matches the exact stored input URI", async () => {
+  const observed = [];
+  const client = new VertexGeminiClient({ projectId: 'fixture-project', location: 'global',
+    model: 'gemini-3.8-flash', accessToken: 'token' }, async (url) => {
+    const parsed = new URL(String(url));
+    observed.push(parsed);
+    if (!parsed.searchParams.has('pageToken')) return Response.json({
+      batchPredictionJobs: [{ name: 'wrong', inputConfig: { gcsSource: { uris: ['gs://bucket/other/input.jsonl'] } } }],
+      nextPageToken: 'second',
+    });
+    return Response.json({ batchPredictionJobs: [{ name: 'projects/p/locations/global/batchPredictionJobs/recovered',
+      state: 'JOB_STATE_PENDING', inputConfig: { gcsSource: { uris: ['gs://bucket/vertex-batch/run-1/input.jsonl'] } } }] });
+  });
+  const found = await client.findBatchByInputUri('gs://bucket/vertex-batch/run-1/input.jsonl', {
+    project_id: 'fixture-project', location: 'global', created_at: '2026-09-24T00:00:00.000Z',
+  });
+  assert.match(found.name, /recovered$/);
+  assert.equal(observed.length, 2);
+  assert.equal(observed[1].searchParams.get('pageToken'), 'second');
+  assert.match(observed[0].searchParams.get('filter'), /createTime>/);
 });
 
 test("Vertex Batch correlation survives provider errors, output limits, and invalid model JSON", () => {

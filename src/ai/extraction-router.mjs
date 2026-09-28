@@ -44,6 +44,7 @@ export class ExtractionRouter {
   prepareBatchExtraction(input, id, run) { return this.bundle({ modelProfile: profileFromRun(run) }).extractor.prepareBatchExtraction(input, id, run); }
   createExtractionBatch(input, options) { return this.bundle({ modelProfile: profileFromRun(options?.runConfig) }).extractor.createExtractionBatch(input, options); }
   getExtractionBatch(name, run) { return this.bundle({ modelProfile: profileFromRun(run) }).extractor.getExtractionBatch(name, run); }
+  findExtractionBatch(inputUri, run) { return this.bundle({ modelProfile: profileFromRun(run) }).extractor.findExtractionBatch(inputUri, run); }
   readExtractionBatch(run) { return this.bundle({ modelProfile: profileFromRun(run) }).extractor.readExtractionBatch(run); }
   parseBatchCoverage(output, options) { return this.bundle({ modelProfile: profileFromRun(options?.runConfig) }).extractor.parseBatchCoverage(output, options); }
   parseBatchExtraction(output, options) { return this.bundle({ modelProfile: profileFromRun(options?.runConfig) }).extractor.parseBatchExtraction(output, options); }

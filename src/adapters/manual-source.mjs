@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { canonicalizeUrl, sha256, truncate } from "../utils.mjs";
 import { estimateSourceProcessing } from "../source-preflight.mjs";
+import { publishMediaBytes } from "../atomic-media-file.mjs";
 
 const require = createRequire(import.meta.url);
 const WordExtractor = require("word-extractor");
@@ -340,7 +341,7 @@ function persistFile(file, directory, submissionId, fileKind, index) {
   const extension = safeExtension(file.originalFilename, file.mimeType);
   const storedName = `${String(index + 1).padStart(2, "0")}-${crypto.randomUUID()}${extension}`;
   const storagePath = path.join(directory, storedName);
-  fs.writeFileSync(storagePath, file.bytes, { flag: "wx" });
+  publishMediaBytes(storagePath, file.bytes);
   return {
     id: `source_file_${submissionId}_${index}`,
     fileKind,

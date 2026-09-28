@@ -1,0 +1,369 @@
+{
+  "root": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-mSQfde",
+  "extension": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-mSQfde\\extension",
+  "profile": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-mSQfde\\profile",
+  "version": "2.0.71",
+  "startedAt": "2026-09-27T11:10:29.818Z",
+  "buildDifference": "Only isolated manifest adds http://127.0.0.1/* for ephemeral CMS port; production code unchanged.",
+  "checks": [
+    {
+      "id": "XP-18",
+      "status": "PASS",
+      "captured": 1,
+      "assets": 4
+    },
+    {
+      "id": "XP-02",
+      "status": "PASS",
+      "kind": "discovery close",
+      "queue": 0
+    }
+  ],
+  "tabEvents": [
+    {
+      "event": "created",
+      "at": 1790507431582
+    },
+    {
+      "event": "created",
+      "at": 1790507431663
+    },
+    {
+      "event": "created",
+      "at": 1790507433189
+    },
+    {
+      "event": "closed",
+      "at": 1790507436189
+    },
+    {
+      "event": "closed",
+      "at": 1790507436399
+    },
+    {
+      "event": "created",
+      "at": 1790507436943
+    },
+    {
+      "event": "closed",
+      "at": 1790507437036
+    },
+    {
+      "event": "closed",
+      "at": 1790507437038
+    }
+  ],
+  "apiEvents": [
+    {
+      "at": 1790507431749,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507431769,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507436094,
+      "method": "POST",
+      "path": "/api/captures",
+      "status": 202
+    },
+    {
+      "at": 1790507436124,
+      "method": "POST",
+      "path": "/api/capture-media-uploads",
+      "status": 201
+    },
+    {
+      "at": 1790507436125,
+      "method": "POST",
+      "path": "/api/capture-media-uploads",
+      "status": 201
+    },
+    {
+      "at": 1790507436137,
+      "method": "PUT",
+      "path": "/api/capture-media-uploads/af508be7-23c6-489a-b51b-3fcb3e105441/chunks/0",
+      "status": 200
+    },
+    {
+      "at": 1790507436137,
+      "method": "PUT",
+      "path": "/api/capture-media-uploads/cbdf1286-2375-4bdb-9573-90bc05ba30f1/chunks/0",
+      "status": 200
+    },
+    {
+      "at": 1790507436160,
+      "method": "POST",
+      "path": "/api/capture-media-uploads/af508be7-23c6-489a-b51b-3fcb3e105441/complete",
+      "status": 200
+    },
+    {
+      "at": 1790507436160,
+      "method": "POST",
+      "path": "/api/capture-media-uploads/cbdf1286-2375-4bdb-9573-90bc05ba30f1/complete",
+      "status": 200
+    },
+    {
+      "at": 1790507436175,
+      "method": "POST",
+      "path": "/api/captures",
+      "status": 202
+    },
+    {
+      "at": 1790507436194,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790507436379,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507436411,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    }
+  ],
+  "blockedNetwork": [
+    "null",
+    "null"
+  ],
+  "networkBoundary": "All browser DNS maps to 127.0.0.1:57805; only fixture hosts served; no proxy; TLS test certificate ignored only in test browser.",
+  "browser": "153.0.8010.12",
+  "extensionId": "fjlfjbpafeffofhkfmgkccplibnihdok",
+  "cms": {
+    "endpoint": "http://127.0.0.1:56905",
+    "database": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-mSQfde\\solo-to-china.sqlite",
+    "role": "api"
+  },
+  "firstCapture": {
+    "activeTasks": [],
+    "automatic": false,
+    "browserIdentity": "bbf8ec9f-2462-4ced-a89c-110b29b7ea88",
+    "checkpoint": {
+      "lastSuccessfulSyncAt": null,
+      "topIdentityKeys": []
+    },
+    "completedAt": "2026-09-27T11:10:36.184Z",
+    "concurrency": 1,
+    "concurrencyController": {
+      "lastChangeAt": null,
+      "reason": "settings"
+    },
+    "concurrencySamples": [
+      {
+        "cmsBackpressure": false,
+        "completedAt": "2026-09-27T11:10:36.179Z",
+        "errorClass": "",
+        "extractionMs": 2842,
+        "localFailure": false,
+        "loginRequired": false,
+        "mediaBytes": 7990,
+        "mediaCount": 2,
+        "mediaDownloadMs": 15,
+        "mediaUploadMs": 104,
+        "memoryPressure": false,
+        "noteLoadMs": 21,
+        "rateLimited": false,
+        "result": "succeeded",
+        "submitMs": 14,
+        "tabCrash": false,
+        "timeout": false,
+        "totalMs": 3043,
+        "verificationDetected": false
+      }
+    ],
+    "config": {
+      "autoMinIntervalHours": 12,
+      "concurrencyInitial": 4,
+      "concurrencyMax": 12,
+      "concurrencyMinSamples": 20,
+      "concurrencyMode": "custom",
+      "concurrencyWindowSize": 24,
+      "customConcurrency": 1,
+      "detailLoadTimeoutMs": 30000,
+      "discoveryBatchSize": 100,
+      "identityBatchSize": 50,
+      "maxRetries": 3,
+      "mediaConcurrency": 12,
+      "mediaMemoryBudgetBytes": 100663296,
+      "mediaUploadConcurrency": 6,
+      "queueHighWatermark": 500,
+      "retryBaseMs": 5000,
+      "retryMaxMs": 120000,
+      "stopAfterConsecutiveKnown": 12,
+      "taskLeaseMs": 180000,
+      "watchdogStallMs": 120000
+    },
+    "controlSchema": 1,
+    "currentTopIdentityKeys": [
+      "xiaohongshu:fixture001"
+    ],
+    "cursor": {
+      "collectionEnd": true,
+      "collectionEndStreak": 2,
+      "domOffset": 1,
+      "scannedWindows": 2,
+      "scrollY": 0
+    },
+    "discoveryComplete": true,
+    "discoveryTabId": 1251281003,
+    "driveRetryAt": null,
+    "driverAttempts": 0,
+    "lastBusinessProgress": "submitting",
+    "lastError": null,
+    "lastProgressAt": "2026-09-27T11:10:36.179Z",
+    "mediaConcurrency": 12,
+    "mediaConcurrencyController": {
+      "lastChangeAt": null,
+      "reason": "settings"
+    },
+    "mode": "full",
+    "noProgressSince": null,
+    "phase": "completed",
+    "queue": [
+      {
+        "attempts": 1,
+        "author": "",
+        "canonicalUrl": "https://www.xiaohongshu.com/explore/fixture001",
+        "captureVersion": 2,
+        "coverUrl": "",
+        "error": null,
+        "externalId": "fixture001",
+        "identityKey": "xiaohongshu:fixture001",
+        "lastHeartbeatAt": "2026-09-27T11:10:36.164Z",
+        "leaseExpiresAt": null,
+        "leaseId": null,
+        "leaseStartedAt": null,
+        "navigationUrl": "https://www.xiaohongshu.com/explore/fixture001",
+        "position": 0,
+        "repairActions": [
+          "CAPTURE_NEW"
+        ],
+        "repairMediaIdentities": [],
+        "retryAt": null,
+        "sourceId": "src_9a6787b7de4b47bfaa387389958cdbf1",
+        "startedAt": "2026-09-27T11:10:33.134Z",
+        "status": "captured",
+        "tabId": null,
+        "taskId": "11fa7902-e4a4-40ae-9452-7d0bd28d76f1",
+        "title": "",
+        "updatedAt": "2026-09-27T11:10:36.179Z",
+        "workerId": null
+      }
+    ],
+    "recoveryNoticeAt": null,
+    "runRevision": 1,
+    "scan": {
+      "checkpointSeen": true,
+      "consecutiveKnown": 0,
+      "reliableCheckpoint": false,
+      "windowNew": 0
+    },
+    "scopeKey": "xhs_scope:https://www.xiaohongshu.com/board/fixture123",
+    "scopeLabel": "小红书收藏夹 · fixture1",
+    "scopeUrl": "https://www.xiaohongshu.com/board/fixture123",
+    "seenIdentityKeys": [
+      "xiaohongshu:fixture001"
+    ],
+    "sessionId": "96b451af-77ed-4f9e-b3ad-8781ccd2fca6",
+    "stage": "submitting",
+    "stageStartedAt": "2026-09-27T11:10:36.165Z",
+    "startedAt": "2026-09-27T11:10:31.753Z",
+    "stats": {
+      "captured": 1,
+      "discovered": 1,
+      "duplicate": 0,
+      "failed": 0,
+      "known": 0,
+      "new": 1,
+      "repair": 0,
+      "retrying": 0,
+      "unavailable": 0
+    },
+    "status": "completed",
+    "stopAfterQueue": false,
+    "tabOwnership": {
+      "1251281003": {
+        "owned": false,
+        "role": "discovery",
+        "tabId": 1251281003,
+        "url": "https://www.xiaohongshu.com/board/fixture123",
+        "windowId": 1251281000
+      },
+      "1251281004": {
+        "owned": true,
+        "role": "worker",
+        "tabId": 1251281004,
+        "url": "https://www.xiaohongshu.com/explore/fixture001",
+        "windowId": 1251281000
+      }
+    },
+    "updatedAt": "2026-09-27T11:10:36.184Z",
+    "workerSlots": [
+      {
+        "tabId": 1251281004,
+        "updatedAt": "2026-09-27T11:10:33.186Z",
+        "workerId": "note-worker-0-447fafd9-39f3-410a-ba8e-757628d7a3c9"
+      }
+    ],
+    "workerTabs": [
+      1251281004
+    ]
+  },
+  "durableSources": [
+    {
+      "id": "src_9a6787b7de4b47bfaa387389958cdbf1",
+      "textChars": 198,
+      "captureVersion": 2
+    }
+  ],
+  "durableAssets": [
+    {
+      "id": "asset_2d422ad594784af6bf3fd6e21a8dcc6b",
+      "kind": "image"
+    },
+    {
+      "id": "asset_267cf52e2ff84ae284d21278a602aa97",
+      "kind": "image"
+    },
+    {
+      "id": "asset_782105bc5f76436fa056f130e6eb8108",
+      "kind": "image"
+    },
+    {
+      "id": "asset_35eb6d9c6713490e8db64cfffabbfaac",
+      "kind": "image"
+    }
+  ],
+  "status": "FAIL",
+  "error": {
+    "message": "The input did not match the regular expression /暂停/. Input:\n\n''\n",
+    "stack": "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /暂停/. Input:\n\n''\n\n    at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/scripts/verify-extension-pre-browser.mjs:94:10"
+  },
+  "finishedAt": "2026-09-27T11:10:37.307Z",
+  "sourceHashes": {
+    "background.js": "bee34b824bbb9c95fa822760d5995b2b6bb28605553e08dc30b03497d7a6598a",
+    "capture-utils.js": "5e939730cbe61260808de933203eff52c30d65f7c18d58bad804dd2952d1efde",
+    "derivative-cache.js": "37ee6933154b13416c683b5692aac919ef1eb2c29279e38200e79ab8af34cc18",
+    "manifest.json": "a65027a4b4aa2f3c2f531f0ac91722acc86f0ccb7fef0dd7cc1d8f2659f1319d",
+    "media-contract.js": "fbc17791b20ec2d02fcae5ac53ff24345887b2de6a3fdda0a16ccacfc60b7002",
+    "media-journal.js": "1f5c06020169868e35823aa16605588469ef778632785903009382333dccf41f",
+    "page-extractor.js": "543fa670aed81e0b0472d965e53a80571aac8088790cfb6ca0aa971e4b50d849",
+    "popup-state.js": "0a75f3cbcd5b66f3122b8865dc4ba99894b01075ef3aa58324923c829d6e88e2",
+    "popup.html": "62f4bb7af68152fdca99ea7eab196013c5c059577a837c37c33a1008d4aff16f",
+    "popup.js": "9cd08f4bd0b07318dc06bf1b337c43024c81470735714a5351f8379203ff7426",
+    "run-control.js": "d4f32007333d48c6c147e058c51ee10c6958bfca6954e7e1cf8605753d3b7818",
+    "sync-core.js": "fbb2859d31cfba31bc4141426e04c4db34ccdc827949d67ab6db6fe42fd2be44",
+    "transport.js": "4115c589a6f7929e697889895e28bdc45865370128d5d64acc1402df69cb1d09"
+  }
+}

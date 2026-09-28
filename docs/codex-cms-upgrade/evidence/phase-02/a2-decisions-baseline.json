@@ -1,0 +1,12 @@
+{
+  "created": "2026-09-28T01:37:07.8781624+08:00",
+  "files": {
+    "frontend/src/App.jsx": "cf0566cbf39740dda98e23acf6ecfaee9620830ef7c57045dbbb7a7d40a724cf",
+    "frontend/src/workspaces/route-preview.jsx": "cfe4129d63e8ea43771bd4519900f3be294efcbcd7fbef0b2981c5c537f069b0",
+    "scripts/stage02-route-browser-fixture.mjs": "e61a35f90fdcd8e399d4545c2b523764fea8068c6a45ad48e4ae7bd328924b37",
+    "src/repository.mjs": "add6fcde358b46bab89c8d8f1121747c50652aea277b8998149557c878b00f27",
+    "src/server.mjs": "30cbe9fe6fbd1ac865939ec976a695ef475f95f05123931c034a4d2ef7f1fdda",
+    "src/repositories/route-bundles.mjs": "741d11ef2f4923ebf5b88fae8e87d91570ab483a34a518f41364bc24a38c025b"
+  },
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290"
+}

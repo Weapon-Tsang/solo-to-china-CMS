@@ -1,0 +1,51 @@
+{
+  "scope": "CMS_ONLY / local disposable historical database replay",
+  "schema": 81,
+  "sourceSchema": 78,
+  "baselineCounts": {
+    "sources": 84,
+    "source_assets": 1454,
+    "source_asset_analyses": 90,
+    "claims": 5334,
+    "knowledge_facts": 4404,
+    "article_drafts": 12,
+    "article_visuals": 26,
+    "jobs": 18415,
+    "model_call_metrics": 6453,
+    "wordpress_publications": 12
+  },
+  "assetsInspected": 1364,
+  "bindingsProposed": 627,
+  "reasons": {
+    "BINDING_AMBIGUOUS": 121,
+    "BINDING_EVIDENCE_MISSING": 1180,
+    "BINDING_ENTITY_UNRESOLVED": 32,
+    "SOURCE_BINDING_SUPPORTED": 28,
+    "BINDING_CANDIDATE": 3
+  },
+  "rows": {
+    "occurrences": 1364,
+    "bindings": 627
+  },
+  "invariants": {
+    "protectedRowsUnchanged": true,
+    "idempotent": true,
+    "originalSnapshotUnchanged": true,
+    "baselineUnchanged": true,
+    "foreignKeysValid": true,
+    "noProviderCalls": true
+  },
+  "elapsedMs": 59104,
+  "audit": {
+    "ambiguousBindings": 596,
+    "contextsPending": 0,
+    "staleConfirmedBindings": 0
+  },
+  "limitations": [
+    "No actual Provider generation",
+    "No image byte semantic inspection",
+    "No production mutation",
+    "No route, manual-upload or WordPress acceptance"
+  ],
+  "retainedWorkDirectory": "cms-phase02-media-replay-pPPWln"
+}

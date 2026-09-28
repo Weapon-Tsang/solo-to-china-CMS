@@ -17,13 +17,13 @@ export function paginateWorkspace(items, input = {}, { searchable = defaultSearc
   const query = normalizeWorkspaceQuery(input);
   const filtered = items.filter((item) => (!query.search || searchable(item).toLocaleLowerCase().includes(query.search))
     && (!query.status || statusOf(item).toLocaleLowerCase() === query.status));
-  const offset = decodeCursor(query.cursor);
+  const offset = workspaceCursorOffset(query.cursor);
   const page = filtered.slice(offset, offset + query.limit);
   const nextOffset = offset + page.length;
   return {
     items: page,
     totalCount: filtered.length,
-    nextCursor: nextOffset < filtered.length ? encodeCursor(nextOffset) : null,
+    nextCursor: nextOffset < filtered.length ? workspaceCursorForOffset(nextOffset) : null,
     query: { search: query.search, status: query.status, limit: query.limit },
   };
 }
@@ -209,8 +209,8 @@ function completedArtifacts(row, seo, schema, ast) {
 function defaultSearchable(item) { return JSON.stringify([item.id, item.title, item.subject, item.destination_slug, item.detail]); }
 function defaultStatus(item) { return item.status || item.severity || ""; }
 function bounded(value, min, max) { return Math.max(min, Math.min(max, Number.parseInt(value, 10) || min)); }
-function encodeCursor(offset) { return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url"); }
-function decodeCursor(cursor) {
+export function workspaceCursorForOffset(offset) { return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url"); }
+export function workspaceCursorOffset(cursor) {
   if (!cursor) return 0;
   try { return Math.max(0, Number.parseInt(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")).offset, 10) || 0); }
   catch { return 0; }

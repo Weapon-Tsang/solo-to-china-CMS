@@ -1,0 +1,35 @@
+{
+  "version": "stage01-closeout-restore-1",
+  "parentManifestSha256": "fdbd052fb3f9c7b336d8c2e0d36a6d4336131005e926b9fd4083d4f4214165c0",
+  "repairedManifestSha256": "e5dede046d15aebf212280c3ec3b5c68fba8a0adeb15dfd81cbf641fd20956ae",
+  "originalRejected": true,
+  "originalRejectionClass": "missing database-referenced file",
+  "repairedVerification": {
+    "integrity": "ok",
+    "schemaVersion": 78,
+    "fileCount": 1219,
+    "referenceCount": 1592,
+    "totalBytes": 3016152188
+  },
+  "restored": {
+    "newExternalPath": true,
+    "schemaVersion": 80,
+    "quickCheck": "ok",
+    "foreignKeyViolations": 0,
+    "businessIdsPreserved": {
+      "sources": true,
+      "jobs": true,
+      "source_assets": true,
+      "article_drafts": true,
+      "wordpress_publications": true,
+      "model_call_metrics": true
+    },
+    "decodedAlias": {
+      "format": "webp",
+      "width": 360,
+      "height": 360,
+      "sha256": "9de028147d4be35cc147ecbe9c922485cec0610914a2458e6e10375260b3d246"
+    },
+    "unresolvedMediaDispatches": 1
+  }
+}

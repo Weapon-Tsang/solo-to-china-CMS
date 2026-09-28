@@ -1,0 +1,16 @@
+(node:2392) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ historical article without route snapshot stays unknown and cannot be silently backfilled (680.0532ms)
+✔ malformed scopes and unresolved targets cannot create an approved route or mutate body/jobs (626.8337ms)
+✔ published three-day article: media-only permission cannot decide; explicit approval preserves body, publication, budget and jobs (644.4544ms)
+✔ source change or another decision makes approval stale; rejection creates no route revision (621.5483ms)
+✔ pending proposal and approved decision survive real migration-review restore without starting work (847.5703ms)
+✔ actual HTTP: admin and origin guards, malformed requests, preview, proposal and reject are enforced (686.4063ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4463.0923

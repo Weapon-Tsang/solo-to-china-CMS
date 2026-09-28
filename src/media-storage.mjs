@@ -77,6 +77,19 @@ export async function recordVerifiedMedia(root, reference, receipt) {
   await fsp.mkdir(path.dirname(target), { recursive: true });
   const temp = `${target}.${randomUUID()}.tmp`;
   await fsp.writeFile(temp, JSON.stringify(record), { flag: 'wx' });
-  await fsp.rename(temp, target);
-  return record;
+  try {
+    await fsp.rename(temp, target);
+    return record;
+  } catch (error) {
+    // Windows can reject replacement while another capture reads the same
+    // content-addressed verification receipt. Accept only an identical winner
+    // still bound to the current file stamp; never downgrade verification.
+    if (!['EPERM', 'EACCES', 'EEXIST'].includes(error.code)) throw error;
+    const winner = trustedMediaRecord(root, reference, receipt.sha256);
+    if (!winner || winner.kind !== receipt.kind || winner.mimeType !== receipt.mimeType
+      || winner.sizeBytes !== receipt.sizeBytes) throw error;
+    return winner;
+  } finally {
+    await fsp.unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  }
 }

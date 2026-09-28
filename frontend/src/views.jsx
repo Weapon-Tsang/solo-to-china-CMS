@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Clock3, Database, ExternalLink, FileUp, Gauge, Link2, MapPin, Plus, RefreshCw, RotateCcw, Trash2, UploadCloud, Webhook,
 } from "lucide-react";
@@ -61,12 +61,72 @@ function SettingsView({ data, health, auth, onAction, onAuthRefresh, actionBusy 
     <Card className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div><div className="text-sm font-semibold text-slate-900">系统与数据存储</div><p className="mt-1 text-xs leading-relaxed text-slate-500">API key 不会返回浏览器、写入日志或本地存储；研究数据与任务快照持久保存。</p></div><span className="grid size-8 place-items-center rounded-lg bg-sky-50 text-sky-700"><Database className="size-4" /></span></div><div className="mt-4 space-y-3 text-xs text-slate-600"><div className="flex items-center justify-between gap-3"><span>当前部署</span><span className="font-medium text-slate-900">{data?.storage?.label || "正在识别"}</span></div><div className="flex items-center justify-between gap-3"><span>跨设备访问</span><span className="font-medium text-slate-900">{data?.storage?.crossDevice ? "支持：登录同一后台即可" : "当前仅本机"}</span></div><div className="flex items-center justify-between gap-3"><span>应用版本</span><span className="font-medium text-slate-900">{data?.appVersion || health?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>内容策略</span><span className="font-medium text-slate-900">v{data?.contentStrategy?.version || health?.contentStrategy?.version || "—"}</span></div><div className="flex items-center justify-between gap-3"><span>凭据加密</span><StatusPill status={data?.encryptionReady ? "ready" : "pending"} /></div></div><p className="mt-4 border-t border-slate-100 pt-3 text-[11px] leading-relaxed text-slate-400 sm:mt-5">{data?.storage?.description || "数据库状态将在服务启动后显示。"}</p></Card>
     <CredentialSettingsCard auth={auth} onAction={onAction} onAuthRefresh={onAuthRefresh} actionBusy={actionBusy} />
     <FrontendContractSettingsCard contract={data?.frontendContract} onAction={onAction} actionBusy={actionBusy} />
+    <SystemHealthPanel count={data?.operations?.counts?.systemHealth} />
     <SettingsOperationsLight data={data} onAction={onAction} actionBusy={actionBusy} />
   </div>;
 }
 
 function FixedModel({ label: title, value }) {
   return <div className="rounded-xl border border-slate-200 p-3"><div className="text-[10px] text-slate-400">{title}</div><div className="mt-1 text-xs font-semibold text-slate-900">{value}</div></div>;
+}
+
+function SystemHealthPanel({ count }) {
+  const [payload, setPayload] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [cursor, setCursor] = useState("");
+  const [history, setHistory] = useState([]);
+  const [pageSize, setPageSize] = useState(20);
+  const load = async (nextCursor = cursor, nextPageSize = pageSize) => {
+    setLoading(true); setError("");
+    try {
+      const result = await api(`/api/settings/system-health?limit=${nextPageSize}&cursor=${encodeURIComponent(nextCursor)}`);
+      setPayload(result);
+      return true;
+    } catch (caught) {
+      setError(caught.message);
+      return false;
+    } finally { setLoading(false); }
+  };
+  const next = async () => {
+    if (!payload?.nextCursor) return;
+    const nextCursor = payload.nextCursor;
+    if (await load(nextCursor)) { setHistory((current) => [...current, cursor]); setCursor(nextCursor); }
+  };
+  const previous = async () => {
+    if (!history.length) return;
+    const previousCursor = history.at(-1);
+    if (await load(previousCursor)) { setHistory((current) => current.slice(0, -1)); setCursor(previousCursor); }
+  };
+  const resize = async (event) => {
+    const size = Number(event.target.value);
+    setPageSize(size); setCursor(""); setHistory([]);
+    await load("", size);
+  };
+  const items = payload?.items || [];
+  return <details onToggle={(event) => { if (event.currentTarget.open && !payload && !loading) void load(""); }}
+    className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:col-span-2 xl:col-span-3">
+    <summary className="cursor-pointer text-xs font-semibold text-slate-800">系统健康
+      <span className="ml-2 font-normal text-slate-500">{payload?.totalCount ?? count ?? 0} 项需要处理</span>
+    </summary>
+    <div className="mt-3 text-[10px] leading-relaxed text-slate-500" aria-live="polite">
+      {loading && !payload ? <p role="status">正在加载…</p> : error ? <p className="text-red-600">{error}</p>
+        : items.length ? <ul className="divide-y divide-slate-200">{items.map((item) => <li key={item.key} className="py-2.5 first:pt-0">
+          <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-semibold text-slate-800">{item.title}</p>
+            <p className="mt-0.5 break-all text-slate-600">{item.subject}</p></div><StatusPill status={item.severity} /></div>
+          <p className="mt-1 text-slate-500">{item.detail}</p>
+          {item.outcomeState && <p className="mt-1 font-medium text-amber-800">待核状态：{label(item.outcomeState)}；已隔离，不会自动重发。</p>}
+        </li>)}</ul> : <p>暂无记录</p>}
+      {payload && <nav aria-label="系统健康分页" className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3">
+        <Button size="sm" variant="outline" disabled={loading || !history.length} onClick={previous}>上一页</Button>
+        <span>第 {history.length + 1} 页 · 当前 {items.length} 条</span>
+        <Button size="sm" variant="outline" disabled={loading || !payload.nextCursor} onClick={next}>下一页</Button>
+        <label>每页 <select aria-label="系统健康每页条数" className="rounded border border-slate-200 bg-white px-2 py-1" value={pageSize} onChange={resize}>
+          <option value="20">20</option><option value="50">50</option>
+        </select> 条</label>
+      </nav>}
+    </div>
+  </details>;
 }
 
 function SettingsOperationsLight({ data, onAction, actionBusy }) {
@@ -83,7 +143,6 @@ function SettingsOperationsLight({ data, onAction, actionBusy }) {
     }
   };
   const groups = [
-    { key:"health",title:"系统健康",summary:`${counts.systemHealth || 0} 项需要处理`,endpoint:"/api/settings/system-health" },
     { key:"maintenance",title:"维护与遥测",summary:`${counts.maintenance || 0} 条运行记录`,endpoint:"/api/settings/maintenance" },
     { key:"wordpress",title:"WordPress 内容库",summary:`${counts.wordpressInventory || 0} 篇内容`,endpoint:"/api/settings/wordpress-inventory" },
     { key:"blueprints",title:"编辑蓝图",summary:`${counts.blueprints || 0} 个蓝图`,endpoint:"/api/settings/blueprints" },
@@ -462,10 +521,11 @@ function recommendationGuidance(item) {
   return map[type] || map.UNSURE;
 }
 
-function KnowledgeDirectoryView({ data, reviewRequest, onNavigate, onAction, actionBusy }) {
+function KnowledgeDirectoryView({ data, reviewRequest, onNavigate, onAction, actionBusy,
+  knowledgeDestination = "", onKnowledgeDestinationChange = () => {} }) {
   const [summary, setSummary] = useState(data?.summary || {});
   const [subjects, setSubjects] = useState(data?.subjects || []);
-  const [destination, setDestination] = useState("");
+  const destination = knowledgeDestination;
   const [activeSubject, setActiveSubject] = useState(null);
   const [facts, setFacts] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -474,8 +534,10 @@ function KnowledgeDirectoryView({ data, reviewRequest, onNavigate, onAction, act
   const [mode, setMode] = useState("directory");
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [localError, setLocalError] = useState("");
+  const directoryRequest = useRef(0);
   useEffect(() => { if (!destination) { setSummary(data?.summary || {}); setSubjects(data?.subjects || []); } }, [data, destination]);
   const loadDirectory = async (slug = "") => {
+    const requestId = ++directoryRequest.current;
     setLoadingDetails(true); setLocalError("");
     try {
       const query = slug ? `?destination=${encodeURIComponent(slug)}` : "";
@@ -483,9 +545,13 @@ function KnowledgeDirectoryView({ data, reviewRequest, onNavigate, onAction, act
       const [nextSummary, nextSubjects] = await Promise.all([
         api(`/api/knowledge/summary${query}`), api(`/api/knowledge/subjects${query}${separator}limit=50`),
       ]);
-      setDestination(slug); setSummary(nextSummary); setSubjects(nextSubjects.items || []); setActiveSubject(null); setFacts([]); setMode("directory");
-    } catch (caught) { setLocalError(caught.message); } finally { setLoadingDetails(false); }
+      if (requestId !== directoryRequest.current) return;
+      onKnowledgeDestinationChange(slug); setSummary(nextSummary); setSubjects(nextSubjects.items || []); setActiveSubject(null); setFacts([]); setMode("directory");
+    } catch (caught) { if (requestId === directoryRequest.current) setLocalError(caught.message); }
+    finally { if (requestId === directoryRequest.current) setLoadingDetails(false); }
   };
+  useEffect(() => { if (destination) void loadDirectory(destination); }, []);
+  useEffect(() => () => { directoryRequest.current++; }, []);
   const selectSubject = async (subject) => {
     setActiveSubject(subject); setLoadingDetails(true); setLocalError("");
     try {

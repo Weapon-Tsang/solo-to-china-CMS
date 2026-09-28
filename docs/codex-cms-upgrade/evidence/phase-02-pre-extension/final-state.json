@@ -1,0 +1,132 @@
+{
+  "at": "2026-09-27T11:41:04.092Z",
+  "status": "PASS_LOCAL / LOCAL_BROWSER_ACCEPTED / STOPPED",
+  "current_authorized_step": "NONE",
+  "phase_end_stop": true,
+  "root": "C:\\Users\\Mloong\\Documents\\ChatGPT\\solo-to-china-CMS",
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "branch": "main",
+  "gitStatus": " M .env.example\n M .gitignore\n M deployment/gce/code-only-release.sh\n M deployment/gce/resume-verified-upgrade.sh\n M extension/background.js\n M extension/manifest.json\n M extension/page-extractor.js\n M extension/popup.js\n M extension/sync-core.js\n M frontend/src/App.jsx\n M frontend/src/views.jsx\n M package-lock.json\n M package.json\n M src/adapters/manual-source.mjs\n M src/ai/extraction-router.mjs\n M src/ai/kimi.mjs\n M src/ai/vertex-gemini-client.mjs\n M src/backup.mjs\n M src/capture-upload.mjs\n M src/chunked-upload.mjs\n M src/config.mjs\n M src/db.mjs\n M src/maintenance.mjs\n M src/media-storage.mjs\n M src/pipeline.mjs\n M src/publication-eligibility.mjs\n M src/repository.mjs\n M src/server.mjs\n M src/services/operations-workspace.mjs\n M src/source-media-store.mjs\n M src/visuals/vertex-imagen.mjs\n M test/backup.test.mjs\n M test/capture-upload.test.mjs\n M test/capture.test.mjs\n M test/extension-background-recovery.test.mjs\n M test/favorites-sync.test.mjs\n M test/frontend-localization.test.mjs\n M test/media-analysis.test.mjs\n M test/media-request-executor.test.mjs\n M test/migration-seventy-nine.test.mjs\n M test/model-routing-v11.test.mjs\n M test/openai.test.mjs\n M test/pipeline.test.mjs\n M test/reliability-dom.test.mjs\n M test/server.test.mjs\n M test/vertex-batch-pipeline.test.mjs\n M test/vertex-gemini-client.test.mjs\n?? docs/codex-cms-upgrade/\n?? extension/run-control.js\n?? scripts/audit-extension-pre-fixture.mjs\n?? scripts/benchmark-local-stage01-browser.js\n?? scripts/benchmark-local-stage01-fin01-browser.js\n?? scripts/benchmark-local-stage01-load.mjs\n?? scripts/benchmark-local-stage01.mjs\n?? scripts/inspect-local-data.mjs\n?? scripts/local-runtime-status.mjs\n?? scripts/prepare-local-release.mjs\n?? scripts/promote-local-data.mjs\n?? scripts/stage01-audit-snapshot.py\n?? scripts/stage01-benchmark-exceptions.mjs\n?? scripts/stage01-cloud-audit.py\n?? scripts/stage01-extract-snapshot.py\n?? scripts/stage01-fetch-snapshot.py\n?? scripts/stage01-fin01-api-benchmark.mjs\n?? scripts/stage01-fin01-review-guard.mjs\n?? scripts/stage01-fin01-worker.mjs\n?? scripts/stage01-profile-exceptions.mjs\n?? scripts/stage01-public-runtime-audit.py\n?? scripts/stage01-repair-identical-derivative.py\n?? scripts/stage01-replay-source-gaps.mjs\n?? scripts/stage01-snapshot-readonly.mjs\n?? scripts/stage01-vertex-canary.mjs\n?? scripts/stage01-worker-replay.mjs\n?? scripts/stage02-media-binding-replay.mjs\n?? scripts/verify-extension-pre-browser.mjs\n?? scripts/verify-local-release-isolation.mjs\n?? src/atomic-media-file.mjs\n?? src/google-access-token.mjs\n?? src/local-runtime.mjs\n?? src/media-context.mjs\n?? src/media-file-lease.mjs\n?? src/repositories/media-bindings.mjs\n?? test/atomic-media-file.test.mjs\n?? test/chunked-upload.test.mjs\n?? test/extension-run-control.test.mjs\n?? test/google-access-token.test.mjs\n?? test/local-delivery-receiver.test.mjs\n?? test/local-runtime.test.mjs\n?? test/media-bindings.test.mjs\n?? test/media-context.test.mjs\n?? test/media-receipt-race.test.mjs\n?? test/migration-eighty.test.mjs\n",
+  "gitDiffStat": " .env.example                                |   2 +\n .gitignore                                  |   2 +\n deployment/gce/code-only-release.sh         |   2 +-\n deployment/gce/resume-verified-upgrade.sh   |   4 +-\n extension/background.js                     | 460 ++++++++++++++++++++-----\n extension/manifest.json                     |   2 +-\n extension/page-extractor.js                 |  33 +-\n extension/popup.js                          |   7 +-\n extension/sync-core.js                      |  21 +-\n frontend/src/App.jsx                        |  12 +-\n frontend/src/views.jsx                      |  78 ++++-\n package-lock.json                           | 291 ++++++++++++++++\n package.json                                |  10 +\n src/adapters/manual-source.mjs              |   3 +-\n src/ai/extraction-router.mjs                |   1 +\n src/ai/kimi.mjs                             |  58 +++-\n src/ai/vertex-gemini-client.mjs             |  62 +++-\n src/backup.mjs                              | 503 ++++++++++++++++++++++++++--\n src/capture-upload.mjs                      |  13 +-\n src/chunked-upload.mjs                      |  21 +-\n src/config.mjs                              |  26 +-\n src/db.mjs                                  |  52 ++-\n src/maintenance.mjs                         |   2 +\n src/media-storage.mjs                       |  17 +-\n src/pipeline.mjs                            |  54 +++\n src/publication-eligibility.mjs             |   6 +\n src/repository.mjs                          | 375 ++++++++++++++++++---\n src/server.mjs                              |  92 ++++-\n src/services/operations-workspace.mjs       |   8 +-\n src/source-media-store.mjs                  |   5 +-\n src/visuals/vertex-imagen.mjs               |  22 +-\n test/backup.test.mjs                        | 463 ++++++++++++++++++++++++-\n test/capture-upload.test.mjs                |  16 +\n test/capture.test.mjs                       |   9 +\n test/extension-background-recovery.test.mjs |   9 +-\n test/favorites-sync.test.mjs                |  40 ++-\n test/frontend-localization.test.mjs         |   9 +\n test/media-analysis.test.mjs                |   2 +-\n test/media-request-executor.test.mjs        |   3 +\n test/migration-seventy-nine.test.mjs        |   4 +-\n test/model-routing-v11.test.mjs             |  15 +\n test/openai.test.mjs                        |   2 +-\n test/pipeline.test.mjs                      |  41 +++\n test/reliability-dom.test.mjs               |   8 +-\n test/server.test.mjs                        |  55 ++-\n test/vertex-batch-pipeline.test.mjs         |  76 +++++\n test/vertex-gemini-client.test.mjs          |  40 ++-\n 47 files changed, 2731 insertions(+), 305 deletions(-)\n",
+  "taskDiffStat": " extension/background.js                     | 460 +++++++++++++++++++++++-----\n extension/manifest.json                     |   2 +-\n extension/page-extractor.js                 |  33 +-\n extension/popup.js                          |   7 +-\n extension/sync-core.js                      |  21 +-\n src/media-storage.mjs                       |  17 +-\n test/extension-background-recovery.test.mjs |   9 +-\n test/favorites-sync.test.mjs                |  40 +--\n test/reliability-dom.test.mjs               |   8 +-\n 9 files changed, 474 insertions(+), 123 deletions(-)\n",
+  "taskFiles": {
+    "extension/background.js": {
+      "bytes": 69294,
+      "sha256": "3ba26b5f5aac8b6b7413b8857565820d05658d98ecdc7a7d961036da74994f93"
+    },
+    "extension/run-control.js": {
+      "bytes": 1866,
+      "sha256": "d4f32007333d48c6c147e058c51ee10c6958bfca6954e7e1cf8605753d3b7818"
+    },
+    "extension/manifest.json": {
+      "bytes": 679,
+      "sha256": "a65027a4b4aa2f3c2f531f0ac91722acc86f0ccb7fef0dd7cc1d8f2659f1319d"
+    },
+    "extension/page-extractor.js": {
+      "bytes": 21171,
+      "sha256": "5c8a12979b0552c6b1f3b7651b7ea612018fced81fcf8c283cd6a491cfcda32d"
+    },
+    "extension/popup.js": {
+      "bytes": 16495,
+      "sha256": "9cd08f4bd0b07318dc06bf1b337c43024c81470735714a5351f8379203ff7426"
+    },
+    "extension/sync-core.js": {
+      "bytes": 37201,
+      "sha256": "fbb2859d31cfba31bc4141426e04c4db34ccdc827949d67ab6db6fe42fd2be44"
+    },
+    "src/media-storage.mjs": {
+      "bytes": 5151,
+      "sha256": "bedd3e3f8f351fe032e25127a18731a5e86343a9fbe3ba1e03d4bebf114fd57c"
+    },
+    "test/extension-background-recovery.test.mjs": {
+      "bytes": 9065,
+      "sha256": "ab72313a75b0279947206e4db8401492a94ec855a95efd6357758563577f4c58"
+    },
+    "test/extension-run-control.test.mjs": {
+      "bytes": 10151,
+      "sha256": "5948d8421044e403e36f26e5d6b2a2dfcf53f59ce7a0f894aa20a5bbfe5d344b"
+    },
+    "test/favorites-sync.test.mjs": {
+      "bytes": 18723,
+      "sha256": "ec51fc082a6cd6f5b2f6ccbd1d94da624542ab93cfd85017a04ce780a11cae9e"
+    },
+    "test/reliability-dom.test.mjs": {
+      "bytes": 8280,
+      "sha256": "4144471994d1303cd4af8e58f243246ec85ba72869c7fe7e0d3cdcae09eb7bd1"
+    },
+    "test/media-receipt-race.test.mjs": {
+      "bytes": 1679,
+      "sha256": "edd0b3a67d09d0770a5b5ff1124dde285b8f86d9a7dc90c05e015c12ed0fd425"
+    },
+    "scripts/verify-extension-pre-browser.mjs": {
+      "bytes": 25697,
+      "sha256": "c9b5302e228e5c72d944904948c82656779dfdd7e1416e5a1f48c8d9c68f5699"
+    },
+    "scripts/audit-extension-pre-fixture.mjs": {
+      "bytes": 2826,
+      "sha256": "a60aef838fd84f2e05b76cc520d2b472737e106b5a8bc5d9db78e7c34022267a"
+    },
+    "docs/codex-cms-upgrade/acceptance/phase-02-pre-extension.md": {
+      "bytes": 16993,
+      "sha256": "aa79027523f32d3648adde78dfe956a872ea225de7a82d915f4c847925509af3"
+    },
+    "docs/codex-cms-upgrade/phases/phase-02-pre-extension.txt": {
+      "bytes": 21809,
+      "sha256": "86109a7babf1b2e71803cb6f5f4c100a6099ec4ab704f6046333055e5b3fdbe9"
+    },
+    "docs/codex-cms-upgrade/phases/phase-02-pre-entry.md": {
+      "bytes": 517,
+      "sha256": "a7ca67d3a33e80cf9a96e345cc90fb9c8879f9f97e060799ef7bbcb9afbd8106"
+    },
+    "docs/codex-cms-upgrade/STATUS.md": {
+      "bytes": 15380,
+      "sha256": "b0470b51da419ca4ebaab8e3319c577e46119bd7197d184e64c07d058de11b0a"
+    }
+  },
+  "validation": {
+    "L1": "PASS",
+    "L2": "PASS 106/106",
+    "L3": "NOT REQUIRED",
+    "L4": "PASS isolated real Chrome MV3",
+    "L5": "NOT REQUIRED / NOT RUN",
+    "L6": "NOT REQUIRED / NOT RUN",
+    "postFixAudit": "PASS local fixture only",
+    "npmCheck": "PASS",
+    "diffCheck": "PASS",
+    "finalBrowserEvidence": "browser-deadlines.json",
+    "reusedFullEvidence": "browser-full.json",
+    "reusedDelta": "reused-browser-delta.patch"
+  },
+  "finalTestIdentity": {
+    "extensionId": "ofiachpcchmgploiecjfdcngmjoogpan",
+    "extensionVersion": "2.0.71",
+    "browser": "153.0.8010.12",
+    "profile": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-4YQdwO\\profile",
+    "extension": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-4YQdwO\\extension",
+    "cms": {
+      "endpoint": "http://127.0.0.1:52769",
+      "database": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-4YQdwO\\solo-to-china.sqlite",
+      "role": "api"
+    }
+  },
+  "userExtension": "UNKNOWN / NOT ACCESSED / NOT UPDATED",
+  "realAccountCanary": "NOT RUN",
+  "sideEffects": {
+    "commit": false,
+    "push": false,
+    "deployment": false,
+    "productionDatabaseRead": false,
+    "productionDatabaseWrite": false,
+    "realAI": false,
+    "wordpressWrite": false,
+    "cloudMutation": false,
+    "userProfileMutation": false,
+    "separateFrontendRepoMutation": false,
+    "initialUnauthenticatedPublicXhsNavigation": true,
+    "initialNavigationDetail": "One initial synthetic harness attempt reached a public verification page without user credentials; failed evidence retained; subsequent all-DNS-loopback boundary prevented public traffic.",
+    "localEffects": "Isolated Chrome profiles, temporary fixture databases/media, tool-cache Chrome download, local build output, repository code/tests/docs. Test directories retained."
+  },
+  "testProcesses": "No matching test Chrome or test harness Node processes at closeout; user CMS not stopped",
+  "stage01": "PASS_LOCAL preserved",
+  "stage02Main": "May continue in a new thread; original A1 checkpoint preserved; not completed here"
+}

@@ -1,0 +1,31 @@
+(node:26964) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?T02-38: automatic local supplementation reads complete long captions and keeps exact locators (2.7482ms)
+鉁?T02-38: exhausted automatic reads retain omitted ranges and never hide pending context (7.3268ms)
+鉁?T02-43: changing image order changes the context fingerprint and cannot reuse old positional evidence (0.3672ms)
+鉁?T02-42/45: repair previews are read-only, apply is idempotent and stale preview cannot write (567.9276ms)
+鉁?T02-43: revocation survives context/policy revisions without restoring automatic adoption (549.5213ms)
+鉁?T02-38/45: evidence beyond the budget cannot produce a confirmed relation (537.0825ms)
+鉁?T02-46: PDF visual input with image kind cannot be repaired or matched as an independent photograph (529.8238ms)
+鉁?T02-45: affected slots are reported while draft and frozen manifest remain unchanged (531.7835ms)
+(node:484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?T02-35/38: omitted captions are supplemented before all real adapter entry points (574.8955ms)
+鉁?T02-35: source image references, independent captions and occurrence IDs survive realtime, Batch and reanalysis requests (540.9776ms)
+鉁?T02-36/37: title and mention order do not become explicit bindings; equal bytes retain distinct occurrences (0.6579ms)
+鉁?T02-38: long source context prioritizes image references and exposes recoverable omitted offsets (1.8215ms)
+鉁?T02-38: image transport cannot silently change image-to-context order or accept unknown IDs (0.7802ms)
+鉁?T02-38: realtime rejects foreign image IDs before single-image normalization and flags missing analysis (0.7418ms)
+鉁?T02-38: Batch rejects missing image analysis against its persisted context manifest (0.6972ms)
+鉁?T02-43: reanalysis of a retained image uses its own capture, and caption changes invalidate context only (523.7465ms)
+鉁?T02-37: identical claim text from two images retains both evidence identities (1.5371ms)
+鉁?T02-38: bounded readback recovers omitted prose and metadata and rejects changed evidence (111.3473ms)
+鉁?T02-38/43: repository readback pins the current or historical capture and never borrows a newer text (530.6341ms)
+鈩?tests 19
+鈩?suites 0
+鈩?pass 19
+鈩?fail 0
+鈩?cancelled 0
+鈩?skipped 0
+鈩?todo 0
+鈩?duration_ms 2963.297

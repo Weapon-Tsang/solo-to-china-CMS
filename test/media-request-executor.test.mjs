@@ -51,6 +51,9 @@ test('only a hash-verified pending QA candidate can reconcile an unknown dispatc
   assert.throws(()=>executor.reconcileUnknownQa({...request,idempotencyKey:'qa-reconcile-2'}),{statusCode:409});
   first.prepare("UPDATE media_dispatches SET state='outcome_unknown',substage='generate_visual' WHERE id='qa-dispatch'").run();
   assert.throws(()=>executor.reconcileUnknownQa({...request,idempotencyKey:'qa-reconcile-3'}),{statusCode:409});
+  first.prepare("UPDATE media_dispatches SET substage='analyze_source_image' WHERE id='qa-dispatch'").run();
+  assert.throws(()=>executor.reconcileUnknownQa({...request,idempotencyKey:'qa-reconcile-4'}),{statusCode:409});
+  assert.equal(first.prepare("SELECT state FROM media_dispatches WHERE id='qa-dispatch'").get().state,'outcome_unknown');
 });
 
 test('shared SQLite enforces 2 RPM pacing without an initial burst', (t) => {

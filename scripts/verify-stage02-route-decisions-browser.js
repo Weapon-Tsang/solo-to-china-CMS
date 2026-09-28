@@ -1,0 +1,65 @@
+async (page) => {
+  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+  await page.route('**/*',route=>/^http:\/\/127\.0\.0\.1:\d+\//.test(route.request().url())?route.continue():route.abort());
+  const endpoint='/api/content/route-owner/route-decisions';
+  const initial=await page.evaluate(async()=>await(await fetch('/api/content/route-owner/production-state')).json());
+  const initialBody=initial.draft.draft.body_markdown;
+  const panel=page.getByRole('region',{name:'路线修订',exact:true});
+  for(const n of [3,1,2])await panel.getByRole('button',{name:`加入来源行程 ${n} · Day ${n}`,exact:true}).click();
+  await panel.getByRole('textbox',{name:'修订原因',exact:true}).fill('浏览器验证：先拒绝不合适的行程提案');
+  await panel.getByRole('button',{name:'保存路线提案',exact:true}).click();
+  await panel.getByText('提案已保存，请核对差异后再决定。',{exact:true}).waitFor();
+  const differences=panel.locator('summary').filter({hasText:/查看 \d+ 项字段差异/}).first();
+  await differences.focus();await page.keyboard.press('Enter');
+  await panel.getByText('days[0].day_id',{exact:true}).waitFor({state:'visible'});
+  await panel.getByRole('button',{name:'拒绝提案',exact:true}).click();
+  await panel.getByText('已拒绝提案，现有路线和正文保持原样。',{exact:true}).waitFor();
+  await panel.getByRole('textbox',{name:'修订原因',exact:true}).fill('浏览器验证：明确批准路线修订，保留已发布正文');
+  await panel.getByRole('button',{name:'保存路线提案',exact:true}).click();
+  await panel.getByText('提案已保存，请核对差异后再决定。',{exact:true}).waitFor();
+  await panel.getByRole('button',{name:'批准路线变更',exact:true}).focus();await page.keyboard.press('Enter');
+  await page.getByRole('heading',{name:'批准路线 · 版本 2',exact:true}).waitFor();
+  const oldSnapshot=panel.locator('summary').filter({hasText:'现有正文使用的路线 · 版本 1'});
+  await oldSnapshot.focus();await page.keyboard.press('Enter');
+  await panel.getByText('此快照只读；与新批准路线不同，正文仍保留原版本。',{exact:true}).waitFor();
+  const widths=[];
+  for(const width of [320,768,1024,1440]) {
+    await page.setViewportSize({width,height:900});
+    const overflow=await panel.evaluate(node=>node.scrollWidth>node.clientWidth+1);
+    if(overflow)throw new Error(`Route decisions overflow at ${width}`);
+    widths.push({width,overflow});
+  }
+  await panel.scrollIntoViewIfNeeded();await page.screenshot({path:'output/playwright/a2-decisions-1440.png'});
+  await page.setViewportSize({width:320,height:900});await page.screenshot({path:'output/playwright/a2-decisions-320.png'});
+  const after=await page.evaluate(async()=>await(await fetch('/api/content/route-owner/production-state')).json());
+  if(after.draft.draft.body_markdown!==initialBody)throw new Error('Published body changed');
+  const state=await page.evaluate(async endpoint=>await(await fetch(endpoint)).json(),endpoint);
+  if(state.current.revision!==2 || state.article_route.revision!==1)throw new Error('Snapshot revision mismatch');
+  await page.reload();await page.getByRole('tab',{name:'内容',exact:true}).click();
+  await page.getByRole('button',{name:/Three-day historical/}).click();
+  await page.getByRole('heading',{name:'批准路线 · 版本 2',exact:true}).waitFor();
+  await page.getByRole('region',{name:'路线修订',exact:true}).getByText('已批准 · 基于版本 1',{exact:true}).waitFor();
+  // Another real client approves while this form still holds revision 2.
+  await panel.locator('summary').filter({hasText:'提出路线修订'}).click();
+  await panel.getByRole('combobox',{name:'来源路线',exact:true}).selectOption({index:1});
+  await panel.getByRole('textbox',{name:'修订原因',exact:true}).fill('浏览器旧版本表单不得覆盖其他客户端的审批');
+  await page.evaluate(async endpoint=>{
+    const get=await(await fetch(endpoint)).json();
+    const send=async(url,payload)=>{
+      const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+      if(!response.ok)throw new Error(`Concurrent client failed: ${response.status}`);
+      return await response.json();
+    };
+    const proposal=await send(endpoint,{expected_hash:get.current.content_hash,idempotency_key:'browser-concurrent-client',
+      reason:'另一个客户端明确批准恢复来源顺序',route_scope:{mode:'source_route_adaptation',fragment_ids:[get.fragments[0].fragment_id]}});
+    await send(`${endpoint}/${proposal.id}`,{expected_hash:get.current.content_hash,proposal_hash:proposal.proposal_hash,
+      decision:'approve_route_revision',authority:'route_revision'});
+  },endpoint);
+  await panel.getByRole('button',{name:'保存路线提案',exact:true}).click();
+  await panel.getByRole('alert').filter({hasText:'批准路线已变化，请刷新后重新提出修订。'}).waitFor();
+  await panel.getByRole('button',{name:'刷新路线与提案',exact:true}).click();
+  await page.getByRole('heading',{name:'批准路线 · 版本 3',exact:true}).waitFor();
+  if(errors.length)throw new Error(errors.join('\n'));
+  return {realApi:true,rejected:true,approved:true,keyboard:true,publishedBodyPreserved:true,oldSnapshotReadOnly:true,
+    reloadPreserved:true,staleFormRejected:true,refreshAfterConflict:true,widths,pageErrors:errors,currentRevision:state.current.revision,articleRevision:state.article_route.revision};
+}

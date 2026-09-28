@@ -1,0 +1,296 @@
+{
+  "root": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-mE1cv1",
+  "extension": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-mE1cv1\\extension",
+  "profile": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-mE1cv1\\profile",
+  "version": "2.0.71",
+  "startedAt": "2026-09-27T11:09:11.496Z",
+  "buildDifference": "Only isolated manifest adds http://127.0.0.1/* for ephemeral CMS port; production code unchanged.",
+  "checks": [],
+  "tabEvents": [
+    {
+      "event": "created",
+      "at": 1790507352789
+    },
+    {
+      "event": "created",
+      "at": 1790507352873
+    },
+    {
+      "event": "created",
+      "at": 1790507354578
+    },
+    {
+      "event": "closed",
+      "at": 1790507355019
+    },
+    {
+      "event": "closed",
+      "at": 1790507355019
+    },
+    {
+      "event": "closed",
+      "at": 1790507355020
+    }
+  ],
+  "apiEvents": [
+    {
+      "at": 1790507352936,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507352959,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790507354657,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    }
+  ],
+  "blockedNetwork": [
+    "null",
+    "https://as.xiaohongshu.com",
+    "https://fe-static.xhscdn.com",
+    "https://fe-static.xhscdn.com",
+    "https://fe-static.xhscdn.com",
+    "https://fe-video-qc.xhscdn.com",
+    "https://fe-static.xhscdn.com",
+    "https://cdn.xiaohongshu.com",
+    "https://cdn.xiaohongshu.com",
+    "https://fe-static.xhscdn.com",
+    "https://fe-static.xhscdn.com",
+    "https://fe-static.xhscdn.com",
+    "https://fe-static.xhscdn.com",
+    "https://fe-static.xhscdn.com",
+    "https://fe-static.xhscdn.com",
+    "https://fe-static.xhscdn.com",
+    "https://cdn.xiaohongshu.com",
+    "https://cdn.xiaohongshu.com",
+    "https://cdn.xiaohongshu.com",
+    "https://cdn.xiaohongshu.com",
+    "https://cdn.xiaohongshu.com",
+    "https://cdn.xiaohongshu.com",
+    "https://fe-video-qc.xhscdn.com",
+    "https://fe-video-qc.xhscdn.com"
+  ],
+  "browser": "153.0.8010.12",
+  "extensionId": "cehfbjbimbfgdibjhaflfoejnggjicla",
+  "cms": {
+    "endpoint": "http://127.0.0.1:64874",
+    "database": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-mE1cv1\\solo-to-china.sqlite",
+    "role": "api"
+  },
+  "firstCapture": {
+    "activeTasks": [],
+    "automatic": false,
+    "browserIdentity": "8c82b4b6-3405-433a-9d20-4e084a95355f",
+    "checkpoint": {
+      "lastSuccessfulSyncAt": null,
+      "topIdentityKeys": []
+    },
+    "concurrency": 1,
+    "concurrencyController": {
+      "lastChangeAt": null,
+      "reason": "settings"
+    },
+    "concurrencySamples": [
+      {
+        "cmsBackpressure": false,
+        "completedAt": "2026-09-27T11:09:14.650Z",
+        "errorClass": "VERIFICATION_REQUIRED",
+        "extractionMs": 3,
+        "localFailure": false,
+        "loginRequired": false,
+        "mediaBytes": 0,
+        "mediaCount": 0,
+        "mediaDownloadMs": 0,
+        "mediaUploadMs": 0,
+        "memoryPressure": false,
+        "noteLoadMs": 299,
+        "rateLimited": false,
+        "result": "failed",
+        "submitMs": 0,
+        "tabCrash": false,
+        "timeout": false,
+        "totalMs": 349,
+        "verificationDetected": true
+      }
+    ],
+    "config": {
+      "autoMinIntervalHours": 12,
+      "concurrencyInitial": 4,
+      "concurrencyMax": 12,
+      "concurrencyMinSamples": 20,
+      "concurrencyMode": "custom",
+      "concurrencyWindowSize": 24,
+      "customConcurrency": 1,
+      "detailLoadTimeoutMs": 30000,
+      "discoveryBatchSize": 100,
+      "identityBatchSize": 50,
+      "maxRetries": 3,
+      "mediaConcurrency": 12,
+      "mediaMemoryBudgetBytes": 100663296,
+      "mediaUploadConcurrency": 6,
+      "queueHighWatermark": 500,
+      "retryBaseMs": 5000,
+      "retryMaxMs": 120000,
+      "stopAfterConsecutiveKnown": 12,
+      "taskLeaseMs": 180000,
+      "watchdogStallMs": 120000
+    },
+    "controlSchema": 1,
+    "currentTopIdentityKeys": [
+      "xiaohongshu:fixture001"
+    ],
+    "cursor": {
+      "collectionEnd": true,
+      "collectionEndStreak": 2,
+      "domOffset": 1,
+      "scannedWindows": 2,
+      "scrollY": 0
+    },
+    "discoveryComplete": true,
+    "discoveryTabId": 1832091111,
+    "driveRetryAt": null,
+    "driverAttempts": 0,
+    "lastBusinessProgress": "extracting",
+    "lastError": {
+      "backpressure": false,
+      "code": "VERIFICATION_REQUIRED",
+      "message": "Xiaohongshu requires manual verification. Complete it in Chrome, then resume.",
+      "retryAfterMs": 0,
+      "retryable": false,
+      "timestamp": "2026-09-27T11:09:14.650Z"
+    },
+    "lastProgressAt": "2026-09-27T11:09:14.650Z",
+    "mediaConcurrency": 12,
+    "mediaConcurrencyController": {
+      "lastChangeAt": null,
+      "reason": "settings"
+    },
+    "mode": "full",
+    "noProgressSince": null,
+    "phase": "acquisition",
+    "queue": [
+      {
+        "attempts": 1,
+        "author": "",
+        "canonicalUrl": "https://www.xiaohongshu.com/explore/fixture001",
+        "coverUrl": "",
+        "error": {
+          "backpressure": false,
+          "code": "VERIFICATION_REQUIRED",
+          "message": "Xiaohongshu requires manual verification. Complete it in Chrome, then resume.",
+          "retryAfterMs": 0,
+          "retryable": false,
+          "timestamp": "2026-09-27T11:09:14.650Z"
+        },
+        "externalId": "fixture001",
+        "identityKey": "xiaohongshu:fixture001",
+        "leaseExpiresAt": null,
+        "leaseId": null,
+        "leaseStartedAt": null,
+        "navigationUrl": "https://www.xiaohongshu.com/explore/fixture001",
+        "position": 0,
+        "repairActions": [
+          "CAPTURE_NEW"
+        ],
+        "repairMediaIdentities": [],
+        "retryAt": null,
+        "sourceId": null,
+        "startedAt": "2026-09-27T11:09:14.298Z",
+        "status": "paused_verification_required",
+        "tabId": null,
+        "taskId": "d112ee87-6b01-4e2f-bacf-713bd7f34a01",
+        "title": "",
+        "updatedAt": "2026-09-27T11:09:14.650Z",
+        "workerId": null
+      }
+    ],
+    "recoveryNoticeAt": null,
+    "runRevision": 1,
+    "scan": {
+      "checkpointSeen": true,
+      "consecutiveKnown": 0,
+      "reliableCheckpoint": false,
+      "windowNew": 0
+    },
+    "scopeKey": "xhs_scope:https://www.xiaohongshu.com/board/fixture123",
+    "scopeLabel": "小红书收藏夹 · fixture1",
+    "scopeUrl": "https://www.xiaohongshu.com/board/fixture123",
+    "seenIdentityKeys": [
+      "xiaohongshu:fixture001"
+    ],
+    "sessionId": "bb112f02-881f-4baf-8950-c7aed7b0eef2",
+    "stage": "extracting",
+    "stageStartedAt": "2026-09-27T11:09:14.646Z",
+    "startedAt": "2026-09-27T11:09:12.941Z",
+    "stats": {
+      "captured": 0,
+      "discovered": 1,
+      "duplicate": 0,
+      "failed": 0,
+      "known": 0,
+      "new": 1,
+      "paused": 1,
+      "repair": 0,
+      "retrying": 0,
+      "unavailable": 0
+    },
+    "status": "paused_verification_required",
+    "stopAfterQueue": false,
+    "tabOwnership": {
+      "1832091111": {
+        "owned": false,
+        "role": "discovery",
+        "tabId": 1832091111,
+        "url": "https://www.xiaohongshu.com/board/fixture123",
+        "windowId": 1832091108
+      },
+      "1832091112": {
+        "owned": true,
+        "role": "worker",
+        "tabId": 1832091112,
+        "url": "https://www.xiaohongshu.com/explore/fixture001",
+        "windowId": 1832091108
+      }
+    },
+    "updatedAt": "2026-09-27T11:09:14.659Z",
+    "workerSlots": [
+      {
+        "tabId": 1832091112,
+        "updatedAt": "2026-09-27T11:09:14.339Z",
+        "workerId": "note-worker-0-e8e97749-0261-4a37-8340-c2b11192e413"
+      }
+    ],
+    "workerTabs": [
+      1832091112
+    ]
+  },
+  "status": "FAIL",
+  "error": {
+    "message": "Expected values to be strictly equal:\n+ actual - expected\n\n+ 'paused_verification_required'\n- 'completed'\n",
+    "stack": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ 'paused_verification_required'\n- 'completed'\n\n    at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/scripts/verify-extension-pre-browser.mjs:65:10"
+  },
+  "finishedAt": "2026-09-27T11:09:15.366Z",
+  "sourceHashes": {
+    "background.js": "bee34b824bbb9c95fa822760d5995b2b6bb28605553e08dc30b03497d7a6598a",
+    "capture-utils.js": "5e939730cbe61260808de933203eff52c30d65f7c18d58bad804dd2952d1efde",
+    "derivative-cache.js": "37ee6933154b13416c683b5692aac919ef1eb2c29279e38200e79ab8af34cc18",
+    "manifest.json": "a65027a4b4aa2f3c2f531f0ac91722acc86f0ccb7fef0dd7cc1d8f2659f1319d",
+    "media-contract.js": "fbc17791b20ec2d02fcae5ac53ff24345887b2de6a3fdda0a16ccacfc60b7002",
+    "media-journal.js": "1f5c06020169868e35823aa16605588469ef778632785903009382333dccf41f",
+    "page-extractor.js": "543fa670aed81e0b0472d965e53a80571aac8088790cfb6ca0aa971e4b50d849",
+    "popup-state.js": "0a75f3cbcd5b66f3122b8865dc4ba99894b01075ef3aa58324923c829d6e88e2",
+    "popup.html": "62f4bb7af68152fdca99ea7eab196013c5c059577a837c37c33a1008d4aff16f",
+    "popup.js": "9cd08f4bd0b07318dc06bf1b337c43024c81470735714a5351f8379203ff7426",
+    "run-control.js": "d4f32007333d48c6c147e058c51ee10c6958bfca6954e7e1cf8605753d3b7818",
+    "sync-core.js": "fbb2859d31cfba31bc4141426e04c4db34ccdc827949d67ab6db6fe42fd2be44",
+    "transport.js": "4115c589a6f7929e697889895e28bdc45865370128d5d64acc1402df69cb1d09"
+  }
+}

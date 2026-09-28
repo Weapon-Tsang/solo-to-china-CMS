@@ -1,0 +1,38 @@
+{
+  "scope": "Existing disposable historical work DB, transaction rollback, no media byte/semantic audit",
+  "policy": "source-media-binding-4",
+  "historicalCounts": {
+    "sources": 84,
+    "source_assets": 1454,
+    "source_asset_analyses": 90,
+    "claims": 5334,
+    "article_drafts": 12,
+    "article_visuals": 26,
+    "writing_packets": 12,
+    "jobs": 18415,
+    "model_call_metrics": 6453,
+    "wordpress_publications": 12
+  },
+  "reasons": {
+    "BINDING_AMBIGUOUS": 121,
+    "BINDING_EVIDENCE_MISSING": 1180,
+    "BINDING_ENTITY_UNRESOLVED": 32,
+    "SOURCE_BINDING_SUPPORTED": 28,
+    "BINDING_CANDIDATE": 3
+  },
+  "assets": 1364,
+  "bindings": 627,
+  "supplementedAssets": 0,
+  "supplementedChars": 0,
+  "modelCalls": 0,
+  "invariants": {
+    "previewEqualsApply": true,
+    "confirmedReadsRevalidated": true,
+    "repairIdempotent": true,
+    "protectedRowsUnchanged": true,
+    "foreignKeysValid": true,
+    "noOrphanBindings": true,
+    "noStaleConfirmedBindings": true,
+    "rollbackRestoredPriorWork": true
+  }
+}

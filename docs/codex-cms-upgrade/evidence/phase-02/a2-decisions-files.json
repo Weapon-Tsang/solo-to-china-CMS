@@ -1,0 +1,20 @@
+{
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "files": {
+    "src/repositories/route-decisions.mjs": "616da4821ec5b840e29399ddcc50de219ca9b7727a9d37324055f7597b60cb69",
+    "src/repository.mjs": "cb2234b710a29bf14e5e963e691ce1f8e765c5ec53d2d2979abbabb0303f095e",
+    "src/server.mjs": "df0d4961f59870b989485a6611ec7c20d5150c6bdccf1e23840fc92cd2ae1d56",
+    "src/route-bundle.mjs": "90c9b2c5b63e9d4efd5fb0524fe89132c1f1095682c3de1afd6dd03dbd802ee9",
+    "src/route-media.mjs": "8c9c5b2335d0d48fe6b1a283e37b7aeb9fefd6530241aa188534323716a9065b",
+    "frontend/src/App.jsx": "0ed4d056f7cd17577cf37916d8535b38b9d634f6a2ed8b7a7f5d3e4cc56ffbe0",
+    "frontend/src/workspaces/route-preview.jsx": "d2b48804814a4095c64e353e0d866d3e49be0a9475a43f69e80106d2b41454b4",
+    "frontend/src/workspaces/route-decisions.jsx": "38afdfa2d83568f4b50e48aa87d6802c2bf158cea3b8c6f045e692b14723d251",
+    "test/route-decisions.test.mjs": "452af1adeabe0fc6a2363e92e3d91b31fbb19270a721ebcfc72fa696967bf71f",
+    "test/route-media.test.mjs": "634c079009d2d01eade4f2910e7f68300241232cffcb369abb564534661ed44d",
+    "test-support/route-production-fixture.mjs": "077fd5384e84066e3c0c94191b1b69c65f79fca3302a4961291b1e629502274a",
+    "test-support/route-decision-fixture.mjs": "dc3344e8dfae337f8bfd1496c4b5ed40a39bd5b906981d9f53ca7623a682e6f7",
+    "scripts/stage02-route-browser-fixture.mjs": "d5eb7f232edd02c23e7947beff7c95ad4966a95fadac9f38b663071463dbb8be",
+    "scripts/stage02-route-historical-replay.mjs": "2e7fa0812d1501962b1e1dd8b0a13b8d06345719990cd935f2b1aecdabde443d",
+    "scripts/verify-stage02-route-decisions-browser.js": "2464125d626a2774b3adafb0e26157a401d8896c27fce1b7b4f2eabd6562201a"
+  }
+}

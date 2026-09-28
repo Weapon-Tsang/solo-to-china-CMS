@@ -1,0 +1,34 @@
+{
+  "git_diff_check": "PASS",
+  "credential_signature_scan": {
+    "scope": [
+      "deployment/gce/code-only-release.sh",
+      "deployment/gce/resume-verified-upgrade.sh",
+      "scripts/stage02-media-binding-replay.mjs",
+      "src/ai/kimi.mjs",
+      "src/backup.mjs",
+      "src/db.mjs",
+      "src/media-context.mjs",
+      "src/publication-eligibility.mjs",
+      "src/repositories/media-bindings.mjs",
+      "src/repository.mjs",
+      "test/backup.test.mjs",
+      "test/media-analysis.test.mjs",
+      "test/media-bindings.test.mjs",
+      "test/media-context.test.mjs",
+      "test/migration-eighty.test.mjs",
+      "test/migration-seventy-nine.test.mjs",
+      "test/openai.test.mjs"
+    ],
+    "findings_files_only": [],
+    "limitation": "Signature scan is not a guarantee; changed adapter/schema/binding code also reviewed."
+  },
+  "baseline_preservation": {
+    "phase01_pipeline_unchanged": true,
+    "frontend_files_unchanged": true
+  },
+  "test_sessions": "all exited with status 0",
+  "long_running_services_started": 0,
+  "production_actions": 0,
+  "paid_provider_requests": 0
+}

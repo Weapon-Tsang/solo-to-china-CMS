@@ -1,0 +1,42 @@
+[
+  {
+    "sha256": "8CF3A4F603748B191777B546EC661EA04B4EF69E3AE096C610F0887C1B04491B",
+    "path": "src/repository.mjs"
+  },
+  {
+    "sha256": "FE9A0FDC5B51A1C88E46D957CA34799569274D452F56D4871A26DDA2AF1A12AB",
+    "path": "src/pipeline.mjs"
+  },
+  {
+    "sha256": "CE77A884D4DBA860FB111257343921AFDFB857CBAE7CDEA62935E65A02E724A2",
+    "path": "src/publication-eligibility.mjs"
+  },
+  {
+    "sha256": "50CD0D746065AE6743C1C068C6CE6ECAAFD6BF58A53D1CFDA34CFE901338F8BF",
+    "path": "src/visuals/route-schematic.mjs"
+  },
+  {
+    "sha256": "4A995A30942A41CC8F49A3A26586DDAA5017C7CDF8876065F25EFE82B7FEED4C",
+    "path": "src/services/production-state.mjs"
+  },
+  {
+    "sha256": "C9911245A8286EE71937E07C8461E609802787B1DB2221D5C2B528B3E8DE915A",
+    "path": "src/services/content-recovery-policy.mjs"
+  },
+  {
+    "sha256": "DDD827C03060032A4DC3637AB7B4B5AADC75F7131F884A929F2829E571B06CB7",
+    "path": "test/route-production.test.mjs"
+  },
+  {
+    "sha256": "9DA3779516DD584A5FFEE01BA43344577DCF34C30E7EAB4D31751960C2A078A3",
+    "path": "scripts/stage02-route-historical-replay.mjs"
+  },
+  {
+    "sha256": "5FADF9BD6A14034CA97A51DE368EDC2634BBF31FD68C198B2C68298F42142F91",
+    "path": "scripts/stage02-route-media-browser-fixture.mjs"
+  },
+  {
+    "sha256": "98266274E8F12A80E66147E4FEC85046FE7A6C892A58656FEE752BA6FEF0D53A",
+    "path": "scripts/verify-stage02-route-media-browser.js"
+  }
+]

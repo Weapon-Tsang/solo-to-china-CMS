@@ -1,0 +1,17 @@
+{
+  "version": "stage01-cloud-readonly-audit-1",
+  "readOnly": true,
+  "vmCount": 5,
+  "runningVmCount": 5,
+  "cmsEngineRunning": true,
+  "bucketCount": 3,
+  "artifactRepositoryCount": 2,
+  "cloudBuildTriggerCount": 0,
+  "billingEnabled": true,
+  "billingAccountConfigured": true,
+  "unverified": [
+    "resource ownership outside named CMS VM",
+    "usage and charges",
+    "safe shutdown candidates"
+  ]
+}

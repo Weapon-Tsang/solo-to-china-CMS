@@ -69,11 +69,20 @@ test('deleted source removes evidence and suppresses the same extension identity
     VALUES ('delete-draft','delete-brief','Delete','delete','Body.','{}','exception','now','now',1,'hash-delete')`).run();
   fixture.db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,created_at,updated_at,source_asset_id)
     VALUES ('delete-visual','delete-draft',0,'hero','Removed image','Removed image','','now','now',?)`).run(assetId);
+  const sharedMedia = path.join(fixture.directory, 'source-images', 'shared-candidate.png');
+  fs.mkdirSync(path.dirname(sharedMedia), { recursive: true });
+  fs.writeFileSync(sharedMedia, 'candidate still references this file');
+  fixture.db.prepare('UPDATE source_assets SET local_path=? WHERE id=?').run(sharedMedia, assetId);
+  fixture.db.prepare(`INSERT INTO visual_candidates(id,visual_id,draft_id,transform_input_hash,output_hash,
+    media_path,mime_type,byte_size,provider,model,created_at,updated_at)
+    VALUES ('delete-candidate','delete-visual','delete-draft','input','output',?,'image/png',?,
+      'fixture','fixture','now','now')`).run(sharedMedia, fs.statSync(sharedMedia).size);
   const removed = fixture.repository.deleteSource(saved.id, 'test-editor');
   assert.equal(removed.deleted, true);
   assert.deepEqual(removed.affectedDrafts, ['delete-draft']);
   assert.equal(fixture.db.prepare('SELECT source_asset_id,status FROM article_visuals WHERE id=?').get('delete-visual').source_asset_id, null);
   assert.equal(fixture.db.prepare('SELECT status FROM article_drafts WHERE id=?').get('delete-draft').status, 'needs_review');
+  assert.equal(fs.existsSync(sharedMedia), true);
   assert.equal(fixture.repository.getSource(saved.id), null);
   assert.equal(fixture.db.prepare('SELECT COUNT(*) count FROM capture_versions WHERE source_id=?').get(saved.id).count, 0);
   const identity = fixture.repository.checkCaptureIdentities([

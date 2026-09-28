@@ -1,0 +1,1433 @@
+{
+  "root": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-4YQdwO",
+  "extension": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-4YQdwO\\extension",
+  "profile": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-4YQdwO\\profile",
+  "version": "2.0.71",
+  "startedAt": "2026-09-27T11:36:22.308Z",
+  "buildDifference": "Isolated manifest adds http://127.0.0.1/* for ephemeral CMS port and test-only module bridge background-test.js importing unmodified production background; bridge invokes real exported deadline methods for fault injection.",
+  "checks": [
+    {
+      "id": "XP-07",
+      "status": "PASS",
+      "detail": "Closed popup while capture active; capture completed; reopened popup kept same session."
+    },
+    {
+      "id": "XP-18",
+      "status": "PASS",
+      "captured": 1,
+      "assets": 4
+    },
+    {
+      "id": "XP-02",
+      "status": "PASS",
+      "kind": "discovery close",
+      "queue": 0
+    },
+    {
+      "id": "XP-10",
+      "status": "PASS",
+      "kind": "real page load 30s and streamed body idle 15s",
+      "bodyDeadlineResult": {
+        "code": "RESPONSE_STALLED",
+        "elapsedMs": 15017
+      },
+      "loadDeadlineResult": {
+        "code": "TAB_LOAD_TIMEOUT",
+        "elapsedMs": 30015,
+        "tabId": 1257493416
+      }
+    },
+    {
+      "id": "XP-01",
+      "status": "NOT_RUN",
+      "observationMs": 31215,
+      "watchdogTicks": 0
+    },
+    {
+      "id": "XP-04",
+      "status": "PASS",
+      "restart": "CDP closed worker; popup runtime woke extension"
+    },
+    {
+      "id": "XP-05",
+      "status": "PASS"
+    },
+    {
+      "id": "XP-02",
+      "status": "PASS",
+      "kind": "unrelated page close leaves running state"
+    },
+    {
+      "id": "XP-02",
+      "status": "PASS",
+      "kind": "actual worker tab removal",
+      "queue": 1
+    },
+    {
+      "id": "XP-05",
+      "status": "PASS",
+      "kind": "resume after missing worker slot",
+      "captured": 1
+    },
+    {
+      "id": "XP-02",
+      "status": "PASS",
+      "kind": "actual whole window removal"
+    },
+    {
+      "id": "XP-09",
+      "status": "PASS",
+      "kind": "real CMS 401 before navigation",
+      "code": "CAPTURE_UNAUTHORIZED"
+    },
+    {
+      "id": "XP-09",
+      "status": "PASS",
+      "kind": "unapproved Origin",
+      "httpStatus": 403
+    },
+    {
+      "id": "XP-13",
+      "status": "PASS",
+      "kind": "same-scope SPA hash preserves running; login navigation pauses"
+    },
+    {
+      "id": "XP-16",
+      "status": "PASS",
+      "kind": "legacy running persisted in real storage; invalid tab/browser identity pauses preserving queue"
+    },
+    {
+      "id": "XP-08",
+      "status": "PASS",
+      "pauseMs": 41
+    },
+    {
+      "id": "XP-04",
+      "status": "PASS",
+      "restart": "Full browser process close/relaunch using same test profile; paused state retained; zero capture tabs."
+    }
+  ],
+  "tabEvents": [
+    {
+      "event": "created",
+      "at": 1790508983796
+    },
+    {
+      "event": "created",
+      "at": 1790508983929
+    },
+    {
+      "event": "closed",
+      "at": 1790508983989
+    },
+    {
+      "event": "created",
+      "at": 1790508985415
+    },
+    {
+      "event": "closed",
+      "at": 1790508988419
+    },
+    {
+      "event": "created",
+      "at": 1790508988650
+    },
+    {
+      "event": "closed",
+      "at": 1790508988745
+    },
+    {
+      "event": "created",
+      "at": 1790508989293
+    },
+    {
+      "event": "closed",
+      "at": 1790508989419
+    },
+    {
+      "event": "created",
+      "at": 1790509020461
+    },
+    {
+      "event": "closed",
+      "at": 1790509020461
+    },
+    {
+      "event": "created",
+      "at": 1790509020516
+    },
+    {
+      "event": "created",
+      "at": 1790509021600
+    },
+    {
+      "event": "created",
+      "at": 1790509021669
+    },
+    {
+      "event": "closed",
+      "at": 1790509021699
+    },
+    {
+      "event": "closed",
+      "at": 1790509021736
+    },
+    {
+      "event": "created",
+      "at": 1790509021751
+    },
+    {
+      "event": "created",
+      "at": 1790509023227
+    },
+    {
+      "event": "closed",
+      "at": 1790509023361
+    },
+    {
+      "event": "created",
+      "at": 1790509023935
+    },
+    {
+      "event": "closed",
+      "at": 1790509026872
+    },
+    {
+      "event": "created",
+      "at": 1790509027074
+    },
+    {
+      "event": "closed",
+      "at": 1790509027583
+    },
+    {
+      "event": "created",
+      "at": 1790509028191
+    },
+    {
+      "event": "created",
+      "at": 1790509029164
+    },
+    {
+      "event": "created",
+      "at": 1790509029226
+    },
+    {
+      "event": "closed",
+      "at": 1790509029406
+    },
+    {
+      "event": "closed",
+      "at": 1790509029407
+    },
+    {
+      "event": "closed",
+      "at": 1790509029409
+    },
+    {
+      "event": "closed",
+      "at": 1790509029411
+    },
+    {
+      "event": "closed",
+      "at": 1790509029413
+    },
+    {
+      "event": "closed",
+      "at": 1790509029416
+    }
+  ],
+  "apiEvents": [
+    {
+      "at": 1790508983975,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790508984001,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790508988308,
+      "method": "POST",
+      "path": "/api/captures",
+      "status": 202
+    },
+    {
+      "at": 1790508988336,
+      "method": "POST",
+      "path": "/api/capture-media-uploads",
+      "status": 201
+    },
+    {
+      "at": 1790508988338,
+      "method": "POST",
+      "path": "/api/capture-media-uploads",
+      "status": 201
+    },
+    {
+      "at": 1790508988350,
+      "method": "PUT",
+      "path": "/api/capture-media-uploads/06fa7460-8d72-4103-837a-b9ce6b788891/chunks/0",
+      "status": 200
+    },
+    {
+      "at": 1790508988351,
+      "method": "PUT",
+      "path": "/api/capture-media-uploads/11b019d0-4c03-4769-989d-14bd3abafd01/chunks/0",
+      "status": 200
+    },
+    {
+      "at": 1790508988378,
+      "method": "POST",
+      "path": "/api/capture-media-uploads/11b019d0-4c03-4769-989d-14bd3abafd01/complete",
+      "status": 200
+    },
+    {
+      "at": 1790508988389,
+      "method": "POST",
+      "path": "/api/capture-media-uploads/06fa7460-8d72-4103-837a-b9ce6b788891/complete",
+      "status": 200
+    },
+    {
+      "at": 1790508988405,
+      "method": "POST",
+      "path": "/api/captures",
+      "status": 202
+    },
+    {
+      "at": 1790508988425,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790508988726,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790508988759,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790509021573,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790509021648,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790509021755,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790509021783,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790509021810,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790509023379,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790509023895,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790509023908,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790509026820,
+      "method": "POST",
+      "path": "/api/captures",
+      "status": 202
+    },
+    {
+      "at": 1790509026834,
+      "method": "POST",
+      "path": "/api/capture-media-uploads",
+      "status": 201
+    },
+    {
+      "at": 1790509026837,
+      "method": "POST",
+      "path": "/api/capture-media-uploads",
+      "status": 201
+    },
+    {
+      "at": 1790509026855,
+      "method": "POST",
+      "path": "/api/captures",
+      "status": 202
+    },
+    {
+      "at": 1790509026877,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790509027563,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790509027612,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790509028122,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790509028135,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 401
+    },
+    {
+      "at": 1790509028156,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 403
+    },
+    {
+      "at": 1790509028223,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790509028260,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    },
+    {
+      "at": 1790509028609,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790509029107,
+      "method": "POST",
+      "path": "/api/favorites-sync-runs",
+      "status": 200
+    },
+    {
+      "at": 1790509029120,
+      "method": "POST",
+      "path": "/api/captures/identity-check",
+      "status": 200
+    }
+  ],
+  "blockedNetwork": [],
+  "networkBoundary": "All browser DNS maps to 127.0.0.1:58643; only fixture hosts served; no proxy; TLS test certificate ignored only in test browser.",
+  "browser": "153.0.8010.12",
+  "extensionId": "ofiachpcchmgploiecjfdcngmjoogpan",
+  "cms": {
+    "endpoint": "http://127.0.0.1:52769",
+    "database": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\stc-02pre-4YQdwO\\solo-to-china.sqlite",
+    "role": "api"
+  },
+  "firstCapture": {
+    "activeTasks": [],
+    "automatic": false,
+    "browserIdentity": "b2a53de8-e914-4891-a5bd-60d5a640f9e3",
+    "checkpoint": {
+      "lastSuccessfulSyncAt": null,
+      "topIdentityKeys": []
+    },
+    "completedAt": "2026-09-27T11:36:28.414Z",
+    "concurrency": 1,
+    "concurrencyController": {
+      "lastChangeAt": null,
+      "reason": "settings"
+    },
+    "concurrencySamples": [
+      {
+        "cmsBackpressure": false,
+        "completedAt": "2026-09-27T11:36:28.409Z",
+        "errorClass": "",
+        "extractionMs": 2836,
+        "localFailure": false,
+        "loginRequired": false,
+        "mediaBytes": 7990,
+        "mediaCount": 2,
+        "mediaDownloadMs": 13,
+        "mediaUploadMs": 123,
+        "memoryPressure": false,
+        "noteLoadMs": 20,
+        "rateLimited": false,
+        "result": "succeeded",
+        "submitMs": 15,
+        "tabCrash": false,
+        "timeout": false,
+        "totalMs": 3044,
+        "verificationDetected": false
+      }
+    ],
+    "config": {
+      "autoMinIntervalHours": 12,
+      "concurrencyInitial": 4,
+      "concurrencyMax": 12,
+      "concurrencyMinSamples": 20,
+      "concurrencyMode": "custom",
+      "concurrencyWindowSize": 24,
+      "customConcurrency": 1,
+      "detailLoadTimeoutMs": 30000,
+      "discoveryBatchSize": 100,
+      "identityBatchSize": 50,
+      "maxRetries": 3,
+      "mediaConcurrency": 12,
+      "mediaMemoryBudgetBytes": 100663296,
+      "mediaUploadConcurrency": 6,
+      "queueHighWatermark": 500,
+      "retryBaseMs": 5000,
+      "retryMaxMs": 120000,
+      "stopAfterConsecutiveKnown": 12,
+      "taskLeaseMs": 180000,
+      "watchdogStallMs": 120000
+    },
+    "controlSchema": 1,
+    "currentTopIdentityKeys": [
+      "xiaohongshu:fixture001"
+    ],
+    "cursor": {
+      "collectionEnd": true,
+      "collectionEndStreak": 2,
+      "domOffset": 1,
+      "scannedWindows": 2,
+      "scrollY": 0
+    },
+    "discoveryComplete": true,
+    "discoveryTabId": 1257493408,
+    "driveRetryAt": null,
+    "driverAttempts": 0,
+    "lastBusinessProgress": "submitting",
+    "lastError": null,
+    "lastProgressAt": "2026-09-27T11:36:28.409Z",
+    "mediaConcurrency": 12,
+    "mediaConcurrencyController": {
+      "lastChangeAt": null,
+      "reason": "settings"
+    },
+    "mode": "full",
+    "noProgressSince": null,
+    "phase": "completed",
+    "queue": [
+      {
+        "attempts": 1,
+        "author": "",
+        "canonicalUrl": "https://www.xiaohongshu.com/explore/fixture001",
+        "captureVersion": 2,
+        "coverUrl": "",
+        "error": null,
+        "externalId": "fixture001",
+        "identityKey": "xiaohongshu:fixture001",
+        "lastHeartbeatAt": "2026-09-27T11:36:28.392Z",
+        "leaseExpiresAt": null,
+        "leaseId": null,
+        "leaseStartedAt": null,
+        "navigationUrl": "https://www.xiaohongshu.com/explore/fixture001",
+        "position": 0,
+        "repairActions": [
+          "CAPTURE_NEW"
+        ],
+        "repairMediaIdentities": [],
+        "retryAt": null,
+        "sourceId": "src_150334b02270463998565d5dfdb7aea4",
+        "startedAt": "2026-09-27T11:36:25.362Z",
+        "status": "captured",
+        "tabId": null,
+        "taskId": "61b5e8ae-fe3b-47e2-ba30-1aaf2568367c",
+        "title": "",
+        "updatedAt": "2026-09-27T11:36:28.409Z",
+        "workerId": null
+      }
+    ],
+    "recoveryNoticeAt": null,
+    "runRevision": 1,
+    "scan": {
+      "checkpointSeen": true,
+      "consecutiveKnown": 0,
+      "reliableCheckpoint": false,
+      "windowNew": 0
+    },
+    "scopeKey": "xhs_scope:https://www.xiaohongshu.com/board/fixture123",
+    "scopeLabel": "小红书收藏夹 · fixture1",
+    "scopeUrl": "https://www.xiaohongshu.com/board/fixture123",
+    "seenIdentityKeys": [
+      "xiaohongshu:fixture001"
+    ],
+    "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+    "stage": "submitting",
+    "stageStartedAt": "2026-09-27T11:36:28.394Z",
+    "startedAt": "2026-09-27T11:36:23.979Z",
+    "stats": {
+      "captured": 1,
+      "discovered": 1,
+      "duplicate": 0,
+      "failed": 0,
+      "known": 0,
+      "new": 1,
+      "repair": 0,
+      "retrying": 0,
+      "unavailable": 0
+    },
+    "status": "completed",
+    "stopAfterQueue": false,
+    "tabOwnership": {
+      "1257493408": {
+        "owned": false,
+        "role": "discovery",
+        "tabId": 1257493408,
+        "url": "https://www.xiaohongshu.com/board/fixture123",
+        "windowId": 1257493405
+      },
+      "1257493410": {
+        "owned": true,
+        "role": "worker",
+        "tabId": 1257493410,
+        "url": "https://www.xiaohongshu.com/explore/fixture001",
+        "windowId": 1257493405
+      }
+    },
+    "updatedAt": "2026-09-27T11:36:28.414Z",
+    "workerSlots": [
+      {
+        "tabId": 1257493410,
+        "updatedAt": "2026-09-27T11:36:25.416Z",
+        "workerId": "note-worker-0-ddda1c7f-4e9a-4329-8448-452c65ef56c6"
+      }
+    ],
+    "workerTabs": [
+      1257493410
+    ]
+  },
+  "durableSources": [
+    {
+      "id": "src_150334b02270463998565d5dfdb7aea4",
+      "textChars": 198,
+      "captureVersion": 2
+    }
+  ],
+  "durableAssets": [
+    {
+      "id": "asset_195813ffa8b845d083c6f3ef18169a90",
+      "kind": "image"
+    },
+    {
+      "id": "asset_4773f8177cb14b1c95feaa8414386b35",
+      "kind": "image"
+    },
+    {
+      "id": "asset_ba15a0da3bc74fe4a780f28ea0434c62",
+      "kind": "image"
+    },
+    {
+      "id": "asset_35d21103b3c34ffeb594c131c429f09c",
+      "kind": "image"
+    }
+  ],
+  "diagnostics": [
+    {
+      "at": "2026-09-27T11:36:23.963Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "role": "/api/captures",
+      "scope": "none",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:23.977Z",
+      "attempts": 0,
+      "elapsedMs": 14,
+      "event": "api-response",
+      "httpStatus": 200,
+      "role": "/api/captures",
+      "scope": "none",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:23.984Z",
+      "attempts": 0,
+      "deadlineMs": 30000,
+      "event": "stage-start",
+      "revision": 1,
+      "role": "injection",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493408
+    },
+    {
+      "at": "2026-09-27T11:36:23.993Z",
+      "attempts": 0,
+      "deadlineMs": 30000,
+      "event": "stage-start",
+      "revision": 1,
+      "role": "dom",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493408
+    },
+    {
+      "at": "2026-09-27T11:36:23.995Z",
+      "attempts": 0,
+      "elapsedMs": 2,
+      "event": "stage-complete",
+      "revision": 1,
+      "role": "dom",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493408
+    },
+    {
+      "at": "2026-09-27T11:36:23.996Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "revision": 1,
+      "role": "/api/captures",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:24.002Z",
+      "attempts": 0,
+      "elapsedMs": 6,
+      "event": "api-response",
+      "httpStatus": 200,
+      "revision": 1,
+      "role": "/api/captures",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:24.005Z",
+      "attempts": 0,
+      "deadlineMs": 30000,
+      "event": "stage-start",
+      "revision": 1,
+      "role": "dom",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493408
+    },
+    {
+      "at": "2026-09-27T11:36:25.219Z",
+      "attempts": 0,
+      "elapsedMs": 1214,
+      "event": "stage-complete",
+      "revision": 1,
+      "role": "dom",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493408
+    },
+    {
+      "at": "2026-09-27T11:36:25.337Z",
+      "attempts": 0,
+      "deadlineMs": 30000,
+      "event": "stage-start",
+      "revision": 1,
+      "role": "injection",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493408
+    },
+    {
+      "at": "2026-09-27T11:36:25.347Z",
+      "attempts": 0,
+      "deadlineMs": 30000,
+      "event": "stage-start",
+      "revision": 1,
+      "role": "dom",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493408
+    },
+    {
+      "at": "2026-09-27T11:36:25.349Z",
+      "attempts": 0,
+      "elapsedMs": 2,
+      "event": "stage-complete",
+      "revision": 1,
+      "role": "dom",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493408
+    },
+    {
+      "at": "2026-09-27T11:36:25.392Z",
+      "attempts": 0,
+      "event": "create-dispatched",
+      "revision": 1,
+      "role": "worker",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:25.439Z",
+      "attempts": 0,
+      "deadlineMs": 30000,
+      "event": "stage-start",
+      "revision": 1,
+      "role": "injection",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493410
+    },
+    {
+      "at": "2026-09-27T11:36:25.446Z",
+      "attempts": 0,
+      "deadlineMs": 150000,
+      "event": "stage-start",
+      "revision": 1,
+      "role": "dom",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493410
+    },
+    {
+      "at": "2026-09-27T11:36:28.282Z",
+      "attempts": 0,
+      "elapsedMs": 2836,
+      "event": "stage-complete",
+      "revision": 1,
+      "role": "dom",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": 1257493410
+    },
+    {
+      "at": "2026-09-27T11:36:28.287Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "revision": 1,
+      "role": "/api/captures",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.311Z",
+      "attempts": 0,
+      "elapsedMs": 25,
+      "event": "api-response",
+      "httpStatus": 202,
+      "revision": 1,
+      "role": "/api/captures",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.325Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.328Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.338Z",
+      "attempts": 0,
+      "elapsedMs": 14,
+      "event": "api-response",
+      "httpStatus": 201,
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.340Z",
+      "attempts": 0,
+      "elapsedMs": 15,
+      "event": "api-response",
+      "httpStatus": 201,
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.341Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "PUT",
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.342Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "PUT",
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.352Z",
+      "attempts": 0,
+      "elapsedMs": 12,
+      "event": "api-response",
+      "httpStatus": 200,
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.352Z",
+      "attempts": 0,
+      "elapsedMs": 10,
+      "event": "api-response",
+      "httpStatus": 200,
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.357Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.358Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.380Z",
+      "attempts": 0,
+      "elapsedMs": 23,
+      "event": "api-response",
+      "httpStatus": 200,
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.390Z",
+      "attempts": 0,
+      "elapsedMs": 34,
+      "event": "api-response",
+      "httpStatus": 200,
+      "revision": 1,
+      "role": "/api/capture-media-uploads",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.395Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "revision": 1,
+      "role": "/api/captures",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.406Z",
+      "attempts": 0,
+      "elapsedMs": 11,
+      "event": "api-response",
+      "httpStatus": 202,
+      "revision": 1,
+      "role": "/api/captures",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "running",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.416Z",
+      "attempts": 0,
+      "event": "remove",
+      "revision": 1,
+      "role": "worker",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "completed",
+      "tabId": 1257493410
+    },
+    {
+      "at": "2026-09-27T11:36:28.417Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "revision": 1,
+      "role": "/api/favorites-sync-runs",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "completed",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.428Z",
+      "attempts": 0,
+      "elapsedMs": 12,
+      "event": "api-response",
+      "httpStatus": 200,
+      "revision": 1,
+      "role": "/api/favorites-sync-runs",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "completed",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.724Z",
+      "attempts": 0,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "revision": 1,
+      "role": "/api/captures",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "completed",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.729Z",
+      "attempts": 0,
+      "elapsedMs": 6,
+      "event": "api-response",
+      "httpStatus": 200,
+      "revision": 1,
+      "role": "/api/captures",
+      "scope": "session-scope",
+      "sessionId": "cb02e977-746e-419e-9fc0-cfd59a2bc769",
+      "status": "completed",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.733Z",
+      "attempts": 0,
+      "deadlineMs": 30000,
+      "event": "stage-start",
+      "revision": 1,
+      "role": "injection",
+      "scope": "session-scope",
+      "sessionId": "7e86866e-0481-4254-a9ac-3d21c1077135",
+      "status": "running",
+      "tabId": 1257493408
+    },
+    {
+      "at": "2026-09-27T11:36:28.750Z",
+      "attempts": 0,
+      "event": "tab-removed",
+      "revision": 1,
+      "role": "associated",
+      "scope": "session-scope",
+      "sessionId": "7e86866e-0481-4254-a9ac-3d21c1077135",
+      "status": "running",
+      "tabId": 1257493408,
+      "windowClosing": false
+    },
+    {
+      "at": "2026-09-27T11:36:28.756Z",
+      "attempts": 1,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "POST",
+      "revision": 2,
+      "role": "/api/favorites-sync-runs",
+      "scope": "session-scope",
+      "sessionId": "7e86866e-0481-4254-a9ac-3d21c1077135",
+      "status": "paused_tab_closed",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:28.761Z",
+      "attempts": 1,
+      "elapsedMs": 5,
+      "event": "api-response",
+      "httpStatus": 200,
+      "revision": 2,
+      "role": "/api/favorites-sync-runs",
+      "scope": "session-scope",
+      "sessionId": "7e86866e-0481-4254-a9ac-3d21c1077135",
+      "status": "paused_tab_closed",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:29.437Z",
+      "attempts": 1,
+      "deadlineMs": 45000,
+      "event": "api-start",
+      "method": "GET",
+      "revision": 2,
+      "role": "/bodystall001",
+      "scope": "session-scope",
+      "sessionId": "7e86866e-0481-4254-a9ac-3d21c1077135",
+      "status": "paused_tab_closed",
+      "tabId": null
+    },
+    {
+      "at": "2026-09-27T11:36:44.449Z",
+      "attempts": 1,
+      "code": "RESPONSE_STALLED",
+      "elapsedMs": 15017,
+      "event": "api-failed",
+      "revision": 2,
+      "role": "/bodystall001",
+      "scope": "session-scope",
+      "sessionId": "7e86866e-0481-4254-a9ac-3d21c1077135",
+      "status": "paused_tab_closed",
+      "tabId": null
+    }
+  ],
+  "resumed": [
+    {
+      "ok": true,
+      "session": {
+        "activeTasks": [],
+        "autoBlocked": false,
+        "automatic": false,
+        "browserIdentity": "b2a53de8-e914-4891-a5bd-60d5a640f9e3",
+        "checkpoint": {
+          "lastSuccessfulSyncAt": "2026-09-27T11:36:28.414Z",
+          "topIdentityKeys": [
+            "xiaohongshu:fixture001"
+          ]
+        },
+        "concurrency": 1,
+        "concurrencyController": {
+          "lastChangeAt": null,
+          "reason": "warming_up"
+        },
+        "concurrencySamples": [],
+        "config": {
+          "identityBatchSize": 50,
+          "discoveryBatchSize": 100,
+          "stopAfterConsecutiveKnown": 12,
+          "queueHighWatermark": 500,
+          "maxRetries": 3,
+          "detailLoadTimeoutMs": 30000,
+          "autoMinIntervalHours": 12,
+          "concurrencyMode": "custom",
+          "concurrencyInitial": 4,
+          "concurrencyMax": 12,
+          "customConcurrency": 1,
+          "mediaConcurrency": 12,
+          "mediaUploadConcurrency": 6,
+          "mediaMemoryBudgetBytes": 100663296,
+          "taskLeaseMs": 180000,
+          "watchdogStallMs": 120000,
+          "retryBaseMs": 5000,
+          "retryMaxMs": 120000,
+          "concurrencyWindowSize": 24,
+          "concurrencyMinSamples": 20
+        },
+        "controlSchema": 1,
+        "cursor": {
+          "collectionEnd": false,
+          "collectionEndStreak": 0,
+          "scannedWindows": 0,
+          "scrollY": 0
+        },
+        "discoveryTabId": 1257493408,
+        "driveRetryAt": "2026-09-27T11:36:32.952Z",
+        "driverAttempts": 1,
+        "lastError": null,
+        "lastProgressAt": "2026-09-27T11:36:28.730Z",
+        "mediaConcurrency": 12,
+        "mediaConcurrencyController": {
+          "lastChangeAt": null,
+          "reason": "settings"
+        },
+        "mode": "full",
+        "phase": "discovery",
+        "queue": [],
+        "recoveryNoticeAt": null,
+        "runRevision": 3,
+        "scan": {
+          "checkpointSeen": false,
+          "consecutiveKnown": 0,
+          "reliableCheckpoint": true
+        },
+        "scopeKey": "xhs_scope:https://www.xiaohongshu.com/board/fixture123",
+        "scopeLabel": "小红书收藏夹 · fixture1",
+        "scopeUrl": "https://www.xiaohongshu.com/board/fixture123",
+        "seenIdentityKeys": [],
+        "sessionId": "7e86866e-0481-4254-a9ac-3d21c1077135",
+        "startedAt": "2026-09-27T11:36:28.730Z",
+        "stats": {
+          "unavailable": 0,
+          "captured": 0,
+          "discovered": 0,
+          "duplicate": 0,
+          "failed": 0,
+          "known": 0,
+          "new": 0,
+          "repair": 0,
+          "retrying": 0
+        },
+        "status": "running",
+        "stopAfterQueue": false,
+        "tabOwnership": {
+          "1257493408": {
+            "owned": false,
+            "role": "discovery",
+            "tabId": 1257493408,
+            "url": "https://www.xiaohongshu.com/board/fixture123",
+            "windowId": 1257493405
+          }
+        },
+        "updatedAt": "2026-09-27T11:37:01.576Z",
+        "workerSlots": [],
+        "workerTabs": [],
+        "completedAt": null,
+        "resumePending": true,
+        "noProgressSince": null
+      }
+    },
+    {
+      "ok": true,
+      "session": {
+        "activeTasks": [],
+        "autoBlocked": false,
+        "automatic": false,
+        "browserIdentity": "b2a53de8-e914-4891-a5bd-60d5a640f9e3",
+        "checkpoint": {
+          "lastSuccessfulSyncAt": "2026-09-27T11:36:28.414Z",
+          "topIdentityKeys": [
+            "xiaohongshu:fixture001"
+          ]
+        },
+        "concurrency": 1,
+        "concurrencyController": {
+          "lastChangeAt": null,
+          "reason": "warming_up"
+        },
+        "concurrencySamples": [],
+        "config": {
+          "identityBatchSize": 50,
+          "discoveryBatchSize": 100,
+          "stopAfterConsecutiveKnown": 12,
+          "queueHighWatermark": 500,
+          "maxRetries": 3,
+          "detailLoadTimeoutMs": 30000,
+          "autoMinIntervalHours": 12,
+          "concurrencyMode": "custom",
+          "concurrencyInitial": 4,
+          "concurrencyMax": 12,
+          "customConcurrency": 1,
+          "mediaConcurrency": 12,
+          "mediaUploadConcurrency": 6,
+          "mediaMemoryBudgetBytes": 100663296,
+          "taskLeaseMs": 180000,
+          "watchdogStallMs": 120000,
+          "retryBaseMs": 5000,
+          "retryMaxMs": 120000,
+          "concurrencyWindowSize": 24,
+          "concurrencyMinSamples": 20
+        },
+        "controlSchema": 1,
+        "cursor": {
+          "collectionEnd": false,
+          "collectionEndStreak": 0,
+          "scannedWindows": 0,
+          "scrollY": 0
+        },
+        "discoveryTabId": 1257493408,
+        "driveRetryAt": "2026-09-27T11:36:32.952Z",
+        "driverAttempts": 1,
+        "lastError": null,
+        "lastProgressAt": "2026-09-27T11:36:28.730Z",
+        "mediaConcurrency": 12,
+        "mediaConcurrencyController": {
+          "lastChangeAt": null,
+          "reason": "settings"
+        },
+        "mode": "full",
+        "phase": "discovery",
+        "queue": [],
+        "recoveryNoticeAt": null,
+        "runRevision": 3,
+        "scan": {
+          "checkpointSeen": false,
+          "consecutiveKnown": 0,
+          "reliableCheckpoint": true
+        },
+        "scopeKey": "xhs_scope:https://www.xiaohongshu.com/board/fixture123",
+        "scopeLabel": "小红书收藏夹 · fixture1",
+        "scopeUrl": "https://www.xiaohongshu.com/board/fixture123",
+        "seenIdentityKeys": [],
+        "sessionId": "7e86866e-0481-4254-a9ac-3d21c1077135",
+        "startedAt": "2026-09-27T11:36:28.730Z",
+        "stats": {
+          "unavailable": 0,
+          "captured": 0,
+          "discovered": 0,
+          "duplicate": 0,
+          "failed": 0,
+          "known": 0,
+          "new": 0,
+          "repair": 0,
+          "retrying": 0
+        },
+        "status": "running",
+        "stopAfterQueue": false,
+        "tabOwnership": {
+          "1257493408": {
+            "owned": false,
+            "role": "discovery",
+            "tabId": 1257493408,
+            "url": "https://www.xiaohongshu.com/board/fixture123",
+            "windowId": 1257493405
+          }
+        },
+        "updatedAt": "2026-09-27T11:37:01.576Z",
+        "workerSlots": [],
+        "workerTabs": [],
+        "completedAt": null,
+        "resumePending": true,
+        "noProgressSince": null
+      }
+    }
+  ],
+  "status": "PASS",
+  "finishedAt": "2026-09-27T11:37:10.710Z",
+  "loadedHashes": {
+    "background-test.js": "b59687f904cafd85fd2a27f01fcc98b8c71ebde6450caf3bbed0dfd0d76f724e",
+    "background.js": "3ba26b5f5aac8b6b7413b8857565820d05658d98ecdc7a7d961036da74994f93",
+    "capture-utils.js": "5e939730cbe61260808de933203eff52c30d65f7c18d58bad804dd2952d1efde",
+    "derivative-cache.js": "37ee6933154b13416c683b5692aac919ef1eb2c29279e38200e79ab8af34cc18",
+    "manifest.json": "9f999cc4fe3939a6b7038601ea6e8b7fe8cf2462fde22cb818e338f456fd4f04",
+    "media-contract.js": "fbc17791b20ec2d02fcae5ac53ff24345887b2de6a3fdda0a16ccacfc60b7002",
+    "media-journal.js": "1f5c06020169868e35823aa16605588469ef778632785903009382333dccf41f",
+    "page-extractor.js": "5c8a12979b0552c6b1f3b7651b7ea612018fced81fcf8c283cd6a491cfcda32d",
+    "popup-state.js": "0a75f3cbcd5b66f3122b8865dc4ba99894b01075ef3aa58324923c829d6e88e2",
+    "popup.html": "62f4bb7af68152fdca99ea7eab196013c5c059577a837c37c33a1008d4aff16f",
+    "popup.js": "9cd08f4bd0b07318dc06bf1b337c43024c81470735714a5351f8379203ff7426",
+    "run-control.js": "d4f32007333d48c6c147e058c51ee10c6958bfca6954e7e1cf8605753d3b7818",
+    "sync-core.js": "fbb2859d31cfba31bc4141426e04c4db34ccdc827949d67ab6db6fe42fd2be44",
+    "transport.js": "4115c589a6f7929e697889895e28bdc45865370128d5d64acc1402df69cb1d09"
+  }
+}

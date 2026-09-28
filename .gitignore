@@ -8,5 +8,8 @@ coverage/
 output/
 tmp/
 .playwright-cli/
+.npm-cache/
 *.log
+!docs/codex-cms-upgrade/evidence/**/*.log
 /.tar
+__pycache__/

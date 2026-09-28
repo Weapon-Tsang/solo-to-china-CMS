@@ -1,0 +1,113 @@
+{
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "files": [
+    {
+      "path": "src/publication-eligibility.mjs",
+      "before": "CE77A884D4DBA860FB111257343921AFDFB857CBAE7CDEA62935E65A02E724A2",
+      "after": "3cba059e1e67cbfff1797c0bb760560c62b2a99c435fcb2d4e05690afa72a467",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "src/pipeline.mjs",
+      "before": "FE9A0FDC5B51A1C88E46D957CA34799569274D452F56D4871A26DDA2AF1A12AB",
+      "after": "59a8784e797cf75751b130376bb678e4c3adb029c4405a21d4b10dfb7fa82c7e",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "src/repository.mjs",
+      "before": "8CF3A4F603748B191777B546EC661EA04B4EF69E3AE096C610F0887C1B04491B",
+      "after": "5f0c13fdc63859b515032d0e1b1dbe6de5865d27f9c7fc52ad97170001674bbd",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "src/route-bundle.mjs",
+      "before": "90C9B2C5B63E9D4EFD5FB0524FE89132C1F1095682C3DE1AFD6DD03DBD802EE9",
+      "after": "d8f34a08bf8dc7b4d0cf9352b7afd6cc51e2c0c527e2ec182e7ee1b81638cccf",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "src/route-media.mjs",
+      "before": "8C9C5B2335D0D48FE6B1A283E37B7AEB9FEFD6530241AA188534323716A9065B",
+      "after": "f6d494f92ab5dec0022c2da7d88e8955bc9a0b9ad445d2af9714c78ba63a11e7",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "src/visuals/route-schematic.mjs",
+      "before": "50CD0D746065AE6743C1C068C6CE6ECAAFD6BF58A53D1CFDA34CFE901338F8BF",
+      "after": "f02cf14c37f9bd126d9626e354b2d605aa3b68cc47d0c0c5b2dbea4e00c5d6a3",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "src/media-delivery.mjs",
+      "before": "027CA8325C313BC9D1425B25A0C25D1EFAA2919049DA9AC794AC795E98BC47E6",
+      "after": "ce2775f84fce5dc427118c182fffc3b22e671c1611f805dbd5e8e32361428c5c",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "src/services/production-state.mjs",
+      "before": "4A995A30942A41CC8F49A3A26586DDAA5017C7CDF8876065F25EFE82B7FEED4C",
+      "after": "4a995a30942a41cc8f49a3a26586ddaa5017c7cdf8876065f25efe82b7feed4c",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "frontend/src/workspaces/route-preview.jsx",
+      "before": "D2B48804814A4095C64E353E0D866D3E49BE0A9475A43F69E80106D2B41454B4",
+      "after": "ea2ae02eb6619630467f41c14ac557241f36cc800965015b77bb543fc34f311e",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "test/route-production.test.mjs",
+      "before": "DDD827C03060032A4DC3637AB7B4B5AADC75F7131F884A929F2829E571B06CB7",
+      "after": "156a9998b523fc2225529134b0ece6c297b2eb98569ec1eec5288735c1ba75a4",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "test-support/route-production-fixture.mjs",
+      "before": "077FD5384E84066E3C0C94191B1B69C65F79FCA3302A4961291B1E629502274A",
+      "after": "703e588b40a3f04aa8f663df416b8a237b98e9ed0f4eea8d0286c705eb481a0f",
+      "beforeNote": "turn entry snapshot"
+    },
+    {
+      "path": "src/server.mjs",
+      "before": null,
+      "after": "c7eba8b4e8bf7eb6bb420964a801771f0acbdce87d68f6cd3f40531b1861d100",
+      "beforeNote": "not separately captured; do not infer unchanged or new"
+    },
+    {
+      "path": "src/content-blocks.mjs",
+      "before": null,
+      "after": "37bcaafb6544e0492166d476e9df5a826e74b70b7b7a6471bf084087f3974ad9",
+      "beforeNote": "not separately captured; do not infer unchanged or new"
+    },
+    {
+      "path": "frontend/src/App.jsx",
+      "before": null,
+      "after": "7a11c7421bea0b3c19bc84c63515361d3414f9b88b402f313cbb0f2c742f702b",
+      "beforeNote": "not separately captured; do not infer unchanged or new"
+    },
+    {
+      "path": "test/route-media.test.mjs",
+      "before": null,
+      "after": "229e0401d0a0e28c86a285e78b5be4d90a9e35d4733b8b5153b90805aece493f",
+      "beforeNote": "not separately captured; do not infer unchanged or new"
+    },
+    {
+      "path": "test/route-decisions.test.mjs",
+      "before": null,
+      "after": "b487dcae224a6dceb3f92e83a4a34461848847601fb9aed2408b662bcf8a8f28",
+      "beforeNote": "not separately captured; do not infer unchanged or new"
+    },
+    {
+      "path": "scripts/stage02-route-media-browser-fixture.mjs",
+      "before": null,
+      "after": "59c645881283bb8f3de79c66bdac2de72762b14cd183401276075d5e2ed37d6c",
+      "beforeNote": "not separately captured; do not infer unchanged or new"
+    },
+    {
+      "path": "scripts/verify-stage02-route-omission-browser.js",
+      "before": null,
+      "after": "e8825215a897cd394dac88d94b7b0a3e6afcbcf65f820ff94fa73685fb66b297",
+      "beforeNote": "not separately captured; do not infer unchanged or new"
+    }
+  ]
+}

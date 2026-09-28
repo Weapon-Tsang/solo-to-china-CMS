@@ -28,13 +28,13 @@ test("MV3 module restart automatically requeues and drives an in-flight task wit
       getManifest: () => ({ version: "2.0.5" }),
     },
     alarms: { onAlarm: listener(), create: async () => {}, clear: async () => true },
-    storage: { local: {
+    storage: { session: { get: async defaults => ({ ...defaults, favoritesBrowserIdentity: 'test-browser' }) }, local: {
       get: async (defaults) => Object.fromEntries(Object.entries(defaults).map(([key, value]) => [key, storage[key] ?? value])),
       set: async (values) => Object.assign(storage, values),
     } },
     tabs: {
       query: async () => [],
-      get: async (id) => ({ id, status: "complete", url: "https://www.xiaohongshu.com/explore/restart-active" }),
+      get: async (id) => ({ id, status: "complete", url: id === 99 ? 'https://www.xiaohongshu.com/user/profile/test?tab=fav' : "https://www.xiaohongshu.com/explore/restart-active" }),
       update: async (id, options) => ({ id, status: "complete", url: options.url }),
       create: async (options) => ({ id: ++createdTabs, status: "complete", url: options.url }),
       remove: async () => {}, onUpdated: listener(), onRemoved: listener(),
@@ -44,11 +44,13 @@ test("MV3 module restart automatically requeues and drives an in-flight task wit
     } }] },
   };
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  globalThis.fetch = async () => new Response('{"items":[]}', { status: 200, headers: { "content-type": "application/json" } });
   try {
     const background = await import(`../extension/background.js?recovery=${Date.now()}`);
     const scope = { key: "scope:restart", url: "https://www.xiaohongshu.com/user/profile/test?tab=fav", label: "Favorites" };
     let session = createSession({ scope, settings: { concurrencyMode: "custom", customConcurrency: 2 } });
+    session.browserIdentity = 'test-browser'; session.runRevision = 1; session.discoveryTabId = 99;
+    session.tabOwnership = { 99: { tabId: 99, url: scope.url, role: 'discovery', owned: false } };
     session.phase = "acquisition";
     session.discoveryComplete = true;
     session = applyIdentityBatch(session, [
@@ -145,4 +147,5 @@ test('watchdog does not requeue an active browser task just because the session 
 
   assert.equal(storage.favoritesSyncState.queue[0].status,'extracting');
   assert.equal(storage.favoritesSyncState.queue[0].leaseId,'live-lease');
+  await background.handleMessage({type:'PAUSE_SYNC'});
 });

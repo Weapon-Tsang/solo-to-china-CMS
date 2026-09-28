@@ -115,7 +115,7 @@ test("restart recovery keeps successful tasks and requeues only unfinished work"
   assert.equal(recovered.queue[1].status, "queued");
 });
 
-test("recovery rediscovers unfinished legacy tasks that lack the visible card navigation URL", () => {
+test("recovery preserves paused legacy queue identities and requires navigation refresh", () => {
   let session = createSession({ scope });
   session = applyIdentityBatch(session, [card("legacy")], identities([card("legacy")], false));
   delete session.queue[0].navigationUrl;
@@ -123,12 +123,13 @@ test("recovery rediscovers unfinished legacy tasks that lack the visible card na
   session.status = "paused_error";
   session.phase = "acquisition";
   const recovered = recoverSession(session);
-  assert.equal(recovered.status, "running");
-  assert.equal(recovered.phase, "discovery");
-  assert.equal(recovered.queue.length, 0);
-  assert.equal(recovered.seenIdentityKeys.length, 0);
-  assert.equal(recovered.stats.discovered, 0);
-  assert.equal(recovered.stats.new, 0);
+  assert.equal(recovered.status, "paused_error");
+  assert.equal(recovered.phase, "acquisition");
+  assert.equal(recovered.queue.length, 1);
+  assert.equal(recovered.queue[0].navigationRefreshRequired, true);
+  assert.equal(recovered.seenIdentityKeys.length, 1);
+  assert.equal(recovered.stats.discovered, 1);
+  assert.equal(recovered.stats.new, 1);
 });
 
 test("streaming session compaction bounds terminal task history while retaining active identities", () => {
@@ -199,7 +200,7 @@ test("completion state is committed before cleanup and unresolved failures remai
   assert.equal(prepareSessionResume(paused).phase, "acquisition");
 });
 
-test("a legacy completed partial run rediscovers token-free failed items", () => {
+test("an explicit legacy resume retains token-free failed items for repair", () => {
   let session = createSession({ scope, mode: "full" });
   session = applyIdentityBatch(session, [card("legacy-blocked")], identities([card("legacy-blocked")], false));
   session = transitionTask(session, session.queue[0].taskId, "failed");
@@ -208,11 +209,11 @@ test("a legacy completed partial run rediscovers token-free failed items", () =>
   session.phase = "completed";
   const resumed = prepareSessionResume(session);
   assert.equal(resumed.status, "running");
-  assert.equal(resumed.phase, "discovery");
-  assert.equal(resumed.queue.length, 0);
-  assert.equal(resumed.seenIdentityKeys.length, 0);
-  assert.equal(resumed.stats.discovered, 0);
-  assert.equal(resumed.stats.new, 0);
+  assert.equal(resumed.phase, "acquisition");
+  assert.equal(resumed.queue.length, 1);
+  assert.equal(resumed.seenIdentityKeys.length, 1);
+  assert.equal(resumed.stats.discovered, 1);
+  assert.equal(resumed.stats.new, 1);
   assert.equal(resumed.stats.failed, 0);
 });
 
@@ -257,9 +258,10 @@ test("only human-required failures pause a session and ordinary task errors stay
     ["NOT_LOGGED_IN", "paused_login_required"],
     ["VERIFICATION_REQUIRED", "paused_verification_required"],
     ["CAPTURE_UNAUTHORIZED", "paused_capture_unauthorized"],
+    ["WORKER_TAB_CLOSED", "paused_tab_closed"],
   ]) assert.deepEqual(classifyTaskDisposition({ code, retryable: false }, 1, 3), { action: "pause", status });
 
-  for (const code of ["NAVIGATION_INTERRUPTED", "TAB_LOAD_TIMEOUT", "CONTENT_NOT_READY", "CAPTURE_SERVER_UNAVAILABLE", "WORKER_TAB_CLOSED"]) {
+  for (const code of ["NAVIGATION_INTERRUPTED", "TAB_LOAD_TIMEOUT", "CONTENT_NOT_READY", "CAPTURE_SERVER_UNAVAILABLE"]) {
     assert.equal(classifyTaskDisposition({ code, retryable: true }, 1, 3).action, "retry");
   }
   for (const code of ["NOTE_UNAVAILABLE", "MEDIA_HTTP_403"]) {
@@ -268,12 +270,14 @@ test("only human-required failures pause a session and ordinary task errors stay
   assert.equal(retryDelayMs(3, { baseMs: 1_000, maxMs: 30_000, random: () => 0.5 }), 4_000);
 });
 
-test("continuous worker pool lets a free slot claim new work before a slow note finishes", async () => {
+test("continuous worker pool lets a free slot claim new work before a slow note finishes", { timeout: 1000 }, async () => {
   const completed = [];
-  const delays = [40, 2, 2, 2];
-  const results = await runContinuousPool(delays, 2, async (delay, index) => {
-    await new Promise((resolve) => setTimeout(resolve, delay));
+  let releaseSlow;
+  const slow = new Promise(resolve => { releaseSlow = resolve; });
+  const results = await runContinuousPool([0, 1, 2, 3], 2, async (_item, index) => {
+    if (index === 0) await slow;
     completed.push(index);
+    if (index === 2) releaseSlow();
     return index;
   });
   assert.deepEqual(results.map((result) => result.status), ["fulfilled", "fulfilled", "fulfilled", "fulfilled"]);

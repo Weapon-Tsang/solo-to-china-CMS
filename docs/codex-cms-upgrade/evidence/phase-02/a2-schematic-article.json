@@ -1,0 +1,152 @@
+{
+  "scope": "Synthetic isolated browser fixture; no real provider or WordPress",
+  "draft": {
+    "id": "draft_2ecb8d2ac07e4702969bd2f307257c83",
+    "body_markdown": "### Day 1\n| Stop | Next connection |\n| --- | --- |\n| East Hall | West Hall; walk; about 15 minutes |\n| West Hall | East Hall; bus |\n| East Hall | End of day |",
+    "content_hash": "21dd1b52865c697b17907a7b737801d79132200cd1590d90033175d31cb7eca9",
+    "revision": 1
+  },
+  "visual": {
+    "id": "visual_28b3539889bf44318602eb5541503a00",
+    "draft_id": "draft_2ecb8d2ac07e4702969bd2f307257c83",
+    "slot": 1,
+    "placement": "mid_article",
+    "purpose": "Approved route sequence",
+    "alt_text": "Day 1: East Hall → West Hall → East Hall",
+    "caption": "Day 1: East Hall → West Hall → East Hall. Not to scale; source assertions, not live navigation.",
+    "generation_prompt": "",
+    "aspect_ratio": "auto",
+    "status": "generated",
+    "media_path": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\cms-a2-media-browser-lTCaKx\\media\\route-d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738.png",
+    "media_url": "/media/route-d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738.png",
+    "provider": "local",
+    "model": "local-route-svg-sharp-1",
+    "last_error": null,
+    "created_at": "2026-09-27T18:26:02.734Z",
+    "updated_at": "2026-09-27T18:30:30.984Z",
+    "wordpress_media_id": null,
+    "wordpress_media_url": null,
+    "strategy_version": "3.9",
+    "image_type": "map_or_route",
+    "image_role": "support",
+    "image_subject": "Approved route sequence",
+    "acquisition_strategy": "render_route_schematic",
+    "factual_image_required": 0,
+    "source_asset_id": null,
+    "source_remote_url": null,
+    "asset_fingerprint": "0bc2dca463e9b62e15fcd9704ed18a78c6b6b6dac20216f4a8816b1274f13508",
+    "attempt_count": 1,
+    "retry_at": null,
+    "media_metadata_json": "{\"route_contract\":{\"route_id\":\"route_ae32e2f497ba96ef9d0df3b4\",\"revision\":1,\"approved_route_hash\":\"a26c361eeaebae180da92308c3ee3b86af98019dfdab905987e37b1105dca049\",\"source_route_hash\":\"7ff9cccb7a2e1eda91e26b37cfd67bac51b08df3da169c2db07d44cb7cd2e665\"},\"route_summary\":{\"approved_route_hash\":\"a26c361eeaebae180da92308c3ee3b86af98019dfdab905987e37b1105dca049\",\"text\":\"Day 1: East Hall → West Hall → East Hall\"},\"transform_version\":\"local-route-svg-sharp-1\",\"recovery_budget\":{\"provider_retry\":0,\"visual_revision\":0,\"deterministic_recovery\":1},\"route_render_manifest\":{\"version\":1,\"renderer\":\"local-route-svg-sharp-1\",\"route_id\":\"route_ae32e2f497ba96ef9d0df3b4\",\"revision\":1,\"approved_route_hash\":\"a26c361eeaebae180da92308c3ee3b86af98019dfdab905987e37b1105dca049\",\"source_route_hash\":\"7ff9cccb7a2e1eda91e26b37cfd67bac51b08df3da169c2db07d44cb7cd2e665\",\"transform\":\"recomposition\",\"input_hash\":\"a61b6e11dfdbf29b6696e47ee3beb2f1c953d8406c99e37e80de42979af975da\",\"draw_operations\":[{\"kind\":\"day\",\"id\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:day:1\",\"text\":\"Day 1\",\"x\":40,\"y\":70},{\"kind\":\"stop\",\"id\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:a\",\"entity_id\":\"east\",\"text\":\"East Hall\",\"x\":70,\"y\":122},{\"kind\":\"arrow\",\"id\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:leg:ab\",\"from\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:a\",\"to\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:b\",\"x\":80,\"y1\":137,\"y2\":198,\"text\":\"walk · about 15 minutes\",\"label_x\":110,\"label_y\":170},{\"kind\":\"stop\",\"id\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:b\",\"entity_id\":\"west\",\"text\":\"West Hall\",\"x\":70,\"y\":222},{\"kind\":\"arrow\",\"id\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:leg:bc\",\"from\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:b\",\"to\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:c\",\"x\":80,\"y1\":237,\"y2\":298,\"text\":\"bus\",\"label_x\":110,\"label_y\":270},{\"kind\":\"stop\",\"id\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:c\",\"entity_id\":\"east\",\"text\":\"East Hall\",\"x\":70,\"y\":322}],\"coverage\":[{\"day_id\":\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:day:1\",\"stop_ids\":[\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:a\",\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:b\",\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:c\"],\"leg_ids\":[\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:leg:ab\",\"src_f1bb7811960149de87a1a4a48d98effb:1:walk:leg:bc\"]}],\"width\":1100,\"height\":501,\"file_sha256\":\"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738\",\"svg_sha256\":\"62ff28c7ec51773415c4954fb48597db8999ff5958a3146d74c0fa0f7dc5fec9\",\"not_to_scale\":true,\"visual_review\":\"NOT_TESTED\"},\"route_render_artifact_id\":\"route_artifact_61715b85cdd3d9d7148c59b12ed52615\",\"binary_qa\":{\"status\":\"passed\",\"sha256\":\"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738\"},\"local_route_qa\":{\"status\":\"passed\",\"file_hash\":\"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738\",\"input_hash\":\"a61b6e11dfdbf29b6696e47ee3beb2f1c953d8406c99e37e80de42979af975da\",\"approved_route_hash\":\"a26c361eeaebae180da92308c3ee3b86af98019dfdab905987e37b1105dca049\",\"method\":\"deterministic_renderer_verification\"}}"
+  },
+  "manifest": {
+    "version": 1,
+    "renderer": "local-route-svg-sharp-1",
+    "route_id": "route_ae32e2f497ba96ef9d0df3b4",
+    "revision": 1,
+    "approved_route_hash": "a26c361eeaebae180da92308c3ee3b86af98019dfdab905987e37b1105dca049",
+    "source_route_hash": "7ff9cccb7a2e1eda91e26b37cfd67bac51b08df3da169c2db07d44cb7cd2e665",
+    "transform": "recomposition",
+    "input_hash": "a61b6e11dfdbf29b6696e47ee3beb2f1c953d8406c99e37e80de42979af975da",
+    "draw_operations": [
+      {
+        "kind": "day",
+        "id": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:day:1",
+        "text": "Day 1",
+        "x": 40,
+        "y": 70
+      },
+      {
+        "kind": "stop",
+        "id": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:a",
+        "entity_id": "east",
+        "text": "East Hall",
+        "x": 70,
+        "y": 122
+      },
+      {
+        "kind": "arrow",
+        "id": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:leg:ab",
+        "from": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:a",
+        "to": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:b",
+        "x": 80,
+        "y1": 137,
+        "y2": 198,
+        "text": "walk · about 15 minutes",
+        "label_x": 110,
+        "label_y": 170
+      },
+      {
+        "kind": "stop",
+        "id": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:b",
+        "entity_id": "west",
+        "text": "West Hall",
+        "x": 70,
+        "y": 222
+      },
+      {
+        "kind": "arrow",
+        "id": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:leg:bc",
+        "from": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:b",
+        "to": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:c",
+        "x": 80,
+        "y1": 237,
+        "y2": 298,
+        "text": "bus",
+        "label_x": 110,
+        "label_y": 270
+      },
+      {
+        "kind": "stop",
+        "id": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:c",
+        "entity_id": "east",
+        "text": "East Hall",
+        "x": 70,
+        "y": 322
+      }
+    ],
+    "coverage": [
+      {
+        "day_id": "src_f1bb7811960149de87a1a4a48d98effb:1:walk:day:1",
+        "stop_ids": [
+          "src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:a",
+          "src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:b",
+          "src_f1bb7811960149de87a1a4a48d98effb:1:walk:stop:c"
+        ],
+        "leg_ids": [
+          "src_f1bb7811960149de87a1a4a48d98effb:1:walk:leg:ab",
+          "src_f1bb7811960149de87a1a4a48d98effb:1:walk:leg:bc"
+        ]
+      }
+    ],
+    "width": 1100,
+    "height": 501,
+    "file_sha256": "d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738",
+    "svg_sha256": "62ff28c7ec51773415c4954fb48597db8999ff5958a3146d74c0fa0f7dc5fec9",
+    "not_to_scale": true,
+    "visual_review": "NOT_TESTED"
+  },
+  "jobs": [
+    {
+      "id": "job_de2868422afe4c76950de70ba42b3128",
+      "type": "generate_visuals",
+      "status": "failed",
+      "attempts": 1,
+      "last_failure_code": "ROUTE_RENDER_STORAGE_MISSING"
+    },
+    {
+      "id": "job_f55d97221d1548a0a427ed21ea5992f8",
+      "type": "generate_visuals",
+      "status": "succeeded",
+      "attempts": 1,
+      "last_failure_code": ""
+    },
+    {
+      "id": "job_f5ef60a0a24142a185f54fdac5fa409b",
+      "type": "review_draft",
+      "status": "queued",
+      "attempts": 0,
+      "last_failure_code": ""
+    }
+  ]
+}

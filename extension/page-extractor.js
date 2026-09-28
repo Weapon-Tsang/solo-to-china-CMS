@@ -1,4 +1,7 @@
 (() => {
+  globalThis.SoloToChinaXhs?.cancel?.();
+  const cancellation = new AbortController();
+  const signal = cancellation.signal;
   const SELECTORS = Object.freeze({
     noteRoot: ["#noteContainer", "[class*='note-detail']", "[class*='note-content']", "main article", "main"],
     title: ["#detail-title", "[class*='title']", "h1"],
@@ -11,7 +14,12 @@
     mediaVideos: ["video"],
   });
 
-  const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+  const wait = (milliseconds) => new Promise((resolve, reject) => {
+    signal.throwIfAborted();
+    const cancel = () => { clearTimeout(timer); reject(signal.reason); };
+    const timer = setTimeout(() => { signal.removeEventListener('abort', cancel); resolve(); }, milliseconds);
+    signal.addEventListener('abort', cancel, { once: true });
+  });
   // The background worker reinjects this file for each discovery pass. Keep the
   // end-of-list observation in the page so an unchanged collection can finish.
   const discoveryPageUrl = `${location.origin}${location.pathname}${location.search}`;
@@ -66,7 +74,7 @@
 
   function discoveryResult(cards) {
     const height = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
-    const collectionEnd = explicitCollectionEnd() || discoveryObservation.stableRounds >= 4;
+    const collectionEnd = explicitCollectionEnd();
     return { cards, scrollY: window.scrollY, scrollHeight: height, collectionEnd, pageUrl: location.href };
   }
 
@@ -74,6 +82,7 @@
     const before = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
     window.scrollTo({ top: before, behavior: "instant" });
     await waitForMutation(document.documentElement, 1_200);
+    signal.throwIfAborted();
     const after = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
     let newIdentities = 0;
     for (const node of document.querySelectorAll(SELECTORS.favoriteCards.join(","))) {
@@ -85,7 +94,7 @@
     const bottom = window.scrollY + window.innerHeight >= after - 80;
     discoveryObservation.stableRounds = bottom && !loading && !newIdentities && after === before ? discoveryObservation.stableRounds + 1 : 0;
     return { advanced: after > before || window.scrollY > 0, scrollY: window.scrollY, scrollHeight: after,
-      collectionEnd: explicitCollectionEnd() || discoveryObservation.stableRounds >= 4 };
+      collectionEnd: explicitCollectionEnd() };
   }
 
   function explicitCollectionEnd() {
@@ -103,6 +112,7 @@
 
     let root = first(SELECTORS.noteRoot);
     if (!root) root = await waitForSelector(SELECTORS.noteRoot, 30_000);
+    signal.throwIfAborted();
     const delayedBlock = detectBlockingPage();
     if (delayedBlock) return { ok: false, error: delayedBlock };
     if (!root) return error("CONTENT_NOT_READY", "The note content did not render before the load timeout.", true);
@@ -135,6 +145,7 @@
     const text = [title, bodyText || description].filter(Boolean).join("\n\n");
     const textHash = await hash(text);
     const domHash = await hash(html);
+    signal.throwIfAborted();
     const sourceTimestamp = globalThis.SoloToChinaCaptureUtils?.extractSourceTimestamp(document, root, new Date())
       || { value:document.querySelector("time")?.dateTime || null,kind:"unknown",raw:"",confidence:"low" };
     const capture = {
@@ -169,6 +180,7 @@
 
   async function expandVisibleText(root) {
     for (const button of root.querySelectorAll("button,[role='button'],span")) {
+      signal.throwIfAborted();
       const label = String(button.textContent || "").trim();
       if (/^(展开|更多|全文|show more|read more)$/i.test(label) && visible(button)) {
         button.click();
@@ -184,11 +196,13 @@
     let stableRounds = 0;
     let finished = true;
     while (Date.now() < deadline) {
+      signal.throwIfAborted();
       const next = first(SELECTORS.carouselNext, root);
       if (!next || next.disabled || next.getAttribute("aria-disabled") === "true") break;
       const before = observed.size + observedVideos.size;
       next.click();
       await waitForMutation(root, 700);
+      signal.throwIfAborted();
       for (const image of collectImages(root)) observed.set(image.mediaIdentity, image);
       for (const video of collectVideos(root)) observedVideos.set(video.mediaIdentity, video);
       stableRounds = observed.size + observedVideos.size === before ? stableRounds + 1 : 0;
@@ -214,6 +228,7 @@
     let stable = 0;
     let previous = null;
     while (stable < 3 && Date.now() < deadline) {
+      signal.throwIfAborted();
       root.scrollTo?.({ top: root.scrollHeight, behavior: "instant" });
       window.scrollTo({ top: Math.min(document.documentElement.scrollHeight, root.getBoundingClientRect().bottom + window.scrollY), behavior: "instant" });
       await wait(700);
@@ -300,28 +315,33 @@
   }
 
   function waitForMutation(root, timeoutMs = 700) {
+    signal.throwIfAborted();
     if (!root || typeof MutationObserver !== "function") return wait(timeoutMs).then(() => false);
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       let settled = false;
       const finish = (changed) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         observer.disconnect();
+        signal.removeEventListener('abort', cancel);
         root.removeEventListener('load', onLoad, true);
         root.removeEventListener('loadeddata', onLoad, true);
         resolve(changed);
       };
       const onLoad = () => finish(true);
+      const cancel = () => { finish(false); };
       const observer = new MutationObserver(() => finish(true));
       const timer = setTimeout(() => finish(false), timeoutMs);
       observer.observe(root, { childList: true, subtree: true, attributes: true });
       root.addEventListener('load', onLoad, true);
       root.addEventListener('loadeddata', onLoad, true);
+      signal.addEventListener('abort', cancel, { once: true });
     });
   }
 
   function waitForSelector(selectors, timeoutMs) {
+    signal.throwIfAborted();
     if (typeof MutationObserver !== "function") return wait(timeoutMs).then(() => first(selectors));
     return new Promise((resolve) => {
       let settled = false;
@@ -330,14 +350,17 @@
         settled = true;
         clearTimeout(timer);
         observer.disconnect();
+        signal.removeEventListener('abort', cancel);
         resolve(value);
       };
       const observer = new MutationObserver(() => {
         const match = first(selectors);
         if (match || detectBlockingPage()) finish(match);
       });
+      const cancel = () => finish(null);
       const timer = setTimeout(() => finish(first(selectors)), timeoutMs);
       observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+      signal.addEventListener('abort', cancel, { once: true });
     });
   }
 
@@ -351,5 +374,5 @@
     return [...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join("");
   }
 
-  globalThis.SoloToChinaXhs = { scanFavorites, scrollFavoritesWindow, prepareAndExtract, discoveryObservation };
+  globalThis.SoloToChinaXhs = { scanFavorites, scrollFavoritesWindow, prepareAndExtract, discoveryObservation, cancel: () => cancellation.abort() };
 })();

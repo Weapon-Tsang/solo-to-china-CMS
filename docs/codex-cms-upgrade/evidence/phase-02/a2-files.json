@@ -1,0 +1,101 @@
+{
+  "note": "Final file identities, not attribution of all preexisting changes. Available before hashes: a2-baseline.json.",
+  "files": [
+    {
+      "path": "src/route-bundle.mjs",
+      "sha256": "48c0c9530a47cdf34fa34bea20f0a3759482aeef643a7afc326728fad4c47501"
+    },
+    {
+      "path": "src/repositories/route-bundles.mjs",
+      "sha256": "741d11ef2f4923ebf5b88fae8e87d91570ab483a34a518f41364bc24a38c025b"
+    },
+    {
+      "path": "src/ai/route-contract.mjs",
+      "sha256": "c7b73c0d887e69844c6e782b11758198782d926c4feeaaa5315eeaaf2839d3e9"
+    },
+    {
+      "path": "src/visuals/route-schematic.mjs",
+      "sha256": "bf3529c9d128f75979121139a5a2423a6a5c4d7c503d4b45d0c148179ec8f936"
+    },
+    {
+      "path": "src/db.mjs",
+      "sha256": "3334edb18d3cc9b9658d4748281a41e81ad9e9ec56cbfabc82bc789fb29f0ce4"
+    },
+    {
+      "path": "src/repository.mjs",
+      "sha256": "f4929930f94cdd355335909bbcc5485a5bd3ec682712768d25e60afd60bc2f5c"
+    },
+    {
+      "path": "src/ai/content-engine.mjs",
+      "sha256": "8e58cf60e77bff9c397b61c8148b7b901e89022f750140e003f43ce0c01fa36e"
+    },
+    {
+      "path": "src/pipeline.mjs",
+      "sha256": "ec6b3178c5e9ba8ee334e94f8bce6390eec0453c0c92ed69d845b85f5909ebee"
+    },
+    {
+      "path": "src/publication-eligibility.mjs",
+      "sha256": "aba81c5f73622e2c0536f5674bd9082ab2f03b6190a720fc72fa8833b07977ad"
+    },
+    {
+      "path": "src/backup.mjs",
+      "sha256": "2a40e3ff7741ebd94ff666a6582a52b48979dff7d49c3f9c1d291bd119c9d8ba"
+    },
+    {
+      "path": "frontend/src/App.jsx",
+      "sha256": "cf0566cbf39740dda98e23acf6ecfaee9620830ef7c57045dbbb7a7d40a724cf"
+    },
+    {
+      "path": "frontend/src/workspaces/route-preview.jsx",
+      "sha256": "cfe4129d63e8ea43771bd4519900f3be294efcbcd7fbef0b2981c5c537f069b0"
+    },
+    {
+      "path": "test/route-bundle.test.mjs",
+      "sha256": "951e5231bed26be42027d33cee8a49a4717a5961448733f4bd467f3477a79594"
+    },
+    {
+      "path": "test/route-production.test.mjs",
+      "sha256": "5ccb7726d5557a37cb04326350ffb998d2929fdcfbc2f48cc47a8cca7ec42484"
+    },
+    {
+      "path": "test/content-pipeline.test.mjs",
+      "sha256": "1b8c4f5f7608cd3a1412d9d4ee282d5860c7763a794d6aacba05f2995895dac5"
+    },
+    {
+      "path": "test/backup.test.mjs",
+      "sha256": "7d5a5619842f164ccff6cdc6b8596e68ac0e05d3b9fdba501a0ecd61dcc67f22"
+    },
+    {
+      "path": "test/migration-seventy-nine.test.mjs",
+      "sha256": "0aad852fc57803c4aa01d6b9e01bd497770b7db70d725a8b0273088ce7e4fd08"
+    },
+    {
+      "path": "test/migration-eighty.test.mjs",
+      "sha256": "5fea9acb24e11a639ac2b8736f2bd2556f39837d30c1f25dd15f7dd84bcd84b6"
+    },
+    {
+      "path": "test-support/route-fixture.mjs",
+      "sha256": "f346c096b897f93c906a1c7193180bc89e6b29c7bba9b69b55d999d40fdd219c"
+    },
+    {
+      "path": "test-support/route-production-fixture.mjs",
+      "sha256": "1f221d4a5df68b71c8eaf20a977fdc3589c4252e9ffa466786fb977a3daf68c5"
+    },
+    {
+      "path": "scripts/stage02-route-historical-replay.mjs",
+      "sha256": "93956f884f8263a339b701e73a0e3d8110dc277d68bd8fcaf480ac0fd8f11b4f"
+    },
+    {
+      "path": "scripts/stage02-route-browser-fixture.mjs",
+      "sha256": "e61a35f90fdcd8e399d4545c2b523764fea8068c6a45ad48e4ae7bd328924b37"
+    },
+    {
+      "path": "scripts/verify-stage02-route-browser.js",
+      "sha256": "bf89d8ef9daff41bbce8883facc96c44b743137feec9b4d039acad96ae2cbf6a"
+    },
+    {
+      "path": "docs/codex-cms-upgrade/phases/phase-02-a2.txt",
+      "sha256": "38c53e6c1ca21c5b8ea78087ea364937b035f3afea2ee568ab17f13a0e57010f"
+    }
+  ]
+}

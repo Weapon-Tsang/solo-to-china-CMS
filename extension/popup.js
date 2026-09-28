@@ -11,6 +11,11 @@ const elements = {
 };
 const CLOUD_CONFIGURED = false;
 const ERROR_MESSAGES = Object.freeze({
+  CAPTURE_TAB_CLOSED: '采集页已关闭，任务已暂停，点击继续可恢复。',
+  CAPTURE_HOST_PERMISSION: '扩展没有该 CMS 地址的访问权限，请核对安装包和连接设置。',
+  CAPTURE_READ_ONLY: 'CMS 当前为只读接收模式，请切换到可写的隔离采集实例后继续。',
+  DISCOVERY_STALLED: '收藏列表长时间没有新增内容，已暂停，未将其标为采集完成。',
+  DOM_TIMEOUT: '页面提取超过时限，已保留队列并暂停。',
   INVALID_FAVORITES_SCOPE: "尚未识别到小红书收藏夹，请打开目标收藏夹页面后重试。",
   SESSION_ALREADY_RUNNING: "已有一个收藏同步任务正在运行，请先完成、暂停或取消当前任务。",
   NO_ACTIVE_SESSION: "当前没有正在运行的同步任务。",
@@ -108,7 +113,7 @@ async function saveSettings() {
       autoMinIntervalHours: Number(elements.autoMinHours.value || 12),
     } });
     if (!response?.ok) return showError(response?.error);
-    transientNotice = response.session?.status === "running" ? "设置已保存，并已实时应用到当前任务。" : "设置已保存并通过连接检查。";
+    transientNotice = response.session?.status === "running" ? "设置已保存，并已实时应用到当前任务。" : "设置已保存；开始或继续时会检查连接。";
     await refresh();
   } catch (error) {
     showError(error);

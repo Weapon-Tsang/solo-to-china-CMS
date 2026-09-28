@@ -26,6 +26,9 @@ export function validateMediaDelivery(visuals = [], { requireMetadata = true, pa
   const hashes = new Map();
   const deliveredIds = new Set();
   for (const [index, visual] of visuals.entries()) {
+    const storedMetadata=parseMediaMetadata(visual.media_metadata || visual.media_metadata_json);
+    if(visual.status==='skipped' && storedMetadata.route_omission && !visual.factual_image_required
+      && !storedMetadata.required_visual_obligation?.required) continue;
     const mediaId = positiveInteger(visual.wordpress_media_id || visual.media_id || visual.id);
     const path = `$.media[${index}]`;
     if (!mediaId) {

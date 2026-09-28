@@ -65,6 +65,15 @@ test("CMS detail and workflow controls remain localized in Chinese", () => {
   assert.match(viewsSource, /disabled=\{actionBusy \|\| !evidenceReady\}/, "证据不完整时必须禁用人工结论按钮");
 });
 
+test("manual review and unknown media states remain explicit and non-successful in the CMS", () => {
+  for (const text of ["待人工检查 · 材料覆盖不足", "这不是处理成功或明确失败", "系统已停止自动重试"]) {
+    assert.ok(appSource.includes(text), `来源人工检查状态缺少边界说明：${text}`);
+  }
+  for (const text of ["系统健康每页条数", "待核状态", "已隔离，不会自动重发"]) {
+    assert.ok(viewsSource.includes(text), `系统健康未知请求状态缺少边界说明：${text}`);
+  }
+});
+
 test("content workspace explains records, failures, and bounded automatic repair before opening details", () => {
   for (const text of ["等待开始", "生产中", "已生成正文", "需要处理", "进度与下一步", "Draft 生成前即可查看生产详情", "系统会自动继续"]) {
     assert.ok(viewsSource.includes(text), `内容队列缺少直白说明：${text}`);

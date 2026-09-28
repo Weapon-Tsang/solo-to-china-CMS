@@ -106,7 +106,7 @@ export function buildContentAst({ draft = {}, brief = {}, visuals = [], facts = 
     };
   });
   assignFactsToNodes(nodes, ledger, facts);
-  const media = visuals.map((visual, index) => ({ id: visual.id || `visual_${index + 1}`, role: visual.image_role || "context",
+  const media = visuals.filter(visual=>visual.status!=='skipped').map((visual, index) => ({ id: visual.id || `visual_${index + 1}`, role: visual.image_role || "context",
     placement: visual.placement || "content", alt: visual.alt_text || "", caption: visual.caption || "",
     media_id: visual.wordpress_media_id || null, source_asset_id: visual.source_asset_id || null,
     media_url: visual.wordpress_media_url || visual.media_url || "", factual: Boolean(visual.factual_image_required),

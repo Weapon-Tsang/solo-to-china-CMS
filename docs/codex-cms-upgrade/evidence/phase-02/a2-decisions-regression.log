@@ -1,0 +1,66 @@
+(node:19304) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ system snapshot hashes the database, uploads and generated media and drills an offline delivery (976.4682ms)
+✔ restore verification rejects a deleted database-referenced image (813.7907ms)
+✔ snapshot refuses source bytes that disagree with the database fingerprint (840.3259ms)
+✔ restore drill rejects media whose bytes disagree with its declared MIME (975.3527ms)
+✔ direct restore rejects media whose bytes disagree with its declared MIME before activation (897.1989ms)
+✔ restore refuses a snapshot from a newer schema before creating a target (783.8039ms)
+✔ restore refuses insufficient free space before creating target or staging (794.4147ms)
+✔ an interrupted restore resumes only the same snapshot and repairs partial files (1142.7223ms)
+✔ restore migrates an older snapshot only inside the isolated target (817.791ms)
+✔ snapshot verification compares manifest hashes rather than only file sizes (742.4624ms)
+✔ snapshot verification rejects an omitted database file reference (734.0503ms)
+✔ snapshot verification rejects omitted, altered, and untrusted business fingerprints (822.8925ms)
+✔ business fingerprint catches changed source state after the database file hash is updated (727.2029ms)
+✔ snapshot includes durable source storage references and pending capture chunks (928.3289ms)
+✔ snapshot restores an unpromoted visual candidate file and its database path (819.4965ms)
+✔ snapshot preserves and remaps file paths nested in historical capture JSON (855.6922ms)
+✔ snapshot rejects a missing file referenced only by historical capture JSON (631.6912ms)
+✔ version 2 manifests remain readable without version 3 JSON references (790.3191ms)
+✔ version 2 recovers omitted relative source storage references only from archived files (830.102ms)
+✔ snapshot rejects case collisions and archive symlinks (698.0056ms)
+✔ snapshot restores to a new external root and remaps only stored file references (810.2655ms)
+✔ restore remaps a POSIX stored path fixture on Windows without changing unrelated text (776.3568ms)
+✔ snapshot refuses to race an active media file mutation (539.1964ms)
+✔ restore refuses a symbolic-link ancestor before creating the target (674.0962ms)
+(node:27196) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ route classification, explicit locators and repeated entity occurrences are independent of photo/OCR order (4.9942ms)
+✔ critical evidence and required media are separate gates; ordinary missing stop photos do not block (3.4432ms)
+✔ same-entity other-day photos differ from whole-day route diagrams; wrong arrows and partial matches rejected (3.5077ms)
+✔ self-reported route hash cannot hide changed Day/order/mode or mutated bundle (4.8142ms)
+✔ actual renderer decodes PNG and rejects missing stop, reversed arrow, old manifest and changed bytes (89.086ms)
+✔ real SQLite route revisions/artifacts survive backup review restore; stale results rejected without budget writes (951.4554ms)
+✔ stored selection chooses the approved source, never the source with more photographs (8.2956ms)
+✔ approved multi-source composition retains repeated visits and field evidence without adding model calls (4.7121ms)
+✔ cross-source connection uses supported entity endpoints and rejects similarly named substitutes (2.7118ms)
+✔ panel, asset and directed field provenance is preserved; invented regions and ambiguous arrows block (4.1148ms)
+✔ available city/bank/time and stale-condition evidence blocks conflicts without claiming live verification (5.1858ms)
+(node:1680) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ historical article without route snapshot stays unknown and cannot be silently backfilled (836.8625ms)
+✔ malformed scopes and unresolved targets cannot create an approved route or mutate body/jobs (758.6669ms)
+✔ published three-day article: media-only permission cannot decide; explicit approval preserves body, publication, budget and jobs (752.6417ms)
+✔ source change or another decision makes approval stale; rejection creates no route revision (692.6109ms)
+✔ pending proposal and approved decision survive real migration-review restore without starting work (904.3466ms)
+✔ actual HTTP: admin and origin guards, malformed requests, preview, proposal and reject are enforced (725.6621ms)
+(node:19056) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ actual normalization accepts related other-day photo but blocks a mismatching full-day map with a durable gap (14.4132ms)
+✔ actual independent visual QA request contains frozen topology and rejects missing/stale/wrong-arrow receipts (23.3851ms)
+(node:26820) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real planning, writer and independent review carry frozen route; no route/SEO/diagram model calls (801.0279ms)
+✔ actual Worker plan stage produces route draft and local schematic (689.346ms)
+✔ actual Worker blocks itinerary without source fragments before a writer/model call (615.7445ms)
+✔ actual planning consumes stored composition scope and excludes old extraction inputs (598.3059ms)
+✔ route visual late results are rejected and changing a plan preserves its cumulative slot recovery budget (605.9725ms)
+ℹ tests 48
+ℹ suites 0
+ℹ pass 48
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19553.4958

@@ -57,6 +57,9 @@ test('an empty historical article plan discovers a frozen original once and uses
   db.prepare(`INSERT INTO sources(id,adapter,canonical_url,captured_at,raw_text,raw_html,
     raw_payload_json,content_hash,capture_version,created_at,updated_at)
     VALUES ('source','manual','https://example.test/source','now','text','html','{}','hash',2,'now','now')`).run();
+  db.prepare(`INSERT INTO capture_versions(id,source_id,capture_version,captured_at,raw_text,raw_html,raw_payload_json,
+    content_hash,completeness_status,completeness_json,acquisition_origin,created_at)
+    VALUES ('retained-capture','source',1,'now','Original capture text','', '{}','original-hash','complete','{}','manual','now')`).run();
   db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,position,local_path,mime_type,
     capture_version,storage_status,original_bytes_status,durability_status,original_sha256,width,height)
     VALUES ('frozen-photo','source','image','https://example.test/photo.png',0,?,'image/png',

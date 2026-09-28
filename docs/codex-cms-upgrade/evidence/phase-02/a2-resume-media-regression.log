@@ -1,0 +1,62 @@
+(node:27220) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ an article may checkpoint analysis for its frozen historical source asset (704.2743ms)
+✔ an empty historical article plan discovers a frozen original once and uses only its pixel subject (929.1903ms)
+(node:23796) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ only a hash-verified pending QA candidate can reconcile an unknown dispatch (623.9936ms)
+✔ shared SQLite enforces 2 RPM pacing without an initial burst (618.6483ms)
+✔ 429 cooldown and unknown outcomes persist through a new executor (555.1865ms)
+✔ explicit grant is durable, idempotent and retains cumulative spent and quota cooldown (557.1967ms)
+✔ an unknown exhausted dispatch cannot be unlocked by an operator grant (542.876ms)
+✔ two real processes sharing one SQLite file never own the visual lane together (774.3453ms)
+(node:22912) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ a source guide card cannot lend an unrelated legacy caption to a travel article (5.2459ms)
+✔ an analyzed Chongqing advisory card cannot match a Hong Kong scene through nearby prose (0.7416ms)
+✔ visual planning preserves the writer count when no relevant authorized source asset exists (0.1713ms)
+✔ a missing writer visual plan deterministically uses relevant project-authorized source originals (0.8209ms)
+✔ article fallback rejects a destination-wide asset that shares only one generic word (0.3882ms)
+✔ authorized fallback photos never expose raw Claim keys as reader alt text (0.3544ms)
+✔ unsupported map and infographic renderers create no fake visual plan (0.1938ms)
+✔ a late required visual survives the presentation limit and displaces an optional illustration (0.3586ms)
+✔ a real-world photo is selected only when an original authorized source asset matches and unknown image content is analyzed (0.6018ms)
+✔ an explicit source id cannot bypass subject relevance for a factual hero (0.4644ms)
+✔ incomplete visual normalization converges on the best asset and remains idempotent (0.6098ms)
+✔ article-level fallback cannot erase an unrelated required photo obligation (0.6743ms)
+✔ a weak article fallback cannot bootstrap its own relevance on retry (0.177ms)
+✔ fresh pixel analysis preserves a recoverable visual and its pending QA candidate identity (0.4303ms)
+✔ an obsolete qualified fallback releases assets displaced by its superseded decision (0.3263ms)
+✔ derivative QA cannot override a source card that depicts an unrelated place (0.3529ms)
+✔ a focused attraction guide rejects previously qualified multi-place visuals and does not reselect them as fallback (0.4336ms)
+✔ a two-stop route map is eligible only for its evidenced non-hero route section (1.4132ms)
+✔ a two-place collage cannot borrow an inaccurate old caption as image-subject evidence (0.3422ms)
+✔ an attraction guide may use an image whose own subject identifies the attraction (0.646ms)
+✔ a multi-place itinerary may retain a qualified multi-place source visual (0.389ms)
+✔ a complex itinerary classified as an editorial infographic is routed as a map (0.15ms)
+✔ strategy 3.9 combines free audited photos with paid Chinese infographic translation (0.465ms)
+✔ audited source photo can reuse a prior English image subject as alt without a new model call (0.884ms)
+✔ the shared visual decision blocks unclassified text while preserving authentic signs (0.1734ms)
+✔ unanalysed high-resolution source images never default to text-free documentary photos (0.0899ms)
+✔ sign matching is token bounded and a storefront collage localizes only author overlays (0.1552ms)
+✔ legacy or incomplete text analysis is re-run before any English recomposition (0.1488ms)
+✔ four-field visual QA is aggregated instead of trusting a cosmetic top-level label (0.3133ms)
+✔ an existing visual plan can be topped up with additional relevant source photos (0.4511ms)
+✔ strategy 3.9 uses qualified originals and still plans relevant Chinese information graphics for English localization (0.5177ms)
+✔ an equal-count media plan repairs only the stale source slot and preserves successful metadata (0.5531ms)
+✔ source-shaped ratio repair does not invalidate an already qualified transformed image (0.3159ms)
+✔ legacy source assets with zero SQL dimensions recover their ratio from the stored original (100.096ms)
+✔ relevant food media beyond the former first-24 candidate window can be selected (0.8222ms)
+✔ a previously QA-passed guide card cannot remain a Guanyinqiao street photo (0.3277ms)
+✔ a QA-passed travel-preparation card cannot remain a Chongqing public-bus photo (0.198ms)
+✔ a QA-passed person photo cannot masquerade as Eling Second Factory (0.1878ms)
+✔ an administrator-confirmed on-site Eling photo is retained only for its verified draft (0.2828ms)
+✔ a broad walking itinerary may use a pixel-verified photo of a named stop (0.2448ms)
+ℹ tests 48
+ℹ suites 0
+ℹ pass 48
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6159.3846

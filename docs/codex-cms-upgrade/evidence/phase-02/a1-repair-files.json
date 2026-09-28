@@ -1,0 +1,168 @@
+{
+  "scope": "Final continuation inventory; earlier legitimate uncommitted work remains; not a before-edit inventory",
+  "recordedAt": "2026-09-27T12:53:31.058Z",
+  "root": "C:\\Users\\Mloong\\Documents\\ChatGPT\\solo-to-china-CMS",
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "branch": "main",
+  "specHash": "d4c223aac6b29b0c6b65fda7d70d8925ef37bfa6faf038f75d2dffe5c37b39c1",
+  "priorCheckpointComparisons": [
+    {
+      "path": "src/media-context.mjs",
+      "sameAsPriorCheckpoint": false,
+      "editedThisContinuation": true
+    },
+    {
+      "path": "src/repositories/media-bindings.mjs",
+      "sameAsPriorCheckpoint": false,
+      "editedThisContinuation": true
+    },
+    {
+      "path": "src/repository.mjs",
+      "sameAsPriorCheckpoint": false,
+      "editedThisContinuation": true
+    },
+    {
+      "path": "src/server.mjs",
+      "sameAsPriorCheckpoint": false,
+      "editedThisContinuation": true
+    },
+    {
+      "path": "frontend/src/App.jsx",
+      "sameAsPriorCheckpoint": true,
+      "editedThisContinuation": false
+    },
+    {
+      "path": "frontend/src/workspaces/source-media-context.jsx",
+      "sameAsPriorCheckpoint": false,
+      "editedThisContinuation": true
+    },
+    {
+      "path": "test/media-context.test.mjs",
+      "sameAsPriorCheckpoint": true,
+      "editedThisContinuation": false
+    },
+    {
+      "path": "test/media-context-api.test.mjs",
+      "sameAsPriorCheckpoint": false,
+      "editedThisContinuation": true
+    },
+    {
+      "path": "test/media-bindings.test.mjs",
+      "sameAsPriorCheckpoint": true,
+      "editedThisContinuation": false
+    },
+    {
+      "path": "scripts/stage02-context-browser-fixture.mjs",
+      "sameAsPriorCheckpoint": false,
+      "editedThisContinuation": true
+    },
+    {
+      "path": "scripts/verify-stage02-context-browser.js",
+      "sameAsPriorCheckpoint": true,
+      "editedThisContinuation": false
+    },
+    {
+      "path": "scripts/stage02-binding-read-audit.mjs",
+      "sameAsPriorCheckpoint": true,
+      "editedThisContinuation": false
+    }
+  ],
+  "files": [
+    {
+      "path": "src/media-context.mjs",
+      "sha256": "fae762f25509afe7948c2f80a4ef9c5cac1e46494dc58e1b681616146e0e60d6",
+      "bytes": 13044
+    },
+    {
+      "path": "src/repositories/media-bindings.mjs",
+      "sha256": "e93e8dbbac773a0cf0a988707071bcdd7adda4fb5eca87e5bf5e10c60d01b5b8",
+      "bytes": 11797
+    },
+    {
+      "path": "src/repositories/media-binding-repair.mjs",
+      "sha256": "b1c78731031ff0b0b1bff1ff09e15890259e003d8d1958ae770b7a4c22306a30",
+      "bytes": 4337
+    },
+    {
+      "path": "src/media-availability.mjs",
+      "sha256": "ac6355ca2d3c0165d50e4f54eb5c36851b57f63f64c3f48d33735aff4de237c6",
+      "bytes": 2027
+    },
+    {
+      "path": "src/repository.mjs",
+      "sha256": "24b4f471956fc98bd8f6f11b43e4a70dfec842887d4cc054b59c06c6a2b8d8be",
+      "bytes": 860022
+    },
+    {
+      "path": "src/server.mjs",
+      "sha256": "1e9ee271957bc72b12dcde382ac4df9312240362f34db2ae93ab04d9d282d23a",
+      "bytes": 118986
+    },
+    {
+      "path": "src/ai/content-engine.mjs",
+      "sha256": "404580c8d2dc56e95b3305f23495b87d88e6e264fc3a5282999244a2cdeb266b",
+      "bytes": 124923
+    },
+    {
+      "path": "frontend/src/workspaces/source-media-context.jsx",
+      "sha256": "f2138953cb26d9ff0df045e971a1012c862d5fa9e27ca2e4d3a2bad4650731ba",
+      "bytes": 5441
+    },
+    {
+      "path": "frontend/src/workspaces/source-binding-repair.jsx",
+      "sha256": "222ca518589a8d216479254f1c9381064ee1caa5b2c7936a6ee0878b3610e274",
+      "bytes": 4473
+    },
+    {
+      "path": "test/media-binding-repair.test.mjs",
+      "sha256": "e36778b3457729b238bc32690266facd102716a0453d796768de61e0f3da01f7",
+      "bytes": 8320
+    },
+    {
+      "path": "test/media-context-api.test.mjs",
+      "sha256": "c3d5d10601547a13d7563b4b4294ba5406bbc2732a59f754ca63c1bb4cbad9db",
+      "bytes": 4064
+    },
+    {
+      "path": "test/media-availability.test.mjs",
+      "sha256": "420070ec1fd8d1c438d1be4d97645eb34512d79d6b1e29b54eabbe3b18fa6448",
+      "bytes": 5780
+    },
+    {
+      "path": "scripts/stage02-binding-repair-replay.mjs",
+      "sha256": "90dc10c1557304c809e3d641de89416cf77fb6c7d6ad68280014e9e24ffa52e4",
+      "bytes": 4056
+    },
+    {
+      "path": "scripts/stage02-availability-read-audit.mjs",
+      "sha256": "69118d77d25ac2dc63d317bf504fa241babe71544690bcdc88ccec7df72e75d0",
+      "bytes": 1586
+    },
+    {
+      "path": "scripts/stage02-context-browser-fixture.mjs",
+      "sha256": "24eca2e9e46d6b42ef31523b67cd1206e71449e9d82e3cdb3325c6807d998fac",
+      "bytes": 2699
+    },
+    {
+      "path": "scripts/verify-stage02-binding-repair-browser.js",
+      "sha256": "d6303eba04a51517cc4f30393f724481c80cccebee48ee39f44c4ecd591a6d40",
+      "bytes": 3211
+    },
+    {
+      "path": "docs/codex-cms-upgrade/STATUS.md",
+      "sha256": "9d38e2001b4b7076a8314ebe70add09da5604a372bb162db736fe67b2c2e41c3",
+      "bytes": 19510
+    },
+    {
+      "path": "docs/codex-cms-upgrade/acceptance/phase-02.md",
+      "sha256": "32bc9275de4a0b4293b7a9927646dbd823fc7ef91f28e690335b31f8ea9d8e0b",
+      "bytes": 29194
+    },
+    {
+      "path": "docs/codex-cms-upgrade/evidence/phase-02/a1-repair-checkpoint.md",
+      "sha256": "90432a758c7d9e285a66e38448200b54d9744813955f0aa900a00a513da2b819",
+      "bytes": 10441
+    }
+  ],
+  "gitStatus": " M .env.example\n M .gitignore\n M deployment/gce/code-only-release.sh\n M deployment/gce/resume-verified-upgrade.sh\n M extension/background.js\n M extension/manifest.json\n M extension/page-extractor.js\n M extension/popup.js\n M extension/sync-core.js\n M frontend/src/App.jsx\n M frontend/src/views.jsx\n M package-lock.json\n M package.json\n M src/adapters/manual-source.mjs\n M src/ai/content-engine.mjs\n M src/ai/extraction-router.mjs\n M src/ai/kimi.mjs\n M src/ai/vertex-gemini-client.mjs\n M src/backup.mjs\n M src/capture-upload.mjs\n M src/chunked-upload.mjs\n M src/config.mjs\n M src/db.mjs\n M src/maintenance.mjs\n M src/media-storage.mjs\n M src/pipeline.mjs\n M src/publication-eligibility.mjs\n M src/repository.mjs\n M src/server.mjs\n M src/services/operations-workspace.mjs\n M src/source-media-store.mjs\n M src/visuals/vertex-imagen.mjs\n M test/backup.test.mjs\n M test/capture-upload.test.mjs\n M test/capture.test.mjs\n M test/extension-background-recovery.test.mjs\n M test/favorites-sync.test.mjs\n M test/frontend-localization.test.mjs\n M test/media-analysis.test.mjs\n M test/media-request-executor.test.mjs\n M test/migration-seventy-nine.test.mjs\n M test/model-routing-v11.test.mjs\n M test/openai.test.mjs\n M test/pipeline.test.mjs\n M test/reliability-dom.test.mjs\n M test/server.test.mjs\n M test/vertex-batch-pipeline.test.mjs\n M test/vertex-gemini-client.test.mjs\n?? docs/codex-cms-upgrade/\n?? extension/run-control.js\n?? frontend/src/workspaces/source-binding-repair.jsx\n?? frontend/src/workspaces/source-media-context.jsx\n?? scripts/audit-extension-pre-fixture.mjs\n?? scripts/benchmark-local-stage01-browser.js\n?? scripts/benchmark-local-stage01-fin01-browser.js\n?? scripts/benchmark-local-stage01-load.mjs\n?? scripts/benchmark-local-stage01.mjs\n?? scripts/inspect-local-data.mjs\n?? scripts/local-runtime-status.mjs\n?? scripts/prepare-local-release.mjs\n?? scripts/promote-local-data.mjs\n?? scripts/stage01-audit-snapshot.py\n?? scripts/stage01-benchmark-exceptions.mjs\n?? scripts/stage01-cloud-audit.py\n?? scripts/stage01-extract-snapshot.py\n?? scripts/stage01-fetch-snapshot.py\n?? scripts/stage01-fin01-api-benchmark.mjs\n?? scripts/stage01-fin01-review-guard.mjs\n?? scripts/stage01-fin01-worker.mjs\n?? scripts/stage01-profile-exceptions.mjs\n?? scripts/stage01-public-runtime-audit.py\n?? scripts/stage01-repair-identical-derivative.py\n?? scripts/stage01-replay-source-gaps.mjs\n?? scripts/stage01-snapshot-readonly.mjs\n?? scripts/stage01-vertex-canary.mjs\n?? scripts/stage01-worker-replay.mjs\n?? scripts/stage02-availability-read-audit.mjs\n?? scripts/stage02-binding-read-audit.mjs\n?? scripts/stage02-binding-repair-replay.mjs\n?? scripts/stage02-context-browser-fixture.mjs\n?? scripts/stage02-media-binding-replay.mjs\n?? scripts/verify-extension-pre-browser.mjs\n?? scripts/verify-local-release-isolation.mjs\n?? scripts/verify-stage02-binding-repair-browser.js\n?? scripts/verify-stage02-context-browser.js\n?? src/atomic-media-file.mjs\n?? src/google-access-token.mjs\n?? src/local-runtime.mjs\n?? src/media-availability.mjs\n?? src/media-context.mjs\n?? src/media-file-lease.mjs\n?? src/repositories/media-binding-repair.mjs\n?? src/repositories/media-bindings.mjs\n?? test/atomic-media-file.test.mjs\n?? test/chunked-upload.test.mjs\n?? test/extension-run-control.test.mjs\n?? test/google-access-token.test.mjs\n?? test/local-delivery-receiver.test.mjs\n?? test/local-runtime.test.mjs\n?? test/media-availability.test.mjs\n?? test/media-binding-repair.test.mjs\n?? test/media-bindings.test.mjs\n?? test/media-context-api.test.mjs\n?? test/media-context.test.mjs\n?? test/media-receipt-race.test.mjs\n?? test/migration-eighty.test.mjs\n"
+}

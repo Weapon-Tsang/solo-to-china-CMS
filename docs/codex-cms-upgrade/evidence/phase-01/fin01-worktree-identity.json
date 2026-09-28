@@ -1,0 +1,20 @@
+{
+  "format": "fin01-worktree-identity-1",
+  "at": "2026-09-27T05:39:52.011Z",
+  "root": "C:\\Users\\Mloong\\Documents\\ChatGPT\\solo-to-china-CMS",
+  "remote": "https://github.com/Weapon-Tsang/solo-to-china-CMS.git",
+  "branch": "main",
+  "head": "e9f7c8e82ff760f4d18f2d2e0673452eb8744290",
+  "status": "M .env.example\n M .gitignore\n M deployment/gce/code-only-release.sh\n M deployment/gce/resume-verified-upgrade.sh\n M frontend/src/App.jsx\n M frontend/src/views.jsx\n M package-lock.json\n M package.json\n M src/adapters/manual-source.mjs\n M src/ai/extraction-router.mjs\n M src/ai/kimi.mjs\n M src/ai/vertex-gemini-client.mjs\n M src/backup.mjs\n M src/capture-upload.mjs\n M src/chunked-upload.mjs\n M src/config.mjs\n M src/db.mjs\n M src/maintenance.mjs\n M src/pipeline.mjs\n M src/repository.mjs\n M src/server.mjs\n M src/source-media-store.mjs\n M src/visuals/vertex-imagen.mjs\n M test/backup.test.mjs\n M test/capture-upload.test.mjs\n M test/capture.test.mjs\n M test/media-request-executor.test.mjs\n M test/migration-seventy-nine.test.mjs\n M test/model-routing-v11.test.mjs\n M test/pipeline.test.mjs\n M test/server.test.mjs\n M test/vertex-batch-pipeline.test.mjs\n M test/vertex-gemini-client.test.mjs\n?? docs/codex-cms-upgrade/\n?? scripts/benchmark-local-stage01-browser.js\n?? scripts/benchmark-local-stage01-fin01-browser.js\n?? scripts/benchmark-local-stage01-load.mjs\n?? scripts/benchmark-local-stage01.mjs\n?? scripts/inspect-local-data.mjs\n?? scripts/local-runtime-status.mjs\n?? scripts/prepare-local-release.mjs\n?? scripts/promote-local-data.mjs\n?? scripts/stage01-audit-snapshot.py\n?? scripts/stage01-benchmark-exceptions.mjs\n?? scripts/stage01-cloud-audit.py\n?? scripts/stage01-extract-snapshot.py\n?? scripts/stage01-fetch-snapshot.py\n?? scripts/stage01-fin01-api-benchmark.mjs\n?? scripts/stage01-fin01-review-guard.mjs\n?? scripts/stage01-fin01-worker.mjs\n?? scripts/stage01-profile-exceptions.mjs\n?? scripts/stage01-public-runtime-audit.py\n?? scripts/stage01-repair-identical-derivative.py\n?? scripts/stage01-replay-source-gaps.mjs\n?? scripts/stage01-snapshot-readonly.mjs\n?? scripts/stage01-vertex-canary.mjs\n?? scripts/stage01-worker-replay.mjs\n?? scripts/verify-local-release-isolation.mjs\n?? src/atomic-media-file.mjs\n?? src/google-access-token.mjs\n?? src/local-runtime.mjs\n?? src/media-file-lease.mjs\n?? test/atomic-media-file.test.mjs\n?? test/chunked-upload.test.mjs\n?? test/google-access-token.test.mjs\n?? test/local-delivery-receiver.test.mjs\n?? test/local-runtime.test.mjs\n?? test/migration-eighty.test.mjs",
+  "sha256": {
+    "src/pipeline.mjs": "bd6ce7f760e87c3b47b945077c06bbe969b72b6d97824096fd5455b74b1a8d92",
+    "frontend/src/App.jsx": "2eef5eaff4ccb9e374c580c70a975bd25c819ef7b059bcade3f74e376090ed46",
+    "frontend/src/views.jsx": "b7f1e30ed70c429c095b5e797bd387ba672887fb9430f08e14bb10f4baf43fb7",
+    "test/pipeline.test.mjs": "46b0a971a5861085444afe17ea0f491c53e24183a5e171d53ef087611799f8bd",
+    "test/local-delivery-receiver.test.mjs": "4ffad9374b24b907ae147a441a487da214ba3431d42861274f4b6127bf058231",
+    "scripts/stage01-fin01-worker.mjs": "230b2c6476fd158d734a232508f1b03245e9b7645755da5e9ebefc3d9558900b",
+    "scripts/stage01-fin01-api-benchmark.mjs": "38dacc0289c9c8b46a1291e00d81b63c6a8454f2bfb261f3c6ea8ac1dfa1964d",
+    "scripts/stage01-fin01-review-guard.mjs": "8f3755e62d5728664ea21d9c3bbd7b790906a284b7ac9f3da5e7567d7e517f00",
+    "docs/codex-cms-upgrade/phases/phase-01-closeout-v1.1.txt": "da5b12ddc7cba5ecfea4d534c4d733eb1117ae411effa17645a35541eb466ae3"
+  }
+}

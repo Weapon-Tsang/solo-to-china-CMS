@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 79;
+export const SCHEMA_VERSION = 82;
 
 export function openDatabase(filename, { migrate: shouldMigrate = true } = {}) {
   if (shouldMigrate) fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -19,7 +19,7 @@ export function openDatabase(filename, { migrate: shouldMigrate = true } = {}) {
   return db;
 }
 
-function migrate(db) {
+export function migrate(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY,
@@ -107,6 +107,91 @@ function migrate(db) {
   if (current < 77) migrationSeventySeven(db);
   if (current < 78) migrationSeventyEight(db);
   if (current < 79) migrationSeventyNine(db);
+  if (current < 80) migrationEighty(db);
+  if (current < 81) migrationEightyOne(db);
+  if (current < 82) migrationEightyTwo(db);
+}
+
+function migrationEightyTwo(db) {
+  transaction(db, () => db.exec(`
+    ALTER TABLE experience_extraction_runs ADD COLUMN route_fragments_json TEXT NOT NULL DEFAULT '[]';
+    CREATE TABLE route_bundles (
+      route_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      candidate_id TEXT NOT NULL REFERENCES topic_candidates(id),
+      owner_id TEXT NOT NULL,
+      approved_route_hash TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      status TEXT NOT NULL,
+      bundle_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(route_id,revision),
+      UNIQUE(owner_id,content_hash)
+    );
+    CREATE INDEX idx_route_bundles_owner ON route_bundles(owner_id,revision DESC);
+    CREATE TABLE route_artifacts (
+      id TEXT PRIMARY KEY,
+      route_id TEXT NOT NULL,
+      route_revision INTEGER NOT NULL,
+      approved_route_hash TEXT NOT NULL,
+      artifact_kind TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      media_path TEXT,
+      file_sha256 TEXT,
+      receipt_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(route_id,route_revision) REFERENCES route_bundles(route_id,revision)
+    );
+    INSERT INTO schema_migrations(version,applied_at) VALUES (82,datetime('now'));
+  `));
+}
+
+function migrationEightyOne(db) {
+  transaction(db, () => db.exec(`
+    CREATE TABLE media_occurrences (
+      id TEXT PRIMARY KEY,
+      asset_id TEXT NOT NULL REFERENCES source_assets(id) ON DELETE CASCADE,
+      source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      capture_version INTEGER NOT NULL,
+      original_sha256 TEXT NOT NULL,
+      context_hash TEXT NOT NULL,
+      context_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('complete','context_pending','stale')),
+      policy_version TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(asset_id,context_hash)
+    );
+    CREATE INDEX idx_media_occurrences_source ON media_occurrences(source_id,capture_version,asset_id);
+    CREATE TABLE media_bindings (
+      id TEXT PRIMARY KEY,
+      occurrence_id TEXT NOT NULL REFERENCES media_occurrences(id) ON DELETE CASCADE,
+      asset_id TEXT NOT NULL REFERENCES source_assets(id) ON DELETE CASCADE,
+      destination_slug TEXT NOT NULL,
+      entity_key TEXT NOT NULL,
+      canonical_subject TEXT NOT NULL,
+      relation_type TEXT NOT NULL CHECK(relation_type IN ('depicts_entity','source_asserts_location','captured_during_route','illustrates_topic','mentions_entity')),
+      status TEXT NOT NULL CHECK(status IN ('confirmed','candidate','ambiguous','conflict','stale','revoked')),
+      evidence_json TEXT NOT NULL,
+      allowed_uses_json TEXT NOT NULL,
+      prohibited_inferences_json TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(occurrence_id,destination_slug,entity_key,relation_type)
+    );
+    CREATE INDEX idx_media_bindings_entity ON media_bindings(destination_slug,entity_key,status,asset_id);
+    CREATE INDEX idx_media_bindings_asset ON media_bindings(asset_id,status,occurrence_id);
+    INSERT INTO schema_migrations(version,applied_at) VALUES (81,datetime('now'));
+  `));
+}
+
+function migrationEighty(db) {
+  transaction(db, () => db.exec(`
+    CREATE INDEX idx_jobs_recovery_lookup ON jobs(type,entity_id,status,updated_at);
+    CREATE INDEX idx_sources_exception_list ON sources(status,updated_at DESC,id,title,last_error)
+      WHERE status='exception';
+    INSERT INTO schema_migrations(version,applied_at) VALUES (80,datetime('now'));
+  `));
 }
 
 function migrationSeventyNine(db) {

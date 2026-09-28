@@ -1,0 +1,32 @@
+(node:19232) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?T02-33/34/40: explicit source relation retrieves a generic photo with no Claims and survives focused-article matching (568.575ms)
+鉁?T02-43: ambiguous cross-destination entities are separately retained and city-level names cannot confirm a stop (539.1989ms)
+鉁?T02-43: publication gate rejects a revoked source binding even when an old matching score is high (544.668ms)
+鉁?T02-42/43: a newly conflicting alias invalidates only the binding revision and preserves prior evidence (544.7437ms)
+鉁?T02-36/39: nearby mentions, uncertain captions and multi-place image references cannot certify a specific photo (539.517ms)
+鉁?T02-41: explicit IDs beyond 160 are preserved; automatic paging reports a remaining range (628.0905ms)
+鉁?T02-42/43: only binding context changes, old relation remains stale, analysis and bytes are reused (542.5082ms)
+鉁?T02-63/70: snapshot and isolated review restore preserve context and binding fingerprints without jobs (735.9534ms)
+鉁?schema 81 is additive and does not backfill, buy analysis, or mutate old records (1078.6414ms)
+(node:27464) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+鉁?T02-35: source image references, independent captions and occurrence IDs survive realtime, Batch and reanalysis requests (573.3543ms)
+鉁?T02-36/37: title and mention order do not become explicit bindings; equal bytes retain distinct occurrences (0.7583ms)
+鉁?T02-38: long source context prioritizes image references and exposes recoverable omitted offsets (1.7673ms)
+鉁?T02-38: image transport cannot silently change image-to-context order or accept unknown IDs (0.9113ms)
+鉁?T02-38: realtime rejects foreign image IDs before single-image normalization and flags missing analysis (1.6874ms)
+鉁?T02-38: Batch rejects missing image analysis against its persisted context manifest (0.7105ms)
+鉁?T02-43: reanalysis of a retained image uses its own capture, and caption changes invalidate context only (533.741ms)
+鉁?T02-37: identical claim text from two images retains both evidence identities (2.0586ms)
+鉁?Kimi adapter sends trusted image evidence as base64 input and requests strict structured output (26.2334ms)
+鉁?Vertex extraction sends a public YouTube source as direct video evidence (3.1351ms)
+鉁?non-Vertex models require an operator transcript for video URLs and uploaded video files (0.6618ms)
+鈩?tests 20
+鈩?suites 0
+鈩?pass 20
+鈩?fail 0
+鈩?cancelled 0
+鈩?skipped 0
+鈩?todo 0
+鈩?duration_ms 5979.3931

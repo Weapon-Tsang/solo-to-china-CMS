@@ -1,0 +1,99 @@
+(node:2576) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ system snapshot hashes the database, uploads and generated media and drills an offline delivery (877.0504ms)
+✔ restore verification rejects a deleted database-referenced image (726.2394ms)
+✔ snapshot refuses source bytes that disagree with the database fingerprint (635.7176ms)
+✔ restore drill rejects media whose bytes disagree with its declared MIME (850.7779ms)
+✔ direct restore rejects media whose bytes disagree with its declared MIME before activation (769.515ms)
+✔ restore refuses a snapshot from a newer schema before creating a target (734.0286ms)
+✔ restore refuses insufficient free space before creating target or staging (748.8615ms)
+✔ an interrupted restore resumes only the same snapshot and repairs partial files (1058.1426ms)
+✔ restore migrates an older snapshot only inside the isolated target (773.2185ms)
+✔ snapshot verification compares manifest hashes rather than only file sizes (684.0493ms)
+✔ snapshot verification rejects an omitted database file reference (691.8148ms)
+✔ snapshot verification rejects omitted, altered, and untrusted business fingerprints (787.9557ms)
+✔ business fingerprint catches changed source state after the database file hash is updated (729.0557ms)
+✔ snapshot includes durable source storage references and pending capture chunks (877.7419ms)
+✔ snapshot restores an unpromoted visual candidate file and its database path (803.5676ms)
+✔ snapshot preserves and remaps file paths nested in historical capture JSON (853.5886ms)
+✔ snapshot rejects a missing file referenced only by historical capture JSON (615.1977ms)
+✔ version 2 manifests remain readable without version 3 JSON references (774.7524ms)
+✔ version 2 recovers omitted relative source storage references only from archived files (827.0105ms)
+✔ snapshot rejects case collisions and archive symlinks (708.7811ms)
+✔ snapshot restores to a new external root and remaps only stored file references (806.0574ms)
+✔ restore remaps a POSIX stored path fixture on Windows without changing unrelated text (769.2082ms)
+✔ snapshot refuses to race an active media file mutation (535.4416ms)
+✔ restore refuses a symbolic-link ancestor before creating the target (695.8519ms)
+(node:12252) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives legacy to QA and WordPress draft delivery (6139.9194ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives article_bundle_v1 to QA and WordPress draft delivery (5656.3116ms)
+(node:27152) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ route classification, explicit locators and repeated entity occurrences are independent of photo/OCR order (5.5507ms)
+✔ critical evidence and required media are separate gates; ordinary missing stop photos do not block (3.2098ms)
+✔ same-entity other-day photos differ from whole-day route diagrams; wrong arrows and partial matches rejected (3.2395ms)
+✔ self-reported route hash cannot hide changed Day/order/mode or mutated bundle (4.5023ms)
+✔ actual renderer decodes PNG and rejects missing stop, reversed arrow, old manifest and changed bytes (75.7077ms)
+✔ real SQLite route revisions/artifacts survive backup review restore; stale results rejected without budget writes (837.9157ms)
+✔ stored selection chooses the approved source, never the source with more photographs (5.7948ms)
+✔ approved multi-source composition retains repeated visits and field evidence without adding model calls (4.884ms)
+✔ cross-source connection uses supported entity endpoints and rejects similarly named substitutes (2.2556ms)
+✔ panel, asset and directed field provenance is preserved; invented regions and ambiguous arrows block (1.9954ms)
+✔ available city/bank/time and stale-condition evidence blocks conflicts without claiming live verification (4.5559ms)
+(node:19708) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ historical article without route snapshot stays unknown and cannot be silently backfilled (657.302ms)
+✔ malformed scopes and unresolved targets cannot create an approved route or mutate body/jobs (621.3735ms)
+✔ published three-day article: media-only permission cannot decide; explicit approval preserves body, publication, budget and jobs (659.369ms)
+✔ source change or another decision makes approval stale; rejection creates no route revision (607.5981ms)
+✔ pending proposal and approved decision survive real migration-review restore without starting work (828.4183ms)
+✔ actual HTTP: admin and origin guards, malformed requests, preview, proposal and reject are enforced (675.424ms)
+(node:6080) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ subroute use requires contiguous approved occurrences; a partial diagram cannot claim the full day (7.99ms)
+✔ actual normalization retains panel crop semantics but never delivers the uncropped collage as a subroute (6.4114ms)
+✔ actual normalization accepts related other-day photo but blocks a mismatching full-day map with a durable gap (4.8837ms)
+✔ actual independent visual QA request contains frozen topology and rejects missing/stale/wrong-arrow receipts (22.9804ms)
+(node:17712) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real planning, writer and independent review carry frozen route; no route/SEO/diagram model calls (829.1749ms)
+✔ actual Worker plan stage produces route draft and local schematic (677.3187ms)
+✔ actual Worker blocks itinerary without source fragments before a writer/model call (624.9118ms)
+✔ actual planning consumes stored composition scope and excludes old extraction inputs (618.1187ms)
+✔ route visual late results are rejected and changing a plan preserves its cumulative slot recovery budget (648.3451ms)
+✔ pixel QA rejects truncated and undersized provider outputs before persistence (13.2818ms)
+✔ Vertex Imagen stores a generated visual in the configured media directory (69.1074ms)
+✔ Gemini 3.1 Flash Image stores an inline image from the global Gemini endpoint (45.3205ms)
+✔ visual generation participates in the shared request gate and preserves provider retry timing (1.4142ms)
+✔ Flash Image transport failures retain their provider and retry classification (0.4509ms)
+✔ Flash Image empty responses remain provider failures while explicit safety blocks stop (1.146ms)
+✔ Chinese source-image localization sends the retained original and forbids scene changes (76.6584ms)
+✔ Chinese source-image localization accepts a retained WebP original without conversion (177.1167ms)
+✔ collage recomposition requests the source-shaped output and forbids dark card styling (100.751ms)
+✔ text-only editorial cards use structured translation and deterministic uncropped layout (473.8963ms)
+✔ dense editorial cards translate first and preserve ordered readable layout (1172.6006ms)
+✔ layout overflow persists translation and a layout retry does not translate twice (3096.751ms)
+✔ editorial translation refuses an in-memory success without a durable checkpoint (33.4165ms)
+✔ photo-omission QA overrides a stale empty photo-region analysis on editorial-card retry (69.0585ms)
+✔ production runtime installs the font used by deterministic editorial cards (0.3104ms)
+✔ a persisted transform candidate resumes only quality QA after a transient reviewer failure (74.9252ms)
+✔ a promoted candidate with passing QA is reused without another provider call (46.2645ms)
+✔ visual call evidence distinguishes local rejection, provider responses, and unknown transport outcomes (2.0024ms)
+✔ SQLite receipt contention after a QA response retries locally without another provider call (102.9722ms)
+✔ a transform error never creates a fake resumable candidate (4.5814ms)
+✔ route transformation sends approved names/topology and stores the independent pixel audit with actual bytes (73.8358ms)
+ℹ tests 73
+ℹ suites 0
+ℹ pass 73
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 24300.9952

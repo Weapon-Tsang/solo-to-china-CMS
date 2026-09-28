@@ -516,6 +516,82 @@ test("missing stored-run credentials remain recoverable and resume without resub
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM vertex_batch_runs").get().count, 1);
 });
 
+test("unknown Batch submission remains quarantined across restart and never resubmits", async (t) => {
+  let current = new Date('2026-09-24T00:00:00.000Z');
+  const { db, repository } = repositoryFixture(t, { clock: () => current, jobLeaseMs: 30_000 });
+  const { jobId } = queueBatchSegment(repository, db, 901, 'Unknown submission');
+  let submissions = 0;
+  let remoteVisible = false;
+  let reconciliations = 0;
+  const extractor = {
+    batchEnabled: true,
+    config: { batchMinimumRequests: 1, batchMaximumRequests: 1, model: 'gemini-3.8-flash' },
+    async prepareBatchExtraction(_source, id) { return { id, request: { contents: [] } }; },
+    async createExtractionBatch(_requests, options) {
+      submissions += 1;
+      assert.equal(options.onDispatch({ inputUri: 'gs://bucket/unknown/input.jsonl',
+        outputUriPrefix: 'gs://bucket/unknown/output/' }), true);
+      throw Object.assign(new Error('Response lost after provider dispatch.'), { code: 'PROVIDER_TRANSPORT_FAILED' });
+    },
+    async findExtractionBatch(inputUri) {
+      reconciliations += 1;
+      assert.equal(inputUri, 'gs://bucket/unknown/input.jsonl');
+      return remoteVisible ? { name: 'projects/p/locations/global/batchPredictionJobs/unknown-1',
+        state: 'JOB_STATE_PENDING' } : null;
+    },
+  };
+  const pipeline = new Pipeline(repository, extractor);
+  await assert.rejects(() => pipeline.pumpVertexBatch(), /Response lost/);
+  const run = db.prepare('SELECT * FROM vertex_batch_runs').get();
+  assert.equal(run.status, 'preparing');
+  assert.equal(run.provider_state, 'SUBMISSION_OUTCOME_UNKNOWN');
+  assert.equal(run.input_uri, 'gs://bucket/unknown/input.jsonl');
+  assert.equal(db.prepare('SELECT status FROM vertex_batch_items').get().status, 'preparing');
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status, 'queued');
+  current = new Date(current.getTime() + 31_000);
+  assert.equal(repository.recoverPreparingVertexBatches(), 0);
+  assert.equal(await pipeline.pumpVertexBatch(), false);
+  assert.equal(submissions, 1);
+  assert.equal(reconciliations, 1);
+  assert.equal(repository.activeVertexBatchCount(), 1);
+  remoteVisible = true;
+  current = new Date(current.getTime() + 301_000);
+  assert.equal(await pipeline.pumpVertexBatch(), true);
+  assert.equal(db.prepare('SELECT status FROM vertex_batch_runs').get().status, 'submitted');
+  assert.equal(db.prepare('SELECT status FROM vertex_batch_items').get().status, 'submitted');
+  assert.equal(submissions, 1);
+});
+
+test("known remote Batch job is queried and recovered without another submission", async (t) => {
+  const { db, repository } = repositoryFixture(t);
+  queueBatchSegment(repository, db, 902, 'Known remote submission');
+  let submissions = 0;
+  let polls = 0;
+  const name = 'projects/p/locations/global/batchPredictionJobs/reconcile-1';
+  const extractor = {
+    batchEnabled: true,
+    config: { batchMinimumRequests: 1, batchMaximumRequests: 1, batchPollMs: 1, model: 'gemini-3.8-flash' },
+    async prepareBatchExtraction(_source, id) { return { id, request: { contents: [] } }; },
+    async createExtractionBatch(_requests, options) {
+      submissions += 1;
+      options.onDispatch({ inputUri: 'gs://bucket/reconcile/input.jsonl',
+        outputUriPrefix: 'gs://bucket/reconcile/output/' });
+      options.onSubmitted({ name });
+      throw new Error('Local receipt transaction failed after provider accepted the Batch.');
+    },
+    async getExtractionBatch(jobName) { polls += 1; assert.equal(jobName, name); return { state: 'JOB_STATE_PENDING' }; },
+  };
+  const pipeline = new Pipeline(repository, extractor);
+  await assert.rejects(() => pipeline.pumpVertexBatch(), /Local receipt transaction failed/);
+  assert.equal(db.prepare('SELECT provider_state FROM vertex_batch_runs').get().provider_state,
+    'SUBMISSION_OUTCOME_UNKNOWN');
+  assert.equal(await pipeline.pumpVertexBatch(), true);
+  assert.equal(db.prepare('SELECT status FROM vertex_batch_runs').get().status, 'submitted');
+  assert.equal(db.prepare('SELECT status FROM vertex_batch_items').get().status, 'submitted');
+  assert.equal(submissions, 1);
+  assert.equal(polls, 1);
+});
+
 function queueBatchSegment(repository, db, index, title) {
   const externalId = String(index).padStart(24, "0");
   const source = repository.saveCapture(normalizeXiaohongshuCapture({

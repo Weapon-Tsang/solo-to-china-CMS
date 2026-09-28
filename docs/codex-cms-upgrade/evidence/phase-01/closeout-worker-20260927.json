@@ -1,0 +1,261 @@
+{
+  "version": "stage01-closeout-worker-1",
+  "inputDatabaseSha256": "4b1b901a1335138f23fe18123e63b7b26817b4a3db472cae8f2fd64aa4ba1aff",
+  "repairedSnapshotManifestSha256": "e5dede046d15aebf212280c3ec3b5c68fba8a0adeb15dfd81cbf641fd20956ae",
+  "isolatedWorkDatabase": "D: separate-volume disposable copy; path withheld",
+  "networkAndSubprocessDenied": true,
+  "modelCallsToRealProvider": 0,
+  "wordpressWrites": 0,
+  "initialJobs": [
+    {
+      "job": "bf6c6e28107c",
+      "type": "extract_segment_claims",
+      "source": "7e8385d94f15",
+      "captureVersion": 2,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "fbe2ac5d4bc0",
+      "type": "preflight_source",
+      "source": "d097c8fd3119",
+      "captureVersion": 1,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "80fd67df10a9",
+      "type": "preflight_source",
+      "source": "e14b6f4a1074",
+      "captureVersion": 1,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "6a324cbcaf6e",
+      "type": "extract_segment_claims",
+      "source": "7e8385d94f15",
+      "captureVersion": 2,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "62ead5a88e22",
+      "type": "extract_segment_claims",
+      "source": "7e8385d94f15",
+      "captureVersion": 2,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "f97735d7fa30",
+      "type": "preflight_source",
+      "source": "d0b2192e1267",
+      "captureVersion": 1,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "2f9677bb7677",
+      "type": "extract_segment_claims",
+      "source": "7e8385d94f15",
+      "captureVersion": 2,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "924af9bfb8c5",
+      "type": "extract_segment_claims",
+      "source": "7e8385d94f15",
+      "captureVersion": 2,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "88c12688820f",
+      "type": "preflight_source",
+      "source": "6b2c407d390d",
+      "captureVersion": 1,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "436e210cee80",
+      "type": "preflight_source",
+      "source": "9c1c358225b8",
+      "captureVersion": 1,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "ee522352f208",
+      "type": "preflight_source",
+      "source": "e36ca2ef1d3e",
+      "captureVersion": 1,
+      "initialStatus": "queued"
+    },
+    {
+      "job": "c85a21c313eb",
+      "type": "extract_segment_claims",
+      "source": "7e8385d94f15",
+      "captureVersion": 2,
+      "initialStatus": "queued"
+    }
+  ],
+  "initialFinalJobs": [
+    {
+      "job": "bf6c6e28107c",
+      "type": "extract_segment_claims",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "fbe2ac5d4bc0",
+      "type": "preflight_source",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "80fd67df10a9",
+      "type": "preflight_source",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "6a324cbcaf6e",
+      "type": "extract_segment_claims",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "62ead5a88e22",
+      "type": "extract_segment_claims",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "f97735d7fa30",
+      "type": "preflight_source",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "2f9677bb7677",
+      "type": "extract_segment_claims",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "924af9bfb8c5",
+      "type": "extract_segment_claims",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "88c12688820f",
+      "type": "preflight_source",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "436e210cee80",
+      "type": "preflight_source",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "ee522352f208",
+      "type": "preflight_source",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    },
+    {
+      "job": "c85a21c313eb",
+      "type": "extract_segment_claims",
+      "status": "succeeded",
+      "attempts": 1,
+      "failureCode": null
+    }
+  ],
+  "claimedStageCounts": {
+    "preflight_source": 6,
+    "segment_source": 6,
+    "extract_segment_claims": 23,
+    "audit_segment_coverage": 23,
+    "retry_segment_extraction": 17
+  },
+  "mockExtractorCalls": 40,
+  "scopedRunStop": "no_eligible_scoped_job",
+  "recoveryRunJobStatuses": {
+    "succeeded": 75
+  },
+  "sources": [
+    {
+      "sourceTag": "e14b6f4a1074",
+      "captureVersion": 1,
+      "status": "exception",
+      "coverage": {
+        "manual_review": 1,
+        "passed": 1
+      }
+    },
+    {
+      "sourceTag": "7e8385d94f15",
+      "captureVersion": 2,
+      "status": "exception",
+      "coverage": {
+        "manual_review": 6,
+        "passed": 2
+      }
+    },
+    {
+      "sourceTag": "e36ca2ef1d3e",
+      "captureVersion": 1,
+      "status": "exception",
+      "coverage": {
+        "manual_review": 1,
+        "passed": 1
+      }
+    },
+    {
+      "sourceTag": "9c1c358225b8",
+      "captureVersion": 1,
+      "status": "exception",
+      "coverage": {
+        "manual_review": 3,
+        "passed": 1
+      }
+    },
+    {
+      "sourceTag": "d0b2192e1267",
+      "captureVersion": 1,
+      "status": "exception",
+      "coverage": {
+        "manual_review": 1,
+        "passed": 1
+      }
+    },
+    {
+      "sourceTag": "6b2c407d390d",
+      "captureVersion": 1,
+      "status": "exception",
+      "coverage": {
+        "manual_review": 3,
+        "passed": 1
+      }
+    },
+    {
+      "sourceTag": "d097c8fd3119",
+      "captureVersion": 1,
+      "status": "exception",
+      "coverage": {
+        "manual_review": 2,
+        "passed": 1
+      }
+    }
+  ],
+  "unresolvedMediaDispatches": 1,
+  "foreignKeyViolations": 0,
+  "interpretation": "All 12 original jobs settled through Pipeline. Mock image extraction led to explicit manual_review/exception for all seven sources; real semantic recovery is unverified."
+}

@@ -1,0 +1,8 @@
+{
+  "totalMs": 44,
+  "resultCount": 7,
+  "queries": [
+    {
+      "sql": "SELECT jobs.id, jobs.type, jobs.entity_id, jobs.last_error, jobs.updated_at, jobs.failure_class, jobs.last_failure_code, jobs.attempts, jobs.max_attempts, media.durability_status A",
+      "calls": 1,
+      "milliseconds": 7

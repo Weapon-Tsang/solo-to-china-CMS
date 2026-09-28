@@ -1,0 +1,12 @@
+C:\Users\Mloong\AppData\Local\npm-cache\_npx\31e32ef8478fbf80\node_modules\playwright-core\lib\tools\cli-client\session.js:254
+      callback.reject(new Error("Session closed"));
+                      ^
+
+Error: Session closed
+    at SocketConnectionClient._rejectCallbacks (C:\Users\Mloong\AppData\Local\npm-cache\_npx\31e32ef8478fbf80\node_modules\playwright-core\lib\tools\cli-client\session.js:254:23)
+    at SocketConnectionClient._connection.onclose (C:\Users\Mloong\AppData\Local\npm-cache\_npx\31e32ef8478fbf80\node_modules\playwright-core\lib\tools\cli-client\session.js:212:43)
+    at Socket.<anonymous> (C:\Users\Mloong\AppData\Local\npm-cache\_npx\31e32ef8478fbf80\node_modules\playwright-core\lib\tools\utils\socketConnection.js:31:21)
+    at Socket.emit (node:events:508:28)
+    at Pipe.<anonymous> (node:net:346:12)
+
+Node.js v24.14.0

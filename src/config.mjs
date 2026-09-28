@@ -49,17 +49,23 @@ export const VISUAL_MODELS = [
 
 export function loadConfig(env = process.env) {
   const runtimeEnvironment = String(env.NODE_ENV || "development").trim().toLowerCase();
-  const databasePathConfigured = Boolean(String(env.DATABASE_PATH || "").trim());
-  const databasePath = path.resolve(root, env.DATABASE_PATH || "data/solo-to-china.sqlite");
-  const sourceUploadsDir = path.resolve(root, env.SOURCE_UPLOADS_DIR || "data/source-uploads");
-  const captureUploadsDir = path.resolve(root, env.CAPTURE_UPLOADS_DIR || "data/capture-uploads");
-  const captureMediaUploadsDir = path.resolve(root, env.CAPTURE_MEDIA_UPLOADS_DIR || "data/capture-media-uploads");
-  const generatedMediaDir = path.resolve(root, env.GENERATED_MEDIA_DIR || "data/generated-media");
+  const dataRoot = env.CMS_DATA_ROOT ? path.resolve(env.CMS_DATA_ROOT) : "";
+  const databasePathConfigured = Boolean(String(env.DATABASE_PATH || "").trim() || dataRoot);
+  const databasePath = path.resolve(root, env.DATABASE_PATH || (dataRoot ? path.join(dataRoot, "solo-to-china.sqlite") : "data/solo-to-china.sqlite"));
+  const sourceUploadsDir = path.resolve(root, env.SOURCE_UPLOADS_DIR || (dataRoot ? path.join(dataRoot, "source-uploads") : "data/source-uploads"));
+  const captureUploadsDir = path.resolve(root, env.CAPTURE_UPLOADS_DIR || (dataRoot ? path.join(dataRoot, "capture-uploads") : "data/capture-uploads"));
+  const captureMediaUploadsDir = path.resolve(root, env.CAPTURE_MEDIA_UPLOADS_DIR || (dataRoot ? path.join(dataRoot, "capture-media-uploads") : "data/capture-media-uploads"));
+  const generatedMediaDir = path.resolve(root, env.GENERATED_MEDIA_DIR || (dataRoot ? path.join(dataRoot, "generated-media") : "data/generated-media"));
   const imageProvider = env.IMAGE_PROVIDER || env.VISUAL_PROVIDER || "none";
+  const googleAuthMode = choice(env.GOOGLE_AUTH_MODE, ["adc", "metadata"],
+    env.CMS_RUN_MODE === "local-production" || env.CMS_RUN_MODE === "development" || runtimeEnvironment !== "production" ? "adc" : "metadata");
   return {
     root,
     deployment: {
       environment: runtimeEnvironment,
+      runMode: choice(env.CMS_RUN_MODE, ["development", "local-production", "migration-review"], ""),
+      dataRoot,
+      releaseRoot: env.CMS_RELEASE_ROOT ? path.resolve(env.CMS_RELEASE_ROOT) : "",
       databasePathConfigured,
       allowProductionDatabaseBootstrap: boolean(env.ALLOW_PRODUCTION_DATABASE_BOOTSTRAP, false),
     },
@@ -67,6 +73,7 @@ export function loadConfig(env = process.env) {
     host: env.HOST || "127.0.0.1",
     port: integer(env.PORT, 4310),
     databasePath,
+    generatedMediaDir,
     processRole: choice(env.CMS_PROCESS_ROLE, ['all','api','worker'], 'all'),
     captureToken: env.CAPTURE_TOKEN || "",
     adminToken: env.ADMIN_TOKEN || "",
@@ -87,6 +94,7 @@ export function loadConfig(env = process.env) {
       },
     },
     captureHost: hostname(env.CAPTURE_HOST),
+    captureAllowedOrigins: stringList(env.CAPTURE_ALLOWED_ORIGINS),
     ai: {
       defaultModel: AI_MODELS.some((item) => item.id === env.AI_MODEL) ? env.AI_MODEL : "vertex-gemini-3.8-flash",
       stagePolicy: modelStagePolicy,
@@ -137,6 +145,7 @@ export function loadConfig(env = process.env) {
       sourceUploadsDir,
     },
     vertex: {
+      googleAuthMode,
       projectId: env.GOOGLE_CLOUD_PROJECT || "",
       location: env.VERTEX_AI_LOCATION || "us-central1",
       accessToken: env.VERTEX_AI_ACCESS_TOKEN || "",
@@ -196,6 +205,7 @@ export function loadConfig(env = process.env) {
       coverageAiRoutingEnabled: boolean(env.COVERAGE_AI_ROUTING_ENABLED,false),
     },
     visuals: {
+      googleAuthMode,
       enabled: boolean(env.IMAGE_ENABLED, false),
       provider: choice(imageProvider, ["none", "vertex_imagen", "vertex_gemini"], "none"),
       projectId: env.GOOGLE_CLOUD_PROJECT || "",
@@ -294,12 +304,14 @@ export function loadConfig(env = process.env) {
       entityResolutionHours: integer(env.ENTITY_RESOLUTION_HOURS, 24),
       autoBackupHours: integer(env.AUTO_BACKUP_HOURS, 24),
       jobHistoryRetentionDays: integer(env.JOB_HISTORY_RETENTION_DAYS, 30),
-      backupDir: path.resolve(root, env.BACKUP_DIR || "backups"),
+      backupDir: path.resolve(root, env.BACKUP_DIR || (dataRoot ? path.join(dataRoot, "backups") : "backups")),
       backupRetention: integer(env.BACKUP_RETENTION, 1),
       backupOffsiteLocation: String(env.BACKUP_OFFSITE_LOCATION || "").trim(),
       backupOffsiteRetentionDays: integer(env.BACKUP_OFFSITE_RETENTION_DAYS, 0),
       sourceUploadsDir,
       generatedMediaDir,
+      captureUploadsDir,
+      captureMediaUploadsDir,
       codeRevision: String(env.ENGINE_IMAGE || env.APP_REVISION || "").trim(),
       databasePath,
     },

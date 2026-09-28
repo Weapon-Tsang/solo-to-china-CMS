@@ -1,0 +1,97 @@
+(node:3740) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ article bundle uses one structured request and keeps evidence scoped to the plan (8.467ms)
+✔ article bundle rejects an unsupported claim before persistence (0.8348ms)
+(node:17824) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ system snapshot hashes the database, uploads and generated media and drills an offline delivery (1080.5635ms)
+✔ restore verification rejects a deleted database-referenced image (780.2226ms)
+✔ snapshot refuses source bytes that disagree with the database fingerprint (676.3789ms)
+✔ restore drill rejects media whose bytes disagree with its declared MIME (792.2228ms)
+✔ direct restore rejects media whose bytes disagree with its declared MIME before activation (797.3582ms)
+✔ restore refuses a snapshot from a newer schema before creating a target (736.6414ms)
+✔ restore refuses insufficient free space before creating target or staging (754.9509ms)
+✔ an interrupted restore resumes only the same snapshot and repairs partial files (1050.9036ms)
+✔ restore migrates an older snapshot only inside the isolated target (757.9638ms)
+✔ snapshot verification compares manifest hashes rather than only file sizes (687.9557ms)
+✔ snapshot verification rejects an omitted database file reference (683.225ms)
+✔ snapshot verification rejects omitted, altered, and untrusted business fingerprints (793.2877ms)
+✔ business fingerprint catches changed source state after the database file hash is updated (763.155ms)
+✔ snapshot includes durable source storage references and pending capture chunks (885.9174ms)
+✔ snapshot restores an unpromoted visual candidate file and its database path (897.0367ms)
+✔ snapshot preserves and remaps file paths nested in historical capture JSON (868.3976ms)
+✔ snapshot rejects a missing file referenced only by historical capture JSON (627.3187ms)
+✔ version 2 manifests remain readable without version 3 JSON references (772.1908ms)
+✔ version 2 recovers omitted relative source storage references only from archived files (805.6886ms)
+✔ snapshot rejects case collisions and archive symlinks (718.82ms)
+✔ snapshot restores to a new external root and remaps only stored file references (820.5398ms)
+✔ restore remaps a POSIX stored path fixture on Windows without changing unrelated text (760.0536ms)
+✔ snapshot refuses to race an active media file mutation (523.0556ms)
+✔ restore refuses a symbolic-link ancestor before creating the target (671.6018ms)
+(node:12536) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives legacy to QA and WordPress draft delivery (6530.8827ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives article_bundle_v1 to QA and WordPress draft delivery (5769.9926ms)
+(node:2044) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-40/41/44: real planning retrieves claim-free entity media and retains explicit IDs beyond preview (1067.1504ms)
+✔ T02-44: capability snapshot is versioned, exposes pagination and never promotes photo to precise entrance (0.4105ms)
+✔ T02-44: actual legacy writer request retains frozen source relationship and cannot borrow a later live snapshot (2.3209ms)
+✔ T02-44: repository freezes availability with the writing packet and carries original receipt fields (653.1439ms)
+✔ T02-41/44: actual article-bundle request includes bounded candidate availability and explicit has_more (599.9961ms)
+(node:23896) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ migration 80 indexes exception source rows and recovered jobs without changing data (689.1727ms)
+(node:4104) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ migration 79 preserves configured credentials and routes while adding Gemini (647.3576ms)
+(node:21100) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"directory":"C:\\Users\\Mloong\\AppData\\Local\\Temp\\cms-a1-pdf-pXwlf9","T02_46":"a-f,h API/restore PASS; browser separately","assets":3,"model_calls":0}
+✔ T02-46a-h: real HTTP receipt, append, confirmation, retrieval, safety and restore (1882.6611ms)
+(node:12760) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ a completed dependency artifact makes duplicate model scheduling reusable (643.5528ms)
+✔ entity resolution pages through the entire claim set instead of truncating at the newest 300 (826.9903ms)
+✔ queue policy exposes age, keeps interactive Research ahead of production, and reports only measured percentiles (568.506ms)
+(node:3768) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (708.8013ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (615.8343ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (546.7402ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (520.8927ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (524.8644ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (559.4572ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (540.306ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (522.0663ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (527.3385ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (527.3087ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (548.5239ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (545.5316ms)
+(node:22764) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ route classification, explicit locators and repeated entity occurrences are independent of photo/OCR order (4.2505ms)
+✔ critical evidence and required media are separate gates; ordinary missing stop photos do not block (3.4791ms)
+✔ same-entity other-day photos differ from whole-day route diagrams; wrong arrows and partial matches rejected (3.899ms)
+✔ self-reported route hash cannot hide changed Day/order/mode or mutated bundle (4.5417ms)
+✔ actual renderer decodes PNG and rejects missing stop, reversed arrow, old manifest and changed bytes (102.4024ms)
+✔ real SQLite route revisions/artifacts survive backup review restore; stale results rejected without budget writes (933.4497ms)
+(node:17868) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real planning, writer and independent review carry frozen route; no route/SEO/diagram model calls (751.284ms)
+✔ actual Worker plan stage produces route draft and local schematic (618.9628ms)
+✔ actual Worker blocks itinerary without source fragments before a writer/model call (585.5982ms)
+ℹ tests 60
+ℹ suites 0
+ℹ pass 60
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 18846.9616

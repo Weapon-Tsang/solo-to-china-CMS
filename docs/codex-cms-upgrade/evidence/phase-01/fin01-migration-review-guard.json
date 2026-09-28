@@ -1,0 +1,49 @@
+{
+  "format": "stage01-fin01-review-guard-1",
+  "at": "2026-09-27T05:29:02.763Z",
+  "root": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\cms-fin01-review-Dv6Ben",
+  "databasePath": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\cms-fin01-review-Dv6Ben\\solo-to-china.sqlite",
+  "worker": {
+    "pid": 7048,
+    "exitCode": 1,
+    "stderr": "(node:7048) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nfile:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/local-runtime.mjs:106\r\n    throw new Error(\"migration-review is read-only: use npm run local:inspect, not the API or Worker server.\");\r\n          ^\r\n\r\nError: migration-review is read-only: use npm run local:inspect, not the API or Worker server.\r\n    at assertLocalRuntime (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/local-runtime.mjs:106:11)\r\n    at createApplication (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/server.mjs:57:3)\r\n    at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/server.mjs:1810:15\r\n    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)\r\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\r\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:661:26)\r\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\r\n\r\nNode.js v24.14.0\r\n",
+    "stdout": "",
+    "spawnError": null
+  },
+  "inspection": {
+    "exitCode": 0,
+    "report": {
+      "mode": "migration-review",
+      "dataRoot": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\cms-fin01-review-Dv6Ben",
+      "databasePath": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\cms-fin01-review-Dv6Ben\\solo-to-china.sqlite",
+      "schemaVersion": 80,
+      "integrity": [
+        "ok"
+      ],
+      "foreignKeyViolations": 0,
+      "handoff": {
+        "queuedJobs": 1,
+        "runningJobs": 0,
+        "activeVertexBatches": 0,
+        "unresolvedWordPressPublishes": 0,
+        "unresolvedWordPressMediaRefreshes": 0,
+        "unresolvedMediaDispatches": 0
+      },
+      "reconciliationRequired": [],
+      "writes": false,
+      "worker": false,
+      "externalCalls": false
+    },
+    "stderr": "(node:20232) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+  },
+  "beforeHash": "480e394efc3e75be8db612488ac4d43995c48e9bcac470099a5960d973affa3c",
+  "afterHash": "480e394efc3e75be8db612488ac4d43995c48e9bcac470099a5960d973affa3c",
+  "job": {
+    "id": "fin01-review-queued",
+    "type": "extract_source",
+    "status": "queued",
+    "attempts": 0
+  },
+  "modelCalls": 0,
+  "pass": true
+}
