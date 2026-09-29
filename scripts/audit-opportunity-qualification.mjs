@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { CONTENT_STRATEGY } from "../src/content-strategy.mjs";
+import { opportunityTitleSubject } from '../src/editorial-title.mjs';
 import { evidenceFamilyKeys, selectedFamilyProjection, completedOpportunitySourceIds } from '../src/opportunity-family-evidence.mjs';
 
 const positional = process.argv.slice(2).filter((value) => !value.startsWith("--"));
@@ -179,7 +180,7 @@ for (const cluster of knowledgeClusters) {
 }
 const knowledgeActionable = actionable.filter((o) => !o.source_id && o.coverage.knowledgeEventGenerated === true);
 const knowledgeChecks = knowledgeActionable.map((o) => {
-  const clusterTitle = String(o.title || "").replace(/: a practical guide for independent travelers$/i, "");
+  const clusterTitle = opportunityTitleSubject(o);
   const expected = knowledgeExpected.get(`${o.destination_slug}|${normalizeTitle(clusterTitle)}`);
   const selectedFactKeys = uniq(o.coverage.selectedFactKeys || []);
   const selectedFacts = selectedFactKeys.map((key) => factMap.get(`${o.destination_slug}|${key}`)).filter(Boolean);
@@ -208,7 +209,7 @@ const knowledgeAdmissionViolations = knowledgeChecks.filter((item) => !item.expe
 const genericKnowledgeSubjects = new Set(["restaurant","featured restaurant","hotpot restaurant","hotel room","pathway","trail","route",
   "viewpoint","venue","accommodation","hotel","food","attraction","transport","public transport","metro station","railway station"]);
 const contextFreeKnowledge = knowledgeActionable.filter((opportunity) => {
-  const base=normalizeTitle(String(opportunity.title || "").replace(/:\s*a practical guide for independent travelers$/iu, "").replaceAll("_", " "));
+  const base=normalizeTitle(opportunityTitleSubject(opportunity).replaceAll("_", " "));
   const destination=normalizeTitle(opportunity.destination_slug).replaceAll(" ", "");
   const withoutDestination=base.split(" ").filter((token)=>token!==destination).join(" ");
   return !base || /\b(?:unnamed|unknown|unspecified)\b/u.test(base) || genericKnowledgeSubjects.has(base)

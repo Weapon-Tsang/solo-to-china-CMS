@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {evidenceFamilyKeys,usableOpportunityFact,completedOpportunitySourceIds,selectedFamilyProjection} from '../src/opportunity-family-evidence.mjs';
+import {evidenceFamilyKeys,usableOpportunityFact,completedOpportunitySourceIds,selectedFamilyProjection,createFamilyProjectionContext} from '../src/opportunity-family-evidence.mjs';
 
 test('independent hand-authored family sets cover duplicates, ungrouped sources and membership changes',()=>{
   const evidence=[{source_id:'a'},{source_id:'b'},{source_id:'a'},{source_id:'c'},{source_id:null},{}];
@@ -39,8 +39,15 @@ test('current capture eligibility and individual membership changes are independ
     assert.deepEqual([...completedOpportunitySourceIds(db)].sort(),['a','b']);
     const opportunity={destination_slug:'city',coverage_json:'{"selectedFactKeys":["key"]}'};
     const before=selectedFamilyProjection(db,opportunity);
+    let eligibilityReads=0;
+    const counted={prepare(sql){if(sql.includes('SELECT s.id FROM sources'))eligibilityReads++;return db.prepare(sql);}};
+    const context=createFamilyProjectionContext(counted);
+    for(let i=0;i<20;i++)assert.deepEqual(selectedFamilyProjection(counted,opportunity,context),before);
+    assert.equal(eligibilityReads,1,'one eligibility scan per rebuild, not per opportunity');
+    assert.throws(()=>selectedFamilyProjection(db,opportunity,context),/another database/);
     db.exec("UPDATE source_family_memberships SET family_id=CASE source_id WHEN 'a' THEN 'two' ELSE 'one' END");
     const after=selectedFamilyProjection(db,opportunity);
+    assert.deepEqual(selectedFamilyProjection(db,opportunity,createFamilyProjectionContext(db)),after);
     assert.deepEqual(after.families,before.families);
     assert.notEqual(after.dependencyFingerprint,before.dependencyFingerprint);
     db.exec("INSERT INTO current_source_assets VALUES ('a',NULL)");

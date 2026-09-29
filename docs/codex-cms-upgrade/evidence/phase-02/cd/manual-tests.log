@@ -1,0 +1,19 @@
+(node:4336) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (1612.4587ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (1821.6262ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1466.5623ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (8110.012ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (676.8779ms)
+✔ incremental browser SHA256 matches native across boundaries, empty files and uneven chunks (76.5306ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14006.6928

@@ -19,7 +19,9 @@ export function resolveStagePolicy(stage, config = {}) {
     class: selected.class || "general",
     requires: [...new Set(selected.requires || ["structured_output"])],
     thinking: selected.thinking || config.thinkingLevel || "LOW",
-    maxOutputTokens: Math.max(256, Math.min(Number(config.maxCompletionTokens || 16_000), Number(selected.maxOutputTokens || 16_000))),
+    // DeepSeek chooses its own output allowance; do not impose a CMS cap.
+    maxOutputTokens: config.provider === "deepseek" ? null
+      : Math.max(256, Math.min(Number(config.maxCompletionTokens || 16_000), Number(selected.maxOutputTokens || 16_000))),
     timeoutMs: Math.max(1_000, Number(selected.timeoutMs || config.requestTimeoutMs || 360_000)),
     maxAttempts: Math.max(1, Math.min(3, Number(selected.maxAttempts || 2))),
   };

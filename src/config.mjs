@@ -7,6 +7,7 @@ import { DEFAULT_COMMERCIAL_DISCLOSURE } from "./commercial.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const modelStagePolicy = JSON.parse(fs.readFileSync(path.join(root, "config", "model-stage-policy.json"), "utf8"));
 const modelPricing = JSON.parse(fs.readFileSync(path.join(root, "config", "model-pricing.json"), "utf8"));
+const providerLimits = JSON.parse(fs.readFileSync(path.join(root, "config", "provider-limits.json"), "utf8"));
 const commercialPolicy = JSON.parse(fs.readFileSync(path.join(root, "config", "commercial-policy.json"), "utf8"));
 
 export const AI_MODELS = [
@@ -199,6 +200,10 @@ export function loadConfig(env = process.env) {
       concurrencyMax: integer(env.AI_CONCURRENCY_MAX || env.EXTRACT_CONCURRENCY_MAX, 4),
       concurrencySuccessWindow: integer(env.AI_CONCURRENCY_SUCCESS_WINDOW || env.EXTRACT_CONCURRENCY_SUCCESS_WINDOW, 12),
       requestSpacingMs: integer(env.AI_REQUEST_SPACING_MS, 1_000),
+      rebuildDebounceMs: integer(env.REBUILD_DEBOUNCE_MS, 30_000),
+      productionReserveSlots: integer(env.PRODUCTION_RESERVED_SLOTS, 1),
+      entityFullReviewDays: integer(env.ENTITY_FULL_REVIEW_DAYS, 7),
+      providerLimits: env.AI_PROVIDER_LIMITS_JSON ? JSON.parse(env.AI_PROVIDER_LIMITS_JSON) : providerLimits.limits,
       providerBackoffInitialMs: integer(env.AI_PROVIDER_BACKOFF_INITIAL_MS, 5_000),
       providerBackoffMaxMs: integer(env.AI_PROVIDER_BACKOFF_MAX_MS, 300_000),
       providerRecoverySuccesses: integer(env.AI_PROVIDER_RECOVERY_SUCCESSES, 5),

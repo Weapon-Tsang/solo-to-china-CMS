@@ -1,0 +1,30 @@
+(node:22392) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives legacy to QA and WordPress draft delivery (6255.833ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives article_bundle_v1 to QA and WordPress draft delivery (5669.8904ms)
+(node:22732) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-13/14 saved entity identity and anonymous access reach the package without model or network calls (703.1773ms)
+(node:29680) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-42 legacy route alt receipt remains renderable; v2 is explicit and unknown policy fails closed (809.4774ms)
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: single-source (1377.9841ms)
+ℹ {"variant":"single-source","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"3fd28785dbbe01e0a67b3effa69acd9835a85be440d42654f285d07ca0bde923","draw_days":1,"html_sha256":"a7bf5dfcc3fad9b430c95efa039ceb5b748465366fb58c0469ec4be4e76d4958","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: evidence-composed (1505.9174ms)
+ℹ {"variant":"evidence-composed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"970e2a561b20608b7f7028b5b9433a2bbe8a1f5e448ca6d709b6325bc08bb2d1","draw_days":3,"html_sha256":"f1c0dbbb2243c040bad1a925926b42a063ca08d001ffc99b046e54704300387b","image_sha256":"c66f3ab31eb2e0dcbb1eab7ec00eee569224159d455071bbdf00b72a91718c69"}
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: mixed (1220.6684ms)
+ℹ {"variant":"mixed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"8fb6cf33eba7a69da89a95620658495e5a7177c38371c867933e47d45d7c4e78","draw_days":1,"html_sha256":"a7d4fff93862065f60841e9a89f700827dde5be9771e1947ee63f6b9eaf03466","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12419.4519

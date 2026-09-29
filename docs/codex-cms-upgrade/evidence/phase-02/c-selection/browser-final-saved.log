@@ -1,0 +1,6 @@
+### Result
+{"width":1200,"height":675}
+### Ran Playwright code
+```js
+await (async page => { await page.reload(); await page.getByRole('tab', {name:'内容',exact:true}).click(); await page.getByRole('button',{name:'Cover selection fixture Draft'}).click(); await page.getByText('独立封面 · 本地预览与选择',{exact:true}).click(); const img=page.getByRole('img',{name:'已保存的独立封面',exact:true}); await img.evaluate(node=>node.decode()); await page.screenshot({path:'output/playwright/c-cover-saved.png',fullPage:true}); return await img.evaluate(node=>({width:node.naturalWidth,height:node.naturalHeight})); })(page);
+```

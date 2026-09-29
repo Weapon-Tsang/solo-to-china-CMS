@@ -1,0 +1,10 @@
+✔ incremental browser SHA256 matches native across boundaries, empty files and uneven chunks (64.7461ms)
+✔ files above native digest cap remain correct on the bounded incremental path (2058.4731ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2246.9586

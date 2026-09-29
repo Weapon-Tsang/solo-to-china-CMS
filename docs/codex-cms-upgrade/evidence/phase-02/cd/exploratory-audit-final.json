@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "scope": "isolated browser fixture only; after explicit revocation",
+  "counts": {
+    "uploads": 5,
+    "stored": 5,
+    "revisions": 2,
+    "selected": 0,
+    "danglingUploads": 0,
+    "orphanRevisions": 0,
+    "duplicateRevisions": 0,
+    "activeJobs": 1,
+    "modelCalls": 0
+  },
+  "retained_originals_verified": 5,
+  "real_provider": "NOT TESTED",
+  "historical_pixels": "NOT TESTED"
+}

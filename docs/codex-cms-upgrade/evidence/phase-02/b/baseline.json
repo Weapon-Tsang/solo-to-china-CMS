@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-28T00:50:42.468Z",
+  "head": "490dd7464d4beb46d3f89a578337c253917fbf7a",
+  "status": "",
+  "files": {
+    "src/media-delivery.mjs": "ce2775f84fce5dc427118c182fffc3b22e671c1611f805dbd5e8e32361428c5c",
+    "src/wordpress.mjs": "4056d0e37b4d40b95b34fc24f78ee2b8d0b7f61442ecb071fe18bb3be7d5ccbb",
+    "src/publication-eligibility.mjs": "3cba059e1e67cbfff1797c0bb760560c62b2a99c435fcb2d4e05690afa72a467",
+    "src/backup.mjs": "2a40e3ff7741ebd94ff666a6582a52b48979dff7d49c3f9c1d291bd119c9d8ba",
+    "src/repository.mjs": "f559e74d901640020c3a69842a742fafa3dc451c73cb3a9c1b237d66124e01cb",
+    "src/config.mjs": "753143c112f14dbfeef35fbd4eb1d089f0af29036230374c566acb9898c77496",
+    "docs/codex-cms-upgrade/STATUS.md": "580365ad7b5174e032386fa4d6e35713309d4752445718e0ae5470a8e7bb2953",
+    "docs/codex-cms-upgrade/acceptance/phase-02.md": "46b69474bd7a1d1061a26f24ca979ee9eff0c4fdd34a21ff5c3b3d351ede7c06"
+  }
+}

@@ -1,0 +1,4 @@
+{"status":"PASS","release":"D:\\cms-phase04-candidate-20260928-final","data":"D:\\cms-phase04-candidate-20260928-final-synthetic-1790609212860","schema":83,"stopped":true,"externalCalls":0}
+
+(node:28928) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)

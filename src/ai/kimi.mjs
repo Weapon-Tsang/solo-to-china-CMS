@@ -3,7 +3,7 @@ import { slugify, truncate } from "../utils.mjs";
 import { createAiClient } from "./client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
-import { MEDIA_CONTEXT_INSTRUCTIONS, mediaContextForSource, contextualImageParts, assertMediaOutputIdentity } from '../media-context.mjs';
+import { MEDIA_CONTEXT_INSTRUCTIONS, mediaContextForSource, sharedMediaContext, contextualImageParts, assertMediaOutputIdentity } from '../media-context.mjs';
 
 const TEXT_REGION_SCHEMA={type:"object",additionalProperties:false,
   required:["region_id","text","role","language","readable","preserve"],properties:{
@@ -20,24 +20,52 @@ const MEDIA_ANALYSIS_ITEM_SCHEMA={ type:"object",additionalProperties:false,
     primary_subjects:{type:"array",items:{type:"string"}},language_by_region:{type:"array",items:{type:"object",additionalProperties:true}},
     reader_text_present:{type:"boolean"},confidence:{type:"number",minimum:0,maximum:1},analysis_version:{type:"string"},prompt_version:{type:"string"} } };
 
+// Compact, flat per-image descriptor produced in the same extraction call that
+// already sees every image. It records what the photo shows and whether it is
+// worth publishing, so article planning does not need a second vision request.
+export const IMAGE_CARD_VERSION = "image-card-1";
+const IMAGE_CARD_KINDS=["documentary_photo","handwritten_card","editorial_infographic","photo_collage","map_or_route","decorative_illustration","unknown"];
+const IMAGE_CARD_SCENES=["landscape","street","architecture","interior","food","transport","signage","ticket_or_document","map","screenshot","people","other"];
+// Deliberately permissive: an Image Card is optional enrichment riding on the
+// Claim extraction request. JSON-mode providers (DeepSeek) do not enforce enums
+// or required fields, and a strict card schema made the whole extraction fail
+// validation (L5 canary 2026-09-30). Allowed values are stated in the prompt and
+// normalized by sanitizeImageCard; unusable cards are dropped, Claims are kept.
+// The first listed type is what Vertex's OpenAPI projection sends to the
+// provider; local validation accepts every listed type.
+const LOOSE_TEXT={type:["string","number","boolean","null"]};
+const LOOSE_LIST={type:["array","string","null"],items:{type:["string","number"]}};
+const IMAGE_CARD_ITEM_SCHEMA={type:"object",
+  properties:{asset_id:LOOSE_TEXT,asset_kind:LOOSE_TEXT,primary_subjects:LOOSE_LIST,place_names:LOOSE_LIST,
+    scene:LOOSE_TEXT,visible_text:{type:["boolean","string","null"]},photo_quality:LOOSE_TEXT,
+    editorial_use:LOOSE_TEXT,alt_text:LOOSE_TEXT,confidence:{type:["number","string","null"]}}};
+
+// Strict where evidence depends on it, tolerant elsewhere. JSON-mode providers
+// (DeepSeek) add stray keys, omit defaults and use off-enum or wrongly typed
+// scalars; three L5 canaries on 2026-09-30 each failed on a different cosmetic
+// deviation ($.image_cards[].scene, $.claims[].value, $.type) and every one of them
+// discarded the whole batch of Claims. sanitizeResult normalizes and defaults;
+// only a missing key/subject/predicate/value/source_quote rejects the output.
+// For Vertex the OpenAPI projection sends the first listed type, so its native
+// structured output keeps the same shape.
 const EXTRACTION_SCHEMA = {
   type: "object",
-  additionalProperties: false,
   required: ["source", "claims"],
   properties: {
     source: {
       type: "object",
-      additionalProperties: false,
-      required: ["language", "summary", "destination_name", "destination_slug", "traveler_fit", "practical_tips", "warnings", "confidence"],
+      required: ["summary", "destination_slug"],
       properties: {
         language: { type: "string" }, summary: { type: "string" }, destination_name: { type: "string" }, destination_slug: { type: "string" },
-        traveler_fit: { type: "array", items: { type: "string" } },
-        practical_tips: { type: "array", items: { type: "object", additionalProperties: false, required: ["topic", "detail"], properties: { topic: { type: "string" }, detail: { type: "string" } } } },
-        warnings: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 },
+        traveler_fit: { type: ["array", "null"], items: { type: "string" } },
+        practical_tips: { type: ["array", "null"], items: { type: "object", properties: { topic: { type: "string" }, detail: { type: "string" } } } },
+        warnings: { type: ["array", "null"], items: { type: "string" } }, confidence: { type: ["number", "string", "null"] },
       },
     },
-    claims: { type: "array", items: { type: "object", additionalProperties: false, required: ["key", "subject", "predicate", "value", "qualifiers", "confidence", "source_quote"], properties: { key: { type: "string" }, subject: { type: "string" }, predicate: { type: "string" }, value: { type: "string" }, qualifiers: { type: "array", items: { type: "string" } }, confidence: { type: "number", minimum: 0, maximum: 1 }, source_quote: { type: "string" }, asset_id: { type: "string" }, segment_id: { type: "string" }, observed_at: { type: "string" }, valid_from: { type: "string" }, valid_to: { type: "string" }, date_confidence: { type: "string", enum: ["low", "medium", "high"] }, claim_role: { type: "string", enum: ["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"] }, knowledge_eligible: { type: "boolean" } } } },
+    claims: { type: "array", items: { type: "object", required: ["key", "subject", "predicate", "value", "source_quote"], properties: { key: { type: "string" }, subject: { type: "string" }, predicate: { type: "string" },
+      value: { type: ["string", "number", "boolean", "null"] }, qualifiers: { type: ["array", "string", "null"], items: { type: ["string", "number"] } }, confidence: { type: ["number", "string", "null"] }, source_quote: { type: "string" }, asset_id: { type: ["string", "null"] }, segment_id: { type: ["string", "null"] }, observed_at: { type: ["string", "null"] }, valid_from: { type: ["string", "null"] }, valid_to: { type: ["string", "null"] }, date_confidence: { type: ["string", "null"] }, claim_role: { type: ["string", "null"] }, knowledge_eligible: { type: ["boolean", "string", "null"] } } } },
     media_analysis: { type:"array",items:MEDIA_ANALYSIS_ITEM_SCHEMA },
+    image_cards: { type:"array",items:IMAGE_CARD_ITEM_SCHEMA },
   },
 };
 // DeepSeek JSON mode can return useful image evidence while omitting required
@@ -101,7 +129,7 @@ export class KimiExtractor {
       const source={id:asset.source_id,capture_version:asset.capture_version,media_context:asset.media_context,assets:[asset]};
       completion=await this.client.completeJson({name:"source_asset_media_analysis",schema:MEDIA_ANALYSIS_SCHEMA,
         instructions:`${MEDIA_ANALYSIS_PROMPT}\n${MEDIA_CONTEXT_INSTRUCTIONS}`,content:[{type:"text",text:JSON.stringify({assetId:asset.id,
-          sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",media_context:mediaContextForSource(source)})},
+          sourceSha256:asset.original_sha256 || asset.stored_sha256 || "",media_context:sharedMediaContext(source)})},
           ...contextualImageParts(source,[asset],images)],signal,telemetryContext,validateOutput:validateMediaAnalysisOutput});
       assertMediaOutputIdentity({media_analysis:[completion.output]},[asset],{requireAll:true});
       permit?.finish();
@@ -113,9 +141,27 @@ export class KimiExtractor {
       method:this.config.provider || "vertex",model:completion.model};
   }
 
+  /** Image Cards only, several images per request: used to backfill images whose
+   * extraction predates cards. Claims are not re-extracted. */
+  async describeImageCards(assets, {signal=null,telemetryContext=null}={}) {
+    if (!this.enabled) throw Object.assign(new Error("Image analysis provider is not configured."),{code:"MEDIA_ANALYSIS_NOT_CONFIGURED",retryable:false});
+    const images=await this.client.imageParts(assets.map((asset)=>({...asset,kind:"image"})));
+    const submitted=assets.filter((_,index)=>images.manifest[index]?.status==="submitted");
+    if (!submitted.length) return {cards:[],model:null,skipped:assets.map((asset)=>asset.id)};
+    const parts=submitted.flatMap((asset,index)=>[{type:"text",text:`Image assetId=${asset.id}`},images.parts[index]]);
+    const completion=await this.client.completeJson({name:"source_image_card",
+      schema:{type:"object",additionalProperties:false,required:["image_cards"],properties:{image_cards:{type:"array",items:IMAGE_CARD_ITEM_SCHEMA}}},
+      instructions:`Describe each supplied travel-source image for editorial reuse. Return one image_cards record per image, using the assetId written immediately before it.\n${IMAGE_CARD_PROMPT}\n${MEDIA_CONTEXT_INSTRUCTIONS}`,
+      content:parts,signal,telemetryContext});
+    const ids=new Set(submitted.map((asset)=>asset.id));
+    const cards=(completion.output?.image_cards || []).map(sanitizeImageCard).filter((card)=>ids.has(card.asset_id));
+    return {cards,model:completion.model,skipped:assets.filter((asset)=>!ids.has(asset.id)).map((asset)=>asset.id)};
+  }
+
   artifactContract(stage) {
     if (stage === 'analyze_source_blueprint') return { name: 'source_blueprint', schema: BLUEPRINT_SCHEMA, prompt: BLUEPRINT_PROMPT };
     return { name: stage === 'audit_segment_coverage' ? 'segment_claim_coverage_audit' : 'source_research_extraction',
+      mediaWireVersion: 'shared-source-context-1',
       ...this.batchConfigSnapshot(stage) };
   }
 
@@ -289,13 +335,24 @@ export class KimiExtractor {
         ...claim,asset_id:batch.images[0].id,
         ...(soleSegmentId ? {segment_id:soleSegmentId} : {}),
       }));
+      if (soleImage && result.image_cards.length===1) result.image_cards[0].asset_id=soleImage.id;
+      const batchAssetIds=new Set(batch.images.map((asset)=>asset.id));
+      result.image_cards=result.image_cards.filter((card)=>batchAssetIds.has(card.asset_id));
+      const cardsById=new Map(result.image_cards.map((card)=>[card.asset_id,card]));
       if (deferredImageAnalysis) {
-        result.media_analysis = batch.images.map((asset)=>sanitizeMediaAnalysis({
-          asset_id:asset.id,analysis_status:"needs_review",asset_kind:"unknown",
-          reader_text_present:true,confidence:0,
-        }));
+        // A qualifying plain-photo card is a real pixel analysis; everything else
+        // keeps the explicit deferral for the dedicated text-region review.
+        result.media_analysis = batch.images.map((asset)=>imageCardMediaAnalysis(cardsById.get(asset.id))
+          || sanitizeMediaAnalysis({
+            asset_id:asset.id,analysis_status:"needs_review",asset_kind:"unknown",
+            reader_text_present:true,confidence:0,
+          }));
         result.source.warnings.push("Image-level media analysis requires separate review before visual reuse.");
+      } else {
+        result.media_analysis=result.media_analysis.map((analysis)=>withImageCardRegion(analysis,cardsById.get(analysis.asset_id)));
       }
+      if (completion.droppedClaims) result.source.warnings.push(
+        `${completion.droppedClaims} claims were dropped for missing required evidence fields (key/subject/predicate/value/source_quote).`);
       if (completion.downgradedClaims) result.source.warnings.push(
         `${completion.downgradedClaims} claims had unrecognized roles and require evidence review before knowledge use.`);
       if (images.attempted > images.parts.length) result.source.warnings.push("Some captured image assets were unavailable to the vision model; completeness remains blocked until they are processed.");
@@ -432,7 +489,12 @@ function mergeExtractionResults(results) {
     const normalized=sanitizeMediaAnalysis(item); if (!normalized.asset_id || analysisIds.has(normalized.asset_id)) continue;
     analysisIds.add(normalized.asset_id);analyses.push(normalized);
   }
-  return { source, claims, media_analysis:analyses, blueprint: emptyBlueprint() };
+  const cards=[]; const cardIds=new Set();
+  for (const card of results.flatMap((result)=>result.image_cards || [])) {
+    if (!card.asset_id || cardIds.has(card.asset_id)) continue;
+    cardIds.add(card.asset_id);cards.push(card);
+  }
+  return { source, claims, media_analysis:analyses, image_cards:cards, blueprint: emptyBlueprint() };
 }
 
 function isYoutubeUrl(value) {
@@ -447,6 +509,8 @@ function isYoutubeUrl(value) {
     return false;
   }
 }
+
+const IMAGE_CARD_PROMPT = `- For every supplied image also return one image_cards record with its exact assetId as asset_id, describing only the pixels: asset_kind (exactly one of ${IMAGE_CARD_KINDS.join(", ")}); primary_subjects (concise English, the dominant depicted things); place_names (named places identifiable from the image itself or its explicit caption, never from mention order); scene (exactly one of ${IMAGE_CARD_SCENES.join(", ")}); visible_text (true only when author-added text is present: overlay titles, captions, stickers, handwritten notes, itinerary or price cards, screenshots of text; real-world signage, shop signs and plaques photographed inside the scene do NOT count and must give false); photo_quality (exactly one of high, medium, low: sharpness, exposure, framing); editorial_use (exactly one of hero, body, evidence_only, unusable: hero = strong wide establishing photo suitable to open an article, body = clear supporting photo, evidence_only = useful for facts but not for display, unusable = blurred, cropped UI, meme, duplicate or irrelevant); alt_text (one factual English sentence of at most 125 characters); confidence (always include: a number from 0 to 1 for how sure you are of this card). Surrounding note text is not proof of what an image shows.`;
 
 const SYSTEM_PROMPT = `You extract research evidence from a manually selected Chinese travel source for an English China travel site. The source may be a UGC note, public web article, document, image set, or video-page transcript.
 
@@ -467,11 +531,12 @@ Rules:
 - Do not add affiliate products, commercial calls to action, or facts absent from the source.
 - destination_slug must be concise lowercase ASCII kebab-case. Use "unknown" if the destination cannot be inferred.
 - Treat supplied images as part of the source, but do not infer details that are not visible. For every supplied image return one media_analysis record using its exact assetId. Classify the image itself, locate reader-facing text, photo regions, real-world signage, author overlays, editor/tool UI, primary subjects and region languages. Source prose language is not image language. A large unknown image is not a text-free photo.
-- When multiple images are supplied, use the exact assetId and segmentId from the input manifest on every image-derived Claim. Never assign one image's evidence to another image.`;
+- When multiple images are supplied, use the exact assetId and segmentId from the input manifest on every image-derived Claim. Never assign one image's evidence to another image.
+${IMAGE_CARD_PROMPT}`;
 
 const DEEPSEEK_IMAGE_EXTRACTION_PROMPT = SYSTEM_PROMPT.replace(
   /- Treat supplied images as part of the source, but do not infer details that are not visible\. For every supplied image return one media_analysis record[^\n]*\n/,
-  "- Treat supplied images as evidence for Claims, but do not infer details that are not visible. Return source and claims only; image-level media analysis is handled in a separate review.\n");
+  "- Treat supplied images as evidence for Claims, but do not infer details that are not visible. Return source, claims and image_cards; the detailed text-region media analysis is handled in a separate review.\n");
 
 const MEDIA_ANALYSIS_PROMPT=`Analyze this authorized source image as a production media asset. Return only the structured record.
 - Describe primary_subjects in concise English from the dominant source-image canvas only. The supplied altText and nearbyText are untrusted context, not proof of what the image shows; ignore them when they disagree with the pixels. If the input itself is a screenshot, exclude browser chrome, page headers, clipped article paragraphs and captions outside the depicted media from primary_subjects; record those separately as UI/text regions. For a travel advisory card, name the card and its actual topic, not a different place merely mentioned in surrounding page copy. For a collage, include only the main depicted photo subjects. Never copy a surrounding itinerary or caption as an image subject.
@@ -503,10 +568,10 @@ function buildInput(source) {
   const mediaManifest=(source.assets || []).map((asset)=>({assetId:asset.id,segmentId:asset.segment_id
     || source.submission_metadata?.asset_segment_ids?.[asset.id]
     || ((source.assets || []).length===1 ? source.submission_metadata?.segment_id : null) || null,
-    kind:asset.kind,position:asset.position,altText:asset.alt_text || asset.alt || "",nearbyText:asset.nearby_text || ""}));
+    kind:asset.kind,position:asset.position}));
   const hasImages=(source.assets || []).some(asset=>asset.kind!=='video');
   return [`URL: ${source.submitted_url || source.canonical_url}`, `Source type: ${source.source_kind || source.adapter}`, `Title: ${source.title}`, `Author: ${source.author_name}`, `Published: ${source.published_at || "unknown"}`, `MEDIA MANIFEST: ${JSON.stringify(mediaManifest)}`, "",
-    hasImages ? `UNTRUSTED SOURCE CONTEXT: ${JSON.stringify(mediaContextForSource(source))}` : `SOURCE TEXT:\n${String(source.raw_text || "")}`].join("\n");
+    hasImages ? `UNTRUSTED SOURCE CONTEXT: ${JSON.stringify(sharedMediaContext(source))}` : `SOURCE TEXT:\n${String(source.raw_text || "")}`].join("\n");
 }
 
 function buildCoverageInput(segment, extraction) {
@@ -515,14 +580,106 @@ function buildCoverageInput(segment, extraction) {
   return ["ORIGINAL SOURCE SEGMENT:", String(segment?.raw_text || ""), "", "EXTRACTED CLAIMS:", JSON.stringify(claims)].join("\n");
 }
 
+const CLAIM_ROLES = new Set(["fact", "recommendation", "personal_experience", "promotional_observation", "editorial_metadata"]);
+const CLAIM_FIELDS = ["key", "subject", "predicate", "value", "qualifiers", "confidence", "source_quote", "asset_id", "segment_id",
+  "observed_at", "valid_from", "valid_to", "date_confidence", "claim_role", "knowledge_eligible"];
+
 function sanitizeResult(result) {
-  result.source.destination_slug = slugify(result.source.destination_slug);
-  result.source.summary = truncate(result.source.summary, 5_000);
-  result.source.warnings = Array.isArray(result.source.warnings) ? result.source.warnings.slice(0, 50) : [];
-  result.claims = result.claims.map((claim) => ({ ...claim, key: truncate(claim.key.toLowerCase().replace(/[^a-z0-9._]+/g, ".").replace(/^\.|\.$/g, ""), 300), source_quote: truncate(claim.source_quote, 800) })).filter((claim) => claim.key && claim.value);
+  const source = result.source && typeof result.source === "object" ? result.source : {};
+  const list = (value) => Array.isArray(value) ? value : [];
+  const sourceConfidence = Number(source.confidence);
+  // Only documented fields survive; stray provider keys are dropped here rather
+  // than failing validation for the whole batch.
+  result = { source: {
+    language: String(source.language || ""), summary: truncate(String(source.summary || ""), 5_000),
+    destination_name: String(source.destination_name || ""), destination_slug: slugify(String(source.destination_slug || "")),
+    traveler_fit: list(source.traveler_fit).map(String).filter(Boolean),
+    practical_tips: list(source.practical_tips).filter((tip) => tip && typeof tip === "object")
+      .map((tip) => ({ topic: String(tip.topic || ""), detail: String(tip.detail || "") })).filter((tip) => tip.topic || tip.detail),
+    warnings: list(source.warnings).map(String).slice(0, 50),
+    confidence: Number.isFinite(sourceConfidence) ? Math.max(0, Math.min(1, sourceConfidence)) : 0,
+  }, claims: list(result.claims), media_analysis: result.media_analysis, image_cards: result.image_cards };
+  result.claims = result.claims.filter((claim) => claim && typeof claim === "object").map((claim) => {
+    const confidence = Number(claim.confidence);
+    const picked = Object.fromEntries(CLAIM_FIELDS.filter((field) => claim[field] != null).map((field) => [field, claim[field]]));
+    const role = String(claim.claim_role || "").trim().toLowerCase();
+    const dateConfidence = String(claim.date_confidence || "").trim().toLowerCase();
+    return { ...picked, key: truncate(String(claim.key || "").toLowerCase().replace(/[^a-z0-9._]+/g, ".").replace(/^\.|\.$/g, ""), 300),
+      value: claim.value == null ? "" : String(claim.value).trim(),
+      qualifiers: (Array.isArray(claim.qualifiers) ? claim.qualifiers : typeof claim.qualifiers === "string" ? [claim.qualifiers] : [])
+        .map((item) => String(item).trim()).filter(Boolean),
+      confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
+      source_quote: truncate(String(claim.source_quote || ""), 800),
+      ...(claim.claim_role != null ? CLAIM_ROLES.has(role) ? { claim_role: role } : { claim_role: undefined } : {}),
+      ...(claim.date_confidence != null ? ["low", "medium", "high"].includes(dateConfidence)
+        ? { date_confidence: dateConfidence } : { date_confidence: undefined } : {}),
+      ...(claim.knowledge_eligible != null ? { knowledge_eligible: claim.knowledge_eligible === true || claim.knowledge_eligible === "true" } : {}) };
+  }).filter((claim) => claim.key && claim.value);
   result.media_analysis=(result.media_analysis || []).map(sanitizeMediaAnalysis).filter((item)=>item.asset_id);
+  const cardIds=new Set();
+  result.image_cards=(Array.isArray(result.image_cards) ? result.image_cards : []).map(sanitizeImageCard)
+    .filter((card)=>card.asset_id && !cardIds.has(card.asset_id) && cardIds.add(card.asset_id));
   result.blueprint = emptyBlueprint();
   return result;
+}
+
+const IMAGE_CARD_SYNONYMS={
+  scene:{cityscape:"street",city:"street",street_scene:"street",night_view:"landscape",nature:"landscape",scenery:"landscape",
+    view:"landscape",river:"landscape",mountain:"landscape",building:"architecture",temple:"architecture",landmark:"architecture",
+    indoor:"interior",room:"interior",hotel:"interior",restaurant:"food",dish:"food",meal:"food",drink:"food",
+    metro:"transport",subway:"transport",train:"transport",station:"transport",bus:"transport",sign:"signage",
+    ticket:"ticket_or_document",document:"ticket_or_document",menu:"ticket_or_document",route:"map",portrait:"people",person:"people"},
+  asset_kind:{photo:"documentary_photo",photograph:"documentary_photo",infographic:"editorial_infographic",collage:"photo_collage",
+    map:"map_or_route",route:"map_or_route",handwritten:"handwritten_card",illustration:"decorative_illustration"},
+  editorial_use:{cover:"hero",hero_image:"hero",supporting:"body",body_image:"body",evidence:"evidence_only",reject:"unusable",none:"unusable"},
+};
+
+export function sanitizeImageCard(value={}) {
+  const strings=(items,limit=12)=>(Array.isArray(items) ? items : typeof items==="string" && items.trim() ? [items] : [])
+    .map((item)=>truncate(String(item || "").trim(),160)).filter(Boolean).slice(0,limit);
+  const key=(item)=>String(item ?? "").trim().toLowerCase().replace(/[\s-]+/g,"_");
+  const pick=(field,item,allowed,fallback)=>{
+    const normalized=key(item);
+    const mapped=allowed.includes(normalized) ? normalized : IMAGE_CARD_SYNONYMS[field]?.[normalized];
+    return mapped || fallback;
+  };
+  const text=key(value?.visible_text);
+  const confidence=Number(value?.confidence);
+  return {asset_id:truncate(String(value?.asset_id || value?.assetId || ""),300),
+    asset_kind:pick("asset_kind",value?.asset_kind,IMAGE_CARD_KINDS,"unknown"),
+    primary_subjects:strings(value?.primary_subjects),place_names:strings(value?.place_names),
+    scene:pick("scene",value?.scene,IMAGE_CARD_SCENES,"other"),
+    // Unknown text presence is treated as text-bearing: such images need the
+    // dedicated text-region review before reuse.
+    visible_text:!(value?.visible_text === false || text === "false" || text === "no"),
+    photo_quality:pick("photo_quality",value?.photo_quality,["high","medium","low"],"low"),
+    editorial_use:pick("editorial_use",value?.editorial_use,["hero","body","evidence_only","unusable"],"evidence_only"),
+    alt_text:truncate(String(value?.alt_text || "").trim(),160),
+    confidence:Number.isFinite(confidence) ? Math.max(0,Math.min(1,confidence)) : 0};
+}
+
+// Whole-image descriptor stored with the analysis, so the writing packet's
+// authorized_source_assets show what each photo depicts and whether to use it.
+function imageCardRegion(card) {
+  return {region_id:"image",source:IMAGE_CARD_VERSION,scene:card.scene,photo_quality:card.photo_quality,
+    editorial_use:card.editorial_use,alt_text:card.alt_text,place_names:card.place_names};
+}
+
+function withImageCardRegion(analysis,card) {
+  if (!card || analysis.asset_kind !== "documentary_photo") return analysis;
+  return {...analysis,photo_regions:[...analysis.photo_regions.filter((region)=>region.source!==IMAGE_CARD_VERSION),imageCardRegion(card)]};
+}
+
+/** Only an unambiguous plain photo becomes a ready analysis. Text-bearing,
+ * collage, low-confidence or unusable images stay deferred: their reuse
+ * depends on fully decoded text regions or a reviewed composition. */
+export function imageCardMediaAnalysis(card) {
+  if (!card?.asset_id || card.asset_kind !== "documentary_photo" || card.visible_text
+    || card.confidence < 0.6 || card.editorial_use === "unusable" || !card.primary_subjects.length) return null;
+  return sanitizeMediaAnalysis({asset_id:card.asset_id,analysis_status:"ready",asset_kind:"documentary_photo",
+    text_regions:[],photo_regions:[imageCardRegion(card)],entities:card.place_names,editor_ui_regions:[],
+    primary_subjects:card.primary_subjects,language_by_region:[],reader_text_present:false,confidence:card.confidence,
+    analysis_version:IMAGE_CARD_VERSION});
 }
 
 function sanitizeMediaAnalysis(value={}) {
@@ -535,7 +692,9 @@ function sanitizeMediaAnalysis(value={}) {
     photo_regions:objects(value.photo_regions),entities:strings(value.entities),editor_ui_regions:objects(value.editor_ui_regions),
     primary_subjects:strings(value.primary_subjects,30),language_by_region:objects(value.language_by_region),
     reader_text_present:Boolean(value.reader_text_present),confidence:Math.max(0,Math.min(1,Number(value.confidence || 0))),
-    analysis_version:"media-analysis-2",prompt_version:"media-analysis-prompt-2"};
+    ...(value.analysis_version === IMAGE_CARD_VERSION
+      ? {analysis_version:IMAGE_CARD_VERSION,prompt_version:IMAGE_CARD_VERSION}
+      : {analysis_version:"media-analysis-2",prompt_version:"media-analysis-prompt-2"})};
 }
 
 function validateMediaAnalysisOutput(value={}) {

@@ -1,0 +1,40 @@
+(node:2044) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ cover plan preserves natural signs but rejects dense cards, screenshots, wrong entity and stale QA (1.3267ms)
+✔ cover locks never silently switch to another candidate and relevance is required before ordering (0.3235ms)
+✔ 16:9 plan is exact, bounded, EXIF-coordinate based and never enlarges a small source (0.2501ms)
+✔ real SQLite dry-run preserves draft, media, publication, jobs and calls; unavailable historical masters remain rejected (642.4423ms)
+(node:7872) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-36/39/43: typed evidence persists and only the supported use can match (666.4049ms)
+✔ T02-43: explicit opposing source statements persist as conflict, never score away (571.453ms)
+✔ T02-43: same bytes retain a locatable opposing occurrence and invalidate a prior positive read (577.2036ms)
+✔ T02-43: unrelated negation is not an explicit contradiction of the named place (555.1607ms)
+✔ T02-43: conflicting source evidence cannot re-enter matching through perfect pixel-name overlap (536.1162ms)
+✔ T02-33/34/40: explicit source relation retrieves a generic photo with no Claims and survives focused-article matching (522.1408ms)
+✔ T02-43: ambiguous cross-destination entities are separately retained and city-level names cannot confirm a stop (523.6145ms)
+✔ T02-43: publication gate rejects a revoked source binding even when an old matching score is high (533.4348ms)
+✔ T02-42/43: a newly conflicting alias invalidates only the binding revision and preserves prior evidence (552.0501ms)
+✔ T02-36/39: nearby mentions, uncertain captions and multi-place image references cannot certify a specific photo (565.1321ms)
+✔ T02-41: explicit IDs beyond 160 are preserved; automatic paging reports a remaining range (753.2152ms)
+✔ T02-41: existing article slot retrieves its exact ID beyond the automatic source page (654.1267ms)
+✔ T02-42/43: only binding context changes, old relation remains stale, analysis and bytes are reused (539.8145ms)
+✔ T02-63/70: snapshot and isolated review restore preserve context and binding fingerprints without jobs (768.0083ms)
+✔ schema 81 is additive and does not backfill, buy analysis, or mutate old records (1065.3218ms)
+✔ T02-42/43: reads reject text, caption and alias changes before a repair job without mutating records (545.0929ms)
+✔ T02-42/43: reversible evidence edits restore the matching revision but never revive revoked decisions (552.6964ms)
+✔ T02-39: entity identity cannot certify a different destination, uppercase entrance or whole-day diagram (0.2316ms)
+✔ T02-43: alias cache observes another connection and never retains rolled-back evidence (544.7345ms)
+✔ commercial overlay preserves editorial blocks and exact Page Payload order (1.9953ms)
+✔ structured affiliate search uses exactly one Frontend delivery representation (0.2961ms)
+✔ Publish Package carries presentation, semantic SEO/GEO, JSON-LD, and WordPress media references (1.1296ms)
+✔ Publish Package translates internal CMS taxonomy before WordPress delivery (0.2959ms)
+✔ commercial reconciliation proves each selected slot across payload, WordPress storage and visible DOM (1.5322ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 28
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11366.7947

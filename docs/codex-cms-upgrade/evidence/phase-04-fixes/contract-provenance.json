@@ -1,0 +1,91 @@
+{
+  "status": "CI_ORIGINAL_PIN_CORRECT_CACHE_COMMIT_LABEL_MISMATCH",
+  "algorithm": "SHA256(JSON.stringify([parsed registry, parsed page, parsed publish]))",
+  "ciOriginalAndFinal": {
+    "commit": "b231b1d54915ceef6a7f52b907ba5d7c1d79463d",
+    "sha256": "9154dc68540d9922c11109e4cfe00aee871d850e61124fd7edb624ee20b2c422",
+    "version": "1.4.1"
+  },
+  "historicalCache": {
+    "claimedCommit": "0c4b327287c016aee138f735a8a13eb2baa74542",
+    "sha256": "9154dc68540d9922c11109e4cfe00aee871d850e61124fd7edb624ee20b2c422",
+    "unchanged": true,
+    "exactParsedDocumentsMatchCi": true
+  },
+  "claimedCommitActual": {
+    "commit": "0c4b327287c016aee138f735a8a13eb2baa74542",
+    "sha256": "e19fbc9e00642ea181733dc8167be698d1de337408462fee8b166aaf190a1249"
+  },
+  "differences": [
+    {
+      "path": "component-registry.json/components/18/example/data/disclosure",
+      "claimedCommitGit": "Paid link",
+      "verifiedBaseline": "We may earn a commission from bookings through these links."
+    },
+    {
+      "path": "component-registry.json/components/18/purpose",
+      "claimedCommitGit": "Renders a restrained contextual commercial action with visible disclosure.",
+      "verifiedBaseline": "Renders a compact commercial ticket with one real action and a page-level relationship notice."
+    },
+    {
+      "path": "component-registry.json/components/19/example/data/disclosure",
+      "claimedCommitGit": "Paid link",
+      "verifiedBaseline": "We may earn a commission from bookings through these links."
+    },
+    {
+      "path": "component-registry.json/components/20/example/data/disclosure",
+      "claimedCommitGit": "Paid link",
+      "verifiedBaseline": "We may earn a commission from bookings through these links."
+    },
+    {
+      "path": "component-registry.json/components/21/example/data/disclosure",
+      "claimedCommitGit": "Paid link",
+      "verifiedBaseline": "We may earn a commission from bookings through these links."
+    },
+    {
+      "path": "component-registry.json/components/22/example/data/disclosure",
+      "claimedCommitGit": "Paid link",
+      "verifiedBaseline": "We may earn a commission from bookings through these links."
+    },
+    {
+      "path": "page-schema.json/properties/blocks/items/oneOf/18/description",
+      "claimedCommitGit": "Renders a restrained contextual commercial action with visible disclosure.",
+      "verifiedBaseline": "Renders a compact commercial ticket with one real action and a page-level relationship notice."
+    },
+    {
+      "path": "cms-publish-package.schema.json/description",
+      "claimedCommitGit": "Authenticated CMS-to-WordPress draft delivery package. WordPress validates and serializes page.blocks[] in the supplied order.",
+      "verifiedBaseline": "Authenticated CMS-to-WordPress draft delivery or guarded published-media refresh package. WordPress validates and serializes page.blocks[] in the supplied order."
+    },
+    {
+      "path": "cms-publish-package.schema.json/properties/contract/properties/contractChecksum/const",
+      "claimedCommitGit": "d83d9c0df8757c96cdc3dba8f12ce4dd3d2163d2ab884af07ad3abc68276c880",
+      "verifiedBaseline": "417022bd056c0e9cd2b67ee016610d08b6d5d7b5737ba6849979f620acddca43"
+    },
+    {
+      "path": "cms-publish-package.schema.json/properties/page/properties/blocks/items/oneOf/18/description",
+      "claimedCommitGit": "Renders a restrained contextual commercial action with visible disclosure.",
+      "verifiedBaseline": "Renders a compact commercial ticket with one real action and a page-level relationship notice."
+    },
+    {
+      "path": "cms-publish-package.schema.json/properties/publication/properties/status/const",
+      "claimedCommitGit": "draft",
+      "verifiedBaseline": null
+    },
+    {
+      "path": "cms-publish-package.schema.json/properties/publication/properties/status/enum",
+      "claimedCommitGit": null,
+      "verifiedBaseline": [
+        "draft",
+        "publish"
+      ]
+    },
+    {
+      "path": "cms-publish-package.schema.json/properties/publication/properties/status/type",
+      "claimedCommitGit": null,
+      "verifiedBaseline": "string"
+    }
+  ],
+  "receiverVerified": false,
+  "networkGitFetch": false
+}

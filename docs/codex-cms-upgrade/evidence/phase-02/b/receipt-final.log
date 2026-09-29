@@ -1,0 +1,45 @@
+✔ accessible captions reuse translated regions without losing source attribution or repeating existing text (1.0663ms)
+✔ WordPress media metadata records a public final URL, dimensions, bytes, hash and derivatives (1.7437ms)
+✔ media delivery rejects private/signed routes, missing dimensions, bad alt roles and duplicate uploads (1.0206ms)
+✔ localized real photos require an original, authorization, a real localized file and WordPress upload (0.3624ms)
+✔ photo-overlay localization remains evidence media and requires the same derivative provenance (0.351ms)
+✔ project-wide source authorization supersedes missing legacy per-item flags (0.2778ms)
+✔ a planned required visual cannot disappear from the delivery manifest (0.1894ms)
+✔ responsive HTML gives only the first image high priority and later images lazy loading (1.2438ms)
+✔ two placements of the same source asset reuse one WordPress media upload (24.0374ms)
+✔ different derivatives of one source asset keep independent WordPress identities (2.2237ms)
+✔ loopback HTTP receiver stores independent bytes, transforms output, loses receipt and returns invalid responses (850.1993ms)
+✔ real JPEG/PNG/WebP decode, EXIF orientation, alpha, source identity and immutable master QA (1560.6373ms)
+✔ photos downscale without enlargement; dense text keeps pixels with lossless output (718.1447ms)
+✔ invalid MIME, broken decode, pixel resource limit and animation are diagnosed without ready files (25.1136ms)
+✔ cache concurrency, transform version, corrupt cache and QA cannot be bypassed by reuse or fallback (909.492ms)
+✔ optimization fallback obeys safe normalized dimensions and retries only encoding (359.3822ms)
+✔ actual crop bytes contain the safe region and preserve master; unsafe crops fail (81.5359ms)
+✔ actual configured adapter uploads derivative bytes and keeps master QA/source identity (223.034ms)
+✔ public URLs reject local/private/signed delivery and remote hashes remain explicitly unknown (0.2464ms)
+✔ WordPress adapter always creates a draft with safe content (23.5005ms)
+✔ media progress is persisted per image and retry skips an already uploaded asset (12.8508ms)
+✔ WordPress media upload preserves CMS Source provenance metadata (1.0107ms)
+✔ WordPress adapter refuses to overwrite a post after a human publishes it (0.7119ms)
+✔ WordPress adapter renders persisted structured blocks instead of reparsing draft Markdown (0.645ms)
+✔ WordPress renders validated commercial blocks with sponsored attributes and rejects unsafe embeds (0.9795ms)
+✔ WordPress adapter uploads an authorized evidence-linked Xiaohongshu source photo (1.6509ms)
+✔ authorized source download classifies an expired CDN URL as permanent (0.4669ms)
+✔ authorized source upload can use a stored capture derivative without a live CDN URL (0.5582ms)
+✔ WordPress inventory sync reads every page without changing posts (2.1554ms)
+✔ markdown renderer escapes HTML before adding supported formatting (0.5374ms)
+✔ WordPress block renderer emits native Gutenberg blocks without weakening HTML escaping (0.2443ms)
+✔ Contract-aware adapter sends the exact Publish Package to the STC CMS Article API (0.7825ms)
+✔ Contract delivery requires an exact WordPress commercial slot receipt (0.8863ms)
+✔ Contract-aware adapter uses explicit PUT and surfaces non-retryable Frontend validation errors (0.4642ms)
+✔ published editorial replacement requires and transmits exact baseline and body hashes (0.5699ms)
+✔ scoped final preview tickets stay on the configured WordPress origin and bind the delivered page (0.7144ms)
+✔ WordPress renderers place generated visual media safely within the article (0.2401ms)
+ℹ tests 37
+ℹ suites 0
+ℹ pass 37
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4070.2011

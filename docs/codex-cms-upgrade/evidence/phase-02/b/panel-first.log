@@ -1,0 +1,15 @@
+(node:14348) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ subroute use requires contiguous approved occurrences; a partial diagram cannot claim the full day (7.335ms)
+✔ actual normalization retains panel crop semantics but never delivers the uncropped collage as a subroute (6.686ms)
+✔ actual normalization accepts related other-day photo but blocks a mismatching full-day map with a durable gap (4.8309ms)
+✔ optional conflicting route map retains its source and explicit omission instead of vanishing (1.8551ms)
+✔ actual independent visual QA request contains frozen topology and rejects missing/stale/wrong-arrow receipts (21.8335ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 322.1526

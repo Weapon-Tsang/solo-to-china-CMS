@@ -1,0 +1,44 @@
+(node:29884) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ a frozen writing packet remains authoritative when a draft is saved and reviewed (614.0926ms)
+(node:24212) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-38: automatic local supplementation reads complete long captions and keeps exact locators (2.8143ms)
+✔ T02-38: exhausted automatic reads retain omitted ranges and never hide pending context (8.3696ms)
+✔ T02-43: changing image order changes the context fingerprint and cannot reuse old positional evidence (0.3857ms)
+✔ T02-42/45: repair previews are read-only, apply is idempotent and stale preview cannot write (624.9832ms)
+✔ T02-43: revocation survives context/policy revisions without restoring automatic adoption (584.9308ms)
+✔ T02-38/45: evidence beyond the budget cannot produce a confirmed relation (553.1245ms)
+✔ T02-38: unrelated omitted prose does not invalidate a complete direct image caption (577.9234ms)
+✔ T02-46: PDF visual input with image kind cannot be repaired or matched as an independent photograph (572.5053ms)
+✔ T02-45: affected slots are reported while draft and frozen manifest remain unchanged (557.2159ms)
+(node:4128) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-36/39/43: typed evidence persists and only the supported use can match (657.2848ms)
+✔ T02-43: explicit opposing source statements persist as conflict, never score away (574.7256ms)
+✔ T02-43: same bytes retain a locatable opposing occurrence and invalidate a prior positive read (558.4163ms)
+✔ T02-43: unrelated negation is not an explicit contradiction of the named place (576.9988ms)
+✔ T02-43: conflicting source evidence cannot re-enter matching through perfect pixel-name overlap (584.2303ms)
+✔ T02-33/34/40: explicit source relation retrieves a generic photo with no Claims and survives focused-article matching (560.7273ms)
+✔ T02-43: ambiguous cross-destination entities are separately retained and city-level names cannot confirm a stop (579.8278ms)
+✔ T02-43: publication gate rejects a revoked source binding even when an old matching score is high (553.9905ms)
+✔ T02-42/43: a newly conflicting alias invalidates only the binding revision and preserves prior evidence (552.9728ms)
+✔ T02-36/39: nearby mentions, uncertain captions and multi-place image references cannot certify a specific photo (561.8099ms)
+✔ T02-41: explicit IDs beyond 160 are preserved; automatic paging reports a remaining range (778.2012ms)
+✔ T02-41: existing article slot retrieves its exact ID beyond the automatic source page (682.967ms)
+✔ T02-42/43: only binding context changes, old relation remains stale, analysis and bytes are reused (565.1957ms)
+✔ T02-63/70: snapshot and isolated review restore preserve context and binding fingerprints without jobs (796.1262ms)
+✔ schema 81 is additive and does not backfill, buy analysis, or mutate old records (1099.6592ms)
+✔ T02-42/43: reads reject text, caption and alias changes before a repair job without mutating records (553.4018ms)
+✔ T02-42/43: reversible evidence edits restore the matching revision but never revive revoked decisions (565.2192ms)
+✔ T02-39: entity identity cannot certify a different destination, uppercase entrance or whole-day diagram (0.2227ms)
+✔ T02-43: alias cache observes another connection and never retains rolled-back evidence (564.2351ms)
+✔ the repaired three-day production corpus keeps prose, packet sections and supplied routes aligned (0.945ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11907.3852

@@ -1,3 +1,83 @@
+# 2026-09-28 阶段02本地验收结论：PASS_LOCAL(CMS_ONLY)
+
+C/D本地硬要求的最后浏览器及故障矩阵已补齐，A2/B既有验收保持。[逐项证据、测试层级和外部门禁](../evidence/phase-02/cd/local-acceptance.md)。本结论只覆盖CMS本地和受控接收器协议；真实WordPress、付费Provider、历史缺失母图像素与全生产链未测试。current_authorized_step=NONE；phase_end_stop=true。以下保留先前检查点记录。
+
+---
+
+# 2026-09-28 阶段02 C/D 本地验收更新
+
+**C_LOCAL_ACCEPTED、D_LOCAL_ACCEPTED（仅CMS本地和受控接收器协议）**。A2/B既有本地验收与全部历史证据保持。逐项分组、真实覆盖范围、未测项和操作说明见[阶段02 C/D本地验收](../evidence/phase-02/cd/local-acceptance.md)。本轮没有真实WordPress写入、模型调用或历史母图像素验收。固定前端合同目前只确认`featuredMediaId`字段；`cardTitle`和`deck`保留内部而不外发。阶段02生产交付验收尚未通过，阶段03不自动进入。
+
+以下保留历史验收与检查点，不追改其当时结论。
+
+---
+
+# 2026-09-28 当前检查点：C封面本地选择已实现 / C_PARTIAL
+
+B_LOCAL_ACCEPTED保持。C已新增独立16:9真实裁剪、母图保全、预览确认、版本/并发保护、单封面锁定与追加历史、CMS操作界面、跨目录恢复及接收能力门控。
+
+- 本轮42/42相关回归PASS；备份组29/29 PASS（重叠不相加）；check/build、真实浏览器选图→预览→确认→刷新回读PASS，四种宽度无横向溢出。
+- 既有获准副本12稿/26候选只读回放及事务回滚PASS，9保护表不变。26历史母图不可达，历史像素/选择完整组合NOT TESTED。真实WP/Provider和全链仍未验。
+- 固定缓存1.4.1/commit 0c4b327287c016aee138f735a8a13eb2baa74542组合hash校验PASS：支持featuredMediaId，不支持cardTitle/deck。**当前选择封面的外部交付关闭**，不会借本地确认覆盖生产。
+- C整体仍未完成：支持接收端的封面上传/显式替换回执、card bundle字段、同实体库存/插画有界预算、必需封面门禁及分批审计待做。[逐项验收和接续](../evidence/phase-02/c-selection/checkpoint.md)。不是C_LOCAL_ACCEPTED。
+- app2.0.70/schema82/HEAD保持；全部未提交成果和历史证据保留。无提交、推送、部署、生产操作或付费调用。自建API/浏览器已停止。
+- current_authorized_step=NONE
+- phase_end_stop=true
+
+下一步继续C已获授权的本地工作；无需重新确认，不进入D/阶段03。
+
+以下保留历史记录。
+
+---
+
+# 2026-09-28 当前检查点：B_LOCAL_ACCEPTED / C_PARTIAL
+
+B补充验收已完成，34/34相关回归及check/build PASS；见 [B补充验收](../evidence/phase-02/b-resume/local-acceptance.md)。按用户“B完成后进入下一阶段”授权，已进入C并实现封面资格/裁剪规划与管理员只读dry-run API；C整体未完成。
+
+- C定向5/5、相关模块29/29、check/build PASS；真实回环HTTP鉴权/版本冲突已验。
+- 既有获准副本12稿/26候选只读审计PASS，事务回滚和9张保护表不变。26历史母图不可达，像素验收NOT TESTED；真实WP/Provider/浏览器C编辑流程未验。
+- [C逐项状态、限制与接续点](../evidence/phase-02/c/checkpoint.md)。后续继续C已获授权本地工作，不需要重复确认；尚未实现完整封面制作、选择和合同交付，不进入D/阶段03。
+- 所有历史/未提交成果保留，app/schema/HEAD不变，无提交、推送、部署、生产操作或付费调用。自建测试服务已关闭。
+- current_authorized_step=NONE
+- phase_end_stop=true
+
+以下保留历史记录。
+
+---
+
+# 2026-09-28 B 补充验收 / C 已获授权
+
+B_LOCAL_ACCEPTED（限定本地范围）。缓存原件绑定、回执复核及安全裁剪增量34/34 PASS，check/build PASS。历史像素/真实WP/Provider限制保持；见 [B补充验收](../evidence/phase-02/b-resume/local-acceptance.md)。此前证据保留。
+
+用户明确“B完成后进入下一阶段”，当前进入C封面与合同，D未授权；不提交、不部署、不操作生产、不调用付费模型。
+- current_authorized_step=PHASE_02_C
+- phase_end_stop=false
+
+---
+
+# 最新阶段02 B 验收 — 2026-09-28
+
+**B_LOCAL_ACCEPTED（限定本地能力） / STOPPED**。[完整报告、用例映射和限制](../evidence/phase-02/b/local-acceptance.md)。本节为MEDIA-001～009当前状态；下方旧表/检查点作为历史保留，不取消A2_LOCAL_ACCEPTED。未进入C/D，阶段02整体未完成。
+
+| IDs | 当前结论 | 边界 |
+|---|---|---|
+| MEDIA-001/002/003/005/006 | PASS_LOCAL_B | 分层、真实Sharp/方向/透明/安全解码/文本可读性、原子缓存、QA与回退、谱系门禁及恢复/清理 |
+| MEDIA-004/007 | PASS_LOCAL_B_ONLY | 实际尺寸/srcset和回环HTTP接收器；真实WP未测；16:9封面由C负责 |
+| MEDIA-008 | PASS_LOCAL_B | 既有绑定/alt门禁与翻译region图注复用；真实模型语言质量、公开站展示NOT TESTED |
+| MEDIA-009 | PASS_LOCAL_B | 无R2/插件/DNS/订阅变化；未来架构验证单独进行 |
+| T02-09/10/11/12/15/16/19 | PASS_LOCAL_B | 证据和实际测试边界见B报告，不外推为全阶段通过 |
+| T02-13 | PASS_B_SUBCASE / PENDING_C | 已有等比尺寸消费通过；封面母图未执行 |
+| T02-14/17/18 | PASS_LOCAL_B_ONLY | 受控上传/独立读取、图注/alt；真实WP/语义/公开排版未验 |
+| T02-75/80 | B_CROP_LOCAL_PASS | 裁剪原件hash→实际裁剪像素→既有转译与独立QA请求→回执；真实Provider和D采用组合未测 |
+
+L1/L2 PASS：150项相关模块，最后小图/清理增量34项、原子/预算5项为独立命令且有重叠；check/build PASS。L3 PASS仅既有副本元数据事务回滚（26 Visuals）；26条历史文件路径不可达，历史像素处理NOT TESTED。L4 PASS仅本地真实恢复与PNG预览。L5/L6 NOT TESTED。Post-Fix Audit **ISSUES FOUND**（上述历史可达性限制），本轮相邻确定性保护回归PASS。未新增生产读取、付费请求或生产写入。
+
+current_authorized_step=NONE；phase_end_stop=true。完整68项/90用例及历史证据保留。下一步C须新的授权，不自动执行。
+
+以下为保留的历史验收记录。
+
+---
+
 # Latest A1 PDF-source fallback acceptance — 2026-09-27
 
 **A1_LOCAL_ACCEPTED / READY_FOR_A2_NEW_THREAD / STOPPED**. [Current report and API/UI/restore evidence](../evidence/phase-02/a1-pdf-source-supplement.md). This supersedes only the older BIND-011/T02-46 blocker; all 68 requirements / 90 cases and prior checkpoints remain preserved.

@@ -1,0 +1,126 @@
+(node:18992) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"nonempty_samples":30,"p50_ms":2.2233000000001084,"p95_ms":20.223399999999856,"provider_calls":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","api_only":true}
+✔ actual authenticated API streaming, ownership, CSRF, confirmation, lost receipt recovery and nonempty latency (2986.204ms)
+(node:6032) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (2584.3024ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (3932.515ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ explicit revocation restores old slot exactly with an appended revision and no provider work (2671.5363ms)
+✔ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (939.0713ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ media-only receiver protocol retains old receipts and reconciles unknown outcomes without duplicate upload (1982.1953ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1688.0182ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (11415.7683ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (740.1839ms)
+(node:7048) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ writer receives bounded image subjects without resending full media and source context (2.2776ms)
+✔ Kimi-backed independent QA cannot approve deterministic evidence or commercial violations (32.5147ms)
+✔ page composition extracts CMS node references before Frontend validation (2.3521ms)
+✔ page composition augments every oneOf component variant with CMS provenance (4.4646ms)
+(node:12344) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ pinned contract integrity and strict fields never imply deployed receiver capabilities (2.1727ms)
+✔ cover plan preserves natural signs but rejects dense cards, screenshots, wrong entity and stale QA (0.9315ms)
+✔ cover locks never silently switch to another candidate and relevance is required before ordering (0.3309ms)
+✔ 16:9 plan is exact, bounded, EXIF-coordinate based and never enlarges a small source (0.2643ms)
+✔ real SQLite dry-run preserves draft, media, publication, jobs and calls; unavailable historical masters remain rejected (1049.1122ms)
+✔ actual authenticated HTTP cover audit is read-only and rejects stale revisions (946.9345ms)
+(node:5348) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit selected cover overrides a populated featured ID; strict schemas keep optional card text internal; capacity never truncates (3.5942ms)
+✔ durable cover-only protocol reconciles lost results without upload replay or changing prior article receipts (1902.0245ms)
+✔ cover illustration maximum is cumulative and rejected before provider credentials or dispatch (0.7639ms)
+(node:20488) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ same-entity stored source becomes a separate cover candidate with real binding checks; illustration plan never dispatches (1123.4347ms)
+(node:2392) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ actual cover output normalizes EXIF, preserves alpha and never enlarges small images (1456.3685ms)
+✔ real cover pixels, explicit preview confirmation, CAS, history and body preservation (2476.4875ms)
+✔ unsafe geometry, stale source relation and concurrent confirmations cannot save a cover (1955.7862ms)
+✔ retained original photo uses existing deterministic qualification without fabricating model QA (998.4477ms)
+✔ cover history files restore across directories, cleanup preserves references, and review does not dispatch (1960.0967ms)
+✔ incremental browser SHA256 matches native across boundaries, empty files and uneven chunks (100.8867ms)
+(node:2216) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ a repaired media gate skips visual re-planning and routes a stale failure to composition (899.6466ms)
+✔ exhausted image step resumes only missing visual after an explicit durable grant (944.1552ms)
+✔ a visual Job cannot succeed while a required planned slot remains unfinished (828.9037ms)
+✔ accessible captions reuse translated regions without losing source attribution or repeating existing text (1.1484ms)
+✔ WordPress media metadata records a public final URL, dimensions, bytes, hash and derivatives (3.5881ms)
+✔ media delivery rejects private/signed routes, missing dimensions, bad alt roles and duplicate uploads (2.2955ms)
+✔ localized real photos require an original, authorization, a real localized file and WordPress upload (0.7005ms)
+✔ photo-overlay localization remains evidence media and requires the same derivative provenance (0.3383ms)
+✔ project-wide source authorization supersedes missing legacy per-item flags (0.2955ms)
+✔ a planned required visual cannot disappear from the delivery manifest (0.3246ms)
+✔ responsive HTML gives only the first image high priority and later images lazy loading (3.8689ms)
+✔ two placements of the same source asset reuse one WordPress media upload (43.0687ms)
+✔ different derivatives of one source asset keep independent WordPress identities (1.9674ms)
+(node:23184) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real Pipeline uploads qualified web bytes, persists lineage and rejects tampered derivatives without rewriting the master (1353.9729ms)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (795.8068ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (844.2445ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (840.3244ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (739.157ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (760.7468ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (779.4778ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (748.2495ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (703.7523ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (694.5511ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (745.3774ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (707.7586ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (609.3605ms)
+✔ commercial overlay preserves editorial blocks and exact Page Payload order (7.2934ms)
+✔ structured affiliate search uses exactly one Frontend delivery representation (0.3415ms)
+✔ Publish Package carries presentation, semantic SEO/GEO, JSON-LD, and WordPress media references (2.9752ms)
+✔ Publish Package translates internal CMS taxonomy before WordPress delivery (0.3015ms)
+✔ commercial reconciliation proves each selected slot across payload, WordPress storage and visible DOM (1.232ms)
+✔ pixel QA rejects truncated and undersized provider outputs before persistence (102.4473ms)
+✔ Vertex Imagen stores a generated visual in the configured media directory (178.6182ms)
+✔ Gemini 3.1 Flash Image stores an inline image from the global Gemini endpoint (63.768ms)
+✔ visual generation participates in the shared request gate and preserves provider retry timing (8.7369ms)
+✔ Flash Image transport failures retain their provider and retry classification (0.6306ms)
+✔ Flash Image empty responses remain provider failures while explicit safety blocks stop (9.1884ms)
+✔ Chinese source-image localization sends the retained original and forbids scene changes (149.2299ms)
+✔ Chinese source-image localization accepts a retained WebP original without conversion (374.0274ms)
+✔ collage recomposition requests the source-shaped output and forbids dark card styling (111.64ms)
+✔ text-only editorial cards use structured translation and deterministic uncropped layout (842.1664ms)
+✔ dense editorial cards translate first and preserve ordered readable layout (2035.2637ms)
+✔ layout overflow persists translation and a layout retry does not translate twice (4599.6564ms)
+✔ editorial translation refuses an in-memory success without a durable checkpoint (43.637ms)
+✔ photo-omission QA overrides a stale empty photo-region analysis on editorial-card retry (85.66ms)
+✔ production runtime installs the font used by deterministic editorial cards (0.4165ms)
+✔ a persisted transform candidate resumes only quality QA after a transient reviewer failure (97.5235ms)
+✔ a promoted candidate with passing QA is reused without another provider call (101.5071ms)
+✔ visual call evidence distinguishes local rejection, provider responses, and unknown transport outcomes (2.3127ms)
+✔ SQLite receipt contention after a QA response retries locally without another provider call (102.9888ms)
+✔ a transform error never creates a fake resumable candidate (0.778ms)
+✔ route transformation sends approved names/topology and stores the independent pixel audit with actual bytes (78.3102ms)
+✔ route panel transformation sends actual cropped pixels to localization and independent QA, preserving original (235.8966ms)
+✔ loopback HTTP receiver stores independent bytes, transforms output, loses receipt and returns invalid responses (1438.7059ms)
+✔ real JPEG/PNG/WebP decode, EXIF orientation, alpha, source identity and immutable master QA (2616.7554ms)
+✔ photos downscale without enlargement; dense text keeps pixels with lossless output (1007.9232ms)
+✔ invalid MIME, broken decode, pixel resource limit and animation are diagnosed without ready files (35.6371ms)
+✔ cache concurrency, transform version, corrupt cache and QA cannot be bypassed by reuse or fallback (1460.7601ms)
+✔ optimization fallback obeys safe normalized dimensions and retries only encoding (521.2357ms)
+✔ actual crop bytes contain the safe region and preserve master; unsafe crops fail (136.7912ms)
+✔ actual configured adapter uploads derivative bytes and keeps master QA/source identity (303.6759ms)
+✔ public URLs reject local/private/signed delivery and remote hashes remain explicitly unknown (0.357ms)
+✔ cache binds original provenance and rejects receipt tampering or missing bytes (1161.4324ms)
+✔ fractional crop rounds outward to retain every safe-region pixel (70.9237ms)
+ℹ tests 93
+ℹ suites 0
+ℹ pass 93
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 26364.6226

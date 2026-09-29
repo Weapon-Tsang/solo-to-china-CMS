@@ -1,0 +1,35 @@
+(node:5716) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (1686.0165ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (2030.1868ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ explicit revocation restores old slot exactly with an appended revision and no provider work (1386.6192ms)
+✔ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (702.232ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1484.8895ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (10972.2867ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (709.1696ms)
+(node:19188) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ writer receives bounded image subjects without resending full media and source context (2.0261ms)
+✔ Kimi-backed independent QA cannot approve deterministic evidence or commercial violations (27.6688ms)
+✔ page composition extracts CMS node references before Frontend validation (1.6431ms)
+✔ page composition augments every oneOf component variant with CMS provenance (1.1899ms)
+(node:1572) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ same-entity stored source becomes a separate cover candidate with real binding checks; illustration plan never dispatches (811.565ms)
+✔ commercial overlay preserves editorial blocks and exact Page Payload order (2.088ms)
+✔ structured affiliate search uses exactly one Frontend delivery representation (0.2765ms)
+✔ Publish Package carries presentation, semantic SEO/GEO, JSON-LD, and WordPress media references (1.9464ms)
+✔ Publish Package translates internal CMS taxonomy before WordPress delivery (0.2744ms)
+✔ commercial reconciliation proves each selected slot across payload, WordPress storage and visible DOM (0.784ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19305.1755

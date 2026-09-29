@@ -1,0 +1,83 @@
+(node:3768) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ article bundle uses one structured request and keeps evidence scoped to the plan (10.306ms)
+✔ article bundle rejects an unsupported claim before persistence (0.7796ms)
+(node:6324) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-38: automatic local supplementation reads complete long captions and keeps exact locators (16.6294ms)
+✔ T02-38: exhausted automatic reads retain omitted ranges and never hide pending context (8.5985ms)
+✔ T02-43: changing image order changes the context fingerprint and cannot reuse old positional evidence (0.7161ms)
+✔ T02-42/45: repair previews are read-only, apply is idempotent and stale preview cannot write (720.5897ms)
+✔ T02-43: revocation survives context/policy revisions without restoring automatic adoption (608.9234ms)
+✔ T02-38/45: evidence beyond the budget cannot produce a confirmed relation (575.7873ms)
+✔ T02-38: unrelated omitted prose does not invalidate a complete direct image caption (557.3397ms)
+✔ T02-46: PDF visual input with image kind cannot be repaired or matched as an independent photograph (552.6674ms)
+✔ T02-45: affected slots are reported while draft and frozen manifest remain unchanged (555.314ms)
+(node:18616) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T02-36/39/43: typed evidence persists and only the supported use can match (832.5306ms)
+✔ T02-43: explicit opposing source statements persist as conflict, never score away (579.8238ms)
+✔ T02-43: same bytes retain a locatable opposing occurrence and invalidate a prior positive read (555.7628ms)
+✔ T02-43: unrelated negation is not an explicit contradiction of the named place (526.9588ms)
+✔ T02-43: conflicting source evidence cannot re-enter matching through perfect pixel-name overlap (562.4524ms)
+✔ T02-33/34/40: explicit source relation retrieves a generic photo with no Claims and survives focused-article matching (565.822ms)
+✔ T02-43: ambiguous cross-destination entities are separately retained and city-level names cannot confirm a stop (540.531ms)
+✔ T02-43: publication gate rejects a revoked source binding even when an old matching score is high (546.4675ms)
+✔ T02-42/43: a newly conflicting alias invalidates only the binding revision and preserves prior evidence (513.0478ms)
+✔ T02-36/39: nearby mentions, uncertain captions and multi-place image references cannot certify a specific photo (568.0357ms)
+✔ T02-41: explicit IDs beyond 160 are preserved; automatic paging reports a remaining range (748.2521ms)
+✔ T02-41: existing article slot retrieves its exact ID beyond the automatic source page (673.7692ms)
+✔ T02-42/43: only binding context changes, old relation remains stale, analysis and bytes are reused (546.6961ms)
+✔ T02-63/70: snapshot and isolated review restore preserve context and binding fingerprints without jobs (777.5735ms)
+✔ schema 81 is additive and does not backfill, buy analysis, or mutate old records (1073.9413ms)
+✔ T02-42/43: reads reject text, caption and alias changes before a repair job without mutating records (533.2448ms)
+✔ T02-42/43: reversible evidence edits restore the matching revision but never revive revoked decisions (553.8978ms)
+✔ T02-39: entity identity cannot certify a different destination, uppercase entrance or whole-day diagram (0.2386ms)
+✔ T02-43: alias cache observes another connection and never retains rolled-back evidence (545.4675ms)
+(node:19304) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ only a hash-verified pending QA candidate can reconcile an unknown dispatch (805.4748ms)
+✔ shared SQLite enforces 2 RPM pacing without an initial burst (616.8886ms)
+✔ 429 cooldown and unknown outcomes persist through a new executor (578.3118ms)
+✔ explicit grant is durable, idempotent and retains cumulative spent and quota cooldown (561.9904ms)
+✔ an unknown exhausted dispatch cannot be unlocked by an operator grant (560.6763ms)
+✔ two real processes sharing one SQLite file never own the visual lane together (1178.9188ms)
+(node:17480) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ historical article without route snapshot stays unknown and cannot be silently backfilled (942.614ms)
+✔ malformed scopes and unresolved targets cannot create an approved route or mutate body/jobs (783.5113ms)
+✔ published three-day article: media-only permission cannot decide; explicit approval preserves body, publication, budget and jobs (733.8558ms)
+✔ Worker rejects approved route v2 with preserved article v1 before composition, QA or delivery (818.3746ms)
+✔ source change or another decision makes approval stale; rejection creates no route revision (644.3264ms)
+✔ pending proposal and approved decision survive real migration-review restore without starting work (861.8948ms)
+✔ actual HTTP: admin and origin guards, malformed requests, preview, proposal and reject are enforced (783.5401ms)
+(node:5996) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ subroute use requires contiguous approved occurrences; a partial diagram cannot claim the full day (7.9333ms)
+✔ actual normalization retains panel crop semantics but never delivers the uncropped collage as a subroute (8.4011ms)
+✔ actual normalization accepts related other-day photo but blocks a mismatching full-day map with a durable gap (13.8055ms)
+✔ optional conflicting route map retains its source and explicit omission instead of vanishing (1.7488ms)
+✔ actual independent visual QA request contains frozen topology and rejects missing/stale/wrong-arrow receipts (28.2164ms)
+(node:18048) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ planning and actual writer/reviewer distinguish knowledge from an explicitly approved mixed section (982.5032ms)
+✔ optional route renderer failure is omitted durably and continues to independent review without rewriting (770.4162ms)
+✔ real Worker route page composition can upload before text QA, while final delivery still rejects missing QA (1338.6308ms)
+✔ real planning, writer and independent review carry frozen route; no route/SEO/diagram model calls (754.3212ms)
+✔ actual Worker separates successful writing from local schematic media stage (802.4509ms)
+✔ real Worker image-only recovery retains written draft, manifest and cumulative slot budget (1184.0322ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ mixed media image-only recovery keeps the completed source photo bytes and receipt intact (2643.9075ms)
+✔ actual Worker blocks itinerary without source fragments before a writer/model call (569.4961ms)
+✔ new recovery jobs cannot reset the local route render budget (801.2233ms)
+✔ two actual source extractions retain scoped field conflict and block Worker before writing (617.087ms)
+✔ actual planning consumes stored composition scope and excludes old extraction inputs (564.0308ms)
+✔ route visual late results are rejected and changing a plan preserves its cumulative slot recovery budget (572.2595ms)
+ℹ tests 60
+ℹ suites 0
+ℹ pass 60
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12234.9238

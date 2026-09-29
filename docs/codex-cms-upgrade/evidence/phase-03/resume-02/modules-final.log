@@ -1,0 +1,113 @@
+(node:34000) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"timestamp":"2026-09-28T08:59:33.520Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"b66426a9-f7ba-4fc9-b18a-ec40612fcda3","method":"POST","path":"/api/drafts/cover-draft/article-media/uploads","status":507,"error":{"name":"Error","message":"可用磁盘不足以保存原件和分块；请释放空间后重试。","code":"MEDIA_DISK_RESERVE"}}
+{"timestamp":"2026-09-28T08:59:33.863Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"797ce0f2-2b26-4e6c-b124-9583bd5429a4","method":"PUT","path":"/api/drafts/cover-draft/article-media/uploads/b6db1ce6-2d27-4ce0-b8d4-0bfd1b044187/chunks/0","status":507,"error":{"name":"Error","message":"磁盘保护阈值不足，请暂停并释放空间。","code":"MEDIA_DISK_RESERVE"}}
+{"timestamp":"2026-09-28T08:59:35.195Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"6bad1ffc-4c9e-43b3-9e3c-8c81237794a6","method":"POST","path":"/api/drafts/cover-draft/article-media/uploads/c849c25d-c876-4c94-adaf-ee181349d571/complete","status":500,"error":{"name":"Error","message":"Input image exceeds pixel limit"}}
+{"status":"PASS","application_413":413,"disk_preflight":507,"disk_chunk":507,"successful_retry":"pending_confirmation","resource_pixels":42250000,"oversized_decode_state":"failed","failed_original_retained":true,"provider_calls":0}
+✔ article upload diagnoses application 413, disk reserve and decode resource limit without losing a valid session (3070.235ms)
+(node:7100) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"nonempty_samples":30,"p50_ms":2.735099999999875,"p95_ms":17.257300000000214,"provider_calls":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","api_only":true}
+✔ actual authenticated API streaming, ownership, CSRF, confirmation, lost receipt recovery and nonempty latency (4000.8365ms)
+(node:31204) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ display capacity rejects adoption with exact excess while preserving stored originals (1953.8429ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (2937.617ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (2780.8705ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ explicit revocation restores old slot exactly with an appended revision and no provider work (1700.3355ms)
+✔ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (733.3196ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ media-only receiver protocol retains old receipts and reconciles unknown outcomes without duplicate upload (1575.825ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1595.3259ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (11398.6483ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (709.793ms)
+(node:35944) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives legacy to QA and WordPress draft delivery (10168.5431ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives article_bundle_v1 to QA and WordPress draft delivery (7077.8081ms)
+(node:35052) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-01/16 observations persist, menu reads never fetch, TTL/manual refresh and revisions are distinct (1045.0232ms)
+✔ T03-16 concurrent clicks coalesce; late results never overwrite a newer revision (1122.0345ms)
+✔ T03-02/17 private/preview/off-site permalinks cannot be requested or overridden (1051.1053ms)
+✔ T03-16 actual local API authenticates and persists inspections without queue/model/content changes (991.3655ms)
+✔ fixed published HTML passes visible body, SEO, schema, media and crawler checks without outcome claims (26.9492ms)
+✔ draft preview requires noindex and exclusion from the public sitemap (3.6218ms)
+✔ draft preview validates article identity, body, media and commercial slots instead of accepting any HTTP 200 (34.9291ms)
+✔ published HTML fails for inherited noindex, hidden body, broken headings, media or schema (3.8434ms)
+✔ mobile, desktop and ordinary user-agent variants must expose the same article facts (13.3451ms)
+✔ T03-03 document title, H1 and card title are independent (8.4873ms)
+✔ T03-04/05 rendered HTML uses all robots tags and the selected crawler group (4.855ms)
+✔ T03-06 logo first and multiple eager images do not pretend to identify measured LCP (3.1023ms)
+✔ T03-10 a later conflicting Article in an array cannot hide behind the first valid script (2.027ms)
+✔ T03-01/02/07 unobserved external checks remain pending while missing content fails independently (5.8213ms)
+✔ T03-09 all head outputs are compared; plugin identity is not inferred (2.417ms)
+✔ T03-17 unavailable anonymous HTML cannot be scored as missing article content (0.294ms)
+✔ T03-01/20 hidden and template text cannot satisfy initial content or important facts (19.0809ms)
+✔ T03-03/05 HTML entities and unquoted attributes use HTML parsing semantics (6.0556ms)
+✔ T03-12 FAQ markup requires visible matching questions and answers, markup itself is optional (8.7574ms)
+✔ T03-10/11 same identity conflicts and explicit author/date evidence are checked across scripts (31.4494ms)
+✔ T03-01 concise useful content has no arbitrary minimum character gate (0.9161ms)
+✔ T03-15 hidden images and fake class references do not satisfy required media (3.6998ms)
+✔ T03-06/15 responsive candidate omissions and fake WebP bytes are diagnosed (2.2066ms)
+✔ T03-15/17 inaccessible image is unknown rather than a media pass or fabricated absence (2.0016ms)
+(node:28092) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-29/39/40 confirmed stop photo proceeds locally; a conflicting Day image stays saved and cannot rewrite approved text (4096.9296ms)
+✔ T03-36/38 photo cannot replace a whole-day obligation; claimed matching Day cannot bypass pixel QA or stale approval (897.9713ms)
+(node:4808) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ Search Console adapter authenticates with a service account and paginates read-only query inventory (70.2792ms)
+✔ Search Console adapter rejects unsafe property identifiers before authentication (1.8811ms)
+✔ Search Console inventory runs through the durable job pipeline (1078.4522ms)
+✔ T03-21/22 saved search observations distinguish absent, empty, failed and stale data without invented outcomes (0.5667ms)
+✔ SEO preview preserves long editorial fields and makes no display or CTR promise (1.1677ms)
+✔ inventory route or status changes identify only page blocks that reference the changed target (1.7546ms)
+✔ canonical URL is emitted only from a configured public route or verified published URL (59.7218ms)
+✔ unsupported title promises are rejected without treating length as a hard limit (0.8675ms)
+✔ SEO and structured data stay synchronized with visible page content (28.1589ms)
+✔ FAQ schema is optional and must exactly match the visible FAQ when present (29.0425ms)
+✔ internal links use only relevant public inventory and invalid targets fail final checks (42.6629ms)
+✔ duplicate inventory creates an editorial risk, never an automatic merge or canonical instruction (5.4275ms)
+✔ Publish Package overwrites conflicting model metadata from one deterministic source (1.4761ms)
+✔ T03-12 visible FAQ is valid without optional markup, later conflicting markup fails (8.9899ms)
+✔ T03-08/10/13 query identities, later Article and local anchors remain distinct (1.2616ms)
+✔ T03-13 unknown links are pending diagnostics, confirmed broken targets fail, contextual Read guide is valid (2.5028ms)
+✔ T03-13 entity identity ranks above title overlap and explicit unknown access is not selected (0.3295ms)
+✔ T03-14 entity plus independent question controls advisory new/update/merge/claim decisions (0.3157ms)
+✔ T03-08/15 internal CMS origins and private literal addresses cannot become public canonical metadata (0.2553ms)
+✔ T03-07/16 explicit inspection traverses child sitemaps and propagates revision and refresh (28.1195ms)
+✔ T03-07 budgets and inaccessible children preserve unknown rather than declaring absence (8.2365ms)
+✔ T03-17 inaccessible page stops inspection without pretending content is missing (2.8364ms)
+✔ T03-04 robots groups distinguish agents and combine equally specific groups (6.5186ms)
+✔ T03-05 longest path, allow ties, wildcards, terminal anchors, comments and encoded paths (2.3988ms)
+✔ T03-05 all applicable meta and header directives apply, other agents remain separate (6.3665ms)
+✔ T03-08 preserve confirmed permalink routing, pagination and slash distinctions (0.4169ms)
+✔ T03-16 allowlist validates every redirect before connection; DNS/private addresses remain blocked (11.7229ms)
+✔ T03-16 page-hash cache, manual invalidation and bounded responses (17.1279ms)
+✔ T03-17 403 and authentication are unknown; concurrency and DNS time are bounded (44.2893ms)
+✔ T03-07 namespace XML parses escaped page URLs and ignores image loc and comments (4.1895ms)
+✔ T03-07 unresolved children, malformed XML, DTD and exhausted budgets remain unknown (2.5149ms)
+(node:27552) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-21/22 real local HTTP exposes saved GSC state without scheduling or requesting Google (939.8989ms)
+ℹ tests 71
+ℹ suites 0
+ℹ pass 71
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 26443.489

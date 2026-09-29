@@ -1,0 +1,82 @@
+{
+  "head": "490dd7464d4beb46d3f89a578337c253917fbf7a",
+  "branch": "main",
+  "remote": "https://github.com/Weapon-Tsang/solo-to-china-CMS.git",
+  "full_spec_sha256": "cdfb039e8d92c5a4c5e1a51a05fce924c71fc45cdb654895a7df3459bebfa91a",
+  "files": [
+    {
+      "sha256": "9eb16e66f1430105f801feb1790d5c5df9a714e452e2272ba6775283c1b09f69",
+      "path": "src/cover-policy.mjs"
+    },
+    {
+      "sha256": "0b8f53f93ab09a8cf32c806e6d32cfc15455a116668b89f7d6fa4ff3d9b9346a",
+      "path": "test/cover-audit.test.mjs"
+    },
+    {
+      "sha256": "102bcdd9d0157c24d92a66561ab828cc9f87128c4334ba40914cf97c20a52ae0",
+      "path": "src/ai/content-engine.mjs"
+    },
+    {
+      "sha256": "21d78be0009763cfa19bd62afaaf7f4e51dc7aa51a73aa22ba16d969d697149e",
+      "path": "src/visuals/route-schematic.mjs"
+    },
+    {
+      "sha256": "ae56b9a34521bf5e5e92ebbf442a8e2af45e6fe590fca65833eaeaec69068e03",
+      "path": "src/repository.mjs"
+    },
+    {
+      "sha256": "1af42ad72511fb03c1568156de958a3efa20492ac2e07295b34ac7cdf83e9bd7",
+      "path": "test/stage03-route-chain.test.mjs"
+    },
+    {
+      "sha256": "3d79792e8ef1526105579e6cf4ce609073ae16e943bdda8d9990950007681fe5",
+      "path": "test-support/fixtures/stage03-pinned-contract.json"
+    },
+    {
+      "sha256": "059fb93ad85e662af978b1c7dc18eaf824a02dcf6ea7883ed685e6ff6044a50c",
+      "path": "test-support/fixtures/stage03-pinned-contract.README.md"
+    },
+    {
+      "sha256": "ea2c3364406636195a5d5898ff844469126aed04e02290377e5567354ae7e184",
+      "path": "scripts/stage03-browser-fixture.mjs"
+    },
+    {
+      "sha256": "b0153244dae3c8dcba7daf48d2a095c31dde4188532eb5b5a197095d970b2c58",
+      "path": "scripts/verify-stage03-route-upload.js"
+    },
+    {
+      "sha256": "e09789b8b079ce26ff03d9f9eadc489d0b73d34a50adc3266d33cc1a3b242691",
+      "path": "scripts/verify-stage03-menu-performance.js"
+    },
+    {
+      "sha256": "c5d5158db393cc98bc2825173740b3403961d061150197348adbc5d6a3bd9366",
+      "path": "scripts/stage03-historical-replay.mjs"
+    },
+    {
+      "sha256": "5f41688f581843e1378fcc52fef4651e0d515d26790d0ca1cfb6d43170f7fbc3",
+      "path": "scripts/benchmark-local-stage01.mjs"
+    },
+    {
+      "sha256": "86714337ed57eb49d0b4656d319500069dfaa41a7baf5a76076ef9e6c627a20e",
+      "path": "scripts/stage03-benchmark-media-load.mjs"
+    },
+    {
+      "sha256": "c02f7b31732edb5368a7b73cf38bbdf674c5f93366fe2d219620f894b06172b2",
+      "path": "docs/codex-cms-upgrade/STATUS.md"
+    },
+    {
+      "sha256": "e9fde2b829573c4b308d091fb2b7db8f4a1fe457e0527d642061c5a769eb501e",
+      "path": "docs/codex-cms-upgrade/EXTERNAL_DEPENDENCIES.md"
+    },
+    {
+      "sha256": "63dae04c9bbf6a2374e3f94bec180eba3abe2cd1c20ad11c73e92aa7cca10bd6",
+      "path": "docs/codex-cms-upgrade/acceptance/phase-03.md"
+    },
+    {
+      "sha256": "31ee9bb5faa958de81f30398770039f166e26415568d816beb5cf9bfdb6fd72e",
+      "path": "docs/codex-cms-upgrade/evidence/phase-03/resume-03/checkpoint.md"
+    }
+  ],
+  "note": "Hashes describe final workspace files including preserved earlier changes; not an attribution of every diff to this turn.",
+  "created_at": "2026-09-28T18:31:15.3470425+08:00"
+}

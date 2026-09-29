@@ -1,0 +1,29 @@
+(node:29016) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives legacy to QA and WordPress draft delivery (6455.2154ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ human approval drives article_bundle_v1 to QA and WordPress draft delivery (5786.3401ms)
+(node:22780) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-01/16 observations persist, menu reads never fetch, TTL/manual refresh and revisions are distinct (676.6771ms)
+✔ T03-16 concurrent clicks coalesce; late results never overwrite a newer revision (651.3432ms)
+✔ T03-02/17 private/preview/off-site permalinks cannot be requested or overridden (613.5747ms)
+✔ T03-16 actual local API authenticates and persists inspections without queue/model/content changes (630.8394ms)
+(node:31232) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-29/39/40 confirmed stop photo proceeds locally; a conflicting Day image stays saved and cannot rewrite approved text (1670.8085ms)
+✔ T03-36/38 photo cannot replace a whole-day obligation; claimed matching Day cannot bypass pixel QA or stale approval (635.3528ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12739.7142

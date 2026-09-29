@@ -1,0 +1,39 @@
+### Result
+{"status":"PASS","scope":"browser confirmation and local deterministic rendering; not WordPress or model pixel QA","media_revision":3,"body_preserved":true,"originals_preserved":true,"provider_calls":0,"layouts":[{"width":320,"overflow":false},{"width":768,"overflow":false},{"width":1024,"overflow":false},{"width":1440,"overflow":false}],"route_hash":"6c8899f689df320ffdd0a2935b4d101de7a9e45460d7c5e6fb3b9f2fa47f17a5"}
+### Ran Playwright code
+```js
+await (async (page) => {
+  const panel=page.getByTestId('article-media');
+  const before=await page.evaluate(async()=> (await (await fetch('/api/content/route-owner/production-state')).json()).draft.draft);
+  const saved=await page.evaluate(async id=>(await fetch(`/api/drafts/${id}/article-media`)).json(),before.id);
+  await panel.getByRole('button',{name:'按批准骨架重编示意图（保留原图）',exact:true}).click();
+  const pending=page.waitForResponse(r=>r.url().endsWith('/article-media/plan'));
+  await panel.getByRole('button',{name:'预览采用差异',exact:true}).click();
+  const plan=await (await pending).json();
+  if(plan.selections?.[0]?.render_preview?.days.length!==3)throw Error(JSON.stringify(plan));
+  await panel.getByText('将采用完整批准路线示意图；上传原图仅保留，不作为相符路线图交付。',{exact:true}).waitFor();
+  await panel.getByRole('checkbox',{name:'已核对图片、替换范围和说明',exact:true}).check();
+  const confirmed=page.waitForResponse(r=>r.url().endsWith('/article-media/confirm'));
+  await panel.getByRole('button',{name:'确认采用并继续',exact:true}).click();
+  const receipt=await (await confirmed).json();
+  if(receipt.state!=='local_ready')throw Error(JSON.stringify(receipt));
+  await panel.getByText('已存会话 2 · 媒体版本 3',{exact:true}).waitFor();
+  const after=await page.evaluate(async()=> (await (await fetch('/api/content/route-owner/production-state')).json()).draft.draft);
+  for(const key of ['body_markdown','content_hash','revision','title','slug'])if(before[key]!==after[key])throw Error('Changed '+key);
+  const final=await page.evaluate(async id=>(await fetch(`/api/drafts/${id}/article-media`)).json(),before.id);
+  const preview=panel.getByRole('img',{name:'按批准骨架生成的路线顺序示意图',exact:true});
+  await preview.waitFor();
+  if(!await preview.evaluate(async img=>{await img.decode();return img.naturalWidth>0&&img.naturalHeight>0;}))throw Error('Missing rendered preview');
+  await panel.getByText('原件保留；本槽位改用批准路线示意图',{exact:true}).waitFor();
+  if(saved.items.some(item=>final.items.find(x=>x.id===item.id)?.receipt.sha256!==item.receipt.sha256))throw Error('Original changed');
+  const layouts=[];
+  for(const width of [320,768,1024,1440]){await page.setViewportSize({width,height:1000});layouts.push({width,overflow:await panel.evaluate(el=>el.scrollWidth>el.clientWidth+1)});}
+  if(layouts.some(x=>x.overflow))throw Error(JSON.stringify(layouts));
+  await preview.scrollIntoViewIfNeeded();
+  await preview.screenshot({path:'output/playwright/phase03-route-recomposed-image.png'});
+  await page.screenshot({path:'output/playwright/phase03-route-recomposed.png'});
+  return {status:'PASS',scope:'browser confirmation and local deterministic rendering; not WordPress or model pixel QA',media_revision:final.media_revision,
+    body_preserved:true,originals_preserved:true,provider_calls:receipt.provider_calls,layouts,route_hash:final.route.approved_route_hash};
+}
+)(page);
+```

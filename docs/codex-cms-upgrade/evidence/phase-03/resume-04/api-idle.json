@@ -1,0 +1,900 @@
+{
+  "format": "cms-phase01-benchmark-1",
+  "createdAt": "2026-09-28T11:06:19.711Z",
+  "machine": {
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.14.0",
+    "cpus": 8,
+    "totalMemoryBytes": 17107996672
+  },
+  "dataset": {
+    "sources": 1000,
+    "claims": 10000,
+    "drafts": 300,
+    "mediaMetadata": 3000,
+    "knowledgeFacts": 1000,
+    "failedJobs": 50,
+    "type": "synthetic fixture"
+  },
+  "mode": "development",
+  "workerLoad": "idle",
+  "syntheticLoad": null,
+  "mediaLoad": null,
+  "network": "loopback",
+  "warmupPerRoute": 1,
+  "validSamplesPerRoute": 30,
+  "percentileMethod": "nearest-rank",
+  "eventLoopDelayP95Ms": 16.49,
+  "queryPlans": {
+    "sources": [
+      {
+        "id": 4,
+        "parent": 0,
+        "notused": 216,
+        "detail": "SCAN sources"
+      },
+      {
+        "id": 16,
+        "parent": 0,
+        "notused": 0,
+        "detail": "USE TEMP B-TREE FOR ORDER BY"
+      }
+    ],
+    "claims": [
+      {
+        "id": 5,
+        "parent": 0,
+        "notused": 61,
+        "detail": "SEARCH claims USING INDEX sqlite_autoindex_claims_2 (source_id=?)"
+      },
+      {
+        "id": 22,
+        "parent": 0,
+        "notused": 0,
+        "detail": "USE TEMP B-TREE FOR ORDER BY"
+      }
+    ],
+    "content": [
+      {
+        "id": 4,
+        "parent": 0,
+        "notused": 216,
+        "detail": "SCAN content_opportunities"
+      },
+      {
+        "id": 18,
+        "parent": 0,
+        "notused": 0,
+        "detail": "USE TEMP B-TREE FOR ORDER BY"
+      }
+    ]
+  },
+  "results": [
+    {
+      "route": "/api/sources?limit=20",
+      "warmup": {
+        "ms": 28.82,
+        "bytes": 20753,
+        "sqlStatements": 4
+      },
+      "samples": [
+        {
+          "ms": 5.418,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 3.719,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.434,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 4.593,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.565,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 3.162,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.522,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 3.08,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 3.627,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.516,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.593,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.132,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 3.06,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.213,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 3.041,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.195,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.019,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.458,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 1.906,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.179,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.033,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.06,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.757,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 1.985,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 1.82,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.015,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.037,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 1.957,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 2.038,
+          "bytes": 20753,
+          "sqlStatements": 4
+        },
+        {
+          "ms": 1.702,
+          "bytes": 20753,
+          "sqlStatements": 4
+        }
+      ],
+      "p50Ms": 2.213,
+      "p95Ms": 4.593,
+      "p95SqlStatements": 4,
+      "targetP95Ms": 300,
+      "targetMet": true
+    },
+    {
+      "route": "/api/knowledge/subjects?limit=20",
+      "warmup": {
+        "ms": 9.204,
+        "bytes": 7177,
+        "sqlStatements": 1
+      },
+      "samples": [
+        {
+          "ms": 7.581,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 8.014,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 7.59,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 8.37,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 7.189,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 9.283,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 7.516,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 8.28,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 7.701,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 5.839,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 4.951,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 4.863,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 6.059,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 5.143,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 4.922,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 5.969,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 5.243,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 4.993,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 4.877,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 7.061,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 4.968,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 4.708,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 7.145,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 5.038,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 6.128,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 5.92,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 5.595,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 5.649,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 5.159,
+          "bytes": 7177,
+          "sqlStatements": 1
+        },
+        {
+          "ms": 5.261,
+          "bytes": 7177,
+          "sqlStatements": 1
+        }
+      ],
+      "p50Ms": 5.839,
+      "p95Ms": 8.37,
+      "p95SqlStatements": 1,
+      "targetP95Ms": 300,
+      "targetMet": true
+    },
+    {
+      "route": "/api/content?limit=20",
+      "warmup": {
+        "ms": 10.958,
+        "bytes": 18740,
+        "sqlStatements": 30
+      },
+      "samples": [
+        {
+          "ms": 7.363,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.856,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.614,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 8.266,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.337,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 8.937,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 6.794,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 8.108,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.773,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 9.132,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.406,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 8.636,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.502,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 8.422,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 8.206,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.598,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.943,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.381,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 9.112,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 6.869,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 9.907,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.274,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.832,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 6.937,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 8.463,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 6.883,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.292,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.761,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.259,
+          "bytes": 18740,
+          "sqlStatements": 30
+        },
+        {
+          "ms": 7.045,
+          "bytes": 18740,
+          "sqlStatements": 30
+        }
+      ],
+      "p50Ms": 7.614,
+      "p95Ms": 9.132,
+      "p95SqlStatements": 30,
+      "targetP95Ms": 300,
+      "targetMet": true
+    },
+    {
+      "route": "/api/exceptions?limit=20",
+      "warmup": {
+        "ms": 6.45,
+        "bytes": 10016,
+        "sqlStatements": 3
+      },
+      "samples": [
+        {
+          "ms": 13.433,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.906,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 6.349,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.045,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.005,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 5.604,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.355,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.158,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.43,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 5.465,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.1,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 3.949,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.887,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.632,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 5.705,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 3.997,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 5.219,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.158,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.172,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.029,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 5.162,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.115,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.066,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.905,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.966,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.203,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 3.963,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 7.187,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.371,
+          "bytes": 10016,
+          "sqlStatements": 3
+        },
+        {
+          "ms": 4.014,
+          "bytes": 10016,
+          "sqlStatements": 3
+        }
+      ],
+      "p50Ms": 4.355,
+      "p95Ms": 7.187,
+      "p95SqlStatements": 3,
+      "targetP95Ms": 300,
+      "targetMet": true
+    },
+    {
+      "route": "/api/dashboard/summary",
+      "warmup": {
+        "ms": 5.094,
+        "bytes": 733,
+        "sqlStatements": 78
+      },
+      "samples": [
+        {
+          "ms": 0.89,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.733,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.72,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.822,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.776,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.677,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.679,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.699,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.682,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.67,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.671,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.755,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.676,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.671,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.672,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.687,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.665,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.664,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.679,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.657,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 1.225,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 1.254,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.724,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.688,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.807,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.669,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.651,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 1.848,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.654,
+          "bytes": 733,
+          "sqlStatements": 7
+        },
+        {
+          "ms": 0.637,
+          "bytes": 733,
+          "sqlStatements": 7
+        }
+      ],
+      "p50Ms": 0.679,
+      "p95Ms": 1.254,
+      "p95SqlStatements": 7,
+      "targetP95Ms": 300,
+      "targetMet": true
+    }
+  ]
+}

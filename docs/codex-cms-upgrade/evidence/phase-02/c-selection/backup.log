@@ -1,0 +1,41 @@
+(node:24464) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ source cleanup preserves nested web/crop references and snapshots remain independent (853.5078ms)
+✔ web derivative lineage and exact bytes restore across directories in migration review (1015.5563ms)
+✔ system snapshot hashes the database, uploads and generated media and drills an offline delivery (934.945ms)
+✔ restore verification rejects a deleted database-referenced image (778.3074ms)
+✔ snapshot refuses source bytes that disagree with the database fingerprint (690.2171ms)
+✔ restore drill rejects media whose bytes disagree with its declared MIME (812.1151ms)
+✔ direct restore rejects media whose bytes disagree with its declared MIME before activation (762.6141ms)
+✔ restore refuses a snapshot from a newer schema before creating a target (731.5217ms)
+✔ restore refuses insufficient free space before creating target or staging (765.4873ms)
+✔ an interrupted restore resumes only the same snapshot and repairs partial files (1055.3892ms)
+✔ restore migrates an older snapshot only inside the isolated target (742.0309ms)
+✔ snapshot verification compares manifest hashes rather than only file sizes (669.1385ms)
+✔ snapshot verification rejects an omitted database file reference (702.7168ms)
+✔ snapshot verification rejects omitted, altered, and untrusted business fingerprints (804.3534ms)
+✔ business fingerprint catches changed source state after the database file hash is updated (719.9191ms)
+✔ snapshot includes durable source storage references and pending capture chunks (873.2501ms)
+✔ snapshot restores an unpromoted visual candidate file and its database path (824.709ms)
+✔ snapshot preserves and remaps file paths nested in historical capture JSON (858.8472ms)
+✔ snapshot rejects a missing file referenced only by historical capture JSON (629.8513ms)
+✔ version 2 manifests remain readable without version 3 JSON references (798.09ms)
+✔ version 2 recovers omitted relative source storage references only from archived files (821.095ms)
+✔ snapshot rejects case collisions and archive symlinks (715.8019ms)
+✔ snapshot restores to a new external root and remaps only stored file references (826.9127ms)
+✔ restore remaps a POSIX stored path fixture on Windows without changing unrelated text (766.8369ms)
+✔ snapshot refuses to race an active media file mutation (543.9171ms)
+✔ restore refuses a symbolic-link ancestor before creating the target (672.3127ms)
+(node:25588) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real cover pixels, explicit preview confirmation, CAS, history and body preservation (1778.3467ms)
+✔ unsafe geometry, stale source relation and concurrent confirmations cannot save a cover (1371.4117ms)
+✔ cover history files restore across directories, cleanup preserves references, and review does not dispatch (1307.0108ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 20685.777

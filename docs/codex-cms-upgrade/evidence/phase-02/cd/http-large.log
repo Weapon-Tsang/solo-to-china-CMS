@@ -1,0 +1,17 @@
+(node:9640) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"nonempty_samples":30,"p50_ms":1.572400000000016,"p95_ms":5.372100000000046,"provider_calls":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","api_only":true}
+✔ actual authenticated API streaming, ownership, CSRF, confirmation, lost receipt recovery and nonempty latency (1794.5684ms)
+(node:12380) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"large_valid_image":{"bytes":23079275,"width":3200,"height":2400},"transport":[{"fixture":"transport-only, intentionally invalid pixels","mib":128,"chunk_bytes":8388608,"rss_before":161492992,"rss_peak":176279552,"elapsed_ms":1078,"state":"failed"},{"fixture":"transport-only, intentionally invalid pixels","mib":512,"chunk_bytes":8388608,"rss_before":168595456,"rss_peak":178651136,"elapsed_ms":4152,"state":"failed"}]}
+✔ large actual PNG exceeds former inline ceiling; 128/512 MiB transport fixtures stream and remain quarantined (7645.4804ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7975.4528

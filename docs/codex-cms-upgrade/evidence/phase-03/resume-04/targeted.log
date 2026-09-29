@@ -1,0 +1,66 @@
+✔ fixed published HTML passes visible body, SEO, schema, media and crawler checks without outcome claims (22.3656ms)
+✔ draft preview requires noindex and exclusion from the public sitemap (4.5394ms)
+✔ draft preview validates article identity, body, media and commercial slots instead of accepting any HTTP 200 (5.1468ms)
+✖ T03-08 preview schema uses the explicit public canonical, preserving meaningful query and slash identity (8.8113ms)
+✔ published HTML fails for inherited noindex, hidden body, broken headings, media or schema (3.7403ms)
+✔ mobile, desktop and ordinary user-agent variants must expose the same article facts (1.8799ms)
+✔ T03-03 document title, H1 and card title are independent (3.6017ms)
+✔ T03-04/05 rendered HTML uses all robots tags and the selected crawler group (4.5793ms)
+✔ T03-06 logo first and multiple eager images do not pretend to identify measured LCP (2.8616ms)
+✔ T03-10 a later conflicting Article in an array cannot hide behind the first valid script (3.4599ms)
+✔ T03-01/02/07 unobserved external checks remain pending while missing content fails independently (2.6369ms)
+✔ T03-09 all head outputs are compared; plugin identity is not inferred (2.3126ms)
+✔ T03-17 unavailable anonymous HTML cannot be scored as missing article content (0.2384ms)
+✔ T03-01/20 hidden and template text cannot satisfy initial content or important facts (9.2804ms)
+✔ T03-03/05 HTML entities and unquoted attributes use HTML parsing semantics (6.3157ms)
+✔ T03-12 FAQ markup requires visible matching questions and answers, markup itself is optional (15.6762ms)
+✔ T03-10/11 same identity conflicts and explicit author/date evidence are checked across scripts (8.6279ms)
+✔ T03-01 concise useful content has no arbitrary minimum character gate (0.6547ms)
+✔ T03-15 hidden images and fake class references do not satisfy required media (4.6207ms)
+✔ T03-06/15 responsive candidate omissions and fake WebP bytes are diagnosed (2.114ms)
+✔ T03-15/17 inaccessible image is unknown rather than a media pass or fabricated absence (1.5819ms)
+(node:30408) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-29/39/40 confirmed stop photo proceeds locally; a conflicting Day image stays saved and cannot rewrite approved text (2500.3569ms)
+✔ T03-36/38 photo cannot replace a whole-day obligation; claimed matching Day cannot bypass pixel QA or stale approval (614.2795ms)
+(node:18400) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-42 legacy route alt receipt remains renderable; v2 is explicit and unknown policy fails closed (780.7239ms)
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: single-source (1400.8886ms)
+ℹ {"variant":"single-source","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"92d81c4646df964d0ce294552b749688367c2fd9a943e7eb75216a193cfa89cf","draw_days":1,"html_sha256":"a7bf5dfcc3fad9b430c95efa039ceb5b748465366fb58c0469ec4be4e76d4958","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: evidence-composed (1442.1879ms)
+ℹ {"variant":"evidence-composed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"650e9f5145ec254b9f5c2eb47fbdb1dd326727309cde40de9823bed499da6b42","draw_days":3,"html_sha256":"52026505d69ec4f6018af8bb6b7b34e52a4670ab42ca88d25105723d585a1e44","image_sha256":"c66f3ab31eb2e0dcbb1eab7ec00eee569224159d455071bbdf00b72a91718c69"}
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: mixed (1210.3652ms)
+ℹ {"variant":"mixed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"52fb0e00a377d823c0b7e59e718f01fe5c277ada363c87c4344ab93c1a7916a0","draw_days":1,"html_sha256":"a7bf5dfcc3fad9b430c95efa039ceb5b748465366fb58c0469ec4be4e76d4958","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+ℹ tests 27
+ℹ suites 0
+ℹ pass 26
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5372.5489
+
+✖ failing tests:
+
+test at test\final-html-validator.test.mjs:50:1
+✖ T03-08 preview schema uses the explicit public canonical, preserving meaningful query and slash identity (8.8113ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(validateRenderedHtmlArtifact({...input,expectedCanonicalUrl:'http://localhost/guide'}).errors.some(e=>e.code==='HTML_CANONICAL_EXPECTATION_INVALID'))
+  
+      at TestContext.<anonymous> (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/test/final-html-validator.test.mjs:59:10)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

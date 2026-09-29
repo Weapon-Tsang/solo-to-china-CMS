@@ -208,6 +208,14 @@ export function mediaContextForSource(source, assets = source.assets || []) {
   return source.media_context ? subsetMediaContext(source.media_context, assets) : supplementMediaContext(source, assets);
 }
 
+// Full per-image evidence is sent adjacent to its image by contextualImageParts.
+// Keep common source prose once, without repeating every image's metadata here.
+export function sharedMediaContext(source, assets = source.assets || []) {
+  const { assets: occurrences, ...shared } = mediaContextForSource(source, assets);
+  return { ...shared, asset_ids: occurrences.map(item => item.asset_id),
+    image_context_location: 'Each full image_context immediately precedes its image.' };
+}
+
 export function contextualImageParts(source, assets, images) {
   const packet = mediaContextForSource(source, assets);
   const submitted = (images.manifest || []).filter((item) => item.status === 'submitted');

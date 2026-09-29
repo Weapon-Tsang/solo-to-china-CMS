@@ -1,0 +1,24 @@
+(node:21384) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real Pipeline uploads qualified web bytes, persists lineage and rejects tampered derivatives without rewriting the master (755.7857ms)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (541.5077ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (523.9007ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (538.7505ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (521.3746ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (516.927ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (517.6674ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (545.4025ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (513.883ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (558.303ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (517.746ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (537.013ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (516.2344ms)
+✔ loopback HTTP receiver stores independent bytes, transforms output, loses receipt and returns invalid responses (568.9969ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7423.8747

@@ -1,0 +1,40 @@
+### Result
+{"realBrowserRecovery":true,"realWorker":true,"bodyPreserved":true,"slotId":"visual_a68571b9cfe0486cacae440e31629973","attempts":1,"budget":{"provider_retry":0,"visual_revision":0,"deterministic_recovery":1},"manifest":{"version":1,"renderer":"local-route-svg-sharp-1","route_id":"route_ae32e2f497ba96ef9d0df3b4","revision":1,"approved_route_hash":"bf93bf340c77722a54829e29bc66bf1f3451ad6c9efda675e87d0b8664ae0a72","source_route_hash":"0ebc4a9c0d07cf2b211d9ee5bc0c74ff959f29e53c7ff3e551a240a956bfc849","transform":"recomposition","input_hash":"9b2958aa7a168d28b3b13e424dc841fa3952001bb843c0f6fd5091235947f588","draw_operations":[{"kind":"day","id":"src_beec292551b74afc8f2be99109134e7a:1:walk:day:1","text":"Day 1","x":40,"y":70},{"kind":"stop","id":"src_beec292551b74afc8f2be99109134e7a:1:walk:stop:a","entity_id":"east","text":"East Hall","x":70,"y":122},{"kind":"arrow","id":"src_beec292551b74afc8f2be99109134e7a:1:walk:leg:ab","from":"src_beec292551b74afc8f2be99109134e7a:1:walk:stop:a","to":"src_beec292551b74afc8f2be99109134e7a:1:walk:stop:b","x":80,"y1":137,"y2":198,"text":"walk · about 15 minutes","label_x":110,"label_y":170},{"kind":"stop","id":"src_beec292551b74afc8f2be99109134e7a:1:walk:stop:b","entity_id":"west","text":"West Hall","x":70,"y":222},{"kind":"arrow","id":"src_beec292551b74afc8f2be99109134e7a:1:walk:leg:bc","from":"src_beec292551b74afc8f2be99109134e7a:1:walk:stop:b","to":"src_beec292551b74afc8f2be99109134e7a:1:walk:stop:c","x":80,"y1":237,"y2":298,"text":"bus","label_x":110,"label_y":270},{"kind":"stop","id":"src_beec292551b74afc8f2be99109134e7a:1:walk:stop:c","entity_id":"east","text":"East Hall","x":70,"y":322}],"coverage":[{"day_id":"src_beec292551b74afc8f2be99109134e7a:1:walk:day:1","stop_ids":["src_beec292551b74afc8f2be99109134e7a:1:walk:stop:a","src_beec292551b74afc8f2be99109134e7a:1:walk:stop:b","src_beec292551b74afc8f2be99109134e7a:1:walk:stop:c"],"leg_ids":["src_beec292551b74afc8f2be99109134e7a:1:walk:leg:ab","src_beec292551b74afc8f2be99109134e7a:1:walk:leg:bc"]}],"width":1100,"height":501,"file_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738","svg_sha256":"62ff28c7ec51773415c4954fb48597db8999ff5958a3146d74c0fa0f7dc5fec9","not_to_scale":true,"visual_review":"NOT_TESTED"},"stageAfter":"review_draft","realProviderRequests":0,"pageErrors":[]}
+### Ran Playwright code
+```js
+await (async (page) => {
+  const errors=[];page.on('pageerror',error=>errors.push(String(error)));
+  await page.route('**/*',route=>/^http:\/\/127\.0\.0\.1:\d+\//.test(route.request().url())?route.continue():route.abort());
+  const read=()=>page.evaluate(async()=>await(await fetch('/api/content/route-owner/production-state')).json());
+  const before=await read();
+  if(before.production_state.recovery_target!=='generate_visuals')throw new Error('Wrong recovery target');
+  await page.getByRole('button',{name:'关闭',exact:true}).click();
+  await page.getByRole('button',{name:'重试失败步骤',exact:true}).click();
+  await page.getByRole('button',{name:'重新执行',exact:true}).click();
+  let complete=false;
+  for(let attempt=0;attempt<30;attempt++) {
+    const state=await read();
+    if(state.draft.draft.visuals.some(v=>v.acquisition_strategy==='render_route_schematic' && v.status==='generated')){complete=true;break;}
+    await page.waitForTimeout(300);
+  }
+  if(!complete)throw new Error('Actual Worker did not recover the route image');
+  const after=await read(),a=before.draft.draft,b=after.draft.draft;
+  if(a.body_markdown!==b.body_markdown || a.content_hash!==b.content_hash || a.revision!==b.revision)throw new Error('Draft changed');
+  const old=a.visuals.find(v=>v.acquisition_strategy==='render_route_schematic');
+  const image=b.visuals.find(v=>v.acquisition_strategy==='render_route_schematic');
+  if(old.id!==image.id || old.attempt_count!==image.attempt_count
+    || JSON.stringify(old.media_metadata.recovery_budget)!==JSON.stringify(image.media_metadata.recovery_budget))throw new Error('Budget/slot changed');
+  await page.reload();await page.getByRole('tab',{name:'内容',exact:true}).click();
+  await page.getByRole('button',{name:'Beijing one-day itinerary'}).click();
+  await page.getByText('查看本地路线示意图',{exact:true}).click();
+  const img=page.getByLabel('批准路线',{exact:true}).getByRole('img');
+  await img.evaluate(node=>node.decode());
+  if(await img.evaluate(node=>node.naturalWidth)!==1100)throw new Error('PNG decode failed');
+  await page.screenshot({path:'output/playwright/b-media-recovered.png',fullPage:true});
+  if(errors.length)throw new Error(errors.join('\n'));
+  return {realBrowserRecovery:true,realWorker:true,bodyPreserved:true,slotId:image.id,attempts:image.attempt_count,
+    budget:image.media_metadata.recovery_budget,manifest:image.media_metadata.route_render_manifest,
+    stageAfter:after.production_state.current_stage,realProviderRequests:0,pageErrors:errors};
+}
+)(page);
+```

@@ -1,0 +1,6 @@
+### Result
+{"status":"PASS","text":"公开页面检查\n内容与媒体时间依据\n首次发布：无已存确认记录\n正文实质修改：无已存确认记录\n整篇事实核实：无已存确认记录\n媒体优化：2026-09-28T11:11:29.013Z\n\n来源核实仅适用于对应证据；上传、换图和转码不更新整篇事实核实时间。\n\n文章关系建议：实体或读者问题待核对\n\n读者问题尚未明确\n\n仅供编辑决定；不会自动合并、删除、改写或重定向。\n\n可用相关内链 0 条；访问待核目标 0 条。\n\n手动读取公开页面、robots 和站点地图。检查结果不代表已收录、排名或 AI 引用。\n\n尚未检查\n\n当前稿件尚未确认为公开文章。\n\n检查公开页面\n重新抓取检查"}
+### Ran Playwright code
+```js
+await (async page => {await page.getByText('展开 Draft 正文、质量与商业层详情',{exact:true}).click();const panel=page.getByTestId('seo-inspection');await panel.getByText('内容与媒体时间依据',{exact:true}).click();await panel.getByText('整篇事实核实：',{exact:true}).waitFor();await page.getByTestId('editorial-seo').waitFor();await panel.screenshot({path:'output/playwright/phase03-seo-time-evidence.png'});return {status:'PASS',text:await panel.innerText()};})(page);
+```

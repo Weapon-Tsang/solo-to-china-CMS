@@ -197,7 +197,7 @@ export function buildProductionState(db, row, options = {}) {
     : failed?.failure_class === "retryable_provider" ? failed : null;
   const retryAttempts=Number(retryJob?.attempts || 0);
   const retryMaximum=Number(retryJob?.max_attempts || 0);
-  const retryState = retryJob ? {
+  const retryState = retryJob?.id && Number.isFinite(retryMaximum) && retryMaximum > 0 ? {
     reason:"provider_backoff",
     attempt:Math.min(retryAttempts,retryMaximum),
     max_attempts:retryMaximum,

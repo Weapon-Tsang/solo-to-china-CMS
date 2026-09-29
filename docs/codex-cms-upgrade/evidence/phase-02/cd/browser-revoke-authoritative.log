@@ -1,0 +1,6 @@
+### Result
+{"status":"PASS","media_revision":2,"recovery_state":"revoked","originals":5,"provider_calls":0}
+### Ran Playwright code
+```js
+await (async (page) => {const d=await page.evaluate(async()=>await(await fetch('/api/drafts/cover-draft/article-media?offset=0',{cache:'no-store'})).json());if(d.media_revision!==2||d.recovery.state!=='revoked')throw new Error('Revoke not visible');return {status:'PASS',media_revision:d.media_revision,recovery_state:d.recovery.state,originals:d.total,provider_calls:d.recovery.receipt.provider_calls};})(page);
+```

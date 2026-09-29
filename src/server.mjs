@@ -48,6 +48,9 @@ import { applyDeliveryRefresh, planDeliveryRefresh } from './services/delivery-r
 import { acquireLocalRuntimeLease, assertLocalCredentialReadiness, assertLocalRuntime, consumeLocalRuntimeStopRequest, localLogPath, markLocalDataRoot } from './local-runtime.mjs';
 import { createGoogleAccessTokenProvider } from './google-access-token.mjs';
 import { createDraftSeoInspection } from './services/draft-seo-inspection.mjs';
+import { createProviderRateLimiter, isRateLimitMetric } from "./ai/provider-rate-limiter.mjs";
+import { checkContextBudget } from "./ai/context-budget.mjs";
+import { diskHealthSeverity, diskUsage } from "./disk-guard.mjs";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -89,6 +92,7 @@ export function createApplication(config = loadConfig(), { seoInspector } = {}) 
   const loginThrottle = createLoginThrottle(config.auth.loginThrottle, { logger: logger.child({ component: "auth" }) });
   const repository = new Repository(db, {
     ...config.content, ...config.extraction, contentStrategy: config.contentStrategy,
+    diskMonitorPath: path.dirname(path.resolve(config.databasePath)),
     sourceUploadsDir: config.manualSources.uploadDir,
     generatedMediaDir: config.generatedMediaDir,
     sourceComplexityRouting: config.extraction.sourceComplexityRouting === true,
@@ -104,8 +108,19 @@ export function createApplication(config = loadConfig(), { seoInspector } = {}) 
   const selectedAi = repository.getAiSettings(config.ai.defaultModel);
   const draftSeo = createDraftSeoInspection(db, { siteUrl: config.content.publicSiteUrl, inspector: seoInspector });
   const googleAccessTokenProvider = createGoogleAccessTokenProvider(config.vertex);
-  const aiRequestGate = createRequestGate(config.extraction.requestSpacingMs);
-  const modelCallTelemetry = (metric) => repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing));
+  const providerRateLimiter = createProviderRateLimiter({ spacingMs: config.extraction.requestSpacingMs,
+    limits: config.extraction.providerLimits || {} });
+  const aiRequestGate = async (request = {}) => {
+    const overrun = checkContextBudget(request);
+    if (overrun) logger.warn("ai.context_budget_exceeded", { ...overrun, provider: request.provider, model: request.model,
+      attempt: request.attempt });
+    return providerRateLimiter.beforeRequest(request);
+  };
+  const modelCallTelemetry = (metric) => {
+    if (isRateLimitMetric(metric)) providerRateLimiter.penalize({ provider: metric.provider, model: metric.model,
+      retryAfterMs: metric.retryAfterMs });
+    return repository.recordModelCall(priceModelAttempt(metric, config.ai.pricing));
+  };
   const legacyAi = { ...config.kimi, ...config.vertex, ...selectedAi, googleAccessTokenProvider,
     stagePolicy: config.ai.stagePolicy, pricing: config.ai.pricing,
     beforeRequest: aiRequestGate,
@@ -286,6 +301,9 @@ export function createApplication(config = loadConfig(), { seoInspector } = {}) 
           ok: true,
           version: VERSION,
           serviceHealth: { ready:true,http:"ready",database:"ready",version:VERSION },
+          diskHealth: (() => { const usage=diskUsage(path.dirname(path.resolve(config.databasePath)));
+            return usage ? { usedRatio:usage.usedRatio,freeBytes:usage.freeBytes,totalBytes:usage.totalBytes,
+              severity:diskHealthSeverity(usage) || "ok" } : null; })(),
           aiConfiguration: { configured:extractor.enabled,provider:extractor.enabled?runtimeProfile.provider:null,
             model:extractor.enabled?runtimeProfile.model:null,credentialsConfigured:extractor.enabled,routingRevision:routing.revision },
           providerRuntime,
@@ -1713,17 +1731,6 @@ export function assertProductionDatabaseConfiguration(config) {
   if (!fs.existsSync(config.databasePath) && !config.deployment.allowProductionDatabaseBootstrap) {
     throw new Error("Production DATABASE_PATH does not exist; set ALLOW_PRODUCTION_DATABASE_BOOTSTRAP=true only for an intentional first deployment.");
   }
-}
-
-function createRequestGate(spacingMs = 0) {
-  const spacing = Math.max(0, Number(spacingMs || 0));
-  let nextStartAt = 0;
-  return async () => {
-    const scheduledAt = Math.max(Date.now(), nextStartAt);
-    nextStartAt = scheduledAt + spacing;
-    const waitMs = scheduledAt - Date.now();
-    if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
-  };
 }
 
 function authorizeCapture(request, token) {

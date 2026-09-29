@@ -1,0 +1,30 @@
+{
+  "capturedAt": "2026-09-28T07:01:46.219Z",
+  "root": "C:\\Users\\Mloong\\Documents\\ChatGPT\\solo-to-china-CMS",
+  "remote": "https://github.com/Weapon-Tsang/solo-to-china-CMS.git",
+  "branch": "main",
+  "head": "490dd7464d4beb46d3f89a578337c253917fbf7a",
+  "mode": "DEVELOPMENT",
+  "platform": "win32 10.0.26200 x64",
+  "node": "v24.14.0",
+  "cpus": 8,
+  "memoryBytes": 17107996672,
+  "hostname": "omitted",
+  "specificationSha256": "cdfb039e8d92c5a4c5e1a51a05fce924c71fc45cdb654895a7df3459bebfa91a",
+  "phase03FileHashes": {
+    "package.json": "7e088ac1001941b02f613be49d2e0e81763efc7b0a09a4f358363882d719dc85",
+    "package-lock.json": "b53e3cc43558040324fd59b16dd1827c0f63937dff3a3d9eae8d4b1c16f0b41d",
+    "src/seo-geo.mjs": "c9f85a843594cc644dadefb64ce3d6bd4786eaefeec4d6a9ad097ac24f3d98a1",
+    "src/final-html-validator.mjs": "d973287894d54f4731a8aacd9db333466d783e873f1b5560619ef3874f44d0b9",
+    "src/safe-media-http.mjs": "3af0525581e50c9854b9db54506ba17237e6f106ca9a80763cccfb249c923624",
+    "src/seo-observation.mjs": "47a7957948033d73b15ab492f7e12285abf4d3cae5ac37ee15cb573966ecb1f2",
+    "src/seo-sitemap.mjs": "70f99ac096c26b0a2fd5f46e8e8684126e43d5a2179ba3ef973c30daa475ce00",
+    "src/seo-public-reader.mjs": "a20e3eed9fd1f173b00154fd8b80b96223e6ea3fb673aad91cc2e93f127b8b4d",
+    "test/seo-geo.test.mjs": "d9c1045278b6c829b5c3f3ab11b574841fe2c50a88b4951bcb97ed0cd02321e9",
+    "test/final-html-validator.test.mjs": "1257dc9416cba31dc5db626c5c22e558f92a231c6f6dc9194f82f052d713ccb6",
+    "test/seo-observation.test.mjs": "a8e60ecd47dab2f8c6c225608e8b67b288976a4136dea79740df10b46ffdef9c",
+    "test/seo-sitemap.test.mjs": "b2c3fe6a3bb5a96e01cf916da1f9ef4b408cc05e77b0d5f552a3da02b8eec8f0",
+    "test/seo-public-reader.test.mjs": "e8ca9bff00d0749330028c41c2a56e6c84f2501b2def2b0babfa3fb02271f1d5"
+  },
+  "workingTreeStatus": "M docs/codex-cms-upgrade/EXTERNAL_DEPENDENCIES.md\n M docs/codex-cms-upgrade/STATUS.md\n M docs/codex-cms-upgrade/acceptance/phase-02.md\n M frontend/src/App.jsx\n M package-lock.json\n M package.json\n M src/ai/content-engine.mjs\n M src/backup.mjs\n M src/capture-media-upload.mjs\n M src/config.mjs\n M src/db.mjs\n M src/final-html-validator.mjs\n M src/local-photo-audit.mjs\n M src/local-runtime.mjs\n M src/media-delivery.mjs\n M src/media-storage.mjs\n M src/pipeline.mjs\n M src/publication-eligibility.mjs\n M src/publish-page.mjs\n M src/repository.mjs\n M src/route-media.mjs\n M src/safe-media-http.mjs\n M src/seo-geo.mjs\n M src/server.mjs\n M src/visuals/vertex-imagen.mjs\n M src/wordpress.mjs\n M test/backup.test.mjs\n M test/final-html-validator.test.mjs\n M test/media-delivery.test.mjs\n M test/publication-eligibility.test.mjs\n M test/route-media.test.mjs\n M test/seo-geo.test.mjs\n M test/visuals.test.mjs\n?? docs/codex-cms-upgrade/evidence/phase-02/b-resume/\n?? docs/codex-cms-upgrade/evidence/phase-02/b/\n?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/\n?? docs/codex-cms-upgrade/evidence/phase-02/c/\n?? docs/codex-cms-upgrade/evidence/phase-02/cd/\n?? docs/codex-cms-upgrade/evidence/phase-03/\n?? docs/codex-cms-upgrade/phases/phase-03.txt\n?? frontend/src/lib/file-hash-worker.js\n?? frontend/src/lib/file-hash.js\n?? frontend/src/workspaces/article-media.jsx\n?? frontend/src/workspaces/cover-selection.jsx\n?? scripts/stage02-browser-benchmark-server.mjs\n?? scripts/stage02-browser-menuswitch-server.mjs\n?? scripts/stage02-browser-resume-server.mjs\n?? scripts/stage02-cd-exploratory-audit.mjs\n?? scripts/stage02-cover-audit-replay.mjs\n?? scripts/stage02-cover-browser-fixture.mjs\n?? scripts/stage02-manual-media-replay.mjs\n?? scripts/stage02-menu-server-load.mjs\n?? scripts/stage02-web-media-replay.mjs\n?? scripts/stage02-web-media-samples.mjs\n?? scripts/verify-stage02-chunk-worker-diagnostic.js\n?? scripts/verify-stage02-cover-browser.js\n?? scripts/verify-stage02-manual-413.js\n?? scripts/verify-stage02-manual-browser-batch.js\n?? scripts/verify-stage02-manual-browser.js\n?? scripts/verify-stage02-manual-final-state.js\n?? scripts/verify-stage02-manual-loaded-menu-chunk-worker.js\n?? scripts/verify-stage02-manual-loaded-menu-foreground.js\n?? scripts/verify-stage02-manual-loaded-menu.js\n?? scripts/verify-stage02-manual-menu-benchmark.js\n?? scripts/verify-stage02-manual-menu-under-server-load.js\n?? scripts/verify-stage02-manual-resume-clean.js\n?? scripts/verify-stage02-manual-resume.js\n?? scripts/verify-stage02-menu-during-upload.js\n?? scripts/verify-stage02-web-media-browser.js\n?? src/cover-contract.mjs\n?? src/cover-media.mjs\n?? src/cover-policy.mjs\n?? src/seo-observation.mjs\n?? src/seo-public-reader.mjs\n?? src/seo-sitemap.mjs\n?? src/services/article-media-delivery.mjs\n?? src/services/article-media.mjs\n?? src/services/cover-audit.mjs\n?? src/services/cover-delivery.mjs\n?? src/services/cover-inventory.mjs\n?? src/services/cover-selection.mjs\n?? src/visuals/route-panel.mjs\n?? src/web-media.mjs\n?? test-support/cover-fixture.mjs\n?? test/article-media-faults.test.mjs\n?? test/article-media-http.test.mjs\n?? test/article-media-large.test.mjs\n?? test/article-media.test.mjs\n?? test/cover-audit.test.mjs\n?? test/cover-delivery.test.mjs\n?? test/cover-inventory.test.mjs\n?? test/cover-selection.test.mjs\n?? test/file-hash.test.mjs\n?? test/seo-observation.test.mjs\n?? test/seo-public-reader.test.mjs\n?? test/seo-sitemap.test.mjs\n?? test/web-media-http.test.mjs\n?? test/web-media.test.mjs"
+}

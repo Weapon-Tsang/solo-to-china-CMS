@@ -1,0 +1,60 @@
+(node:22200) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ web derivative lineage and exact bytes restore across directories in migration review (890.5726ms)
+✔ system snapshot hashes the database, uploads and generated media and drills an offline delivery (840.7764ms)
+✔ restore verification rejects a deleted database-referenced image (688.427ms)
+✔ snapshot refuses source bytes that disagree with the database fingerprint (593.2108ms)
+✔ restore drill rejects media whose bytes disagree with its declared MIME (752.5367ms)
+✔ direct restore rejects media whose bytes disagree with its declared MIME before activation (777.0177ms)
+✔ restore refuses a snapshot from a newer schema before creating a target (700.2503ms)
+✔ restore refuses insufficient free space before creating target or staging (741.7887ms)
+✔ an interrupted restore resumes only the same snapshot and repairs partial files (1040.1244ms)
+✔ restore migrates an older snapshot only inside the isolated target (732.4186ms)
+✔ snapshot verification compares manifest hashes rather than only file sizes (660.2565ms)
+✔ snapshot verification rejects an omitted database file reference (671.991ms)
+✔ snapshot verification rejects omitted, altered, and untrusted business fingerprints (787.3028ms)
+✔ business fingerprint catches changed source state after the database file hash is updated (722.0618ms)
+✔ snapshot includes durable source storage references and pending capture chunks (842.6507ms)
+✔ snapshot restores an unpromoted visual candidate file and its database path (787.7527ms)
+✔ snapshot preserves and remaps file paths nested in historical capture JSON (821.8363ms)
+✔ snapshot rejects a missing file referenced only by historical capture JSON (584.5614ms)
+✔ version 2 manifests remain readable without version 3 JSON references (790.6632ms)
+✔ version 2 recovers omitted relative source storage references only from archived files (802.5984ms)
+✔ snapshot rejects case collisions and archive symlinks (667.1249ms)
+✔ snapshot restores to a new external root and remaps only stored file references (780.8379ms)
+✔ restore remaps a POSIX stored path fixture on Windows without changing unrelated text (745.4034ms)
+✔ snapshot refuses to race an active media file mutation (519.1489ms)
+✔ restore refuses a symbolic-link ancestor before creating the target (657.1588ms)
+(node:10860) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ real Pipeline uploads qualified web bytes, persists lineage and rejects tampered derivatives without rewriting the master (560.7999ms)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (556.7349ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (526.6347ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (529.9145ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (516.0534ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (513.0725ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (511.2732ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (550.7672ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (513.2233ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (521.0141ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (501.4551ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (494.3008ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (495.3047ms)
+ℹ tests 38
+ℹ suites 0
+ℹ pass 37
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 18765.913
+
+✖ failing tests:
+
+test at test\publication-eligibility.test.mjs:14:1
+✖ real Pipeline uploads qualified web bytes, persists lineage and rejects tampered derivatives without rewriting the master (560.7999ms)
+  TypeError: Cannot read properties of undefined (reading 'id')
+      at Repository.getDraftPackage (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/repository.mjs:6313:43)
+      at TestContext.<anonymous> (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/test/publication-eligibility.test.mjs:30:47)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3)

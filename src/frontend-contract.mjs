@@ -451,6 +451,9 @@ export function validateJsonSchema(value, schema, context = { root: schema, path
   if (resolved.not && validateJsonSchema(value, resolved.not, context).length === 0) errors.push(issue("INVALID_COMPONENT_DATA", "Value matches a prohibited schema.", context.path));
   if (resolved.const !== undefined && stableStringify(value) !== stableStringify(resolved.const)) errors.push(issue("INVALID_COMPONENT_DATA", "Value does not equal the required constant.", context.path));
   if (Array.isArray(resolved.enum) && !resolved.enum.some((item) => stableStringify(item) === stableStringify(value))) errors.push(issue("INVALID_COMPONENT_DATA", "Value is not one of the allowed values.", context.path));
+  // Provider route schemas use OpenAPI nullable for unknown geometry/duration.
+  // Null is explicit absence, not invalid geometry requiring a paid repair.
+  if (value === null && resolved.nullable === true) return errors;
   if (resolved.type && !matchesType(value, resolved.type)) errors.push(issue("INVALID_COMPONENT_DATA", `Expected ${Array.isArray(resolved.type) ? resolved.type.join(" or ") : resolved.type}.`, context.path));
   if (typeof value === "string") {
     if (resolved.minLength != null && value.length < resolved.minLength) errors.push(issue("INVALID_COMPONENT_DATA", `String is shorter than ${resolved.minLength}.`, context.path));

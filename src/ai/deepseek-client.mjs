@@ -3,6 +3,7 @@ import { KimiClient } from "./kimi-client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
 import { ProviderRequestError, providerReasoningOptions, providerTransportError } from "./provider-schema.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
+import { estimateRequestTokens } from "./provider-rate-limiter.mjs";
 
 export class DeepSeekClient extends KimiClient {
   async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null }) {
@@ -12,18 +13,21 @@ export class DeepSeekClient extends KimiClient {
     const hasImages = Array.isArray(content) && content.some((part) => part?.type === "image_url");
     const messages = [{ role: "system", content: `${instructions}\nReturn JSON only. Every object in an array must have the fields shown in this shape. Values are placeholders, not evidence: ${JSON.stringify(schemaExample(schema,{includeMediaAnalysis:hasImages && name==="source_research_extraction"}))}` },
       { role: "user", content }];
+    if (name === "experience_extraction") messages[0].content +=
+      `\nFollow this complete JSON Schema, including enum values and optional route_fragments when present: ${JSON.stringify(schema)}\nPreserve all grounded sequence, conditions, alternatives and uncertainty. Cite the references supporting each block. Keep source details in their original language.`;
     const startedAt = Date.now();
     let lastIssues = [];
     for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
       const gateAt = Date.now();
-      await this.config.beforeRequest?.({ provider: "deepseek", model: this.config.model, stage: name, attempt: attempt + 1 });
+      await this.config.beforeRequest?.({ provider: "deepseek", model: this.config.model, stage: name, attempt: attempt + 1,
+        estimatedTokens: estimateRequestTokens(messages) });
       const attemptAt = Date.now();
       let response;
       try {
         response = await this.fetch(`${this.config.baseUrl}/chat/completions`, {
           method: "POST",
           headers: { authorization: `Bearer ${this.config.apiKey}`, "content-type": "application/json" },
-          body: JSON.stringify({ model: this.config.model, messages, max_tokens: policy.maxOutputTokens,
+          body: JSON.stringify({ model: this.config.model, messages,
             response_format: { type: "json_object" },
             ...providerReasoningOptions("deepseek", hasImages && name === "source_research_extraction" ? "NONE" : policy.thinking) }),
           signal: combinedSignal(signal, timeoutMs || policy.timeoutMs),
@@ -49,7 +53,9 @@ export class DeepSeekClient extends KimiClient {
           status: "failed", errorCode: "MODEL_OUTPUT_LIMIT", usage: payload?.usage, model: payload?.model,
           httpStatus: response.status, requestId, finishReason: choice.finish_reason, dispatchState: "response_received" }));
         throw Object.assign(new Error("DeepSeek output reached its token or context limit."), {
-        code: "MODEL_OUTPUT_LIMIT", provider: "deepseek", retryable: true,
+        // Do not restart the same request after a provider output/context limit.
+        // The pipeline may still split a multi-image batch into different inputs.
+        code: "MODEL_OUTPUT_LIMIT", provider: "deepseek", retryable: false,
       });
       }
       const output = choice?.message?.content;
@@ -57,6 +63,9 @@ export class DeepSeekClient extends KimiClient {
       try { parsed = typeof output === "string" && output.trim() ? JSON.parse(output) : null; } catch { parsed = null; }
       const downgradedClaims = parsed && hasImages && name === "source_research_extraction"
         ? downgradeUnknownClaimRoles(parsed) : 0;
+      // JSON mode does not enforce per-item required fields. One Claim without its
+      // quote is dropped on its own instead of invalidating every Claim in the batch.
+      const droppedClaims = parsed && name === "source_research_extraction" ? dropInvalidClaims(parsed, schema) : 0;
       const errors = parsed == null ? [{ path: "$", message: "invalid or empty JSON" }] : validateJsonSchema(parsed, schema);
       lastIssues = errors.slice(0, 5).map((item) => String(item.path || "$"));
       if (!errors.length) {
@@ -64,7 +73,7 @@ export class DeepSeekClient extends KimiClient {
           status: "succeeded", usage: payload?.usage, model: payload?.model, httpStatus: response.status,
           requestId, dispatchState: "completed" }));
         return { output: parsed, model: payload?.model || this.config.model, usage: payload?.usage || null,
-          downgradedClaims };
+          downgradedClaims, droppedClaims };
       }
       this.emitModelCall(metric({ identity, policy, telemetryContext, attempt, gateAt, attemptAt, startedAt,
         status: "failed", errorCode: "INVALID_MODEL_OUTPUT", usage: payload?.usage, httpStatus: response.status,
@@ -74,9 +83,21 @@ export class DeepSeekClient extends KimiClient {
         { role: "user", content: `Correct the JSON and return the complete object only. Errors: ${JSON.stringify(errors.slice(0, 20))}` });
     }
     throw Object.assign(new Error(`DeepSeek returned invalid structured output after bounded repair (${lastIssues.join(",") || "invalid JSON"}).`), {
-      code: "INVALID_MODEL_OUTPUT", provider: "deepseek", retryable: true,
+      code: "INVALID_MODEL_OUTPUT", provider: "deepseek", retryable: false,
     });
   }
+}
+
+function dropInvalidClaims(output, schema) {
+  const itemSchema = schema?.properties?.claims?.items;
+  if (!Array.isArray(output?.claims) || !itemSchema) return 0;
+  const before = output.claims.length;
+  const valid = output.claims.filter((claim) => claim && typeof claim === "object" && !validateJsonSchema(claim, itemSchema).length);
+  // Never turn a wholly malformed answer into an empty "success": keep it so the
+  // bounded repair round sees the errors.
+  if (before && !valid.length) return 0;
+  output.claims = valid;
+  return before - valid.length;
 }
 
 function downgradeUnknownClaimRoles(output) {
@@ -96,7 +117,7 @@ function schemaExample(schema,{includeMediaAnalysis=false}={}) {
   if (!schema || typeof schema !== "object") return null;
   const type = Array.isArray(schema.type) ? schema.type.find((item) => item !== "null") : schema.type;
   if (type === "object" || schema.properties) return Object.fromEntries(Object.entries(schema.properties || {})
-    .filter(([key]) => (schema.required || []).includes(key) || (includeMediaAnalysis && key === "media_analysis"))
+    .filter(([key]) => (schema.required || []).includes(key) || (includeMediaAnalysis && (key === "media_analysis" || key === "image_cards")))
     .map(([key, child]) => [key, schemaExample(child)]));
   if (type === "array") return schema.items ? [schemaExample(schema.items)] : [];
   if (schema.enum?.length) return schema.enum[0];

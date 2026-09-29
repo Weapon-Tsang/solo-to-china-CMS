@@ -45,9 +45,10 @@ test("ordinary image segments form traceable 4-8 item model batches while maps s
   assert.equal(savedSegments.length,batches[0].segmentIds.length);
   const results=db.prepare(`SELECT segment_id,result_json FROM segment_extractions WHERE segment_id IN (${savedSegments.map(()=>"?").join(",")})`).all(...savedSegments);
   assert.equal(results.reduce((sum,row)=>sum+JSON.parse(row.result_json).claims.length,0),1);
-  assert.deepEqual(db.prepare(`SELECT analysis_status,reader_text_present FROM source_asset_analyses
-    WHERE asset_id IN (${pack.source.assets.map(()=>"?").join(",")})`).all(...pack.source.assets.map((asset)=>asset.id))
-    .map((row)=>[row.analysis_status,row.reader_text_present]),pack.source.assets.map(()=>["needs_review",1]));
+  // Deferral placeholders carry no pixel knowledge and are not persisted: a stored
+  // needs_review row used to hide these images from visual discovery forever.
+  assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM source_asset_analyses
+    WHERE asset_id IN (${pack.source.assets.map(()=>"?").join(",")})`).get(...pack.source.assets.map((asset)=>asset.id)).count,0);
 });
 
 test("media batch output limit halves work before falling back to individual images", async (t) => {

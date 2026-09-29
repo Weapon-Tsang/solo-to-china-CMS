@@ -1,0 +1,15 @@
+✔ media bytes become visible only after the final filename is linked (11.5209ms)
+(node:14308) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ a repaired media gate skips visual re-planning and routes a stale failure to composition (565.2718ms)
+✔ exhausted image step resumes only missing visual after an explicit durable grant (651.2114ms)
+✔ a visual Job cannot succeed while a required planned slot remains unfinished (555.168ms)
+✔ Windows receipt replacement conflict accepts only an identical verified winner and removes its temp (26.5392ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2085.7131

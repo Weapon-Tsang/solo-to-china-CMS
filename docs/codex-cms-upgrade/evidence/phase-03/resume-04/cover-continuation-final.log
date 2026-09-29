@@ -1,0 +1,54 @@
+(node:30828) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"nonempty_samples":30,"p50_ms":3.534599999999955,"p95_ms":26.61959999999999,"provider_calls":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","api_only":true}
+✔ actual authenticated API streaming, ownership, CSRF, confirmation, lost receipt recovery and nonempty latency (2781.2653ms)
+(node:3708) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover geometry completes the existing media revision without resetting body or buying QA (3223.7665ms)
+✔ display capacity rejects adoption with exact excess while preserving stored originals (943.4477ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (1872.4064ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (1962.8436ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ explicit revocation restores old slot exactly with an appended revision and no provider work (1357.8829ms)
+✔ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (702.7532ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ media-only receiver protocol retains old receipts and reconciles unknown outcomes without duplicate upload (1402.0537ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1451.0464ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (10962.4945ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (716.9795ms)
+(node:23604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit selected cover overrides a populated featured ID; strict schemas keep optional card text internal; capacity never truncates (2.7618ms)
+✔ durable cover-only protocol reconciles lost results without upload replay or changing prior article receipts (1651.4653ms)
+✔ cover illustration maximum is cumulative and rejected before provider credentials or dispatch (0.7099ms)
+(node:14080) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ actual cover output normalizes EXIF, preserves alpha and never enlarges small images (1417.2295ms)
+✔ real cover pixels, explicit preview confirmation, CAS, history and body preservation (2245.3003ms)
+✔ unsafe geometry, stale source relation and concurrent confirmations cannot save a cover (1434.3016ms)
+✔ retained original photo uses existing deterministic qualification without fabricating model QA (918.2353ms)
+✔ cover history files restore across directories, cleanup preserves references, and review does not dispatch (1345.3925ms)
+(node:28076) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"success","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: success, actual bytes and rendered HTML (2729.1845ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"lost","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":1,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: lost, actual bytes and rendered HTML (1912.5407ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"partial","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: partial, actual bytes and rendered HTML (1695.1945ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 25185.172

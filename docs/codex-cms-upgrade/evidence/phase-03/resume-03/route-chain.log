@@ -1,0 +1,16 @@
+(node:37660) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: single-source (1450.3779ms)
+ℹ {"variant":"single-source","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"cc56ee4c37335928b7823db0fbbfbb8160659fcd0aab29b8b2967c17dc65c3a2","draw_days":1,"html_sha256":"b8f5e2af624bd813fce5fffd7e9570160e142ccdce48e64414205c8642aefc3c","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: evidence-composed (1222.119ms)
+ℹ {"variant":"evidence-composed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"f2a01a9b2db7176bdf9fe50322b36c54ce7bd89645689134bb6aae36c99123c7","draw_days":1,"html_sha256":"b8f5e2af624bd813fce5fffd7e9570160e142ccdce48e64414205c8642aefc3c","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: mixed (1214.0313ms)
+ℹ {"variant":"mixed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"2c934300cf6c2b088e7418d89334f4a0a085da1e067fbe0d81d098202ebbe178","draw_days":1,"html_sha256":"b8f5e2af624bd813fce5fffd7e9570160e142ccdce48e64414205c8642aefc3c","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4358.7943

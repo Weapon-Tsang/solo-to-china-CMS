@@ -1,0 +1,1136 @@
+{
+  "scope": "C read-only historical cover dry-run; no pixel or receiver acceptance",
+  "reports": [
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_0ff3fa83e3c844fc807f8c8f1e1ffe88",
+      "revision": 3,
+      "post_id": 182,
+      "body_hash": "ef0b42ac2890ef67b6602202da7586d120c604bd1bff2ae2f6a2e04b4a1c44b5",
+      "input_fingerprint": "92969134c3c85ffd9647d5421a7b2a3c67ef7300b56ff07a2772c8d00576df0a",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_fc264b4ad54945338b54ecf16b05ecb3",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_2cd1276cd5b647ffa4eb9c120c5cc1b7",
+          "binding_ids": [],
+          "old_media_id": 208
+        },
+        {
+          "id": "visual_9bed6386cc894609b17aca736c33701e",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_99cd8df1453b44b989a7941115a6d634",
+          "binding_ids": [],
+          "old_media_id": 209
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 182,
+        "revision": 3,
+        "media_ids": [
+          208,
+          209
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_359330e87f9c4f24b97fa88bf499d448",
+      "revision": 4,
+      "post_id": 74,
+      "body_hash": "d28e079c2b5854b6cae2875f660a9fb629d7d33f2bbce28065d59b3b4baf46f5",
+      "input_fingerprint": "dc52d5f24319a3dcf6959a42d54585deeb61d1e7ab586cc80e782f277e06d02c",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_8f97cfa9182e4d6a990a33a9d07a8fc2",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_a4aad89d3d5e471eb5ed2ee92d41fd3f",
+          "binding_ids": [],
+          "old_media_id": 202
+        },
+        {
+          "id": "visual_f3547a558e134e989117eddd60059a68",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_69c31bb1ed984a9c8ed9ae04dd747632",
+          "binding_ids": [],
+          "old_media_id": 203
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 74,
+        "revision": 4,
+        "media_ids": [
+          202,
+          203
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_363b4984860b46d9ba4830d92dd7ac34",
+      "revision": 7,
+      "post_id": 79,
+      "body_hash": "0c84bfff0f7da6ca9e39c0b25a2b4ed29924cd68d137ccfd278483b723715448",
+      "input_fingerprint": "e9aa1fc0baba1da80382dc864b77626eb840efdf12fa346e672eff9047f988d2",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_3b460bc16b424575aca2ce82bd3ff79d",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_b5442ab82e784dfab40d89d1b9f3877c",
+          "binding_ids": [],
+          "old_media_id": 172
+        },
+        {
+          "id": "visual_ea9e6312ce7544ba857232e357263ef9",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_a281dcbb108049fb8d45024bc2a4ca5e",
+          "binding_ids": [],
+          "old_media_id": 173
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 79,
+        "revision": 7,
+        "media_ids": [
+          172,
+          173
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_4ed1e5eed85a40f798c8f83c7edb2f20",
+      "revision": 8,
+      "post_id": 83,
+      "body_hash": "87f9cefc9503a7c42a79afbaa879b40217444378344ce0f76d667fb1e9b43dfc",
+      "input_fingerprint": "d6c3996e7176e1c82a899457ecd2917da23ede23223c7d91a903e89b9e08ba57",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_2ca136d5b88e403eb162f0621562c200",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_13042917cdeb453f9d6aaca1a7c1b9ea",
+          "binding_ids": [],
+          "old_media_id": 129
+        },
+        {
+          "id": "visual_d356d27d91e84613bfdbbe9ed312b154",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_a281dcbb108049fb8d45024bc2a4ca5e",
+          "binding_ids": [],
+          "old_media_id": 130
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 83,
+        "revision": 8,
+        "media_ids": [
+          129,
+          130
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_514305818f534265b7a0f8a8d81d1d9d",
+      "revision": 5,
+      "post_id": 192,
+      "body_hash": "86597dceabd6b180c87b68d63a03d2860c70b5d8487415dc830761fdf38b3b04",
+      "input_fingerprint": "b74da0474dafaafc69da6eefc1d692c3e5ecc3767809c24285f5bd284db81991",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_22fa9d4320594d0eaa37a28e8638a546",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_ce3a4f25e0384f9aa1a52338a34b73fd",
+          "binding_ids": [],
+          "old_media_id": 224
+        },
+        {
+          "id": "visual_efa86786d22141069c5ee296df9e531e",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_31722f465cf94277b54a7a5eb072b318",
+          "binding_ids": [],
+          "old_media_id": 225
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 192,
+        "revision": 5,
+        "media_ids": [
+          224,
+          225
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_63924329268349768c466fea688d3e3a",
+      "revision": 6,
+      "post_id": 177,
+      "body_hash": "0d90b40b110bd6e1a9a83aa518d8a22b0c29410cc0762e0c14d694ecaf77d77c",
+      "input_fingerprint": "151a4cd8da4cfc8a93c82a4aa2a507b4d3859088a610943bb86704ad4ef2683f",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_6555e8945f4947fabf21af53d7c6da68",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_57d71446bb1e4a91bc366cad3c6bd438",
+          "binding_ids": [],
+          "old_media_id": 206
+        },
+        {
+          "id": "visual_b69092e502e946209c4713808cc1287b",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_69b26c625ffc455b85e0868af1192ad9",
+          "binding_ids": [],
+          "old_media_id": 207
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 177,
+        "revision": 6,
+        "media_ids": [
+          206,
+          207
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_8ba37e5651be4c06806b84452d33f79c",
+      "revision": 4,
+      "post_id": 96,
+      "body_hash": "09f649bae753a47303dc3c99a9792d04ac772f6a5ca5387710e291df1b02439c",
+      "input_fingerprint": "d360d5d1aa70f37ce0f33a65863d0ba878c4e82798bdfd126d352848dac8e303",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_1c542c3e15834cb48656ce5e537f44bd",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_4a9ee8fbe35f45a68728368913294f91",
+          "binding_ids": [],
+          "old_media_id": 131
+        },
+        {
+          "id": "visual_d2bb4f75b5f4489db4e882a439692119",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_e443399a68a04c699fb7b737e367e356",
+          "binding_ids": [],
+          "old_media_id": 132
+        },
+        {
+          "id": "visual_f86cb3fb198c492b8bc97ba99c90a2c7",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_eb50cbd5b4354eb09d09a1166907e0fa",
+          "binding_ids": [],
+          "old_media_id": 133
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 96,
+        "revision": 4,
+        "media_ids": [
+          131,
+          132,
+          133
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_8d559d08d77e4b2593f1ccd82f96f4d0",
+      "revision": 15,
+      "post_id": 171,
+      "body_hash": "32dcbe17e9c6829c639d8c1228254807a6d9699661139d635b3162606f0e158a",
+      "input_fingerprint": "ffea7fb2f6cc3cb3fe8df3b2885b10596cd9e09ccfbf8241a250cfa2e3a5eb8c",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_f47b4c5d63cc440ab7e9332aff11fa32",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_9167bcb188584840ad453423be585222",
+          "binding_ids": [],
+          "old_media_id": 198
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 171,
+        "revision": 15,
+        "media_ids": [
+          198
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_ac2559c3c4c24d0bbee23daf89a2ddf0",
+      "revision": 6,
+      "post_id": 69,
+      "body_hash": "726ef5b2363f470b4c8c7d429faa37e7eb12cc403747616476f065bf88867031",
+      "input_fingerprint": "fa141d714e0bb53e738ce786e6bcf7bbac0c7fd5b1645f42bfb2e6a2cf99c9b7",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_dbe175d539c04908aec9ddc882ea3bde",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_c3fbf1ff39ae41159a3a11e190f2cc7b",
+          "binding_ids": [],
+          "old_media_id": 221
+        },
+        {
+          "id": "visual_2b782e5fbc1747518eda334148ddc15c",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_121b47861c4b457bbc4d7345b9fcdf88",
+          "binding_ids": [],
+          "old_media_id": 222
+        },
+        {
+          "id": "visual_7bde8fdb025f49ffaa43a0f6de949e4a",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_7f632cc12f274730a70429b8c41466c7",
+          "binding_ids": [],
+          "old_media_id": 223
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 69,
+        "revision": 6,
+        "media_ids": [
+          221,
+          222,
+          223
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_ba8ccf5e73a1425285676bfaa9a18287",
+      "revision": 6,
+      "post_id": 76,
+      "body_hash": "41143bdefb602b59a7c5138bbe645f47ce2a44b47eb4641a75b54365c0cc781a",
+      "input_fingerprint": "14913700cac60f32e949d30cb4cb84f1a9a7ba67fdf5d5face8e80d5e017364f",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_e9fe290858494fc49b907a34afd54d96",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_NON_PHOTO_REQUIRES_SEPARATE_REVIEW",
+            "COVER_TEXT_OR_COLLAGE_DOMINANT",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_54ab0750d30342bb885ebfe25b4f3a46",
+          "binding_ids": [],
+          "old_media_id": 200
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 76,
+        "revision": 6,
+        "media_ids": [
+          200
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_d48d54a4cac54f05b5e287f87fac6e00",
+      "revision": 2,
+      "post_id": 195,
+      "body_hash": "827ccaafd0a27e782e4e2e29ded32d38fa104d81fd0e6bb16d1e4aae38d11cbe",
+      "input_fingerprint": "69985a60bfe068c51cf5b704a484bb3f4bde94441068370dae06032d69aae687",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_4440f1a20ce14d46a88bc194cb6f2376",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_dc0a5a8c12f142d6a2fc8a2766aeb917",
+          "binding_ids": [],
+          "old_media_id": 210
+        },
+        {
+          "id": "visual_c457d23a8da84c0aa792f94914eb5222",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_55f01817aff441da811e88c35d480245",
+          "binding_ids": [],
+          "old_media_id": 211
+        },
+        {
+          "id": "visual_d925b8b85ece49e5b26c4bf449154b7d",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_INTERFACE_SCREENSHOT",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_6d6d1d1b70014f93985563f312349588",
+          "binding_ids": [],
+          "old_media_id": 212
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 195,
+        "revision": 2,
+        "media_ids": [
+          210,
+          211,
+          212
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "dry_run": true,
+      "policy_version": "cover-1",
+      "draft_id": "draft_da588d0e83ca4b96a64fcaaa1de75b73",
+      "revision": 3,
+      "post_id": 87,
+      "body_hash": "5ccbf0ff02f50c71b1a6406ecca3231bb65522905dc0653360210a850bac29cf",
+      "input_fingerprint": "45e34c856f37652e9b9ada4bdfbc6a20644c30c37fcb8406554141838ef4eca3",
+      "selection": {
+        "status": "needs_review",
+        "reason": "COVER_NO_QUALIFIED_CANDIDATE",
+        "selected": null
+      },
+      "candidates": [
+        {
+          "id": "visual_51e2da875808474195be725b77ce518d",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_bd919594c79f4f808bda559b418d7c5c",
+          "binding_ids": [],
+          "old_media_id": 124
+        },
+        {
+          "id": "visual_83b3706fc1b049c2879159006ca99c0d",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_c7b2cb03d3c94327b5f7f39ff342ce39",
+          "binding_ids": [],
+          "old_media_id": 125
+        },
+        {
+          "id": "visual_dda60343067d4e1fabd18f4e50f822d3",
+          "locked": false,
+          "origin": "article",
+          "master_hash": null,
+          "eligible": false,
+          "reasons": [
+            "COVER_MASTER_UNAVAILABLE_OR_INVALID",
+            "COVER_OVERLAY_REVIEW_REQUIRED",
+            "COVER_ENTITY_RELATION_UNCONFIRMED",
+            "COVER_MASTER_QA_REQUIRED",
+            "COVER_DIMENSIONS_INVALID"
+          ],
+          "crop": {
+            "status": "needs_review",
+            "reason": "COVER_DIMENSIONS_INVALID"
+          },
+          "policy_version": "cover-1",
+          "source_asset_id": "asset_34c5dfbd2c3a48a2bab1ebcad0968a00",
+          "binding_ids": [],
+          "old_media_id": 126
+        }
+      ],
+      "execution_enabled": false,
+      "external_dependencies": [
+        "EXT-PURPOSE",
+        "EXT-REFRESH",
+        "EXT-CARD"
+      ],
+      "next_local_steps": [
+        "review_candidate_reasons"
+      ],
+      "paid_steps": [],
+      "paid_steps_status": "not_planned_no_automatic_ai_fallback",
+      "rollback": {
+        "post_id": 87,
+        "revision": 3,
+        "media_ids": [
+          124,
+          125,
+          126
+        ],
+        "action": "retain_existing_article_and_media"
+      },
+      "effects": {
+        "database_writes": 0,
+        "remote_requests": 0,
+        "model_calls": 0,
+        "uploads": 0
+      }
+    }
+  ],
+  "contract": {
+    "frontend_commit_sha": "0c4b327287c016aee138f735a8a13eb2baa74542",
+    "contract_version": "1.4.1",
+    "checksum": "417022bd056c0e9cd2b67ee016610d08b6d5d7b5737ba6849979f620acddca43",
+    "registry_sha256": "4162011012b948b490282341ede515fa8d553e8fe720a5356ef07199e97d491e",
+    "page_schema_sha256": "fec14a71e31b35fc1e31b09b7d65f9dd4989dd6314fb591710d6201a658ca120",
+    "receiver_capabilities": "NOT_TESTED",
+    "source": "existing authorized historical database cache; not deployed version evidence"
+  },
+  "protected_tables": {
+    "sources": "715013e77e3853044d98dd194919bb7cc8098e94b4fa6e80fa7c2950a0ba9a47",
+    "source_assets": "c86cef9d7f5c453e3e256b003cc465c364a590604ffdd4b00b188ae9f84b7c3e",
+    "article_drafts": "5e64a1acffb5c30b977b6d45f0cc9d82a582c57891633029eb12eecddf7aa454",
+    "article_visuals": "f36d7a36db985687f8485cf71002a8a13dec02bfadc8772e1873cac74a81a3bc",
+    "writing_packets": "ddb5bf89a295eec23ae41263155f9c4510e70d1cc8266dd040574aaa530a26e4",
+    "jobs": "1a73c4b30ddb83d67ebe1766f4860e345c2db851b4b9955e2c9e0cb665857159",
+    "model_call_metrics": "faeadb724aff8537a2fca179579b5aff2a2c399c52a983caab0f06de6550f965",
+    "wordpress_publications": "4452f0350ddc06eaad732a13e79a66f4c8c9e8b9e8a86ecb72149556b0230bc6",
+    "media_bindings": "d8b63d441bd8c92b397b0b00082a25096ad95eaf89b8886957fb3027ca7a380f"
+  },
+  "rollback": "PASS",
+  "writes": 0,
+  "external_requests": 0
+}

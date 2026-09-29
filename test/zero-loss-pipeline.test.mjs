@@ -40,3 +40,12 @@ test("CMS extraction concurrency grows only after sustained success and immediat
   pipeline.recordExtractionOutcome(job, { ok: false, error: Object.assign(new Error("rate limit"), { provider: "vertex", status: 429, retryable: true }) });
   assert.equal(pipeline.maxConcurrent, 2);
 });
+
+test('visual QA and stale inputs do not throttle unrelated production concurrency',()=>{
+ const pipeline=new Pipeline({}, {}, {extractionConfig:{concurrencyMode:'auto',concurrencyInitial:4,concurrencyMax:4}});
+ for(const code of ['VISUAL_QUALITY_QA_FAILED','STALE_PIPELINE_INPUT'])
+  pipeline.recordExtractionOutcome({type:'generate_visuals'},{ok:false,error:Object.assign(new Error(code),{code,retryable:true})});
+ assert.equal(pipeline.maxConcurrent,4);
+ pipeline.recordExtractionOutcome({type:'generate_draft'},{ok:false,error:{code:'PROVIDER_TIMEOUT',provider:'vertex',retryable:true}});
+ assert.equal(pipeline.maxConcurrent,2);
+});

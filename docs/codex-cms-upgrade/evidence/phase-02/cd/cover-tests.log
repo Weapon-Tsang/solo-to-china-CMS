@@ -1,0 +1,21 @@
+(node:17072) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ pinned contract integrity and strict fields never imply deployed receiver capabilities (2.4856ms)
+✔ cover plan preserves natural signs but rejects dense cards, screenshots, wrong entity and stale QA (0.9112ms)
+✔ cover locks never silently switch to another candidate and relevance is required before ordering (0.2623ms)
+✔ 16:9 plan is exact, bounded, EXIF-coordinate based and never enlarges a small source (0.2084ms)
+✔ real SQLite dry-run preserves draft, media, publication, jobs and calls; unavailable historical masters remain rejected (746.8149ms)
+✔ actual authenticated HTTP cover audit is read-only and rejects stale revisions (647.2874ms)
+(node:21616) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit selected cover overrides a populated featured ID; strict schemas keep optional card text internal; capacity never truncates (2.4521ms)
+✔ durable cover-only protocol reconciles lost results without upload replay or changing prior article receipts (1195.1907ms)
+✔ cover illustration maximum is cumulative and rejected before provider credentials or dispatch (1.0698ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1787.0297

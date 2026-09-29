@@ -1,0 +1,53 @@
+{
+  "source": "anonymous_https",
+  "cookies": false,
+  "authentication": false,
+  "observations": [
+    {
+      "requestedUrl": "https://solotochina.com/",
+      "status": "observed",
+      "reason": null,
+      "httpStatus": 200,
+      "finalUrl": "https://solotochina.com/",
+      "headers": {
+        "content-type": "text/html; charset=UTF-8",
+        "x-robots-tag": null,
+        "cache-control": null
+      },
+      "bytes": 37957,
+      "sha256": "724830fbde19085ba86c0cda06685c9177943a4c9eb7b9bd19b0b197954cd218",
+      "checkedAt": "2026-09-28T07:35:16.507Z"
+    },
+    {
+      "requestedUrl": "https://solotochina.com/robots.txt",
+      "status": "observed",
+      "reason": null,
+      "httpStatus": 200,
+      "finalUrl": "https://solotochina.com/robots.txt",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "x-robots-tag": null,
+        "cache-control": "max-age=14400"
+      },
+      "bytes": 119,
+      "sha256": "3d4e294fae1a1f5131de1494a004fb4347b71d4b11936d6d6179e4e217a90b40",
+      "checkedAt": "2026-09-28T07:35:17.976Z"
+    },
+    {
+      "requestedUrl": "https://solotochina.com/sitemap_index.xml",
+      "status": "observed",
+      "reason": null,
+      "httpStatus": 200,
+      "finalUrl": "https://solotochina.com/sitemap_index.xml",
+      "headers": {
+        "content-type": "text/xml; charset=UTF-8",
+        "x-robots-tag": "noindex",
+        "cache-control": "no-cache, no-store, must-revalidate, max-age=0"
+      },
+      "bytes": 657,
+      "sha256": "79b89951459acb66d7cf141638f03e9012a4ae7638fe983c983b9eb29fc38749",
+      "checkedAt": "2026-09-28T07:35:19.268Z"
+    }
+  ],
+  "limitations": "Homepage/robots/sitemap only. No deployed CMS version, article rendering, indexing, ranking or AI citation conclusion."
+}

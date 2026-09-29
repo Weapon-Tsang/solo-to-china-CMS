@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSession, classifyCaptureApiError } from '../extension/sync-core.js';
+import { createSession, classifyCaptureApiError, applyIdentityBatch } from '../extension/sync-core.js';
 import { bounded, sameRun, tabMatches } from '../extension/run-control.js';
 
 const scope = {key:'scope-test',url:'https://www.xiaohongshu.com/board/test123',label:'Fixture'};
@@ -142,4 +142,62 @@ test('run fence includes status and revision; matching URL alone cannot establis
 test('bounded waits stop without accepting late values',async()=>{
   let done;const pending=bounded(()=>new Promise(r=>{done=r;}),{timeoutMs:10,code:'TEST_TIMEOUT'});
   await assert.rejects(pending,{code:'TEST_TIMEOUT'});done('late');
+});
+
+test('collection note redirect retains worker ownership through navigation events',async t=>{
+  const f=await fixture(t);
+  const note='6aa963dd000000002601bc12';
+  const tab=await f.background.createOwnedTab(f.session,`https://www.xiaohongshu.com/board/6aac9277000000000c037eec/${note}?xsec_token=fixture`,'worker');
+  const actual=`https://www.xiaohongshu.com/explore/${note}?xsec_source=pc_feed`;
+  f.tabs.get(tab.id).url=actual;
+  chrome.tabs.onUpdated.emit(tab.id,{url:actual},f.tabs.get(tab.id));
+  await new Promise(r=>setTimeout(r,20));
+  assert.equal(f.storage.favoritesSyncState.status,'running');
+  assert.equal(tabMatches(f.tabs.get(tab.id),f.storage.favoritesSyncState.tabOwnership[tab.id]),true);
+  await f.background.closeWorkerTabs(f.storage.favoritesSyncState);
+  await new Promise(r=>setTimeout(r,20));
+  assert.equal(f.tabs.has(tab.id),false);
+  assert.equal(f.storage.favoritesSyncState.status,'running');
+});
+
+test('worker note equivalence accepts only the same note on the same origin',()=>{
+  const note='6aa963dd000000002601bc12';
+  const record={tabId:2,windowId:1,role:'worker',url:`https://www.xiaohongshu.com/board/collection/${note}`};
+  const matches=url=>tabMatches({id:2,windowId:1,url},record);
+  assert.equal(matches(`https://www.xiaohongshu.com/explore/${note}`),true);
+  assert.equal(matches(`https://www.xiaohongshu.com/discovery/item/${note}/`),true);
+  for(const path of ['/explore/another','/board/collection','/login',`/explore/${note}/other`])
+    assert.equal(matches('https://www.xiaohongshu.com'+path),false);
+  assert.equal(matches(`https://example.org/explore/${note}`),false);
+  assert.equal(matches(`http://www.xiaohongshu.com/explore/${note}`),false);
+  assert.equal(tabMatches({id:2,windowId:1,url:`https://www.xiaohongshu.com/explore/${note}`},{...record,role:'discovery'}),false);
+});
+
+test('two-card collection drains its one new note before waiting for an end marker',async t=>{
+  const f=await fixture(t);
+  const cards=['known123','new123'].map(externalId=>({externalId,url:`https://www.xiaohongshu.com/explore/${externalId}`}));
+  globalThis.fetch=async()=>Response.json({items:[{externalId:'known123',known:true},{externalId:'new123',known:false}]});
+  let scans=0;
+  chrome.scripting.executeScript=async options=>{
+    if(options.files)return [];
+    scans++;
+    assert.match(String(options.func),/scanFavorites/,'must dispatch acquisition before scrolling');
+    return [{result:{cards,collectionEnd:false,scrollY:0}}];
+  };
+  const result=await f.background.discoverWindow(f.session);
+  assert.equal(result.phase,'acquisition');
+  assert.equal(Boolean(result.discoveryComplete),false,'unknown collection end must not become successful completion');
+  assert.equal(result.queue.filter(task=>task.status==='queued').length,1);
+  assert.equal(scans,1);
+});
+
+test('resumed stalled discovery drains persisted queued work without another scan',async t=>{
+  const f=await fixture(t);
+  const session=applyIdentityBatch(f.session,[{externalId:'new123',url:'https://www.xiaohongshu.com/explore/new123'}],[{externalId:'new123',known:false}]);
+  session.phase='discovery';session.noProgressSince=1;
+  f.storage.favoritesSyncState=session;
+  chrome.scripting.executeScript=async()=>{throw Error('must not scan ahead of saved work');};
+  const result=await f.background.discoverWindow(session);
+  assert.equal(result.phase,'acquisition');assert.equal(result.status,'running');
+  assert.equal(Boolean(result.discoveryComplete),false);
 });

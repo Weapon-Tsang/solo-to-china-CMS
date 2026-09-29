@@ -1,5 +1,5 @@
 import {
-  AlertTriangle, Bell, BookOpen, Bot, Box, Check, CircleAlert, Database, FileCheck2,
+  AlertTriangle, Bell, BookOpen, Bot, Box, Check, CircleAlert, FileCheck2,
   FileText, Gauge, Inbox, Layers3, Library, PanelTop, RefreshCw, Route, Search, Settings2, Sparkles,
   TicketCheck, WandSparkles,
 } from "lucide-react";
@@ -51,12 +51,12 @@ export function Topbar({ health, refreshing, onRefresh }) {
   const providerLabel=!health?.aiConfiguration?.configured?"AI 未配置"
     : providerState==="backoff"?"AI 限流退避"
       : providerState==="degraded"?"AI 最近失败"
-        : `${health.aiConfiguration.provider === "vertex" ? "Vertex AI" : "Kimi"} · ${health.aiConfiguration.model || "已配置"}`;
+        : `来源解析：${({vertex:"Vertex AI",deepseek:"DeepSeek",openai:"OpenAI",kimi:"Kimi"})[health.aiConfiguration.provider] || health.aiConfiguration.provider || "AI"} · ${health.aiConfiguration.model || "已配置"}`;
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200/70 bg-slate-50/85 backdrop-blur-xl">
       <div className="mx-auto flex h-[52px] w-full max-w-[1440px] items-center justify-between px-3 sm:h-14 sm:px-6 lg:px-8">
         <a href="/" className="flex items-center gap-2.5 text-sm font-semibold tracking-tight text-slate-900">
-          <span className="grid size-8 place-items-center rounded-lg bg-slate-900 text-white shadow-sm"><Database className="size-4" /></span>
+          <img src="/brand/solotochina-logo.jpg" alt="" width="36" height="36" className="size-9 shrink-0 rounded-lg bg-white object-contain" />
           <span>SoloToChina</span><span className="hidden border-l border-slate-200 pl-2.5 font-normal text-slate-400 sm:inline">内容研究引擎</span>
         </a>
         <div className="flex items-center gap-2">

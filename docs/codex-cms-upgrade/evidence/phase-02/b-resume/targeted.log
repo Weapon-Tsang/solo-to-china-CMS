@@ -1,0 +1,44 @@
+✔ accessible captions reuse translated regions without losing source attribution or repeating existing text (0.9897ms)
+✔ WordPress media metadata records a public final URL, dimensions, bytes, hash and derivatives (1.7983ms)
+✔ media delivery rejects private/signed routes, missing dimensions, bad alt roles and duplicate uploads (0.9962ms)
+✔ localized real photos require an original, authorization, a real localized file and WordPress upload (0.3451ms)
+✔ photo-overlay localization remains evidence media and requires the same derivative provenance (0.3396ms)
+✔ project-wide source authorization supersedes missing legacy per-item flags (0.3257ms)
+✔ a planned required visual cannot disappear from the delivery manifest (0.2129ms)
+✔ responsive HTML gives only the first image high priority and later images lazy loading (1.2813ms)
+✔ two placements of the same source asset reuse one WordPress media upload (22.2728ms)
+✔ different derivatives of one source asset keep independent WordPress identities (1.7884ms)
+(node:20504) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real Pipeline uploads qualified web bytes, persists lineage and rejects tampered derivatives without rewriting the master (925.6186ms)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (617.8335ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (557.6978ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (566.4708ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (582.3151ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (561.3784ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (547.8185ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (537.1657ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (530.9235ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (526.2722ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (542.5835ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (530.3377ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (524.9923ms)
+✔ loopback HTTP receiver stores independent bytes, transforms output, loses receipt and returns invalid responses (902.8601ms)
+✔ real JPEG/PNG/WebP decode, EXIF orientation, alpha, source identity and immutable master QA (1648.2179ms)
+✔ photos downscale without enlargement; dense text keeps pixels with lossless output (697.7387ms)
+✔ invalid MIME, broken decode, pixel resource limit and animation are diagnosed without ready files (24.6877ms)
+✔ cache concurrency, transform version, corrupt cache and QA cannot be bypassed by reuse or fallback (909.2013ms)
+✔ optimization fallback obeys safe normalized dimensions and retries only encoding (347.9946ms)
+✔ actual crop bytes contain the safe region and preserve master; unsafe crops fail (82.3744ms)
+✔ actual configured adapter uploads derivative bytes and keeps master QA/source identity (213.5792ms)
+✔ public URLs reject local/private/signed delivery and remote hashes remain explicitly unknown (0.2642ms)
+✔ cache binds original provenance and rejects receipt tampering or missing bytes (821.1216ms)
+✔ fractional crop rounds outward to retain every safe-region pixel (48.9329ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7919.2124

@@ -1,0 +1,56 @@
+(node:27260) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ pinned contract integrity and strict fields never imply deployed receiver capabilities (2.0173ms)
+✔ cover plan preserves natural signs but rejects dense cards, screenshots, wrong entity and stale QA (0.6783ms)
+✔ cover locks never silently switch to another candidate and relevance is required before ordering (0.29ms)
+✔ 16:9 plan is exact, bounded, EXIF-coordinate based and never enlarges a small source (0.2346ms)
+✔ real SQLite dry-run preserves draft, media, publication, jobs and calls; unavailable historical masters remain rejected (837.0443ms)
+✔ actual authenticated HTTP cover audit is read-only and rejects stale revisions (824.1257ms)
+(node:19076) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real cover pixels, explicit preview confirmation, CAS, history and body preservation (2132.1161ms)
+✔ unsafe geometry, stale source relation and concurrent confirmations cannot save a cover (1559.2523ms)
+✔ cover history files restore across directories, cleanup preserves references, and review does not dispatch (1333.2135ms)
+(node:8304) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ a repaired media gate skips visual re-planning and routes a stale failure to composition (687.4927ms)
+✔ exhausted image step resumes only missing visual after an explicit durable grant (875.3761ms)
+✔ a visual Job cannot succeed while a required planned slot remains unfinished (754.1282ms)
+✔ accessible captions reuse translated regions without losing source attribution or repeating existing text (1.1033ms)
+✔ WordPress media metadata records a public final URL, dimensions, bytes, hash and derivatives (1.8678ms)
+✔ media delivery rejects private/signed routes, missing dimensions, bad alt roles and duplicate uploads (1.1045ms)
+✔ localized real photos require an original, authorization, a real localized file and WordPress upload (0.3708ms)
+✔ photo-overlay localization remains evidence media and requires the same derivative provenance (0.4211ms)
+✔ project-wide source authorization supersedes missing legacy per-item flags (0.331ms)
+✔ a planned required visual cannot disappear from the delivery manifest (0.4979ms)
+✔ responsive HTML gives only the first image high priority and later images lazy loading (1.407ms)
+✔ two placements of the same source asset reuse one WordPress media upload (33.3121ms)
+✔ different derivatives of one source asset keep independent WordPress identities (1.8328ms)
+(node:19108) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real Pipeline uploads qualified web bytes, persists lineage and rejects tampered derivatives without rewriting the master (925.5748ms)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (741.5351ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (709.7605ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (674.0195ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (717.993ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (582.0213ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (612.7466ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (554.1791ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (578.1385ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (580.5268ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (551.3598ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (568.8796ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (572.7207ms)
+✔ commercial overlay preserves editorial blocks and exact Page Payload order (2.4897ms)
+✔ structured affiliate search uses exactly one Frontend delivery representation (3.3762ms)
+✔ Publish Package carries presentation, semantic SEO/GEO, JSON-LD, and WordPress media references (3.2855ms)
+✔ Publish Package translates internal CMS taxonomy before WordPress delivery (0.3076ms)
+✔ commercial reconciliation proves each selected slot across payload, WordPress storage and visible DOM (0.8477ms)
+ℹ tests 40
+ℹ suites 0
+ℹ pass 40
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8834.6769

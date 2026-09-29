@@ -1,0 +1,117 @@
+{
+  "head": "490dd7464d4beb46d3f89a578337c253917fbf7a",
+  "files": [
+    {
+      "file": "docs/codex-cms-upgrade/EXTERNAL_DEPENDENCIES.md",
+      "sha256": "8ef847e2b6b2185b6540ea09a2995dbbf5ab368e67cca5bce45632eae8bc271f"
+    },
+    {
+      "file": "docs/codex-cms-upgrade/STATUS.md",
+      "sha256": "32ce7a15050966946ed2010c13e5070db317422ee99b08aed5bcc60b52386c4d"
+    },
+    {
+      "file": "docs/codex-cms-upgrade/acceptance/phase-02.md",
+      "sha256": "a5b07f418c9b77930d812d907782d7af3e62b2b07c2b3a890606618e1c9d3d6d"
+    },
+    {
+      "file": "src/backup.mjs",
+      "sha256": "b4d834ba49efb9f985f6eb22447d16d027ccb04b603430e5bc9539ca3963076f"
+    },
+    {
+      "file": "src/config.mjs",
+      "sha256": "fae5b71839d4cd2e7779588f65d243419f90e24370a2227349cb57ce0c328c79"
+    },
+    {
+      "file": "src/media-delivery.mjs",
+      "sha256": "710d0711be960c1b22e74113c5873479ea0243728a44a089a782be0096644432"
+    },
+    {
+      "file": "src/publication-eligibility.mjs",
+      "sha256": "065346349a1f0ef6c4e95ae9a87821b0e67d03cc29b46891c15a058b8bf45433"
+    },
+    {
+      "file": "src/repository.mjs",
+      "sha256": "3945fe587825603293518a32af8b618101a62e59fa0c05931d8280c2151c2d68"
+    },
+    {
+      "file": "src/route-media.mjs",
+      "sha256": "7597957266134ee5529bfc7f7a5977f6c65a7d9c64c6bdcddf8ca6ee37c16487"
+    },
+    {
+      "file": "src/server.mjs",
+      "sha256": "d2de95b1ada6e3dc9dd8481d1d4c2be94bdab2a4a6caf6ddfc4ce3563e7833b9"
+    },
+    {
+      "file": "src/visuals/vertex-imagen.mjs",
+      "sha256": "ee59b8645df21f536b0955730e00c878410ae249ea325b700045ddc48601eba2"
+    },
+    {
+      "file": "src/wordpress.mjs",
+      "sha256": "a78011f84a474d99ec5d55a3c318fd2f39f31290928278ccce9fd603603458aa"
+    },
+    {
+      "file": "test/backup.test.mjs",
+      "sha256": "89ed73a3b96b3bafcbd2398803e29cc2b6116c0b94ab7916267fddedbdf80754"
+    },
+    {
+      "file": "test/media-delivery.test.mjs",
+      "sha256": "fc96399e9833b3ff00f4392d9e9e13bab431a1f4e745102e085c7a04755c2fc6"
+    },
+    {
+      "file": "test/publication-eligibility.test.mjs",
+      "sha256": "c9ed303da4ab2c348d93e11d83d1722cab44728d3c87b260de8e524a49a54a50"
+    },
+    {
+      "file": "test/route-media.test.mjs",
+      "sha256": "d3cf169a022ea984480b2ab143c0dd605ac43c26e41d9ad03b7f1806d00bca14"
+    },
+    {
+      "file": "test/visuals.test.mjs",
+      "sha256": "61951dffc0069e52b3d926272dcc1635bd6c46e7c9c88c8a53342add1f75769e"
+    },
+    {
+      "file": "scripts/stage02-web-media-replay.mjs",
+      "sha256": "243d839a291992b23301286f1cdea498b4f2a7584b21788b941b0b0df58363f6"
+    },
+    {
+      "file": "scripts/stage02-web-media-samples.mjs",
+      "sha256": "b722c122fbbe937bd8adca2055134f6da18413248a3d3fba7cc4ffe600b19ebe"
+    },
+    {
+      "file": "scripts/verify-stage02-web-media-browser.js",
+      "sha256": "7392944bdc4008474e6b96b2e5335e2d71c423779d78f29b643955cbeaff048a"
+    },
+    {
+      "file": "src/visuals/route-panel.mjs",
+      "sha256": "20d99500f0371a9ae58df838896f0a0cbfb28eae07a868efb5f0420bc0641b99"
+    },
+    {
+      "file": "src/web-media.mjs",
+      "sha256": "cc92dd67fc5d19dd43e83bb6bae548d4e1b1aba5fcc0b8c8be30ca98d2a89ce0"
+    },
+    {
+      "file": "test/web-media-http.test.mjs",
+      "sha256": "fd076781858442c0b6f27266235e3c39499d3a448fafb453b1904ea844e1c531"
+    },
+    {
+      "file": "test/web-media.test.mjs",
+      "sha256": "3fb34b60ea9f7f8e2723dadc5f72a555b256cacae7618e6325fd19b37993d80e"
+    },
+    {
+      "file": "src/cover-policy.mjs",
+      "sha256": "9b5790537bd28fe9f8eba7797863cb543c1e2b942e1c07b7568ed1424a4b790a"
+    },
+    {
+      "file": "src/services/cover-audit.mjs",
+      "sha256": "058e955c33b50cb742f07d271abbc5ce2cedde2a6ce7f23889cbde8d343cae86"
+    },
+    {
+      "file": "test/cover-audit.test.mjs",
+      "sha256": "0ba9114bcfc654ea674961629d2688f70a291d1e74cad571dd075946c7a02383"
+    },
+    {
+      "file": "scripts/stage02-cover-audit-replay.mjs",
+      "sha256": "b09219a51df848a78c79d7326000bca1df4d5c7f6ddc18b9e6f743decd55ef70"
+    }
+  ]
+}

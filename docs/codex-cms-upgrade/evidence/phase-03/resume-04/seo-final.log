@@ -1,0 +1,42 @@
+(node:33508) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-01/16 observations persist, menu reads never fetch, TTL/manual refresh and revisions are distinct (921.7564ms)
+✔ T03-16 concurrent clicks coalesce; late results never overwrite a newer revision (588.5223ms)
+✔ T03-02/17 private/preview/off-site permalinks cannot be requested or overridden (579.1467ms)
+✔ T03-16 actual local API authenticates and persists inspections without queue/model/content changes (622.8841ms)
+(node:20756) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-13/14 saved entity identity and anonymous access reach the package without model or network calls (724.7824ms)
+✔ commercial overlay preserves editorial blocks and exact Page Payload order (2.2495ms)
+✔ structured affiliate search uses exactly one Frontend delivery representation (0.3533ms)
+✔ Publish Package carries presentation, semantic SEO/GEO, JSON-LD, and WordPress media references (2.1029ms)
+✔ Publish Package translates internal CMS taxonomy before WordPress delivery (0.2921ms)
+✔ commercial reconciliation proves each selected slot across payload, WordPress storage and visible DOM (2.1827ms)
+✔ SEO preview preserves long editorial fields and makes no display or CTR promise (2.4679ms)
+✔ inventory route or status changes identify only page blocks that reference the changed target (4.1012ms)
+✔ canonical URL is emitted only from a configured public route or verified published URL (7.8997ms)
+✔ unsupported title promises are rejected without treating length as a hard limit (0.8501ms)
+✔ SEO and structured data stay synchronized with visible page content (6.6843ms)
+✔ FAQ schema is optional and must exactly match the visible FAQ when present (2.9903ms)
+✔ internal links use only relevant public inventory and invalid targets fail final checks (5.6899ms)
+✔ duplicate inventory creates an editorial risk, never an automatic merge or canonical instruction (0.4247ms)
+✔ Publish Package overwrites conflicting model metadata from one deterministic source (0.9048ms)
+✔ T03-12 visible FAQ is valid without optional markup, later conflicting markup fails (1.2754ms)
+✔ T03-08/10/13 query identities, later Article and local anchors remain distinct (0.7265ms)
+✔ T03-13 unknown links are pending diagnostics, confirmed broken targets fail, contextual Read guide is valid (1.8629ms)
+✔ T03-13 entity identity ranks above title overlap and explicit unknown access is not selected (0.3472ms)
+✔ T03-14 entity plus independent question controls advisory new/update/merge/claim decisions (0.4878ms)
+✔ T03-08/15 internal CMS origins and private literal addresses cannot become public canonical metadata (0.2555ms)
+✔ T03-09/10 schema arrays and nested BlogPosting consume CMS metadata without inventing author or time (0.4649ms)
+✔ T03-07/16 explicit inspection traverses child sitemaps and propagates revision and refresh (24.8614ms)
+✔ T03-07 budgets and inaccessible children preserve unknown rather than declaring absence (11.1749ms)
+✔ T03-17 inaccessible page stops inspection without pretending content is missing (2.9739ms)
+✔ T03-08 allowed redirect checks canonical and sitemap against the final anonymous URL (3.0704ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3297.9793

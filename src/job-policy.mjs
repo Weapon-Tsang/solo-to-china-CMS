@@ -44,6 +44,9 @@ export function isAiJobType(type) {
 export const WORKLOAD_LANES = Object.freeze({
   interactive: { rank: 0, concurrency: 2, requestSpacingMs: 1_000, backoffMultiplier: 1 },
   normal_ingest: { rank: 1, concurrency: 2, requestSpacingMs: 1_000, backoffMultiplier: 1 },
+  // Approved article production. Its own lane so Source ingest and long
+  // semantic work cannot occupy every slot an approved article needs.
+  production: { rank: 1, concurrency: 2, requestSpacingMs: 1_000, backoffMultiplier: 1 },
   semantic: { rank: 2, concurrency: 1, requestSpacingMs: 1_500, backoffMultiplier: 1.5 },
   background_enrichment: { rank: 3, concurrency: 1, requestSpacingMs: 2_000, backoffMultiplier: 2 },
   historical_recovery: { rank: 4, concurrency: 1, requestSpacingMs: 3_000, backoffMultiplier: 3 },
@@ -59,7 +62,15 @@ export const DATABASE_HEAVY_JOB_TYPES = new Set([
   "rebuild_content_opportunities",
 ]);
 
+export const PRODUCTION_LANE_JOB_TYPES = new Set(["assemble_editorial","plan_content","plan_narrative","assemble_writing_packet",
+  "compose_frontend_page_plan","generate_draft","generate_visuals","compose_frontend_page","review_draft","revise_draft",
+  "compose_commercial","compose_publish_page","push_wordpress_draft","publish_wordpress_post"]);
+
 export function workloadClassForJob(type, requested = "") {
+  // Explicit operator/recovery lanes win; otherwise production stages always
+  // run in the production lane even when inherited from an ingest parent.
+  if (["interactive", "historical_recovery", "maintenance"].includes(requested)) return requested;
+  if (PRODUCTION_LANE_JOB_TYPES.has(type)) return "production";
   if (WORKLOAD_LANES[requested]) return requested;
   if (["extract_source_experience", "resolve_entities", "rebuild_knowledge"].includes(type)) return "semantic";
   if (["analyze_source_family", "analyze_source_blueprint", "analyze_source_diagnostic", "analyze_intake",

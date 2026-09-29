@@ -1,0 +1,163 @@
+{
+  "head": "490dd7464d4beb46d3f89a578337c253917fbf7a",
+  "files": [
+    {
+      "file": "docs/codex-cms-upgrade/EXTERNAL_DEPENDENCIES.md",
+      "before": "75c6fc97831e0ade24b7c008797d93268e093ebb970edac02880e6448026ac04",
+      "after": "fd91f4bd406bf20c95de3da560239b3268b75f87ce735b9b27bb4c18f8cb395c",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "docs/codex-cms-upgrade/STATUS.md",
+      "before": "580365ad7b5174e032386fa4d6e35713309d4752445718e0ae5470a8e7bb2953",
+      "after": "a90a5dd61d762ba165f267323e384f933754d3b19a1b14b417b4ec504c7c4efa",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "docs/codex-cms-upgrade/acceptance/phase-02.md",
+      "before": "46b69474bd7a1d1061a26f24ca979ee9eff0c4fdd34a21ff5c3b3d351ede7c06",
+      "after": "0666396dcf0327e4c217db9056f364de2b5e09c6043156a76ac1db4bd4fee32a",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "src/backup.mjs",
+      "before": "2a40e3ff7741ebd94ff666a6582a52b48979dff7d49c3f9c1d291bd119c9d8ba",
+      "after": "b4d834ba49efb9f985f6eb22447d16d027ccb04b603430e5bc9539ca3963076f",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "src/config.mjs",
+      "before": "753143c112f14dbfeef35fbd4eb1d089f0af29036230374c566acb9898c77496",
+      "after": "fae5b71839d4cd2e7779588f65d243419f90e24370a2227349cb57ce0c328c79",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "src/media-delivery.mjs",
+      "before": "ce2775f84fce5dc427118c182fffc3b22e671c1611f805dbd5e8e32361428c5c",
+      "after": "710d0711be960c1b22e74113c5873479ea0243728a44a089a782be0096644432",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "src/publication-eligibility.mjs",
+      "before": "3cba059e1e67cbfff1797c0bb760560c62b2a99c435fcb2d4e05690afa72a467",
+      "after": "065346349a1f0ef6c4e95ae9a87821b0e67d03cc29b46891c15a058b8bf45433",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "src/repository.mjs",
+      "before": "f559e74d901640020c3a69842a742fafa3dc451c73cb3a9c1b237d66124e01cb",
+      "after": "3945fe587825603293518a32af8b618101a62e59fa0c05931d8280c2151c2d68",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "src/route-media.mjs",
+      "before": "f6d494f92ab5dec0022c2da7d88e8955bc9a0b9ad445d2af9714c78ba63a11e7",
+      "after": "7597957266134ee5529bfc7f7a5977f6c65a7d9c64c6bdcddf8ca6ee37c16487",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "src/server.mjs",
+      "before": "c7eba8b4e8bf7eb6bb420964a801771f0acbdce87d68f6cd3f40531b1861d100",
+      "after": "474c2e29696f7c3b589cde25683bf2a4089c1515e68eb3dc87469d3683d383fe",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "src/visuals/vertex-imagen.mjs",
+      "before": "cac1266c83f90c0d56971f4c6d14e9726b1624a2ab494cbbbe65c9b86d76f7e7",
+      "after": "ee59b8645df21f536b0955730e00c878410ae249ea325b700045ddc48601eba2",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "src/wordpress.mjs",
+      "before": "4056d0e37b4d40b95b34fc24f78ee2b8d0b7f61442ecb071fe18bb3be7d5ccbb",
+      "after": "a78011f84a474d99ec5d55a3c318fd2f39f31290928278ccce9fd603603458aa",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "test/backup.test.mjs",
+      "before": "2e9bafe37733e89a000b2bf482b287dd480ef662b91ea1470898f312307a85a3",
+      "after": "89ed73a3b96b3bafcbd2398803e29cc2b6116c0b94ab7916267fddedbdf80754",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "test/media-delivery.test.mjs",
+      "before": "31d650fae90cc2bb3305dd4b98966d142282f7edf1c5db8c0210b86cee2ad29f",
+      "after": "fc96399e9833b3ff00f4392d9e9e13bab431a1f4e745102e085c7a04755c2fc6",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "test/publication-eligibility.test.mjs",
+      "before": "3c5c372a11e5d04b4fc370ce04fafd2fcc03b43221f1f1a68ec6c1b2a119fcbe",
+      "after": "c9ed303da4ab2c348d93e11d83d1722cab44728d3c87b260de8e524a49a54a50",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "test/route-media.test.mjs",
+      "before": "229e0401d0a0e28c86a285e78b5be4d90a9e35d4733b8b5153b90805aece493f",
+      "after": "d3cf169a022ea984480b2ab143c0dd605ac43c26e41d9ad03b7f1806d00bca14",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "test/visuals.test.mjs",
+      "before": "576373668fc97f998dd1f9e7c292498e2e6cdcc87afa2c24192ddb05106cddb9",
+      "after": "61951dffc0069e52b3d926272dcc1635bd6c46e7c9c88c8a53342add1f75769e",
+      "beforeBasis": "clean entry HEAD 490dd74"
+    },
+    {
+      "file": "scripts/stage02-web-media-replay.mjs",
+      "before": null,
+      "after": "243d839a291992b23301286f1cdea498b4f2a7584b21788b941b0b0df58363f6",
+      "beforeBasis": "new in B"
+    },
+    {
+      "file": "scripts/stage02-web-media-samples.mjs",
+      "before": null,
+      "after": "b722c122fbbe937bd8adca2055134f6da18413248a3d3fba7cc4ffe600b19ebe",
+      "beforeBasis": "new in B"
+    },
+    {
+      "file": "scripts/verify-stage02-web-media-browser.js",
+      "before": null,
+      "after": "7392944bdc4008474e6b96b2e5335e2d71c423779d78f29b643955cbeaff048a",
+      "beforeBasis": "new in B"
+    },
+    {
+      "file": "src/visuals/route-panel.mjs",
+      "before": null,
+      "after": "20d99500f0371a9ae58df838896f0a0cbfb28eae07a868efb5f0420bc0641b99",
+      "beforeBasis": "new in B"
+    },
+    {
+      "file": "src/web-media.mjs",
+      "before": null,
+      "after": "958dba695bfa86f21d756f20d77112aa755bdc9a09fa7e0155cc33dd7d607d8d",
+      "beforeBasis": "new in B"
+    },
+    {
+      "file": "test/web-media-http.test.mjs",
+      "before": null,
+      "after": "fd076781858442c0b6f27266235e3c39499d3a448fafb453b1904ea844e1c531",
+      "beforeBasis": "new in B"
+    },
+    {
+      "file": "test/web-media.test.mjs",
+      "before": null,
+      "after": "5a01d4168cd9a571a62e165c2b1ec64a5779b4168c4c0971e1d2a3dacb1d134f",
+      "beforeBasis": "new in B"
+    }
+  ],
+  "preservedHistory": [
+    {
+      "file": "docs/codex-cms-upgrade/evidence/phase-02/a2-local-acceptance.md",
+      "unchanged": true
+    },
+    {
+      "file": "docs/codex-cms-upgrade/phases/phase-02.txt",
+      "unchanged": true
+    },
+    {
+      "file": "docs/codex-cms-upgrade/phases/phase-02-a2.txt",
+      "unchanged": true
+    }
+  ]
+}

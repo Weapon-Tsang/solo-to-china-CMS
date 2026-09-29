@@ -25,5 +25,6 @@
   "action": {
     "default_title": "保存到 SoloToChina",
     "default_popup": "popup.html"
-  }
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArx2GaBvl9NSlg5KFLTqd+Gr9uIdwt3PQhKd7UFUUOB+iu9gsqQT+WFMZDNcIIMqTaUc49bscShhQ/uyTDVsoG1kRm9sOwCU+Tof8YZFfBFUMdPwabHnQIB2om9TVMkEBAX16o3C4hLiRC6rxbuABvrm1LDb8xHZ3B37tIS2lBnBn6iyiRCM20x5boCD+Cj6dFuwNcnT7KpD5vnO4oNGDGEcSl3Lv7jeGkb5B+UyLOZnOiCqUndSCebr/c8EpTv6Pe2j6FC7LwTK50C3OOiJZ52PN6RZcELYJB8N+HdbAON8x6SRUZIHGK3tfccIsNm1KMo2Epnb/XEfl9k4k/9OgHwIDAQAB"
 }

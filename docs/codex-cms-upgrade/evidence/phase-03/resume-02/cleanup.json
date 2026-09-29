@@ -1,0 +1,30 @@
+{
+  "at": "2026-09-28T09:14:22.199Z",
+  "ports": [
+    {
+      "port": 61848,
+      "listening": false
+    },
+    {
+      "port": 51109,
+      "listening": false
+    },
+    {
+      "port": 58193,
+      "listening": false
+    },
+    {
+      "port": 58503,
+      "listening": false
+    }
+  ],
+  "browserSessions": {
+    "phase03": "closed by session-specific CLI",
+    "perf03": "closed by session-specific CLI"
+  },
+  "testCommands": "completed with teardown; no sub-agents spawned",
+  "workerBenchmark": "process exited 0; worker and synthetic load stopped by benchmark finally",
+  "phase_end_stop": true,
+  "current_authorized_step": "NONE",
+  "userServicesStopped": false
+}

@@ -1,0 +1,31 @@
+(node:33688) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit selected cover overrides a populated featured ID; strict schemas keep optional card text internal; capacity never truncates (2.4238ms)
+✔ durable cover-only protocol reconciles lost results without upload replay or changing prior article receipts (1293.1179ms)
+✔ cover illustration maximum is cumulative and rejected before provider credentials or dispatch (0.6639ms)
+(node:1940) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ actual cover output normalizes EXIF, preserves alpha and never enlarges small images (1051.8585ms)
+✔ real cover pixels, explicit preview confirmation, CAS, history and body preservation (1820.773ms)
+✔ unsafe geometry, stale source relation and concurrent confirmations cannot save a cover (1331.587ms)
+✔ retained original photo uses existing deterministic qualification without fabricating model QA (893.3657ms)
+✔ cover history files restore across directories, cleanup preserves references, and review does not dispatch (1215.6477ms)
+(node:33892) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"success","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: success, actual bytes and rendered HTML (1925.8983ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"lost","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":1,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: lost, actual bytes and rendered HTML (1761.9108ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"partial","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: partial, actual bytes and rendered HTML (1567.2518ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6790.63

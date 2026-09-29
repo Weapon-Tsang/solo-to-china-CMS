@@ -1,0 +1,59 @@
+(node:18800) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"nonempty_samples":30,"p50_ms":1.877799999999752,"p95_ms":3.692700000000059,"provider_calls":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","api_only":true}
+✔ actual authenticated API streaming, ownership, CSRF, confirmation, lost receipt recovery and nonempty latency (2411.1036ms)
+(node:11536) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (2344.9042ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (2052.0743ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ explicit revocation restores old slot exactly with an appended revision and no provider work (1432.685ms)
+✔ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (704.9228ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ media-only receiver protocol retains old receipts and reconciles unknown outcomes without duplicate upload (1445.1904ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1457.3337ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (11013.7229ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (707.6581ms)
+(node:16876) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ pinned contract integrity and strict fields never imply deployed receiver capabilities (2.2606ms)
+✔ cover plan preserves natural signs but rejects dense cards, screenshots, wrong entity and stale QA (0.896ms)
+✔ cover locks never silently switch to another candidate and relevance is required before ordering (0.3064ms)
+✔ 16:9 plan is exact, bounded, EXIF-coordinate based and never enlarges a small source (0.2157ms)
+✔ real SQLite dry-run preserves draft, media, publication, jobs and calls; unavailable historical masters remain rejected (922.5129ms)
+✔ actual authenticated HTTP cover audit is read-only and rejects stale revisions (849.7755ms)
+(node:25500) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit selected cover overrides a populated featured ID; strict schemas keep optional card text internal; capacity never truncates (3.4966ms)
+✔ durable cover-only protocol reconciles lost results without upload replay or changing prior article receipts (1672.0965ms)
+✔ cover illustration maximum is cumulative and rejected before provider credentials or dispatch (0.6504ms)
+(node:24148) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ same-entity stored source becomes a separate cover candidate with real binding checks; illustration plan never dispatches (1136.724ms)
+(node:24192) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real Pipeline uploads qualified web bytes, persists lineage and rejects tampered derivatives without rewriting the master (1028.4341ms)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (770.5495ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (666.7749ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (621.7366ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (595.2941ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (548.5157ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (574.2726ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (580.0212ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (567.5227ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (563.8474ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (558.8428ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (574.8775ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (581.6298ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21584.3338

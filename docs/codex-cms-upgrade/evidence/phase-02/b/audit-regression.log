@@ -1,0 +1,44 @@
+(node:20940) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ source cleanup preserves nested web/crop references and snapshots remain independent (854.0178ms)
+✔ web derivative lineage and exact bytes restore across directories in migration review (942.2688ms)
+✔ system snapshot hashes the database, uploads and generated media and drills an offline delivery (921.9718ms)
+✔ restore verification rejects a deleted database-referenced image (715.9804ms)
+✔ snapshot refuses source bytes that disagree with the database fingerprint (602.516ms)
+✔ restore drill rejects media whose bytes disagree with its declared MIME (773.3071ms)
+✔ direct restore rejects media whose bytes disagree with its declared MIME before activation (751.0609ms)
+✔ restore refuses a snapshot from a newer schema before creating a target (705.9352ms)
+✔ restore refuses insufficient free space before creating target or staging (743.2833ms)
+✔ an interrupted restore resumes only the same snapshot and repairs partial files (1052.7569ms)
+✔ restore migrates an older snapshot only inside the isolated target (733.7043ms)
+✔ snapshot verification compares manifest hashes rather than only file sizes (674.144ms)
+✔ snapshot verification rejects an omitted database file reference (680.7915ms)
+✔ snapshot verification rejects omitted, altered, and untrusted business fingerprints (782.4327ms)
+✔ business fingerprint catches changed source state after the database file hash is updated (707.6012ms)
+✔ snapshot includes durable source storage references and pending capture chunks (868.806ms)
+✔ snapshot restores an unpromoted visual candidate file and its database path (810.8395ms)
+✔ snapshot preserves and remaps file paths nested in historical capture JSON (847.1928ms)
+✔ snapshot rejects a missing file referenced only by historical capture JSON (605.2089ms)
+✔ version 2 manifests remain readable without version 3 JSON references (760.3307ms)
+✔ version 2 recovers omitted relative source storage references only from archived files (833.8049ms)
+✔ snapshot rejects case collisions and archive symlinks (664.4904ms)
+✔ snapshot restores to a new external root and remaps only stored file references (790.2172ms)
+✔ restore remaps a POSIX stored path fixture on Windows without changing unrelated text (774.8935ms)
+✔ snapshot refuses to race an active media file mutation (523.9103ms)
+✔ restore refuses a symbolic-link ancestor before creating the target (655.0039ms)
+✔ real JPEG/PNG/WebP decode, EXIF orientation, alpha, source identity and immutable master QA (1512.6864ms)
+✔ photos downscale without enlargement; dense text keeps pixels with lossless output (708.1811ms)
+✔ invalid MIME, broken decode, pixel resource limit and animation are diagnosed without ready files (24.5009ms)
+✔ cache concurrency, transform version, corrupt cache and QA cannot be bypassed by reuse or fallback (930.1489ms)
+✔ optimization fallback obeys safe normalized dimensions and retries only encoding (356.2319ms)
+✔ actual crop bytes contain the safe region and preserve master; unsafe crops fail (80.9818ms)
+✔ actual configured adapter uploads derivative bytes and keeps master QA/source identity (222.2849ms)
+✔ public URLs reject local/private/signed delivery and remote hashes remain explicitly unknown (0.2629ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 20083.8417

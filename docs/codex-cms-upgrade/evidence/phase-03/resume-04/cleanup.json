@@ -1,0 +1,14 @@
+{
+  "checked_at": "2026-09-28T19:52:45.9431363+08:00",
+  "fixture_processes_remaining": [],
+  "browser_sessions_closed": [
+    "phase03r4",
+    "phase03r4perf"
+  ],
+  "browser_close_exit_codes": [
+    0,
+    0
+  ],
+  "method": "Fixture-specific STOP files; verified recorded Node PIDs absent; named Playwright sessions closed",
+  "user_processes_stopped": false
+}

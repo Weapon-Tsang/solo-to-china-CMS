@@ -1,4 +1,5 @@
 import { slugify, truncate } from "../utils.mjs";
+import { compactExperienceReferences } from './experience-references.mjs';
 import { CONTENT_STRATEGY } from "../content-strategy.mjs";
 import { createAiClient } from "./client.mjs";
 import { evidenceTextContains, pageBlockSignature, protectedFactTokens, validatePageEvidence } from "../evidence-validator.mjs";
@@ -186,7 +187,7 @@ Return exactly a brief and a draft in one structured response. The brief is an e
 Optionally include draft.card_title (up to 100 characters) and draft.deck (up to 240 characters) for a compact listing card, using the same facts. They never replace title, meta_description, SEO or body. Do not add a separate generation call for these fields.
 Use only the supplied source facts and experience. Every evidence ledger claim key must appear in the matching brief outline section and refer to an input fact. Preserve numbers, qualifiers, dates, uncertainty and source provenance. Do not invent first-person travel experience or source media.
 Plan a useful narrative, reader decisions, SEO metadata, FAQ and required image slots. The draft must contain each evidence-bearing brief heading and must include accurate alt text. A factual image must reference a relevant authorized source; illustration does not replace factual evidence. Do not claim that any generated image passed visual QA.
-Plan all useful visual types: include as many distinct, relevant, high-quality real-world originals from authorized_source_assets as the article can use well, and retain valuable Chinese information graphics or route maps for complete English translation. Generate an original illustration where it genuinely helps. Do not select an unrelated image to fill a quota. Reusing an eligible retained original is a local zero-Provider operation; translation, generation and their independent visual QA are separately budgeted. Preserve source IDs, specific subjects, accurate English alt text and useful placement.
+Plan all useful visual types: include as many distinct, relevant, high-quality real-world originals from authorized_source_assets as the article can use well, and retain valuable Chinese information graphics or route maps for complete English translation. All imported source images are authorized for editorial use even when per-image licensing fields are missing. For article body media, use relevant source originals; never generate a substitute scene. If no suitable original is available, leave the optional slot absent or report a required-media gap. Abstract cover illustrations use a separate explicitly authorized workflow. Do not select an unrelated image to fill a quota. Reusing an eligible retained original is a local zero-Provider operation; translation, generation and their independent visual QA are separately budgeted. Preserve source IDs, specific subjects, accurate English alt text and useful placement.
 The output is production input, not a review. A separate independent reviewer will audit it.`;
 
 const DRAFT_REPAIR_SCHEMA = objectSchema(
@@ -353,12 +354,15 @@ export class ContentEngine {
   }
 
   async analyzeExperience(sourcePackage, options = {}) {
-    return this.respond({
+    const references = this.config.provider === 'deepseek' ? compactExperienceReferences(sourcePackage)
+      : { input: sourcePackage, restore: output => output };
+    const result = await this.respond({
       name: "experience_extraction",
       schema: EXPERIENCE_SCHEMA,
       instructions: EXPERIENCE_PROMPT + ROUTE_EXTRACTION_PROMPT,
-      input: JSON.stringify(sourcePackage), options,
+      input: JSON.stringify(references.input), options,
     });
+    return { ...result, output: references.restore(result.output) };
   }
 
   async assembleEditorial(assemblyPackage, options = {}) {
@@ -580,7 +584,8 @@ export class ContentEngine {
       compose_frontend_page: ['frontend_page_payload', null, pagePayloadPrompt.toString()],
     };
     const [name, schema, prompt] = contracts[stage] || [stage, null, 'deterministic-v2'];
-    return { name, schema, prompt };
+    return { name, schema, prompt, ...(stage === 'extract_source_experience' && this.config.provider === 'deepseek'
+      ? { wireVersion: 'typed-experience-references-full-schema-1' } : {}) };
   }
 }
 
@@ -1136,7 +1141,7 @@ function qualityReviewFactDtos(contentPackage,draft) {
 }
 const intakePrompt = (strategyVersion) => `Analyze one already-captured human-selected China travel source for SoloToChina Content Production Strategy ${strategyVersion}.
 - This is decision support, not article generation. Do not write an article and do not reveal private reasoning.
-- Use only the supplied source and structured claims. A useful narrow fact can be KNOWLEDGE_ONLY or CLAIM_ONLY, but a coherent small topic can be a standalone TOPIC_FEATURE.
+- Use only the supplied source and structured claims. existing_destination_coverage summarizes which subjects and predicates the destination Knowledge already covers; use it only to judge duplicate_likelihood and topic_completeness, never as evidence. A useful narrow fact can be KNOWLEDGE_ONLY or CLAIM_ONLY, but a coherent small topic can be a standalone TOPIC_FEATURE.
 - Do not judge a travel article against an encyclopedic destination checklist. Judge whether the evidence fulfills one clear, bounded reader promise.
 - Complete itineraries, one-day routes, food lists, hotel-area guides, photo-location lists and similarly useful source notes can be ARTICLE_CANDIDATE in SOURCE_ADAPTATION mode when editing rights are supplied. They do not need unrelated destination facts or a second source.
 - Treat SOURCE_ADAPTATION, TOPIC_FEATURE and MULTI_SOURCE_SYNTHESIS as parallel, non-exclusive opportunity paths. A source may support several paths at the same time; multi-source synthesis is a creative option, not an emergency fallback.
@@ -1184,7 +1189,7 @@ const briefPrompt = (strategyVersion) => `Create an evidence-backed English cont
 - Follow the selected production_mode for this one plan, without treating the other parallel routes as disabled. For source_adaptation, preserve the authorized source's useful itinerary, selection, sequence and practical intent while writing original English copy; do not copy wording or claim facts outside that source package. For topic_feature, fulfill only the bounded topic promise. For multi_source_synthesis, deliberately combine compatible perspectives across sources; it is a creative format, not a completeness repair step.
 - Include practical adaptation for language, booking, payment, navigation, safety, and solo logistics where evidence permits.
 - Canonical fields are structured source data for the writer and renderer. Use empty arrays or empty strings for unknown information rather than guessing.
-- Include direct answer blocks only where the supplied facts support them. The image plan must distinguish real_world_photo, infographic, map_or_route, and illustration; only illustration is eligible for image-model generation.
+- Include direct answer blocks only where the supplied facts support them. The image plan must distinguish real_world_photo, infographic, map_or_route, and illustration; body images must come from authorized source assets; illustration is not a fallback for missing real-world media.
 - Affiliate inventory and commercial conversion are outside this task and must not appear.`;
 
 const draftPrompt = (policy) => `Write an original, publication-quality English China travel guide from the supplied brief and evidence package.
@@ -1208,9 +1213,9 @@ const draftPrompt = (policy) => `Write an original, publication-quality English 
 - Return SEO metadata with secondary keywords and search intent. Use internal links only from internal_link_inventory and preserve their exact URL. Do not invent canonical URLs.
 - Preserve the internal evidence ledger for every factual section. A visible Sources section is optional unless the confirmed brief requests one; if used, show human-readable titles, real URLs and supplied dates without internal IDs.
 - If the evidence package includes a frontend_page_plan, honor its semantic section order and writer guidance in the reader-facing article. It is a composition plan, not permission to invent components, props, or visual styling.
-- Return only evidence-supported, rights-safe image plans, never filler to meet a count. Every included item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. Set required_in_article true only when an approved core reader promise genuinely requires that exact factual visual; otherwise it is optional and may be omitted if no relevant image exists. factual_image_required means a factual scene must not be fabricated, not that every photo is mandatory. When a factual real-world visual supports the evidence, plan REAL_WORLD_PHOTO: the pipeline will prioritize an explicitly saved, user-authorized source image that is linked to the article evidence. Use ILLUSTRATION only for original no-text/no-logo generation prompts. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
+- Return only evidence-supported, rights-safe image plans, never filler to meet a count. Every included item needs accurate alt text, a useful placement, caption, image type, role, subject, factual_image_required, and aspect ratio. Set required_in_article true only when an approved core reader promise genuinely requires that exact factual visual; otherwise it is optional and may be omitted if no relevant image exists. factual_image_required means a factual scene must not be fabricated, not that every photo is mandatory. When a factual real-world visual supports the evidence, plan REAL_WORLD_PHOTO: the pipeline will prioritize an explicitly saved, user-authorized source image that is linked to the article evidence. Do not request ILLUSTRATION for article body media. Cover generation is a separate workflow. A real venue, street, landmark, hotel, meal, ticket, or route must be REAL_WORLD_PHOTO / factual_image_required and must never ask an image model to fabricate a documentary-looking photo. Use INFOGRAPHIC only when structured facts support it; use MAP_OR_ROUTE only when validated coordinates or route data are supplied.
 - Select real-world photo subjects from authorized_source_assets before writing when a saved asset actually matches the subject. These entries describe local retained files; do not copy or expose preview URLs in body_markdown.
-- Where locally audited original photos are relevant, plan multiple distinct views up to the configured visual limit so the reader can see the real place or action. Direct reuse of an eligible original needs no model call. Retain useful Chinese information graphics, annotated routes and editorial cards for full English translation and independent visual QA; do not drop them merely to avoid a paid call. Plan necessary original illustrations through the separate generation and QA budget. Do not directly reuse a photo with dense Chinese text, low photographic quality, missing bytes or a weak subject match.
+- Where locally audited original photos are relevant, plan multiple distinct views up to the configured visual limit so the reader can see the real place or action. Direct reuse of an eligible original needs no model call. Retain useful Chinese information graphics, annotated routes and editorial cards for full English translation and independent visual QA; do not drop them merely to avoid a paid call. Never fill missing factual or optional body images with generated illustrations. All imported source images are already authorized; missing licensing metadata is not a reason to exclude them. Do not directly reuse a photo with dense Chinese text, low photographic quality, missing bytes or a weak subject match.
 - Use a concise, practical guide voice. Prefer direct instructions and short useful paragraphs; avoid literary scene-setting, generic enthusiasm, and padding.
 - If revision_feedback exists, rebuild from the frozen Writing Packet and fix every blocker. Never reuse failed prose, and do not add unsupported facts.
 - For every fact you cite in evidence_ledger, preserve its supplied amounts, durations, dates, negations, audiences, conditions and exceptions in the reader-visible section. Treat revision_feedback.missing_protected_values as an exact must-include list; verify each value is visible before returning.

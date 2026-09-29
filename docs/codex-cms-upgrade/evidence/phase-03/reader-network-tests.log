@@ -1,0 +1,22 @@
+(node:33964) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ PNG regression fixture has valid chunk CRCs and decodes to a complete RGBA scanline (1.4434ms)
+✔ provisional recapture preserves the complete source and archives attempts idempotently (546.0683ms)
+✔ upload restart resumes missing chunks; lost finalize returns same durable receipt; capabilities isolate sessions (154.9127ms)
+✔ IndexedDB restart preserves binary and upload progress, enforces quota, and frees accepted bytes (5.3778ms)
+✔ remote policy rejects IPv4, IPv6, mapped/private and mixed DNS results without network probes (4.8583ms)
+✔ legacy mixed capture crosses extension upload, real signature validation, and Source storage without duplicate base64 (653.01ms)
+✔ connection lookup is pinned; changed socket addresses and private redirect hops are rejected before body use (6.833ms)
+✔ a pending DNS lookup obeys cancellation without opening a connection (0.3061ms)
+✔ remote originals stream through validation and remove incomplete temporary files on failure (38.8712ms)
+✔ T03-16 allowlist validates every redirect before connection; DNS/private addresses remain blocked (7.2495ms)
+✔ T03-16 page-hash cache, manual invalidation and bounded responses (5.5328ms)
+✔ T03-17 403 and authentication are unknown; concurrency and DNS time are bounded (35.2958ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1715.0508

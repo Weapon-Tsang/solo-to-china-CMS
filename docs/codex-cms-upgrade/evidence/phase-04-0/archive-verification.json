@@ -1,0 +1,6 @@
+{
+  "status": "PASS",
+  "files": 172,
+  "check": "ZIP entry bytes SHA256 match runtime manifest",
+  "initial_check": "PowerShell .NET API unavailable in language mode; Python standard library verification completed"
+}

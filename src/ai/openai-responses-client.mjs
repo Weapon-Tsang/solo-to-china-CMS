@@ -3,6 +3,7 @@ import { KimiClient } from "./kimi-client.mjs";
 import { validateJsonSchema } from "../frontend-contract.mjs";
 import { decodeOpenAiWire, openAiWireSchema, ProviderRequestError, providerReasoningOptions, providerTransportError } from "./provider-schema.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
+import { estimateRequestTokens } from "./provider-rate-limiter.mjs";
 
 export class OpenAIResponsesClient extends KimiClient {
   async completeJson({ name, schema, instructions, content, timeoutMs = null, signal = null, telemetryContext = null }) {
@@ -14,7 +15,8 @@ export class OpenAIResponsesClient extends KimiClient {
     const input = [{ role: "user", content: normalizeParts(content) }];
     for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
       const gateAt = Date.now();
-      await this.config.beforeRequest?.({ provider: "openai", model: this.config.model, stage: name, attempt: attempt + 1 });
+      await this.config.beforeRequest?.({ provider: "openai", model: this.config.model, stage: name, attempt: attempt + 1,
+        estimatedTokens: estimateRequestTokens(instructions, input) });
       const attemptAt = Date.now();
       const body = {
         model: this.config.model,

@@ -1,0 +1,26 @@
+(node:31068) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-13/14 saved entity identity and anonymous access reach the package without model or network calls (673.1007ms)
+✔ SEO preview preserves long editorial fields and makes no display or CTR promise (1.664ms)
+✔ inventory route or status changes identify only page blocks that reference the changed target (1.1709ms)
+✔ canonical URL is emitted only from a configured public route or verified published URL (5.714ms)
+✔ unsupported title promises are rejected without treating length as a hard limit (0.7621ms)
+✔ SEO and structured data stay synchronized with visible page content (4.7406ms)
+✔ FAQ schema is optional and must exactly match the visible FAQ when present (1.2902ms)
+✔ internal links use only relevant public inventory and invalid targets fail final checks (3.6072ms)
+✔ duplicate inventory creates an editorial risk, never an automatic merge or canonical instruction (0.3871ms)
+✔ Publish Package overwrites conflicting model metadata from one deterministic source (1.3974ms)
+✔ T03-12 visible FAQ is valid without optional markup, later conflicting markup fails (0.7881ms)
+✔ T03-08/10/13 query identities, later Article and local anchors remain distinct (0.7152ms)
+✔ T03-13 unknown links are pending diagnostics, confirmed broken targets fail, contextual Read guide is valid (1.601ms)
+✔ T03-13 entity identity ranks above title overlap and explicit unknown access is not selected (0.3429ms)
+✔ T03-14 entity plus independent question controls advisory new/update/merge/claim decisions (0.3454ms)
+✔ T03-08/15 internal CMS origins and private literal addresses cannot become public canonical metadata (0.2514ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1098.2565

@@ -6,6 +6,7 @@ import { validateJsonSchema } from "../frontend-contract.mjs";
 import { ProviderRequestError, providerReasoningOptions, providerTransportError, vertexStructuredOutput } from "./provider-schema.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
 import { createGoogleAccessTokenProvider } from "../google-access-token.mjs";
+import { estimateRequestTokens } from "./provider-rate-limiter.mjs";
 
 const MAX_INLINE_VIDEO_BYTES = 14 * 1024 * 1024;
 const MAX_REMOTE_VIDEO_BYTES = 256 * 1024 * 1024;
@@ -43,8 +44,12 @@ export class VertexGeminiClient {
     const effectiveTimeoutMs = timeoutMs || policy.timeoutMs;
     const identity = modelCallIdentity(name, schema, instructions, content);
     const resumedSchemaMode = telemetryContext?.structuredSchemaMode;
-    let schemaMode = ["json_schema","openapi","prompt_only"].includes(resumedSchemaMode)
-      ? resumedSchemaMode : this.config.structuredSchemaMode || "openapi";
+    const schemaRegistry = this.config.schemaModeRegistry || SCHEMA_MODE_REGISTRY;
+    const schemaRegistryKey = `${this.config.provider || "vertex"}|${this.config.model}|${identity.schemaHash}`;
+    // A schema that one Job already proved unsupported is not re-probed by
+    // every later Job; each probe is a separately billed provider request.
+    let schemaMode = mostDegradedSchemaMode(["json_schema","openapi","prompt_only"].includes(resumedSchemaMode)
+      ? resumedSchemaMode : this.config.structuredSchemaMode || "openapi", schemaRegistry.get(schemaRegistryKey));
     const requestBody = {
       systemInstruction: { parts: [{ text: instructions }] },
       contents: [{ role: "user", parts }],
@@ -66,7 +71,8 @@ export class VertexGeminiClient {
       requestAttempt += 1;
       requestBody.contents[0].parts = correction ? [...parts, { text: correction }] : parts;
       const requestGateStartedAt = Date.now();
-      await this.config.beforeRequest?.({ provider: this.config.provider || "vertex", model: this.config.model, stage: name, attempt: requestAttempt, schemaMode });
+      await this.config.beforeRequest?.({ provider: this.config.provider || "vertex", model: this.config.model, stage: name, attempt: requestAttempt, schemaMode,
+        estimatedTokens: estimateRequestTokens(requestBody.systemInstruction, requestBody.contents) });
       const attemptStartedAt = Date.now();
       telemetryContext.retryWaitMs = Math.max(0, attemptStartedAt - requestGateStartedAt);
       const requestStartedAt = new Date(attemptStartedAt).toISOString();
@@ -90,12 +96,13 @@ export class VertexGeminiClient {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         const message = payload?.error?.message || response.statusText;
-        const fallbackMode = response.status === 400 ? nextVertexSchemaMode(schemaMode) : null;
+        const fallbackMode = response.status === 400 && !isNonSchemaBadRequest(message) ? nextVertexSchemaMode(schemaMode) : null;
         if (fallbackMode) {
           this.emitModelCall(vertexAttemptMetric({ identity, policy, telemetryContext, attempt, attemptStartedAt, requestStartedAt,
             status: "failed", errorCode: "SCHEMA_MODE_UNSUPPORTED",
             retryReason: `schema_transport_fallback:${schemaMode}->${fallbackMode}`, usage: payload?.usageMetadata }));
           schemaMode = fallbackMode;
+          schemaRegistry.set(schemaRegistryKey, mostDegradedSchemaMode(fallbackMode, schemaRegistry.get(schemaRegistryKey)));
           applyVertexSchemaTransport(requestBody, schema, schemaMode, instructions);
           continue;
         }
@@ -546,6 +553,25 @@ function vertexRequestBody({ name, schema, instructions, content, config }) {
         : { temperature: 0.1 }),
     },
   };
+}
+
+const SCHEMA_MODE_ORDER = ["json_schema", "openapi", "prompt_only"];
+// Process-wide memory of the structured transport each (provider, model,
+// schema) combination actually accepts. Only degradations are recorded.
+export const SCHEMA_MODE_REGISTRY = new Map();
+
+function mostDegradedSchemaMode(left, right) {
+  return [left, right].filter((mode) => SCHEMA_MODE_ORDER.includes(mode))
+    .sort((a, b) => SCHEMA_MODE_ORDER.indexOf(b) - SCHEMA_MODE_ORDER.indexOf(a))[0] || left;
+}
+
+// Vertex reports schema-complexity rejections as a generic INVALID_ARGUMENT,
+// so a 400 degrades the transport unless the message names another cause.
+// Retrying an oversized request or an unreadable image with a weaker schema
+// transport only multiplies billed requests for the same failure.
+export function isNonSchemaBadRequest(message) {
+  return /token count|exceeds the maximum|too large|payload size|request size|inline ?data|image|video|mime|unsupported file|file ?uri|deadline/i
+    .test(String(message || ""));
 }
 
 function nextVertexSchemaMode(mode) {

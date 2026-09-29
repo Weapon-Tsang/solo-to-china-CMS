@@ -1,0 +1,250 @@
+(node:36756) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+{
+  "status": "PASS",
+  "scope": "existing historical disposable copy; synthetic uploads, no original pixels or full production replay",
+  "baselineCounts": {
+    "sources": 84,
+    "source_assets": 1454,
+    "claims": 5334,
+    "article_drafts": 12
+  },
+  "items": [
+    {
+      "draft_id": "draft_0ff3fa83e3c844fc807f8c8f1e1ffe88",
+      "body_hash": "ef0b42ac2890ef67b6602202da7586d120c604bd1bff2ae2f6a2e04b4a1c44b5",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "new",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 2,
+        "after_candidates": 3,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_359330e87f9c4f24b97fa88bf499d448",
+      "body_hash": "d28e079c2b5854b6cae2875f660a9fb629d7d33f2bbce28065d59b3b4baf46f5",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "needs-review",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 2,
+        "after_candidates": 3,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_363b4984860b46d9ba4830d92dd7ac34",
+      "body_hash": "0c84bfff0f7da6ca9e39c0b25a2b4ed29924cd68d137ccfd278483b723715448",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "new",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 2,
+        "after_candidates": 3,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_4ed1e5eed85a40f798c8f83c7edb2f20",
+      "body_hash": "87f9cefc9503a7c42a79afbaa879b40217444378344ce0f76d667fb1e9b43dfc",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "needs-review",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 2,
+        "after_candidates": 3,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_514305818f534265b7a0f8a8d81d1d9d",
+      "body_hash": "86597dceabd6b180c87b68d63a03d2860c70b5d8487415dc830761fdf38b3b04",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "new",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 2,
+        "after_candidates": 3,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_63924329268349768c466fea688d3e3a",
+      "body_hash": "0d90b40b110bd6e1a9a83aa518d8a22b0c29410cc0762e0c14d694ecaf77d77c",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "new",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 2,
+        "after_candidates": 3,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_8ba37e5651be4c06806b84452d33f79c",
+      "body_hash": "09f649bae753a47303dc3c99a9792d04ac772f6a5ca5387710e291df1b02439c",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "needs-review",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 3,
+        "after_candidates": 4,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_8d559d08d77e4b2593f1ccd82f96f4d0",
+      "body_hash": "32dcbe17e9c6829c639d8c1228254807a6d9699661139d635b3162606f0e158a",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "new",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 1,
+        "after_candidates": 2,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_ac2559c3c4c24d0bbee23daf89a2ddf0",
+      "body_hash": "726ef5b2363f470b4c8c7d429faa37e7eb12cc403747616476f065bf88867031",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "needs-review",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 3,
+        "after_candidates": 4,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_ba8ccf5e73a1425285676bfaa9a18287",
+      "body_hash": "41143bdefb602b59a7c5138bbe645f47ce2a44b47eb4641a75b54365c0cc781a",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "needs-review",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 1,
+        "after_candidates": 2,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_d48d54a4cac54f05b5e287f87fac6e00",
+      "body_hash": "827ccaafd0a27e782e4e2e29ded32d38fa104d81fd0e6bb16d1e4aae38d11cbe",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "new",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 3,
+        "after_candidates": 4,
+        "null_qa_rejected": true
+      }
+    },
+    {
+      "draft_id": "draft_da588d0e83ca4b96a64fcaaa1de75b73",
+      "body_hash": "5ccbf0ff02f50c71b1a6406ecca3231bb65522905dc0653360210a850bac29cf",
+      "route_present": false,
+      "media_revision": 1,
+      "editorial": {
+        "action": "needs-review",
+        "confirmed_links": 0,
+        "unverified_targets": 0
+      },
+      "cover_audit": {
+        "before_candidates": 3,
+        "after_candidates": 4,
+        "null_qa_rejected": true
+      }
+    }
+  ],
+  "menu_list_ms": [
+    1.3554000000001452,
+    0.991399999999885,
+    1.0644999999999527,
+    1.0808999999999287,
+    0.7049999999999272,
+    0.8922000000002299,
+    1.3736999999991895,
+    0.8321999999998297,
+    0.8492999999998574,
+    0.7900999999992564,
+    1.0259000000005472,
+    0.9355999999997948
+  ],
+  "protected": {
+    "article_drafts": {
+      "count": 12,
+      "sha256": "166970bc4f006cf526ec819fb1056bc4ef07aba0f05130f92d0e9d8c307ffda8"
+    },
+    "article_visuals": {
+      "count": 26,
+      "sha256": "015d0384f3593d9ca5921c7e050851861241c5a45aa7ca1e5658776fe0277039"
+    },
+    "wordpress_publications": {
+      "count": 12,
+      "sha256": "4534a75d7a5417e5a64ab82cb3165c3fce87c3b2dd2b44f74dcb5f08db367c2d"
+    },
+    "jobs": {
+      "count": 18415,
+      "sha256": "ba57b229e03ab846891f9d47836697dd90c01c68f88b229b4c98168d9fd4cecf"
+    },
+    "model_call_metrics": {
+      "count": 6453,
+      "sha256": "efeeeec1697c3cb46f9d09d815fcac3e9c550f96cdd394675d70ea6cc6f500e1"
+    },
+    "media_bindings": {
+      "count": 627,
+      "sha256": "f7739df26b79a28a584acebb8f035ba5d00ea07956148971baccb343ce9e60cb"
+    }
+  },
+  "rollback": "PASS",
+  "committed_writes": 0,
+  "external_calls": 0,
+  "directory": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\cms-phase03-historical-tnZ1kN"
+}

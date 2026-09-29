@@ -1,0 +1,44 @@
+(node:18680) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"timestamp":"2026-09-28T10:47:59.387Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"5be12064-5354-4e06-8ca7-025ae85ddbb2","method":"POST","path":"/api/drafts/cover-draft/article-media/uploads","status":507,"error":{"name":"Error","message":"可用磁盘不足以保存原件和分块；请释放空间后重试。","code":"MEDIA_DISK_RESERVE"}}
+{"timestamp":"2026-09-28T10:47:59.433Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"d2a4acfa-c349-4cc6-808a-83109d005c5e","method":"PUT","path":"/api/drafts/cover-draft/article-media/uploads/350b85cd-729a-4c3b-85f8-d36709fbf6b1/chunks/0","status":507,"error":{"name":"Error","message":"磁盘保护阈值不足，请暂停并释放空间。","code":"MEDIA_DISK_RESERVE"}}
+{"timestamp":"2026-09-28T10:48:00.187Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"1808c1a0-2071-4dc8-bc85-511f14e5079e","method":"POST","path":"/api/drafts/cover-draft/article-media/uploads/291d9461-26f2-448e-9714-030d161e94d0/complete","status":500,"error":{"name":"Error","message":"Input image exceeds pixel limit"}}
+{"status":"PASS","application_413":413,"disk_preflight":507,"disk_chunk":507,"successful_retry":"pending_confirmation","resource_pixels":42250000,"oversized_decode_state":"failed","failed_original_retained":true,"provider_calls":0}
+✔ article upload diagnoses application 413, disk reserve and decode resource limit without losing a valid session (1672.7394ms)
+(node:21452) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"nonempty_samples":30,"p50_ms":2.6437000000000808,"p95_ms":8.703099999999722,"provider_calls":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","api_only":true}
+✔ actual authenticated API streaming, ownership, CSRF, confirmation, lost receipt recovery and nonempty latency (2599.3545ms)
+(node:33956) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ display capacity rejects adoption with exact excess while preserving stored originals (1133.9821ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (2162.571ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (1891.3245ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ explicit revocation restores old slot exactly with an appended revision and no provider work (1363.242ms)
+✔ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (689.7948ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ media-only receiver protocol retains old receipts and reconciles unknown outcomes without duplicate upload (1347.7746ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1441.5618ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (10635.3029ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (698.0017ms)
+(node:2480) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-13/14 saved entity identity and anonymous access reach the package without model or network calls (775.4262ms)
+(node:21548) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-29/39/40 confirmed stop photo proceeds locally; a conflicting Day image stays saved and cannot rewrite approved text (3533.0562ms)
+✔ T03-36/38 photo cannot replace a whole-day obligation; claimed matching Day cannot bypass pixel QA or stale approval (642.9139ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21975.8596

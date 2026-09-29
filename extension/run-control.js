@@ -27,6 +27,16 @@ export function tabMatches(tab, record) {
   try {
     const actual = new URL(tab.pendingUrl || tab.url);
     const expected = new URL(record.url);
+    // Collection links redirect to the canonical detail route for the same
+    // note. Keep the tab/window and origin fences; only worker note routes
+    // can be equivalent. Discovery scopes must still match their exact path.
+    if (record.role === 'worker' && actual.origin === expected.origin
+      && actual.protocol === 'https:' && /^(?:www\.)?xiaohongshu\.com$/.test(actual.hostname)) {
+      const noteId = path => path.match(/^\/(?:explore|discovery\/item)\/([A-Za-z0-9]+)\/?$/)?.[1]
+        || path.match(/^\/board\/[A-Za-z0-9]+\/([A-Za-z0-9]+)\/?$/)?.[1];
+      const expectedId = noteId(expected.pathname);
+      if (expectedId && expectedId === noteId(actual.pathname)) return true;
+    }
     return actual.origin === expected.origin && actual.pathname === expected.pathname
       && actual.searchParams.get('tab') === expected.searchParams.get('tab');
   } catch { return false; }

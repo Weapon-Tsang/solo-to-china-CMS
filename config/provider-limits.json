@@ -1,0 +1,13 @@
+{
+  "version": "provider-limits-1",
+  "note": "Per provider or provider:model admission limits. rpm = requests/minute, tpm = estimated input tokens/minute; 0 disables that dimension. Set these at or slightly below the project's actual quota. AI_PROVIDER_LIMITS_JSON overrides this file.",
+  "limits": {
+    "default": { "rpm": 60, "tpm": 0 },
+    "vertex": { "rpm": 60, "tpm": 2000000 },
+    "vertex_gemini": { "rpm": 30, "tpm": 0 },
+    "gemini": { "rpm": 60, "tpm": 2000000 },
+    "deepseek": { "rpm": 60, "tpm": 0 },
+    "kimi": { "rpm": 30, "tpm": 0 },
+    "openai": { "rpm": 60, "tpm": 0 }
+  }
+}

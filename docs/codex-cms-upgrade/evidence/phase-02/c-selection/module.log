@@ -1,0 +1,44 @@
+(node:17504) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ cover plan preserves natural signs but rejects dense cards, screenshots, wrong entity and stale QA (1.3347ms)
+✔ cover locks never silently switch to another candidate and relevance is required before ordering (0.302ms)
+✔ 16:9 plan is exact, bounded, EXIF-coordinate based and never enlarges a small source (0.2428ms)
+✔ real SQLite dry-run preserves draft, media, publication, jobs and calls; unavailable historical masters remain rejected (898.0265ms)
+✔ actual authenticated HTTP cover audit is read-only and rejects stale revisions (809.9506ms)
+(node:12896) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real cover pixels, explicit preview confirmation, CAS, history and body preservation (2157.6072ms)
+✔ unsafe geometry, stale source relation and concurrent confirmations cannot save a cover (1711.431ms)
+(node:24528) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real Pipeline uploads qualified web bytes, persists lineage and rejects tampered derivatives without rewriting the master (950.1438ms)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (738.1855ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (717.8955ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (683.239ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (626.6313ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (636.8197ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (579.4311ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (567.9824ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (537.4233ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (548.0698ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (538.8874ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (541.8912ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (538.8364ms)
+✔ real JPEG/PNG/WebP decode, EXIF orientation, alpha, source identity and immutable master QA (1944.5534ms)
+✔ photos downscale without enlargement; dense text keeps pixels with lossless output (871.032ms)
+✔ invalid MIME, broken decode, pixel resource limit and animation are diagnosed without ready files (38.8746ms)
+✔ cache concurrency, transform version, corrupt cache and QA cannot be bypassed by reuse or fallback (1282.3494ms)
+✔ optimization fallback obeys safe normalized dimensions and retries only encoding (404.1809ms)
+✔ actual crop bytes contain the safe region and preserve master; unsafe crops fail (80.7363ms)
+✔ actual configured adapter uploads derivative bytes and keeps master QA/source identity (224.5929ms)
+✔ public URLs reject local/private/signed delivery and remote hashes remain explicitly unknown (0.3177ms)
+✔ cache binds original provenance and rejects receipt tampering or missing bytes (816.2626ms)
+✔ fractional crop rounds outward to retain every safe-region pixel (51.6281ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8650.5745

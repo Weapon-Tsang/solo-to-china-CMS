@@ -48,13 +48,13 @@ test("Vertex Imagen stores a generated visual in the configured media directory"
     return Response.json({ predictions: [{ bytesBase64Encoded: rendered.toString("base64"), mimeType: "image/png" }] });
   };
   const client = new VertexImagen({ enabled: true, provider: "vertex_imagen", projectId: "project", location: "us-central1", model: "imagen-4.0-generate-001", coverQuality: "1K", inlineQuality: "1K", mediaDir: directory, publicBaseUrl: "https://engine.example.com", requestTimeoutMs: 5_000 }, fetchStub);
-  const output = await client.generate({ id: "visual_1", slot: 1, image_type: "illustration", acquisition_strategy: "generate_illustration", factual_image_required: false, image_role: "hero", aspect_ratio: "16:9", generation_prompt: "A quiet travel scene" }, { id: "draft_1" });
+  const output = await client.generate({ id: "visual_1", slot: 1, image_type: "illustration", acquisition_strategy: "generate_illustration", factual_image_required: false, image_role: "hero", aspect_ratio: "16:9", generation_prompt: "A quiet travel scene" }, {id:"draft_1",strategy_version:"3.8"});
   assert.equal(output.provider, "vertex_imagen");
   assert.match(output.mediaUrl, /^https:\/\/engine\.example\.com\/media\/draft_1-/);
   assert.deepEqual(fs.readFileSync(output.mediaPath), rendered);
   assert.equal(output.metadata.pixel_qa.status, "passed");
   await assert.rejects(
-    client.generate({ id: "visual_2", slot: 2, image_type: "real_world_photo", acquisition_strategy: "search_real_image", factual_image_required: true, image_role: "support", aspect_ratio: "3:2", generation_prompt: "" }, { id: "draft_1" }),
+    client.generate({ id: "visual_2", slot: 2, image_type: "real_world_photo", acquisition_strategy: "search_real_image", factual_image_required: true, image_role: "support", aspect_ratio: "3:2", generation_prompt: "" }, {id:"draft_1",strategy_version:"3.8"}),
     /only non-factual illustrations/i,
   );
 });
@@ -71,7 +71,7 @@ test("Gemini 3.1 Flash Image stores an inline image from the global Gemini endpo
     return Response.json({ candidates: [{ content: { parts: [{ text: "Illustration created." }, { inlineData: { data: rendered.toString("base64"), mimeType: "image/png" } }] } }] });
   };
   const client = new VertexImagen({ enabled: true, provider: "vertex_gemini", projectId: "project", location: "global", model: "gemini-3.1-flash-image", mediaDir: directory, publicBaseUrl: "https://engine.example.com", requestTimeoutMs: 5_000 }, fetchStub);
-  const output = await client.generate({ id: "visual_1", slot: 1, image_type: "illustration", acquisition_strategy: "generate_illustration", factual_image_required: false, image_role: "hero", aspect_ratio: "16:9", generation_prompt: "A quiet travel scene" }, { id: "draft_1" });
+  const output = await client.generate({ id: "visual_1", slot: 1, image_type: "illustration", acquisition_strategy: "generate_illustration", factual_image_required: false, image_role: "hero", aspect_ratio: "16:9", generation_prompt: "A quiet travel scene" }, {id:"draft_1",strategy_version:"3.8"});
 
   assert.equal(output.provider, "vertex_gemini");
   assert.equal(output.model, "gemini-3.1-flash-image");
@@ -91,7 +91,7 @@ test("visual generation participates in the shared request gate and preserves pr
     beforeRequest: async () => { gated += 1; },
   }, async () => Response.json({ error: { message: "Resource exhausted." } }, { status: 429, headers: { "retry-after": "2" } }));
   await assert.rejects(
-    client.generate({ id: "visual_limited", slot: 1, image_type: "illustration", acquisition_strategy: "generate_illustration", factual_image_required: false, image_role: "hero", aspect_ratio: "16:9", generation_prompt: "A quiet travel scene" }, { id: "draft_1" }),
+    client.generate({ id: "visual_limited", slot: 1, image_type: "illustration", acquisition_strategy: "generate_illustration", factual_image_required: false, image_role: "hero", aspect_ratio: "16:9", generation_prompt: "A quiet travel scene" }, {id:"draft_1",strategy_version:"3.8"}),
     (error) => error.status === 429 && error.retryable === true && error.retryAfterMs === 2_000,
   );
   assert.equal(gated, 1);
@@ -104,7 +104,7 @@ test("Flash Image transport failures retain their provider and retry classificat
   }, async()=>{throw new TypeError("fetch failed",{cause:{code:"UND_ERR_SOCKET"}});});
   await assert.rejects(client.generate({id:"visual-network",slot:1,image_type:"illustration",
     acquisition_strategy:"generate_illustration",factual_image_required:false,image_role:"hero",aspect_ratio:"16:9",
-    generation_prompt:"A quiet travel scene"},{id:"draft-network"}),
+    generation_prompt:"A quiet travel scene"},{id:"draft-network",strategy_version:"3.8"}),
   (error)=>error.code==="PROVIDER_TRANSPORT_FAILED"&&error.provider==="vertex_gemini"&&error.retryable===true);
 });
 
@@ -114,11 +114,11 @@ test("Flash Image empty responses remain provider failures while explicit safety
   const visual={id:"visual-empty",slot:1,image_type:"illustration",acquisition_strategy:"generate_illustration",
     factual_image_required:false,image_role:"hero",aspect_ratio:"16:9",generation_prompt:"A quiet travel scene"};
   const transient=new VertexImagen(config,async()=>Response.json({candidates:[{finishReason:"STOP",content:{parts:[{text:"Unable to return an image this time."}]}}]}));
-  await assert.rejects(transient.generate(visual,{id:"draft-empty"}),
+  await assert.rejects(transient.generate(visual,{id:"draft-empty",strategy_version:"3.8"}),
     (error)=>error.code==="EMPTY_IMAGE_OUTPUT"&&error.provider==="vertex_gemini"&&error.retryable===true
       && /Unable to return an image/.test(error.message));
   const blocked=new VertexImagen(config,async()=>Response.json({promptFeedback:{blockReason:"SAFETY"}}));
-  await assert.rejects(blocked.generate(visual,{id:"draft-blocked"}),
+  await assert.rejects(blocked.generate(visual,{id:"draft-blocked",strategy_version:"3.8"}),
     (error)=>error.code==="IMAGE_SAFETY_BLOCKED"&&error.provider==="vertex_gemini"&&error.retryable===false);
 });
 
@@ -500,7 +500,7 @@ test("visual call evidence distinguishes local rejection, provider responses, an
     model:"image-model",accessToken:"token",publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
     beforeRequest:()=>{throw Object.assign(new Error("local budget gate"),{code:"LOCAL_GATE"});},onModelCall:(entry)=>gated.push(entry)},
   async()=>{networkCalls+=1;return Response.json({});});
-  await assert.rejects(gateClient.generate(visual,{id:"draft"}),/local budget gate/);
+  await assert.rejects(gateClient.generate(visual,{id:"draft",strategy_version:"3.8"}),/local budget gate/);
   assert.equal(networkCalls,0);
   assert.equal(gated[0].dispatchState,"not_attempted");
 
@@ -510,7 +510,7 @@ test("visual call evidence distinguishes local rejection, provider responses, an
       model:"image-model",accessToken:"token",publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
       onModelCall:(entry)=>ledger.push(entry)},async()=>Response.json({error:{code:status,message:`status ${status}`}},
         {status,headers:{"x-request-id":`request-${status}`}}));
-    await assert.rejects(client.generate(visual,{id:"draft"}),(error)=>error.status===status);
+    await assert.rejects(client.generate(visual,{id:"draft",strategy_version:"3.8"}),(error)=>error.status===status);
     assert.equal(ledger[0].httpStatus,status);
     assert.equal(ledger[0].dispatchState,"response_received");
     assert.equal(ledger[0].providerRequestId,`request-${status}`);
@@ -520,7 +520,7 @@ test("visual call evidence distinguishes local rejection, provider responses, an
   const transportClient=new VertexImagen({enabled:true,provider:"vertex_gemini",projectId:"project",location:"global",
     model:"image-model",accessToken:"token",publicBaseUrl:"https://engine.example.com",requestTimeoutMs:5_000,
     onModelCall:(entry)=>unknown.push(entry)},async()=>{throw new TypeError("socket closed");});
-  await assert.rejects(transportClient.generate(visual,{id:"draft"}),/socket closed/);
+  await assert.rejects(transportClient.generate(visual,{id:"draft",strategy_version:"3.8"}),/socket closed/);
   assert.equal(unknown[0].dispatchState,"dispatch_started");
   assert.equal(unknown[0].httpStatus,null);
   assert.equal(unknown[0].evidenceBasis,"dispatch_started_outcome_unknown");
@@ -547,7 +547,7 @@ test("a transform error never creates a fake resumable candidate",async()=>{
     saveVisualCandidate:()=>{saved+=1;},onModelCall:(entry)=>ledger.push(entry)},async()=>Response.json({error:{message:"busy"}},{status:429}));
   await assert.rejects(client.generate({id:"visual-transform-429",slot:1,image_type:"illustration",
     acquisition_strategy:"generate_illustration",factual_image_required:false,image_role:"hero",aspect_ratio:"16:9",
-    generation_prompt:"Quiet scene"},{id:"draft"}),(error)=>error.status===429);
+    generation_prompt:"Quiet scene"},{id:"draft",strategy_version:"3.8"}),(error)=>error.status===429);
   assert.equal(saved,0);
   assert.equal(ledger[0].substage,"generate_visual");
   assert.equal(ledger[0].httpStatus,429);
@@ -616,4 +616,12 @@ test('route panel transformation sends actual cropped pixels to localization and
   failQa=true;await assert.rejects(client.localizeSourceImage(visual,{id:'draft'}),{code:'ROUTE_VISUAL_QA_FAILED'});
   contract.panel_scope.source_sha256='stale';
   await assert.rejects(client.localizeSourceImage(visual,{id:'draft'}),{code:'ROUTE_PANEL_INVALID'});
+});
+
+test('current body illustration cannot reach a paid provider even when factual flag is false',async()=>{
+ let calls=0;
+ const client=new VertexImagen({enabled:true,provider:'vertex_gemini',projectId:'project',publicBaseUrl:'https://example.test'},async()=>{calls++;throw new Error('Must not call');});
+ await assert.rejects(client.generate({image_type:'illustration',acquisition_strategy:'generate_illustration',
+   factual_image_required:false,image_subject:'Nanbin Road skyline'},{id:'nanbin',strategy_version:'3.9'}),{code:'SOURCE_IMAGE_REQUIRED'});
+ assert.equal(calls,0);
 });

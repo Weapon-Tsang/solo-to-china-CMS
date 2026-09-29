@@ -21,11 +21,18 @@ export function completedOpportunitySourceIds(db) {
       AND er.capture_version=s.capture_version AND er.status='succeeded' AND er.degraded=0)`).all().map(r => r.id));
 }
 
-export function selectedFamilyProjection(db, opportunity) {
+// Only reuse within one synchronous rebuild. Never retain across jobs: captures,
+// experience completion and family memberships can change between rebuilds.
+export function createFamilyProjectionContext(db) {
+  return { db, complete: completedOpportunitySourceIds(db),
+    membership: new Map(db.prepare('SELECT source_id,family_id FROM source_family_memberships').all().map(r => [r.source_id,r.family_id])) };
+}
+
+export function selectedFamilyProjection(db, opportunity, context = null) {
   const coverage = JSON.parse(opportunity.coverage_json);
   const keys = [...new Set(coverage.selectedFactKeys || [])].sort();
-  const complete = completedOpportunitySourceIds(db);
-  const membership = new Map(db.prepare('SELECT source_id,family_id FROM source_family_memberships').all().map(r => [r.source_id,r.family_id]));
+  if (context && context.db !== db) throw new Error('Family projection context belongs to another database.');
+  const { complete, membership } = context || createFamilyProjectionContext(db);
   const facts = keys.length ? db.prepare(`SELECT k.*,r.status AS resolution_status,r.preferred_value AS resolved_value
     FROM knowledge_facts k JOIN destinations d ON d.id=k.destination_id
     LEFT JOIN knowledge_resolutions r ON r.destination_slug=d.slug AND r.normalized_key=k.normalized_key

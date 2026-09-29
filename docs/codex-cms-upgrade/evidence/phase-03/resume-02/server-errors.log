@@ -1,0 +1,5 @@
+Captured from the isolated stage03 browser fixture stdout when its exec session completed (exit 0).
+2026-09-28T08:51:19.261Z GET /api/drafts/draft_8ee9a7d10a194684ab4a9f32292d90ad/cover-audit 500 TypeError: Cannot read properties of null (reading 'status')
+2026-09-28T09:08:49.663Z GET /api/drafts/draft_8ee9a7d10a194684ab4a9f32292d90ad/cover-audit 500 TypeError: Cannot read properties of null (reading 'status')
+No stack was emitted. This is an unresolved local runtime defect, not a production observation.
+Targeted upload/SEO scripts did not fail on all same-origin HTTP 500s. Full page acceptance is FAIL.

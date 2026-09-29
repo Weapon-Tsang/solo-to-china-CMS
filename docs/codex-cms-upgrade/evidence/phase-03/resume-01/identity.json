@@ -1,0 +1,27 @@
+{
+  "checkedAt": "2026-09-28T07:38:20.423Z",
+  "cwd": "C:\\Users\\Mloong\\Documents\\ChatGPT\\solo-to-china-CMS",
+  "os": "10.0.26200",
+  "node": "v24.14.0",
+  "head": "490dd7464d4beb46d3f89a578337c253917fbf7a",
+  "branch": "main",
+  "remote": "https://github.com/Weapon-Tsang/solo-to-china-CMS.git",
+  "specSha256": "cdfb039e8d92c5a4c5e1a51a05fce924c71fc45cdb654895a7df3459bebfa91a",
+  "files": {
+    "src/seo-html.mjs": "b780e779cfe76a82c1d8b40c4c95899cc9bbd2555336b319a28385582d205ff3",
+    "src/seo-observation.mjs": "65b0159c790bcdabe2edf6af7b8fa2ee3bf984a4e8e861afe09bf84a7d582089",
+    "src/services/seo-inspection.mjs": "ed622cebb19264d7f9fa1acbb20ec3bdc33fcd4c7b2a94dee32217fe0baebe38",
+    "src/final-html-validator.mjs": "f3a0d1c9d8e70a10e519968de467015400a732389b4b6ab2c1a7087e16f4d25f",
+    "src/seo-geo.mjs": "b749aded24df958b860e2eb7932832a9413c98335ee8acaa85dfd5e02cbd1fcb",
+    "src/search-console.mjs": "92842f4419bc68b96820c4b6a4d5276a4f83fee1daf309957c72771dd054dc31",
+    "src/server.mjs": "b749050ec266c1e9c4834a9560ba578123c919b9efd55f28c83e843e5f16def0",
+    "test/final-html-validator.test.mjs": "22f709c29972e7a997a36d51ffa8ed84b7a6ffb4231756d569fbbccd9b2814b1",
+    "test/seo-geo.test.mjs": "007a2cb71901f10228254b666ca93794421d86b4f2488a32418e56149d0d61ad",
+    "test/seo-inspection.test.mjs": "58cc58cccd2b1cdbadccf1ac30e89fab98e47d45f17f6c95f06641fe89e297a5",
+    "test/seo-status-http.test.mjs": "d36b6b932172c441b6b5a1cf4b26078710a237d5502fcbc95769722cb9f5b219",
+    "test/search-console.test.mjs": "7da067dd346294663550338c0adaafcb557594668e46be5749258eb184b1d7c6",
+    "package.json": "565a599cbd7437395cdb291c1292c0f37279c6cc1804130f6b4d76d5d6761a75",
+    "package-lock.json": "4a4a87dd5efab1134c6d10e0c688e9ab4020dc372bad8c4b6c8e90a49cea773e"
+  },
+  "note": "Other dirty/untracked files predate this resume. Existing phase02 changes in shared files retained."
+}

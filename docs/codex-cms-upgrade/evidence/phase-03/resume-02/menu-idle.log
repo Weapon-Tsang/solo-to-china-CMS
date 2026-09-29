@@ -1,0 +1,23 @@
+### Result
+{"status":"PASS","scope":"PERF-005 standard synthetic dataset: 1000 sources, 10000 claims, 300 drafts, 3000 media metadata; idle API, no upload/renderer load","cold":{"samples":[130,103,117,120,103,102,122,114,101,116,108,120,95,113,105,146,117,99,132,108,122,95,104,120,144,92,106,104,134,110],"p50_ms":110,"p95_ms":144,"target_met":true},"warm":{"samples":[78,74,100,66,67,61,60,58,82,98,88,68,74,58,46,86,75,200,65,65,67,59,75,73,88,78,62,61,61,73],"p50_ms":68,"p95_ms":100,"target_met":true},"errors":[]}
+### Ran Playwright code
+```js
+await (async (page) => {
+  await page.setViewportSize({width:1440,height:1000});
+  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+  const content=page.getByRole('tab',{name:'内容',exact:true}),sources=page.getByRole('tab',{name:'来源',exact:true});
+  const cold=[],warm=[];
+  await content.click();await page.getByRole('button',{name:/Guide /}).first().waitFor();await sources.click();
+  for(let i=0;i<30;i++){
+    await page.reload({waitUntil:'domcontentloaded'});await sources.waitFor();
+    let start=Date.now();await content.click();await page.getByRole('button',{name:/Guide /}).first().waitFor();cold.push(Date.now()-start);
+    await sources.click();await page.getByRole('heading',{name:'研究来源',exact:true}).waitFor();
+    start=Date.now();await content.click();await page.getByRole('button',{name:/Guide /}).first().waitFor();warm.push(Date.now()-start);
+  }
+  const stats=values=>{const sorted=[...values].sort((a,b)=>a-b);return {samples:values,p50_ms:sorted[14],p95_ms:sorted[28],target_met:sorted[28] <= (values===cold?1000:200)};};
+  const result={status:'PASS',scope:'PERF-005 standard synthetic dataset: 1000 sources, 10000 claims, 300 drafts, 3000 media metadata; idle API, no upload/renderer load',cold:stats(cold),warm:stats(warm),errors};
+  if(errors.length||!result.cold.target_met||!result.warm.target_met)result.status='FAIL';
+  return result;
+}
+)(page);
+```

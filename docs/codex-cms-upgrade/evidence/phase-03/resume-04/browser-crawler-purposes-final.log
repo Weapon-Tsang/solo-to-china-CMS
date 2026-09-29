@@ -1,0 +1,6 @@
+### Result
+{"status":"PASS","policy_text":"搜索抓取与训练使用分别检查\nGooglebot：搜索抓取 · 规则允许。官方用途说明（核对于 2026-09-28）\nOAI-SearchBot：ChatGPT 搜索抓取 · 规则允许。官方用途说明（核对于 2026-09-28）\nGPTBot：模型训练采集 · 规则允许。官方用途说明（核对于 2026-09-28）\nGoogle-Extended：Gemini 训练与检索增强使用控制；不决定 Google 搜索收录 · 规则允许。官方用途说明（核对于 2026-09-28）\nChatGPT-User：用户发起的页面访问；不能据 robots 规则断言访问结果 · 规则未知。官方用途说明（核对于 2026-09-28）\n\n这是规则观察，不证明爬虫实际访问、收录或引用；没有修改任何站点设置。"}
+### Ran Playwright code
+```js
+await (async page => {const panel=page.getByTestId('seo-inspection');await panel.getByText('搜索抓取与训练使用分别检查',{exact:true}).click();await panel.getByText('GPTBot',{exact:true}).waitFor();await panel.getByText('OAI-SearchBot',{exact:true}).waitFor();await panel.screenshot({path:'output/playwright/phase03-crawler-purposes.png'});return {status:'PASS',policy_text:await panel.locator('details').last().innerText()};})(page);
+```

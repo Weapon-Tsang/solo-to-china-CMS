@@ -1,0 +1,15 @@
+(node:4192) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"timestamp":"2026-09-28T04:35:06.966Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"2fd5b0a0-c414-44ce-89b1-c71506b12b53","method":"POST","path":"/api/drafts/cover-draft/article-media/uploads","status":507,"error":{"name":"Error","message":"可用磁盘不足以保存原件和分块；请释放空间后重试。","code":"MEDIA_DISK_RESERVE"}}
+{"timestamp":"2026-09-28T04:35:06.998Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"e9dbc0dd-6c0e-47a9-948b-cb2ce2365e0c","method":"PUT","path":"/api/drafts/cover-draft/article-media/uploads/9ac75b70-78ac-436f-bbed-ea1c14e96250/chunks/0","status":507,"error":{"name":"Error","message":"磁盘保护阈值不足，请暂停并释放空间。","code":"MEDIA_DISK_RESERVE"}}
+{"timestamp":"2026-09-28T04:35:07.486Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"8b1ef469-0878-4848-b335-436c0ea33fe5","method":"POST","path":"/api/drafts/cover-draft/article-media/uploads/597feee1-db0e-4103-89a9-ac839ad9027a/complete","status":500,"error":{"name":"Error","message":"Input image exceeds pixel limit"}}
+{"status":"PASS","application_413":413,"disk_preflight":507,"disk_chunk":507,"successful_retry":"pending_confirmation","resource_pixels":42250000,"oversized_decode_state":"failed","failed_original_retained":true,"provider_calls":0}
+✔ article upload diagnoses application 413, disk reserve and decode resource limit without losing a valid session (1240.2394ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1602.311

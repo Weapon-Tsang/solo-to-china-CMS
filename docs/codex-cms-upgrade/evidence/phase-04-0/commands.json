@@ -1,0 +1,48 @@
+[
+  {
+    "command": "npm run check",
+    "exit_code": 0,
+    "evidence": "check.log",
+    "scope": "Vite build and static checks; audited lifecycle"
+  },
+  {
+    "command": "node --test test/stage04-preflight.test.mjs test/article-media.test.mjs test/article-media-http.test.mjs test/article-media-faults.test.mjs test/backup.test.mjs test/stage03-restore-matrix.test.mjs test/stage03-route-chain.test.mjs test/cover-delivery.test.mjs test/frontend-contract.test.mjs test/local-runtime.test.mjs",
+    "exit_code": 0,
+    "tests": 81,
+    "evidence": "regression.log"
+  },
+  {
+    "command": "node --test test/stage04-preflight.test.mjs",
+    "exit_code": 0,
+    "tests": 5,
+    "evidence": "final-preflight-tests.log",
+    "note": "overlaps 81; no sum"
+  },
+  {
+    "command": "node scripts/stage03-historical-replay.mjs D:/cms-phase02-media-replay-xiKzH1/work.sqlite",
+    "exit_code": 0,
+    "evidence": "historical-replay.log",
+    "scope": "existing disposable work copy, transaction rollback, no production access"
+  },
+  {
+    "command": "npx --no-install @playwright/cli -s=phase04 run-code --filename scripts/verify-stage04-chunk-browser.js",
+    "exit_code": 0,
+    "result": "PASS",
+    "evidence": "browser-final.log"
+  },
+  {
+    "command": "node --check scripts/stage04-browser-fixture.mjs; node --check scripts/verify-stage04-chunk-browser.js",
+    "exit_code": 0
+  },
+  {
+    "command": "git diff --check",
+    "exit_code": 0,
+    "evidence": "diff-check.log"
+  },
+  {
+    "command": "node scripts/stage04-local-preflight.mjs",
+    "exit_code": 0,
+    "evidence": "inventory.json",
+    "scope": "local files only"
+  }
+]

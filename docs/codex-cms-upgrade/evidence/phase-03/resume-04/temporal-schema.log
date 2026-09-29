@@ -1,0 +1,63 @@
+✔ T03-11/19/30 four timestamps remain separate and upload/capture never verifies article facts (3.1529ms)
+(node:4864) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-01/16 observations persist, menu reads never fetch, TTL/manual refresh and revisions are distinct (1055.5437ms)
+✔ T03-16 concurrent clicks coalesce; late results never overwrite a newer revision (632.9449ms)
+✔ T03-02/17 private/preview/off-site permalinks cannot be requested or overridden (641.257ms)
+✔ T03-16 actual local API authenticates and persists inspections without queue/model/content changes (677.1171ms)
+(node:30220) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-13/14 saved entity identity and anonymous access reach the package without model or network calls (813.8191ms)
+✔ commercial overlay preserves editorial blocks and exact Page Payload order (6.4828ms)
+✔ structured affiliate search uses exactly one Frontend delivery representation (0.3561ms)
+✔ Publish Package carries presentation, semantic SEO/GEO, JSON-LD, and WordPress media references (1.4687ms)
+✔ Publish Package translates internal CMS taxonomy before WordPress delivery (0.4226ms)
+✔ commercial reconciliation proves each selected slot across payload, WordPress storage and visible DOM (2.0554ms)
+✔ SEO preview preserves long editorial fields and makes no display or CTR promise (1.3424ms)
+✔ inventory route or status changes identify only page blocks that reference the changed target (1.3821ms)
+✔ canonical URL is emitted only from a configured public route or verified published URL (13.7029ms)
+✔ unsupported title promises are rejected without treating length as a hard limit (2.2762ms)
+✔ SEO and structured data stay synchronized with visible page content (10.3407ms)
+✔ FAQ schema is optional and must exactly match the visible FAQ when present (2.5461ms)
+✔ internal links use only relevant public inventory and invalid targets fail final checks (6.0843ms)
+✔ duplicate inventory creates an editorial risk, never an automatic merge or canonical instruction (0.3882ms)
+✔ Publish Package overwrites conflicting model metadata from one deterministic source (1.3577ms)
+✔ T03-12 visible FAQ is valid without optional markup, later conflicting markup fails (5.5175ms)
+✔ T03-08/10/13 query identities, later Article and local anchors remain distinct (3.7367ms)
+✔ T03-13 unknown links are pending diagnostics, confirmed broken targets fail, contextual Read guide is valid (2.7824ms)
+✔ T03-13 entity identity ranks above title overlap and explicit unknown access is not selected (1.0026ms)
+✔ T03-14 entity plus independent question controls advisory new/update/merge/claim decisions (1.9682ms)
+✔ T03-08/15 internal CMS origins and private literal addresses cannot become public canonical metadata (1.3691ms)
+✔ T03-09/10 schema arrays and nested BlogPosting consume CMS metadata without inventing author or time (2.0492ms)
+✔ T03-07/16 explicit inspection traverses child sitemaps and propagates revision and refresh (26.0104ms)
+✔ T03-07 budgets and inaccessible children preserve unknown rather than declaring absence (8.1697ms)
+✔ T03-17 inaccessible page stops inspection without pretending content is missing (1.9737ms)
+✔ T03-08 allowed redirect checks canonical and sitemap against the final anonymous URL (3.6233ms)
+(node:29768) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-42 legacy route alt receipt remains renderable; v2 is explicit and unknown policy fails closed (894.3067ms)
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: single-source (1573.5117ms)
+ℹ {"variant":"single-source","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"beedaa76554f9e76621a35986cea3ec04a3c0c52d92ed45ed11c3fb3a5a243a1","draw_days":1,"html_sha256":"a7bf5dfcc3fad9b430c95efa039ceb5b748465366fb58c0469ec4be4e76d4958","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: evidence-composed (1623.515ms)
+ℹ {"variant":"evidence-composed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"939d78bb6ae2e6b51abea4d3eb2393fe2aaf3ccc54df4438073cde935fadfe23","draw_days":3,"html_sha256":"f1c0dbbb2243c040bad1a925926b42a063ca08d001ffc99b046e54704300387b","image_sha256":"c66f3ab31eb2e0dcbb1eab7ec00eee569224159d455071bbdf00b72a91718c69"}
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: mixed (3491.1001ms)
+ℹ {"variant":"mixed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"a680b59b6b3a689f53896f779c2a718a555dcf716681b5e556a50e7b267b5f92","draw_days":1,"html_sha256":"c63a64eb7d9e6855991c116532eb7ca76abcf01f163debfbf523bd05188515a3","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+✔ real JPEG/PNG/WebP decode, EXIF orientation, alpha, source identity and immutable master QA (1669.437ms)
+✔ photos downscale without enlargement; dense text keeps pixels with lossless output (739.0134ms)
+✔ invalid MIME, broken decode, pixel resource limit and animation are diagnosed without ready files (27.9887ms)
+✔ cache concurrency, transform version, corrupt cache and QA cannot be bypassed by reuse or fallback (952.0027ms)
+✔ optimization fallback obeys safe normalized dimensions and retries only encoding (362.8017ms)
+✔ actual crop bytes contain the safe region and preserve master; unsafe crops fail (92.7042ms)
+✔ actual configured adapter uploads derivative bytes and keeps master QA/source identity (232.9767ms)
+✔ public URLs reject local/private/signed delivery and remote hashes remain explicitly unknown (0.2761ms)
+✔ cache binds original provenance and rejects receipt tampering or missing bytes (815.85ms)
+✔ fractional crop rounds outward to retain every safe-region pixel (48.4203ms)
+ℹ tests 45
+ℹ suites 0
+ℹ pass 45
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8366.0251

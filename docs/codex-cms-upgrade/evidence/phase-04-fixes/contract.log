@@ -1,0 +1,11 @@
+(node:18716) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/scripts/verify-cross-repo-contract.mjs:59
+  if (active.artifact_checksum !== releaseGate.frontend.artifactSha256) throw new Error(`Fixed Frontend artifact SHA256 mismatch: ${active.artifact_checksum}.`);
+                                                                              ^
+
+Error: Fixed Frontend artifact SHA256 mismatch: e19fbc9e00642ea181733dc8167be698d1de337408462fee8b166aaf190a1249.
+    at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/scripts/verify-cross-repo-contract.mjs:59:79
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+
+Node.js v24.14.0

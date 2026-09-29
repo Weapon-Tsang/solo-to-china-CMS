@@ -1,0 +1,36 @@
+(node:20668) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-42 legacy route alt receipt remains renderable; v2 is explicit and unknown policy fails closed (768.4388ms)
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: single-source (1387.625ms)
+ℹ {"variant":"single-source","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"db0c56d994e4816190699d357aff91220d72647da38e29f90d86288373ff2a46","draw_days":1,"html_sha256":"a7bf5dfcc3fad9b430c95efa039ceb5b748465366fb58c0469ec4be4e76d4958","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: evidence-composed (1512.1212ms)
+ℹ {"variant":"evidence-composed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"6fd284a8df8be8b4aa47c8695ca808b5323866a25ce567ba7514e350daa69af4","draw_days":3,"html_sha256":"f1c0dbbb2243c040bad1a925926b42a063ca08d001ffc99b046e54704300387b","image_sha256":"c66f3ab31eb2e0dcbb1eab7ec00eee569224159d455071bbdf00b72a91718c69"}
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✖ T03-35/37/41/42 pinned-contract route chain through actual HTTP: mixed (3448.9077ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7593.0157
+
+✖ failing tests:
+
+test at test\stage03-route-chain.test.mjs:140:68
+✖ T03-35/37/41/42 pinned-contract route chain through actual HTTP: mixed (3448.9077ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(remote.state.uploads.every(x=>['image/webp','image/jpeg'].includes(x.metadata.mime)))
+  
+      at TestContext.<anonymous> (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/test/stage03-route-chain.test.mjs:212:10)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

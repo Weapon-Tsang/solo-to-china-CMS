@@ -1,0 +1,179 @@
+{
+  "valid": true,
+  "status": "pending",
+  "errors": [],
+  "warnings": [
+    {
+      "code": "HTML_IMAGE_SRCSET_UNOBSERVED",
+      "path": "$.rendered_html.images[0]",
+      "url": "https://receiver.invalid/media/501.webp",
+      "dependency": "EXT-IMG-LOAD",
+      "severity": "warning"
+    }
+  ],
+  "dimensions": {
+    "content_quality": {
+      "status": "passed",
+      "detail": 348,
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    },
+    "seo_artifact": {
+      "status": "passed",
+      "detail": {
+        "title": "Beijing route — source conditions",
+        "description": "Supported route sequence with approximate source timings.",
+        "canonical": null
+      }
+    },
+    "structured_data": {
+      "status": "passed",
+      "detail": "visible/schema consistency only",
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    },
+    "rendered_html": {
+      "status": "passed",
+      "detail": {}
+    },
+    "crawler_configuration": {
+      "status": "passed",
+      "detail": {
+        "metaRobots": "noindex",
+        "xRobotsTag": "noindex",
+        "robotsAllowed": null,
+        "sitemapIncluded": null,
+        "authenticated": false,
+        "note": "noindex, robots.txt and authentication are separate controls",
+        "robotsObservation": {
+          "status": "unknown",
+          "allowed": null,
+          "agent": "Googlebot",
+          "httpStatus": 200,
+          "reason": "robots_response_unavailable"
+        },
+        "directiveResult": {
+          "indexable": false,
+          "directives": [
+            {
+              "token": "noindex",
+              "source": "meta:robots"
+            },
+            {
+              "token": "noindex",
+              "source": "header:*"
+            }
+          ],
+          "conflicts": []
+        },
+        "sitemapObservation": {
+          "status": "unknown",
+          "included": null,
+          "observations": [
+            {
+              "url": "root",
+              "status": "unknown",
+              "reason": "missing_or_size_budget"
+            }
+          ]
+        }
+      }
+    },
+    "lcp": {
+      "status": "not_measured",
+      "detail": "Image order and fetchpriority are not LCP measurements."
+    },
+    "production_cost": {
+      "status": "not_tested",
+      "value": null
+    }
+  },
+  "health": {
+    "content": {
+      "status": "passed",
+      "detail": 348,
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    },
+    "media": {
+      "status": "passed",
+      "detail": null,
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    },
+    "canonical": {
+      "status": "passed",
+      "detail": null,
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    },
+    "indexability": {
+      "status": "passed",
+      "detail": null,
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    },
+    "schema": {
+      "status": "passed",
+      "detail": "visible/schema consistency only",
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    },
+    "internal-links": {
+      "status": "passed",
+      "detail": null,
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    },
+    "sitemap": {
+      "status": "unknown",
+      "detail": {
+        "status": "unknown",
+        "included": null,
+        "observations": [
+          {
+            "url": "root",
+            "status": "unknown",
+            "reason": "missing_or_size_budget"
+          }
+        ]
+      },
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    },
+    "crawler": {
+      "status": "unknown",
+      "detail": {
+        "status": "unknown",
+        "allowed": null,
+        "agent": "Googlebot",
+        "httpStatus": 200,
+        "reason": "robots_response_unavailable"
+      },
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    },
+    "field-data": {
+      "status": "not_measured",
+      "detail": null,
+      "source": "provided_artifact",
+      "checkedAt": "2026-09-28T11:32:47.762Z",
+      "pageRevision": null
+    }
+  },
+  "conclusions": {
+    "ranking": "not_tested",
+    "indexing": "not_tested",
+    "aiCitation": "not_tested"
+  }
+}

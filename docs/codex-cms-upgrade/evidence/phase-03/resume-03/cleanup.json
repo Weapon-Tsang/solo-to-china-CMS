@@ -1,0 +1,11 @@
+{
+  "checked_at": "2026-09-28T18:30:51.0979422+08:00",
+  "remaining_fixture_listeners": [],
+  "remaining_owned_processes": [],
+  "user_services_modified": false,
+  "closed_browser_sessions": [
+    "phase03resume",
+    "phase03load"
+  ],
+  "synthetic_directories_retained": true
+}

@@ -4,6 +4,7 @@ import path from "node:path";
 import { validateJsonSchema } from "../frontend-contract.mjs";
 import { ProviderRequestError, providerTransportError } from "./provider-schema.mjs";
 import { resolveStagePolicy } from "./stage-policy.mjs";
+import { estimateRequestTokens } from "./provider-rate-limiter.mjs";
 
 const IMAGE_HOST_SUFFIXES = ["xiaohongshu.com", "xhscdn.com", "xhscdn.net", "xhscdn.cn"];
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -31,7 +32,8 @@ export class KimiClient {
     telemetryContext = { ...(telemetryContext || {}), stageStartedAt: Date.now(), retryWaitMs: 0 };
     for (let attempt = 0; attempt < policy.maxAttempts; attempt += 1) {
       const requestGateStartedAt = Date.now();
-      await this.config.beforeRequest?.({ provider: "kimi", model: this.config.model, stage: name, attempt: attempt + 1 });
+      await this.config.beforeRequest?.({ provider: "kimi", model: this.config.model, stage: name, attempt: attempt + 1,
+        estimatedTokens: estimateRequestTokens(messages) });
       const attemptStartedAt = Date.now();
       telemetryContext.retryWaitMs = Math.max(0, attemptStartedAt - requestGateStartedAt);
       const requestStartedAt = new Date(attemptStartedAt).toISOString();

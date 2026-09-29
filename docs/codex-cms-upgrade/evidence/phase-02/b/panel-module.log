@@ -1,0 +1,37 @@
+(node:22776) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ subroute use requires contiguous approved occurrences; a partial diagram cannot claim the full day (7.9619ms)
+✔ actual normalization retains panel crop semantics but never delivers the uncropped collage as a subroute (6.6157ms)
+✔ actual normalization accepts related other-day photo but blocks a mismatching full-day map with a durable gap (7.1665ms)
+✔ optional conflicting route map retains its source and explicit omission instead of vanishing (1.892ms)
+✔ actual independent visual QA request contains frozen topology and rejects missing/stale/wrong-arrow receipts (29.4714ms)
+✔ pixel QA rejects truncated and undersized provider outputs before persistence (12.7292ms)
+✔ Vertex Imagen stores a generated visual in the configured media directory (69.5915ms)
+✔ Gemini 3.1 Flash Image stores an inline image from the global Gemini endpoint (46.2034ms)
+✔ visual generation participates in the shared request gate and preserves provider retry timing (1.3239ms)
+✔ Flash Image transport failures retain their provider and retry classification (0.3729ms)
+✔ Flash Image empty responses remain provider failures while explicit safety blocks stop (1.0278ms)
+✔ Chinese source-image localization sends the retained original and forbids scene changes (72.0735ms)
+✔ Chinese source-image localization accepts a retained WebP original without conversion (167.4185ms)
+✔ collage recomposition requests the source-shaped output and forbids dark card styling (99.7103ms)
+✔ text-only editorial cards use structured translation and deterministic uncropped layout (470.7573ms)
+✔ dense editorial cards translate first and preserve ordered readable layout (1203.6474ms)
+✔ layout overflow persists translation and a layout retry does not translate twice (3109.8411ms)
+✔ editorial translation refuses an in-memory success without a durable checkpoint (30.9234ms)
+✔ photo-omission QA overrides a stale empty photo-region analysis on editorial-card retry (70.6937ms)
+✔ production runtime installs the font used by deterministic editorial cards (0.3779ms)
+✔ a persisted transform candidate resumes only quality QA after a transient reviewer failure (73.2371ms)
+✔ a promoted candidate with passing QA is reused without another provider call (46.7918ms)
+✔ visual call evidence distinguishes local rejection, provider responses, and unknown transport outcomes (1.8813ms)
+✔ SQLite receipt contention after a QA response retries locally without another provider call (113.1031ms)
+✔ a transform error never creates a fake resumable candidate (0.6629ms)
+✔ route transformation sends approved names/topology and stores the independent pixel audit with actual bytes (61.1161ms)
+✔ route panel transformation sends actual cropped pixels to localization and independent QA, preserving original (197.9298ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6104.4014

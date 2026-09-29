@@ -1,0 +1,48 @@
+(node:21108) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover geometry completes the existing media revision without resetting body or buying QA (2290.3779ms)
+✔ display capacity rejects adoption with exact excess while preserving stored originals (856.8213ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (1492.0798ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (1826.6309ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ explicit revocation restores old slot exactly with an appended revision and no provider work (1440.8197ms)
+✔ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (700.1482ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ media-only receiver protocol retains old receipts and reconciles unknown outcomes without duplicate upload (1398.7232ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1456.0969ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (10794.3377ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (706.417ms)
+✔ fixed published HTML passes visible body, SEO, schema, media and crawler checks without outcome claims (22.0095ms)
+✔ draft preview requires noindex and exclusion from the public sitemap (4.6133ms)
+✔ draft preview validates article identity, body, media and commercial slots instead of accepting any HTTP 200 (5.1888ms)
+✔ T03-08 preview schema uses the explicit public canonical, preserving meaningful query and slash identity (10.4731ms)
+✔ published HTML fails for inherited noindex, hidden body, broken headings, media or schema (3.6781ms)
+✔ mobile, desktop and ordinary user-agent variants must expose the same article facts (1.7551ms)
+✔ T03-03 document title, H1 and card title are independent (3.5499ms)
+✔ T03-04/05 rendered HTML uses all robots tags and the selected crawler group (7.0108ms)
+✔ T03-06 logo first and multiple eager images do not pretend to identify measured LCP (3.1725ms)
+✔ T03-10 a later conflicting Article in an array cannot hide behind the first valid script (2.0357ms)
+✔ T03-01/02/07 unobserved external checks remain pending while missing content fails independently (3.3074ms)
+✔ T03-09 all head outputs are compared; plugin identity is not inferred (2.2792ms)
+✔ T03-09 Rank Math enabled, disabled and unknown-plugin response fixtures are checked by actual output (7.0635ms)
+✔ T03-17 unavailable anonymous HTML cannot be scored as missing article content (0.2958ms)
+✔ T03-01/20 hidden and template text cannot satisfy initial content or important facts (13.0243ms)
+✔ T03-03/05 HTML entities and unquoted attributes use HTML parsing semantics (6.8242ms)
+✔ T03-12 FAQ markup requires visible matching questions and answers, markup itself is optional (13.1131ms)
+✔ T03-10/11 same identity conflicts and explicit author/date evidence are checked across scripts (4.9784ms)
+✔ T03-01 concise useful content has no arbitrary minimum character gate (0.6482ms)
+✔ T03-15 hidden images and fake class references do not satisfy required media (2.9106ms)
+✔ T03-06/15 responsive candidate omissions and fake WebP bytes are diagnosed (1.6492ms)
+✔ T03-15/17 inaccessible image is unknown rather than a media pass or fabricated absence (1.3776ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 23451.9069

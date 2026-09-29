@@ -1,0 +1,167 @@
+{
+  "compared": 38,
+  "changed": [
+    {
+      "path": "src/services/article-media.mjs",
+      "unchanged": false
+    },
+    {
+      "path": "test/article-media.test.mjs",
+      "unchanged": false
+    }
+  ],
+  "rows": [
+    {
+      "path": "src/services/article-media.mjs",
+      "unchanged": false
+    },
+    {
+      "path": "frontend/src/workspaces/article-media.jsx",
+      "unchanged": true
+    },
+    {
+      "path": "src/final-html-validator.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/services/seo-inspection.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/services/draft-seo-inspection.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/services/editorial-seo-context.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/seo-geo.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/publish-page.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/services/article-time-evidence.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/repository.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/web-media.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/publication-eligibility.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/server.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/services/cover-selection.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "src/seo-crawlers.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "frontend/src/workspaces/seo-inspection.jsx",
+      "unchanged": true
+    },
+    {
+      "path": "frontend/src/workspaces/cover-selection.jsx",
+      "unchanged": true
+    },
+    {
+      "path": "frontend/src/App.jsx",
+      "unchanged": true
+    },
+    {
+      "path": "test/manual-route-media.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/editorial-seo-context.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/article-time-evidence.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/stage03-restore-matrix.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/stage03-route-chain.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/stage03-receiver-http.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/route-production.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/route-bundle.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/article-media.test.mjs",
+      "unchanged": false
+    },
+    {
+      "path": "test/seo-crawlers.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/final-html-validator.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/seo-geo.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/seo-inspection.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test/web-media.test.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "test-support/stage03-media-receiver.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "scripts/stage03-historical-replay.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "scripts/stage03-browser-delivery-fixture.mjs",
+      "unchanged": true
+    },
+    {
+      "path": "scripts/verify-stage03-browser-delivery.js",
+      "unchanged": true
+    },
+    {
+      "path": "scripts/verify-stage03-browser-cover-delivery.js",
+      "unchanged": true
+    },
+    {
+      "path": "scripts/verify-stage03-route-recompose.js",
+      "unchanged": true
+    }
+  ]
+}

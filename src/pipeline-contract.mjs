@@ -12,16 +12,17 @@ export function semanticMaterial(value) {
   return value;
 }
 export const dependencyHash = value => sha256(JSON.stringify(semanticMaterial(value)));
-export function stageConfiguration(pipeline, stage) {
-  const extraction = ['extract_segment_claims','audit_segment_coverage','retry_segment_extraction','analyze_source_blueprint'].includes(stage);
+export function stageConfiguration(pipeline, stage, options = {}) {
+  const extraction = ['extract_media_batch','extract_segment_claims','audit_segment_coverage','retry_segment_extraction','analyze_source_blueprint'].includes(stage);
+  const sourceSemantic = ['extract_source_experience','resolve_entities','analyze_source_diagnostic','analyze_intake'].includes(stage);
   const delivery = ['compose_publish_page','push_wordpress_draft'].includes(stage);
   const commercial = stage === 'compose_commercial';
-  const engine = extraction ? pipeline.extractor : delivery ? pipeline.wordpress : commercial ? pipeline.commercialComposer : pipeline.contentEngine;
-  const contract = engine?.artifactContract?.(stage) || { stage };
-  const config = engine?.config || {};
+  const engine = extraction ? pipeline.extractor : sourceSemantic ? pipeline.sourceEngine || pipeline.contentEngine : delivery ? pipeline.wordpress : commercial ? pipeline.commercialComposer : pipeline.contentEngine;
+  const contract = engine?.artifactContract?.(stage, options) || { stage };
+  const config = engine?.configFor?.(options) || engine?.config || {};
   return dependencyHash({ version: PIPELINE_CONTRACT_VERSION, contract,
     retryCoverage: stage === 'retry_segment_extraction' ? {
-      contract: engine?.artifactContract?.('audit_segment_coverage'),
+      contract: engine?.artifactContract?.('audit_segment_coverage', options),
       stagePolicy: resolveStagePolicy('segment_claim_coverage_audit', config),
     } : null,
     provider: config.provider, model: config.model,

@@ -1,0 +1,90 @@
+(node:17644) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T04-17 lower proxy chunk setting affects new sessions and preserves existing parts across restart (892.5978ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover geometry completes the existing media revision without resetting body or buying QA (2446.982ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-31 one confirmation of a body photo and separate cover waits only for cover geometry (2602.7097ms)
+✔ display capacity rejects adoption with exact excess while preserving stored originals (835.6552ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (1442.1165ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (1815.9342ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ explicit revocation restores old slot exactly with an appended revision and no provider work (1364.6291ms)
+✔ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (681.0276ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ media-only receiver protocol retains old receipts and reconciles unknown outcomes without duplicate upload (1370.9099ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1445.7841ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (10694.9919ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (706.3156ms)
+(node:35956) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ source cleanup preserves nested web/crop references and snapshots remain independent (928.1998ms)
+✔ web derivative lineage and exact bytes restore across directories in migration review (1035.2037ms)
+✔ system snapshot hashes the database, uploads and generated media and drills an offline delivery (980.3692ms)
+✔ restore verification rejects a deleted database-referenced image (768.7423ms)
+✔ snapshot refuses source bytes that disagree with the database fingerprint (685.8282ms)
+✔ restore drill rejects media whose bytes disagree with its declared MIME (880.7714ms)
+✔ direct restore rejects media whose bytes disagree with its declared MIME before activation (852.9249ms)
+✔ restore refuses a snapshot from a newer schema before creating a target (750.6857ms)
+✔ restore refuses insufficient free space before creating target or staging (782.9756ms)
+✔ an interrupted restore resumes only the same snapshot and repairs partial files (1117.6341ms)
+✔ restore migrates an older snapshot only inside the isolated target (773.2791ms)
+✔ snapshot verification compares manifest hashes rather than only file sizes (695.8427ms)
+✔ snapshot verification rejects an omitted database file reference (734.197ms)
+✔ snapshot verification rejects omitted, altered, and untrusted business fingerprints (817.7714ms)
+✔ business fingerprint catches changed source state after the database file hash is updated (722.4797ms)
+✔ snapshot includes durable source storage references and pending capture chunks (919.6375ms)
+✔ snapshot restores an unpromoted visual candidate file and its database path (855.2733ms)
+✔ snapshot preserves and remaps file paths nested in historical capture JSON (897.6488ms)
+✔ snapshot rejects a missing file referenced only by historical capture JSON (639.3467ms)
+✔ version 2 manifests remain readable without version 3 JSON references (850.5753ms)
+✔ version 2 recovers omitted relative source storage references only from archived files (922.8295ms)
+✔ snapshot rejects case collisions and archive symlinks (769.2923ms)
+✔ snapshot restores to a new external root and remaps only stored file references (906.7603ms)
+✔ restore remaps a POSIX stored path fixture on Windows without changing unrelated text (844.795ms)
+✔ snapshot refuses to race an active media file mutation (578.6388ms)
+✔ restore refuses a symbolic-link ancestor before creating the target (745.0428ms)
+(node:14036) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit selected cover overrides a populated featured ID; strict schemas keep optional card text internal; capacity never truncates (2.694ms)
+✔ durable cover-only protocol reconciles lost results without upload replay or changing prior article receipts (1305.3102ms)
+✔ cover illustration maximum is cumulative and rejected before provider credentials or dispatch (1.3923ms)
+(node:22884) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit development uses external data root and rejects checkout paths before opening a database (12.6917ms)
+✔ migration review refuses the writing server and stable mode refuses missing database (3.3158ms)
+✔ an existing unmarked database cannot become development, and reviewed data needs explicit promotion (1342.1711ms)
+✔ local production refuses a Worker with unreadable stored credentials while allowing API recovery (0.3827ms)
+✔ migration review inspects an existing database without changing its bytes (731.8214ms)
+✔ local status reports mode, role, version and schema without exposing configuration secrets (720.0676ms)
+✔ one API and one Worker may share a data root, while duplicate roles and all-in-one are refused (28.2223ms)
+✔ stale lease needs an explicit unlock and cannot be silently reused (13.9202ms)
+✔ a stop request is bound to the live instance nonce and does not kill a PID (17.7967ms)
+{"timestamp":"2026-09-28T15:19:51.271Z","level":"info","service":"solo-to-china","event":"server.stopped","version":"2.0.70"}
+✔ local stop command gracefully stops only its own API subprocess (1751.1329ms)
+{"timestamp":"2026-09-28T15:19:51.278Z","level":"info","service":"solo-to-china","event":"server.stopped","version":"2.0.70"}
+{"timestamp":"2026-09-28T15:19:52.433Z","level":"info","service":"solo-to-china","event":"server.started","host":"127.0.0.1","port":59212,"version":"2.0.70"}
+✔ API and Worker applications coordinate before database open and release leases on stop (646.5219ms)
+{"timestamp":"2026-09-28T15:19:52.486Z","level":"info","service":"solo-to-china","event":"http.request_completed","requestId":"c93cdc3e-daad-4d95-b9cf-6cc84b4a0c1a","method":"GET","path":"/api/health","status":200,"durationMs":5,"responseBytes":21468,"rowCount":null,"cacheStatus":null}
+{"timestamp":"2026-09-28T15:19:52.492Z","level":"info","service":"solo-to-china","event":"server.stopped","version":"2.0.70"}
+{"timestamp":"2026-09-28T15:19:52.494Z","level":"info","service":"solo-to-china","event":"server.stopped","version":"2.0.70"}
+✔ a port conflict reports EADDRINUSE and releases only the failed application's lease (1218.0565ms)
+(node:4556) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-33/44 real snapshot and review restore: media_only (1556.4651ms)
+✔ T03-33/44 real snapshot and review restore: equivalent_alias_registration (1104.9378ms)
+✔ T03-33/44 real snapshot and review restore: equivalent_english_alias_correction (1039.2258ms)
+✔ T03-33/44 real snapshot and review restore: day_order (1062.9019ms)
+✔ CI checkout agrees with fixed commit and real artifact bytes; mutations fail (332.9394ms)
+ℹ tests 58
+ℹ suites 0
+ℹ pass 58
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 26871.5248

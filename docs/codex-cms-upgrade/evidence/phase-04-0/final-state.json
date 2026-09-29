@@ -1,0 +1,50 @@
+{
+  "at": "2026-09-28T13:23:16.863Z",
+  "status": "PASS_LOCAL(CMS_ONLY)",
+  "whole_phase04": "INCOMPLETE_SPEC_AND_AUTH_PENDING",
+  "current_authorized_step": "NONE",
+  "phase_end_stop": true,
+  "artifact_manifest_sha256": "9cbe2db3780e48e63f7a8796e49c56e0fdaa676a5311f365fd77d15b8d1c88fb",
+  "plan_sha256": "c44a80b2a2b5271aeb2992e79111778020f0dd6ec3a8400bbe6497215a055d67",
+  "phase_input_sha256": "69e41825b77b2fc8e97d3d99de958f212ad361516fa89bca765c68cff1ec9802",
+  "files": {
+    "src/config.mjs": "7e837d7f4adf0b5c975e7fd513897d28913fc990201dccfbce283651a1da5b8e",
+    "src/services/article-media.mjs": "5ee4583704a3373eee895ec1d8ff7aa96ea3e0888b5162f6da692b8dcce6de28",
+    "test/article-media.test.mjs": "ada141c0b038107667c6f8d45178093705858cba0ef445dec5381312d8f15969",
+    "scripts/stage04-local-preflight.mjs": "13681ab1d5c829c194f78b58bc6bbdf9512efa3103af69ca0da5721157a8732d",
+    "scripts/stage04-browser-fixture.mjs": "be92c8d3a6705081080863594a133c9fd3b107acad85ce037034fe24b7d0684c",
+    "scripts/verify-stage04-chunk-browser.js": "2e87a7a70ab922ee02605330c3b24e3df2b663d835c5054c2b8dfdc25b1b2058",
+    "test/stage04-preflight.test.mjs": "11414485ea3c70357b56c377303dfefe593a267c653fd3fc3736489b91bedb23"
+  },
+  "cleanup": {
+    "api_sessions": [
+      98734,
+      8723
+    ],
+    "api_exit_codes": [
+      0,
+      0
+    ],
+    "browser_session": "phase04",
+    "browser_closed": true,
+    "user_services_stopped": false
+  },
+  "side_effects": {
+    "commit": false,
+    "push": false,
+    "merge": false,
+    "deploy": false,
+    "cloud_build": false,
+    "production_private_read": false,
+    "production_export": false,
+    "paid_model": false,
+    "wordpress_write": false,
+    "production_migration": false,
+    "activate": false,
+    "production_backup": false,
+    "disk_snapshot": false,
+    "cloud_stop": false,
+    "cloud_delete": false,
+    "public_frontend_modify": false
+  }
+}

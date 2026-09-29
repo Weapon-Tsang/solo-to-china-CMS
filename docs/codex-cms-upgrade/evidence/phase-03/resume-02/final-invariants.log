@@ -1,0 +1,30 @@
+(node:26292) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-01/16 observations persist, menu reads never fetch, TTL/manual refresh and revisions are distinct (1057.2487ms)
+✔ T03-16 concurrent clicks coalesce; late results never overwrite a newer revision (690.4209ms)
+✔ T03-02/17 private/preview/off-site permalinks cannot be requested or overridden (620.673ms)
+✔ T03-16 actual local API authenticates and persists inspections without queue/model/content changes (684.8515ms)
+(node:9640) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-29/39/40 confirmed stop photo proceeds locally; a conflicting Day image stays saved and cannot rewrite approved text (2239.9408ms)
+✔ T03-36/38 photo cannot replace a whole-day obligation; claimed matching Day cannot bypass pixel QA or stale approval (650.5913ms)
+(node:14416) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"success","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: success, actual bytes and rendered HTML (1794.4001ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"lost","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":1,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: lost, actual bytes and rendered HTML (1568.1932ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"partial","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: partial, actual bytes and rendered HTML (1422.0071ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5338.728

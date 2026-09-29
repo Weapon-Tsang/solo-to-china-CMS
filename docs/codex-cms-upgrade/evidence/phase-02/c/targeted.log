@@ -1,0 +1,14 @@
+(node:6140) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ cover plan preserves natural signs but rejects dense cards, screenshots, wrong entity and stale QA (1.1852ms)
+✔ cover locks never silently switch to another candidate and relevance is required before ordering (0.252ms)
+✔ 16:9 plan is exact, bounded, EXIF-coordinate based and never enlarges a small source (0.2027ms)
+✔ real SQLite dry-run preserves draft, media, publication, jobs and calls; unavailable historical masters remain rejected (595.2561ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 880.5741

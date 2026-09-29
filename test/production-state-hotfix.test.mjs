@@ -115,6 +115,8 @@ test("a planned visual remains pending in production state instead of appearing 
   assert.equal(item.visual_total,1);
   assert.equal(item.visual_pending,1);
   assert.equal(item.production_state.completed_stages.includes('generate_visuals'),false);
+  assert.equal(item.production_state.retry_state,null,
+    'inferred pending media has no provider retry budget and must not show 0/0 retries');
 });
 
 test("one Candidate-level failure has one canonical approved production owner",(t)=>{

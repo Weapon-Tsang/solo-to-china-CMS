@@ -46,6 +46,10 @@ const LOCAL_FAILURE_CODES = new Set([
 
 export function classifyCaptureApiError(status, payload = {}) {
   const serverMessage = typeof payload?.error === "string" ? payload.error.trim() : "";
+  if (status === 403 && /request origin is not allowed/i.test(serverMessage)) return {
+    code: 'CAPTURE_ORIGIN_DENIED', retryable: false,
+    message: 'CMS 尚未允许当前扩展来源，请配置此扩展的精确 Origin。',
+  };
   if (/read.only|migration.review/i.test(`${payload.code || ''} ${serverMessage}`)) return { code: 'CAPTURE_READ_ONLY', retryable: false, message: 'CMS 为只读接收模式，采集已暂停。' };
   if (status === 401 || status === 403) return {
     code: "CAPTURE_UNAUTHORIZED", retryable: false,
@@ -380,7 +384,7 @@ export function classifyTaskDisposition(error = {}, attempts = 0, maxRetries = S
   if (['DOM_TIMEOUT', 'INJECTION_TIMEOUT', 'TASK_DEADLINE', 'DISCOVERY_STALLED', 'CAPTURE_READ_ONLY'].includes(code)) return { action: 'pause', status: 'paused_error' };
   if (code === "NOT_LOGGED_IN") return { action: "pause", status: "paused_login_required" };
   if (code === "VERIFICATION_REQUIRED") return { action: "pause", status: "paused_verification_required" };
-  if (code === "CAPTURE_UNAUTHORIZED" || code === "UNAUTHORIZED") return { action: "pause", status: "paused_capture_unauthorized" };
+  if (["CAPTURE_UNAUTHORIZED", "UNAUTHORIZED", "CAPTURE_ORIGIN_DENIED", "CAPTURE_TOKEN_MISSING"].includes(code)) return { action: "pause", status: "paused_capture_unauthorized" };
   if (error.retryable !== false && Number(attempts || 0) < Number(maxRetries || 0)) return { action: "retry", status: "retry_wait" };
   return { action: "fail", status: "failed", unavailable: code === "NOTE_UNAVAILABLE" };
 }

@@ -1,0 +1,24 @@
+{
+  "version": "context-budgets-1",
+  "note": "Estimated input-token budget per model stage. Kept separate from model-stage-policy.json on purpose: stage policy is part of every pipeline dependency hash, so editing it would invalidate reusable artifacts. Exceeding a budget is logged (ai.context_budget_exceeded) and reported by npm run audit:model-context; it does not block the request.",
+  "stages": {
+    "source_research_extraction": 30000,
+    "segment_claim_coverage_audit": 20000,
+    "source_editorial_blueprint": 10000,
+    "source_asset_media_analysis": 8000,
+    "content_intake_analysis": 12000,
+    "experience_extraction": 40000,
+    "destination_entity_resolution": 60000,
+    "luna_local_dispute_review": 8000,
+    "editorial_assembly": 40000,
+    "content_brief": 40000,
+    "narrative_plan": 30000,
+    "article_draft_v2": 60000,
+    "article_bundle_v1": 60000,
+    "quality_review_v2": 40000,
+    "quality_review_v3": 40000,
+    "frontend_page_plan": 16000,
+    "frontend_page_payload": 30000,
+    "bounded_draft_repair": 40000
+  }
+}

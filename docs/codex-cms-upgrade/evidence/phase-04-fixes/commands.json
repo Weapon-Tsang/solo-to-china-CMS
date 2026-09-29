@@ -1,0 +1,65 @@
+[
+  {
+    "command": "npm run check",
+    "exit": 0,
+    "evidence": "check.log",
+    "scope": "build/static/boundaries"
+  },
+  {
+    "command": "node --test test/stage04-release-identity.test.mjs test/backup.test.mjs test/stage03-restore-matrix.test.mjs test/cover-delivery.test.mjs test/article-media.test.mjs test/local-runtime.test.mjs",
+    "exit": 0,
+    "tests": 58,
+    "evidence": "regression.log",
+    "note": "before final provenance correction; final identity rerun separately"
+  },
+  {
+    "command": "node --test test/stage04-release-identity.test.mjs test/backup.test.mjs",
+    "exit": 0,
+    "tests": 27,
+    "evidence": "final-targeted.log",
+    "note": "backup immutable-source assertions; overlapping set"
+  },
+  {
+    "command": "node --test test/stage04-release-identity.test.mjs",
+    "exit": 0,
+    "tests": 1,
+    "evidence": "identity-final.log",
+    "note": "final b231/915 pin"
+  },
+  {
+    "command": "node scripts/verify-cross-repo-contract.mjs",
+    "exit": 0,
+    "evidence": "contract-final.log",
+    "note": "real local Git blobs, final pin"
+  },
+  {
+    "command": "node scripts/stage04-local-preflight.mjs",
+    "exit": 0,
+    "evidence": "artifact-location.json"
+  },
+  {
+    "command": "node scripts/stage04-prepare-candidate.mjs D:/cms-phase04-candidate-20260928-final",
+    "exit": 0,
+    "evidence": "candidate-prepare.log"
+  },
+  {
+    "command": "npm ci --omit=dev --ignore-scripts --no-audit --no-fund",
+    "cwd": "D:\\cms-phase04-candidate-20260928-final",
+    "exit": 0,
+    "evidence": "candidate-install.log"
+  },
+  {
+    "command": "candidate smoke with allowlisted environment",
+    "exit": 0,
+    "evidence": "candidate-smoke.json"
+  },
+  {
+    "command": "python scripts/stage04-archive-candidate.py",
+    "exit": 0,
+    "evidence": "archive.json"
+  },
+  {
+    "command": "GitHub Actions / Cloud Build / full release:check",
+    "status": "NOT_RUN"
+  }
+]

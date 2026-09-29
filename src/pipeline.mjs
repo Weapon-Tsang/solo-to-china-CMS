@@ -45,6 +45,10 @@ export class Pipeline {
     this.isolatedTaskRunner=isolatedTaskRunner;
     this.timer = null;
     this.working = 0;
+    // Slots usable only by the production lane, outside the adaptive limit, so
+    // one long semantic or ingest job cannot strand approved articles.
+    this.productionReserveSlots = Math.max(0, Math.min(4, Number(extractionConfig.productionReserveSlots || 0)));
+    this.reservedWorking = 0;
     this.concurrencyMode = extractionConfig.concurrencyMode || (maxConcurrent ? "fixed" : "auto");
     this.concurrencyCeiling = Math.max(1, Math.min(16, Number(extractionConfig.concurrencyMax || maxConcurrent || 8)));
     this.maxConcurrent = Math.max(1, Math.min(this.concurrencyCeiling, Number(maxConcurrent || extractionConfig.concurrencyInitial || 4)));
@@ -102,6 +106,9 @@ export class Pipeline {
     const slots = Math.max(0, this.maxConcurrent - this.working);
     for (let index = 0; index < slots; index += 1) {
       void this.runOne().catch((error) => this.logger.error("pipeline.tick_failed", { error }));
+    }
+    for (let index = this.reservedWorking; index < this.productionReserveSlots; index += 1) {
+      void this.runOne({ reservedLane: "production" }).catch((error) => this.logger.error("pipeline.tick_failed", { error }));
     }
   }
 
@@ -343,9 +350,12 @@ export class Pipeline {
     }
   }
 
-  async runOne() {
-    if (this.working >= this.maxConcurrent) return false;
-    this.working += 1;
+  async runOne({ reservedLane = null } = {}) {
+    const reserved = Boolean(reservedLane) && this.reservedWorking < this.productionReserveSlots;
+    if (reservedLane && !reserved) return false;
+    if (!reserved && this.working >= this.maxConcurrent) return false;
+    if (reserved) this.reservedWorking += 1;
+    else this.working += 1;
     let job;
     let startedAt;
     let heartbeatTimer;
@@ -366,7 +376,8 @@ export class Pipeline {
         && this.repository.countVertexBatchEligibleJobs?.() >= minimum);
       const deferBatchCoverage = Boolean(this.extractor?.batchEnabled
         && this.repository.countVertexBatchEligibleJobs?.("audit_segment_coverage") >= minimum);
-      job = this.repository.claimJob({ deferBatchExtraction, deferBatchCoverage });
+      job = this.repository.claimJob({ deferBatchExtraction, deferBatchCoverage,
+        ...(reserved ? { workloadClass: reservedLane } : {}) });
       if (!job) return false;
       startedAt = Date.now();
       abortController = new AbortController();
@@ -443,13 +454,13 @@ export class Pipeline {
         this.repository.ensureAuthorizedSourceVisuals?.(job.entity_id);
       }
       const artifactConfigHash = stageConfiguration(this, job.pipeline_version === 'article_bundle_v1'
-        && job.type === 'plan_content' ? 'article_bundle_v1' : job.type);
+        && job.type === 'plan_content' ? 'article_bundle_v1' : job.type,{telemetryContext});
       pipelineArtifact = this.repository.preparePipelineArtifact?.(job, artifactConfigHash) || null;
       const modelStep = async (key, input, operation, configurationStage = job.type) => {
         if (!this.repository.pipelineStepIdentity) return guarded(operation);
         assertLease();
         this.repository.assertPipelineInput?.(pipelineArtifact, job);
-        const identity = this.repository.pipelineStepIdentity(job, pipelineArtifact, key, input, stageConfiguration(this, configurationStage));
+        const identity = this.repository.pipelineStepIdentity(job, pipelineArtifact, key, input, stageConfiguration(this, configurationStage,{telemetryContext}));
         const receipt = this.repository.readPipelineStep(identity);
         if (receipt) {
           this.logger.info('pipeline.model_step_reused', {jobId:job.id, jobType:job.type, step:key, requestHash:identity.request_hash});
@@ -583,7 +594,7 @@ export class Pipeline {
           if(!pack)throw new Error(`Media batch ${job.entity_id} no longer exists.`);
           if(pack.staleCaptureVersion)break;
           try {
-            const extraction=await guarded((signal)=>this.extractor.extract(pack.source,{signal,telemetryContext}));
+            const extraction=await modelStep('source-extraction',pack.source,(signal)=>this.extractor.extract(pack.source,{signal,telemetryContext}));
             commitStage(()=>{
               for(const segmentId of this.repository.saveMediaBatchExtraction(job.entity_id,extraction)) {
                 this.enqueueChild(job,"audit_segment_coverage",segmentId,{executionRoute:'realtime'});
@@ -609,7 +620,7 @@ export class Pipeline {
           if (!pack) throw new Error(`Source segment ${job.entity_id} no longer exists.`);
           if (pack.staleCaptureVersion) break;
           try {
-            const extraction = await guarded((signal) => this.extractor.extract(pack.source, { signal, telemetryContext }));
+            const extraction = await modelStep('source-extraction',pack.source,(signal) => this.extractor.extract(pack.source, { signal, telemetryContext }));
             commitStage(() => {
               if (this.repository.saveSegmentExtraction(job.entity_id, extraction)) this.enqueueChild(job,"audit_segment_coverage", job.entity_id, { executionRoute: job.execution_route || 'realtime' });
             });
@@ -692,7 +703,7 @@ export class Pipeline {
         case "extract_source_experience": {
           const experiencePackage = this.repository.getExperienceExtractionPackage(job.entity_id);
           if (!experiencePackage) throw new Error(`Source ${job.entity_id} is not ready for Experience extraction.`);
-          const extracted = await guarded((signal) => this.sourceEngine.analyzeExperience(experiencePackage, { signal, telemetryContext }));
+          const extracted = await modelStep('experience-extraction',experiencePackage,(signal) => this.sourceEngine.analyzeExperience(experiencePackage, { signal, telemetryContext }));
           commitStage(() => {
             this.repository.saveExperienceExtraction(job.entity_id, extracted.output, extracted.model, experiencePackage);
             this.enqueueSourceSemanticDownstream(job.entity_id,job);
@@ -728,34 +739,77 @@ export class Pipeline {
         }
         case "resolve_entities": {
           let cursor = null;
+          let newPages = 0;
+          let reviewComplete = true;
+          let reviewedClaims = 0;
           const resolutions = [];
-          do {
-            const entityPackage = this.repository.getEntityResolutionPackage(job.entity_id, 80, cursor);
+          // Frozen for every turn of this Job (pages are reused from receipts).
+          const since = this.repository.entityReviewSince?.(job.entity_id) || null;
+          const reviewStartedAt = job.started_at || new Date().toISOString();
+          // Production ledger 2026-09-15..29: 66 of 159 pages of 80 Claims hit the
+          // provider output limit and were re-billed or abandoned. Start at 40 and
+          // halve a page that still overflows instead of giving up on the rest.
+          // A split survives the Job's yield/resume turns in this worker so the
+          // overflowing size is not purchased again on every turn.
+          this.entityPageSizes ||= new Map();
+          let pageSize = this.entityPageSizes.get(job.id) || ENTITY_RESOLUTION_PAGE_SIZE;
+          for (;;) {
+            const entityPackage = this.repository.getEntityResolutionPackage(job.entity_id, pageSize, cursor, { since });
+            reviewedClaims += entityPackage.claims.length;
             if ((this.sourceEngine?.enabledFor?.({ telemetryContext }) ?? this.sourceEngine?.enabled)
               && typeof this.sourceEngine?.resolveEntities === "function" && entityPackage.claims.length) {
               try {
-                const resolved = await modelStep(`entities:${cursor || 'start'}`, entityPackage, (signal) => this.sourceEngine.resolveEntities(entityPackage, { signal,
-                  telemetryContext: { ...telemetryContext, entityId: `${job.entity_id}:${cursor || "start"}` } }));
+                const resolved = await modelStep(`entities:${cursor || 'start'}:${pageSize}`, entityPackage, (signal) => {
+                  newPages += 1;
+                  return this.sourceEngine.resolveEntities(entityPackage, { signal,
+                    telemetryContext: { ...telemetryContext, entityId: `${job.entity_id}:${cursor || "start"}` } });
+                });
                 // Keep every page on the same input revision. Applying page 1
                 // would otherwise mutate aliases/metadata read by page 2 and
                 // make our own output appear to be a concurrent input change.
                 resolutions.push(resolved);
               } catch (error) {
+                if (isModelOutputLimit(error) && pageSize > ENTITY_RESOLUTION_MIN_PAGE_SIZE) {
+                  reviewedClaims -= entityPackage.claims.length;
+                  pageSize = Math.max(ENTITY_RESOLUTION_MIN_PAGE_SIZE, Math.floor(pageSize / 2));
+                  this.entityPageSizes.set(job.id, pageSize);
+                  this.logger.warn("pipeline.entity_resolution_page_split", { jobId: job.id, cursor, pageSize });
+                  continue;
+                }
                 if (!isRecoverableStructuredOutputError(error)) throw error;
                 this.logger.warn("pipeline.entity_resolution_model_output_invalid", {
                   jobId: job.id, entityId: job.entity_id, cursor, error,
                 });
+                reviewComplete = false;
                 cursor = null;
                 break;
               }
             }
             cursor = entityPackage.nextCursor;
-          } while (cursor);
+            // A destination can have thousands of claims. Yield after bounded
+            // paid work even when adaptive concurrency has fallen to one. The
+            // durable step receipts retain completed pages; replay reads those
+            // receipts without charging again, and applies all pages atomically.
+            if (cursor && newPages >= 2 && this.repository.pipelineStepIdentity) {
+              assertLease();
+              const availableAt = new Date(Date.now() + 5_000).toISOString();
+              if (!this.repository.deferJobWithoutAttempt(job, availableAt))
+                throw Object.assign(new Error("JOB_LEASE_LOST"), { code: "JOB_LEASE_LOST" });
+              this.logger.info("pipeline.entity_resolution_yielded", { jobId:job.id, cursor, newPages });
+              return false;
+            }
+            if (!cursor) break;
+          }
           commitStage(() => {
             for (const resolved of resolutions) this.repository.applyEntityResolution(job.entity_id, resolved.output, resolved.model);
             this.repository.resolveEntitiesDeterministically(job.entity_id);
+            const modelReviewed = (this.sourceEngine?.enabledFor?.({ telemetryContext }) ?? this.sourceEngine?.enabled)
+              && typeof this.sourceEngine?.resolveEntities === "function";
+            if (reviewComplete && modelReviewed) this.repository.recordEntityReview?.(job.entity_id, reviewStartedAt,
+              { full: since == null, claims: reviewedClaims });
             this.enqueueChild(job,"rebuild_knowledge",job.entity_id,{workloadClass:"semantic"});
           });
+          this.entityPageSizes.delete(job.id);
           break;
         }
         case "rebuild_knowledge":
@@ -999,6 +1053,11 @@ export class Pipeline {
               })) throw Object.assign(new Error('Discovered source analysis could not be bound to this article.'),{
                 code:'MEDIA_ANALYSIS_CHECKPOINT_REJECTED',retryable:false,
               });
+              // Persist exact caption/figure-reference relationships alongside
+              // pixel analysis. Source titles alone never establish location.
+              const current=this.repository.db.prepare('SELECT capture_version FROM sources WHERE id=?').get(asset.source_id);
+              if (current?.capture_version === asset.capture_version)
+                this.repository.refreshSourceMediaBindings?.(asset.source_id,{dryRun:false,assetIds:[assetId]});
             };
             if (typeof this.repository.checkpointPipelineStage === 'function')
               this.repository.checkpointPipelineStage(job,pipelineArtifact,saveAnalysis);
@@ -1487,7 +1546,8 @@ export class Pipeline {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (abortController && !abortController.signal.aborted) abortController.abort();
       if (abortController) this.activeAbortControllers.delete(abortController);
-      this.working -= 1;
+      if (reserved) this.reservedWorking -= 1;
+      else this.working -= 1;
     }
   }
 
@@ -1495,7 +1555,10 @@ export class Pipeline {
     if (this.concurrencyMode !== "auto" || !isAiJobType(job?.type)) return;
     this.extractionOutcomes.push({ ...outcome, at: Date.now() });
     if (this.extractionOutcomes.length > this.concurrencySuccessWindow) this.extractionOutcomes.shift();
-    if (!outcome.ok && (isProviderPressure(outcome.error) || outcome.error?.retryable || /timeout/i.test(String(outcome.error?.message || "")))) {
+    // A retryable business failure (stale inputs, visual QA) is not evidence
+    // that the provider is overloaded. Reducing the whole worker here can
+    // strand unrelated production behind one long semantic job.
+    if (!outcome.ok && isProviderPressure(outcome.error)) {
       this.maxConcurrent = Math.max(1, Math.floor(this.maxConcurrent / 2));
       this.logger.warn("pipeline.extraction_concurrency_reduced", { concurrency: this.maxConcurrent, reason: outcome.error?.code || outcome.error?.status || "transient_failure" });
       this.extractionOutcomes = [];
@@ -1796,6 +1859,9 @@ function mergeExtractionClaims(previous = [], retried = []) {
   }
   return merged;
 }
+
+const ENTITY_RESOLUTION_PAGE_SIZE = 40;
+const ENTITY_RESOLUTION_MIN_PAGE_SIZE = 10;
 
 function isRecoverableStructuredOutputError(error) {
   return /(?:invalid JSON|no structured output|structured output reached its token limit)/i.test(String(error?.message || error));

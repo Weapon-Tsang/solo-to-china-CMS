@@ -1,0 +1,37 @@
+(node:20556) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ source cleanup preserves nested web/crop references and snapshots remain independent (782.3867ms)
+✔ web derivative lineage and exact bytes restore across directories in migration review (838.8746ms)
+✔ system snapshot hashes the database, uploads and generated media and drills an offline delivery (833.2375ms)
+✔ restore verification rejects a deleted database-referenced image (678.1226ms)
+✔ snapshot refuses source bytes that disagree with the database fingerprint (586.9878ms)
+✔ restore drill rejects media whose bytes disagree with its declared MIME (816.265ms)
+✔ direct restore rejects media whose bytes disagree with its declared MIME before activation (821.7438ms)
+✔ restore refuses a snapshot from a newer schema before creating a target (719.9744ms)
+✔ restore refuses insufficient free space before creating target or staging (736.424ms)
+✔ an interrupted restore resumes only the same snapshot and repairs partial files (1082.3654ms)
+✔ restore migrates an older snapshot only inside the isolated target (724.3507ms)
+✔ snapshot verification compares manifest hashes rather than only file sizes (673.918ms)
+✔ snapshot verification rejects an omitted database file reference (699.8831ms)
+✔ snapshot verification rejects omitted, altered, and untrusted business fingerprints (783.5533ms)
+✔ business fingerprint catches changed source state after the database file hash is updated (714.9109ms)
+✔ snapshot includes durable source storage references and pending capture chunks (866.1383ms)
+✔ snapshot restores an unpromoted visual candidate file and its database path (801.4601ms)
+✔ snapshot preserves and remaps file paths nested in historical capture JSON (851.8007ms)
+✔ snapshot rejects a missing file referenced only by historical capture JSON (596.5589ms)
+✔ version 2 manifests remain readable without version 3 JSON references (754.8857ms)
+✔ version 2 recovers omitted relative source storage references only from archived files (804.1952ms)
+✔ snapshot rejects case collisions and archive symlinks (677.7007ms)
+✔ snapshot restores to a new external root and remaps only stored file references (794.9569ms)
+✔ restore remaps a POSIX stored path fixture on Windows without changing unrelated text (767.0746ms)
+✔ snapshot refuses to race an active media file mutation (522.7767ms)
+✔ restore refuses a symbolic-link ancestor before creating the target (671.6541ms)
+✔ CI checkout agrees with fixed commit and real artifact bytes; mutations fail (721.6543ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 20058.9765

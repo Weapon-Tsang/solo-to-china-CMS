@@ -84,3 +84,15 @@ test("queue policy exposes age, keeps interactive Research ahead of production, 
   assert.equal(queued.state, "queued");
   assert.ok(Number.isInteger(queued.queue_age_ms));
 });
+
+test('previously resolved identities do not re-enter paid destination resolution',t=>{
+ const {repository,db}=repositoryFixture(t);const source=capturedSource(repository,'49');
+ repository.saveExtraction(source.id,{source:{language:'en',summary:'Identity',destination_name:'Chongqing',destination_slug:'chongqing',traveler_fit:[],practical_tips:[],warnings:[],confidence:.9},
+  claims:[{key:'place.museum',subject:'Museum',predicate:'access',value:'open',qualifiers:[],confidence:.9,source_quote:'Museum open'}],
+  blueprint:{format:'guide',hook:'test',angle:'test',sections:[],strengths:[],gaps:[]}},'test','fixture');
+ const claim=repository.getEntityResolutionPackage('chongqing').claims[0];assert.ok(claim);
+ db.prepare("UPDATE claims SET entity_resolution_status='resolved' WHERE id=?").run(claim.id);
+ assert.equal(repository.getEntityResolutionPackage('chongqing').claims.length,0);
+ db.prepare("UPDATE claims SET entity_resolution_status='unresolved' WHERE id=?").run(claim.id);
+ assert.equal(repository.getEntityResolutionPackage('chongqing').claims.length,1);
+});

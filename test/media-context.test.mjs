@@ -13,6 +13,22 @@ const analysis = (id) => ({asset_id:id,source_sha256:'same-bytes',analysis_statu
 const output = (ids) => ({source:{language:'zh',summary:'source',destination_name:'Chongqing',destination_slug:'chongqing',
   traveler_fit:[],practical_tips:[],warnings:[],confidence:0.8},claims:[],media_analysis:ids.map(analysis)});
 
+test('model wire sends common source text once and each image context only beside its image',async()=>{
+  const source={id:'shared-source',capture_version:2,raw_text:'UNIQUE_COMMON_TEXT',assets:[photo('one'),photo('two',1)]};
+  const requests=[];const extractor=mockExtractor(requests);
+  await extractor.extract(source);
+  assert.equal(requests.length,1);
+  const text=requests[0].content.filter(p=>p.type==='text').map(p=>p.text).join('\n');
+  assert.equal(text.split('UNIQUE_COMMON_TEXT').length-1,1);
+  assert.equal(text.split('独立图注').length-1,2,'one caption per image, no header duplicate');
+  assert.equal(text.split('courtyard').length-1,2,'alt text appears only in each image context');
+  const parts=requests[0].content;
+  for(const id of ['one','two']) {
+    const index=parts.findIndex(p=>p.image_url?.url===`fixture:${id}`);
+    assert.equal(JSON.parse(parts[index-1].text).image_context.asset_id,id);
+  }
+});
+
 function mockExtractor(requests) {
   const extractor=new KimiExtractor({provider:'vertex',projectId:'fixture',accessToken:'fixture',model:'fixture'});
   extractor.client={enabled:true,batchEnabledFor:()=>true,

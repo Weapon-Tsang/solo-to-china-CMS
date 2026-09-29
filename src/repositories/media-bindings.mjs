@@ -134,6 +134,13 @@ export function refreshSourceMediaBindings(db, sourceId, {dryRun = true, assetId
       id:`binding_${sha256(`${occurrenceId}:${match.destination_slug}:${match.entity_key}:${type}`).slice(0,32)}`,
       occurrence_id:occurrenceId,asset_id:asset.id,destination_slug:match.destination_slug,entity_key:match.entity_key,
       canonical_subject:match.canonical_subject,relation_type:type,
+      subject_aliases:match.names.map(({name})=>name),
+      // Retain the literal name matched in this occurrence. Duplicate alias
+      // records can share a name without resolving to one canonical entity.
+      matched_aliases:[...new Set(match.names.filter(({name})=>proofs.some(proof=>includesName(proof.quote,name)))
+        .map(({name})=>name))],
+      context_complete:!directContextPending && !peerPending && peers.length<=100,
+      uncertain,
       // A list of places in a caption is not proof of a single depicted place.
       status:opposed ? (scopedProofs.some(item=>item.polarity==='supports') ? 'conflict' : 'candidate')
         : matches.size!==1 || uncertain ? 'ambiguous'

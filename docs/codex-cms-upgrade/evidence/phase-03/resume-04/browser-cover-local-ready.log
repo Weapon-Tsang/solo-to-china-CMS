@@ -1,0 +1,6 @@
+### Result
+{"status":"PASS","media_revision":1,"state":"local_ready","items":[{"slot_id":"cover-visual","state":"ready"}]}
+### Ran Playwright code
+```js
+await (async page => {const data=await page.evaluate(async()=>await(await fetch('/api/drafts/cover-draft/article-media')).json());if(data.recovery.state!=='local_ready')throw Error(JSON.stringify(data.recovery));return {status:'PASS',media_revision:data.media_revision,state:data.recovery.state,items:data.recovery.receipt.items};})(page);
+```

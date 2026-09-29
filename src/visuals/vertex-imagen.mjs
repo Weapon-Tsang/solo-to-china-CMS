@@ -6,6 +6,7 @@ import { ProviderRequestError, providerTransportError } from "../ai/provider-sch
 import { createGoogleAccessTokenProvider } from "../google-access-token.mjs";
 import { publishMediaBytes } from "../atomic-media-file.mjs";
 import { cropRoutePanel } from './route-panel.mjs';
+import { requiresOriginalBodyMedia } from './body-media-policy.mjs';
 
 const VISUAL_QA_SCHEMA={type:"object",additionalProperties:false,
   required:["language","completeness","style","semantic","notes"],properties:{
@@ -35,6 +36,10 @@ export class VertexImagen {
   async generate(visual, draft, options = {}) {
     if (!this.enabled) throw new Error("Visual generation is not configured.");
     const cover=safeJson(visual.media_metadata_json).cover_generation || visual.media_metadata?.cover_generation;
+    if (!cover && requiresOriginalBodyMedia(draft.strategy_version)) {
+      throw Object.assign(new Error('Body visuals require relevant authorized source images; generated scenery is not permitted.'),
+        {code:'SOURCE_IMAGE_REQUIRED',retryable:false});
+    }
     if(cover) {
       if(cover.authorized!==true)throw Object.assign(new Error('Cover generation is waiting for explicit provider authorization.'),{code:'COVER_GENERATION_WAITING_AUTH',retryable:false});
       const history=await this.config.coverCandidateHistory?.(visual.id);

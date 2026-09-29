@@ -1,0 +1,9 @@
+{
+  "status": "PASS",
+  "archive": "C:\\Users\\Mloong\\Documents\\ChatGPT\\solo-to-china-CMS\\output\\phase04-1790609202806\\cms-runtime-payload.zip",
+  "sha256": "82dd3be6733c250fcd6153026aedaada593b30761e92c2a0d19ba31206efb7fd",
+  "files": 172,
+  "extracted": "C:\\Users\\Mloong\\Documents\\ChatGPT\\solo-to-china-CMS\\output\\phase04-1790609202806\\archive-verified",
+  "dependencies_included": false,
+  "exact_entries_and_extracted_bytes_verified": true
+}

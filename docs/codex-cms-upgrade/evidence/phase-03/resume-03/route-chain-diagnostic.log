@@ -1,0 +1,28 @@
+(node:35484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ T03-35/37/41/42 pinned-contract route chain through actual HTTP: evidence-composed (1610.1222ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2105.7048
+
+✖ failing tests:
+
+test at test\stage03-route-chain.test.mjs:113:68
+✖ T03-35/37/41/42 pinned-contract route chain through actual HTTP: evidence-composed (1610.1222ms)
+  AssertionError [ERR_ASSERTION]: {"failed":[{"type":"compose_publish_page","last_error":"MEDIA_DELIVERY_INVALID: required media is incomplete."}],"eligibility":{"passed":false,"code":"MEDIA_DELIVERY_INVALID","missing":[{"code":"MEDIA_ALT_KEYWORD_STUFFING","path":"$.media[0].alt"}],"required":1,"ready":1}}
+      at TestContext.<anonymous> (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/test/stage03-route-chain.test.mjs:136:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'fail',
+    diff: 'simple'
+  }

@@ -581,7 +581,7 @@ test("an equal-count media plan repairs only the stale source slot and preserves
     language_by_region:[{region_id:"body",language:"zh-CN",role:"author_overlay"}],text_regions:[{region_id:"body",text:"09:00–17:00",role:"author_overlay"}],
     editor_ui_regions:[],photo_regions:[],entities:[],primary_subjects:["Chongqing route card"],analysis_version:"media-analysis-1",
     original_sha256:"abc",capture_version:2,width:1200,height:1600}];
-  const output=normalizeVisuals(current,{title:"Chongqing route",body_markdown:"A Chongqing route card."},{destination_slug:"chongqing"},assets,
+  const output=normalizeVisuals(current,{title:"Chongqing route",body_markdown:"A Chongqing route card.",strategy_version:"3.8"},{destination_slug:"chongqing"},assets,
     {visuals:{target:2,maximum:5}});
   assert.equal(output.length,2);
   assert.equal(output[0].source_asset_id,"card");
@@ -734,4 +734,75 @@ test('a broad walking itinerary may use a pixel-verified photo of a named stop',
     {destination_slug:'chongqing',content_type:'itinerary'},[asset],{visuals:{target:1,maximum:3}});
   assert.equal(output[0]?.source_asset_id,asset.id);
   assert.match(output[0].caption,/Raffles City/);
+});
+
+test('3.9 Nanbin scene mislabeled as illustration uses a relevant original without generation',()=>{
+ const asset={id:'nanbin-original',asset_kind:'real_world_photo',analysis_status:'ready',
+  primary_subjects:['Nanbin Road riverfront'],language_status:'no_text',width:1600,height:900,
+  storage_status:'saved',original_bytes_status:'saved_original',durability_status:'ORIGINAL_STORED',
+  original_sha256:'photo-hash',local_photo_audit:{status:'eligible',sha256:'photo-hash'}};
+ const request={image_type:'illustration',image_subject:'Nanbin Road riverfront',factual_image_required:false,
+  acquisition_strategy:'generate_illustration',status:'generated',media_url:'/media/fake.png',
+  generation_prompt:'Invent a panoramic skyline',provider:'vertex_gemini',model:'image'};
+ const article={title:'Nanbin Road riverfront',body_markdown:'Nanbin Road riverfront',strategy_version:'3.9'};
+ const selected=normalizeVisuals([request],article,{destination_slug:'chongqing'},[asset],{visuals:{maximum:2,target:1}});
+ assert.equal(selected.length,1);assert.equal(selected[0].source_asset_id,asset.id);
+ assert.equal(selected[0].acquisition_strategy,'use_authorized_source_image');
+ assert.equal(selected[0].factual_image_required,true);assert.equal(selected[0].generation_prompt,'');
+ assert.notEqual(selected[0].media_url,'/media/fake.png');
+ assert.deepEqual(normalizeVisuals([request],article,{destination_slug:'chongqing'},[],{}),[]);
+ const required=normalizeVisuals([{...request,required_in_article:true}],article,{destination_slug:'chongqing'},[],{});
+ assert.equal(required[0].acquisition_strategy,'await_authorized_source_image');
+});
+
+test('duplicate location aliases can support a contextual original, without certifying an exact landmark slot',()=>{
+ const asset={id:'river-photo',asset_kind:'documentary_photo',analysis_status:'ready',
+  primary_subjects:['Illuminated skyline across the river at night'],language_status:'no_text',
+  original_sha256:'river',local_photo_audit:{status:'eligible',sha256:'river'},width:1200,height:800,
+  storage_status:'saved',original_bytes_status:'saved_original',durability_status:'ORIGINAL_STORED',
+  source_binding_issues:['Riverside Quarter','Old Riverside Quarter'].map(canonical_subject=>({
+    status:'ambiguous',destination_slug:'example',canonical_subject,relation_type:'source_asserts_location',
+    matched_aliases:['riverside quarter'],context_complete:true,uncertain:false,
+    evidence:[{polarity:'supports',quote:'Photo 1: Riverside Quarter'}]}))};
+ const draft={title:'Example Waterfront Guide',body_markdown:'Visit Riverside Quarter for the illuminated skyline across the river at night.',strategy_version:'3.9'};
+ const brief={destination_slug:'example',topic:'Example Waterfront'};
+ const policy={content_type:'attraction_guide',visuals:{maximum:3}};
+ const output=normalizeVisuals([],draft,brief,[asset],policy);
+ assert.equal(output[0]?.source_asset_id,asset.id);
+ assert.equal(output[0].caption,asset.primary_subjects[0]);
+ assert.doesNotMatch(output[0].caption,/Riverside Quarter/);
+ for(const changed of [
+   {...asset,source_binding_issues:asset.source_binding_issues.map(b=>({...b,uncertain:true}))},
+   {...asset,source_binding_issues:asset.source_binding_issues.map(b=>({...b,matched_aliases:['riverside quarter','another place']}))},
+   {...asset,source_binding_issues:asset.source_binding_issues.map(b=>({...b,context_complete:false}))},
+   {...asset,source_binding_issues:asset.source_binding_issues.map(b=>({...b,status:'revoked'}))},
+   {...asset,primary_subjects:['Bowl of spicy noodles on a table']},
+ ]) assert.deepEqual(normalizeVisuals([],draft,brief,[changed],policy),[]);
+ const exact=normalizeVisuals([{image_type:'real_world_photo',image_subject:'Example Waterfront boarding gate',required_in_article:true}],draft,brief,[asset],policy);
+ assert.equal(exact[0].acquisition_strategy,'await_authorized_source_image');
+});
+
+test('a local quality audit and source prose cannot establish photo identity',()=>{
+ const asset={id:'unidentified-photo',asset_kind:'documentary_photo',analysis_status:'not_analyzed',
+  original_sha256:'original',local_photo_audit:{status:'eligible',sha256:'original'},
+  evidence_subject:'Nanbin Road riverfront',nearby_text:'Nanbin Road riverfront',
+  source_title:'Nanbin Road riverfront photos',language_status:'none',
+  original_bytes_status:'saved_original',durability_status:'ORIGINAL_STORED'};
+ const output=normalizeVisuals([],
+  {title:'Nanbin Road riverfront',body_markdown:'Nanbin Road riverfront',strategy_version:'3.9'},
+  {destination_slug:'chongqing',topic:'Nanbin Road riverfront'},[asset],{visuals:{target:1,maximum:3}});
+ assert.deepEqual(output,[]);
+});
+
+test('a multi-attraction handwritten guide cannot fulfill a museum exterior obligation',()=>{
+ const asset={id:'notes',asset_kind:'handwritten_card',analysis_status:'ready',
+  primary_subjects:['Three Gorges Museum, Hongyadong and Jiefangbei visitor notes'],
+  entities:['Three Gorges Museum','Hongyadong','Jiefangbei'],language_status:'chinese',
+  text_regions:[{region_id:'body',text:'Museum advice',role:'editorial_text',language:'zh',readable:true,preserve:false}],
+  reader_text_present:true,analysis_version:'media-analysis-2'};
+ const output=normalizeVisuals([{source_asset_id:'notes',image_type:'infographic',
+  image_subject:'Three Gorges Museum exterior',required_in_article:true}],
+  {title:'Three Gorges Museum',body_markdown:'Three Gorges Museum exterior',strategy_version:'3.9'},
+  {destination_slug:'chongqing',topic:'Three Gorges Museum'},[asset],{content_type:'attraction_guide',visuals:{maximum:3}});
+ assert.equal(output.length,1);assert.equal(output[0].acquisition_strategy,'await_authorized_source_image');
 });

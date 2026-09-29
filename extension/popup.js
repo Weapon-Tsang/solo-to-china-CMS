@@ -3,7 +3,7 @@ import { acquisitionStatus, completionStatus, deriveSyncProgress, progressCards 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   sync: $("#sync"), repair: $("#repair-sync"), full: $("#full-sync"), save: $("#save"), pause: $("#pause"), resume: $("#resume"), cancel: $("#cancel"), stopQueue: $("#stop-queue"),
-  endpoint: $("#endpoint"), token: $("#token"), saveSettings: $("#save-settings"), autoSync: $("#auto-sync"), concurrencyMode: $("#concurrency-mode"), customConcurrency: $("#custom-concurrency"), customConcurrencyField: $("#custom-concurrency-field"),
+  endpoint: $("#endpoint"), token: $("#token"), saveSettings: $("#save-settings"), checkConnection: $("#check-connection"), autoSync: $("#auto-sync"), concurrencyMode: $("#concurrency-mode"), customConcurrency: $("#custom-concurrency"), customConcurrencyField: $("#custom-concurrency-field"),
   concurrencyMax: $("#concurrency-max"), mediaConcurrency: $("#media-concurrency"), concurrencyState: $("#concurrency-state"),
   identityBatchSize: $("#identity-batch-size"), discoveryBatchSize: $("#discovery-batch-size"), knownStreak: $("#known-streak"), queueHighWatermark: $("#queue-high-watermark"), maxRetries: $("#max-retries"), detailTimeout: $("#detail-timeout"),
   autoMinHours: $("#auto-min-hours"),
@@ -32,7 +32,11 @@ const ERROR_MESSAGES = Object.freeze({
   CAPTURE_SERVER_UNAVAILABLE: "CMS 服务暂时不可用，请检查服务状态后继续同步。",
   CAPTURE_REQUEST_TIMEOUT: "CMS 请求超时，任务已安全保留并会按重试策略再次处理。",
   CAPTURE_REJECTED: "笔记采集结果不完整，已阻止进入研究流程。",
-  CAPTURE_UNAUTHORIZED: "采集令牌无效，请核对扩展设置与 CMS 的 CAPTURE_TOKEN。",
+  CAPTURE_TOKEN_MISSING: "此扩展尚未保存采集令牌。请在下方连接设置中填写 CMS 的 CAPTURE_TOKEN，保存后检查连接。新目录加载的扩展不会自动继承旧扩展设置。",
+  CAPTURE_ORIGIN_DENIED: "CMS 尚未允许此扩展来源。请将当前扩展 ID 对应的 chrome-extension://来源加入服务器 CAPTURE_ALLOWED_ORIGINS；更换令牌不能解决此问题。",
+  CAPTURE_ENDPOINT_INVALID: "CMS 地址无效，请在下方连接设置中填写正确的 HTTP(S) 服务地址。",
+  CAPTURE_PROTOCOL_ERROR: "CMS 返回了不兼容的响应，请检查服务地址和采集入口。",
+  CAPTURE_UNAUTHORIZED: "采集令牌无效。请在下方连接设置中更新 CMS 的 CAPTURE_TOKEN，保存后检查连接。",
   UNAUTHORIZED: "采集令牌无效，请检查扩展设置与 CMS 的 CAPTURE_TOKEN。",
   NETWORK_ERROR: "无法连接 CMS，请确认服务地址、采集令牌和 CMS 运行状态。",
 });
@@ -40,6 +44,9 @@ const ERROR_MESSAGES = Object.freeze({
 let busy = false;
 let refreshing = false;
 let transientNotice = "";
+let noticeUntil = 0;
+let commandError = null;
+let pendingNotice = "";
 
 void refresh();
 const refreshTimer = setInterval(() => {
@@ -56,6 +63,7 @@ elements.resume.addEventListener("click", () => command("RESUME_SYNC"));
 elements.cancel.addEventListener("click", () => command("CANCEL_SYNC"));
 elements.stopQueue.addEventListener("click", () => command("STOP_AFTER_QUEUE"));
 elements.saveSettings.addEventListener("click", saveSettings);
+elements.checkConnection.addEventListener("click", () => command("CHECK_CONNECTION"));
 
 async function refresh() {
   if (refreshing) return;
@@ -72,6 +80,12 @@ async function refresh() {
 }
 
 async function command(type, payload = {}) {
+  commandError = null;
+  transientNotice = "";
+  pendingNotice = ['START_SYNC', 'RESUME_SYNC', 'CHECK_CONNECTION'].includes(type)
+    ? "正在检查 CMS 连接与采集令牌……" : "正在执行操作……";
+  elements.status.textContent = pendingNotice;
+  elements.status.className = "";
   setBusy(true);
   let refreshAfter = true;
   try {
@@ -79,15 +93,19 @@ async function command(type, payload = {}) {
     if (!response?.ok) {
       showError(response?.error);
       refreshAfter = false;
+    } else if (type === "CHECK_CONNECTION") {
+      transientNotice = "连接验证通过，采集令牌有效。现在可以同步新增收藏。";
     } else if (type === "SAVE_CURRENT") {
       transientNotice = response.result?.duplicate
         ? "当前笔记已采集过，内容没有变化。"
         : "当前笔记已保存，CMS 已接收并加入研究抽取队列。";
     }
+    if (response?.ok && transientNotice) noticeUntil = Date.now() + 5_000;
   } catch (error) {
     showError(error);
     refreshAfter = false;
   } finally {
+    pendingNotice = "";
     setBusy(false);
     if (refreshAfter) await refresh();
   }
@@ -113,7 +131,10 @@ async function saveSettings() {
       autoMinIntervalHours: Number(elements.autoMinHours.value || 12),
     } });
     if (!response?.ok) return showError(response?.error);
+    commandError = null;
+    elements.token.value = "";
     transientNotice = response.session?.status === "running" ? "设置已保存，并已实时应用到当前任务。" : "设置已保存；开始或继续时会检查连接。";
+    noticeUntil = Date.now() + 5_000;
     await refresh();
   } catch (error) {
     showError(error);
@@ -122,9 +143,9 @@ async function saveSettings() {
   }
 }
 
-function render({ session, currentScope, currentPageKind, settings, history }) {
+function render({ session, currentScope, currentPageKind, settings, history, connectionIssue }) {
   elements.status.className = "";
-  elements.endpoint.value = settings.endpoint || "";
+  if (document.activeElement !== elements.endpoint) elements.endpoint.value = settings.endpoint || "";
   elements.token.placeholder = settings.tokenConfigured ? "采集令牌已保存" : "请输入采集令牌";
   elements.autoSync.value = settings.autoSync || "off";
   elements.concurrencyMode.value = settings.concurrencyMode || "auto";
@@ -168,9 +189,13 @@ function render({ session, currentScope, currentPageKind, settings, history }) {
   elements.repair.disabled = running || paused || (!activeSession && !currentScope);
   elements.full.disabled = running || paused || (!activeSession && !currentScope);
 
-  if (transientNotice) {
+  const visibleError = commandError || connectionIssue;
+  if (busy && pendingNotice) {
+    elements.status.textContent = pendingNotice;
+  } else if (visibleError) {
+    renderError(visibleError);
+  } else if (transientNotice && Date.now() < noticeUntil) {
     elements.status.textContent = transientNotice;
-    transientNotice = "";
   } else {
     renderStatus({ session, currentScope, currentPageKind, settings, stats, progress });
   }
@@ -206,6 +231,12 @@ function renderConcurrency(session, settings) {
 
 function renderStatus({ session, currentScope, currentPageKind, settings, stats, progress }) {
   if (!session) {
+    try {
+      if (!settings.tokenConfigured && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(settings.endpoint).hostname)) {
+        renderError({ code: 'CAPTURE_TOKEN_MISSING' });
+        return;
+      }
+    } catch { /* Invalid addresses are explained by the explicit connection check. */ }
     elements.status.textContent = currentScope
       ? "已正确识别当前收藏夹，等待采集指令……"
       : currentPageKind === "album_overview"
@@ -274,8 +305,17 @@ function setBusy(value) {
   for (const button of document.querySelectorAll("button")) button.disabled = value;
 }
 function showError(error) {
+  commandError = error || { message: "扩展操作失败，请稍后重试。" };
+  transientNotice = "";
+  renderError(commandError);
+}
+function renderError(error) {
   elements.status.textContent = localizedError(error) || "扩展操作失败，请稍后重试。";
   elements.status.className = "error";
+  if (/^(CAPTURE_(TOKEN_MISSING|UNAUTHORIZED|ORIGIN_DENIED|ENDPOINT_INVALID|HOST_PERMISSION)|UNAUTHORIZED)$/.test(error?.code || "")) {
+    elements.settingsPanel.hidden = false;
+    elements.settingsPanel.open = true;
+  }
 }
 function localizedError(error) {
   const code = String(error?.code || "");

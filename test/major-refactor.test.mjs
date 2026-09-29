@@ -310,13 +310,14 @@ test("knowledge opportunity types follow the topic entity and bilingual destinat
   repository.rebuildTopicClusters("chengdu");
   repository.rebuildKnowledgeOpportunities("chengdu");
   const opportunities=repository.listRecommendationInbox().filter((item)=>item.coverage.knowledgeEventGenerated);
-  const taxi=opportunities.find((item)=>item.title.startsWith("Chengdu Taxi:"));
+  const taxi=opportunities.find((item)=>item.coverage.proposal.targetEntities.includes("Chengdu Taxi"));
   assert.equal(taxi?.content_type,"transport_guide");
   const city=opportunities.filter((item)=>item.content_type==="city_guide");
   assert.equal(city.length,1,JSON.stringify(opportunities.map((item)=>({title:item.title,type:item.content_type}))));
   assert.equal(city[0].readiness.factCount,2);
-  assert.equal(opportunities.find((item)=>item.title.startsWith("Beicang Creative Park:"))?.content_type,"attraction_guide");
-  assert.equal(opportunities.find((item)=>item.title.startsWith("Chengdu summer weather:"))?.content_type,"practical_guide");
+  assert.equal(opportunities.find((item)=>item.coverage.proposal.targetEntities.includes("Beicang Creative Park"))?.content_type,"attraction_guide");
+  assert.equal(opportunities.find((item)=>item.coverage.proposal.targetEntities.includes("Chengdu summer weather"))?.content_type,"practical_guide");
+  assert.ok(opportunities.every((item)=>!item.title.includes('a practical guide for independent travelers')));
 });
 
 test("recommendation reconciliation merges near-identical production paths from the same source", (t) => {

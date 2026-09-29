@@ -1,0 +1,241 @@
+{
+  "status": "PASS",
+  "scope": "browser CMS + real files + deterministic fixture outbox + loopback receiver; not real WordPress",
+  "contract": "0c4b327287c016aee138f735a8a13eb2baa74542",
+  "body_hash": "67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a",
+  "plan": {
+    "draft_id": "cover-draft",
+    "draft_revision": 2,
+    "media_revision": 1,
+    "revision_id": "589db2f5-922b-49ca-95f5-af528ed9cec3",
+    "protected_content_hash": "33fa8bd1ee01044ef07f82b0ba0db9a484c675873df17da5e7ed2394cfe73569",
+    "post_id": 123,
+    "site_url": "https://receiver.invalid",
+    "prior_page_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "prior_modified_gmt": "2026-09-28T00:00:00",
+    "published": false,
+    "contract_hash": "9154dc68540d9922c11109e4cfe00aee871d850e61124fd7edb624ee20b2c422",
+    "contract_commit": "0c4b327287c016aee138f735a8a13eb2baa74542",
+    "slots": [
+      {
+        "slot_id": "cover-visual",
+        "caption": "Synthetic East Hall fixture for local testing.",
+        "anchor": "hero",
+        "source_asset_id": "manual_asset_8da27b12-e9e8-453a-a5ee-fa34b56045ba"
+      }
+    ],
+    "media_fingerprint": "d3bfc2b4d975e536ce908642aa5f252a6254ee6dcf7e0750c3386991d7df7d59",
+    "scope": "body_media_only",
+    "body_change": false,
+    "ready": true,
+    "missing": [],
+    "capacity": 200,
+    "selected_count": 1,
+    "external_dependency": "EXT-BODY-MEDIA-REFRESH",
+    "plan_hash": "713fe38769d4c661739cf63781938c936d1565bc893066a1ed634f21d594e772"
+  },
+  "delivered": {
+    "state": "confirmed",
+    "receipt": {
+      "idempotency_key": "28881c0f-936d-4ccf-9a25-a20c447ee585",
+      "post_id": 123,
+      "cms_draft_id": "cover-draft",
+      "cms_revision": 2,
+      "prior_page_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "protected_content_hash": "33fa8bd1ee01044ef07f82b0ba0db9a484c675873df17da5e7ed2394cfe73569",
+      "page_payload_hash": "3d5e8fc377cf164c4005f354c6a7b404bb1e5440420bcf96054fc70e37648cd2",
+      "modified_gmt": "2026-09-28T01:00:00",
+      "media": [
+        {
+          "slot_id": "cover-visual",
+          "media_id": 901,
+          "url": "https://receiver.invalid/media/3c4a888ad589733ff249bbf6e637a793601ebf74672aa4fc29a534b55b176d8b.webp",
+          "upload_hash": "3c4a888ad589733ff249bbf6e637a793601ebf74672aa4fc29a534b55b176d8b",
+          "width": 1600,
+          "height": 1000,
+          "mime": "image/webp"
+        }
+      ]
+    },
+    "body_changed": false,
+    "old_receipts_retained": true
+  },
+  "uploads": 1,
+  "writes": 1,
+  "provider_calls": 0,
+  "inspection": {
+    "valid": true,
+    "status": "pending",
+    "errors": [],
+    "warnings": [
+      {
+        "code": "HTML_IMAGE_SRCSET_UNOBSERVED",
+        "path": "$.rendered_html.images[0]",
+        "url": "https://receiver.invalid/media/3c4a888ad589733ff249bbf6e637a793601ebf74672aa4fc29a534b55b176d8b.webp",
+        "dependency": "EXT-IMG-LOAD",
+        "severity": "warning"
+      }
+    ],
+    "dimensions": {
+      "content_quality": {
+        "status": "passed",
+        "detail": 70,
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      },
+      "seo_artifact": {
+        "status": "passed",
+        "detail": {
+          "title": "Cover selection fixture",
+          "description": "",
+          "canonical": null
+        }
+      },
+      "structured_data": {
+        "status": "passed",
+        "detail": "visible/schema consistency only",
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      },
+      "rendered_html": {
+        "status": "passed",
+        "detail": {}
+      },
+      "crawler_configuration": {
+        "status": "passed",
+        "detail": {
+          "metaRobots": "noindex",
+          "xRobotsTag": null,
+          "robotsAllowed": null,
+          "sitemapIncluded": null,
+          "authenticated": false,
+          "note": "noindex, robots.txt and authentication are separate controls",
+          "robotsObservation": {
+            "status": "unknown",
+            "allowed": null,
+            "agent": "Googlebot",
+            "httpStatus": 200,
+            "reason": "robots_response_unavailable"
+          },
+          "directiveResult": {
+            "indexable": false,
+            "directives": [
+              {
+                "token": "noindex",
+                "source": "meta:robots"
+              }
+            ],
+            "conflicts": []
+          },
+          "sitemapObservation": {
+            "status": "unknown",
+            "included": null,
+            "observations": [
+              {
+                "url": "root",
+                "status": "unknown",
+                "reason": "missing_or_size_budget"
+              }
+            ]
+          }
+        }
+      },
+      "lcp": {
+        "status": "not_measured",
+        "detail": "Image order and fetchpriority are not LCP measurements."
+      },
+      "production_cost": {
+        "status": "not_tested",
+        "value": null
+      }
+    },
+    "health": {
+      "content": {
+        "status": "passed",
+        "detail": 70,
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      },
+      "media": {
+        "status": "passed",
+        "detail": null,
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      },
+      "canonical": {
+        "status": "passed",
+        "detail": null,
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      },
+      "indexability": {
+        "status": "passed",
+        "detail": null,
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      },
+      "schema": {
+        "status": "passed",
+        "detail": "visible/schema consistency only",
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      },
+      "internal-links": {
+        "status": "passed",
+        "detail": null,
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      },
+      "sitemap": {
+        "status": "unknown",
+        "detail": {
+          "status": "unknown",
+          "included": null,
+          "observations": [
+            {
+              "url": "root",
+              "status": "unknown",
+              "reason": "missing_or_size_budget"
+            }
+          ]
+        },
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      },
+      "crawler": {
+        "status": "unknown",
+        "detail": {
+          "status": "unknown",
+          "allowed": null,
+          "agent": "Googlebot",
+          "httpStatus": 200,
+          "reason": "robots_response_unavailable"
+        },
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      },
+      "field-data": {
+        "status": "not_measured",
+        "detail": null,
+        "source": "provided_artifact",
+        "checkedAt": "2026-09-28T11:21:49.990Z",
+        "pageRevision": null
+      }
+    },
+    "conclusions": {
+      "ranking": "not_tested",
+      "indexing": "not_tested",
+      "aiCitation": "not_tested"
+    }
+  }
+}

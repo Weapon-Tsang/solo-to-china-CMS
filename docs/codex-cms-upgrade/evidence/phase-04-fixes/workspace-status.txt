@@ -1,0 +1,157 @@
+ M config/release-gate.json
+ M deployment/gce/DEPLOY.md
+ M deployment/gce/resume-verified-upgrade.sh
+ M docs/codex-cms-upgrade/EXTERNAL_DEPENDENCIES.md
+ M docs/codex-cms-upgrade/STATUS.md
+ M docs/codex-cms-upgrade/acceptance/phase-02.md
+ M frontend/src/App.jsx
+ M frontend/src/views.jsx
+ M package-lock.json
+ M package.json
+ M scripts/benchmark-local-stage01.mjs
+ M scripts/verify-cross-repo-contract.mjs
+ M src/ai/content-engine.mjs
+ M src/backup.mjs
+ M src/capture-media-upload.mjs
+ M src/config.mjs
+ M src/db.mjs
+ M src/final-html-validator.mjs
+ M src/local-photo-audit.mjs
+ M src/local-runtime.mjs
+ M src/media-delivery.mjs
+ M src/media-storage.mjs
+ M src/pipeline.mjs
+ M src/publication-eligibility.mjs
+ M src/publish-page.mjs
+ M src/repository.mjs
+ M src/route-media.mjs
+ M src/safe-media-http.mjs
+ M src/search-console.mjs
+ M src/seo-geo.mjs
+ M src/server.mjs
+ M src/visuals/route-schematic.mjs
+ M src/visuals/vertex-imagen.mjs
+ M src/wordpress.mjs
+ M test/backup.test.mjs
+ M test/content-pipeline.test.mjs
+ M test/final-html-validator.test.mjs
+ M test/media-delivery.test.mjs
+ M test/publication-eligibility.test.mjs
+ M test/route-bundle.test.mjs
+ M test/route-media.test.mjs
+ M test/route-production.test.mjs
+ M test/search-console.test.mjs
+ M test/seo-geo.test.mjs
+ M test/visuals.test.mjs
+?? docs/codex-cms-upgrade/acceptance/phase-03.md
+?? docs/codex-cms-upgrade/acceptance/phase-04-0.md
+?? docs/codex-cms-upgrade/acceptance/phase-04-fixes.md
+?? docs/codex-cms-upgrade/evidence/phase-02/b-resume/
+?? docs/codex-cms-upgrade/evidence/phase-02/b/
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/
+?? docs/codex-cms-upgrade/evidence/phase-02/c/
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/
+?? docs/codex-cms-upgrade/evidence/phase-03/
+?? docs/codex-cms-upgrade/evidence/phase-04-0/
+?? docs/codex-cms-upgrade/evidence/phase-04-fixes/
+?? docs/codex-cms-upgrade/phases/phase-03.txt
+?? docs/codex-cms-upgrade/phases/phase-04-0.txt
+?? docs/codex-cms-upgrade/phases/phase-04-fixes.txt
+?? frontend/src/lib/file-hash-worker.js
+?? frontend/src/lib/file-hash.js
+?? frontend/src/workspaces/article-media.jsx
+?? frontend/src/workspaces/cover-selection.jsx
+?? frontend/src/workspaces/seo-inspection.jsx
+?? scripts/fixed-contract-identity.mjs
+?? scripts/stage02-browser-benchmark-server.mjs
+?? scripts/stage02-browser-menuswitch-server.mjs
+?? scripts/stage02-browser-resume-server.mjs
+?? scripts/stage02-cd-exploratory-audit.mjs
+?? scripts/stage02-cover-audit-replay.mjs
+?? scripts/stage02-cover-browser-fixture.mjs
+?? scripts/stage02-manual-media-replay.mjs
+?? scripts/stage02-menu-server-load.mjs
+?? scripts/stage02-web-media-replay.mjs
+?? scripts/stage02-web-media-samples.mjs
+?? scripts/stage03-benchmark-media-load.mjs
+?? scripts/stage03-browser-delivery-fixture.mjs
+?? scripts/stage03-browser-fixture.mjs
+?? scripts/stage03-historical-replay.mjs
+?? scripts/stage04-archive-candidate.py
+?? scripts/stage04-browser-fixture.mjs
+?? scripts/stage04-candidate-smoke.mjs
+?? scripts/stage04-local-preflight.mjs
+?? scripts/stage04-prepare-candidate.mjs
+?? scripts/verify-stage02-chunk-worker-diagnostic.js
+?? scripts/verify-stage02-cover-browser.js
+?? scripts/verify-stage02-manual-413.js
+?? scripts/verify-stage02-manual-browser-batch.js
+?? scripts/verify-stage02-manual-browser.js
+?? scripts/verify-stage02-manual-final-state.js
+?? scripts/verify-stage02-manual-loaded-menu-chunk-worker.js
+?? scripts/verify-stage02-manual-loaded-menu-foreground.js
+?? scripts/verify-stage02-manual-loaded-menu.js
+?? scripts/verify-stage02-manual-menu-benchmark.js
+?? scripts/verify-stage02-manual-menu-under-server-load.js
+?? scripts/verify-stage02-manual-resume-clean.js
+?? scripts/verify-stage02-manual-resume.js
+?? scripts/verify-stage02-menu-during-upload.js
+?? scripts/verify-stage02-web-media-browser.js
+?? scripts/verify-stage03-browser-cover-delivery.js
+?? scripts/verify-stage03-browser-delivery.js
+?? scripts/verify-stage03-menu-performance.js
+?? scripts/verify-stage03-route-recompose.js
+?? scripts/verify-stage03-route-reopen.js
+?? scripts/verify-stage03-route-upload.js
+?? scripts/verify-stage03-seo-browser.js
+?? scripts/verify-stage04-chunk-browser.js
+?? src/cover-contract.mjs
+?? src/cover-media.mjs
+?? src/cover-policy.mjs
+?? src/seo-crawlers.mjs
+?? src/seo-html.mjs
+?? src/seo-observation.mjs
+?? src/seo-public-reader.mjs
+?? src/seo-sitemap.mjs
+?? src/services/article-media-delivery.mjs
+?? src/services/article-media.mjs
+?? src/services/article-time-evidence.mjs
+?? src/services/cover-audit.mjs
+?? src/services/cover-delivery.mjs
+?? src/services/cover-inventory.mjs
+?? src/services/cover-selection.mjs
+?? src/services/draft-seo-inspection.mjs
+?? src/services/editorial-seo-context.mjs
+?? src/services/manual-route-media.mjs
+?? src/services/seo-inspection.mjs
+?? src/visuals/route-panel.mjs
+?? src/web-media.mjs
+?? test-support/cover-fixture.mjs
+?? test-support/fixtures/
+?? test-support/stage03-media-receiver.mjs
+?? test/article-media-faults.test.mjs
+?? test/article-media-http.test.mjs
+?? test/article-media-large.test.mjs
+?? test/article-media.test.mjs
+?? test/article-time-evidence.test.mjs
+?? test/cover-audit.test.mjs
+?? test/cover-delivery.test.mjs
+?? test/cover-inventory.test.mjs
+?? test/cover-selection.test.mjs
+?? test/draft-seo-inspection.test.mjs
+?? test/editorial-seo-context.test.mjs
+?? test/file-hash.test.mjs
+?? test/manual-route-media.test.mjs
+?? test/seo-crawlers.test.mjs
+?? test/seo-inspection.test.mjs
+?? test/seo-observation.test.mjs
+?? test/seo-public-reader.test.mjs
+?? test/seo-sitemap.test.mjs
+?? test/seo-status-http.test.mjs
+?? test/stage03-receiver-http.test.mjs
+?? test/stage03-restore-matrix.test.mjs
+?? test/stage03-route-chain.test.mjs
+?? test/stage04-preflight.test.mjs
+?? test/stage04-release-identity.test.mjs
+?? test/web-media-http.test.mjs
+?? test/web-media.test.mjs

@@ -1,0 +1,308 @@
+{
+  "scope": "B metadata compatibility and adjacent audit on existing authorized work.sqlite only",
+  "externalRequests": 0,
+  "schema": 81,
+  "before": {
+    "sources": {
+      "count": 84,
+      "sha256": "871777ff5a19c20082ee95cbe04735f37438f66891deddf6aa10e97c676c79a8"
+    },
+    "source_assets": {
+      "count": 1454,
+      "sha256": "916d82e5c530919c5076db615413beb08d9cf71ba0a065bf1c758c741b700a31"
+    },
+    "article_drafts": {
+      "count": 12,
+      "sha256": "166970bc4f006cf526ec819fb1056bc4ef07aba0f05130f92d0e9d8c307ffda8"
+    },
+    "article_visuals": {
+      "count": 26,
+      "sha256": "015d0384f3593d9ca5921c7e050851861241c5a45aa7ca1e5658776fe0277039"
+    },
+    "writing_packets": {
+      "count": 12,
+      "sha256": "ff5d245ed3d256bc342dcd4e12bdebfd81ce8b4646018b7ffc5d518590c899d1"
+    },
+    "jobs": {
+      "count": 18415,
+      "sha256": "ba57b229e03ab846891f9d47836697dd90c01c68f88b229b4c98168d9fd4cecf"
+    },
+    "model_call_metrics": {
+      "count": 6453,
+      "sha256": "efeeeec1697c3cb46f9d09d815fcac3e9c550f96cdd394675d70ea6cc6f500e1"
+    },
+    "wordpress_publications": {
+      "count": 12,
+      "sha256": "4534a75d7a5417e5a64ab82cb3165c3fce87c3b2dd2b44f74dcb5f08db367c2d"
+    }
+  },
+  "visuals": [
+    {
+      "id": "visual_1c542c3e15834cb48656ce5e537f44bd",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 3,
+      "returnedSizes": 5
+    },
+    {
+      "id": "visual_22fa9d4320594d0eaa37a28e8638a546",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 6,
+      "returnedSizes": 7
+    },
+    {
+      "id": "visual_2b782e5fbc1747518eda334148ddc15c",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 6
+    },
+    {
+      "id": "visual_2ca136d5b88e403eb162f0621562c200",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 5
+    },
+    {
+      "id": "visual_3b460bc16b424575aca2ce82bd3ff79d",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 5
+    },
+    {
+      "id": "visual_4440f1a20ce14d46a88bc194cb6f2376",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 6,
+      "returnedSizes": 7
+    },
+    {
+      "id": "visual_51e2da875808474195be725b77ce518d",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 6
+    },
+    {
+      "id": "visual_6555e8945f4947fabf21af53d7c6da68",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 7,
+      "returnedSizes": 8
+    },
+    {
+      "id": "visual_7bde8fdb025f49ffaa43a0f6de949e4a",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 6
+    },
+    {
+      "id": "visual_83b3706fc1b049c2879159006ca99c0d",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 6
+    },
+    {
+      "id": "visual_8f97cfa9182e4d6a990a33a9d07a8fc2",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 5
+    },
+    {
+      "id": "visual_9bed6386cc894609b17aca736c33701e",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 5
+    },
+    {
+      "id": "visual_b69092e502e946209c4713808cc1287b",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 5,
+      "returnedSizes": 7
+    },
+    {
+      "id": "visual_c457d23a8da84c0aa792f94914eb5222",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 5,
+      "returnedSizes": 7
+    },
+    {
+      "id": "visual_d2bb4f75b5f4489db4e882a439692119",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 5
+    },
+    {
+      "id": "visual_d356d27d91e84613bfdbbe9ed312b154",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 3,
+      "returnedSizes": 5
+    },
+    {
+      "id": "visual_d925b8b85ece49e5b26c4bf449154b7d",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 6,
+      "returnedSizes": 7
+    },
+    {
+      "id": "visual_dbe175d539c04908aec9ddc882ea3bde",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 6
+    },
+    {
+      "id": "visual_dda60343067d4e1fabd18f4e50f822d3",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 6
+    },
+    {
+      "id": "visual_e9fe290858494fc49b907a34afd54d96",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 5
+    },
+    {
+      "id": "visual_ea9e6312ce7544ba857232e357263ef9",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 5
+    },
+    {
+      "id": "visual_efa86786d22141069c5ee296df9e531e",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 6,
+      "returnedSizes": 7
+    },
+    {
+      "id": "visual_f3547a558e134e989117eddd60059a68",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 6
+    },
+    {
+      "id": "visual_f47b4c5d63cc440ab7e9332aff11fa32",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 5
+    },
+    {
+      "id": "visual_f86cb3fb198c492b8bc97ba99c90a2c7",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 4,
+      "returnedSizes": 6
+    },
+    {
+      "id": "visual_fc264b4ad54945338b54ecf16b05ecb3",
+      "status": "generated",
+      "hasLocalFile": false,
+      "legacyHashPresent": true,
+      "webLineagePresent": false,
+      "servedHashKnown": false,
+      "responsiveCandidates": 5,
+      "returnedSizes": 6
+    }
+  ],
+  "audit": {
+    "orphanVisuals": 0,
+    "generatedWithoutLocalFile": 26,
+    "existingWebLineage": 0
+  },
+  "rollback": "PASS",
+  "protectedRowsUnchanged": true
+}

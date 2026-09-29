@@ -99,8 +99,16 @@ for (const stopAfter of [1,2]) test(`real process termination after entity page 
   const engine={enabled:true,config:{model:'fixture'},resolveEntities:async pack=>{
     fs.appendFileSync(callsFile,JSON.stringify(pack.claims.length)+'\n');return output;
   }};
-  assert.equal(await new Pipeline(repository,{enabled:false,config:{}},{contentEngine:engine}).runOne(),true);
-  assert.deepEqual(fs.readFileSync(callsFile,'utf8').trim().split('\n').map(Number),[80,80,80,65]);
+  // Entity resolution yields after two new paid pages (deferJobWithoutAttempt),
+  // so the resumed job may take several worker turns; receipts must still
+  // prevent any page from being purchased twice.
+  const resumed=new Pipeline(repository,{enabled:false,config:{}},{contentEngine:engine});
+  for (let turn=0;turn<10 && db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status!=='succeeded';turn+=1) {
+    db.prepare("UPDATE jobs SET available_at='2000-01-01T00:00:00.000Z',next_eligible_at=NULL WHERE id=? AND status='queued'").run(jobId);
+    await resumed.runOne();
+  }
+  // 305 Claims in pages of 40 (production output-limit data, 2026-09-30).
+  assert.deepEqual(fs.readFileSync(callsFile,'utf8').trim().split('\n').map(Number),[40,40,40,40,40,40,40,25]);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status,'succeeded');
   assert.ok(db.prepare('SELECT COUNT(*) n FROM entity_aliases').get().n>0);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='rebuild_knowledge'").get().n,1);

@@ -1,0 +1,44 @@
+M docs/codex-cms-upgrade/EXTERNAL_DEPENDENCIES.md
+ M docs/codex-cms-upgrade/STATUS.md
+ M docs/codex-cms-upgrade/acceptance/phase-02.md
+ M src/backup.mjs
+ M src/config.mjs
+ M src/media-delivery.mjs
+ M src/publication-eligibility.mjs
+ M src/repository.mjs
+ M src/route-media.mjs
+ M src/server.mjs
+ M src/visuals/vertex-imagen.mjs
+ M src/wordpress.mjs
+ M test/backup.test.mjs
+ M test/media-delivery.test.mjs
+ M test/publication-eligibility.test.mjs
+ M test/route-media.test.mjs
+ M test/visuals.test.mjs
+?? docs/codex-cms-upgrade/evidence/phase-02/b/
+?? scripts/stage02-web-media-replay.mjs
+?? scripts/stage02-web-media-samples.mjs
+?? scripts/verify-stage02-web-media-browser.js
+?? src/visuals/route-panel.mjs
+?? src/web-media.mjs
+?? test/web-media-http.test.mjs
+?? test/web-media.test.mjs
+
+docs/codex-cms-upgrade/EXTERNAL_DEPENDENCIES.md |  9 +++++
+ docs/codex-cms-upgrade/STATUS.md                | 19 +++++++++++
+ docs/codex-cms-upgrade/acceptance/phase-02.md   | 23 +++++++++++++
+ src/backup.mjs                                  |  1 +
+ src/config.mjs                                  |  2 ++
+ src/media-delivery.mjs                          | 32 ++++++++++++++++--
+ src/publication-eligibility.mjs                 | 14 +++++++-
+ src/repository.mjs                              | 18 +++++++---
+ src/route-media.mjs                             |  6 +++-
+ src/server.mjs                                  |  7 ++++
+ src/visuals/vertex-imagen.mjs                   | 13 +++++++
+ src/wordpress.mjs                               | 45 +++++++++++++++++++++++--
+ test/backup.test.mjs                            | 43 +++++++++++++++++++++++
+ test/media-delivery.test.mjs                    |  9 ++++-
+ test/publication-eligibility.test.mjs           | 32 ++++++++++++++++++
+ test/route-media.test.mjs                       |  6 ++--
+ test/visuals.test.mjs                           | 36 ++++++++++++++++++++
+ 17 files changed, 301 insertions(+), 14 deletions(-)

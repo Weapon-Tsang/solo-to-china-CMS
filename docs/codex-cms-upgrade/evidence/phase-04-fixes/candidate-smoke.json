@@ -1,0 +1,445 @@
+{
+  "status": "PASS",
+  "release": "D:\\cms-phase04-candidate-20260928-final",
+  "data": "D:\\cms-phase04-candidate-20260928-final-synthetic-1790609212860",
+  "node": "v24.14.0",
+  "platform": "win32",
+  "arch": "x64",
+  "sharpPath": "D:\\cms-phase04-candidate-20260928-final\\node_modules\\sharp\\dist\\index.cjs",
+  "sharp": {
+    "aom": "3.14.1",
+    "archive": "3.8.9",
+    "cairo": "1.18.4",
+    "cgif": "0.5.3",
+    "exif": "0.6.26",
+    "expat": "2.8.3",
+    "ffi": "3.8.0",
+    "fontconfig": "2.18.3",
+    "freetype": "2.14.3",
+    "fribidi": "1.0.16",
+    "glib": "2.89.4",
+    "harfbuzz": "14.3.1",
+    "heif": "1.23.2",
+    "highway": "1.4.0",
+    "imagequant": "2.4.1",
+    "lcms": "2.19.1",
+    "mozjpeg": "0826579",
+    "pango": "1.58.2",
+    "pixman": "0.46.4",
+    "png": "1.6.58",
+    "proxy-libintl": "0.5",
+    "rsvg": "2.62.91",
+    "tiff": "4.7.2",
+    "uhdr": "2.0.2",
+    "vips": "8.18.6",
+    "webp": "1.6.0",
+    "xml2": "2.15.3",
+    "zlib-ng": "2.3.3",
+    "sharp": "0.35.4"
+  },
+  "media": {
+    "format": "webp",
+    "bytes": 68
+  },
+  "health": {
+    "ok": true,
+    "version": "2.0.70",
+    "serviceHealth": {
+      "ready": true,
+      "http": "ready",
+      "database": "ready",
+      "version": "2.0.70"
+    },
+    "aiConfiguration": {
+      "configured": false,
+      "provider": null,
+      "model": null,
+      "credentialsConfigured": false,
+      "routingRevision": 1
+    },
+    "providerRuntime": {
+      "state": "not_configured",
+      "provider": null,
+      "model": null,
+      "lastSuccessAt": null,
+      "lastFailureAt": null
+    },
+    "queueHealth": {
+      "active": 0,
+      "queued": 0,
+      "running": 0
+    },
+    "aiConfigured": false,
+    "aiProvider": null,
+    "aiModel": null,
+    "vertexBatchConfigured": false,
+    "vertexBatchActive": 0,
+    "visualProvider": null,
+    "visualModel": null,
+    "contentStrategy": {
+      "name": "SoloToChina 内容生产策略",
+      "version": "3.9",
+      "document": "docs/content-strategy/CONTENT_PRODUCTION_STRATEGY_3.9.md",
+      "status": "active",
+      "history": [
+        {
+          "version": "3.9",
+          "effectiveDate": "2026-09-22",
+          "status": "active",
+          "summary": "Use many relevant high-quality original photographs with zero-Provider direct reuse while continuing valuable information-graphic translation and necessary image generation.",
+          "changes": [
+            "Audit retained source photos locally for resolution, focus, image detail and dense Chinese text; persist checks by original SHA-256 and reuse results without Provider requests.",
+            "Use as many relevant eligible originals as the reader and page contract support, with accurate alt text, provenance and no unrelated filler; direct reuse adds zero model or image API calls.",
+            "Keep useful Chinese information graphics and route maps for complete English translation and independent visual QA, and generate new illustrations when needed under the existing durable paid-call budget.",
+            "Historical draft and published-article image refresh preserves frozen prose and prior successful assets, re-runs only missing media and delivery stages, and requires current QA and publication gates."
+          ]
+        },
+        {
+          "version": "3.8",
+          "effectiveDate": "2026-09-19",
+          "status": "superseded",
+          "summary": "Explicit reader-promise planning, source-role mapping, evidence plans, translation checkpoints, and neutral commercial-language QA.",
+          "changes": [
+            "Content Briefs carry a working title, why-this-article rationale, reader promise, source-role map, and section-level evidence plan into writing and bounded repair.",
+            "Neutral factual references to a commercial brand are distinct from promotional language; commercial overlays remain isolated from Research Drafts.",
+            "Pure-text image localization persists structured translation before deterministic layout and reuses it through adaptive-layout recovery.",
+            "Commercial modules use compact English category defaults and the visible Paid link disclosure while remaining separate from editorial writing."
+          ]
+        },
+        {
+          "version": "3.7",
+          "effectiveDate": "2026-09-17",
+          "status": "superseded",
+          "summary": "Role-isolated model routing with immutable task profiles, encrypted extraction credentials, fixed Vertex production roles, and frozen-draft knowledge updates.",
+          "changes": [
+            "DeepSeek-V4.1-Flash is the recommended candidate for new source extraction; GPT-5.6 Luna is an explicit alternative and an operator-only bounded dispute reviewer.",
+            "Planning, writing, article review and image review stay fixed on Vertex Gemini 3.8 Flash; required generation and localization stay fixed on Gemini 3.1 Flash Image.",
+            "Each new model-backed Job freezes its role, provider, model, routing revision and policy version so setting changes never replay or relabel existing results.",
+            "Source and article production availability are isolated; Knowledge changes create a non-destructive update notice without clearing a frozen draft review, and approved evidence-waiting work remains idempotently reconcilable."
+          ]
+        },
+        {
+          "version": "3.6",
+          "effectiveDate": "2026-09-17",
+          "status": "superseded",
+          "summary": "Evidence-consistent diagnostics, isolated commercial asset revisions, traceable article usage, and resumable visual QA checkpoints.",
+          "changes": [
+            "Final-page validation preserves original validator paths, safe actual values, stable slot/asset identities, contract identity, job attempt and production owner without misclassifying deterministic failures as model failures.",
+            "Every visual provider subcall records its actual provider, model, substage, HTTP result and dispatch evidence; an immutable post-transform candidate resumes quality review without buying the transform twice.",
+            "Affiliate assets use optimistic revisions and content hashes, preserve URL bytes and version history, compute old/new impact without silently starting production, and expose article/slot/delivery usage evidence.",
+            "Operator state distinguishes local not-applicable work, confirmed not-attempted gates, received provider responses, cache reuse and genuinely unknown historical or transport outcomes."
+          ]
+        },
+        {
+          "version": "3.5",
+          "effectiveDate": "2026-09-16",
+          "status": "superseded",
+          "summary": "Capture-versioned media understanding, verified visual transformation, media-only repair, responsive article navigation, and two-level commercial placement.",
+          "changes": [
+            "Image-level classification, regions, language, subjects and editor UI are persisted and hydrated through the production SQL decision DTO.",
+            "Authorized media follows explicit retain, overlay localization, editorial-card, collage, route or illustration paths with full decode and independent quality states.",
+            "Media-only historical repair reuses qualified slots and frozen prose, while mobile article navigation uses a native vertical disclosure with complete wrapping.",
+            "Commercial composition separates strongly relevant contextual actions from one optional destination planning resource; the score threshold governs link work, not insertion."
+          ]
+        },
+        {
+          "version": "3.4",
+          "effectiveDate": "2026-09-15",
+          "status": "superseded",
+          "summary": "Reading-task composition, provenance-safe visual delivery, and versioned commercial overlays with end-to-end slot reconciliation.",
+          "changes": [
+            "CMS page plans are consumed deterministically by reader task, using the simplest Registry component that preserves content and evidence order.",
+            "Visual selection shares one classification path, fills relevant gaps without replacing valid media, and separates generated bytes from pixel-qualified delivery.",
+            "Commercial intent projection reads Contract-visible fields, resolves normalized scoped assets, and distinguishes intentional no-op, asset gap, stale overlay, and delivery mismatch.",
+            "Scoped final-preview capabilities and commercial-only draft refresh preserve frozen prose, QA, media, ownership, leases, idempotency and draft-only WordPress delivery."
+          ]
+        },
+        {
+          "version": "3.3",
+          "effectiveDate": "2026-09-12",
+          "status": "superseded",
+          "summary": "Typed Knowledge resolution, staged source recovery, workload lanes, incremental coverage, and isolated heavy work.",
+          "changes": [
+            "Canonical typed facts and scoped/temporal resolution reduce manual review to high-risk or unresolved contradictions.",
+            "Predicate mismatch repair, targeted verification jobs, and auditable resolution history are persisted.",
+            "Historical source recovery uses dry-run manifests and inherited low-priority job context while interactive intake stays ahead.",
+            "Knowledge and coverage work plus scheduled backups run outside the HTTP process; coverage rebuilds from dirty fact scopes."
+          ]
+        },
+        {
+          "version": "3.2",
+          "effectiveDate": "2026-09-12",
+          "status": "superseded",
+          "summary": "大来源自动排队、可追溯媒体批处理、独立运行状态与安全迁移预检。",
+          "changes": [
+            "取消按估算调用次数触发的人工启动；仅明确硬限制阻断。",
+            "普通图片按 4–8 张分组并保留资产与分段级来源关系；地图、表格、文字密集图和视频单独处理。",
+            "服务、AI 配置、提供商运行状态和队列健康分离，状态读取不触发付费请求。",
+            "历史处理缺口与 Base64 迁移默认仅生成 dry-run 报告，原始素材不自动删除。"
+          ]
+        },
+        {
+          "version": "3.1",
+          "effectiveDate": "2026-09-12",
+          "status": "superseded",
+          "summary": "可靠采集与证据快照、可恢复生产、分离实时调度及低开销状态读取。",
+          "changes": [
+            "媒体类型与全生命周期超时校验；IndexedDB 断点和幂等媒体回执。",
+            "Writing Packet 冻结证据与叙事上下文，页面按内容节点校验采用证据。",
+            "普通内容失败归档并保留批准及产物；只有明确范围失效才重新推荐。",
+            "持久化知识脏版本合并、真实阶段依赖缓存及主要阶段原子提交。",
+            "实时与历史 Batch 路由分离，视觉与文本反压隔离；复杂度分流默认关闭。"
+          ]
+        },
+        {
+          "version": "3.0",
+          "effectiveDate": "2026-09-11",
+          "status": "superseded",
+          "summary": "建立原始媒体耐久化、Experience 语义层、Writing Packet 写作输入、机会生命周期与失败学习闭环，并将后台收敛为六个业务入口。",
+          "changes": [
+            "小红书图片和视频原件采用校验过的分块上传与持久化状态机；原件未落盘时不允许开始来源抽取，并支持增量、修复与全量三种同步。",
+            "Claims 后新增可追溯的 Experience Blocks，保存路线、顺序、条件、权衡、提醒和决策逻辑，不把叙事结构伪装成原子事实。",
+            "内容生产改为 Editorial Assembly、Narrative Plan、Writing Packet、Draft 的显式流水线，写作模型只接收本次选择的可读证据包。",
+            "建议页只展示可执行内容机会；每个方向独立批准、暂缓或忽略，并以 NEW、UPDATE、EXPAND、MERGE、SKIP 明示 SEO 处理动作。",
+            "普通内容生产失败生成 Failure Lesson、清理瞬态产物并回到 recommended_again；研究资产保留且再次生产必须重新批准。",
+            "后台顶级菜单固定为来源、建议、内容、知识库、商品、设置；系统健康、迁移、回填与高级维护统一收进设置。",
+            "新增安全可审计的媒体、Experience、建议重算和失败产物清理回填，以及交互优先、历史回填低优先级的公平队列。"
+          ]
+        },
+        {
+          "version": "2.1",
+          "effectiveDate": "2026-09-11",
+          "status": "superseded",
+          "summary": "简化为建议批准与内容结果的一一对应界面，移除人工创作规划功能，并强化中文诊断、原图留存、保真图片翻译和独立正文质检。",
+          "changes": [
+            "移除创作规划菜单、人工命题接口和专用运行代码；内部自动写作准备仍作为生产实现步骤保留。",
+            "内容页按已批准文章逐篇显示创建结果，失败或阻塞时直接显示中文原因和最小处理入口。",
+            "所有确认操作改用适配移动端的站内对话框，质量问题缺字段时显示可操作的中文兜底说明。",
+            "授权来源图片必须先保存并校验真实字节，写作前按图片自身上下文匹配；中文图使用原图输入并只翻译可读文字。",
+            "用户选择来源中的日常票价、时间和预约信息无需额外官方核验或日期门槛，只有真正互斥信息进入一次人工决定。",
+            "正文质量审核与图片、页面交付并行且相互独立；内容 AST 不再跨章节继承证据，并保留有序列表和媒体节点。"
+          ]
+        },
+        {
+          "version": "2.0",
+          "effectiveDate": "2026-09-10",
+          "status": "superseded",
+          "summary": "将来源、知识、文章方案和实际内容机会重新分层，并以中文诊断和有界自动修复替代大段内部代码与无差别人工介入。",
+          "changes": [
+            "采集来源只新增 Claims、知识和编辑建议；未批准的单来源文章方案不再计入内容机会或系统选题。",
+            "实际内容机会只来自人工批准的文章方案、人工命题，或满足至少两个独立来源的目的地级知识汇总门槛。",
+            "规划最多选择 48 条证据、每节最多 12 条；质量审核要求每个事实章节有证据，而不是要求正文穷举整个素材库。",
+            "正文、证据台账、页面和图片失败按责任阶段分类，显示中文原因，并最多自动修复两次后才转人工。",
+            "采集扩展保留普通尺寸授权图片的实际字节；同内容重采也可补回历史缺失图片，并记录可识别的编辑或发布时间。"
+          ]
+        },
+        {
+          "version": "1.9",
+          "effectiveDate": "2026-09-10",
+          "status": "superseded",
+          "summary": "以明确的创作提案和人工批准为生产单位，分离正文质量与交付故障，提供有边界的批量决策和阶段恢复。",
+          "changes": [
+            "来源建议、创作方向与已批准生产任务分别计数；相同确定性提案分组比较，不自动合并或删除。",
+            "批准冻结目的地、读者承诺、证据边界和方向指纹，拒绝陈旧选择；人工命题使用相同批准记录。",
+            "规划必须引用本次素材包中的无严格冲突事实；素材覆盖分不再因事实数量获得奖励，不代表事实真实性或文章质量。",
+            "正文质量与图片、页面交付分别报告；旧修订或旧证据审核不作为当前结论，媒体失败不触发正文重写。",
+            "恢复入口提供原文链接、已授权保留素材绑定、正文与证据修正、目的地修正和单阶段执行；升级不因策略变化批量重分析旧来源。"
+          ]
+        },
+        {
+          "version": "1.8",
+          "effectiveDate": "2026-09-10",
+          "status": "superseded",
+          "summary": "用开放世界语义判定和按独立来源、来源质量、发布时间及采集时间加权的自动共识，取代针对单个例子补规则和要求人工持续核验动态旅行事实。",
+          "changes": [
+            "未知谓词不再默认等于单值硬事实；只有结构定义明确互斥的字段才允许产生事实冲突，其余不同观察先按可并存、补充、细化或不同适用范围保存。",
+            "判定顺序统一为：是否同一对象、是否同一属性、适用范围是否相同、两句话能否同时成立、是否只是时间不同，避免为每个地铁口、名称或表述差异单独增加特例。",
+            "营业时间、票价、预约、班次、入口和交通等动态事实不再进入日常人工核验队列，改由多来源时效加权共识自动选择当前工作值。",
+            "同一作者、近似转载或同一来源家族只计算一次独立投票，避免复制内容制造虚假多数；真正独立的笔记、文档和页面分别计票。",
+            "权重由来源独立性、来源等级、Claim 提取置信度、来源完整性和证据时间共同决定；发布时间、观察时间或采集时间越新，动态事实权重越高。",
+            "形成稳定多数时标记为多来源共识；没有稳定多数时采用最新加权暂定值，并把置信度、候选值、支持来源数、反对来源数和证据日期完整保存在知识事实中。",
+            "过时证据不再作为后台异常或内容生产硬阻塞；它仍可在文章中使用，但必须明确说明证据日期和可能变化，并继续作为后续采集的优先信号。",
+            "只有安全、医疗、过敏、紧急疏散、法律义务等高后果且真正互斥的事实保留严格审核，普通旅游攻略的价格、时间和预约差异不再转嫁给人工。",
+            "数据库迁移会为全部目的地排入一次知识重建，自动清除旧的动态硬事实人审记录并重算当前共识。"
+          ]
+        },
+        {
+          "version": "1.7",
+          "effectiveDate": "2026-09-09",
+          "status": "superseded",
+          "summary": "把单一来源改写、专题创作和多来源综合作为可以同时成立的创作路线；同时收紧异常规则，并用 Vertex Batch 加速大批量异步提取和文本覆盖审计。",
+          "changes": [
+            "异常数量区分事实组与成对比较；组内先做同义归一、范围拆分和多值并存，避免把一个事实组显示成多次独立故障。",
+            "地铁站名和出口编号先标准化：上新街地铁站1号出口、上新街1号口和上新街站一号出入口自动视为同义佐证。",
+            "拥挤程度、拍照位置、菜品清单和普通别名按主观观察或多值知识处理，不同来源答案允许并存。",
+            "Claim 判定规则升级后自动重建仍有待处理异常的目的地知识，清理已经能自动判断的历史误报。",
+            "同一来源可以同时产生单一来源改写、专题文章和多来源综合机会；为第一篇文章选择主路线，不会关闭其余路线。",
+            "不同作者的一日游、两日游、路线顺序、美食清单和拍照点属于可并存的选择，不再因为内容不同就判定冲突。",
+            "免费与 0 元、全天与 24 小时等同义硬事实先标准化后比较，只有真正互斥且会影响游客决策的事实才要求人工处理。",
+            "策略解释和演化日志统一使用直白中文，并明确说明能写什么、为什么能写、证据边界和真正缺口。",
+            "大批量分段提取和文本覆盖审计优先提交 Vertex Batch 异步任务，完成后再成批更新状态；小批量、视频和失败项保留实时请求兜底。"
+          ]
+        },
+        {
+          "version": "1.6",
+          "effectiveDate": "2026-09-09",
+          "status": "superseded",
+          "summary": "用编辑上的充分性取代百科式完整性，支持窄专题和已获编辑授权的单一来源改写。",
+          "changes": [
+            "按一个边界清楚的读者承诺判断是否可写，不要求一篇文章覆盖目的地所有事实。",
+            "可从美食、住宿、路线、机位和实用小话题持续拆分专题系列。",
+            "完整且已获编辑授权的来源可直接形成原创英文改写，不必强行混入无关来源。",
+            "无法回溯原文的单条信息主张会被排除，但不会阻塞同一来源中已有证据支持的内容。",
+            "队列优先完成靠前来源及其诊断，再继续展开后续来源。"
+          ]
+        },
+        {
+          "version": "1.5",
+          "effectiveDate": "2026-09-08",
+          "status": "superseded",
+          "summary": "将证据、审核、媒体、最终页面和投递精确绑定到版本，并按真实读者任务决定篇幅、问答和配图。",
+          "changes": [
+            "审核、页面组合和商业输出绑定到准确的草稿版本、内容哈希和证据哈希。",
+            "按内容类型、读者意图和证据覆盖决定字数、问答和配图，不使用统一硬门槛。",
+            "审核最终可见页面，FAQ 结构化数据只来自页面中实际显示的问答。",
+            "展示读者可核实的来源，内部链接只使用已同步的 WordPress 库存。",
+            "记录模型来源和用量，但不记录提示词、密钥或来源正文。"
+          ]
+        },
+        {
+          "version": "1.4",
+          "effectiveDate": "2026-09-07",
+          "status": "superseded",
+          "summary": "把不同类型来源统一建模为证据容器，分段提取并审计完整性，通过内容机会状态机推进生产。",
+          "changes": [
+            "增加来源分段、证据片段、提取覆盖和来源家族，避免长内容被截断或遗漏。",
+            "增加主题聚类和覆盖矩阵，按内容类型给出可解释的证据就绪度。",
+            "人工批准精确对应一个内容机会；证据不足时等待，满足后自动恢复且只创建一个候选。",
+            "来源诊断、研究草稿、前端页面和发布包保持分离，商业内容只在质量审核后组合。",
+            "增加大视频分块上传、阶段进度、可审计的信息主张排除和知识显示控制。"
+          ]
+        },
+        {
+          "version": "1.3",
+          "effectiveDate": "2026-09-03",
+          "status": "superseded",
+          "summary": "分离实体身份、语义关系和信息主张，并引入独立的联盟供应商、素材、意图和追踪阶段。",
+          "changes": [
+            "增加实体类型、粒度和地域约束，支持可审计的合并复核与撤销。",
+            "分离信息主张的值、限定条件和范围，在冲突前先识别兼容、补充和细化关系。",
+            "增加供应商和联盟素材登记、区块意图、兜底、密度限制和合格机会。",
+            "安全渲染结构化商业区块，并记录前端能力缺口。",
+            "以最少隐私数据聚合展示和点击事件，同时保持研究与证据账本隔离。"
+          ]
+        },
+        {
+          "version": "1.2",
+          "effectiveDate": "2026-09-01",
+          "status": "superseded",
+          "summary": "允许明确获得授权的来源图片进入发布素材池，并在 WordPress 草稿中优先使用与证据匹配的真实照片。",
+          "changes": [
+            "记录内容所有者对人工选择来源图片发布授权的确认。",
+            "每个匹配的来源素材都可追溯到原笔记和 WordPress 媒体记录。",
+            "没有合适实景素材时，才使用已验证地图、信息图或非纪实原创插画。",
+            "继续保留事实核验、人工发布决定和人工选择来源的边界。"
+          ]
+        },
+        {
+          "version": "1.1",
+          "effectiveDate": "2026-09-01",
+          "status": "superseded",
+          "summary": "增加策略历史，并明确区分来源图片用于研究理解和用于公开发布的资格。",
+          "changes": [
+            "向后台展示不可变的策略演化历史，下游记录保留创建时的策略版本。",
+            "保存的来源图片可用于文字识别、多模态理解和研究证据。",
+            "实景照片只有在自有、官方、许可或明确授权时才能公开发布。",
+            "地图和信息图由数据确定性生成，生成式图片只作为非纪实原创插画。"
+          ]
+        },
+        {
+          "version": "1.0",
+          "effectiveDate": "2026-08-23",
+          "status": "superseded",
+          "summary": "建立人工选择来源、证据优先生产、人工批准、搜索优化审核和仅投递 WordPress 草稿的基础流程。",
+          "changes": [
+            "要求人工明确保存来源，禁止自动发现、批量抓取和绕过访问控制。",
+            "分离信息主张、目的地知识、内容机会、规范内容、质量审核和商业组合。",
+            "文章规划前必须人工批准，WordPress 始终只接收草稿。"
+          ]
+        }
+      ]
+    },
+    "frontendContract": {
+      "configured": false,
+      "status": "healthy",
+      "sourceRepository": "",
+      "registrySource": "",
+      "pageSchemaSource": "",
+      "publishPackageSchemaSource": "",
+      "lastAttemptAt": "2026-09-28T15:26:56.992Z",
+      "lastSuccessAt": "2026-09-28T15:26:56.992Z",
+      "lastError": null,
+      "active": {
+        "id": "fcontract_159ef327efad40cc873a2949a39ca154",
+        "contractVersion": "1.4.1",
+        "schemaVersion": "2020-12",
+        "pageSchemaContractVersion": "1.4.1",
+        "publishPackageVersion": "1.0.0",
+        "checksum": "417022bd056c0e9cd2b67ee016610d08b6d5d7b5737ba6849979f620acddca43",
+        "frontendCommitSha": "b231b1d54915ceef6a7f52b907ba5d7c1d79463d",
+        "syncedAt": "2026-09-28T15:26:56.992Z",
+        "sourceRepository": "https://github.com/Weapon-Tsang/solo-to-china"
+      },
+      "availableComponents": 29,
+      "stableComponents": 29,
+      "deprecatedComponents": [],
+      "canCompose": true
+    },
+    "contentAutomationConfigured": false,
+    "visualGenerationConfigured": false,
+    "wordpressConfigured": false,
+    "searchConsoleConfigured": false,
+    "maintenanceEnabled": false,
+    "notificationsConfigured": false,
+    "queueActive": 0,
+    "captureMediaProtocol": {
+      "version": 2,
+      "resume": true,
+      "uploadCapability": true,
+      "maxBytes": 536870912
+    }
+  },
+  "schema": 83,
+  "contract": {
+    "commit": "b231b1d54915ceef6a7f52b907ba5d7c1d79463d",
+    "artifactSha256": "9154dc68540d9922c11109e4cfe00aee871d850e61124fd7edb624ee20b2c422"
+  },
+  "jobs": 0,
+  "blockedExternalAttempts": 0,
+  "review": {
+    "mode": "migration-review",
+    "dataRoot": "D:\\cms-phase04-candidate-20260928-final-synthetic-1790609212860-review",
+    "databasePath": "D:\\cms-phase04-candidate-20260928-final-synthetic-1790609212860-review\\solo-to-china.sqlite",
+    "schemaVersion": 83,
+    "integrity": [
+      "ok"
+    ],
+    "foreignKeyViolations": 0,
+    "handoff": {
+      "queuedJobs": 0,
+      "runningJobs": 0,
+      "activeVertexBatches": 0,
+      "unresolvedWordPressPublishes": 0,
+      "unresolvedWordPressMediaRefreshes": 0,
+      "unresolvedMediaDispatches": 0,
+      "pendingArticleMedia": 0,
+      "unresolvedCoverDeliveries": 0,
+      "unresolvedManualMediaDeliveries": 0
+    },
+    "reconciliationRequired": [],
+    "writes": false,
+    "worker": false,
+    "externalCalls": false
+  },
+  "stopped": true
+}

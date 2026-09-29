@@ -1,0 +1,46 @@
+### Result
+{"status":"PASS","scope":"browser upload and confirmation to fixture outbox and loopback HTTP receiver; not WordPress","layouts":[{"width":390,"overflow":false},{"width":768,"overflow":false},{"width":1440,"overflow":false}],"requests":[{"method":"GET","url":"/api/drafts/cover-draft/article-media?offset=0"},{"method":"GET","url":"/api/drafts/cover-draft/article-media?offset=0"},{"method":"POST","url":"/api/drafts/cover-draft/article-media/uploads"},{"method":"GET","url":"/api/drafts/cover-draft/article-media/uploads/56ed7ccc-79ab-4951-bb98-9f1b9eadcd92"},{"method":"PUT","url":"/api/drafts/cover-draft/article-media/uploads/56ed7ccc-79ab-4951-bb98-9f1b9eadcd92/chunks/0"},{"method":"POST","url":"/api/drafts/cover-draft/article-media/uploads/56ed7ccc-79ab-4951-bb98-9f1b9eadcd92/complete"},{"method":"GET","url":"/api/drafts/cover-draft/article-media?offset=0"},{"method":"GET","url":"/api/drafts/cover-draft/article-media/uploads/56ed7ccc-79ab-4951-bb98-9f1b9eadcd92/preview"},{"method":"GET","url":"/api/drafts/cover-draft/article-media?offset=0"},{"method":"POST","url":"/api/drafts/cover-draft/article-media/plan"},{"method":"POST","url":"/api/drafts/cover-draft/article-media/confirm"},{"method":"GET","url":"/api/drafts/cover-draft/article-media?offset=0"},{"method":"GET","url":"/api/drafts/cover-draft/article-media"},{"method":"GET","url":"/api/drafts/cover-draft/article-media?offset=0"},{"method":"GET","url":"/api/drafts/cover-draft/article-media/uploads/56ed7ccc-79ab-4951-bb98-9f1b9eadcd92/preview"}],"body_preserved":true,"media_revision":1,"page_errors":[],"outbound":[],"preview":[800,500]}
+### Ran Playwright code
+```js
+await (async (page) => {
+  const errors=[],outbound=[],requests=[];page.on('pageerror',e=>errors.push(String(e)));
+  await page.route('**/*',route=>{const url=route.request().url();if(!/^http:\/\/127\.0\.0\.1:\d+\//.test(url)){outbound.push(url);return route.abort();}return route.continue();});
+  page.on('request',request=>{if(request.url().includes('/article-media'))requests.push({method:request.method(),url:request.url().replace(/^http:\/\/[^/]+/,'')});});
+  await page.getByRole('textbox',{name:'用户名',exact:true}).fill('stage03');await page.getByRole('textbox',{name:'密码',exact:true}).fill('stage03-fixture-only');
+  await page.getByRole('button',{name:'登录',exact:true}).click();await page.getByRole('tab',{name:'内容',exact:true}).click();
+  await page.getByRole('button',{name:'Cover selection fixture Draft'}).click();
+  await page.getByText('上传图片补齐',{exact:true}).click();const panel=page.getByTestId('article-media');
+  const before=await page.evaluate(async()=>await(await fetch('/api/content/cover-owner/production-state')).json());
+  await panel.getByLabel('补图文件',{exact:true}).setInputFiles('output/playwright/phase03-delivery-photo.png');
+  await panel.getByText('已保存，待确认采用',{exact:true}).waitFor({timeout:30000});
+  await panel.getByRole('checkbox',{name:'选择采用',exact:true}).check();
+  await panel.getByLabel('目标槽位',{exact:true}).selectOption('cover-visual');
+  await panel.getByLabel('准确英文说明',{exact:true}).fill('Synthetic East Hall fixture for local testing.');
+  await panel.getByLabel('与文章对象的关系',{exact:true}).fill('Controlled local fixture; not historical photo suitability.');
+  await panel.getByRole('checkbox',{name:'我已核对为对应对象的真实照片',exact:true}).check();
+  await panel.getByRole('checkbox',{name:'无须翻译的读者文字，主体清晰且非界面截图',exact:true}).check();
+  await panel.getByRole('checkbox',{name:'已查看原图并确认清晰度（小图不放大）',exact:true}).check();
+  await panel.getByRole('button',{name:'预览采用差异',exact:true}).click();
+  await panel.getByRole('button',{name:'确认采用并继续',exact:true}).waitFor();
+  if(await panel.getByRole('button',{name:'确认采用并继续',exact:true}).isEnabled())throw new Error('Confirmation bypass');
+  const layouts=[];
+  for(const width of [390,768,1440]){await page.setViewportSize({width,height:1050});const overflow=await page.getByRole('dialog').evaluate(el=>el.scrollWidth>el.clientWidth+1);if(overflow)throw new Error(`Overflow at ${width}`);layouts.push({width,overflow});}
+  await panel.getByRole('checkbox',{name:'已核对图片、替换范围和说明',exact:true}).focus();await page.keyboard.press('Space');
+  await panel.getByRole('button',{name:'确认采用并继续',exact:true}).click();await panel.getByText('已存会话 1 · 媒体版本 1',{exact:true}).waitFor();
+  const after=await page.evaluate(async()=>await(await fetch('/api/content/cover-owner/production-state')).json());
+  for(const key of ['body_markdown','title','slug','revision','content_hash'])if(before.draft.draft[key]!==after.draft.draft[key])throw new Error(`Draft changed: ${key}`);
+  await page.screenshot({path:'output/playwright/phase03-browser-delivery-adopted.png'});
+  const persisted=await page.evaluate(async()=>await(await fetch('/api/drafts/cover-draft/article-media')).json());
+  if(persisted.media_revision!==1||persisted.recovery.state!=='local_ready')throw new Error('Missing durable media revision');
+  await page.reload();await page.getByRole('tab',{name:'内容',exact:true}).click();await page.getByRole('button',{name:'Cover selection fixture Draft'}).click();await page.getByText('上传图片补齐',{exact:true}).click();
+  const refreshed=page.getByTestId('article-media');
+  for(let i=0;i<20 && !await refreshed.getByText('接收端已确认此图片',{exact:true}).count();i++){await refreshed.getByRole('button',{name:'刷新上传状态',exact:true}).click();await page.waitForTimeout(500);}
+  await refreshed.getByText('接收端已确认此图片',{exact:true}).waitFor();
+  await refreshed.getByText('局部恢复：本地处理完成 · 接收端回执已确认',{exact:true}).waitFor();
+  await page.screenshot({path:'output/playwright/phase03-browser-delivery-confirmed.png'});
+  const img=page.getByTestId('article-media').locator('img').first();await img.evaluate(el=>el.decode());
+  if(errors.length||outbound.length)throw new Error(JSON.stringify({errors,outbound}));
+  return ({status:'PASS',scope:'browser upload and confirmation to fixture outbox and loopback HTTP receiver; not WordPress',layouts,requests,body_preserved:true,media_revision:persisted.media_revision,page_errors:errors,outbound,preview:await img.evaluate(el=>[el.naturalWidth,el.naturalHeight])});
+}
+)(page);
+```

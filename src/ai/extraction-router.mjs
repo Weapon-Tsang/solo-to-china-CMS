@@ -27,6 +27,11 @@ export class ExtractionRouter {
   get batchEnabled() { return this.bundle().extractor.batchEnabled; }
   configFor(options = {}) { return this.bundle(options).config; }
   enabledFor(options = {}) { return this.bundle(options).extractor.enabled; }
+  artifactContract(stage, options = {}) {
+    const bundle = this.bundle(options);
+    return (['extract_media_batch','extract_segment_claims','audit_segment_coverage','retry_segment_extraction','analyze_source_blueprint'].includes(stage)
+      ? bundle.extractor : bundle.content).artifactContract(stage);
+  }
 
   extract(input, options = {}) { return this.bundle(options).extractor.extract(input, options); }
   auditCoverage(input, options = {}) { return this.bundle(options).extractor.auditCoverage(input, options); }

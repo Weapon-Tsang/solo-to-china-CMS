@@ -1,0 +1,127 @@
+(node:3248) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (777.195ms)
+✖ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (696.8084ms)
+✖ explicit revocation restores old slot exactly with an appended revision and no provider work (712.5142ms)
+✖ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (721.0978ms)
+✖ manual cover remains separate from body and exposes an eligible geometry candidate (718.3041ms)
+✖ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (698.8031ms)
+✖ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (697.5318ms)
+(node:20472) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ writer receives bounded image subjects without resending full media and source context (1.9841ms)
+✔ Kimi-backed independent QA cannot approve deterministic evidence or commercial violations (27.3611ms)
+✔ page composition extracts CMS node references before Frontend validation (1.5799ms)
+✔ page composition augments every oneOf component variant with CMS provenance (1.0928ms)
+(node:22348) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ same-entity stored source becomes a separate cover candidate with real binding checks; illustration plan never dispatches (634.3056ms)
+✔ commercial overlay preserves editorial blocks and exact Page Payload order (4.1492ms)
+✔ structured affiliate search uses exactly one Frontend delivery representation (0.3266ms)
+✔ Publish Package carries presentation, semantic SEO/GEO, JSON-LD, and WordPress media references (1.9458ms)
+✔ Publish Package translates internal CMS taxonomy before WordPress delivery (0.2702ms)
+✔ commercial reconciliation proves each selected slot across payload, WordPress storage and visible DOM (0.894ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 9
+ℹ fail 8
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5356.9394
+
+✖ failing tests:
+
+test at test\article-media.test.mjs:25:1
+✖ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (777.195ms)
+  Error: CHECK constraint failed: authorization_status IN ('legacy','owner_confirmed','unconfirmed')
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:122:137
+      at transaction (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/db.mjs:3916:20)
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:108:7 {
+    code: 'ERR_SQLITE_ERROR',
+    errcode: 275,
+    errstr: 'constraint failed'
+  }
+
+test at test\article-media.test.mjs:45:1
+✖ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (696.8084ms)
+  Error: CHECK constraint failed: authorization_status IN ('legacy','owner_confirmed','unconfirmed')
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:122:137
+      at transaction (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/db.mjs:3916:20)
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:108:7 {
+    code: 'ERR_SQLITE_ERROR',
+    errcode: 275,
+    errstr: 'constraint failed'
+  }
+
+test at test\article-media.test.mjs:66:1
+✖ explicit revocation restores old slot exactly with an appended revision and no provider work (712.5142ms)
+  Error: CHECK constraint failed: authorization_status IN ('legacy','owner_confirmed','unconfirmed')
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:122:137
+      at transaction (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/db.mjs:3916:20)
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:108:7 {
+    code: 'ERR_SQLITE_ERROR',
+    errcode: 275,
+    errstr: 'constraint failed'
+  }
+
+test at test\article-media.test.mjs:77:1
+✖ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (721.0978ms)
+  Error: CHECK constraint failed: authorization_status IN ('legacy','owner_confirmed','unconfirmed')
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:122:137
+      at transaction (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/db.mjs:3916:20)
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:108:7 {
+    code: 'ERR_SQLITE_ERROR',
+    errcode: 275,
+    errstr: 'constraint failed'
+  }
+
+test at test\article-media.test.mjs:94:1
+✖ manual cover remains separate from body and exposes an eligible geometry candidate (718.3041ms)
+  Error: CHECK constraint failed: authorization_status IN ('legacy','owner_confirmed','unconfirmed')
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:122:137
+      at transaction (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/db.mjs:3916:20)
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:108:7 {
+    code: 'ERR_SQLITE_ERROR',
+    errcode: 275,
+    errstr: 'constraint failed'
+  }
+
+test at test\article-media.test.mjs:104:1
+✖ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (698.8031ms)
+  Error: CHECK constraint failed: authorization_status IN ('legacy','owner_confirmed','unconfirmed')
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:122:137
+      at transaction (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/db.mjs:3916:20)
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:108:7 {
+    code: 'ERR_SQLITE_ERROR',
+    errcode: 275,
+    errstr: 'constraint failed'
+  }
+
+test at test\article-media.test.mjs:113:1
+✖ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (697.5318ms)
+  Error: CHECK constraint failed: authorization_status IN ('legacy','owner_confirmed','unconfirmed')
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:122:137
+      at transaction (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/db.mjs:3916:20)
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:108:7 {
+    code: 'ERR_SQLITE_ERROR',
+    errcode: 275,
+    errstr: 'constraint failed'
+  }
+
+test at test\cover-inventory.test.mjs:10:1
+✖ same-entity stored source becomes a separate cover candidate with real binding checks; illustration plan never dispatches (634.3056ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/test/cover-inventory.test.mjs:18:58)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

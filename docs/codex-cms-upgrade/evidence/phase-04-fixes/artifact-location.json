@@ -1,0 +1,9 @@
+{
+  "status": "INVENTORY_ONLY_NOT_RELEASE_APPROVAL",
+  "output": "C:\\Users\\Mloong\\Documents\\ChatGPT\\solo-to-china-CMS\\output\\phase04-1790609202806",
+  "manifest_sha256": "e0c6c81c9c37920f1d9663c0b2dbc803c0d95adc365cf9cacebc1049367ac1c1",
+  "files": 172,
+  "contract": "pinned_cache_verified",
+  "schema": 83,
+  "secret_findings": 0
+}

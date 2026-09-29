@@ -1,0 +1,59 @@
+{
+  "at": "2026-09-28T15:31:33.207Z",
+  "status": "PASS_LOCAL_CANDIDATE",
+  "current_authorized_step": "NONE",
+  "phase_end_stop": true,
+  "branch": "main",
+  "head": "490dd7464d4beb46d3f89a578337c253917fbf7a",
+  "files": {
+    "config/release-gate.json": "d68d23107bdf9ecd40cdb0ecbaf20fd0da851c051d6c7efeaa6ea7386f067928",
+    "deployment/gce/DEPLOY.md": "43ee55c06a11d99d3d3855613605ff61c4e601bd622c6a98565055f94f6c4fe6",
+    "deployment/gce/resume-verified-upgrade.sh": "c6373ded2030d5381eb6a71528444420ac16bd022ccfeab88d595730ce5c9cbd",
+    "scripts/verify-cross-repo-contract.mjs": "704914515d75271c2a1c88af2f0f5dbeba54ba8508ee972d686bff2d8480040f",
+    "scripts/fixed-contract-identity.mjs": "45765e55888581464dfc5823fdfc070a819dce79c5f39517878e97b408c2f77d",
+    "scripts/stage04-prepare-candidate.mjs": "8bfe7db85fbf34dae556cf3ddcf0484a31ed60703c557cab792effc17e1fb208",
+    "scripts/stage04-candidate-smoke.mjs": "501cf180e7113a102a6f1d6ed65a588bb0efd9fd6231fcad1ccb45e42ed81006",
+    "scripts/stage04-archive-candidate.py": "b6d28889cb8bdd6c0397567553ba0dd9beffe296e747ebcf137450e7f784ab6f",
+    "test/backup.test.mjs": "72f456cb24a77ea90dfc4f1a52d9996822187ec861b2d98dcd31d9ad11df3cb1",
+    "test/stage04-release-identity.test.mjs": "59e465b130c9c856ff9f686b6e1dae13985b3a201ec259dbc0176782e0438ac6",
+    "docs/codex-cms-upgrade/STATUS.md": "b49d5bdbc33c6d7fb2b41a78a5dbb9fe69ebb1c491f442ce914f05c4a4aa2be0",
+    "docs/codex-cms-upgrade/EXTERNAL_DEPENDENCIES.md": "c937e328e7d6768b68753cfa555ea9b580ee558b63ac48d2fc900ccdd30a121f",
+    "docs/codex-cms-upgrade/acceptance/phase-04-0.md": "b8e560ab7950c9891a961c9c64f99adae79a3b3fc9723507609ab928dac445c1",
+    "docs/codex-cms-upgrade/evidence/phase-04-0/release-migration-plan.md": "f43cf49577874033261c898e4ae3503696176b781e335d8a1e1d2da1abfe82a9",
+    "docs/codex-cms-upgrade/acceptance/phase-04-fixes.md": "6643b077e0124868e44b5bc97c66e5a757182089e45f1ca067a95626e24ba304",
+    "docs/codex-cms-upgrade/phases/phase-04-fixes.txt": "2dae1c263a9b85502a04d9f18656988c937951b3b7aaa7a15899da5667d40b6c"
+  },
+  "evidenceDirectory": "docs/codex-cms-upgrade/evidence/phase-04-fixes",
+  "priorCacheUnchanged": true,
+  "currentRuntimeAndCandidateMatchManifest": true,
+  "workflowUnchanged": true,
+  "cleanup": {
+    "candidateApiStopped": true,
+    "candidateChildExit": 0,
+    "allToolSessionsExited": true,
+    "userServicesStopped": false,
+    "backgroundTasks": false
+  },
+  "sideEffects": {
+    "commit": false,
+    "push": false,
+    "merge": false,
+    "deploy": false,
+    "cloudBuild": false,
+    "productionPrivateRead": false,
+    "productionExport": false,
+    "paidModel": false,
+    "wordpressWrite": false,
+    "productionMigration": false,
+    "productionBackup": false,
+    "workerActivation": false,
+    "cloudStop": false,
+    "cloudDelete": false,
+    "publicFrontendModify": false
+  },
+  "knownIssues": [
+    "historical cache commit label mismatch",
+    "new media refresh production adapters not wired",
+    "production receiver and platform unknown"
+  ]
+}

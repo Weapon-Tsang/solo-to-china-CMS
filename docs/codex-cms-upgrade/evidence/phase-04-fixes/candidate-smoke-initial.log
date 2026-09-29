@@ -1,0 +1,16 @@
+
+(node:13156) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+file:///D:/cms-phase04-candidate-20260928-r2/src/frontend-contract.mjs:298
+    throw new FrontendContractError("CONTRACT_VERSION_MISMATCH", "Publish Package checksum does not match the generated Component Registry bytes.");
+          ^
+
+FrontendContractError: Publish Package checksum does not match the generated Component Registry bytes.
+    at normalizePublishPackageSchema (file:///D:/cms-phase04-candidate-20260928-r2/src/frontend-contract.mjs:298:11)
+    at FrontendContractConsumer.sync (file:///D:/cms-phase04-candidate-20260928-r2/src/frontend-contract.mjs:132:30)
+    at async file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/scripts/stage04-candidate-smoke.mjs:52:3 {
+  code: 'CONTRACT_VERSION_MISMATCH',
+  details: {}
+}
+
+Node.js v24.14.0

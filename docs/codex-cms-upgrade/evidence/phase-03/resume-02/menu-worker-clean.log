@@ -1,0 +1,23 @@
+### Result
+{"status":"PASS","scope":"PERF-005 standard synthetic dataset: 1000 sources, 10000 claims, 300 drafts, 3000 media metadata; load mode recorded in companion API report; no upload/renderer load","cold":{"samples":[114,122,116,118,104,111,108,102,125,100,107,108,110,108,88,106,117,115,109,102,130,106,104,101,108,95,109,97,101,104],"p50_ms":108,"p95_ms":125,"target_met":true},"warm":{"samples":[77,62,77,58,59,60,60,56,58,57,57,59,56,72,58,57,60,59,60,61,74,59,59,73,63,55,63,62,62,60],"p50_ms":60,"p95_ms":77,"target_met":true},"errors":[]}
+### Ran Playwright code
+```js
+await (async (page) => {
+  await page.setViewportSize({width:1440,height:1000});
+  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+  const content=page.getByRole('tab',{name:'内容',exact:true}),sources=page.getByRole('tab',{name:'来源',exact:true});
+  const cold=[],warm=[];
+  await content.click();await page.getByRole('button',{name:/Guide /}).first().waitFor();await sources.click();
+  for(let i=0;i<30;i++){
+    await page.reload({waitUntil:'domcontentloaded'});await sources.waitFor();
+    let start=Date.now();await content.click();await page.getByRole('button',{name:/Guide /}).first().waitFor();cold.push(Date.now()-start);
+    await sources.click();await page.getByRole('heading',{name:'研究来源',exact:true}).waitFor();
+    start=Date.now();await content.click();await page.getByRole('button',{name:/Guide /}).first().waitFor();warm.push(Date.now()-start);
+  }
+  const stats=values=>{const sorted=[...values].sort((a,b)=>a-b);return {samples:values,p50_ms:sorted[14],p95_ms:sorted[28],target_met:sorted[28] <= (values===cold?1000:200)};};
+  const result={status:'PASS',scope:'PERF-005 standard synthetic dataset: 1000 sources, 10000 claims, 300 drafts, 3000 media metadata; load mode recorded in companion API report; no upload/renderer load',cold:stats(cold),warm:stats(warm),errors};
+  if(errors.length||!result.cold.target_met||!result.warm.target_met)result.status='FAIL';
+  return result;
+}
+)(page);
+```

@@ -1,0 +1,293 @@
+### Page
+- Page URL: http://127.0.0.1:57607/
+- Page Title: SoloToChina Research Engine
+### Snapshot
+```yaml
+- generic:
+  - generic:
+    - generic:
+      - banner [aria-hidden]:
+        - generic:
+          - link:
+            - /url: /
+            - generic: SoloToChina
+            - generic: 内容研究引擎
+          - generic:
+            - generic: 服务就绪
+            - generic: AI 未配置
+            - button:
+              - generic: 刷新状态
+      - main:
+        - generic [aria-hidden]:
+          - generic:
+            - generic: 内容研究
+            - heading [level=1]: 内容生产
+            - paragraph: 将有证据支撑的主题推进至草稿、审核和发布。
+          - generic:
+            - button:
+              - generic: 策略 v3.9
+              - generic: 阅读
+            - generic: 采集服务就绪
+        - region [aria-hidden]:
+          - generic:
+            - button:
+              - generic: 查看来源已结构化
+            - generic:
+              - generic:
+                - paragraph: 研究资产
+                - heading [level=2]: 来源已结构化
+            - generic:
+              - strong: "0"
+              - generic: 条知识事实
+            - paragraph: 暂无事实冲突
+            - generic:
+              - generic: 1来源
+              - generic: 0信息主张
+              - generic: 点击查看
+          - generic:
+            - button:
+              - generic: 查看内容机会待决定
+            - generic:
+              - generic:
+                - paragraph: 编辑决策
+                - heading [level=2]: 内容机会待决定
+            - generic:
+              - strong: "0"
+              - generic: 个可执行机会
+            - paragraph: 每个创作方向独立批准、暂缓或忽略
+            - generic:
+              - generic: 0内容流程记录
+              - generic: 0可用草稿
+              - generic: 点击查看
+          - generic:
+            - button:
+              - generic: 查看联盟商品
+            - generic:
+              - generic:
+                - paragraph: 商业图层
+                - heading [level=2]: 联盟商品
+            - generic:
+              - strong: "0"
+              - generic: 个可用商品
+            - paragraph: 未配置也不影响研究与写作
+            - generic:
+              - generic: 0WordPress 库存
+              - generic: 0待投递草稿
+              - generic: 点击查看
+          - generic:
+            - button:
+              - generic: 查看运行正常
+            - generic:
+              - generic:
+                - paragraph: 系统健康
+                - heading [level=2]: 运行正常
+            - generic:
+              - strong: "0"
+              - generic: 个系统故障
+            - paragraph: 认证、数据库、网络与外部集成正常
+            - generic:
+              - generic: 1系统重算中
+              - generic: 1内部机会
+              - generic: 点击查看
+        - generic [aria-hidden]:
+          - generic:
+            - tablist:
+              - tab:
+                - generic: 来源
+              - tab:
+                - generic: 建议
+              - tab [selected]:
+                - generic: 内容
+              - tab:
+                - generic: 知识库
+              - tab:
+                - generic: 商品
+              - tab:
+                - generic: 设置
+                - generic: "1"
+        - alert [aria-hidden]:
+          - generic:
+            - heading [level=5]: AI 提取已暂停
+            - generic: 请在“设置”中配置 AI 模型后，系统才会处理排队中的图文提取、信息主张和编辑蓝图；已采集的来源不会丢失。
+          - button: 前往设置
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - strong: "1"
+                  - text: 篇
+                  - paragraph: 等待开始
+                - generic:
+                  - strong: "0"
+                  - text: 篇
+                  - paragraph: 生产中
+                - generic:
+                  - strong: "0"
+                  - text: 篇
+                  - paragraph: 需要处理
+                - generic:
+                  - strong: "0"
+                  - text: 篇
+                  - paragraph: 已完成
+                - generic:
+                  - strong: "0"
+                  - text: 篇
+                  - paragraph: 历史记录
+                - generic:
+                  - strong: "1"
+                  - text: 篇
+                  - paragraph: 已生成正文
+              - paragraph: 以下为已加载记录的计数；继续加载后逐页累加。
+            - generic:
+              - button "当前生产"
+              - button "等待开始"
+              - button "生产中"
+              - button "需要处理"
+              - button "已完成"
+              - button "历史"
+            - generic:
+              - generic:
+                - generic:
+                  - table:
+                    - rowgroup:
+                      - row "生产内容 当前阶段 进度与下一步 操作":
+                        - columnheader "生产内容"
+                        - columnheader "当前阶段"
+                        - columnheader "进度与下一步"
+                        - columnheader "操作"
+                    - rowgroup:
+                      - button "Cover selection fixture Draft cover-draft 等待中 已批准 · 等待补充证据 当前尚未进入正文生产；这是系统等待，不是错误，也不需要重复批准。证据满足后会自动继续。 已完成 5/7（71%） 当前：质量审核 下一步：质量审核 系统会自动继续 归档 删除生产记录":
+                        - cell "Cover selection fixture Draft cover-draft":
+                          - generic: Cover selection fixture
+                          - paragraph: Draft cover-draft
+                        - cell "等待中 已批准 · 等待补充证据 当前尚未进入正文生产；这是系统等待，不是错误，也不需要重复批准。证据满足后会自动继续。":
+                          - generic: 等待中
+                          - paragraph: 已批准 · 等待补充证据
+                          - paragraph: 当前尚未进入正文生产；这是系统等待，不是错误，也不需要重复批准。证据满足后会自动继续。
+                        - cell "已完成 5/7（71%） 当前：质量审核 下一步：质量审核 系统会自动继续":
+                          - generic:
+                            - paragraph: 已完成 5/7（71%）
+                            - paragraph: 当前：质量审核
+                            - paragraph: 下一步：质量审核
+                            - paragraph: 系统会自动继续
+                        - cell "归档 删除生产记录":
+                          - generic:
+                            - button "归档"
+                            - button "删除生产记录"
+          - navigation "列表分页":
+            - button "上一页" [disabled]
+            - generic: 第 1 页
+            - generic:
+              - text: 每页
+              - combobox "每页 条":
+                - option "20" [selected]
+                - option "50"
+              - text: 条
+        - generic [aria-hidden]:
+          - generic: SoloToChina 内容研究引擎
+          - generic: 应用 v2.0.70 · 策略 v3.9 · 仅处理人工选定来源
+  - dialog [ref=e320]:
+    - generic [ref=e321]:
+      - generic [ref=e322]: 内容生产详情
+      - heading "Cover selection fixture" [level=2] [ref=e327]
+      - paragraph [ref=e328]: 已批准 · 等待补充证据。当前尚未进入正文生产；这是系统等待，不是错误，也不需要重复批准。证据满足后会自动继续。
+    - region "路线修订" [ref=e330]:
+      - heading "路线修订" [level=4] [ref=e331]
+      - paragraph [ref=e332]: 先保存提案，再核对和批准。只修图片不会修改路线；批准路线也不会自动重写或发布正文。
+      - button "刷新路线与提案" [ref=e333]
+      - paragraph [ref=e334]: 此历史记录没有可验证的路线快照。保留原正文；不能根据新图片自动建立或覆盖路线。
+      - paragraph [ref=e335]: 暂无路线变更提案。
+      - list
+    - group [ref=e336]:
+      - generic "独立封面 · 本地预览与选择" [ref=e337] [cursor=pointer]
+      - paragraph [ref=e338]: 选择适合横幅的图片。主体范围与焦点按归一方向的原图填写；先核对预览，再确认保存。当前接收端尚未验证，保存后会阻断新交付，线上文章不变。
+      - list [ref=e339]:
+        - listitem [ref=e340]:
+          - paragraph [ref=e341]: Synthetic Hall
+          - paragraph [ref=e342]: 请标定需要保留的主体和焦点
+          - button "选择此图" [active] [ref=e343]
+      - generic [ref=e402]:
+        - figure "母图保留，不覆盖正文图。百分比范围 0–100。" [ref=e403]:
+          - img "待裁剪母图：Synthetic Hall" [ref=e404]
+        - generic [ref=e406]:
+          - generic [ref=e407]:
+            - text: 主体左边界 %
+            - spinbutton "主体左边界 %" [ref=e408]
+          - generic [ref=e409]:
+            - text: 主体上边界 %
+            - spinbutton "主体上边界 %" [ref=e410]
+          - generic [ref=e411]:
+            - text: 主体宽度 %
+            - spinbutton "主体宽度 %" [ref=e412]
+          - generic [ref=e413]:
+            - text: 主体高度 %
+            - spinbutton "主体高度 %" [ref=e414]
+          - generic [ref=e415]:
+            - text: 焦点横向 %
+            - spinbutton "焦点横向 %" [ref=e416]
+          - generic [ref=e417]:
+            - text: 焦点纵向 %
+            - spinbutton "焦点纵向 %" [ref=e418]
+        - generic [ref=e419]:
+          - checkbox "小图清晰度已确认（不放大）" [ref=e420]
+          - text: 小图清晰度已确认（不放大）
+        - generic [ref=e421]:
+          - checkbox "锁定此封面选择" [checked] [ref=e422]
+          - text: 锁定此封面选择
+        - button "生成封面预览" [disabled]
+    - generic [ref=e344]:
+      - generic [ref=e345]: 等待中
+      - generic [ref=e346]: 完成 5/7
+      - generic [ref=e347]: 会自动继续
+    - generic [ref=e348]:
+      - heading "生产时间线" [level=3] [ref=e349]
+      - generic [ref=e350]:
+        - list [ref=e351]:
+          - listitem [ref=e352]:
+            - generic [ref=e353]:
+              - strong [ref=e354]: 素材组装
+              - generic [ref=e355]: 生产入口
+            - generic [ref=e356]: 已处理
+          - listitem [ref=e357]:
+            - generic [ref=e358]:
+              - strong [ref=e359]: 写作准备
+              - generic [ref=e360]: 已有 1 个前置依赖
+            - generic [ref=e361]: 已处理
+          - listitem [ref=e362]:
+            - generic [ref=e363]:
+              - strong [ref=e364]: 叙事规划
+              - generic [ref=e365]: 已有 1 个前置依赖
+            - generic [ref=e366]: 已处理
+          - listitem [ref=e367]:
+            - generic [ref=e368]:
+              - strong [ref=e369]: Writing Packet
+              - generic [ref=e370]: 已有 1 个前置依赖
+            - generic [ref=e371]: 已处理
+          - listitem [ref=e372]:
+            - generic [ref=e373]:
+              - strong [ref=e374]: 正文生成
+              - generic [ref=e375]: 已有 1 个前置依赖
+            - generic [ref=e376]: 已处理
+          - listitem [ref=e377]:
+            - generic [ref=e378]:
+              - strong [ref=e379]: 质量审核
+              - generic [ref=e380]: 已有 1 个前置依赖
+            - generic [ref=e381]: 等待中
+          - listitem [ref=e382]:
+            - generic [ref=e383]:
+              - strong [ref=e384]: 商业内容组合
+              - generic [ref=e385]: 已有 1 个前置依赖
+            - generic [ref=e386]: 等待中
+        - paragraph [ref=e387]: 下一步骤：质量审核
+        - group [ref=e388]:
+          - generic "展开内部 stage key" [ref=e389] [cursor=pointer]
+    - generic [ref=e390]:
+      - heading "页面编排预览" [level=3] [ref=e391]
+      - generic [ref=e392]:
+        - paragraph [ref=e393]: 页面结构预览，不代表 WordPress 最终主题视觉。组件渲染、JSX 和 CSS 由 Frontend Contract / WordPress 主题负责。
+        - generic [ref=e394]: 页面规划尚未生成；生产详情仍可正常查看。
+    - group [ref=e395]:
+      - generic "展开 Draft 正文、质量与商业层详情" [ref=e396] [cursor=pointer]
+    - button "关闭" [ref=e397]
+```

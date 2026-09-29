@@ -1,0 +1,14 @@
+(node:12092) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/scripts/stage02-manual-media-replay.mjs:12
+if(filename!==fs.realpathSync('D:/cms-phase02-media-replay-xiKzH1/work.sqlite'))throw new Error('Only the existing approved disposable work database is allowed.');
+                                                                                      ^
+
+Error: Only the existing approved disposable work database is allowed.
+    at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/scripts/stage02-manual-media-replay.mjs:12:87
+    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:661:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.14.0

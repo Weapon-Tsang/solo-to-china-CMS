@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { evidenceFamilyKeys, usableOpportunityFact, selectedFamilyProjection, completedOpportunitySourceIds } from './opportunity-family-evidence.mjs';
+import { boilerplateTitleSubject, evidenceTitle } from './editorial-title.mjs';
+import { evidenceFamilyKeys, usableOpportunityFact, selectedFamilyProjection, completedOpportunitySourceIds, createFamilyProjectionContext } from './opportunity-family-evidence.mjs';
 import { panelReceiptValid } from './visuals/route-panel.mjs';
+import { requiresOriginalBodyMedia } from './visuals/body-media-policy.mjs';
 import { accessibleMediaCaption } from './media-delivery.mjs';
 import { editorialSeoContext } from './services/editorial-seo-context.mjs';
 import { articleTimeEvidence } from './services/article-time-evidence.mjs';
@@ -23,7 +25,7 @@ import {
 } from "./affiliate-queue.mjs";
 import { classifySourceFamily, evaluateCoverage, segmentSource, stableOpportunityKey } from "./research-strategy.mjs";
 import { AI_JOB_TYPES, DATABASE_HEAVY_JOB_TYPES, classifyBatchFailure, isOperationalFailureRetryable, isProviderPressure,
-  inheritJobContext,laneBackoffMs,modelRoleForJob,workloadClassForJob } from "./job-policy.mjs";
+  inheritJobContext,laneBackoffMs,modelRoleForJob,workloadClassForJob,PRODUCTION_LANE_JOB_TYPES } from "./job-policy.mjs";
 import { pageBlockSignature, selectedFactEvidence, selectedFactSnapshot } from "./evidence-validator.mjs";
 import { estimateSourceProcessing } from "./source-preflight.mjs";
 import { sourceProcessingProfile } from "./source-processing-profile.mjs";
@@ -56,6 +58,7 @@ import { currentRouteBundle, persistRouteBundle, saveRouteArtifact } from './rep
 import { renderRouteSchematic, verifyRouteRender, routeSchematicVisual, verifyStoredRouteVisual } from './visuals/route-schematic.mjs';
 import { constrainRouteVisuals } from './route-media.mjs';
 import { routeDecisionState, proposeRouteRevision, decideRouteRevision } from './repositories/route-decisions.mjs';
+import { describeDiskUsage, diskHealthSeverity, diskUsage } from './disk-guard.mjs';
 
 function conflictError(message) { const error = new Error(message); error.statusCode = 409; return error; }
 
@@ -85,6 +88,9 @@ function isReusableDiagnosticStrategy(previous, current) {
   return Boolean(String(previous || "") && COMPATIBLE_DIAGNOSTIC_STRATEGIES.get(current)?.has(String(previous)));
 }
 
+const DEBOUNCED_REBUILD_JOBS = new Set(["rebuild_knowledge", "rebuild_topic_clusters", "build_coverage_matrix",
+  "rebuild_content_opportunities", "reconcile_approved_opportunities", "rebuild_editorial"]);
+
 export class Repository {
   constructor(db, contentConfig = {}) {
     this.db = db;
@@ -95,6 +101,12 @@ export class Repository {
     this.workerId = String(contentConfig.workerId || id("worker"));
     this.jobLeaseMs = Math.max(30_000, Number(contentConfig.jobLeaseMs || 10 * 60_000));
     this.clock = contentConfig.clock || (() => new Date());
+    // Derived rebuilds become runnable after a short window so that a burst of
+    // Source completions for one destination coalesces into one rebuild chain
+    // through the existing queued-job dedupe. 0 keeps immediate scheduling.
+    this.rebuildDebounceMs = Math.max(0, Number(contentConfig.rebuildDebounceMs || 0));
+    this.entityFullReviewDays = Math.max(0, Number(contentConfig.entityFullReviewDays || 0));
+    this.diskMonitorPath = contentConfig.diskMonitorPath || null;
     this.providerBackoffInitialMs = Math.max(1_000, Number(contentConfig.providerBackoffInitialMs || 5_000));
     this.providerBackoffMaxMs = Math.max(this.providerBackoffInitialMs, Number(contentConfig.providerBackoffMaxMs || 300_000));
     this.providerRecoverySuccesses = Math.max(1, Number(contentConfig.providerRecoverySuccesses || 5));
@@ -1965,12 +1977,14 @@ export class Repository {
       return active.id;
     }
     const jobId = id("job");
+    const availableAt = this.rebuildDebounceMs && !interactive && DEBOUNCED_REBUILD_JOBS.has(type)
+      ? new Date(Date.parse(timestamp) + this.rebuildDebounceMs).toISOString() : timestamp;
     try {
       this.db.prepare(`
         INSERT INTO jobs(id, type, entity_id, available_at, created_at, updated_at, dedupe_key,priority,production_attempt_id,execution_route,
           workload_class,parent_job_id,recovery_run_id,interactive,production_owner_opportunity_id,model_role,model_profile_json,model_routing_revision,pipeline_version,max_attempts)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(jobId, type, entityId, timestamp, timestamp, timestamp, resolvedDedupeKey, priority, productionAttemptId, executionRoute,
+      `).run(jobId, type, entityId, availableAt, timestamp, timestamp, resolvedDedupeKey, priority, productionAttemptId, executionRoute,
         resolvedWorkloadClass,parentJobId,recoveryRunId,interactive ? 1 : 0,resolvedOwnerId,resolvedModelRole,
         JSON.stringify(resolvedModelProfile || {}),resolvedRoutingRevision,pipelineVersion,type === 'generate_visuals' ? 4 : 3);
       return jobId;
@@ -2355,7 +2369,7 @@ export class Repository {
     return Number(this.db.prepare("SELECT COUNT(*) AS count FROM vertex_batch_runs WHERE status IN ('preparing','submitted')").get()?.count || 0);
   }
 
-  claimJob({ deferBatchExtraction = false, deferBatchCoverage = false } = {}) {
+  claimJob({ deferBatchExtraction = false, deferBatchCoverage = false, workloadClass = null } = {}) {
     return transaction(this.db, () => {
       const timestamp = this.jobTimestamp();
       const providerReady = this.clock().getTime() >= this.providerBackoffUntil;
@@ -2396,9 +2410,11 @@ export class Repository {
             AND database_writer.type IN (${databaseHeavyTypes.map(()=>"?").join(",")}))
           AND (jobs.type NOT IN (${databaseHeavyTypes.map(()=>"?").join(",")})
             OR NOT EXISTS (SELECT 1 FROM jobs active_pipeline_job WHERE active_pipeline_job.status='running'))
+          AND (? IS NULL OR jobs.workload_class=? OR (?='production' AND jobs.workload_class='normal_ingest'
+            AND jobs.type IN (${[...PRODUCTION_LANE_JOB_TYPES].map(() => "?").join(",")})))
           AND (SELECT COUNT(*) FROM jobs running_lane WHERE running_lane.status='running'
             AND running_lane.workload_class=jobs.workload_class) < CASE jobs.workload_class
-              WHEN 'interactive' THEN 2 WHEN 'normal_ingest' THEN 2 ELSE 1 END
+              WHEN 'interactive' THEN 2 WHEN 'normal_ingest' THEN 2 WHEN 'production' THEN 2 ELSE 1 END
         ORDER BY
           CASE workload_class WHEN 'interactive' THEN 0 WHEN 'historical_recovery' THEN 2
             WHEN 'maintenance' THEN 3 ELSE 1 END,
@@ -2435,7 +2451,8 @@ export class Repository {
       `).get(timestamp, timestamp, deferBatchExtraction ? 1 : 0, deferBatchCoverage ? 1 : 0,
         ...AI_JOB_TYPES, timestamp, timestamp, providerReady ? 1 : 0,
         this.clock().getTime() >= (this.visualBackoffUntil || 0) ? 1 : 0,
-        ...databaseHeavyTypes, ...databaseHeavyTypes, timestamp);
+        ...databaseHeavyTypes, ...databaseHeavyTypes, workloadClass, workloadClass, workloadClass,
+        ...PRODUCTION_LANE_JOB_TYPES, timestamp);
       if (!job) return null;
       const queueLatencyMs = Math.max(0, Date.parse(timestamp) - Date.parse(job.created_at));
       const claimed = this.db.prepare(`
@@ -3025,7 +3042,9 @@ export class Repository {
       if (segment.asset_id) {
         const mediaAnalysis = (extraction?.result?.media_analysis || []).find((item) =>
           !item?.asset_id || item.asset_id === segment.asset_id);
-        if (mediaAnalysis) this.saveSourceAssetAnalysis(segment.asset_id, mediaAnalysis, {
+        // An explicit deferral placeholder carries no pixel knowledge. Persisting it
+        // made the image look analyzed, which excluded it from visual discovery.
+        if (mediaAnalysis && !isDeferredMediaAnalysisPlaceholder(mediaAnalysis)) this.saveSourceAssetAnalysis(segment.asset_id, mediaAnalysis, {
           provider:extraction.method || "", model:extraction.model || "", withinTransaction:true,
         });
         const languageStatus = mediaAnalysis ? imageLanguageStatus(mediaAnalysis) : "unknown";
@@ -3376,12 +3395,11 @@ export class Repository {
   getIntakePackage(sourceId) {
     const source = this.getSource(sourceId);
     if (!source?.structured) return null;
-    const existingKnowledge=this.knowledgeForDestination(source.structured.destination_slug).slice(0,80).map((fact)=>({
-      key:fact.normalized_key,subject:fact.subject,predicate:fact.predicate,preferred_value:fact.preferred_value,
-      consensus_status:fact.consensus_status,confidence:fact.consensus_confidence,freshness:fact.freshness_state,
-      evidence:(fact.evidence||[]).slice(0,2).map((item)=>({source_id:item.source_id,quote:String(item.quote||"").slice(0,200),
-        confidence:item.confidence,observed_at:item.observed_at||item.published_at||null})),
-    }));
+    // Intake only needs to know what the destination already covers to judge
+    // duplication; fact values and evidence quotes are not decision inputs and
+    // made this stage the largest token consumer. Summarize coverage instead.
+    const existingKnowledge=destinationCoverageSummary(this.knowledgeForDestination(source.structured.destination_slug)
+      .filter((fact)=>!(fact.evidence||[]).length || (fact.evidence||[]).some((item)=>item.source_id!==source.id)));
     const result={
       strategy_version: this.strategyVersion,
       source: {
@@ -3401,12 +3419,12 @@ export class Repository {
       claims: source.claims.map((claim) => ({
         key: claim.normalized_key, subject: claim.subject, predicate: claim.predicate,
         value: claim.value_text, qualifiers: claim.qualifiers, confidence: claim.confidence,
-        source_quote: String(claim.source_quote || "").slice(0, 300),
+        source_quote: String(claim.source_quote || "").slice(0, 200),
       })),
-      existing_knowledge:existingKnowledge,
+      existing_destination_coverage:existingKnowledge,
     };
     const inputBytes=Buffer.byteLength(JSON.stringify(result));
-    return {...result,input_telemetry:{projection:"compact_claim_evidence_v1",bytes:inputBytes,estimated_tokens:Math.ceil(inputBytes/3)}};
+    return {...result,input_telemetry:{projection:"compact_claim_coverage_v2",bytes:inputBytes,estimated_tokens:Math.ceil(inputBytes/3)}};
   }
 
   saveIntakeAnalysis(sourceId, analysis, model, { deferReconciliation = false } = {}) {
@@ -3962,9 +3980,9 @@ export class Repository {
     return new Set((facts || []).flatMap(independentEvidenceKeysForFact)).size;
   }
 
-  completedOpportunityFacts(facts) {
-    const completed=completedOpportunitySourceIds(this.db);
-    const familyBySource=new Map(this.db.prepare("SELECT source_id,family_id FROM source_family_memberships").all()
+  completedOpportunityFacts(facts, context = null) {
+    const completed=context?.complete || completedOpportunitySourceIds(this.db);
+    const familyBySource=context?.membership || new Map(this.db.prepare("SELECT source_id,family_id FROM source_family_memberships").all()
       .map((row)=>[row.source_id,row.family_id]));
     return (facts || []).map((fact)=>{
       const evidence=(fact.evidence || []).filter((item)=>completed.has(item.source_id));
@@ -4021,7 +4039,10 @@ export class Repository {
       const opportunityId = `opportunity_${sha256(topicKey).slice(0,24)}`;
       const existing = this.db.prepare("SELECT id,lifecycle_state,status,approved_at,candidate_id FROM content_opportunities WHERE topic_key=?").get(topicKey);
       // Frozen editorial decisions are not rewritten by a live knowledge projection.
-      if (existing && (existing.approved_at || existing.candidate_id)) continue;
+      if (existing && (existing.approved_at || existing.candidate_id
+        || !['recommended','recommended_again','deferred'].includes(existing.lifecycle_state))) continue;
+      if (existing && (this.db.prepare('SELECT 1 FROM topic_candidates WHERE opportunity_id=? LIMIT 1').get(existing.id)
+        || this.db.prepare("SELECT 1 FROM jobs WHERE (entity_id=? OR production_owner_opportunity_id=?) AND status IN ('queued','running') LIMIT 1").get(existing.id,existing.id))) continue;
       if (!actionability) {
         if (existing && ["recommended","deferred"].includes(existing.lifecycle_state)) {
           this.db.prepare(`UPDATE content_opportunities SET status='suppressed',suppression_reason='knowledge_cluster_no_longer_actionable',updated_at=? WHERE id=?`)
@@ -4031,10 +4052,10 @@ export class Repository {
         continue;
       }
       const contentType = inferKnowledgeOpportunityType(cluster.title,facts,destinationSlug);
-      const title = `${cluster.title}: a practical guide for independent travelers`;
+      const title = evidenceTitle(cluster.title, usableFacts);
       const matrix = evaluateCoverage({topicKey,contentType,facts:usableFacts,sourceFamilyCount:sourceFamilyIds.length,
         publicationMode:"multi_source_synthesis"});
-      const coverage = { ...matrix,publicationMode:"multi_source_synthesis",knowledgeEventGenerated:true,
+      const coverage = { ...matrix,publicationMode:"multi_source_synthesis",knowledgeEventGenerated:true, titlePolicy:"evidence-v1",
         knowledgeIntentIdentity:String(cluster.topic_key || "").split(":cluster:").at(-1) || titleIdentity,
         proposal:{readerPromise:`Help an independent traveler make a confident decision about ${cluster.title}.`,
           evidenceBoundary:`Use only the ${usableFacts.length} current, traceable facts in this knowledge cluster.`,targetEntities:[cluster.title]},
@@ -4077,7 +4098,8 @@ export class Repository {
   rebuildCoverageMatrices(destinationSlug,{changedFactKeys=null}={}) {
     const startedAt=Date.now();
     const allFacts = this.knowledgeForDestination(destinationSlug);
-    const completedFacts = this.completedOpportunityFacts(allFacts);
+    const familyContext = createFamilyProjectionContext(this.db);
+    const completedFacts = this.completedOpportunityFacts(allFacts, familyContext);
     const completedFactsByKey=new Map(completedFacts.map((fact)=>[fact.normalized_key,fact]));
     const allOpportunities = this.db.prepare("SELECT * FROM content_opportunities WHERE destination_slug=?").all(destinationSlug);
     const changed=new Set((changedFactKeys||[]).filter(Boolean));
@@ -4128,7 +4150,7 @@ export class Repository {
         .run(matrix.readiness.score, JSON.stringify(matrix.readiness), JSON.stringify(coverage), next, now(), opportunity.id);
       if (previousCoverage.knowledgeEventGenerated) {
         const stored=this.db.prepare('SELECT * FROM content_opportunities WHERE id=?').get(opportunity.id);
-        const projection=selectedFamilyProjection(this.db,stored);
+        const projection=selectedFamilyProjection(this.db,stored,familyContext);
         this.db.prepare("UPDATE content_opportunities SET coverage_json=json_set(coverage_json,'$.familyEvidenceVersion',?,'$.familyEvidenceFingerprint',?) WHERE id=?")
           .run(projection.version,projection.dependencyFingerprint,opportunity.id);
       }
@@ -4491,8 +4513,9 @@ export class Repository {
     return this.db.prepare("SELECT * FROM source_blueprints WHERE source_id=?").get(sourceId);
   }
 
-  getEntityResolutionPackage(destinationSlug, limit = 80, cursor = null) {
+  getEntityResolutionPackage(destinationSlug, limit = 80, cursor = null, { since = null } = {}) {
     const pageSize = Math.max(1, Math.min(300, Number(limit || 80)));
+    const scanLimit = pageSize * 4;
     const rows = this.db.prepare(`
       SELECT c.id, c.normalized_key, c.original_normalized_key, c.subject, c.predicate, c.value_text,
         c.source_quote, c.confidence, c.entity_key, c.canonical_subject, c.entity_aliases_json,
@@ -4501,10 +4524,27 @@ export class Repository {
       FROM claims c JOIN structured_sources ss ON ss.source_id=c.source_id
       JOIN sources s ON s.id=c.source_id
       WHERE ss.destination_slug=? AND c.knowledge_eligible=1 AND c.lifecycle_status='active'
+        AND c.entity_resolution_status<>'resolved'
         AND (? IS NULL OR c.id>?)
+        AND (? IS NULL OR c.created_at>?)
       ORDER BY c.id LIMIT ?
-    `).all(destinationSlug, cursor, cursor, pageSize + 1);
-    const page = rows.slice(0, pageSize);
+    `).all(destinationSlug, cursor, cursor, since, since, scanLimit + 1);
+    // A claim whose subject already names a confirmed (model/manual) alias is
+    // resolved by resolveEntitiesDeterministically at the end of the job; paying
+    // the model to re-identify it again is pure repeated context.
+    const confirmed = new Set(this.db.prepare(`SELECT alias_normalized FROM entity_aliases
+      WHERE destination_slug=? AND resolution_source IN ('model','manual')`).all(destinationSlug).map((row) => row.alias_normalized));
+    const page = [];
+    let scanned = 0;
+    let prelinked = 0;
+    for (const row of rows.slice(0, scanLimit)) {
+      if (page.length >= pageSize) break;
+      scanned += 1;
+      if (confirmed.has(normalizeEntityAlias(row.subject))) { prelinked += 1; continue; }
+      page.push(row);
+    }
+    const lastScannedId = rows[scanned - 1]?.id || null;
+    const hasMore = rows.length > scanned;
     const destination = this.db.prepare("SELECT name FROM destinations WHERE slug=?").get(destinationSlug);
     const claimNames=new Set(page.flatMap((row)=>{
       const aliases=json(row.entity_aliases_json,[]);
@@ -4530,14 +4570,20 @@ export class Repository {
       destination: { slug: destinationSlug, name: destination?.name || destinationSlug },
       claims: page.map((row) => ({
         id: row.id, key: row.normalized_key, original_key: row.original_normalized_key || row.normalized_key,
-        subject: row.subject, predicate: row.predicate, value: row.value_text, source_quote: row.source_quote,
+        subject: row.subject, predicate: row.predicate, value: truncateText(row.value_text, 240),
+        source_quote: truncateText(row.source_quote, 240),
         confidence: row.confidence, current_entity_key: row.entity_key || null,
         current_canonical_subject: row.canonical_subject || null, current_aliases: json(row.entity_aliases_json, []),
         entity_type: row.entity_type, granularity: row.granularity, location: json(row.entity_location_json, {}),
         captured_at: row.captured_at, source_title: row.source_title,
       })),
-      known_aliases: knownAliases,
-      nextCursor: rows.length > pageSize ? page.at(-1)?.id || null : null,
+      // Identity-relevant alias fields only; parsed JSON columns were previously
+      // sent twice (raw and parsed) together with bookkeeping timestamps.
+      known_aliases: knownAliases.map((alias) => ({ alias_normalized: alias.alias_normalized, entity_key: alias.entity_key,
+        canonical_subject: alias.canonical_subject, aliases: alias.aliases, resolution_source: alias.resolution_source,
+        confidence: alias.confidence, entity_type: alias.entity_type, granularity: alias.granularity, location: alias.location })),
+      prelinked_claims: prelinked,
+      nextCursor: hasMore ? lastScannedId : null,
     };
   }
 
@@ -4553,6 +4599,30 @@ export class Repository {
       SELECT * FROM entity_merge_candidates WHERE status=? ORDER BY confidence DESC, updated_at DESC
     `).all(status).map((row) => ({ ...row, location: json(row.location_json, {}), assessment: assessEntityIdentity(row) }))
       .filter((row) => status !== "pending" || row.assessment.decision !== "DO_NOT_MERGE");
+  }
+
+  // Incremental entity review. A claim the model already reviewed under a
+  // successful destination pass is not re-sent daily; only claims created since
+  // the last pass are. A periodic full sweep still re-checks everything so new
+  // aliases can link older claims. entityFullReviewDays=0 keeps full passes.
+  entityReviewSince(destinationSlug) {
+    if (!this.entityFullReviewDays) return null;
+    const read = (key) => this.db.prepare("SELECT last_started_at FROM integration_sync_state WHERE sync_key=? AND status='succeeded'").get(key);
+    const full = read(`entity_full_review:${destinationSlug}`);
+    if (!full?.last_started_at) return null;
+    if (this.clock().getTime() - Date.parse(full.last_started_at) > this.entityFullReviewDays * 86_400_000) return null;
+    return read(`entity_review:${destinationSlug}`)?.last_started_at || full.last_started_at;
+  }
+
+  recordEntityReview(destinationSlug, startedAt, { full = false, claims = 0 } = {}) {
+    const timestamp = this.jobTimestamp();
+    const upsert = this.db.prepare(`INSERT INTO integration_sync_state(sync_key,status,last_started_at,last_succeeded_at,item_count,updated_at)
+      VALUES (?,'succeeded',?,?,?,?) ON CONFLICT(sync_key) DO UPDATE SET status='succeeded',
+        last_started_at=CASE WHEN integration_sync_state.last_started_at IS NULL OR excluded.last_started_at>integration_sync_state.last_started_at
+          THEN excluded.last_started_at ELSE integration_sync_state.last_started_at END,
+        last_succeeded_at=excluded.last_succeeded_at,item_count=excluded.item_count,last_error=NULL,updated_at=excluded.updated_at`);
+    upsert.run(`entity_review:${destinationSlug}`, startedAt, timestamp, claims, timestamp);
+    if (full) upsert.run(`entity_full_review:${destinationSlug}`, startedAt, timestamp, claims, timestamp);
   }
 
   enqueueEntityResolutionForAllDestinations() {
@@ -5675,8 +5745,14 @@ export class Repository {
     const inventory=[...new Map([...availableAssets,...inventoryPage].map(asset=>[asset.id,asset])).values()];
     inventory.retrieval=inventoryPage.retrieval;
     const explicit=new Set(explicitAssetIds);
-    bounded.authorized_source_assets=availableAssets.filter((asset,index)=>explicit.has(asset.id) || index<12)
+    // The planner sees 12 photos; choose them by pixel relevance and editorial
+    // quality rather than capture order, so the outline is built around the
+    // best available originals.
+    const rankedIds=new Set(rankPlanningAssets(availableAssets,{title:topic.candidate.proposed_title,
+      targetEntities:selection.target_entities}).slice(0,12).map((asset)=>asset.id));
+    bounded.authorized_source_assets=availableAssets.filter((asset)=>explicit.has(asset.id) || rankedIds.has(asset.id))
       .map((asset)=>({id:asset.id,source_id:asset.source_id,asset_kind:asset.asset_kind,
+        ...(imageCardOf(asset) ? {image_card:imageCardOf(asset)} : {}),
         mime_type:asset.mime_type,preview_url:`/api/source-assets/${asset.id}/preview`,
         alt_text:truncateText(asset.alt_text,180),caption_text:truncateText(asset.caption_text,180),
         nearby_text:truncateText(asset.nearby_text,300),
@@ -6094,7 +6170,8 @@ export class Repository {
     draft.evidence_ledger = normalizeDraftLedger(draft.evidence_ledger, json(brief.plan_json, {}));
     const existing = this.db.prepare("SELECT id, revision FROM article_drafts WHERE brief_id = ?").get(briefId);
     const draftId = existing?.id || id("draft");
-    const retainedVisuals = preserveVisuals && existing ? this.listDraftVisuals(draftId) : [];
+    const retainVisualPlan = Boolean(preserveVisuals && existing);
+    const retainedVisuals = retainVisualPlan ? this.listDraftVisuals(draftId) : [];
     const timestamp = now();
     const packet = this.getWritingPacket(briefId);
     const briefPackage = this.getBriefPackage(briefId);
@@ -6105,11 +6182,24 @@ export class Repository {
       validateRouteDraft(frozenRoute,draft);
     }
     const facts = briefPackage?.facts || [];
+    // Activate only for newly projected opportunities. Existing production owners
+    // without this policy retain their frozen titles and generation behavior.
+    const titleOwner = this.db.prepare(`SELECT coverage_json FROM content_opportunities WHERE candidate_id=?
+      AND approved_at IS NOT NULL AND (? IS NULL OR id=?)`).all(brief.candidate_id, opportunityId, opportunityId);
+    if (titleOwner.length === 1 && json(titleOwner[0].coverage_json,{}).titlePolicy === 'evidence-v1') {
+      const genericSubject = boilerplateTitleSubject(draft.title);
+      const nextTitle = genericSubject ? evidenceTitle(genericSubject,facts) : draft.title;
+      draft = { ...draft, title:nextTitle, seo:{...(draft.seo || {})} };
+      for (const key of ['meta_title','seo_title','og_title']) {
+        if (boilerplateTitleSubject(draft.seo[key])) draft.seo[key] = nextTitle;
+      }
+      if (boilerplateTitleSubject(draft.card_title)) draft.card_title = nextTitle;
+    }
     const authorizedSourceAssets = this.authorizedSourceAssetsForBrief(brief, { packet });
     const policy = packet?.context?.version === 2 ? packet.context.content_policy
       : contentPolicyFor(brief, facts);
     const metadata = draftMetadata(draft, {...brief,route_bundle:frozenRoute}, this.contentConfig, authorizedSourceAssets, policy, facts,
-      retainedVisuals.length ? retainedVisuals : null);
+      retainVisualPlan ? retainedVisuals : null);
     draft.evidence_ledger = metadata.evidenceLedger;
     const contentHash = draftContentHash(draft, metadata, brief);
     if (existing) {
@@ -6137,7 +6227,7 @@ export class Repository {
     this.db.prepare('UPDATE article_drafts SET card_title=?,deck=? WHERE id=?').run(
       String(draft.card_title || '').trim().slice(0,100),String(draft.deck || '').trim().slice(0,240),draftId);
     this.invalidateDraftDependents(draftId, timestamp);
-    if (!retainedVisuals.length) {
+    if (!retainVisualPlan) {
       this.replaceDraftVisuals(draftId, metadata.visuals, brief.strategy_version || this.strategyVersion);
     }
     // Source analysis may still refine the visual plan. Freeze just before the
@@ -6154,7 +6244,7 @@ export class Repository {
     return draftId;
   }
 
-  updateDraftMetadata(draftId, { title = null, seoTitle = null, metaDescription = null } = {}) {
+  updateDraftMetadata(draftId, { title = null, seoTitle = null, metaDescription = null } = {}, { enqueueReview = true, preserveVisuals = false } = {}) {
     const contentPackage = this.getDraftPackage(draftId);
     if (!contentPackage) throw new Error(`Article draft ${draftId} not found.`);
     const draft = contentPackage.draft;
@@ -6166,11 +6256,14 @@ export class Repository {
       ...draft,
       title: nextTitle,
       meta_description: metaDescription == null ? draft.meta_description : String(metaDescription).trim(),
-      seo: { ...(draft.seo || {}), meta_title: nextSeoTitle, seo_title: nextSeoTitle },
+      seo: { ...(draft.seo || {}), meta_title: nextSeoTitle, seo_title: nextSeoTitle,
+        ...(title == null ? {} : {og_title:nextTitle}) },
+      card_title: title != null && boilerplateTitleSubject(draft.card_title) ? nextTitle : draft.card_title,
       faqs: draft.seo?.faqs || [],
     };
-    const savedId = this.saveDraft(draft.brief_id, next, "manual_metadata_edit", { deferReview: true });
-    this.enqueue("review_draft", savedId);
+    const savedId = this.saveDraft(draft.brief_id, next, "manual_metadata_edit", { deferReview: true, preserveVisuals });
+    if (enqueueReview) this.enqueue("review_draft", savedId);
+    else this.db.prepare("UPDATE article_drafts SET status='review' WHERE id=?").run(savedId);
     return this.getDraftPackage(savedId).draft;
   }
 
@@ -6463,7 +6556,8 @@ export class Repository {
     return this.listDraftVisuals(draftId);
   }
 
-  // Discovery is only for an empty plan. Source prose and filenames rank which
+  // Discovery fills missing original-photo coverage, even when a card already
+  // occupies the plan. Source prose and filenames rank which
   // stored originals to inspect first, but never establish image relevance.
   // The analyzed pixels must still pass normalizeVisuals before any slot exists.
   sourceMediaAnalysisProviderCalls(jobId) {
@@ -6473,21 +6567,37 @@ export class Repository {
   }
 
   sourceVisualDiscoveryCandidates(draftId, { limit = 3 } = {}) {
-    if (this.listDraftVisuals(draftId).length || mediaManifestForDraft(this.db,draftId)?.approvedNoImage) return [];
+    const current=this.listDraftVisuals(draftId);
+    if (mediaManifestForDraft(this.db,draftId)?.approvedNoImage) return [];
     const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
       FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
     if (!row) return [];
+    if (current.length && (!requiresOriginalBodyMedia(row.strategy_version)
+      || current.some(visual=>visual.acquisition_strategy === 'use_authorized_source_image'
+        && visual.image_type === 'real_world_photo' && visual.status === 'generated'))) return [];
     const packet=this.getWritingPacket(row.brief_id);
     const frozenIds=new Set((packet?.context?.authorized_source_assets || [])
       .map((asset)=>asset.id || asset.source_asset_id).filter(Boolean));
     const seenHashes=new Set();
-    return this.authorizedSourceAssetsForBrief(row,{packet})
+    const targetKeys=new Set(mediaEntityKeys(this.db,row.destination_slug,`${row.title} ${row.topic}`));
+    const sourcePriorities=new Map();
+    const sourcePriority=(asset)=>{
+      if (!sourcePriorities.has(asset.source_id)) sourcePriorities.set(asset.source_id,
+        mediaEntityKeys(this.db,row.destination_slug,asset.source_title || '')
+          .filter(key=>targetKeys.has(key)).length / Math.max(1,targetKeys.size));
+      return sourcePriorities.get(asset.source_id);
+    };
+    // Empty legacy captions should not bury a dedicated attraction photo note
+    // behind newer city-wide guide cards. Source titles only rank the bounded
+    // inspection queue; they never establish what the image actually depicts.
+    return this.authorizedSourceAssetsForBrief(row,{packet,limit:1000})
       .filter((asset)=>asset.analysis_status === 'not_analyzed'
         && (asset.capture_version === asset.source_capture_version || frozenIds.has(asset.id))
         && asset.local_path && fs.existsSync(asset.local_path))
-      .map((asset)=>({asset,priority:articleAssetMatchScore(row,row,asset),
+      .map((asset)=>({asset,priority:articleAssetMatchScore(row,row,asset)+sourcePriority(asset),
+        position:Number.isSafeInteger(asset.position) ? asset.position : Number.MAX_SAFE_INTEGER,
         pixels:Number(asset.width || 0)*Number(asset.height || 0)}))
-      .sort((left,right)=>right.priority-left.priority || right.pixels-left.pixels
+      .sort((left,right)=>right.priority-left.priority || left.position-right.position || right.pixels-left.pixels
         || String(left.asset.id).localeCompare(String(right.asset.id)))
       .filter(({asset})=>{
         const key=asset.original_sha256 || asset.id;
@@ -6505,7 +6615,7 @@ export class Repository {
     return this.db.prepare(`SELECT DISTINCT av.id AS visual_id,av.source_asset_id
       FROM article_visuals av JOIN source_asset_analyses saa ON saa.asset_id=av.source_asset_id
       WHERE av.draft_id=? AND saa.asset_kind IN ('photo_collage','editorial_infographic','map_or_route','handwritten_card')
-        AND COALESCE(saa.prompt_version,'')<>'media-analysis-prompt-3'
+        AND COALESCE(saa.prompt_version,'') NOT IN ('media-analysis-prompt-3','media-analysis-prompt-4')
       ORDER BY av.slot LIMIT 3`).all(draftId);
   }
 
@@ -8720,6 +8830,11 @@ export class Repository {
     const timestamp = now();
     return transaction(this.db, () => {
       const previous = this.db.prepare("SELECT * FROM wordpress_content_inventory").all();
+      const inventorySignature = rows => JSON.stringify(rows.map(row => [
+        row.site_url || siteUrl, Number(row.post_id ?? row.postId), row.slug, row.title, row.status,
+        row.post_url ?? row.postUrl, row.modified_at ?? row.modifiedAt,
+      ]).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+      const inventoryChanged = inventorySignature(previous) !== inventorySignature(items);
       // V1 has one WordPress destination. Dropping previous-site rows prevents stale
       // candidates from being suppressed after the configured site changes.
       this.db.prepare("DELETE FROM wordpress_content_inventory").run();
@@ -8748,7 +8863,9 @@ export class Repository {
           last_error=NULL, item_count=excluded.item_count, updated_at=excluded.updated_at
       `).run(wordpressSyncKey(siteUrl), timestamp, timestamp, items.length, timestamp);
       this.invalidateInventoryLinkedCompositions(inventoryTargetChanges(previous, items), timestamp);
-      for (const row of this.db.prepare("SELECT slug FROM destinations").all()) this.enqueue("rebuild_topics", row.slug);
+      if (inventoryChanged) {
+        for (const row of this.db.prepare("SELECT slug FROM destinations").all()) this.enqueue("rebuild_topics", row.slug);
+      }
       return items.length;
     });
   }
@@ -9281,6 +9398,10 @@ export class Repository {
       const failure = explainOperationalFailure({ ...row, type });
       items.push(exceptionItem("sync", row.sync_key, "blocker", failure.headline, row.sync_key, failureDetail(failure), true, row.updated_at));
     }
+    const disk = diskUsage(this.diskMonitorPath);
+    const diskSeverity = diskHealthSeverity(disk);
+    if (diskSeverity) items.push(exceptionItem("sync", "disk:data", diskSeverity, "数据盘空间不足", this.diskMonitorPath,
+      describeDiskUsage(disk), false, now()));
     for (const row of this.db.prepare("SELECT task_key, last_error, updated_at FROM maintenance_runs WHERE status='failed'").all()) {
       const failure = explainOperationalFailure({ ...row, type: row.task_key || "maintenance" });
       items.push(exceptionItem("maintenance", row.task_key, "blocker", failure.headline, row.task_key, failureDetail(failure), false, row.updated_at));
@@ -10685,7 +10806,7 @@ function legacyBlockRecord(block, signature) {
 
 export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = [], policy = {}) {
   const maximum = policy.visuals?.maximum ?? 5;
-  const freeOriginalPolicy = String(draft.strategy_version || CONTENT_STRATEGY.version) === '3.9';
+  const freeOriginalPolicy = requiresOriginalBodyMedia(draft.strategy_version || CONTENT_STRATEGY.version);
   const articleFallbackMinimum = 0.34;
   const allowedPlacements = ["hero", "after_intro", "mid_article", "before_faq", "closing"];
   const allowedRatios = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"];
@@ -10717,16 +10838,25 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     || item?.media_metadata?.required_visual_obligation?.required === true);
   const obligations=eligible.filter(isRequired).length;
   let optionalCount=0;
-  const visuals = eligible.filter((item)=>isRequired(item)
+    const visuals = eligible.filter((item)=>isRequired(item)
       || optionalCount++ < Math.max(0,maximum-obligations))
-    .map((item, index) => normalizeVisual(item, index, draft, brief, allowedPlacements, allowedRatios));
+    .map((item, index) => {
+      // Body media under the original-photo policy cannot opt out by declaring
+      // an actual destination scene a non-factual illustration. Abstract covers
+      // have a separate explicit authorization workflow and are not body slots.
+      const request = freeOriginalPolicy && (!item.image_type || item.image_type === 'illustration')
+        ? {...item,image_type:'real_world_photo',factual_image_required:true,
+          acquisition_strategy:'search_real_image',generation_prompt:'',
+          status:'planned',media_url:'',provider:null,model:null} : item;
+      return normalizeVisual(request, index, draft, brief, allowedPlacements, allowedRatios);
+    });
   // A transformed image can faithfully reproduce its source and still mislead
   // readers when the source is a city-wide collage used as a single-attraction
   // image. The four-field derivative QA does not establish article relevance.
   // Keep such assets out of both exact-id reuse and article-level fallback,
   // including previously generated/qualified derivatives.
   const unsafeAttractionAssetIds = new Set(authorizedSourceAssets
-    .filter((asset) => assetUnsafeForFocusedAttraction(asset, brief, policy))
+    .filter((asset) => assetUnsafeForFocusedAttraction(asset, brief, policy, draft))
     .map((asset) => asset.id));
   const scopedRouteAssetIds=new Set(visuals.filter((visual)=>{
     const asset=authorizedSourceAssets.find((candidate)=>candidate.id===visual.source_asset_id);
@@ -10812,7 +10942,8 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
     const decision = decideVisualAsset(asset, visual);
     if (freeOriginalPolicy && visual.image_type === 'real_world_photo' && decision.action === 'retain'
       && (asset.local_photo_audit?.status !== 'eligible'
-        || asset.local_photo_audit.sha256 !== asset.original_sha256)) {
+        || asset.local_photo_audit.sha256 !== asset.original_sha256
+        || !hasImageLevelDescription(asset))) {
       return requiredVisualGap(visual,'original_photo_needs_local_quality_review');
     }
     if (decision.action === "reject") {
@@ -10881,7 +11012,7 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       const subject=readerVisualAlt(asset,"",brief.destination_slug);
       const decision=decideVisualAsset(asset,{image_subject:subject,purpose:`Evidence-linked view supporting ${draft.title}`});
       const freeOriginal=decision.action === 'retain' && asset.local_photo_audit?.status === 'eligible'
-        && asset.local_photo_audit.sha256 === asset.original_sha256;
+        && asset.local_photo_audit.sha256 === asset.original_sha256 && hasImageLevelDescription(asset);
       const usefulTranslation=decision.action === 'localize' && asset.analysis_status === 'ready'
         && (decision.translateRegionIds?.length > 0 || /^(?:zh|chinese|mixed)/i.test(asset.language_status || ''));
       return {asset,decision,score:articleAssetMatchScore(draft,brief,asset),
@@ -11041,16 +11172,17 @@ function sourceAnalysisSnapshot(asset={}) {
     confidence:asset.analysis_confidence || 0,analysis_version:asset.analysis_version || ""};
 }
 
-function assetUnsafeForFocusedAttraction(asset = {}, brief = {}, policy = {}) {
+function assetUnsafeForFocusedAttraction(asset = {}, brief = {}, policy = {}, draft = {}) {
   if(bindingBlocksPhoto(asset,brief)) return true;
   if (policy.content_type !== "attraction_guide") return false;
   if (bindingSupportsPhoto(asset,brief)) return false;
+  if (articleIncludesBoundPhoto(draft,brief,asset)) return false;
   // A destination-wide note may mention the attraction only as one route stop;
   // nearby prose and a list of recognized entities are not pixel-level proof.
   const focus = String(brief.topic || "").split(":", 1)[0];
   const focusTokens = topicTokens(focus);
   for (const token of topicTokens(brief.destination_slug || "")) focusTokens.delete(token);
-  const multiPlaceKind=["photo_collage","editorial_infographic","map_or_route"].includes(String(asset.asset_kind || ""));
+  const multiPlaceKind=["photo_collage","editorial_infographic","map_or_route","handwritten_card"].includes(String(asset.asset_kind || ""));
   const hasPixelSubjects=['ready','needs_review'].includes(asset.analysis_status)
     && (asset.primary_subjects || []).length > 0;
   const imageLevelTokens = topicTokens([
@@ -11104,9 +11236,41 @@ function readerVisualAlt(asset, fallback = "", destinationSlug = "") {
   return truncateText(`Photo of ${subject}${suffix}.`,220);
 }
 
+function hasImageLevelDescription(asset) {
+  return Boolean((asset.primary_subjects || []).length || asset.alt_text?.trim() || asset.caption_text?.trim());
+}
+
+function articleIncludesBoundPhoto(draft, brief, asset) {
+  if (asset.asset_kind !== 'documentary_photo' || asset.analysis_status !== 'ready'
+    || !(asset.primary_subjects || []).length) return false;
+  const body=` ${normalizeTitle(draft?.body_markdown || '')} `;
+  if ((asset.source_bindings || []).some(binding=>{
+    const name=normalizeTitle(binding.canonical_subject || '');
+    return name.length>=3 && body.includes(` ${name} `)
+      && bindingSupportsPhoto(asset,{destination_slug:brief?.destination_slug,
+        entity_key:binding.entity_key,purpose:binding.canonical_subject});
+  })) return true;
+  // A repeated alias is not resolved entity identity. It can still support an
+  // ordinary contextual photo when one explicit image caption names one place
+  // discussed in the article. Never extend this to exact-location slots.
+  const issues=(asset.source_binding_issues || []).filter(binding=>binding.destination_slug===brief?.destination_slug);
+  if (!issues.length || issues.some(binding=>binding.status!=='ambiguous'
+    || !binding.context_complete || binding.uncertain
+    || !['source_asserts_location','depicts_entity'].includes(binding.relation_type)
+    || !binding.evidence?.length || binding.evidence.some(proof=>proof.polarity!=='supports'))) return false;
+  const labels=new Set(issues.flatMap(binding=>binding.matched_aliases || []));
+  if (labels.size!==1 || !issues.some(binding=>[binding.canonical_subject,...(binding.subject_aliases || [])]
+    .some(name=>normalizeTitle(name).length>=3 && body.includes(` ${normalizeTitle(name)} `)))) return false;
+  const pixels=topicTokens(asset.primary_subjects.join(' '));
+  const article=topicTokens(draft.body_markdown || '');
+  const generic=new Set(['photo','image','city','view','people','street','building','buildings']);
+  return [...pixels].filter(token=>!generic.has(token) && article.has(token)).length>=3;
+}
+
 function articleAssetMatchScore(draft, brief, asset) {
   if(bindingBlocksPhoto(asset,{...brief,purpose:draft?.title})) return 0;
   if (bindingSupportsPhoto(asset,{...brief,purpose:draft?.title})) return 1;
+  if (articleIncludesBoundPhoto(draft,brief,asset)) return 1;
   const article = topicTokens(`${draft?.title || ""} ${draft?.body_markdown || ""}`);
   for (const token of topicTokens(brief?.destination_slug || "")) article.delete(token);
   const pixelDescribed=['ready','needs_review'].includes(asset.analysis_status)
@@ -11321,10 +11485,22 @@ function normalizeSourceAssetAnalysis(value = {}, asset = {}) {
   };
 }
 
+// Deferral placeholders written by earlier extraction runs: needs_review,
+// unknown kind, zero confidence and no pixel description at all.
+export function isDeferredMediaAnalysisPlaceholder(analysis = {}) {
+  const list=(value,key)=>Array.isArray(value) ? value : json(analysis[key],[]);
+  return analysis.analysis_status === "needs_review" && (analysis.asset_kind || "unknown") === "unknown"
+    && !Number(analysis.confidence ?? analysis.analysis_confidence ?? 0)
+    && !list(analysis.primary_subjects,"primary_subjects_json").length
+    && !list(analysis.text_regions,"text_regions_json").length
+    && !list(analysis.entities,"entities_json").length;
+}
+
 function hydrateSourceAssetAnalysis(row) {
   const textRegions=json(row.text_regions_json,[]);
   const assetKind=row.asset_kind || "unknown";
   let analysisStatus=row.analysis_status || "not_analyzed";
+  if (isDeferredMediaAnalysisPlaceholder(row)) analysisStatus="not_analyzed";
   if (analysisStatus === "ready" && sourceAnalysisRequiresRefresh(assetKind,row.reader_text_present == null ? null : Boolean(row.reader_text_present),textRegions,row.analysis_version)) {
     analysisStatus="needs_review";
   }
@@ -12702,4 +12878,54 @@ function safeDiagnosticValue(value,depth=0,key="") {
   if (typeof value === "object") return Object.fromEntries(Object.entries(value).slice(0,120)
     .map(([name,item])=>[name,safeDiagnosticValue(item,depth+1,name)]));
   return String(value).slice(0,500);
+}
+
+// Bounded, value-free view of a destination's Knowledge for duplicate and
+// completeness judgement: which subjects are covered, by which predicates and
+// how well corroborated. Output size is independent of evidence volume.
+export function destinationCoverageSummary(facts = [], { maxSubjects = 60, maxPredicates = 12 } = {}) {
+  const subjects = new Map();
+  for (const fact of facts) {
+    const subject = String(fact.subject || "").trim();
+    if (!subject) continue;
+    const entry = subjects.get(subject) || { subject, facts: 0, corroborated: 0, predicates: new Set() };
+    entry.facts += 1;
+    if (fact.consensus_status === "corroborated") entry.corroborated += 1;
+    if (fact.predicate) entry.predicates.add(String(fact.predicate));
+    subjects.set(subject, entry);
+  }
+  const ranked = [...subjects.values()].sort((a, b) => b.facts - a.facts || a.subject.localeCompare(b.subject));
+  return {
+    fact_count: facts.length,
+    subject_count: ranked.length,
+    subjects: ranked.slice(0, maxSubjects).map((entry) => ({ subject: entry.subject, facts: entry.facts,
+      corroborated: entry.corroborated, predicates: [...entry.predicates].slice(0, maxPredicates) })),
+    omitted_subjects: Math.max(0, ranked.length - maxSubjects),
+  };
+}
+
+// Whole-image Image Card descriptor stored as a photo region by extraction.
+export function imageCardOf(asset = {}) {
+  const region=(asset.photo_regions || json(asset.photo_regions_json,[])).find((item)=>item?.source==="image-card-1");
+  return region ? {scene:region.scene,photo_quality:region.photo_quality,editorial_use:region.editorial_use,
+    alt_text:region.alt_text,place_names:region.place_names || []} : null;
+}
+
+/** Stable ranking of authorized source images for article planning: pixel-analyzed
+ * photos that depict the topic's named places first, then editorial quality.
+ * Unusable or evidence-only cards sink; retrieval order breaks ties. */
+export function rankPlanningAssets(assets = [], { title = "", targetEntities = [] } = {}) {
+  const tokens=(value)=>new Set(String(value || "").toLowerCase().normalize("NFKC")
+    .split(/[^\p{L}\p{N}]+/u).filter((token)=>token.length>1 || /\p{Script=Han}/u.test(token)));
+  const wanted=tokens([title,...targetEntities.map((item)=>typeof item==="string" ? item : item?.name || item?.canonical_subject || "")].join(" "));
+  const useScore={hero:3,body:2,evidence_only:-2,unusable:-6};
+  const qualityScore={high:1,medium:0.5,low:-1};
+  return assets.map((asset,index)=>{
+    const card=imageCardOf(asset);
+    const depicted=tokens([...(asset.primary_subjects || []),...(asset.entities || []),...(card?.place_names || [])].join(" "));
+    const overlap=[...depicted].filter((token)=>wanted.has(token)).length;
+    const analyzed=asset.analysis_status==="ready" ? 2 : asset.analysis_status==="needs_review" ? 0.5 : 0;
+    const score=analyzed+Math.min(3,overlap)*1.5+(card ? (useScore[card.editorial_use] || 0)+(qualityScore[card.photo_quality] || 0) : 0);
+    return {asset,index,score};
+  }).sort((left,right)=>right.score-left.score || left.index-right.index).map((item)=>item.asset);
 }

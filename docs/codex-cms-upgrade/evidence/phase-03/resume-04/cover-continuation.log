@@ -1,0 +1,69 @@
+(node:35528) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"nonempty_samples":30,"p50_ms":2.059899999999743,"p95_ms":3.8158000000003085,"provider_calls":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","api_only":true}
+✔ actual authenticated API streaming, ownership, CSRF, confirmation, lost receipt recovery and nonempty latency (2670.3181ms)
+(node:5836) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✖ manual cover geometry completes the existing media revision without resetting body or buying QA (945.1048ms)
+✔ display capacity rejects adoption with exact excess while preserving stored originals (1211.1458ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (2072.7323ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (2172.5741ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ explicit revocation restores old slot exactly with an appended revision and no provider work (1450.7119ms)
+✔ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (681.4341ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ media-only receiver protocol retains old receipts and reconciles unknown outcomes without duplicate upload (1396.055ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1463.9636ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (10877.6656ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (695.8843ms)
+(node:1504) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit selected cover overrides a populated featured ID; strict schemas keep optional card text internal; capacity never truncates (3.2085ms)
+✔ durable cover-only protocol reconciles lost results without upload replay or changing prior article receipts (1608.2652ms)
+✔ cover illustration maximum is cumulative and rejected before provider credentials or dispatch (0.6609ms)
+(node:30032) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ actual cover output normalizes EXIF, preserves alpha and never enlarges small images (1288.4641ms)
+✔ real cover pixels, explicit preview confirmation, CAS, history and body preservation (2125.185ms)
+✔ unsafe geometry, stale source relation and concurrent confirmations cannot save a cover (1459.5911ms)
+✔ retained original photo uses existing deterministic qualification without fabricating model QA (883.2501ms)
+✔ cover history files restore across directories, cleanup preserves references, and review does not dispatch (1340.4983ms)
+(node:34844) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"success","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: success, actual bytes and rendered HTML (2511.7411ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"lost","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":1,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: lost, actual bytes and rendered HTML (2035.3626ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"behavior":"partial","scope":"CMS loopback receiver; not WordPress","uploads":1,"writes":1,"reconciles":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","provider_calls":0}
+✔ T03-23/24/32 local HTTP body receiver: partial, actual bytes and rendered HTML (1597.3304ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 21
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 23533.1274
+
+✖ failing tests:
+
+test at test\article-media.test.mjs:27:1
+✖ manual cover geometry completes the existing media revision without resetting body or buying QA (945.1048ms)
+  Error: 封面与正文使用独立槽位，请为此用途新增槽位。
+      at fail (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:18:57)
+      at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:178:100
+      at Array.map (<anonymous>)
+      at ArticleMediaService.plan (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/src/services/article-media.mjs:169:39)
+      at TestContext.<anonymous> (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/test/article-media.test.mjs:30:24)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    code: 'MEDIA_PURPOSE_CONFLICT',
+    statusCode: 409
+  }

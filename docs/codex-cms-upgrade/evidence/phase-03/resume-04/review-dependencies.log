@@ -1,0 +1,72 @@
+(node:32248) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-29/39/40 confirmed stop photo proceeds locally; a conflicting Day image stays saved and cannot rewrite approved text (2695.3113ms)
+✔ T03-36/38 photo cannot replace a whole-day obligation; claimed matching Day cannot bypass pixel QA or stale approval (614.6966ms)
+✔ T03-42/44 failed manual recomposition keeps its budget across restart and new confirmation (857.8684ms)
+(node:26392) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ real Pipeline uploads qualified web bytes, persists lineage and rejects tampered derivatives without rewriting the master (841.8533ms)
+✔ required nonfactual images keep the text and block delivery when two of three slots are missing (624.5263ms)
+✔ manifest cannot be rewritten within one revision and missing manifest does not imply no-image approval (604.5216ms)
+✔ a cached article payload cannot bypass the latest database gate at WordPress upsert (591.4473ms)
+✔ a QA note identifying a place-name typo blocks publication despite four passed scores (559.7026ms)
+✔ a near-zero factual source match cannot pass merely because image QA says passed (578.5779ms)
+✔ an infographic cannot be captioned as a photograph even when image QA passed (578.6312ms)
+✔ legacy successful image bytes and independent QA are rebound by SHA without another provider call (548.1432ms)
+✔ legacy image recovery refuses failed and changed-plan visuals (567.5461ms)
+✔ a strategy 3.9 source photo requires its authoritative local audit, not visual metadata (545.8622ms)
+✔ low lexical match is allowed only by a source-recorded confirmation for this draft (565.4577ms)
+✔ an older brief accepts an audited documentary original with authentic place signage after a prose revision (555.3659ms)
+✔ historical refresh plans removal of an optional original that fails the new audit (575.8613ms)
+(node:25264) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ planning and actual writer/reviewer distinguish knowledge from an explicitly approved mixed section (790.6972ms)
+✔ optional route renderer failure is omitted durably and continues to independent review without rewriting (822.7987ms)
+✖ real Worker route page composition can upload before text QA, while final delivery still rejects missing QA (1220.3564ms)
+✔ real planning, writer and independent review carry frozen route; no route/SEO/diagram model calls (720.8298ms)
+✔ actual Worker separates successful writing from local schematic media stage (828.3826ms)
+✔ real Worker image-only recovery retains written draft, manifest and cumulative slot budget (1181.7364ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ mixed media image-only recovery keeps the completed source photo bytes and receipt intact (2637.7117ms)
+✔ actual Worker blocks itinerary without source fragments before a writer/model call (581.5056ms)
+✔ new recovery jobs cannot reset the local route render budget (823.5089ms)
+✔ two actual source extractions retain scoped field conflict and block Worker before writing (633.9264ms)
+✔ actual planning consumes stored composition scope and excludes old extraction inputs (579.1006ms)
+✔ route visual late results are rejected and changing a plan preserves its cumulative slot recovery budget (581.3155ms)
+(node:29156) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-42 legacy route alt receipt remains renderable; v2 is explicit and unknown policy fails closed (822.2425ms)
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: single-source (1530.8048ms)
+ℹ {"variant":"single-source","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"053c736c7f754e1012497f80b5c19fff1815f32cd3f9e497316c1bc9a20cb0e9","draw_days":1,"html_sha256":"a7bf5dfcc3fad9b430c95efa039ceb5b748465366fb58c0469ec4be4e76d4958","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: evidence-composed (1626.5304ms)
+ℹ {"variant":"evidence-composed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"7c0c6726185b813595071d893f89577a9f1e221b3cfcb50d0b06935cc861e81f","draw_days":3,"html_sha256":"f1c0dbbb2243c040bad1a925926b42a063ca08d001ffc99b046e54704300387b","image_sha256":"c66f3ab31eb2e0dcbb1eab7ec00eee569224159d455071bbdf00b72a91718c69"}
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: mixed (3685.7014ms)
+ℹ {"variant":"mixed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"98ccb101d7ad9c24f995f579facc9023b9b4b02abb73866d4db26526e46f2dac","draw_days":1,"html_sha256":"c63a64eb7d9e6855991c116532eb7ca76abcf01f163debfbf523bd05188515a3","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+ℹ tests 32
+ℹ suites 0
+ℹ pass 31
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11987.2866
+
+✖ failing tests:
+
+test at test\route-production.test.mjs:115:1
+✖ real Worker route page composition can upload before text QA, while final delivery still rejects missing QA (1220.3564ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+  
+  'f75023152f99c0f853f3c601e9f63c738513425209a44599510e7ae707a275ce'
+      at TestContext.<anonymous> (file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/test/route-production.test.mjs:163:10)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'f75023152f99c0f853f3c601e9f63c738513425209a44599510e7ae707a275ce',
+    expected: 'f75023152f99c0f853f3c601e9f63c738513425209a44599510e7ae707a275ce',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }

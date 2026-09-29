@@ -1,0 +1,33 @@
+(node:12312) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ pinned contract integrity and strict fields never imply deployed receiver capabilities (2.0432ms)
+✔ cover plan preserves natural signs but rejects dense cards, screenshots, wrong entity and stale QA (3.9469ms)
+✔ cover locks never silently switch to another candidate and relevance is required before ordering (0.297ms)
+✔ 16:9 plan is exact, bounded, EXIF-coordinate based and never enlarges a small source (0.2413ms)
+✔ real SQLite dry-run preserves draft, media, publication, jobs and calls; unavailable historical masters remain rejected (814.7049ms)
+✔ actual authenticated HTTP cover audit is read-only and rejects stale revisions (736.6027ms)
+(node:21248) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit selected cover overrides a populated featured ID; strict schemas keep optional card text internal; capacity never truncates (2.658ms)
+✔ durable cover-only protocol reconciles lost results without upload replay or changing prior article receipts (1364.2587ms)
+✔ cover illustration maximum is cumulative and rejected before provider credentials or dispatch (0.6332ms)
+(node:10440) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ actual cover output normalizes EXIF, preserves alpha and never enlarges small images (1090.3782ms)
+✔ real cover pixels, explicit preview confirmation, CAS, history and body preservation (1833.0461ms)
+✔ unsafe geometry, stale source relation and concurrent confirmations cannot save a cover (1341.6924ms)
+✔ retained original photo uses existing deterministic qualification without fabricating model QA (813.2519ms)
+✔ cover history files restore across directories, cleanup preserves references, and review does not dispatch (1267.6204ms)
+(node:6720) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-29/39/40 confirmed stop photo proceeds locally; a conflicting Day image stays saved and cannot rewrite approved text (2445.0606ms)
+✔ T03-36/38 photo cannot replace a whole-day obligation; claimed matching Day cannot bypass pixel QA or stale approval (678.86ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6879.5926

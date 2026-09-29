@@ -1,0 +1,211 @@
+ M docs/codex-cms-upgrade/EXTERNAL_DEPENDENCIES.md
+ M docs/codex-cms-upgrade/STATUS.md
+ M docs/codex-cms-upgrade/acceptance/phase-02.md
+ M frontend/src/App.jsx
+ M src/ai/content-engine.mjs
+ M src/backup.mjs
+ M src/capture-media-upload.mjs
+ M src/config.mjs
+ M src/db.mjs
+ M src/local-photo-audit.mjs
+ M src/local-runtime.mjs
+ M src/media-delivery.mjs
+ M src/media-storage.mjs
+ M src/pipeline.mjs
+ M src/publication-eligibility.mjs
+ M src/publish-page.mjs
+ M src/repository.mjs
+ M src/route-media.mjs
+ M src/server.mjs
+ M src/visuals/vertex-imagen.mjs
+ M src/wordpress.mjs
+ M test/backup.test.mjs
+ M test/media-delivery.test.mjs
+ M test/publication-eligibility.test.mjs
+ M test/route-media.test.mjs
+ M test/visuals.test.mjs
+?? docs/codex-cms-upgrade/evidence/phase-02/b-resume/baseline.json
+?? docs/codex-cms-upgrade/evidence/phase-02/b-resume/check.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b-resume/local-acceptance.md
+?? docs/codex-cms-upgrade/evidence/phase-02/b-resume/targeted.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/atomic-budget-audit.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/audit-regression.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/baseline.json
+?? docs/codex-cms-upgrade/evidence/phase-02/b/browser.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/check.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/files.json
+?? docs/codex-cms-upgrade/evidence/phase-02/b/git-final.txt
+?? docs/codex-cms-upgrade/evidence/phase-02/b/historical-stderr.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/historical.json
+?? docs/codex-cms-upgrade/evidence/phase-02/b/http-pipeline.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/integration-first.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/local-acceptance.md
+?? docs/codex-cms-upgrade/evidence/phase-02/b/module-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/module-first.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/panel-first.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/panel-module.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/receipt-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/b/samples.json
+?? docs/codex-cms-upgrade/evidence/phase-02/b/targeted-first.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/backup.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/baseline.json
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/browser-before.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/browser-final-saved.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/browser-form.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/browser-persisted.json
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/browser-result-file.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/browser-result.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/check.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/checkpoint.md
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/files.json
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/final-check.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/final-historical-stderr.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/final-historical.json
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/final-regression.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/final-ui-build.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/git-final.txt
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/historical-stderr.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/historical.json
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/module-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/module.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c-selection/targeted.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c/api-targeted.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c/check.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c/checkpoint.md
+?? docs/codex-cms-upgrade/evidence/phase-02/c/files.json
+?? docs/codex-cms-upgrade/evidence/phase-02/c/git-final.txt
+?? docs/codex-cms-upgrade/evidence/phase-02/c/historical-final-stderr.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c/historical-final.json
+?? docs/codex-cms-upgrade/evidence/phase-02/c/historical-stderr.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c/historical.json
+?? docs/codex-cms-upgrade/evidence/phase-02/c/module-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c/module.log
+?? docs/codex-cms-upgrade/evidence/phase-02/c/targeted.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-101.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-413-accepted.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-413-clean.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-413-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-413-pass.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-413.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-final-state.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-menu-switch-accepted.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-menu-switch-fixed.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-menu-switch.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-resume-after-fix.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-resume-clean.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-resume-final-accepted.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-resume-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-resume-pass.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-resume-verified.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-resume.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser-revoke-authoritative.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/browser.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build-after-pause-fix.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build-chunk-worker-fixed.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build-chunk-worker.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build-final-error-recovery.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build-hash-yield.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build-menu-effect-split.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build-menu-unmount-fix.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build-menu-unmount-pause.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build-native-hash.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build-post-profile.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/build.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/capacity.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/check-complete.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/check.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/chunk-worker-diagnostic.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/chunk-worker-fixed.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/closeout-check.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/closeout-module.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/cover-inventory-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/cover-tests.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/exploratory-audit-final.json
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/exploratory-audit-final.stderr
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/exploratory-audit.json
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/exploratory-audit.stderr
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/fault-injection.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/files.json
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/final-check.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/final-hardening.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/final-regression.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/git-final.txt
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/hash-native-boundary.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/hash-yield-test.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/historical-manual-complete.json
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/historical-manual-complete.stderr
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/historical-manual-final.json
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/historical-manual.json
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/http-large.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/local-acceptance.md
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/manual-tests.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/menu-benchmark-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/menu-benchmark.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/menu-loaded-after-yield.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/menu-loaded-chunk-worker-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/menu-loaded-chunk-worker.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/menu-loaded-foreground.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/menu-loaded-native-hash.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/menu-loaded-profile.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/menu-loaded.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/menu-under-server-load.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/node-server-load.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/phase-03-04-precheck.md
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/post-doc-hardening.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/state-backup.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/targeted-final.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/targeted-fixed.log
+?? docs/codex-cms-upgrade/evidence/phase-02/cd/upstream-regression.log
+?? frontend/src/lib/file-hash-worker.js
+?? frontend/src/lib/file-hash.js
+?? frontend/src/workspaces/article-media.jsx
+?? frontend/src/workspaces/cover-selection.jsx
+?? scripts/stage02-browser-benchmark-server.mjs
+?? scripts/stage02-browser-menuswitch-server.mjs
+?? scripts/stage02-browser-resume-server.mjs
+?? scripts/stage02-cd-exploratory-audit.mjs
+?? scripts/stage02-cover-audit-replay.mjs
+?? scripts/stage02-cover-browser-fixture.mjs
+?? scripts/stage02-manual-media-replay.mjs
+?? scripts/stage02-menu-server-load.mjs
+?? scripts/stage02-web-media-replay.mjs
+?? scripts/stage02-web-media-samples.mjs
+?? scripts/verify-stage02-chunk-worker-diagnostic.js
+?? scripts/verify-stage02-cover-browser.js
+?? scripts/verify-stage02-manual-413.js
+?? scripts/verify-stage02-manual-browser-batch.js
+?? scripts/verify-stage02-manual-browser.js
+?? scripts/verify-stage02-manual-final-state.js
+?? scripts/verify-stage02-manual-loaded-menu-chunk-worker.js
+?? scripts/verify-stage02-manual-loaded-menu-foreground.js
+?? scripts/verify-stage02-manual-loaded-menu.js
+?? scripts/verify-stage02-manual-menu-benchmark.js
+?? scripts/verify-stage02-manual-menu-under-server-load.js
+?? scripts/verify-stage02-manual-resume-clean.js
+?? scripts/verify-stage02-manual-resume.js
+?? scripts/verify-stage02-menu-during-upload.js
+?? scripts/verify-stage02-web-media-browser.js
+?? src/cover-contract.mjs
+?? src/cover-media.mjs
+?? src/cover-policy.mjs
+?? src/services/article-media-delivery.mjs
+?? src/services/article-media.mjs
+?? src/services/cover-audit.mjs
+?? src/services/cover-delivery.mjs
+?? src/services/cover-inventory.mjs
+?? src/services/cover-selection.mjs
+?? src/visuals/route-panel.mjs
+?? src/web-media.mjs
+?? test-support/cover-fixture.mjs
+?? test/article-media-faults.test.mjs
+?? test/article-media-http.test.mjs
+?? test/article-media-large.test.mjs
+?? test/article-media.test.mjs
+?? test/cover-audit.test.mjs
+?? test/cover-delivery.test.mjs
+?? test/cover-inventory.test.mjs
+?? test/cover-selection.test.mjs
+?? test/file-hash.test.mjs
+?? test/web-media-http.test.mjs
+?? test/web-media.test.mjs

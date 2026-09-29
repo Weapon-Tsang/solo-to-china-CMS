@@ -1,0 +1,18 @@
+(node:20700) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/scripts/stage02-cd-exploratory-audit.mjs:16
+  for(const row of db.prepare('SELECT a.local_path,a.sha256 FROM article_media_uploads u JOIN source_assets a ON a.id=u.asset_id').all())assert.ok(fs.existsSync(row.local_path),'stored original missing');
+                      ^
+
+Error: no such column: a.sha256
+    at file:///C:/Users/Mloong/Documents/ChatGPT/solo-to-china-CMS/scripts/stage02-cd-exploratory-audit.mjs:16:23
+    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:661:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  code: 'ERR_SQLITE_ERROR',
+  errcode: 1,
+  errstr: 'SQL logic error'
+}
+
+Node.js v24.14.0

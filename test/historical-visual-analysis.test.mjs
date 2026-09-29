@@ -47,6 +47,11 @@ test('an article may checkpoint analysis for its frozen historical source asset'
   },{forDraftId:'draft',forVisualId:'visual'}),true);
   assert.deepEqual(repository.sourceVisualReanalysisCandidates('draft'),[],
     'the verified analysis is durable and is not charged again');
+  assert.equal(repository.saveSourceAssetAnalysis('old-asset',{
+    ...analysis,prompt_version:'media-analysis-prompt-4',primary_subjects:['Chongqing travel advisory card']
+  },{forDraftId:'draft',forVisualId:'visual'}),true);
+  assert.deepEqual(repository.sourceVisualReanalysisCandidates('draft'),[],
+    'the current context-aware prompt must not trigger repeated paid re-analysis');
 });
 
 test('an empty historical article plan discovers a frozen original once and uses only its pixel subject', async (t) => {
@@ -184,4 +189,32 @@ test('an empty historical article plan discovers a frozen original once and uses
     'MEDIA_DISCOVERY_BUDGET_EXHAUSTED');
   assert.equal(analyses,5,'a resumed Job may inspect only the one remaining budgeted source');
   assert.equal(repository.sourceVisualDiscoveryCandidates('other-draft').length,1);
+});
+
+test('empty-caption original from a named attraction source outranks larger city-wide images for inspection only',t=>{
+ const {db,repository,directory}=repositoryFixture(t);
+ const file=path.join(directory,'photo.png');fs.writeFileSync(file,png);
+ db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at)
+ VALUES ('b','chongqing','Nanbin Road','travelers','guide','ready','now','now')`).run();
+ db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at)
+ VALUES ('d','b','Nanbin Road','nanbin','Nanbin Road','{}','needs_review','now','now')`).run();
+ repository.upsertEntityAlias('chongqing','nanbinroad',{entityKey:'attraction.nanbin_road',canonicalSubject:'Nanbin Road',aliases:['Nanbin Road','南滨路']},'model',.99);
+ repository.getWritingPacket=()=>null;
+ let retrievalLimit;
+ repository.authorizedSourceAssetsForBrief=(_brief,options)=>{retrievalLimit=options.limit;return [
+  {id:'city',source_id:'city-source',source_title:'Chongqing travel guide',width:4000,height:3000,local_path:file,analysis_status:'not_analyzed',capture_version:1,source_capture_version:1},
+  {id:'nanbin',source_id:'nanbin-source',source_title:'南滨路摄影散步',width:1600,height:900,local_path:file,analysis_status:'not_analyzed',capture_version:1,source_capture_version:1}];};
+ assert.deepEqual(repository.sourceVisualDiscoveryCandidates('d',{limit:1}),['nanbin']);
+ assert.equal(retrievalLimit,1000);
+ assert.deepEqual(repository.listDraftVisuals('d'),[],'ranking alone must never create a factual image');
+ db.prepare("UPDATE content_briefs SET strategy_version='3.9' WHERE id='b'").run();
+ db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,
+ aspect_ratio,status,created_at,updated_at,image_type,acquisition_strategy)
+ VALUES ('card','d',1,'hero','Visitor information','Visitor information','','16:9','planned','now','now',
+ 'infographic','recompose_editorial_card')`).run();
+ assert.deepEqual(repository.sourceVisualDiscoveryCandidates('d',{limit:1}),['nanbin'],
+   'an existing information card must not block discovery of authorized original photos');
+ db.prepare("UPDATE article_visuals SET image_type='real_world_photo',acquisition_strategy='use_authorized_source_image',status='generated' WHERE id='card'").run();
+ assert.deepEqual(repository.sourceVisualDiscoveryCandidates('d'),[],
+   'satisfied original-photo coverage must not trigger another paid discovery scan');
 });

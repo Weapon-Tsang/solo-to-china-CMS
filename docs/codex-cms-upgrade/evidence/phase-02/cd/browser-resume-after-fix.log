@@ -1,0 +1,9 @@
+### Error
+Error: locator.setInputFiles: Error: strict mode violation: getByTestId('article-media').getByLabel('重新选择此原件以续传') resolved to 3 elements:
+    1) <input type="file" class="block w-full"/> aka getByRole('article').filter({ hasText: 'proxy-413-retry.png · 0.03 MB' }).getByLabel('重新选择此原件以续传')
+    2) <input type="file" class="block w-full"/> aka getByRole('article').filter({ hasText: 'proxy-413-clean.png · 0.03 MB' }).getByLabel('重新选择此原件以续传')
+    3) <input type="file" class="block w-full"/> aka getByRole('article').filter({ hasText: 'resume-valid-recovery.png ·' }).getByLabel('重新选择此原件以续传')
+
+Call log:
+[2m  - waiting for getByTestId('article-media').getByLabel('重新选择此原件以续传')[22m
+

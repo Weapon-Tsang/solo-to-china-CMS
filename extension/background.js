@@ -16,6 +16,7 @@ const STATE_KEY = "favoritesSyncState";
 const SETTINGS_KEY = "favoritesSyncSettings";
 const SCOPES_KEY = "favoritesSyncScopes";
 const HISTORY_KEY = "favoritesSyncHistory";
+const CONNECTION_ISSUE_KEY = "favoritesConnectionIssue";
 const TICK_ALARM = "stc-favorites-tick";
 const AUTO_ALARM = "stc-favorites-auto";
 const DIRECT_CAPTURE_BYTES = 3_500_000;
@@ -136,6 +137,9 @@ async function handleMessage(message) {
       const settings = await settingsWithConnection({ ...previous, ...requested,
         token: String(requested.token || "").trim() || previous.token });
       await chrome.storage.local.set({ [SETTINGS_KEY]: settings, endpoint: settings.endpoint, token: settings.token });
+      if (settings.endpoint !== previous.endpoint || settings.token !== previous.token) {
+        await chrome.storage.local.set({ [CONNECTION_ISSUE_KEY]: null });
+      }
       configureMediaResources(settings);
       const session = await mutateState(null, (current) => current && !["completed", "completed_with_failures", "cancelled"].includes(current.status)
         ? applySettingsToSession(current, settings) : current);
@@ -148,6 +152,10 @@ async function handleMessage(message) {
       return { ok: true, settings: publicSettings(settings), session };
     }
     case "START_SYNC": return singleCommand(() => startSync(["incremental","repair","full"].includes(message.mode) ? message.mode : "incremental"));
+    case "CHECK_CONNECTION": {
+      await assertFavoritesSyncApi();
+      return { ok: true };
+    }
     case "PAUSE_SYNC": return pauseSync("paused_by_user");
     case "RESUME_SYNC": return singleCommand(resumeSync);
     case "CANCEL_SYNC": return cancelSync();
@@ -237,6 +245,12 @@ async function drive() {
 }
 
 async function discoverWindow(session) {
+  // Drain discovered work before scanning again. A short collection may never
+  // render an explicit end marker; its scan timeout must not starve this queue.
+  if (session.queue.some(task => task.status === 'queued')) {
+    session.phase = 'acquisition';
+    return session;
+  }
   const signal = runSignal(session);
   const tab = await ensureDiscoveryTab(session);
   await injectExtractor(tab.id, signal);
@@ -274,7 +288,7 @@ async function discoverWindow(session) {
   if (session.status !== "running") return session;
   const shouldStop = shouldStopDiscovery(session);
   const backlog = session.queue.filter((task) => ["queued", "retry_wait"].includes(task.status)).length;
-  if (shouldStop || session.stopAfterQueue || backlog >= session.config.queueHighWatermark) {
+  if (shouldStop || session.stopAfterQueue || backlog > 0) {
     session.discoveryComplete = shouldStop || session.stopAfterQueue;
     session.phase = "acquisition";
     return session;
@@ -579,11 +593,21 @@ async function identityCheck(cards, configuredSettings = null, signal) {
 
 async function assertFavoritesSyncApi(settings = null) {
   settings ||= await loadSettings();
-  let url;
-  try { url = new URL(settings.endpoint); } catch { throw syncError('CAPTURE_ENDPOINT_INVALID', 'CMS 地址无效。', false); }
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw syncError('CAPTURE_ENDPOINT_INVALID', 'CMS 地址必须为 HTTP(S)，不能包含凭证。', false);
-  if (chrome.permissions && !await chrome.permissions.contains({ origins: [`${url.origin}/*`] })) throw syncError('CAPTURE_HOST_PERMISSION', '扩展没有该 CMS 地址的访问权限。', false);
-  await identityCheck([], settings);
+  try {
+    let url;
+    try { url = new URL(settings.endpoint); } catch { throw syncError('CAPTURE_ENDPOINT_INVALID', 'CMS 地址无效。', false); }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw syncError('CAPTURE_ENDPOINT_INVALID', 'CMS 地址必须为 HTTP(S)，不能包含凭证。', false);
+    if (!settings.token && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+      throw syncError('CAPTURE_TOKEN_MISSING', '尚未配置采集令牌。', false);
+    }
+    if (chrome.permissions && !await chrome.permissions.contains({ origins: [`${url.origin}/*`] })) throw syncError('CAPTURE_HOST_PERMISSION', '扩展没有该 CMS 地址的访问权限。', false);
+    await identityCheck([], settings);
+    await chrome.storage.local.set({ [CONNECTION_ISSUE_KEY]: null });
+  } catch (error) {
+    // Persist only the failure code, never credentials or raw server responses.
+    await chrome.storage.local.set({ [CONNECTION_ISSUE_KEY]: { code: String(error.code || 'NETWORK_ERROR'), timestamp: new Date().toISOString() } });
+    throw error;
+  }
 }
 
 async function apiJson(url, options, token) {
@@ -1106,7 +1130,7 @@ async function waitForTab(tabId, timeoutMs, signal) {
 }
 
 async function loadSettings() { const stored = await chrome.storage.local.get({ endpoint: DEFAULT_ENDPOINT, token: DEFAULT_CAPTURE_TOKEN, [SETTINGS_KEY]: {} }); return settingsWithConnection({ endpoint: stored.endpoint, token: stored.token, ...stored[SETTINGS_KEY] }); }
-async function settingsWithConnection(value) { const endpoint = String(value.endpoint || DEFAULT_ENDPOINT).replace(/\/$/, ""); return { ...normalizeSettings(value), endpoint, token: String(value.token || DEFAULT_CAPTURE_TOKEN), autoSync: ["off", "startup", "daily"].includes(value.autoSync) ? value.autoSync : "off", lastScopeUrl: value.lastScopeUrl || "", lastScopeKey: value.lastScopeKey || "" }; }
+async function settingsWithConnection(value) { const endpoint = String(value.endpoint || DEFAULT_ENDPOINT).trim().replace(/\/$/, ""); return { ...normalizeSettings(value), endpoint, token: String(value.token || DEFAULT_CAPTURE_TOKEN).trim(), autoSync: ["off", "startup", "daily"].includes(value.autoSync) ? value.autoSync : "off", lastScopeUrl: value.lastScopeUrl || "", lastScopeKey: value.lastScopeKey || "" }; }
 async function loadState() { return (await chrome.storage.local.get({ [STATE_KEY]: null }))[STATE_KEY]; }
 async function saveState(session) { session.updatedAt = new Date().toISOString(); await chrome.storage.local.set({ [STATE_KEY]: session }); }
 async function mutateState(sessionId, mutator) {
@@ -1163,7 +1187,8 @@ async function publicState() {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
   const currentScope = scopeFromUrl(activeTab?.url || "");
   const currentPageKind = isFavoritesAlbumOverviewUrl(activeTab?.url || "") ? "album_overview" : currentScope ? "collection" : "other";
-  return { session, currentScope, currentPageKind, settings: publicSettings(settings), history };
+  const connectionIssue = (await chrome.storage.local.get({ [CONNECTION_ISSUE_KEY]: null }))[CONNECTION_ISSUE_KEY];
+  return { session, currentScope, currentPageKind, settings: publicSettings(settings), history, connectionIssue };
 }
 async function reportSession(session) {
   const settings = await loadSettings();
@@ -1213,4 +1238,4 @@ async function hashBytes(bytes) { const digest = await crypto.subtle.digest("SHA
 function bytesToBase64(bytes) { let output = ""; const block = 0x8000; for (let index = 0; index < bytes.length; index += block) output += String.fromCharCode(...bytes.subarray(index, index + block)); return btoa(output); }
 
 export { handleMessage, restoreAfterRestart, watchdog, persistCaptureMedia, apiJson, execute, handleDriverError,
-  createOwnedTab, ensureDiscoveryTab, closeWorkerTabs, persistProgress, waitForTab, startAutomaticSync };
+  createOwnedTab, ensureDiscoveryTab, closeWorkerTabs, persistProgress, waitForTab, startAutomaticSync, discoverWindow };

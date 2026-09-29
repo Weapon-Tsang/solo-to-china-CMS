@@ -405,7 +405,7 @@ function ChangePasswordScreen({ onChanged }) {
 }
 
 function AuthShell({ title, description, children }) {
-  return <main className="grid min-h-screen place-items-center bg-slate-50 px-4"><Card className="w-full max-w-sm p-7 shadow-sm"><div className="mb-6"><div className="mb-4 grid size-10 place-items-center rounded-xl bg-slate-950 text-sm font-semibold text-white">S</div><h1 className="text-xl font-semibold tracking-tight text-slate-950">{title}</h1><p className="mt-2 text-sm leading-6 text-slate-500">{description}</p></div>{children}</Card></main>;
+  return <main className="grid min-h-screen place-items-center bg-slate-50 px-4"><Card className="w-full max-w-sm p-7 shadow-sm"><div className="mb-6"><img src="/brand/solotochina-logo.jpg" alt="SoloToChina" width="64" height="64" className="mb-4 size-16 rounded-xl bg-white object-contain" /><h1 className="text-xl font-semibold tracking-tight text-slate-950">{title}</h1><p className="mt-2 text-sm leading-6 text-slate-500">{description}</p></div>{children}</Card></main>;
 }
 
 function AuthField({ label, type = "text", value, onChange, autoComplete, hint }) {

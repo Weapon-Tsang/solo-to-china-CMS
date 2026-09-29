@@ -1,0 +1,156 @@
+{
+  "scope": "Existing historical graph, transient schema83 plus manual upload/confirmation inside outer rollback. Synthetic images are NOT historical image acceptance.",
+  "directory": "C:\\Users\\Mloong\\AppData\\Local\\Temp\\cms-d-historical-2ioqqG",
+  "transient_schema": 83,
+  "items": [
+    {
+      "draft_id": "draft_0ff3fa83e3c844fc807f8c8f1e1ffe88",
+      "revision": 3,
+      "body_hash": "ef0b42ac2890ef67b6602202da7586d120c604bd1bff2ae2f6a2e04b4a1c44b5",
+      "slot": "visual_fc264b4ad54945338b54ecf16b05ecb3",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_359330e87f9c4f24b97fa88bf499d448",
+      "revision": 4,
+      "body_hash": "d28e079c2b5854b6cae2875f660a9fb629d7d33f2bbce28065d59b3b4baf46f5",
+      "slot": "visual_8f97cfa9182e4d6a990a33a9d07a8fc2",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_363b4984860b46d9ba4830d92dd7ac34",
+      "revision": 7,
+      "body_hash": "0c84bfff0f7da6ca9e39c0b25a2b4ed29924cd68d137ccfd278483b723715448",
+      "slot": "visual_3b460bc16b424575aca2ce82bd3ff79d",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_4ed1e5eed85a40f798c8f83c7edb2f20",
+      "revision": 8,
+      "body_hash": "87f9cefc9503a7c42a79afbaa879b40217444378344ce0f76d667fb1e9b43dfc",
+      "slot": "visual_2ca136d5b88e403eb162f0621562c200",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_514305818f534265b7a0f8a8d81d1d9d",
+      "revision": 5,
+      "body_hash": "86597dceabd6b180c87b68d63a03d2860c70b5d8487415dc830761fdf38b3b04",
+      "slot": "visual_22fa9d4320594d0eaa37a28e8638a546",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_63924329268349768c466fea688d3e3a",
+      "revision": 6,
+      "body_hash": "0d90b40b110bd6e1a9a83aa518d8a22b0c29410cc0762e0c14d694ecaf77d77c",
+      "slot": "visual_6555e8945f4947fabf21af53d7c6da68",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_8ba37e5651be4c06806b84452d33f79c",
+      "revision": 4,
+      "body_hash": "09f649bae753a47303dc3c99a9792d04ac772f6a5ca5387710e291df1b02439c",
+      "slot": "visual_1c542c3e15834cb48656ce5e537f44bd",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_8d559d08d77e4b2593f1ccd82f96f4d0",
+      "revision": 15,
+      "body_hash": "32dcbe17e9c6829c639d8c1228254807a6d9699661139d635b3162606f0e158a",
+      "slot": "visual_f47b4c5d63cc440ab7e9332aff11fa32",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_ac2559c3c4c24d0bbee23daf89a2ddf0",
+      "revision": 6,
+      "body_hash": "726ef5b2363f470b4c8c7d429faa37e7eb12cc403747616476f065bf88867031",
+      "slot": "visual_dbe175d539c04908aec9ddc882ea3bde",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_ba8ccf5e73a1425285676bfaa9a18287",
+      "revision": 6,
+      "body_hash": "41143bdefb602b59a7c5138bbe645f47ce2a44b47eb4641a75b54365c0cc781a",
+      "slot": "visual_e9fe290858494fc49b907a34afd54d96",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_d48d54a4cac54f05b5e287f87fac6e00",
+      "revision": 2,
+      "body_hash": "827ccaafd0a27e782e4e2e29ded32d38fa104d81fd0e6bb16d1e4aae38d11cbe",
+      "slot": "visual_4440f1a20ce14d46a88bc194cb6f2376",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    },
+    {
+      "draft_id": "draft_da588d0e83ca4b96a64fcaaa1de75b73",
+      "revision": 3,
+      "body_hash": "5ccbf0ff02f50c71b1a6406ecca3231bb65522905dc0653360210a850bac29cf",
+      "slot": "visual_51e2da875808474195be725b77ce518d",
+      "state": "waiting_attention",
+      "item_states": [
+        "WAITING_AUTH"
+      ],
+      "provider_calls": 0
+    }
+  ],
+  "rollback": "PASS",
+  "schema_restored": true,
+  "protected_tables": {
+    "sources": "715013e77e3853044d98dd194919bb7cc8098e94b4fa6e80fa7c2950a0ba9a47",
+    "source_assets": "c86cef9d7f5c453e3e256b003cc465c364a590604ffdd4b00b188ae9f84b7c3e",
+    "article_drafts": "5e64a1acffb5c30b977b6d45f0cc9d82a582c57891633029eb12eecddf7aa454",
+    "article_visuals": "f36d7a36db985687f8485cf71002a8a13dec02bfadc8772e1873cac74a81a3bc",
+    "writing_packets": "ddb5bf89a295eec23ae41263155f9c4510e70d1cc8266dd040574aaa530a26e4",
+    "jobs": "1a73c4b30ddb83d67ebe1766f4860e345c2db851b4b9955e2c9e0cb665857159",
+    "model_call_metrics": "faeadb724aff8537a2fca179579b5aff2a2c399c52a983caab0f06de6550f965",
+    "wordpress_publications": "4452f0350ddc06eaad732a13e79a66f4c8c9e8b9e8a86ecb72149556b0230bc6",
+    "media_bindings": "d8b63d441bd8c92b397b0b00082a25096ad95eaf89b8886957fb3027ca7a380f",
+    "schema_migrations": "b63fd0f06f3436837fa4311d72d5dd27a40f7ffbdabd9f9a08f85258905b1c19"
+  },
+  "committed_writes": 0,
+  "external_calls": 0,
+  "historical_pixels": "NOT TESTED: original Linux media paths unavailable"
+}

@@ -1,0 +1,8 @@
+### Error
+Error: locator.waitFor: Error: strict mode violation: getByTestId('article-media').getByText('已保存，待确认采用', { exact: true }) resolved to 2 elements:
+    1) <p class="text-xs">已保存，待确认采用</p> aka getByText('已保存，待确认采用').first()
+    2) <p class="text-xs">已保存，待确认采用</p> aka getByText('已保存，待确认采用').nth(1)
+
+Call log:
+[2m  - waiting for getByTestId('article-media').getByText('已保存，待确认采用', { exact: true }) to be visible[22m
+

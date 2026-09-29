@@ -1,0 +1,27 @@
+✔ T03-11/19/30 four timestamps remain separate and upload/capture never verifies article facts (4.1644ms)
+(node:31980) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-29/39/40 confirmed stop photo proceeds locally; a conflicting Day image stays saved and cannot rewrite approved text (2486.8069ms)
+✔ T03-36/38 photo cannot replace a whole-day obligation; claimed matching Day cannot bypass pixel QA or stale approval (608.3817ms)
+✔ T03-42/44 failed manual recomposition keeps its budget across restart and new confirmation (816.9328ms)
+✔ T03-40 three new Day images cannot reorder an existing three-day article under media-only confirmation (858.1363ms)
+✔ T03-04/21 search, training and user-triggered requests remain independent observations (1.6313ms)
+✔ T03-07/16 explicit inspection traverses child sitemaps and propagates revision and refresh (21.8561ms)
+✔ T03-07 budgets and inaccessible children preserve unknown rather than declaring absence (9.6341ms)
+✔ T03-17 inaccessible page stops inspection without pretending content is missing (1.8037ms)
+✔ T03-08 allowed redirect checks canonical and sitemap against the final anonymous URL (3.6668ms)
+(node:10936) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-33/44 real snapshot and review restore: media_only (1402.1024ms)
+✔ T03-33/44 real snapshot and review restore: equivalent_alias_registration (984.1529ms)
+✔ T03-33/44 real snapshot and review restore: equivalent_english_alias_correction (918.0053ms)
+✔ T03-33/44 real snapshot and review restore: day_order (958.3643ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5280.9348

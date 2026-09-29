@@ -1,0 +1,131 @@
+(node:32428) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"timestamp":"2026-09-28T13:11:31.913Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"865f29b5-b5fe-4056-a1aa-a76a516d6ba2","method":"POST","path":"/api/drafts/cover-draft/article-media/uploads","status":507,"error":{"name":"Error","message":"可用磁盘不足以保存原件和分块；请释放空间后重试。","code":"MEDIA_DISK_RESERVE"}}
+{"timestamp":"2026-09-28T13:11:31.958Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"ff70e30c-741a-4678-b6a5-f27f5c5d30a6","method":"PUT","path":"/api/drafts/cover-draft/article-media/uploads/ce67814a-f32b-4f3e-9724-edecd2c420f5/chunks/0","status":507,"error":{"name":"Error","message":"磁盘保护阈值不足，请暂停并释放空间。","code":"MEDIA_DISK_RESERVE"}}
+{"timestamp":"2026-09-28T13:11:32.649Z","level":"error","service":"solo-to-china","event":"http.request_failed","requestId":"1e417e90-d600-4b10-9ca4-a0b6ad03f136","method":"POST","path":"/api/drafts/cover-draft/article-media/uploads/35e06cf4-17f0-47e1-a75b-5031a5106291/complete","status":500,"error":{"name":"Error","message":"Input image exceeds pixel limit"}}
+{"status":"PASS","application_413":413,"disk_preflight":507,"disk_chunk":507,"successful_retry":"pending_confirmation","resource_pixels":42250000,"oversized_decode_state":"failed","failed_original_retained":true,"provider_calls":0}
+✔ article upload diagnoses application 413, disk reserve and decode resource limit without losing a valid session (1580.1572ms)
+(node:36664) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+{"nonempty_samples":30,"p50_ms":2.2846999999997024,"p95_ms":3.1125999999999294,"provider_calls":0,"body_hash":"67e491d767d0363fe384b85624df151404d691eae55dc182c0de4b62311c7e2a","api_only":true}
+✔ actual authenticated API streaming, ownership, CSRF, confirmation, lost receipt recovery and nonempty latency (2715.4809ms)
+(node:36380) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T04-17 lower proxy chunk setting affects new sessions and preserves existing parts across restart (1007.2869ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover geometry completes the existing media revision without resetting body or buying QA (3142.3866ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-31 one confirmation of a body photo and separate cover waits only for cover geometry (2780.5448ms)
+✔ display capacity rejects adoption with exact excess while preserving stored originals (866.5075ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual photo confirm preserves body, old media, manifest and budget; resume and duplicate are idempotent (1476.6548ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes (1851.8819ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ explicit revocation restores old slot exactly with an appended revision and no provider work (1328.4392ms)
+✔ text recovery uses the same selected slot only when explicitly enabled outside development; completed QA is reused (672.2318ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ media-only receiver protocol retains old receipts and reconciles unknown outcomes without duplicate upload (1366.9906ms)
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ manual cover remains separate from body and exposes an eligible geometry candidate (1406.0533ms)
+✔ 101 actual sessions finish and paginate without count limit; fresh manager resumes server chunks (10553.745ms)
+✔ stale revision, bad hash, missing chunk, plan mutation and non-photo awaiting auth are explicit (670.0358ms)
+(node:23684) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ source cleanup preserves nested web/crop references and snapshots remain independent (1408.0333ms)
+✔ web derivative lineage and exact bytes restore across directories in migration review (1254.9983ms)
+✔ system snapshot hashes the database, uploads and generated media and drills an offline delivery (1217.2167ms)
+✔ restore verification rejects a deleted database-referenced image (803.9999ms)
+✔ snapshot refuses source bytes that disagree with the database fingerprint (725.927ms)
+✔ restore drill rejects media whose bytes disagree with its declared MIME (975.2702ms)
+✔ direct restore rejects media whose bytes disagree with its declared MIME before activation (898.3629ms)
+✔ restore refuses a snapshot from a newer schema before creating a target (778.961ms)
+✔ restore refuses insufficient free space before creating target or staging (804.597ms)
+✔ an interrupted restore resumes only the same snapshot and repairs partial files (1183.5297ms)
+✔ restore migrates an older snapshot only inside the isolated target (759.9513ms)
+✔ snapshot verification compares manifest hashes rather than only file sizes (686.8918ms)
+✔ snapshot verification rejects an omitted database file reference (745.4006ms)
+✔ snapshot verification rejects omitted, altered, and untrusted business fingerprints (809.1242ms)
+✔ business fingerprint catches changed source state after the database file hash is updated (749.2515ms)
+✔ snapshot includes durable source storage references and pending capture chunks (885.1469ms)
+✔ snapshot restores an unpromoted visual candidate file and its database path (830.2937ms)
+✔ snapshot preserves and remaps file paths nested in historical capture JSON (877.2858ms)
+✔ snapshot rejects a missing file referenced only by historical capture JSON (675.2465ms)
+✔ version 2 manifests remain readable without version 3 JSON references (843.8975ms)
+✔ version 2 recovers omitted relative source storage references only from archived files (919.9534ms)
+✔ snapshot rejects case collisions and archive symlinks (787.0015ms)
+✔ snapshot restores to a new external root and remaps only stored file references (938.6339ms)
+✔ restore remaps a POSIX stored path fixture on Windows without changing unrelated text (845.3736ms)
+✔ snapshot refuses to race an active media file mutation (605.0866ms)
+✔ restore refuses a symbolic-link ancestor before creating the target (748.2445ms)
+(node:30244) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit selected cover overrides a populated featured ID; strict schemas keep optional card text internal; capacity never truncates (3.1069ms)
+✔ durable cover-only protocol reconciles lost results without upload replay or changing prior article receipts (1674.0967ms)
+✔ cover illustration maximum is cumulative and rejected before provider credentials or dispatch (0.773ms)
+(node:31200) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ synchronized registry validates a valid page and preserves block order (739.223ms)
+✔ REST synchronization uses the generated artifact ETag as the exact Contract checksum (932.3162ms)
+✔ REST synchronization versions every Contract URL with the exact deployed frontend commit (731.9973ms)
+✔ a Page Schema change creates a new composite snapshot when the Registry checksum is unchanged (777.144ms)
+✔ commercial components are consumed from the registry and missing capabilities are explicit (613.5774ms)
+✔ presentation metadata is preserved but cannot enter ordered page blocks (579.4426ms)
+✔ the published Frontend inputSchema and 2020-12 shape sync while commercial capabilities stay out of pre-QA composition (552.0309ms)
+✔ component validation rejects unknown components, variants, required fields, and arbitrary data (566.3589ms)
+✔ local validation enforces the WordPress guide taxonomy omitted by the generic JSON Schema (584.1204ms)
+✔ local validation rejects an entity spelling WordPress would rewrite (641.4872ms)
+✔ deprecated components are blocked for new pages and warned for historical compatibility (600.7172ms)
+✔ minor updates activate automatically while major updates keep the Last Known Good Contract until accepted (559.7668ms)
+✔ failed refresh uses Last Known Good Contract but a new environment without one fails safely (1056.8121ms)
+(node:29208) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ explicit development uses external data root and rejects checkout paths before opening a database (14.5268ms)
+✔ migration review refuses the writing server and stable mode refuses missing database (3.597ms)
+✔ an existing unmarked database cannot become development, and reviewed data needs explicit promotion (1436.3943ms)
+✔ local production refuses a Worker with unreadable stored credentials while allowing API recovery (0.5376ms)
+✔ migration review inspects an existing database without changing its bytes (944.6892ms)
+✔ local status reports mode, role, version and schema without exposing configuration secrets (724.3304ms)
+✔ one API and one Worker may share a data root, while duplicate roles and all-in-one are refused (34.5254ms)
+✔ stale lease needs an explicit unlock and cannot be silently reused (16.3776ms)
+✔ a stop request is bound to the live instance nonce and does not kill a PID (19.8761ms)
+{"timestamp":"2026-09-28T13:11:36.870Z","level":"info","service":"solo-to-china","event":"server.stopped","version":"2.0.70"}
+✔ local stop command gracefully stops only its own API subprocess (1825.7672ms)
+{"timestamp":"2026-09-28T13:11:36.881Z","level":"info","service":"solo-to-china","event":"server.stopped","version":"2.0.70"}
+{"timestamp":"2026-09-28T13:11:38.224Z","level":"info","service":"solo-to-china","event":"server.started","host":"127.0.0.1","port":51915,"version":"2.0.70"}
+✔ API and Worker applications coordinate before database open and release leases on stop (630.3312ms)
+{"timestamp":"2026-09-28T13:11:38.265Z","level":"info","service":"solo-to-china","event":"http.request_completed","requestId":"da77cfa0-9628-4076-8654-45fa7ab5a4fc","method":"GET","path":"/api/health","status":200,"durationMs":9,"responseBytes":21468,"rowCount":null,"cacheStatus":null}
+{"timestamp":"2026-09-28T13:11:38.271Z","level":"info","service":"solo-to-china","event":"server.stopped","version":"2.0.70"}
+{"timestamp":"2026-09-28T13:11:38.277Z","level":"info","service":"solo-to-china","event":"server.stopped","version":"2.0.70"}
+✔ a port conflict reports EADDRINUSE and releases only the failed application's lease (1400.4611ms)
+(node:37164) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-33/44 real snapshot and review restore: media_only (1846.0522ms)
+✔ T03-33/44 real snapshot and review restore: equivalent_alias_registration (1089.1913ms)
+✔ T03-33/44 real snapshot and review restore: equivalent_english_alias_correction (1198.7964ms)
+✔ T03-33/44 real snapshot and review restore: day_order (1084.0551ms)
+(node:2252) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ T03-42 legacy route alt receipt remains renderable; v2 is explicit and unknown policy fails closed (904.6073ms)
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: single-source (1530.598ms)
+ℹ {"variant":"single-source","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"65c2e01495d2d4368b9d9b9d8eef9642fbc9993cbeaf9e770a105a4d6a666950","draw_days":1,"html_sha256":"a7bf5dfcc3fad9b430c95efa039ceb5b748465366fb58c0469ec4be4e76d4958","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: evidence-composed (1952.39ms)
+ℹ {"variant":"evidence-composed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"8442afe6fdd42d66bbe7191bac721ca35fdcb3954988efd598d44f6153e87a4c","draw_days":3,"html_sha256":"f1c0dbbb2243c040bad1a925926b42a063ca08d001ffc99b046e54704300387b","image_sha256":"c66f3ab31eb2e0dcbb1eab7ec00eee569224159d455071bbdf00b72a91718c69"}
+Warning: Invalid resolution 25 dpi. Using 70 instead.
+✔ T03-35/37/41/42 pinned-contract route chain through actual HTTP: mixed (3701.232ms)
+ℹ {"variant":"mixed","scope":"controlled model boundary + real CMS jobs + pinned contract + loopback receiver; not WordPress","contract_commit":"0c4b327287c016aee138f735a8a13eb2baa74542","requests":[{"method":"POST","url":"/media"},{"method":"POST","url":"/media"},{"method":"POST","url":"/draft"},{"method":"GET","url":"/page"}],"calls":["article_bundle_v1","quality_review_v3"],"route_hash":"d8715f7e87ac87b5fce1598ed8a15135de2e6b4d9823728abeff72c528f783c7","draw_days":1,"html_sha256":"c63a64eb7d9e6855991c116532eb7ca76abcf01f163debfbf523bd05188515a3","image_sha256":"d24239e1f69c798a71ba4f11fc3eb10561f8645cedc4b2ada0517dc839afa738"}
+✔ T04-01/02/14 precheck uses pinned CMS consumer artifact and never grants execution (0.8418ms)
+✔ T04-15 unsupported fields and tampered fixed contract cannot enable delivery (2.4399ms)
+✔ T04-16/18 missing manual evidence or restore coverage blocks local precheck, paid tests stay off (0.1521ms)
+✔ T04-24/25 old manual acceptance cannot prove routes or authorize rewriting published text (0.1409ms)
+✔ artifact manifest binds bytes and rejects escapes; secret scan reports names without secret values (5.0561ms)
+ℹ tests 81
+ℹ suites 0
+ℹ pass 81
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 27740.8703

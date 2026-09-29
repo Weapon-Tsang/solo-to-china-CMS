@@ -1,0 +1,31 @@
+ M docs/codex-cms-upgrade/EXTERNAL_DEPENDENCIES.md
+ M docs/codex-cms-upgrade/STATUS.md
+ M docs/codex-cms-upgrade/acceptance/phase-02.md
+ M src/backup.mjs
+ M src/config.mjs
+ M src/media-delivery.mjs
+ M src/publication-eligibility.mjs
+ M src/repository.mjs
+ M src/route-media.mjs
+ M src/server.mjs
+ M src/visuals/vertex-imagen.mjs
+ M src/wordpress.mjs
+ M test/backup.test.mjs
+ M test/media-delivery.test.mjs
+ M test/publication-eligibility.test.mjs
+ M test/route-media.test.mjs
+ M test/visuals.test.mjs
+?? docs/codex-cms-upgrade/evidence/phase-02/b-resume/
+?? docs/codex-cms-upgrade/evidence/phase-02/b/
+?? docs/codex-cms-upgrade/evidence/phase-02/c/
+?? scripts/stage02-cover-audit-replay.mjs
+?? scripts/stage02-web-media-replay.mjs
+?? scripts/stage02-web-media-samples.mjs
+?? scripts/verify-stage02-web-media-browser.js
+?? src/cover-policy.mjs
+?? src/services/cover-audit.mjs
+?? src/visuals/route-panel.mjs
+?? src/web-media.mjs
+?? test/cover-audit.test.mjs
+?? test/web-media-http.test.mjs
+?? test/web-media.test.mjs
