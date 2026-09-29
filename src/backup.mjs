@@ -509,7 +509,7 @@ function assertRestoreFreeSpace(target, snapshot) {
   }
 }
 
-function collectDatabaseReferences(database, { includeJson = true } = {}) {
+export function collectDatabaseReferences(database, { includeJson = true } = {}) {
   const output = [];
   for (const specification of REFERENCED_FILE_COLUMNS) {
     if (!tableExists(database, specification.table)) continue;

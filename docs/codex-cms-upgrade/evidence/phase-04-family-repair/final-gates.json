@@ -1,0 +1,26 @@
+{
+  "before": {
+    "enforced": true,
+    "passed": false,
+    "hardViolationCount": 6,
+    "integrityViolationCount": 0,
+    "productionHolds": {
+      "evidenceGap": 134,
+      "readinessScoreZero": 31,
+      "sourceBackedWithoutSelectedFacts": 0
+    }
+  },
+  "after": {
+    "enforced": true,
+    "passed": true,
+    "hardViolationCount": 0,
+    "integrityViolationCount": 0,
+    "productionHolds": {
+      "evidenceGap": 134,
+      "readinessScoreZero": 31,
+      "sourceBackedWithoutSelectedFacts": 0
+    }
+  },
+  "codeManifestSha256": "aae81f137a4a4aafc001238b52f44a6d16dc3cfa70e1a93bd665f0c9ee319fa1",
+  "productionActions": 0
+}

@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { CONTENT_STRATEGY } from "../src/content-strategy.mjs";
+import { evidenceFamilyKeys, selectedFamilyProjection, completedOpportunitySourceIds } from '../src/opportunity-family-evidence.mjs';
 
 const positional = process.argv.slice(2).filter((value) => !value.startsWith("--"));
 const databasePath = positional[0] || process.env.DATABASE_PATH;
@@ -9,6 +10,7 @@ if (!databasePath) throw new Error("Database path is required");
 
 const db = new DatabaseSync(databasePath, { readOnly: true });
 db.exec("PRAGMA query_only=ON");
+db.exec('BEGIN'); // All input tables belong to one consistent read view.
 const rows = (sql, ...args) => db.prepare(sql).all(...args);
 const one = (sql, ...args) => db.prepare(sql).get(...args);
 const parse = (value, fallback) => {
@@ -70,12 +72,8 @@ const sourceRows = rows(`SELECT s.id,s.status,s.capture_version,s.completeness_s
   LEFT JOIN content_intake_analyses a ON a.source_id=s.id
   LEFT JOIN content_recommendations r ON r.analysis_id=a.id`);
 const sourceMap = new Map(sourceRows.map((source) => [source.id, source]));
-const baseCurrent = (source) => Boolean(source && source.completeness_status === "complete"
-  && ["processed", "needs_ai"].includes(source.status)
-  && Number(source.media_count || 0) === Number(source.original_count || 0)
-  && source.experience_status === "succeeded"
-  && Number(source.experience_capture_version || 0) === Number(source.capture_version || 0)
-  && !Boolean(source.experience_degraded));
+const completedSourceIds = completedOpportunitySourceIds(db);
+const baseCurrent = (source) => Boolean(source && completedSourceIds.has(source.id));
 const fullyCurrent = (source) => baseCurrent(source) && source.analysis_strategy === currentStrategy;
 
 const opportunities = rows(`SELECT o.*,r.strategy_version AS recommendation_strategy,r.classification,r.recommended_action,
@@ -162,8 +160,8 @@ for (const fact of facts) {
   factMap.set(`${fact.destination_slug}|${fact.normalized_key}`, fact);
 }
 const familyForSource = new Map(rows("SELECT source_id,family_id,relation_type FROM source_family_memberships")
-  .map((item) => [item.source_id, item.family_id || `source:${item.source_id}`]));
-const independenceKeys = (evidence) => uniq(evidence.map((item) => familyForSource.get(item.source_id) || `source:${item.source_id}`));
+  .map((item) => [item.source_id, item.family_id]));
+const independenceKeys = (evidence) => evidenceFamilyKeys(evidence,familyForSource);
 const knowledgeClusters = rows("SELECT * FROM topic_clusters");
 const knowledgeExpected = new Map();
 for (const cluster of knowledgeClusters) {
@@ -190,6 +188,8 @@ const knowledgeChecks = knowledgeActionable.map((o) => {
     && String(fact.preferred_value || "").trim());
   const selectedEvidence = usableSelectedFacts.flatMap((fact) => fact.evidence.filter((e) => baseCurrent(sourceMap.get(e.source_id))));
   const selectedFamilies = independenceKeys(selectedEvidence);
+  const staleFamilyDependency = Boolean(o.coverage.familyEvidenceFingerprint
+    && o.coverage.familyEvidenceFingerprint !== selectedFamilyProjection(db,o).dependencyFingerprint);
   return { id: o.id, title: o.title, destination: o.destination_slug, expected: expected || null,
     storedFactCount: Number(o.readiness.factCount || 0), selectedFactKeyCount: selectedFactKeys.length,
     selectedFactCount: selectedFacts.length, usableSelectedFactCount: usableSelectedFacts.length,
@@ -199,11 +199,12 @@ const knowledgeChecks = knowledgeActionable.map((o) => {
     hasUnfinishedSelectedSource: o.sourceIds.some((id) => !baseCurrent(sourceMap.get(id))),
     familyEligibilityFailure: Boolean(expected && !expected.familyEligible),
     storedFactMismatch: Number(o.readiness.factCount || 0) !== usableSelectedFacts.length,
-    storedFamilyMismatch: Number(o.readiness.sourceFamilyCount || 0) !== selectedFamilies.length };
+    storedFamilyMismatch: Number(o.readiness.sourceFamilyCount || 0) !== selectedFamilies.length,
+    staleFamilyDependency };
 });
 const knowledgeAdmissionViolations = knowledgeChecks.filter((item) => !item.expected || item.usableSelectedFactCount < 2
   || item.actualIndependentFamilies < 2 || item.familyEligibilityFailure || item.hasUnfinishedSelectedSource
-  || item.missingSelectedFactCount || item.unusableSelectedFactCount || item.storedFactMismatch || item.storedFamilyMismatch);
+  || item.missingSelectedFactCount || item.unusableSelectedFactCount || item.storedFactMismatch || item.storedFamilyMismatch || item.staleFamilyDependency);
 const genericKnowledgeSubjects = new Set(["restaurant","featured restaurant","hotpot restaurant","hotel room","pathway","trail","route",
   "viewpoint","venue","accommodation","hotel","food","attraction","transport","public transport","metro station","railway station"]);
 const contextFreeKnowledge = knowledgeActionable.filter((opportunity) => {

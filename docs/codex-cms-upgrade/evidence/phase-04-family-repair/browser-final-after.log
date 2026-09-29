@@ -1,0 +1,115 @@
+### Page
+- Page URL: http://127.0.0.1:62737/
+- Page Title: SoloToChina Research Engine
+### Snapshot
+```yaml
+- generic [ref=f2e41]:
+  - banner [ref=f2e42]:
+    - generic [ref=f2e43]:
+      - link "SoloToChina 内容研究引擎" [ref=f2e44] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f2e50]: SoloToChina
+        - generic [ref=f2e51]: 内容研究引擎
+      - generic [ref=f2e52]:
+        - generic [ref=f2e53]: 服务就绪
+        - generic [ref=f2e58]: AI 未配置
+        - button "刷新最新状态" [ref=f2e60]:
+          - generic [ref=f2e61]: 刷新状态
+  - main [ref=f2e62]:
+    - generic [ref=f2e63]:
+      - generic [ref=f2e64]:
+        - generic [ref=f2e65]: 内容研究
+        - heading "建议收件箱" [level=1] [ref=f2e329]
+        - paragraph [ref=f2e70]: 只显示可独立批准、暂缓或忽略的实际内容机会。
+      - generic [ref=f2e71]:
+        - button "策略 v3.9 阅读" [ref=f2e72]:
+          - generic [ref=f2e76]: 策略 v3.9
+          - generic [ref=f2e77]: 阅读
+        - generic [ref=f2e78]: 采集服务就绪
+    - region "工作台总览" [ref=f2e81]:
+      - generic [ref=f2e82] [cursor=pointer]:
+        - button "查看来源已结构化" [ref=f2e83]
+        - generic [ref=f2e87]:
+          - paragraph [ref=f2e88]: 研究资产
+          - heading "来源已结构化" [level=2] [ref=f2e89]
+        - generic [ref=f2e94]:
+          - strong [ref=f2e95]: "3"
+          - generic [ref=f2e96]: 条知识事实
+        - paragraph [ref=f2e97]: 暂无事实冲突
+        - generic [ref=f2e98]:
+          - generic [ref=f2e99]: 3来源
+          - generic [ref=f2e100]: 3信息主张
+          - generic [ref=f2e101]: 点击查看
+      - generic [ref=f2e102] [cursor=pointer]:
+        - button "查看内容机会待决定" [ref=f2e103]
+        - generic [ref=f2e107]:
+          - paragraph [ref=f2e108]: 编辑决策
+          - heading "内容机会待决定" [level=2] [ref=f2e109]
+        - generic [ref=f2e115]:
+          - strong [ref=f2e116]: "0"
+          - generic [ref=f2e117]: 个可执行机会
+        - paragraph [ref=f2e118]: 每个创作方向独立批准、暂缓或忽略
+        - generic [ref=f2e119]:
+          - generic [ref=f2e120]: 0内容流程记录
+          - generic [ref=f2e121]: 0可用草稿
+          - generic [ref=f2e122]: 点击查看
+      - generic [ref=f2e123] [cursor=pointer]:
+        - button "查看联盟商品" [ref=f2e124]
+        - generic [ref=f2e128]:
+          - paragraph [ref=f2e129]: 商业图层
+          - heading "联盟商品" [level=2] [ref=f2e130]
+        - generic [ref=f2e135]:
+          - strong [ref=f2e136]: "0"
+          - generic [ref=f2e137]: 个可用商品
+        - paragraph [ref=f2e138]: 未配置也不影响研究与写作
+        - generic [ref=f2e139]:
+          - generic [ref=f2e140]: 0WordPress 库存
+          - generic [ref=f2e141]: 0待投递草稿
+          - generic [ref=f2e142]: 点击查看
+      - generic [ref=f2e143] [cursor=pointer]:
+        - button "查看运行正常" [ref=f2e144]
+        - generic [ref=f2e148]:
+          - paragraph [ref=f2e149]: 系统健康
+          - heading "运行正常" [level=2] [ref=f2e150]
+        - generic [ref=f2e154]:
+          - strong [ref=f2e155]: "0"
+          - generic [ref=f2e156]: 个系统故障
+        - paragraph [ref=f2e157]: 认证、数据库、网络与外部集成正常
+        - generic [ref=f2e158]:
+          - generic [ref=f2e159]: 0系统重算中
+          - generic [ref=f2e160]: 0内部机会
+          - generic [ref=f2e161]: 点击查看
+    - tablist "后台功能导航" [ref=f2e164]:
+      - tab "来源" [ref=f2e165]
+      - tab "建议" [selected] [ref=f2e362]
+      - tab "内容" [ref=f2e176]
+      - tab "知识库" [ref=f2e181]
+      - tab "商品" [ref=f2e185]
+      - tab "设置 1 项待处理" [ref=f2e190]:
+        - generic [ref=f2e194]: 设置
+        - generic "1 项待处理" [ref=f2e195]: "1"
+    - alert [ref=f2e196]:
+      - generic [ref=f2e199]:
+        - heading "AI 提取已暂停" [level=5] [ref=f2e200]
+        - generic [ref=f2e201]: 请在“设置”中配置 AI 模型后，系统才会处理排队中的图文提取、信息主张和编辑蓝图；已采集的来源不会丢失。
+      - button "前往设置" [ref=f2e202]
+    - generic [ref=f2e203]:
+      - generic [ref=f2e363]:
+        - heading "建议收件箱为空" [level=3] [ref=f2e368]
+        - paragraph [ref=f2e369]: 来源诊断和知识聚合会在形成可执行文章机会后显示在这里；知识型、低价值和非行动项不会混入。
+        - button "查看研究来源" [ref=f2e370]
+      - navigation "列表分页" [ref=f2e358]:
+        - button "上一页" [disabled]
+        - generic [ref=f2e359]: 第 1 页
+        - button "下一页" [disabled]
+        - generic [ref=f2e360]:
+          - text: 每页
+          - combobox "每页 条" [ref=f2e361]:
+            - option "20" [selected]
+            - option "50"
+          - text: 条
+    - generic [ref=f2e323]:
+      - generic [ref=f2e324]: SoloToChina 内容研究引擎
+      - generic [ref=f2e325]: 应用 v2.0.72 · 策略 v3.9 · 仅处理人工选定来源
+  - generic [ref=f2e371]: 已批准；必要证据补齐后自动进入生产。
+```

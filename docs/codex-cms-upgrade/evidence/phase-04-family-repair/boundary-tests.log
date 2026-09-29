@@ -1,0 +1,23 @@
+(node:35644) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ deployment probe rehearses schema 59 to current, preserves cited IDs and rolls back paired DB without deleting originals (1582.8688ms)
+✔ deployment probe blocks changed content and refuses to restore a corrupted snapshot (1182.2806ms)
+✔ deployment opportunity gate reconciles deterministically and rejects an actionable row below admission quality (1857.7341ms)
+✔ deployment helpers validate the supplied release version instead of a hard-coded app version (726.1278ms)
+✔ runtime image smoke explicitly authorizes only its disposable database bootstrap (0.618ms)
+(node:28396) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ maintenance refuses changed repair dependencies, rows and approval state (6.4065ms)
+✔ boundary backup rejects media mutation even when names and sizes are unchanged (599.9808ms)
+(node:20124) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ actual upgrade control flow rejects bad preflight before service actions (509.2942ms)
+✔ real preflight CLI returns success/failure promptly and rejects changed database identity (1048.4687ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5448.5846

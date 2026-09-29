@@ -1,0 +1,101 @@
+{
+  "version": "selected-usable-facts-v1",
+  "identity": {
+    "path": "/work/replay.sqlite",
+    "kind": "isolated-snapshot-replay"
+  },
+  "ids": [
+    "opportunity_859f07766f1202a7b54f3058",
+    "opportunity_9d066affac5209dd820dae5e",
+    "opportunity_e76caea56f5914a2d27a8f85",
+    "opportunity_716a5d141a6a239055100d06",
+    "opportunity_0ad2ce3a8a6125aa07ee8be4",
+    "opportunity_c1f5ed8caac9df16e20abf27"
+  ],
+  "allowedFields": [
+    "readiness_json.sourceFamilyCount",
+    "coverage_json.readiness.sourceFamilyCount"
+  ],
+  "previewFingerprint": "292f4815778b55594681b82fee997277302b15075a0f88ae32aa5d0eb062986c",
+  "isolatedOnly": true,
+  "records": [
+    {
+      "id": "opportunity_859f07766f1202a7b54f3058",
+      "before": 14,
+      "after": 12,
+      "blocked": false,
+      "linkedProduction": false,
+      "eligibilityChanged": false,
+      "missing": 0,
+      "unusable": 0,
+      "dependencyFingerprint": "14296aed466116407a2214737ff884eccc3cdf25d80524a0eaaac829aad92f83",
+      "recordFingerprint": "cabaef5db5ca886c75b49999d13f72539ec44b281ca8497d214ee05c2949960d",
+      "postFingerprint": "dead18f1d01f35748a9015df7e2859233a23927834bd969263b50c806d7257cb"
+    },
+    {
+      "id": "opportunity_9d066affac5209dd820dae5e",
+      "before": 3,
+      "after": 2,
+      "blocked": false,
+      "linkedProduction": false,
+      "eligibilityChanged": false,
+      "missing": 0,
+      "unusable": 0,
+      "dependencyFingerprint": "6ddd9759eed9d4dbd3d89f8ab31798c272c212ae774a93e9e64c9527950a8494",
+      "recordFingerprint": "8050934c5725cbd18c5415d70e9669b352e998e2f2222528403f1c6cb208a5be",
+      "postFingerprint": "3f00f5722557089442b61a5f1ec1005cefacf1a83dd0aa895f8b16454efeed65"
+    },
+    {
+      "id": "opportunity_e76caea56f5914a2d27a8f85",
+      "before": 18,
+      "after": 17,
+      "blocked": false,
+      "linkedProduction": false,
+      "eligibilityChanged": false,
+      "missing": 0,
+      "unusable": 0,
+      "dependencyFingerprint": "a4a38b3f5c5f12334c4bd48699228fc4a0a8fd3f133dbb94c33b0d9de517a625",
+      "recordFingerprint": "da50e63fda48038815749b81eed3ac40e4d06e3e9478dc2bcf866d19a386d5c8",
+      "postFingerprint": "671913dd262cfcc7b0d4baa2073f3ed4970729d559dafef43a760a351554cf4e"
+    },
+    {
+      "id": "opportunity_716a5d141a6a239055100d06",
+      "before": 31,
+      "after": 30,
+      "blocked": false,
+      "linkedProduction": false,
+      "eligibilityChanged": false,
+      "missing": 0,
+      "unusable": 0,
+      "dependencyFingerprint": "fa3e60dd477c9893fc11178a7ed58e1ec7f086d11735c428a35e712f8927e599",
+      "recordFingerprint": "02170a5af7e12ec5884fa44d5ea5cbea35847ee21b24d7c5a84261fc18d5d717",
+      "postFingerprint": "b0248695024891e42805d89b12374911ce7b6edb652e077a4b918c31b9e9ac25"
+    },
+    {
+      "id": "opportunity_0ad2ce3a8a6125aa07ee8be4",
+      "before": 24,
+      "after": 23,
+      "blocked": false,
+      "linkedProduction": false,
+      "eligibilityChanged": false,
+      "missing": 0,
+      "unusable": 0,
+      "dependencyFingerprint": "6919843b5f9471c830746079578c03ba3ce0b20a379245b66e1f173417560531",
+      "recordFingerprint": "2d6663fa4adafd6facaa4416e234dfe1e4cf3594cb2f9c192f2bfb5434c3c7f1",
+      "postFingerprint": "665b555f9111deff0a4ac10a98c532c1a24c8275381422ded5536ee9d5ea9437"
+    },
+    {
+      "id": "opportunity_c1f5ed8caac9df16e20abf27",
+      "before": 3,
+      "after": 2,
+      "blocked": false,
+      "linkedProduction": false,
+      "eligibilityChanged": false,
+      "missing": 0,
+      "unusable": 0,
+      "dependencyFingerprint": "9cb3eb3aeee593e8a640e1de61cf059b5e6c995f2b701df17d601db961ec5812",
+      "recordFingerprint": "0f57d3bc171cf7595215abf300a08e68ad8f3cafa0e0348e1747fd7586f5bb56",
+      "postFingerprint": "577b6385e3dd92ae07fb8b76105f53186bcfd1680e4ac2aeeac936b539908d4b"
+    }
+  ]
+}

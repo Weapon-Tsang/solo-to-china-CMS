@@ -1,4 +1,20 @@
-# 2026-09-29 当前：LOCAL_DEVELOPMENT / EXISTING_CLOUD_PRODUCTION — BLOCKED / ROLLED_BACK
+# 2026-09-29 有限发布已获批准，2.0.72 候选验证中
+
+用户批准一次新构建、六条定向修复及15分钟维护。详见[修复与发布记录](acceptance/phase-04-family-repair.md)。历史停止点不再表示当前授权状态；尚未完成新部署。
+
+---
+
+# 2026-09-29 来源族计数定向修复：本地修复及同源隔离回放完成，尚未重新发布
+
+六条来源族异常已定位为写入器对筛选前 cluster facts 计数、却保存筛选后 selectedFactKeys 的集合错配。永久修复、精确 ID dry-run/隔离 apply、依赖指纹及维护前门禁已实现。真实留存 schema79 快照隔离迁移到83，六条计数修复后完整业务门禁 6→0；受保护数据保持一致。相关模块47项、check、真实门禁及坏样本控制顺序验证见[本轮报告](acceptance/phase-04-family-repair.md)和[回放摘要](evidence/phase-04-family-repair/replay-summary.json)。
+
+旧云端健康 GET 仍为2.0.70，Provider MODEL_OUTPUT_LIMIT 降级尚存；新版 Browser E2E 和 Capture→QA 全链 NOT TESTED。本轮生产写入、构建、Git提交/推送、服务重启、主动模型及WordPress请求均为0。下一次有限发布计划和输入中的禁止发布条款冲突待明确处理；不继承上一轮已用完的3次构建额度。
+
+current_authorized_step=NONE；phase_end_stop=true。以下原回滚历史完整保留。
+
+---
+
+# 2026-09-29 原发布结果：LOCAL_DEVELOPMENT / EXISTING_CLOUD_PRODUCTION — BLOCKED / ROLLED_BACK
 
 CMS 代码已提交、推送并经 PR 15/16/17 合并；候选 `a11bcf1711c6b31b52725cdc925c4817629037f3` / 2.0.71 镜像构建成功。3 次 Cloud Build 上限已用完。完整云端备份、隔离恢复与 schema79→83 迁移均通过，但最终业务审计发现 6 条 Knowledge Opportunity 来源族计数不一致，公开切换前停止并回滚。**新版未上线；原云端 2.0.70/schema79 的 API 与 Worker 已恢复，原后台地址仍可使用。**
 

@@ -15,6 +15,19 @@ RELEASE="$APP/upgrades/$REVISION${ATTEMPT:+-attempt-$ATTEMPT}"
 OLD="engine-before-${REVISION:0:7}"
 OLD_WORKER="engine-worker-before-${REVISION:0:7}"
 log() { printf '[stc-upgrade] %s\n' "$*"; }
+# Required before *any* production service action, including recovery of a completed release.
+# This is an isolated, migrated snapshot prepared with the exact candidate image.
+# The post-stop live gate below still rechecks the new fixed write boundary.
+PREFLIGHT="${STC_UPGRADE_PREFLIGHT_DIR:?isolated candidate preflight directory required}"
+[[ "$PREFLIGHT" == /* && -f "$PREFLIGHT/manifest.json" && -f "$PREFLIGHT/database.sqlite" ]]
+timeout --signal=TERM --kill-after=10s 300s docker run --rm --network none --read-only \
+  --env "STC_UPGRADE_IMAGE=$IMAGE" --env "STC_UPGRADE_REVISION=$REVISION" --env "STC_UPGRADE_VERSION=$VERSION" \
+  --volume "$PREFLIGHT:/preflight:ro" --entrypoint node "$IMAGE" \
+  /app/scripts/preflight-opportunities.mjs /preflight
+log 'Candidate snapshot business gate passed before maintenance.'
+PREPARED="${STC_UPGRADE_PREPARED_DIR:?verified complete backup directory required}"
+[[ "$PREFLIGHT" == "$PREPARED/preflight" && -f "$PREFLIGHT/boundary-plan.json" ]]
+[[ "${STC_UPGRADE_FAMILY_REPAIR:-}" == approved-six-ids ]]
 systemctl start docker
 install -d -m 0700 "$RELEASE"
 exec 9>"$RELEASE/lock"
@@ -52,7 +65,7 @@ docker network inspect solo-to-china >/dev/null
 DATA="$(docker volume inspect --format '{{.Mountpoint}}' solo_to_china_data)"
 [[ "$DATA" == /var/lib/docker/volumes/solo_to_china_data/_data ]]
 AVAILABLE="$(df -B1 --output=avail "$DATA" | tail -1 | tr -d ' ')"
-DATA_BYTES="$(du -sb --exclude=backups "$DATA" | cut -f1)"
+DATA_BYTES="$(stat -c %s "$DATA/solo-to-china.sqlite")"
 REQUIRED=$((DATA_BYTES * 3 + 2147483648))
 log "Disk preflight available=$AVAILABLE required=$REQUIRED data=$DATA_BYTES"
 [[ "$AVAILABLE" -gt "$REQUIRED" ]]
@@ -80,12 +93,31 @@ WORKER_STOPPED=0
 MIGRATED=0
 EXPOSED=0
 PHASE=legacy-copy
+MAINTENANCE_START=0
+RECOVERING=0
+PROBE="stc-offline-${REVISION:0:7}"
+# At most ten minutes for the forward path, reserving five for rollback.
+# Docker client timeout alone does not stop its container: recover kills our
+# named offline probe before restoring the database.
+bounded() {
+  local seconds=600
+  if [[ "$MAINTENANCE_START" != 0 && "$RECOVERING" == 0 ]]; then
+    seconds=$((600 - SECONDS + MAINTENANCE_START))
+    [[ "$seconds" -gt 0 ]] || return 124
+  elif [[ "$RECOVERING" == 1 ]]; then
+    seconds=$((900 - SECONDS + MAINTENANCE_START))
+    [[ "$seconds" -gt 0 ]] || return 124
+  fi
+  timeout --signal=TERM --kill-after=5s "${seconds}s" "$@"
+}
+DOCKER_BIN="$(type -P docker)"
+docker() { bounded "$DOCKER_BIN" "$@"; }
 offline() {
   local image="$1" mode="$2"
   PHASE="$mode"
-  if ! docker run --rm --network none --env "OLD_IMAGE=$OLD_IMAGE" --env "NEW_VERSION=$VERSION" \
+  if ! docker run --rm --name "$PROBE" --network none --env "OLD_IMAGE=$OLD_IMAGE" --env "NEW_VERSION=$VERSION" \
     --volume solo_to_china_data:/var/lib/solo-to-china \
-    --volume "$RELEASE:/ops" --volume "$RELEASE/legacy-app-data:/app/data:ro" \
+    --volume "$RELEASE:/ops" --volume "$PREPARED:/prepared:ro" --volume "$RELEASE/legacy-app-data:/app/data:ro" \
     "$image" node /ops/verify-upgrade.mjs "$mode" >"$RELEASE/$mode.log" 2>&1; then
     return 1
   fi
@@ -96,6 +128,9 @@ offline() {
 recover() {
   local code=$?
   trap - ERR
+  RECOVERING=1
+  timeout 10s "$DOCKER_BIN" kill "$PROBE" >/dev/null 2>&1 || true
+  timeout 10s "$DOCKER_BIN" wait "$PROBE" >/dev/null 2>&1 || true
   log "Upgrade failed exit=$code phase=$PHASE stopped=$STOPPED renamed=$RENAMED migrated=$MIGRATED exposed=$EXPOSED; details retained in $RELEASE"
   # These probe/copy logs contain no credentials or model output. Only the first
   # error headline is emitted; full diagnostics remain private on the VM.
@@ -130,8 +165,9 @@ recover() {
 }
 trap recover ERR
 log "Stopping engine gracefully; old image=$OLD_IMAGE"
-docker stop --time 120 engine >/dev/null
+MAINTENANCE_START=$SECONDS
 STOPPED=1
+docker stop --time 120 engine >/dev/null
 docker update --restart no engine >/dev/null
 if [[ "$WORKER_PRESENT" == 1 ]]; then
   docker stop --time 120 engine-worker >/dev/null
@@ -154,14 +190,13 @@ CONTENT_ROOTS=("$RELEASE/legacy-app-data")
 for directory in "$DATA/source-uploads" "$DATA/generated-media"; do
   if [[ -d "$directory" ]]; then CONTENT_ROOTS+=("$directory"); fi
 done
-find "${CONTENT_ROOTS[@]}" -type f -print0 \
-  | sort -z | xargs -0 -r sha256sum >"$RELEASE/originals.sha256"
-offline "$IMAGE" backup
-offline "$IMAGE" rehearse
+bounded bash -c 'find "$@" -type f -print0 | sort -z | xargs -0 -r sha256sum' _ "${CONTENT_ROOTS[@]}" >"$RELEASE/originals.sha256"
+offline "$IMAGE" boundary-backup
 MIGRATED=1
 offline "$IMAGE" migrate
+offline "$IMAGE" family-repair
 PHASE=opportunity-audit
-docker run --rm --network none --volume solo_to_china_data:/var/lib/solo-to-china \
+docker run --rm --name "$PROBE" --network none --volume solo_to_china_data:/var/lib/solo-to-china \
   "$IMAGE" node /app/scripts/audit-opportunity-qualification.mjs \
   /var/lib/solo-to-china/solo-to-china.sqlite --enforce >"$RELEASE/opportunity-audit.json" 2>"$RELEASE/opportunity-audit.log"
 OPPORTUNITY_SUMMARY="$(python3 - "$RELEASE/opportunity-audit.json" <<'PY'
@@ -174,7 +209,7 @@ print(json.dumps({'stage':'opportunity-gate','reconciliation':'not-run',
 PY
 )"
 log "$OPPORTUNITY_SUMMARY"
-sha256sum --check --status "$RELEASE/originals.sha256"
+bounded sha256sum --check --status "$RELEASE/originals.sha256"
 sha256sum --check --status "$RELEASE/env.sha256"
 log 'Original media hashes and existing environment preserved.'
 docker network disconnect solo-to-china engine
@@ -184,6 +219,7 @@ docker run --detach --name engine --restart unless-stopped --network none \
   --env-file "$APP/.env.production" \
   --env "ENGINE_IMAGE=$IMAGE" --env "APP_REVISION=$REVISION" \
   --env CMS_PROCESS_ROLE=api \
+  --env CMS_STARTUP_RECONCILIATION_ENABLED=false \
   --env HOST=0.0.0.0 --env PORT=8080 \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
   --env BACKUP_DIR=/var/lib/solo-to-china/backups \
@@ -201,8 +237,10 @@ done
 [[ "$READY" == 1 ]]
 log 'New container readiness passed on isolated network; connecting public service.'
 docker network disconnect none engine
-docker network connect solo-to-china engine
+[[ $((SECONDS - MAINTENANCE_START)) -lt 540 ]]
+# From this point assume new writes may exist, even if network connect times out.
 EXPOSED=1
+docker network connect solo-to-china engine
 docker start cloudflared >/dev/null
 PHASE=worker-start
 docker run --detach --name engine-worker --restart unless-stopped --network solo-to-china \
@@ -226,3 +264,4 @@ done
 date --utc --iso-8601=seconds >"$RELEASE/complete"
 # Keep prior containers, images, backups and rehearsal evidence for this release.
 log "COMPLETE revision=$REVISION image=$IMAGE rollback_container=$OLD rollback_worker=$OLD_WORKER records=$RELEASE"
+log "Maintenance elapsed=$((SECONDS - MAINTENANCE_START))s (authorized maximum 900s)."

@@ -1,0 +1,238 @@
+{
+  "before": {
+    "enforced": true,
+    "passed": false,
+    "hardViolationCount": 6,
+    "integrityViolationCount": 0,
+    "productionHolds": {
+      "evidenceGap": 134,
+      "readinessScoreZero": 31,
+      "sourceBackedWithoutSelectedFacts": 0
+    }
+  },
+  "after": {
+    "enforced": true,
+    "passed": true,
+    "hardViolationCount": 0,
+    "integrityViolationCount": 0,
+    "productionHolds": {
+      "evidenceGap": 134,
+      "readinessScoreZero": 31,
+      "sourceBackedWithoutSelectedFacts": 0
+    }
+  },
+  "counts": {
+    "sources": 84,
+    "baseCompleteSources": 77,
+    "fullyCurrentSources": 0,
+    "unfinishedSources": 7,
+    "allOpportunities": 1427,
+    "activeLifecycle": 1402,
+    "actionable": 181,
+    "sourceBackedActionable": 0,
+    "knowledgeActionable": 181,
+    "otherActionable": 0,
+    "inboxStates": {
+      "SUPERSEDED": 1201,
+      "ACTIONABLE": 181,
+      "INTERNAL": 39,
+      "MERGED": 6
+    },
+    "processingStates": {
+      "EVIDENCE_GAP": 134,
+      "CURRENT": 47
+    },
+    "opportunityStrategies": {
+      "3.3": 497,
+      "3.0": 440,
+      "1.8": 269,
+      "3.9": 198,
+      "3.8": 20,
+      "1.9": 1,
+      "3.2": 1,
+      "3.4": 1
+    },
+    "actionableModes": {
+      "multi_source_synthesis": 181
+    },
+    "actionableTypes": {
+      "attraction_guide": 87,
+      "food_guide": 27,
+      "itinerary": 26,
+      "transport_guide": 18,
+      "practical_guide": 17,
+      "hotel_area_guide": 4,
+      "city_guide": 2
+    },
+    "actionableReadiness": {
+      "ready": 47,
+      "evidenceGap": 134,
+      "score0": 31,
+      "score100": 0,
+      "min": 0,
+      "max": 94
+    }
+  },
+  "replay": {
+    "schemaBefore": 79,
+    "schemaAfter": 83,
+    "applied": {
+      "changed": 6,
+      "idempotent": false
+    },
+    "repeated": {
+      "changed": 0,
+      "idempotent": true
+    },
+    "integrity": [
+      {
+        "integrity_check": "ok"
+      }
+    ],
+    "foreign": [],
+    "protectedTablesUnchanged": true,
+    "protectedTableCount": 127,
+    "providerRequests": 0,
+    "productionMutations": 0
+  },
+  "records": [
+    {
+      "id": "opportunity_859f07766f1202a7b54f3058",
+      "status": "recommended",
+      "lifecycle": "recommended",
+      "approved_at": null,
+      "candidate_id": null,
+      "productionLinks": {
+        "topic_candidates": 0,
+        "editorial_assemblies": 0
+      },
+      "created_at": "2026-09-13T04:55:03.682Z",
+      "updated_at": "2026-09-28T14:25:41.461Z",
+      "stored": 14,
+      "allCount": 14,
+      "selectedCount": 12,
+      "extraFamilies": [
+        "family_14084ea40f2116738795b177",
+        "family_92df613436683e274903cab2"
+      ],
+      "excludedFactIds": [
+        "fact_2a5f90f29ba1d95f38ec45ac",
+        "fact_d7a541ff11dcb09e07405766",
+        "fact_7ecb39c0c993e050107e41a2",
+        "fact_8530212142a5ad670792f5e0"
+      ]
+    },
+    {
+      "id": "opportunity_9d066affac5209dd820dae5e",
+      "status": "recommended",
+      "lifecycle": "recommended",
+      "approved_at": null,
+      "candidate_id": null,
+      "productionLinks": {
+        "topic_candidates": 0,
+        "editorial_assemblies": 0
+      },
+      "created_at": "2026-09-13T04:55:03.682Z",
+      "updated_at": "2026-09-28T14:25:41.461Z",
+      "stored": 3,
+      "allCount": 3,
+      "selectedCount": 2,
+      "extraFamilies": [
+        "family_417fc98b021b7187311a9879"
+      ],
+      "excludedFactIds": [
+        "fact_471465fd8b2bc48cb3d570b0"
+      ]
+    },
+    {
+      "id": "opportunity_e76caea56f5914a2d27a8f85",
+      "status": "recommended",
+      "lifecycle": "recommended",
+      "approved_at": null,
+      "candidate_id": null,
+      "productionLinks": {
+        "topic_candidates": 0,
+        "editorial_assemblies": 0
+      },
+      "created_at": "2026-09-13T04:55:03.682Z",
+      "updated_at": "2026-09-28T14:25:41.461Z",
+      "stored": 18,
+      "allCount": 18,
+      "selectedCount": 17,
+      "extraFamilies": [
+        "family_92df613436683e274903cab2"
+      ],
+      "excludedFactIds": [
+        "fact_8cfdd426452d45f38cf40897"
+      ]
+    },
+    {
+      "id": "opportunity_716a5d141a6a239055100d06",
+      "status": "recommended",
+      "lifecycle": "recommended",
+      "approved_at": null,
+      "candidate_id": null,
+      "productionLinks": {
+        "topic_candidates": 0,
+        "editorial_assemblies": 0
+      },
+      "created_at": "2026-09-13T04:55:03.682Z",
+      "updated_at": "2026-09-28T14:25:41.461Z",
+      "stored": 31,
+      "allCount": 31,
+      "selectedCount": 30,
+      "extraFamilies": [
+        "family_92df613436683e274903cab2"
+      ],
+      "excludedFactIds": [
+        "fact_e8eadacc290f1562d50feedd"
+      ]
+    },
+    {
+      "id": "opportunity_0ad2ce3a8a6125aa07ee8be4",
+      "status": "recommended",
+      "lifecycle": "recommended",
+      "approved_at": null,
+      "candidate_id": null,
+      "productionLinks": {
+        "topic_candidates": 0,
+        "editorial_assemblies": 0
+      },
+      "created_at": "2026-09-13T04:55:03.682Z",
+      "updated_at": "2026-09-28T14:25:41.461Z",
+      "stored": 24,
+      "allCount": 24,
+      "selectedCount": 23,
+      "extraFamilies": [
+        "family_14084ea40f2116738795b177"
+      ],
+      "excludedFactIds": [
+        "fact_003f7617e352279bccde587c",
+        "fact_38d65932f792c1757d49ec0f",
+        "fact_a6e867c6802d60c8f08cc685"
+      ]
+    },
+    {
+      "id": "opportunity_c1f5ed8caac9df16e20abf27",
+      "status": "recommended",
+      "lifecycle": "recommended",
+      "approved_at": null,
+      "candidate_id": null,
+      "productionLinks": {
+        "topic_candidates": 0,
+        "editorial_assemblies": 0
+      },
+      "created_at": "2026-09-13T04:55:03.682Z",
+      "updated_at": "2026-09-28T14:25:41.461Z",
+      "stored": 3,
+      "allCount": 3,
+      "selectedCount": 2,
+      "extraFamilies": [
+        "family_12c6a517a6a1af59e44353d0"
+      ],
+      "excludedFactIds": [
+        "fact_1963bedb1f24d3bd6eefb4a6"
+      ]
+    }
+  ]
+}

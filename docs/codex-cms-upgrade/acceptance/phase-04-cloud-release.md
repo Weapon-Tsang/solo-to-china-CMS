@@ -1,5 +1,7 @@
 # 2026-09-29 原云端升级执行记录
 
+后续增量：[来源族计数定向修复与同源回放](phase-04-family-repair.md)已完成代码修复和隔离验证；不改变本文上一次发布 BLOCKED / ROLLED_BACK 结论，新版尚未重新部署。
+
 **最终发布结论：BLOCKED / ROLLED_BACK。代码已提交推送并合并，候选镜像构建成功；新版没有对外上线。原云端 API/Worker 已恢复 2.0.70/schema79。**
 
 决策：`LOCAL_DEVELOPMENT / EXISTING_CLOUD_PRODUCTION`。保留原云端 GCE、数据卷、数据库、媒体、队列及 `https://engine.solotochina.com`；公开站 `https://solotochina.com` 为独立 WordPress。旧本机生产迁移计划 DEFERRED。此文件只记录实际执行，不以离线测试推断线上成功。

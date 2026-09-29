@@ -1,0 +1,76 @@
+{
+  "applied": {
+    "changed": 6,
+    "idempotent": false
+  },
+  "repeated": {
+    "changed": 0,
+    "idempotent": true
+  },
+  "migrationProtectedFingerprints": {
+    "sources": {
+      "count": 84,
+      "sha256": "ba126de50a6d42ec59e6aabf0b25def1c7addeaee00757b1dec75a9181d4a0e8"
+    },
+    "capture_versions": {
+      "count": 168,
+      "sha256": "cc20b3f0fd5bdde5f6a803ea094755b41aecf4d912d526c6ad4fc03ea875d29a"
+    },
+    "source_assets": {
+      "count": 1454,
+      "sha256": "676d4dafc2e453119b2d8f203011c53d5ee19236713fbfe620a98ed89071c87e"
+    },
+    "source_files": {
+      "count": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "source_segments": {
+      "count": 2316,
+      "sha256": "c8f15fb5320ac22fcb8e7939aeeb450bd683da1ad93908197ec1935235f6f5fd"
+    },
+    "claims": {
+      "count": 5465,
+      "sha256": "e52d981420eecc13bb1aea83ddeb50bfa8cb354d6dc30656cc90996fb149b67a"
+    },
+    "evidence_spans": {
+      "count": 8606,
+      "sha256": "45442d4bf7925c39c46633583d8a194458f1076175bbde6f794669fa70025c29"
+    },
+    "extraction_coverage": {
+      "count": 2316,
+      "sha256": "205f4d5a6cc2aab9b3f164e5b55a81581c9599cdc13f7c22aede8566026d25c0"
+    },
+    "article_drafts": {
+      "count": 12,
+      "sha256": "fdbacdfeef45885ec6c6d29937adf2d5a3f5c10a6f18cc264d7719cec6e75359"
+    },
+    "article_visuals": {
+      "count": 26,
+      "sha256": "015d0384f3593d9ca5921c7e050851861241c5a45aa7ca1e5658776fe0277039"
+    },
+    "knowledge_facts": {
+      "count": 4493,
+      "sha256": "f3a3945aa6d504cfaf3457aa9013f676da94c8bd8171d2ad9e72d8235abda86f"
+    },
+    "source_family_memberships": {
+      "count": 78,
+      "sha256": "860d32ee2ac3fc327700664b9688b4e9e03ba96e74cbf89396f0eea4490fdd3c"
+    },
+    "knowledge_resolutions": {
+      "count": 16,
+      "sha256": "3f62e808aa1197a950dd474dcfc8d3cabf5d85010251644cea26ebc64c42b9b5"
+    },
+    "topic_clusters": {
+      "count": 1717,
+      "sha256": "013150c97a5afee39a1c36a972c91a619e47e7ed8042109065b575a3d6c0b2c5"
+    }
+  },
+  "exactFinalGate": {
+    "bad": 6,
+    "good": 0
+  },
+  "codeManifestSha256": "aae81f137a4a4aafc001238b52f44a6d16dc3cfa70e1a93bd665f0c9ee319fa1",
+  "migrationComparisonReused": true,
+  "productionActions": 0,
+  "providerCalls": 0
+}

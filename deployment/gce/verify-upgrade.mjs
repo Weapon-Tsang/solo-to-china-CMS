@@ -9,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 const root = process.env.STC_PROBE_ROOT || '/var/lib/solo-to-china';
 const work = process.env.STC_PROBE_WORK || '/ops';
 const app = process.env.STC_PROBE_APP || '/app';
+const prepared = process.env.STC_PROBE_PREPARED || '/prepared';
 const tables = ['sources', 'capture_versions', 'source_assets', 'source_files', 'source_segments',
   'claims', 'evidence_spans', 'extraction_coverage', 'article_drafts', 'article_visuals'];
 const mode = process.argv[2];
@@ -30,7 +31,31 @@ const check = db => {
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
 };
 const write = (name, value) => fs.writeFileSync(path.join(work, name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
-if (mode === 'backup') {
+if (mode === 'boundary-backup') {
+  const {fileHash,verifyBoundaryMedia}=await import(pathToFileURL(path.join(app,'scripts/family-release-boundary.mjs')).href);
+  const plan=JSON.parse(fs.readFileSync(`${prepared}/preflight/boundary-plan.json`,'utf8'));
+  assert.equal(plan.restoreDrill,'passed');
+  assert.ok(Date.now()-Date.parse(plan.preparedAt)<6*60*60*1000,'Prepared backup is too old');
+  assert.equal(fileHash(`${plan.snapshot}/manifest.json`),plan.snapshotManifestSha256);
+  const manifest=JSON.parse(fs.readFileSync(`${plan.snapshot}/manifest.json`,'utf8'));
+  const filename=`${root}/solo-to-china.sqlite`,before=new DatabaseSync(filename);
+  try {
+    before.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    check(before);
+    verifyBoundaryMedia(before,manifest,plan.references);
+    write('baseline.json',fingerprint(before));
+  } finally {before.close();}
+  const databaseBackupPath=`${work}/boundary.sqlite`;
+  fs.copyFileSync(filename,databaseBackupPath,fs.constants.COPYFILE_EXCL);
+  const sha256=fileHash(databaseBackupPath);assert.equal(fileHash(filename),sha256);
+  write('backup.json',{kind:'verified-boundary-database-and-prepared-media',databaseBackupPath,sha256,
+    preparedSnapshot:plan.snapshot,snapshotManifestSha256:plan.snapshotManifestSha256,oldImage:process.env.OLD_IMAGE});
+  console.log(JSON.stringify({stage:mode,integrity:'ok',currentDatabasePreserved:true,mediaMatchedPreparedSnapshot:true}));
+} else if (mode === 'family-repair') {
+  const {repairBoundary}=await import(pathToFileURL(path.join(app,'scripts/family-release-boundary.mjs')).href);
+  const plan=JSON.parse(fs.readFileSync(`${prepared}/preflight/boundary-plan.json`,'utf8'));
+  console.log(JSON.stringify({stage:mode,...repairBoundary(`${root}/solo-to-china.sqlite`,plan.expected,work)}));
+} else if (mode === 'backup') {
   const { createBackup, verifyBackup, drillBackup } = await import(pathToFileURL(path.join(app, 'src/backup.mjs')).href);
   const before = new DatabaseSync(`${root}/solo-to-china.sqlite`, { readOnly: true });
   check(before);
@@ -78,7 +103,10 @@ if (mode === 'backup') {
 } else if (mode === 'restore') {
   const { verifyBackup } = await import(pathToFileURL(path.join(app, 'src/backup.mjs')).href);
   const backup = JSON.parse(fs.readFileSync(`${work}/backup.json`, 'utf8'));
-  verifyBackup(backup.backupPath);
+  if(backup.kind==='verified-boundary-database-and-prepared-media') {
+    const {fileHash}=await import(pathToFileURL(path.join(app,'scripts/family-release-boundary.mjs')).href);
+    assert.equal(fileHash(backup.databaseBackupPath),backup.sha256,'Boundary backup changed');
+  } else verifyBackup(backup.backupPath);
   // Preserve the failed attempt, including its journal, before restoring the paired old DB.
   // Keep the rename inside the data mount: /ops may be a different Docker mount.
   const retained = `${root}/failed-database-${Date.now()}`;
