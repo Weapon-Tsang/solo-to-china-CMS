@@ -1,0 +1,40 @@
+{
+  "ready": {
+    "ready": true,
+    "version": "2.0.72",
+    "database": "ready"
+  },
+  "version": "2.0.72",
+  "providerRuntime": {
+    "state": "degraded",
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "lastSuccessAt": "2026-09-23T20:24:56.428Z",
+    "lastFailureAt": "2026-09-28T20:14:40.714Z",
+    "lastErrorCode": "MODEL_OUTPUT_LIMIT",
+    "consecutiveFailures": 75,
+    "backoffUntil": null,
+    "lastLatencyMs": 33254,
+    "windows": {
+      "oneHour": {
+        "attempts": 0,
+        "successes": null,
+        "failures": null,
+        "rate_limited": null,
+        "average_provider_ms": null,
+        "average_total_ms": null,
+        "average_retry_wait_ms": null
+      },
+      "twentyFourHours": {
+        "attempts": 24,
+        "successes": 0,
+        "failures": 24,
+        "rate_limited": 0,
+        "average_provider_ms": 38606.3,
+        "average_total_ms": 165635.8,
+        "average_retry_wait_ms": 6.2
+      }
+    },
+    "source": "persisted_model_call_telemetry"
+  }
+}

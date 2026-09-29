@@ -1,0 +1,11 @@
+{
+  "scope": "Real local Pipeline on fixed fixtures with provider and WordPress stand-ins; production model generation excluded",
+  "testLog": "output/release-check-logs/1790653224475-Unit-and-integration-tests.log",
+  "results": [
+    "✔ human approval drives legacy to QA and WordPress draft delivery (9150.3847ms)",
+    "✔ human approval drives article_bundle_v1 to QA and WordPress draft delivery (9883.0537ms)",
+    "ℹ tests 1118",
+    "ℹ pass 1118",
+    "ℹ fail 0"
+  ]
+}

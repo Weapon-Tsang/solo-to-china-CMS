@@ -1,0 +1,110 @@
+{
+  "preflight": {
+    "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:3fe1cc4459a4346a753f4ffa88a36845e63a5c1e107e173f8172e2a165418d80",
+    "revision": "b65794b42bc25d11ca92e0f21e31456e72eaabb3",
+    "version": "2.0.72",
+    "inputSnapshotSha256": "f5aacc20c6e4db29eb97cf484a49539881579eae1f17a39da980f1d4321d9cb6",
+    "databaseSha256": "14af5f12a84a9e8505b0ff1e7aab78f0ef3b6383c2825ffae83e64e2d1a9bbbf",
+    "migration": {
+      "schema": 83,
+      "preservedContentFingerprints": true
+    },
+    "migrationMs": 197199
+  },
+  "completeSnapshot": {
+    "hostPath": "/opt/solo-to-china/prepared/family-2.0.72-20260929/backups/solo-to-china-2026-09-29T03-47-31-904Z.snapshot",
+    "database": {
+      "bytes": 2335760384,
+      "sha256": "f5aacc20c6e4db29eb97cf484a49539881579eae1f17a39da980f1d4321d9cb6",
+      "integrity": "ok"
+    },
+    "totals": {
+      "files": 1449,
+      "bytes": 3018436807
+    },
+    "references": 10108,
+    "pairedOldImage": "sha256:d7fa6ccba0e1cab1e9f1546bb61a82a84903805b61e0fa8689900cff939a3b4d",
+    "databaseSchema": 79
+  },
+  "restoreDrill": "passed",
+  "preparedAt": "2026-09-29T04:08:25.880Z",
+  "repair": {
+    "previewFingerprint": "aa6619d899618ddc24b028b3544db20b073f86c23c122f3f51ef5d9597a90de3",
+    "records": [
+      {
+        "id": "opportunity_859f07766f1202a7b54f3058",
+        "before": 14,
+        "after": 12,
+        "blocked": false,
+        "protectedDecision": false,
+        "eligibilityChanged": false,
+        "dependencyFingerprint": "14296aed466116407a2214737ff884eccc3cdf25d80524a0eaaac829aad92f83"
+      },
+      {
+        "id": "opportunity_9d066affac5209dd820dae5e",
+        "before": 3,
+        "after": 2,
+        "blocked": false,
+        "protectedDecision": false,
+        "eligibilityChanged": false,
+        "dependencyFingerprint": "6ddd9759eed9d4dbd3d89f8ab31798c272c212ae774a93e9e64c9527950a8494"
+      },
+      {
+        "id": "opportunity_e76caea56f5914a2d27a8f85",
+        "before": 18,
+        "after": 17,
+        "blocked": false,
+        "protectedDecision": false,
+        "eligibilityChanged": false,
+        "dependencyFingerprint": "a4a38b3f5c5f12334c4bd48699228fc4a0a8fd3f133dbb94c33b0d9de517a625"
+      },
+      {
+        "id": "opportunity_716a5d141a6a239055100d06",
+        "before": 31,
+        "after": 30,
+        "blocked": false,
+        "protectedDecision": false,
+        "eligibilityChanged": false,
+        "dependencyFingerprint": "fa3e60dd477c9893fc11178a7ed58e1ec7f086d11735c428a35e712f8927e599"
+      },
+      {
+        "id": "opportunity_0ad2ce3a8a6125aa07ee8be4",
+        "before": 24,
+        "after": 23,
+        "blocked": false,
+        "protectedDecision": false,
+        "eligibilityChanged": false,
+        "dependencyFingerprint": "6919843b5f9471c830746079578c03ba3ce0b20a379245b66e1f173417560531"
+      },
+      {
+        "id": "opportunity_c1f5ed8caac9df16e20abf27",
+        "before": 3,
+        "after": 2,
+        "blocked": false,
+        "protectedDecision": false,
+        "eligibilityChanged": false,
+        "dependencyFingerprint": "9cb3eb3aeee593e8a640e1de61cf059b5e6c995f2b701df17d601db961ec5812"
+      }
+    ]
+  },
+  "hardViolations": 0,
+  "stages": [
+    {
+      "stage": "prepared-complete-backup",
+      "elapsedMs": 402062
+    },
+    {
+      "stage": "prepared-restore-drill",
+      "status": "passed",
+      "elapsedMs": 831740
+    },
+    {
+      "stage": "prepared-ready",
+      "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:3fe1cc4459a4346a753f4ffa88a36845e63a5c1e107e173f8172e2a165418d80",
+      "revision": "b65794b42bc25d11ca92e0f21e31456e72eaabb3",
+      "migrationMs": 197199,
+      "elapsedMs": 1444604,
+      "hardViolations": 0
+    }
+  ]
+}

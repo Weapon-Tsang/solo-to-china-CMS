@@ -1,0 +1,13 @@
+{
+  "changeClass": ["DATABASE_LOGIC", "DATA_MIGRATION", "RELEASE_CONTROL"],
+  "L1": {"status": "PASS", "scope": "Source family projection, repair boundaries, approval/inbox regressions, deployment ordering and child-process failure propagation"},
+  "L2": {"status": "PASS", "applicationTests": 1118, "offlineMandatoryChecks": 50, "updatedHostProbeTests": 6, "countsAreNotAdditive": true},
+  "L3": {"status": "PASS", "scope": "Retained real schema79 snapshot and current production read-only source copy; migration to83, exact six repairs, idempotence, protected fingerprints and complete Opportunity audit"},
+  "L4": {"status": "PASS", "scope": "Isolated browser login, recommendations, real approval operation and immediate inbox removal; screenshot output/playwright/family-approved.png"},
+  "L5": {"status": "NOT REQUIRED", "scope": "No provider, prompt or transport changes; no real provider canary"},
+  "L6": {"status": "PASS", "scope": "Offline full-chain fixed-fixture Pipeline through approval, QA and mock WordPress for legacy and article_bundle_v1, plus current full-size database release rehearsal and isolated API startup", "limitations": "Historical production Capture-to-QA with real model output and production WordPress are NOT TESTED"},
+  "knownUntested": ["Real provider output quality", "Production WordPress writes", "Real Chrome extension installation and Xiaohongshu capture", "SEO rankings and indexing outcomes"],
+  "ciRuns": [36518209356, 36521660139],
+  "applicationSourceRevision": "b65794b42bc25d11ca92e0f21e31456e72eaabb3",
+  "hostCoordinatorRevision": "faacbc20676ea53d29eb5cedabe71034d5b5cfe1"
+}

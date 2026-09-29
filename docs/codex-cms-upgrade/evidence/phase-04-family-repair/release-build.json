@@ -1,0 +1,25 @@
+{
+  "revision": "b65794b42bc25d11ca92e0f21e31456e72eaabb3",
+  "pullRequest": 19,
+  "ciRun": 36518209356,
+  "ci": "success",
+  "localTests": 1118,
+  "releaseGate": "passed",
+  "buildId": "585607a9-f3bd-48c3-b055-06513e20e35a",
+  "buildStatus": "SUCCESS",
+  "buildStart": "2026-09-29T03:44:46.851504951Z",
+  "buildFinish": "2026-09-29T03:46:23.171939Z",
+  "images": [
+    {
+      "artifactRegistryPackage": "projects/project-4bcb9146-c37b-43b0-b11/locations/asia-east1/repositories/solo-to-china/packages/engine/versions/sha256:3fe1cc4459a4346a753f4ffa88a36845e63a5c1e107e173f8172e2a165418d80",
+      "digest": "sha256:3fe1cc4459a4346a753f4ffa88a36845e63a5c1e107e173f8172e2a165418d80",
+      "name": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine:2.0.72-b65794b",
+      "pushTiming": {
+        "endTime": "2026-09-29T03:46:21.523497988Z",
+        "startTime": "2026-09-29T03:45:51.086873507Z"
+      }
+    }
+  ],
+  "authorizedBuilds": 1,
+  "actualBuilds": 1
+}
