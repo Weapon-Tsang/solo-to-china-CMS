@@ -1,0 +1,186 @@
+{
+  "completedAt": "2026-09-29T04:52:10+00:00",
+  "maintenanceSeconds": 450,
+  "applicationRevision": "b65794b42bc25d11ca92e0f21e31456e72eaabb3",
+  "deploymentCoordinatorRevision": "faacbc20676ea53d29eb5cedabe71034d5b5cfe1",
+  "cloudBuildId": "585607a9-f3bd-48c3-b055-06513e20e35a",
+  "cloudBuildCount": 1,
+  "containers": [
+    {
+      "name": "engine",
+      "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:3fe1cc4459a4346a753f4ffa88a36845e63a5c1e107e173f8172e2a165418d80",
+      "running": true,
+      "startedAt": "2026-09-29T04:51:59.354041997Z",
+      "restartPolicy": "unless-stopped"
+    },
+    {
+      "name": "engine-worker",
+      "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:3fe1cc4459a4346a753f4ffa88a36845e63a5c1e107e173f8172e2a165418d80",
+      "running": true,
+      "startedAt": "2026-09-29T04:52:07.440864462Z",
+      "restartPolicy": "unless-stopped"
+    },
+    {
+      "name": "cloudflared",
+      "image": "cloudflare/cloudflared:2026.8.2",
+      "running": true,
+      "startedAt": "2026-09-23T20:00:37.782162532Z",
+      "restartPolicy": "unless-stopped"
+    },
+    {
+      "name": "engine-before-b65794b",
+      "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:8339aa10cd3a02b4178d7137943aa648ab10251ab3ab5213f84d5b3d54ecb313",
+      "running": false,
+      "startedAt": "2026-09-28T19:52:43.773257245Z",
+      "restartPolicy": "no"
+    },
+    {
+      "name": "engine-worker-before-b65794b",
+      "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:8339aa10cd3a02b4178d7137943aa648ab10251ab3ab5213f84d5b3d54ecb313",
+      "running": false,
+      "startedAt": "2026-09-28T19:52:44.55703732Z",
+      "restartPolicy": "no"
+    }
+  ],
+  "boundaryBackup": {
+    "kind": "verified-boundary-database-and-prepared-media",
+    "databaseBackupPath": "/ops/boundary.sqlite",
+    "sha256": "f4bd035c5dff61b42825dae3fb897df0eca916cc0e34f9ab4c444aa3d72b64db",
+    "preparedSnapshot": "/prepared/backups/solo-to-china-2026-09-29T03-47-31-904Z.snapshot",
+    "snapshotManifestSha256": "f96502986fb42acc31e62156621c55aa5042115ad268920de6ea8707f0e82168",
+    "oldImage": "sha256:d7fa6ccba0e1cab1e9f1546bb61a82a84903805b61e0fa8689900cff939a3b4d"
+  },
+  "migration": {
+    "schema": 83,
+    "integrity": "ok",
+    "foreignKeyErrors": 0,
+    "preservedContentFingerprints": true,
+    "migrationMs": 221472
+  },
+  "repair": {
+    "changed": 6,
+    "idempotent": false,
+    "previewFingerprint": "99ff31599ba2992ba56279841c075011a0c86c8aa7c602d14c82017d5bd419e0",
+    "records": [
+      {
+        "id": "opportunity_859f07766f1202a7b54f3058",
+        "before": 14,
+        "after": 12
+      },
+      {
+        "id": "opportunity_9d066affac5209dd820dae5e",
+        "before": 3,
+        "after": 2
+      },
+      {
+        "id": "opportunity_e76caea56f5914a2d27a8f85",
+        "before": 18,
+        "after": 17
+      },
+      {
+        "id": "opportunity_716a5d141a6a239055100d06",
+        "before": 31,
+        "after": 30
+      },
+      {
+        "id": "opportunity_0ad2ce3a8a6125aa07ee8be4",
+        "before": 24,
+        "after": 23
+      },
+      {
+        "id": "opportunity_c1f5ed8caac9df16e20abf27",
+        "before": 3,
+        "after": 2
+      }
+    ]
+  },
+  "audit": {
+    "counts": {
+      "sources": 84,
+      "baseCompleteSources": 77,
+      "fullyCurrentSources": 0,
+      "unfinishedSources": 7,
+      "allOpportunities": 1427,
+      "activeLifecycle": 1402,
+      "actionable": 181,
+      "sourceBackedActionable": 0,
+      "knowledgeActionable": 181,
+      "otherActionable": 0,
+      "inboxStates": {
+        "SUPERSEDED": 1201,
+        "ACTIONABLE": 181,
+        "INTERNAL": 39,
+        "MERGED": 6
+      },
+      "processingStates": {
+        "EVIDENCE_GAP": 134,
+        "CURRENT": 47
+      },
+      "opportunityStrategies": {
+        "3.3": 497,
+        "3.0": 440,
+        "1.8": 269,
+        "3.9": 198,
+        "3.8": 20,
+        "1.9": 1,
+        "3.2": 1,
+        "3.4": 1
+      },
+      "actionableModes": {
+        "multi_source_synthesis": 181
+      },
+      "actionableTypes": {
+        "attraction_guide": 87,
+        "food_guide": 27,
+        "itinerary": 26,
+        "transport_guide": 18,
+        "practical_guide": 17,
+        "hotel_area_guide": 4,
+        "city_guide": 2
+      },
+      "actionableReadiness": {
+        "ready": 47,
+        "evidenceGap": 134,
+        "score0": 31,
+        "score100": 0,
+        "min": 0,
+        "max": 94
+      }
+    },
+    "enforcement": {
+      "enforced": true,
+      "passed": true,
+      "hardViolationCount": 0,
+      "integrityViolationCount": 0,
+      "productionHolds": {
+        "evidenceGap": 134,
+        "readinessScoreZero": 31,
+        "sourceBackedWithoutSelectedFacts": 0
+      }
+    }
+  },
+  "budgetAssessment": {
+    "originalExtraMargin420Seconds": "NOT MET",
+    "timing": {
+      "boundary-backup": 115,
+      "migrate": 201,
+      "family-repair": 42,
+      "forward-total": 402,
+      "restore": 59
+    },
+    "overhead": {
+      "media-hash": 7,
+      "full-db-api-start": 3
+    },
+    "estimatedExposureSeconds": 479,
+    "estimatedForwardSeconds": 539,
+    "estimatedRollbackSeconds": 179,
+    "enforcedForwardLimitSeconds": 600,
+    "authorizedTotalLimitSeconds": 900,
+    "hardViolations": 0,
+    "pairedRestore": "PASS",
+    "basis": "Measured full-size steps plus 60 seconds miscellaneous stop/copy overhead and 60 seconds Worker startup; rollback reserves 120 seconds for old service startup. Runtime limits remain unchanged."
+  },
+  "environmentAndMediaPreserved": true,
+  "probeSha256": "a51bc8f235b81e08072cb16d971715dcaf60fe47aa5952d66f955e83c92a41a8"
+}

@@ -1,0 +1,29 @@
+{
+  "observedAt": "2026-09-29T04:57:34.469Z",
+  "jobs": [
+    {
+      "status": "failed",
+      "n": 1230
+    },
+    {
+      "status": "succeeded",
+      "n": 18152
+    }
+  ],
+  "modelCalls": 6535,
+  "mediaDispatches": [
+    {
+      "state": "completed",
+      "n": 49
+    },
+    {
+      "state": "failed",
+      "n": 8
+    },
+    {
+      "state": "outcome_unknown",
+      "n": 1
+    }
+  ],
+  "schema": 83
+}

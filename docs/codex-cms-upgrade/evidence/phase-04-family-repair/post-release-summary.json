@@ -1,0 +1,260 @@
+{
+  "completedAt": "2026-09-29T04:55:01Z",
+  "audit": {
+    "counts": {
+      "sources": 84,
+      "baseCompleteSources": 77,
+      "fullyCurrentSources": 0,
+      "unfinishedSources": 7,
+      "allOpportunities": 1427,
+      "activeLifecycle": 1402,
+      "actionable": 181,
+      "sourceBackedActionable": 0,
+      "knowledgeActionable": 181,
+      "otherActionable": 0,
+      "inboxStates": {
+        "SUPERSEDED": 1201,
+        "ACTIONABLE": 181,
+        "INTERNAL": 39,
+        "MERGED": 6
+      },
+      "processingStates": {
+        "EVIDENCE_GAP": 134,
+        "CURRENT": 47
+      },
+      "opportunityStrategies": {
+        "3.3": 497,
+        "3.0": 440,
+        "1.8": 269,
+        "3.9": 198,
+        "3.8": 20,
+        "1.9": 1,
+        "3.2": 1,
+        "3.4": 1
+      },
+      "actionableModes": {
+        "multi_source_synthesis": 181
+      },
+      "actionableTypes": {
+        "attraction_guide": 87,
+        "food_guide": 27,
+        "itinerary": 26,
+        "transport_guide": 18,
+        "practical_guide": 17,
+        "hotel_area_guide": 4,
+        "city_guide": 2
+      },
+      "actionableReadiness": {
+        "ready": 47,
+        "evidenceGap": 134,
+        "score0": 31,
+        "score100": 0,
+        "min": 0,
+        "max": 94
+      }
+    },
+    "enforcement": {
+      "enforced": true,
+      "passed": true,
+      "hardViolationCount": 0,
+      "integrityViolationCount": 0,
+      "productionHolds": {
+        "evidenceGap": 134,
+        "readinessScoreZero": 31,
+        "sourceBackedWithoutSelectedFacts": 0
+      }
+    }
+  },
+  "requests": [
+    {
+      "probe": "request",
+      "path": "/api/health",
+      "status": 200,
+      "durationMs": 176
+    },
+    {
+      "probe": "request",
+      "path": "/api/ready",
+      "status": 200,
+      "durationMs": 6
+    },
+    {
+      "probe": "request",
+      "path": "/api/dashboard",
+      "status": 200,
+      "durationMs": 3568
+    },
+    {
+      "probe": "request",
+      "path": "/api/sources?limit=500",
+      "status": 200,
+      "durationMs": 291
+    },
+    {
+      "probe": "request",
+      "path": "/api/recommendations?limit=500",
+      "status": 200,
+      "durationMs": 54
+    },
+    {
+      "probe": "request",
+      "path": "/api/content",
+      "status": 200,
+      "durationMs": 266
+    },
+    {
+      "probe": "request",
+      "path": "/api/exceptions?limit=500",
+      "status": 200,
+      "durationMs": 20
+    },
+    {
+      "probe": "request",
+      "path": "/api/maintenance",
+      "status": 200,
+      "durationMs": 2789
+    },
+    {
+      "probe": "request",
+      "path": "/api/commercial",
+      "status": 200,
+      "durationMs": 9
+    }
+  ],
+  "summaries": [
+    {
+      "probe": "dashboard",
+      "actions": {
+        "sources": 0,
+        "recommendations": 181,
+        "knowledge": 0,
+        "blueprints": 0,
+        "content": 0,
+        "wordpress": 0,
+        "commercial": 1,
+        "exceptions": 7,
+        "maintenance": 1,
+        "settings": 0
+      },
+      "totals": {
+        "sources": 84,
+        "claims": 5465,
+        "knowledgeFacts": 4493,
+        "conflicts": 0,
+        "exceptions": 7,
+        "exceptionRecords": 7,
+        "topicCandidates": 29,
+        "pendingRecommendations": 181,
+        "internalOpportunities": 188,
+        "processingGapOpportunities": 0,
+        "evidenceGapOpportunities": 140,
+        "mergedOpportunities": 6,
+        "supersededOpportunities": 1201,
+        "contentPipelineItems": 12,
+        "contentNeedsAttention": 0,
+        "draftsReady": 0,
+        "activeOffers": 4,
+        "affiliateQueueTasks": 1,
+        "wordpressInventory": 12,
+        "searchQueries": 0
+      }
+    },
+    {
+      "probe": "sources",
+      "count": 84,
+      "statuses": {
+        "processed": 78,
+        "media_only": 6
+      },
+      "media": {
+        "discovered": 1366,
+        "originals": 1366,
+        "browserRepair": 0,
+        "serverRepair": 0
+      },
+      "experience": {
+        "missing": 6,
+        "succeeded": 78
+      }
+    },
+    {
+      "probe": "recommendations",
+      "count": 100,
+      "summary": {
+        "recommendations": 77,
+        "pending": 53,
+        "opportunities": 828,
+        "approved": 13,
+        "internalOpportunities": 1,
+        "actionableInbox": 181,
+        "processingGap": 0,
+        "evidenceGap": 140,
+        "merged": 6,
+        "superseded": 1201
+      },
+      "comparisonGroups": 0
+    },
+    {
+      "probe": "exceptions",
+      "count": 8,
+      "summary": {
+        "blockers": 7,
+        "warnings": 1
+      }
+    },
+    {
+      "probe": "maintenance",
+      "cards": [
+        {
+          "key": "media_original_backfill",
+          "title": "媒体原件修复",
+          "total": 1366,
+          "completed": 1366,
+          "pending": 0,
+          "blocked": 0,
+          "nextOwner": "system"
+        },
+        {
+          "key": "experience_backfill",
+          "title": "体验信息补齐",
+          "total": 78,
+          "completed": 77,
+          "pending": 1,
+          "blocked": 0,
+          "nextOwner": "system"
+        },
+        {
+          "key": "recommendation_reconciliation",
+          "title": "推荐收件箱校准",
+          "total": 188,
+          "completed": 181,
+          "pending": 0,
+          "blocked": 0,
+          "nextOwner": "system",
+          "detail": {
+            "actionable": 181,
+            "evidenceGap": 140,
+            "merged": 6,
+            "superseded": 1201
+          }
+        },
+        {
+          "key": "historical_failure_migration",
+          "title": "历史失败治理",
+          "total": 128,
+          "completed": 113,
+          "pending": 0,
+          "blocked": 15,
+          "nextOwner": "system"
+        }
+      ]
+    },
+    {
+      "probe": "commercial",
+      "providers": 1,
+      "assets": 4,
+      "opportunities": 3,
+      "queue": 1
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "schema": 83,
+  "before": {
+    "sources": 84,
+    "source_assets": 1454,
+    "claims": 5465,
+    "article_drafts": 12,
+    "model_call_metrics": 6535,
+    "jobs": 19382,
+    "media_dispatches": 58
+  },
+  "after": {
+    "sources": 84,
+    "source_assets": 1454,
+    "claims": 5465,
+    "article_drafts": 12,
+    "model_call_metrics": 6535,
+    "jobs": 19382,
+    "media_dispatches": 58
+  },
+  "jobs": [
+    {
+      "status": "failed",
+      "n": 1230
+    },
+    {
+      "status": "succeeded",
+      "n": 18152
+    }
+  ],
+  "repair": [
+    {
+      "id": "opportunity_859f07766f1202a7b54f3058",
+      "stored": 12,
+      "actual": 12,
+      "lifecycle": "recommended",
+      "approved": false,
+      "candidate": false
+    },
+    {
+      "id": "opportunity_9d066affac5209dd820dae5e",
+      "stored": 2,
+      "actual": 2,
+      "lifecycle": "recommended",
+      "approved": false,
+      "candidate": false
+    },
+    {
+      "id": "opportunity_e76caea56f5914a2d27a8f85",
+      "stored": 17,
+      "actual": 17,
+      "lifecycle": "recommended",
+      "approved": false,
+      "candidate": false
+    },
+    {
+      "id": "opportunity_716a5d141a6a239055100d06",
+      "stored": 30,
+      "actual": 30,
+      "lifecycle": "recommended",
+      "approved": false,
+      "candidate": false
+    },
+    {
+      "id": "opportunity_0ad2ce3a8a6125aa07ee8be4",
+      "stored": 23,
+      "actual": 23,
+      "lifecycle": "recommended",
+      "approved": false,
+      "candidate": false
+    },
+    {
+      "id": "opportunity_c1f5ed8caac9df16e20abf27",
+      "stored": 2,
+      "actual": 2,
+      "lifecycle": "recommended",
+      "approved": false,
+      "candidate": false
+    }
+  ],
+  "newModelCalls": [],
+  "foreignKeyErrors": 0
+}

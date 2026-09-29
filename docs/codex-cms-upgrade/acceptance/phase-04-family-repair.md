@@ -1,5 +1,35 @@
 # 2026-09-29 来源族计数定向修复
 
+## 最终结果：2.0.72 已发布到原云端生产
+
+**2026-09-29 12:52:10（北京时间）发布完成；schema83，策略3.9。** 唯一维护窗口从12:44:40至12:52:10，450秒（7分30秒），未超过批准的15分钟，没有生产回滚或第二次构建。API、Worker使用下文同一固定镜像；原域名 [CMS](https://engine.solotochina.com) 与 [采集入口](https://capture.solotochina.com) 的 readiness 均为HTTP200、`ready=true`、version2.0.72。
+
+六条正式修复分别为14→12、3→2、18→17、31→30、24→23、3→2，仅改两个获批来源族计数字段。正式预览指纹 `99ff31599ba2992ba56279841c075011a0c86c8aa7c602d14c82017d5bd419e0`；首轮changed=6，执行器内第二次apply断言changed=0通过（结果文件的 `idempotent:false` 描述首轮实际发生变更，不表示二次幂等测试失败）。六条仍为recommended、未批准、未绑定candidate。停机后的完整门禁与上线后只读复验均为hardViolationCount=0、integrityViolationCount=0。
+
+上线前后来源84、source_assets1454、Claims5465、草稿12、Jobs19382、model_call_metrics6535、media_dispatches58均相同；所有受保护内容指纹、媒体SHA及生产环境文件SHA对照通过。Jobs为failed1230/succeeded18152、queued/running=0；相对于准备时固定副本，没有新增模型调用，未新增Canary或重发历史失败。正常Worker已恢复，沿用既有预算，未来正常业务消费仍可能产生正常费用，不能把此次观察写成永久免费。
+
+后台只读GET覆盖health、ready、dashboard、sources、recommendations、content、exceptions、maintenance、commercial，全部200。浏览器真实审批操作在隔离环境通过，生产没有为了验收再执行一次审批或生成。旧失败/证据缺口仍保留：完整审计范围内134个EVIDENCE_GAP、31个readiness=0、7个未完成来源；UI总览的140个证据缺口属于更广口径，不能与134直接相减认作新增故障。原未知媒体投递未重投。模型健康仍显示历史 `MODEL_OUTPUT_LIMIT` 降级，最后失败记录为2026-09-28T20:14:40.714Z；历史费用未知，不宣称这项独立模型问题已解决。封面/正文独立刷新仍按接续指令保持关闭，未修改独立前端仓库或向正式WordPress写入。
+
+| 验收层级 | 最终状态 | 实际覆盖 |
+|---|---|---|
+| L1 Targeted Tests | PASS | 来源族独立预期、写入/准入/修复边界、只读收件箱、部署顺序及失败传播 |
+| L2 Module Regression | PASS | 应用1118项测试、50项离线强制门禁；后续宿主机probe 6项测试及两次PR CI通过，数量不累加 |
+| L3 Production DB Replay | PASS | 留存同源库及当前生产只读副本，79→83、精确六条修复/幂等、保护指纹、完整门禁及恢复演练 |
+| L4 Browser E2E | PASS | 隔离登录→建议→批准→立即移出收件箱；另有生产只读API/公网验收 |
+| L5 Real Provider Canary | NOT REQUIRED | 未修改模型/Prompt/transport；未主动发起真实模型测试 |
+| L6 Full Production Replay | PASS（离线范围） | 固定fixture真实Pipeline至QA和mock WordPress，legacy/article_bundle_v1两路径；当前整库发布演练及正式发布门禁 |
+| Post-Fix Exploratory Audit | PASS（定向范围） | 上线后完整机会审计零硬违规、数据/任务/模型调用对照；上述历史独立问题保留 |
+
+**NOT TESTED：** 真实模型产出质量、历史生产来源实际Capture→QA全链、正式WordPress写入、用户Chrome扩展安装/真实小红书采集、SEO排名效果。离线L6通过不扩大为这些外部验收通过。
+
+旧容器 `engine-before-b65794b`、`engine-worker-before-b65794b` 已停止并保留，旧镜像、上轮快照和失败库全部保留。当刻一致数据库位于 `/opt/solo-to-china/upgrades/b65794b42bc25d11ca92e0f21e31456e72eaabb3/boundary.sqlite`，SHA `f4bd035c5dff61b42825dae3fb897df0eca916cc0e34f9ab4c444aa3d72b64db`，与本次已完整恢复演练的媒体快照配对。公开服务后禁止自动用它覆盖后续新写入。开机metadata已改为仅核对固定镜像并启动已验证容器，不重复迁移/启动补排；回读与本地字节一致，SHA `2048b3cd31a9bb705347776658434f7bf095145d23fc35ae9f93dfec31d300ed`，未为测试重启VM。原startup脚本私有留存。
+
+扩展2.0.72已打包至 `output/phase04-cloud-extension-2.0.72.zip`，默认入口capture.solotochina.com，保留用户已存token且不内嵌凭据；SHA `3e823097bfda6a469c2fc30a83e05b68ff6c0471ef9fb64fb2728dac68e6edd3`。未操作用户浏览器profile，安装状态NOT TESTED。
+
+机器证据：[发布结果](../evidence/phase-04-family-repair/production-release-result.json)、[上线后数据对照](../evidence/phase-04-family-repair/postflight-result.json)、[上线后审计/API](../evidence/phase-04-family-repair/post-release-summary.json)、[公网](../evidence/phase-04-family-repair/public-endpoints.json)、[测试范围](../evidence/phase-04-family-repair/validation-scope.json)。诊断中的Python默认UA公网403已用正常Node客户端确认两个域名200；只读副本伴随文件问题通过不可变只读提取摘要解决，两者都不涉及修改生产业务数据或放宽业务门禁。
+
+`current_authorized_step=COMPLETE`；本次有限发布完成，下面未授权/停止描述均为历史记录。
+
 ## 有限发布授权后的执行记录（覆盖下文历史停止点）
 
 用户已回复“批准”，同意文末具体计划中的提交/推送/必要合并、一次 Cloud Build、六条两个字段修复、最多15分钟维护以及成功/回滚后的 API 与 Worker 恢复及既有正常生产费用。候选版本2.0.72，schema83，策略3.9。不得追加第二次构建、提高模型预算、重发历史失败或写正式 WordPress。
@@ -12,7 +42,11 @@
 
 浏览器测试发现并修复相邻问题：readOnly 建议收件箱仍展示已批准但遗留 ACTIONABLE 标记的记录。查询现在同时限定可决策 lifecycle；隔离浏览器登录→建议→批准后收件箱立即清空，确认提示与总览一致。永久回归禁止只读列表依赖一次额外 reconciliation 才移除已批准项。等待证据的已批准机会允许刷新派生就绪度，保持 approved_at 与 selectedFactKeys；绑定生产 owner 的内容仍冻结。
 
-最终构建、当前生产数据回放、维护时长及上线状态待下文追加实际结果；本段不代表已部署。历史回放与历史“未授权/停止”原文保留。
+第二次完整边界演练：备份115秒、迁移201秒、六条修复42秒，含完整审计的正向共402秒；配对恢复59秒，硬违规0。额外设置的420秒“正向加回滚”余量检查未满足（实测461秒），不将该检查报告为通过。补测全媒体哈希7秒、完整数据库隔离API启动3秒后，按真实步骤预算复核：正向402 + 两次哈希14 + API启动3 + 停止/拷贝等预留60 = 479秒公开前预算；再留60秒启动Worker，总539秒，小于既有600秒正向上限。回滚59秒加旧服务启动预留120秒为179秒，小于300秒回滚预算。业务门禁、540秒公开前上限、600/900秒运行限制均未放宽。计时与独立预算判断分别留存，不用一个“演练通过”掩盖原余量检查失败。
+
+应用源提交 `b65794b42bc25d11ca92e0f21e31456e72eaabb3`，PR #19；宿主机部署probe后续提交经PR #20合并至 `faacbc20676ea53d29eb5cedabe71034d5b5cfe1`。两次PR CI均通过。唯一Cloud Build `585607a9-f3bd-48c3-b055-06513e20e35a` 成功，固定镜像 `sha256:3fe1cc4459a4346a753f4ffa88a36845e63a5c1e107e173f8172e2a165418d80`。镜像内303个运行文件与应用源归档逐一SHA一致；宿主机probe不在该镜像内，单独验证及记录身份。
+
+当前只读来源副本的完整备份含1449文件、3,018,436,807字节；完整恢复演练通过。schema79输入SHA `f5aacc20c6e4db29eb97cf484a49539881579eae1f17a39da980f1d4321d9cb6`；79→83迁移、六条修复和完整机会门禁通过，预检库SHA `14af5f12a84a9e8505b0ff1e7aab78f0ef3b6383c2825ffae83e64e2d1a9bbbf`。停机前再次检查当前六条及依赖、媒体引用与预检一致，running jobs=0；随后以准确镜像强制预检通过后才停止旧服务。维护结果与线上读验结果见后续最终记录。历史回放与历史“未授权/停止”原文保留。
 
 风险：DATABASE_LOGIC + 发布控制流程。工作区 `docs/cloud-release-result`，HEAD `ed6efd01cbd621ccdbc7f83a7bb3748a87a2682c`；承接候选 `a11bcf1711c6b31b52725cdc925c4817629037f3`。保留进入本轮时已有的文档/证据差异，没有 reset、stash、pull、commit、push 或 merge。完整输入留存于 [phase-04-family-repair.txt](../phases/phase-04-family-repair.txt)。原发布 [BLOCKED / ROLLED_BACK 记录](phase-04-cloud-release.md) 保留。
 

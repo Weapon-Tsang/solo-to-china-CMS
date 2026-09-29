@@ -1,0 +1,25 @@
+[
+  {
+    "url": "https://engine.solotochina.com/",
+    "status": 200,
+    "result": null
+  },
+  {
+    "url": "https://engine.solotochina.com/api/ready",
+    "status": 200,
+    "result": {
+      "ready": true,
+      "version": "2.0.72",
+      "database": "ready"
+    }
+  },
+  {
+    "url": "https://capture.solotochina.com/api/ready",
+    "status": 200,
+    "result": {
+      "ready": true,
+      "version": "2.0.72",
+      "database": "ready"
+    }
+  }
+]
