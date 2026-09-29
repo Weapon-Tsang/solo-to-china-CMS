@@ -83,7 +83,7 @@ if (!extractor.enabled) throw new Error("Vertex Gemini is not configured (GOOGLE
 const repository = new Repository(db, { sourceUploadsDir: config.manualSources.uploadDir });
 const stillUnanalyzed = db.prepare("SELECT analysis_status, asset_kind, confidence AS analysis_confidence, primary_subjects_json, text_regions_json, entities_json FROM source_asset_analyses WHERE asset_id=?");
 const selected = candidates.slice(0, limit);
-const outcome = { requested: 0, cards: 0, ready: 0, deferred: 0, skipped: 0, raced: 0, failed: 0, ledger: ledgerPath };
+const outcome = { requested: 0, cards: 0, ready: 0, deferred: 0, skipped: 0, raced: 0, failed: 0, ledger: ledgerPath, kinds: {} };
 for (let index = 0; index < selected.length; index += perRequest) {
   const group = selected.slice(index, index + perRequest);
   try {
@@ -92,6 +92,8 @@ for (let index = 0; index < selected.length; index += perRequest) {
     outcome.skipped += skipped.length;
     for (const card of cards) {
       outcome.cards += 1;
+      const kind = `${card.asset_kind}${card.visible_text ? "+text" : ""}:${card.editorial_use}`;
+      outcome.kinds[kind] = (outcome.kinds[kind] || 0) + 1;
       const analysis = imageCardMediaAnalysis(card);
       // Non-photo cards remain unanalyzed so the dedicated text-region review
       // still discovers them; their card is not a reuse decision.
