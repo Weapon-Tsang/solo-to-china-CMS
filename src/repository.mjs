@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { evidenceFamilyKeys, usableOpportunityFact, selectedFamilyProjection, completedOpportunitySourceIds } from './opportunity-family-evidence.mjs';
 import { panelReceiptValid } from './visuals/route-panel.mjs';
 import { accessibleMediaCaption } from './media-delivery.mjs';
 import { editorialSeoContext } from './services/editorial-seo-context.mjs';
@@ -3684,6 +3685,7 @@ export class Repository {
       LEFT JOIN sources s ON s.id=o.source_id
       LEFT JOIN structured_sources ss ON ss.source_id=o.source_id
       WHERE o.inbox_state='ACTIONABLE'
+        AND o.lifecycle_state IN ('recommended','recommended_again','deferred')
       ORDER BY CASE o.lifecycle_state WHEN 'recommended_again' THEN 0 WHEN 'recommended' THEN 1 ELSE 2 END,
         o.readiness_score DESC,o.updated_at DESC LIMIT ? OFFSET ?`).all(Math.max(1,Math.min(500,Number(limit)||100)),Math.max(0,Number(cursor)||0))
       .map((row) => {
@@ -3727,6 +3729,16 @@ export class Repository {
       return { opportunityId,decision,status:lifecycleState,queued:false,candidateId:null };
     }
     const readiness = json(opportunity.readiness_json,{});
+    const decisionCoverage = json(opportunity.coverage_json,{});
+    if (decisionCoverage.knowledgeEventGenerated) {
+      const projection = selectedFamilyProjection(this.db, opportunity);
+      if (projection.missing || projection.unusable || projection.facts.length < 2 || projection.families.length < 2
+        || projection.families.length !== Number(readiness.sourceFamilyCount)
+        || projection.facts.length !== Number(readiness.factCount)
+        || (decisionCoverage.familyEvidenceFingerprint && decisionCoverage.familyEvidenceFingerprint !== projection.dependencyFingerprint)) {
+        throw conflictError('Knowledge evidence changed; recalculate this opportunity before approval.');
+      }
+    }
     const ready = Boolean(readiness.ready);
     this.db.prepare("UPDATE content_opportunities SET lifecycle_state='approved',status=?,suppression_reason=NULL,approved_at=?,updated_at=? WHERE id=?")
       .run(ready ? "approved_ready" : "approved_waiting_for_evidence",timestamp,timestamp,opportunityId);
@@ -3951,17 +3963,12 @@ export class Repository {
   }
 
   completedOpportunityFacts(facts) {
-    const completed=new Set(this.db.prepare(`SELECT s.id FROM sources s
-      WHERE s.completeness_status='complete' AND s.status IN ('processed','needs_ai')
-        AND NOT EXISTS (SELECT 1 FROM current_source_assets a WHERE a.source_id=s.id AND a.durability_status<>'ORIGINAL_STORED')
-        AND EXISTS (SELECT 1 FROM experience_extraction_runs er WHERE er.source_id=s.id AND er.capture_version=s.capture_version
-          AND er.status='succeeded' AND er.degraded=0)`).all().map((row)=>row.id));
+    const completed=completedOpportunitySourceIds(this.db);
     const familyBySource=new Map(this.db.prepare("SELECT source_id,family_id FROM source_family_memberships").all()
       .map((row)=>[row.source_id,row.family_id]));
     return (facts || []).map((fact)=>{
       const evidence=(fact.evidence || []).filter((item)=>completed.has(item.source_id));
-      const independenceKeys=uniqueStrings(evidence.map((item)=>familyBySource.get(item.source_id)
-        ? `family:${familyBySource.get(item.source_id)}` : item.source_id ? `source:${item.source_id}` : null),10_000);
+      const independenceKeys=evidenceFamilyKeys(evidence,familyBySource);
       return {...fact,evidence,consensus_detail:{variants:[{independenceKeys}]}};
     }).filter((fact)=>fact.evidence.length>0);
   }
@@ -4003,17 +4010,18 @@ export class Repository {
     const activeTopicKeys=new Set();
     for (const cluster of clusters) {
       const facts = json(cluster.claim_keys_json,[]).map((key) => factsByKey.get(key)).filter(Boolean);
-      const sourceFamilyIds = [...new Set(facts.flatMap(independentEvidenceKeysForFact))];
-      const sourceIds = [...new Set(facts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))];
-      const usableFacts = facts.filter((fact) => fact.consensus_status !== "conflicted"
-        && ["current","unknown"].includes(fact.validity_state || "unknown"));
+      const usableFacts = facts.filter(usableOpportunityFact);
+      const sourceFamilyIds = [...new Set(usableFacts.flatMap(independentEvidenceKeysForFact))];
+      const sourceIds = [...new Set(usableFacts.flatMap((fact) => (fact.evidence || []).map((item) => item.source_id)).filter(Boolean))];
       const actionability = usableFacts.length >= 2 && sourceFamilyIds.length >= 2
         && knowledgeClusterIsArticleWorthy(cluster.title,usableFacts,destinationSlug);
       const titleIdentity=slugify(cluster.title) || "topic";
       const topicKey = `${destinationSlug}:knowledge:${titleIdentity}:${sha256(cluster.topic_key).slice(0,12)}`;
       activeTopicKeys.add(topicKey);
       const opportunityId = `opportunity_${sha256(topicKey).slice(0,24)}`;
-      const existing = this.db.prepare("SELECT id,lifecycle_state,status FROM content_opportunities WHERE topic_key=?").get(topicKey);
+      const existing = this.db.prepare("SELECT id,lifecycle_state,status,approved_at,candidate_id FROM content_opportunities WHERE topic_key=?").get(topicKey);
+      // Frozen editorial decisions are not rewritten by a live knowledge projection.
+      if (existing && (existing.approved_at || existing.candidate_id)) continue;
       if (!actionability) {
         if (existing && ["recommended","deferred"].includes(existing.lifecycle_state)) {
           this.db.prepare(`UPDATE content_opportunities SET status='suppressed',suppression_reason='knowledge_cluster_no_longer_actionable',updated_at=? WHERE id=?`)
@@ -4047,6 +4055,10 @@ export class Repository {
           lifecycle.action,lifecycle.targetPostId,JSON.stringify(lifecycle.impact));
       this.db.prepare("UPDATE content_opportunities SET seo_action=? WHERE id=?")
         .run(lifecycle.seoAction,opportunityId);
+      const stored = this.db.prepare('SELECT * FROM content_opportunities WHERE id=?').get(opportunityId);
+      const projection = selectedFamilyProjection(this.db,stored);
+      this.db.prepare("UPDATE content_opportunities SET coverage_json=json_set(coverage_json,'$.familyEvidenceVersion',?,'$.familyEvidenceFingerprint',?) WHERE id=?")
+        .run(projection.version,projection.dependencyFingerprint,opportunityId);
       this.saveCoverageMatrix(matrix,destinationSlug);
       if (existing) refreshed += 1; else created += 1;
     }
@@ -4086,9 +4098,13 @@ export class Repository {
       const previousCoverage = json(opportunity.coverage_json, {});
       const publicationMode = normalizePublicationMode(previousCoverage.publicationMode);
       if (previousCoverage.manualAssignmentId) continue; // Manual scope is rebuilt only by its own evaluator.
+      // Awaiting evidence still needs derived readiness refresh, without changing
+      // the approved selected facts. A bound production owner remains frozen.
+      if (previousCoverage.knowledgeEventGenerated && (opportunity.candidate_id
+        || (opportunity.approved_at && opportunity.status !== 'approved_waiting_for_evidence'))) continue;
       const sourceFacts = factsForSource(allFacts, opportunity.source_id);
       const facts = previousCoverage.knowledgeEventGenerated
-        ? (previousCoverage.selectedFactKeys || []).map((key)=>completedFactsByKey.get(key)).filter(Boolean)
+        ? (previousCoverage.selectedFactKeys || []).map((key)=>completedFactsByKey.get(key)).filter(Boolean).filter(usableOpportunityFact)
         : ["source_adaptation", "topic_feature"].includes(publicationMode) && sourceFacts.length
           ? sourceFacts : scopeFactsForOpportunity(completedFacts, { destinationSlug, topic: opportunity.topic_key, title: opportunity.title });
       const familyCount = this.independentSourceFamilyCountForFacts(facts);
@@ -4110,6 +4126,12 @@ export class Repository {
       const next = current === "approved_waiting_for_evidence" && matrix.readiness.ready ? "approved_ready" : current;
       this.db.prepare("UPDATE content_opportunities SET readiness_score=?,readiness_json=?,coverage_json=?,status=?,updated_at=? WHERE id=?")
         .run(matrix.readiness.score, JSON.stringify(matrix.readiness), JSON.stringify(coverage), next, now(), opportunity.id);
+      if (previousCoverage.knowledgeEventGenerated) {
+        const stored=this.db.prepare('SELECT * FROM content_opportunities WHERE id=?').get(opportunity.id);
+        const projection=selectedFamilyProjection(this.db,stored);
+        this.db.prepare("UPDATE content_opportunities SET coverage_json=json_set(coverage_json,'$.familyEvidenceVersion',?,'$.familyEvidenceFingerprint',?) WHERE id=?")
+          .run(projection.version,projection.dependencyFingerprint,opportunity.id);
+      }
     }
     this.reconcileRecommendationInbox(destinationSlug);
     this.lastCoverageRebuildTelemetry={destinationSlug,mode:changed.size?'incremental':'full',changedFactCount:changed.size,

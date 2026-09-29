@@ -1,6 +1,6 @@
-# 2.0.71 existing-cloud CMS release candidate
+# 2.0.72 existing-cloud CMS release candidate
 
-App/Extension version `2.0.71`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Development remains local while the existing cloud CMS stays the sole production system. Schema 79 to 83 requires a verified paired backup, isolated rehearsal and a single stopped-writer migration. The fixed Frontend 1.4.1 artifact remains b231b1d54915ceef6a7f52b907ba5d7c1d79463d / 9154dc68540d9922c11109e4cfe00aee871d850e61124fd7edb624ee20b2c422. New cover-only and body-media-only external refresh paths stay gated until their receiver-specific CAS and receipt protocol is verified. The release backup does not prune older snapshots or containers. See docs/codex-cms-upgrade for the bounded cloud execution record.
+App/Extension version `2.0.72`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Development remains local while the existing cloud CMS stays the sole production system. Schema 79 to 83 requires a verified paired backup, isolated rehearsal and a single stopped-writer migration. The fixed Frontend 1.4.1 artifact remains b231b1d54915ceef6a7f52b907ba5d7c1d79463d / 9154dc68540d9922c11109e4cfe00aee871d850e61124fd7edb624ee20b2c422. New cover-only and body-media-only external refresh paths stay gated until their receiver-specific CAS and receipt protocol is verified. The release backup does not prune older snapshots or containers. See docs/codex-cms-upgrade for the bounded cloud execution record.
 
 # 2.0.70 Xiaohongshu media extraction recovery hotfix
 

@@ -1,0 +1,26 @@
+(node:27364) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ current schema installs the durable editorial, failure, reconciliation, and backfill boundaries (552.4912ms)
+✔ capture media uploads durably assemble verified image and video originals (649.725ms)
+✔ browser media repair makes the original durable and resumes blocked extraction once (549.9969ms)
+✔ published inventory classifies partial overlap as an explicit EXPAND opportunity (522.9913ms)
+✔ one source keeps same-title adaptation and feature modes independently actionable (561.6869ms)
+✔ Experience Blocks reject invented provenance and persist grounded sequence separately from Claims (559.4554ms)
+✔ knowledge change creates an independent multi-source opportunity and Writing Packet selects only assembled evidence (596.0506ms)
+✔ knowledge opportunities use completed sources while unfinished sources remain out of the evidence set (561.7327ms)
+✔ knowledge opportunities collapse resolved aliases, count source families once, and infer type from the entity (586.1028ms)
+✔ knowledge rebuild suppresses replaced alias opportunities and rejects context-free generic subjects (617.851ms)
+✔ knowledge opportunity types follow the topic entity and bilingual destination names collapse (617.2435ms)
+✔ recommendation reconciliation merges near-identical production paths from the same source (533.6274ms)
+✔ knowledge reconciliation merges the same intent across a city and its nested destination scope (594.524ms)
+✔ terminal expression failure archives the attempt and retains artifacts, approval and Golden Article associations (532.9561ms)
+✔ family count excludes historical-only evidence; bounded repair preserves data and rejects stale previews (621.8986ms)
+✔ read-only inbox immediately excludes approved waiting opportunities without reconciliation (550.8352ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9643.7827

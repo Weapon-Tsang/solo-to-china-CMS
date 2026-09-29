@@ -7,6 +7,7 @@ import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { CaptureMediaUploadManager } from "../src/capture-media-upload.mjs";
 import { SCHEMA_VERSION } from "../src/db.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
+import { previewRepair, applyRepair } from '../scripts/repair-opportunity-families.mjs';
 
 test("current schema installs the durable editorial, failure, reconciliation, and backfill boundaries", (t) => {
   const { db } = repositoryFixture(t);
@@ -408,6 +409,68 @@ test("terminal expression failure archives the attempt and retains artifacts, ap
   assert.equal(db.prepare("SELECT COUNT(*) n FROM golden_articles WHERE draft_id='draft-failure'").get().n,1);
   assert.equal(repository.listOperationalExceptions().some((item) => item.key===`job:${jobId}`),false);
   assert.equal(db.prepare("SELECT body_markdown FROM article_drafts WHERE id='draft-failure'").get().body_markdown,'Body');
+});
+
+test('family count excludes historical-only evidence; bounded repair preserves data and rejects stale previews', (t) => {
+  const {db,repository}=repositoryFixture(t);
+  for (const [n,predicate] of [[1,'route'],[2,'payment'],[3,'schedule']]) {
+    saveResearchSource(repository,`68abcdef00000000000000b${n}`,
+      [[`chengdu.metro.family.${predicate}`,'Chengdu Metro',predicate,`Verified ${predicate} information`]],`Verified ${predicate} information`);
+  }
+  repository.rebuildKnowledge('chengdu');
+  db.prepare("UPDATE knowledge_facts SET validity_state='historical' WHERE normalized_key='chengdu.metro.family.schedule'").run();
+  repository.rebuildTopicClusters('chengdu');
+  repository.rebuildKnowledgeOpportunities('chengdu');
+  const row=db.prepare("SELECT * FROM content_opportunities WHERE json_extract(coverage_json,'$.knowledgeEventGenerated')=1").get();
+  assert.ok(row);
+  const readiness=JSON.parse(row.readiness_json),coverage=JSON.parse(row.coverage_json);
+  assert.equal(readiness.sourceFamilyCount,2,'two selected sources; historical third source must not inflate count');
+  assert.equal(coverage.selectedSourceIds.length,2);
+  assert.equal(coverage.selectedFactKeys.length,2);
+  const protectedBefore=JSON.stringify(db.prepare('SELECT * FROM knowledge_facts ORDER BY id').all());
+  db.prepare("UPDATE content_opportunities SET readiness_json=json_set(readiness_json,'$.sourceFamilyCount',3),coverage_json=json_set(coverage_json,'$.readiness.sourceFamilyCount',3) WHERE id=?").run(row.id);
+  assert.throws(()=>repository.decideOpportunity(row.id,'approve'),/Knowledge evidence changed/);
+  const identity={path:'isolated-fixture'};
+  const preview=previewRepair(db,[row.id],identity);
+  assert.equal(preview.records[0].before,3);assert.equal(preview.records[0].after,2);
+  assert.equal(preview.records[0].blocked,false);
+  assert.equal(JSON.parse(db.prepare('SELECT readiness_json FROM content_opportunities WHERE id=?').get(row.id).readiness_json).sourceFamilyCount,3);
+  assert.throws(()=>applyRepair(db,preview,{path:'wrong'}),/identity/);
+  assert.throws(()=>applyRepair(db,preview,identity,{afterUpdate:()=>{throw new Error('injected failure');}}),/injected failure/);
+  assert.equal(JSON.parse(db.prepare('SELECT readiness_json FROM content_opportunities WHERE id=?').get(row.id).readiness_json).sourceFamilyCount,3);
+  assert.equal(applyRepair(db,preview,identity).changed,1);
+  assert.equal(applyRepair(db,preview,identity).changed,0);
+  assert.equal(JSON.stringify(db.prepare('SELECT * FROM knowledge_facts ORDER BY id').all()),protectedBefore);
+  db.prepare("UPDATE knowledge_facts SET validity_state='historical' WHERE normalized_key='chengdu.metro.family.payment'").run();
+  assert.throws(()=>applyRepair(db,preview,identity),/Stale preview/);
+  db.prepare("UPDATE knowledge_facts SET validity_state='current' WHERE normalized_key='chengdu.metro.family.payment'").run();
+  db.prepare("UPDATE content_opportunities SET updated_at='changed' WHERE id=?").run(row.id);
+  assert.throws(()=>applyRepair(db,preview,identity),/Stale preview/);
+  assert.throws(()=>previewRepair(db,['missing'],identity),/Unknown/);
+  db.prepare("UPDATE content_opportunities SET approved_at='approved' WHERE id=?").run(row.id);
+  assert.equal(previewRepair(db,[row.id],identity).records[0].protectedDecision,true);
+  const frozen=db.prepare('SELECT coverage_json,readiness_json FROM content_opportunities WHERE id=?').get(row.id);
+  repository.rebuildKnowledgeOpportunities('chengdu');
+  assert.deepEqual(db.prepare('SELECT coverage_json,readiness_json FROM content_opportunities WHERE id=?').get(row.id),frozen);
+  db.prepare("UPDATE knowledge_facts SET validity_state='historical' WHERE normalized_key='chengdu.metro.family.payment'").run();
+  assert.equal(previewRepair(db,[row.id],identity).records[0].blocked,true);
+});
+
+test('read-only inbox immediately excludes approved waiting opportunities without reconciliation',t=>{
+  const {repository}=repositoryFixture(t);
+  for(const [n,predicate] of [[1,'route'],[2,'payment']]) saveResearchSource(repository,`68abcdef00000000000000d${n}`,
+    [[`chengdu.metro.${predicate}`,'Chengdu Metro',predicate,`Verified ${predicate} information`]],`Verified ${predicate} information`);
+  repository.rebuildKnowledge('chengdu');repository.rebuildTopicClusters('chengdu');repository.rebuildKnowledgeOpportunities('chengdu');
+  const [opportunity]=repository.listRecommendationInbox(20,{reconcile:false});assert.ok(opportunity);
+  const decision=repository.decideOpportunity(opportunity.id,'approve');assert.equal(decision.status,'approved_waiting_for_evidence');
+  assert.deepEqual(repository.listRecommendationInbox(20,{reconcile:false}),[]);
+  const approved=repository.db.prepare('SELECT approved_at,coverage_json FROM content_opportunities WHERE id=?').get(opportunity.id);
+  repository.db.prepare("UPDATE content_opportunities SET readiness_json=json_set(readiness_json,'$.sourceFamilyCount',99) WHERE id=?").run(opportunity.id);
+  repository.rebuildCoverageMatrices('chengdu');
+  const refreshed=repository.db.prepare('SELECT approved_at,coverage_json,readiness_json FROM content_opportunities WHERE id=?').get(opportunity.id);
+  assert.equal(refreshed.approved_at,approved.approved_at);
+  assert.deepEqual(JSON.parse(refreshed.coverage_json).selectedFactKeys,JSON.parse(approved.coverage_json).selectedFactKeys);
+  assert.equal(JSON.parse(refreshed.readiness_json).sourceFamilyCount,2);
 });
 
 function saveResearchSource(repository,externalId,claims,text,destinationOverride=null) {

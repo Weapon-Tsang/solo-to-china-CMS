@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { CONTENT_STRATEGY } from '../src/content-strategy.mjs';
 import { SCHEMA_VERSION } from '../src/db.mjs';
+import {fileHash,referenceHash} from '../scripts/family-release-boundary.mjs';
 
 const app = fileURLToPath(new URL('..', import.meta.url));
 async function fixture(t) {
@@ -28,9 +29,9 @@ async function fixture(t) {
     VALUES ('segment','original','image',0,'asset','hash','hash','now','now',3)`).run();
   db.prepare("INSERT INTO evidence_spans(id,source_id,segment_id,asset_id,locator_type,created_at) VALUES ('span','original','segment','asset','asset','now')").run();
   db.close();
-  const run = mode => spawnSync(process.execPath, ['deployment/gce/verify-upgrade.mjs', mode], {
+  const run = (mode,overrides={}) => spawnSync(process.execPath, ['deployment/gce/verify-upgrade.mjs', mode], {
     cwd: app, encoding: 'utf8', windowsHide: true,
-    env: { ...process.env, STC_PROBE_ROOT: root, STC_PROBE_WORK: work, STC_PROBE_APP: app, OLD_IMAGE: 'fixture-old-image', NEW_VERSION: '9.8.7' },
+    env: { ...process.env, STC_PROBE_ROOT: root, STC_PROBE_WORK: work, STC_PROBE_APP: app, OLD_IMAGE: 'fixture-old-image', NEW_VERSION: '9.8.7',...overrides },
   });
   return { root, work, filename, original, run };
 }
@@ -65,6 +66,24 @@ test('deployment probe blocks changed content and refuses to restore a corrupted
   const db = new DatabaseSync(f.filename);
   assert.equal(db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 59); db.close();
   assert.equal(fs.readFileSync(f.original, 'utf8'), 'original bytes');
+});
+
+test('prepared media backup plus current boundary database retains post-preparation changes on rollback',async t=>{
+  const f=await fixture(t);assert.equal(f.run('backup').status,0);
+  const backup=JSON.parse(fs.readFileSync(path.join(f.work,'backup.json')));
+  const prepared=path.join(f.root,'prepared');fs.mkdirSync(path.join(prepared,'preflight'),{recursive:true});
+  let db=new DatabaseSync(f.filename);const references=referenceHash(db);
+  // A legitimate database update since preparation must survive failed deployment.
+  db.prepare("UPDATE sources SET title='new business after preparation' WHERE id='original'").run();db.close();
+  fs.writeFileSync(path.join(prepared,'preflight/boundary-plan.json'),JSON.stringify({snapshot:backup.backupPath,
+    snapshotManifestSha256:fileHash(backup.manifestPath),references,restoreDrill:'passed',preparedAt:new Date().toISOString()}));
+  const boundary=path.join(f.root,'boundary');fs.mkdirSync(boundary);
+  const env={STC_PROBE_WORK:boundary,STC_PROBE_PREPARED:prepared};
+  for(const mode of ['boundary-backup','migrate','restore']) {const result=f.run(mode,env);assert.equal(result.status,0,result.stderr);}
+  db=new DatabaseSync(f.filename);
+  assert.equal(db.prepare('SELECT MAX(version) v FROM schema_migrations').get().v,59);
+  assert.equal(db.prepare("SELECT title FROM sources WHERE id='original'").get().title,'new business after preparation');db.close();
+  assert.equal(fs.readFileSync(f.original,'utf8'),'original bytes');
 });
 test('deployment opportunity gate reconciles deterministically and rejects an actionable row below admission quality', async t => {
   const f = await fixture(t);
@@ -122,7 +141,13 @@ test('deployment helpers validate the supplied release version instead of a hard
   assert.match(resume, /MAX\(version\).*==81/);
   const current = fs.readFileSync(path.join(app, 'deployment/gce/upgrade-existing.sh'), 'utf8');
   const probe = fs.readFileSync(path.join(app, 'deployment/gce/verify-upgrade.mjs'), 'utf8');
-  assert.match(current, /offline "\$IMAGE" backup/);
+  // The full snapshot/drill precedes maintenance; the stopped boundary must
+  // preserve the latest DB and verify its media against that complete snapshot.
+  assert.match(current, /offline "\$IMAGE" boundary-backup/);
+  const preparation = fs.readFileSync(path.join(app,'scripts/prepare-family-release.mjs'),'utf8');
+  assert.match(preparation, /createBackup\(/);
+  assert.match(preparation, /drillBackup\(backup.backupPath\)/);
+  assert.match(probe, /verifyBoundaryMedia\(before,manifest,plan.references\)/);
   assert.doesNotMatch(current, /docker image prune|docker rm --force/);
   assert.doesNotMatch(current, /reconcile-opportunity-qualification/);
   assert.match(probe, /prune: false/);

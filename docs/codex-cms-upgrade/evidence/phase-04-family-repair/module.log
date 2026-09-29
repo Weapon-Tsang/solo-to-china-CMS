@@ -1,0 +1,63 @@
+(node:19528) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ actual upgrade control flow rejects bad preflight before service actions (679.2208ms)
+✔ real preflight CLI returns success/failure promptly and rejects changed database identity (975.7459ms)
+(node:4604) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ K01 canonical typed serialization removes hours and free-price wording noise (9.8502ms)
+✔ K02 opening schedules retain interval, closed day and effective dates (1.4293ms)
+✔ K03 opening-hours open access is locally reclassified rather than compared as a schedule (0.6119ms)
+✔ K04 admission price and metro fare split by product scope (17.679ms)
+✔ K05 current, historical and scheduled values remain separate (0.9905ms)
+✔ K06 ordinary dynamic conflict reaches consensus or targeted verification (0.7623ms)
+✔ K07 safety-critical disagreement alone requires a human (4.8315ms)
+✔ K08 verification jobs expose retry and completion state (564.2204ms)
+✔ K09 Knowledge status separates automatic, verification, repair and human queues (538.6519ms)
+✔ K10 recomputation dry run projects equivalent legacy review away without mutating it (548.3566ms)
+✔ S01 processing gap dry run reports the exact missing stage and no mutation (518.0377ms)
+✔ S03 approved recovery jobs inherit historical lane, priority, route and recovery ID (520.2004ms)
+✔ S04 a legacy gate becomes a stored dry-run manifest without queued recovery (518.4789ms)
+✔ S05-S07 core jobs precede background and interactive intake precedes historical recovery (517.4185ms)
+✔ S02/S06 nineteen and twenty-seven images auto-schedule while only a hard limit blocks (0.2825ms)
+✔ S08 recovery backoff is lane-aware and historical work cannot flood concurrent claims (515.0572ms)
+✔ P01 database-heavy subprocess jobs are exclusive and lane limits are enforced (528.6502ms)
+✔ P01 a busy recovery tick is deferred without escaping the pipeline timer (1.7415ms)
+✔ P01/P03 child CPU work keeps timers responsive and a child crash stays contained (440.0658ms)
+✔ P01 isolated Knowledge rebuild waits for a WAL writer and commits through the shared database (965.9236ms)
+✔ P02 compact intake omits raw payloads and reports an input budget (509.5407ms)
+✔ P03 backup process failure is recorded without blocking the pipeline (1.2047ms)
+(node:10152) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ current schema installs the durable editorial, failure, reconciliation, and backfill boundaries (568.7806ms)
+✔ capture media uploads durably assemble verified image and video originals (662.7383ms)
+✔ browser media repair makes the original durable and resumes blocked extraction once (531.1034ms)
+✔ published inventory classifies partial overlap as an explicit EXPAND opportunity (503.0938ms)
+✔ one source keeps same-title adaptation and feature modes independently actionable (524.4938ms)
+✔ Experience Blocks reject invented provenance and persist grounded sequence separately from Claims (511.6959ms)
+✔ knowledge change creates an independent multi-source opportunity and Writing Packet selects only assembled evidence (566.5125ms)
+✔ knowledge opportunities use completed sources while unfinished sources remain out of the evidence set (543.6562ms)
+✔ knowledge opportunities collapse resolved aliases, count source families once, and infer type from the entity (556.8417ms)
+✔ knowledge rebuild suppresses replaced alias opportunities and rejects context-free generic subjects (554.0642ms)
+✔ knowledge opportunity types follow the topic entity and bilingual destination names collapse (573.6519ms)
+✔ recommendation reconciliation merges near-identical production paths from the same source (508.8899ms)
+✔ knowledge reconciliation merges the same intent across a city and its nested destination scope (572.5345ms)
+✔ terminal expression failure archives the attempt and retains artifacts, approval and Golden Article associations (536.3511ms)
+✔ family count excludes historical-only evidence; bounded repair preserves data and rejects stale previews (550.5718ms)
+(node:3812) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ independent hand-authored family sets cover duplicates, ungrouped sources and membership changes (1.2773ms)
+✔ historical, hidden, conflicted and valueless facts cannot contribute selected families (0.2381ms)
+✔ current capture eligibility and individual membership changes are independently fingerprinted (2.3557ms)
+✔ T04-01/02/14 precheck uses pinned CMS consumer artifact and never grants execution (0.8184ms)
+✔ T04-15 unsupported fields and tampered fixed contract cannot enable delivery (3.0346ms)
+✔ T04-16/18 missing manual evidence or restore coverage blocks local precheck, paid tests stay off (0.1526ms)
+✔ T04-24/25 old manual acceptance cannot prove routes or authorize rewriting published text (0.1333ms)
+✔ artifact manifest binds bytes and rejects escapes; secret scan reports names without secret values (5.5491ms)
+ℹ tests 47
+ℹ suites 0
+ℹ pass 47
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8745.873

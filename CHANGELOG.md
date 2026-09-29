@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.72 - Unreleased
+
+- Count opportunity families only from usable selected evidence; protect approval and frozen production ownership.
+- Repair six historical derived counts with an exact preview and move release validation before bounded maintenance.
+
 ## 2.0.71 - Unreleased
 
 - Retain local development and the existing cloud CMS as the sole production system while preparing the schema 79 to 83 release.
