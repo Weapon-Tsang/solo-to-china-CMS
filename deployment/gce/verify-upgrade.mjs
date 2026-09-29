@@ -4,7 +4,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 
 const root = process.env.STC_PROBE_ROOT || '/var/lib/solo-to-china';
 const work = process.env.STC_PROBE_WORK || '/ops';
@@ -43,7 +44,6 @@ if (mode === 'boundary-backup') {
     before.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     check(before);
     verifyBoundaryMedia(before,manifest,plan.references);
-    write('baseline.json',fingerprint(before));
   } finally {before.close();}
   const databaseBackupPath=`${work}/boundary.sqlite`;
   fs.copyFileSync(filename,databaseBackupPath,fs.constants.COPYFILE_EXCL);
@@ -51,6 +51,12 @@ if (mode === 'boundary-backup') {
   write('backup.json',{kind:'verified-boundary-database-and-prepared-media',databaseBackupPath,sha256,
     preparedSnapshot:plan.snapshot,snapshotManifestSha256:plan.snapshotManifestSha256,oldImage:process.env.OLD_IMAGE});
   console.log(JSON.stringify({stage:mode,integrity:'ok',currentDatabasePreserved:true,mediaMatchedPreparedSnapshot:true}));
+} else if (mode === 'boundary-baseline') {
+  const backup=JSON.parse(fs.readFileSync(`${work}/backup.json`,'utf8'));
+  assert.equal(backup.kind,'verified-boundary-database-and-prepared-media');
+  const original=new DatabaseSync(backup.databaseBackupPath,{readOnly:true});
+  try {write('baseline.json',fingerprint(original));} finally {original.close();}
+  console.log(JSON.stringify({stage:mode,readOnly:true}));
 } else if (mode === 'family-repair') {
   const {repairBoundary}=await import(pathToFileURL(path.join(app,'scripts/family-release-boundary.mjs')).href);
   const plan=JSON.parse(fs.readFileSync(`${prepared}/preflight/boundary-plan.json`,'utf8'));
@@ -83,19 +89,33 @@ if (mode === 'boundary-backup') {
   console.log(JSON.stringify(drillSummary));
 } else if (mode === 'rehearse' || mode === 'migrate') {
   const { openDatabase, SCHEMA_VERSION } = await import(pathToFileURL(path.join(app, 'src/db.mjs')).href);
-  const baseline = JSON.parse(fs.readFileSync(`${work}/baseline.json`, 'utf8'));
   const backup = JSON.parse(fs.readFileSync(`${work}/backup.json`, 'utf8'));
+  let baseline, baselineDone=null;
+  if(mode==='migrate' && backup.kind==='verified-boundary-database-and-prepared-media') {
+    // Read the exact frozen backup while migrating the separate live file. Both
+    // complete hashes are still compared before the container can succeed.
+    // Children share this offline container's lifetime and are killed on timeout.
+    const original=new DatabaseSync(backup.databaseBackupPath,{readOnly:true});
+    try {
+      baseline=Object.fromEntries(tables.filter(table=>original.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table))
+        .map(table=>[table,{columns:original.prepare(`PRAGMA table_info(${table})`).all().map(r=>r.name)
+          .filter(c=>!(['source_assets','source_files'].includes(table)&&c==='capture_version'))}]));
+    } finally {original.close();}
+    const child=spawn(process.execPath,[fileURLToPath(import.meta.url),'boundary-baseline'],{stdio:'inherit',windowsHide:true});
+    baselineDone=new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error(`Boundary baseline failed: ${code}`)));});
+  } else baseline = JSON.parse(fs.readFileSync(`${work}/baseline.json`, 'utf8'));
   const target = mode === 'rehearse' ? `${work}/rehearsal.sqlite` : `${root}/solo-to-china.sqlite`;
   if (mode === 'rehearse') fs.copyFileSync(backup.databaseBackupPath, target, fs.constants.COPYFILE_EXCL);
   const start = performance.now();
   const db = openDatabase(target);
   check(db);
   const actual = fingerprint(db, baseline);
-  assert.deepEqual(actual, baseline, 'Migration changed existing content, IDs or row counts');
   const schema = db.prepare('SELECT MAX(version) AS n FROM schema_migrations').get().n;
   assert.equal(schema, SCHEMA_VERSION);
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   db.close();
+  if(baselineDone) {await baselineDone;baseline=JSON.parse(fs.readFileSync(`${work}/baseline.json`,'utf8'));}
+  assert.deepEqual(actual, baseline, 'Migration changed existing content, IDs or row counts');
   const result = { stage: mode, schema, integrity: 'ok', foreignKeyErrors: 0,
     preservedContentFingerprints: true, migrationMs: Math.round(performance.now() - start), tables: actual };
   write(`${mode}.json`, result);

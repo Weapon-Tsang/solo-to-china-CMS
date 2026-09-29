@@ -84,6 +84,14 @@ test('prepared media backup plus current boundary database retains post-preparat
   assert.equal(db.prepare('SELECT MAX(version) v FROM schema_migrations').get().v,59);
   assert.equal(db.prepare("SELECT title FROM sources WHERE id='original'").get().title,'new business after preparation');db.close();
   assert.equal(fs.readFileSync(f.original,'utf8'),'original bytes');
+  const failedBoundary=path.join(f.root,'failed-boundary');fs.mkdirSync(failedBoundary);
+  const failedEnv={...env,STC_PROBE_WORK:failedBoundary};
+  assert.equal(f.run('boundary-backup',failedEnv).status,0);
+  // A failed child fingerprint must fail the parent, never silently publish.
+  fs.writeFileSync(path.join(failedBoundary,'baseline.json'),'{}');
+  const failed=f.run('migrate',failedEnv);assert.notEqual(failed.status,0);
+  assert.match(failed.stderr,/Boundary baseline failed/);
+  assert.equal(f.run('restore',failedEnv).status,0);
 });
 test('deployment opportunity gate reconciles deterministically and rejects an actionable row below admission quality', async t => {
   const f = await fixture(t);
