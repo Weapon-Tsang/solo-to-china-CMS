@@ -1,0 +1,16 @@
+(node:35288) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ deployment probe rehearses schema 59 to current, preserves cited IDs and rolls back paired DB without deleting originals (1495.6548ms)
+✔ deployment probe blocks changed content and refuses to restore a corrupted snapshot (1121.5164ms)
+✔ prepared media backup plus current boundary database retains post-preparation changes on rollback (1817.8346ms)
+✔ deployment opportunity gate reconciles deterministically and rejects an actionable row below admission quality (1749.4091ms)
+✔ deployment helpers validate the supplied release version instead of a hard-coded app version (703.705ms)
+✔ runtime image smoke explicitly authorizes only its disposable database bootstrap (0.307ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6994.8163
