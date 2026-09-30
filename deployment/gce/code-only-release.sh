@@ -6,9 +6,13 @@ set -Eeuo pipefail
 REVISION="${1:?exact 40-character revision required}"
 IMAGE="${2:?immutable image digest required}"
 VERSION="${3:?application version required}"
+SCHEMA="${4:?unchanged database schema required}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 [[ "$REVISION" =~ ^[a-f0-9]{40}$ ]]
 [[ "$IMAGE" =~ ^asia-east1-docker\.pkg\.dev/[^[:space:]]+@sha256:[a-f0-9]{64}$ ]]
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+[[ "$SCHEMA" =~ ^[0-9]+$ ]]
+[[ -f "$SCRIPT_DIR/pin-runtime-image.py" ]]
 
 APP=/opt/solo-to-china
 ENV_FILE="$APP/.env.production"
@@ -39,13 +43,15 @@ docker pull "$IMAGE" >"$RELEASE/image-pull.log" 2>&1
 # The API role never creates a database. Initialize only the throwaway
 # canary volume before checking the image; the production volume is untouched.
 docker run --rm --network none --env-file "$ENV_FILE" \
+  --env "EXPECTED_SCHEMA=$SCHEMA" \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
   --volume "$RELEASE/canary-data:/var/lib/solo-to-china" "$IMAGE" \
   node --input-type=module -e \
-    'import {openDatabase} from "./src/db.mjs";const db=openDatabase(process.env.DATABASE_PATH);db.close()' \
+    'import {openDatabase} from "./src/db.mjs";const db=openDatabase(process.env.DATABASE_PATH);const schema=db.prepare("SELECT MAX(version) n FROM schema_migrations").get().n;console.log(JSON.stringify({schema}));if(schema!==Number(process.env.EXPECTED_SCHEMA))process.exit(1);db.close()' \
   >"$RELEASE/canary-bootstrap.log" 2>&1
 docker run --detach --name "engine-canary-$SHORT" --restart no --network none \
   --env-file "$ENV_FILE" --env CMS_PROCESS_ROLE=api \
+  --env CMS_STARTUP_RECONCILIATION_ENABLED=false \
   --env "ENGINE_IMAGE=$IMAGE" --env "APP_REVISION=$REVISION" \
   --env ALLOW_PRODUCTION_DATABASE_BOOTSTRAP=true --env HOST=0.0.0.0 --env PORT=8080 \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
@@ -67,8 +73,8 @@ docker stop --time 10 "engine-canary-$SHORT" >/dev/null || true
 docker rm "engine-canary-$SHORT" >/dev/null
 [[ "$CANARY_READY" == 1 ]]
 
-docker exec engine node --input-type=module -e \
-  'const {DatabaseSync}=await import("node:sqlite");const d=new DatabaseSync("/var/lib/solo-to-china/solo-to-china.sqlite",{readOnly:true});const schema=d.prepare("SELECT MAX(version) n FROM schema_migrations").get().n;const active=d.prepare("SELECT COUNT(*) n FROM jobs WHERE status=?").get("running").n;console.log(JSON.stringify({schema,active}));if(schema!==81||active)process.exit(1);d.close()' \
+docker exec --env "EXPECTED_SCHEMA=$SCHEMA" engine node --input-type=module -e \
+  'const {DatabaseSync}=await import("node:sqlite");const d=new DatabaseSync("/var/lib/solo-to-china/solo-to-china.sqlite",{readOnly:true});const schema=d.prepare("SELECT MAX(version) n FROM schema_migrations").get().n;const active=d.prepare("SELECT COUNT(*) n FROM jobs WHERE status=?").get("running").n;console.log(JSON.stringify({schema,active}));if(schema!==Number(process.env.EXPECTED_SCHEMA)||active)process.exit(1);d.close()' \
   >"$RELEASE/pre-switch-database.json"
 
 SWITCH_STARTED=0
@@ -91,11 +97,13 @@ rollback() {
     fi
     if docker ps -a --format '{{.Names}}' | grep -Fxq "$OLD_API"; then
       docker rename "$OLD_API" engine >/dev/null 2>&1 || true
+      docker update --restart unless-stopped engine >/dev/null 2>&1 || true
       docker start engine >/dev/null 2>&1 || true
       docker network connect solo-to-china engine >/dev/null 2>&1 || true
     fi
     if docker ps -a --format '{{.Names}}' | grep -Fxq "$OLD_WORKER"; then
       docker rename "$OLD_WORKER" engine-worker >/dev/null 2>&1 || true
+      docker update --restart unless-stopped engine-worker >/dev/null 2>&1 || true
       docker start engine-worker >/dev/null 2>&1 || true
     fi
     if [[ -f "$RELEASE/.env.production.before-image-pin" ]]; then
@@ -118,6 +126,7 @@ docker rename engine "$OLD_API"
 
 docker run --detach --name engine --restart unless-stopped --network none \
   --env-file "$ENV_FILE" --env CMS_PROCESS_ROLE=api \
+  --env CMS_STARTUP_RECONCILIATION_ENABLED=false \
   --env "ENGINE_IMAGE=$IMAGE" --env "APP_REVISION=$REVISION" \
   --env HOST=0.0.0.0 --env PORT=8080 \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
@@ -141,6 +150,7 @@ docker network connect solo-to-china engine
 
 docker run --detach --name engine-worker --restart unless-stopped --network solo-to-china \
   --env-file "$ENV_FILE" --env CMS_PROCESS_ROLE=worker \
+  --env CMS_STARTUP_RECONCILIATION_ENABLED=false \
   --env "ENGINE_IMAGE=$IMAGE" --env "APP_REVISION=$REVISION" \
   --env HOST=0.0.0.0 --env PORT=8080 \
   --env DATABASE_PATH=/var/lib/solo-to-china/solo-to-china.sqlite \
@@ -179,7 +189,7 @@ assert health['contentStrategy']['version']=='3.9'
 assert ready['ready'] is True and ready['database']=='ready' and ready['version']==sys.argv[3]
 PY
 date --utc --iso-8601=seconds >"$RELEASE/complete"
-python3 "$APP/upgrades/8e3b9a467c36ff6a3b0ff33d4b28cf8700db6303/pin-runtime-image.py" "$RELEASE" "$IMAGE" >"$RELEASE/image-pin.log"
+python3 "$SCRIPT_DIR/pin-runtime-image.py" "$RELEASE" "$IMAGE" >"$RELEASE/image-pin.log"
 trap - ERR
 printf 'CODE_ONLY_RELEASE complete revision=%s image=%s rollback_api=%s rollback_worker=%s\n' \
   "$REVISION" "$IMAGE" "$OLD_API" "$OLD_WORKER"

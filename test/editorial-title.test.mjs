@@ -106,3 +106,15 @@ test('new title policy removes generic model output while existing production ow
   assert.equal(final.title,'Museum: Choosing an Entry Slot');
   assert.equal(JSON.parse(final.seo_json).meta_title,final.title);
 });
+
+test('editorial-v2 draft fallback uses the approved angle instead of creating another facet template',t=>{
+  const {db,repository}=draftFixture(t);
+  const title='Museum: Choosing an Entry Slot Before Your Visit';
+  db.prepare("UPDATE content_opportunities SET title=?,coverage_json=? WHERE id='opp'")
+    .run(title,JSON.stringify({titlePolicy:'editorial-v2'}));
+  const template='Museum: Booking, Costs, Opening Hours';
+  repository.saveDraft('brief',{title:template,slug:'museum',body_markdown:'## Visit\n\nTake the metro.',meta_description:'Visit the museum.',
+    evidence_ledger:[],unresolved_conflicts:[],seo:{meta_title:template,og_title:template},card_title:template,visuals:[],faqs:[]},'test',{deferReview:true});
+  const saved=db.prepare("SELECT title,seo_json FROM article_drafts WHERE id='draft'").get();
+  assert.equal(saved.title,title);assert.equal(JSON.parse(saved.seo_json).meta_title,title);
+});

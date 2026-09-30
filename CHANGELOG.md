@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.73 - Unreleased
+
+- Generate evidence-grounded English titles with concrete editorial angles at the Knowledge opportunity stage; preserve approved owners and reuse current evidence fingerprints.
+- Reject logistics-list title variants before caching, provide explicit retry/status in the CMS, and retain the approved specific title when draft output falls back to a template.
+- Add bounded real-provider title canary and full editorial-title-to-QA regression; support verified same-schema code-only API/Worker switching with rollback.
+
 ## 2.0.72 - Unreleased
 
 - Count opportunity families only from usable selected evidence; protect approval and frozen production ownership.

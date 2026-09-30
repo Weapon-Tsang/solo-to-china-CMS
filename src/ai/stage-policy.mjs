@@ -4,12 +4,14 @@ export function resolveStagePolicy(stage, config = {}) {
   const catalog = config.stagePolicy || { version: "legacy", stages: {} };
   const reasoningStage = new Set(["content_brief", "article_draft_v2", "article_bundle_v1", "quality_review_v2", "quality_review_v3", "frontend_page_plan",
     "frontend_page_payload", "bounded_draft_repair"]).has(stage);
-  const selected = catalog.stages?.[stage] || {
+  const selected = catalog.stages?.[stage] || (stage === 'opportunity_editorial_titles' ? {
+    class:'editorial',requires:['structured_output'],thinking:'LOW',maxOutputTokens:4096,timeoutMs:120_000,maxAttempts:1,
+  } : {
     class: "general", requires: ["structured_output"],
     thinking: reasoningStage ? config.reasoningThinkingLevel || "MEDIUM" : config.thinkingLevel || "LOW",
     maxOutputTokens: Number(config.maxCompletionTokens || 16_000),
     timeoutMs: Number(config.requestTimeoutMs || 360_000), maxAttempts: 2,
-  };
+  });
   const policy = {
     version: catalog.version || "legacy",
     stage: stage || "unknown",

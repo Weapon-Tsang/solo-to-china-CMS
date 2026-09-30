@@ -6,6 +6,13 @@ export function boilerplateTitleSubject(title) {
   return GENERIC_GUIDE.test(value) ? value.replace(GENERIC_GUIDE, '').trim() : null;
 }
 
+export function isFacetListTitle(title) {
+  const subtitle = String(title || '').split(':').slice(1).join(':').trim();
+  if (!subtitle) return false;
+  const parts = subtitle.split(/\s*(?:,|\band\b|&)\s*/iu).filter(Boolean);
+  return parts.length > 0 && parts.every(part => /^(?:Booking|Reservations?|Costs?|Prices?|Tickets?|(?:Opening\s+)?Hours|(?:Metro|Transport)\s+Access|Getting There|Route|Payment|What to Order|When to Visit|Time Needed|Accessibility)$/iu.test(part));
+}
+
 export function opportunityTitleSubject(opportunity) {
   const entities = opportunity.coverage?.proposal?.targetEntities;
   if (Array.isArray(entities) && entities.length === 1 && typeof entities[0] === 'string' && entities[0].trim()) return entities[0].trim();

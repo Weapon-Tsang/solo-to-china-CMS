@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { boilerplateTitleSubject, evidenceTitle } from './editorial-title.mjs';
+import { boilerplateTitleSubject, evidenceTitle, isFacetListTitle } from './editorial-title.mjs';
+import { assertOpportunityTitleReady } from './services/opportunity-titles.mjs';
 import { evidenceFamilyKeys, usableOpportunityFact, selectedFamilyProjection, completedOpportunitySourceIds, createFamilyProjectionContext } from './opportunity-family-evidence.mjs';
 import { panelReceiptValid } from './visuals/route-panel.mjs';
 import { requiresOriginalBodyMedia } from './visuals/body-media-policy.mjs';
@@ -3758,6 +3759,7 @@ export class Repository {
       }
     }
     const ready = Boolean(readiness.ready);
+    assertOpportunityTitleReady(this,opportunity);
     this.db.prepare("UPDATE content_opportunities SET lifecycle_state='approved',status=?,suppression_reason=NULL,approved_at=?,updated_at=? WHERE id=?")
       .run(ready ? "approved_ready" : "approved_waiting_for_evidence",timestamp,timestamp,opportunityId);
     this.retireRecommendationIntentVariants(opportunityId,timestamp);
@@ -4037,7 +4039,7 @@ export class Repository {
       const topicKey = `${destinationSlug}:knowledge:${titleIdentity}:${sha256(cluster.topic_key).slice(0,12)}`;
       activeTopicKeys.add(topicKey);
       const opportunityId = `opportunity_${sha256(topicKey).slice(0,24)}`;
-      const existing = this.db.prepare("SELECT id,lifecycle_state,status,approved_at,candidate_id FROM content_opportunities WHERE topic_key=?").get(topicKey);
+      const existing = this.db.prepare("SELECT id,title,coverage_json,lifecycle_state,status,approved_at,candidate_id FROM content_opportunities WHERE topic_key=?").get(topicKey);
       // Frozen editorial decisions are not rewritten by a live knowledge projection.
       if (existing && (existing.approved_at || existing.candidate_id
         || !['recommended','recommended_again','deferred'].includes(existing.lifecycle_state))) continue;
@@ -4052,12 +4054,15 @@ export class Repository {
         continue;
       }
       const contentType = inferKnowledgeOpportunityType(cluster.title,facts,destinationSlug);
-      const title = evidenceTitle(cluster.title, usableFacts);
+      const previousTitle = json(existing?.coverage_json,{}).editorialTitle;
+      const title = previousTitle?.status === 'ready' ? existing.title : cluster.title;
       const matrix = evaluateCoverage({topicKey,contentType,facts:usableFacts,sourceFamilyCount:sourceFamilyIds.length,
         publicationMode:"multi_source_synthesis"});
-      const coverage = { ...matrix,publicationMode:"multi_source_synthesis",knowledgeEventGenerated:true, titlePolicy:"evidence-v1",
+      const coverage = { ...matrix,publicationMode:"multi_source_synthesis",knowledgeEventGenerated:true, titlePolicy:"editorial-v2",
+        editorialTitle:previousTitle || {status:'pending'},
         knowledgeIntentIdentity:String(cluster.topic_key || "").split(":cluster:").at(-1) || titleIdentity,
-        proposal:{readerPromise:`Help an independent traveler make a confident decision about ${cluster.title}.`,
+        proposal:{readerPromise:previousTitle?.status === 'ready' ? json(existing.coverage_json,{}).proposal?.readerPromise
+          : `Help an independent traveler make a confident decision about ${cluster.title}.`,
           evidenceBoundary:`Use only the ${usableFacts.length} current, traceable facts in this knowledge cluster.`,targetEntities:[cluster.title]},
         selectedFactKeys:usableFacts.map((fact) => fact.normalized_key),selectedSourceIds:sourceIds };
       const lifecycle = this.classifyPublicationLifecycle(title);
@@ -6232,16 +6237,19 @@ export class Repository {
     const facts = briefPackage?.facts || [];
     // Activate only for newly projected opportunities. Existing production owners
     // without this policy retain their frozen titles and generation behavior.
-    const titleOwner = this.db.prepare(`SELECT coverage_json FROM content_opportunities WHERE candidate_id=?
+    const titleOwner = this.db.prepare(`SELECT title,coverage_json FROM content_opportunities WHERE candidate_id=?
       AND approved_at IS NOT NULL AND (? IS NULL OR id=?)`).all(brief.candidate_id, opportunityId, opportunityId);
-    if (titleOwner.length === 1 && json(titleOwner[0].coverage_json,{}).titlePolicy === 'evidence-v1') {
+    if (titleOwner.length === 1 && ['evidence-v1','editorial-v2'].includes(json(titleOwner[0].coverage_json,{}).titlePolicy)) {
       const genericSubject = boilerplateTitleSubject(draft.title);
-      const nextTitle = genericSubject ? evidenceTitle(genericSubject,facts) : draft.title;
+      const editorial = json(titleOwner[0].coverage_json,{}).titlePolicy === 'editorial-v2';
+      const generic = value => boilerplateTitleSubject(value) || (editorial && isFacetListTitle(value));
+      const nextTitle = editorial && generic(draft.title) ? titleOwner[0].title
+        : genericSubject ? evidenceTitle(genericSubject,facts) : draft.title;
       draft = { ...draft, title:nextTitle, seo:{...(draft.seo || {})} };
       for (const key of ['meta_title','seo_title','og_title']) {
-        if (boilerplateTitleSubject(draft.seo[key])) draft.seo[key] = nextTitle;
+        if (generic(draft.seo[key])) draft.seo[key] = nextTitle;
       }
-      if (boilerplateTitleSubject(draft.card_title)) draft.card_title = nextTitle;
+      if (generic(draft.card_title)) draft.card_title = nextTitle;
     }
     const authorizedSourceAssets = this.authorizedSourceAssetsForBrief(brief, { packet });
     const policy = packet?.context?.version === 2 ? packet.context.content_policy

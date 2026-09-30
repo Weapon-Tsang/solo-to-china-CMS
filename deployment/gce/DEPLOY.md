@@ -2,6 +2,10 @@
 
 Use one Google Compute Engine VM, a persistent Docker volume, and one Cloudflare Tunnel. The API container and the production Worker run as separate processes against the same SQLite volume. The durable queue, media quota and delivery gates remain database-backed; a stateless Cloud Run revision is not a safe replacement without a database redesign.
 
+## 2.0.73 code-only release, verified schema 83
+
+The September 30 live read-only inspection confirms both production roles run schema 83. The revised `code-only-release.sh <exact-revision> <immutable-image-digest> <version> <unchanged-schema>` requires both the candidate's isolated fresh database and the production read-only schema to match the explicit unchanged schema. It rejects running jobs before switching, disables startup reconciliation, preserves rollback containers and their restart policies, and uses the adjacent reviewed `pin-runtime-image.py`. Use this path only for an explicitly authorized code-only production release with unchanged schema; it does not migrate or back up production data. Historical schema 81 recovery scripts remain excluded.
+
 ## 2.0.71 existing cloud, schema 79 to 83
 
 The current target is the existing `solo-to-china-engine` VM and `solo_to_china_data` volume. Use only the reviewed `upgrade-existing.sh` plus `verify-upgrade.mjs` with a fixed commit and immutable image digest. The helper stops API and Worker before creating a non-pruning verified backup and isolated rehearsal, then performs one schema migration and starts isolated API readiness before reconnecting Cloudflare. The release Worker sets `CMS_STARTUP_RECONCILIATION_ENABLED=false` so startup does not create historical repair jobs. Preserve prior containers, images, snapshots, upload state and the original environment. Do not use `startup.sh`: it is a first-install provisioner and rewrites the environment and volumes. The sections below describe earlier releases and are historical.

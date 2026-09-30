@@ -1,4 +1,5 @@
 import { slugify, truncate } from "../utils.mjs";
+import { OPPORTUNITY_TITLE_SCHEMA, OPPORTUNITY_TITLE_PROMPT, validateOpportunityTitles } from '../services/opportunity-titles.mjs';
 import { compactExperienceReferences } from './experience-references.mjs';
 import { CONTENT_STRATEGY } from "../content-strategy.mjs";
 import { createAiClient } from "./client.mjs";
@@ -307,6 +308,12 @@ export class ContentEngine {
     return this.client.enabled;
   }
 
+  async composeOpportunityTitles(research, options = {}) {
+    return this.respond({name:'opportunity_editorial_titles',schema:OPPORTUNITY_TITLE_SCHEMA,
+      instructions:OPPORTUNITY_TITLE_PROMPT,input:JSON.stringify(research),
+      options:{...options,validateOutput:output=>validateOpportunityTitles(research,output)}});
+  }
+
   async plan(research, options = {}) {
     if(research.route_bundle) assertFrozenRoute(research.route_bundle);
     return this.respond({
@@ -568,6 +575,7 @@ export class ContentEngine {
 
   artifactContract(stage) {
     const contracts = {
+      compose_opportunity_titles: ['opportunity_editorial_titles', OPPORTUNITY_TITLE_SCHEMA, OPPORTUNITY_TITLE_PROMPT],
       analyze_intake: ['content_intake_analysis', INTAKE_SCHEMA, intakePrompt(this.contentStrategy.version)],
       analyze_source_diagnostic: ['content_intake_analysis', INTAKE_SCHEMA, intakePrompt(this.contentStrategy.version)],
       extract_source_experience: ['experience_extraction', EXPERIENCE_SCHEMA, EXPERIENCE_PROMPT + ROUTE_EXTRACTION_PROMPT],

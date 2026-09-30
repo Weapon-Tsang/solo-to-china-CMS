@@ -1,4 +1,5 @@
 import http from "node:http";
+import { queueOpportunityTitles } from './services/opportunity-titles.mjs';
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -1090,6 +1091,11 @@ export function createApplication(config = loadConfig(), { seoInspector } = {}) 
           readiness:{ready:Boolean(item.readiness?.ready),blockingRequirements:item.readiness?.blockingRequirements || []},
           displayStatus:item.displayStatus,productionTypeLabel:item.productionTypeLabel,
           recommendationReason:item.recommendationReason,previousFailureSummary:item.previousFailureSummary,
+          editorialTitle:item.coverage?.knowledgeEventGenerated ? {
+            status:item.coverage.editorialTitle?.status === 'ready' ? 'ready'
+              : repository.db.prepare('SELECT status FROM jobs WHERE id=?').get(item.coverage.editorialTitle?.jobId || '')?.status || 'pending',
+            angle:item.coverage.editorialTitle?.angle || '',readerPromise:item.coverage.proposal?.readerPromise || '',
+          } : null,
         }));
         return sendJson(response, 200, { items,
           comparisonGroups: groupProposals(inbox),
@@ -1152,6 +1158,15 @@ export function createApplication(config = loadConfig(), { seoInspector } = {}) 
         authorizeAdmin(request, config.adminToken, auth);
         const dismissed = repository.dismissEditorialTopic(decodeURIComponent(editorialTopicDismissMatch[1]));
         return dismissed ? sendJson(response, 200, dismissed) : sendJson(response, 404, { error: "Editorial topic not found." });
+      }
+      if (request.method === "POST" && url.pathname === "/api/recommendations/editorial-titles") {
+        authorizeAdmin(request, config.adminToken, auth);
+        repository.reconcileRecommendationInbox();
+        const destinations = repository.db.prepare(`SELECT DISTINCT destination_slug FROM content_opportunities
+          WHERE inbox_state='ACTIONABLE' AND approved_at IS NULL AND candidate_id IS NULL`).all();
+        const jobs = destinations.map(row => queueOpportunityTitles(repository,row.destination_slug)).filter(Boolean);
+        if (jobs.length) runQueued();
+        return sendJson(response,202,{queued:jobs.length});
       }
       if (request.method === "POST" && url.pathname === "/api/recommendations/bulk-decision") {
         authorizeAdmin(request, config.adminToken, auth);

@@ -13,8 +13,11 @@ import { CommercialComposer, normalizeCommercialOffer } from "../src/commercial.
 import { FrontendContractConsumer } from "../src/frontend-contract.mjs";
 import { defaultComponents, frontendContractFixture } from "../test-support/frontend-contract-fixture.mjs";
 import { pageBlockSignature, normalizeVisuals } from "../src/repository.mjs";
+import { evaluateCoverage } from '../src/research-strategy.mjs';
+import { selectedFamilyProjection } from '../src/opportunity-family-evidence.mjs';
+import { queueOpportunityTitles } from '../src/services/opportunity-titles.mjs';
 
-for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval drives ${pipelineMode} to QA and WordPress draft delivery`, async (t) => {
+for (const pipelineMode of ['legacy','article_bundle_v1','editorial-v2']) test(`human approval drives ${pipelineMode} to QA and WordPress draft delivery`, async (t) => {
   t.after(closeLocalPhotoAudit);
   const { db, repository, directory } = repositoryFixture(t);
   const commercialComponent = {
@@ -63,7 +66,7 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
             ["beijing.booking.reservation", "Beijing booking", "reservation booking", "Reserve timed attractions"],
             ["beijing.payment.methods", "Beijing payment", "payment methods", "Carry a working mobile payment method"],
             ["beijing.cost.budget", "Beijing budget", "cost budget", "Plan admission and transit costs"],
-          ].map(([key, subject, predicate, value]) => ({ key, subject, predicate, value,
+          ].map(([key, subject, predicate, value]) => ({ key, subject:pipelineMode === 'editorial-v2' ? 'Beijing' : subject, predicate, value,
             qualifiers: [], confidence: 0.85, source_quote: value })),
           media_analysis:(source.assets || []).map((asset)=>({asset_id:asset.id,analysis_status:"ready",
             asset_kind:"documentary_photo",text_regions:[],photo_regions:[{region_id:"photo",subject:"Central Beijing metro entrance"}],
@@ -77,6 +80,14 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   const stageCalls = [];
   const contentEngine = {
     enabled: true,
+    async composeOpportunityTitles(pack) {
+      stageCalls.push('compose_opportunity_titles');
+      return {model:'title-replay-model',output:{proposals:pack.opportunities.map(item=>({
+        id:item.id,title:'Beijing Arrival: Plan Metro Travel and Timed Attraction Entry',
+        angle:'Arrival and advance reservation decisions',reader_promise:'Plan metro travel and reserve timed attractions.',
+        evidence_keys:item.facts.map(fact=>fact.key),
+      }))}};
+    },
     async articleBundle(research) {
       stageCalls.push('article_bundle_v1');
       const [brief,draft]=await Promise.all([this.plan(research),this.draft(research)]);
@@ -202,6 +213,19 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   }));
 
   for (let index = 0; index < 60; index += 1) await pipeline.runOne();
+  if (pipelineMode === 'editorial-v2') {
+    // Commission the scoped first-arrival topic, whose five supplied facts cover
+    // preparation; the same evidence cannot support a complete city guide.
+    const row=db.prepare("SELECT * FROM content_opportunities WHERE json_extract(coverage_json,'$.knowledgeEventGenerated')=1").get();
+    assert.ok(row);
+    const projection=selectedFamilyProjection(db,row),coverage=JSON.parse(row.coverage_json);
+    const assessed=evaluateCoverage({topicKey:row.topic_key,contentType:'first_time_guide',facts:projection.facts,
+      sourceFamilyCount:projection.families.length,publicationMode:'multi_source_synthesis'});
+    db.prepare('UPDATE content_opportunities SET content_type=?,readiness_json=?,readiness_score=?,coverage_json=? WHERE id=?')
+      .run('first_time_guide',JSON.stringify(assessed.readiness),assessed.readiness.score,
+        JSON.stringify({...coverage,contentType:'first_time_guide',requirements:assessed.requirements,readiness:assessed.readiness}),row.id);
+    queueOpportunityTitles(repository,'beijing');await pipeline.runOne();
+  }
   assert.equal(repository.listContent().length, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM topic_candidates").get().count, 0);
   const dashboardBeforeApproval = repository.dashboard();
@@ -212,11 +236,22 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   assert.equal(recommendation.strategy_version, CONTENT_STRATEGY.version);
   assert.equal(recommendation.production_paths.length, 3);
   assert.ok(recommendation.production_paths.every((path) => path.opportunity_id));
-  assert.equal(repository.listContentOpportunities().length, 0, "unapproved source proposals are not content opportunities");
+  if (pipelineMode !== 'editorial-v2') assert.equal(repository.listContentOpportunities().length, 0, "unapproved source proposals are not content opportunities");
   assert.equal(repository.listApprovedContentOpportunities().length, 0);
   assert.equal(repository.listContent({ approvedOnly: true }).length, 0);
-  const adaptationPath = recommendation.production_paths.find((path) => path.mode === "SOURCE_ADAPTATION");
-  const approval = repository.decideRecommendation(recommendation.id, "approved_article", "", { opportunityId: adaptationPath.opportunity_id });
+  const editorialOpportunity = pipelineMode === 'editorial-v2' ? repository.listContentOpportunities()[0] : null;
+  if (editorialOpportunity) {
+    assert.equal(editorialOpportunity.coverage.editorialTitle.status,'ready');
+    assert.ok(stageCalls.includes('compose_opportunity_titles'));
+  }
+  if (pipelineMode === 'editorial-v2') assert.ok(editorialOpportunity,JSON.stringify({message:'Knowledge opportunity must complete editorial title stage before approval',
+    opportunities:db.prepare('SELECT title,inbox_state,coverage_json FROM content_opportunities').all(),
+    sources:db.prepare('SELECT status,last_error FROM sources').all(),
+    facts:db.prepare('SELECT normalized_key,consensus_status FROM knowledge_facts').all(),
+    failures:db.prepare("SELECT type,status,last_error FROM jobs WHERE status IN ('failed','queued','running')").all()}));
+  const adaptationPath = editorialOpportunity ? {opportunity_id:editorialOpportunity.id} : recommendation.production_paths.find((path) => path.mode === "SOURCE_ADAPTATION");
+  const approval = editorialOpportunity ? repository.decideOpportunity(editorialOpportunity.id,'approve')
+    : repository.decideRecommendation(recommendation.id, "approved_article", "", { opportunityId: adaptationPath.opportunity_id });
   assert.equal(approval.opportunityId, adaptationPath.opportunity_id);
   assert.equal(repository.listContentOpportunities().length, 1, "the approved article plan becomes a content opportunity");
   const [approvedOpportunity] = repository.listApprovedContentOpportunities();
@@ -225,7 +260,7 @@ for (const pipelineMode of ['legacy','article_bundle_v1']) test(`human approval 
   assert.equal("readiness_json" in approvedOpportunity, false);
   const dashboardAfterApproval = repository.dashboard();
   assert.equal(dashboardAfterApproval.actionCounts.recommendations, pendingRecommendationCount - 1);
-  assert.equal(dashboardAfterApproval.totals.pendingRecommendations, pendingRecommendationCount - 1);
+  if (!editorialOpportunity) assert.equal(dashboardAfterApproval.totals.pendingRecommendations, pendingRecommendationCount - 1);
   assert.equal(dashboardAfterApproval.totals.contentPipelineItems, 1, JSON.stringify(approval));
   assert.equal(approval.queued, true, JSON.stringify(approval));
   assert.equal(db.prepare("SELECT pipeline_version FROM jobs WHERE type='plan_content' AND status='queued'").get().pipeline_version,

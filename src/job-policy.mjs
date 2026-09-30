@@ -1,4 +1,5 @@
 export const AI_JOB_TYPES = new Set([
+  "compose_opportunity_titles",
   "extract_segment_claims",
   "extract_media_batch",
   "audit_segment_coverage",
@@ -26,6 +27,7 @@ export const EXTRACTION_JOB_TYPES = new Set([
 ]);
 
 export const WRITING_JOB_TYPES = new Set([
+  "compose_opportunity_titles",
   "assemble_editorial", "plan_content", "plan_narrative", "compose_frontend_page_plan",
   "generate_draft", "review_draft", "revise_draft", "compose_frontend_page",
 ]);
@@ -74,6 +76,7 @@ export function workloadClassForJob(type, requested = "") {
   if (WORKLOAD_LANES[requested]) return requested;
   if (["extract_source_experience", "resolve_entities", "rebuild_knowledge"].includes(type)) return "semantic";
   if (["analyze_source_family", "analyze_source_blueprint", "analyze_source_diagnostic", "analyze_intake",
+    "compose_opportunity_titles",
     "rebuild_editorial", "rebuild_topic_clusters", "build_coverage_matrix", "rebuild_content_opportunities",
     "reconcile_approved_opportunities"].includes(type)) return "background_enrichment";
   if (["database_backup", "job_history_cleanup"].includes(type)) return "maintenance";

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { opportunityTitlePackage, queueOpportunityTitles, saveOpportunityTitles, validateOpportunityTitles } from './services/opportunity-titles.mjs';
 import { fileURLToPath } from "node:url";
 import { validatePlannedEvidence } from "./services/editorial-proposal.mjs";
 import { buildContentAst, composePageFromAst, markdownToContentBlocks } from "./content-blocks.mjs";
@@ -852,6 +853,24 @@ export class Pipeline {
         }
         case "reconcile_approved_opportunities": {
           this.repository.reconcileApprovedOpportunities(job.entity_id);
+          this.repository.reconcileRecommendationInbox();
+          queueOpportunityTitles(this.repository,job.entity_id);
+          break;
+        }
+        case "compose_opportunity_titles": {
+          this.requireContentEngine();
+          const pack = opportunityTitlePackage(this.repository,job.entity_id);
+          if (!pack.opportunities.length) break;
+          const result = await modelStep('opportunity-titles',pack,
+            async signal => {
+              const generated = await this.contentEngine.composeOpportunityTitles(pack,{signal,telemetryContext});
+              validateOpportunityTitles(pack,generated.output);
+              return generated;
+            });
+          commitStage(() => {
+            saveOpportunityTitles(this.repository,pack,result.output,result.model);
+            queueOpportunityTitles(this.repository,job.entity_id);
+          });
           break;
         }
         case "analyze_intake": {

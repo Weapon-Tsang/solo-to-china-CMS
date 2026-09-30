@@ -7,6 +7,7 @@ import { normalizeXiaohongshuCapture } from "../src/adapters/xiaohongshu.mjs";
 import { CaptureMediaUploadManager } from "../src/capture-media-upload.mjs";
 import { SCHEMA_VERSION } from "../src/db.mjs";
 import { repositoryFixture } from "../test-support/repository-fixture.mjs";
+import { acceptFixtureTitles } from '../test-support/opportunity-title-fixture.mjs';
 import { previewRepair, applyRepair } from '../scripts/repair-opportunity-families.mjs';
 
 test("current schema installs the durable editorial, failure, reconciliation, and backfill boundaries", (t) => {
@@ -155,6 +156,7 @@ test("knowledge change creates an independent multi-source opportunity and Writi
   assert.ok(opportunity.coverage.selectedSourceIds.length >= 2);
 
   repository.db.prepare("UPDATE content_opportunities SET readiness_json=json_set(readiness_json,'$.ready',json('true')),status='recommended' WHERE id=?").run(opportunity.id);
+  acceptFixtureTitles(repository,'shanghai');
   const approval=repository.decideOpportunity(opportunity.id,"approve");
   assert.equal(approval.queued,true);
   const candidateId=approval.candidateId;
@@ -463,6 +465,7 @@ test('read-only inbox immediately excludes approved waiting opportunities withou
     [[`chengdu.metro.${predicate}`,'Chengdu Metro',predicate,`Verified ${predicate} information`]],`Verified ${predicate} information`);
   repository.rebuildKnowledge('chengdu');repository.rebuildTopicClusters('chengdu');repository.rebuildKnowledgeOpportunities('chengdu');
   const [opportunity]=repository.listRecommendationInbox(20,{reconcile:false});assert.ok(opportunity);
+  acceptFixtureTitles(repository,'chengdu');
   const decision=repository.decideOpportunity(opportunity.id,'approve');assert.equal(decision.status,'approved_waiting_for_evidence');
   assert.deepEqual(repository.listRecommendationInbox(20,{reconcile:false}),[]);
   const approved=repository.db.prepare('SELECT approved_at,coverage_json FROM content_opportunities WHERE id=?').get(opportunity.id);
