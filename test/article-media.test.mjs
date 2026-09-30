@@ -129,6 +129,25 @@ test('manual photo confirm preserves body, old media, manifest and budget; resum
   f.repository.replaceDraftVisuals(f.draftId,[],'3.9');assert.equal(f.db.prepare('SELECT id FROM article_visuals WHERE id=?').get(f.visualId).id,f.visualId);
 });
 
+// 2026-09-30 (Three Gorges Museum): a bounded QA repair bumped the draft revision
+// and the adopted operator photo stopped counting, failing MEDIA_INCOMPLETE.
+test('an adopted operator photo survives a text-only revision bump of the same slot',async t=>{
+  const f=await fixture(t);freezeRequiredMediaManifest(f.db,f.draftId);
+  const u=await upload(f);await f.service.complete(f.draftId,u.id,'editor');
+  const input=request(f,u),plan=f.service.plan(f.draftId,input,'editor');
+  await f.service.confirm(f.draftId,{...input,confirmed:true,plan_hash:plan.plan_hash,idempotency_key:'manual_photo_revision_bump'},'editor');
+  assert.equal(evaluatePublicationEligibility(f.db,f.draftId).passed,true);
+  f.db.prepare("UPDATE article_drafts SET revision=revision+1,content_hash='repaired-text-hash'").run();
+  freezeRequiredMediaManifest(f.db,f.draftId);
+  const after=evaluatePublicationEligibility(f.db,f.draftId);
+  assert.equal(after.passed,true,JSON.stringify(after.missing || after));
+  // A different slot row never inherits the adoption.
+  const row=f.db.prepare('SELECT media_metadata_json FROM article_visuals WHERE id=?').get(f.visualId);
+  const metadata=JSON.parse(row.media_metadata_json);metadata.manual_article_selection.slot_id='visual_other_slot';
+  f.db.prepare('UPDATE article_visuals SET media_metadata_json=? WHERE id=?').run(JSON.stringify(metadata),f.visualId);
+  assert.equal(evaluatePublicationEligibility(f.db,f.draftId).passed,false);
+});
+
 test('paused chunks and adopted originals survive cross-directory backup; restore requires fresh admin and never executes',async t=>{
   const f=await fixture(t),u=await upload(f),input=request(f,u),plan=f.service.plan(f.draftId,input,'editor');
   await f.service.confirm(f.draftId,{...input,confirmed:true,plan_hash:plan.plan_hash,idempotency_key:'manual_backup_test_01'},'editor');

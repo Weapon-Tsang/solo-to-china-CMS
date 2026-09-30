@@ -196,8 +196,14 @@ export function evaluatePublicationEligibility(db, draftId, { phase = 'local', p
     const localPhotoQualified=localPhotoAudit.status === 'eligible'
       && localPhotoAudit.sha256 === fileHash && Number(localPhotoAudit.providerCalls) === 0;
     const manual=metadata.manual_article_selection,manualReceipt=metadata.manual_local_receipt;
+    // A locked operator photo belongs to its visual slot. A bounded text repair
+    // bumps the draft revision but keeps the slot row, so the adoption carries
+    // over (2026-09-30: every QA repair silently invalidated an adopted photo).
+    // A regenerated draft rebuilds its slots and cannot match the old slot id.
+    const manualRevisionCurrent=manual?.draft_revision===draft.revision
+      || (manual?.slot_id===row?.id && Number(manual?.draft_revision)<=Number(draft.revision));
     const manualPhoto=Boolean(manual?.locked && manual.local_photo && !manual.route_blocked
-      && manual.asset_id===row?.source_asset_id && manual.draft_revision===draft.revision
+      && manual.asset_id===row?.source_asset_id && manualRevisionCurrent
       && manual.original_hash===fileHash && manualReceipt?.original_hash===fileHash
       && manualReceipt.selection_id===manual.id && manualReceipt.provider_calls===0
       && manualReceipt.photo_audit?.sha256===fileHash && Number.isFinite(manualReceipt.photo_audit.textChars)
