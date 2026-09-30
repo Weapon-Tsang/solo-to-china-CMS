@@ -1,3 +1,7 @@
+# 2.0.77 Image recognition timeout recovery
+
+App/Extension version `2.0.77`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Same-schema CODE_ONLY_RELEASE. Completed read-only recognition timeouts can retry within the original media budget; unfinished requests and generation/QA remain protected. Article-scoped Knowledge reads preserve package and dependency fingerprints. The UI shows current-job recognized-original counts. See `codex-cms-upgrade/acceptance/media-timeout-followup-20261001.md` for actual replay/canary/browser scope and remaining media constraints.
+
 # 2.0.76 Production interruption recovery
 
 App/Extension version `2.0.76`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Article-bundle state and recovery preserve the owner and pipeline version, writing corrects protected-evidence omissions once, and source-photo discovery continues in cached batches with a twelve-dispatch durable limit. This is a same-schema CODE_ONLY_RELEASE. See `codex-cms-upgrade/acceptance/production-interruption-development-fix-20260930.md` for the production-copy, browser and bounded Vertex evidence and untested areas. Content Production Strategy 3.9 and `config/content-strategy.json` remain unchanged.

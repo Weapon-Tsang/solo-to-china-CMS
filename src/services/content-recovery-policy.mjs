@@ -110,7 +110,7 @@ export function explainOperationalFailure(job) {
   };
   if (code === 'MEDIA_OUTCOME_UNKNOWN') return {
     category:'media',headline:'上次图片请求结果未确认',
-    reason:'系统无法证明上次请求是否已经完成或扣费。再次点击失败步骤重试仍会被相同的请求账本拦截，以免重复生图和付费。',
+    reason:'上次请求未返回确定结果。已结束的原图识别可以在原预算内重试；未结束的请求或生图仍需核对请求账本，避免重复生图和付费。',
     action:{id:null,label:'先核对图片请求账本与候选文件',why:'确认供应商结果、已留存候选图及对应 visual/substage，再决定是否允许一次新的请求。'},
     technicalDetail:details,
   };

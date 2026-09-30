@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.77 - Unreleased
+
+- Retry settled source-image recognition timeouts within the original durable dispatch budget; retain unknown-outcome protection for generation, QA and unfinished requests.
+- Bound article Knowledge reads by selected evidence to avoid repeated destination-wide decoding during media lane waits and checkpoints.
+- Display successful unique original-image recognition progress for the current media job.
+- Add timeout/restart/budget, crash protection, production-scale read and visible-progress regressions.
+
 ## 2.0.76 - Unreleased
 
 - Preserve article-bundle stage dependencies and pipeline versions during recovery so real writing failures remain actionable.

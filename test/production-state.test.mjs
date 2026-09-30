@@ -167,6 +167,28 @@ test("remote WordPress drafts cannot be locally deleted", (t) => {
   assert.ok(db.prepare("SELECT 1 FROM article_drafts WHERE id='draft-state'").get());
 });
 
+test('image progress counts successful unique originals of the current job while waiting for the shared lane', t => {
+  const {db,repository}=repositoryFixture(t);
+  seedOpportunity(db);
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,candidate_id)
+    VALUES ('brief-state','beijing','State guide','[]','informational','drafted','now','now','candidate-state')`).run();
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at)
+    VALUES ('draft-state','brief-state','State guide','state-guide','Body','{}','needs_review','now','now')`).run();
+  const jobId=repository.enqueue('generate_visuals','draft-state',{productionOwnerOpportunityId:'opp-state',pipelineVersion:'article_bundle_v1'});
+  for(const [runId,asset,status,requestKind] of [[jobId,'a','succeeded','provider'],[jobId,'a','succeeded','provider'],
+    [jobId,'b','succeeded','provider'],[jobId,'c','failed','provider'],[jobId,'d','succeeded','cache'],['old-job','e','succeeded','provider']]) {
+    repository.recordModelCall({runId,entityId:asset,stage:'source_asset_media_analysis',provider:'vertex',model:'test',status,requestKind});
+  }
+  let state=repository.getContentProductionDetail('opp-state').production_state;
+  assert.match(state.headline,/已识别 2 张原图/);
+  assert.equal(state.stage_status,'queued');
+  assert.equal(state.auto_continue,true);
+  db.prepare("UPDATE jobs SET status='running' WHERE id=?").run(jobId);
+  state=repository.getContentProductionDetail('opp-state').production_state;
+  assert.match(state.headline,/图片处理中.*已识别 2 张原图/);
+  assert.equal(state.stage_status,'running');
+});
+
 test("page composition preview is structural and keeps the Frontend Contract boundary", () => {
   const preview=buildPageCompositionPreview({ frontend_page_payload_json:JSON.stringify({blocks:[
     {type:"article_hero",variant:"default",data:{title:"State guide",image_url:"https://img.test/hero.jpg"},claim_keys:["claim:1"]},

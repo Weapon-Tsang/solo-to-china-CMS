@@ -121,6 +121,17 @@ export function createMediaRequestExecutor(db, { rpm = 2, windowMs = 60_000, saf
     const nowMs = clock();
     const token = crypto.randomUUID();
     const outcome = transaction(db, () => {
+      // Recognition only reads an immutable original. A finished transport
+      // timeout can be retried within the same paid-dispatch budget; it cannot
+      // create a second image or external write. Never clear in-flight calls,
+      // expired/crashed calls without completion, or generation/QA outcomes.
+      if (substage === 'analyze_source_image') {
+        db.prepare(`UPDATE media_dispatches SET state='failed'
+          WHERE visual_id=? AND substage=? AND state='outcome_unknown'
+          AND completed_at_ms IS NOT NULL
+          AND id<>COALESCE((SELECT owner_token FROM media_visual_lane WHERE id=1),'')`)
+          .run(visualId, substage);
+      }
       const unknown = db.prepare(`SELECT id FROM media_dispatches WHERE visual_id=? AND substage=?
         AND state IN ('dispatch_started','outcome_unknown') LIMIT 1`).get(visualId, substage);
       if (unknown) return { error: blocked('MEDIA_OUTCOME_UNKNOWN', 'A prior media request has an unknown outcome.') };

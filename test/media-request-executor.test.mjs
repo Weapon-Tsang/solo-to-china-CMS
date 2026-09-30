@@ -97,6 +97,37 @@ test('429 cooldown and unknown outcomes persist through a new executor', (t) => 
   assert.equal(retryAfterDelayMs(new Date(120_000).toUTCString(), 0), 120_000);
 });
 
+test('settled source recognition timeouts resume after restart with a bounded cumulative budget', t => {
+  const { first, second } = setup(t);
+  let time = 100_000;
+  const config = { clock: () => time, maxDispatches: 2 };
+  const params = { provider:'vertex', model:'model', visualId:'discovery:draft:original', substage:'analyze_source_image' };
+  const firstCall = createMediaRequestExecutor(first, config).acquire(params);
+  assert.throws(() => createMediaRequestExecutor(second, config).acquire(params), {code:'MEDIA_OUTCOME_UNKNOWN'});
+  firstCall.finish({error:{code:'PROVIDER_TIMEOUT'}});
+  time += 31_000;
+  const restarted = createMediaRequestExecutor(second, config);
+  restarted.acquire(params).finish({error:{code:'PROVIDER_TIMEOUT'}});
+  time += 31_000;
+  assert.throws(() => restarted.acquire(params), {code:'MEDIA_BUDGET_EXHAUSTED'});
+  assert.equal(restarted.budget(params).spent, 2);
+  assert.equal(restarted.budget(params).unknown, 0);
+  assert.deepEqual(first.prepare('SELECT error_code,state FROM media_dispatches ORDER BY started_at_ms').all()
+    .map(row=>({...row})), [{error_code:'PROVIDER_TIMEOUT',state:'failed'}, {error_code:'PROVIDER_TIMEOUT',state:'failed'}]);
+});
+
+test('a crashed recognition call without a recorded finish remains blocked', t => {
+  const {first, second} = setup(t);
+  let time = 100_000;
+  const config = {clock:()=>time,leaseMs:1000};
+  const params = {provider:'vertex',model:'model',visualId:'original',substage:'analyze_source_image'};
+  createMediaRequestExecutor(first,config).acquire(params);
+  time += 31_000;
+  createMediaRequestExecutor(second,config).acquire({...params,visualId:'another'}).finish();
+  time += 31_000;
+  assert.throws(()=>createMediaRequestExecutor(second,config).acquire(params),{code:'MEDIA_OUTCOME_UNKNOWN'});
+});
+
 test('explicit grant is durable, idempotent and retains cumulative spent and quota cooldown', (t) => {
   const {first,second} = setup(t);
   let time=100_000;

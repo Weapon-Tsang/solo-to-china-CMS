@@ -5705,7 +5705,8 @@ export class Repository {
     const coverage = json(opportunity?.coverage_json, {});
     const assembly = this.getEditorialAssembly(candidateId);
     const selectedKeys = new Set(assembly?.selected_fact_keys?.length ? assembly.selected_fact_keys : coverage.selectedFactKeys || []);
-    const destinationFacts = currentPublicationFacts(this.knowledgeForDestination(candidate.destination_slug));
+    const destinationFacts = currentPublicationFacts(this.knowledgeForDestination(candidate.destination_slug,
+      {normalizedKeys:selectedKeys.size ? [...selectedKeys] : null}));
     return selectedKeys.size
       ? withScopedCoverageLimitations(destinationFacts.filter((fact) => selectedKeys.has(fact.normalized_key)),
         topicTokens(`${candidate.topic_key || ""} ${candidate.proposed_title || ""}`))
@@ -5724,7 +5725,8 @@ export class Repository {
     const publicationMode = normalizePublicationMode(coverage.publicationMode);
     const assembly = this.getEditorialAssembly(candidateId);
     const selectedKeys = new Set(assembly?.selected_fact_keys?.length ? assembly.selected_fact_keys : coverage.selectedFactKeys || []);
-    const destinationFacts = currentPublicationFacts(this.knowledgeForDestination(candidate.destination_slug));
+    const destinationFacts = currentPublicationFacts(this.knowledgeForDestination(candidate.destination_slug,
+      {normalizedKeys:selectedKeys.size ? [...selectedKeys] : null}));
     const scopedFacts = selectedKeys.size
       ? withScopedCoverageLimitations(destinationFacts.filter((fact) => selectedKeys.has(fact.normalized_key)),
         topicTokens(`${candidate.topic_key || ""} ${candidate.proposed_title || ""}`))
@@ -9199,8 +9201,11 @@ export class Repository {
 
   authorizedSourceAssetsForBrief(brief, { packet = null, additionalSourceIds = [], explicitAssetIds = [], includeUnavailable = false, limit = 160, offset = 0 } = {}) {
     const claimKeys = json(brief.evidence_ledger_json, []);
-    const supportingFacts = this.knowledgeForDestination(brief.destination_slug)
-      .filter((fact) => !claimKeys.length || claimKeys.includes(fact.normalized_key));
+    // Media discovery and every input checkpoint need only this article's
+    // evidence. Loading and decoding the whole destination on each lane wait
+    // blocks the worker event loop before the next image can be dispatched.
+    const supportingFacts = this.knowledgeForDestination(brief.destination_slug,
+      {normalizedKeys:claimKeys.length ? claimKeys : null});
     const sourceIds = [...new Set([...supportingFacts
       .flatMap((fact) => fact.evidence || [])
       .map((evidence) => evidence.source_id)

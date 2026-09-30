@@ -302,6 +302,17 @@ export function buildProductionState(db, row, options = {}) {
     explanation = providerCooling
       ? `供应商请求暂时不可用，任务正在退避；系统还会自动尝试 ${retryState.remaining_auto_attempts} 次，不会重跑已完成步骤。仅凭这一状态不能判断为余额或配额耗尽。`
       : active.status === "running" ? "系统正在执行当前步骤，完成后会按流水线依赖自动继续。" : "任务已进入 durable queue，将自动继续。";
+    if (active.type === 'generate_visuals' && !providerCooling) {
+      const inspected = new Set(modelCalls.filter(call => call.run_id === active.id
+        && call.stage === 'source_asset_media_analysis' && call.request_kind === 'provider'
+        && call.status === 'succeeded').map(call => call.source_asset_id || call.entity_id).filter(Boolean)).size;
+      if (inspected) {
+        headline = active.status === 'running' ? `图片处理中 · 已识别 ${inspected} 张原图` : `图片处理等待继续 · 已识别 ${inspected} 张原图`;
+        explanation = active.status === 'running'
+          ? '正在检查候选图片是否适合本文，已完成的识别结果会保留。'
+          : '正在等待下一轮图片处理调度，已完成的识别结果会保留。';
+      }
+    }
     autoContinue = true;
   } else if (dependencyBrokenFailure && firstPending) {
     const firstPendingIndex = entries.findIndex((entry) => entry.key === firstPending.key);
