@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.78 - Unreleased
+
+- Audit cached recognized source photos during article recovery before buying discovery requests. Resume bounded local audit batches without losing the required visual obligation.
+- Continue discovery when a failed required slot remains, and select a qualified relevant original ahead of a rejected original.
+- Reject tiny originals locally before paid recognition; preserve identity and quality gates and refuse unchanged empty-media retries.
+- Add production screenshot regressions for cached audit, fourth-image continuation, qualified alternatives and negative-only resolution screening.
+
 ## 2.0.77 - Unreleased
 
 - Retry settled source-image recognition timeouts within the original durable dispatch budget; retain unknown-outcome protection for generation, QA and unfinished requests.

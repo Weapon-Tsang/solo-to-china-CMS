@@ -22,6 +22,18 @@ export async function closeLocalPhotoAudit() {
   await worker.terminate();
 }
 
+// Negative-only preflight: passing dimensions never establishes photo identity
+// or eligibility, but a tiny retained image cannot satisfy the body-photo gate.
+export async function rejectLowResolutionOriginal(filename) {
+  const bytes=await fs.readFile(filename);
+  const metadata=await sharp(bytes).metadata();
+  const {width,height}=metadata.autoOrient || metadata;
+  if(width>=900 && height>=600) return null;
+  return {version:'local-photo-audit-1',sha256:createHash('sha256').update(bytes).digest('hex'),
+    width:Number(width || 0),height:Number(height || 0),status:'needs_review',
+    reasons:['resolution_low'],checkedAt:new Date().toISOString(),method:'sharp_resolution_local',providerCalls:0};
+}
+
 // The OCR engine and image statistics run locally. No image or extracted text
 // is sent to a Provider, and only counts/quality evidence are persisted.
 export async function auditSourcePhoto(filename, { assetKind = 'unknown',alwaysCheckText=false } = {}) {

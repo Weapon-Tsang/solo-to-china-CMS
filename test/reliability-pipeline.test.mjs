@@ -284,7 +284,7 @@ test('a persisted required-media gap stops the visual stage before generation or
   assert.equal(await pipeline.runOne(),false,"a deterministic required-media blocker fails this Job");
   const job=db.prepare('SELECT status,last_failure_code FROM jobs WHERE id=?').get(jobId);
   assert.equal(job.status,'failed');
-  assert.equal(job.last_failure_code,'MEDIA_REQUIRED_MANIFEST_MISSING');
+  assert.equal(job.last_failure_code,'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE');
   assert.equal(calls,0);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='compose_frontend_page' AND entity_id='draft-media-gap'").get().n,0);
   assert.equal(repository.blockedRequiredVisuals('draft-media-gap').length,1);

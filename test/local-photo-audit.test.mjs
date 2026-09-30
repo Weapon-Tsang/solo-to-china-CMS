@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import sharp from 'sharp';
 import { repositoryFixture } from '../test-support/repository-fixture.mjs';
-import { auditSourcePhoto, closeLocalPhotoAudit } from '../src/local-photo-audit.mjs';
+import { auditSourcePhoto, closeLocalPhotoAudit, rejectLowResolutionOriginal } from '../src/local-photo-audit.mjs';
 import { Pipeline } from '../src/pipeline.mjs';
 
 test('source photo audit runs locally in a persisted worker job and rejects flat low-quality media', async (t) => {
@@ -41,4 +41,18 @@ test('source photo audit runs locally in a persisted worker job and rejects flat
   assert.deepEqual(JSON.parse(db.prepare('SELECT local_photo_audit_json FROM source_assets WHERE id=?').get('asset').local_photo_audit_json), audit);
   assert.equal((await auditSourcePhoto(file)).status, 'needs_review');
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM model_call_metrics').get().count, 0);
+});
+
+test('tiny originals are rejected before paid recognition; dimensions alone never approve a photo',async t=>{
+  const {directory}=repositoryFixture(t);
+  const small=path.join(directory,'small.png');
+  const large=path.join(directory,'large.png');
+  await sharp({create:{width:640,height:853,channels:3,background:'white'}}).png().toFile(small);
+  await sharp({create:{width:1200,height:800,channels:3,background:'white'}}).png().toFile(large);
+  const rejection=await rejectLowResolutionOriginal(small);
+  assert.equal(rejection.status,'needs_review');
+  assert.deepEqual(rejection.reasons,['resolution_low']);
+  assert.equal(rejection.providerCalls,0);
+  assert.equal(rejection.sha256,createHash('sha256').update(fs.readFileSync(small)).digest('hex'));
+  assert.equal(await rejectLowResolutionOriginal(large),null,'passing dimensions is not positive identity/quality evidence');
 });

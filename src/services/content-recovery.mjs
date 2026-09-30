@@ -256,8 +256,9 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       if (!definition) conflict('没有可恢复的准确生产步骤。');
       if (stage === 'generate_visuals' && ctx.draft
         && ctx.failedJob?.last_failure_code === 'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE'
-        && !repo.listDraftVisuals(ctx.draft.id).length
-        && !repo.sourceVisualDiscoveryCandidates(ctx.draft.id).length) {
+        && !repo.sourceVisualDiscoveryCandidates(ctx.draft.id).length
+        && !repo.sourceVisualPhotoAuditCandidates(ctx.draft.id).length
+        && !repo.mediaRepairPlan(ctx.draft.id).slots.some(slot=>['repair','retain'].includes(slot.disposition))) {
         conflict('已保存的来源图片没有可确认与本文相关的候选图；请补充相关原图或修复素材记录后再重试，重复执行不会产生新配图。');
       }
       if (requestedAction === 'retry_failed_stage' && productionState?.stage_status !== 'failed'

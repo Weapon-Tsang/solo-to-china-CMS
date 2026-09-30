@@ -69,6 +69,10 @@ test('an exhausted image discovery gives a concrete reason and refuses an unchan
   const failed=db.prepare('SELECT type,last_error,last_failure_code FROM jobs WHERE id=?').get(jobId);
   assert.equal(failed.last_failure_code,'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE');
   assert.equal(explainOperationalFailure(failed).action.id,null);
+  db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,
+    status,created_at,updated_at,acquisition_strategy,factual_image_required,media_metadata_json)
+    VALUES ('unfilled-required','draft-r',1,'hero','Required image','','','failed','now','now',
+    'await_authorized_source_image',1,'{"required_visual_obligation":{"required":true}}')`).run();
   assert.throws(()=>executeContentRecovery(repository,'opportunity-r',
     {action:'generate_visuals',revision:1}),/重复执行不会产生新配图/);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='generate_visuals'").get().n,1);

@@ -1,3 +1,7 @@
+# 2.0.78 Required source-photo recovery
+
+App/Extension version `2.0.78`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Same-schema CODE_ONLY_RELEASE. See `codex-cms-upgrade/acceptance/media-completion-followup-20261001.md` for deterministic, production-copy and real production verification, including any missing original-photo inputs.
+
 # 2.0.77 Image recognition timeout recovery
 
 App/Extension version `2.0.77`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Same-schema CODE_ONLY_RELEASE. Completed read-only recognition timeouts can retry within the original media budget; unfinished requests and generation/QA remain protected. Article-scoped Knowledge reads preserve package and dependency fingerprints. The UI shows current-job recognized-original counts. See `codex-cms-upgrade/acceptance/media-timeout-followup-20261001.md` for actual replay/canary/browser scope and remaining media constraints.

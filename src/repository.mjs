@@ -6623,6 +6623,23 @@ export class Repository {
       .get(jobId).calls;
   }
 
+  sourceVisualPhotoAuditCandidates(draftId, {limit=3} = {}) {
+    const row=this.db.prepare(`SELECT ad.id,ad.title,ad.body_markdown,ad.brief_id,cb.*
+      FROM article_drafts ad JOIN content_briefs cb ON cb.id=ad.brief_id WHERE ad.id=?`).get(draftId);
+    if(!row || mediaManifestForDraft(this.db,draftId)?.approvedNoImage) return [];
+    const visuals=this.listDraftVisuals(draftId);
+    return this.authorizedSourceAssetsForBrief(row,{packet:this.getWritingPacket(row.brief_id),limit:1000})
+      .filter(asset=>asset.analysis_status==='ready' && asset.asset_kind==='documentary_photo'
+        && asset.local_path && fs.existsSync(asset.local_path)
+        && !(asset.local_photo_audit?.version==='local-photo-audit-1'
+          && asset.local_photo_audit.sha256===asset.original_sha256
+          && ['eligible','needs_review'].includes(asset.local_photo_audit.status)))
+      .map(asset=>({asset,score:Math.max(articleAssetMatchScore(row,row,asset),
+        ...visuals.map(visual=>visualAssetMatchScore(visual,asset)))}))
+      .filter(item=>item.score>=0.34).sort((a,b)=>b.score-a.score || a.asset.id.localeCompare(b.asset.id))
+      .slice(0,Math.max(0,Math.min(3,Number(limit)||0))).map(item=>item.asset.id);
+  }
+
   sourceVisualDiscoveryCandidates(draftId, { limit = 3 } = {}) {
     const current=this.listDraftVisuals(draftId);
     if (mediaManifestForDraft(this.db,draftId)?.approvedNoImage) return [];
@@ -6649,6 +6666,9 @@ export class Repository {
     // inspection queue; they never establish what the image actually depicts.
     return this.authorizedSourceAssetsForBrief(row,{packet,limit:1000})
       .filter((asset)=>asset.analysis_status === 'not_analyzed'
+        && !(requiresOriginalBodyMedia(row.strategy_version)
+          && asset.local_photo_audit?.status==='needs_review'
+          && asset.local_photo_audit.sha256===asset.original_sha256)
         && (asset.capture_version === asset.source_capture_version || frozenIds.has(asset.id))
         && asset.local_path && fs.existsSync(asset.local_path))
       .map((asset)=>({asset,priority:articleAssetMatchScore(row,row,asset)+sourcePriority(asset),
@@ -10982,15 +11002,21 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       && visual.asset_fingerprint === visualFingerprint(visual);
     const qualifiedExisting=visual.status === "generated"
       && visualQualityQaStatus(visual.media_metadata?.quality_qa) === "passed";
+    const qualifiedOriginal=(asset)=>asset?.local_photo_audit?.status==='eligible'
+      && asset.local_photo_audit.sha256===asset.original_sha256
+      && hasImageLevelDescription(asset) && decideVisualAsset(asset,visual).action==='retain';
+    const originalAlternative=freeOriginalPolicy && visual.image_type==='real_world_photo'
+      && !qualifiedExisting && !editorVerifiedExact && !qualifiedOriginal(exact)
+      ? ranked.find(item=>item.score>=pixelMatchFloor(item.asset) && qualifiedOriginal(item.asset)) : null;
     // A qualified derivative is immutable input. Incomplete or failed work,
     // however, must converge on the highest-scoring authorized asset instead
     // of preferring whichever asset happened to occupy the slot last. Exact-id
     // preference made repeated normalization oscillate between two plans.
-    const match = editorVerifiedExact ? {asset:exact,score:exactScore}
+    const match = originalAlternative || (editorVerifiedExact ? {asset:exact,score:exactScore}
       : (qualifiedExisting || stabilizedSelection) && exact
       && (!exactHasPixelSubjects || exactScore >= pixelMatchFloor(exact)) ? {asset:exact,score:exactScore}
       : coherentExisting && exact && exactScore >= 0.34
-        ? {asset:exact,score:exactScore} : ranked[0];
+        ? {asset:exact,score:exactScore} : ranked[0]);
     // Asset ownership is insufficient: a factual photo is reusable only when its
     // own alt/evidence metadata matches the planned subject.
     const matchHasPixelSubjects=Boolean(match?.asset && ['ready','needs_review'].includes(match.asset.analysis_status)
@@ -11017,7 +11043,9 @@ export function normalizeVisuals(values, draft, brief, authorizedSourceAssets = 
       && (asset.local_photo_audit?.status !== 'eligible'
         || asset.local_photo_audit.sha256 !== asset.original_sha256
         || !hasImageLevelDescription(asset))) {
-      return requiredVisualGap(visual,'original_photo_needs_local_quality_review');
+      return requiredVisualGap(visual,asset.local_photo_audit?.status==='needs_review'
+        && asset.local_photo_audit.sha256===asset.original_sha256
+        ? 'original_photo_quality_rejected' : 'original_photo_needs_local_quality_review');
     }
     if (decision.action === "reject") {
       displacedAssetIds.add(asset.id);

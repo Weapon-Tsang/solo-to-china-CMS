@@ -7,35 +7,10 @@ import sharp from 'sharp';
 import {Pipeline} from '../src/pipeline.mjs';
 import { repositoryFixture } from '../test-support/repository-fixture.mjs';
 import {png} from '../test-support/media-fixtures.mjs';
+import {closeLocalPhotoAudit} from '../src/local-photo-audit.mjs';
 
 test('fourth relevant original survives a worker restart and advances to page composition',async t=>{
-  const {db,repository,directory}=repositoryFixture(t);
-  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,
-    coverage_score,evidence_count,conflict_count,created_at,updated_at)
-    VALUES ('c','chongqing','museum','Luo Zhongli Art Museum','fixture',1,1,0,'now','now')`).run();
-  db.prepare(`INSERT INTO sources(id,adapter,canonical_url,captured_at,raw_text,raw_html,raw_payload_json,
-    content_hash,capture_version,created_at,updated_at) VALUES ('s','manual','https://example.test/museum',
-    'now','Museum source','','{}','s-hash',1,'now','now')`).run();
-  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,strategy_version)
-    VALUES ('b','chongqing','Luo Zhongli Art Museum','travelers','guide','ready','now','now','3.8')`).run();
-  db.prepare("UPDATE content_briefs SET candidate_id='c' WHERE id='b'").run();
-  db.prepare(`INSERT INTO narrative_plans(id,brief_id,created_at,updated_at) VALUES ('n','b','now','now')`).run();
-  const ids=['photo-0','photo-1','photo-2','photo-3'];
-  db.prepare(`INSERT INTO writing_packets(id,brief_id,narrative_plan_id,packet_text,evidence_ledger_json,selected_fact_keys_json,
-    selected_experience_block_ids_json,input_hash,created_at,updated_at,context_json)
-    VALUES ('p','b','n','','[]','[]','[]','packet-hash','now','now',?)`).run(JSON.stringify({version:2,
-      authorized_source_assets:ids.map(id=>({id})),content_policy:{visuals:{minimum:0,target:1,maximum:3}}}));
-  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,
-    revision,content_hash,strategy_version) VALUES ('d','b','Luo Zhongli Art Museum','museum',
-    'Visit Luo Zhongli Art Museum.','{}','drafted','now','now',1,'body-hash','3.8')`).run();
-  for(let i=0;i<ids.length;i++) {
-    const bytes=await sharp({create:{width:1,height:1,channels:3,background:{r:30+i*30,g:70,b:100}}}).png().toBuffer();
-    const file=path.join(directory,ids[i]+'.png');fs.writeFileSync(file,bytes);
-    db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,position,local_path,mime_type,capture_version,
-      storage_status,original_bytes_status,durability_status,original_sha256,width,height)
-      VALUES (?,'s','image',?,?,?,'image/png',1,'saved','saved_original','ORIGINAL_STORED',?,1200,800)`)
-      .run(ids[i],'https://example.test/'+ids[i],i,file,createHash('sha256').update(bytes).digest('hex'));
-  }
+  const {db,repository,ids}=await originalPhotoFixture(t);
   const inspected=[];
   const reviewer={async analyzeMediaAsset(asset,{telemetryContext}){
     inspected.push(asset.id);
@@ -51,6 +26,7 @@ test('fourth relevant original survives a worker restart and advances to page co
   assert.equal(await new Pipeline(repository,{config:{}},options).runOne(),false);
   assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status,'queued');
   assert.equal(inspected.length,3,JSON.stringify(db.prepare('SELECT * FROM jobs WHERE id=?').get(jobId)));
+  assert.equal(repository.blockedRequiredVisuals('d').length,1,'a failed required slot must keep discovery resumable');
   assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='compose_frontend_page'").get().n,0);
   db.prepare("UPDATE jobs SET available_at='2000-01-01',next_eligible_at='2000-01-01' WHERE id=?").run(jobId);
   assert.equal(await new Pipeline(repository,{config:{}},options).runOne(),true,
@@ -281,4 +257,120 @@ test('empty-caption original from a named attraction source outranks larger city
  db.prepare("UPDATE article_visuals SET image_type='real_world_photo',acquisition_strategy='use_authorized_source_image',status='generated' WHERE id='card'").run();
  assert.deepEqual(repository.sourceVisualDiscoveryCandidates('d'),[],
    'satisfied original-photo coverage must not trigger another paid discovery scan');
+});
+
+async function originalPhotoFixture(t) {
+  t.after(closeLocalPhotoAudit);
+  const {db,repository,directory}=repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,
+    coverage_score,evidence_count,conflict_count,created_at,updated_at)
+    VALUES ('c','chongqing','museum','Luo Zhongli Art Museum','fixture',1,1,0,'now','now')`).run();
+  db.prepare(`INSERT INTO sources(id,adapter,canonical_url,captured_at,raw_text,raw_html,raw_payload_json,
+    content_hash,capture_version,created_at,updated_at) VALUES ('s','manual','https://example.test/museum',
+    'now','Museum source','','{}','s-hash',1,'now','now')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,strategy_version)
+    VALUES ('b','chongqing','Luo Zhongli Art Museum','travelers','guide','ready','now','now','3.9')`).run();
+  db.prepare("UPDATE content_briefs SET candidate_id='c' WHERE id='b'").run();
+  db.prepare(`INSERT INTO narrative_plans(id,brief_id,created_at,updated_at) VALUES ('n','b','now','now')`).run();
+  const ids=['photo-0','photo-1','photo-2','photo-3'];
+  db.prepare(`INSERT INTO writing_packets(id,brief_id,narrative_plan_id,packet_text,evidence_ledger_json,selected_fact_keys_json,
+    selected_experience_block_ids_json,input_hash,created_at,updated_at,context_json)
+    VALUES ('p','b','n','','[]','[]','[]','packet-hash','now','now',?)`).run(JSON.stringify({version:2,
+      authorized_source_assets:ids.map(id=>({id})),content_policy:{visuals:{minimum:0,target:1,maximum:3}}}));
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,
+    revision,content_hash,strategy_version) VALUES ('d','b','Luo Zhongli Art Museum','museum',
+    'Visit Luo Zhongli Art Museum.','{}','drafted','now','now',1,'body-hash','3.9')`).run();
+  db.prepare(`INSERT INTO article_visuals(id,draft_id,slot,placement,purpose,alt_text,generation_prompt,
+    aspect_ratio,status,created_at,updated_at,image_type,image_role,image_subject,acquisition_strategy,
+    factual_image_required,media_metadata_json)
+    VALUES ('required-museum','d',1,'mid_article','Luo Zhongli Art Museum','Museum','','3:2',
+    'failed','now','now','real_world_photo','support','Luo Zhongli Art Museum',
+    'await_authorized_source_image',1,'{"required_visual_obligation":{"required":true}}')`).run();
+  for(let i=0;i<ids.length;i++) {
+    const pixels=Buffer.alloc(1200*800*3);
+    for(let j=0;j<pixels.length;j++) pixels[j]=(j*31+(j>>8)*17+i*43)%256;
+    const bytes=await sharp(pixels,{raw:{width:1200,height:800,channels:3}}).png().toBuffer();
+    const file=path.join(directory,ids[i]+'.png');fs.writeFileSync(file,bytes);
+    db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,position,local_path,mime_type,capture_version,
+      storage_status,original_bytes_status,durability_status,original_sha256,width,height)
+      VALUES (?,'s','image',?,?,?,'image/png',1,'saved','saved_original','ORIGINAL_STORED',?,1200,800)`)
+      .run(ids[i],'https://example.test/'+ids[i],i,file,createHash('sha256').update(bytes).digest('hex'));
+  }
+  return {db,repository,directory,ids};
+}
+
+
+test('cached recognized originals receive local quality checks before paid discovery',async t=>{
+  const {db,repository,ids}=await originalPhotoFixture(t);
+  for(const id of ids) assert.equal(repository.saveSourceAssetAnalysis(id,{
+    analysis_status:'ready',asset_kind:'documentary_photo',reader_text_present:false,
+    primary_subjects:[id===ids[0]?'Luo Zhongli Art Museum':'Unrelated street'],
+    analysis_version:'media-analysis-2',prompt_version:'media-analysis-prompt-4',
+  },{forDraftId:'d'}),true);
+  assert.deepEqual(repository.sourceVisualPhotoAuditCandidates('d'),[ids[0]]);
+  const pipeline=new Pipeline(repository,{config:{}},{visuals:{enabled:true},
+    visualReviewer:{analyzeMediaAsset(){throw Error('Cached recognition must not buy another model call');}},
+    frontendContracts:{diagnostics:()=>({canCompose:true})}});
+  const job=repository.enqueue('generate_visuals','d');
+  assert.equal(await pipeline.runOne(),true,JSON.stringify(db.prepare('SELECT * FROM jobs WHERE id=?').get(job)));
+  const audit=repository.sourceAssetDecisionDto(ids[0]).local_photo_audit;
+  assert.equal(audit.status,'eligible');assert.equal(audit.providerCalls,0);
+  assert.equal(repository.listDraftVisuals('d')[0].source_asset_id,ids[0]);
+  assert.equal(repository.listDraftVisuals('d')[0].status,'generated');
+  assert.deepEqual(repository.sourceVisualPhotoAuditCandidates('d'),[]);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM model_call_metrics').get().n,0);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='compose_frontend_page' AND status='queued'").get().n,1);
+});
+
+test('tiny discovery originals checkpoint locally and resume without spending the provider budget',async t=>{
+  const {db,repository,directory,ids}=await originalPhotoFixture(t);
+  for(let i=0;i<3;i++) {
+    const bytes=await sharp({create:{width:640,height:480,channels:3,background:{r:220+i,g:230,b:240}}}).png().toBuffer();
+    fs.writeFileSync(path.join(directory,ids[i]+'.png'),bytes);
+    db.prepare('UPDATE source_assets SET original_sha256=? WHERE id=?')
+      .run(createHash('sha256').update(bytes).digest('hex'),ids[i]);
+  }
+  const inspected=[];
+  const pipeline=new Pipeline(repository,{config:{}},{visuals:{enabled:true},
+    visualReviewer:{async analyzeMediaAsset(asset){inspected.push(asset.id);return {method:'fixture',model:'fixture',result:{
+      analysis_status:'ready',asset_kind:'documentary_photo',reader_text_present:false,
+      primary_subjects:['Luo Zhongli Art Museum'],analysis_version:'media-analysis-2',prompt_version:'media-analysis-prompt-4'}};}},
+    frontendContracts:{diagnostics:()=>({canCompose:true})}});
+  const job=repository.enqueue('generate_visuals','d');
+  assert.equal(await pipeline.runOne(),false);
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(job).status,'queued');
+  assert.deepEqual(inspected,[]);
+  assert.deepEqual(repository.sourceVisualDiscoveryCandidates('d'),[ids[3]]);
+  db.prepare("UPDATE jobs SET available_at='2000-01-01',next_eligible_at='2000-01-01' WHERE id=?").run(job);
+  assert.equal(await pipeline.runOne(),true);
+  assert.deepEqual(inspected,[ids[3]]);
+  assert.equal(repository.listDraftVisuals('d')[0].source_asset_id,ids[3]);
+});
+
+test('cached low-resolution originals remain blocked while local audit resumes the next batch without paid discovery',async t=>{
+  const {db,repository,directory,ids}=await originalPhotoFixture(t);
+  for(let i=0;i<ids.length;i++) {
+    if(i<3){
+      const bytes=await sharp({create:{width:640,height:480,channels:3,background:{r:30+i*30,g:70,b:100}}}).png().toBuffer();
+      fs.writeFileSync(path.join(directory,ids[i]+'.png'),bytes);
+      db.prepare('UPDATE source_assets SET original_sha256=?,width=640,height=480 WHERE id=?')
+        .run(createHash('sha256').update(bytes).digest('hex'),ids[i]);
+    }
+    repository.saveSourceAssetAnalysis(ids[i],{analysis_status:'ready',asset_kind:'documentary_photo',
+      reader_text_present:false,primary_subjects:['Luo Zhongli Art Museum'],
+      analysis_version:'media-analysis-2',prompt_version:'media-analysis-prompt-4'},{forDraftId:'d'});
+  }
+  const pipeline=new Pipeline(repository,{config:{}},{visuals:{enabled:true},
+    visualReviewer:{analyzeMediaAsset(){throw Error('Local quality audit must finish before paid discovery');}},
+    frontendContracts:{diagnostics:()=>({canCompose:true})}});
+  const job=repository.enqueue('generate_visuals','d');
+  assert.equal(await pipeline.runOne(),false);
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(job).status,'queued');
+  assert.equal(repository.listDraftVisuals('d').some(v=>v.status==='generated'),false);
+  assert.ok(repository.sourceAssetDecisionDto(ids[0]).local_photo_audit.reasons.includes('resolution_low'));
+  assert.deepEqual(repository.sourceVisualPhotoAuditCandidates('d'),[ids[3]]);
+  db.prepare("UPDATE jobs SET available_at='2000-01-01',next_eligible_at='2000-01-01' WHERE id=?").run(job);
+  assert.equal(await pipeline.runOne(),true,JSON.stringify(db.prepare('SELECT * FROM jobs WHERE id=?').get(job)));
+  assert.equal(repository.listDraftVisuals('d')[0].source_asset_id,ids[3]);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM model_call_metrics').get().n,0);
 });

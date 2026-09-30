@@ -11,7 +11,8 @@ import { assertPublicationEligibility, evaluatePublicationEligibility, freezeReq
 import { inheritJobContext, isAiJobType, isProviderPressure } from "./job-policy.mjs";
 import { evaluateSourcePreflight } from "./source-preflight.mjs";
 import { recoverRemoteOriginal } from "./source-media-store.mjs";
-import { auditSourcePhoto } from './local-photo-audit.mjs';
+import { auditSourcePhoto, rejectLowResolutionOriginal } from './local-photo-audit.mjs';
+import { requiresOriginalBodyMedia } from './visuals/body-media-policy.mjs';
 import { stageConfiguration } from './pipeline-contract.mjs';
 import { sourceProcessingProfile } from './source-processing-profile.mjs';
 import { runNodeJsonProcess } from './process-runner.mjs';
@@ -1027,6 +1028,26 @@ export class Pipeline {
           }
           let contentPackage = this.repository.getDraftPackage(job.entity_id);
           if (!contentPackage) throw new Error(`Article draft ${job.entity_id} no longer exists.`);
+          // Cached recognition is not a completed delivery-quality check.
+          // Image-only recovery must audit retained ready photos as well as
+          // newly analyzed originals before buying another discovery request.
+          const photoAuditIds=this.repository.sourceVisualPhotoAuditCandidates?.(job.entity_id) || [];
+          for(const assetId of photoAuditIds) {
+            const asset=this.repository.sourceAssetDecisionDto(assetId);
+            const audit=await guarded(()=>auditSourcePhoto(asset.local_path,{assetKind:asset.asset_kind}));
+            const save=()=>this.repository.saveLocalPhotoAudit(assetId,audit);
+            if(typeof this.repository.checkpointPipelineStage==='function')
+              this.repository.checkpointPipelineStage(job,pipelineArtifact,save);
+            else save();
+          }
+          if (photoAuditIds.length) this.repository.prepareMediaRepair(job.entity_id);
+          if (this.repository.sourceVisualPhotoAuditCandidates?.(job.entity_id)?.length
+            && (!this.repository.listDraftVisuals(job.entity_id).length
+              || this.repository.blockedRequiredVisuals?.(job.entity_id)?.length)) {
+            throw Object.assign(new Error('Continue local quality checks of retained recognized photos.'),{
+              code:'MEDIA_DISCOVERY_CONTINUE',availableAt:new Date(Date.now()+1000).toISOString(),
+            });
+          }
           const staleCardAnalyses=this.repository.sourceVisualReanalysisCandidates?.(job.entity_id) || [];
           for (const {visual_id:visualId,source_asset_id:assetId} of staleCardAnalyses) {
             if (typeof this.visualReviewer?.analyzeMediaAsset !== "function") {
@@ -1057,13 +1078,25 @@ export class Pipeline {
           const discoveryIds=this.repository.sourceVisualDiscoveryCandidates?.(job.entity_id,
             {limit:discoveryLimit}) || [];
           let discoveryCount=0;
+          let locallyRejected=0;
           for (const assetId of discoveryIds) {
+            const asset=this.repository.sourceAssetDecisionDto(assetId);
+            if(requiresOriginalBodyMedia(contentPackage.draft?.strategy_version)) {
+              const rejection=await guarded(()=>rejectLowResolutionOriginal(asset.local_path));
+              if(rejection) {
+                const save=()=>this.repository.saveLocalPhotoAudit(assetId,rejection);
+                if(typeof this.repository.checkpointPipelineStage==='function')
+                  this.repository.checkpointPipelineStage(job,pipelineArtifact,save);
+                else save();
+                locallyRejected++;
+                continue;
+              }
+            }
             if (typeof this.visualReviewer?.analyzeMediaAsset !== "function") {
               throw Object.assign(new Error("Image analysis provider is not configured for media discovery."),{
                 code:"MEDIA_ANALYSIS_NOT_CONFIGURED",retryable:false,
               });
             }
-            const asset=this.repository.sourceAssetDecisionDto(assetId);
             const analyzed=await guarded((signal)=>this.visualReviewer.analyzeMediaAsset(asset,{signal,
               telemetryContext:{...telemetryContext,entityId:assetId,visualId:`discovery:${job.entity_id}:${assetId}`}}));
             discoveryCount+=1;
@@ -1098,11 +1131,12 @@ export class Pipeline {
               visual.acquisition_strategy === 'use_authorized_source_image' && visual.status === 'generated')) break;
           }
           const remainingDiscovery=this.repository.sourceVisualDiscoveryCandidates?.(job.entity_id) || [];
-          if (!this.repository.listDraftVisuals(job.entity_id).length
+          const unresolvedPhotos=this.repository.blockedRequiredVisuals?.(job.entity_id) || [];
+          if ((!this.repository.listDraftVisuals(job.entity_id).length || unresolvedPhotos.length)
             && !mediaManifestForDraft(this.repository.db,job.entity_id)?.approvedNoImage) {
             const exhausted=remainingDiscovery.length>0;
             const providerDispatches=this.repository.sourceMediaAnalysisProviderCalls?.(job.id) || 0;
-            if (exhausted && discoveryCount>0 && providerDispatches<discoveryBudget) {
+            if (exhausted && (discoveryCount>0 || locallyRejected>0) && providerDispatches<discoveryBudget) {
               throw Object.assign(new Error('Continue inspecting the next batch of stored source images.'),{
                 code:'MEDIA_DISCOVERY_CONTINUE',availableAt:new Date(Date.now()+1000).toISOString(),
               });
@@ -1112,6 +1146,7 @@ export class Pipeline {
               : 'No pixel-verified relevant source image was found for this article.'),{
               code:exhausted ? 'MEDIA_DISCOVERY_BUDGET_EXHAUSTED' : 'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE',retryable:false,
               details:{substage:'source_media_discovery',analyzed_assets:discoveryCount,
+                locally_rejected:locallyRejected,
                 provider_dispatches:providerDispatches,dispatch_limit:discoveryBudget,
                 remaining_candidates_lower_bound:remainingDiscovery.length},
             });
