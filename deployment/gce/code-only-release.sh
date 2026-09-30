@@ -7,11 +7,13 @@ REVISION="${1:?exact 40-character revision required}"
 IMAGE="${2:?immutable image digest required}"
 VERSION="${3:?application version required}"
 SCHEMA="${4:?unchanged database schema required}"
+TITLE_DRAIN="${5:-none}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 [[ "$REVISION" =~ ^[a-f0-9]{40}$ ]]
 [[ "$IMAGE" =~ ^asia-east1-docker\.pkg\.dev/[^[:space:]]+@sha256:[a-f0-9]{64}$ ]]
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 [[ "$SCHEMA" =~ ^[0-9]+$ ]]
+[[ "$TITLE_DRAIN" == none || "$TITLE_DRAIN" == drain-title-jobs ]]
 [[ -f "$SCRIPT_DIR/pin-runtime-image.py" ]]
 
 APP=/opt/solo-to-china
@@ -73,8 +75,8 @@ docker stop --time 10 "engine-canary-$SHORT" >/dev/null || true
 docker rm "engine-canary-$SHORT" >/dev/null
 [[ "$CANARY_READY" == 1 ]]
 
-docker exec --env "EXPECTED_SCHEMA=$SCHEMA" engine node --input-type=module -e \
-  'const {DatabaseSync}=await import("node:sqlite");const d=new DatabaseSync("/var/lib/solo-to-china/solo-to-china.sqlite",{readOnly:true});const schema=d.prepare("SELECT MAX(version) n FROM schema_migrations").get().n;const active=d.prepare("SELECT COUNT(*) n FROM jobs WHERE status=?").get("running").n;console.log(JSON.stringify({schema,active}));if(schema!==Number(process.env.EXPECTED_SCHEMA)||active)process.exit(1);d.close()' \
+docker exec --env "EXPECTED_SCHEMA=$SCHEMA" --env "TITLE_DRAIN=$TITLE_DRAIN" engine node --input-type=module -e \
+  'const {DatabaseSync}=await import("node:sqlite");const d=new DatabaseSync("/var/lib/solo-to-china/solo-to-china.sqlite",{readOnly:true});const schema=d.prepare("SELECT MAX(version) n FROM schema_migrations").get().n;const active=d.prepare("SELECT COUNT(*) n FROM jobs WHERE status=?").get("running").n;const otherActive=d.prepare("SELECT COUNT(*) n FROM jobs WHERE status=? AND type<>?").get("running","compose_opportunity_titles").n;console.log(JSON.stringify({schema,active,otherActive}));if(schema!==Number(process.env.EXPECTED_SCHEMA)||otherActive||(active&&process.env.TITLE_DRAIN!=="drain-title-jobs"))process.exit(1);d.close()' \
   >"$RELEASE/pre-switch-database.json"
 
 SWITCH_STARTED=0
@@ -117,8 +119,13 @@ trap rollback ERR
 
 SWITCH_STARTED=1
 docker update --restart no engine-worker >/dev/null
-docker stop --time 30 engine-worker >/dev/null
+docker stop --time 300 engine-worker >/dev/null
 docker rename engine-worker "$OLD_WORKER"
+# Graceful worker shutdown releases unfinished title jobs with their durable
+# receipts. Never switch while any lease still marks a job as running.
+docker exec engine node --input-type=module -e \
+  'const {DatabaseSync}=await import("node:sqlite");const d=new DatabaseSync("/var/lib/solo-to-china/solo-to-china.sqlite",{readOnly:true});const active=d.prepare("SELECT COUNT(*) n FROM jobs WHERE status=?").get("running").n;d.close();if(active)process.exit(1)' \
+  >"$RELEASE/drained-worker-check.log"
 docker network disconnect solo-to-china engine
 docker update --restart no engine >/dev/null
 docker stop --time 30 engine >/dev/null

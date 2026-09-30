@@ -1,3 +1,7 @@
+# 2.0.74 opportunity title batch performance
+
+App/Extension version `2.0.74`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Share source-completeness and family membership projection only within a synchronous opportunity title batch. This removes repeated current-media checks as already titled opportunities grow, while preserving the exact AI inputs, evidence fingerprints, approval guards and fresh checks across jobs. Content Production Strategy 3.9 and `config/content-strategy.json` remain unchanged. This same-schema code-only patch follows the real 2.0.73 production title rollout; see its acceptance record below.
+
 # 2.0.73 opportunity editorial titles
 
 App/Extension version `2.0.73`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Current production has been inspected read-only and is already schema 83. This code-only release adds evidence-grounded English titles before opportunity approval, preserves approved production owners, and rejects logistics-list variants before caching. Use the reviewed same-schema API/Worker release helper rather than replaying the previous migration. The active strategy remains `config/content-strategy.json` / Content Production Strategy 3.9. Validation and release boundaries: docs/codex-cms-upgrade/acceptance/opportunity-editorial-titles-20260930.md.

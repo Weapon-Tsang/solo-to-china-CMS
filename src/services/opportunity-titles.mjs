@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { selectedFamilyProjection } from '../opportunity-family-evidence.mjs';
+import { selectedFamilyProjection, createFamilyProjectionContext } from '../opportunity-family-evidence.mjs';
 import { boilerplateTitleSubject, opportunityTitleSubject, isFacetListTitle } from '../editorial-title.mjs';
 
 export const TITLE_POLICY = 'editorial-v2';
@@ -15,9 +15,9 @@ function protectedTitle(repository,row) {
     || repository.db.prepare("SELECT 1 FROM jobs WHERE (entity_id=? OR production_owner_opportunity_id=?) AND status IN ('queued','running') LIMIT 1").get(row.id,row.id);
 }
 
-export function titleInput(repository, row) {
+export function titleInput(repository, row, projectionContext = null) {
   const coverage = parse(row.coverage_json);
-  const projection = selectedFamilyProjection(repository.db, row);
+  const projection = selectedFamilyProjection(repository.db, row, projectionContext);
   if (projection.missing || projection.unusable || projection.facts.length < 2 || projection.families.length < 2) return null;
   // Round-robin predicates before capping input so plentiful ticket facts do
   // not displace the route/access evidence that can support a distinct angle.
@@ -61,9 +61,10 @@ export function opportunityTitlePackage(repository, destination) {
     AND json_extract(coverage_json,'$.knowledgeEventGenerated')=1
     ORDER BY readiness_score DESC,id`).all(destination);
   const opportunities = [];
+  const projectionContext = createFamilyProjectionContext(repository.db);
   for (const row of rows) {
     if (protectedTitle(repository,row)) continue;
-    const input = titleInput(repository,row);
+    const input = titleInput(repository,row,projectionContext);
     if (!input) continue;
     const saved = parse(row.coverage_json).editorialTitle;
     if (saved?.inputHash === input.input_hash && saved.status === 'ready') continue;
@@ -119,11 +120,12 @@ export function validateOpportunityTitles(pack, output) {
 export function saveOpportunityTitles(repository, pack, output, model) {
   const proposals = validateOpportunityTitles(pack,output);
   const changed = [];
+  const projectionContext = createFamilyProjectionContext(repository.db);
   for (const proposal of proposals) {
     const row = repository.db.prepare('SELECT * FROM content_opportunities WHERE id=?').get(proposal.id);
     const input = pack.opportunities.find(item => item.id === proposal.id);
     if (protectedTitle(repository,row)
-      || titleInput(repository,row)?.input_hash !== input.input_hash) continue;
+      || titleInput(repository,row,projectionContext)?.input_hash !== input.input_hash) continue;
     const coverage = parse(row.coverage_json);
     coverage.titlePolicy = TITLE_POLICY;
     coverage.editorialTitle = {status:'ready',inputHash:input.input_hash,model,

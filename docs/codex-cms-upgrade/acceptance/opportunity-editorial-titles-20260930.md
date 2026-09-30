@@ -1,9 +1,9 @@
 # 机会阶段英文编辑标题验收：2026-09-30
 
 Change class: AI_PROVIDER / PIPELINE / DATABASE_LOGIC
-Release class: CODE_ONLY_RELEASE，版本 2.0.73，schema 保持 83。
+Release class: CODE_ONLY_RELEASE，版本 2.0.74（2.0.73 已正式上线），schema 保持 83。
 
-用户明确要求机会阶段生成具体英文标题，并授权完成验收、提交、推送、部署到生产。当前状态：发布前验收，正式切换记录将在发布后补充。
+用户明确要求机会阶段生成具体英文标题，并授权完成验收、提交、推送、部署到生产。当前状态：2.0.73 已上线并成功启动正式拟题；2.0.74 性能补丁正在最终验收。
 
 ## 问题与改动
 
@@ -38,3 +38,13 @@ Release class: CODE_ONLY_RELEASE，版本 2.0.73，schema 保持 83。
 尚未覆盖：生产 WordPress 写入、浏览器真实新来源采集、整库真实 AI Capture→QA、SEO/流量结果。L4 的本地模拟和 L6 的 mock 输出不能用于声称这些方面已经验证。
 
 本地证据：output/title-editorial-20260930/ 与 output/title-release-20260930/，包括 targeted-tests.log、full-pipeline-debug.log、current-replay.json、semantic-evidence.json、vertex-canary-final.json、release-check-final.log。原始生产依赖投影和模型输入不提交到 Git。
+
+## 2.0.73 实际发布与 2.0.74 性能补丁
+
+2.0.73 代码提交并推送：4716ea5a42434fb76a47198eb3cd64d6be24bd6f。不可变镜像：sha256:89bce345108a93acf34278146fd403313047da0b47165b3eb9b2f4365e0caf86。2026-09-30 公开 health/readiness 均返回 2.0.73；API/Worker 镜像一致、startup reconciliation=false；上一版本保留为 engine-before-4716ea5a 和 engine-worker-before-4716ea5a。VM verified-container 启动检查同步更新，无重启、迁移或生产备份。
+
+正式 admin 拟题 endpoint 返回 202、三个目的地队列。真实模型生成了具体英文标题。上线后的 fingerprint 对比：189 条受保护机会、14 篇草稿、31 个候选、14 条 WordPress 记录、90 个来源的状态/版本投影、5,235 个 Knowledge 的值/状态投影全部保持不变。owner orphan=0、同目的地并发重复拟题 jobs=0；当前工作只在正常机会拟题队列运行，不批准、不创建正文、不写 WordPress。
+
+真实生产 batch 后期从约 24 秒增长到 142 秒，而 Provider 调用仍约 10–12 秒。相邻扫描发现 title package 为每个已拟题机会重复检查当前媒体完整性和来源 families，导致同步耗时随已完成记录增长。2.0.74 在每次同步 package/save 内共享 createFamilyProjectionContext；跨 jobs 不复用。原六个真实 Golden 样本的完整输入 SHA256 在优化前后完全一致：679aeeea7f6c8497d146529dedb69ca109e8d90d7577b60ba5a445ae2afcc2dc。因此无需为没有改变的 Prompt/Schema 重复付费 Canary；仍通过正式队列的真实调用确认发布后行为。
+
+2.0.74 的定向标题/正文链路测试 22 项通过；最终 release gate、不可变镜像和上线性能将随后记录。生产浏览器完整交互 NOT TESTED：内置浏览器停在登录页面，Chrome 连接超时；已完成本地浏览器 E2E 和生产 authenticated API 验收，不能将这两者称为生产浏览器 E2E。

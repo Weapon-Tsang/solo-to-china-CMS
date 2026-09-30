@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.74 - Unreleased
+
+- Share the current source/family projection within each synchronous title batch to avoid repeating media completeness scans for every already titled opportunity; retain fresh projection checks between jobs and preserve the original model input hashes.
+
 ## 2.0.73 - Unreleased
 
 - Generate evidence-grounded English titles with concrete editorial angles at the Knowledge opportunity stage; preserve approved owners and reuse current evidence fingerprints.
