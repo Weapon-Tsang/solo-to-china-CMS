@@ -189,6 +189,44 @@ test("completing a qualifying task marks matching historical drafts stale withou
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE entity_id=? AND type=?").get("draft-affiliate-unrelated", "compose_commercial").count, 0);
 });
 
+// 2026-09-30: updating a Trains link showed two published articles as
+// "pipeline interrupted". Published articles are frozen against inventory edits.
+test("an affiliate inventory change never marks a published article for commercial refresh", (t) => {
+  const repository = fixture(t); const db = repository.db;
+  const composition = (draftId) => repository.saveCommercialComposition(draftId, {
+    publishableBodyMarkdown:"## Tickets\n\nReserve your entry.", slots:[], offerIds:[], assetIds:[], commercialBlocks:[], contentBlocks:[],
+    disclosureText:"", strategyVersion:"3.5", readingLayoutVersion:"1", status:"no_offers",
+    outcome:"asset_not_configured", reasonCode:"ASSET_NOT_CONFIGURED", opportunities:[],
+    intents:[{ id:`intent-${draftId}`, blockIndex:0, blockKey:"tickets", intentType:"ATTRACTION_GUIDE",
+      productCategory:"ATTRACTION", destinationSlug:"beijing", areaKey:"", routeKey:"", entityKey:"attraction.forbidden_city",
+      intentStrength:"VERY_HIGH", decisionStage:"TRANSACTION", recommendedComponent:"affiliate_booking_card", reason:"Ticket action." }],
+  });
+  for (const [id, status] of [["draft-live", "published"], ["draft-remote-live", "wordpress_draft"], ["draft-pending", "wordpress_draft"]]) {
+    db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at)
+      VALUES (?,'beijing','Forbidden City tickets','[]','transactional','ready','now','now')`).run(`brief-${id}`);
+    db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,revision,content_hash)
+      VALUES (?,?,'Forbidden City tickets',?,'## Tickets','{}',?,'now','now',1,?)`).run(id, `brief-${id}`, id, status, `${id}-hash`);
+    composition(id);
+  }
+  db.prepare("UPDATE article_drafts SET status='published' WHERE id='draft-live'").run();
+  // Published in WordPress directly, before the CMS status caught up.
+  db.prepare(`INSERT INTO wordpress_publications(draft_id,site_url,post_id,status,created_at,updated_at)
+    VALUES ('draft-remote-live','https://solotochina.com',42,'synced','now','now')`).run();
+  db.prepare(`INSERT INTO wordpress_content_inventory(site_url,post_id,status,slug,title,synced_at)
+    VALUES ('https://solotochina.com',42,'publish','draft-remote-live','Forbidden City tickets','now')`).run();
+  const task = createTask(repository, { productCategory:"ATTRACTION", assetType:"DEEP_LINK", scopeType:"ENTITY",
+    scopeKey:"attraction.forbidden_city", destinationSlug:"beijing", entityKey:"attraction.forbidden_city",
+    tripToolType:"CUSTOM_LINK", opportunityId:"opp-affiliate-frozen", score:88 });
+  repository.completeAffiliateQueueTask(task.id, { affiliateUrl:"https://www.trip.com/t/example?sub1=stc_attraction_forbidden_city" });
+  const flag = (id) => db.prepare("SELECT refresh_required FROM commercial_compositions WHERE draft_id=?").get(id).refresh_required;
+  assert.equal(flag("draft-live"), 0);
+  assert.equal(flag("draft-remote-live"), 0);
+  assert.equal(flag("draft-pending"), 1);
+  // A later commercial recomposition must not demote a published article.
+  composition("draft-live");
+  assert.equal(db.prepare("SELECT status FROM article_drafts WHERE id='draft-live'").get().status, "published");
+});
+
 test("completing an already completed task is idempotent", (t) => {
   const repository = fixture(t); const task = createTask(repository);
   const first = repository.completeAffiliateQueueTask(task.id, { affiliateUrl: "https://www.trip.com/t/first" });

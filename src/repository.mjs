@@ -4608,8 +4608,18 @@ export class Repository {
   entityReviewSince(destinationSlug) {
     if (!this.entityFullReviewDays) return null;
     const read = (key) => this.db.prepare("SELECT last_started_at FROM integration_sync_state WHERE sync_key=? AND status='succeeded'").get(key);
-    const full = read(`entity_full_review:${destinationSlug}`);
-    if (!full?.last_started_at) return null;
+    let full = read(`entity_full_review:${destinationSlug}`);
+    // Bootstrap: before watermarks existed every daily pass was a full review.
+    // Treat the last successful pass as the baseline instead of paying for one
+    // more full sweep (2026-09-30: ~2.1M DeepSeek tokens in one morning).
+    if (!full?.last_started_at) {
+      const previous = this.db.prepare(`SELECT COALESCE(started_at,created_at) AS last_started_at FROM jobs
+        WHERE type='resolve_entities' AND entity_id=? AND status='succeeded' ORDER BY completed_at DESC LIMIT 1`).get(destinationSlug);
+      if (!previous?.last_started_at) return null;
+      // Persist the baseline when writable; read-only audits just use it.
+      try { this.recordEntityReview(destinationSlug, previous.last_started_at, { full: true, claims: 0 }); } catch { /* read-only */ }
+      full = previous;
+    }
     if (this.clock().getTime() - Date.parse(full.last_started_at) > this.entityFullReviewDays * 86_400_000) return null;
     return read(`entity_review:${destinationSlug}`)?.last_started_at || full.last_started_at;
   }
@@ -7797,9 +7807,16 @@ export class Repository {
     const destination = asset.destinationSlug || asset.destination_slug || "";
     const country=normalizeCountryCode(asset.countryCode || asset.country_code || (scopeType === "COUNTRY" ? asset.scopeKey || asset.scope_key : ""));
     const category=asset.productCategory || asset.product_category;
+    // Published articles are frozen: an affiliate inventory edit must not pull a
+    // live post back into production (2026-09-30: a Trains link update showed two
+    // published transport articles as "pipeline interrupted"). They keep their
+    // delivered commercial overlay until an operator explicitly refreshes them.
     const rows=this.db.prepare(`SELECT cc.draft_id,cb.destination_slug,cb.canonical_json,ad.status AS draft_status
       FROM commercial_compositions cc JOIN article_drafts ad ON ad.id=cc.draft_id
-      JOIN content_briefs cb ON cb.id=ad.brief_id`).all();
+      JOIN content_briefs cb ON cb.id=ad.brief_id
+      WHERE ad.status<>'published' AND NOT EXISTS (SELECT 1 FROM wordpress_publications wp
+        JOIN wordpress_content_inventory wi ON wi.site_url=wp.site_url AND wi.post_id=wp.post_id
+        WHERE wp.draft_id=ad.id AND wi.status='publish')`).all();
     const affected=[];
     for (const row of rows) {
       const canonical=json(row.canonical_json,{});
@@ -8301,7 +8318,7 @@ export class Repository {
           composition.outcome || (composition.status === "composed" ? "inserted" : "intentional_noop"), composition.reasonCode || "",
           JSON.stringify(composition.diagnostics || {}), JSON.stringify(composition.manifest || {}), editorialPageHash,
           assetInventoryHash, readingLayoutVersion, page.contract_checksum || "");
-      this.db.prepare(`UPDATE article_drafts SET status=CASE WHEN status='wordpress_draft' THEN status ELSE 'commercial_ready' END,
+      this.db.prepare(`UPDATE article_drafts SET status=CASE WHEN status IN ('wordpress_draft','published') THEN status ELSE 'commercial_ready' END,
         updated_at=? WHERE id=?`).run(timestamp, draftId);
     });
     this.enqueueAffiliateQueueFromComposition(composition);

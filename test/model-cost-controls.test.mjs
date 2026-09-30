@@ -445,3 +445,36 @@ test("disk usage above 80%/90% becomes a warning/blocker health issue", (t) => {
   const actual = diskHealthSeverity(diskUsage(process.cwd()));
   assert.equal(Boolean(disk), Boolean(actual));
 });
+
+import { buildProductionState } from "../src/services/production-state.mjs";
+
+test("a published article with a stale commercial overlay stays completed instead of pipeline-interrupted", (t) => {
+  const { db } = repositoryFixture(t);
+  const base = { opportunity_id: "opp-frozen", draft_id: "draft-frozen", commercial_refresh_required: 1,
+    commercial_refresh_reason: "affiliate_asset_inventory_changed", draft_updated_at: "2026-09-30T04:20:00.000Z",
+    approved_at: "2026-09-20T00:00:00.000Z" };
+  const published = buildProductionState(db, { ...base, draft_status: "published" });
+  assert.equal(published.stage_status, "succeeded");
+  assert.equal(published.headline, "文章已在 WordPress 发布");
+  // Published remotely before the CMS status caught up: the stale overlay flag
+  // changes nothing (this minimal row lacks other stage evidence either way).
+  const remote = { ...base, draft_status: "wordpress_draft", wordpress_remote_status: "publish" };
+  const flagged = buildProductionState(db, remote);
+  const unflagged = buildProductionState(db, { ...remote, commercial_refresh_required: 0 });
+  assert.equal(flagged.headline, unflagged.headline);
+  assert.doesNotMatch(String(flagged.headline || "") + String(flagged.explanation || ""), /商业内容组合|流程断链/);
+  const pending = buildProductionState(db, { ...base, draft_status: "commercial_ready" });
+  assert.match(JSON.stringify(pending), /COMMERCIAL_OVERLAY_STALE|商业/);
+});
+
+// 2026-09-30: the first pass after the watermark release re-sent every claim
+// (~2.1M DeepSeek tokens) although daily full passes had already run for weeks.
+test("the entity review watermark bootstraps from the last successful resolution instead of a paid full sweep", (t) => {
+  const { db, repository } = repositoryFixture(t, { entityFullReviewDays: 30, clock: () => new Date("2026-09-30T06:00:00.000Z") });
+  assert.equal(repository.entityReviewSince("chongqing"), null, "never resolved: a first full pass is required");
+  const jobId = repository.enqueue("resolve_entities", "chongqing");
+  db.prepare("UPDATE jobs SET status='succeeded', started_at=?, completed_at=? WHERE id=?")
+    .run("2026-09-29T20:09:00.000Z", "2026-09-29T20:40:00.000Z", jobId);
+  assert.equal(repository.entityReviewSince("chongqing"), "2026-09-29T20:09:00.000Z");
+  assert.ok(db.prepare("SELECT 1 FROM integration_sync_state WHERE sync_key='entity_full_review:chongqing'").get());
+});

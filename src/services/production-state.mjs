@@ -627,7 +627,10 @@ function inferredPersistedFailure(row) {
     failure_execution_kind:"persisted_state", failure_details_json:JSON.stringify({ evidence_basis:"persisted_visual_status" }),
     updated_at:row.draft_updated_at,
   };
-  if (row.commercial_refresh_required) return {
+  // A live WordPress post is frozen: a stale commercial overlay is not a
+  // production failure and must not reopen the article's pipeline.
+  const liveOnWordPress = row.draft_status === "published" || row.wordpress_remote_status === "publish";
+  if (row.commercial_refresh_required && !liveOnWordPress) return {
     type:"compose_commercial", recovery_type:"compose_commercial",
     last_error:row.commercial_refresh_reason || "商业叠加层依赖已变化，需要从商业内容组合阶段刷新。",
     last_failure_code:"COMMERCIAL_OVERLAY_STALE", failure_class:"permanent_input",

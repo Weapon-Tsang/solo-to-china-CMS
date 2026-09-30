@@ -202,7 +202,7 @@ export function loadConfig(env = process.env) {
       requestSpacingMs: integer(env.AI_REQUEST_SPACING_MS, 1_000),
       rebuildDebounceMs: integer(env.REBUILD_DEBOUNCE_MS, 30_000),
       productionReserveSlots: integer(env.PRODUCTION_RESERVED_SLOTS, 1),
-      entityFullReviewDays: integer(env.ENTITY_FULL_REVIEW_DAYS, 7),
+      entityFullReviewDays: integer(env.ENTITY_FULL_REVIEW_DAYS, 30),
       providerLimits: env.AI_PROVIDER_LIMITS_JSON ? JSON.parse(env.AI_PROVIDER_LIMITS_JSON) : providerLimits.limits,
       providerBackoffInitialMs: integer(env.AI_PROVIDER_BACKOFF_INITIAL_MS, 5_000),
       providerBackoffMaxMs: integer(env.AI_PROVIDER_BACKOFF_MAX_MS, 300_000),
