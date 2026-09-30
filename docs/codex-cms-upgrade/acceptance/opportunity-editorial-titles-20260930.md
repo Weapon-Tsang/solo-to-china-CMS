@@ -1,9 +1,9 @@
 # 机会阶段英文编辑标题验收：2026-09-30
 
 Change class: AI_PROVIDER / PIPELINE / DATABASE_LOGIC
-Release class: CODE_ONLY_RELEASE，版本 2.0.74（2.0.73 已正式上线），schema 保持 83。
+Release class: CODE_ONLY_RELEASE，最终生产版本 2.0.75，schema 保持 83。
 
-用户明确要求机会阶段生成具体英文标题，并授权完成验收、提交、推送、部署到生产。当前状态：2.0.74 已完成正式上线，health/readiness 通过，正式拟题正在完成剩余机会。
+用户明确要求机会阶段生成具体英文标题，并授权完成验收、提交、推送、部署到生产。最终状态：2.0.75 已提交、推送并部署到生产；health/readiness 通过，198 个当前机会全部拟题完成。
 
 ## 问题与改动
 
@@ -65,3 +65,16 @@ Release class: CODE_ONLY_RELEASE，版本 2.0.74（2.0.73 已正式上线），s
 One isolated real-provider diagnostic (production writes=0) confirmed that a proposal copied the Chinese signage “我在重庆” into an otherwise English title. The output validator correctly rejected it. The prompt now requires 12–140 characters, forbids Chinese characters in titles including quoted signage and parenthetical names, and translates or describes signage in English. Evidence retains original text. The output validator and current ready-title hashes remain unchanged.
 
 A second bounded canary used the same six blocked current production inputs with the patched prompt: PASS, one dispatch, 5,084 input tokens, 930 output tokens, 9,630 ms, production writes=0. All six proposals passed the unchanged local semantic validator. Targeted title/editorial/content-chain tests: 23 PASS, including permanent quoted-signage and parenthetical-name regression. Final production counts and 2.0.75 deployment evidence will be appended after the immutable release completes.
+
+
+## 最终生产验收：2.0.75
+
+代码提交 `457ab3c285e70ac348a372b9e95e652d80237339` 已推送 main。Cloud Build `c968a578-61ba-4f82-b0a4-291ea74f1945` 成功，不可变镜像 `sha256:7bb1e112d9708516818446338483fe14eef1c44676a18c1823b7e836490cdd78` 已部署到 API/Worker，公开 health/readiness 返回 2.0.75，schema 仍为 83。运行环境镜像引用和 VM verified-container 启动检查均已核对；上一版容器 `engine-before-457ab3c2` / `engine-worker-before-457ab3c2` 保留用于回滚。
+
+当前 198 个 ACTIONABLE、未批准的 Knowledge 机会全部为 editorialTitle=ready。全量 facet-list templates=0、中文或标题长度违规=0、完全重复标题=0。生产 authenticated API 首页 20 个均 ready；再次调用正式拟题 endpoint 返回 202 / queued=0，确认不会重复付费生成。35 个标题 jobs 成功，无 running/queued 标题 jobs；此前四个被语义校验拒绝的 jobs 保留为失败历史，不影响当前 ready 状态。正式拟题 Provider 共记录 39 次响应，382,751 input tokens / 43,018 output tokens，新增 400/429/MAX_TOKENS=0；其中四次响应被本地语义校验拒绝，不能把 Provider response success 等同于业务 job success。
+
+最终 Post-Fix Audit：PASS。189 个受保护机会、14 篇草稿、31 个候选、14 个 WordPress 记录的完整行指纹保持不变；90 个来源的状态/版本投影与 5,235 个 Knowledge 的值/状态投影也保持不变。production owner orphan=0、duplicate active title jobs=0。来源和 Knowledge 的全部原始字段没有重新做全量指纹，不扩大该投影验证的覆盖范围。未执行生产数据库 migration/backfill、生产备份、磁盘 snapshot、WordPress 写入或镜像清理。
+
+2.0.75 最终 L1：23 targeted PASS；L2：1,208 unit/integration PASS，50 mandatory release checks PASS / 0 FAIL；L3：production dependency projection replay PASS；L4：local Browser E2E PASS，production authenticated Browser E2E NOT TESTED；L5：blocked six-input real Vertex canary PASS；L6：mocked complete pipeline and isolated image runtime/rollback PASS，full real production Capture→QA NOT TESTED。与标题无关的既有历史重复和 Knowledge review_type CHECK 兼容问题仍未纳入本次修复。
+
+永久脱敏验收摘要：[production summary](opportunity-editorial-titles-production-20260930.json)。原始素材、模型输入输出、运行环境凭据及完整数据库投影均未提交 Git。

@@ -1,0 +1,154 @@
+{
+  "recordedAt": "2026-09-30T14:01:14.272199+00:00",
+  "version": "2.0.75",
+  "codeRevision": "457ab3c285e70ac348a372b9e95e652d80237339",
+  "cloudBuild": "c968a578-61ba-4f82-b0a4-291ea74f1945",
+  "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:7bb1e112d9708516818446338483fe14eef1c44676a18c1823b7e836490cdd78",
+  "releaseClass": "CODE_ONLY_RELEASE",
+  "changeClass": [
+    "AI_PROVIDER",
+    "PIPELINE",
+    "DATABASE_LOGIC"
+  ],
+  "schema": 83,
+  "health": {
+    "version": "2.0.75",
+    "ok": true
+  },
+  "readiness": {
+    "version": "2.0.75",
+    "ready": true,
+    "database": "ready"
+  },
+  "runtime": [
+    {
+      "name": "/engine",
+      "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:7bb1e112d9708516818446338483fe14eef1c44676a18c1823b7e836490cdd78",
+      "running": true,
+      "startupReconciliation": "false"
+    },
+    {
+      "name": "/engine-worker",
+      "image": "asia-east1-docker.pkg.dev/project-4bcb9146-c37b-43b0-b11/solo-to-china/engine@sha256:7bb1e112d9708516818446338483fe14eef1c44676a18c1823b7e836490cdd78",
+      "running": true,
+      "startupReconciliation": "false"
+    }
+  ],
+  "startupDigestVerified": true,
+  "rollbackContainers": [
+    "engine-before-457ab3c2",
+    "engine-worker-before-457ab3c2"
+  ],
+  "tests": {
+    "L1": "PASS: 23 targeted tests",
+    "L2": "PASS: 1208 unit/integration tests; 50 mandatory release checks, 0 failures",
+    "L3": "PASS: read-only production title-dependency projection to local baseline/work; not a full DB backup",
+    "L4": "PASS: local browser generation/rejection/retry/approval/defer/refresh; production browser NOT TESTED",
+    "L5": "PASS: six blocked production inputs, one patched real Vertex dispatch, production writes=0",
+    "L6": "PASS: mocked complete Capture-to-QA-to-mock-WordPress flows and isolated immutable image runtime/rollback; full real production Capture-to-QA NOT TESTED",
+    "postFixAudit": "PASS for changed flow; pre-existing archived duplicate titles and Knowledge review_type compatibility issues remain out of scope"
+  },
+  "opportunities": {
+    "total": 198,
+    "ready": 198,
+    "facetTemplates": 0,
+    "nonEnglishTitles": 0,
+    "duplicateExactTitles": 0,
+    "firstPage": {
+      "count": 20,
+      "ready": 20,
+      "templates": []
+    },
+    "repeatGenerationQueued": 0
+  },
+  "jobs": [
+    {
+      "status": "failed",
+      "n": 4
+    },
+    {
+      "status": "succeeded",
+      "n": 35
+    }
+  ],
+  "activeTitleJobs": 0,
+  "rejectedBatchHistory": 4,
+  "modelCalls": [
+    {
+      "provider": "vertex",
+      "model": "gemini-3.8-flash",
+      "status": "succeeded",
+      "error_code": null,
+      "n": 39,
+      "inputTokens": 382751,
+      "outputTokens": 43018,
+      "maxLatencyMs": 19519
+    }
+  ],
+  "canary": {
+    "status": "PASS",
+    "dispatches": 1,
+    "latencyMs": 9630,
+    "usage": {
+      "promptTokenCount": 5084,
+      "candidatesTokenCount": 930,
+      "totalTokenCount": 6014,
+      "trafficType": "ON_DEMAND",
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 5084
+        }
+      ],
+      "candidatesTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 930
+        }
+      ]
+    },
+    "productionWrites": 0
+  },
+  "preservedData": {
+    "protectedOpportunities": {
+      "unchanged": true,
+      "count": 189,
+      "sha256": "c9ec2465934c44bd16347527b5c655b137282cf844f75fe2bea3211e209b1c79"
+    },
+    "drafts": {
+      "unchanged": true,
+      "count": 14,
+      "sha256": "dd3b447603adad980d1e9a0b8a1546c400b43aee86f381a76caa4907ed82d90a"
+    },
+    "candidates": {
+      "unchanged": true,
+      "count": 31,
+      "sha256": "003e97dc139f57ec30fc4d4f9c6e42ce85774f03310b148a77150bab350f28fa"
+    },
+    "wordpress": {
+      "unchanged": true,
+      "count": 14,
+      "sha256": "f1d04d52d18ee93fc0f2afa21b5a6186d34b12424442de2ef082e10a1ff63d30"
+    },
+    "sources": {
+      "unchanged": true,
+      "count": 90,
+      "sha256": "fc9cd68fccd7f2339d366034abd6571431112a410afc0ff8a4d7599370aaf47f"
+    },
+    "knowledge": {
+      "unchanged": true,
+      "count": 5235,
+      "sha256": "c4f9dc3c25cd203e9f9ce1c6417f5e42a6186caa971c8bf5676b7624119d344f"
+    }
+  },
+  "productionDatabaseMigration": false,
+  "productionBackfill": false,
+  "productionWordPressWrites": false,
+  "productionSnapshotOrBackup": false,
+  "knownUntested": [
+    "authenticated production browser interactions",
+    "real WordPress write",
+    "full real-source Capture-to-QA pipeline",
+    "search ranking/indexing outcomes"
+  ]
+}
