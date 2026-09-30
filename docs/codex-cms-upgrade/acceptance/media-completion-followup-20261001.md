@@ -22,4 +22,24 @@ Two recognized panda originals are 640x480 and 640x853; both fail the existing l
 - L6 Full Production Replay: NOT TESTED. Neither affected article has yet been verified through successful final page/WordPress delivery with qualified media. Offline gate/fixtures and a single image recognition cannot establish article completion.
 - Post-Fix Exploratory Audit: ISSUES FOUND. Genuine retained-media input gaps remain. The disposable recovery leaves no active/orphan/duplicate-owner jobs. Live audit is recorded after deployment/testing.
 
-Ignored evidence is under `output/content-media-completion-20261001/`. Production release and real terminal recovery results are appended after execution; no production completion is claimed in this pre-release record.
+Ignored evidence is under `output/content-media-completion-20261001/`.
+
+## Released version and actual production runs
+
+Code commit `e277016043f4f6d723e134288ad662fd9fd3b86c` was committed, pushed to `main`, and deployed as 2.0.78 using the same-schema code-only procedure. Cloud Build `ccc872d5-6b1f-4c09-a005-63f38082be13` succeeded. The immutable production image is `sha256:44b927e50aef612640a25072d5a96d98e740ffc8a1a82d246e78e15602c11f46`. Isolated startup, readiness, Linux runtime checks, container switch and resume-only startup metadata verification passed. The prior 2.0.77 image and stopped containers are retained for rollback. No production schema migration, full backup, disk snapshot or backfill ran. The remote has only `origin/main` after pruning; there is no remaining feature branch to delete.
+
+Real production recovery was requested through the normal authenticated API, scoped to the two affected approved owners. Existing planning and article bodies were preserved. Times below are UTC on 2026-09-30 (2026-10-01 in Asia/Shanghai).
+
+| Owner | Real job | Outcome | Paid recognitions |
+| --- | --- | --- | --- |
+| Museum | `job_4f7891639fa84d958503b8c78c48a0e7` | 18:36:02, `MEDIA_DISCOVERY_NO_RELEVANT_IMAGE` | 0 |
+| Zoo, first bounded run | `job_987825baf6a1473ba250b93736eb3ff4` | 18:49:29, `MEDIA_DISCOVERY_BUDGET_EXHAUSTED`, three remaining candidates | 12 |
+| Zoo, scoped continuation | `job_224e603636f4426b9ef6354ba98d0cd3` | 19:00:18, `MEDIA_DISCOVERY_NO_RELEVANT_IMAGE`, zero remaining candidates | 1 |
+
+The Zoo continuation correctly reused all earlier recognition results. Its two tiny remaining originals were rejected locally and only its one remaining full-size card called the real provider. All 13 recognitions succeeded, with no repeated original IDs across the three test jobs and no provider error recorded. Actual request latency ranged from approximately 7.3 to 57.1 seconds. Successful recognition did not qualify a collage as a relevant documentary photograph.
+
+Final read-only owner inspection confirms both records are explicitly failed at `generate_visuals` with a permanent input reason and an empty discovery/local-audit queue. No active jobs, duplicate active production owners or orphan active production owners remain. API and worker containers have zero restarts and zero OOM events. The authentic input gap remains: low-resolution panda originals and an insufficient embedded Museum photo. These outcomes establish termination/recovery behavior, not successful final article delivery.
+
+Final authenticated API verification completed at 19:04:18 UTC. Both unchanged-input retry requests returned HTTP 409 with a request to supply relevant original media. Database job counts and model-call counts were unchanged by those requests. All 16 article bodies and 14 WordPress publication receipts retain their exact pre-release fingerprints. Content list API HTTP 200 projects the same failed stage and exact terminal reason as the persisted jobs. Final live verification evidence is `real-production-test.json`; its PASS applies only to recovery, termination, reuse, protected-data and job invariants, not article completion.
+
+Final coverage: L1 PASS; L2 PASS; L3 PASS; L5 real recognition canary PASS for 13 actual recognitions, including continuation and reuse. L4 Browser E2E NOT TESTED: the browser could not connect to the local replay server, its internal connection-error data URL was rejected by automatic safety review, and a normal production HTTPS navigation timed out. The disposable local server was stopped after testing. L6 successful full article/page/WordPress delivery NOT TESTED because neither article has a qualified required source photograph. Post-Fix Exploratory Audit: ISSUES FOUND (retained-media input gaps); no active/orphan/duplicate-owner job findings. Do not report these two articles as completed or published.
