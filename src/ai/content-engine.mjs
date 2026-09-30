@@ -187,6 +187,7 @@ const ARTICLE_BUNDLE_PROMPT = `Produce one complete, evidence-grounded English a
 Return exactly a brief and a draft in one structured response. The brief is an editorial plan and the draft is the finished article.
 Optionally include draft.card_title (up to 100 characters) and draft.deck (up to 240 characters) for a compact listing card, using the same facts. They never replace title, meta_description, SEO or body. Do not add a separate generation call for these fields.
 Use only the supplied source facts and experience. Every evidence ledger claim key must appear in the matching brief outline section and refer to an input fact. Preserve numbers, qualifiers, dates, uncertainty and source provenance. Do not invent first-person travel experience or source media.
+For every cited claim, include its exact protected amounts and time ranges in the reader-visible body, including all endpoints (for example 08:30-09:50) and feeding times. revision_feedback contains deterministic errors from a rejected attempt: correct every listed missing_protected_values item before returning. Do not merely repeat the value in the evidence ledger, metadata or FAQ.
 Plan a useful narrative, reader decisions, SEO metadata, FAQ and required image slots. The draft must contain each evidence-bearing brief heading and must include accurate alt text. A factual image must reference a relevant authorized source; illustration does not replace factual evidence. Do not claim that any generated image passed visual QA.
 Plan all useful visual types: include as many distinct, relevant, high-quality real-world originals from authorized_source_assets as the article can use well, and retain valuable Chinese information graphics or route maps for complete English translation. All imported source images are authorized for editorial use even when per-image licensing fields are missing. For article body media, use relevant source originals; never generate a substitute scene. If no suitable original is available, leave the optional slot absent or report a required-media gap. Abstract cover illustrations use a separate explicitly authorized workflow. Do not select an unrelated image to fill a quota. Reusing an eligible retained original is a local zero-Provider operation; translation, generation and their independent visual QA are separately budgeted. Preserve source IDs, specific subjects, accurate English alt text and useful placement.
 The output is production input, not a review. A separate independent reviewer will audit it.`;
@@ -329,10 +330,11 @@ export class ContentEngine {
     const facts = (research?.facts || []).map((fact) => ({ ...fact,
       evidence: compactFactEvidence(fact.evidence) }));
     const allowedFactKeys = facts.map((fact) => fact.normalized_key);
-    const result = await this.respond({
+    const request = (revisionFeedback = null) => this.respond({
       name: 'article_bundle_v1', schema: ARTICLE_BUNDLE_SCHEMA,
       instructions: ARTICLE_BUNDLE_PROMPT + ROUTE_WRITING_PROMPT,
-      input: JSON.stringify({ ...research, facts,approved_route_table:research.route_bundle ? routeReadableMarkdown(research.route_bundle):null }),
+      input: JSON.stringify({ ...research, facts,revision_feedback:revisionFeedback,
+        approved_route_table:research.route_bundle ? routeReadableMarkdown(research.route_bundle):null }),
       options: { ...options, validateOutput: (output) => {
         const outline = output.brief?.outline || [];
         const sectionIds = outline.map((section) => section.section_id).filter(Boolean);
@@ -347,6 +349,18 @@ export class ContentEngine {
         validateRouteDraft(research.route_bundle,output.draft);
       } },
     });
+    let result;
+    try {
+      result = await request();
+    } catch (error) {
+      if (!["DRAFT_EVIDENCE_SCOPE_INVALID", "DRAFT_EVIDENCE_VALUE_INVALID", "DRAFT_STRUCTURE_INVALID"].includes(error?.code)) throw error;
+      // One correction with exact deterministic feedback; a second invalid
+      // response still fails closed and never reaches persistence or media.
+      result = await request({ draft_contract_error:error.message,
+        rejected_claim_keys:error.invalidClaimKeys || [], rejected_section_ids:error.invalidSectionIds || [],
+        missing_evidence_section_ids:error.missingSectionIds || [], missing_body_section_ids:error.missingBodySectionIds || [],
+        invalid_section_claim_mappings:error.invalidSectionClaims || [], missing_protected_values:error.missingProtectedValues || [] });
+    }
     result.output.draft.slug = slugify(result.output.draft.slug || result.output.draft.title);
     return result;
   }

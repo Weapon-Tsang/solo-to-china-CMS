@@ -246,7 +246,8 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
         && evaluatePublicationEligibility(repo.db, ctx.draft.id).passed) {
         stage = productionState.latest_error.stage;
       }
-      const definition = PRODUCTION_STAGE_REGISTRY.find((item) => item.key === stage);
+      const definition = productionState?.stage_registry?.find((item) => item.key === stage)
+        || PRODUCTION_STAGE_REGISTRY.find((item) => item.key === stage);
       if (stage === 'generate_visuals' && ctx.draft && repo.db.prepare(`SELECT 1 FROM media_dispatches md
         JOIN article_visuals av ON av.id=md.visual_id WHERE av.draft_id=?
         AND md.state IN ('dispatch_started','outcome_unknown') LIMIT 1`).get(ctx.draft.id)) {
@@ -310,7 +311,8 @@ export function executeContentRecovery(repo, candidateId, input, actor = 'admini
       const recoveryRunId = activeRecovery?.recovery_run_id || id('recovery_run');
       const jobId = activeRecovery?.id || repo.enqueue(stage,entityId,{
         dedupeKey:`recovery-stage:${ctx.opportunity.id}:${stage}:${entityId}:${inputIdentity}:g${generation}`,
-        recoveryRunId,interactive:true,productionOwnerOpportunityId:ctx.opportunity.id });
+        recoveryRunId,interactive:true,productionOwnerOpportunityId:ctx.opportunity.id,
+        pipelineVersion:productionState?.pipeline_version || ctx.failedJob?.pipeline_version || 'legacy' });
       result = { action:requestedAction,resolvedStage:stage,jobId,recoveryRunId,queued:!activeRecovery && Boolean(jobId),
         already_recovering:Boolean(activeRecovery),reused_active_recovery:Boolean(activeRecovery),retry_generation:generation,
         stageOnly:['retry_failed_stage','recover_next_stage'].includes(requestedAction),

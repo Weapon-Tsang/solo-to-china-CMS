@@ -21,6 +21,34 @@ function seedEditorialAssembly(db) {
     VALUES ('assembly-state','candidate-state','opp-state','assembly-hash','2026-09-01','2026-09-01')`).run();
 }
 
+test('bundle failure remains a writing failure without legacy assembly and recovery keeps its version', t=>{
+  const {db,repository}=repositoryFixture(t);
+  seedOpportunity(db);
+  db.prepare("UPDATE content_opportunities SET status='producing',lifecycle_state='producing' WHERE id='opp-state'").run();
+  const failed=repository.enqueue('plan_content','candidate-state',{
+    productionOwnerOpportunityId:'opp-state',pipelineVersion:'article_bundle_v1'});
+  db.prepare(`UPDATE jobs SET status='failed',last_failure_code='DRAFT_EVIDENCE_VALUE_INVALID',
+    last_error='Draft omitted 08:30-09:50 and 15:00',updated_at='2026-09-30' WHERE id=?`).run(failed);
+  const state=repository.getContentProductionDetail('opp-state').production_state;
+  assert.equal(state.stage_status,'failed');
+  assert.equal(state.current_stage,'plan_content');
+  assert.equal(state.latest_error.code,'DRAFT_EVIDENCE_VALUE_INVALID');
+  assert.equal(state.recovery_target,'plan_content');
+  assert.equal(state.latest_historical_error,null);
+  assert.equal(state.stage_registry.some(s=>s.key==='assemble_editorial'),false);
+  repository.getPlanningPackage=()=>({candidate:{destination_slug:'beijing',proposed_title:'State guide'},facts:[]});
+  const input={action:'retry_failed_stage',idempotencyKey:'zoo-bundle-recovery'};
+  const first=executeContentRecovery(repository,'opp-state',input);
+  const second=executeContentRecovery(repository,'opp-state',input);
+  assert.equal(first.resolvedStage,'plan_content');
+  assert.equal(second.jobId,first.jobId);
+  assert.equal(second.idempotent,true);
+  const job=db.prepare('SELECT pipeline_version,production_owner_opportunity_id FROM jobs WHERE id=?').get(first.jobId);
+  assert.equal(job.pipeline_version,'article_bundle_v1');
+  assert.equal(job.production_owner_opportunity_id,'opp-state');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='assemble_editorial'").get().n,0);
+});
+
 test("production_state distinguishes evidence wait, queue, failure and exact targeted recovery", (t) => {
   const { db,repository } = repositoryFixture(t);
   seedOpportunity(db,{candidate:false,ready:false});

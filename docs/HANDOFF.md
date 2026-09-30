@@ -1,3 +1,7 @@
+# 2.0.76 Production interruption recovery
+
+App/Extension version `2.0.76`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Article-bundle state and recovery preserve the owner and pipeline version, writing corrects protected-evidence omissions once, and source-photo discovery continues in cached batches with a twelve-dispatch durable limit. This is a same-schema CODE_ONLY_RELEASE. See `codex-cms-upgrade/acceptance/production-interruption-development-fix-20260930.md` for the production-copy, browser and bounded Vertex evidence and untested areas. Content Production Strategy 3.9 and `config/content-strategy.json` remain unchanged.
+
 # 2.0.75 English opportunity signage titles
 
 App/Extension version `2.0.75`, schema migration `83`, and Content Strategy `3.9` are the release baseline. Share source-completeness and family membership projection only within a synchronous opportunity title batch. This removes repeated current-media checks as already titled opportunities grow, while preserving the exact AI inputs, evidence fingerprints, approval guards and fresh checks across jobs. Content Production Strategy 3.9 and `config/content-strategy.json` remain unchanged. This same-schema code-only patch follows the real 2.0.73 production title rollout; see its acceptance record below.

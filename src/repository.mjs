@@ -5621,9 +5621,8 @@ export class Repository {
       if (!approved) return false;
     }
     this.db.prepare("UPDATE topic_candidates SET status = 'brief_queued', updated_at = ? WHERE id = ?").run(now(), candidateId);
-    // `plan_content` is the durable production entrypoint. The Pipeline persists an
-    // Editorial Assembly first inside that job, so legacy operators retain one clear
-    // queue action while the new semantic boundary remains mandatory.
+    // The bundle entrypoint validates and persists its Brief and Draft together.
+    // Legacy assembly/packet artifacts are not prerequisites for this version.
     const ownerId = opportunityId || approved?.id || null;
     this.enqueue("plan_content", candidateId, { productionOwnerOpportunityId: ownerId,
       pipelineVersion: 'article_bundle_v1',

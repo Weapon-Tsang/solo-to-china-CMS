@@ -8,6 +8,61 @@ import {Pipeline} from '../src/pipeline.mjs';
 import { repositoryFixture } from '../test-support/repository-fixture.mjs';
 import {png} from '../test-support/media-fixtures.mjs';
 
+test('fourth relevant original survives a worker restart and advances to page composition',async t=>{
+  const {db,repository,directory}=repositoryFixture(t);
+  db.prepare(`INSERT INTO topic_candidates(id,destination_slug,topic_key,proposed_title,rationale,
+    coverage_score,evidence_count,conflict_count,created_at,updated_at)
+    VALUES ('c','chongqing','museum','Luo Zhongli Art Museum','fixture',1,1,0,'now','now')`).run();
+  db.prepare(`INSERT INTO sources(id,adapter,canonical_url,captured_at,raw_text,raw_html,raw_payload_json,
+    content_hash,capture_version,created_at,updated_at) VALUES ('s','manual','https://example.test/museum',
+    'now','Museum source','','{}','s-hash',1,'now','now')`).run();
+  db.prepare(`INSERT INTO content_briefs(id,destination_slug,topic,audience,search_intent,status,created_at,updated_at,strategy_version)
+    VALUES ('b','chongqing','Luo Zhongli Art Museum','travelers','guide','ready','now','now','3.8')`).run();
+  db.prepare("UPDATE content_briefs SET candidate_id='c' WHERE id='b'").run();
+  db.prepare(`INSERT INTO narrative_plans(id,brief_id,created_at,updated_at) VALUES ('n','b','now','now')`).run();
+  const ids=['photo-0','photo-1','photo-2','photo-3'];
+  db.prepare(`INSERT INTO writing_packets(id,brief_id,narrative_plan_id,packet_text,evidence_ledger_json,selected_fact_keys_json,
+    selected_experience_block_ids_json,input_hash,created_at,updated_at,context_json)
+    VALUES ('p','b','n','','[]','[]','[]','packet-hash','now','now',?)`).run(JSON.stringify({version:2,
+      authorized_source_assets:ids.map(id=>({id})),content_policy:{visuals:{minimum:0,target:1,maximum:3}}}));
+  db.prepare(`INSERT INTO article_drafts(id,brief_id,title,slug,body_markdown,quality_report_json,status,created_at,updated_at,
+    revision,content_hash,strategy_version) VALUES ('d','b','Luo Zhongli Art Museum','museum',
+    'Visit Luo Zhongli Art Museum.','{}','drafted','now','now',1,'body-hash','3.8')`).run();
+  for(let i=0;i<ids.length;i++) {
+    const bytes=await sharp({create:{width:1,height:1,channels:3,background:{r:30+i*30,g:70,b:100}}}).png().toBuffer();
+    const file=path.join(directory,ids[i]+'.png');fs.writeFileSync(file,bytes);
+    db.prepare(`INSERT INTO source_assets(id,source_id,kind,remote_url,position,local_path,mime_type,capture_version,
+      storage_status,original_bytes_status,durability_status,original_sha256,width,height)
+      VALUES (?,'s','image',?,?,?,'image/png',1,'saved','saved_original','ORIGINAL_STORED',?,1200,800)`)
+      .run(ids[i],'https://example.test/'+ids[i],i,file,createHash('sha256').update(bytes).digest('hex'));
+  }
+  const inspected=[];
+  const reviewer={async analyzeMediaAsset(asset,{telemetryContext}){
+    inspected.push(asset.id);
+    repository.recordModelCall({stage:'source_asset_media_analysis',provider:'vertex',model:'test',
+      runId:telemetryContext.runId,entityId:asset.id,requestKind:'provider',status:'succeeded'});
+    return {method:'fixture',model:'fixture',result:{analysis_status:'ready',asset_kind:'documentary_photo',
+      reader_text_present:false,primary_subjects:[asset.id==='photo-3'?'Luo Zhongli Art Museum':'Unrelated street'],
+      photo_regions:[],text_regions:[],entities:[],editor_ui_regions:[],language_by_region:[],confidence:.95,
+      analysis_version:'media-analysis-2',prompt_version:'media-analysis-prompt-4',source_sha256:asset.original_sha256}};
+  }};
+  const options={visualReviewer:reviewer,visuals:{enabled:true},frontendContracts:{diagnostics:()=>({canCompose:true})}};
+  const jobId=repository.enqueue('generate_visuals','d');
+  assert.equal(await new Pipeline(repository,{config:{}},options).runOne(),false);
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status,'queued');
+  assert.equal(inspected.length,3,JSON.stringify(db.prepare('SELECT * FROM jobs WHERE id=?').get(jobId)));
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='compose_frontend_page'").get().n,0);
+  db.prepare("UPDATE jobs SET available_at='2000-01-01',next_eligible_at='2000-01-01' WHERE id=?").run(jobId);
+  assert.equal(await new Pipeline(repository,{config:{}},options).runOne(),true,
+    JSON.stringify({job:db.prepare('SELECT status,last_error,last_failure_code FROM jobs WHERE id=?').get(jobId),visuals:repository.listDraftVisuals('d')}));
+  assert.deepEqual(inspected,ids);
+  assert.equal(repository.listDraftVisuals('d')[0].source_asset_id,'photo-3');
+  assert.equal(repository.listDraftVisuals('d')[0].status,'generated');
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(jobId).status,'succeeded');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM jobs WHERE type='compose_frontend_page' AND status='queued'").get().n,1);
+  assert.equal(db.prepare("SELECT content_hash FROM article_drafts WHERE id='d'").get().content_hash,'body-hash');
+});
+
 test('an article may checkpoint analysis for its frozen historical source asset', (t) => {
   const {db,repository}=repositoryFixture(t);
   db.prepare(`INSERT INTO sources(id,adapter,canonical_url,captured_at,raw_text,raw_html,
@@ -99,7 +154,10 @@ test('an empty historical article plan discovers a frozen original once and uses
   assert.equal(refresh.items[0].reason,'source_original_discovery');
   assert.deepEqual(refresh.items[0].discovery_candidate_ids,['frozen-photo']);
   let analyses=0;
-  const reviewer={async analyzeMediaAsset(asset){analyses++;return {method:'fixture',model:'fixture',result:{
+  const reviewer={async analyzeMediaAsset(asset,options){analyses++;
+    repository.recordModelCall({stage:'source_asset_media_analysis',provider:'vertex',model:'test',
+      runId:options.telemetryContext.runId,entityId:asset.id,requestKind:'provider',status:'succeeded'});
+    return {method:'fixture',model:'fixture',result:{
     analysis_status:'ready',asset_kind:'documentary_photo',reader_text_present:false,
     primary_subjects:['Ciqikou street food market'],photo_regions:[],text_regions:[],entities:[],
     editor_ui_regions:[],language_by_region:[],confidence:.95,analysis_version:'media-analysis-2',
@@ -162,10 +220,15 @@ test('an empty historical article plan discovers a frozen original once and uses
   assert.equal(repository.sourceVisualDiscoveryCandidates('other-draft').length,3);
   const budgetJob=repository.enqueue('generate_visuals','other-draft',{dedupeKey:'bounded-discovery'});
   assert.equal(await pipeline.runOne(),false);
-  assert.equal(db.prepare('SELECT last_failure_code FROM jobs WHERE id=?').get(budgetJob).last_failure_code,
-    'MEDIA_DISCOVERY_BUDGET_EXHAUSTED');
-  assert.equal(analyses,4,'one earlier analysis and only three new calls are permitted in this run');
+  assert.equal(db.prepare('SELECT status FROM jobs WHERE id=?').get(budgetJob).status,'queued');
+  assert.equal(analyses,4,'inspect only three new originals in one batch');
   assert.equal(repository.sourceVisualDiscoveryCandidates('other-draft').length,1);
+  db.prepare("UPDATE jobs SET available_at='2000-01-01',next_eligible_at='2000-01-01' WHERE id=?").run(budgetJob);
+  const restarted=new Pipeline(repository,{config:{}},{visualReviewer:reviewer,visuals:{enabled:true}});
+  assert.equal(await restarted.runOne(),false);
+  assert.equal(analyses,5,'restart inspects only the fourth original and reuses the first three');
+  assert.equal(db.prepare('SELECT last_failure_code FROM jobs WHERE id=?').get(budgetJob).last_failure_code,
+    'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE');
   const extraId='uninspected-after-rate-wait';
   const extraBytes=await sharp({create:{width:1,height:1,channels:3,
     background:{r:222,g:33,b:44}}}).png().toBuffer();
@@ -180,14 +243,15 @@ test('an empty historical article plan discovers a frozen original once and uses
     authorized_source_assets:[{id:'frozen-photo'},...newIds.map(id=>({id})),{id:extraId}],
     content_policy:{visuals:{minimum:0,target:1,maximum:3}}}),'other-packet');
   const resumedJob=repository.enqueue('generate_visuals','other-draft',{dedupeKey:'resumed-bounded-discovery'});
-  for (const id of newIds.slice(0,2)) repository.recordModelCall({stage:'source_asset_media_analysis',
-    provider:'vertex',model:'test',runId:resumedJob,entityId:id,requestKind:'provider',status:'succeeded'});
-  assert.equal(repository.sourceMediaAnalysisProviderCalls(resumedJob),2);
+  db.prepare('DELETE FROM source_asset_analyses WHERE asset_id=?').run(newIds[3]);
+  for (let index=0;index<11;index++) repository.recordModelCall({stage:'source_asset_media_analysis',
+    provider:'vertex',model:'test',runId:resumedJob,entityId:extraId,requestKind:'provider',status:'succeeded'});
+  assert.equal(repository.sourceMediaAnalysisProviderCalls(resumedJob),11);
   assert.equal(repository.sourceVisualDiscoveryCandidates('other-draft').length,2);
   assert.equal(await pipeline.runOne(),false);
   assert.equal(db.prepare('SELECT last_failure_code FROM jobs WHERE id=?').get(resumedJob).last_failure_code,
     'MEDIA_DISCOVERY_BUDGET_EXHAUSTED');
-  assert.equal(analyses,5,'a resumed Job may inspect only the one remaining budgeted source');
+  assert.equal(analyses,6,'a resumed Job may inspect only the one remaining budgeted source');
   assert.equal(repository.sourceVisualDiscoveryCandidates('other-draft').length,1);
 });
 

@@ -49,13 +49,16 @@ for (const row of rows) {
   const first = executeContentRecovery(repository, row.opportunity_id, input, 'offline-production-replay');
   const second = executeContentRecovery(repository, row.opportunity_id, input, 'offline-production-replay');
   const job = repository.db.prepare(
-    'SELECT id,type,status,entity_id,production_owner_opportunity_id,recovery_run_id FROM jobs WHERE id=?',
+    'SELECT id,type,status,entity_id,production_owner_opportunity_id,recovery_run_id,pipeline_version FROM jobs WHERE id=?',
   ).get(first.jobId);
   if (!first.jobId || !first.queued || second.jobId !== first.jobId || !second.idempotent) {
     throw new Error(`Recovery idempotency invariant failed for ${row.opportunity_id}.`);
   }
   if (!job || job.type !== first.resolvedStage || job.production_owner_opportunity_id !== row.opportunity_id) {
     throw new Error(`Recovery owner/stage invariant failed for ${row.opportunity_id}.`);
+  }
+  if (stateBefore.pipeline_version === 'article_bundle_v1' && job.pipeline_version !== 'article_bundle_v1') {
+    throw new Error(`Recovery pipeline-version invariant failed for ${row.opportunity_id}.`);
   }
   results.push({
     opportunityId: row.opportunity_id,

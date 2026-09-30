@@ -13,7 +13,7 @@ const ISSUE_GUIDANCE = {
   CONFLICT_HANDLING_OMISSION: ['证据冲突说明缺失', '正文选择了一个值，却遗漏 Brief 要求公开说明的差异、条件或变化范围。', '保留不确定性并写清条件、影响和读者下一步。'],
   UNRESOLVED_HOURS_CONFLICT: ['营业时间范围说明缺失', '正文把有场景或季节差异的时间写成了单一绝对值。', '按 Brief 给出的范围和适用条件修订。'],
   INVALID_DRAFT_REPAIR_SCOPE: ['自动修订没有命中当前草稿章节', '旧修订请求使用了写作提纲标题或旧版章节层级，和当前草稿可替换章节不一致；系统已停止，未覆盖现有正文。', '按当前草稿列出的真实章节重新执行定向修订。'],
-  DRAFT_EVIDENCE_VALUE_INVALID: ['关键事实修订后仍不一致', '定向修订后，正文仍遗漏或改写了证据台账中的金额、时长、日期、条件或例外；该版本没有进入图片和页面阶段。', '从保留的 Writing Packet 重建正文，并逐项保留系统列出的受保护值。'],
+  DRAFT_EVIDENCE_VALUE_INVALID: ['正文遗漏或改写关键事实', '模型生成的正文没有完整保留证据中的时间、金额、条件或例外；不合格版本已被拦截，未进入图片和页面阶段。', '按原生产流程重建正文，并逐项保留系统列出的受保护值。'],
   DATABASE_DUMP: ['正文像数据库导出', '事实被逐条堆放，没有形成可读的旅行决策逻辑。', '重新组织叙事与因果关系，不新增事实。'],
   GENERIC_AI_TRANSITIONS: ['正文存在通用 AI 过渡语', '泛化过渡语取代了具体的路线、条件或因果连接。', '删除套话，直接连接读者问题和下一步。'],
   REPETITIVE_EXPLANATION: ['正文重复解释', '相同观点被多次换句表达，却没有增加条件、取舍或行动信息。', '合并重复段落，保留最清楚的一处。'],
@@ -122,7 +122,7 @@ export function explainOperationalFailure(job) {
   };
   if (code === 'MEDIA_DISCOVERY_BUDGET_EXHAUSTED') return {
     category:'media',headline:'本轮来源图片检查达到调用上限',
-    reason:'本轮只分析了有限数量的原图，尚有未检查的候选图；没有找到可确认与文章相符的图片，也没有使用无关图。',
+    reason:'已达到本任务的原图检查总预算，尚有未检查的候选图；已保存的分析结果会复用。没有找到可确认与文章相符的图片，也没有使用无关图。',
     action:{id:'generate_visuals',label:'继续检查剩余候选图',why:'每次只检查有限数量，已保存的分析结果会复用；也可以先人工核对素材以节省调用。'},
     technicalDetail:details,
   };

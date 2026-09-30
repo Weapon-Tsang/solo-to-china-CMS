@@ -1049,10 +1049,11 @@ export class Pipeline {
             else saveAnalysis();
           }
           if (staleCardAnalyses.length) this.repository.prepareMediaRepair(job.entity_id);
-          // The three-call limit is per durable Job, not per runOne invocation:
-          // media RPM waits and provider retries resume the same Job and must
-          // never expand discovery into an unbounded paid scan of old sources.
-          const discoveryLimit=Math.max(0,3-(this.repository.sourceMediaAnalysisProviderCalls?.(job.id) || 0));
+          // Inspect in small batches, but do not turn the first three misses
+          // into a permanent failure. The same durable Job resumes its saved
+          // analyses, with a total ceiling that survives RPM waits/restarts.
+          const discoveryBudget=12;
+          const discoveryLimit=Math.min(3,Math.max(0,discoveryBudget-(this.repository.sourceMediaAnalysisProviderCalls?.(job.id) || 0)));
           const discoveryIds=this.repository.sourceVisualDiscoveryCandidates?.(job.entity_id,
             {limit:discoveryLimit}) || [];
           let discoveryCount=0;
@@ -1100,13 +1101,19 @@ export class Pipeline {
           if (!this.repository.listDraftVisuals(job.entity_id).length
             && !mediaManifestForDraft(this.repository.db,job.entity_id)?.approvedNoImage) {
             const exhausted=remainingDiscovery.length>0;
+            const providerDispatches=this.repository.sourceMediaAnalysisProviderCalls?.(job.id) || 0;
+            if (exhausted && discoveryCount>0 && providerDispatches<discoveryBudget) {
+              throw Object.assign(new Error('Continue inspecting the next batch of stored source images.'),{
+                code:'MEDIA_DISCOVERY_CONTINUE',availableAt:new Date(Date.now()+1000).toISOString(),
+              });
+            }
             throw Object.assign(new Error(exhausted
               ? 'The bounded media discovery found no relevant image; more stored originals remain uninspected.'
               : 'No pixel-verified relevant source image was found for this article.'),{
               code:exhausted ? 'MEDIA_DISCOVERY_BUDGET_EXHAUSTED' : 'MEDIA_DISCOVERY_NO_RELEVANT_IMAGE',retryable:false,
               details:{substage:'source_media_discovery',analyzed_assets:discoveryCount,
-                provider_dispatches:this.repository.sourceMediaAnalysisProviderCalls?.(job.id) || 0,
-                remaining_candidates:remainingDiscovery.length},
+                provider_dispatches:providerDispatches,dispatch_limit:discoveryBudget,
+                remaining_candidates_lower_bound:remainingDiscovery.length},
             });
           }
           const analysisVisuals=this.repository.plannedVisuals(job.entity_id)
@@ -1547,7 +1554,7 @@ export class Pipeline {
       if (job) {
         if (isJobLeaseLost(error)) {
           this.logger.warn("pipeline.job_lease_lost", { jobId: job.id, jobType: job.type, entityId: job.entity_id });
-        } else if (error?.code === 'MEDIA_RATE_WAIT' && error.availableAt) {
+        } else if (['MEDIA_RATE_WAIT','MEDIA_DISCOVERY_CONTINUE'].includes(error?.code) && error.availableAt) {
           this.repository.deferJobWithoutAttempt(job, error.availableAt);
         } else {
           this.repository.failPipelineArtifact?.(pipelineArtifact, error);

@@ -95,7 +95,6 @@ export function prefetchProductionStates(db, rows) {
 export function buildProductionState(db, row, options = {}) {
   const batch=options.batch || null;
   const capabilities = resolveCapabilities(db, row, options);
-  const registry = PRODUCTION_STAGE_REGISTRY.filter((item) => stageEnabled(item, capabilities, db, row,batch));
   const entityIds = [row.candidate_id, row.brief_id, row.draft_id].filter(Boolean);
   const legacyOwnerIsUnique = Boolean(row.approved_at && Number(row.approved_owner_count || 0) === 1);
   const jobs = batch ? batch.jobs.filter((job)=>entityIds.includes(job.entity_id)
@@ -108,6 +107,16 @@ export function buildProductionState(db, row, options = {}) {
   const scopeResetAt=batch ? batch.scopeResets.get(row.opportunity_id) || null : db.prepare(`SELECT created_at FROM content_operation_history WHERE opportunity_id=?
     AND action='correct_destination' AND status='completed' ORDER BY created_at DESC,id DESC LIMIT 1`).get(row.opportunity_id)?.created_at || null;
   const currentJobs=scopeResetAt ? jobs.filter((item)=>String(item.updated_at)>String(scopeResetAt)) : jobs;
+  const pipelineVersion = [...currentJobs].reverse().find((item) => item.type === 'plan_content')?.pipeline_version || 'legacy';
+  const bundled = pipelineVersion === 'article_bundle_v1';
+  // The bundle entrypoint creates its Brief and Draft together. It does not
+  // run the legacy assembly/packet chain; missing legacy artifacts cannot hide
+  // a current bundle failure or redirect recovery into a different pipeline.
+  const registry = PRODUCTION_STAGE_REGISTRY
+    .filter((item) => !bundled || !['assemble_editorial','plan_narrative','assemble_writing_packet','compose_frontend_page_plan'].includes(item.key))
+    .map((item) => !bundled ? item : item.key === 'plan_content' ? { ...item, dependencies:[] }
+      : item.key === 'generate_draft' ? { ...item, dependencies:['plan_content'] } : item)
+    .filter((item) => stageEnabled(item, capabilities, db, row,batch));
   const jobIds=currentJobs.map((item)=>item.id);
   const receipts = batch ? batch.receipts.filter((item)=>jobIds.includes(item.job_id)) : jobIds.length ? db.prepare(`SELECT stage,entity_id,job_id,created_at FROM pipeline_step_receipts
     WHERE job_id IN (${placeholders(jobIds)}) AND stage IN (${placeholders(PRODUCTION_JOB_TYPES)})
@@ -417,6 +426,7 @@ export function buildProductionState(db, row, options = {}) {
     last_attempt_at: lastAttemptAt,
     available_actions: availableActions,
     stage_registry: registry,
+    pipeline_version: pipelineVersion,
     timeline: entries,
     disposition: control?.disposition || "active",
     has_production_lineage: hasLineage,

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.76 - Unreleased
+
+- Preserve article-bundle stage dependencies and pipeline versions during recovery so real writing failures remain actionable.
+- Correct missing protected evidence once before rejecting article-bundle output; retain strict evidence validation and provider-error boundaries.
+- Continue source-photo discovery in cached batches within a durable twelve-dispatch budget instead of stopping after three candidates.
+- Add production regressions for bounded correction, recovery idempotency and source-photo continuation across worker restart.
+
 ## 2.0.75 - Unreleased
 
 - Require English-only opportunity titles even when source evidence includes quoted Chinese signage or parenthetical entity names; retain strict output rejection and add the production signage regression.
